@@ -39,6 +39,8 @@ cp index.html dist_stage/index.html
 cp -r src lib dist_stage/
 mkdir -p dist_stage/resources
 cp -r app/resources/* dist_stage/resources/
+mkdir -p dist_stage/app/css
+cp -r app/css/* dist_stage/app/css/
 
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 
