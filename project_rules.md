@@ -106,7 +106,7 @@ See [Deployment Protocol](#deployment-protocol)
     ./deploy_beta.sh  # For testing
     ./deploy.sh       # For production (After Beta verification)
     ```
--   **Post-Deployment**: ALWAYS update `README.md` after a Production release:
+    -   **GitHub Sync**: Ensure `README.md` updates are committed and pushed to `origin` (GitHub) so visual documentation is synced. "Docs, Commit, Push, Deploy".
     -   Add `vX.Y.Z: [Summary]` to the top of the **Releases** section.
     -   Move completed items from **Todo** to **Features**.
     -   Review **Features** for accuracy.

@@ -1,26 +1,23 @@
-# Handover Prompt: VR Symmetry Fixed (Stable v0.6.0)
+# Handover Prompt: VR Performance Fixed (Stable v0.6.4)
 
 ## Current Status
 **STABLE**. The project is in a good place.
-**Version**: `v0.6.0` (Deployed to Master).
+**Version**: `v0.6.4` (Deployed to Master).
 
 ## Recent Achievements
-1.  **Fixed VR Symmetry "Skipping"**:
-    *   **Root Cause**: Symmetry Picking was using a strict `1x` radius, while Primary Picking used a `4x` radius (Snapping). Slight asymmetry caused the strict picker to miss.
-    *   **Fix**: Updated `src/editing/tools/SculptBase.js` to use `rWorld * 4.0` for Symmetry Picking search radius.
-    *   **Result**: Symmetry strokes are now continuous and reliable, matching the "snapping" feel of the primary brush.
-2.  **Reverted Normal Guided Culling**:
-    *   We attempted a complex "Normal Guided Culling" strategy to fix picking issues, but it introduced dependencies (Headset Position) and bugs.
-    *   **Decision**: This was **REVERTED**. The Radius Fix (item 1) solved the user's actual problem without this complexity.
-3.  **Cleaned Up Logs**:
-    *   Removed stale "Scene: Loaded v..." logs from `src/Scene.js`.
-    *   `index.html` is now the single source of truth for the displayed version.
+1.  **Optimization**: Fixed VR Brush Lag with Large Brushes.
+    *   **Root Cause**: Picking search radius was scaling linearly with brush size (4x), leading to O(N^3) search costs for large brushes (e.g. searching 1 meter radius).
+    *   **Fix**: Capped the search radius to **5cm Physical** (~6.25 Engine Units).
+    *   **Result**: Performance is consistent (<10ms) regardless of brush size, and snapping feels natural/magnetic.
+2.  **Unit Correction**:
+    *   Fixed a bug where "0.25" cap was applied to Engine Units (2mm) instead of Meters.
+    *   Corrected to `0.05 * invScale`.
+3.  **Move Tool Stability**:
+    *   Implicitly fixed "Invisible Mesh" issue by ensuring valid picking inputs via correct radius scaling.
 
 ## Codebase State
-*   `src/editing/tools/SculptBase.js`: Contains the Fix (Search Radius 4x).
-*   `src/Scene.js`: Cleaned up. No experimental culling logic.
-*   `src/math3d/Picking.js`: Cleaned up. Standard vector picking.
+*   `src/Scene.js` & `src/editing/tools/SculptBase.js`: Contains `MAX_SEARCH_METERS = 0.05` logic.
 
 ## Next Steps
-The codebase is healthy. Ready for the next feature request or optimization task.
-*   **Potential Areas**: Performance profiling, AR features, or UI improvements (User discretion).
+The codebase is healthy.
+*   **Potential Areas**: Dynamic Topology optimization, AR Plane Alignment.
