@@ -7,6 +7,7 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.5: Fix VR Menu Depth Sorting (Menu now correctly occluded by objects)
 - v0.6.4: Fix VR Brush Lag (Cap Search Radius to 5cm Physical), Unit Correction
 - v0.5.375: Fix VR Symmetry Skipping (Search Radius 4x), Revert Normal Culling
 - v0.5.60: fixed desktop exposure (removed double-gamma), calibrated VR scale (100 units = 1m), fixed initial camera offset (starting position)

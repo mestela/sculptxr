@@ -38,6 +38,9 @@ const searchRadius = Math.min(rWorld * 4.0, MAX_SEARCH_RADIUS);
 picking.intersectionSphereMeshes(meshes, pos, searchRadius);
 ```
 
+## Other Fixes (v0.6.5)
+-   **VR Menu Depth**: Enabled Depth Test in `VRMenu.js` so it correctly hides behind the sculpt and controllers when appropriately positioned.
+
 ## Verification
 *   **Log**: `Stroke` time < 10ms.
 *   **Feel**: Consistent snapping.
