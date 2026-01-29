@@ -47,7 +47,8 @@ Enums.Shader = {
   CONTOUR: 10,
   PAINTUV: 11,
   BLUR: 12,
-  TEXTURE: 13
+  TEXTURE: 13,
+  UNLIT: 14
 };
 
 // camera projection

@@ -4,7 +4,7 @@
 <head>
     <meta charset='utf-8' />
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>SculptXR</title>
+    <title>SculptGL v0.6.33</title>
     <style>
         body {
             margin: 0;
@@ -210,7 +210,7 @@
       "drawables/Primitives": "./src/drawables/Primitives.js",
       "drawables/Rtt": "./src/drawables/Rtt.js",
       "drawables/Selection": "./src/drawables/Selection.js",
-      "drawables/VRLaser": "./src/drawables/VRLaser.js",
+      "drawables/VRLaser": "./src/drawables/VRLaser.js?v=0.6.29",
       "drawables/VRMenu": "./src/drawables/VRMenu.js",
 
       "misc/": "./src/misc/",
@@ -234,7 +234,9 @@
       
       "Scene": "./src/Scene.js",
       "SculptGL": "./src/SculptGL.js",
-      "render/shaders/ShaderBase.js": "./src/render/shaders/ShaderBase.js"
+      "render/shaders/ShaderBase.js": "./src/render/shaders/ShaderBase.js",
+      "render/shaders/ShaderWireframe.js": "./src/render/shaders/ShaderWireframe.js",
+      "render/shaders/ShaderUnlit": "./src/render/shaders/ShaderUnlit.js"
     }
   }
   </script>
@@ -348,7 +350,7 @@
             console.log("Initializing SculptGL for WebXR...");
 
 
-            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.5 - VR Menu Depth Fix", "lime");
+            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.33 - Thinner Laser", "lime");
 
             // Check HTTPS
             if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
