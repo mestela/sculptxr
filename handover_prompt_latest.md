@@ -1,23 +1,25 @@
-# Handover Prompt: VR Menu Depth Fixed (Stable v0.6.5)
+# SculptGL WebXR Implementation Handover (v0.6.33)
 
 ## Current Status
-**STABLE**. The project is in a good place.
-**Version**: `v0.6.5` (Deployed to Master).
+**Version**: `v0.6.33` (Stable)
+**Active Task**: Maintenance / Feature Polish.
 
-## Recent Achievements
-1.  **Fixed VR Menu Depth**:
-    *   **Root Cause**: `VRMenu.js` was explicitly disabling Depth Testing, causing it to draw over everything (Painter's algo) but be overwritten by the Mesh (Depth "Far").
-    *   **Fix**: Enabled `gl.DEPTH_TEST` for VR Menu rendering. Correctly sorts against Controllers and Mesh.
-2.  **Optimization**: Fixed VR Brush Lag with Large Brushes (v0.6.4).
-    *   Capped search radius to 5cm Physical (~6.25 Units).
-3.  **Unit Correction**:
-    *   Fixed Unit Mismatch in picking logic.
-3.  **Move Tool Stability**:
-    *   Implicitly fixed "Invisible Mesh" issue by ensuring valid picking inputs via correct radius scaling.
+## Achievements
+- **VRLaser**: Implemented a context-sensitive Red Laser Pointer for the VR Menu.
+    - **Visuals**: Unlit Red Cylinder (1mm radius).
+    - **Behavior**: Only visible when pointing at the menu; dynamic length matches distance.
+- **90fps Cursor**: Decoupled VR Menu cursor from the 30fps texture update loop.
+- **Crash Fixes**: Resolved `ShaderFlat` crashes.
+- **VR Menu Depth**: Fixed incorrect depth sorting.
 
-## Codebase State
-*   `src/Scene.js` & `src/editing/tools/SculptBase.js`: Contains `MAX_SEARCH_METERS = 0.05` logic.
+## Known Issues
+- **None Critical**.
+- **Minor**: Dynamic Topology in VR is enabled but behavior is inconsistent/unverified.
 
 ## Next Steps
-The codebase is healthy.
-*   **Potential Areas**: Dynamic Topology optimization, AR Plane Alignment.
+1.  **Voxel Grid Visualization**: Users report drawing out of bounds; a visual bounding box would help.
+2.  **Spectator Mode**: Implement Desktop Mirroring for PCVR.
+
+## Useful Commands
+- `deploy.sh`: Deploys to Production (`sculptxr`).
+- `deploy_beta.sh`: Deploys to Beta (`sculptxrbeta`).

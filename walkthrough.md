@@ -45,3 +45,20 @@ picking.intersectionSphereMeshes(meshes, pos, searchRadius);
 *   **Log**: `Stroke` time < 10ms.
 *   **Feel**: Consistent snapping.
 *   **Move Tool**: Stable even at large radii.
+
+# Walkthrough: VRLaser Implementation (v0.6.33)
+
+## Goal
+Provide clear visual feedback for UI interaction (Menu Pointing) without cluttering the view during sculpting.
+
+## Approach
+1.  **Geometry**: 8-sided Cylinder (Radius 1mm).
+2.  **Shader**: `ShaderUnlit` (Solid Red `[1,0,0]`) to ensure visibility against all backgrounds without lighting artifacts.
+3.  **Behavior**:
+    *   **Conditional Visibility**: Only visible when `_isPointingAtMenu` is true.
+    *   **Dynamic Length**: Stretches exactly to the menu intersection point (+5cm overshot) for precise depth cues.
+    *   **Attachment**: Locked to `targetRaySpace` (or `gripSpace` fallback) of the Right Controller.
+
+## Challenges
+*   **Shader**: `ShaderFlat` forced "headlight" shading, making the laser look like a 3D pipe. Implemented `ShaderUnlit` for a clean "Laser" look.
+*   **Caching**: Aggressive browser caching required manual cache-busting in `importmap` (`?v=...`) to force updates on Quest.

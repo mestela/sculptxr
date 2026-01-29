@@ -7,6 +7,7 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.33: **New VRLaser**: Added Red Cylinder Laser Pointer for menu interaction (Context-sensitive, only visible when pointing at menu).
 - v0.6.5: Fix VR Menu Depth Sorting (Menu now correctly occluded by objects)
 - v0.6.4: Fix VR Brush Lag (Cap Search Radius to 5cm Physical), Unit Correction
 - v0.5.375: Fix VR Symmetry Skipping (Search Radius 4x), Revert Normal Culling
@@ -61,7 +62,6 @@ It should work on any WebXR compatible device. So far I've tested on
     - Re-symmetrize function, choose left->right, right->left
     - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
 - **UI + UX**  
-    - Menu draws over controllers, it should correctly place itself in depth against controllers/the mesh
     - Controllers are represented with cubes, replace with something better    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Cursor on menu feels laggy; could that run at a higher frame rate?
