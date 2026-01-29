@@ -189,15 +189,19 @@ class VRMenu {
     const isDepth = gl.getParameter(gl.DEPTH_TEST);
     const isBlend = gl.getParameter(gl.BLEND);
 
+    // FIX: Enable Depth Test so Menu sorts correctly with Controllers and Mesh
+    // if (isCull) gl.disable(gl.CULL_FACE); // Keep Culling disabled (Double Sided)
+    // if (isDepth) gl.disable(gl.DEPTH_TEST); // REMOVED: We WANT Depth Test!
+
     if (isCull) gl.disable(gl.CULL_FACE);
-    if (isDepth) gl.disable(gl.DEPTH_TEST);
+    if (!isDepth) gl.enable(gl.DEPTH_TEST); // Ensure Depth is ON
     if (!isBlend) gl.enable(gl.BLEND); // Ensure Blending is ON for Menu
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // Standard Alpha Blend
 
     ShaderLib[Enums.Shader.TEXTURE].getOrCreate(this._gl).draw(this, main);
 
     if (isCull) gl.enable(gl.CULL_FACE);
-    if (isDepth) gl.enable(gl.DEPTH_TEST);
+    if (!isDepth) gl.disable(gl.DEPTH_TEST); // Restore OFF if it was OFF
     if (!isBlend) gl.disable(gl.BLEND); // Restore OFF if it was OFF
   }
 
