@@ -292,6 +292,7 @@ class SculptBase {
   }
 
   makeStrokeXR(picking, pickingSym) {
+    const t0 = performance.now();
     var mesh = this.getMesh();
     // picking is already updated by handleXRInput
 
@@ -329,13 +330,21 @@ class SculptBase {
         vec3.transformMat4(symWorldPos, localPos, mesh.getMatrix());
 
         // LOGGING
-        if (window.screenLog && Math.random() < 0.05) {
-          window.screenLog(`Sym Check: Pos=${worldPos[0].toFixed(2)} Sym=${symWorldPos[0].toFixed(2)}`, "yellow");
-        }
+        // if (window.screenLog && Math.random() < 0.05) {
+        //   window.screenLog(`Sym Check: Pos=${worldPos[0].toFixed(2)} Sym=${symWorldPos[0].toFixed(2)}`, "yellow");
+        // }
 
         // Intersection
         var rWorld = Math.sqrt(picking._rWorld2);
-        pickingSym.intersectionSphereMeshes([mesh], symWorldPos, rWorld * 4.0); // Fix: 4x Search Radius for snapping (same as Primary)
+
+        // FIX v0.6.4: Unit-Corrected Cap (5cm Physical)
+        const vrScale = this._main._vrScale || 1.0;
+        const invScale = 1.0 / vrScale;
+        const MAX_SEARCH_METERS = 0.05; // 5cm
+        const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
+
+        const searchRadius = Math.min(rWorld * 4.0, MAX_SEARCH_RADIUS);
+        pickingSym.intersectionSphereMeshes([mesh], symWorldPos, searchRadius);
 
         if (pickingSym.getMesh()) {
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
@@ -352,6 +361,18 @@ class SculptBase {
     if (pick2) {
       this.stroke(pickingSym, true);
     }
+
+    const t1 = performance.now();
+    if (!this._lastPerfLog || t1 - this._lastPerfLog > 1000) {
+      this._lastPerfLog = t1;
+      const dur = t1 - t0;
+      const count1 = pick1 ? picking.getPickedVertices().length : 0;
+      const count2 = pick2 ? pickingSym.getPickedVertices().length : 0;
+      if (window.screenLog) {
+        window.screenLog(`Stroke: ${dur.toFixed(1)}ms V:${count1 + count2}`, dur > 10 ? "orange" : "green");
+      }
+    }
+
     return pick1 || pick2;
   }
 

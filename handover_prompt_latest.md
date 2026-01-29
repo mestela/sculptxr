@@ -1,40 +1,26 @@
-# Handover Prompt: VR Symmetry Debugging (FAILED SESSION)
+# Handover Prompt: VR Symmetry Fixed (Stable v0.6.0)
 
 ## Current Status
-**CRITICAL**: VR Interaction (Sculpt/Move) was broken in `v0.5.370`.
-**Action**: Reverted `src/Scene.js` and `src/math3d/Picking.js` to previous state (git restore).
-**Current Version**: Code matches `v0.5.367` (approx).
-**Symptoms**:
-1.  **Brush**: Works Main, but Symmetry Cursor is "under surface" (picking backfaces?).
-2.  **Move Tool**: Main works. Symmetry "shoots away" (likely grabbing backfaces).
+**STABLE**. The project is in a good place.
+**Version**: `v0.6.0` (Deployed to Master).
 
-## Session Summary (What We Tried)
-1.  **Radius Increase**: Fixed "Snapping" (Move Tool), but didn't fix "Under Surface" visual.
-2.  **Headset-Based Culling**: Attempted to use `HeadsetPos` to Cull backfaces. User reported "Bidentical behavior" (didn't work).
-3.  **Normal-Guided Culling** (v0.5.370):
-    *   Goal: Mimic Desktop Raycast by using Main Brush Normal as a "Hint" for Symmetry.
-    *   Logic: `dot(FaceNormal, MirroredMainNormal) > 0`.
-    *   **RESULT**: BROKE EVERYTHING. "I can't move the world, I can't sculpt".
-    *   *Hypothesis*: My matrix transform logic (`transpose(inverse)`) or coordinate space (World vs Local) in `Picking.js` was buggy, causing `intersectionSphereMeshes` to return NO HITS or throw errors, killing the input loop.
+## Recent Achievements
+1.  **Fixed VR Symmetry "Skipping"**:
+    *   **Root Cause**: Symmetry Picking was using a strict `1x` radius, while Primary Picking used a `4x` radius (Snapping). Slight asymmetry caused the strict picker to miss.
+    *   **Fix**: Updated `src/editing/tools/SculptBase.js` to use `rWorld * 4.0` for Symmetry Picking search radius.
+    *   **Result**: Symmetry strokes are now continuous and reliable, matching the "snapping" feel of the primary brush.
+2.  **Reverted Normal Guided Culling**:
+    *   We attempted a complex "Normal Guided Culling" strategy to fix picking issues, but it introduced dependencies (Headset Position) and bugs.
+    *   **Decision**: This was **REVERTED**. The Radius Fix (item 1) solved the user's actual problem without this complexity.
+3.  **Cleaned Up Logs**:
+    *   Removed stale "Scene: Loaded v..." logs from `src/Scene.js`.
+    *   `index.html` is now the single source of truth for the displayed version.
 
-## Technical Diagnosis
-**Desktop vs VR**:
-*   **Desktop**: Uses `intersectionMouseMeshes` (Raycast). Implicity hits FRONT face first. Safe.
-*   **VR**: Uses `intersectionSphereMeshes` (Proximity). Hits CLOSEST point.
-    *   If Symmetry Point is slightly *inside* mesh: Backface is closer -> Picks Backface.
-    *   Backface Normal points IN -> visual artifact ("Under Surface").
+## Codebase State
+*   `src/editing/tools/SculptBase.js`: Contains the Fix (Search Radius 4x).
+*   `src/Scene.js`: Cleaned up. No experimental culling logic.
+*   `src/math3d/Picking.js`: Cleaned up. Standard vector picking.
 
 ## Next Steps
-1.  **Debug Normal-Guided Culling**:
-    *   This IS the correct approach (User agreed).
-    *   But implementation was buggy in `v0.5.370`.
-    *   Need to verify `mat4.transpose` logic and `worldHintNormal` transformation.
-    *   *Unit Test*: Write a test (or use console logs) to verify the math before breaking VR again.
-
-2.  **Alternative**: Use `intersectionRayMeshes` for VR logic?
-    *   Maybe cast a short ray from `PreviousPos` to `CurrentPos`?
-    *   Or `Center` to `Center + Normal`?
-
-## Files to Watch
-*   `src/math3d/Picking.js` (Core Picking Logic)
-*   `src/Scene.js` (VR Input Loop)
+The codebase is healthy. Ready for the next feature request or optimization task.
+*   **Potential Areas**: Performance profiling, AR features, or UI improvements (User discretion).

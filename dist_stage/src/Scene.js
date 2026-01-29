@@ -110,8 +110,7 @@ class Scene {
   }
 
   start() {
-    if (window.screenLog) window.screenLog("Scene: Loaded v0.5.271", "lime");
-    console.log("Scene: Loaded v0.5.271");
+
     this.initWebGL();
     if (!this._gl)
       return;
@@ -1600,11 +1599,11 @@ class Scene {
 
     // 4. Picking State Synchronization
     // FIX v0.5.40: Quadruple search radius (User Request)
-    // The actual sculpting radius is reset below via _rWorld2, so this only affects "snapping" range.
-
-
-
-    let picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, pickingRadius * 4.0);
+    // FIX v0.6.4: Unit-Corrected Cap (5cm Physical)
+    const MAX_SEARCH_METERS = 0.05; // 5cm
+    const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
+    const searchRadius = Math.min(pickingRadius * 4.0, MAX_SEARCH_RADIUS);
+    let picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, searchRadius);
 
     if (picked) {
       // CRITICAL FIX: The picking logic expects the squared radius in ENGINE units
