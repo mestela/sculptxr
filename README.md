@@ -64,7 +64,6 @@ It should work on any WebXR compatible device. So far I've tested on
 - **UI + UX**  
     - Controllers are represented with cubes, replace with something better    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - Cursor on menu feels laggy; could that run at a higher frame rate?
     - Menu layout is clunky
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - UX for importing meshes is clunky (forced back into 2d mode to get standard browser import dialog)

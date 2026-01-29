@@ -1,7 +1,76 @@
-import { mat4, vec3 } from 'gl-matrix';
+import { mat4, vec3, mat3 } from 'gl-matrix';
 import Buffer from 'render/Buffer';
 import ShaderLib from 'render/ShaderLib';
 import Enums from 'misc/Enums';
+
+// Helper Class for 3D Cursor
+class CursorMesh {
+  constructor(gl) {
+    this._gl = gl;
+    this._id = -999; // Static ID
+    this._matrix = mat4.create();
+    this._mv = mat4.create();
+    this._mvp = mat4.create();
+    this._n = mat3.create(); // Normal Matrix
+    this._en = mat3.create(); // Edit Normal Matrix
+    this._editMat = mat4.create(); // Edit Matrix
+    this._center = [0, 0, 0];
+    this._origin = [0, 0, 0];
+    this._normal = [0, 1, 0];
+
+    // Geometry
+    const cw = 0.005; // 5mm radius
+    const cverts = new Float32Array([
+      -cw, -cw, 0.01, cw, -cw, 0.01, -cw, cw, 0.01,
+      -cw, cw, 0.01, cw, -cw, 0.01, cw, cw, 0.01
+    ]);
+    this._vertexBuffer = new Buffer(gl, gl.ARRAY_BUFFER, gl.STATIC_DRAW);
+    this._vertexBuffer.update(cverts);
+  }
+
+  updateMatrices(camera, parentMatrix, lx, ly) {
+    // Model Matrix
+    mat4.copy(this._matrix, parentMatrix);
+    mat4.translate(this._matrix, this._matrix, [lx, ly, 0.0]); // Z is in verts
+
+    // MVP
+    mat4.mul(this._mv, camera.getView(), this._matrix);
+    mat4.mul(this._mvp, camera.getProjection(), this._mv);
+
+    // Normal Matrix (approx identity for flat cursor is fine, but better to be correct)
+    mat3.fromMat4(this._n, this._mv);
+    mat3.invert(this._n, this._n);
+    mat3.transpose(this._n, this._n);
+  }
+
+  // Interface for ShaderBase
+  getGL() { return this._gl; }
+  getID() { return this._id; }
+  getEditMatrix() { return this._editMat; } // Identity
+  getEN() { return this._en; } // Identity
+  getMV() { return this._mv; }
+  getMVP() { return this._mvp; }
+  getN() { return this._n; }
+
+  getFlatShading() { return true; } // Use flat shading (dFdx/dFdy) so we ignore bounds normals
+  getSymmetryOrigin() { return this._origin; }
+  getSymmetryNormal() { return this._normal; }
+  getOpacity() { return 1.0; }
+  getFlatColor() { return [1.0, 0.0, 0.0]; } // RED
+
+  // Buffers (Return Vertex Buffer as fallback to prevents null bind crashes)
+  getMaterialBuffer() { return this._vertexBuffer; }
+  getNormalBuffer() { return this._vertexBuffer; }
+  getColorBuffer() { return this._vertexBuffer; }
+  getVertexBuffer() { return this._vertexBuffer; }
+  getIndexBuffer() { return null; } // DrawArrays doesn't use IndexBuffer
+  getWireframeBuffer() { return null; }
+
+  // Draw Props
+  isUsingDrawArrays() { return true; }
+  getMode() { return this._gl.TRIANGLES; }
+  getCount() { return 6; }
+}
 
 class VRMenu {
 
@@ -47,6 +116,11 @@ class VRMenu {
     this._texCoordBuffer.update(texCoords);
 
     // Initial State
+    // Cursor Mesh (Small Quad/Cube)
+    // We can use a simple small quad.
+    // 3D Cursor Mesh
+    this._cursorMesh = new CursorMesh(this._gl);
+
     this._rotation = vec3.fromValues(Math.PI / 2, 0, 0); // +90 deg X (Correct Face?)
     this._offset = vec3.fromValues(0.15, 0.0, 0.0); // 15cm right
 
@@ -203,7 +277,85 @@ class VRMenu {
     if (isCull) gl.enable(gl.CULL_FACE);
     if (!isDepth) gl.disable(gl.DEPTH_TEST); // Restore OFF if it was OFF
     if (!isBlend) gl.disable(gl.BLEND); // Restore OFF if it was OFF
+
+    // --- DRAW 3D CURSOR ---
+    const cursorUV = this._guiXR.getCursorUV();
+    if (cursorUV) {
+      // Calculate Local Position
+      // Menu Quad is [-w, -h] to [w, h] with w=0.15, h=0.15
+      const w = 0.15;
+      const h = 0.15;
+      // UV [0..1] -> [-w..w]
+      // x = -w + u*2w
+      // y = -h + (1-v)*2h (Canvas origin TL, GL origin BL?)
+      // GuiXR.js uses ctx (TL origin). 
+      // VRMenu constructor texCoords: TL=(0,1)? 
+      // texCoords:
+      // 0.0, 1.0 (BL in GL? No, texture coordinates usually 0,0 BL)
+      // Canvas 0,0 is Top-Left.
+      // Mesh:
+      // -w, -h (Bottom Left) -> UV(0, 1) ??
+      // Let's check VRMenu vertices/texcoords:
+      // -w, -h -> 0.0, 1.0  (Bottom Left Vertex has UV 0,1)
+      // This implies Texture T=1 is Bottom?
+      // Canvas T=0 is Top.
+      // Usually: GL 0,0 is Bottom Left.
+      // Canvas to Textures usually flips Y unless PREMULTIPLY_ALPHA / UNPACK_FLIP_Y_WEBGL is set.
+      // Scene.js: gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      // So Canvas(0,0 TL) -> Texture(0,0 BL) ?? No.
+      // If FLIP_Y is true:
+      // Canvas Row 0 (Top) -> Texture Row 0 (Bottom).
+      // So Canvas Top -> Texture Bottom (V=0).
+      // Vertices:
+      // -w, -h (Bottom physical) has UV 0,1 ??
+      // If Texture Bottom is V=0.
+      // Then Bottom Physical should have V=0?
+      // Code: -w, -h -> 0.0, 1.0.
+      // Code: -w, h (Top Physical) -> 0.0, 0.0.
+      // So Top Physical -> V=0.
+      // Texture Bottom (V=0) is stored with Canvas Top?
+      // If FLIP_Y=true, Canvas Top becomes Texture Bottom.
+      // So Canvas(0,0) -> Texture(0,0).
+      // So Top Physical (-w, h) maps to Texture(0,0).
+      // So UV(0,0) is Top-Left of Canvas.
+      // Correct.
+      //
+      // So:
+      // u goes 0..1 (Left..Right) => -w..w
+      // v goes 0..1 (Top..Bottom) => h..-h
+
+      const lx = -w + cursorUV.u * (2.0 * w);
+      const ly = h - cursorUV.v * (2.0 * h);
+
+      if (this._cacheWorld && this._cursorMesh) {
+        this._cursorMesh.updateMatrices(main.getCamera(), this._cacheWorld, lx, ly);
+
+        // Debug Log (Throttle)
+        if (!this._cursorLog) this._cursorLog = 0;
+        if (this._cursorLog++ > 60) { // ~0.6 sec
+          this._cursorLog = 0;
+          const mvp = this._cursorMesh.getMVP();
+          const gl = this._gl;
+          if (window.screenLog) {
+            window.screenLog(`CurUV:${cursorUV.u.toFixed(2)},${cursorUV.v.toFixed(2)} LX:${lx.toFixed(2)} LY:${ly.toFixed(2)}`, "cyan");
+          }
+        }
+
+        // Ensure Cursor is Visible
+        // 1. Disable Culling (in case winding is wrong)
+        gl.disable(gl.CULL_FACE);
+        // 2. Enable Depth Test (should be on, but double check)
+        gl.enable(gl.DEPTH_TEST);
+
+        const shader = ShaderLib[Enums.Shader.FLAT].getOrCreate(gl);
+        shader.draw(this._cursorMesh, main);
+
+        // Restore State (VRMenu standard state usually has Cull OFF, but we respect isCull from above)
+        if (isCull) gl.enable(gl.CULL_FACE);
+      }
+    }
   }
+
 
   getMVP() {
     return this._cacheMVP;
