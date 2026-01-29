@@ -292,7 +292,7 @@ class SculptBase {
   }
 
   makeStrokeXR(picking, pickingSym) {
-    const t0 = performance.now();
+
     var mesh = this.getMesh();
     // picking is already updated by handleXRInput
 
@@ -362,16 +362,7 @@ class SculptBase {
       this.stroke(pickingSym, true);
     }
 
-    const t1 = performance.now();
-    if (!this._lastPerfLog || t1 - this._lastPerfLog > 1000) {
-      this._lastPerfLog = t1;
-      const dur = t1 - t0;
-      const count1 = pick1 ? picking.getPickedVertices().length : 0;
-      const count2 = pick2 ? pickingSym.getPickedVertices().length : 0;
-      if (window.screenLog) {
-        window.screenLog(`Stroke: ${dur.toFixed(1)}ms V:${count1 + count2}`, dur > 10 ? "orange" : "green");
-      }
-    }
+
 
     return pick1 || pick2;
   }
