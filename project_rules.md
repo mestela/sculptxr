@@ -27,7 +27,7 @@
 3.  **Tag**: Start commit message with `[PARANOID]`.
 
 ## Versioning & Debugging Protocol
-1.  **ALWAYS Increment**: Every new attempt gets a new version number (Minor/Patch). NEVER reuse a version string.
+1.  **ALWAYS Increment**: Every new attempt gets a new version number (Minor/Patch). NEVER reuse a version string. **Even for small changes or tests.**
 2.  **ALWAYS Display**: Version string MUST be visible in the top-left black debug square (`#log` in `xr_poc.html`).
 3.  **ALWAYS Describe**: Format MUST be `v{Major}.{Minor}.{Patch} - {Short Task Description}` (e.g., `v0.4.33 - Fix Lighting`).
 4.  **Console Override**: Ensure `console.log` is redirected to this `#log` window so errors are visible in VR.
