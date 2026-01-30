@@ -811,7 +811,7 @@ class SculptGL extends Scene {
       console.log(`Started XR Session: ${mode}`);
     } catch (e) {
       console.error(`Failed to start ${mode} session:`, e);
-      if (window.screenLog) window.screenLog(`Failed to start ${mode}: ${e.message}`, "red");
+      if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.33 - Thinner Laser", "lime");
     }
   }
 

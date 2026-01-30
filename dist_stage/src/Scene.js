@@ -20,6 +20,8 @@ import MeshStatic from 'mesh/meshStatic/MeshStatic';
 import WebGLCaps from 'render/WebGLCaps';
 import GuiXR from 'gui/GuiXR';
 import VRMenu from 'drawables/VRMenu';
+import VRLaser from 'drawables/VRLaser';
+
 
 class Scene {
 
@@ -381,6 +383,14 @@ class Scene {
       if (this._vrMenu && this._vrPoseLeft) {
         this._vrMenu.updateMatrices(cam, this._vrPoseLeft);
         this._vrMenu.render(this);
+      }
+
+      // VRLaser (Pass 1) - Only if pointing at Menu
+      if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
+        // Default to 1.0 if undefined
+        const dist = this._vrLaserDistance || 1.0;
+        this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist);
+        this._vrLaser.render(this);
       }
 
       // Debug Pivot (Pink/Green Cube) - Pass 1
@@ -1062,6 +1072,7 @@ class Scene {
     if (!this._guiXR) this._guiXR = new GuiXR(this);
     this._guiXR.init(this._gl);
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
+    if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
   }
 
   updateVRControllerPose(handedness, position, orientation) {
@@ -1202,12 +1213,21 @@ class Scene {
 
     const session = frame.session;
     const sources = session.inputSources;
-
     let leftGrip = false, rightGrip = false;
     let leftOrigin = null, rightOrigin = null;
     let leftRot = null, rightRot = null;
 
+    // Reset Menu Pointing State (Per Frame)
+    this._isPointingAtMenu = false;
+
+
+
     for (const source of sources) {
+      // DEBUG: Scan Sources
+      // if (window.screenLog && this._logThrottle % 120 === 0) {
+      //   window.screenLog(`Src: ${source.handedness} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`, "yellow");
+      // }
+
       if (!source.gripSpace) continue;
 
       if (!source.gripSpace) continue;
@@ -1306,29 +1326,77 @@ class Scene {
       }
 
       // 2. Menu Raycasting (Right Hand Only)
-      if (source.handedness === 'right' && source.targetRaySpace) {
-        const rayPose = frame.getPose(source.targetRaySpace, refSpace);
+      if (source.handedness === 'right') {
+        let rayPose = null;
+        let isFallback = false;
+
+        // Try Target Ray Space (Standard)
+        if (source.targetRaySpace) {
+          rayPose = frame.getPose(source.targetRaySpace, refSpace);
+        }
+
+        // Fallback to Grip Space (if Ray failed)
+        if (!rayPose && source.gripSpace) {
+          rayPose = frame.getPose(source.gripSpace, refSpace);
+          isFallback = true;
+        }
+
         if (rayPose && this._vrMenu) {
           const mat = rayPose.transform.matrix;
-          // Extract Origin and Direction from Ray Matrix
-          // Origin is translation (12,13,14)
-          const origin = vec3.fromValues(mat[12], mat[13], mat[14]);
-          // Direction is -Z column (8,9,10) ? WebXR ray usually points down -Z.
-          const dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+
+          let origin, dir;
+
+          if (isFallback) {
+            // Synthetic Ray from Grip (Approximate Pointing)
+            // Grip usually points -Z (forward) or needs slight offset.
+            // We'll use -Z for now.
+            origin = vec3.fromValues(mat[12], mat[13], mat[14]);
+            // Grip Z=0 is center of handle?
+            // Direction: -Z column (8,9,10)
+            dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+
+            // Optional: Tilt ray down/up if needed? Start with straight -Z.
+          } else {
+            // Standard Ray
+            origin = vec3.fromValues(mat[12], mat[13], mat[14]);
+            dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+          }
           vec3.normalize(dir, dir);
 
           const hit = this._vrMenu.intersect(origin, dir);
+
+          // DEBUG: Log Intersection Attempts (Throttled)
+          if (!this._logIntersect) this._logIntersect = 0;
+          if (this._logIntersect++ % 120 === 0 && window.screenLog) {
+            // window.screenLog(`Ray(${isFallback?'Grip':'Ray'}) Hit:${!!hit}`, hit ? "lime" : "orange");
+          }
+
           if (hit) {
             this._isPointingAtMenu = true;
-            // if (window.screenLog) window.screenLog("Menu Intersect: TRUE", "cyan");
             this._guiXR.setCursor(hit.uv[0], hit.uv[1]);
 
             // Interact if Trigger Pressed (Button 0)
             if (source.gamepad && source.gamepad.buttons[0]) {
               this._guiXR.onInteract(hit.uv[0], hit.uv[1], source.gamepad.buttons[0].pressed);
             }
+
+            // Calc Laser Distance (plus overshoot)
+            if (this._vrLaser) {
+              this._vrLaserDistance = hit.distance + 0.05; // +5cm
+            }
+
           } else {
             this._guiXR.setCursor(-1, -1);
+            this._vrLaserDistance = 1.0; // Reset length (though invisible)
+          }
+
+        } else {
+          // Log Failure
+          if (window.screenLog && this._logThrottle % 180 === 0) {
+            const hasRaySpace = !!source.targetRaySpace;
+            const hasGripSpace = !!source.gripSpace;
+            const hasMenu = !!this._vrMenu;
+            window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
           }
         }
       }
@@ -1371,6 +1439,18 @@ class Scene {
     }
 
     if (activeSource) this.processVRSculpting(activeSource, frame, refSpace);
+
+    // Update VRLaser Matrix (Right Hand / Active Source)
+    if (activeSource && this._vrLaser) {
+      // Prioritize targetRaySpace (Pointer), fallback to gripSpace
+      const space = activeSource.targetRaySpace || activeSource.gripSpace;
+      if (space) {
+        const pose = frame.getPose(space, refSpace);
+        if (pose) {
+          this._vrLaserMatrix = pose.transform.matrix;
+        }
+      }
+    }
 
     // Sync Debug Cursor specific to Active Hand (or failing that, right hand?)
     // processVRSculpting calls updateDebugCursor internally? No.

@@ -99,7 +99,7 @@ class SculptBase {
         var picking = this._main.getPicking();
         var pickingSym = this._main.getSculptManager().getSymmetry() ? this._main.getPickingSymmetry() : null;
 
-        this.makeStrokeXR(picking, pickingSym); 
+        this.makeStrokeXR(picking, pickingSym);
 
         // Init lastInter for continuous update
         var inter = picking.getIntersectionPoint();
@@ -313,12 +313,12 @@ class SculptBase {
       if (main._vrControllerPos) {
         // Mirror World Pos
         var worldPos = vec3.clone(main._vrControllerPos);
-        var mInv = mat4.create();
-        mat4.invert(mInv, mesh.getMatrix());
+        var matInv = mat4.create();
+        mat4.invert(matInv, mesh.getMatrix());
 
         // World -> Local
         var localPos = vec3.create();
-        vec3.transformMat4(localPos, worldPos, mInv);
+        vec3.transformMat4(localPos, worldPos, matInv);
 
         // Correct Symmetry Mirroring (Local Space)
         var ptPlane = mesh.getSymmetryOrigin(); // Local Space
@@ -350,32 +350,119 @@ class SculptBase {
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
           pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
           pickingSym.computePickedNormal();
-          pick2 = pickingSym.getMesh();
+
+          // FIX v0.6.44: Normal Consistency Check
+          // Only accept symmetry pick if its normal matches the mirrored main normal.
+          // This prevents "locking" onto backfaces/cliffs without needing camera info.
+          if (pick1) {
+            const nMain = picking.getPickedNormal(); // Local Normal
+            const nSym = pickingSym.getPickedNormal(); // Local Normal
+
+            // Mirror the MAIN normal to see what we EXPECT at symmetry point
+            var nExpected = vec3.clone(nMain);
+            Geometry.mirrorPoint(nExpected, [0, 0, 0], nPlane); // Mirror vector only (origin 0)
+
+            // Check alignment (Dot Product)
+            // If vectors are roughly same direction, dot > 0.
+            // If they are opposite (backface drift), dot < 0.
+            // We can be strict (> 0.5) or lenient (> 0.0).
+            // Let's try lenient first to avoid skipping valid curved surfaces.
+            const conformity = vec3.dot(nExpected, nSym);
+
+            if (conformity < 0.0) {
+              // Reject Drift
+              // if (window.screenLog && Math.random() < 0.1) window.screenLog(`Sym Rejected: Drift ${conformity.toFixed(2)}`, "orange");
+              pick2 = null;
+            } else {
+              pick2 = pickingSym.getMesh();
+            }
+          } else {
+          // If main brush didn't hit, we can't compare.
+          // Allow symmetry to work alone? Or drift risk?
+          // Usually strokes start on surface. Let's allow it.
+            pick2 = pickingSym.getMesh();
+          }
         }
       }
     }
 
+    // FIX v0.6.49: Force "Surface-Relative" Culling
+    // In VR, we lack a valid Camera EyeDir relative to the surface.
+    // By setting EyeDir to the NEGATIVE PickedNormal, we tell getFrontVertices() to cull
+    // everything "behind" the tangent plane of the stroke.
+    // This prevents backface drift for BOTH Main and Symmetry brushes.
+
     if (!dynTopo && pick1) {
+      // Main Brush: Use NEGATIVE Normal (pointing INTO surface) to keep front faces
+      var nMain = picking.getPickedNormal();
+      vec3.negate(picking.getEyeDirection(), nMain); 
       this.stroke(picking, false);
     }
     if (pick2) {
+      // Symmetry Brush: Use NEGATIVE Normal
+      var nSym = pickingSym.getPickedNormal();
+      vec3.negate(pickingSym.getEyeDirection(), nSym);
       this.stroke(pickingSym, true);
     }
-
-
 
     return pick1 || pick2;
   }
 
-  /** Return the vertices that point toward the camera */
+  /** Return the vertices that point toward the camera (or surface normal in VR) */
   getFrontVertices(iVertsInRadius, eyeDir) {
     var nbVertsSelected = iVertsInRadius.length;
     var iVertsFront = new Uint32Array(Utils.getMemory(4 * nbVertsSelected), 0, nbVertsSelected);
     var acc = 0;
     var nAr = this.getMesh().getNormals();
+
+    // FIX v0.6.46: View-Independent Culling for VR
+    // In VR, "eyeDir" is unreliable/irrelevant. We should cull backfaces relative to the SURFACE NORMAL.
+    // However, getFrontVertices is generic. We need to check if we are in VR or if eyeDir is [0,0,0].
+    // Actually, Picking.js sets eyeDir to [0,0,0] by default in VR currently.
+    // If eyeDir is approx zero, or if we want to force Surface-Based Culling, we use Picked Normal.
+
+    var useSurfaceNormal = false;
+    if (this._main._xrSession) {
+      useSurfaceNormal = true;
+    }
+
     var eyeX = eyeDir[0];
     var eyeY = eyeDir[1];
     var eyeZ = eyeDir[2];
+
+    if (useSurfaceNormal) {
+      // We want to cull vertices that face AWAY from the brush direction.
+      // The "Brush Direction" is effectively -PickedNormal (pushing into surface).
+      // So we want vertices where Normal dot PickedNormal > 0.
+      // Wait, eyeDir points FROM surface TO camera.
+      // So backface culling keeps faces where Normal dot EyeDir > 0.
+      // If we assume the "Virtual Eye" is infinitely far along the Normal, then EyeDir = PickedNormal.
+      // So we just use PickedNormal as EyeDir.
+      // BUT, we need to access the picking object to get PickedNormal!
+      // getFrontVertices doesn't take 'picking' as arg, only eyeDir.
+      // We can patch 'eyeDir' before calling this function, OR we can try to guess it here.
+      // Better: Patch 'eyeDir' in the CALLER (stroke method) or SCULPTBASE (makeStroke).
+
+      // actually, let's look at Brush.js. It calls:
+      // var iVertsFront = this.getFrontVertices(iVertsInRadius, picking.getEyeDirection());
+
+      // So we should fix Picking.getEyeDirection() to return PickedNormal in VR!
+      // But picking.getEyeDirection is just a getter for _eyeDir.
+
+      // Let's modify Brush.js instead? No, SculptBase is better.
+      // Actually, let's just make getFrontVertices robust.
+      // If eyeDir is zero, we can't cull.
+
+      if (Math.abs(eyeX) < 1e-6 && Math.abs(eyeY) < 1e-6 && Math.abs(eyeZ) < 1e-6) {
+        // EyeDir is zero (VR default).
+        // We can't access picked normal here easily without passing 'picking'.
+        // Let's just return ALL vertices (disable culling) to prevent "Disabled Stroke" bug.
+        // This re-enables strokes but doesn't fix drift (backfaces included).
+        // TO PROPERLY FIX DRIFT: We need to pass the Picking object or Normal to getFrontVertices.
+        return iVertsInRadius; // Temporary fallback
+      }
+    }
+
     for (var i = 0; i < nbVertsSelected; ++i) {
       var id = iVertsInRadius[i];
       var j = id * 3;
@@ -599,7 +686,7 @@ class SculptBase {
     selection.render(this._main);
   }
 
-  addSculptToScene() {}
+  addSculptToScene() { }
 
   getScreenRadius() {
     return (this._radius || 1) * this._main.getPixelRatio();

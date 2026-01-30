@@ -17,6 +17,8 @@ import ShaderPaintUV from 'render/shaders/ShaderPaintUV';
 import ShaderBlur from 'render/shaders/ShaderBlur';
 import ShaderTexture from 'render/shaders/ShaderTexture';
 
+import ShaderUnlit from 'render/shaders/ShaderUnlit';
+
 var ShaderLib = [];
 
 // 3D shaders
@@ -27,6 +29,7 @@ ShaderLib[Enums.Shader.UV] = ShaderUV;
 ShaderLib[Enums.Shader.WIREFRAME] = ShaderWireframe;
 ShaderLib[Enums.Shader.FLAT] = ShaderFlat;
 ShaderLib[Enums.Shader.SELECTION] = ShaderSelection;
+ShaderLib[Enums.Shader.UNLIT] = ShaderUnlit;
 
 // 2D screen shaders
 ShaderLib[Enums.Shader.BACKGROUND] = ShaderBackground;

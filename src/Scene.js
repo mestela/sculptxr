@@ -1224,9 +1224,9 @@ class Scene {
 
     for (const source of sources) {
       // DEBUG: Scan Sources
-      if (window.screenLog && this._logThrottle % 120 === 0) {
-        window.screenLog(`Src: ${source.handedness} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`, "yellow");
-      }
+      // if (window.screenLog && this._logThrottle % 120 === 0) {
+      //   window.screenLog(`Src: ${source.handedness} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`, "yellow");
+      // }
 
       if (!source.gripSpace) continue;
 

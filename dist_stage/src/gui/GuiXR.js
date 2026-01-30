@@ -109,7 +109,8 @@ class GuiXR {
       this._updateHover();
     }
     this._needsUpdate = true;
-    this.draw();
+    this._needsUpdate = true;
+    // this.draw(); // DECOUPLED: Cursor is 3D now. No texture update needed just for motion.
   }
 
   _updateHover() {
@@ -472,19 +473,8 @@ class GuiXR {
       }
     }
 
-    // Cursor
-    if (this._cursor.active) {
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = '#FF0000';
-      ctx.beginPath();
-      ctx.arc(this._cursor.x, this._cursor.y, 10, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.fillStyle = '#FF0000';
-      ctx.beginPath();
-      ctx.arc(this._cursor.x, this._cursor.y, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // Cursor is now drawn by VRMenu.js as 3D geometry
+    // This reduces latency (no texture upload needed just for cursor)
 
     // Main Border
     ctx.strokeStyle = '#00D0FF';
@@ -526,6 +516,14 @@ class GuiXR {
   syncToolRadius() {
     var tool = this._main.getSculptManager().getCurrentTool();
     if (tool) tool.setRadius(this._radius * 100);
+  }
+
+  getCursorUV() {
+    if (!this._cursor.active) return null;
+    return {
+      u: this._cursor.x / this._canvas.width,
+      v: this._cursor.y / this._canvas.height
+    };
   }
 
   updateRadius(val) {
