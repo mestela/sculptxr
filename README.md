@@ -7,6 +7,7 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.50: **UX Improvement**: Moved Undo/Redo shortcuts to the **Left Controller Thumbstick** (Axis 2) to prevent accidental brush resizing.
 - v0.6.49: **Fixed Symmetry Drift**: Implemented Surface-Relative Culling to prevent brushes from grabbing back-facing geometry, ensuring perfect symmetry.
 - v0.6.33: **New VRLaser**: Added Red Cylinder Laser Pointer for menu interaction (Context-sensitive, only visible when pointing at menu).
 - v0.6.5: Fix VR Menu Depth Sorting (Menu now correctly occluded by objects)
@@ -69,7 +70,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - UX for importing meshes is clunky (forced back into 2d mode to get standard browser import dialog)
     - Double handed grip needs work, gets hard to control when the world has been scaled too large
-    - **Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)
+    - **Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing) - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - **Content**: Add Primitive shapes (Cone, Cylinder, etc) for starting
 

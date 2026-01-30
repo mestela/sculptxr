@@ -1232,82 +1232,85 @@ class Scene {
 
       if (!source.gripSpace) continue;
 
-      // VR SHORTCUTS (Right Hand Only for now)
-      if (source.handedness === 'right' && source.gamepad) {
-        // Unique Persistent State
-        if (!this._vrShortcutState) this._vrShortcutState = { axes: [] };
-        const state = this._vrShortcutState;
+      // VR SHORTCUTS
+      if (source.gamepad) {
+        // Unique Persistent State per Controller
+        if (!this._vrStateLeft) this._vrStateLeft = { axes: [] };
+        if (!this._vrStateRight) this._vrStateRight = { axes: [] };
+
+        const state = source.handedness === 'left' ? this._vrStateLeft : this._vrStateRight;
         const axes = source.gamepad.axes;
 
         // Thresholds
         const T_PRESS = 0.7;
         const T_RELEASE = 0.3;
 
-        // AXIS 2 (Left/Right) - Undo/Redo
-        const valX = axes[2];
-        const lastX = state.axes[2] || 0;
+        // LEFT HAND: AXIS 2 (Left/Right) - Undo/Redo
+        if (source.handedness === 'left') {
+          const valX = axes[2];
+          const lastX = state.axes[2] || 0;
 
-        // State Machine: Only fire if we were neutral
-        const wasNeutralX = Math.abs(lastX) < T_RELEASE;
-        const isPressedX = Math.abs(valX) > T_PRESS;
+          // State Machine: Only fire if we were neutral
+          const wasNeutralX = Math.abs(lastX) < T_RELEASE;
+          const isPressedX = Math.abs(valX) > T_PRESS;
 
-        if (wasNeutralX && isPressedX) {
-          if (valX < -T_PRESS) {
-            if (window.screenLog) window.screenLog("Shortcuts: Undo (Triggered)", "lime");
-            // Fix: Scene.js has _stateManager directly, no _main property
-            if (this._stateManager) {
-              this._stateManager.undo();
-              this._main ? this._main.render() : this.render(); // Handle both just in case, but usually this.render()
-            } else {
-              if (window.screenLog) window.screenLog("CRITICAL: _stateManager missing!", "red");
-            }
-          } else if (valX > T_PRESS) {
-            if (window.screenLog) window.screenLog("Shortcuts: Redo (Triggered)", "lime");
-            if (this._stateManager) {
-              this._stateManager.redo();
-              this._main ? this._main.render() : this.render();
-            }
-          }
-        }
-        state.axes[2] = valX;
-
-        // AXIS 3 (Up/Down) - Radius +/- 5%
-        const valY = axes[3];
-        const isPressedY = Math.abs(valY) > T_PRESS;
-
-        // Timer for Repeat/Debounce
-        const now = performance.now();
-        if (!state.lastRadiusTime) state.lastRadiusTime = 0;
-
-        if (isPressedY) {
-          if (now - state.lastRadiusTime > 150) { // 150ms Repeat Rate
-            state.lastRadiusTime = now;
-
-            let change = 0.0;
-            if (valY < -T_PRESS) change = 0.05; // UP -> +5%
-            if (valY > T_PRESS) change = -0.05; // DOWN -> -5%
-
-            if (change !== 0 && this._guiXR) {
-              const oldVal = this._guiXR._radius;
-              const newVal = Math.max(0.01, Math.min(1.0, oldVal + change));
-
-              if (window.screenLog) window.screenLog(`Radius: ${(oldVal * 100).toFixed(0)}% -> ${(newVal * 100).toFixed(0)}%`, "yellow");
-
-              // Use new helper to sync Widget + Texture
-              this._guiXR.updateRadius(newVal);
-
-              // Sync Tool
-              if (this._sculptManager) this._sculptManager.getTool().setRadius(newVal * 100);
-
-              // Force Render
-              this._main ? this._main.render() : this.render();
+          if (wasNeutralX && isPressedX) {
+            if (valX < -T_PRESS) {
+              if (window.screenLog) window.screenLog("Shortcuts: Undo (Left Stick)", "lime");
+              if (this._stateManager) {
+                this._stateManager.undo();
+                this._main ? this._main.render() : this.render();
+              }
+            } else if (valX > T_PRESS) {
+              if (window.screenLog) window.screenLog("Shortcuts: Redo (Left Stick)", "lime");
+              if (this._stateManager) {
+                this._stateManager.redo();
+                this._main ? this._main.render() : this.render();
+              }
             }
           }
-        } else {
-          // Reset timer on release (optional, allows immediate press again)
-          state.lastRadiusTime = 0;
+          state.axes[2] = valX;
         }
-        state.axes[3] = valY;
+
+        // RIGHT HAND: AXIS 3 (Up/Down) - Radius +/- 5%
+        if (source.handedness === 'right') {
+          const valY = axes[3];
+          const isPressedY = Math.abs(valY) > T_PRESS;
+
+          // Timer for Repeat/Debounce
+          const now = performance.now();
+          if (!state.lastRadiusTime) state.lastRadiusTime = 0;
+
+          if (isPressedY) {
+            if (now - state.lastRadiusTime > 150) { // 150ms Repeat Rate
+              state.lastRadiusTime = now;
+
+              let change = 0.0;
+              if (valY < -T_PRESS) change = 0.05; // UP -> +5%
+              if (valY > T_PRESS) change = -0.05; // DOWN -> -5%
+
+              if (change !== 0 && this._guiXR) {
+                const oldVal = this._guiXR._radius;
+                const newVal = Math.max(0.01, Math.min(1.0, oldVal + change));
+
+                if (window.screenLog) window.screenLog(`Radius: ${(oldVal * 100).toFixed(0)}% -> ${(newVal * 100).toFixed(0)}%`, "yellow");
+
+                // Use new helper to sync Widget + Texture
+                this._guiXR.updateRadius(newVal);
+
+                // Sync Tool
+                if (this._sculptManager) this._sculptManager.getTool().setRadius(newVal * 100);
+
+                // Force Render
+                this._main ? this._main.render() : this.render();
+              }
+            }
+          } else {
+            // Reset timer on release (optional, allows immediate press again)
+            state.lastRadiusTime = 0;
+          }
+          state.axes[3] = valY;
+        }
       }
 
       // 1. Common Pose Gathering (for All Tasks)
