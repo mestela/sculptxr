@@ -7,6 +7,7 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.49: **Fixed Symmetry Drift**: Implemented Surface-Relative Culling to prevent brushes from grabbing back-facing geometry, ensuring perfect symmetry.
 - v0.6.33: **New VRLaser**: Added Red Cylinder Laser Pointer for menu interaction (Context-sensitive, only visible when pointing at menu).
 - v0.6.5: Fix VR Menu Depth Sorting (Menu now correctly occluded by objects)
 - v0.6.4: Fix VR Brush Lag (Cap Search Radius to 5cm Physical), Unit Correction
