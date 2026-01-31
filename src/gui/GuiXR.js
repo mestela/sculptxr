@@ -167,6 +167,23 @@ class GuiXR {
       return;
     }
 
+    if (tabName === 'Scene') {
+      const tabIdx = 1;
+      const w = this._canvas.width;
+      const r1W = w / GLOBAL_TABS.length;
+      const x = tabIdx * r1W;
+
+      const sceneData = getSceneWidgets(this._main);
+      this.openOverlay('menu', {
+        x: x,
+        y: TAB_HEIGHT,
+        w: sceneData.width,
+        h: sceneData.height,
+        widgets: sceneData.widgets
+      });
+      return;
+    }
+
     if (tabName === 'Tools') {
       this._viewMode = 'SIDEBAR';
       this._scrollOffset = 0;
