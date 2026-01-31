@@ -19,32 +19,32 @@ import getSettingsWidgets from 'gui/vr/GuiVRSettings';
 import MeshDynamic from 'mesh/dynamic/MeshDynamic';
 import Remesh from 'editing/Remesh';
 
-const TAB_HEIGHT = 80;
+const TAB_HEIGHT = 40; // Reduced from 80
 const TAB_ROWS = 2; // Rows of tabs
 const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // 160px reserved for Tabs
 const CANVAS_SIZE = 1024;
 // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
-// Top Row: FILES, SCENE, HISTORY, SETTINGS
-// Bottom/Sidebar: VIEW (Rendering), TOPOLOGY, TOOLS
+// Top Row: Files, Scene, History, Settings
+// Bottom/Sidebar: View (Rendering), Topology, Tools (Sculpting)
 // Actually, user wants "Half horizontal space" mockup.
 // Let's assume the user wants the VR panel to LOOK like the desktop sidebar.
 // The mockup shows Tabs at the top, and then collapsible sections below.
 // We will group widgets into "Sections" instead of just "Tabs".
 
 // Group 1: Global Tabs (Top)
-const GLOBAL_TABS = ['FILES', 'SCENE', 'HISTORY', 'SETTINGS', 'TOOLS'];
+const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Settings', 'Tools'];
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
 // This implies they are all stacked vertically.
 
-const SECTIONS = ['RENDERING', 'TOPOLOGY', 'SCULPTING & PAINTING'];
+const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
 
 // Map old Tabs to new Layout Logic
-// FILES, SCENE, HISTORY, SETTINGS -> Top Bar (Tabs)
-// VIEW -> RENDERING Section
-// TOPOLOGY -> TOPOLOGY Section
-// TOOLS -> SCULPTING & PAINTING Section
+// Files, Scene, History, Settings -> Top Bar (Tabs)
+// View -> Rendering Section
+// Topology -> Topology Section
+// Tools -> Sculpting & Painting Section
 
 const COLOR_HEADER = '#111';
 const COLOR_SECTION_BG = '#282828';
@@ -83,12 +83,12 @@ class GuiXR {
 
     this._needsUpdate = true;
     this._textureAllocated = false;
-    this._activeTab = 'SCULPTING & PAINTING'; // Default section open?
+    this._activeTab = 'Sculpting & Painting'; // Default section open?
     // Actually if they are collapsible, we need a map of open/closed states.
     this._sectionStates = {
-      'RENDERING': true,
-      'TOPOLOGY': true,
-      'SCULPTING & PAINTING': true
+      'Rendering': true,
+      'Topology': true,
+      'Sculpting & Painting': true
     };
 
     this._scrollOffset = 0; // Vertical scroll
@@ -112,15 +112,15 @@ class GuiXR {
       // In VR, switching "Tabs" usually replaces the main content.
       // But user wants "Top split into 2 rows".
       // Let's treat valid "Tabs" as the Top Row items.
-      'FILES': getFilesWidgets(main),
-      'SCENE': getSceneWidgets(main),
-      'HISTORY': getHistoryWidgets(main),
-      'SETTINGS': getSettingsWidgets(main),
+      'Files': getFilesWidgets(main),
+      'Scene': getSceneWidgets(main),
+      'History': getHistoryWidgets(main),
+      'Settings': getSettingsWidgets(main),
 
       // Sections
-      'RENDERING': getRenderingWidgets(main),
-      'TOPOLOGY': getTopologyWidgets(main),
-      'SCULPTING & PAINTING': getToolsWidgets(main, main.getSculptManager().getToolIndex())
+      'Rendering': getRenderingWidgets(main),
+      'Topology': getTopologyWidgets(main),
+      'Sculpting & Painting': getToolsWidgets(main, main.getSculptManager().getToolIndex())
     };
 
     // We need to know which "Mode" we are in.
@@ -148,7 +148,7 @@ class GuiXR {
 
   // Console Helper for Tab Switching
   switchTab(tabName) {
-    if (tabName === 'FILES') {
+    if (tabName === 'Files') {
       // New: Open Files as Dropdown Menu
       // We calculate X position based on tab index (0)
       const tabIdx = 0;
@@ -159,7 +159,7 @@ class GuiXR {
       const filesData = getFilesWidgets(this._main);
       this.openOverlay('menu', {
         x: x,
-        y: TAB_HEIGHT,
+        y: TAB_HEIGHT, 
         w: filesData.width,
         h: filesData.height,
         widgets: filesData.widgets
@@ -167,7 +167,7 @@ class GuiXR {
       return;
     }
 
-    if (tabName === 'TOOLS') {
+    if (tabName === 'Tools') {
       this._viewMode = 'SIDEBAR';
       this._scrollOffset = 0;
     } else if (GLOBAL_TABS.includes(tabName)) {
@@ -273,7 +273,7 @@ class GuiXR {
 
   // Reload widgets (e.g. when tool changes)
   refreshToolsWidget() {
-    this._tabWidgets['SCULPTING & PAINTING'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
+    this._tabWidgets['Sculpting & Painting'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
     this._needsUpdate = true;
     this.draw();
   }
@@ -941,7 +941,8 @@ class GuiXR {
       const row2 = ['Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
 
       ctx.textAlign = 'center';
-      ctx.font = '28px sans-serif'; 
+      ctx.textAlign = 'center';
+      ctx.font = '18px sans-serif'; 
 
       // Row 1
       const r1W = w / row1.length;
@@ -950,16 +951,16 @@ class GuiXR {
         const y = 0;
 
         let isActive = (t === this._viewMode);
-        if (this._viewMode === 'SIDEBAR' && t === 'TOOLS') isActive = true;
+        if (this._viewMode === 'SIDEBAR' && t === 'Tools') isActive = true;
 
         ctx.fillStyle = isActive ? '#0070A0' : '#111';
         ctx.fillRect(x, y, r1W, TAB_HEIGHT);
         ctx.strokeStyle = '#333';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1; // Thinner border
         ctx.strokeRect(x, y, r1W, TAB_HEIGHT);
 
         ctx.fillStyle = isActive ? '#fff' : '#aaa';
-        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 8);
+        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 6); // Adjusted text offset
       });
 
       // Row 2 (Placeholders)
