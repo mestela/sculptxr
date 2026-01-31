@@ -19,11 +19,36 @@ import getSettingsWidgets from 'gui/vr/GuiVRSettings';
 import MeshDynamic from 'mesh/dynamic/MeshDynamic';
 import Remesh from 'editing/Remesh';
 
-const TAB_HEIGHT = 100;
+const TAB_HEIGHT = 80;
+const TAB_ROWS = 2; // Rows of tabs
+const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // 160px reserved for Tabs
 const CANVAS_SIZE = 1024;
 // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
-// VR Tabs: FILES, SCENE, HISTORY, SETTINGS, VIEW, TOPOLOGY, TOOLS
-const TABS = ['FILES', 'SCENE', 'HISTORY', 'SETTINGS', 'VIEW', 'TOPOLOGY', 'TOOLS'];
+// Top Row: FILES, SCENE, HISTORY, SETTINGS
+// Bottom/Sidebar: VIEW (Rendering), TOPOLOGY, TOOLS
+// Actually, user wants "Half horizontal space" mockup.
+// Let's assume the user wants the VR panel to LOOK like the desktop sidebar.
+// The mockup shows Tabs at the top, and then collapsible sections below.
+// We will group widgets into "Sections" instead of just "Tabs".
+
+// Group 1: Global Tabs (Top)
+const GLOBAL_TABS = ['FILES', 'SCENE', 'HISTORY', 'SETTINGS', 'TOOLS'];
+// Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
+// Or does clicking one hide others?
+// User said: "panel has collapsible sections like the desktop"
+// This implies they are all stacked vertically.
+
+const SECTIONS = ['RENDERING', 'TOPOLOGY', 'SCULPTING & PAINTING'];
+
+// Map old Tabs to new Layout Logic
+// FILES, SCENE, HISTORY, SETTINGS -> Top Bar (Tabs)
+// VIEW -> RENDERING Section
+// TOPOLOGY -> TOPOLOGY Section
+// TOOLS -> SCULPTING & PAINTING Section
+
+const COLOR_HEADER = '#111';
+const COLOR_SECTION_BG = '#282828';
+const COLOR_WIDGET_BG = '#444';
 
 const OVERLAY_BG = 'rgba(0, 0, 0, 0.8)';
 const OVERLAY_W = 800;
@@ -58,7 +83,16 @@ class GuiXR {
 
     this._needsUpdate = true;
     this._textureAllocated = false;
-    this._activeTab = 'TOOLS';
+    this._activeTab = 'SCULPTING & PAINTING'; // Default section open?
+    // Actually if they are collapsible, we need a map of open/closed states.
+    this._sectionStates = {
+      'RENDERING': true,
+      'TOPOLOGY': true,
+      'SCULPTING & PAINTING': true
+    };
+
+    this._scrollOffset = 0; // Vertical scroll
+    this._maxScroll = 0;
 
     this._cursor = { x: -1, y: -1, active: false };
     this._radius = 0.20;
@@ -69,17 +103,38 @@ class GuiXR {
     this._overlayOpenTime = 0; // Cooldown for accidental clicks
 
     this._inputDebounce = 0; // Debounce all interactions
+    this._activeCombobox = null; // In-context dropdown state
 
 
     this._tabWidgets = {
-      'TOOLS': getToolsWidgets(main, main.getSculptManager().getToolIndex()),
-      'SCENE': getSceneWidgets(main),
-      'TOPOLOGY': getTopologyWidgets(main),
-      'VIEW': getRenderingWidgets(main),
+      // Global Tabs (Overlay or separate view? For now let's just make them active "Tools" that swal layout?)
+      // Actually standard desktop: clicking "Files" opens a modal or changes view?
+      // In VR, switching "Tabs" usually replaces the main content.
+      // But user wants "Top split into 2 rows".
+      // Let's treat valid "Tabs" as the Top Row items.
       'FILES': getFilesWidgets(main),
+      'SCENE': getSceneWidgets(main),
       'HISTORY': getHistoryWidgets(main),
-      'SETTINGS': getSettingsWidgets(main)
+      'SETTINGS': getSettingsWidgets(main),
+
+      // Sections
+      'RENDERING': getRenderingWidgets(main),
+      'TOPOLOGY': getTopologyWidgets(main),
+      'SCULPTING & PAINTING': getToolsWidgets(main, main.getSculptManager().getToolIndex())
     };
+
+    // We need to know which "Mode" we are in.
+    // If we click "FILES", does it replace the sidebar?
+    // User says "Menus are at the top".
+    // "Panel has collapsible sections".
+    // This implies the MAIN VIEW is the Sidebar stack (Rendering + Topo + Sculpting).
+    // And global tabs might just show overlays or switch context?
+    // Let's assume "Sidebar Mode" is the default view.
+    this._viewMode = 'SIDEBAR'; // vs 'FILES', 'SCENE', 'HISTORY', 'SETTINGS' ?
+    // Actually, Scene/History might be better as Panels too?
+    // For now, let's keep the user's mockup logic:
+    // Top Rows: Files, Scene, History, Background, Camera...
+    // Below: The Sidebar Stack.
 
     setTimeout(() => this.syncToolRadius(), 500);
 
@@ -93,20 +148,26 @@ class GuiXR {
 
   // Console Helper for Tab Switching
   switchTab(tabName) {
-    if (TABS.includes(tabName)) {
-      this._activeTab = tabName;
-      this._needsUpdate = true;
-      this.draw();
-      console.log(`[GuiXR] Switched to tab: ${tabName} `);
+    if (tabName === 'TOOLS') {
+      this._viewMode = 'SIDEBAR';
+      this._scrollOffset = 0;
+    } else if (GLOBAL_TABS.includes(tabName)) {
+      this._viewMode = tabName;
+      this._scrollOffset = 0; // Reset scroll
     } else {
-      console.warn(`[GuiXR] Invalid tab: ${tabName}.Available: ${TABS.join(', ')} `);
+      // It's likely a sidebar click?
+      this._viewMode = 'SIDEBAR';
     }
+
+    this._activeCombobox = null;
+    this._needsUpdate = true;
+    this.draw();
+    console.log(`[GuiXR] Switched Layout Mode: ${this._viewMode}`);
   }
 
   nextTab() {
-    const idx = TABS.indexOf(this._activeTab);
-    const nextIdx = (idx + 1) % TABS.length;
-    this.switchTab(TABS[nextIdx]);
+    // Cycle through Global Tabs + Sidebar?
+    // Debug helper mainly.
   }
 
   togglePreview() {
@@ -169,10 +230,22 @@ class GuiXR {
     this._canvas.addEventListener('pointermove', onPointerMove);
     this._canvas.addEventListener('pointerup', onPointerUp);
 
+    // Desktop Mouse Wheel Logic
+    const onWheel = (e) => {
+      e.preventDefault();
+      // Scroll Logic
+      this._scrollOffset += e.deltaY; // vertical scroll
+      this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+      this._needsUpdate = true;
+      this.draw();
+    };
+    this._canvas.addEventListener('wheel', onWheel);
+
     this._previewCleanup = () => {
       this._canvas.removeEventListener('pointerdown', onPointerDown);
       this._canvas.removeEventListener('pointermove', onPointerMove);
       this._canvas.removeEventListener('pointerup', onPointerUp);
+      this._canvas.removeEventListener('wheel', onWheel);
     };
 
     this._needsUpdate = true;
@@ -181,7 +254,7 @@ class GuiXR {
 
   // Reload widgets (e.g. when tool changes)
   refreshToolsWidget() {
-    this._tabWidgets['TOOLS'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
+    this._tabWidgets['SCULPTING & PAINTING'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
     this._needsUpdate = true;
     this.draw();
   }
@@ -243,7 +316,94 @@ class GuiXR {
   }
 
   _getWidgets() {
-    return this._tabWidgets[this._activeTab] || [];
+    if (this._viewMode === 'SIDEBAR') {
+      return []; // We handle sidebar custom in draw() for now, or we merge all?
+      // To reuse interaction logic, we should probably generate a FLAT list of visible widgets based on scroll offset.
+      // OR we map interaction to the layout logic.
+      // Standard _getWidgets logic relies on x,y.
+      // If we implement scrolling, we need to offset Y.
+
+      let allWidgets = [];
+      let currentY = HEADER_HEIGHT - this._scrollOffset;
+
+      SECTIONS.forEach(secTitle => {
+        const isOpen = this._sectionStates[secTitle];
+        // Header Button (Virtual)
+        // We'll treat the header as a widget for interaction?
+        allWidgets.push({
+          type: 'section_header',
+          label: secTitle,
+          x: 0,
+          y: currentY,
+          w: CANVAS_SIZE,
+          h: 60,
+          id: 'section_' + secTitle
+        });
+        currentY += 60;
+
+        if (isOpen) {
+          const secWidgets = this._tabWidgets[secTitle];
+          // Clone and Offset
+          if (secWidgets) {
+            secWidgets.forEach(w => {
+              allWidgets.push({
+                ...w,
+                y: w.y + currentY - 130 // 130 was original offset in generator? We need to re-base.
+                // Actually, the generators (getToolsWidgets) used absolute Y starting at 130.
+                // We need to normalize them to relative 0 if possible, or subtract 130.
+              });
+            });
+
+            // Update currentY by height of section
+            // We need to know the max H of the section.
+            // The widgets have y + h.
+            if (secWidgets.length > 0) {
+              const maxY = Math.max(...secWidgets.map(w => (isFinite(w.y) && isFinite(w.h)) ? w.y + w.h : 0));
+              const minY = Math.min(...secWidgets.map(w => isFinite(w.y) ? w.y : 0));
+              const sectionH = Math.max(0, maxY - minY + 20);
+              currentY += sectionH;
+            }
+          }
+        }
+      });
+
+      this._maxScroll = Math.max(0, currentY + this._scrollOffset - CANVAS_SIZE);
+      return allWidgets;
+    }
+
+
+    // Regular View (Generic Scroll support)
+    const widgets = this._tabWidgets[this._viewMode] || [];
+    // Just apply scroll offset?
+    // We need to calculate bounds to set _maxScroll
+    // If not SIDEBAR, we treat it as a simple list?
+    // Widgets usually have fixed Y.
+    // If we want to scroll them, we need to offset Y.
+    const hasScroll = true; // Always allow scroll?
+
+    if (hasScroll) {
+      const currentY = HEADER_HEIGHT - this._scrollOffset;
+      const offsetWidgets = widgets.map(w => ({
+        ...w,
+        y: w.y + currentY - 130 // normalize ?
+      }));
+
+      // Calculate max scroll
+      if (widgets.length > 0) {
+        const maxY = Math.max(...widgets.map(w => (isFinite(w.y) && isFinite(w.h)) ? w.y + w.h : 0));
+        const minY = Math.min(...widgets.map(w => isFinite(w.y) ? w.y : 0));
+        const contentH = Math.max(0, maxY - minY + 20);
+        // Total height needed
+        const totalH = contentH + HEADER_HEIGHT + 130;  // approximate
+        const calculatedMax = totalH - CANVAS_SIZE;
+        this._maxScroll = Math.max(0, isFinite(calculatedMax) ? calculatedMax : 0);
+      } else {
+        this._maxScroll = 0;
+      }
+      return offsetWidgets;
+    }
+
+    return widgets;
   }
 
   onInteract(u, v, isPressed) {
@@ -252,6 +412,14 @@ class GuiXR {
     const cx = this._cursor.x;
     const cy = this._cursor.y;
     const now = performance.now();
+
+    // 0. Dropdown Interaction (High Priority)
+    if (this._activeCombobox) {
+      if (now - this._inputDebounce < 250) return;
+      this._inputDebounce = now;
+      this._handleDropdownInteract(cx, cy);
+      return;
+    }
 
     // 0. Check Overlay
     if (this._overlay) {
@@ -286,16 +454,38 @@ class GuiXR {
     const w = this._canvas.width;
 
     // 1. Check Tabs (Header)
-    if (cy < TAB_HEIGHT) {
-      const tabWidth = w / TABS.length;
-      const tabIndex = Math.floor(cx / tabWidth);
-      if (tabIndex >= 0 && tabIndex < TABS.length) {
-        this._activeTab = TABS[tabIndex];
-        this._needsUpdate = true;
-        this.draw();
+    // 1. Check Tabs (Header)
+    if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
+      const row1 = GLOBAL_TABS;
+    // Row 1 Handling
+      if (cy < TAB_HEIGHT) {
+        const r1W = w / row1.length;
+        const idx = Math.floor(cx / r1W);
+        if (idx >= 0 && idx < row1.length) {
+          console.log(`[GuiXR] Clicked Global Tab: ${row1[idx]}`);
+          this.switchTab(row1[idx]);
+        }
+        return;
       }
-      return;
+      // Row 2 Handling (Placeholder)
+      if (cy < HEADER_HEIGHT) {
+        // Second row clicks
+        console.log("[GuiXR] Clicked Row 2 (Not Implemented)");
+        return;
+      }
+    } else {
+      // Fallback for unknown modes (should not happen often)
+      const row1 = GLOBAL_TABS;
+      if (cy < TAB_HEIGHT) {
+        const r1W = w / row1.length;
+        const idx = Math.floor(cx / r1W);
+        if (idx >= 0 && idx < row1.length) {
+          this.switchTab(row1[idx]);
+        }
+        return;
+      }
     }
+
 
     // 2. Check Widgets
     if (targetWid) {
@@ -488,7 +678,15 @@ class GuiXR {
       }
 
       if (opts.length > 0) {
-        this.openOverlay('combobox', { title: w.label || 'Select', options: opts, callback: cb });
+        // Toggle Dropdown
+        w.options = opts;
+        if (this._activeCombobox === w) {
+          this._activeCombobox = null;
+        } else {
+          this._activeCombobox = w;
+        }
+        this._needsUpdate = true;
+        this.draw();
       } else {
         console.warn("[GuiXR] No options for combobox: " + w.id);
       }
@@ -540,6 +738,14 @@ class GuiXR {
     const main = this._main;
     if (!main) return;
     if (w.type === 'slider' || w.type === 'info' || w.type === 'combobox' || w.type === 'color') return;
+
+    if (w.type === 'section_header') {
+      // Toggle Section
+      this._sectionStates[w.label] = !this._sectionStates[w.label];
+      this._needsUpdate = true;
+      this.forceDraw(); // Force redraw to recalc layout
+      return;
+    }
 
     // Scene Actions
     if (w.id === 'addSphere') main.addSphere();
@@ -666,29 +872,47 @@ class GuiXR {
     ctx.fillRect(0, 0, w, h);
 
     // Header / Tabs
-    const tabW = w / TABS.length;
-    ctx.font = '30px sans-serif';
-    ctx.textAlign = 'center';
+    // Header / Tabs
+    if (true) {
+      const row1 = GLOBAL_TABS;
+      const row2 = ['Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
 
-    for (let i = 0; i < TABS.length; ++i) {
-      const t = TABS[i];
-      const isActive = t === this._activeTab;
-      const x = i * tabW;
+      ctx.textAlign = 'center';
+      ctx.font = '28px sans-serif'; 
 
-      ctx.fillStyle = isActive ? '#0070A0' : '#333';
-      ctx.fillRect(x, 0, tabW, TAB_HEIGHT);
+      // Row 1
+      const r1W = w / row1.length;
+      row1.forEach((t, i) => {
+        const x = i * r1W;
+        const y = 0;
 
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, 0, tabW, TAB_HEIGHT);
+        let isActive = (t === this._viewMode);
+        if (this._viewMode === 'SIDEBAR' && t === 'TOOLS') isActive = true;
 
-      ctx.fillStyle = isActive ? '#fff' : '#888';
+        ctx.fillStyle = isActive ? '#0070A0' : '#111';
+        ctx.fillRect(x, y, r1W, TAB_HEIGHT);
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, r1W, TAB_HEIGHT);
 
-      // Auto-scale font if too long
-      // ctx.font = (t.length > 8) ? '24px sans-serif' : '30px sans-serif';
-      // Resetting font for each tab to be safe
-      ctx.font = '30px sans-serif';
-      ctx.fillText(t, x + tabW / 2, TAB_HEIGHT / 2 + 10);
+        ctx.fillStyle = isActive ? '#fff' : '#aaa';
+        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 8);
+      });
+
+      // Row 2 (Placeholders)
+      const row2Mock = ['Background', 'Camera', 'Language', 'Help'];
+      const r2W = w / row2Mock.length;
+      row2Mock.forEach((t, i) => {
+        const x = i * r2W;
+        const y = TAB_HEIGHT;
+        ctx.fillStyle = '#161616';
+        ctx.fillRect(x, y, r2W, TAB_HEIGHT);
+        ctx.strokeStyle = '#333';
+        ctx.strokeRect(x, y, r2W, TAB_HEIGHT);
+
+        ctx.fillStyle = '#666';
+        ctx.fillText(t, x + r2W / 2, y + TAB_HEIGHT / 2 + 8);
+      });
     }
 
     // --- DRAW WIDGETS ---
@@ -698,6 +922,46 @@ class GuiXR {
     if (this._main && this._main.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
 
     for (let wid of widgets) {
+      // Special Section Header Handling
+      if (wid.type === 'section_header') {
+        // Draw Desktop-Style Section Header
+        ctx.fillStyle = '#2A2A2A'; // Darker/Lighter?
+        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
+
+        // Triangle
+        const isOpen = this._sectionStates[wid.label];
+        ctx.fillStyle = '#ccc';
+        ctx.beginPath();
+        const triX = 30;
+        const triY = wid.y + wid.h / 2;
+        if (isOpen) {
+          // Arrow Down
+          ctx.moveTo(triX - 10, triY - 5);
+          ctx.lineTo(triX + 10, triY - 5);
+          ctx.lineTo(triX, triY + 10);
+        } else {
+          // Arrow Right
+          ctx.moveTo(triX - 5, triY - 10);
+          ctx.lineTo(triX - 5, triY + 10);
+          ctx.lineTo(triX + 10, triY);
+        }
+        ctx.fill();
+
+        ctx.font = 'bold 30px sans-serif';
+        ctx.fillStyle = '#eee';
+        ctx.textAlign = 'left';
+        ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
+
+        // Divider
+        ctx.strokeStyle = 'black';
+        ctx.beginPath();
+        ctx.moveTo(wid.x, wid.y + wid.h);
+        ctx.lineTo(wid.x + wid.w, wid.y + wid.h);
+        ctx.stroke();
+
+        continue;
+      }
+
       if (wid.type === 'info') {
         ctx.fillStyle = '#888';
         ctx.font = 'italic 28px sans-serif';
@@ -766,6 +1030,13 @@ class GuiXR {
         ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
       } else {
         let displayLabel = wid.label;
+
+        // Generic Combobox Label
+        if (wid.type === 'combobox' && wid.options && wid.value !== undefined) {
+          const opt = wid.options.find(o => o.id === wid.value) || wid.options[wid.value];
+          if (opt) displayLabel = opt.label;
+        }
+
         if (wid.id === 'environment' && wid.type === 'combobox') {
           const ShaderPBR = Shader[Enums.Shader.PBR];
           if (ShaderPBR && ShaderPBR.environments && ShaderPBR.environments[ShaderPBR.idEnv]) {
@@ -809,8 +1080,35 @@ class GuiXR {
     ctx.lineWidth = 15;
     ctx.strokeRect(0, 0, w, h);
 
+    // --- DRAW SCROLLBAR if needed ---
+    if (this._viewMode === 'SIDEBAR' && this._maxScroll > 0) {
+      // Draw Scroll Track
+      const trackW = 20;
+      const trackX = w - trackW;
+      const trackY = HEADER_HEIGHT;
+      const trackH = h - HEADER_HEIGHT;
+
+      ctx.fillStyle = '#111';
+      ctx.fillRect(trackX, trackY, trackW, trackH);
+
+      // Draw Scroll Thumb
+      // Thumb Size proportional to content
+      const contentH = trackH + this._maxScroll;
+      const thumbH = Math.max(50, (trackH / contentH) * trackH);
+      const thumbY = trackY + (this._scrollOffset / this._maxScroll) * (trackH - thumbH);
+
+      ctx.fillStyle = '#666';
+      if (this._cursor.active && this._cursor.x >= trackX) ctx.fillStyle = '#888';
+      ctx.fillRect(trackX + 2, thumbY, trackW - 4, thumbH);
+    }
+
+    // --- DRAW OVERLAYS ---
     if (this._overlay) {
       this._drawOverlay(ctx, w, h);
+    }
+
+    if (this._activeCombobox) {
+      this._drawActiveCombobox(ctx);
     }
 
     this._needsUpdate = true;
@@ -1256,6 +1554,88 @@ class GuiXR {
     }
     this.syncToolRadius();
     this.forceDraw();
+  }
+  _handleDropdownInteract(cx, cy) {
+    const w = this._activeCombobox;
+    // Check if inside Dropdown List
+    const itemHeight = 60; // Standard layout
+    const startY = w.y + w.h;
+    const listH = (w.options ? w.options.length : 0) * itemHeight;
+
+    if (cx >= w.x && cx <= w.x + w.w && cy >= startY && cy <= startY + listH) {
+      // Inside List
+      const index = Math.floor((cy - startY) / itemHeight);
+      if (w.options && w.options[index]) {
+        const opt = w.options[index];
+        if (w.onSelect) w.onSelect(opt.id !== undefined ? opt.id : index);
+        this._activeCombobox = null;
+        this._needsUpdate = true;
+        this.draw();
+      }
+      return;
+    }
+
+    // Check if inside Header (Toggle off)
+    if (cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h) {
+      this._activeCombobox = null;
+      this._needsUpdate = true;
+      this.draw();
+      return;
+    }
+
+    // Clicked Outside
+    console.log("[GuiXR] Closing dropdown (clicked outside)");
+    this._activeCombobox = null;
+    this._needsUpdate = true;
+    this.draw();
+  }
+
+  _drawActiveCombobox(ctx) {
+    const w = this._activeCombobox;
+    if (!w || !w.options) return;
+
+    const itemHeight = 60;
+    const startX = w.x;
+    const startY = w.y + w.h; // Below button
+
+    const listH = w.options.length * itemHeight;
+
+    // Shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 10;
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(startX, startY, w.w, listH);
+
+    ctx.shadowColor = 'transparent'; // Reset
+
+    // Border
+    ctx.strokeStyle = '#00D0FF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(startX, startY, w.w, listH);
+
+    // Highlight hover
+    if (this._cursor.active) {
+      const cy = this._cursor.y;
+      if (this._cursor.x >= startX && this._cursor.x <= startX + w.w && cy >= startY && cy <= startY + listH) {
+        const idx = Math.floor((cy - startY) / itemHeight);
+        ctx.fillStyle = '#444';
+        ctx.fillRect(startX, startY + idx * itemHeight, w.w, itemHeight);
+      }
+    }
+
+    // Items
+    ctx.textAlign = 'left';
+    ctx.font = '24px sans-serif';
+    ctx.fillStyle = 'white';
+
+    w.options.forEach((opt, i) => {
+      const y = startY + i * itemHeight;
+      ctx.fillText(opt.label, startX + 20, y + itemHeight / 2 + 8);
+    });
   }
 }
 
