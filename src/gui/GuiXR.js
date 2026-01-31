@@ -1178,25 +1178,27 @@ class GuiXR {
   }
 
   _drawOverlay(ctx, w, h) {
-    ctx.fillStyle = OVERLAY_BG;
-    ctx.fillRect(0, 0, w, h);
+    if (this._overlay !== 'menu') {
+      ctx.fillStyle = OVERLAY_BG;
+      ctx.fillRect(0, 0, w, h);
 
-    ctx.fillStyle = '#222';
-    ctx.fillRect(OVERLAY_X, OVERLAY_Y, OVERLAY_W, OVERLAY_H);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(OVERLAY_X, OVERLAY_Y, OVERLAY_W, OVERLAY_H);
+      ctx.fillStyle = '#222';
+      ctx.fillRect(OVERLAY_X, OVERLAY_Y, OVERLAY_W, OVERLAY_H);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(OVERLAY_X, OVERLAY_Y, OVERLAY_W, OVERLAY_H);
 
-    const closeSize = 60;
-    ctx.fillStyle = '#c00';
-    ctx.fillRect(OVERLAY_X + OVERLAY_W - closeSize, OVERLAY_Y, closeSize, closeSize);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 40px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('X', OVERLAY_X + OVERLAY_W - closeSize / 2, OVERLAY_Y + 45);
+      const closeSize = 60;
+      ctx.fillStyle = '#c00';
+      ctx.fillRect(OVERLAY_X + OVERLAY_W - closeSize, OVERLAY_Y, closeSize, closeSize);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 40px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('X', OVERLAY_X + OVERLAY_W - closeSize / 2, OVERLAY_Y + 45);
 
-    ctx.textAlign = 'left';
-    ctx.fillText(this._overlayData.title || this._overlay, OVERLAY_X + 20, OVERLAY_Y + 50);
+      ctx.textAlign = 'left';
+      ctx.fillText(this._overlayData.title || this._overlay, OVERLAY_X + 20, OVERLAY_Y + 50);
+    }
 
     // Draw OVERLAY if active
     if (this._overlay === 'menu' && this._overlayData) {
