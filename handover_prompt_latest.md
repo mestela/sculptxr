@@ -25,15 +25,16 @@
     - Attempted Binary PLY (failed).
 - **v0.6.52** (Beta)
     - Debug release (Import try/catch).
-5.  **Current State**:
-    *   Code is committed and pushed (`desktop_ui` branch).
-    *   Production (`sculptvr`) v0.6.50.
-    *   Beta (`sculptvrbeta`) v0.6.51 (Controllers).
-    *   `project_rules.md` is updated.
+## Current State
+Code is committed and pushed (`desktop_ui` branch).
+-   **Production**: v0.6.50 (Stable).
+-   **Beta**: v0.6.55 (Controllers + Fixes).
+-   **Environment**: `project_rules.md` is active.
 
 ## Next High-Priority Tasks
-1.  **Voxel Grid Visualization**: Draw wireframe bounds for Voxel mode.
-2.  **Matcap UI**: Add UI to swap matcaps/environments.
+1.  **Refine VR Controllers**: User validation indicates "things that need correcting" (likely pivot, scale, or material).
+2.  **Voxel Grid Visualization**: Draw wireframe bounds for Voxel mode.
+3.  **Matcap UI**: Add UI to swap matcaps/environments.
 
 ## Deployment
 See `project_rules.md` for strict protocol.
