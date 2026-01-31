@@ -60,6 +60,11 @@
 3.  **Revert Safety**: Before reverting (`git checkout .`), ALWAYS check `git status` for uncommitted config files. If found, commit them separately first.
 4.  **Verification**: A "working state" is defined as a state that can be cloned and run `python3 -m http.server` without *any* extra steps.
 
+## Build System Rules (STRICT)
+1.  **NO NPM / NO BUILD**: This is a pure static site. Do NOT run `npm build`, `npm start`, `yarn`, or `pnpm`.
+2.  **Raw Loading**: The browser loads `src/` files directly (via `importmap` in `index.html` or standard ES modules).
+3.  **Deploy Script Only**: The only valid "build" action is `./deploy.sh` or `./deploy_beta.sh`, which merely rsyncs files.
+
 ## Handover Protocol
 **When to create**: At the end of EVERY session, or when hitting a blocking issue.
 **File Naming**: `handover_prompt_latest.md`
