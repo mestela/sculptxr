@@ -4,8 +4,16 @@ import Export from 'files/Export';
 import { saveAs } from 'file-saver';
 import Shader from 'render/ShaderLib';
 
-const TAB_HEIGHT = 60;
-const TABS = ['TOOLS', 'VIEW', 'FILES', 'HISTORY'];
+// Modular Imports
+import getToolsWidgets from 'gui/vr/GuiVRTools';
+import getSceneWidgets from 'gui/vr/GuiVRScene';
+import getRenderingWidgets from 'gui/vr/GuiVRRendering';
+import getFilesWidgets from 'gui/vr/GuiVRFiles';
+import getHistoryWidgets from 'gui/vr/GuiVRHistory';
+
+const TAB_HEIGHT = 100;
+const CANVAS_SIZE = 1024;
+const TABS = ['TOOLS', 'SCENE', 'VIEW', 'FILES', 'HISTORY'];
 
 class GuiXR {
 
@@ -14,8 +22,8 @@ class GuiXR {
     this._gl = main._gl;
 
     this._canvas = document.createElement('canvas');
-    this._canvas.width = 512;
-    this._canvas.height = 512;
+    this._canvas.width = CANVAS_SIZE;
+    this._canvas.height = CANVAS_SIZE;
     this._ctx = this._canvas.getContext('2d');
 
     this._needsUpdate = true;
@@ -25,61 +33,15 @@ class GuiXR {
     this._cursor = { x: -1, y: -1, active: false };
     this._radius = 0.20; // Expose for VR Scene
 
+    // Initialize Widgets
+    // We bind 'main' here, but note that main might not be fully ready in constructor.
+    // However, the widget generators just return config objects, they don't execute logic yet.
     this._tabWidgets = {
-      'TOOLS': [
-        // Sliders
-        { type: 'slider', id: 'radius', x: 20, y: 80, w: 200, h: 30, label: 'Rad', value: 0.20 },
-        { type: 'slider', id: 'intensity', x: 20, y: 120, w: 200, h: 30, label: 'Int', value: 0.5 },
-
-        // Voxel Sliders
-        { type: 'slider', id: 'voxelRes', x: 240, y: 80, w: 200, h: 30, label: 'Res', value: 0.5 }, // 32..256
-        { type: 'slider', id: 'voxelRad', x: 240, y: 120, w: 200, h: 30, label: 'Mult', value: 0.5 }, // 1..100
-
-        // Tools (Grid 2xN)
-        { type: 'button', id: Enums.Tools.BRUSH, label: 'Brush', x: 20, y: 170, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.INFLATE, label: 'Inflate', x: 130, y: 170, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.SMOOTH, label: 'Smooth', x: 20, y: 220, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.FLATTEN, label: 'Flatten', x: 130, y: 220, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.PINCH, label: 'Pinch', x: 20, y: 270, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.CREASE, label: 'Crease', x: 130, y: 270, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.DRAG, label: 'Drag', x: 20, y: 320, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.MOVE, label: 'Move', x: 130, y: 320, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.PAINT, label: 'Paint', x: 20, y: 370, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.TRANSFORM, label: 'Transform', x: 130, y: 370, w: 100, h: 40 },
-
-        // Voxel Tool Highlight
-        { type: 'button', id: Enums.Tools.VOXEL, label: 'VOXEL', x: 240, y: 170, w: 200, h: 40 },
-
-        { type: 'button', id: Enums.Tools.MASKING, label: 'Mask', x: 240, y: 220, w: 100, h: 40 },
-        { type: 'button', id: Enums.Tools.LOCALSCALE, label: 'L.Scale', x: 350, y: 220, w: 90, h: 40 },
-
-        // Voxel Actions
-        { type: 'button', id: 'bake', label: 'BAKE TO MESH', x: 240, y: 270, w: 200, h: 40 },
-
-        // Dynamic Topology Toggle
-        { type: 'toggle', id: 'dynamic', label: 'Dynamic Topology', x: 20, y: 440, w: 210, h: 40 }
-      ],
-      'VIEW': [
-        { type: 'toggle', id: 'flat', label: 'Flat Shading', x: 20, y: 150, w: 200, h: 50 },
-        { type: 'toggle', id: 'wireframe', label: 'Wireframe', x: 20, y: 80, w: 200, h: 50 },
-        { type: 'toggle', id: 'symmetry', label: 'Symmetry', x: 20, y: 430, w: 200, h: 50 },
-        { type: 'toggle', id: 'passthrough', label: 'Passthrough', x: 20, y: 220, w: 200, h: 50 },
-        { type: 'info', label: '(Blinks during switch)', x: 230, y: 250 },
-        { type: 'button', id: 'pbr', label: 'PBR', x: 20, y: 290, w: 200, h: 50 },
-        { type: 'button', id: 'matcap', label: 'Matcap', x: 20, y: 360, w: 200, h: 50 }
-      ],
-      'FILES': [
-        { type: 'button', id: 'reset', label: 'Reset Scene', x: 20, y: 80, w: 200, h: 50 },
-        { type: 'button', id: 'export_obj', label: 'Export OBJ', x: 20, y: 150, w: 200, h: 50 },
-        { type: 'button', id: 'import_obj', label: 'Import OBJ', x: 220, y: 150, w: 200, h: 50 },
-        { type: 'button', id: 'export_stl', label: 'Export STL', x: 20, y: 220, w: 200, h: 50 },
-        { type: 'info', label: 'Files save to browser', x: 20, y: 300 }
-      ],
-      'HISTORY': [
-        { type: 'button', id: 'undo', label: 'Undo', x: 20, y: 80, w: 200, h: 60 },
-        { type: 'button', id: 'redo', label: 'Redo', x: 20, y: 160, w: 200, h: 60 },
-        { type: 'button', id: 'max_resolution', label: 'Subdivide', x: 20, y: 240, w: 200, h: 60 }
-      ]
+      'TOOLS': getToolsWidgets(main),
+      'SCENE': getSceneWidgets(main),
+      'VIEW': getRenderingWidgets(main),
+      'FILES': getFilesWidgets(main),
+      'HISTORY': getHistoryWidgets(main)
     };
 
     // Sync initial radius to tool
@@ -108,8 +70,7 @@ class GuiXR {
       this._cursor.y = v * this._canvas.height;
       this._updateHover();
     }
-    this._needsUpdate = true;
-    this._needsUpdate = true;
+    this._needsUpdate = true; 
     // this.draw(); // DECOUPLED: Cursor is 3D now. No texture update needed just for motion.
   }
 
@@ -212,152 +173,126 @@ class GuiXR {
     } else {
       // Buttons / Toggles: VISUAL ONLY (Action via onClick)
       this._lastClick = now;
-      // this._executeAction(w); // DISABLE UNTRUSTED POLLING EXECUTION
       this._needsUpdate = true;
       this.draw();
+      this.onClick(); // Immediate Action Trigger? Or wait? 
+      // Original logic separated visual update from action, but here we can just call it.
+      // Actually `onClick` calls _executeAction. 
+      // But `onInteract` calls `_handleWidgetClick`.
+      // The original `onInteract` for buttons fell through to `this.draw()`.
+      // Then `onClick` (from `Scene.js`?) was called?
+      // Wait, `Scene.js` calls `onInteract` with `isPressed`. 
+      // It DOES NOT call `onClick` automatically.
+      // I should call `_executeAction` here for buttons if pressed.
+      this._executeAction(w);
     }
   }
 
   onClick() {
-    // Trusted Event Trigger
-    const w = this._hoverWidget;
-    if (!w) return;
-
-    if (w.type === 'slider') return; // Sliders handled by onInteract
-
-    if (w.type === 'slider') return; // Sliders handled by onInteract
-
-    this._executeAction(w);
-
-    // VISUAL FEEDBACK
-    this._lastClick = performance.now();
-    this._clickedWidget = w;
-    setTimeout(() => { this._needsUpdate = true; this.draw(); }, 250); // Redraw to clear flash
-
-    this._needsUpdate = true;
-    this.draw();
-
+    // Re-implement if needed, but _handleWidgetClick seems to cover it
+    // This was used for "Trusted" clicks?
   }
 
   _executeAction(w) {
     const main = this._main;
     if (!main) return;
 
-    // TOOLS TAB
-    if (this._activeTab === 'TOOLS') {
-      if (w.type === 'button') {
-        if (w.id === 'bake') {
-          // Trigger Voxel Bake
-          const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
-          if (tool && tool.bakeToMesh) {
-            tool.bakeToMesh();
-            // Switch to Brush? Optional.
-            main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
-          } else {
-            console.warn("Bake failed: Voxel tool not ready.");
-          }
-        } else {
-          main.getSculptManager().setToolIndex(w.id);
-        }
-      }
-      if (w.id === 'dynamic') {
-        // Reuse existing GuiTopology logic
-        if (main._gui && main._gui._ctrlTopology) {
-          main._gui._ctrlTopology.dynamicToggleActivate();
-        }
+    if (w.type === 'slider' || w.type === 'info') return;
+
+    // --- GENERIC ACTIONS BY ID ---
+    // Scene Actions
+    if (w.id === 'addSphere') main.addSphere();
+    if (w.id === 'addCube') main.addCube();
+    if (w.id === 'addCylinder') main.addCylinder();
+    if (w.id === 'addTorus') main.addTorus();
+    if (w.id === 'reset') {
+      if (confirm('Reset Scene?')) main.clearScene();
+    }
+
+    // Tools
+    if (typeof w.id === 'number') { // Tool Enum
+      main.getSculptManager().setToolIndex(w.id);
+    }
+
+    // Voxel
+    if (w.id === 'bake') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool.bakeToMesh) tool.bakeToMesh();
+    }
+    if (w.id === 'dynamic') {
+      if (main._gui && main._gui._ctrlTopology) {
+        main._gui._ctrlTopology.dynamicToggleActivate();
       }
     }
 
-    // VIEW TAB
-    if (this._activeTab === 'VIEW') {
+    // View / Rendering
+    if (w.id === 'wireframe') {
       const mesh = main.getMesh();
-
-      if (!mesh) return;
-
-      if (w.id === 'wireframe') {
-        mesh.setShowWireframe(!mesh.getShowWireframe());
-      } else if (w.id === 'flat') {
-        mesh.setFlatShading(!mesh.getFlatShading());
-      } else if (w.id === 'passthrough') {
-        // Toggle Session Mode (AR <-> VR)
-        main.toggleXRSession();
-      } else if (w.id === 'symmetry') {
-        const sm = main.getSculptManager();
-        if (sm) {
-          sm._symmetry = !sm._symmetry;
-          // Force re-render if needed or just wait for next frame
-          main.render();
-        }
-      } else if (w.id === 'pbr') {
-        mesh.setShaderType(Enums.Shader.PBR);
-      } else if (w.id === 'matcap') {
-        mesh.setShaderType(Enums.Shader.MATCAP);
-      }
-      main.render();
+      if (mesh) mesh.setShowWireframe(!mesh.getShowWireframe());
+    }
+    if (w.id === 'flat') {
+      const mesh = main.getMesh();
+      if (mesh) mesh.setFlatShading(!mesh.getFlatShading());
+    }
+    if (w.id === 'passthrough') {
+      main.toggleXRSession();
+    }
+    if (w.id === 'symmetry') {
+      const sm = main.getSculptManager();
+      if (sm) sm._symmetry = !sm._symmetry;
+    }
+    if (w.id === 'pbr') {
+      const mesh = main.getMesh();
+      if (mesh) mesh.setShaderType(Enums.Shader.PBR);
+    }
+    if (w.id === 'matcap') {
+      const mesh = main.getMesh();
+      if (mesh) mesh.setShaderType(Enums.Shader.MATCAP);
     }
 
-    // HISTORY TAB
-    if (this._activeTab === 'HISTORY') {
-      if (w.id === 'undo') {
-        if (window.screenLog) window.screenLog("GuiXR: Undo Pressed", "yellow");
-        main.getStateManager().undo();
-      }
-      if (w.id === 'redo') {
-        main.getStateManager().redo();
-      }
-      if (w.id === 'max_resolution') {
-        // Subdivide
-        // Dynamic import or check if available? 
-        // Usually internal calls. Let's try direct GuiSculpting access or direct logic
-        // Simple generic Subdivision for now if possible, else skip
-        // accessing main.gui._ctrlTopology.subdivide() is hacky but might work if GUI exists
-        // Better:
-        main.addHistoryState(new main.getStateManager().StateDynamic(main));
-        // Actually real subdivision is complex. sticky.
-        // Let's stick to Undo/Redo for now being safe.
-      }
+    // History
+    if (w.id === 'undo') main.getStateManager().undo();
+    if (w.id === 'redo') main.getStateManager().redo();
+    if (w.id === 'max_resolution') {
+      // Subdivide - Minimal implementation for now
+      // main.addHistoryState(new main.getStateManager().StateDynamic(main));
+      // Need access to Remesh or Topology?
+      // Let's print info for now or try standard subdiv
+      console.log("Subdivision not fully bridged yet");
     }
 
-    // FILES TAB
-    if (this._activeTab === 'FILES') {
-      if (w.id === 'reset') {
-        if (confirm('Reset Scene?')) {
-          main.clearScene();
-          }
-        }
-      if (w.id === 'export_obj') {
-        if (window.screenLog) window.screenLog("Exporting OBJ...", "yellow");
-
-        // Export.exportOBJ signature: (meshes, colorZbrush, colorAppend)
+    // Files
+    if (w.id === 'export_obj') {
         const meshes = main.getMeshes();
-        const rawBlob = Export.exportOBJ(meshes, true, false);
-        // Reslice with correct type to avoid .txt extension
+      const rawBlob = Export.exportOBJ(meshes, true, false);
         const blob = new Blob([rawBlob], { type: 'model/obj' });
-        saveAs(blob, 'sculptgl_vr_export.obj');
-        if (window.screenLog) window.screenLog("Saved to Downloads", "lime");
-      }
-      if (w.id === 'export_stl') Export.exportSTL(main);
-      if (w.id === 'import_obj') {
-        if (window.screenLog) window.screenLog("Importing...", "yellow");
-        // Trigger the hidden file input
-        const fileInput = document.getElementById('fileopen');
-        if (fileInput) fileInput.click();
-        else if (window.screenLog) window.screenLog("ERR: #fileopen not found", "red");
-      }
+      saveAs(blob, 'sculptgl_vr_export.obj');
     }
+    if (w.id === 'export_stl') Export.exportSTL(main);
+    if (w.id === 'import_obj') {
+        const fileInput = document.getElementById('fileopen');
+      if (fileInput) fileInput.click();
+    }
+
+    // Visual Feedback
+    this._clickedWidget = w;
+    this._lastClick = performance.now();
+    setTimeout(() => { this._needsUpdate = true; this.draw(); }, 250);
+    this._needsUpdate = true;
+    main.render();
   }
 
   click() {
+    // Debug helper? Or used by mouse interaction?
     if (!this._cursor.active) return;
     this.onInteract(this._cursor.x / this._canvas.width, this._cursor.y / this._canvas.height, true);
   }
 
-  // FORCE DRAW (Bypass Throttle)
   forceDraw() {
     this._lastDraw = 0;
     this._needsUpdate = true;
     this.draw();
-    this.updateTexture(); // Immediate upload attempt
+    this.updateTexture(); 
   }
 
   draw() {
@@ -387,12 +322,12 @@ class GuiXR {
 
       // Tab Border
       ctx.strokeStyle = '#111';
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 2;
       ctx.strokeRect(tx, 0, tabWidth, TAB_HEIGHT);
 
       // Text
       ctx.fillStyle = isActive ? '#fff' : '#888';
-      ctx.font = isActive ? 'bold 18px sans-serif' : '18px sans-serif';
+      ctx.font = isActive ? 'bold 36px sans-serif' : '36px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(tab, tx + tabWidth / 2, TAB_HEIGHT / 2);
@@ -400,7 +335,7 @@ class GuiXR {
       // Active Indicator
       if (isActive) {
         ctx.fillStyle = '#00D0FF';
-        ctx.fillRect(tx, TAB_HEIGHT - 4, tabWidth, 4);
+        ctx.fillRect(tx, TAB_HEIGHT - 6, tabWidth, 6);
       }
     });
 
@@ -415,7 +350,7 @@ class GuiXR {
     for (let wid of widgets) {
       if (wid.type === 'info') {
         ctx.fillStyle = '#888';
-        ctx.font = 'italic 16px sans-serif';
+        ctx.font = 'italic 28px sans-serif';
         ctx.textAlign = 'left';
         ctx.fillText(wid.label, wid.x, wid.y);
         continue;
@@ -423,21 +358,16 @@ class GuiXR {
 
       let isActive = false;
       // Determine active state for toggles/buttons
-      if (this._activeTab === 'TOOLS' && wid.type === 'button') {
+      if (wid.type === 'button' && typeof wid.id === 'number') {
         isActive = (wid.id === activeTool);
       }
-      // Highlight Dynamic Toggle
-      if (this._activeTab === 'TOOLS' && wid.id === 'dynamic') {
-        isActive = (mesh && mesh.isDynamic);
-      }
-      if (this._activeTab === 'VIEW') {
-        if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
-        if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
-        if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
-        if (wid.id === 'passthrough' && this._main) isActive = (this._main.getXRMode() === 'immersive-ar');
-        if (wid.id === 'pbr' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.PBR);
-        if (wid.id === 'matcap' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.MATCAP);
-      }
+      if (wid.id === 'dynamic' && mesh) isActive = mesh.isDynamic;
+      if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
+      if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
+      if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
+      if (wid.id === 'passthrough' && this._main) isActive = (this._main.getXRMode() === 'immersive-ar');
+      if (wid.id === 'pbr' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.PBR);
+      if (wid.id === 'matcap' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.MATCAP);
 
       // Draw active background
       ctx.fillStyle = isActive ? '#00A040' : '#444';
@@ -458,27 +388,24 @@ class GuiXR {
 
       // Border
       ctx.strokeStyle = isActive ? '#fff' : '#888';
-      ctx.lineWidth = isActive ? 3 : 1;
+      ctx.lineWidth = isActive ? 4 : 2;
       ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
       // Label
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
+      ctx.font = '28px sans-serif';
       if (wid.type === 'slider') {
         ctx.textAlign = 'left';
-        // Add Value to Label
-        ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 10, wid.y + 25);
+        ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 20, wid.y + wid.h / 2 + 10);
       } else {
-        ctx.fillText(wid.label, wid.x + wid.w / 2, wid.y + wid.h / 2);
+        ctx.fillText(wid.label, wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
       }
     }
 
-    // Cursor is now drawn by VRMenu.js as 3D geometry
-    // This reduces latency (no texture upload needed just for cursor)
-
     // Main Border
     ctx.strokeStyle = '#00D0FF';
-    ctx.lineWidth = 10;
+    ctx.lineWidth = 15;
     ctx.strokeRect(0, 0, w, h);
 
     this._needsUpdate = true;
@@ -528,6 +455,8 @@ class GuiXR {
 
   updateRadius(val) {
     this._radius = val;
+    // Update Widgets in ALL tabs where radius might appear?
+    // In our case only TOOLS tab has radius.
     const tools = this._tabWidgets['TOOLS'];
     if (tools) {
       const w = tools.find(w => w.id === 'radius');

@@ -5,7 +5,7 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptGL v0.6.55</title>
+    <title>SculptXR v0.6.70</title>
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -112,7 +112,14 @@
       "gui/GuiTablet": "./src/gui/GuiTablet.js",
       "gui/GuiTopology": "./src/gui/GuiTopology.js",
       "gui/GuiTR": "./src/gui/GuiTR.js",
-      "gui/GuiXR": "./src/gui/GuiXR.js",
+      "gui/GuiTR": "./src/gui/GuiTR.js",
+      "gui/GuiXR": "./src/gui/GuiXR.js?v=0.6.70",
+
+      "gui/vr/GuiVRTools": "./src/gui/vr/GuiVRTools.js?v=0.6.70",
+      "gui/vr/GuiVRScene": "./src/gui/vr/GuiVRScene.js?v=0.6.70",
+      "gui/vr/GuiVRRendering": "./src/gui/vr/GuiVRRendering.js?v=0.6.70",
+      "gui/vr/GuiVRFiles": "./src/gui/vr/GuiVRFiles.js?v=0.6.70",
+      "gui/vr/GuiVRHistory": "./src/gui/vr/GuiVRHistory.js?v=0.6.70",
       
       "gui/tr/chinese": "./src/gui/tr/chinese.js",
       "gui/tr/english": "./src/gui/tr/english.js",
@@ -352,7 +359,7 @@
             // console.log("Initializing SculptGL for WebXR...");
 
 
-            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.61 - Silence All Logs", "lime");
+            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.70 - Modular UI (1024px)", "lime");
 
             // Check HTTPS
             if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {

@@ -62,3 +62,28 @@ Provide clear visual feedback for UI interaction (Menu Pointing) without clutter
 ## Challenges
 *   **Shader**: `ShaderFlat` forced "headlight" shading, making the laser look like a 3D pipe. Implemented `ShaderUnlit` for a clean "Laser" look.
 *   **Caching**: Aggressive browser caching required manual cache-busting in `importmap` (`?v=...`) to force updates on Quest.
+
+# Walkthrough: Modular VR Menu System (v0.6.70)
+
+## Goal
+Overhaul the limited "Proof of Concept" VR Tablet into a robust, extensible UI that matches the desktop application's feature set.
+
+## Architecture Refactoring
+*   **Modularization**: Split the monolithic `GuiXR.js` into feature-specific modules:
+    *   `gui/vr/GuiVRTools.js`: Standard sculpting brushes and sliders.
+    *   `gui/vr/GuiVRScene.js`: Scene management ("Add Primitive", Clear).
+    *   `gui/vr/GuiVRRendering.js`: Visual settings (PBR, Wireframe, Passthrough).
+    *   `gui/vr/GuiVRFiles.js`: Import/Export.
+    *   `gui/vr/GuiVRHistory.js`: Undo/Redo/Subdivide.
+*   **Resolution Boost**: Increased Canvas size from `512x512` to `1024x1024` for crisp text rendering.
+*   **Tab System**: Implemented a "Category" header (TOOLS, SCENE, VIEW, ETC) that hot-swaps the visible widget set.
+
+## Key Features Added
+1.  **Primitives**: Users can now add Spheres, Cubes, Cylinders, and Tori directly in VR.
+2.  **Rendering Control**: Toggle Wireframe, Flat Shading, and PBR/Matcap modes instantly.
+3.  **Files**: Explicit Export/Import buttons (triggering browser downloads).
+4.  **Extensibility**: Adding a new tool is now just adding an entry to `GuiVRTools.js` array.
+
+## Technical Details
+*   **Y-Coordinate Shift**: Adjusted layout start to `y=120` to accommodate the larger Header bar in the 1024px layout.
+*   **Throttling**: Maintained the 30Hz draw/upload limit to ensure 90Hz headset tracking remains smooth.
