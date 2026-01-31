@@ -32,6 +32,11 @@ export default function getToolsWidgets(main, activeToolIndex) {
   // 3. Dynamic Tool Settings
   const contextY = toolsY + 240; // 190 + 160 + 80 = 430
 
+  // --- ALPHA SETTINGS (Common to most tools) ---
+  // Mockup for now
+  // widgets.push({ type: 'info', label: 'ALPHA', x: 620, y: 120 }); // Crammed in top right?
+  // Let's put Alpha just above context settings or inline
+
   if (activeToolIndex === Enums.Tools.PAINT) {
     // --- PAINT TOOL SETTINGS ---
     widgets.push({ type: 'info', label: '--- PAINT SETTINGS ---', x: 20, y: contextY });
@@ -51,9 +56,21 @@ export default function getToolsWidgets(main, activeToolIndex) {
     widgets.push({ type: 'toggle', id: 'write_metalness', label: 'Metal', x: 580, y: row2Y, w: 100, h: 60 });
 
     // Row 3: Embedded Color Picker
-    // 50% smaller size requested -> Now 30% larger (User Feedback)
     const pickerH = 300;
     widgets.push({ type: 'colorpicker_embedded', id: 'picker', x: 20, y: row2Y + 80, w: 400, h: pickerH });
+
+  } else if (activeToolIndex === Enums.Tools.MASKING) {
+    widgets.push({ type: 'info', label: '--- MASKING ---', x: 20, y: contextY });
+
+    const row1Y = contextY + 40;
+    widgets.push({ type: 'button', id: 'mask_clear', label: 'Clear', x: 20, y: row1Y, w: 160, h: 60, disabled: true });
+    widgets.push({ type: 'button', id: 'mask_invert', label: 'Invert', x: 200, y: row1Y, w: 160, h: 60, disabled: true });
+    widgets.push({ type: 'button', id: 'mask_blur', label: 'Blur', x: 380, y: row1Y, w: 160, h: 60, disabled: true });
+    widgets.push({ type: 'button', id: 'mask_sharpen', label: 'Sharpen', x: 560, y: row1Y, w: 160, h: 60, disabled: true });
+
+    const row2Y = contextY + 120;
+    widgets.push({ type: 'button', id: 'mask_extract', label: 'Extract (Mockup)', x: 20, y: row2Y, w: 300, h: 60, disabled: true });
+    widgets.push({ type: 'slider', id: 'extract_thick', label: 'Thickness', x: 340, y: row2Y, w: 300, h: 40, value: 0.1, disabled: true });
 
   } else {
     // --- DEFAULT / VOXEL SETTINGS ---
@@ -62,6 +79,23 @@ export default function getToolsWidgets(main, activeToolIndex) {
     widgets.push({ type: 'slider', id: 'voxelRad', x: 340, y: contextY + 40, w: 300, h: 40, label: 'Radius Mult', value: 0.5 });
     widgets.push({ type: 'button', id: Enums.Tools.VOXEL, label: 'VOXEL TOOL', x: 20, y: contextY + 100, w: 200, h: 60 });
     widgets.push({ type: 'button', id: 'bake', label: 'BAKE TO MESH', x: 240, y: contextY + 100, w: 300, h: 60 });
+  }
+
+  // Common Tool Options (Alpha, etc.) - Mockups
+  // Ideally positioned in free space or context dependent
+  if (activeToolIndex !== Enums.Tools.PAINT) {
+    const alphaY = contextY + 180;
+    widgets.push({ type: 'info', label: 'ALPHA (MOCKUP)', x: 600, y: contextY });
+    widgets.push({ type: 'combobox', id: 'alpha_select', label: 'Alpha', x: 600, y: contextY + 40, w: 300, h: 60, disabled: true });
+    widgets.push({ type: 'button', id: 'alpha_import', label: 'Import', x: 600, y: contextY + 110, w: 140, h: 60, disabled: true });
+    widgets.push({ type: 'toggle', id: 'alpha_lock', label: 'Lock Pos', x: 760, y: contextY + 110, w: 140, h: 60, disabled: true });
+  }
+
+  if (activeToolIndex === Enums.Tools.BRUSH) {
+    // Add Clay/Accumulate
+    const brushY = contextY + 280;
+    widgets.push({ type: 'toggle', id: 'clay', label: 'Clay', x: 20, y: brushY, w: 140, h: 60, disabled: true });
+    widgets.push({ type: 'toggle', id: 'accumulate', label: 'Accumulate', x: 180, y: brushY, w: 140, h: 60, disabled: true });
   }
 
   // Topology (Bottom) - Dynamic Y

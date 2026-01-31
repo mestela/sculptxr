@@ -12,10 +12,15 @@ import getSceneWidgets from 'gui/vr/GuiVRScene';
 import getRenderingWidgets from 'gui/vr/GuiVRRendering';
 import getFilesWidgets from 'gui/vr/GuiVRFiles';
 import getHistoryWidgets from 'gui/vr/GuiVRHistory';
+import getTopologyWidgets from 'gui/vr/GuiVRTopology';
+
+// Direct access for property setters
+import MeshDynamic from 'mesh/dynamic/MeshDynamic';
+import Remesh from 'editing/Remesh';
 
 const TAB_HEIGHT = 100;
 const CANVAS_SIZE = 1024;
-const TABS = ['TOOLS', 'SCENE', 'VIEW', 'FILES', 'HISTORY'];
+const TABS = ['TOOLS', 'SCENE', 'TOPOLOGY', 'VIEW', 'FILES', 'HISTORY'];
 
 const OVERLAY_BG = 'rgba(0, 0, 0, 0.8)';
 const OVERLAY_W = 800;
@@ -66,12 +71,74 @@ class GuiXR {
     this._tabWidgets = {
       'TOOLS': getToolsWidgets(main, main.getSculptManager().getToolIndex()),
       'SCENE': getSceneWidgets(main),
+      'TOPOLOGY': getTopologyWidgets(main),
       'VIEW': getRenderingWidgets(main),
       'FILES': getFilesWidgets(main),
       'HISTORY': getHistoryWidgets(main)
     };
 
     setTimeout(() => this.syncToolRadius(), 500);
+
+    // Desktop Preview Toggle (Dev Tool)
+    window.addEventListener('keydown', (e) => {
+      if (e.shiftKey && e.altKey && e.code === 'KeyV') {
+        this.togglePreview();
+      }
+    });
+  }
+
+  // Console Helper for Tab Switching
+  switchTab(tabName) {
+    if (TABS.includes(tabName)) {
+      this._activeTab = tabName;
+      this._needsUpdate = true;
+      this.draw();
+      console.log(`[GuiXR] Switched to tab: ${tabName} `);
+    } else {
+      console.warn(`[GuiXR] Invalid tab: ${tabName}.Available: ${TABS.join(', ')} `);
+    }
+  }
+
+  nextTab() {
+    const idx = TABS.indexOf(this._activeTab);
+    const nextIdx = (idx + 1) % TABS.length;
+    this.switchTab(TABS[nextIdx]);
+  }
+
+  togglePreview() {
+    if (this._previewContainer) {
+      document.body.removeChild(this._previewContainer);
+      this._previewContainer = null;
+      console.log("[GuiXR] Desktop Preview Hidden");
+      return;
+    }
+
+    const div = document.createElement('div');
+    div.style.position = 'absolute';
+    div.style.top = '50%';
+    div.style.left = '50%';
+    div.style.transform = 'translate(-50%, -50%)';
+    div.style.zIndex = '9999';
+    div.style.border = '4px solid #00D0FF';
+    div.style.background = '#222';
+    div.style.boxShadow = '0 0 20px rgba(0,0,0,0.8)';
+    // Scale to fit height
+    const scale = (window.innerHeight * 0.8) / CANVAS_SIZE;
+    div.style.width = `${CANVAS_SIZE * scale}px`;
+    div.style.height = `${CANVAS_SIZE * scale}px`;
+
+    // Clone? No, we want the live canvas.
+    // CSS-scale the canvas to fit the container
+    this._canvas.style.width = '100%';
+    this._canvas.style.height = '100%';
+
+    div.appendChild(this._canvas);
+    document.body.appendChild(div);
+    this._previewContainer = div;
+
+    console.log("[GuiXR] Desktop Preview Visible (Visual Only). Use app.guiXR.switchTab('NAME') to navigate.");
+    this._needsUpdate = true;
+    this.draw();
   }
 
   // Reload widgets (e.g. when tool changes)
@@ -194,6 +261,10 @@ class GuiXR {
 
     // 2. Check Widgets
     if (targetWid) {
+      if (targetWid.disabled) {
+        console.log(`[GuiXR] Ignored disabled widget: ${targetWid.label}`);
+        return;
+      }
       // console.log(`[GuiXR] Interacted with widget: ${targetWid.id} (${targetWid.type})`);
       this._handleWidgetClick(targetWid);
       return;
@@ -645,11 +716,24 @@ class GuiXR {
 
       ctx.strokeStyle = isActive ? '#fff' : '#888';
       ctx.lineWidth = isActive ? 4 : 2;
+
+      // Disabled / Mockup Style
+      if (wid.disabled) {
+        ctx.fillStyle = '#222'; // Dark background
+        ctx.strokeStyle = '#333'; // Dim outline
+        ctx.lineWidth = 2;
+      }
+
       ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
       ctx.font = '28px sans-serif';
+
+      if (wid.disabled) {
+        ctx.fillStyle = '#555'; // Dim text
+      }
+
       if (wid.type === 'slider') {
         ctx.textAlign = 'left';
         ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 20, wid.y + wid.h / 2 + 10);

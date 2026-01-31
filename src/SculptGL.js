@@ -44,6 +44,14 @@ class SculptGL extends Scene {
 
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
+    window.app = this; // Ensure 'app' is also set globally
+
+    // Convenience for Console Debugging
+    Object.defineProperty(this, 'guiXR', {
+      get: function () { return this._guiXR; }
+    });
+    this.toggleMenu = () => { if (this._guiXR) this._guiXR.togglePreview(); };
+    this.nextTab = () => { if (this._guiXR) this._guiXR.nextTab(); };
 
     this.initHammer();
 

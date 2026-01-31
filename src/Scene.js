@@ -211,6 +211,10 @@ class Scene {
     return this._gui;
   }
 
+  getGuiXR() {
+    return this._guiXR;
+  }
+
   getMeshes() {
     return this._meshes;
   }
