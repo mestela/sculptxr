@@ -90,13 +90,13 @@ It should work on any WebXR compatible device. So far I've tested on
     - Re-symmetrize function, choose left->right, right->left
     - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
 - **UI + UX**  
-    - Controllers are represented with cubes, replace with something better - **DONE v0.6.51**    
+    - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - UX for importing meshes is clunky (forced back into 2d mode to get standard browser import dialog)
     - Double handed grip needs work, gets hard to control when the world has been scaled too large
-    - **Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing) - **DONE v0.6.50**
+    - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - **Content**: Add Primitive shapes (Cone, Cylinder, etc) for starting
 
