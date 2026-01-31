@@ -102,3 +102,23 @@ Improve usability of the "Environment" and "Matcap" selection in VR by making th
 *   **Visuals**: Headers are aligned with their dropdowns.
 *   **Feedback**: Changing the selection immediately updates the button text.
 *   **Regression Check**: The top-level "Matcap" button (under Shading Mode) remains labeled "Matcap".
+
+# Walkthrough: Radial Color Picker Refinement (v0.6.93)
+
+## Goal
+Improve the usability and accuracy of the VR Radial Color Picker based on user feedback.
+
+## Changes
+1.  **Geometry**:
+    *   **Size**: Increased widget height from 150px to **300px** for easier interaction.
+    *   **Ring Thickness**: Reduced from 50px to **20px** for a cleaner look.
+    *   **Square**: Nested strictly inside the ring.
+2.  **Color Mapping**:
+    *   **Hue**: Corrected logic to match standard HSV (Red at 0/Right, Green at 120/Top, Blue at 240/Left).
+    *   **Saturation/Value**: Clamped values to [0, 1] to prevent "out of bounds" drift.
+3.  **Stability**:
+    *   Fixed a `SyntaxError` caused by duplicate `cx`/`cy` variable declarations in the draw loop.
+
+## Verification
+*   **Visual**: Ring is thin and sharp. Colors match standard color wheels.
+*   **Interaction**: Dragging on the ring changes Hue smoothly. Dragging inside the square changes S/V.

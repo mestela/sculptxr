@@ -7,6 +7,7 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.93: **Radial Color Picker Refined**: Larger (300px), thinner ring (20px), and corrected Hue mapping (standard HSV).
 - v0.6.70: **Modular VR Menu**: Major overhaul of `GuiXR`. increased resolution to 1024x1024. Added Tabs (TOOLS, SCENE, VIEW, FILES, HISTORY). Added "Add Primitive" and "Rendering Settings".
 - v0.6.61: **Log Cleanup & Polish**: High-fidelity Quest Touch Plus controllers, PBR matte shading, ergonomic menu/laser offsets, and completely silent console logging.
 - v0.6.50: **UX Improvement**: Moved Undo/Redo shortcuts to the **Left Controller Thumbstick** (Axis 2) to prevent accidental brush resizing.
