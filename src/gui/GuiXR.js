@@ -856,22 +856,37 @@ class GuiXR {
     Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
     let [h, s, v] = hsv;
 
-    const cx = this._cursor.x;
-    const cy = this._cursor.y;
+    const mx = this._cursor.x;
+    const my = this._cursor.y;
 
-    // Layout (relative to widget)
-    // w.h is ~400.
-    const padding = 10;
-    const innerX = w.x + padding;
-    const innerY = w.y + padding;
-    const innerH = w.h - padding * 2;
-    const svSize = innerH; // Square
 
-    // SV Check
-    if (cx >= innerX && cx <= innerX + svSize && cy >= innerY && cy <= innerY + svSize) {
-      s = Math.max(0, Math.min(1, (cx - innerX) / svSize));
-      v = Math.max(0, Math.min(1, 1.0 - (cy - innerY) / svSize));
-      // Update Color
+
+    // Config (MUST MATCH DRAW LOGIC)
+    const cx = w.x + w.w * 0.5;
+    const cy = w.y + w.h * 0.5;
+    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const thickness = 20; // 50% thinner
+    const outerRadius = maxR;
+    const innerRadius = outerRadius - thickness;
+
+    // Square fits INSIDE innerRadius
+    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
+    const sqSize = sqHalf * 2;
+
+    const dx = mx - cx;
+    const dy = my - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // 1. Hue Ring Interaction (Annulus)
+    // Give some padding for touch/click: +/- 10px
+    if (dist >= innerRadius - 10 && dist <= outerRadius + 10) {
+      // Angle -> Hue
+      // atan2(y, x) -> -PI to PI
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += Math.PI * 2;
+      // Map 0..2PI to 0..1
+      h = angle / (Math.PI * 2);
+
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
       this._needsUpdate = true;
@@ -880,14 +895,22 @@ class GuiXR {
       return;
     }
 
-    // Hue Check
-    const hueX = innerX + svSize + 20;
-    const hueW = 50;
-    const hueH = svSize;
+    // 2. SV Square Interaction
+    if (Math.abs(dx) <= sqHalf + 10 && Math.abs(dy) <= sqHalf + 10) {
+      // Map dx, dy relative to square center to s, v
+      // Clamp to exact square bounds for value
+      const cDx = Math.max(-sqHalf, Math.min(sqHalf, dx));
+      const cDy = Math.max(-sqHalf, Math.min(sqHalf, dy));
 
-    if (cx >= hueX && cx <= hueX + hueW && cy >= innerY && cy <= innerY + hueH) {
-      h = Math.max(0, Math.min(1, (cy - innerY) / hueH));
-      // Update Color
+      // dx from -sqHalf to +sqHalf -> s from 0 to 1
+      // dy from -sqHalf to +sqHalf -> v from 1 to 0 (top is V=1, bottom is V=0)
+      s = (cDx + sqHalf) / sqSize;
+      v = 1.0 - (cDy + sqHalf) / sqSize;
+
+      // Clamp just in case floating point errors
+      s = Math.max(0, Math.min(1, s));
+      v = Math.max(0, Math.min(1, v));
+
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
       this._needsUpdate = true;
@@ -895,119 +918,190 @@ class GuiXR {
       this._main.render();
       return;
     }
-
-    /* Eyedropper Disabled
-    // Eyedropper (Next to Hue)
-    const dropperX = hueX + hueW + 20;
-    const dropperSize = 60;
-    if (cx >= dropperX && cx <= dropperX + dropperSize && cy >= innerY && cy <= innerY + dropperSize) {
-      tool._pickColor = !tool._pickColor;
-      // Ensure pick callback is set if it wasn't already
-      if (tool._pickColor && !tool._pickCallback) {
-        tool.setPickCallback((color, roughness, metallic) => {
-          vec3.copy(tool._color, color);
-          tool._material[0] = roughness;
-          tool._material[1] = metallic;
-          this._needsUpdate = true;
-          this.draw();
-          tool._pickColor = false; // Exit pick mode after one pick
-          console.log("Pick Color: ", color, roughness, metallic);
-        });
-      }
-      this._needsUpdate = true;
-      this.draw();
-      return;
-    }
-    */
   }
 
   _drawEmbeddedColorPicker(ctx, w) {
     const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
     if (!tool) return;
 
-    // Bg
+    // Background
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, w.h);
 
     const rgb = tool._color;
     const hsv = [0, 0, 0];
     Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
-    const [h, s, v] = hsv;
+    const [hue, s, v] = hsv;
 
-    const padding = 10;
-    const innerX = w.x + padding;
-    const innerY = w.y + padding;
-    const innerH = w.h - padding * 2;
-    const svSize = innerH;
+    const x = w.x;
+    const y = w.y;
 
-    // 1. SV Square
-    const baseRgb = Utils.hsv2rgb(h, 1, 1);
-    const cssBase = `rgb(${baseRgb[0] * 255}, ${baseRgb[1] * 255}, ${baseRgb[2] * 255})`;
+    // --- 1. Geometry Setup ---
+    const cx = x + w.w * 0.5;
+    const cy = y + w.h * 0.5;
+    // Fit within bounds, padding 10
+    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const thickness = 20; // 50% thinner (was ~40)
+    const outerRadius = maxR;
+    const innerRadius = outerRadius - thickness;
 
-    const grdS = ctx.createLinearGradient(innerX, innerY, innerX + svSize, innerY);
-    grdS.addColorStop(0, 'white');
-    grdS.addColorStop(1, cssBase);
-    ctx.fillStyle = grdS;
-    ctx.fillRect(innerX, innerY, svSize, svSize);
+    // Square fits INSIDE innerRadius
+    // diag = innerRadius * sqrt(2) / sqrt(2)? No.
+    // square half-size = innerRadius / sqrt(2)
+    // padding 10
+    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
+    const sqSize = sqHalf * 2;
+    const sqX = cx - sqHalf;
+    const sqY = cy - sqHalf;
 
-    const grdV = ctx.createLinearGradient(innerX, innerY, innerX, innerY + svSize);
-    grdV.addColorStop(0, 'rgba(0,0,0,0)');
-    grdV.addColorStop(1, 'rgba(0,0,0,1)');
-    ctx.fillStyle = grdV;
-    ctx.fillRect(innerX, innerY, svSize, svSize);
+    // --- 2. Draw Hue Ring ---
+    // User reported Pink vs Yellow mismatch -> Reversing gradient to match standard HSV
+    // Standard Canvas 'hue' is Red(0) -> Yellow -> Green -> Cyan -> Blue -> Magenta -> Red
+    // We want 0 at 3 o'clock or 12 o'clock?
+    // Let's use standard order.
+    // If we effectively rotate -90, 0 is Top.
 
-    // SV Cursor
-    const cx = innerX + s * svSize;
-    const cy = innerY + (1.0 - v) * svSize;
+    // We'll draw many segments for smooth gradient or use createConicGradient if available (Safari 15+, Chrome 99+)
+    // Fallback to segments if conic not supported? Most modern browsers have it.
+    // But check for "ctx.createConicGradient".
+
+    if (ctx.createConicGradient) {
+      ctx.save();
+      ctx.beginPath();
+    // Rotate -90 deg so Red is at Top? Or Right?
+    // Standard HSV wheel usually has Red at Right (0 deg) or Top (90 deg).
+    // Let's keep 0 at Right (Standard Math).
+    // But Conic Gradient starts at 3 o'clock by default? No, usually 0 is 3 o'clock.
+    // Wait, Conic Gradient starts at 0 (3 o'clock) going CLOCKWISE?
+    // Let's test standard: Red->Yellow...
+    // If I use the CSS colors above (Red, Magenta, Blue...) that is COUNTER-CLOCKWISE.
+    // Standard H is Red(0), Yellow(60), Green(120), Cyan(180), Blue(240), Magenta(300).
+    // So Red -> Yellow is increasing angle (Clockwise in Canvas? Y-down).
+    // 0 is 3 o'clock.
+    // So standard conic:
+    // 0: Red
+    // 1/6: Yellow
+    // 2/6: Green
+    // 3/6: Cyan
+    // 4/6: Blue
+    // 5/6: Magenta
+    // 1: Red
+
+      // Re-defining gradient for proper HSV Clockwise (Standard)
+      const g2 = ctx.createConicGradient(0, cx, cy);
+      g2.addColorStop(0, "red");
+      g2.addColorStop(1 / 6, "yellow");
+      g2.addColorStop(2 / 6, "lime"); // Green
+      g2.addColorStop(3 / 6, "cyan");
+      g2.addColorStop(4 / 6, "blue");
+      g2.addColorStop(5 / 6, "magenta");
+      g2.addColorStop(1, "red");
+
+      ctx.fillStyle = g2;
+      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+      ctx.arc(cx, cy, innerRadius, Math.PI * 2, 0, true);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // Fallback or simpler ring
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#888';
+      ctx.fill();
+    }
+
+    // --- 3. Sat/Val Square ---
+    // Draw Square
+    // 2D Gradient for SV
+    // Top-Left: White (S=0, V=1)
+    // Top-Right: Hue (S=1, V=1)
+    // Bottom-Left: Black (S=0, V=0)
+    // Bottom-Right: Black (S=1, V=0) -> actually V gradient is vertical.
+
+    // Fill White
+    ctx.fillStyle = 'white';
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    // Horizontal Gradient (White -> Hue)
+    const gH = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
+    gH.addColorStop(0, 'rgba(255,255,255,1)');
+    gH.addColorStop(1, `hsl(${hue * 360}, 100%, 50%)`);
+    ctx.fillStyle = gH;
+    ctx.globalCompositeOperation = 'multiply'; // Multiply to blend? No.
+    // Standard SV way: Layer 1: White. Layer 2: Linear-Horz transparent -> Hue. Layer 3: Linear-Vertical Black(0) -> Transparent? No.
+    // Better:
+    // Base: Hue
+    // Overlay 1: Linear-Horz White -> Transparent
+    // Overlay 2: Linear-Vert Transparent -> Black
+
+    // Reset Composite
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Draw Hue Base
+    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    // Draw Saturation (White to Transparent) - Actually S goes Left(0) to Right(1).
+    // So Left is White (desaturated), Right is Pure Hue.
+    const gSat = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
+    gSat.addColorStop(0, 'white');
+    gSat.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gSat;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    // Draw Value (Transparent to Black) - Top(1) to Bottom(0).
+    // So Top is Transparent (Visible), Bottom is Black.
+    const gVal = ctx.createLinearGradient(sqX, sqY, sqX, sqY + sqSize);
+    gVal.addColorStop(0, 'rgba(0,0,0,0)');
+    gVal.addColorStop(1, 'black');
+    ctx.fillStyle = gVal;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+
+    // --- 4. Inputs & Interactions ---
+    if (this._capturedWidget === w) {
+      // Convert mouse coords to local
+      // We use GuiXR's _lastInputX/Y relative to canvas?
+      // This function is draw(), but let's assume update logic happens here or we use stored input.
+      // Actually GuiXR handles input in _handleColorPickerInteract.
+      // We should move logic there?
+      // Currently `_handleColorPickerInteract` calls this... NO, `_handleEmbeddedColorPicker` handles interact.
+      // `_drawEmbeddedColorPicker` assumes state is updated.
+    }
+
+    // --- 5. Indicators ---
+    // Hue Ring Indicator
+    // The hue value `h` is 0 at 3 o'clock and increases clockwise.
+    const angle = hue * Math.PI * 2;
+    // 0 is Right (Red).
+    const rInd = (innerRadius + outerRadius) * 0.5;
+    const indX = cx + Math.cos(angle) * rInd;
+    const indY = cy + Math.sin(angle) * rInd;
+
+    ctx.beginPath();
+    ctx.arc(indX, indY, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fill();
+
+    // SV Square Indicator
+    // S = x, V = y (inverted? Top is V=1, Bottom V=0)
+    // S: 0 (Left) -> 1 (Right)
+    // V: 0 (Bottom) -> 1 (Top) => y = (1-V)*size
+    const svX = sqX + s * sqSize; // saturation
+    const svY = sqY + (1.0 - v) * sqSize; // value (1=top, 0=bottom)
+
+    ctx.beginPath();
+    ctx.arc(svX, svY, 6, 0, Math.PI * 2);
     ctx.strokeStyle = (v < 0.5) ? 'white' : 'black';
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
     ctx.stroke();
 
-    // 2. Hue Strip
-    const hueX = innerX + svSize + 20;
-    const hueW = 50;
-    const hueH = svSize;
-    const grdH = ctx.createLinearGradient(hueX, innerY, hueX, innerY + hueH);
-    grdH.addColorStop(0.00, '#ff0000');
-    grdH.addColorStop(0.17, '#ffff00');
-    grdH.addColorStop(0.33, '#00ff00');
-    grdH.addColorStop(0.50, '#00ffff');
-    grdH.addColorStop(0.67, '#0000ff');
-    grdH.addColorStop(0.83, '#ff00ff');
-    grdH.addColorStop(1.00, '#ff0000');
-    ctx.fillStyle = grdH;
-    ctx.fillRect(hueX, innerY, hueW, hueH);
-
-    // Hue Cursor
-    const hcy = innerY + h * hueH;
-    ctx.fillStyle = 'white';
-    ctx.fillRect(hueX - 2, hcy - 3, hueW + 4, 6);
-    ctx.strokeStyle = 'black';
-    ctx.strokeRect(hueX - 2, hcy - 3, hueW + 4, 6);
-
-  /* Eyedropper Disabled
-  // 3. Eyedropper Button
-  const dropperX = hueX + hueW + 20;
-  const dropperSize = 60;
-  const isActive = tool._pickColor;
-
-  ctx.fillStyle = isActive ? '#00A040' : '#444';
-  ctx.fillRect(dropperX, innerY, dropperSize, dropperSize);
-  ctx.strokeStyle = '#fff';
-  ctx.strokeRect(dropperX, innerY, dropperSize, dropperSize);
-
-  // Icon
-  if (this._dropperIcon && this._dropperIcon.complete) {
-    ctx.drawImage(this._dropperIcon, dropperX + 5, innerY + 5, dropperSize - 10, dropperSize - 10);
-  } else {
-    ctx.fillStyle = '#fff';
-    ctx.font = '20px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText("ID", dropperX + dropperSize / 2, innerY + dropperSize / 2 + 7);
-  }
-  */
+    const cssFinal = `rgb(${Math.floor(rgb[0] * 255)}, ${Math.floor(rgb[1] * 255)}, ${Math.floor(rgb[2] * 255)})`;
+    ctx.fillStyle = cssFinal;
+    ctx.fill();
   }
 
   updateTexture() {

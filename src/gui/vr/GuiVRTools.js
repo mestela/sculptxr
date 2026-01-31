@@ -51,8 +51,8 @@ export default function getToolsWidgets(main, activeToolIndex) {
     widgets.push({ type: 'toggle', id: 'write_metalness', label: 'Metal', x: 580, y: row2Y, w: 100, h: 60 });
 
     // Row 3: Embedded Color Picker
-    // 50% smaller size requested
-    const pickerH = 220;
+    // 50% smaller size requested -> Now 30% larger (User Feedback)
+    const pickerH = 300;
     widgets.push({ type: 'colorpicker_embedded', id: 'picker', x: 20, y: row2Y + 80, w: 400, h: pickerH });
 
   } else {
@@ -65,14 +65,11 @@ export default function getToolsWidgets(main, activeToolIndex) {
   }
 
   // Topology (Bottom) - Dynamic Y
-  // If Paint: contextY + 100 (Row2) + 80 (Spacing) + 220 (Picker) + 40 (Padding) = contextY + 440
-  // contextY is ~430 -> 870
-  // Default: contextY + 100 + 60 + 40 = contextY + 200 -> 630
-
+  // If Paint: contextY + 100 (Row2) + 80 (Spacing) + 300 (Picker) + 40 (Padding)
   let topoY = 700;
   if (activeToolIndex === Enums.Tools.PAINT) {
     const row2Y = contextY + 100;
-    topoY = row2Y + 80 + 220 + 40;
+    topoY = row2Y + 80 + 300 + 40;
   } else {
     topoY = contextY + 220;
   }
