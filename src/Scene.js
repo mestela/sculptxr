@@ -1044,7 +1044,7 @@ class Scene {
   }
 
   initVRControllers() {
-    // Simple 5cm cube for controllers
+    // Simple 5cm cube for controllers (Placeholder)
     var gl = this._gl;
     if (!gl) return; // Wait for GL
 
@@ -1057,15 +1057,22 @@ class Scene {
 
       mesh.setShaderType(Enums.Shader.FLAT);
       mesh.setFlatColor(color);
+      mesh.isPlaceholder = true;
       mesh.init();
       mesh.initRender();
       return mesh;
     };
 
     if (Primitives) {
-      this._vrControllerLeft = makeCtrl([0.0, 1.0, 0.0]); // GREEN
-      this._vrControllerRight = makeCtrl([0.0, 0.0, 1.0]); // BLUE
-      if (window.screenLog) window.screenLog("Created Controllers: Left(Green), Right(Blue)", "lime");
+      if (!this._vrControllerLeft) {
+        this._vrControllerLeft = makeCtrl([0.0, 1.0, 0.0]); // GREEN
+        this.loadVRController('left');
+      }
+      if (!this._vrControllerRight) {
+        this._vrControllerRight = makeCtrl([0.0, 0.0, 1.0]); // BLUE
+        this.loadVRController('right');
+      }
+      // if (window.screenLog) window.screenLog("Created Controllers (Loading Models...)", "lime");
     }
 
     // Init VR Menu System
@@ -1073,6 +1080,72 @@ class Scene {
     this._guiXR.init(this._gl);
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
     if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
+  }
+
+  loadVRController(handedness) {
+    // URL must be relative to the page (root)
+    // Files are in src/resources/controllers/
+    // Switched to PLY for robustness/efficiency
+    const url = `src/resources/controllers/controller_${handedness}.ply`;
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'text'; // PLY is ASCII now
+
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        // Ensure Import is defined
+        if (typeof Import === 'undefined') {
+          if (window.screenLog) window.screenLog("CRITICAL: Import module not found!", "red");
+          return;
+        }
+
+        try {
+          // Log header for debug
+          var headerPreview = xhr.response ? xhr.response.substring(0, 50).replace(/\n/g, '\\n') : "null";
+          console.log(`PLY Header (${handedness}): ${headerPreview}`);
+
+          var meshes = Import.importPLY(xhr.response, this._gl);
+          if (meshes && meshes.length > 0) {
+            // Validate mesh has vertices
+            if (meshes[0].getNbVertices() > 0) {
+              var mesh = meshes[0];
+
+              mesh.init(); // Compute normals/topology first
+
+              mesh.setShaderType(Enums.Shader.FLAT);
+              mesh.setFlatColor([0.15, 0.15, 0.15]);
+
+              mesh.initRender();
+              mesh.isPlaceholder = false;
+
+              // Replace Reference
+              if (handedness === 'left') this._vrControllerLeft = mesh;
+              else this._vrControllerRight = mesh;
+
+              if (window.screenLog) window.screenLog(`Loaded ${handedness} Controller (PLY)`, "lime");
+            } else {
+              if (window.screenLog) window.screenLog(`Empty mesh for ${handedness}`, "orange");
+            }
+          } else {
+            if (window.screenLog) window.screenLog(`ImportPLY returned no meshes for ${handedness}`, "orange");
+          }
+        } catch (e) {
+          console.error(e);
+          if (window.screenLog) {
+            window.screenLog(`Error parsing ${handedness}: ${e.message}`, "red");
+            window.screenLog(`Stack: ${e.stack}`, "orange");
+          }
+        }
+      } else {
+        console.warn(`Controller load failed: ${url}`);
+        if (window.screenLog) window.screenLog(`Failed to load ${handedness} controller (404)`, "red");
+      }
+    }.bind(this);
+    xhr.onerror = function () {
+      if (window.screenLog) window.screenLog(`Network Error loading ${handedness} controller`, "red");
+    };
+    xhr.send(null);
   }
 
   updateVRControllerPose(handedness, position, orientation) {
@@ -1093,7 +1166,9 @@ class Scene {
     mat4.fromRotationTranslation(mat, rot, pos);
 
     // Apply Scale (Controllers are 1.0 size cubes, we want 0.02m = 2cm)
-    mat4.scale(mat, mat, [0.02, 0.02, 0.02]);
+    // Real Models (OBJ) are in Meters (~0.15), so we scale by 1.0 (no change) or adjustment
+    const scale = mesh.isPlaceholder ? 0.02 : 1.0;
+    mat4.scale(mat, mat, [scale, scale, scale]);
 
     // DEBUG: Verify Right Controller Position (Fixed)
     // if (handedness === 'right' && window.screenLog && this._logThrottle % 200 === 0) {
@@ -1395,12 +1470,12 @@ class Scene {
 
         } else {
           // Log Failure
-          if (window.screenLog && this._logThrottle % 180 === 0) {
-            const hasRaySpace = !!source.targetRaySpace;
-            const hasGripSpace = !!source.gripSpace;
-            const hasMenu = !!this._vrMenu;
-            window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
-          }
+          // if (window.screenLog && this._logThrottle % 180 === 0) {
+          //   const hasRaySpace = !!source.targetRaySpace;
+          //   const hasGripSpace = !!source.gripSpace;
+          //   const hasMenu = !!this._vrMenu;
+          //   window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
+          // }
         }
       }
 

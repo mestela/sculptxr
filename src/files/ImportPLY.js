@@ -108,7 +108,7 @@ var getBinaryRead = function (dview, prop, isFloat) {
 };
 
 var readHeader = function (buffer) {
-  var data = Utils.ab2str(buffer);
+  var data = (typeof buffer === 'string') ? buffer : Utils.ab2str(buffer);
   var lines = data.split('\n');
 
   var infos = {
@@ -393,9 +393,9 @@ Import.importPLY = function (buffer, gl) {
   }
 
   var mesh = new MeshStatic(gl);
-  mesh.setVertices(infos.vertices);
-  mesh.setFaces(infos.faces);
-  mesh.setColors(infos.colors);
+  if (infos.vertices) mesh.setVertices(infos.vertices);
+  if (infos.faces) mesh.setFaces(infos.faces);
+  if (infos.colors) mesh.setColors(infos.colors);
   return [mesh];
 };
 

@@ -1,25 +1,53 @@
-# SculptGL WebXR Implementation Handover (v0.6.33)
+# Handover Prompt (Protocol Enforced)
 
-## Current Status
-**Version**: `v0.6.33` (Stable)
-**Active Task**: Maintenance / Feature Polish.
+**Current Status**: **v0.6.55** deployed to Beta.
+**Current Working Directory**: `/usr/local/google/home/mattestela/.gemini/jetski/scratch/sculptxr`
+**Checkpoint**: Handover after robust VR Controller integration.
+**Accomplishments**: 
+- **Fixed Critical Crash**: Resolved "Cannot read properties of null (reading 'length')" by reordering mesh initialization (`init` before `setShaderType`).
+- **Robust Loading**: Implemented ASCII PLY support with fallback handlers in `ImportPLY.js`.
+- **Cache Busting**: Enforced cache busting (`?v=0.6.55`) on all modules to prevent version skews.
+- **Pipeline**: Added `scripts/convert_controllers.py` and `scripts/fetch_controllers.sh`.
 
-## Achievements
-- **VRLaser**: Implemented a context-sensitive Red Laser Pointer for the VR Menu.
-    - **Visuals**: Unlit Red Cylinder (1mm radius).
-    - **Behavior**: Only visible when pointing at the menu; dynamic length matches distance.
-- **90fps Cursor**: Decoupled VR Menu cursor from the 30fps texture update loop.
-- **Crash Fixes**: Resolved `ShaderFlat` crashes.
-- **VR Menu Depth**: Fixed incorrect depth sorting.
+## Critical Instructions for Next Agent
+1.  **Step ID Fatigue**: The previous session ran long (~330 steps), leading to "emoji creep" and overzealous auto-deployment. **STRICTLY FOLLOW `project_rules.md`**.
+    *   **NO EMOJIS**.
+    *   **NO AUTO-COMMIT**.
+    *   **NO AUTO-DEPLOY TO PROD**.
+- **v0.6.55** (Beta)
+    - Robust, instrumented ASCII PLY loading.
+    - `ImportPLY.js` now accepts strings directly.
+    - `Scene.js` logs first 50 chars of PLY header to debug 404/Empty/Corrupt issues.
+- **v0.6.54** (Beta)
+    - Switched to **ASCII PLY** for controller models.
+    - Reason: Binary PLY parsing in `ImportPLY.js` was crashing (`null` array access). ASCII PLY bypasses `ab2str` and binary offsets.
+- **v0.6.53** (Beta)
+    - Attempted Binary PLY (failed).
+- **v0.6.52** (Beta)
+    - Debug release (Import try/catch).
+5.  **Current State**:
+    *   Code is committed and pushed (`desktop_ui` branch).
+    *   Production (`sculptvr`) v0.6.50.
+    *   Beta (`sculptvrbeta`) v0.6.51 (Controllers).
+    *   `project_rules.md` is updated.
 
-## Known Issues
-- **None Critical**.
-- **Minor**: Dynamic Topology in VR is enabled but behavior is inconsistent/unverified.
+## Next High-Priority Tasks
+1.  **Voxel Grid Visualization**: Draw wireframe bounds for Voxel mode.
+2.  **Matcap UI**: Add UI to swap matcaps/environments.
 
-## Next Steps
-1.  **Voxel Grid Visualization**: Users report drawing out of bounds; a visual bounding box would help.
-2.  **Spectator Mode**: Implement Desktop Mirroring for PCVR.
+## Deployment
+See `project_rules.md` for strict protocol.
+-   **Beta**: `./deploy_beta.sh` (Auto-allowed for testing).
+-   **Prod**: `./deploy.sh` (**FORBIDDEN** without explicit user request).
 
-## Useful Commands
-- `deploy.sh`: Deploys to Production (`sculptxr`).
-- `deploy_beta.sh`: Deploys to Beta (`sculptxrbeta`).
+## Interactive Debugging Protocol
+- **Preference**: Use the browser console for immediate state inspection and manipulation whenever possible.
+- **Workflow**:
+    1.  Provide copy-pasteable JavaScript snippets for the user to run in the console.
+    2.  Use `app`, `app.getMesh()`, `app.getPicking()`, `app.getSculptManager()` entry points.
+    3.  Analyze the return values to decide the next code fix.
+
+## Communication Style
+1.  **NO EMOJIS**: Do not use emojis in ANY response, title, task name, or commit message. Zero tolerance.
+2.  **Professional Tone**: Keep all communication professional, concise, and sober.
+3.  **No False Confidence**: Do not use words like "final", "real", "definitive", "corrected" to describe a solution. Use "updated", "new iteration", "attempt".

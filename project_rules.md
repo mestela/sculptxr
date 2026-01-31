@@ -6,6 +6,10 @@
 3. **PRODUCTION LOCK**: Production deployment (`sculptvr`) is **FORBIDDEN** without explicit user approval following a successful Beta test.
 4. **VR VERIFICATION**: Do not request VR testing until a Beta deployment is confirmed successful.
 5. **ROLLBACK CAUTION**: Do not perform blind rollbacks. Stop and Plan.
+6. **MANUAL COMMIT & DEPLOY (Added Jan 31)**:
+    *   **NEVER automatically commit changes.** Wait for explicit user request/approval.
+    *   **NEVER automatically deploy to PRODUCTION.** Wait for explicit user request/approval.
+    *   **Beta Deployment is allowed** for testing purposes, but Production is strictly off-limits until final approval.
 
 ## Commit Protocol
 **"Working First, Clean Later"**
@@ -23,7 +27,7 @@
 1.  **Commit EVERYTHING**: `git add .` (No partial commits. All config/scripts included).
 2.  **Documentation of Truth**: Update `walkthrough.md` (or a specific checkpoint doc) with a **Plain English Reconstruction Guide**.
     *   *Standard*: "Could a stranger rewrite this feature from scratch reading *only* this doc?"
-    *   Must include: Key logic changes, math derivations, and specific file modifications.
+    *   *Must include*: Key logic changes, math derivations, and specific file modifications.
 3.  **Tag**: Start commit message with `[PARANOID]`.
 
 ## Versioning & Debugging Protocol

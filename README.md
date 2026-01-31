@@ -10,7 +10,8 @@
 - v0.6.50: **UX Improvement**: Moved Undo/Redo shortcuts to the **Left Controller Thumbstick** (Axis 2) to prevent accidental brush resizing.
 - v0.6.49: **Fixed Symmetry Drift**: Implemented Surface-Relative Culling to prevent brushes from grabbing back-facing geometry, ensuring perfect symmetry.
 - v0.6.33: **New VRLaser**: Added Red Cylinder Laser Pointer for menu interaction (Context-sensitive, only visible when pointing at menu).
-- v0.6.5: Fix VR Menu Depth Sorting (Menu now correctly occluded by objects)
+- v0.6.51: **VR Controller Models**: Replaced placeholder cubes with official Oculus Touch v3 (Quest 2/3 style) models.
+
 - v0.6.4: Fix VR Brush Lag (Cap Search Radius to 5cm Physical), Unit Correction
 - v0.5.375: Fix VR Symmetry Skipping (Search Radius 4x), Revert Normal Culling
 - v0.5.60: fixed desktop exposure (removed double-gamma), calibrated VR scale (100 units = 1m), fixed initial camera offset (starting position)
@@ -34,6 +35,26 @@ It should work on any WebXR compatible device. So far I've tested on
     - Render ported to webXR
     - Works in PCVR (accessible via Meta Link/Air Link).
     - **Native Quest 2/3 Support**: Includes AR Passthrough mode (select it from the view menu, there's a noticable pause/glitch when it swaps)
+
+- **v0.6.55** (Beta)
+    - Fix: Resolved "Cannot read properties of null (reading 'length')" error during PLY loading.
+    - Fix: Reordered `mesh.init()` before `mesh.setShaderType()` in `Scene.js` to ensure normals are computed before buffer updates.
+    - Fix: Comprehensive Cache Busting (`?v=0.6.55`) for all modules in `importmap`.
+    - Robustness: `ImportPLY.js` now handles both String and Buffer input and protects against null `vertices`/`faces`.
+- **v0.6.54** (Beta)
+    - Fix: Switched to ASCII PLY format to resolve binary parsing issues in `ImportPLY.js`.
+    - Note: Binary PLY was failing with "Cannot read properties of null (reading 'length')" inside `ImportPLY` logic (likely `readHeader` or `ab2str` edge cases). ASCII is robust.
+- **v0.6.53** (Beta)
+    - Feature: Switch to PLY format for VR controllers (robust binary loading).
+    - Pipeline: `convert_controllers.py` now exports PLY.
+- **v0.6.52** (Beta)
+    - Fix: Corrected URL path for VR controller models (`src/resources` vs `resources`).
+    - Fix: Enhanced failure logging for controller loading.
+    - Fix: Cache-busting for core JS modules to ensure updates propagate.
+    - Cleanup: Removed spammy 'Ray Fail' logs.
+- **v0.6.51** (Beta)
+    - Feature: Automated Oculus Controller Model Loading (OBJ).
+    - Pipeline: `fetch_controllers.sh` and `convert_controllers.py`.
 
 - **Interaction**:
     - **VR Tablet Menu**: UI moved to a palette on the left controller, basic butttons, toggles, sliders
@@ -64,7 +85,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - Re-symmetrize function, choose left->right, right->left
     - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
 - **UI + UX**  
-    - Controllers are represented with cubes, replace with something better    
+    - Controllers are represented with cubes, replace with something better - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky
     - Jump between passthrough (AR) and immersive (VR) modes is janky
