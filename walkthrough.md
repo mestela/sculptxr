@@ -122,3 +122,40 @@ Improve the usability and accuracy of the VR Radial Color Picker based on user f
 ## Verification
 *   **Visual**: Ring is thin and sharp. Colors match standard color wheels.
 *   **Interaction**: Dragging on the ring changes Hue smoothly. Dragging inside the square changes S/V.
+
+# Walkthrough: VR Menu Expansion (v0.6.98)
+
+## Goal
+Expand the VR Menu from a simple "Tools Only" interface to a comprehensive suite of controls matching the desktop application, including Topology, Scene, and View settings.
+
+## Features Added
+1.  **Topology Tab**:
+    -   **Multiresolution**: Subdivide, Reverse, and Delete Levels.
+    -   **Dynamic Topology**: Enable/Disable, Subdivision Factor (Slider), Decimation Factor (Slider).
+    -   **Remesh**: Surface Remesh and Marching Cubes Remesh triggers.
+2.  **Scene Settings Tab**:
+    -   **Primitives**: Add Sphere, Cube, Cylinder, Torus directly into the scene.
+    -   **Clear Scene**: Clean slate.
+3.  **View Settings Tab**:
+    -   **Wireframe**: Toggle on/off.
+    -   **Flat Shading**: Toggle on/off.
+    -   **PBR/Matcap**: Switch shader modes.
+4.  **Files Tab**:
+    -   **Import/Export**: OBJ/STL/PLY support (triggers browser download/upload dialogs).
+5.  **History Tab**:
+    -   **Undo/Redo**: Infinite history stack navigation.
+
+## Desktop Preview (New Workflow)
+To facilitate faster iteration on these complex layouts without constant headset toggling:
+-   **Command**: `Shift + Alt + V` (or `app.guiXR.togglePreview()` in console).
+-   **Behavior**: Renders the live VR Menu texture (1024x1024) as a DOM overlay on the desktop screen.
+-   **Interaction**: Mouse clicks on the overlay simulate VR Pointer interactions (UV-based).
+
+## Technical Details
+-   **Widgets**: Standardized `GuiVR*.js` modules for each tab to keep `GuiXR.js` clean.
+-   **Scrolling**: (Future) Currently menus are static pages; overflowing content may be clipped.
+-   **Performance**: Menu redraws are throttled to 30Hz to preserve VR framerate.
+
+## Verification
+-   **Preview**: Use `Shift+Alt+V` to verify layout alignment.
+-   **Function**: Verify "Subdivide" actually increases vertex count (visible in wireframe).

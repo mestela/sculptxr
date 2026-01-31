@@ -1,39 +1,82 @@
 import Enums from 'misc/Enums';
+import TR from 'gui/GuiTR';
 
 export default function getRenderingWidgets(main) {
-  return [
-    { type: 'info', label: '--- SHADING MODE ---', x: 20, y: 130 },
+  const widgets = [];
+  const col1X = 20;
 
-    //     { type: 'toggle', id: 'flat', label: 'Flat Shading', x: 20, y: 270, w: 200, h: 80 },
-    //     { type: 'toggle', id: 'wireframe', label: 'Wireframe', x: 240, y: 270, w: 200, h: 80 },
+  const btnH = 60;
+  const gapBtn = 20;
+  const gapSection = 40;
+  const gapHeader = 40;
 
-    // Shader Types (Expanded)
-    { type: 'button', id: 'pbr', label: 'PBR', x: 20, y: 170, w: 140, h: 80 },
-    { type: 'button', id: 'matcap', label: 'Matcap', x: 170, y: 170, w: 140, h: 80 },
-    { type: 'button', id: 'normal', label: 'Normal', x: 320, y: 170, w: 140, h: 80, disabled: true }, // Mockup
-    { type: 'button', id: 'uv', label: 'UV', x: 470, y: 170, w: 140, h: 80, disabled: true }, // Mockup
+  let y = 130;
 
-    { type: 'toggle', id: 'flat', label: 'Flat', x: 20, y: 270, w: 140, h: 80 },
-    { type: 'toggle', id: 'wireframe', label: 'Wire', x: 170, y: 270, w: 140, h: 80 },
-    { type: 'toggle', id: 'filmic', label: 'Filmic', x: 320, y: 270, w: 140, h: 80, disabled: true }, // Mockup
+  // --- SHADER ---
+  widgets.push({ type: 'info', label: 'SHADER', x: col1X, y: y });
+  y += gapHeader;
 
-    // Comboboxes
-    { type: 'info', label: 'ENVIRONMENT', x: 20, y: 390 },
-    { type: 'combobox', id: 'environment', label: 'Environment', x: 20, y: 430, w: 420, h: 80 },
-
-    { type: 'info', label: 'MATCAP', x: 460, y: 390 },
-    { type: 'combobox', id: 'matcap', label: 'Matcap', x: 460, y: 430, w: 300, h: 80 },
-    { type: 'button', id: 'import_matcap', label: 'Import', x: 770, y: 430, w: 130, h: 80, disabled: true }, // Mockup
-
-    { type: 'info', label: '--- POST PROCESS ---', x: 20, y: 550 },
-    { type: 'slider', id: 'exposure', label: 'Exposure', x: 20, y: 590, w: 300, h: 40, value: 0.2 }, 
-    { type: 'slider', id: 'curvature', label: 'Curvature', x: 340, y: 590, w: 300, h: 40, value: 0.2 },
-    { type: 'slider', id: 'transparency', label: 'Transparency', x: 660, y: 590, w: 240, h: 40, value: 0, disabled: true }, // Mockup
-
-    { type: 'info', label: '--- VISUALS ---', x: 20, y: 660 },
-    { type: 'toggle', id: 'symmetry', label: 'Symmetry', x: 20, y: 700, w: 200, h: 80 },
-    { type: 'toggle', id: 'grid', label: 'Grid', x: 240, y: 700, w: 200, h: 80 },
-    { type: 'toggle', id: 'contour', label: 'Contour', x: 460, y: 700, w: 200, h: 80 },
-    { type: 'toggle', id: 'passthrough', label: 'AR Mode', x: 680, y: 700, w: 200, h: 80 },
+  const shaderOptions = [
+    { label: TR('renderingMatcap'), id: Enums.Shader.MATCAP },
+    { label: TR('renderingPBR'), id: Enums.Shader.PBR },
+    { label: TR('renderingNormal'), id: Enums.Shader.NORMAL },
+    { label: TR('renderingUV'), id: Enums.Shader.UV }
   ];
+
+  widgets.push({
+    type: 'combobox',
+    id: 'shader_type',
+    label: 'Shader',
+    x: col1X, y: y, w: 400, h: btnH,
+    value: main.getMesh() ? main.getMesh().getShaderType() : 0,
+    options: shaderOptions,
+    onSelect: (id) => {
+      if (main.getMesh()) {
+        main.getMesh().setShaderType(id);
+        main.render();
+        // Force UI update
+        if (main.guiXR) main.guiXR._needsUpdate = true;
+      }
+    }
+  });
+  y += btnH + gapSection;
+
+
+  // --- OPTIONS ---
+  widgets.push({ type: 'info', label: 'OPTIONS', x: col1X, y: y });
+  y += gapHeader;
+
+  const mesh = main.getMesh();
+  const flat = mesh ? mesh.getFlatShading() : false;
+  const wire = mesh ? mesh.getShowWireframe() : false;
+
+  widgets.push({ type: 'checkbox', id: 'flat', label: 'Flat Shading', x: col1X, y: y, w: 250, h: btnH, value: flat });
+  widgets.push({ type: 'checkbox', id: 'wireframe', label: 'Wireframe', x: 300, y: y, w: 250, h: btnH, value: wire });
+  widgets.push({ type: 'checkbox', id: 'filmic', label: 'Filmic', x: 550, y: y, w: 200, h: btnH, disabled: true });
+  y += btnH + gapBtn;
+
+  widgets.push({ type: 'slider', id: 'curvature', label: 'Curvature', x: col1X, y: y + 10, w: 400, h: 40, value: 0.2 });
+  widgets.push({ type: 'slider', id: 'exposure', label: 'Exposure', x: 450, y: y + 10, w: 300, h: 40, value: 0.2 });
+  y += btnH + gapSection; // Slider row
+
+
+  // --- ENVIRONMENT / MATCAP ---
+  widgets.push({ type: 'info', label: 'ENV / MATCAP', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({ type: 'combobox', id: 'environment', label: 'Environment', x: col1X, y: y, w: 400, h: btnH });
+  widgets.push({ type: 'combobox', id: 'matcap', label: 'Matcap', x: 450, y: y, w: 300, h: btnH });
+  y += btnH + gapBtn;
+
+  widgets.push({ type: 'button', id: 'import_matcap', label: 'Import Matcap', x: 450, y: y, w: 200, h: btnH, disabled: true });
+  y += btnH + gapSection;
+
+
+  // --- EXTRA ---
+  widgets.push({ type: 'info', label: 'EXTRA', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({ type: 'slider', id: 'transparency', label: 'Transparency', x: col1X, y: y, w: 400, h: 40, value: 0, disabled: true });
+
+  return widgets;
 }

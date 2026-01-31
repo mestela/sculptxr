@@ -9,9 +9,9 @@ ROOT_DIR = os.getcwd()
 class XRDevHandler(http.server.SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1" # Enable persistent connections
     def do_GET(self):
-        # 1. Root -> xr_poc.html
+        # 1. Root -> index.html
         if self.path == '/' or self.path == '/index.html':
-            self.path = '/xr_poc.html'
+            self.path = '/index.html'
             return http.server.SimpleHTTPRequestHandler.do_GET(self)
         
         normalized_path = self.path.lstrip('/')

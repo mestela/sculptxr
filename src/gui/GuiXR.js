@@ -13,6 +13,7 @@ import getRenderingWidgets from 'gui/vr/GuiVRRendering';
 import getFilesWidgets from 'gui/vr/GuiVRFiles';
 import getHistoryWidgets from 'gui/vr/GuiVRHistory';
 import getTopologyWidgets from 'gui/vr/GuiVRTopology';
+import getSettingsWidgets from 'gui/vr/GuiVRSettings';
 
 // Direct access for property setters
 import MeshDynamic from 'mesh/dynamic/MeshDynamic';
@@ -20,7 +21,9 @@ import Remesh from 'editing/Remesh';
 
 const TAB_HEIGHT = 100;
 const CANVAS_SIZE = 1024;
-const TABS = ['TOOLS', 'SCENE', 'TOPOLOGY', 'VIEW', 'FILES', 'HISTORY'];
+// Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
+// VR Tabs: FILES, SCENE, HISTORY, SETTINGS, VIEW, TOPOLOGY, TOOLS
+const TABS = ['FILES', 'SCENE', 'HISTORY', 'SETTINGS', 'VIEW', 'TOPOLOGY', 'TOOLS'];
 
 const OVERLAY_BG = 'rgba(0, 0, 0, 0.8)';
 const OVERLAY_W = 800;
@@ -74,7 +77,8 @@ class GuiXR {
       'TOPOLOGY': getTopologyWidgets(main),
       'VIEW': getRenderingWidgets(main),
       'FILES': getFilesWidgets(main),
-      'HISTORY': getHistoryWidgets(main)
+      'HISTORY': getHistoryWidgets(main),
+      'SETTINGS': getSettingsWidgets(main)
     };
 
     setTimeout(() => this.syncToolRadius(), 500);
@@ -127,8 +131,6 @@ class GuiXR {
     div.style.width = `${CANVAS_SIZE * scale}px`;
     div.style.height = `${CANVAS_SIZE * scale}px`;
 
-    // Clone? No, we want the live canvas.
-    // CSS-scale the canvas to fit the container
     this._canvas.style.width = '100%';
     this._canvas.style.height = '100%';
 
@@ -136,7 +138,43 @@ class GuiXR {
     document.body.appendChild(div);
     this._previewContainer = div;
 
-    console.log("[GuiXR] Desktop Preview Visible (Visual Only). Use app.guiXR.switchTab('NAME') to navigate.");
+    console.log("[GuiXR] Desktop Preview Visible (Interactive).");
+
+    // Attach Events
+    const mapEventToNormalized = (e) => {
+      const rect = this._canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      return { u: x, v: y };
+    };
+
+    const onPointerDown = (e) => {
+      if (e.button !== 0) return; // Only left click
+      e.preventDefault();
+      const { u, v } = mapEventToNormalized(e);
+      this.setCursor(u, v);
+      this.onInteract(u, v, true);
+    };
+    const onPointerMove = (e) => {
+      e.preventDefault();
+      const { u, v } = mapEventToNormalized(e);
+      this.setCursor(u, v);
+    };
+    const onPointerUp = (e) => {
+      e.preventDefault();
+      this.setCursor(-1, -1); // Deactivate cursor
+    };
+
+    this._canvas.addEventListener('pointerdown', onPointerDown);
+    this._canvas.addEventListener('pointermove', onPointerMove);
+    this._canvas.addEventListener('pointerup', onPointerUp);
+
+    this._previewCleanup = () => {
+      this._canvas.removeEventListener('pointerdown', onPointerDown);
+      this._canvas.removeEventListener('pointermove', onPointerMove);
+      this._canvas.removeEventListener('pointerup', onPointerUp);
+    };
+
     this._needsUpdate = true;
     this.draw();
   }
@@ -419,27 +457,33 @@ class GuiXR {
       const ShaderMatcap = Shader[Enums.Shader.MATCAP];
       const ShaderPBR = Shader[Enums.Shader.PBR];
 
-      if (w.id === 'matcap') {
+      // Generic Support (Preferred)
+      if (w.options) {
+        opts = w.options;
+        cb = w.onSelect;
+      }
+      // Legacy Hardcoded Support
+      else if (w.id === 'matcap') {
         if (ShaderMatcap && ShaderMatcap.matcaps) {
           opts = ShaderMatcap.matcaps.map((m, i) => ({ label: m.name, id: i }));
-        } else {
-          console.error("[GuiXR] ShaderMatcap.matcaps not found!", ShaderMatcap);
         }
         cb = (id) => {
-          this._main.getMesh().setShaderType(Enums.Shader.MATCAP);
-          this._main.getMesh().setMatcap(id);
-          this._main.render();
+          if (this._main) {
+            this._main.getMesh().setShaderType(Enums.Shader.MATCAP);
+            this._main.getMesh().setMatcap(id);
+            this._main.render();
+          }
         };
       } else if (w.id === 'environment') {
         if (ShaderPBR && ShaderPBR.environments) {
           opts = ShaderPBR.environments.map((e, i) => ({ label: e.name, id: i }));
-        } else {
-          console.error("[GuiXR] ShaderPBR.environments not found!", ShaderPBR);
         }
         cb = (id) => {
-          this._main.getMesh().setShaderType(Enums.Shader.PBR);
-          ShaderPBR.idEnv = id;
-          this._main.render();
+          if (this._main) {
+            this._main.getMesh().setShaderType(Enums.Shader.PBR);
+            ShaderPBR.idEnv = id;
+            this._main.render();
+          }
         };
       }
 
@@ -610,45 +654,48 @@ class GuiXR {
   }
 
   draw() {
-    const now = performance.now();
-    if (!this._lastDraw) this._lastDraw = 0;
-    if (now - this._lastDraw < 30) return;
-    this._lastDraw = now;
+    if (!this._needsUpdate) return;
+    this._needsUpdate = false;
 
     const ctx = this._ctx;
-    const w = this._canvas.width;
-    const h = this._canvas.height;
+    const w = CANVAS_SIZE;
+    const h = CANVAS_SIZE;
 
-    // Background
-    ctx.fillStyle = '#222';
+    // BG
+    ctx.fillStyle = '#202020';
     ctx.fillRect(0, 0, w, h);
 
-    // --- DRAW TABS ---
-    const tabWidth = w / TABS.length;
-    TABS.forEach((tab, i) => {
-      const isActive = (tab === this._activeTab);
-      const tx = i * tabWidth;
-      ctx.fillStyle = isActive ? '#444' : '#333';
-      ctx.fillRect(tx, 0, tabWidth, TAB_HEIGHT);
+    // Header / Tabs
+    const tabW = w / TABS.length;
+    ctx.font = '30px sans-serif';
+    ctx.textAlign = 'center';
+
+    for (let i = 0; i < TABS.length; ++i) {
+      const t = TABS[i];
+      const isActive = t === this._activeTab;
+      const x = i * tabW;
+
+      ctx.fillStyle = isActive ? '#0070A0' : '#333';
+      ctx.fillRect(x, 0, tabW, TAB_HEIGHT);
+
       ctx.strokeStyle = '#111';
       ctx.lineWidth = 2;
-      ctx.strokeRect(tx, 0, tabWidth, TAB_HEIGHT);
+      ctx.strokeRect(x, 0, tabW, TAB_HEIGHT);
+
       ctx.fillStyle = isActive ? '#fff' : '#888';
-      ctx.font = isActive ? 'bold 36px sans-serif' : '36px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(tab, tx + tabWidth / 2, TAB_HEIGHT / 2);
-      if (isActive) {
-        ctx.fillStyle = '#00D0FF';
-        ctx.fillRect(tx, TAB_HEIGHT - 6, tabWidth, 6);
-      }
-    });
+
+      // Auto-scale font if too long
+      // ctx.font = (t.length > 8) ? '24px sans-serif' : '30px sans-serif';
+      // Resetting font for each tab to be safe
+      ctx.font = '30px sans-serif';
+      ctx.fillText(t, x + tabW / 2, TAB_HEIGHT / 2 + 10);
+    }
 
     // --- DRAW WIDGETS ---
     const widgets = this._getWidgets();
     const mesh = this._main ? this._main.getMesh() : null;
     let activeTool = -1;
-    if (this._main?.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
+    if (this._main && this._main.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
 
     for (let wid of widgets) {
       if (wid.type === 'info') {
@@ -665,9 +712,8 @@ class GuiXR {
       if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
       if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
       if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
-      if (wid.id === 'passthrough' && this._main) isActive = (this._main.getXRMode() === 'immersive-ar');
-      if (wid.id === 'pbr' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.PBR);
-      if (wid.id === 'matcap' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.MATCAP);
+      // Passthrough check might need generic handling
+      // if (wid.id === 'passthrough' && this._main) isActive = (this._main.getXRMode() === 'immersive-ar');
 
       // Paint Toggles
       if (wid.id === 'pick_color') {
@@ -689,42 +735,20 @@ class GuiXR {
 
       ctx.fillStyle = isActive ? '#00A040' : '#444';
       if (wid.type === 'slider') ctx.fillStyle = '#555';
-      if (wid.type === 'combobox') ctx.fillStyle = '#334455';
-      if (wid.type === 'color') {
-        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        if (tool) {
-          const c = tool._color;
-          ctx.fillStyle = `rgb(${Math.floor(c[0] * 255)}, ${Math.floor(c[1] * 255)}, ${Math.floor(c[2] * 255)})`;
-        } else {
-          ctx.fillStyle = '#000';
-        }
-      }
+      if (wid.disabled) ctx.fillStyle = '#222';
 
-      if (this._clickedWidget === wid && this._lastClick && (performance.now() - this._lastClick < 200)) ctx.fillStyle = '#fff';
-
-      ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-
-      if (wid.type === 'slider') {
-        ctx.fillStyle = '#0070A0';
-        ctx.fillRect(wid.x, wid.y, wid.w * wid.value, wid.h);
-      }
-
-      if (wid.type === 'color') {
-        // Already filled above
-        // Stroke
+      // Checkbox style overrides logic below
+      if (wid.type === 'button' || wid.type === 'toggle' || wid.type === 'checkbox' || wid.type === 'combobox') {
+        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
       }
 
       ctx.strokeStyle = isActive ? '#fff' : '#888';
       ctx.lineWidth = isActive ? 4 : 2;
-
-      // Disabled / Mockup Style
-      if (wid.disabled) {
-        ctx.fillStyle = '#222'; // Dark background
-        ctx.strokeStyle = '#333'; // Dim outline
-        ctx.lineWidth = 2;
+      // Standard Box Outline
+      // Standard Box Outline
+      if (wid.type !== 'slider' && wid.type !== 'info' && wid.type !== 'colorpicker_embedded') {
+        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
       }
-
-      ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
@@ -737,6 +761,9 @@ class GuiXR {
       if (wid.type === 'slider') {
         ctx.textAlign = 'left';
         ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 20, wid.y + wid.h / 2 + 10);
+      } else if (wid.type === 'checkbox' || wid.type === 'toggle') {
+        ctx.textAlign = 'left';
+        ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
       } else {
         let displayLabel = wid.label;
         if (wid.id === 'environment' && wid.type === 'combobox') {
@@ -767,6 +794,10 @@ class GuiXR {
         ctx.lineTo(triX + 10, triY - 5);
         ctx.lineTo(triX, triY + 10);
         ctx.fill();
+
+        ctx.strokeStyle = '#888';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
       }
 
       if (wid.type === 'colorpicker_embedded') {

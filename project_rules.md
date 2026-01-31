@@ -103,7 +103,7 @@ See [Deployment Protocol](#deployment-protocol)
     -   *Persistence*: Logic is valid for 24h (via `ControlPersist`).
     -   *Agent Protocol*: Agent **should** attempt `./deploy.sh`. If it hangs/fails, ask user to "Please Tap Key".
 -   **Deployment Safety (Version Guard)**:
-    -   Script automatically parses `xr_poc.html` for `VERSION: vX.Y.Z`.
+    -   Script automatically parses `index.html` for `VERSION: vX.Y.Z`.
     -   Compares against `.last_deployed_version` (PROD) or `.last_deployed_beta` (BETA).
     -   **Rule**: Version must be strictly greater than last deployed (unless using FORCE).
     -   **Beta Channel**: Use `./deploy_beta.sh` for rapid testing (tracks version independently in `.last_deployed_beta`).
@@ -119,6 +119,11 @@ See [Deployment Protocol](#deployment-protocol)
     -   Add `vX.Y.Z: [Summary]` to the top of the **Releases** section.
     -   Move completed items from **Todo** to **Features**.
     -   Review **Features** for accuracy.
+
+## Desktop Preview Protocol (Added Feb 01)
+-   **Goal**: Iterate on VR Menu layouts without putting on the headset.
+-   **Command**: `Shift + Alt + V` (or `app.guiXR.togglePreview()` in console).
+-   **Usage**: Opens a 1:1 overlay of the VR Menu texture on the desktop screen. Mouse acts as the VR Pointer.
 
 ## Deployment & Caching (Updated Jan 26)
 1.  **Client-Side Clearing**: User utilizes "Application -> Clear Site Data" in DevTools to ensure fresh code.
