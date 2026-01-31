@@ -1,31 +1,34 @@
 # Handover Prompt (Protocol Enforced)
 
-**Current Status**: **v0.6.70 - Modular VR UI** (Merged to Master & Deployed)
+**Current Status**: **v0.6.77 - VR Combobox Refinement** (Deployed to Beta)
 **Current Working Directory**: `/usr/local/google/home/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Handover after "Polish & Silence" phase.
+**Checkpoint**: Handover after "VR Combobox Refinement" phase.
 
 ## System State
-- **Branch**: `master` (Contains all recent UI/Controller/Log updates)
-- **Version**: `v0.6.70`
-- **Deployment**: Production and Beta are both live with v0.6.70.
+- **Branch**: `master` (Contains v0.6.77 changes)
+- **Version**: `v0.6.77`
+- **Deployment**:
+    - **Beta**: `v0.6.77` (Verified)
+    - **Production**: `v0.6.70` (Pending Approval)
 
 ## Recent Accomplishments
-1.  **High-Fidelity Controllers**: Quest Touch Plus models (PLY) with matte PBR shading.
-2.  **Polished Offsets**:
-    - **Menu**: 3cm Up, 3cm Right (Left Hand) to reveal buttons.
-    - **Laser**: 1cm offset (Right Hand) to prevent mesh intersection.
-3.  **Log Cleanliness**: All high-frequency console logs (raycasts, updates, brush events) have been silenced. Only critical version info remains.
-4.  **Modular VR Menu**: Major overhaul of `GuiXR` (v0.6.70). increased resolution to 1024x1024. Added Tabs (TOOLS, SCENE, VIEW, FILES, HISTORY). Added "Add Primitive" and "Rendering Settings".
-5.  **Documentation**: README updated with strikethrough todos; Handover prompt cleaned.
+1.  **VR Combobox Refinement (v0.6.77)**:
+    -   **Split Headers**: "ENVIRONMENT" and "MATCAP" are now separate headers.
+    -   **Dynamic Labels**: Buttons now display the *name* of the selected item (e.g., "studio_small_01") instead of generic text.
+    -   **Scoped Logic**: Ensures dynamic labeling only applies to specific widgets.
+2.  **Modular VR Menu (v0.6.70)**: 1024x1024 resolution, Tabs (TOOLS, SCENE, VIEW, ETC).
+3.  **High-Fidelity Controllers**: Quest Touch Plus models.
 
-## Verification Walkthrough (v0.6.61)
-1.  **Launch**: Open the app on Quest 3.
-2.  **Verify UI**: Check for "SculptXR VERSION: v0.6.70 - Modular UI (1024px)".
-3.  **Enter VR**:
-    - **Resolution**: Check that text is crisp (1024x1024).
-    - **Tabs**: Verify all tabs (TOOLS, SCENE, VIEW, FILES, HISTORY) trigger correctly.
-    - **Add Primitive**: Test "Add Sphere" from SCENE tab.
-    - **Rendering**: Test "Wireframe" toggle from VIEW tab.
+## Verification Walkthrough (v0.6.77)
+1.  **Launch**: Open Beta URL on Quest 3.
+2.  **Verify UI**: Check for "SculptXR VERSION: v0.6.77".
+3.  **Combobox Test**:
+    -   Open "VIEW" tab.
+    -   Note the "Environment" button shows the current env name.
+    -   Click it, select a different one.
+    -   Verify the button text updates immediately.
+    -   Repeat for "Matcap".
 
 ## Next Steps
-- **User Defined**: The user has cleared the agenda. Await new instructions.
+- **Production Deployment**: Await user approval to deploy v0.6.77 to Production.
+- **User Defined**: Await new instructions.

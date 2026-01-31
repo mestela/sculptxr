@@ -87,3 +87,18 @@ Overhaul the limited "Proof of Concept" VR Tablet into a robust, extensible UI t
 ## Technical Details
 *   **Y-Coordinate Shift**: Adjusted layout start to `y=120` to accommodate the larger Header bar in the 1024px layout.
 *   **Throttling**: Maintained the 30Hz draw/upload limit to ensure 90Hz headset tracking remains smooth.
+
+# Walkthrough: VR Combobox Refinement (v0.6.77)
+
+## Goal
+Improve usability of the "Environment" and "Matcap" selection in VR by making the layout cleaner and the current selection visible at a glance.
+
+## Changes
+1.  **Layout Split**: Split the single "ENVIRONMENT & MATERIALS" header into two aligned headers: "ENVIRONMENT" and "MATCAP".
+2.  **Dynamic Labels**: The combobox buttons now display the *name* of the currently selected environment or matcap (e.g., "clay", "studio_small_01") instead of the static generic labels.
+3.  **Scoped Logic**: Ensure dynamic labeling only applies to `combobox` widgets to prevent accidental renaming of other buttons (like the main "Matcap" shading mode toggle).
+
+## Verification
+*   **Visuals**: Headers are aligned with their dropdowns.
+*   **Feedback**: Changing the selection immediately updates the button text.
+*   **Regression Check**: The top-level "Matcap" button (under Shading Mode) remains labeled "Matcap".
