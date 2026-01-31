@@ -1,60 +1,61 @@
+
 export default function getFilesWidgets(main) {
   const widgets = [];
-  // Spacing Constants
-  const col1X = 20;
-  const colWidth = 200;
-  const btnH = 60;
-  const gapBtn = 20; // Gap between button rows
-  const gapSection = 40; // Gap above header
-  const gapHeader = 40; // Gap below header (to next button)
 
-  let y = 130;
+  const w = 350; // Menu Width
+  const pad = 10;
+  const itemH = 50;
+  const headerH = 40;
 
-  // --- Import / Export ---
-  widgets.push({ type: 'info', label: 'IMPORT / EXPORT', x: col1X, y: y });
-  y += gapHeader;
+  let y = 10;
+  const x = 10;
+  const contentW = w - 20;
 
-  // Row 2: OBJ / STL
-  widgets.push({ type: 'button', id: 'import_obj', label: 'Import OBJ', x: col1X, y: y, w: colWidth, h: btnH });
-  widgets.push({ type: 'button', id: 'export_obj', label: 'Export OBJ', x: col1X + 220, y: y, w: colWidth, h: btnH });
-  widgets.push({ type: 'button', id: 'export_stl', label: 'Export STL', x: col1X + 440, y: y, w: colWidth, h: btnH });
-  widgets.push({ type: 'button', id: 'export_sgl', label: 'Export SGL', x: col1X + 660, y: y, w: colWidth, h: btnH, disabled: true });
-  y += btnH + gapBtn;
+  // Helpers
+  const addHeader = (label) => {
+    widgets.push({ type: 'info', label, x, y, w: contentW, h: headerH, header: true }); // Special flag for header style
+    y += headerH;
+  };
+  const addButton = (id, label) => {
+    widgets.push({ type: 'button', id, label, x, y, w: contentW, h: itemH, textAlign: 'left' });
+    y += itemH;
+  };
+  const addCheckbox = (id, label, valueObj, valueKey) => {
+    // We assume valueObj[valueKey] holds boolean, update via callback or reliance on main loop?
+    // GuiXR updates usually need explicit state or getter.
+    // For now, let's just make them buttons that toggle state or standard checkboxes if supported.
+    // GuiXR supports 'checkbox'.
+    widgets.push({ type: 'checkbox', id, label, x, y, w: contentW, h: itemH, value: false }); // Logic handled in GuiXR
+    y += itemH;
+  };
 
-  // Row 3: More Exports
-  widgets.push({ type: 'button', id: 'export_ply', label: 'Export PLY', x: col1X, y: y, w: colWidth, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'obj_zbrush', label: 'ZBrush Color', x: col1X + 220, y: y, w: colWidth, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'obj_append', label: 'Append Color', x: col1X + 440, y: y, w: colWidth, h: btnH, disabled: true });
-  y += btnH + gapSection;
+  // --- Import ---
+  addHeader('Import');
+  addButton('import_obj', 'Add (obj, sgl, ply, stl)');
+  addCheckbox('import_scale', 'Scale and center');
+  addCheckbox('import_srgb', 'sRGB vertex color');
 
-  // --- Import Options ---
-  widgets.push({ type: 'info', label: 'IMPORT OPTIONS', x: col1X, y: y });
-  y += gapHeader;
+  // --- Export Scene ---
+  y += 10;
+  addHeader('Export Scene');
+  addCheckbox('export_all', 'Export all');
+  addButton('export_sgl', 'Save .sgl (SculptGL)');
+  addButton('export_obj', 'Save .obj');
+  addButton('export_ply', 'Save .ply');
+  addButton('export_stl', 'Save .stl');
+  addCheckbox('export_zbrush', 'OBJ color zbrush');
+  addCheckbox('export_append', 'OBJ color append');
+  addButton('go_sketchfab', 'Go to Sketchfab !');
 
-  widgets.push({ type: 'button', id: 'auto_matrix', label: 'Auto Matrix', x: col1X, y: y, w: colWidth, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'vert_srgb', label: 'Vertex SRGB', x: col1X + 220, y: y, w: colWidth, h: btnH, disabled: true });
-  y += btnH + gapSection;
+  // --- Export Textures ---
+  y += 10;
+  addHeader('Export textures');
+  widgets.push({ type: 'slider', id: 'tex_size', label: 'Size', x, y, w: contentW, h: itemH, value: 0.5 });
+  y += itemH;
 
-  // --- Texture Export ---
-  widgets.push({ type: 'info', label: 'TEXTURE EXPORT', x: col1X, y: y });
-  y += gapHeader;
+  addButton('save_diffuse', 'Save diffuse');
+  addButton('save_roughness', 'Save roughness');
+  addButton('save_metalness', 'Save metalness');
 
-  // Slider (Size)
-  // Sliders often draw label above/left. In VR Menu, slider label is inside/above?
-  // Let's check visual. Previous screen showed "Size: 0.50" inside?
-  // Standard slider height 40.
-  widgets.push({ type: 'slider', id: 'tex_size', label: 'Size', x: col1X, y: y, w: 400, h: 40, value: 0.5, disabled: true });
-  y += 40 + gapBtn; // Smaller gap for slider to buttons?
-
-  widgets.push({ type: 'button', id: 'save_color', label: 'Save Color', x: col1X, y: y, w: colWidth, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'save_rough', label: 'Save Rough', x: col1X + 220, y: y, w: colWidth, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'save_metal', label: 'Save Metal', x: col1X + 440, y: y, w: colWidth, h: btnH, disabled: true });
-  y += btnH + gapSection;
-
-  // Footer
-  widgets.push({ type: 'info', label: 'Files will be saved to your browser downloads.', x: col1X, y: y });
-  y += 40;
-  widgets.push({ type: 'info', label: 'Importing will open a system dialog (exit VR temporarily).', x: col1X, y: y });
-
-  return widgets;
+  return { widgets, width: w, height: y + 20 };
 }

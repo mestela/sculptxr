@@ -148,6 +148,25 @@ class GuiXR {
 
   // Console Helper for Tab Switching
   switchTab(tabName) {
+    if (tabName === 'FILES') {
+      // New: Open Files as Dropdown Menu
+      // We calculate X position based on tab index (0)
+      const tabIdx = 0;
+      const w = this._canvas.width;
+      const r1W = w / GLOBAL_TABS.length;
+      const x = tabIdx * r1W;
+
+      const filesData = getFilesWidgets(this._main);
+      this.openOverlay('menu', {
+        x: x,
+        y: TAB_HEIGHT,
+        w: filesData.width,
+        h: filesData.height,
+        widgets: filesData.widgets
+      });
+      return;
+    }
+
     if (tabName === 'TOOLS') {
       this._viewMode = 'SIDEBAR';
       this._scrollOffset = 0;
@@ -508,7 +527,17 @@ class GuiXR {
     }
 
     // Close if clicking outside box
-    if (cx < OVERLAY_X || cx > OVERLAY_X + OVERLAY_W || cy < OVERLAY_Y || cy > OVERLAY_Y + OVERLAY_H) {
+    // Custom bounds for 'menu' which has variable size
+    let ox = OVERLAY_X, oy = OVERLAY_Y, ow = OVERLAY_W, oh = OVERLAY_H;
+
+    if (this._overlay === 'menu' && this._overlayData) {
+      ox = this._overlayData.x;
+      oy = this._overlayData.y;
+      ow = this._overlayData.w;
+      oh = this._overlayData.h;
+    }
+
+    if (cx < ox || cx > ox + ow || cy < oy || cy > oy + oh) {
       console.log("[GuiXR] Closing overlay (clicked outside)");
       this.closeOverlay();
       return;
@@ -526,6 +555,8 @@ class GuiXR {
       this._handleComboboxInteract(cx, cy);
     } else if (this._overlay === 'colorpicker') {
       this._handleColorPickerInteract(cx, cy);
+    } else if (this._overlay === 'menu') {
+      this._handleMenuInteract(cx, cy);
     }
   }
 
@@ -547,6 +578,38 @@ class GuiXR {
       console.log(`[GuiXR] Selected option ${index}: ${opt.label}`);
       if (data.callback) data.callback(opt.id !== undefined ? opt.id : index);
       this.closeOverlay();
+    }
+  }
+
+  _handleMenuInteract(cx, cy) {
+    const data = this._overlayData;
+    if (!data || !data.widgets) return;
+
+    // Relativize coords
+    const rx = cx - data.x;
+    const ry = cy - data.y;
+
+    // Check click on menu widgets
+    for (const w of data.widgets) {
+      if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
+        if (!w.disabled && !w.header) {
+          console.log(`[GuiXR] Menu Click: ${w.id}`);
+          // Execute action? Or toggle?
+          // For now just Log.
+          // Ideally: this._executeAction(w);
+          // We need to support 'checkbox' toggles as well.
+          // If checkbox, toggle value in widget?
+          if (w.type === 'checkbox') {
+            w.value = !w.value;
+            console.log(`[GuiXR] Toggled ${w.id} to ${w.value}`);
+            this._needsUpdate = true;
+          } else if (w.type === 'button') {
+            // Trigger action
+            this.closeOverlay(); // Close menu on action? usually yes.
+          }
+        }
+        return;
+      }
     }
   }
 
@@ -1134,6 +1197,105 @@ class GuiXR {
 
     ctx.textAlign = 'left';
     ctx.fillText(this._overlayData.title || this._overlay, OVERLAY_X + 20, OVERLAY_Y + 50);
+
+    // Draw OVERLAY if active
+    if (this._overlay === 'menu' && this._overlayData) {
+      const { x, y, w, h, widgets } = this._overlayData;
+
+      // Shadow / Dimmer for background?
+      // ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      // ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+      // Menu Box
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 20;
+      ctx.fillStyle = '#222'; // Dark Menu BG
+      ctx.fillRect(x, y, w, h);
+      ctx.shadowBlur = 0;
+
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, w, h);
+
+      // Draw Menu Widgets
+      widgets.forEach(wid => {
+        const wx = x + wid.x;
+        const wy = y + wid.y;
+
+        ctx.textAlign = 'left';
+
+        if (wid.header) {
+          ctx.font = 'bold 18px sans-serif';
+          ctx.fillStyle = '#aaa';
+          ctx.fillText(wid.label, wx + 5, wy + wid.h - 10);
+          // Separator line?
+          ctx.strokeStyle = '#444';
+          ctx.beginPath();
+          ctx.moveTo(wx, wy + wid.h - 5);
+          ctx.lineTo(wx + wid.w, wy + wid.h - 5);
+          ctx.stroke();
+        } else if (wid.type === 'checkbox') {
+          // Checkbox logic
+          const boxSize = 24;
+          const boxX = wx + wid.w - boxSize - 5;
+          const boxY = wy + (wid.h - boxSize) / 2;
+
+          ctx.fillStyle = '#111';
+          ctx.fillRect(boxX, boxY, boxSize, boxSize);
+          ctx.strokeStyle = '#555';
+          ctx.strokeRect(boxX, boxY, boxSize, boxSize);
+
+          if (wid.value) {
+            ctx.fillStyle = '#0f0'; // Checkmark
+            ctx.fillRect(boxX + 4, boxY + 4, boxSize - 8, boxSize - 8);
+          }
+
+          ctx.font = '18px sans-serif';
+          ctx.fillStyle = '#ddd';
+          ctx.textAlign = 'left';
+          ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
+
+        } else if (wid.type === 'slider') {
+          // Slider Logic
+          ctx.font = '18px sans-serif';
+          ctx.fillStyle = '#ddd';
+          ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
+
+          // Draw Slider Bar
+          const sliderW = 120;
+          const sliderH = 6;
+          const sliderX = wx + wid.w - sliderW - 10;
+          const sliderY = wy + wid.h / 2 - sliderH / 2;
+
+          ctx.fillStyle = '#111';
+          ctx.fillRect(sliderX, sliderY, sliderW, sliderH);
+
+          // Knob
+          // Mock value 0.5
+          const knobX = sliderX + sliderW * (wid.value || 0.5);
+          ctx.fillStyle = '#888';
+          ctx.fillRect(knobX - 5, sliderY - 5, 10, 16);
+
+          // Value Text?
+          ctx.fillStyle = '#aaa';
+          ctx.textAlign = 'right';
+          ctx.fillText("1024", sliderX - 10, wy + wid.h / 2 + 6);
+
+
+        } else if (wid.type === 'button') {
+          ctx.fillStyle = '#333';
+          ctx.fillRect(wx, wy, wid.w, wid.h);
+
+          // Hover effect? Need hover state.
+
+          ctx.font = '18px sans-serif';
+          ctx.fillStyle = wid.disabled ? '#666' : '#fff';
+          ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
+        }
+      });
+      return; // Skip other overlays if Menu is open? Or draw on top? 
+      // Usually Menu is top.
+    }
 
     if (this._overlay === 'combobox') {
       this._drawCombobox(ctx);
