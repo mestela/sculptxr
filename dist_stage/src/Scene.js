@@ -151,8 +151,8 @@ class Scene {
       const tool = this._sculptManager.getCurrentTool();
       const toolName = tool ? tool.constructor.name : "None";
       const toolIdx = this._sculptManager.getToolIndex();
-      if (window.screenLog) window.screenLog(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`, "lime");
-      console.log(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`);
+      // if (window.screenLog) window.screenLog(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`, "lime");
+      // console.log(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`);
 
       // Force Voxel Start if Voxel Tool provided
       if (toolName === 'SculptVoxel' && tool.forceInit) {
@@ -381,7 +381,14 @@ class Scene {
 
       // VR Menu (Attached to Left Controller) - Pass 1
       if (this._vrMenu && this._vrPoseLeft) {
-        this._vrMenu.updateMatrices(cam, this._vrPoseLeft);
+        // [USER REQUEST] Lift menu 3cm to avoid Z-fighting with controller
+        const menuPose = mat4.clone(this._vrPoseLeft);
+        const lift = mat4.create();
+        // [USER REQUEST] Lift menu 3cm (Y) and shift 3cm Right (X) to reveal buttons
+        mat4.fromTranslation(lift, [0.03, 0.03, 0.0]);
+        mat4.multiply(menuPose, menuPose, lift);
+
+        this._vrMenu.updateMatrices(cam, menuPose);
         this._vrMenu.render(this);
       }
 
@@ -389,7 +396,8 @@ class Scene {
       if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
         // Default to 1.0 if undefined
         const dist = this._vrLaserDistance || 1.0;
-        this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist);
+        // [USER REQUEST] Push laser start 1cm away to avoid intersecting controller
+        this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
         this._vrLaser.render(this);
       }
 
@@ -1103,7 +1111,7 @@ class Scene {
         try {
           // Log header for debug
           var headerPreview = xhr.response ? xhr.response.substring(0, 50).replace(/\n/g, '\\n') : "null";
-          console.log(`PLY Header (${handedness}): ${headerPreview}`);
+          // console.log(`PLY Header (${handedness}): ${headerPreview}`);
 
           var meshes = Import.importPLY(xhr.response, this._gl);
           if (meshes && meshes.length > 0) {
@@ -1113,8 +1121,11 @@ class Scene {
 
               mesh.init(); // Compute normals/topology first
 
-              mesh.setShaderType(Enums.Shader.FLAT);
-              mesh.setFlatColor([0.15, 0.15, 0.15]);
+              // [USER REQUEST] Matte/Lambert shading (PBR)
+              mesh.setShaderType(Enums.Shader.PBR);
+              mesh.setAlbedo([0.5, 0.5, 0.5]); // Lighter Gray
+              mesh.setRoughness(0.8); // Matte
+              mesh.setMetallic(0.0);  // Plastic/Rubber
 
               mesh.initRender();
               mesh.isPlaceholder = false;
@@ -1123,7 +1134,7 @@ class Scene {
               if (handedness === 'left') this._vrControllerLeft = mesh;
               else this._vrControllerRight = mesh;
 
-              if (window.screenLog) window.screenLog(`Loaded ${handedness} Controller (PLY)`, "lime");
+              // if (window.screenLog) window.screenLog(`Loaded ${handedness} Controller (PLY)`, "lime");
             } else {
               if (window.screenLog) window.screenLog(`Empty mesh for ${handedness}`, "orange");
             }
@@ -1153,7 +1164,7 @@ class Scene {
     if (!mesh) return;
 
     if (window.screenLog && !this._hasLoggedCtrl) {
-      window.screenLog(`First Controller Update: ${handedness}`, 'lime');
+      // window.screenLog(`First Controller Update: ${handedness}`, 'lime');
       this._hasLoggedCtrl = true;
     }
 
@@ -1829,7 +1840,7 @@ class Scene {
 
         // Deep Trace: Start Stroke
         if (window.screenLog && this._logThrottle++ % 60 === 0) {
-          window.screenLog("Sculpt: START STROKE (r=" + sliderVal.toFixed(2) + ")", "lime");
+          // window.screenLog("Sculpt: START STROKE (r=" + sliderVal.toFixed(2) + ")", "lime");
         }
 
         this._sculptManager.start(false);

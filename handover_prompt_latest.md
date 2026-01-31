@@ -14,41 +14,33 @@
     *   **NO EMOJIS**.
     *   **NO AUTO-COMMIT**.
     *   **NO AUTO-DEPLOY TO PROD**.
-- **v0.6.55** (Beta)
-    - Robust, instrumented ASCII PLY loading.
-    - `ImportPLY.js` now accepts strings directly.
-    - `Scene.js` logs first 50 chars of PLY header to debug 404/Empty/Corrupt issues.
-- **v0.6.54** (Beta)
-    - Switched to **ASCII PLY** for controller models.
-    - Reason: Binary PLY parsing in `ImportPLY.js` was crashing (`null` array access). ASCII PLY bypasses `ab2str` and binary offsets.
-- **v0.6.53** (Beta)
-    - Attempted Binary PLY (failed).
-- **v0.6.52** (Beta)
-    - Debug release (Import try/catch).
-## Current State
-Code is committed and pushed (`desktop_ui` branch).
--   **Production**: v0.6.50 (Stable).
--   **Beta**: v0.6.55 (Controllers + Fixes).
--   **Environment**: `project_rules.md` is active.
+### **Current Status:**
+- **Version:** v0.6.61 (Deployed to Production & Beta)
+- **Key Features:**
+  - **High-Fidelity VR Controllers:** Integrated Meta Quest Touch Plus models (sourced from Meta's SDK).
+  - **Matte PBR Shading:** Controllers use a custom PBR material (Albedo `[0.5, 0.5, 0.5]`, Roughness `0.8`, Metallic `0.0`) for a sleek, non-distracting look.
+  - **Smooth Normals:** Fixed faceted look by processing PLY normals during conversion.
+  - **Ergonomic Offsets:**
+    - **Laser Pointer:** Offset 1cm from controller tip.
+    - **VR Menu:** Offset 3cm UP (+Y) and 3cm RIGHT (+X) to prevent occlusion of controller buttons.
+  - **Silent Logging:** Removed high-frequency logs for a clean debugging experience.
 
-## Next High-Priority Tasks
-1.  **Refine VR Controllers**: User validation indicates "things that need correcting" (likely pivot, scale, or material).
-2.  **Voxel Grid Visualization**: Draw wireframe bounds for Voxel mode.
-3.  **Matcap UI**: Add UI to swap matcaps/environments.
+### **Latest Walkthrough (v0.6.61)**
 
-## Deployment
-See `project_rules.md` for strict protocol.
--   **Beta**: `./deploy_beta.sh` (Auto-allowed for testing).
--   **Prod**: `./deploy.sh` (**FORBIDDEN** without explicit user request).
-
-## Interactive Debugging Protocol
-- **Preference**: Use the browser console for immediate state inspection and manipulation whenever possible.
-- **Workflow**:
-    1.  Provide copy-pasteable JavaScript snippets for the user to run in the console.
-    2.  Use `app`, `app.getMesh()`, `app.getPicking()`, `app.getSculptManager()` entry points.
-    3.  Analyze the return values to decide the next code fix.
-
-## Communication Style
-1.  **NO EMOJIS**: Do not use emojis in ANY response, title, task name, or commit message. Zero tolerance.
-2.  **Professional Tone**: Keep all communication professional, concise, and sober.
-3.  **No False Confidence**: Do not use words like "final", "real", "definitive", "corrected" to describe a solution. Use "updated", "new iteration", "attempt".
+1.  **Launch:** Open the app on Quest 3 (via HTTPS).
+2.  **Verify UI:** Check the "SculptXR VERSION: v0.6.61 - Silence All Logs" message on the overlay.
+3.  **Enter VR:** Click "Enter VR".
+4.  **Inspect Controllers:**
+    - Confirm you see the Quest Touch Plus models (not generic boxes).
+    - Verify they look matte gray and smooth (no sharp polygon edges).
+5.  **Check Menu Placement:**
+    - Look at your Left Hand.
+    - Ensure the floating Menu is positioned slightly "Up and Right" relative to the controller.
+    - Confirm you can clearly see the Joystick and Buttons underneath/beside the menu.
+6.  **Verify Laser:**
+    - Point with the Right Hand.
+    - Confirm the Red Laser Beam starts slightly (1cm) away from the controller tip, not intersecting the mesh.
+7.  **Test Silence:**
+    - Interact with the menu, paint, sculpt.
+    - Glance at the 2D Console (if visible) or the in-app log overlay.
+    - Confirm NO scrolling spam logs appear. Only the version line should remain.

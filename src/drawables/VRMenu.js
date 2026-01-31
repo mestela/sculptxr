@@ -337,7 +337,7 @@ class VRMenu {
           const mvp = this._cursorMesh.getMVP();
           const gl = this._gl;
           if (window.screenLog) {
-            window.screenLog(`CurUV:${cursorUV.u.toFixed(2)},${cursorUV.v.toFixed(2)} LX:${lx.toFixed(2)} LY:${ly.toFixed(2)}`, "cyan");
+            // window.screenLog(`CurUV:${cursorUV.u.toFixed(2)},${cursorUV.v.toFixed(2)} LX:${lx.toFixed(2)} LY:${ly.toFixed(2)}`, "cyan");
           }
         }
 

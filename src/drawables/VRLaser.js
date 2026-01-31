@@ -75,13 +75,20 @@ class VRLaser {
     this._vertexCount = v.length / 3;
   }
 
-  updateMatrices(camera, parentMatrix, length = 1.0) {
+  updateMatrices(camera, parentMatrix, length = 1.0, startOffset = 0.0) {
     if (!parentMatrix) return;
 
-    // Model Matrix with Scale
+    // Model Matrix with Scale & Offset
     mat4.copy(this._matrix, parentMatrix);
-    // Scale Z by length (geometry is Z=0 to Z=-1, so scale makes it shorter/longer)
-    mat4.scale(this._matrix, this._matrix, [1, 1, length]);
+
+    // 1. Offset Start (Push away from controller)
+    if (startOffset !== 0.0) {
+      mat4.translate(this._matrix, this._matrix, [0, 0, -startOffset]);
+    }
+
+    // 2. Scale Z (Adjust length to account for offset)
+    const effectiveLen = Math.max(0.001, length - startOffset);
+    mat4.scale(this._matrix, this._matrix, [1, 1, effectiveLen]);
 
     // MVP
     mat4.mul(this._mv, camera.getView(), this._matrix);

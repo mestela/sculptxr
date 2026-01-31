@@ -56,8 +56,12 @@ It should work on any WebXR compatible device. So far I've tested on
     - Feature: Automated Oculus Controller Model Loading (OBJ).
     - Pipeline: `fetch_controllers.sh` and `convert_controllers.py`.
 
-- **Interaction**:
-    - **VR Tablet Menu**: UI moved to a palette on the left controller, basic butttons, toggles, sliders
+- **v0.6.61**:
+    - **Controllers**: Polished Quest 3 Touch Plus models with smooth normals and PBR matte shading.
+    - **UX**: Offset VR Menu (3cm Up/Right) for better button visibility.
+    - **UX**: Offset Laser Pointer (1cm) to prevent mesh intersection.
+    - **DX**: Silenced all high-frequency console logs for cleaner debugging.
+- **v0.6.55** (Beta)
     - **Two-Handed Navigation**:
         - Single Grip: Translate world, rotate around controller
         - Double Grip: Scale and Rotate world from midpoint of controllers

@@ -13,6 +13,13 @@ def convert_glb_to_ply(glb_path, output_path):
     # Select all objects
     bpy.ops.object.select_all(action='SELECT')
     
+    # Smooth Shading (Fix Faceted Look)
+    print("Applying Smooth Shading (Direct Data Access)...")
+    for obj in bpy.context.selected_objects:
+        if obj.type == 'MESH':
+            for poly in obj.data.polygons:
+                poly.use_smooth = True
+
     # Export PLY (Binary by default)
     print(f"Exporting to {output_path}...")
     bpy.ops.wm.ply_export(

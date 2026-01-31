@@ -5,10 +5,10 @@ set -e
 TARGET_DIR="src/resources/controllers_raw"
 mkdir -p "$TARGET_DIR"
 
-# Base URL for Oculus Touch v3 (Quest 2/3)
-BASE_URL="https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/master/packages/assets/profiles/oculus-touch-v3"
+# Base URL for Meta Quest Touch Plus (Quest 3)
+BASE_URL="https://raw.githubusercontent.com/immersive-web/webxr-input-profiles/master/packages/assets/profiles/meta-quest-touch-plus"
 
-echo "Downloading Oculus Touch v3 assets..."
+echo "Downloading Meta Quest Touch Plus (Quest 3) assets..."
 
 # Download Left
 echo "Fetching left.glb..."

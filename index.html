@@ -349,10 +349,10 @@
                 logContainer.prepend(btnCopy);
             }
 
-            console.log("Initializing SculptGL for WebXR...");
+            // console.log("Initializing SculptGL for WebXR...");
 
 
-            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.55 - VS Code Debugging", "lime");
+            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.61 - Silence All Logs", "lime");
 
             // Check HTTPS
             if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
@@ -372,7 +372,7 @@
                 const app = new SculptGL();
                 app.start();
                 window.app = app; // For debugging
-                console.log("SculptGL started successfully.");
+                // console.log("SculptGL started successfully.");
             } catch (e) {
                 console.error("CRITICAL: Failed to load SculptGL module:", e);
                 console.error(e.message);
@@ -396,14 +396,16 @@
 
                 // Check AR
                 navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-                    if (window.screenLog) window.screenLog("AR Supported: " + supported, supported ? "lime" : "orange");
+                    if (window.screenLog) {
+                        // window.screenLog("AR Supported: " + supported, supported ? "lime" : "orange");
+                    }
                     if (supported) {
                         btnAR.textContent = 'Enter AR';
                         btnAR.style.display = 'block'; // Force block
                         btnAR.addEventListener('click', () => onEnterVR('immersive-ar'));
                     } else {
                         btnAR.style.display = 'none';
-                        if (window.screenLog) window.screenLog("Hiding AR Button (Not Supported)", "orange");
+                        // if (window.screenLog) window.screenLog("Hiding AR Button (Not Supported)", "orange");
                     }
                 }).catch((err) => {
                     console.error(err);
