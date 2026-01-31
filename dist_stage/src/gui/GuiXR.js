@@ -4,6 +4,7 @@ import Export from 'files/Export';
 import { saveAs } from 'file-saver';
 import Shader from 'render/ShaderLib';
 import Utils from 'misc/Utils';
+import { vec3 } from 'gl-matrix';
 
 // Modular Imports
 import getToolsWidgets from 'gui/vr/GuiVRTools';
@@ -24,14 +25,28 @@ const OVERLAY_Y = (CANVAS_SIZE - OVERLAY_H) / 2;
 
 class GuiXR {
 
-  constructor(main) {
+  constructor(main, canvas) {
     this._main = main;
     this._gl = main._gl;
 
-    this._canvas = document.createElement('canvas');
-    this._canvas.width = CANVAS_SIZE;
-    this._canvas.height = CANVAS_SIZE;
-    this._ctx = this._canvas.getContext('2d');
+    if (canvas) {
+      this._canvas = canvas;
+      this._ctx = canvas.getContext('2d');
+    } else {
+      this._canvas = document.createElement('canvas');
+      this._canvas.width = CANVAS_SIZE;
+      this._canvas.height = CANVAS_SIZE;
+      this._ctx = this._canvas.getContext('2d');
+    }
+
+    this._uiSettings = {
+      resolution: 256, // Voxel Resolution
+      radius: 1.0 // Voxel Radius
+    };
+
+    // Preload Dropper Icon
+    this._dropperIcon = new Image();
+    this._dropperIcon.src = 'resources/dropper.png';
 
     this._needsUpdate = true;
     this._textureAllocated = false;
@@ -47,8 +62,9 @@ class GuiXR {
 
     this._inputDebounce = 0; // Debounce all interactions
 
+
     this._tabWidgets = {
-      'TOOLS': getToolsWidgets(main),
+      'TOOLS': getToolsWidgets(main, main.getSculptManager().getToolIndex()),
       'SCENE': getSceneWidgets(main),
       'VIEW': getRenderingWidgets(main),
       'FILES': getFilesWidgets(main),
@@ -56,6 +72,13 @@ class GuiXR {
     };
 
     setTimeout(() => this.syncToolRadius(), 500);
+  }
+
+  // Reload widgets (e.g. when tool changes)
+  refreshToolsWidget() {
+    this._tabWidgets['TOOLS'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
+    this._needsUpdate = true;
+    this.draw();
   }
 
   init(gl) {
@@ -121,19 +144,39 @@ class GuiXR {
   onInteract(u, v, isPressed) {
     if (!this._cursor.active || !isPressed) return;
 
-    // Global Debounce (prevent double-firing across frames)
-    const now = performance.now();
-    if (now - this._inputDebounce < 250) return;
-    this._inputDebounce = now;
-
     const cx = this._cursor.x;
     const cy = this._cursor.y;
+    const now = performance.now();
 
     // 0. Check Overlay
     if (this._overlay) {
+      if (now - this._inputDebounce < 250) return;
+      this._inputDebounce = now;
       this._handleOverlayInteract(cx, cy);
       return;
     }
+
+    // Find Target Widget for Debounce Logic
+    let targetWid = null;
+    const widgets = this._getWidgets();
+    for (let wid of widgets) {
+      if (cx >= wid.x && cx <= wid.x + wid.w && cy >= wid.y && cy <= wid.y + wid.h) {
+        targetWid = wid;
+        break;
+      }
+    }
+
+    // Dynamic Debounce
+    let debounceTime = 250;
+    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic')) {
+      debounceTime = 16; // ~60fps for continuous controls
+    }
+
+    // Check Tabs
+    if (!targetWid && cy < TAB_HEIGHT) debounceTime = 250;
+
+    if (now - this._inputDebounce < debounceTime) return;
+    this._inputDebounce = now;
 
     const w = this._canvas.width;
 
@@ -150,13 +193,10 @@ class GuiXR {
     }
 
     // 2. Check Widgets
-    const widgets = this._getWidgets();
-    for (let wid of widgets) {
-      if (cx >= wid.x && cx <= wid.x + wid.w && cy >= wid.y && cy <= wid.y + wid.h) {
-        console.log(`[GuiXR] Interacted with widget: ${wid.id} (${wid.type})`);
-        this._handleWidgetClick(wid);
-        return;
-      }
+    if (targetWid) {
+      // console.log(`[GuiXR] Interacted with widget: ${targetWid.id} (${targetWid.type})`);
+      this._handleWidgetClick(targetWid);
+      return;
     }
   }
 
@@ -211,36 +251,38 @@ class GuiXR {
     }
   }
 
+
+
   _handleColorPickerInteract(cx, cy) {
+    const data = this._overlayData;
     const padding = 40;
     const startX = OVERLAY_X + padding;
     const startY = OVERLAY_Y + 100;
-
     const svSize = 500;
+
+    // 1. SV Square Interaction
     if (cx >= startX && cx <= startX + svSize && cy >= startY && cy <= startY + svSize) {
-      const s = (cx - startX) / svSize;
-      const v = 1.0 - (cy - startY) / svSize;
-      if (this._overlayData.onSVChange) this._overlayData.onSVChange(s, v);
-      this._needsUpdate = true;
-      this.draw();
+      const s = Math.max(0, Math.min(1, (cx - startX) / svSize));
+      const v = Math.max(0, Math.min(1, 1.0 - (cy - startY) / svSize));
+      if (data.onSVChange) data.onSVChange(s, v);
       return;
     }
 
+    // 2. Hue Strip Interaction
     const hueX = startX + svSize + 40;
     const hueW = 80;
     const hueH = svSize;
     if (cx >= hueX && cx <= hueX + hueW && cy >= startY && cy <= startY + hueH) {
-      const h = (cy - startY) / hueH;
-      if (this._overlayData.onHueChange) this._overlayData.onHueChange(h);
-      this._needsUpdate = true;
-      this.draw();
+      const h = Math.max(0, Math.min(1, (cy - startY) / hueH));
+      if (data.onHueChange) data.onHueChange(h);
       return;
     }
 
+    // 3. Confirm Button
     const btnY = startY + svSize + 40;
     const btnH = 80;
-    if (cy >= btnY && cy <= btnY + btnH) {
-      if (this._overlayData.onConfirm) this._overlayData.onConfirm();
+    if (cy >= btnY && cy <= btnY + btnH && cx >= startX && cx <= startX + svSize + 40 + hueW) {
+      if (data.onConfirm) data.onConfirm();
       this.closeOverlay();
     }
   }
@@ -285,9 +327,20 @@ class GuiXR {
             var tool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
             if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(1.0 + val * 99.0);
           }
+
+          if (w.id === 'roughness' || w.id === 'metallic') {
+            const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+            if (tool) {
+              if (w.id === 'roughness') tool._material[0] = val;
+              if (w.id === 'metallic') tool._material[1] = val;
+            }
+          }
+
           this._main.render();
         }
       }
+    } else if (w.type === 'colorpicker_embedded') {
+      this._handleEmbeddedColorPicker(w);
     } else if (w.type === 'combobox') {
       let opts = [];
       let cb = null;
@@ -326,14 +379,36 @@ class GuiXR {
       }
 
     } else if (w.type === 'color') {
-      let hue = 0.0;
-      let sat = 1.0;
-      let val = 1.0;
+      const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+      if (!tool) return;
+
+      const rgb = tool._color;
+      const hsv = [0, 0, 0];
+      Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
 
       this.openOverlay('colorpicker', {
-        hue, sat, val,
-        onSVChange: (s, v) => { },
-        onHueChange: (h) => { },
+        hue: hsv[0],
+        sat: hsv[1],
+        val: hsv[2],
+        onSVChange: (s, v) => {
+          this._overlayData.sat = s;
+          this._overlayData.val = v;
+          const newRgb = Utils.hsv2rgb(this._overlayData.hue, s, v);
+          tool._color[0] = newRgb[0];
+          tool._color[1] = newRgb[1];
+          tool._color[2] = newRgb[2];
+          this._needsUpdate = true;
+          this.draw();
+        },
+        onHueChange: (h) => {
+          this._overlayData.hue = h;
+          const newRgb = Utils.hsv2rgb(h, this._overlayData.sat, this._overlayData.val);
+          tool._color[0] = newRgb[0];
+          tool._color[1] = newRgb[1];
+          tool._color[2] = newRgb[2];
+          this._needsUpdate = true;
+          this.draw();
+        },
         onConfirm: () => { }
       });
 
@@ -356,18 +431,90 @@ class GuiXR {
     if (w.id === 'addCube') main.addCube();
     if (w.id === 'addCylinder') main.addCylinder();
     if (w.id === 'addTorus') main.addTorus();
-    if (w.id === 'reset') if (confirm('Reset Scene?')) main.clearScene();
-    if (typeof w.id === 'number') main.getSculptManager().setToolIndex(w.id);
-    if (w.id === 'bake') main.getSculptManager().getTool(Enums.Tools.VOXEL)?.bakeToMesh();
-    if (w.id === 'dynamic') main._gui?._ctrlTopology?.dynamicToggleActivate();
-    if (w.id === 'wireframe') main.getMesh()?.setShowWireframe(!main.getMesh().getShowWireframe());
-    if (w.id === 'flat') main.getMesh()?.setFlatShading(!main.getMesh().getFlatShading());
-    if (w.id === 'passthrough') main.toggleXRSession();
-    if (w.id === 'symmetry') main.getSculptManager()._symmetry = !main.getSculptManager()._symmetry;
-    if (w.id === 'pbr') main.getMesh()?.setShaderType(Enums.Shader.PBR);
-    if (w.id === 'matcap') main.getMesh()?.setShaderType(Enums.Shader.MATCAP);
     if (w.id === 'undo') main.getStateManager().undo();
     if (w.id === 'redo') main.getStateManager().redo();
+
+    // Tool Selection (Dynamic Updates)
+    if (typeof w.id === 'number') {
+      const sm = main.getSculptManager();
+      sm.setToolIndex(w.id);
+      this.refreshToolsWidget(); // Rebuild widgets for new tool
+
+      // Inject Pick Callback if Paint
+      if (w.id === Enums.Tools.PAINT) {
+        const tool = sm.getTool(Enums.Tools.PAINT);
+        if (tool) {
+          tool.setPickCallback((color, roughness, metallic) => {
+            // Update Tool Internal State
+            vec3.copy(tool._color, color);
+            tool._material[0] = roughness;
+            tool._material[1] = metallic;
+
+            // Update UI
+            this._needsUpdate = true;
+            this.draw();
+
+            // Auto-Exit Pick Mode? User might want multiple picks? 
+            // Standard behavior is usually one pick then switch back to paint.
+            tool._pickColor = false;
+            console.log("Pick Color: ", color, roughness, metallic);
+          });
+        }
+      }
+    }
+
+    // Paint Tool Toggles
+    if (w.id === 'paint_all') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.PAINT);
+      if (tool && tool.paintAll) tool.paintAll();
+    }
+    if (w.id === 'pick_color') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.PAINT);
+      if (tool) {
+        tool._pickColor = !tool._pickColor;
+        // Force cursor update if needed (main mostly uses mouse logic but we can manually sync)
+        console.log("Pick Color toggled:", tool._pickColor);
+      }
+    }
+    if (w.id === 'write_albedo' || w.id === 'write_roughness' || w.id === 'write_metalness') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.PAINT);
+      if (tool) {
+        if (w.id === 'write_albedo') tool._writeAlbedo = !tool._writeAlbedo;
+        if (w.id === 'write_roughness') tool._writeRoughness = !tool._writeRoughness;
+        if (w.id === 'write_metalness') tool._writeMetalness = !tool._writeMetalness;
+      }
+    }
+
+    // View / Rendering Modes
+    if (w.id === 'pbr') main.getMesh().setShaderType(Enums.Shader.PBR);
+    if (w.id === 'matcap') main.getMesh().setShaderType(Enums.Shader.MATCAP);
+
+    // Toggles (Modifiers)
+    if (w.id === 'flat') {
+      const val = !main.getMesh().getFlatShading();
+      main.getMesh().setFlatShading(val);
+      // Force update to ensure visual sync if needed
+    }
+    if (w.id === 'wireframe') {
+      const val = !main.getMesh().getShowWireframe();
+      main.getMesh().setShowWireframe(val);
+    }
+
+    // Toggles
+    if (w.id === 'symmetry') {
+      const sym = main.getPickingSymmetry();
+      if (sym) {
+        const val = !sym.getValue();
+        sym.setValue(val);
+        w.value = val; // Store state in widget for visual toggle?
+        // Note: toggle rendering isn't fully wired to w.value yet in GuiXR draw() for standard toggles, but logic should work.
+      }
+    }
+
+    // Passthrough (Placeholder)
+    if (w.id === 'passthrough') {
+      console.warn("AR Passthrough not yet implemented");
+    }
 
     if (w.id === 'export_obj') {
       const blob = new Blob([Export.exportOBJ(main.getMeshes(), true, false)], { type: 'model/obj' });
@@ -451,10 +598,36 @@ class GuiXR {
       if (wid.id === 'pbr' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.PBR);
       if (wid.id === 'matcap' && mesh) isActive = (mesh.getShaderType() === Enums.Shader.MATCAP);
 
+      // Paint Toggles
+      if (wid.id === 'pick_color') {
+        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+        isActive = tool ? tool._pickColor : false;
+      }
+      if (wid.id === 'write_albedo') {
+        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+        isActive = tool ? tool._writeAlbedo : false;
+      }
+      if (wid.id === 'write_roughness') {
+        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+        isActive = tool ? tool._writeRoughness : false;
+      }
+      if (wid.id === 'write_metalness') {
+        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+        isActive = tool ? tool._writeMetalness : false;
+      }
+
       ctx.fillStyle = isActive ? '#00A040' : '#444';
       if (wid.type === 'slider') ctx.fillStyle = '#555';
       if (wid.type === 'combobox') ctx.fillStyle = '#334455';
-      if (wid.type === 'color') ctx.fillStyle = '#111';
+      if (wid.type === 'color') {
+        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+        if (tool) {
+          const c = tool._color;
+          ctx.fillStyle = `rgb(${Math.floor(c[0] * 255)}, ${Math.floor(c[1] * 255)}, ${Math.floor(c[2] * 255)})`;
+        } else {
+          ctx.fillStyle = '#000';
+        }
+      }
 
       if (this._clickedWidget === wid && this._lastClick && (performance.now() - this._lastClick < 200)) ctx.fillStyle = '#fff';
 
@@ -466,8 +639,8 @@ class GuiXR {
       }
 
       if (wid.type === 'color') {
-        ctx.fillStyle = 'red';
-        ctx.fillRect(wid.x + 10, wid.y + 10, wid.w - 20, wid.h - 20);
+        // Already filled above
+        // Stroke
       }
 
       ctx.strokeStyle = isActive ? '#fff' : '#888';
@@ -510,6 +683,10 @@ class GuiXR {
         ctx.lineTo(triX + 10, triY - 5);
         ctx.lineTo(triX, triY + 10);
         ctx.fill();
+      }
+
+      if (wid.type === 'colorpicker_embedded') {
+        this._drawEmbeddedColorPicker(ctx, wid);
       }
     }
 
@@ -587,9 +764,250 @@ class GuiXR {
     const data = this._overlayData;
     const startX = OVERLAY_X + 40;
     const startY = OVERLAY_Y + 100;
-    ctx.fillStyle = '#888';
-    ctx.font = '30px sans-serif';
-    ctx.fillText('Color Picker Implementation Pending', startX, startY + 50);
+    const svSize = 500;
+
+    // 1. SV Square
+    // We need to draw a gradient. Canvas createLinearGradient is fast.
+    // Horizontal: White -> Pure Color (Sat)
+    // Vertical: Black -> Transparent (Val) handles the darkness?
+    // standard SV square:
+    // Top-Left: White (S=0, V=1)  Top-Right: HueColor (S=1, V=1)
+    // Bottom-Left: Black (S=0, V=0) Bottom-Right: Black (S=1, V=0)
+
+    // Easier: Draw S-gradient horizontal, then overlay V-gradient vertical (black transparent to opaque black)
+
+    // Base Color from Hue
+    const baseRgb = Utils.hsv2rgb(data.hue, 1, 1);
+    const cssBase = `rgb(${baseRgb[0] * 255}, ${baseRgb[1] * 255}, ${baseRgb[2] * 255})`;
+
+    // Saturation Gradient (Left to Right: White to Base)
+    const grdS = ctx.createLinearGradient(startX, startY, startX + svSize, startY);
+    grdS.addColorStop(0, 'white');
+    grdS.addColorStop(1, cssBase);
+    ctx.fillStyle = grdS;
+    ctx.fillRect(startX, startY, svSize, svSize);
+
+    // Value Gradient (Top to Bottom: Transparent to Black)
+    // Wait, V=1 is Top (Color), V=0 is Bottom (Black)
+    const grdV = ctx.createLinearGradient(startX, startY, startX, startY + svSize);
+    grdV.addColorStop(0, 'rgba(0,0,0,0)');
+    grdV.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.fillStyle = grdV;
+    ctx.fillRect(startX, startY, svSize, svSize);
+
+    // Cursor for SV
+    const cx = startX + data.sat * svSize;
+    const cy = startY + (1.0 - data.val) * svSize;
+    ctx.strokeStyle = (data.val < 0.5) ? 'white' : 'black';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 2. Hue Strip
+    const hueX = startX + svSize + 40;
+    const hueW = 80;
+    const hueH = svSize;
+    const grdH = ctx.createLinearGradient(hueX, startY, hueX, startY + hueH);
+    grdH.addColorStop(0.00, '#ff0000');
+    grdH.addColorStop(0.17, '#ffff00');
+    grdH.addColorStop(0.33, '#00ff00');
+    grdH.addColorStop(0.50, '#00ffff');
+    grdH.addColorStop(0.67, '#0000ff');
+    grdH.addColorStop(0.83, '#ff00ff');
+    grdH.addColorStop(1.00, '#ff0000');
+    ctx.fillStyle = grdH;
+    ctx.fillRect(hueX, startY, hueW, hueH);
+
+    // Hue Cursor
+    const hcy = startY + data.hue * hueH;
+    ctx.fillStyle = 'white';
+    ctx.fillRect(hueX - 5, hcy - 5, hueW + 10, 10);
+    ctx.strokeStyle = 'black';
+    ctx.strokeRect(hueX - 5, hcy - 5, hueW + 10, 10);
+
+    // 3. Confirm / Preview
+    const btnY = startY + svSize + 40;
+    const btnH = 80;
+    const btnW = svSize + 40 + hueW;
+
+    // Preview Color
+    const finalRgb = Utils.hsv2rgb(data.hue, data.sat, data.val);
+    const cssFinal = `rgb(${Math.floor(finalRgb[0] * 255)}, ${Math.floor(finalRgb[1] * 255)}, ${Math.floor(finalRgb[2] * 255)})`;
+
+    ctx.fillStyle = cssFinal;
+    ctx.fillRect(startX, btnY, btnW, btnH);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(startX, btnY, btnW, btnH);
+
+    ctx.fillStyle = (data.val < 0.5) ? '#fff' : '#000';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText("OK", startX + btnW / 2, btnY + btnH / 2 + 10);
+  }
+
+  _handleEmbeddedColorPicker(w) {
+    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    if (!tool) return;
+
+    const rgb = tool._color;
+    const hsv = [0, 0, 0];
+    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
+    let [h, s, v] = hsv;
+
+    const cx = this._cursor.x;
+    const cy = this._cursor.y;
+
+    // Layout (relative to widget)
+    // w.h is ~400.
+    const padding = 10;
+    const innerX = w.x + padding;
+    const innerY = w.y + padding;
+    const innerH = w.h - padding * 2;
+    const svSize = innerH; // Square
+
+    // SV Check
+    if (cx >= innerX && cx <= innerX + svSize && cy >= innerY && cy <= innerY + svSize) {
+      s = Math.max(0, Math.min(1, (cx - innerX) / svSize));
+      v = Math.max(0, Math.min(1, 1.0 - (cy - innerY) / svSize));
+      // Update Color
+      const newRgb = Utils.hsv2rgb(h, s, v);
+      vec3.copy(tool._color, newRgb);
+      this._needsUpdate = true;
+      this.draw();
+      this._main.render();
+      return;
+    }
+
+    // Hue Check
+    const hueX = innerX + svSize + 20;
+    const hueW = 50;
+    const hueH = svSize;
+
+    if (cx >= hueX && cx <= hueX + hueW && cy >= innerY && cy <= innerY + hueH) {
+      h = Math.max(0, Math.min(1, (cy - innerY) / hueH));
+      // Update Color
+      const newRgb = Utils.hsv2rgb(h, s, v);
+      vec3.copy(tool._color, newRgb);
+      this._needsUpdate = true;
+      this.draw();
+      this._main.render();
+      return;
+    }
+
+    /* Eyedropper Disabled
+    // Eyedropper (Next to Hue)
+    const dropperX = hueX + hueW + 20;
+    const dropperSize = 60;
+    if (cx >= dropperX && cx <= dropperX + dropperSize && cy >= innerY && cy <= innerY + dropperSize) {
+      tool._pickColor = !tool._pickColor;
+      // Ensure pick callback is set if it wasn't already
+      if (tool._pickColor && !tool._pickCallback) {
+        tool.setPickCallback((color, roughness, metallic) => {
+          vec3.copy(tool._color, color);
+          tool._material[0] = roughness;
+          tool._material[1] = metallic;
+          this._needsUpdate = true;
+          this.draw();
+          tool._pickColor = false; // Exit pick mode after one pick
+          console.log("Pick Color: ", color, roughness, metallic);
+        });
+      }
+      this._needsUpdate = true;
+      this.draw();
+      return;
+    }
+    */
+  }
+
+  _drawEmbeddedColorPicker(ctx, w) {
+    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    if (!tool) return;
+
+    // Bg
+    ctx.fillStyle = '#222';
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+
+    const rgb = tool._color;
+    const hsv = [0, 0, 0];
+    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
+    const [h, s, v] = hsv;
+
+    const padding = 10;
+    const innerX = w.x + padding;
+    const innerY = w.y + padding;
+    const innerH = w.h - padding * 2;
+    const svSize = innerH;
+
+    // 1. SV Square
+    const baseRgb = Utils.hsv2rgb(h, 1, 1);
+    const cssBase = `rgb(${baseRgb[0] * 255}, ${baseRgb[1] * 255}, ${baseRgb[2] * 255})`;
+
+    const grdS = ctx.createLinearGradient(innerX, innerY, innerX + svSize, innerY);
+    grdS.addColorStop(0, 'white');
+    grdS.addColorStop(1, cssBase);
+    ctx.fillStyle = grdS;
+    ctx.fillRect(innerX, innerY, svSize, svSize);
+
+    const grdV = ctx.createLinearGradient(innerX, innerY, innerX, innerY + svSize);
+    grdV.addColorStop(0, 'rgba(0,0,0,0)');
+    grdV.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.fillStyle = grdV;
+    ctx.fillRect(innerX, innerY, svSize, svSize);
+
+    // SV Cursor
+    const cx = innerX + s * svSize;
+    const cy = innerY + (1.0 - v) * svSize;
+    ctx.strokeStyle = (v < 0.5) ? 'white' : 'black';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 2. Hue Strip
+    const hueX = innerX + svSize + 20;
+    const hueW = 50;
+    const hueH = svSize;
+    const grdH = ctx.createLinearGradient(hueX, innerY, hueX, innerY + hueH);
+    grdH.addColorStop(0.00, '#ff0000');
+    grdH.addColorStop(0.17, '#ffff00');
+    grdH.addColorStop(0.33, '#00ff00');
+    grdH.addColorStop(0.50, '#00ffff');
+    grdH.addColorStop(0.67, '#0000ff');
+    grdH.addColorStop(0.83, '#ff00ff');
+    grdH.addColorStop(1.00, '#ff0000');
+    ctx.fillStyle = grdH;
+    ctx.fillRect(hueX, innerY, hueW, hueH);
+
+    // Hue Cursor
+    const hcy = innerY + h * hueH;
+    ctx.fillStyle = 'white';
+    ctx.fillRect(hueX - 2, hcy - 3, hueW + 4, 6);
+    ctx.strokeStyle = 'black';
+    ctx.strokeRect(hueX - 2, hcy - 3, hueW + 4, 6);
+
+  /* Eyedropper Disabled
+  // 3. Eyedropper Button
+  const dropperX = hueX + hueW + 20;
+  const dropperSize = 60;
+  const isActive = tool._pickColor;
+
+  ctx.fillStyle = isActive ? '#00A040' : '#444';
+  ctx.fillRect(dropperX, innerY, dropperSize, dropperSize);
+  ctx.strokeStyle = '#fff';
+  ctx.strokeRect(dropperX, innerY, dropperSize, dropperSize);
+
+  // Icon
+  if (this._dropperIcon && this._dropperIcon.complete) {
+    ctx.drawImage(this._dropperIcon, dropperX + 5, innerY + 5, dropperSize - 10, dropperSize - 10);
+  } else {
+    ctx.fillStyle = '#fff';
+    ctx.font = '20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText("ID", dropperX + dropperSize / 2, innerY + dropperSize / 2 + 7);
+  }
+  */
   }
 
   updateTexture() {

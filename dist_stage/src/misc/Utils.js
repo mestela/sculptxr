@@ -259,4 +259,59 @@ Utils.computeWorldVertices = function (mesh, arrayOut) {
   return arrayOut;
 };
 
+/**
+ * HSV to RGB conversion
+ * h, s, v in [0, 1]
+ * returns [r, g, b] in [0, 1]
+ */
+Utils.hsv2rgb = function (h, s, v, color) {
+  var r, g, b;
+  var i = Math.floor(h * 6);
+  var f = h * 6 - i;
+  var p = v * (1 - s);
+  var q = v * (1 - f * s);
+  var t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    case 5: r = v; g = p; b = q; break;
+  }
+  if (color) {
+    color[0] = r; color[1] = g; color[2] = b;
+    return color;
+  }
+  return [r, g, b];
+};
+
+/**
+ * RGB to HSV conversion
+ * r, g, b in [0, 1]
+ * returns [h, s, v] in [0, 1]
+ */
+Utils.rgb2hsv = function (r, g, b, hsv) {
+  var max = Math.max(r, g, b), min = Math.min(r, g, b);
+  var h, s, v = max;
+  var d = max - min;
+  s = max === 0 ? 0 : d / max;
+
+  if (max === min) {
+    h = 0; // achromatic
+  } else {
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  if (hsv) {
+    hsv[0] = h; hsv[1] = s; hsv[2] = v;
+    return hsv;
+  }
+  return [h, s, v];
+};
+
 export default Utils;

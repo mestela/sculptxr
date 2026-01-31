@@ -37,9 +37,9 @@ ShaderFlat.fragment = [
   'varying vec3 vVertex;',
   'void main() {',
   '  vec3 n = normalize(cross(dFdx(vVertex), dFdy(vVertex)));',
-  '  // Simple headlight',
-  '  float diffuse = max(0.0, dot(n, vec3(0.0, 0.0, 1.0)));',
-  '  diffuse += 0.3; // Ambient',
+  '  vec3 lDir = normalize(vec3(0.0, 0.0, 1.0));',
+  '  float diffuse = max(0.0, dot(n, lDir));',
+  '  diffuse = diffuse * 0.7 + 0.3; // Ambient + Diffuse',
   '  gl_FragColor = vec4(uColor * diffuse, uAlpha);',
   '}'
 ].join('\n');

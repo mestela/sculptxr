@@ -7,8 +7,8 @@ export default function getRenderingWidgets(main) {
     // Shader Types
     { type: 'button', id: 'pbr', label: 'PBR', x: 20, y: 170, w: 200, h: 80 },
     { type: 'button', id: 'matcap', label: 'Matcap', x: 240, y: 170, w: 200, h: 80 },
-    { type: 'button', id: 'flat', label: 'Flat Shading', x: 20, y: 270, w: 200, h: 80 },
-    { type: 'button', id: 'wireframe', label: 'Wireframe', x: 240, y: 270, w: 200, h: 80 },
+    { type: 'toggle', id: 'flat', label: 'Flat Shading', x: 20, y: 270, w: 200, h: 80 },
+    { type: 'toggle', id: 'wireframe', label: 'Wireframe', x: 240, y: 270, w: 200, h: 80 },
 
 
 

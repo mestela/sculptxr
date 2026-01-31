@@ -12,7 +12,7 @@ class Paint extends SculptBase {
     this._intensity = 0.75;
     this._culling = false;
     this._color = vec3.fromValues(1.0, 0.766, 0.336); // albedo
-    this._material = vec3.fromValues(0.3, 0.95, 0.0); // roughness/metallic/masking
+    this._material = vec3.fromValues(0.5, 0.0, 0.0); // roughness/metallic/masking
     this._pickColor = false; // color picking
     this._pickCallback = null; // callback function after picking a color
     this._idAlpha = 0;
@@ -63,7 +63,9 @@ class Paint extends SculptBase {
 
   updatePickColor() {
     var picking = this._main.getPicking();
-    if (picking.intersectionMouseMesh())
+    // In VR, picking is handled by Scene.js processVRSculpting
+    var isVR = this._main._xrSession;
+    if (!isVR && picking.intersectionMouseMesh())
       this.pickColor(picking);
   }
 
@@ -73,12 +75,25 @@ class Paint extends SculptBase {
 
   pickColor(picking) {
     var mesh = this.getMesh();
+    // Ensure picking mesh matches active mesh (or use picking mesh)
+    // If Picking (VR) hit a mesh, use that mesh for material lookup
+    var hitMesh = picking.getMesh();
+    if (hitMesh && hitMesh !== mesh) {
+      // console.warn("Picking mesh mismatch, using hit mesh");
+      mesh = hitMesh;
+    }
+
+    if (!hitMesh) return; // No functionality if no mesh hit
+
     var color = this._color;
     picking.polyLerp(mesh.getMaterials(), color);
     var roughness = color[0];
     var metallic = color[1];
     picking.polyLerp(mesh.getColors(), color);
-    this._pickCallback(color, roughness, metallic);
+
+    // console.log("Picked:", color, roughness, metallic);
+    if (this._pickCallback)
+      this._pickCallback(color, roughness, metallic);
   }
 
   stroke(picking) {

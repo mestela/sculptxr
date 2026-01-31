@@ -1831,7 +1831,7 @@ class Scene {
     const canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir);
 
     if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
-      window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Tool=${tool ? tool.constructor.name : 'None'}`, "orange");
+      // window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Tool=${tool ? tool.constructor.name : 'None'}`, "orange");
     }
 
     if (canSculpt) {
