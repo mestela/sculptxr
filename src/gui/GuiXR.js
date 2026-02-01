@@ -142,6 +142,7 @@ class GuiXR {
     // Let's assume "Sidebar Mode" is the default view.
     this._viewMode = 'SIDEBAR'; // vs 'FILES', 'SCENE', 'HISTORY', 'SETTINGS' ?
     this._isDraggingScrollbar = false; // New state for scrollbar drag
+    this._activeSlider = null; // Lock for slider drag
     // Actually, Scene/History might be better as Panels too?
     // For now, let's keep the user's mockup logic:
     // Top Rows: Files, Scene, History, Background, Camera...
@@ -698,26 +699,56 @@ class GuiXR {
     }
 
 
-    // 2. Check Widgets
+    // 2. Active Slider Lock (Priority Over Widgets)
+    if (this._activeSlider) {
+      if (!isPressed) {
+        this._activeSlider = null;
+        return;
+      }
+
+      const targetWid = this._activeSlider;
+      const sliderW = 120; // Match widget layout
+      const paddingRight = 10;
+      const sliderX = targetWid.x + targetWid.w - sliderW - paddingRight;
+
+      // Calculate normalized value
+      let t = (cx - sliderX) / sliderW;
+      t = Math.max(0, Math.min(1, t));
+
+      // Map to Min/Max
+      let val = t;
+      if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
+        val = targetWid.min + t * (targetWid.max - targetWid.min);
+        if (targetWid.step) {
+          const steps = Math.round((val - targetWid.min) / targetWid.step);
+          val = targetWid.min + steps * targetWid.step;
+        }
+      }
+
+      // Update
+      if (targetWid.value !== val) {
+        targetWid.value = val;
+        if (targetWid.onInput) targetWid.onInput(val);
+        this._executeAction(targetWid);
+        this._needsRedraw = true;
+      }
+      return;
+    }
+
+    // 3. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
       if (targetWid.disabled) return;
 
       if (targetWid.type === 'slider') {
-        // Generic Slider Drag Logic
-        // Assume slider is right-aligned 120px area
-        // But for better UX in VR, let's treat the *entire* widget as drag area?
-        // Or at least allow mapping from the widget start.
-        // Let's map X relative to the Slider "Track".
+        this._activeSlider = targetWid;
 
-        const sliderW = 120;
+        const sliderW = 120; 
         const paddingRight = 10;
         const sliderX = targetWid.x + targetWid.w - sliderW - paddingRight;
 
-        // Calculate normalized value
         let t = (cx - sliderX) / sliderW;
         t = Math.max(0, Math.min(1, t));
 
-        // Map to Min/Max
         let val = t;
         if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
           val = targetWid.min + t * (targetWid.max - targetWid.min);
@@ -727,11 +758,10 @@ class GuiXR {
           }
         }
 
-        // Update
         if (targetWid.value !== val) {
           targetWid.value = val;
           if (targetWid.onInput) targetWid.onInput(val);
-          this._executeAction(targetWid); // Legacy support
+          this._executeAction(targetWid);
           this._needsRedraw = true;
         }
         return;
@@ -753,40 +783,11 @@ class GuiXR {
 
     // 4. Background Drag (Content Scrolling)
     // We allow drag if we started below header, OR if we are already dragging (even if we drifted up)
-    if (cy > HEADER_HEIGHT || (this._lastScrollY !== undefined && isPressed)) {
+    // 4. Background Drag (Content Scrolling) - DISABLED BY USER REQUEST
+    // Only Scrollbar (handled above) is allowed for scrolling now.
 
-      // Init drag
-      if (this._lastScrollY === undefined && isPressed) {
-        this._lastScrollY = cy;
-        if (window.screenLog) window.screenLog(`Scroll Start: ${cy.toFixed(1)}`, 'cyan');
-        return;
-      }
-
-      // Continue drag
-      if (this._lastScrollY !== undefined && isPressed) {
-        const deltaY = this._lastScrollY - cy; // Drag UP to scroll DOWN
-        this._lastScrollY = cy;
-
-        if (window.screenLog) window.screenLog(`Scroll Delta: ${deltaY.toFixed(1)} Range: ${this._maxScroll}`, 'gray');
-
-        if (Math.abs(deltaY) > 0) {
-          this._scrollOffset += deltaY;
-          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
-          this._needsRedraw = true;
-          this._requestDraw();
-        }
-      } else {
-        // Released
-        if (this._lastScrollY !== undefined) {
-          if (window.screenLog) window.screenLog(`Scroll End`, 'cyan');
-        }
-        this._lastScrollY = undefined;
-      }
-    } else {
-      // Hovering header and NOT dragging
-      if (this._lastScrollY !== undefined) {
-        if (window.screenLog) window.screenLog(`Scroll Abort (Header)`, 'orange');
-      }
+    // Debug Log for Header Hover (Optional)
+    if (this._lastScrollY !== undefined) {
       this._lastScrollY = undefined;
     }
   }
