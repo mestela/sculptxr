@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.150 - Fix Stale Sliders';
+export const VERSION = 'v0.6.151 - Add onInput to Sliders';

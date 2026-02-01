@@ -48,7 +48,8 @@ export default function getToolsWidgets(main, activeToolIndex) {
     label: 'Radius',
     x: col1X, y: y, w: 350, h: 40,
     value: activeTool ? activeTool._radius : 50,
-    min: 5, max: 250, precision: 0
+    min: 5, max: 250, precision: 0,
+    onInput: (val) => { if (activeTool) { activeTool._radius = val; main.render(); } }
   });
 
   // Intensity
@@ -58,7 +59,8 @@ export default function getToolsWidgets(main, activeToolIndex) {
     label: 'Intensity',
     x: 400, y: y, w: 350, h: 40,
     value: activeTool ? activeTool._intensity : 0.5,
-    min: 0, max: 1, precision: 2
+    min: 0, max: 1, precision: 2,
+    onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
   });
   y += 40 + gapSection;
 
