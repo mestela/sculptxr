@@ -45,3 +45,44 @@ This document details the refactoring and debugging of the VR User Interface in 
 ## Future Recommendations
 *   **Unified State**: The UI currently duplicates state (GuiXR vs SculptManager). Moving to a single source of truth (Signal/Observer pattern) would prevent de-syncs.
 *   **Reactive UI**: The manual cache clearing is a band-aid. A lightweight reactive view system (retrained mode?) would be safer.
+## Performance & Rendering Optimizations
+
+### The "Scrollbar Lag" Solution
+*   **Problem**: Scrolling the VR menu was initially extremely jittery and CPU-intensive.
+*   **Diagnosis**: Every scroll event triggered a full canvas redraw (2D API) AND a full 1024x1024 texture upload to the GPU (`gl.texImage2D`). The texture upload is a blocking operation in WebGL 1.0 (synchronous on some implementations) or just heavy bandwidth-wise.
+*   **Strategy**: Decoupled "Redraw" from "Upload".
+    *   `_needsRedraw = true`: Flags that the 2D canvas content is dirty (e.g., scroll position changed, button hover).
+    *   `_needsUpload = true`: Flags that the updated canvas actually needs to be sent to the GPU.
+*   **Implementation**: In `update()`, we check these flags independently. While scrolling, we might redraw the canvas multiple times per frame, but we only upload the texture once per frame at most. (Further optimization could throttle upload to 30fps if needed, but decoupling was sufficient to hit 72/90fps).
+
+## Layout Architecture
+
+### Top Menu vs. Lower Panel
+To improve usability, the UI was split into two distinct regions, mimicking the desktop sidebar but optimized for the 1:1 aspect ratio of the VR texture (`1024x1024`):
+
+1.  **Global Tabs (Top Header)**:
+    *   Fixed height (`HEADER_HEIGHT`).
+    *   Contains global context switches: `Files`, `Scene`, `History`, `Settings`.
+    *   Always visible (not scrollable).
+    *   Implementation: `GuiXR.js` draws these first and then applies a `ctx.clip()` rectangle to the area *below* them for the scrolling content.
+
+2.  **Lower Panel (Scrolling Content)**:
+    *   Contains the "heavy" widgets: `Tools`, `Rendering`, `Topology`.
+    *   Scrolls vertically via `this._scrollOffset`.
+    *   **Collapsible Sections**: Instead of a flat list, widgets are grouped into `SECTIONS` ('Rendering', 'Topology', 'Sculpting & Painting').
+    *   State: `this._sectionStates` (map of 'Section Name' -> Boolean) tracks visibility.
+
+## New Widget Types
+
+### Combobox (Dropdown)
+*   **Challenge**: HTML `<select>` elements don't exist in a canvas/VR texture.
+*   **Solution**: Implemented a custom `combobox` widget type in `GuiXR.js`.
+    *   **State**: `this._activeCombobox` tracks which dropdown is open.
+    *   **Rendering**: 
+        *   The closed box is rendered in the scrollable list.
+        *   The open list (`_drawActiveCombobox`) is rendered *last*, on top of everything (z-index equivalent), bypassing the scroll clip region to ensure it floats above headers if needed.
+    *   **Interaction**: Click parsing checks `_activeCombobox` first (modal behavior) before checking underlying widgets.
+
+### Section Headers
+*   **Description**: Simple toggle buttons that show/hide entire groups of widgets.
+*   **Logic**: `_getWidgets()` iterates `SECTIONS`. If a section is closed, it only adds the Header widget. If open, it appends the widgets from the corresponding generator (`GuiVRTools.js`, etc.) to the list.
