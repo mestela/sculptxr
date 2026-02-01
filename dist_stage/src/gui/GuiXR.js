@@ -918,7 +918,6 @@ class GuiXR {
           mesh.setSymmetryOffset(w.value);
           main.render();
         }
-      }
       } else if (isFinite(w.min) && isFinite(w.max)) {
         // Generic Min/Max Slider Support
       // w.value is ALREADY mapped by onInteract (or initialized mapped)

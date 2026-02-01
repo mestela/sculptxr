@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.143 - Fix Slider Logic';
+export const VERSION = 'v0.6.144 - Fix Syntax Error';
