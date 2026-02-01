@@ -116,22 +116,22 @@ class GuiXR {
     this._activeCombobox = null; // In-context dropdown state
 
 
-    this._tabWidgets = {
-      // Global Tabs (Overlay or separate view? For now let's just make them active "Tools" that swal layout?)
-      // Actually standard desktop: clicking "Files" opens a modal or changes view?
-      // In VR, switching "Tabs" usually replaces the main content.
-      // But user wants "Top split into 2 rows".
-      // Let's treat valid "Tabs" as the Top Row items.
-      'Files': getFilesWidgets(main),
-      'Scene': getSceneWidgets(main),
-      'History': getHistoryWidgets(main),
-      // 'Settings': No longer a global tab, decomposed
-
-      // Sections
-      'Rendering': getRenderingWidgets(main),
-      'Topology': getTopologyWidgets(main),
-      'Sculpting & Painting': getToolsWidgets(main, main.getSculptManager().getToolIndex())
+    this._widgetGenerators = {
+      'Files': getFilesWidgets,
+      'Scene': getSceneWidgets,
+      'History': getHistoryWidgets,
+      'Rendering': getRenderingWidgets,
+      'Topology': getTopologyWidgets,
+      'Sculpting & Painting': (main) => getToolsWidgets(main, main.getSculptManager().getToolIndex()),
+      'Background': getBackgroundWidgets,
+      'Camera': getCameraWidgets,
+      'Tablet pressure': getTabletWidgets,
+      'Language': getLanguageWidgets,
+      'Extra UI': getExtraUIWidgets,
+      'About & Help': getAboutWidgets
     };
+
+    this._tabWidgets = {}; // Cache (updated on draw)
 
     // We need to know which "Mode" we are in.
     // If we click "FILES", does it replace the sidebar?
@@ -360,7 +360,6 @@ class GuiXR {
 
   // Reload widgets (e.g. when tool changes)
   refreshToolsWidget() {
-    this._tabWidgets['Sculpting & Painting'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
     this._needsRedraw = true;
     this.draw();
   }
@@ -468,6 +467,9 @@ class GuiXR {
   }
 
   _getWidgets() {
+    const main = this._main;
+    const gens = this._widgetGenerators;
+
     if (this._viewMode === 'SIDEBAR') {
       let allWidgets = [];
       let currentY = HEADER_HEIGHT - this._scrollOffset;
@@ -488,7 +490,12 @@ class GuiXR {
         currentY += 60;
 
         if (isOpen) {
+          // Generate Fresh Widgets
+          if (gens[secTitle]) {
+            this._tabWidgets[secTitle] = gens[secTitle](main);
+          }
           const secWidgets = this._tabWidgets[secTitle];
+
           if (secWidgets) {
             // Determine vertical range of this section's widgets to normalize them
             let minY = Infinity;
@@ -521,6 +528,10 @@ class GuiXR {
     }
 
     // Regular View (Generic Scroll support)
+    // Generate Fresh Widgets
+    if (gens[this._viewMode]) {
+      this._tabWidgets[this._viewMode] = gens[this._viewMode](main);
+    }
     const widgets = this._tabWidgets[this._viewMode] || [];
     const currentY = HEADER_HEIGHT - this._scrollOffset;
 
@@ -550,6 +561,7 @@ class GuiXR {
 
     // 0. Dropdown Interaction (High Priority)
     if (this._activeCombobox) {
+      if (!isPressed) return; // Only interact on press
       if (now - this._inputDebounce < 250) return;
       this._inputDebounce = now;
       this._handleDropdownInteract(cx, cy);
@@ -558,6 +570,7 @@ class GuiXR {
 
     // 0. Check Overlay
     if (this._overlay) {
+      if (!isPressed) return; // Only interact on press
       if (now - this._inputDebounce < 250) return;
       this._inputDebounce = now;
       this._handleOverlayInteract(cx, cy, isPressed);
