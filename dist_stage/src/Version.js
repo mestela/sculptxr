@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.145 - Remove Duplicate Widgets';
+export const VERSION = 'v0.6.146 - Real Remove Duplicate Widgets';
