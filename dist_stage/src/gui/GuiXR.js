@@ -1122,8 +1122,18 @@ class GuiXR {
   }
 
   _handleWidgetClick(w) {
-    if (w.type === 'slider') {
-      const val = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
+  } else if(w.type === 'slider') {
+  let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
+
+  // Generic Min/Max Mapping
+  let val = t;
+  if (isFinite(w.min) && isFinite(w.max)) {
+    val = w.min + t * (w.max - w.min);
+    if (w.step) {
+      const steps = Math.round((val - w.min) / w.step);
+      val = w.min + steps * w.step;
+    }
+  }
       w.value = val;
       this._needsRedraw = true;
       this.draw();
@@ -1133,27 +1143,32 @@ class GuiXR {
       if (now - this._lastSliderCallback > 30) {
         this._lastSliderCallback = now;
         if (this._main) {
-          if (w.id === 'radius') this.updateRadius(val);
-          if (w.id === 'intensity' && this._main.getSculptManager().getCurrentTool()) {
-            this._main.getSculptManager().getCurrentTool().setIntensity(val);
-          }
-          if (w.id === 'voxelRes') {
-            var tool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
-            if (tool && tool.setResolution) tool.setResolution(Math.floor(32 + val * (256 - 32)));
-          }
-          if (w.id === 'voxelRad') {
-            var tool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
-            if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(1.0 + val * 99.0);
-          }
-
-          if (w.id === 'roughness' || w.id === 'metallic') {
-            const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-            if (tool) {
-              if (w.id === 'roughness') tool._material[0] = val;
-              if (w.id === 'metallic') tool._material[1] = val;
+          // Use onInput if available (Preferred)
+          if (w.onInput) {
+            w.onInput(val);
+          } else {
+            // Legacy Fallbacks
+            if (w.id === 'radius') this.updateRadius(val); // Should be covered by onInput now
+            if (w.id === 'intensity' && this._main.getSculptManager().getCurrentTool()) {
+              this._main.getSculptManager().getCurrentTool().setIntensity(val);
+            }
+            // ... (keep other fallbacks if needed, or rely on adding onInput to them later)
+            if (w.id === 'voxelRes') {
+              var tool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
+              if (tool && tool.setResolution) tool.setResolution(Math.floor(32 + t * (256 - 32))); // voxelRes might rely on normalized t?
+            }
+            if (w.id === 'voxelRad') {
+              var tool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
+              if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(1.0 + t * 99.0);
+            }
+            if (w.id === 'roughness' || w.id === 'metallic') {
+              const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+              if (tool) {
+                if (w.id === 'roughness') tool._material[0] = val; // Assuming these accept 0-1
+                if (w.id === 'metallic') tool._material[1] = val;
+              }
             }
           }
-
           this._main.render();
         }
       }
