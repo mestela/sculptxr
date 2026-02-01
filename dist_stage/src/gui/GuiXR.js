@@ -96,8 +96,8 @@ class GuiXR {
     this._activeTab = 'Sculpting & Painting'; // Default section open?
     // Actually if they are collapsible, we need a map of open/closed states.
     this._sectionStates = {
-      'Rendering': true,
-      'Topology': true,
+      'Rendering': false,
+      'Topology': false,
       'Sculpting & Painting': true
     };
 
