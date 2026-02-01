@@ -600,8 +600,20 @@ class GuiXR {
 
     // Scrollbar Debounce Override
     const canvasW = this._canvas.width;
-    if (this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT)) {
+    const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
+
+    if (isScrollInteraction) {
       debounceTime = 0; // Immediate response for scrollbar
+    } else {
+      // For all other widgets, if we are NOT pressing, we shouldn't consume the debounce timer
+      // preventing the subsequent PRESS from registering.
+      if (!isPressed) {
+        // Special case: we might need "Hover" events for some things? 
+        // Currently GuiXR mainly uses Hover for highlights (handled in setCursor/draw) 
+        // and Scroll Drag (handled above).
+        // So we can largely ignore !isPressed here for debounce purposes.
+        return;
+      }
     }
 
     if (now - this._inputDebounce < debounceTime) return;
@@ -609,8 +621,9 @@ class GuiXR {
 
     const w = this._canvas.width;
 
-    // 0. Scrollbar Drag (Priority)
-    const trackW = 40;
+    // 1. Scrollbar Interaction
+    if (isScrollInteraction) {
+      const trackW = 40;
     const trackX = w - trackW;
 
     // Check if we hit scrollbar (only if below header)
@@ -644,6 +657,8 @@ class GuiXR {
       }
       this._lastScrollY = cy;
       return;
+    }
+
     }
 
     // 1. Check Tabs (Header)
