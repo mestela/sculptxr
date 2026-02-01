@@ -1,33 +1,38 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.6.132 (BETA) - STABLE BUT SLOW
+**Project Status**: v0.6.136 (BETA) - FEELING GOOD
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v0.6.132` deployed to `sculptxrbeta`.
-**Last Successful Version**: `v0.6.132` (Flashing fixed, logic correct).
+**Checkpoint**: `v0.6.136` deployed to `sculptxrbeta`.
+**Last Successful Version**: `v0.6.136` (Responsive menu, no input lag).
 
-## Current Issue: SLOW MENU
-**User Report**: "Flashing is fixed, but the menu feels slow."
+## Current Issue: RESOLVED (Ready for Next Challenge)
+**User Report**: "starting to feel really good!"
 **Status**:
-*   **Fixed**: Flashing (caused by `ReferenceError: t0` in v0.6.131).
-*   **Fixed**: Pipeline Stalls (caused by `gl.getError` in `Buffer.js` and `gl.getParameter` in `VRMenu.js`).
-*   **Remaining**: Perceived slowness/lag in GUI interactions.
+*   **Fixed**: Flashing (v0.6.131).
+*   **Fixed**: Pipeline Stalls (v0.6.131).
+*   **Fixed**: Menu Lag (v0.6.133 - 30fps throttle).
+*   **Fixed**: Combobox Interaction (v0.6.134 - Hover vs Press).
+*   **Fixed**: Stale Widgets (v0.6.135 - Refresh loop).
+*   **Fixed**: Input Lag (v0.6.136 - Debounce fix).
 
-## Recent Changes (v0.6.132)
-1.  **GuiXR.js Refactor**:
-    *   Separated `_needsRedraw` (Canvas) from `_needsUpload` (Texture).
-    *   **Throttling**: Texture upload is throttled to 15fps (`GuiXR.js:2174`). This might be the source of "slowness" if the user expects 90fps smoothness for UI updates.
-    *   **Fix**: Restored `t0` variable which fixed the `ReferenceError`.
-2.  **Buffer.js Optimization**: `gl.getError` loop removed.
-
+## Recent Changes (v0.6.136)
+1.  **Input Latency Fix**:
+    *   **Root Cause**: Hover events were resetting the `_inputDebounce` timer, causing race conditions where Clicks were ignored if the user's hand was moving (which is always).
+    *   **Fix**: `onInteract` now strictly ignores Hover events for debounce purposes. Only `isPressed` events reset the timer.
+2.  **Stale Widgets Fix**:
+    *   **Root Cause**: Widgets were cached once at startup.
+    *   **Fix**: `_getWidgets` now regenerates widgets on every redraw using `_widgetGenerators`.
+3.  **Combobox Fix**:
+    *   **Root Cause**: Hover events triggered selection.
+    *   **Fix**: Added `if (!isPressed) return;` guard to Dropdown/Overlay handlers.
+4.  **Throttle Relaxed**:
+    *   Texture upload increased from 15fps to 30fps (33ms).
 ## Debugging Leads for Next Agent
-1.  **Investigate 15fps Throttle**:
-    *   The `updateTexture()` method enforces a 66ms delay (15fps).
-    *   *Hypothesis*: This is too slow for scroll/hover feedback, making it feel "laggy".
-    *   *Experiment*: Try increasing throttle to 30fps (33ms) or 45fps (22ms) to see if responsiveness improves without tanking VR performance.
-2.  **Canvas Performance**:
-    *   Check `GuiXR.js` `draw()` time. If `ctx.fill()`/`ctx.stroke()` are slow, the 15fps throttle might mask it, or the main thread might be blocked.
-3.  **Draw Count**:
-    *   Ensure we aren't redrawing the canvas *every* frame unnecessarily. The `_needsRedraw` flag *should* prevent this, but verify it works as intended.
+1.  **Canvas Performance**:
+    *   Check `GuiXR.js` `draw()` time.
+    *   *Note*: 30fps throttle seems stable, but future high-res UI might need WebGL-based UI rendering instead of 2D Canvas.
+2.  **Draw Count**:
+    *   Ensure we aren't redrawing the canvas *every* frame unnecessarily.
 
 ## Deployment
 See [Deployment Protocol](#deployment-protocol) in `project_rules.md`.
@@ -36,7 +41,6 @@ See [Deployment Protocol](#deployment-protocol) in `project_rules.md`.
 
 ## Interactive Debugging Protocol
 -   **Preference**: Use the browser console for immediate state inspection and manipulation whenever possible.
--   **Why**: It is faster, fun, and confirms "ground truth" state (CPU/GPU sync, variable values) without code-compile-reload cycles.
 -   **Workflow**:
     1.  Provide copy-pasteable JavaScript snippets for the user to run in the console.
     2.  Use `app`, `app.getMesh()`, `app.getPicking()`, `app.getSculptManager()` entry points.

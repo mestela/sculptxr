@@ -53,6 +53,7 @@ export default function getRenderingWidgets(main) {
     id: 'curvature',
     label: TR('renderingCurvature'),
     x: col1X, y: y, w: 400, h: 40,
+    min: 0, max: 25,
     value: mesh.getCurvature() * 20.0,
     onInput: (val) => { mesh.setCurvature(val / 20.0); main.render(); }
   });

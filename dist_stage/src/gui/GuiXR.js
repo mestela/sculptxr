@@ -700,9 +700,43 @@ class GuiXR {
 
     // 2. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
-      if (targetWid.disabled) {
+      if (targetWid.disabled) return;
+
+      if (targetWid.type === 'slider') {
+        // Generic Slider Drag Logic
+        // Assume slider is right-aligned 120px area
+        // But for better UX in VR, let's treat the *entire* widget as drag area?
+        // Or at least allow mapping from the widget start.
+        // Let's map X relative to the Slider "Track".
+
+        const sliderW = 120;
+        const paddingRight = 10;
+        const sliderX = targetWid.x + targetWid.w - sliderW - paddingRight;
+
+        // Calculate normalized value
+        let t = (cx - sliderX) / sliderW;
+        t = Math.max(0, Math.min(1, t));
+
+        // Map to Min/Max
+        let val = t;
+        if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
+          val = targetWid.min + t * (targetWid.max - targetWid.min);
+          if (targetWid.step) {
+            const steps = Math.round((val - targetWid.min) / targetWid.step);
+            val = targetWid.min + steps * targetWid.step;
+          }
+        }
+
+        // Update
+        if (targetWid.value !== val) {
+          targetWid.value = val;
+          if (targetWid.onInput) targetWid.onInput(val);
+          this._executeAction(targetWid); // Legacy support
+          this._needsRedraw = true;
+        }
         return;
       }
+
       if (targetWid.type === 'section_header') {
         const sec = targetWid.label;
         this._sectionStates[sec] = !this._sectionStates[sec];
