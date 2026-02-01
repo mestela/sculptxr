@@ -578,6 +578,42 @@ class GuiXR {
       return;
     }
 
+    // 0.5. Active Slider Lock (High Priority)
+    // Must run BEFORE !isPressed check (to allow clearing lock on release)
+    if (this._activeSlider) {
+      if (!isPressed) {
+        this._activeSlider = null;
+        return;
+      }
+
+      const targetWid = this._activeSlider;
+      const sliderW = targetWid.w;
+      const sliderX = targetWid.x;
+
+      // Calculate normalized value
+      let t = (cx - sliderX) / sliderW;
+      t = Math.max(0, Math.min(1, t));
+
+      // Map to Min/Max
+      let val = t;
+      if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
+        val = targetWid.min + t * (targetWid.max - targetWid.min);
+        if (targetWid.step) {
+          const steps = Math.round((val - targetWid.min) / targetWid.step);
+          val = targetWid.min + steps * targetWid.step;
+        }
+      }
+
+      // Update
+      if (targetWid.value !== val) {
+        targetWid.value = val;
+        if (targetWid.onInput) targetWid.onInput(val);
+        this._executeAction(targetWid);
+        this._needsRedraw = true;
+      }
+      return;
+    }
+
     // Find Target Widget for Debounce Logic
     let targetWid = null;
     const widgets = this._getWidgets();
@@ -699,41 +735,7 @@ class GuiXR {
     }
 
 
-    // 2. Active Slider Lock (Priority Over Widgets)
-    if (this._activeSlider) {
-      if (!isPressed) {
-        this._activeSlider = null;
-        return;
-      }
-
-      const targetWid = this._activeSlider;
-      const sliderW = 120; // Match widget layout
-      const paddingRight = 10;
-      const sliderX = targetWid.x + targetWid.w - sliderW - paddingRight;
-
-      // Calculate normalized value
-      let t = (cx - sliderX) / sliderW;
-      t = Math.max(0, Math.min(1, t));
-
-      // Map to Min/Max
-      let val = t;
-      if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
-        val = targetWid.min + t * (targetWid.max - targetWid.min);
-        if (targetWid.step) {
-          const steps = Math.round((val - targetWid.min) / targetWid.step);
-          val = targetWid.min + steps * targetWid.step;
-        }
-      }
-
-      // Update
-      if (targetWid.value !== val) {
-        targetWid.value = val;
-        if (targetWid.onInput) targetWid.onInput(val);
-        this._executeAction(targetWid);
-        this._needsRedraw = true;
-      }
-      return;
-    }
+    // 2. Active Slider Lock (Moved to top)
 
     // 3. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
@@ -742,9 +744,8 @@ class GuiXR {
       if (targetWid.type === 'slider') {
         this._activeSlider = targetWid;
 
-        const sliderW = 120; 
-        const paddingRight = 10;
-        const sliderX = targetWid.x + targetWid.w - sliderW - paddingRight;
+        const sliderW = targetWid.w;
+        const sliderX = targetWid.x;
 
         let t = (cx - sliderX) / sliderW;
         t = Math.max(0, Math.min(1, t));
