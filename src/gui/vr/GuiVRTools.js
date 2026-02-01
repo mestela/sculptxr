@@ -15,7 +15,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
   let y = 130;
 
   // 1. Tool Selection (Combobox)
-  widgets.push({ type: 'info', label: 'Sculpt Tool', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Tool', x: col1X, y: y });
   y += gapHeader;
 
   // Build Options from Tools array
@@ -29,7 +29,6 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeToolIndex,
     options: toolOptions,
     onSelect: (id) => {
-      // Enums.Tools keys are mapped by index if Tools array is ordered same as Enums?
       main.getSculptManager().setToolIndex(id);
       if (main.guiXR) main.guiXR.refreshToolsWidget();
     }
@@ -37,56 +36,46 @@ export default function getToolsWidgets(main, activeToolIndex) {
   y += btnH + gapSection;
 
 
-  // 2. Common Settings (Symmetry, Continuous)
+  // 2. Brush Settings
+  widgets.push({ type: 'slider', id: 'radius', label: 'Radius (-X)', x: col1X, y: y, w: 350, h: 40, value: 0.5 });
+  widgets.push({ type: 'slider', id: 'intensity', label: 'Intensity (-C)', x: 400, y: y, w: 350, h: 40, value: 0.5 });
+  y += 40 + gapSection;
+
+  const activeTool = main.getSculptManager().getTool(activeToolIndex);
+
+  // Negative, Clay, Accumulate, Thin surface
+  widgets.push({ type: 'checkbox', id: 'negative', label: 'Negative (N or -Alt)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._negative : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'clay', label: 'Clay', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._clay : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'accumulate', label: 'Accumulate (no limit per stroke)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._accumulate : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily, marking disabled for now or check prop
+  y += btnH + gapSection;
+
+
+  // 3. Alpha
+  widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({ type: 'checkbox', id: 'lock_position', label: 'Lock position', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  y += btnH + gapBtn;
+
+  widgets.push({ type: 'combobox', id: 'alpha_tex', label: 'Texture', x: col1X, y: y, w: 400, h: btnH, options: [{ label: 'None', id: 0 }], value: 0, disabled: true });
+  y += btnH + gapBtn;
+
+  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import alpha tex (jpg, png...)', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  y += btnH + gapSection;
+
+
+  // 4. Common
   widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'checkbox', id: 'symmetry', label: 'Symmetry', x: col1X, y: y, w: 300, h: btnH, value: main.getSculptManager()._symmetry });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'continuous', label: 'Continuous', x: col1X, y: y, w: 300, h: btnH, disabled: true });
   y += btnH + gapSection;
-
-
-  // 3. Radius / Intensity
-  // Sliders
-  widgets.push({ type: 'slider', id: 'radius', label: 'Radius', x: col1X, y: y, w: 350, h: 40, value: 0.5 });
-  widgets.push({ type: 'slider', id: 'intensity', label: 'Intensity', x: 400, y: y, w: 350, h: 40, value: 0.5 });
-  y += 40 + gapSection;
-
-
-  // 4. Alpha (Mockup)
-  widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
-  y += gapHeader;
-
-  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import Alpha', x: col1X, y: y, w: 250, h: btnH, disabled: true });
-  y += btnH + gapSection;
-
-
-  // 5. Tool Specifics
-  if (activeToolIndex === Enums.Tools.PAINT) {
-    widgets.push({ type: 'info', label: 'Paint', x: col1X, y: y });
-    y += gapHeader;
-
-    widgets.push({ type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 300, h: 40, value: 0.5 });
-    widgets.push({ type: 'slider', id: 'metallic', label: 'Metallic', x: 340, y: y, w: 300, h: 40, value: 0 });
-    y += 40 + gapBtn;
-
-    // We need logic for these writes. GuiXR has special cases for 'write_albedo' etc.
-    const tool = main.getSculptManager().getTool(Enums.Tools.PAINT);
-
-    widgets.push({ type: 'checkbox', id: 'write_albedo', label: 'Albedo', x: col1X, y: y, w: 150, h: btnH, value: tool._writeAlbedo });
-    widgets.push({ type: 'checkbox', id: 'write_roughness', label: 'Rough', x: 180, y: y, w: 150, h: btnH, value: tool._writeRoughness });
-    widgets.push({ type: 'checkbox', id: 'write_metalness', label: 'Metal', x: 340, y: y, w: 150, h: btnH, value: tool._writeMetalness });
-    y += btnH + gapBtn;
-
-    widgets.push({ type: 'colorpicker_embedded', id: 'picker', x: col1X, y: y, w: 400, h: 250 });
-  } else if (activeToolIndex === Enums.Tools.MASKING) {
-    widgets.push({ type: 'info', label: 'Masking', x: col1X, y: y });
-    y += gapHeader;
-
-    widgets.push({ type: 'button', id: 'mask_invert', label: 'Invert', x: col1X, y: y, w: 150, h: btnH, disabled: true });
-    widgets.push({ type: 'button', id: 'mask_clear', label: 'Clear', x: 190, y: y, w: 150, h: btnH, disabled: true });
-    widgets.push({ type: 'button', id: 'mask_blur', label: 'Blur', x: 360, y: y, w: 150, h: btnH, disabled: true });
-    widgets.push({ type: 'button', id: 'mask_sharpen', label: 'Sharpen', x: 530, y: y, w: 150, h: btnH, disabled: true });
-  }
 
   return widgets;
 }

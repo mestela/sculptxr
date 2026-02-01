@@ -379,19 +379,13 @@ class GuiXR {
 
   _getWidgets() {
     if (this._viewMode === 'SIDEBAR') {
-      return []; // We handle sidebar custom in draw() for now, or we merge all?
-      // To reuse interaction logic, we should probably generate a FLAT list of visible widgets based on scroll offset.
-      // OR we map interaction to the layout logic.
-      // Standard _getWidgets logic relies on x,y.
-      // If we implement scrolling, we need to offset Y.
-
       let allWidgets = [];
       let currentY = HEADER_HEIGHT - this._scrollOffset;
 
       SECTIONS.forEach(secTitle => {
         const isOpen = this._sectionStates[secTitle];
-        // Header Button (Virtual)
-        // We'll treat the header as a widget for interaction?
+
+        // Section Header Widget
         allWidgets.push({
           type: 'section_header',
           label: secTitle,
@@ -405,26 +399,29 @@ class GuiXR {
 
         if (isOpen) {
           const secWidgets = this._tabWidgets[secTitle];
-          // Clone and Offset
           if (secWidgets) {
+            // Determine vertical range of this section's widgets to normalize them
+            let minY = Infinity;
+            let maxY = -Infinity;
+            secWidgets.forEach(w => {
+              if (w.y < minY) minY = w.y;
+              if (w.y + w.h > maxY) maxY = w.y + w.h;
+            });
+
+            if (minY === Infinity) minY = 0;
+            if (maxY === -Infinity) maxY = 0;
+
+            const sectionHeight = maxY - minY + 20; // + padding
+
+            // Clone and re-position widgets
             secWidgets.forEach(w => {
               allWidgets.push({
                 ...w,
-                y: w.y + currentY - 130 // 130 was original offset in generator? We need to re-base.
-                // Actually, the generators (getToolsWidgets) used absolute Y starting at 130.
-                // We need to normalize them to relative 0 if possible, or subtract 130.
+                y: w.y - minY + currentY + 10 // +10 padding top
               });
             });
 
-            // Update currentY by height of section
-            // We need to know the max H of the section.
-            // The widgets have y + h.
-            if (secWidgets.length > 0) {
-              const maxY = Math.max(...secWidgets.map(w => (isFinite(w.y) && isFinite(w.h)) ? w.y + w.h : 0));
-              const minY = Math.min(...secWidgets.map(w => isFinite(w.y) ? w.y : 0));
-              const sectionH = Math.max(0, maxY - minY + 20);
-              currentY += sectionH;
-            }
+            currentY += sectionHeight;
           }
         }
       });
@@ -433,39 +430,18 @@ class GuiXR {
       return allWidgets;
     }
 
-
     // Regular View (Generic Scroll support)
     const widgets = this._tabWidgets[this._viewMode] || [];
-    // Just apply scroll offset?
-    // We need to calculate bounds to set _maxScroll
-    // If not SIDEBAR, we treat it as a simple list?
-    // Widgets usually have fixed Y.
-    // If we want to scroll them, we need to offset Y.
-    const hasScroll = true; // Always allow scroll?
+    const currentY = HEADER_HEIGHT - this._scrollOffset;
 
-    if (hasScroll) {
-      const currentY = HEADER_HEIGHT - this._scrollOffset;
-      const offsetWidgets = widgets.map(w => ({
-        ...w,
-        y: w.y + currentY - 130 // normalize ?
-      }));
+    // Normalize generic view if needed, but usually they are absolute. 
+    // Let's assume absolute for now but apply scroll.
+    const offsetWidgets = widgets.map(w => ({
+      ...w,
+      y: w.y + currentY - 130 // 130 was original offset
+    }));
 
-      // Calculate max scroll
-      if (widgets.length > 0) {
-        const maxY = Math.max(...widgets.map(w => (isFinite(w.y) && isFinite(w.h)) ? w.y + w.h : 0));
-        const minY = Math.min(...widgets.map(w => isFinite(w.y) ? w.y : 0));
-        const contentH = Math.max(0, maxY - minY + 20);
-        // Total height needed
-        const totalH = contentH + HEADER_HEIGHT + 130;  // approximate
-        const calculatedMax = totalH - CANVAS_SIZE;
-        this._maxScroll = Math.max(0, isFinite(calculatedMax) ? calculatedMax : 0);
-      } else {
-        this._maxScroll = 0;
-      }
-      return offsetWidgets;
-    }
-
-    return widgets;
+    return offsetWidgets;
   }
 
   onInteract(u, v, isPressed) {
@@ -503,8 +479,10 @@ class GuiXR {
 
     // Dynamic Debounce
     let debounceTime = 250;
-    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic')) {
-      debounceTime = 16; // ~60fps for continuous controls
+    // Faster interaction for continuous controls
+    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic' || targetWid.type === 'section_header')) {
+      if (targetWid.type === 'section_header') debounceTime = 300; // prevent double toggle
+      else debounceTime = 16; 
     }
 
     // Check Tabs
@@ -554,12 +532,37 @@ class GuiXR {
     // 2. Check Widgets
     if (targetWid) {
       if (targetWid.disabled) {
-        console.log(`[GuiXR] Ignored disabled widget: ${targetWid.label}`);
         return;
       }
-      // console.log(`[GuiXR] Interacted with widget: ${targetWid.id} (${targetWid.type})`);
+      if (targetWid.type === 'section_header') {
+        const sec = targetWid.label;
+        this._sectionStates[sec] = !this._sectionStates[sec];
+        this._needsUpdate = true;
+        this.draw();
+        return;
+      }
+
       this._handleWidgetClick(targetWid);
       return;
+    }
+
+    // 3. Background Drag (Scrolling)
+    if (cy > HEADER_HEIGHT) {
+      // If we started a drag or this is a move
+      if (this._lastScrollY === undefined) this._lastScrollY = cy;
+
+      const deltaY = this._lastScrollY - cy;
+      this._lastScrollY = cy;
+
+      if (Math.abs(deltaY) > 0) {
+        this._scrollOffset += deltaY;
+        this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+        this._needsUpdate = true;
+        this.draw();
+        return;
+      }
+    } else {
+      this._lastScrollY = undefined;
     }
   }
 

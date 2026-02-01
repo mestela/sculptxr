@@ -21,15 +21,12 @@ export default function getTopologyWidgets(main) {
   widgets.push({ type: 'info', label: 'Multiresolution', x: col1X, y: y });
   y += gapHeader;
 
-  widgets.push({ type: 'slider', id: 'multires_level', label: 'Level', x: col1X, y: y, w: 300, h: 40, value: 0, disabled: true }); // Needs wiring
-  y += 40 + gapBtn; // Slider height + gap
-
-  widgets.push({ type: 'button', id: 'subdivide', label: 'Subdivide', x: col1X, y: y, w: 200, h: btnH });
-  widgets.push({ type: 'button', id: 'reverse', label: 'Reverse', x: 230, y: y, w: 200, h: btnH });
+  widgets.push({ type: 'button', id: 'subdivide', label: 'Subdivide', x: col1X, y: y, w: 150, h: btnH });
+  widgets.push({ type: 'button', id: 'reverse', label: 'Reverse', x: 180, y: y, w: 150, h: btnH, disabled: true });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'button', id: 'del_lower', label: 'Del Lower', x: col1X, y: y, w: 200, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'del_higher', label: 'Del Higher', x: 230, y: y, w: 200, h: btnH, disabled: true });
+  widgets.push({ type: 'button', id: 'del_lower', label: 'Del Lower', x: col1X, y: y, w: 150, h: btnH, disabled: true });
+  widgets.push({ type: 'button', id: 'del_higher', label: 'Del Higher', x: 180, y: y, w: 150, h: btnH, disabled: true });
   y += btnH + gapSection;
 
 
@@ -37,26 +34,26 @@ export default function getTopologyWidgets(main) {
   widgets.push({ type: 'info', label: 'Remesh', x: col1X, y: y });
   y += gapHeader;
 
-  widgets.push({ type: 'slider', id: 'voxelRes', label: 'Resolution', x: col1X, y: y, w: 400, h: 40, value: 0.5 });
+  widgets.push({ type: 'slider', id: 'voxelRes', label: 'Resolution', x: col1X, y: y, w: 350, h: 40, value: 0.5 });
   y += 40 + gapBtn;
 
-  widgets.push({ type: 'checkbox', id: 'remesh_block', label: 'Blocky', x: col1X, y: y, w: 200, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'remesh', label: 'Remesh (Surface)', x: 230, y: y, w: 250, h: btnH });
+  widgets.push({ type: 'button', id: 'remesh', label: 'Remesh', x: col1X, y: y, w: 350, h: btnH });
   y += btnH + gapSection;
 
 
-  // --- DYNAMIC ---
+  // --- DYNAMIC TOPOLOGY ---
   widgets.push({ type: 'info', label: 'Dynamic Topology', x: col1X, y: y });
   y += gapHeader;
 
-  widgets.push({ type: 'checkbox', id: 'dynamic', label: 'Activated', x: col1X, y: y, w: 300, h: btnH });
+  widgets.push({ type: 'checkbox', id: 'dynamic', label: 'Activated', x: col1X, y: y, w: 350, h: btnH });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'slider', id: 'dyn_subd', label: 'Subdivision', x: col1X, y: y, w: 300, h: 40, value: 0.5, disabled: true });
-  widgets.push({ type: 'slider', id: 'dyn_dec', label: 'Decimation', x: 350, y: y, w: 300, h: 40, value: 0.5, disabled: true });
-  y += 40 + gapBtn;
+  widgets.push({ type: 'slider', id: 'dyn_subd', label: 'Subdivision', x: col1X, y: y, w: 350, h: 40, value: 50, disabled: true }); // Value 0-100 placeholder
+  widgets.push({ type: 'slider', id: 'dyn_dec', label: 'Decimation', x: col1X, y: y + 50, w: 350, h: 40, value: 50, disabled: true });
+  y += 100 + gapBtn;
 
-  widgets.push({ type: 'checkbox', id: 'dyn_linear', label: 'Linear', x: col1X, y: y, w: 200, h: btnH, disabled: true });
+  widgets.push({ type: 'checkbox', id: 'dyn_linear', label: 'Linear', x: col1X, y: y, w: 350, h: btnH, disabled: true });
+  y += btnH + gapSection;
 
   return widgets;
 }
