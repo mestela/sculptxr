@@ -15,7 +15,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
   let y = 130;
 
   // 1. Tool Selection (Combobox)
-  widgets.push({ type: 'info', label: 'SCULPT TOOL', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Sculpt Tool', x: col1X, y: y });
   y += gapHeader;
 
   // Build Options from Tools array
@@ -38,7 +38,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
 
   // 2. Common Settings (Symmetry, Continuous)
-  widgets.push({ type: 'info', label: 'COMMON', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'checkbox', id: 'symmetry', label: 'Symmetry', x: col1X, y: y, w: 300, h: btnH, value: main.getSculptManager()._symmetry });
@@ -53,7 +53,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
 
   // 4. Alpha (Mockup)
-  widgets.push({ type: 'info', label: 'ALPHA', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'button', id: 'alpha_import', label: 'Import Alpha', x: col1X, y: y, w: 250, h: btnH, disabled: true });
@@ -62,7 +62,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
   // 5. Tool Specifics
   if (activeToolIndex === Enums.Tools.PAINT) {
-    widgets.push({ type: 'info', label: 'PAINT', x: col1X, y: y });
+    widgets.push({ type: 'info', label: 'Paint', x: col1X, y: y });
     y += gapHeader;
 
     widgets.push({ type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 300, h: 40, value: 0.5 });
@@ -79,7 +79,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
     widgets.push({ type: 'colorpicker_embedded', id: 'picker', x: col1X, y: y, w: 400, h: 250 });
   } else if (activeToolIndex === Enums.Tools.MASKING) {
-    widgets.push({ type: 'info', label: 'MASKING', x: col1X, y: y });
+    widgets.push({ type: 'info', label: 'Masking', x: col1X, y: y });
     y += gapHeader;
 
     widgets.push({ type: 'button', id: 'mask_invert', label: 'Invert', x: col1X, y: y, w: 150, h: btnH, disabled: true });

@@ -1,3 +1,5 @@
+import ShaderBase from 'render/shaders/ShaderBase';
+
 export default function getSceneWidgets(main) {
   const widgets = [];
 
@@ -41,8 +43,8 @@ export default function getSceneWidgets(main) {
   y += ITEM_H + GAP;
 
   // Isolate (Checkbox?)
-  const isIsolate = false; // Need to fetch actual state if possible, or just default to checkable
-  // For now just generic checkbox toggle
+  // We'll leave it as false for now, or check for hidden meshes if feasible.
+  const isIsolate = false; 
   widgets.push({ type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H, value: isIsolate });
   y += ITEM_H + GAP;
 
@@ -53,16 +55,18 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Extra', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 0, y: y, w: menuW, h: ITEM_H, value: main.getGrid() }); // Assuming main.getGrid() exists or similar
+  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showGrid });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: 0, y: y, w: menuW, h: ITEM_H, value: false });
+  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showContour });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: 0, y: y, w: menuW, h: ITEM_H, value: false });
+  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.showSymmetryLine });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: 0, y: y, w: menuW, h: ITEM_H, value: false });
+  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.darkenUnselected });
   y += ITEM_H + GAP;
 
-  widgets.push({ type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: 0, y: y, w: menuW, h: ITEM_H, value: 0.5 });
+  const mesh = main.getMesh();
+  const symOffset = mesh ? mesh.getSymmetryOffset() : 0;
+  widgets.push({ type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: 0, y: y, w: menuW, h: ITEM_H, value: symOffset });
   y += ITEM_H + GAP;
 
   return {

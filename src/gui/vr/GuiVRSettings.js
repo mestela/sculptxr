@@ -1,39 +1,35 @@
-import TR from 'gui/GuiTR';
+import Enums from 'misc/Enums';
 
 export default function getSettingsWidgets(main) {
   const widgets = [];
-
-  // Spacing Constants
-  const col1X = 20;
-  const btnH = 60;
-  const gapBtn = 20;
-  const gapSection = 40;
-  const gapHeader = 40;
-
-  let y = 130;
-
-  // --- BACKGROUND ---
-  widgets.push({ type: 'info', label: 'BACKGROUND', x: col1X, y: y });
-  y += gapHeader;
-
-  widgets.push({ type: 'button', id: 'reset_bg', label: 'Reset BG', x: col1X, y: y, w: 200, h: btnH, disabled: true });
-  widgets.push({ type: 'button', id: 'import_bg', label: 'Import BG', x: 240, y: y, w: 200, h: btnH, disabled: true });
-  y += btnH + gapSection;
+  const menuW = 400;
+  let y = 10;
+  const ITEM_H = 40;
+  const HEADER_H = 30;
+  const GAP = 5;
 
   // --- CAMERA ---
-  widgets.push({ type: 'info', label: 'CAMERA', x: col1X, y: y });
-  y += gapHeader;
+  widgets.push({ type: 'header', label: 'Camera', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
 
-  widgets.push({ type: 'button', id: 'reset_view', label: 'Reset View', x: col1X, y: y, w: 200, h: btnH });
-  widgets.push({ type: 'slider', id: 'fov', label: 'FOV', x: 240, y: y + 10, w: 300, h: 40, value: 0.5, disabled: true });
-  y += btnH + gapSection;
+  widgets.push({ type: 'button', id: 'reset_view', label: 'Reset View', x: 0, y: y, w: menuW, h: ITEM_H });
+  y += ITEM_H + GAP;
 
-  // --- CONFIG ---
-  widgets.push({ type: 'info', label: 'CONFIG', x: col1X, y: y });
-  y += gapHeader;
+  const cam = main.getCamera();
+  const fovVal = (cam.getFov() - 10) / (90 - 10);
+  widgets.push({ type: 'slider', id: 'fov', label: 'Field of View', x: 0, y: y, w: menuW, h: ITEM_H, value: fovVal, min: 10, max: 90 });
+  y += ITEM_H + GAP;
 
-  widgets.push({ type: 'combobox', id: 'language', label: 'Language', x: col1X, y: y, w: 300, h: btnH, disabled: true });
-  y += btnH + gapBtn;
+  const isOrtho = cam.getMode() === Enums.CameraMode.ORTHOGRAPHIC;
+  widgets.push({ type: 'checkbox', id: 'camera_mode', label: 'Orthographic', x: 0, y: y, w: menuW, h: ITEM_H, value: isOrtho });
+  y += ITEM_H + GAP;
 
-  return widgets;
+  // Divider
+  y += 10;
+
+  return {
+    width: menuW,
+    height: y + 10,
+    widgets: widgets
+  };
 }

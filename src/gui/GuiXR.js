@@ -12,16 +12,24 @@ import getSceneWidgets from 'gui/vr/GuiVRScene';
 import getRenderingWidgets from 'gui/vr/GuiVRRendering';
 import getFilesWidgets from 'gui/vr/GuiVRFiles';
 import getHistoryWidgets from 'gui/vr/GuiVRHistory';
+import getBackgroundWidgets from 'gui/vr/GuiVRBackground';
+import getCameraWidgets from 'gui/vr/GuiVRCamera';
+import getTabletWidgets from 'gui/vr/GuiVRTablet';
+import getLanguageWidgets from 'gui/vr/GuiVRLanguage';
+import getExtraUIWidgets from 'gui/vr/GuiVRExtraUI';
+import getAboutWidgets from 'gui/vr/GuiVRAbout';
 import getTopologyWidgets from 'gui/vr/GuiVRTopology';
-import getSettingsWidgets from 'gui/vr/GuiVRSettings';
+import Tablet from 'misc/Tablet';
 
 // Direct access for property setters
 import MeshDynamic from 'mesh/dynamic/MeshDynamic';
 import Remesh from 'editing/Remesh';
+import ShaderBase from 'render/shaders/ShaderBase';
+import StateManager from 'states/StateManager';
 
 const TAB_HEIGHT = 40; // Reduced from 80
 const TAB_ROWS = 2; // Rows of tabs
-const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // 160px reserved for Tabs
+const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // Reserved for Tabs
 const CANVAS_SIZE = 1024;
 // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
 // Top Row: Files, Scene, History, Settings
@@ -32,7 +40,8 @@ const CANVAS_SIZE = 1024;
 // We will group widgets into "Sections" instead of just "Tabs".
 
 // Group 1: Global Tabs (Top)
-const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Settings', 'Tools'];
+// Group 1: Global Tabs (Top)
+const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Background', 'Camera', 'Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
@@ -115,7 +124,7 @@ class GuiXR {
       'Files': getFilesWidgets(main),
       'Scene': getSceneWidgets(main),
       'History': getHistoryWidgets(main),
-      'Settings': getSettingsWidgets(main),
+      // 'Settings': No longer a global tab, decomposed
 
       // Sections
       'Rendering': getRenderingWidgets(main),
@@ -148,57 +157,74 @@ class GuiXR {
 
   // Console Helper for Tab Switching
   switchTab(tabName) {
-    if (tabName === 'Files') {
-      // New: Open Files as Dropdown Menu
-      // We calculate X position based on tab index (0)
-      const tabIdx = 0;
+    const tabIdx = GLOBAL_TABS.indexOf(tabName);
+
+    // Check if it's one of our dropdown tabs
+    if (tabIdx !== -1) {
       const w = this._canvas.width;
-      const r1W = w / GLOBAL_TABS.length;
-      const x = tabIdx * r1W;
 
-      const filesData = getFilesWidgets(this._main);
-      this.openOverlay('menu', {
-        x: x,
-        y: TAB_HEIGHT, 
-        w: filesData.width,
-        h: filesData.height,
-        widgets: filesData.widgets
-      });
-      return;
+      // Row Logic Match draw()
+      const row1Count = 5;
+      const isRow1 = tabIdx < row1Count;
+      const countInRow = isRow1 ? row1Count : (GLOBAL_TABS.length - row1Count);
+      const idxInRow = isRow1 ? tabIdx : (tabIdx - row1Count);
+
+      const rowW = w / countInRow;
+      const x = idxInRow * rowW;
+
+      let data = null;
+      if (tabName === 'Files') data = getFilesWidgets(this._main);
+      else if (tabName === 'Scene') data = getSceneWidgets(this._main);
+      else if (tabName === 'History') data = getHistoryWidgets(this._main);
+      else if (tabName === 'Background') data = getBackgroundWidgets(this._main);
+      else if (tabName === 'Camera') data = getCameraWidgets(this._main);
+      else if (tabName === 'Tablet pressure') data = getTabletWidgets(this._main);
+      else if (tabName === 'Language') data = getLanguageWidgets(this._main);
+      else if (tabName === 'Extra UI') data = getExtraUIWidgets(this._main);
+      else if (tabName === 'About & Help') data = getAboutWidgets(this._main);
+
+      if (data) {
+        let overlayX = x;
+        // Clamp overlayX
+        if (overlayX + data.width > this._canvas.width) {
+          overlayX = this._canvas.width - data.width;
+        }
+
+        // Determine Y based on which row this tab belongs to
+        // Row 1: 0..4 (5 tabs)
+        // Row 2: 5..8 (4 tabs)
+        const row1Count = 5;
+        const rowIndex = (tabIdx < row1Count) ? 0 : 1;
+        const overlayY = (rowIndex + 1) * TAB_HEIGHT;
+
+        this.openOverlay('menu', {
+          x: overlayX,
+          y: overlayY,
+          w: data.width,
+          h: data.height,
+          widgets: data.widgets,
+          tabName: tabName
+        });
+        this.draw();
+        return;
+      }
     }
 
-    if (tabName === 'Scene') {
-      const tabIdx = 1;
-      const w = this._canvas.width;
-      const r1W = w / GLOBAL_TABS.length;
-      const x = tabIdx * r1W;
-
-      const sceneData = getSceneWidgets(this._main);
-      this.openOverlay('menu', {
-        x: x,
-        y: TAB_HEIGHT,
-        w: sceneData.width,
-        h: sceneData.height,
-        widgets: sceneData.widgets
-      });
-      return;
-    }
-
-    if (tabName === 'Tools') {
-      this._viewMode = 'SIDEBAR';
-      this._scrollOffset = 0;
-    } else if (GLOBAL_TABS.includes(tabName)) {
-      this._viewMode = tabName;
-      this._scrollOffset = 0; // Reset scroll
-    } else {
-      // It's likely a sidebar click?
-      this._viewMode = 'SIDEBAR';
-    }
+    // Sidebar fallback (Tools, Rendering, etc. - though Tools is removed from GLOBAL_TABS now?)
+    // User list didn't include "Tools". But "Tools" is usually the main sculpting thing.
+    // If "Tools" is not in GLOBAL_TABS, we might need another way to access it?
+    // Maybe user meant "Tools" as "Sculpting"?
+    // The user's list: "Files, Scene, History, Background, Camera, Tablet pressure, Language, Extra UI, About & Help"
+    // Where is "Sculpting" or "Tools"? Maybe they assume it's always visible or in Sidebar?
+    // Since I'm making top bar, I'll assume standard layout below is Tools/Sidebar.
+    // But if I can't click "Tools" tab...
+    // I'll leave 'Tools' out of GLOBAL_TABS as per request, but maybe add it as a separate persistent thing?
+    // Or maybe the Sidebar is always visible?
+    // For now, I follow the user's specific list for the Top Menu.
 
     this._activeCombobox = null;
     this._needsUpdate = true;
     this.draw();
-    console.log(`[GuiXR] Switched Layout Mode: ${this._viewMode}`);
   }
 
   nextTab() {
@@ -490,34 +516,36 @@ class GuiXR {
     const w = this._canvas.width;
 
     // 1. Check Tabs (Header)
-    // 1. Check Tabs (Header)
     if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
-      const row1 = GLOBAL_TABS;
-    // Row 1 Handling
+      const row1Count = 5;
+      const row1 = GLOBAL_TABS.slice(0, row1Count);
+      const row2 = GLOBAL_TABS.slice(row1Count);
+
+      // Row 1
       if (cy < TAB_HEIGHT) {
         const r1W = w / row1.length;
         const idx = Math.floor(cx / r1W);
         if (idx >= 0 && idx < row1.length) {
-          console.log(`[GuiXR] Clicked Global Tab: ${row1[idx]}`);
+          console.log(`[GuiXR] Clicked Global Tab (Row 1): ${row1[idx]}`);
           this.switchTab(row1[idx]);
         }
         return;
       }
-      // Row 2 Handling (Placeholder)
+      // Row 2
       if (cy < HEADER_HEIGHT) {
-        // Second row clicks
-        console.log("[GuiXR] Clicked Row 2 (Not Implemented)");
+        const r2W = w / row2.length;
+        const idx = Math.floor(cx / r2W);
+        if (idx >= 0 && idx < row2.length) {
+          console.log(`[GuiXR] Clicked Global Tab (Row 2): ${row2[idx]}`);
+          this.switchTab(row2[idx]);
+        }
         return;
       }
     } else {
-      // Fallback for unknown modes (should not happen often)
-      const row1 = GLOBAL_TABS;
-      if (cy < TAB_HEIGHT) {
-        const r1W = w / row1.length;
-        const idx = Math.floor(cx / r1W);
-        if (idx >= 0 && idx < row1.length) {
-          this.switchTab(row1[idx]);
-        }
+      // Fallback logic if needed, but above covers all GLOBAL_TABS interaction
+      if (cy < HEADER_HEIGHT) {
+        // Just reset to sidebar?
+        console.log("Clicked header in unknown mode");
         return;
       }
     }
@@ -610,24 +638,197 @@ class GuiXR {
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
-          console.log(`[GuiXR] Menu Click: ${w.id}`);
-          // Execute action? Or toggle?
-          // For now just Log.
-          // Ideally: this._executeAction(w);
-          // We need to support 'checkbox' toggles as well.
-          // If checkbox, toggle value in widget?
-          if (w.type === 'checkbox') {
+          // console.log(`[GuiXR] Menu Click: ${w.id}`);
+
+          if (w.type === 'slider') {
+            const val = Math.max(0, Math.min(1, (rx - w.x) / w.w));
+            w.value = val;
+            this._executeAction(w);
+            this._needsUpdate = true;
+          } else if (w.type === 'checkbox') {
             w.value = !w.value;
-            console.log(`[GuiXR] Toggled ${w.id} to ${w.value}`);
+            this._executeAction(w);
             this._needsUpdate = true;
           } else if (w.type === 'button') {
-            // Trigger action
-            this.closeOverlay(); // Close menu on action? usually yes.
+            this._executeAction(w);
+            // Close menu on action? 
+            // Keep open for specific actions like Undo/Redo or Tools
+            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus'].includes(w.id);
+            if (!keepOpen) this.closeOverlay();
+            else this._needsUpdate = true;
+          } else if (w.type === 'combobox') {
+            this.openOverlay('combobox', {
+              options: w.options,
+              callback: (val) => {
+                w.value = val;
+                this._executeAction(w);
+                // We close the overlay automatically when selecting option.
+                // If we want to re-open the menu, we'd need to know which menu it was.
+                // For now, let's just close it, similar to desktop dropdowns.
+              }
+            });
+            return;
           }
         }
         return;
       }
     }
+  }
+
+  _getWidgetValue(tab, id) {
+    if (!this._tabWidgets[tab] || !this._tabWidgets[tab].widgets) return undefined;
+    const w = this._tabWidgets[tab].widgets.find(w => w.id === id);
+    return w ? w.value : undefined;
+  }
+
+  _executeAction(w) {
+    const main = this._main;
+    const id = w.id;
+
+    if (w.type === 'slider') {
+      if (id === 'symmetryOffset') {
+        const mesh = main.getMesh();
+        if (mesh) {
+          mesh.setSymmetryOffset(w.value);
+          main.render();
+        }
+      } else if (isFinite(w.min) && isFinite(w.max)) {
+        // Generic Min/Max Slider Support
+        const mapped = w.min + w.value * (w.max - w.min);
+        let val = mapped;
+        if (w.step) {
+          const steps = Math.round((mapped - w.min) / w.step);
+          val = w.min + steps * w.step;
+        }
+
+        if (id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
+        else if (id === 'fov') { main.getCamera().setFov(val); main.render(); }
+        // Add other generic sliders here
+      }
+      return;
+    }
+
+    if (w.type === 'checkbox') {
+      const val = w.value;
+      if (id === 'grid') { main._showGrid = val; main.render(); }
+      else if (id === 'contour') { main._showContour = val; main.render(); }
+      else if (id === 'show_sym') { ShaderBase.showSymmetryLine = val; main.render(); }
+      else if (id === 'darken') { ShaderBase.darkenUnselected = val; main.render(); }
+      else if (id === 'camera_mode') {
+        const mode = val ? Enums.CameraMode.ORTHOGRAPHIC : Enums.CameraMode.PERSPECTIVE;
+        main.getCamera().setMode(mode);
+        main.render();
+      }
+      else if (id === 'import_scale') main._autoMatrix = val;
+      else if (id === 'import_srgb') main._vertexSRGB = val;
+      else if (['export_all', 'export_zbrush', 'export_append'].includes(id)) {
+        const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._guiFiles : null;
+        if (guiFiles) {
+          if (id === 'export_all') guiFiles._exportAll = val;
+          else if (id === 'export_zbrush') guiFiles._objColorZbrush = val;
+          else if (id === 'export_append') guiFiles._objColorAppended = val;
+        }
+      }
+      return;
+    }
+
+    // Files
+    if (id === 'import_obj') {
+      const fileInput = document.getElementById('fileopen');
+      if (fileInput) fileInput.click();
+    }
+    else if (id === 'export_sgl') {
+      const exportAll = this._getWidgetValue('Files', 'export_all');
+      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
+      if (meshes.length) saveAs(Export.exportSGL(meshes, main), 'yourMesh.sgl');
+    }
+    else if (id === 'export_obj') {
+      const exportAll = this._getWidgetValue('Files', 'export_all');
+      const colorZbrush = this._getWidgetValue('Files', 'export_zbrush');
+      const colorAppend = this._getWidgetValue('Files', 'export_append');
+      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
+      if (meshes.length) saveAs(Export.exportOBJ(meshes, colorZbrush, colorAppend), 'yourMesh.obj');
+    }
+    else if (id === 'export_ply') {
+      const exportAll = this._getWidgetValue('Files', 'export_all');
+      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
+      if (meshes.length) saveAs(Export.exportBinaryPLY(meshes), 'yourMesh.ply');
+    }
+    else if (id === 'export_stl') {
+      const exportAll = this._getWidgetValue('Files', 'export_all');
+      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
+      if (meshes.length) saveAs(Export.exportBinarySTL(meshes), 'yourMesh.stl');
+    }
+    else if (id === 'go_sketchfab') {
+      if (this._main && this._main.getGui() && this._main.getGui().exportSketchfab) {
+        this._main.getGui().exportSketchfab();
+      }
+    }
+
+    if (id === 'undo') { main.getStateManager().undo(); main.render(); }
+    else if (id === 'redo') { main.getStateManager().redo(); main.render(); }
+    else if (id === 'reset') { if (window.confirm('Reset Scene?')) main.clearScene(); }
+    else if (id === 'addSphere') main.addSphere();
+    else if (id === 'addCube') main.addCube();
+    else if (id === 'addCylinder') main.addCylinder();
+    else if (id === 'addTorus') main.addTorus();
+    else if (id === 'duplicateSelection') main.duplicateSelection();
+    else if (id === 'deleteSelection') main.deleteCurrentSelection();
+    else if (id === 'merge') {
+      const sel = main.getSelectedMeshes();
+      if (sel.length >= 2) {
+        const newMesh = Remesh.mergeMeshes(sel, main.getMesh() || sel[0]);
+        main.removeMeshes(sel);
+        main.getStateManager().pushStateAddRemove(newMesh, sel.slice());
+        main.getMeshes().push(newMesh);
+        main.setMesh(newMesh);
+      }
+    }
+
+    // Background interaction
+    else if (id === 'bg_reset') { main.getBackground().deleteTexture(); main.render(); }
+    else if (id === 'bg_import') { const el = document.getElementById('backgroundopen'); if (el) el.click(); }
+    else if (id === 'bg_fill') { main.getBackground()._fill = w.value; main.onCanvasResize(); }
+    else if (id === 'bg_blur') { main.getBackground()._blur = w.value; main.render(); }
+    else if (id === 'bg_type') {
+      main.getBackground().setType(w.value);
+      main.onCanvasResize();
+      main.render();
+    }
+
+    // Camera
+    else if (id === 'cam_reset') { main.getCamera().resetView(); main.render(); }
+    else if (id === 'cam_front') { main.getCamera().toggleViewFront(); main.render(); }
+    else if (id === 'cam_left') { main.getCamera().toggleViewLeft(); main.render(); }
+    else if (id === 'cam_top') { main.getCamera().toggleViewTop(); main.render(); }
+    else if (id === 'cam_proj') { main.getCamera().setProjectionType(w.value); main.render(); }
+    else if (id === 'cam_mode') { main.getCamera().setMode(w.value); main.render(); }
+    else if (id === 'cam_pivot') { main.getCamera().toggleUsePivot(); main.render(); }
+    else if (id === 'cam_speed') { main._cameraSpeed = w.value; }
+
+    // Tablet
+    else if (id === 'tablet_radius') { Tablet.radiusFactor = w.value; }
+    else if (id === 'tablet_intensity') { Tablet.intensityFactor = w.value; }
+
+    // Language
+    else if (id === 'language') {
+      TR.select = w.value;
+      // Ideally reload GUI but here just close overlay.
+    }
+
+    // Extra UI
+    else if (id === 'extra_pixel_ratio') { main._pixelRatio = w.value; main.onCanvasResize(); }
+    else if (id === 'extra_vox_res') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool.setResolution) tool.setResolution(w.value);
+    }
+    else if (id === 'extra_vox_rad') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(w.value);
+    }
+
+    // About
+    else if (id === 'about_link') { window.open('http://stephaneginier.com', '_blank'); }
   }
 
 
@@ -952,12 +1153,11 @@ class GuiXR {
     ctx.fillRect(0, 0, w, h);
 
     // Header / Tabs
-    // Header / Tabs
     if (true) {
-      const row1 = GLOBAL_TABS;
-      const row2 = ['Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
+      const row1Count = 5;
+      const row1 = GLOBAL_TABS.slice(0, row1Count);
+      const row2 = GLOBAL_TABS.slice(row1Count);
 
-      ctx.textAlign = 'center';
       ctx.textAlign = 'center';
       ctx.font = '18px sans-serif'; 
 
@@ -968,31 +1168,34 @@ class GuiXR {
         const y = 0;
 
         let isActive = (t === this._viewMode);
-        if (this._viewMode === 'SIDEBAR' && t === 'Tools') isActive = true;
+        // if (this._viewMode === 'SIDEBAR' && t === 'Tools') isActive = true;
 
         ctx.fillStyle = isActive ? '#0070A0' : '#111';
         ctx.fillRect(x, y, r1W, TAB_HEIGHT);
         ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1; // Thinner border
+        ctx.lineWidth = 1;
         ctx.strokeRect(x, y, r1W, TAB_HEIGHT);
 
         ctx.fillStyle = isActive ? '#fff' : '#aaa';
-        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 6); // Adjusted text offset
+        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 6);
       });
 
-      // Row 2 (Placeholders)
-      const row2Mock = ['Background', 'Camera', 'Language', 'Help'];
-      const r2W = w / row2Mock.length;
-      row2Mock.forEach((t, i) => {
+      // Row 2
+      const r2W = w / row2.length;
+      row2.forEach((t, i) => {
         const x = i * r2W;
         const y = TAB_HEIGHT;
-        ctx.fillStyle = '#161616';
+
+        let isActive = (t === this._viewMode);
+
+        ctx.fillStyle = isActive ? '#0070A0' : '#111';
         ctx.fillRect(x, y, r2W, TAB_HEIGHT);
         ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
         ctx.strokeRect(x, y, r2W, TAB_HEIGHT);
 
-        ctx.fillStyle = '#666';
-        ctx.fillText(t, x + r2W / 2, y + TAB_HEIGHT / 2 + 8);
+        ctx.fillStyle = isActive ? '#fff' : '#aaa';
+        ctx.fillText(t, x + r2W / 2, y + TAB_HEIGHT / 2 + 6);
       });
     }
 
@@ -1291,15 +1494,63 @@ class GuiXR {
           ctx.fillRect(sliderX, sliderY, sliderW, sliderH);
 
           // Knob
-          // Mock value 0.5
-          const knobX = sliderX + sliderW * (wid.value || 0.5);
+          // Mock value? Use real value which is 0..1 usually in widget, but we have min/max support in _executeAction
+          // The widget object might only have 'value' normalized or raw? 
+          // getCameraWidgets sets 'value' to real value (e.g. 45 for fov).
+          // But _handleMenuInteract normalizes slider interaction to 0..1?
+          // Wait, _handleMenuInteract says: w.value = val (0..1).
+          // _executeAction maps 0..1 to Min/Max.
+          // BUT getCameraWidgets initializes 'value' to camera.getFov() (e.g. 45).
+          // If interaction sets it to 0.5, we lose the previous State?
+          // We need normalization in getCameraWidgets or handle normalized values.
+          // GuiXR _handleMenuInteract assumes w.value is 0-1. 
+          // If we pass raw value 45, the slider will draw at 4500% !
+          // We should normalize input widgets?
+          // OR handle raw values in slider drawing and interaction?
+          // _handleMenuInteract sets 0..1. 
+          // So if we start with real value, we need to normalize it for display only?
+          // Or we normalize it during widget creation?
+          // The widget creation functions (GuiVRCamera) put raw values.
+          // We should probably normalize them in the widget creation OR handle min/max in drawing/interaction.
+          // Since _executeAction handles min/max, it expects w.value to be 0..1 (from interaction).
+          // So the initial value MUST be normalized.
+          // I need to update GuiVRCamera.js etc to normalize?
+          // Or I check min/max here?
+
+          let normalized = wid.value;
+          if (wid.min !== undefined && wid.max !== undefined) {
+            // If value is raw (e.g. 45), normalize it.
+            // But if value is 0.5 (from interaction), stick with it.
+            // How do we distinguish? 
+            // Maybe we assume 'value' on the widget OBJECT is always 0..1?
+            // If so, getCameraWidgets is WRONG to pass raw value.
+            // I'll assume I need to fix getCameraWidgets/GuiVRCamera.js etc or fix logic here.
+            // Given I can edit this file easily:
+            // Let's normalize here if min/max exist and value > 1 ? No, value can be 0.5 and be raw.
+
+            // Safer: assume w.value IS the normalized value (0..1).
+            // AND in getCameraWidgets, we should compute normalized value.
+            // I'll update visual here to use 0..1.
+            // And I will try to update GuiVRCamera separately or rely on 'init' normalization?
+            // GuiXR doesn't have init normalization loop by default.
+
+            // Let's just use wid.value for knob position (assuming 0..1).
+            // And display the MAPPED value (using min/max).
+          }
+
+          const knobX = sliderX + sliderW * Math.max(0, Math.min(1, wid.value));
           ctx.fillStyle = '#888';
           ctx.fillRect(knobX - 5, sliderY - 5, 10, 16);
 
-          // Value Text?
+          // Value Text
+          let displayVal = wid.value;
+          if (wid.min !== undefined && wid.max !== undefined) {
+            displayVal = wid.min + wid.value * (wid.max - wid.min);
+          }
+
           ctx.fillStyle = '#aaa';
           ctx.textAlign = 'right';
-          ctx.fillText("1024", sliderX - 10, wy + wid.h / 2 + 6);
+          ctx.fillText(displayVal.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
 
 
         } else if (wid.type === 'button') {
@@ -1311,6 +1562,34 @@ class GuiXR {
           ctx.font = '18px sans-serif';
           ctx.fillStyle = wid.disabled ? '#666' : '#fff';
           ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
+
+        } else if (wid.type === 'combobox') {
+          ctx.fillStyle = '#252525';
+          ctx.fillRect(wx, wy, wid.w, wid.h);
+          ctx.strokeStyle = '#444';
+          ctx.strokeRect(wx, wy, wid.w, wid.h);
+
+          ctx.font = '18px sans-serif';
+          ctx.fillStyle = '#ddd';
+          ctx.textAlign = 'left';
+          ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
+
+          let valLabel = wid.value;
+          if (wid.options) {
+            const opt = wid.options.find(o => o.id === wid.value);
+            if (opt) valLabel = opt.label;
+          }
+
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#fff';
+          ctx.fillText(valLabel, wx + wid.w - 30, wy + wid.h / 2 + 6);
+
+          // Triangle
+          ctx.beginPath();
+          ctx.moveTo(wx + wid.w - 20, wy + wid.h / 2 - 5);
+          ctx.lineTo(wx + wid.w - 10, wy + wid.h / 2 - 5);
+          ctx.lineTo(wx + wid.w - 15, wy + wid.h / 2 + 5);
+          ctx.fill();
         }
       });
       return; // Skip other overlays if Menu is open? Or draw on top? 

@@ -13,7 +13,7 @@ export default function getRenderingWidgets(main) {
   let y = 130;
 
   // --- SHADER ---
-  widgets.push({ type: 'info', label: 'SHADER', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Shader', x: col1X, y: y });
   y += gapHeader;
 
   const shaderOptions = [
@@ -43,7 +43,7 @@ export default function getRenderingWidgets(main) {
 
 
   // --- OPTIONS ---
-  widgets.push({ type: 'info', label: 'OPTIONS', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Options', x: col1X, y: y });
   y += gapHeader;
 
   const mesh = main.getMesh();
@@ -61,7 +61,7 @@ export default function getRenderingWidgets(main) {
 
 
   // --- ENVIRONMENT / MATCAP ---
-  widgets.push({ type: 'info', label: 'ENV / MATCAP', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Env / Matcap', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'combobox', id: 'environment', label: 'Environment', x: col1X, y: y, w: 400, h: btnH });
@@ -73,7 +73,7 @@ export default function getRenderingWidgets(main) {
 
 
   // --- EXTRA ---
-  widgets.push({ type: 'info', label: 'EXTRA', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Extra', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'slider', id: 'transparency', label: 'Transparency', x: col1X, y: y, w: 400, h: 40, value: 0, disabled: true });

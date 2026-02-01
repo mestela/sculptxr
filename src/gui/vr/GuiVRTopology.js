@@ -18,7 +18,7 @@ export default function getTopologyWidgets(main) {
   let y = 130;
 
   // --- MULTIRESOLUTION ---
-  widgets.push({ type: 'info', label: 'MULTIRESOLUTION', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Multiresolution', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'slider', id: 'multires_level', label: 'Level', x: col1X, y: y, w: 300, h: 40, value: 0, disabled: true }); // Needs wiring
@@ -34,7 +34,7 @@ export default function getTopologyWidgets(main) {
 
 
   // --- REMESH ---
-  widgets.push({ type: 'info', label: 'REMESH', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Remesh', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'slider', id: 'voxelRes', label: 'Resolution', x: col1X, y: y, w: 400, h: 40, value: 0.5 });
@@ -46,7 +46,7 @@ export default function getTopologyWidgets(main) {
 
 
   // --- DYNAMIC ---
-  widgets.push({ type: 'info', label: 'DYNAMIC TOPOLOGY', x: col1X, y: y });
+  widgets.push({ type: 'info', label: 'Dynamic Topology', x: col1X, y: y });
   y += gapHeader;
 
   widgets.push({ type: 'checkbox', id: 'dynamic', label: 'Activated', x: col1X, y: y, w: 300, h: btnH });
