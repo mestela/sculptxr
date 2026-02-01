@@ -3,6 +3,7 @@ import TR from 'gui/GuiTR';
 import Tools from 'editing/tools/Tools';
 
 export default function getToolsWidgets(main, activeToolIndex) {
+  if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
   const widgets = [];
 
   // Spacing Constants

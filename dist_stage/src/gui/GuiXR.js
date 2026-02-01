@@ -361,6 +361,7 @@ class GuiXR {
 
   // Reload widgets (e.g. when tool changes)
   refreshToolsWidget() {
+    this._tabWidgets = {}; // Clear cache to force regeneration
     this._needsRedraw = true;
     this.draw();
   }
