@@ -5,6 +5,10 @@
 **Checkpoint**: `v0.6.136` deployed to `sculptxrbeta`.
 **Last Successful Version**: `v0.6.136` (Responsive menu, no input lag).
 
+## MANDATORY: Project Rules & Guidelines
+**CRITICAL**: You MUST read and follow `project_rules.md` at the start of your session. It contains codebase-specific patterns, style guides, and forbidden actions (e.g., no emoji, specific git workflows).
+[project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
+
 ## Current Issue: RESOLVED (Ready for Next Challenge)
 **User Report**: "starting to feel really good!"
 **Status**:
