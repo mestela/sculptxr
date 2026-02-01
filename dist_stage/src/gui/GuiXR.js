@@ -929,6 +929,14 @@ class GuiXR {
 
         if (id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
         else if (id === 'fov') { main.getCamera().setFov(val); main.render(); }
+        else if (id === 'radius' || id === 'intensity') {
+          const tool = main.getSculptManager().getCurrentTool();
+          if (tool) {
+            if (id === 'radius') tool._radius = val;
+            if (id === 'intensity') tool._intensity = val;
+            main.render();
+          }
+        }
         // Add other generic sliders here
       }
       return;
@@ -1500,25 +1508,30 @@ class GuiXR {
         ctx.fillStyle = '#222';
         ctx.fillRect(wid.x, wid.y + wid.h * 0.4, wid.w, wid.h * 0.2);
 
+        // Calculate Normalized Value for Knob Position
+        let t = wid.value;
+        if (isFinite(wid.min) && isFinite(wid.max)) {
+          t = (wid.value - wid.min) / (wid.max - wid.min);
+        }
+        t = Math.max(0, Math.min(1, t));
+
         // Knob
-        const val = Math.max(0, Math.min(1, wid.value)); // Clamp for safety
-        const knobX = wid.x + val * wid.w;
+        const knobX = wid.x + t * wid.w;
         ctx.fillStyle = '#00D0FF';
         ctx.fillRect(knobX - 10, wid.y, 20, wid.h);
 
         // Label (Left)
         ctx.fillStyle = '#eee';
         ctx.textAlign = 'left';
-        ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 20, wid.y + wid.h / 2 + 10);
+        ctx.fillText(`${wid.label}:`, wid.x + 20, wid.y + wid.h / 2 + 10);
 
-        // Mapped Value (Right) if applicable
-        if (!wid.noValue && isFinite(wid.min) && isFinite(wid.max)) {
-          const mapped = wid.min + wid.value * (wid.max - wid.min);
-          const valStr = mapped.toFixed(wid.precision || 2);
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#aaa';
-          ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
-        }
+        // Value (Right)
+        // Use Actual Value
+        let valStr = wid.value.toFixed(wid.precision || 2);
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#aaa';
+        ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
         continue;
       }
 

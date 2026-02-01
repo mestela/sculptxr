@@ -38,8 +38,17 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
 
   // 2. Brush Settings
-  widgets.push({ type: 'slider', id: 'radius', label: 'Radius (-X)', x: col1X, y: y, w: 350, h: 40, value: 0.5 });
-  widgets.push({ type: 'slider', id: 'intensity', label: 'Intensity (-C)', x: 400, y: y, w: 350, h: 40, value: 0.5 });
+  widgets.push({ type: 'slider', id: 'radius', label: 'Radius (-X)', x: col1X, y: y, w: 350, h: 40, value: 0.5, min: 1, max: 100, precision: 0 }); // Scaled via tool?
+  // Check GuiSculptingTools... Radius (5, 500). Intensity (0-100) or (0-1)?
+  // GuiSculptingTools: radius 5-500. Intensity 0-100?
+  // Let's check GuiSculptingTools again.
+  // radius: 5, 500
+  // intensity: 0, 100 (tool._intensity * 100)
+
+  // So VR should match density?
+  // Let's try matching those ranges.
+  widgets.push({ type: 'slider', id: 'radius', label: 'Radius', x: col1X, y: y, w: 350, h: 40, value: 50, min: 5, max: 500 });
+  widgets.push({ type: 'slider', id: 'intensity', label: 'Intensity', x: 400, y: y, w: 350, h: 40, value: 0.5, min: 0, max: 1 });
   y += 40 + gapSection;
 
   const activeTool = main.getSculptManager().getTool(activeToolIndex);
