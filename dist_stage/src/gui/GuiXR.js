@@ -918,14 +918,17 @@ class GuiXR {
           mesh.setSymmetryOffset(w.value);
           main.render();
         }
+      }
       } else if (isFinite(w.min) && isFinite(w.max)) {
         // Generic Min/Max Slider Support
-        const mapped = w.min + w.value * (w.max - w.min);
-        let val = mapped;
+      // w.value is ALREADY mapped by onInteract (or initialized mapped)
+      let val = w.value;
         if (w.step) {
-          const steps = Math.round((mapped - w.min) / w.step);
+          const steps = Math.round((val - w.min) / w.step);
           val = w.min + steps * w.step;
         }
+
+      console.log(`[GuiXR] Slider Action: ${id} = ${val}`);
 
         if (id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
         else if (id === 'fov') { main.getCamera().setFov(val); main.render(); }
@@ -935,6 +938,8 @@ class GuiXR {
             if (id === 'radius') tool._radius = val;
             if (id === 'intensity') tool._intensity = val;
             main.render();
+          } else {
+            console.warn(`[GuiXR] No active tool for ${id}`);
           }
         }
         // Add other generic sliders here
