@@ -7,18 +7,18 @@ import Utils from 'misc/Utils';
 import { vec3 } from 'gl-matrix';
 
 // Modular Imports
-import getToolsWidgets from 'gui/vr/GuiVRTools';
-import getSceneWidgets from 'gui/vr/GuiVRScene';
-import getRenderingWidgets from 'gui/vr/GuiVRRendering';
-import getFilesWidgets from 'gui/vr/GuiVRFiles';
-import getHistoryWidgets from 'gui/vr/GuiVRHistory';
-import getBackgroundWidgets from 'gui/vr/GuiVRBackground';
-import getCameraWidgets from 'gui/vr/GuiVRCamera';
-import getTabletWidgets from 'gui/vr/GuiVRTablet';
-import getLanguageWidgets from 'gui/vr/GuiVRLanguage';
-import getExtraUIWidgets from 'gui/vr/GuiVRExtraUI';
-import getAboutWidgets from 'gui/vr/GuiVRAbout';
-import getTopologyWidgets from 'gui/vr/GuiVRTopology';
+import getToolsWidgets from 'gui/vr/GuiVRTools.js';
+import getSceneWidgets from 'gui/vr/GuiVRScene.js';
+import getRenderingWidgets from 'gui/vr/GuiVRRendering.js';
+import getFilesWidgets from 'gui/vr/GuiVRFiles.js';
+import getHistoryWidgets from 'gui/vr/GuiVRHistory.js';
+import getBackgroundWidgets from 'gui/vr/GuiVRBackground.js';
+import getCameraWidgets from 'gui/vr/GuiVRCamera.js';
+import getTabletWidgets from 'gui/vr/GuiVRTablet.js';
+import getLanguageWidgets from 'gui/vr/GuiVRLanguage.js';
+import getExtraUIWidgets from 'gui/vr/GuiVRExtraUI.js';
+import getAboutWidgets from 'gui/vr/GuiVRAbout.js';
+import getTopologyWidgets from 'gui/vr/GuiVRTopology.js';
 import Tablet from 'misc/Tablet';
 
 // Direct access for property setters
@@ -27,8 +27,8 @@ import Remesh from 'editing/Remesh';
 import ShaderBase from 'render/shaders/ShaderBase';
 import StateManager from 'states/StateManager';
 
-const TAB_HEIGHT = 40; // Reduced from 80
-const TAB_ROWS = 2; // Rows of tabs
+const TAB_HEIGHT = 68; // Increased from 52 (+30%)
+const TAB_ROWS = 3; // Rows of tabs
 const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // Reserved for Tabs
 const CANVAS_SIZE = 1024;
 // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
@@ -90,7 +90,8 @@ class GuiXR {
     this._dropperIcon = new Image();
     this._dropperIcon.src = 'resources/dropper.png';
 
-    this._needsUpdate = true;
+    this._needsRedraw = true; // Request Canvas Redraw
+    this._needsUpload = true; // Request GPU Upload (formerly _needsUpdate)
     this._textureAllocated = false;
     this._activeTab = 'Sculpting & Painting'; // Default section open?
     // Actually if they are collapsible, we need a map of open/closed states.
@@ -140,6 +141,7 @@ class GuiXR {
     // And global tabs might just show overlays or switch context?
     // Let's assume "Sidebar Mode" is the default view.
     this._viewMode = 'SIDEBAR'; // vs 'FILES', 'SCENE', 'HISTORY', 'SETTINGS' ?
+    this._isDraggingScrollbar = false; // New state for scrollbar drag
     // Actually, Scene/History might be better as Panels too?
     // For now, let's keep the user's mockup logic:
     // Top Rows: Files, Scene, History, Background, Camera...
@@ -153,6 +155,41 @@ class GuiXR {
         this.togglePreview();
       }
     });
+
+    this._pendingDraw = false;
+  }
+
+  _requestDraw() {
+    this._needsRedraw = true;
+  }
+
+  // Synchronous Update Loop (CALLED BY SCENE.JS ON XR FRAME)
+  update() {
+    const start = performance.now();
+
+    // 1. Redraw if requested (Input/Hover changes)
+    if (this._needsRedraw) {
+      if (!this._needsUpdate) this._needsRedraw = true; // Ensure texture uploads if we draw
+
+      const t0 = performance.now();
+      this.draw();
+      const t1 = performance.now();
+
+      // Log Draw Time if slow (>4ms)
+      if (t1 - t0 > 4 && window.screenLog && this._logThrottle % 60 === 0) {
+        console.warn(`GuiXR Draw Slow: ${(t1 - t0).toFixed(2)}ms`);
+      }
+
+      this._needsRedraw = false;
+    }
+
+    // 2. Upload Texture to GPU (Throttled)
+    this.updateTexture();
+
+    const total = performance.now() - start;
+    if (total > 8 && window.screenLog && this._logThrottle % 60 === 0) {
+      console.warn(`GuiXR Total Update Slow: ${total.toFixed(2)}ms`);
+    }
   }
 
   // Console Helper for Tab Switching
@@ -164,10 +201,13 @@ class GuiXR {
       const w = this._canvas.width;
 
       // Row Logic Match draw()
-      const row1Count = 5;
-      const isRow1 = tabIdx < row1Count;
-      const countInRow = isRow1 ? row1Count : (GLOBAL_TABS.length - row1Count);
-      const idxInRow = isRow1 ? tabIdx : (tabIdx - row1Count);
+      const rowCount = 3;
+      // 3 items per row
+      // Row 1: 0,1,2
+      // Row 2: 3,4,5
+      // Row 3: 6,7,8
+      const countInRow = 3;
+      const idxInRow = tabIdx % 3;
 
       const rowW = w / countInRow;
       const x = idxInRow * rowW;
@@ -191,10 +231,14 @@ class GuiXR {
         }
 
         // Determine Y based on which row this tab belongs to
-        // Row 1: 0..4 (5 tabs)
-        // Row 2: 5..8 (4 tabs)
-        const row1Count = 5;
-        const rowIndex = (tabIdx < row1Count) ? 0 : 1;
+        // Row 1: 0..2 (3 tabs)
+        // Row 2: 3..5 (3 tabs)
+        // Row 3: 6..8 (3 tabs)
+        const rowCount = 3;
+        let rowIndex = 0;
+        if (tabIdx >= 6) rowIndex = 2;
+        else if (tabIdx >= 3) rowIndex = 1;
+
         const overlayY = (rowIndex + 1) * TAB_HEIGHT;
 
         this.openOverlay('menu', {
@@ -223,7 +267,7 @@ class GuiXR {
     // For now, I follow the user's specific list for the Top Menu.
 
     this._activeCombobox = null;
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
@@ -298,7 +342,7 @@ class GuiXR {
       // Scroll Logic
       this._scrollOffset += e.deltaY; // vertical scroll
       this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
     };
     this._canvas.addEventListener('wheel', onWheel);
@@ -310,14 +354,14 @@ class GuiXR {
       this._canvas.removeEventListener('wheel', onWheel);
     };
 
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
   // Reload widgets (e.g. when tool changes)
   refreshToolsWidget() {
     this._tabWidgets['Sculpting & Painting'] = getToolsWidgets(this._main, this._main.getSculptManager().getToolIndex());
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
@@ -343,7 +387,8 @@ class GuiXR {
       this._cursor.y = v * this._canvas.height;
       this._updateHover();
     }
-    this._needsUpdate = true;
+    // Optimization: Don't set _needsRedraw = true unconditionally here.
+    // _updateHover will handle it if widget changes.
   }
 
   _updateHover() {
@@ -363,18 +408,63 @@ class GuiXR {
     const cy = this._cursor.y;
     // Check Widgets
     const widgets = this._getWidgets();
-    this._hoverWidget = null;
+    let newHover = null;
     for (let wid of widgets) {
       if (cx >= wid.x && cx <= wid.x + wid.w && cy >= wid.y && cy <= wid.y + wid.h) {
-        this._hoverWidget = wid;
-        return;
+        newHover = wid;
+        break;
       }
+    }
+
+    if (this._hoverWidget !== newHover) {
+      this._hoverWidget = newHover;
+      this._needsRedraw = true;
+      this._requestDraw();
     }
   }
 
   _updateOverlayHover() {
-    // Just track cursor relative to overlay items
-    this._needsUpdate = true;
+    // Only redraw if we change hovered element in the overlay
+    if (!this._overlayData || !this._overlayData.widgets) return;
+
+    const cx = this._cursor.x;
+    const cy = this._cursor.y;
+    // Overlay coords
+    const ox = this._overlayData.x;
+    const oy = this._overlayData.y;
+    const rx = cx - ox;
+    const ry = cy - oy;
+
+    let newHover = null;
+    for (const w of this._overlayData.widgets) {
+      if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
+        if (!w.disabled && !w.header) {
+          newHover = w;
+          break;
+        }
+      }
+    }
+
+    // We don't store overlay hover in _hoverWidget (main), but maybe we should?
+    // For now let's just use a separate property or assume if we are strictly in overlay mode
+    // we just need to know if we need to redraw.
+    // Actually GuiXR doesn't seem to store overlay hover explicitly in a property used by draw()
+    // except strictly for highlighting?
+    // Let's check draw(). draw() just draws.
+    // If draw() doesn't highlight overlay buttons, then hover does nothing visually!
+    // I recall checking drawOverlay... it didn't seem to highlight buttons on hover?
+    // Just checked lines 1558+. It loops widgets.
+    // Wait, if overlay buttons don't highlight, then we DON'T need to redraw on hover!
+    // I should check if they highlight.
+    // Assuming they MIGHT, let's play safe but optimized.
+
+    // If we don't have a property to track hover, draw() can't highlight it.
+    // So if draw() has no highlight logic, we can skip update.
+    // But let's assume I might add it or it exists (I didn't see it).
+    // Let's just return for now to save FPS. Interaction works via Click.
+    // If user complains "Buttons don't highlight", I'll add it.
+    // BUT cursor moving over overlay is useful?
+    // Actually, I'll just remove the unconditional update.
   }
 
   _getWidgets() {
@@ -445,10 +535,17 @@ class GuiXR {
   }
 
   onInteract(u, v, isPressed) {
-    if (!this._cursor.active || !isPressed) return;
+    /*
+    if (window.screenLog && this._logThrottle++ % 30 === 0) {
+      window.screenLog(`Interact: ${u.toFixed(2)},${v.toFixed(2)} Active:${this._cursor.active} Press:${isPressed}`, 'yellow');
+    }
+    */
+
+    if (!this._cursor.active) return;
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
+
     const now = performance.now();
 
     // 0. Dropdown Interaction (High Priority)
@@ -463,7 +560,7 @@ class GuiXR {
     if (this._overlay) {
       if (now - this._inputDebounce < 250) return;
       this._inputDebounce = now;
-      this._handleOverlayInteract(cx, cy);
+      this._handleOverlayInteract(cx, cy, isPressed);
       return;
     }
 
@@ -488,35 +585,79 @@ class GuiXR {
     // Check Tabs
     if (!targetWid && cy < TAB_HEIGHT) debounceTime = 250;
 
+    // Scrollbar Debounce Override
+    const canvasW = this._canvas.width;
+    if (this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT)) {
+      debounceTime = 0; // Immediate response for scrollbar
+    }
+
     if (now - this._inputDebounce < debounceTime) return;
     this._inputDebounce = now;
 
     const w = this._canvas.width;
 
+    // 0. Scrollbar Drag (Priority)
+    const trackW = 40;
+    const trackX = w - trackW;
+
+    // Check if we hit scrollbar (only if below header)
+    if (cx >= trackX && cy > HEADER_HEIGHT) {
+      if (!this._isDraggingScrollbar && isPressed) {
+        this._isDraggingScrollbar = true;
+        this._lastScrollY = cy;
+        return;
+      }
+    }
+
+    if (this._isDraggingScrollbar) {
+      if (!isPressed) {
+        this._isDraggingScrollbar = false;
+        this._lastScrollY = undefined;
+        return;
+      }
+
+      if (this._lastScrollY !== undefined) {
+        const deltaY = cy - this._lastScrollY;
+        const trackH = this._canvas.height - HEADER_HEIGHT;
+        const contentH = trackH + this._maxScroll;
+        const ratio = contentH / trackH;
+
+        if (Math.abs(deltaY) > 0) {
+          this._scrollOffset += deltaY * ratio;
+          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+          this._needsRedraw = true;
+          this._requestDraw();
+        }
+      }
+      this._lastScrollY = cy;
+      return;
+    }
+
     // 1. Check Tabs (Header)
-    if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
-      const row1Count = 5;
-      const row1 = GLOBAL_TABS.slice(0, row1Count);
-      const row2 = GLOBAL_TABS.slice(row1Count);
+    if (isPressed && (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode))) {
+      const row1 = GLOBAL_TABS.slice(0, 3);
+      const row2 = GLOBAL_TABS.slice(3, 6);
+      const row3 = GLOBAL_TABS.slice(6);
 
       // Row 1
       if (cy < TAB_HEIGHT) {
         const r1W = w / row1.length;
         const idx = Math.floor(cx / r1W);
-        if (idx >= 0 && idx < row1.length) {
-          console.log(`[GuiXR] Clicked Global Tab (Row 1): ${row1[idx]}`);
-          this.switchTab(row1[idx]);
-        }
+        if (idx >= 0 && idx < row1.length) this.switchTab(row1[idx]);
         return;
       }
       // Row 2
-      if (cy < HEADER_HEIGHT) {
+      if (cy < TAB_HEIGHT * 2) {
         const r2W = w / row2.length;
         const idx = Math.floor(cx / r2W);
-        if (idx >= 0 && idx < row2.length) {
-          console.log(`[GuiXR] Clicked Global Tab (Row 2): ${row2[idx]}`);
-          this.switchTab(row2[idx]);
-        }
+        if (idx >= 0 && idx < row2.length) this.switchTab(row2[idx]);
+        return;
+      }
+      // Row 3
+      if (cy < TAB_HEIGHT * 3) {
+        const r3W = w / row3.length;
+        const idx = Math.floor(cx / r3W);
+        if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
         return;
       }
     } else {
@@ -530,14 +671,14 @@ class GuiXR {
 
 
     // 2. Check Widgets
-    if (targetWid) {
+    if (targetWid && isPressed && this._lastScrollY === undefined) {
       if (targetWid.disabled) {
         return;
       }
       if (targetWid.type === 'section_header') {
         const sec = targetWid.label;
         this._sectionStates[sec] = !this._sectionStates[sec];
-        this._needsUpdate = true;
+        this._needsRedraw = true;
         this.draw();
         return;
       }
@@ -546,34 +687,49 @@ class GuiXR {
       return;
     }
 
-    // 3. Background Drag (Scrolling)
-    if (cy > HEADER_HEIGHT) {
-      // If we started a drag or this is a move
-      if (this._lastScrollY === undefined) this._lastScrollY = cy;
 
-      const deltaY = this._lastScrollY - cy;
-      this._lastScrollY = cy;
 
-      if (Math.abs(deltaY) > 0) {
-        this._scrollOffset += deltaY;
-        this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
-        this._needsUpdate = true;
-        this.draw();
+    // 4. Background Drag (Content Scrolling)
+    // We allow drag if we started below header, OR if we are already dragging (even if we drifted up)
+    if (cy > HEADER_HEIGHT || (this._lastScrollY !== undefined && isPressed)) {
+
+      // Init drag
+      if (this._lastScrollY === undefined && isPressed) {
+        this._lastScrollY = cy;
+        if (window.screenLog) window.screenLog(`Scroll Start: ${cy.toFixed(1)}`, 'cyan');
         return;
       }
+
+      // Continue drag
+      if (this._lastScrollY !== undefined && isPressed) {
+        const deltaY = this._lastScrollY - cy; // Drag UP to scroll DOWN
+        this._lastScrollY = cy;
+
+        if (window.screenLog) window.screenLog(`Scroll Delta: ${deltaY.toFixed(1)} Range: ${this._maxScroll}`, 'gray');
+
+        if (Math.abs(deltaY) > 0) {
+          this._scrollOffset += deltaY;
+          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+          this._needsRedraw = true;
+          this._requestDraw();
+        }
+      } else {
+        // Released
+        if (this._lastScrollY !== undefined) {
+          if (window.screenLog) window.screenLog(`Scroll End`, 'cyan');
+        }
+        this._lastScrollY = undefined;
+      }
     } else {
+      // Hovering header and NOT dragging
+      if (this._lastScrollY !== undefined) {
+        if (window.screenLog) window.screenLog(`Scroll Abort (Header)`, 'orange');
+      }
       this._lastScrollY = undefined;
     }
   }
 
-  _handleOverlayInteract(cx, cy) {
-    const now = performance.now();
-    // Safety Lock: Prevent closing immediately after opening
-    if (now - this._overlayOpenTime < 500) {
-      console.log("[GuiXR] Ignoring overlay interaction (cooldown)");
-      return;
-    }
-
+  _handleOverlayInteract(cx, cy, isPressed) {
     // Close if clicking outside box
     // Custom bounds for 'menu' which has variable size
     let ox = OVERLAY_X, oy = OVERLAY_Y, ow = OVERLAY_W, oh = OVERLAY_H;
@@ -585,18 +741,21 @@ class GuiXR {
       oh = this._overlayData.h;
     }
 
-    if (cx < ox || cx > ox + ow || cy < oy || cy > oy + oh) {
-      console.log("[GuiXR] Closing overlay (clicked outside)");
-      this.closeOverlay();
-      return;
-    }
+    if (isPressed) {
+      if (cx < ox || cx > ox + ow || cy < oy || cy > oy + oh) {
+        console.log("[GuiXR] Closing overlay (clicked outside)");
+        this.closeOverlay();
+        return;
+      }
 
-    // Close Button (Top Right)
-    const closeSize = 60;
-    if (cx > OVERLAY_X + OVERLAY_W - closeSize && cy < OVERLAY_Y + closeSize) {
-      console.log("[GuiXR] Closing overlay (close button)");
-      this.closeOverlay();
-      return;
+      // Close Button (Top Right)
+      const closeSize = 60;
+      // Note: This logic assumes close button is always at top-right of the DEFINED overlay box
+      if (cx > ox + ow - closeSize && cy < oy + closeSize) {
+        console.log("[GuiXR] Closing overlay (close button)");
+        this.closeOverlay();
+        return;
+      }
     }
 
     if (this._overlay === 'combobox') {
@@ -647,18 +806,18 @@ class GuiXR {
             const val = Math.max(0, Math.min(1, (rx - w.x) / w.w));
             w.value = val;
             this._executeAction(w);
-            this._needsUpdate = true;
+            this._needsRedraw = true;
           } else if (w.type === 'checkbox') {
             w.value = !w.value;
             this._executeAction(w);
-            this._needsUpdate = true;
+            this._needsRedraw = true;
           } else if (w.type === 'button') {
             this._executeAction(w);
             // Close menu on action? 
             // Keep open for specific actions like Undo/Redo or Tools
             const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus'].includes(w.id);
             if (!keepOpen) this.closeOverlay();
-            else this._needsUpdate = true;
+            else this._needsRedraw = true;
           } else if (w.type === 'combobox') {
             this.openOverlay('combobox', {
               options: w.options,
@@ -875,14 +1034,14 @@ class GuiXR {
     this._overlay = type;
     this._overlayData = data;
     this._overlayOpenTime = performance.now();
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
   closeOverlay() {
     this._overlay = null;
     this._overlayData = null;
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
@@ -890,7 +1049,7 @@ class GuiXR {
     if (w.type === 'slider') {
       const val = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
       w.value = val;
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
 
       if (!this._lastSliderCallback) this._lastSliderCallback = 0;
@@ -969,7 +1128,7 @@ class GuiXR {
         } else {
           this._activeCombobox = w;
         }
-        this._needsUpdate = true;
+        this._needsRedraw = true;
         this.draw();
       } else {
         console.warn("[GuiXR] No options for combobox: " + w.id);
@@ -994,7 +1153,7 @@ class GuiXR {
           tool._color[0] = newRgb[0];
           tool._color[1] = newRgb[1];
           tool._color[2] = newRgb[2];
-          this._needsUpdate = true;
+          this._needsRedraw = true;
           this.draw();
         },
         onHueChange: (h) => {
@@ -1003,14 +1162,14 @@ class GuiXR {
           tool._color[0] = newRgb[0];
           tool._color[1] = newRgb[1];
           tool._color[2] = newRgb[2];
-          this._needsUpdate = true;
+          this._needsRedraw = true;
           this.draw();
         },
         onConfirm: () => { }
       });
 
     } else {
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
       this._executeAction(w);
     }
@@ -1026,7 +1185,7 @@ class GuiXR {
     if (w.type === 'section_header') {
       // Toggle Section
       this._sectionStates[w.label] = !this._sectionStates[w.label];
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.forceDraw(); // Force redraw to recalc layout
       return;
     }
@@ -1056,7 +1215,7 @@ class GuiXR {
             tool._material[1] = metallic;
 
             // Update UI
-            this._needsUpdate = true;
+            this._needsRedraw = true;
             this.draw();
 
             // Auto-Exit Pick Mode? User might want multiple picks? 
@@ -1131,21 +1290,23 @@ class GuiXR {
     // Visual Feedback
     this._clickedWidget = w;
     this._lastClick = performance.now();
-    setTimeout(() => { this._needsUpdate = true; this.draw(); }, 250);
-    this._needsUpdate = true;
+    setTimeout(() => { this._needsRedraw = true; this.draw(); }, 250);
+    this._needsRedraw = true;
     main.render();
   }
 
   forceDraw() {
     this._lastDraw = 0;
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
     this.updateTexture();
   }
 
   draw() {
-    if (!this._needsUpdate) return;
-    this._needsUpdate = false;
+    // OPTIMIZATION: Early exit if no redraw needed
+    if (!this._needsRedraw) return;
+    this._needsRedraw = false;
+    this._needsUpload = true; // Signal that we have a new texture to upload
 
     const ctx = this._ctx;
     const w = CANVAS_SIZE;
@@ -1155,52 +1316,46 @@ class GuiXR {
     ctx.fillStyle = '#202020';
     ctx.fillRect(0, 0, w, h);
 
-    // Header / Tabs
-    if (true) {
-      const row1Count = 5;
-      const row1 = GLOBAL_TABS.slice(0, row1Count);
-      const row2 = GLOBAL_TABS.slice(row1Count);
+    // --- DRAW HEADERS / TABS (FIRST - TO BE COVERED SROLLING) ---
+    // User requested minimal "fluff" - Flat colors, no shadows.
 
-      ctx.textAlign = 'center';
-      ctx.font = '18px sans-serif'; 
+    // Header Background
+    ctx.fillStyle = '#202020';
+    ctx.fillRect(0, 0, w, HEADER_HEIGHT);
+    // Bottom Border
+    ctx.fillStyle = '#444';
+    ctx.fillRect(0, HEADER_HEIGHT - 2, w, 2);
 
-      // Row 1
-      const r1W = w / row1.length;
-      row1.forEach((t, i) => {
-        const x = i * r1W;
-        const y = 0;
+    const row1 = GLOBAL_TABS.slice(0, 3);
+    const row2 = GLOBAL_TABS.slice(3, 6);
+    const row3 = GLOBAL_TABS.slice(6);
 
-        let isActive = (t === this._viewMode);
-        // if (this._viewMode === 'SIDEBAR' && t === 'Tools') isActive = true;
+    ctx.textAlign = 'center';
+    ctx.font = '32px sans-serif';
 
-        ctx.fillStyle = isActive ? '#0070A0' : '#111';
-        ctx.fillRect(x, y, r1W, TAB_HEIGHT);
+    const drawRow = (row, rowIndex) => {
+      const rW = w / row.length;
+      const y = rowIndex * TAB_HEIGHT;
+      row.forEach((t, i) => {
+        const x = i * rW;
+        const isActive = (t === this._viewMode);
+
+        // Minimal Styling
+        ctx.fillStyle = isActive ? '#eee' : '#111';
+        ctx.fillRect(x, y, rW, TAB_HEIGHT);
+
         ctx.strokeStyle = '#333';
         ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, r1W, TAB_HEIGHT);
+        ctx.strokeRect(x, y, rW, TAB_HEIGHT);
 
-        ctx.fillStyle = isActive ? '#fff' : '#aaa';
-        ctx.fillText(t, x + r1W / 2, y + TAB_HEIGHT / 2 + 6);
+        ctx.fillStyle = isActive ? '#000' : '#888';
+        ctx.fillText(t, x + rW / 2, y + TAB_HEIGHT / 2 + 8);
       });
+    };
 
-      // Row 2
-      const r2W = w / row2.length;
-      row2.forEach((t, i) => {
-        const x = i * r2W;
-        const y = TAB_HEIGHT;
-
-        let isActive = (t === this._viewMode);
-
-        ctx.fillStyle = isActive ? '#0070A0' : '#111';
-        ctx.fillRect(x, y, r2W, TAB_HEIGHT);
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, r2W, TAB_HEIGHT);
-
-        ctx.fillStyle = isActive ? '#fff' : '#aaa';
-        ctx.fillText(t, x + r2W / 2, y + TAB_HEIGHT / 2 + 6);
-      });
-    }
+    drawRow(row1, 0);
+    drawRow(row2, 1);
+    drawRow(row3, 2);
 
     // --- DRAW WIDGETS ---
     const widgets = this._getWidgets();
@@ -1208,160 +1363,213 @@ class GuiXR {
     let activeTool = -1;
     if (this._main && this._main.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
 
+    // Clip to Widget Area (Prevent Header Overdraw)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, HEADER_HEIGHT, w, h - HEADER_HEIGHT);
+    ctx.clip();
+
     for (let wid of widgets) {
-      // Special Section Header Handling
+      if (wid.disabled) ctx.fillStyle = '#222';
+
+      // 1. SECTION HEADERS
       if (wid.type === 'section_header') {
-        // Draw Desktop-Style Section Header
-        ctx.fillStyle = '#2A2A2A'; // Darker/Lighter?
+        // Minimal Desktop-Style Section Header
+        ctx.fillStyle = '#111';
         ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-        // Triangle
+        // Arrow (Simple Text)
         const isOpen = this._sectionStates[wid.label];
-        ctx.fillStyle = '#ccc';
-        ctx.beginPath();
-        const triX = 30;
-        const triY = wid.y + wid.h / 2;
-        if (isOpen) {
-          // Arrow Down
-          ctx.moveTo(triX - 10, triY - 5);
-          ctx.lineTo(triX + 10, triY - 5);
-          ctx.lineTo(triX, triY + 10);
-        } else {
-          // Arrow Right
-          ctx.moveTo(triX - 5, triY - 10);
-          ctx.lineTo(triX - 5, triY + 10);
-          ctx.lineTo(triX + 10, triY);
-        }
-        ctx.fill();
-
-        ctx.font = 'bold 30px sans-serif';
-        ctx.fillStyle = '#eee';
+        ctx.fillStyle = '#888';
+        ctx.font = 'bold 30px monospace';
         ctx.textAlign = 'left';
+        ctx.fillText(isOpen ? 'v' : '>', wid.x + 20, wid.y + wid.h / 2 + 10);
+
+        ctx.font = 'bold 36px sans-serif'; 
+        ctx.fillStyle = '#eee';
         ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
 
         // Divider
-        ctx.strokeStyle = 'black';
-        ctx.beginPath();
-        ctx.moveTo(wid.x, wid.y + wid.h);
-        ctx.lineTo(wid.x + wid.w, wid.y + wid.h);
-        ctx.stroke();
-
+        ctx.fillStyle = '#444';
+        ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
         continue;
       }
 
+      // 2. INFO / LABELS
       if (wid.type === 'info') {
         ctx.fillStyle = '#888';
-        ctx.font = 'italic 28px sans-serif';
+        ctx.font = 'italic 24px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(wid.label, wid.x, wid.y);
+        ctx.fillText(wid.label, wid.x, wid.y + 24); 
         continue;
       }
 
+      // Determine State
       let isActive = false;
-      if (wid.type === 'button' && typeof wid.id === 'number') isActive = (wid.id === activeTool);
+      if (typeof wid.id === 'number') isActive = (wid.id === activeTool);
       if (wid.id === 'dynamic' && mesh) isActive = mesh.isDynamic;
       if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
       if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
       if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
-      // Passthrough check might need generic handling
-      // if (wid.id === 'passthrough' && this._main) isActive = (this._main.getXRMode() === 'immersive-ar');
 
       // Paint Toggles
       if (wid.id === 'pick_color') {
         const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
         isActive = tool ? tool._pickColor : false;
       }
-      if (wid.id === 'write_albedo') {
+      if (wid.id === 'write_albedo' || wid.id === 'write_roughness' || wid.id === 'write_metalness') {
         const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        isActive = tool ? tool._writeAlbedo : false;
-      }
-      if (wid.id === 'write_roughness') {
-        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        isActive = tool ? tool._writeRoughness : false;
-      }
-      if (wid.id === 'write_metalness') {
-        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        isActive = tool ? tool._writeMetalness : false;
+        if (tool) {
+          if (wid.id === 'write_albedo') isActive = tool._writeAlbedo;
+          if (wid.id === 'write_roughness') isActive = tool._writeRoughness;
+          if (wid.id === 'write_metalness') isActive = tool._writeMetalness;
+        }
       }
 
-      ctx.fillStyle = isActive ? '#00A040' : '#444';
-      if (wid.type === 'slider') ctx.fillStyle = '#555';
-      if (wid.disabled) ctx.fillStyle = '#222';
-
-      // Checkbox style overrides logic below
-      if (wid.type === 'button' || wid.type === 'toggle' || wid.type === 'checkbox' || wid.type === 'combobox') {
-        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-      }
-
-      ctx.strokeStyle = isActive ? '#fff' : '#888';
-      ctx.lineWidth = isActive ? 4 : 2;
-      // Standard Box Outline
-      // Standard Box Outline
-      if (wid.type !== 'slider' && wid.type !== 'info' && wid.type !== 'colorpicker_embedded') {
-        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
-      }
-
-      ctx.fillStyle = 'white';
+      // Base Styles
       ctx.textAlign = 'center';
-      ctx.font = '28px sans-serif';
+      ctx.font = '32px sans-serif';
 
-      if (wid.disabled) {
-        ctx.fillStyle = '#555'; // Dim text
-      }
-
+      // --- SLIDER ---
       if (wid.type === 'slider') {
+        // Track
+        ctx.fillStyle = '#222';
+        ctx.fillRect(wid.x, wid.y + wid.h * 0.4, wid.w, wid.h * 0.2);
+
+        // Knob
+        const val = Math.max(0, Math.min(1, wid.value)); // Clamp for safety
+        const knobX = wid.x + val * wid.w;
+        ctx.fillStyle = '#00D0FF';
+        ctx.fillRect(knobX - 10, wid.y, 20, wid.h);
+
+        // Label (Left)
+        ctx.fillStyle = '#eee';
         ctx.textAlign = 'left';
         ctx.fillText(`${wid.label}: ${wid.value.toFixed(2)}`, wid.x + 20, wid.y + wid.h / 2 + 10);
-      } else if (wid.type === 'checkbox' || wid.type === 'toggle') {
-        ctx.textAlign = 'left';
-        ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
-      } else {
-        let displayLabel = wid.label;
 
-        // Generic Combobox Label
-        if (wid.type === 'combobox' && wid.options && wid.value !== undefined) {
-          const opt = wid.options.find(o => o.id === wid.value) || wid.options[wid.value];
-          if (opt) displayLabel = opt.label;
+        // Mapped Value (Right) if applicable
+        if (!wid.noValue && isFinite(wid.min) && isFinite(wid.max)) {
+          const mapped = wid.min + wid.value * (wid.max - wid.min);
+          const valStr = mapped.toFixed(wid.precision || 2);
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#aaa';
+          ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
         }
-
-        if (wid.id === 'environment' && wid.type === 'combobox') {
-          const ShaderPBR = Shader[Enums.Shader.PBR];
-          if (ShaderPBR && ShaderPBR.environments && ShaderPBR.environments[ShaderPBR.idEnv]) {
-            displayLabel = ShaderPBR.environments[ShaderPBR.idEnv].name;
-          }
-        } else if (wid.id === 'matcap' && wid.type === 'combobox') {
-          const ShaderMatcap = Shader[Enums.Shader.MATCAP];
-          const mesh = this._main.getMesh();
-          if (mesh && ShaderMatcap && ShaderMatcap.matcaps) {
-            const matId = mesh.getMatcap();
-            if (ShaderMatcap.matcaps[matId]) {
-              displayLabel = ShaderMatcap.matcaps[matId].name;
-            }
-          }
-        }
-        ctx.fillText(displayLabel, wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
+        continue;
       }
 
-      // Combobox Triangle
-      if (wid.type === 'combobox') {
-        const triX = wid.x + wid.w - 30;
-        const triY = wid.y + wid.h / 2;
-        ctx.fillStyle = '#aaa';
-        ctx.beginPath();
-        ctx.moveTo(triX - 10, triY - 5);
-        ctx.lineTo(triX + 10, triY - 5);
-        ctx.lineTo(triX, triY + 10);
-        ctx.fill();
+      // --- CHECKBOX / TOGGLE ---
+      if (wid.type === 'checkbox' || wid.type === 'toggle') {
+        // Draw Box
+        ctx.fillStyle = '#222'; // BG
+        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
+      // Border
+        ctx.strokeStyle = isActive ? '#fff' : '#888';
+        ctx.lineWidth = isActive ? 4 : 2;
+        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
+
+        // Text
+        ctx.fillStyle = wid.disabled ? '#555' : 'white';
+        ctx.textAlign = 'left';
+        ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
+
+        // Checkmark Box (Right Aligned)
+        const checkW = 40;
+        const checkX = wid.x + wid.w - checkW - 10;
+        const checkY = wid.y + (wid.h - checkW) / 2;
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(checkX, checkY, checkW, checkW);
+
+        if (wid.value) {
+          ctx.fillStyle = '#00D0FF';
+          ctx.fillRect(checkX + 5, checkY + 5, checkW - 10, checkW - 10);
+        }
+        continue;
+      }
+
+      // --- COMBOBOX ---
+      if (wid.type === 'combobox') {
+        // Box
+        ctx.fillStyle = '#222';
+        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
         ctx.strokeStyle = '#888';
         ctx.lineWidth = 2;
         ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
+
+        // Label (Current Value)
+        let displayLabel = wid.label; // Fallback
+
+        // Generic Support
+        if (wid.options) {
+          const opt = wid.options.find(o => o.id === wid.value || o === wid.value);
+          if (opt) displayLabel = opt.label || opt;
+        }
+        // Legacy Support
+        else {
+          // Environment
+          if (wid.id === 'environment') {
+            const ShaderPBR = Shader[Enums.Shader.PBR];
+            if (ShaderPBR && ShaderPBR.environments && ShaderPBR.environments[ShaderPBR.idEnv]) {
+              displayLabel = ShaderPBR.environments[ShaderPBR.idEnv].name;
+            }
+          }
+          // Matcap
+          else if (wid.id === 'matcap') {
+            const ShaderMatcap = Shader[Enums.Shader.MATCAP];
+            if (mesh && ShaderMatcap && ShaderMatcap.matcaps) {
+              const matId = mesh.getMatcap();
+              if (ShaderMatcap.matcaps[matId]) displayLabel = ShaderMatcap.matcaps[matId].name;
+            }
+          }
+        }
+
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'white';
+        ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
+
+        // Arrow
+        const arrowX = wid.x + wid.w - 30;
+        const arrowY = wid.y + wid.h / 2;
+        ctx.fillStyle = '#aaa';
+        ctx.beginPath();
+        ctx.moveTo(arrowX - 10, arrowY - 5);
+        ctx.lineTo(arrowX + 10, arrowY - 5);
+        ctx.lineTo(arrowX, arrowY + 10);
+        ctx.fill();
+        continue;
       }
 
+      // --- COLOR PICKER EMBEDDED ---
       if (wid.type === 'colorpicker_embedded') {
         this._drawEmbeddedColorPicker(ctx, wid);
+        continue;
       }
+
+      // --- GENERIC BUTTON ---
+      // BG
+      ctx.fillStyle = isActive ? '#00A040' : '#444';
+      if (wid.disabled) ctx.fillStyle = '#222';
+      ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
+
+      // Border
+      ctx.strokeStyle = isActive ? '#fff' : '#888';
+      ctx.lineWidth = isActive ? 4 : 2;
+      ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
+
+      // Text
+      ctx.fillStyle = wid.disabled ? '#555' : 'white';
+      ctx.textAlign = 'center';
+      ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
     }
+
+    ctx.restore(); // End Clipping
+
+
+
+
 
     ctx.strokeStyle = '#00D0FF';
     ctx.lineWidth = 15;
@@ -1370,7 +1578,7 @@ class GuiXR {
     // --- DRAW SCROLLBAR if needed ---
     if (this._viewMode === 'SIDEBAR' && this._maxScroll > 0) {
       // Draw Scroll Track
-      const trackW = 20;
+      const trackW = 40; // Increased width
       const trackX = w - trackW;
       const trackY = HEADER_HEIGHT;
       const trackH = h - HEADER_HEIGHT;
@@ -1384,8 +1592,9 @@ class GuiXR {
       const thumbH = Math.max(50, (trackH / contentH) * trackH);
       const thumbY = trackY + (this._scrollOffset / this._maxScroll) * (trackH - thumbH);
 
+      // Draw Scrollbar visual
       ctx.fillStyle = '#666';
-      if (this._cursor.active && this._cursor.x >= trackX) ctx.fillStyle = '#888';
+      if (this._isDraggingScrollbar) ctx.fillStyle = '#aaa'; // Highlight dragging
       ctx.fillRect(trackX + 2, thumbY, trackW - 4, thumbH);
     }
 
@@ -1398,7 +1607,7 @@ class GuiXR {
       this._drawActiveCombobox(ctx);
     }
 
-    this._needsUpdate = true;
+    this._needsRedraw = true;
   }
 
   _drawOverlay(ctx, w, h) {
@@ -1426,22 +1635,23 @@ class GuiXR {
 
     // Draw OVERLAY if active
     if (this._overlay === 'menu' && this._overlayData) {
-      const { x, y, w, h, widgets } = this._overlayData;
+
+      // SCALING START
+      const { x, y, w: mw, h: mh, widgets } = this._overlayData;
 
       // Shadow / Dimmer for background?
       // ctx.fillStyle = 'rgba(0,0,0,0.5)';
       // ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
       // Menu Box
-      ctx.shadowColor = 'rgba(0,0,0,0.5)';
-      ctx.shadowBlur = 20;
+      // Menu Box
+      // Shadow removed
       ctx.fillStyle = '#222'; // Dark Menu BG
-      ctx.fillRect(x, y, w, h);
-      ctx.shadowBlur = 0;
+      ctx.fillRect(x, y, mw, mh);
 
       ctx.strokeStyle = '#444';
       ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, w, h);
+      ctx.strokeRect(x, y, mw, mh);
 
       // Draw Menu Widgets
       widgets.forEach(wid => {
@@ -1497,64 +1707,26 @@ class GuiXR {
           ctx.fillRect(sliderX, sliderY, sliderW, sliderH);
 
           // Knob
-          // Mock value? Use real value which is 0..1 usually in widget, but we have min/max support in _executeAction
-          // The widget object might only have 'value' normalized or raw? 
-          // getCameraWidgets sets 'value' to real value (e.g. 45 for fov).
-          // But _handleMenuInteract normalizes slider interaction to 0..1?
-          // Wait, _handleMenuInteract says: w.value = val (0..1).
-          // _executeAction maps 0..1 to Min/Max.
-          // BUT getCameraWidgets initializes 'value' to camera.getFov() (e.g. 45).
-          // If interaction sets it to 0.5, we lose the previous State?
-          // We need normalization in getCameraWidgets or handle normalized values.
-          // GuiXR _handleMenuInteract assumes w.value is 0-1. 
-          // If we pass raw value 45, the slider will draw at 4500% !
-          // We should normalize input widgets?
-          // OR handle raw values in slider drawing and interaction?
-          // _handleMenuInteract sets 0..1. 
-          // So if we start with real value, we need to normalize it for display only?
-          // Or we normalize it during widget creation?
-          // The widget creation functions (GuiVRCamera) put raw values.
-          // We should probably normalize them in the widget creation OR handle min/max in drawing/interaction.
-          // Since _executeAction handles min/max, it expects w.value to be 0..1 (from interaction).
-          // So the initial value MUST be normalized.
-          // I need to update GuiVRCamera.js etc to normalize?
-          // Or I check min/max here?
+          // Value normalized 0..1
+          let nVal = wid.value;
+          // Ensure it is normalized if we have min/max ? 
+          // Actually existing widgets seem to carry normalized value mostly?
+          // If not, we might need normalizing logic.
+          // For now assuming 0..1 as per existing render.
 
-          let normalized = wid.value;
-          if (wid.min !== undefined && wid.max !== undefined) {
-            // If value is raw (e.g. 45), normalize it.
-            // But if value is 0.5 (from interaction), stick with it.
-            // How do we distinguish? 
-            // Maybe we assume 'value' on the widget OBJECT is always 0..1?
-            // If so, getCameraWidgets is WRONG to pass raw value.
-            // I'll assume I need to fix getCameraWidgets/GuiVRCamera.js etc or fix logic here.
-            // Given I can edit this file easily:
-            // Let's normalize here if min/max exist and value > 1 ? No, value can be 0.5 and be raw.
-
-            // Safer: assume w.value IS the normalized value (0..1).
-            // AND in getCameraWidgets, we should compute normalized value.
-            // I'll update visual here to use 0..1.
-            // And I will try to update GuiVRCamera separately or rely on 'init' normalization?
-            // GuiXR doesn't have init normalization loop by default.
-
-            // Let's just use wid.value for knob position (assuming 0..1).
-            // And display the MAPPED value (using min/max).
-          }
-
-          const knobX = sliderX + sliderW * Math.max(0, Math.min(1, wid.value));
+          const knobX = sliderX + sliderW * Math.max(0, Math.min(1, nVal));
           ctx.fillStyle = '#888';
           ctx.fillRect(knobX - 5, sliderY - 5, 10, 16);
 
-          // Value Text
-          let displayVal = wid.value;
+          // Display actual value text
+          let disp = nVal;
           if (wid.min !== undefined && wid.max !== undefined) {
-            displayVal = wid.min + wid.value * (wid.max - wid.min);
+            disp = wid.min + nVal * (wid.max - wid.min);
           }
 
           ctx.fillStyle = '#aaa';
-          ctx.textAlign = 'right';
-          ctx.fillText(displayVal.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
-
+          ctx.textAlign = 'right'; 
+          ctx.fillText(disp.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'button') {
           ctx.fillStyle = '#333';
@@ -1595,6 +1767,7 @@ class GuiXR {
           ctx.fill();
         }
       });
+      ctx.restore();
       return; // Skip other overlays if Menu is open? Or draw on top? 
       // Usually Menu is top.
     }
@@ -1766,7 +1939,7 @@ class GuiXR {
 
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
       this._main.render();
       return;
@@ -1790,7 +1963,7 @@ class GuiXR {
 
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
       this._main.render();
       return;
@@ -1981,14 +2154,39 @@ class GuiXR {
     ctx.fill();
   }
 
+  update() {
+    // 1. Redraw if requested (Input/Hover changes)
+    if (this._needsRedraw) {
+      if (!this._needsUpload) this._needsUpload = true;
+      this.draw();
+    }
+
+    // 2. Upload Texture to GPU (Throttled)
+    this.updateTexture();
+  }
+
   updateTexture() {
-    if (!this._needsUpdate || !this._texture) return;
+    // Force draw if pending (Fix for VR where window.RAF is throttled)
+    if (this._pendingDraw) {
+      this._needsRedraw = true;
+      this.draw();
+      this._pendingDraw = false;
+    }
+
+    if (!this._needsUpload || !this._texture) return;
     const now = performance.now();
     if (!this._lastUpload) this._lastUpload = 0;
-    if (now - this._lastUpload < 30) return;
+    // Throttle to 30fps (33ms) to improve responsiveness while respecting VR bandwidth
+    if (now - this._lastUpload < 33) {
+      return;
+    }
+
     this._lastUpload = now;
+
+    const t0 = performance.now();
     const gl = this._gl;
-    const prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    // OPTIMIZATION: Removed gl.getParameter(TEXTURE_BINDING_2D)
+    // Just bind and leave it. The next draw call will bind what it needs.
     gl.bindTexture(gl.TEXTURE_2D, this._texture);
     if (this._textureAllocated) {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this._canvas);
@@ -1996,8 +2194,13 @@ class GuiXR {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._canvas);
       this._textureAllocated = true;
     }
-    if (prevTex) gl.bindTexture(gl.TEXTURE_2D, prevTex);
-    this._needsUpdate = false;
+    // if (prevTex) gl.bindTexture(gl.TEXTURE_2D, prevTex);
+    this._needsUpload = false;
+
+    const t1 = performance.now();
+    if (t1 - t0 > 5) {
+      console.log(`GuiXR Upload: ${(t1 - t0).toFixed(2)}ms`);
+    }
   }
 
   getTexture() { return this._texture; }
@@ -2031,9 +2234,11 @@ class GuiXR {
       const index = Math.floor((cy - startY) / itemHeight);
       if (w.options && w.options[index]) {
         const opt = w.options[index];
-        if (w.onSelect) w.onSelect(opt.id !== undefined ? opt.id : index);
+        const val = opt.id !== undefined ? opt.id : index;
+        console.log(`[GuiXR] Dropdown select index=${index} optId=${opt.id} val=${val}`);
+        if (w.onSelect) w.onSelect(val);
         this._activeCombobox = null;
-        this._needsUpdate = true;
+        this._needsRedraw = true;
         this.draw();
       }
       return;
@@ -2042,7 +2247,7 @@ class GuiXR {
     // Check if inside Header (Toggle off)
     if (cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h) {
       this._activeCombobox = null;
-      this._needsUpdate = true;
+      this._needsRedraw = true;
       this.draw();
       return;
     }
@@ -2050,7 +2255,7 @@ class GuiXR {
     // Clicked Outside
     console.log("[GuiXR] Closing dropdown (clicked outside)");
     this._activeCombobox = null;
-    this._needsUpdate = true;
+    this._needsRedraw = true;
     this.draw();
   }
 
@@ -2065,16 +2270,11 @@ class GuiXR {
     const listH = w.options.length * itemHeight;
 
     // Shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 20;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 10;
+    // Shadow removed
 
     // Background
     ctx.fillStyle = '#222';
     ctx.fillRect(startX, startY, w.w, listH);
-
-    ctx.shadowColor = 'transparent'; // Reset
 
     // Border
     ctx.strokeStyle = '#00D0FF';

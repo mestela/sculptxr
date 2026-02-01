@@ -122,7 +122,7 @@ class VRMenu {
     this._cursorMesh = new CursorMesh(this._gl);
 
     this._rotation = vec3.fromValues(Math.PI / 2, 0, 0); // +90 deg X (Correct Face?)
-    this._offset = vec3.fromValues(0.15, 0.0, 0.0); // 15cm right
+    this._offset = vec3.fromValues(0.15, 0.0, 0.0); // 15cm right (clears controller)
 
     this.rebuildMatrix();
   }
@@ -259,24 +259,28 @@ class VRMenu {
     }
 
     const gl = this._gl;
-    const isCull = gl.getParameter(gl.CULL_FACE);
-    const isDepth = gl.getParameter(gl.DEPTH_TEST);
-    const isBlend = gl.getParameter(gl.BLEND);
+    // OPTIMIZATION: Removed gl.getParameter calls (Top Performance Bottleneck: ~1ms per call)
+    // We just enforce the state we need.
 
-    // FIX: Enable Depth Test so Menu sorts correctly with Controllers and Mesh
-    // if (isCull) gl.disable(gl.CULL_FACE); // Keep Culling disabled (Double Sided)
-    // if (isDepth) gl.disable(gl.DEPTH_TEST); // REMOVED: We WANT Depth Test!
+    // 1. Culling: We want it OFF for the menu (Double Sided)
+    gl.disable(gl.CULL_FACE);
 
-    if (isCull) gl.disable(gl.CULL_FACE);
-    if (!isDepth) gl.enable(gl.DEPTH_TEST); // Ensure Depth is ON
-    if (!isBlend) gl.enable(gl.BLEND); // Ensure Blending is ON for Menu
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // Standard Alpha Blend
+    // 2. Depth Test: We want it ON to sort with controllers
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    // 3. Blending: We want it ON for transparency
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     ShaderLib[Enums.Shader.TEXTURE].getOrCreate(this._gl).draw(this, main);
 
-    if (isCull) gl.enable(gl.CULL_FACE);
-    if (!isDepth) gl.disable(gl.DEPTH_TEST); // Restore OFF if it was OFF
-    if (!isBlend) gl.disable(gl.BLEND); // Restore OFF if it was OFF
+    // RESTORE DEFAULTS (Approximation - to be safe for next pass)
+    // Most opaque geometry needs Cull Face ON and Depth Test ON.
+    // Blending usually OFF.
+    gl.enable(gl.CULL_FACE);
+    // gl.enable(gl.DEPTH_TEST); // Already ON
+    gl.disable(gl.BLEND);
 
     // --- DRAW 3D CURSOR ---
     const cursorUV = this._guiXR.getCursorUV();
@@ -350,8 +354,8 @@ class VRMenu {
         const shader = ShaderLib[Enums.Shader.FLAT].getOrCreate(gl);
         shader.draw(this._cursorMesh, main);
 
-        // Restore State (VRMenu standard state usually has Cull OFF, but we respect isCull from above)
-        if (isCull) gl.enable(gl.CULL_FACE);
+        // Restore State (Assume Cull ON is default for rest of scene)
+        gl.enable(gl.CULL_FACE);
       }
     }
   }

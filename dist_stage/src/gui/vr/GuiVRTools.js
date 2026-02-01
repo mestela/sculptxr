@@ -1,84 +1,82 @@
 import Enums from 'misc/Enums';
 import TR from 'gui/GuiTR';
+import Tools from 'editing/tools/Tools';
 
 export default function getToolsWidgets(main, activeToolIndex) {
   const widgets = [];
 
-  // 1. Common Sliders (Top Row) - Always visible
-  widgets.push({ type: 'slider', id: 'radius', x: 20, y: 120, w: 300, h: 40, label: 'Radius', value: 0.20 });
-  widgets.push({ type: 'slider', id: 'intensity', x: 340, y: 120, w: 300, h: 40, label: 'Intensity', value: 0.5 });
+  // Spacing Constants
+  const col1X = 20;
+  const btnH = 50; // Dense
+  const gapBtn = 15;
+  const gapSection = 30;
+  const gapHeader = 30;
 
-  // 2. Tool Grid (Collapsed if Paint is active? No, keep grid for switching)
-  // Actually, if we have many paint widgets, we might need space.
-  // For now, let's put the grid at y=190.
-  const toolsY = 190;
-  widgets.push(
-    { type: 'button', id: Enums.Tools.BRUSH, label: 'Brush', x: 20, y: toolsY, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.INFLATE, label: 'Inflate', x: 240, y: toolsY, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.SMOOTH, label: 'Smooth', x: 460, y: toolsY, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.FLATTEN, label: 'Flatten', x: 680, y: toolsY, w: 200, h: 60 },
+  let y = 130;
 
-    { type: 'button', id: Enums.Tools.PINCH, label: 'Pinch', x: 20, y: toolsY + 80, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.CREASE, label: 'Crease', x: 240, y: toolsY + 80, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.DRAG, label: 'Drag', x: 460, y: toolsY + 80, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.MOVE, label: 'Move', x: 680, y: toolsY + 80, w: 200, h: 60 },
+  // 1. Tool Selection (Combobox)
+  // Removing "Tool" italic header to match desktop 1:1 more closely or just saving space
+  widgets.push({ type: 'info', label: 'Tool', x: col1X, y: y }); 
+  y += gapHeader;
 
-    { type: 'button', id: Enums.Tools.PAINT, label: 'Paint', x: 20, y: toolsY + 160, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.TRANSFORM, label: 'Transform', x: 240, y: toolsY + 160, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.MASKING, label: 'Mask', x: 460, y: toolsY + 160, w: 200, h: 60 },
-    { type: 'button', id: Enums.Tools.LOCALSCALE, label: 'L.Scale', x: 680, y: toolsY + 160, w: 200, h: 60 }
-  );
+  // Build Options from Tools array
+  const toolOptions = Tools.map((t, i) => ({ label: TR(t.uiName), id: i }));
 
-  // 3. Dynamic Tool Settings
-  const contextY = toolsY + 240; // 190 + 160 + 80 = 430
+  widgets.push({
+    type: 'combobox',
+    id: 'tool_select',
+    label: 'Tool',
+    x: col1X, y: y, w: 400, h: btnH,
+    value: activeToolIndex,
+    options: toolOptions,
+    onSelect: (id) => {
+      main.getSculptManager().setToolIndex(id);
+      if (main.guiXR) main.guiXR.refreshToolsWidget();
+    }
+  });
+  y += btnH + gapSection;
 
-  if (activeToolIndex === Enums.Tools.PAINT) {
-    // --- PAINT TOOL SETTINGS ---
-    widgets.push({ type: 'info', label: '--- PAINT SETTINGS ---', x: 20, y: contextY });
 
-    // Row 1: Roughness & Metallic
-    widgets.push({ type: 'slider', id: 'roughness', label: 'Roughness', x: 20, y: contextY + 40, w: 300, h: 40, value: 0.5 });
-    widgets.push({ type: 'slider', id: 'metallic', label: 'Metallic', x: 340, y: contextY + 40, w: 300, h: 40, value: 0 });
+  // 2. Brush Settings
+  widgets.push({ type: 'slider', id: 'radius', label: 'Radius (-X)', x: col1X, y: y, w: 350, h: 40, value: 0.5 });
+  widgets.push({ type: 'slider', id: 'intensity', label: 'Intensity (-C)', x: 400, y: y, w: 350, h: 40, value: 0.5 });
+  y += 40 + gapSection;
 
-    // Row 2: Actions & Channels
-    const row2Y = contextY + 100;
-    widgets.push({ type: 'button', id: 'paint_all', label: 'Paint All', x: 20, y: row2Y, w: 200, h: 60 });
+  const activeTool = main.getSculptManager().getTool(activeToolIndex);
 
-    // Channels
-    widgets.push({ type: 'info', label: 'Channels:', x: 240, y: row2Y + 20 });
-    widgets.push({ type: 'toggle', id: 'write_albedo', label: 'Albedo', x: 360, y: row2Y, w: 100, h: 60 });
-    widgets.push({ type: 'toggle', id: 'write_roughness', label: 'Rough', x: 470, y: row2Y, w: 100, h: 60 });
-    widgets.push({ type: 'toggle', id: 'write_metalness', label: 'Metal', x: 580, y: row2Y, w: 100, h: 60 });
+  // Negative, Clay, Accumulate, Thin surface
+  widgets.push({ type: 'checkbox', id: 'negative', label: 'Negative (N or -Alt)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._negative : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'clay', label: 'Clay', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._clay : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'accumulate', label: 'Accumulate (no limit per stroke)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._accumulate : false });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily
+  y += btnH + gapSection;
 
-    // Row 3: Embedded Color Picker
-    // 50% smaller size requested
-    const pickerH = 220;
-    widgets.push({ type: 'colorpicker_embedded', id: 'picker', x: 20, y: row2Y + 80, w: 400, h: pickerH });
 
-  } else {
-    // --- DEFAULT / VOXEL SETTINGS ---
-    widgets.push({ type: 'info', label: '--- VOXEL REMESHING ---', x: 20, y: contextY });
-    widgets.push({ type: 'slider', id: 'voxelRes', x: 20, y: contextY + 40, w: 300, h: 40, label: 'Resolution', value: 0.5 });
-    widgets.push({ type: 'slider', id: 'voxelRad', x: 340, y: contextY + 40, w: 300, h: 40, label: 'Radius Mult', value: 0.5 });
-    widgets.push({ type: 'button', id: Enums.Tools.VOXEL, label: 'VOXEL TOOL', x: 20, y: contextY + 100, w: 200, h: 60 });
-    widgets.push({ type: 'button', id: 'bake', label: 'BAKE TO MESH', x: 240, y: contextY + 100, w: 300, h: 60 });
-  }
+  // 3. Alpha
+  widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
+  y += gapHeader;
 
-  // Topology (Bottom) - Dynamic Y
-  // If Paint: contextY + 100 (Row2) + 80 (Spacing) + 220 (Picker) + 40 (Padding) = contextY + 440
-  // contextY is ~430 -> 870
-  // Default: contextY + 100 + 60 + 40 = contextY + 200 -> 630
+  widgets.push({ type: 'checkbox', id: 'lock_position', label: 'Lock position', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  y += btnH + gapBtn;
 
-  let topoY = 700;
-  if (activeToolIndex === Enums.Tools.PAINT) {
-    const row2Y = contextY + 100;
-    topoY = row2Y + 80 + 220 + 40;
-  } else {
-    topoY = contextY + 220;
-  }
+  widgets.push({ type: 'combobox', id: 'alpha_tex', label: 'Texture', x: col1X, y: y, w: 400, h: btnH, options: [{ label: 'None', id: 0 }], value: 0, disabled: true });
+  y += btnH + gapBtn;
 
-  widgets.push({ type: 'info', label: '--- TOPOLOGY ---', x: 20, y: topoY });
-  widgets.push({ type: 'toggle', id: 'dynamic', label: 'Dynamic Topology', x: 20, y: topoY + 40, w: 300, h: 60 });
+  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import alpha tex (jpg, png...)', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  y += btnH + gapSection;
+
+
+  // 4. Common
+  widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({ type: 'checkbox', id: 'symmetry', label: 'Symmetry', x: col1X, y: y, w: 300, h: btnH, value: main.getSculptManager()._symmetry });
+  y += btnH + gapBtn;
+  widgets.push({ type: 'checkbox', id: 'continuous', label: 'Continuous', x: col1X, y: y, w: 300, h: btnH, disabled: true });
+  y += btnH + gapSection;
 
   return widgets;
 }

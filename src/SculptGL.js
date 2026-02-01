@@ -1,4 +1,5 @@
 import 'misc/Polyfill';
+import { VERSION } from './Version.js';
 import { vec3, mat4 } from 'gl-matrix';
 import { Manager as HammerManager, Pan, Pinch, Tap } from 'hammerjs';
 import Tablet from 'misc/Tablet';
@@ -819,7 +820,7 @@ class SculptGL extends Scene {
       // console.log(`Started XR Session: ${mode}`);
     } catch (e) {
       console.error(`Failed to start ${mode} session:`, e);
-      if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.33 - Thinner Laser", "lime");
+      if (window.screenLog) window.screenLog(`SculptXR ${VERSION}`, "lime");
     }
   }
 

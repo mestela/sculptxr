@@ -7,15 +7,16 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
   // Spacing Constants
   const col1X = 20;
-  const btnH = 60;
-  const gapBtn = 20;
-  const gapSection = 40;
-  const gapHeader = 40;
+  const btnH = 50; // Dense
+  const gapBtn = 15;
+  const gapSection = 30;
+  const gapHeader = 30;
 
   let y = 130;
 
   // 1. Tool Selection (Combobox)
-  widgets.push({ type: 'info', label: 'Tool', x: col1X, y: y });
+  // Removing "Tool" italic header to match desktop 1:1 more closely or just saving space
+  widgets.push({ type: 'info', label: 'Tool', x: col1X, y: y }); 
   y += gapHeader;
 
   // Build Options from Tools array
@@ -50,7 +51,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
   y += btnH + gapBtn;
   widgets.push({ type: 'checkbox', id: 'accumulate', label: 'Accumulate (no limit per stroke)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._accumulate : false });
   y += btnH + gapBtn;
-  widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily, marking disabled for now or check prop
+  widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily
   y += btnH + gapSection;
 
 

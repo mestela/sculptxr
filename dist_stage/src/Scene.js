@@ -1,6 +1,7 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import getOptionsURL from 'misc/getOptionsURL';
 import Enums from 'misc/Enums';
+import { VERSION } from './Version.js';
 import Utils from 'misc/Utils';
 import SculptManager from 'editing/SculptManager';
 import Subdivision from 'editing/Subdivision';
@@ -209,6 +210,10 @@ class Scene {
 
   getGui() {
     return this._gui;
+  }
+
+  getGuiXR() {
+    return this._guiXR;
   }
 
   getMeshes() {
@@ -1277,8 +1282,8 @@ class Scene {
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // VR Menu Texture Update
-      if (this._guiXR) this._guiXR.updateTexture();
+      // VR Menu Update (Sync with Frame)
+      if (this._guiXR) this._guiXR.update();
 
       // Handle Input (PoC placeholder)
       if (typeof this.handleXRInput === 'function') {
@@ -1753,7 +1758,7 @@ class Scene {
 
     // DEBUG LOG: Verify this logic
     if (this._isPointingAtMenu) {
-      // if (window.screenLog) window.screenLog("SCULPT BLOCKED (Menu Hit)", "lime");
+      // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "lime");
       return;
     } else {
       // if (window.screenLog && source.gamepad.buttons[0].pressed) window.screenLog("SCULPT ALLOWED (No Menu Hit)", "red");
@@ -1774,6 +1779,13 @@ class Scene {
     const searchRadius = Math.min(pickingRadius * 4.0, MAX_SEARCH_RADIUS);
     let picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, searchRadius);
 
+    // DEBUG: Picking Trace
+    if (window.screenLog && this._logThrottle % 30 === 0) {
+      const p = enginePos;
+      const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 10).toFixed(1)} Pos:${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`;
+      // window.screenLog(msg, picked ? "lime" : "orange");
+    }
+
     if (picked) {
       // CRITICAL FIX: The picking logic expects the squared radius in ENGINE units
       this._picking._rWorld2 = pickingRadius * pickingRadius;
@@ -1783,6 +1795,12 @@ class Scene {
       if (mesh) {
         this._picking._rLocal2 = this._picking._rWorld2 / mesh.getScale2();
       }
+
+      // DEBUG: Verify Mesh Hit
+      // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("Mesh Hit: " + mesh.getID(), "lime");
+
+    } else {
+      // if (window.screenLog && this._logThrottle % 60 === 0 && source.gamepad.buttons[0].pressed) window.screenLog("No Mesh Hit (Too far?)", "grey");
     }
 
     // 5. Stroke Lifecycle (Corrected API)
@@ -1791,39 +1809,12 @@ class Scene {
 
     // DEBUG: Cursor Drift
     // HIDDEN to prevent Red Sphere Artifacts
-    if (this._debugCursor && false) {
+    if (this._debugCursor) {
+    // Force Debug Cursor ON for diagnostics
       this.updateDebugCursor(enginePos, true);
-
-      // Fix Red Cube Blobbing: Inverse Scale to maintain physical size
-      const currentMat = this._debugCursor.getMatrix();
-
-      // We want to scale it by invScale RELATIVE to its current 1.0 size.
-      // updateDebugCursor sets scale to 0.02 (2cm).
-      // If World is 10x bigger (scale 10), we want Cube to be 2cm * 0.1?
-      // No, if World is 10x, and we render in scaled world, a 2cm cube becomes 20cm?
-      // Pass 2 renders in SCALED space.
-      // So if I want 2cm PHYSICAL size, and world is scaled by S.
-      // I need to scale mesh by 1/S?
-      // Yes. 2cm * 1/S * S = 2cm.
-      if (typeof invScale !== 'undefined') {
-        // Red Cube Debugging
-        // Simplification: Just set it to 1.5cm absolute.
-        // If the world is NOT scaled by matrix, this should look like 1.5cm.
-        // If the world IS scaled by matrix, this will look tiny/huge.
-        // User reports "Smaller as world smaller".
-        // World Smaller usually means "Zoomed Out" (Scale < 1)?
-        // Or "World is small object" (Scale < 1)?
-        // If Scale < 1, invScale > 1.
-
-        mat4.identity(currentMat);
-        mat4.translate(currentMat, currentMat, enginePos);
-
-        // TRY: Constant size 1.5cm (0.015).
-        // If this grows/shrinks, then Render Matrix IS scaling.
-        const size = 0.015;
-        mat4.scale(currentMat, currentMat, [size, size, size]);
-      }
     }
+
+
 
     // Allow Start ONLY if Picked OR Tool Allows Air (Voxel). Allow Continue ALWAYS if Trigger is held.
     const tool = this._sculptManager.getCurrentTool();

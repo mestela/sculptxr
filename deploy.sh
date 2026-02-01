@@ -6,7 +6,7 @@ DEST=${3:-'~/tokeru.com/sculptxr/'}
 
 
 # --- VERSION SAFETY CHECK ---
-CURRENT_VERSION=$(grep -oP 'VERSION: \K(v[0-9]+\.[0-9]+\.[0-9]+)' index.html)
+CURRENT_VERSION=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' index.html | head -n 1)
 
 # Select state file based on destination
 if [[ "$DEST" == *"beta"* ]]; then

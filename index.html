@@ -5,7 +5,7 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.6.98</title>
+    <title>SculptXR v0.6.133</title>
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -245,6 +245,7 @@
       
       "Scene": "./src/Scene.js?v=0.6.55",
       "SculptGL": "./src/SculptGL.js?v=0.6.55",
+      "Version": "./src/Version.js",
       "render/shaders/ShaderBase.js": "./src/render/shaders/ShaderBase.js",
       "render/shaders/ShaderWireframe.js": "./src/render/shaders/ShaderWireframe.js",
       "render/shaders/ShaderUnlit": "./src/render/shaders/ShaderUnlit.js"
@@ -308,8 +309,10 @@
     <script type="module">
         import Scene from 'Scene';
         import SculptGL from 'SculptGL';
+                                                                                                        import { VERSION } from 'Version';
 
         window.onload = async () => {
+            document.title = `SculptXR ${VERSION}`;
             // Reuse global screenLog
             const cls = console.log;
             const cerr = console.error;
@@ -370,7 +373,7 @@
             // console.log("Initializing SculptGL for WebXR...");
 
 
-            if (window.screenLog) window.screenLog("SculptXR VERSION: v0.6.98 - VR Menu Expansion (Topology, Scene, View)", "lime");
+            if (window.screenLog) window.screenLog(`SculptXR ${VERSION}`, "lime");
 
             // Check HTTPS
             if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {

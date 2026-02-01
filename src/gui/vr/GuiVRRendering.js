@@ -1,21 +1,29 @@
 import Enums from 'misc/Enums';
 import TR from 'gui/GuiTR';
+import Shader from 'render/ShaderLib';
 
 export default function getRenderingWidgets(main) {
   const widgets = [];
+  const mesh = main.getMesh();
+  if (!mesh) return widgets;
+
+  const shaderType = mesh.getShaderType();
+  const ShaderMERGE = Shader[Enums.Shader.MERGE];
+  const ShaderPBR = Shader[Enums.Shader.PBR];
+  const ShaderMATCAP = Shader[Enums.Shader.MATCAP];
+
   const col1X = 20;
-
-  const btnH = 60;
-  const gapBtn = 20;
-  const gapSection = 40;
-  const gapHeader = 40;
-
+  const btnH = 50;
+  const gapBtn = 15;
+  const gapSection = 30;
+  const gapHeader = 30;
   let y = 130;
 
-  // --- SHADER ---
-  widgets.push({ type: 'info', label: 'Shader', x: col1X, y: y });
+  // --- 1. SHADER ---
+  widgets.push({ type: 'info', label: TR('renderingShader'), x: col1X, y: y });
   y += gapHeader;
 
+  // Shader Selection
   const shaderOptions = [
     { label: TR('renderingMatcap'), id: Enums.Shader.MATCAP },
     { label: TR('renderingPBR'), id: Enums.Shader.PBR },
@@ -26,50 +34,163 @@ export default function getRenderingWidgets(main) {
   widgets.push({
     type: 'combobox',
     id: 'shader_type',
-    label: 'Shader',
+    label: '',
     x: col1X, y: y, w: 400, h: btnH,
-    value: main.getMesh() ? main.getMesh().getShaderType() : 0,
+    value: shaderType,
     options: shaderOptions,
     onSelect: (id) => {
-      if (main.getMesh()) {
-        main.getMesh().setShaderType(id);
-        main.render();
-        if (main.guiXR) main.guiXR._needsUpdate = true;
-      }
+      console.log(`[GuiVR] onSelect shader id: ${id} (type: ${typeof id})`);
+      mesh.setShaderType(id);
+      main.render();
+      if (main.guiXR) main.guiXR._needsUpdate = true;
     }
+  });
+  y += btnH + gapBtn;
+
+  // Curvature
+  widgets.push({
+    type: 'slider',
+    id: 'curvature',
+    label: TR('renderingCurvature'),
+    x: col1X, y: y, w: 400, h: 40,
+    value: mesh.getCurvature() * 20.0,
+    onInput: (val) => { mesh.setCurvature(val / 20.0); main.render(); }
+  });
+  y += 40 + gapBtn;
+
+  // Filmic Tonemapping
+  widgets.push({
+    type: 'checkbox',
+    id: 'filmic',
+    label: TR('renderingFilmic'),
+    x: col1X, y: y, w: 400, h: btnH,
+    value: ShaderMERGE.FILMIC,
+    onInteract: () => {
+      ShaderMERGE.FILMIC = !ShaderMERGE.FILMIC;
+      main.render();
+      if (main.guiXR) main.guiXR._needsUpdate = true;
+    } 
   });
   y += btnH + gapSection;
 
 
-  // --- OPTIONS ---
-  widgets.push({ type: 'info', label: 'Options', x: col1X, y: y });
+  // --- 2. ENVIRONMENT (PBR) ---
+  if (shaderType === Enums.Shader.PBR) {
+    widgets.push({ type: 'info', label: TR('renderingEnvironment'), x: col1X, y: y });
+    y += gapHeader;
+
+    const envOptions = ShaderPBR.environments.map((env, i) => ({ label: env.name, id: i }));
+    widgets.push({
+      type: 'combobox',
+      id: 'environment',
+      label: '',
+      x: col1X, y: y, w: 400, h: btnH,
+      value: ShaderPBR.idEnv,
+      options: envOptions,
+      onSelect: (id) => {
+        ShaderPBR.idEnv = id;
+        main.render();
+        if (main.guiXR) main.guiXR._needsUpdate = true;
+      }
+    });
+    y += btnH + gapBtn;
+
+    // PBR Exposure (Visible only in PBR in desktop)
+    widgets.push({
+      type: 'slider',
+      id: 'exposure',
+      label: TR('renderingExposure'),
+      x: col1X, y: y, w: 400, h: 40,
+      value: ShaderPBR.exposure,
+      min: 0, max: 5,
+      onInput: (val) => { ShaderPBR.exposure = val; main.render(); }
+    });
+    y += 40 + gapSection;
+  }
+
+  // --- 3. MATERIAL (MATCAP) ---
+  if (shaderType === Enums.Shader.MATCAP) {
+    widgets.push({ type: 'info', label: TR('renderingMaterial'), x: col1X, y: y });
+    y += gapHeader;
+
+    const matcaps = ShaderMATCAP.matcaps;
+    const matcapOptions = matcaps.map((m, i) => ({ label: m.name, id: i }));
+    widgets.push({
+      type: 'combobox',
+      id: 'matcap',
+      label: '',
+      x: col1X, y: y, w: 400, h: btnH,
+      value: mesh.getMatcap(),
+      options: matcapOptions,
+      onSelect: (id) => {
+        mesh.setMatcap(id);
+        main.render();
+        if (main.guiXR) main.guiXR._needsUpdate = true;
+      }
+    });
+    y += btnH + gapBtn;
+
+    widgets.push({
+      type: 'button',
+      id: 'import_matcap',
+      label: TR('renderingImportMatcap'),
+      x: col1X, y: y, w: 400, h: btnH,
+      disabled: true
+    });
+    y += btnH + gapSection;
+  }
+
+  // --- 4. UV (Texture) ---
+  if (shaderType === Enums.Shader.UV) {
+    // Desktop puts 'Import UV' button here.
+    widgets.push({ type: 'info', label: TR('renderingMaterial'), x: col1X, y: y });
+    y += gapHeader;
+
+    widgets.push({
+      type: 'button',
+      id: 'import_uv',
+      label: TR('renderingImportUV'),
+      x: col1X, y: y, w: 400, h: btnH,
+      disabled: true
+    });
+    y += btnH + gapSection;
+  }
+
+  // --- 5. EXTRA ---
+  widgets.push({ type: 'info', label: TR('renderingExtra'), x: col1X, y: y });
   y += gapHeader;
 
-  const mesh = main.getMesh();
-  const flat = mesh ? mesh.getFlatShading() : false;
-  const wire = mesh ? mesh.getShowWireframe() : false;
-
-  widgets.push({ type: 'slider', id: 'exposure', label: 'Exposure', x: col1X, y: y, w: 400, h: 40, value: 0.2 }); // Corrected value binding needed?
+  widgets.push({
+    type: 'slider',
+    id: 'transparency',
+    label: TR('renderingTransparency'),
+    x: col1X, y: y, w: 400, h: 40,
+    value: (1.0 - mesh.getOpacity()) * 100,
+    onInput: (val) => {
+      mesh.setOpacity(1.0 - val / 100.0);
+      main.render();
+    }
+  });
   y += 40 + gapBtn;
 
-  widgets.push({ type: 'slider', id: 'curvature', label: 'Curvature', x: col1X, y: y, w: 400, h: 40, value: 0.2 });
-  y += 40 + gapSection;
-
-  widgets.push({ type: 'checkbox', id: 'flat', label: 'Flat Shading', x: col1X, y: y, w: 250, h: btnH, value: flat });
-  widgets.push({ type: 'checkbox', id: 'wireframe', label: 'Wireframe', x: 270, y: y, w: 250, h: btnH, value: wire });
-  y += btnH + gapSection;
-
-
-  // --- ENVIRONMENT / MATCAP ---
-  widgets.push({ type: 'info', label: 'Env / Matcap', x: col1X, y: y });
-  y += gapHeader;
-
-  widgets.push({ type: 'combobox', id: 'environment', label: 'Environment', x: col1X, y: y, w: 400, h: btnH });
-  y += btnH + gapBtn;
-  widgets.push({ type: 'combobox', id: 'matcap', label: 'Matcap', x: col1X, y: y, w: 400, h: btnH });
+  widgets.push({
+    type: 'checkbox',
+    id: 'flat',
+    label: TR('renderingFlat'),
+    x: col1X, y: y, w: 400, h: btnH,
+    value: mesh.getFlatShading(),
+    onInteract: () => { mesh.setFlatShading(!mesh.getFlatShading()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
+  });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'button', id: 'import_matcap', label: 'Import Matcap', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  widgets.push({
+    type: 'checkbox',
+    id: 'wireframe',
+    label: TR('renderingWireframe'),
+    x: col1X, y: y, w: 400, h: btnH,
+    value: mesh.getShowWireframe(),
+    onInteract: () => { mesh.setShowWireframe(!mesh.getShowWireframe()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
+  });
   y += btnH + gapSection;
 
   return widgets;
