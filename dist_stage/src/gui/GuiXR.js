@@ -1122,7 +1122,7 @@ class GuiXR {
   }
 
   _handleWidgetClick(w) {
-  } else if(w.type === 'slider') {
+    if (w.type === 'slider') {
   let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
   // Generic Min/Max Mapping
