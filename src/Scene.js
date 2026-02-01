@@ -1765,9 +1765,15 @@ class Scene {
     }
 
     // 3. Picking (Engine Space Units)
-    // Radius: Read from VR Menu (0.0 to 1.0)
-    // Note: this._guiXR might be missing if not initialized, fallback to 0.15 (1.5cm) for "Spike" feel
-    const sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
+    // Radius: Prioritize Active Tool (0-100+ range) -> Normalize to 0-1+
+    // Fallback to GuiXR._radius or default
+    let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
+    if (this._sculptManager) {
+      const tool = this._sculptManager.getCurrentTool();
+      if (tool && tool._radius !== undefined) {
+        sliderVal = tool._radius / 100.0;
+      }
+    }
     const physicalRadius = sliderVal * 0.1; // Map to 0-10cm physical range
     const pickingRadius = physicalRadius * invScale;
 
