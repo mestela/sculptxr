@@ -60,10 +60,12 @@ const COLOR_SECTION_BG = '#282828';
 const COLOR_WIDGET_BG = '#444';
 
 const OVERLAY_BG = 'rgba(0, 0, 0, 0.8)';
-const OVERLAY_W = 800;
-const OVERLAY_H = 800;
+const OVERLAY_W = 720;
+const OVERLAY_H = 720;
 const OVERLAY_X = (CANVAS_SIZE - OVERLAY_W) / 2;
 const OVERLAY_Y = (CANVAS_SIZE - OVERLAY_H) / 2;
+
+const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 
 class GuiXR {
 
@@ -193,6 +195,15 @@ class GuiXR {
     }
   }
 
+  _getOverlayPivot() {
+    // Pivot around Menu Origin if it's a menu
+    if (this._overlay === 'menu' && this._overlayData) {
+      return { x: this._overlayData.x, y: this._overlayData.y };
+    }
+    // Default to Center for other overlays
+    return { x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 };
+  }
+
   // Console Helper for Tab Switching
   switchTab(tabName) {
     const tabIdx = GLOBAL_TABS.indexOf(tabName);
@@ -226,16 +237,17 @@ class GuiXR {
 
       if (data) {
         let overlayX = x;
-        // Clamp overlayX
-        if (overlayX + data.width > this._canvas.width) {
-          overlayX = this._canvas.width - data.width;
+        // Clamp overlayX (taking Scale into account)
+        const scaledWidth = data.width * OVERLAY_SCALE;
+        if (overlayX + scaledWidth > this._canvas.width) {
+          overlayX = this._canvas.width - scaledWidth;
         }
+        if (overlayX < 0) overlayX = 0;
 
         // Determine Y based on which row this tab belongs to
         // Row 1: 0..2 (3 tabs)
         // Row 2: 3..5 (3 tabs)
         // Row 3: 6..8 (3 tabs)
-        const rowCount = 3;
         let rowIndex = 0;
         if (tabIdx >= 6) rowIndex = 2;
         else if (tabIdx >= 3) rowIndex = 1;
@@ -395,22 +407,64 @@ class GuiXR {
   _updateHover() {
     if (!this._cursor.active) {
       this._hoverWidget = null;
-      return;
-    }
-
-    // If overlay is open, hover logic
-    if (this._overlay) {
-      this._hoverWidget = null; // Clear main widget hover
-      this._updateOverlayHover();
+      this._hoverTab = null; 
       return;
     }
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
-    // Check Widgets
+
+    // 0. Priority Blocking: Overlay OR Active Combobox
+    if (this._overlay) {
+      // If Overlay is 'menu', we might want to highlight buttons inside it?
+      // YES, handled by _updateOverlayHover.
+      this._hoverWidget = null;
+      this._hoverTab = null;
+      this._updateOverlayHover();
+      return;
+    }
+
+    if (this._activeCombobox) {
+      this._hoverWidget = null;
+      this._hoverTab = null;
+      this._updateComboboxHover();
+      return;
+    }
+
+    // 1. Check Tabs (Header Area)
+    if (cy < HEADER_HEIGHT) {
+      this._hoverWidget = null;
+
+      const rW = CANVAS_SIZE / 3;
+      const rowIndex = Math.floor(cy / TAB_HEIGHT);
+      const colIndex = Math.floor(cx / rW);
+
+      if (rowIndex >= 0 && rowIndex < 3 && colIndex >= 0 && colIndex < 3) {
+        let tabIndex = rowIndex * 3 + colIndex;
+        if (tabIndex < GLOBAL_TABS.length) {
+          const tabLabel = GLOBAL_TABS[tabIndex];
+          if (this._hoverTab !== tabLabel) {
+            this._hoverTab = tabLabel;
+            this._needsRedraw = true;
+            this._requestDraw();
+          }
+          return;
+        }
+      }
+      this._hoverTab = null;
+      return;
+    }
+    this._hoverTab = null;
+
+    // 2. Check Widgets AND Headers
     const widgets = this._getWidgets();
     let newHover = null;
+
+    // Reverse Check? (Topmost first) - though currently we don't have overlaps usually.
+    // Z-Order: Overlay > Combobox > Header > Widgets
+
     for (let wid of widgets) {
+      // Check collision
       if (cx >= wid.x && cx <= wid.x + wid.w && cy >= wid.y && cy <= wid.y + wid.h) {
         newHover = wid;
         break;
@@ -418,23 +472,39 @@ class GuiXR {
     }
 
     if (this._hoverWidget !== newHover) {
-      this._hoverWidget = newHover;
+      this._hoverWidget = newHover; 
       this._needsRedraw = true;
       this._requestDraw();
     }
   }
 
+  _updateComboboxHover() {
+    // Basic hit test for dropdown options to support highlighting?
+    // Not critical but nice-to-have if user asked for it. 
+    // "menu elements don't highlight" -> refers to Overlay Menu or Combobox? 
+    // User said "combobox for tool ... elements behind ... highlight", then "open a menu ... don't highlight".
+    // "Menu" likely means the top tabs ("Files", "Scene" etc) causing an Overlay.
+    // So _updateOverlayHover is priority.
+  }
+
   _updateOverlayHover() {
-    // Only redraw if we change hovered element in the overlay
     if (!this._overlayData || !this._overlayData.widgets) return;
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
+
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+
+    // Transform Cursor to Local Overlay Space (Pivot Scale)
+    const scx = (cx - pivot.x) * invScale + pivot.x;
+    const scy = (cy - pivot.y) * invScale + pivot.y;
+
     // Overlay coords
     const ox = this._overlayData.x;
     const oy = this._overlayData.y;
-    const rx = cx - ox;
-    const ry = cy - oy;
+    const rx = scx - ox;
+    const ry = scy - oy;
 
     let newHover = null;
     for (const w of this._overlayData.widgets) {
@@ -446,26 +516,12 @@ class GuiXR {
       }
     }
 
-    // We don't store overlay hover in _hoverWidget (main), but maybe we should?
-    // For now let's just use a separate property or assume if we are strictly in overlay mode
-    // we just need to know if we need to redraw.
-    // Actually GuiXR doesn't seem to store overlay hover explicitly in a property used by draw()
-    // except strictly for highlighting?
-    // Let's check draw(). draw() just draws.
-    // If draw() doesn't highlight overlay buttons, then hover does nothing visually!
-    // I recall checking drawOverlay... it didn't seem to highlight buttons on hover?
-    // Just checked lines 1558+. It loops widgets.
-    // Wait, if overlay buttons don't highlight, then we DON'T need to redraw on hover!
-    // I should check if they highlight.
-    // Assuming they MIGHT, let's play safe but optimized.
-
-    // If we don't have a property to track hover, draw() can't highlight it.
-    // So if draw() has no highlight logic, we can skip update.
-    // But let's assume I might add it or it exists (I didn't see it).
-    // Let's just return for now to save FPS. Interaction works via Click.
-    // If user complains "Buttons don't highlight", I'll add it.
-    // BUT cursor moving over overlay is useful?
-    // Actually, I'll just remove the unconditional update.
+    // New Property for Overlay Hover
+    if (this._hoverOverlayWidget !== newHover) {
+      this._hoverOverlayWidget = newHover;
+      this._needsRedraw = true;
+      this._requestDraw();
+    }
   }
 
   _getWidgets() {
@@ -537,7 +593,7 @@ class GuiXR {
     const widgets = this._tabWidgets[this._viewMode] || [];
     const currentY = HEADER_HEIGHT - this._scrollOffset;
 
-    // Normalize generic view if needed, but usually they are absolute. 
+    // Normalize generic view if needed, but usually they are absolute.
     // Let's assume absolute for now but apply scroll.
     const offsetWidgets = widgets.map(w => ({
       ...w,
@@ -699,6 +755,17 @@ class GuiXR {
 
     }
 
+    // 2. Dropdown Interaction (Combobox) - Needs Scaling if it overlays
+    // Dropdowns are treated as overlays in _drawCombobox but handled separately in input?
+    // Wait, _handleDropdownInteract logic?
+    // Let's modify _handleDropdownInteract to support scaling.
+    // It's defined somewhere else?
+    // I need to find _handleDropdownInteract definition.
+    // Searching...
+    // It is effectively an overlay.
+    // But `this._activeCombobox` overrides input in `onInteract`.
+
+
     // 1. Check Tabs (Header)
     if (isPressed && (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode))) {
       const row1 = GLOBAL_TABS.slice(0, 3);
@@ -795,6 +862,12 @@ class GuiXR {
   }
 
   _handleOverlayInteract(cx, cy, isPressed) {
+    // Input Transform for Scale
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+    cx = (cx - pivot.x) * invScale + pivot.x;
+    cy = (cy - pivot.y) * invScale + pivot.y;
+
     // Close if clicking outside box
     // Custom bounds for 'menu' which has variable size
     let ox = OVERLAY_X, oy = OVERLAY_Y, ow = OVERLAY_W, oh = OVERLAY_H;
@@ -1272,6 +1345,13 @@ class GuiXR {
   _executeAction(w) {
     const main = this._main;
     if (!main) return;
+
+    // Prefer onInteract if defined (New System)
+    if (w.onInteract) {
+      w.onInteract();
+      return;
+    }
+
     if (w.type === 'slider' || w.type === 'info' || w.type === 'combobox' || w.type === 'color') return;
 
     if (w.type === 'section_header') {
@@ -1431,13 +1511,20 @@ class GuiXR {
       row.forEach((t, i) => {
         const x = i * rW;
         const isActive = (t === this._viewMode);
+        const isHovered = (t === this._hoverTab);
 
         // Minimal Styling
         ctx.fillStyle = isActive ? '#eee' : '#111';
         ctx.fillRect(x, y, rW, TAB_HEIGHT);
 
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1;
+        // Hover Highlight
+        if (isHovered) {
+          ctx.fillStyle = '#333';
+          ctx.fillRect(x, y, rW, TAB_HEIGHT);
+        }
+
+        ctx.strokeStyle = (isHovered) ? '#aaa' : '#333';
+        ctx.lineWidth = (isHovered) ? 4 : 1;
         ctx.strokeRect(x, y, rW, TAB_HEIGHT);
 
         ctx.fillStyle = isActive ? '#000' : '#888';
@@ -1458,7 +1545,8 @@ class GuiXR {
     // Clip to Widget Area (Prevent Header Overdraw)
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, HEADER_HEIGHT, w, h - HEADER_HEIGHT);
+    // FIX: Allow slight overlap for Section Header highlight (startY - 4)
+    ctx.rect(0, HEADER_HEIGHT - 4, w, h - HEADER_HEIGHT + 4);
     ctx.clip();
 
     for (let wid of widgets) {
@@ -1484,182 +1572,166 @@ class GuiXR {
         // Divider
         ctx.fillStyle = '#444';
         ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
-        continue;
-      }
 
+      }
       // 2. INFO / LABELS
-      if (wid.type === 'info') {
+      else if (wid.type === 'info') {
         ctx.fillStyle = '#888';
         ctx.font = 'italic 24px sans-serif';
         ctx.textAlign = 'left';
         ctx.fillText(wid.label, wid.x, wid.y + 24); 
-        continue;
       }
+      else {
+        // GENERIC WIDGET HANDLING (Slider, Checkbox, Combobox, Button, ColorPicker)
 
-      // Determine State
-      let isActive = false;
-      if (typeof wid.id === 'number') isActive = (wid.id === activeTool);
-      if (wid.id === 'dynamic' && mesh) isActive = mesh.isDynamic;
-      if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
-      if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
-      if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
+        // Determine State (Global 'isActive' for this widget)
+        let isActive = false;
+        if (typeof wid.id === 'number') isActive = (wid.id === activeTool);
+        if (wid.id === 'dynamic' && mesh) isActive = mesh.isDynamic;
+        if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
+        if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
+        if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
 
-      // Paint Toggles
-      if (wid.id === 'pick_color') {
-        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        isActive = tool ? tool._pickColor : false;
-      }
-      if (wid.id === 'write_albedo' || wid.id === 'write_roughness' || wid.id === 'write_metalness') {
-        const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-        if (tool) {
-          if (wid.id === 'write_albedo') isActive = tool._writeAlbedo;
-          if (wid.id === 'write_roughness') isActive = tool._writeRoughness;
-          if (wid.id === 'write_metalness') isActive = tool._writeMetalness;
+        // Paint Toggles
+        if (wid.id === 'pick_color') {
+          const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+          isActive = tool ? tool._pickColor : false;
         }
-      }
-
-      // Base Styles
-      ctx.textAlign = 'center';
-      ctx.font = '32px sans-serif';
-
-      // --- SLIDER ---
-      if (wid.type === 'slider') {
-        // Track
-        ctx.fillStyle = '#222';
-        ctx.fillRect(wid.x, wid.y + wid.h * 0.4, wid.w, wid.h * 0.2);
-
-        // Calculate Normalized Value for Knob Position
-        let t = wid.value;
-        if (isFinite(wid.min) && isFinite(wid.max)) {
-          t = (wid.value - wid.min) / (wid.max - wid.min);
+        if (wid.id === 'write_albedo' || wid.id === 'write_roughness' || wid.id === 'write_metalness') {
+          const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+          if (tool) {
+            if (wid.id === 'write_albedo') isActive = tool._writeAlbedo;
+            if (wid.id === 'write_roughness') isActive = tool._writeRoughness;
+            if (wid.id === 'write_metalness') isActive = tool._writeMetalness;
+          }
         }
-        t = Math.max(0, Math.min(1, t));
 
-        // Knob
-        const knobX = wid.x + t * wid.w;
-        ctx.fillStyle = '#00D0FF';
-        ctx.fillRect(knobX - 10, wid.y, 20, wid.h);
+        // Base Styles
+        ctx.textAlign = 'center';
+        ctx.font = '32px sans-serif';
 
-        // Label (Left)
-        ctx.fillStyle = '#eee';
-        ctx.textAlign = 'left';
-        ctx.fillText(`${wid.label}:`, wid.x + 20, wid.y + wid.h / 2 + 10);
+        // --- SLIDER ---
+        if (wid.type === 'slider') {
+          // Track
+          ctx.fillStyle = '#222';
+          ctx.fillRect(wid.x, wid.y + wid.h * 0.4, wid.w, wid.h * 0.2);
 
-        // Value (Right)
-        // Use Actual Value
-        let valStr = wid.value.toFixed(wid.precision || 2);
+          let t = wid.value;
+          if (isFinite(wid.min) && isFinite(wid.max)) {
+            t = (wid.value - wid.min) / (wid.max - wid.min);
+          }
+          t = Math.max(0, Math.min(1, t));
 
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#aaa';
-        ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
-        continue;
-      }
-
-      // --- CHECKBOX / TOGGLE ---
-      if (wid.type === 'checkbox' || wid.type === 'toggle') {
-        // Draw Box
-        ctx.fillStyle = '#222'; // BG
-        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-
-      // Border
-        ctx.strokeStyle = isActive ? '#fff' : '#888';
-        ctx.lineWidth = isActive ? 4 : 2;
-        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
-
-        // Text
-        ctx.fillStyle = wid.disabled ? '#555' : 'white';
-        ctx.textAlign = 'left';
-        ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
-
-        // Checkmark Box (Right Aligned)
-        const checkW = 40;
-        const checkX = wid.x + wid.w - checkW - 10;
-        const checkY = wid.y + (wid.h - checkW) / 2;
-
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(checkX, checkY, checkW, checkW);
-
-        if (wid.value) {
+          const knobX = wid.x + t * wid.w;
           ctx.fillStyle = '#00D0FF';
-          ctx.fillRect(checkX + 5, checkY + 5, checkW - 10, checkW - 10);
+          ctx.fillRect(knobX - 10, wid.y, 20, wid.h);
+
+          ctx.fillStyle = '#eee';
+          ctx.textAlign = 'left';
+          ctx.fillText(`${wid.label}:`, wid.x + 20, wid.y + wid.h / 2 + 10);
+
+          let valStr = wid.value.toFixed(wid.precision || 2);
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#aaa';
+          ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
         }
-        continue;
-      }
+          // --- CHECKBOX / TOGGLE ---
+        else if (wid.type === 'checkbox' || wid.type === 'toggle') {
+          ctx.fillStyle = '#222';
+          ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-      // --- COMBOBOX ---
-      if (wid.type === 'combobox') {
-        // Box
-        ctx.fillStyle = '#222';
-        ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-        ctx.strokeStyle = '#888';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
+          ctx.strokeStyle = isActive ? '#fff' : '#666';
+          ctx.lineWidth = isActive ? 2 : 2;
+          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
-        // Label (Current Value)
-        let displayLabel = wid.label; // Fallback
+          ctx.fillStyle = wid.disabled ? '#555' : 'white';
+          ctx.textAlign = 'left';
+          ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
 
-        // Generic Support
-        if (wid.options) {
-          const opt = wid.options.find(o => o.id === wid.value || o === wid.value);
-          if (opt) displayLabel = opt.label || opt;
+          const checkW = 40;
+          const checkX = wid.x + wid.w - checkW - 10;
+          const checkY = wid.y + (wid.h - checkW) / 2;
+
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(checkX, checkY, checkW, checkW);
+
+          if (wid.value) {
+            ctx.strokeStyle = '#00D0FF';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            const pad = 8;
+            ctx.moveTo(checkX + pad, checkY + checkW * 0.5);
+            ctx.lineTo(checkX + checkW * 0.4, checkY + checkW - pad);
+            ctx.lineTo(checkX + checkW - pad, checkY + pad);
+            ctx.stroke();
+          }
         }
-        // Legacy Support
-        else {
-          // Environment
-          if (wid.id === 'environment') {
-            const ShaderPBR = Shader[Enums.Shader.PBR];
-            if (ShaderPBR && ShaderPBR.environments && ShaderPBR.environments[ShaderPBR.idEnv]) {
-              displayLabel = ShaderPBR.environments[ShaderPBR.idEnv].name;
+          // --- COMBOBOX ---
+        else if (wid.type === 'combobox') {
+          ctx.fillStyle = '#222';
+          ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
+          ctx.strokeStyle = '#888';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
+
+          let displayLabel = wid.label;
+          if (wid.options) {
+            const opt = wid.options.find(o => o.id === wid.value || o === wid.value);
+            if (opt) displayLabel = opt.label || opt;
+          } else {
+            // Environment
+            if (wid.id === 'environment') {
+              const ShaderPBR = Shader[Enums.Shader.PBR];
+              if (ShaderPBR && ShaderPBR.environments && ShaderPBR.environments[ShaderPBR.idEnv]) {
+                displayLabel = ShaderPBR.environments[ShaderPBR.idEnv].name;
+              }
+            }
+            // Matcap
+            else if (wid.id === 'matcap') {
+              const ShaderMatcap = Shader[Enums.Shader.MATCAP];
+              if (mesh && ShaderMatcap && ShaderMatcap.matcaps) {
+                const matId = mesh.getMatcap();
+                if (ShaderMatcap.matcaps[matId]) displayLabel = ShaderMatcap.matcaps[matId].name;
+              }
             }
           }
-          // Matcap
-          else if (wid.id === 'matcap') {
-            const ShaderMatcap = Shader[Enums.Shader.MATCAP];
-            if (mesh && ShaderMatcap && ShaderMatcap.matcaps) {
-              const matId = mesh.getMatcap();
-              if (ShaderMatcap.matcaps[matId]) displayLabel = ShaderMatcap.matcaps[matId].name;
-            }
-          }
+
+          ctx.textAlign = 'left';
+          ctx.fillStyle = 'white';
+          ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
+
+          ctx.textAlign = 'right';
+          ctx.fillText('▼', wid.x + wid.w - 20, wid.y + wid.h / 2 + 10);
         }
+          // --- COLOR PICKER EMBEDDED ---
+        else if (wid.type === 'colorpicker_embedded') {
+          this._drawEmbeddedColorPicker(ctx, wid);
+        }
+          // --- GENERIC BUTTON ---
+        else if (wid.type === 'button') {
+          ctx.fillStyle = isActive ? '#00A040' : '#444';
+          if (wid.disabled) ctx.fillStyle = '#222';
+          ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-        ctx.textAlign = 'left';
-        ctx.fillStyle = 'white';
-        ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
+          ctx.strokeStyle = isActive ? '#fff' : '#888';
+          ctx.lineWidth = isActive ? 4 : 2;
+          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
-        // Arrow
-        const arrowX = wid.x + wid.w - 30;
-        const arrowY = wid.y + wid.h / 2;
-        ctx.fillStyle = '#aaa';
-        ctx.beginPath();
-        ctx.moveTo(arrowX - 10, arrowY - 5);
-        ctx.lineTo(arrowX + 10, arrowY - 5);
-        ctx.lineTo(arrowX, arrowY + 10);
-        ctx.fill();
-        continue;
+          ctx.fillStyle = wid.disabled ? '#555' : 'white';
+          ctx.textAlign = 'center';
+          ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
+        }
+      } // END ELSE (Generic Widgets)
+
+      // --- GENERIC HOVER HIGHLIGHT (For ALL widgets, drawn LAST so it's ON TOP) ---
+      const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
+      if (isHovered && wid.type !== 'info') {
+        const INSET = 3;
+        ctx.strokeStyle = '#dfdfdf'; // Brighter Gray
+        ctx.lineWidth = 6;           // Thicker
+        ctx.strokeRect(wid.x + INSET, wid.y + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
       }
-
-      // --- COLOR PICKER EMBEDDED ---
-      if (wid.type === 'colorpicker_embedded') {
-        this._drawEmbeddedColorPicker(ctx, wid);
-        continue;
-      }
-
-      // --- GENERIC BUTTON ---
-      // BG
-      ctx.fillStyle = isActive ? '#00A040' : '#444';
-      if (wid.disabled) ctx.fillStyle = '#222';
-      ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-
-      // Border
-      ctx.strokeStyle = isActive ? '#fff' : '#888';
-      ctx.lineWidth = isActive ? 4 : 2;
-      ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
-
-      // Text
-      ctx.fillStyle = wid.disabled ? '#555' : 'white';
-      ctx.textAlign = 'center';
-      ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
     }
 
     ctx.restore(); // End Clipping
@@ -1697,11 +1769,28 @@ class GuiXR {
 
     // --- DRAW OVERLAYS ---
     if (this._overlay) {
+      ctx.save();
+
+      const pivot = this._getOverlayPivot();
+      ctx.translate(pivot.x, pivot.y);
+      ctx.scale(OVERLAY_SCALE, OVERLAY_SCALE);
+      ctx.translate(-pivot.x, -pivot.y);
+
       this._drawOverlay(ctx, w, h);
+      ctx.restore();
     }
 
     if (this._activeCombobox) {
+      ctx.save();
+      // Apply same scale to Active Combobox so it aligns with the (now scaled) Overlay
+      // Use the same pivot as the overlay it belongs to (which is currently active)
+      const pivot = this._getOverlayPivot();
+      ctx.translate(pivot.x, pivot.y);
+      ctx.scale(OVERLAY_SCALE, OVERLAY_SCALE);
+      ctx.translate(-pivot.x, -pivot.y);
+
       this._drawActiveCombobox(ctx);
+      ctx.restore();
     }
 
     this._needsRedraw = true;
@@ -1741,7 +1830,6 @@ class GuiXR {
       // ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
       // Menu Box
-      // Menu Box
       // Shadow removed
       ctx.fillStyle = '#222'; // Dark Menu BG
       ctx.fillRect(x, y, mw, mh);
@@ -1755,14 +1843,33 @@ class GuiXR {
         const wx = x + wid.x;
         const wy = y + wid.y;
 
+        // Hover Highlight for Overlay
+        if (this._hoverOverlayWidget === wid) {
+          ctx.fillStyle = '#333';
+          ctx.fillRect(wx, wy, wid.w, wid.h);
+          ctx.strokeStyle = '#aaa';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(wx, wy, wid.w, wid.h);
+        }
+
         ctx.textAlign = 'left';
 
+        // NOTE: Widgets in overlay come from GuiVRXXX files which hardcode size?
+        // NO, GuiFiles.js returns { w: 800, h: ..., widgets: [...] }
+        // If we scaled OVERLAY_W, we might need to rely on the *generators* or scale contexts.
+        // But here we are drawing them.
+        // Wait, the WIDGETS inside `data.widgets` have `x, y, w, h`.
+        // If those are hardcoded 800-based, scaling the box won't scale the buttons!
+        // We MUST scale the widgets on the fly OR update the generators.
+        // Scaling on the fly during draw is easier for now to satisfy "Scale by 20%".
+        // But `_updateHover` also uses these coordinates for hit testing.
         if (wid.header) {
           ctx.font = 'bold 18px sans-serif';
           ctx.fillStyle = '#aaa';
           ctx.fillText(wid.label, wx + 5, wy + wid.h - 10);
-          // Separator line?
+          // Separator line
           ctx.strokeStyle = '#444';
+          ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(wx, wy + wid.h - 5);
           ctx.lineTo(wx + wid.w, wy + wid.h - 5);
@@ -1829,11 +1936,12 @@ class GuiXR {
           ctx.fillStyle = '#333';
           ctx.fillRect(wx, wy, wid.w, wid.h);
 
-          // Hover effect? Need hover state.
+          ctx.strokeStyle = '#555';
+          ctx.strokeRect(wx, wy, wid.w, wid.h);
 
-          ctx.font = '18px sans-serif';
-          ctx.fillStyle = wid.disabled ? '#666' : '#fff';
-          ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
+          ctx.fillStyle = '#eee';
+          ctx.textAlign = 'center';
+          ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'combobox') {
           ctx.fillStyle = '#252525';
@@ -1864,9 +1972,9 @@ class GuiXR {
           ctx.fill();
         }
       });
-      ctx.restore();
-      return; // Skip other overlays if Menu is open? Or draw on top? 
-      // Usually Menu is top.
+
+      // No restore needed (caller handles it)
+      return; 
     }
 
     if (this._overlay === 'combobox') {
@@ -1874,12 +1982,14 @@ class GuiXR {
     } else if (this._overlay === 'colorpicker') {
       this._drawColorPicker(ctx);
     }
+    // No restore needed (caller handles it)
   }
 
   _drawCombobox(ctx) {
     const data = this._overlayData;
     if (!data || !data.options) return;
 
+    // REVERTED to standard sizes (handled by Scale)
     const itemHeight = 80;
     const startY = OVERLAY_Y + 100;
     const startX = OVERLAY_X + 20;
@@ -1898,12 +2008,12 @@ class GuiXR {
       if (i === hoverIndex) ctx.fillStyle = '#666'; // Hover Highlight
       else ctx.fillStyle = '#444';
 
-      ctx.fillRect(startX, y, OVERLAY_W - 40, itemHeight - 10);
+      ctx.fillRect(startX, y, OVERLAY_W - 60, itemHeight - 12);
 
       ctx.fillStyle = '#fff';
-      ctx.font = '32px sans-serif';
+      ctx.font = '38px sans-serif'; // was 32
       ctx.textAlign = 'left';
-      ctx.fillText(opt.label, startX + 20, y + itemHeight / 2 + 10);
+      ctx.fillText(opt.label, startX + 25, y + itemHeight / 2 + 12);
     });
   }
 
@@ -2320,6 +2430,12 @@ class GuiXR {
     this.forceDraw();
   }
   _handleDropdownInteract(cx, cy) {
+    // Input Transform for Scale
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+    cx = (cx - pivot.x) * invScale + pivot.x;
+    cy = (cy - pivot.y) * invScale + pivot.y;
+
     const w = this._activeCombobox;
     // Check if inside Dropdown List
     const itemHeight = 60; // Standard layout

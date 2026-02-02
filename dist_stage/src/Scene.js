@@ -467,8 +467,11 @@ class Scene {
         this._sculptManager.getSelection().renderVR(this, cam, radius);
 
         // Debug Interaction
-        // if (this._vrGrip.right.active && window.screenLog && Math.random() < 0.02)
-        //   window.screenLog("VR: Grip Active", "yellow");
+        if (window.screenLog && Math.random() < 0.02) {
+          const hovered = this._guiXR ? this._guiXR._hoverWidget : null;
+          const target = this._guiXR ? this._guiXR._activeWidget : null;
+          if (hovered) window.screenLog(`Hover: ${hovered.id}`, 'lime');
+        }
       }
     }
   }
@@ -1459,10 +1462,12 @@ class Scene {
 
           const hit = this._vrMenu.intersect(origin, dir);
 
-          // DEBUG: Log Intersection Attempts (Throttled)
+          // DEBUG: Log Intersection Attempts (Throttled but visible)
           if (!this._logIntersect) this._logIntersect = 0;
-          if (this._logIntersect++ % 120 === 0 && window.screenLog) {
-            // window.screenLog(`Ray(${isFallback?'Grip':'Ray'}) Hit:${!!hit}`, hit ? "lime" : "orange");
+          if (this._logIntersect++ % 60 === 0 && window.screenLog) {
+            const originStr = `${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}`;
+            window.screenLog(`Ray(${isFallback ? 'Grip' : 'Ray'}): [${originStr}] Hit:${!!hit}`, hit ? "lime" : "orange");
+            if (hit) window.screenLog(`Hit UV: ${hit.uv[0].toFixed(2)}, ${hit.uv[1].toFixed(2)}`, "lime");
           }
 
           if (hit) {
@@ -1471,7 +1476,9 @@ class Scene {
 
             // Interact if Trigger Pressed (Button 0)
             if (source.gamepad && source.gamepad.buttons[0]) {
-              this._guiXR.onInteract(hit.uv[0], hit.uv[1], source.gamepad.buttons[0].pressed);
+              const pressed = source.gamepad.buttons[0].pressed;
+              // if (pressed && window.screenLog) window.screenLog("Trigger Pressed", "cyan");
+              this._guiXR.onInteract(hit.uv[0], hit.uv[1], pressed);
             }
 
             // Calc Laser Distance (plus overshoot)
@@ -1486,12 +1493,12 @@ class Scene {
 
         } else {
           // Log Failure
-          // if (window.screenLog && this._logThrottle % 180 === 0) {
-          //   const hasRaySpace = !!source.targetRaySpace;
-          //   const hasGripSpace = !!source.gripSpace;
-          //   const hasMenu = !!this._vrMenu;
-          //   window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
-          // }
+          if (window.screenLog && this._logThrottle % 120 === 0) {
+            const hasRaySpace = !!source.targetRaySpace;
+            const hasGripSpace = !!source.gripSpace;
+            const hasMenu = !!this._vrMenu;
+            window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
+          }
         }
       }
 

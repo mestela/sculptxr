@@ -69,13 +69,16 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'checkbox',
     id: 'negative',
     label: 'Negative (N or -Alt)',
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 550, h: btnH,
     value: activeTool ? activeTool._negative : false,
     onInteract: () => {
       if (activeTool) {
+        if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
         activeTool._negative = !activeTool._negative;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
+      } else {
+        if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
       }
     }
   });
@@ -85,10 +88,11 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'checkbox',
     id: 'clay',
     label: 'Clay',
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 550, h: btnH,
     value: activeTool ? activeTool._clay : false,
     onInteract: () => {
       if (activeTool) {
+        if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
         activeTool._clay = !activeTool._clay;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -101,10 +105,11 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'checkbox',
     id: 'accumulate',
     label: 'Accumulate (no limit per stroke)',
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 550, h: btnH,
     value: activeTool ? activeTool._accumulate : false,
     onInteract: () => {
       if (activeTool) {
+        if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
         activeTool._accumulate = !activeTool._accumulate;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -112,7 +117,20 @@ export default function getToolsWidgets(main, activeToolIndex) {
     }
   });
   y += btnH + gapBtn;
-  widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily
+  widgets.push({
+    type: 'checkbox',
+    id: 'thin_surface',
+    label: 'Thin surface (front vertex only)',
+    x: col1X, y: y, w: 550, h: btnH,
+    value: activeTool ? activeTool._culling : false, // _culling is likely the prop name
+    onInteract: () => {
+      if (activeTool) {
+        activeTool._culling = !activeTool._culling;
+        main.render();
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapSection;
 
 
@@ -120,13 +138,13 @@ export default function getToolsWidgets(main, activeToolIndex) {
   widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
   y += gapHeader;
 
-  widgets.push({ type: 'checkbox', id: 'lock_position', label: 'Lock position', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  widgets.push({ type: 'checkbox', id: 'lock_position', label: 'Lock position', x: col1X, y: y, w: 550, h: btnH, disabled: true });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'combobox', id: 'alpha_tex', label: 'Texture', x: col1X, y: y, w: 400, h: btnH, options: [{ label: 'None', id: 0 }], value: 0, disabled: true });
+  widgets.push({ type: 'combobox', id: 'alpha_tex', label: 'Texture', x: col1X, y: y, w: 550, h: btnH, options: [{ label: 'None', id: 0 }], value: 0, disabled: true });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import alpha tex (jpg, png...)', x: col1X, y: y, w: 400, h: btnH, disabled: true });
+  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import alpha tex (jpg, png...)', x: col1X, y: y, w: 550, h: btnH, disabled: true });
   y += btnH + gapSection;
 
 

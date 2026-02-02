@@ -31,6 +31,18 @@ if [ -f "$LAST_VERSION_FILE" ]; then
     fi
 fi
 echo "Current Version: $CURRENT_VERSION"
+
+# --- SYNC VERSION.JS ---
+# Extract the full version description string from index.html comment
+# Matches: "VERSION: v0.6.154 - Fix VR Sculpting Interactions"
+FULL_VERSION_STR=$(grep -oE "VERSION: .*" index.html | head -n 1 | sed 's/VERSION: //')
+
+if [ -z "$FULL_VERSION_STR" ]; then
+  FULL_VERSION_STR="$CURRENT_VERSION"
+fi
+
+echo "🔄 Syncing src/Version.js -> $FULL_VERSION_STR"
+echo "export const VERSION = '$FULL_VERSION_STR';" > src/Version.js
 # ----------------------------
 
 echo "🚧 Preparing distribution package..."

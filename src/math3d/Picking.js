@@ -562,10 +562,24 @@ class Picking {
     var isQuad = iv4 !== Utils.TRI_INDEX;
     if (isQuad) iv4 *= 3;
 
-    var len1 = 1.0 / vec3.dist(this._interPoint, vAr.subarray(iv1, iv1 + 3));
-    var len2 = 1.0 / vec3.dist(this._interPoint, vAr.subarray(iv2, iv2 + 3));
-    var len3 = 1.0 / vec3.dist(this._interPoint, vAr.subarray(iv3, iv3 + 3));
-    var len4 = isQuad ? 1.0 / vec3.dist(this._interPoint, vAr.subarray(iv4, iv4 + 3)) : 0.0;
+    var d1 = vec3.dist(this._interPoint, vAr.subarray(iv1, iv1 + 3));
+    if (d1 < 1e-6) return vec3.copy(out, vField.subarray(iv1, iv1 + 3));
+    var len1 = 1.0 / d1;
+
+    var d2 = vec3.dist(this._interPoint, vAr.subarray(iv2, iv2 + 3));
+    if (d2 < 1e-6) return vec3.copy(out, vField.subarray(iv2, iv2 + 3));
+    var len2 = 1.0 / d2;
+
+    var d3 = vec3.dist(this._interPoint, vAr.subarray(iv3, iv3 + 3));
+    if (d3 < 1e-6) return vec3.copy(out, vField.subarray(iv3, iv3 + 3));
+    var len3 = 1.0 / d3;
+
+    var len4 = 0.0;
+    if (isQuad) {
+      var d4 = vec3.dist(this._interPoint, vAr.subarray(iv4, iv4 + 3));
+      if (d4 < 1e-6) return vec3.copy(out, vField.subarray(iv4, iv4 + 3));
+      len4 = 1.0 / d4;
+    }
 
     var invSum = 1.0 / (len1 + len2 + len3 + len4);
     vec3.set(out, 0.0, 0.0, 0.0);

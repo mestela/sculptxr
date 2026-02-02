@@ -61,6 +61,8 @@ class Brush extends SculptBase {
     var mAr = mesh.getMaterials();
     var vProxy = this._accumulate || this._lockPosition ? vAr : mesh.getVerticesProxy();
     var radius = Math.sqrt(radiusSquared);
+    if (radius < 1e-6) return; // Prevent division by zero / NaNs
+
     var deformIntensityBrush = intensity * radius * 0.1;
     if (this._negative)
       deformIntensityBrush = -deformIntensityBrush;
@@ -70,6 +72,9 @@ class Brush extends SculptBase {
     var anx = aNormal[0];
     var any = aNormal[1];
     var anz = aNormal[2];
+    // Safety: If normal is NaN, abort to prevent mesh corruption
+    if (isNaN(anx) || isNaN(any) || isNaN(anz)) return;
+
     for (var i = 0, l = iVertsInRadius.length; i < l; ++i) {
       var ind = iVertsInRadius[i] * 3;
       var dx = vProxy[ind] - cx;

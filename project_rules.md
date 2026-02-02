@@ -109,6 +109,8 @@ See [Deployment Protocol](#deployment-protocol)
     -   **Beta Channel**: Use `./deploy_beta.sh` for rapid testing (tracks version independently in `.last_deployed_beta`).
     -   **Prod Channel**: Use `./deploy.sh` (tracks version in `.last_deployed_version`).
     -   *Override*: `FORCE=1 ./deploy.sh` (Only use if you are 100% sure).
+    -   *Override*: `FORCE=1 ./deploy.sh` (Only use if you are 100% sure).
+    -   **Auto-Sync**: The script automatically updates `src/Version.js` to match the version and comment in `index.html`.
 -   **Reference**: See `knowledge/sculptgl_webxr_port/artifacts/infrastructure/standalone_deployment.md` for troubleshooting.
 -   **Usage**:
     ```bash
