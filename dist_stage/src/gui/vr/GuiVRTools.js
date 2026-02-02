@@ -1,6 +1,7 @@
 import Enums from 'misc/Enums';
 import TR from 'gui/GuiTR';
 import Tools from 'editing/tools/Tools';
+import Picking from 'math3d/Picking';
 
 export default function getToolsWidgets(main, activeToolIndex) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
@@ -138,13 +139,72 @@ export default function getToolsWidgets(main, activeToolIndex) {
   widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
   y += gapHeader;
 
-  widgets.push({ type: 'checkbox', id: 'lock_position', label: 'Lock position', x: col1X, y: y, w: 550, h: btnH, disabled: true });
+  // Lock Position
+  widgets.push({
+    type: 'checkbox',
+    id: 'lock_position',
+    label: 'Lock position',
+    x: col1X, y: y, w: 550, h: btnH,
+    value: activeTool ? activeTool._lockPosition : false,
+    disabled: !activeTool,
+    onInteract: () => {
+      if (activeTool && activeTool._lockPosition !== undefined) {
+        activeTool._lockPosition = !activeTool._lockPosition;
+        if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'combobox', id: 'alpha_tex', label: 'Texture', x: col1X, y: y, w: 550, h: btnH, options: [{ label: 'None', id: 0 }], value: 0, disabled: true });
+  // Alpha Texture Combobox
+  // We need to map Alpha Names to IDs/Indices for the Combobox
+  const alphaNames = Object.keys(Picking.ALPHAS_NAMES);
+  const alphaOptions = alphaNames.map((name, i) => ({ label: name, id: i }));
+
+  // Find current index
+  let currentAlphaIndex = 0;
+  if (activeTool && activeTool._idAlpha) {
+    currentAlphaIndex = alphaNames.indexOf(activeTool._idAlpha);
+    if (currentAlphaIndex === -1) currentAlphaIndex = 0;
+  }
+
+  widgets.push({
+    type: 'combobox',
+    id: 'alpha_tex',
+    label: 'Texture',
+    x: col1X, y: y, w: 550, h: btnH,
+    options: alphaOptions,
+    value: currentAlphaIndex,
+    disabled: !activeTool,
+    onSelect: (idx) => {
+      if (activeTool) {
+        const name = alphaNames[idx];
+        activeTool._idAlpha = name;
+        if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
+        // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapBtn;
 
-  widgets.push({ type: 'button', id: 'alpha_import', label: 'Import alpha tex (jpg, png...)', x: col1X, y: y, w: 550, h: btnH, disabled: true });
+  widgets.push({
+    type: 'button',
+    id: 'alpha_import',
+    label: 'Import alpha tex (jpg, png...)',
+    x: col1X, y: y, w: 550, h: btnH,
+    onInteract: () => {
+      // Trigger Desktop File Picker
+      const input = document.getElementById('alphaopen');
+      if (input) {
+        input.click();
+        if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
+      } else {
+        if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
+      }
+    }
+  });
   y += btnH + gapSection;
 
 
