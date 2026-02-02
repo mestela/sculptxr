@@ -65,11 +65,52 @@ export default function getToolsWidgets(main, activeToolIndex) {
   y += 40 + gapSection;
 
   // Negative, Clay, Accumulate, Thin surface
-  widgets.push({ type: 'checkbox', id: 'negative', label: 'Negative (N or -Alt)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._negative : false });
+  widgets.push({
+    type: 'checkbox',
+    id: 'negative',
+    label: 'Negative (N or -Alt)',
+    x: col1X, y: y, w: 400, h: btnH,
+    value: activeTool ? activeTool._negative : false,
+    onInteract: () => {
+      if (activeTool) {
+        activeTool._negative = !activeTool._negative;
+        main.render();
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapBtn;
-  widgets.push({ type: 'checkbox', id: 'clay', label: 'Clay', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._clay : false });
+
+  widgets.push({
+    type: 'checkbox',
+    id: 'clay',
+    label: 'Clay',
+    x: col1X, y: y, w: 400, h: btnH,
+    value: activeTool ? activeTool._clay : false,
+    onInteract: () => {
+      if (activeTool) {
+        activeTool._clay = !activeTool._clay;
+        main.render();
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapBtn;
-  widgets.push({ type: 'checkbox', id: 'accumulate', label: 'Accumulate (no limit per stroke)', x: col1X, y: y, w: 400, h: btnH, value: activeTool ? activeTool._accumulate : false });
+
+  widgets.push({
+    type: 'checkbox',
+    id: 'accumulate',
+    label: 'Accumulate (no limit per stroke)',
+    x: col1X, y: y, w: 400, h: btnH,
+    value: activeTool ? activeTool._accumulate : false,
+    onInteract: () => {
+      if (activeTool) {
+        activeTool._accumulate = !activeTool._accumulate;
+        main.render();
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapBtn;
   widgets.push({ type: 'checkbox', id: 'thin_surface', label: 'Thin surface (front vertex only)', x: col1X, y: y, w: 400, h: btnH, disabled: true }); // Not sure if exposed easily
   y += btnH + gapSection;
