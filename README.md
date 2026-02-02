@@ -59,6 +59,9 @@ It should work on any WebXR compatible device. So far I've tested on
     - Fix: Enhanced failure logging for controller loading.
     - Fix: Cache-busting for core JS modules to ensure updates propagate.
     - Cleanup: Removed spammy 'Ray Fail' logs.
+- **v0.6.184** (Beta)
+    - **VR Common Section**: Added 'Symmetry' and 'Continuous' controls to VR Sculpting Tools.
+    - **Parity**: 'Sculpting & Painting' panel now matches Desktop functionality (Tools, Alpha, Common).
 - **v0.6.51** (Beta)
     - Feature: Automated Oculus Controller Model Loading (OBJ).
     - Pipeline: `fetch_controllers.sh` and `convert_controllers.py`.
