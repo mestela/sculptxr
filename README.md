@@ -7,6 +7,9 @@
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
 ## Releases
+- v0.6.220: **VR Brush Alignment**: Implemented Ray-based Picking (Laser) for precise brush positioning. Brush cursor now aligns perfectly with the controller's aim direction.
+- v0.6.219: **Final Polish**: Log cleanup and version hardening.
+- v0.6.218: **VR Brush Visuals**: Fixed Surface Radius Circle visibility (moved to RenderVR Pass 2).
 - v0.6.93: **Radial Color Picker Refined**: Larger (300px), thinner ring (20px), and corrected Hue mapping (standard HSV).
 - v0.6.70: **Modular VR Menu**: Major overhaul of `GuiXR`. increased resolution to 1024x1024. Added Tabs (TOOLS, SCENE, VIEW, FILES, HISTORY). Added "Add Primitive" and "Rendering Settings".
 - v0.6.61: **Log Cleanup & Polish**: High-fidelity Quest Touch Plus controllers, PBR matte shading, ergonomic menu/laser offsets, and completely silent console logging.
@@ -76,7 +79,11 @@ It should work on any WebXR compatible device. So far I've tested on
     - **Two-Handed Navigation**:
         - Single Grip: Translate world, rotate around controller
         - Double Grip: Scale and Rotate world from midpoint of controllers
-    - Ray-casting support for UI interaction
+    - Two-Handed Navigation:
+        - Single Grip: Translate world, rotate around controller
+        - Double Grip: Scale and Rotate world from midpoint of controllers
+    - **Ray-casting Picking**: Precise brush alignment using laser pointer (v0.6.220)
+    - Thumbstick left/right for undo/redo, up/down for brush size
     - Thumbstick left/right for undo/redo, up/down for brush size
 - **Sculpting & Rendering**:
     - Most brushes are fully functional
