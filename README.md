@@ -112,6 +112,8 @@ It should work on any WebXR compatible device. So far I've tested on
     - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
     - Drag tool not working correctly with symmetry
     - Reference image support
+    - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
+    - Desktop mode with 6dof controllers! That should be possible to hack together!
 - **UI + UX**  
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
@@ -131,6 +133,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - Combobox for tool too slow; revert back to button panel i think
     - Default smooth strength too high
     - Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.
+    
 
 
 
