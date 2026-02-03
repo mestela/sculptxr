@@ -114,13 +114,24 @@ It should work on any WebXR compatible device. So far I've tested on
 - **UI + UX**  
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - Menu layout is clunky (but slowly improving)
+    - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - UX for importing meshes is clunky (forced back into 2d mode to get standard browser import dialog)
     - Double handed grip needs work, gets hard to control when the world has been scaled too large
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - ~~**Content**: Add Primitive shapes (Cone, Cylinder, etc) for starting~~
+    - Matcap misaligned; its upside down and slightly different in left/right eyes
+    - Default move brush size is too big
+    - Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges
+    - Trigger on left controller should invoke sub mode
+    - Drag on empty space of menu panel should scroll
+    - Combobox for tool has misaligned highlight
+    - Combobox for tool too slow; revert back to button panel i think
+    - Default smooth strength too high
+
+
+
 
 
 
