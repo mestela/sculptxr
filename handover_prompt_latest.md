@@ -17,6 +17,9 @@ We switched from Sphere Picking to **Ray Casting** for accurate laser-based alig
 3.  **UI Completeness**: Add missing primitives / menu items.
 
 ## Recent Changes
+*   **v0.6.231**: Fixed `refreshSymmetry` crash in `GuiXR` (was missing method).
+*   **v0.6.230**: Fixed `setSymmetry` crash in `SculptManager` (was missing method).
+*   **v0.6.229**: Polish - Radius sphere updates while dragging slider (Menu Guard fix), Voxel default radius = 20, Bake disables symmetry.
 *   **v0.6.228**: Fixed Air Drawing offset for Standalone VR (was emitting from root/5cm instead of tip/10cm).
 *   **v0.6.227**: Corrected lint errors in `Scene.js` introduced in v0.6.226.
 *   **v0.6.226**: Implemented **Air Drawing** for Voxel Tool (Disabled surface snapping).

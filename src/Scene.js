@@ -1954,17 +1954,6 @@ class Scene {
     // CRITICAL: Update shared state for SculptBase/SculptManager parity
     this._vrControllerPos = enginePos;
 
-    // 2.5 Menu Guard: If pointing at menu, block sculpting
-    // This requires handleXRInput to have run and set this._isPointingAtMenu
-
-    // DEBUG LOG: Verify this logic
-    if (this._isPointingAtMenu) {
-      // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "lime");
-      return;
-    } else {
-      // if (window.screenLog && source.gamepad.buttons[0].pressed) window.screenLog("SCULPT ALLOWED (No Menu Hit)", "red");
-    }
-
     // 3. Picking (Engine Space Units)
     // Radius: Prioritize Active Tool (0-100+ range) -> Normalize to 0-1+
     // Fallback to GuiXR._radius or default
@@ -1979,6 +1968,17 @@ class Scene {
     const pickingRadius = physicalRadius * invScale;
     this._vrLastPhysicalRadius = physicalRadius; // Store for renderVR (Tracking Space / Meters)
     this._vrLastPickingRadius = pickingRadius; // Keep for debug/other uses
+
+    // 2.5 Menu Guard: If pointing at menu, block sculpting
+    // This requires handleXRInput to have run and set this._isPointingAtMenu
+
+    // DEBUG LOG: Verify this logic
+    if (this._isPointingAtMenu) {
+      // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "lime");
+      return;
+    } else {
+      // if (window.screenLog && source.gamepad.buttons[0].pressed) window.screenLog("SCULPT ALLOWED (No Menu Hit)", "red");
+    }
 
     // 4. Picking State Synchronization (RAY CASTING)
     // Use Ray Casting for perfect alignment with Laser Pointer

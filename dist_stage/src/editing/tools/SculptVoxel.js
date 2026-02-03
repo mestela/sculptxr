@@ -71,7 +71,7 @@ class SculptVoxel extends SculptBase {
     };
 
     // Ensure we have a default radius for distance check
-    this._radius = 5.0; // Brush Size ~5% of world
+    this._radius = 20.0; // Brush Size ~20% of world (User Request)
   }
 
   getMesh() {
@@ -762,6 +762,13 @@ class SculptVoxel extends SculptBase {
     if (window.screenLog) window.screenLog("Voxel: Baking to Mesh...", "lime");
 
     const main = this._main;
+
+    // [USER REQUEST] Turn off symmetry after bake
+    if (main.getSculptManager()) {
+      main.getSculptManager().setSymmetry(false);
+      if (main.guiXR) main.guiXR.refreshSymmetry(); // If widget exists
+    }
+
     const gl = main._gl;
 
     // 1. Extract Geometry

@@ -38,6 +38,10 @@ class SculptManager {
     return this._symmetry;
   }
 
+  setSymmetry(val) {
+    this._symmetry = val;
+  }
+
   getTool(index) {
     return this._tools[index];
   }
