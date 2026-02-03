@@ -414,8 +414,8 @@ class VoxelState {
       if (window.screenLog) window.screenLog(msg, "orange");
       res.faces = new Uint32Array(newFaces); 
     } else {
-      console.log(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`);
-      if (window.screenLog) window.screenLog(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`, "grey");
+      // console.log(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`);
+      // if (window.screenLog) window.screenLog(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`, "grey");
     }
   }
 

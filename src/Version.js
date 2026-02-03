@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.231 - Add refreshSymmetry to GuiXR -->';
+export const VERSION = 'v0.6.233 - Silence Voxel Logs Completely -->';
