@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.235 - Fix Move Tool Radius in Air Mode -->';
+export const VERSION = 'v0.6.237 - Debug Move Tool (Logs) -->';

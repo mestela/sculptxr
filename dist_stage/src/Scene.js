@@ -2052,15 +2052,6 @@ class Scene {
       const mesh = this._picking.getMesh() || this.getMesh();
       if (mesh) {
         this._picking._rLocal2 = this._picking._rWorld2 / mesh.getScale2();
-
-        // UPDATE enginePos to match the HIT POINT
-        const localInter = this._picking.getIntersectionPoint();
-        vec3.transformMat4(enginePos, localInter, mesh.getMatrix());
-
-        // Also update _vrControllerPos to hit point for visual consistency?? 
-        // No, keep _vrControllerPos as the "Hand" position for other logic? 
-        // Actually Scene.js uses _vrControllerPos for some things, but let's update it to ensure tool follows surface.
-        this._vrControllerPos = enginePos; 
       }
 
       // DEBUG: Verify Mesh Hit

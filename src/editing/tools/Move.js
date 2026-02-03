@@ -242,6 +242,13 @@ class Move extends SculptBase {
     // Apply Primary Move
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
+
+      if (window.screenLog && this._main._logThrottle % 30 === 0) {
+        const d = moveData.dir;
+        // window.screenLog(`Move Dir: ${d[0].toFixed(2)}, ${d[1].toFixed(2)}, ${d[2].toFixed(2)}`, "cyan");
+        // window.screenLog(`Curr: ${vCurrLocal[0].toFixed(2)}`, "grey");
+      }
+
        this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking);
     }
 
