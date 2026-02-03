@@ -130,6 +130,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - Combobox for tool has misaligned highlight
     - Combobox for tool too slow; revert back to button panel i think
     - Default smooth strength too high
+    - Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.
 
 
 
