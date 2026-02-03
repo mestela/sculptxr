@@ -104,7 +104,7 @@ It should work on any WebXR compatible device. So far I've tested on
 - **Functionality**:
     - Dynamic Topology (code path is active, but not working, unsure why)
     - Multiresolution not yet supported in VR
-    - Can't change matcaps or PBR environment (need combobox UI element)
+    - ~~Can't change matcaps or PBR environment (need combobox UI element)~~
     - Add primitives menu missing
     - Transform tool/gizmo missing
     - Lots of 'minor' UI missing (need to take an inventory of all the menu items)
