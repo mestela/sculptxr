@@ -1974,35 +1974,87 @@ class Scene {
     this._vrLastPhysicalRadius = physicalRadius; // Store for renderVR (Tracking Space / Meters)
     this._vrLastPickingRadius = pickingRadius; // Keep for debug/other uses
 
-    // 4. Picking State Synchronization
-    // FIX v0.5.40: Quadruple search radius (User Request)
-    // FIX v0.6.4: Unit-Corrected Cap (5cm Physical)
-    const MAX_SEARCH_METERS = 0.05; // 5cm
-    const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
-    const searchRadius = Math.min(pickingRadius * 4.0, MAX_SEARCH_RADIUS);
-    let picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, searchRadius);
+    // 4. Picking State Synchronization (RAY CASTING)
+    // Use Ray Casting for perfect alignment with Laser Pointer
+
+    // A. Compute Ray Direction (Model Space)
+    const engineDir = vec3.fromValues(0, 0, -1); // Standard Forward
+    if (pose && pose.transform && pose.transform.orientation) {
+      const q = pose.transform.orientation;
+      const qRot = quat.fromValues(q.x, q.y, q.z, q.w);
+      vec3.transformQuat(engineDir, engineDir, qRot);
+    }
+    // Transform Direction to Model Space (Inv Rotation only)
+    if (this._xrWorldOffset) {
+      const r = this._xrWorldOffset.orientation;
+      const qInv = quat.create();
+      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+      quat.invert(qInv, qRot);
+      vec3.transformQuat(engineDir, engineDir, qInv);
+    }
+    vec3.normalize(engineDir, engineDir);
+
+    // B. Compute Ray Origin (Model Space) - Start closer to controller (1cm) to avoid missing nearby surfaces
+    const rayOffset = vec3.fromValues(0, 0, -0.01); // 1cm offset
+    if (pose && pose.transform && pose.transform.orientation) {
+      const q = pose.transform.orientation;
+      vec3.transformQuat(rayOffset, rayOffset, [q.x, q.y, q.z, q.w]);
+    }
+    const rayOriginPhysical = [
+      p.x + rayOffset[0],
+      p.y + rayOffset[1],
+      p.z + rayOffset[2]
+    ];
+
+    // Transform Ray Origin to Model Space
+    const rayOrigin = vec3.create();
+    vec3.copy(rayOrigin, rayOriginPhysical);
+    if (this._xrWorldOffset) {
+      const t = this._xrWorldOffset.position;
+      const r = this._xrWorldOffset.orientation;
+      vec3.sub(rayOrigin, rayOrigin, [t.x, t.y, t.z]);
+      const qInv = quat.create();
+      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+      quat.invert(qInv, qRot);
+      vec3.transformQuat(rayOrigin, rayOrigin, qInv);
+    }
+    vec3.scale(rayOrigin, rayOrigin, invScale);
+
+    // C. Perform Intersection
+    this._picking._rWorld2 = pickingRadius * pickingRadius; // Pre-set radius squared for logic that might check it
+    let picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
 
     // DEBUG: Picking Trace
     // if (window.screenLog && this._logThrottle % 60 === 0) {
-    //   const p = enginePos;
     //   const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm`;
     //   window.screenLog(msg, picked ? "lime" : "red");
     // }
 
     if (picked) {
-      // CRITICAL FIX: The picking logic expects the squared radius in ENGINE units
+      // OVERRIDE: Ray picking usually uses screen-projected radius. We must force VR Physical Radius.
       this._picking._rWorld2 = pickingRadius * pickingRadius;
 
-      // Optional: Sync local radius if using per-mesh scaling (usually not in VR)
+      // Sync local radius
       const mesh = this._picking.getMesh();
       if (mesh) {
         this._picking._rLocal2 = this._picking._rWorld2 / mesh.getScale2();
+
+        // UPDATE enginePos to match the HIT POINT
+        const localInter = this._picking.getIntersectionPoint();
+        vec3.transformMat4(enginePos, localInter, mesh.getMatrix());
+
+        // Also update _vrControllerPos to hit point for visual consistency?? 
+        // No, keep _vrControllerPos as the "Hand" position for other logic? 
+        // Actually Scene.js uses _vrControllerPos for some things, but let's update it to ensure tool follows surface.
+        this._vrControllerPos = enginePos; 
       }
 
       // DEBUG: Verify Mesh Hit
       // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("Mesh Hit: " + mesh.getID(), "lime");
 
     } else {
+      // Fallback: enginePos remains at the default "5cm in front" position (calculated above as physicalOrigin)
+      // This allows Air Sculpting to work at a comfortable distance if enabled.
       // if (window.screenLog && this._logThrottle % 60 === 0 && source.gamepad.buttons[0].pressed) window.screenLog("No Mesh Hit (Too far?)", "grey");
     }
 
