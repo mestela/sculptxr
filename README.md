@@ -6,6 +6,9 @@
 
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
+> [!NOTE]
+> **WIP**: The VR Interface is a Work In Progress. Not all menus and UI elements from the desktop version are fully functional or present in VR yet. We are actively porting them over. 
+
 ## Releases
 - v0.6.220: **VR Brush Alignment**: Implemented Ray-based Picking (Laser) for precise brush positioning. Brush cursor now aligns perfectly with the controller's aim direction.
 - v0.6.219: **Final Polish**: Log cleanup and version hardening.
