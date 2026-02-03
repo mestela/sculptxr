@@ -27,6 +27,7 @@ class SculptVoxel extends SculptBase {
     mat4.translate(this._gridMatrix, this._gridMatrix, [0.0, 1.3, -1.5]);
     this._invGridMatrix = mat4.create();
     mat4.invert(this._invGridMatrix, this._gridMatrix);
+    this._allowAir = true; // [VR] Allow drawing in air (Scene.js checks this)
 
     this._lastUpdate = 0;
 

@@ -11,6 +11,7 @@ class Move extends SculptBase {
     this._intensity = 1.0;
     this._topoCheck = true;
     this._negative = false; // along normal
+    this._allowAir = true; // [VR] Allow moving without surface snap
     this._moveData = {
       center: [0.0, 0.0, 0.0],
       dir: [0.0, 0.0],
