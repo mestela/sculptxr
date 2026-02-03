@@ -107,7 +107,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - ~~Can't change matcaps or PBR environment (need combobox UI element)~~
     - Add primitives menu missing
     - Transform tool/gizmo missing
-    - Lots of 'minor' UI missing (need to take an inventory of all the menu items)
+    - ~~Lots of 'minor' UI missing (need to take an inventory of all the menu items)~~
     - Re-symmetrize function, choose left->right, right->left
     - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
     - Drag tool not working correctly with symmetry
