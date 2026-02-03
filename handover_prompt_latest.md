@@ -17,6 +17,7 @@ We switched from Sphere Picking to **Ray Casting** for accurate laser-based alig
 3.  **UI Completeness**: Add missing primitives / menu items.
 
 ## Recent Changes
+*   **v0.6.233**: Silenced Voxel log spam ("Sanitized...").
 *   **v0.6.231**: Fixed `refreshSymmetry` crash in `GuiXR` (was missing method).
 *   **v0.6.230**: Fixed `setSymmetry` crash in `SculptManager` (was missing method).
 *   **v0.6.229**: Polish - Radius sphere updates while dragging slider (Menu Guard fix), Voxel default radius = 20, Bake disables symmetry.
