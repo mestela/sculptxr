@@ -8,10 +8,12 @@ class Attribute {
   }
 
   unbind() {
+    if (this._location === -1) return;
     this._gl.disableVertexAttribArray(this._location);
   }
 
   bindToBuffer(buffer) {
+    if (this._location === -1) return;
     var gl = this._gl;
     buffer.bind();
     gl.enableVertexAttribArray(this._location);

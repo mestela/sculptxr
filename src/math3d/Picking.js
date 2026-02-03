@@ -40,6 +40,7 @@ class Picking {
     this._pickedVertices = []; // vertices selected
     this._interPoint = [0.0, 0.0, 0.0]; // intersection point (mesh local space)
     this._rLocal2 = 0.0; // radius of the selection area (local/object space)
+    this._rLocal2 = 0.0; // radius of the selection area (local/object space)
     this._rWorld2 = 0.0; // radius of the selection area (world space)
     this._eyeDir = [0.0, 0.0, 0.0]; // eye direction
 
@@ -322,7 +323,9 @@ class Picking {
       this._mesh = nearMesh;
       vec3.copy(this._interPoint, nearPoint);
       this._pickedFace = nearFace;
-      this.updateLocalAndWorldRadius2();
+      // FIX for VR: Use the passed physical radius, DO NOT re-project to screen (which updateLocalAndWorldRadius2 does)
+      this._rWorld2 = worldRadius * worldRadius;
+      this._rLocal2 = this._rWorld2 / nearMesh.getScale2();
       return true;
     }
 

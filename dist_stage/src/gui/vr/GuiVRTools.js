@@ -28,7 +28,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'combobox',
     id: 'tool_select',
     label: 'Tool',
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 320, h: btnH,
     value: activeToolIndex,
     options: toolOptions,
     onSelect: (id) => {
@@ -134,7 +134,6 @@ export default function getToolsWidgets(main, activeToolIndex) {
   });
   y += btnH + gapSection;
 
-
   // 3. Alpha
   widgets.push({ type: 'info', label: 'Alpha', x: col1X, y: y });
   y += gapHeader;
@@ -209,13 +208,72 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
 
   // 4. Common
-  widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
-  y += gapHeader;
+  const mgr = main.getSculptManager();
+  const showSym = activeToolIndex !== Enums.Tools.TRANSFORM;
+  const showContinuous = mgr.canBeContinuous();
 
-  widgets.push({ type: 'checkbox', id: 'symmetry', label: 'Symmetry', x: col1X, y: y, w: 300, h: btnH, value: main.getSculptManager()._symmetry });
-  y += btnH + gapBtn;
-  widgets.push({ type: 'checkbox', id: 'continuous', label: 'Continuous', x: col1X, y: y, w: 300, h: btnH, disabled: true });
-  y += btnH + gapSection;
+  if (showSym || showContinuous) {
+    widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
+    y += gapHeader;
+
+    if (showSym) {
+      widgets.push({
+        type: 'checkbox',
+        id: 'symmetry',
+        label: 'Symmetry',
+        x: col1X, y: y, w: 300, h: btnH,
+        value: mgr._symmetry,
+        onInteract: () => {
+          mgr._symmetry = !mgr._symmetry;
+          if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
+          main.render();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      });
+      y += btnH + gapBtn;
+    }
+
+    if (showContinuous) {
+      widgets.push({
+        type: 'checkbox',
+        id: 'continuous',
+        label: 'Continuous',
+        x: col1X, y: y, w: 300, h: btnH,
+        value: mgr._continuous,
+        onInteract: () => {
+          mgr._continuous = !mgr._continuous;
+          if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
+          main.render();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      });
+      y += btnH + gapSection;
+    } else {
+      // If we had a gap for the header but didn't add the continuous button (and symmetry was also hidden? no, if we are here at least one is shown),
+      // Actually if showContinuous is false we just skip it.
+      // If we are here, at least one of them is true.
+      // If showSym was true, we added y += btnH + gapBtn.
+      // We might want to ensure the final spacing is correct. 
+      // If continuous is hidden, we might have added extra gapBtn after symmetry.
+      // Let's just reset standard gap after the block.
+    }
+
+    // Ensure consistent spacing after the block if items were added
+    // The last item added usually adds its own spacing. 
+    // If symmetry was last, it added `gapBtn`. We might want `gapSection` for the next potential section.
+    // If continuous was last, it added `gapSection`.
+    // Let's just fix the gap of the last added item if needed, but for now simple checks are fine.
+    // Actually, if Symmetry is the ONLY one shown, it currently adds `gapBtn` (15) instead of `gapSection` (30).
+    // Not a huge deal, but we can fix it.
+
+    // Correction for spacing:
+    // If we finished on Symmetry (Continuous hidden), we want gapSection.
+    if (showSym && !showContinuous) {
+      // Fix last gap
+      y -= gapBtn; // remove gapBtn
+      y += gapSection; // add gapSection
+    }
+  }
 
   return widgets;
 }

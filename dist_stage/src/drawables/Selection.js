@@ -178,7 +178,10 @@ class Selection {
   }
 
   renderVR(main, camera, worldRadius) {
-    if (!main.getPicking().getMesh()) return;
+    if (!main.getPicking().getMesh()) {
+      // if (window.screenLog && Math.random() < 0.01) window.screenLog("RenderVR: No Mesh", "red");
+      return;
+    }
 
     var useSym = main.getSculptManager().getSymmetry();
 
@@ -188,6 +191,8 @@ class Selection {
     // Draw (Blue for VR)
     vec3.set(this._color, 0.0, 0.0, 0.8);
     ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, true, useSym);
+
+    // if (window.screenLog && Math.random() < 0.01) window.screenLog("RenderVR: DRAW", "lime");
   }
 
   _updateMatricesMeshVR(camera, main, worldRadius, useSym) {

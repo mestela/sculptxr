@@ -1,38 +1,36 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.6.184 (BETA) - SCULPTING & PAINTING PARITY ACHIEVED
+**Project Status**: v0.6.195 (BETA) - STABLE REVERT
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v0.6.184` deployed to `sculptxrbeta`.
-**Last Successful Version**: `v0.6.184` (Symmetry/Continuous logic restored).
+**Checkpoint**: `v0.6.195` deployed to `sculptxrbeta`.
 
 ## MANDATORY: Project Rules & Guidelines
-**CRITICAL**: You MUST read and follow `project_rules.md` at the start of your session. It contains codebase-specific patterns, style guides, and forbidden actions (e.g., no emoji, specific git workflows).
 [project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
 
-## Current Issue: VISUAL POLISH ONLY
-**User Report**: "That works."
-**Status**:
-*   **Fixed**: "Common" Section (Symmetry, Continuous) implemented in VR (v0.6.184).
-*   **Working**: Combobox Layout (Smart positioning).
+## Current Focus: VR Polishing & Bugfixes
+**CRITICAL BUG REPORT (v0.6.195)**:
+The user reports:
+1.  **Controller Visuals**: Controller model visible, with spike and red half-sphere on tip.
+2.  **Giant Sphere Glitch**:
+    *   "When I get within sculpting distance, the half a sphere becomes huge."
+    *   "I can sculpt fine, it's just with a huge half-sphere behind the sculpt."
+    *   "If I lift the controller away from the surface, the half sphere returns to the spike tip at normal size."
 
-## Recent Changes (v0.6.184)
-1.  **Common Section (VR)**:
-    *   **Feature**: Added 'Common' section to VR Tool Panel.
-    *   **Feature**: 'Symmetry' toggle (Hides for Transform tool).
-    *   **Feature**: 'Continuous' toggle (Respects `canBeContinuous`).
-2.  **Combobox Smart Positioning** (v0.6.183):
-    *   Lists push UP if clipping bottom.
-    *   Hit testing patched with 1.13x scale factor (Needs proper fix later).
+## Outstanding Issues (Next Session)
+1.  **Fix Giant Sphere Glitch**:
+    *   **Goal**: Clamp the radius of the brush helper sphere.
+    *   **Suspicion**: `Picking.computeWorldRadius2` likely returns a massive value when close to surface or hitting backfaces/bad intersection.
+    *   **Solution**: **CLAMP** the radius in `Scene.js` or `Picking.js` to a reasonable max (e.g., 25cm).
+    *   **WARNING**: Do **NOT** refactor the entire `renderVR` loop or add "Overlay Passes" blindly. A previous attempt to do this caused a "View Lock" bug where displays became desynchronized. **Make minimal, safe changes.**
 
-## Debugging Leads for Next Agent
-1.  **Combobox Alignment**:
-    *   Investigate why `VRMenu` texture/quad mapping results in a 13-15% vertical compression.
-    *   Check `GuiXR` canvas height vs `VRMenu` geometry aspect ratio.
-2.  **Common Section**:
-    *   User wants 'Symmetry' and 'Continuous' in a 'Common' section matching Desktop.
-    *   Check `GuiSculpting.js` for exact layout and replicate in `GuiVRTools.js` carefully.
+2.  **Pointer Visibility**:
+    *   The "Hidden Spike" issue seems mostly resolved or at least visible now (red half-sphere). If it clips into the controller, adjust offset slightly, but prioritize the Giant Sphere fix first.
+
+## Recent Changes
+*   **v0.6.195**: Reverted to safe state after v0.6.200 caused View Lock.
+*   **v0.6.199**: Fixed `Scene.js` Syntax Errors (missing braces).
+*   **v0.6.186**: Fixed VR Crash.
 
 ## Deployment
-See [Deployment Protocol](#deployment-protocol) in `project_rules.md`.
-*   **BETA**: `./deploy_beta.sh` (Current focus)
-*   **PROD**: `./deploy.sh` (LOCKED until fix)
+*   **BETA**: `./deploy_beta.sh`
+*   **PROD**: `./deploy.sh` (LOCKED)

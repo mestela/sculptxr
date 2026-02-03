@@ -86,21 +86,23 @@ var createCylinderArray = function (
   var heightHalf = height * 0.5;
 
   var nbVertices = (heightSegments + 1) * radSegments;
-  var nbFaces = heightSegments * radSegments;
-  if (topCap) {
-    nbVertices += 1;
-    nbFaces += radSegments;
-  }
-  if (lowCap) {
-    nbVertices += 1;
-    nbFaces += radSegments;
-  }
+  // Sides need 8 indices per quad (2 tris + separators), Caps need 4 per tri
+  var sideFaces = heightSegments * radSegments;
+  var capFaces = (topCap ? radSegments : 0) + (lowCap ? radSegments : 0);
+
+  if (topCap) nbVertices += 1;
+  if (lowCap) nbVertices += 1;
+
   if (isSingularTop || isSingularBottom) {
     nbVertices -= radSegments;
-    nbFaces -= radSegments;
+    // Singular caps don't add faces in this logic, handled by capFaces reduction? 
+    // Wait, original logic reduced nbFaces.
+    if (isSingularTop) capFaces -= radSegments;
+    if (isSingularBottom) capFaces -= radSegments;
   }
+
   var vAr = new Float32Array(nbVertices * 3);
-  var fAr = new Uint32Array(nbFaces * 4);
+  var fAr = new Uint32Array(sideFaces * 8 + capFaces * 4);
 
   var id = 0;
   var k = 0;
@@ -124,20 +126,44 @@ var createCylinderArray = function (
   for (j = 0; j < radSegments; j++) {
     var off = j === radSegments - 1 ? 0 : j + 1;
     for (i = startHeight; i < endHeight; i++) {
-      k = 4 * id++;
-      fAr[k] = radSegments * i + j;
-      fAr[k + 1] = radSegments * (i + 1) + j;
-      fAr[k + 2] = radSegments * (i + 1) + off;
-      fAr[k + 3] = radSegments * i + off;
+      k = 8 * id++; // 8 indices per side face
+      var first = radSegments * i + j;
+      var second = radSegments * (i + 1) + j;
+      var third = radSegments * (i + 1) + off;
+      var fourth = radSegments * i + off;
+
+      // Tri 1
+      fAr[k] = first;
+      fAr[k + 1] = second;
+      fAr[k + 2] = fourth;
+      fAr[k + 3] = Utils.TRI_INDEX;
+
+      // Tri 2
+      fAr[k + 4] = second;
+      fAr[k + 5] = third;
+      fAr[k + 6] = fourth;
+      fAr[k + 7] = Utils.TRI_INDEX;
     }
   }
+
+  // Continue 'id' from previous loop (it equals sideFaces)
+  // But our buffer position 'k' needs to account for the fact that previous faces took 8 indices each.
+  // Current 'id' assumes 1 unit per face.
+  // Side faces used 8 indices. Caps use 4.
+  // We can track exact offset.
+  var offset = sideFaces * 8;
+
+  // Reset id? No, we can just use relative count.
+  // Actually, easiest is just to maintain 'k'.
+  // But the loop uses 'k = 4 * id++' pattern.
+  // we can change it to 'k = offset + 4 * (id - sideFaces)'.
 
   var last;
   if (topCap) {
     last = (lowCap ? vAr.length - 6 : vAr.length - 3) / 3;
     vAr[last * 3 + 1] = heightHalf;
     for (j = 0; j < radSegments; j++) {
-      k = 4 * id++;
+      k = offset + 4 * (id++ - sideFaces);
       fAr[k] = j;
       fAr[k + 1] = j === radSegments - 1 ? 0 : j + 1;
       fAr[k + 2] = last;
@@ -151,11 +177,63 @@ var createCylinderArray = function (
     if (isSingularTop) --i;
     var end = radSegments * i;
     for (j = 0; j < radSegments; j++) {
-      k = 4 * id++;
+      k = offset + 4 * (id++ - sideFaces);
       fAr[k] = j === radSegments - 1 ? end : end + j + 1;
       fAr[k + 1] = end + j;
       fAr[k + 2] = last;
       fAr[k + 3] = Utils.TRI_INDEX;
+    }
+  }
+
+  return {
+    vertices: vAr,
+    faces: fAr
+  };
+};
+
+var createSphereArray = function (radius = 0.5, latSegments = 32, longSegments = 32) {
+  var vAr = new Float32Array((latSegments + 1) * (longSegments + 1) * 3);
+  // EACH quad produces 2 triangles (8 indices including TRI_INDEX separators)
+  var fAr = new Uint32Array(latSegments * longSegments * 8);
+
+  var k = 0;
+  var i = 0;
+  var j = 0;
+  for (i = 0; i <= latSegments; i++) {
+    var theta = i * Math.PI / latSegments;
+    var sinTheta = Math.sin(theta);
+    var cosTheta = Math.cos(theta);
+
+    for (j = 0; j <= longSegments; j++) {
+      var phi = j * 2 * Math.PI / longSegments;
+      var sinPhi = Math.sin(phi);
+      var cosPhi = Math.cos(phi);
+
+      var x = cosPhi * sinTheta;
+      var y = cosTheta;
+      var z = sinPhi * sinTheta;
+
+      vAr[k++] = radius * x;
+      vAr[k++] = radius * y;
+      vAr[k++] = radius * z;
+    }
+  }
+
+  k = 0;
+  for (i = 0; i < latSegments; i++) {
+    for (j = 0; j < longSegments; j++) {
+      var first = (i * (longSegments + 1)) + j;
+      var second = first + longSegments + 1;
+
+      fAr[k++] = first;
+      fAr[k++] = second;
+      fAr[k++] = first + 1;
+      fAr[k++] = Utils.TRI_INDEX;
+
+      fAr[k++] = second;
+      fAr[k++] = second + 1;
+      fAr[k++] = first + 1;
+      fAr[k++] = Utils.TRI_INDEX;
     }
   }
 
@@ -312,6 +390,10 @@ Primitives.createCube = function (gl) {
 
 Primitives.createCylinder = function (gl) {
   return createMesh(gl, createCylinderArray.apply(this, slice.call(arguments, 1)));
+};
+
+Primitives.createSphere = function (gl) {
+  return createMesh(gl, createSphereArray.apply(this, slice.call(arguments, 1)));
 };
 
 Primitives.createTorus = function (gl) {

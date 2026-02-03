@@ -19,6 +19,7 @@
 - v0.6.152: **VR Slider Fixes**: Fully functional Radius and Intensity sliders. Fixed detachment between menu state and VR cursor size.
 - v0.6.150: **Architecture**: Fixed stale widget caching in VR Menu.
 
+- v0.6.218: **VR Brush Visuals**: Fixed Surface Radius Circle visibility (moved to RenderVR Pass 2), added platform-specific offsets for correct brush positioning on PCVR and Standalone.
 - v0.6.4: Fix VR Brush Lag (Cap Search Radius to 5cm Physical), Unit Correction
 - v0.5.375: Fix VR Symmetry Skipping (Search Radius 4x), Revert Normal Culling
 - v0.5.60: fixed desktop exposure (removed double-gamma), calibrated VR scale (100 units = 1m), fixed initial camera offset (starting position)

@@ -34,6 +34,13 @@ class Scene {
     // cache canvas stuffs
     this._pixelRatio = 1.0;
     this._viewport = document.getElementById('viewport');
+
+    // Detect Quest Standalone (OculusBrowser) for Offset Fix
+    // Standalone WebXR implementation has a different Ray Origin vs Controller Model alignment than PCVR.
+    this._isQuestStandalone = /OculusBrowser/.test(navigator.userAgent);
+    if (this._isQuestStandalone && window.screenLog) window.screenLog("Detected: Oculus Browser (Standalone)", "lime");
+
+    this._preventDefault = this._preventDefault.bind(this);
     this._canvas = document.getElementById('canvas');
     this._canvasWidth = 0;
     this._canvasHeight = 0;
@@ -344,9 +351,10 @@ class Scene {
   }
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
-  renderVR(glLayer, pose) {
+  renderVR(glLayer, pose, frame, refSpace) {
     var gl = this._gl;
-    if (!gl) return;
+    var cam = this._camera;
+    var views = pose.views;
 
     // VR Exposure Override (Default 1.0 matches Desktop now)
     // var oldExposure = this._exposure;
@@ -360,7 +368,6 @@ class Scene {
       this.initVRControllers();
     }
 
-    var cam = this._camera;
     var meshes = this._meshes;
     var grid = this._grid;
 
@@ -369,8 +376,9 @@ class Scene {
     if (this._vrControllerLeft) ctrls.push(this._vrControllerLeft);
     if (this._vrControllerRight) ctrls.push(this._vrControllerRight);
 
-    for (const view of pose.views) {
-      const viewport = glLayer.getViewport(view);
+    for (var i = 0; i < views.length; ++i) {
+      var view = views[i];
+      var viewport = glLayer.getViewport(view);
       gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 
       // --- PASS 1: REAL WORLD (Controllers/Debug) ---
@@ -379,9 +387,9 @@ class Scene {
       mat4.copy(cam._proj, view.projectionMatrix);
 
       // Render Controllers (Real World)
-      for (const ctrl of ctrls) {
-        ctrl.updateMatrices(cam);
-        ctrl.render(this);
+      for (var j = 0; j < ctrls.length; ++j) {
+        ctrls[j].updateMatrices(cam);
+        ctrls[j].render(this);
       }
 
       // VR Menu (Attached to Left Controller) - Pass 1
@@ -414,6 +422,38 @@ class Scene {
         gl.enable(gl.DEPTH_TEST);
       }
 
+      // VR Brush Tip (Pencil) via Reliable Ray Matrix
+      if (this._vrControllerTip) {
+        // DEBUG: Throttle log every 180 frames (approx 2s at 90fps)
+        if (this._logThrottle++ % 180 === 0) {
+          if (window.screenLog) {
+            const hasMatrix = !!this._vrRightRayMatrix;
+            // const tipVis = this._vrControllerTip.isVisible();
+            const poseStatus = this._vrRightRayMatrix ? `Pos=[${this._vrRightRayMatrix[12].toFixed(2)},${this._vrRightRayMatrix[13].toFixed(2)}]` : "NoMat";
+            // window.screenLog(`Ptr: M=${hasMatrix ? 'OK' : 'NULL'} ${poseStatus}`, hasMatrix ? "lime" : "orange");
+            // if (!hasMatrix && this._logThrottle % 360 === 0) window.screenLog("Wait: Ptr Matrix Missing", "orange");
+          }
+        }
+
+        if (this._vrRightRayMatrix) {
+          // 1. Update Tip Matrix
+          const mTip = this._vrControllerTip.getMatrix();
+          mat4.copy(mTip, this._vrRightRayMatrix);
+
+          // Apply Local Transform (Rotate +Y to -Z, Offset Base)
+          // Standalone (OculusBrowser) needs 7.5cm, PCVR needs 2.5cm
+          const offY = this._isQuestStandalone ? 0.075 : 0.025;
+          mat4.rotateX(mTip, mTip, -Math.PI / 2);
+          mat4.translate(mTip, mTip, [0, offY, 0]);
+
+          this._vrControllerTip.updateMatrices(cam);
+          this._vrControllerTip.render(this);
+
+          // 2. Update Radius Sphere code REMOVED (Moved to Pass 3 Overlay)
+          // Storing matrix for Pass 3 use is handled by _vrRightRayMatrix existence.
+        }
+      }
+
       // Log Once
       if (window.screenLog && Math.random() < 0.005) {
         // if (window.screenLog && Math.random() < 0.01) window.screenLog(`VR Rendering: ${meshes.length} Meshes`, "grey");
@@ -444,37 +484,90 @@ class Scene {
       }
 
       // Meshes
-      for (let i = 0, l = meshes.length; i < l; ++i) {
-        if (!meshes[i].isVisible()) continue;
-        meshes[i].updateMatrices(cam);
-        meshes[i].render(this);
+      for (let k = 0, l = meshes.length; k < l; ++k) {
+        if (!meshes[k].isVisible()) continue;
+        meshes[k].updateMatrices(cam);
+        meshes[k].render(this);
       }
 
       // Wireframe (Pass 2)
       gl.enable(gl.BLEND);
       gl.depthFunc(gl.LESS);
-      for (let i = 0, l = meshes.length; i < l; ++i) {
-        if (meshes[i].getShowWireframe())
-          meshes[i].renderWireframe(this);
+      for (let k = 0, l = meshes.length; k < l; ++k) {
+        if (meshes[k].getShowWireframe())
+          meshes[k].renderWireframe(this);
       }
       gl.depthFunc(gl.LEQUAL);
       gl.disable(gl.BLEND);
 
-      // Brush Indicator (NEW)
+      // Brush Indicator (NEW) - Pass 2 (World Scaled)
+      // Rendered here to match Mesh Coordinates
       if (this._sculptManager && this._picking.getMesh()) {
-        // rWorld2 is set in handleXRInput (picking logic)
         const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+
+        // Visuals: On Top + Blending
+        gl.disable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+        // Use 'cam' (current camera with World Scale applied)
         this._sculptManager.getSelection().renderVR(this, cam, radius);
 
-        // Debug Interaction
-        if (window.screenLog && Math.random() < 0.02) {
-          const hovered = this._guiXR ? this._guiXR._hoverWidget : null;
-          const target = this._guiXR ? this._guiXR._activeWidget : null;
-          if (hovered) window.screenLog(`Hover: ${hovered.id}`, 'lime');
-        }
+        gl.disable(gl.BLEND);
+        gl.enable(gl.DEPTH_TEST);
       }
+
+      // --- PASS 3: OVERLAY (Real World, Always On Top) ---
+      // Restore Real World Matrices (Inverse of View Transform)
+      mat4.copy(cam._view, view.transform.inverse.matrix);
+      mat4.copy(cam._proj, view.projectionMatrix);
+
+      // Render VR Brush Radius Sphere (Moved from Pass 1)
+      if (this._vrBrushRadiusSphere && this._vrRightRayMatrix && this._vrControllerTip) {
+        // We reuse the Ray Matrix from Pass 1 (which tracks the controller)
+        const mSphere = this._vrBrushRadiusSphere.getMatrix();
+        mat4.copy(mSphere, this._vrRightRayMatrix);
+
+        // Transform: Rotate X -90 (Align Y with Z), Translate Y (Tip Center)
+        // Standalone: 10cm (7.5cm base + 2.5cm half-length), PCVR: 5cm (2.5cm base + 2.5cm half-length)
+        const offY = this._isQuestStandalone ? 0.10 : 0.05;
+        mat4.rotateX(mSphere, mSphere, -Math.PI / 2);
+        mat4.translate(mSphere, mSphere, [0, offY, 0]);
+
+        // FIX: Normalize rotation columns to remove existing scale (Double Scaling Bug Prevention)
+        const sx = Math.hypot(mSphere[0], mSphere[1], mSphere[2]);
+        const sy = Math.hypot(mSphere[4], mSphere[5], mSphere[6]);
+        const sz = Math.hypot(mSphere[8], mSphere[9], mSphere[10]);
+
+        // Inverse scale to normalize
+        if (sx > 1e-6) { mSphere[0] /= sx; mSphere[1] /= sx; mSphere[2] /= sx; }
+        if (sy > 1e-6) { mSphere[4] /= sy; mSphere[5] /= sy; mSphere[6] /= sy; }
+        if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
+
+        // Scale by Radius
+        const radius = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
+        mat4.scale(mSphere, mSphere, [radius, radius, radius]);
+
+        this._vrBrushRadiusSphere.updateMatrices(cam);
+
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE);
+
+        gl.depthMask(false); // No depth write
+        gl.disable(gl.CULL_FACE); // Double sided
+        gl.disable(gl.DEPTH_TEST); // Always visible (Ghost through mesh)
+
+        this._vrBrushRadiusSphere.render(this);
+
+        gl.enable(gl.DEPTH_TEST);
+        gl.enable(gl.CULL_FACE);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
+
     }
   }
+
 
   _drawSceneVR() {
     var gl = this._gl;
@@ -496,6 +589,17 @@ class Scene {
     for (var i = 0, l = meshes.length; i < l; ++i) {
       if (!meshes[i].isVisible()) continue;
       meshes[i].render(this);
+    }
+
+    // Brush Indicator (NEW)
+    // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
+    if (this._sculptManager && this._picking.getMesh()) {
+      // rWorld2 is set in handleXRInput (picking logic)
+      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+
+      // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
+      // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
+      this._sculptManager.getSelection().renderVR(this, this._camera, radius);
     }
   }
 
@@ -922,22 +1026,34 @@ class Scene {
     this._xrSession = session;
     session.addEventListener('end', this.onXREnd.bind(this));
 
-    this._xrSession = session;
-    session.addEventListener('end', this.onXREnd.bind(this));
-
     // Force Init Controllers & Menu IMMEDIATELY
     this.initVRControllers();
 
     const gl = this._gl;
 
-    // Ensure context is compatible (some browsers require this even with the flag)
+    // Helper to try spaces in order
+    const requestRefSpace = (spaces) => {
+      if (spaces.length === 0) return Promise.reject("No supported reference space found");
+      const space = spaces[0];
+      return session.requestReferenceSpace(space)
+        .then(refSpace => {
+          console.log(`XR: using reference space '${space}'`);
+          return refSpace;
+        })
+        .catch(e => {
+          console.warn(`XR: '${space}' failed, trying next...`);
+          return requestRefSpace(spaces.slice(1));
+        });
+    };
+
+    // Ensure context is compatible
     gl.makeXRCompatible().then(() => {
-      try {
         const baseLayer = new XRWebGLLayer(session, gl);
         session.updateRenderState({ baseLayer });
 
-        // Request 'local-floor' space for 6DoF height
-        session.requestReferenceSpace('local-floor').then((refSpace) => {
+      // Try 'local-floor' -> 'local' -> 'viewer'
+      requestRefSpace(['local-floor', 'local', 'viewer'])
+        .then((refSpace) => {
           this._baseRefSpace = refSpace;
 
           // If the slider has a value, apply it
@@ -945,12 +1061,15 @@ class Scene {
 
           this._logThrottle = 0;
           session.requestAnimationFrame(this.onXRFrame.bind(this));
+        })
+        .catch((e) => {
+          console.error("enterXR Critical Error: Failed to get reference space", e);
+          if (window.screenLog) window.screenLog(`XR Error: ${e}`, "red");
+          session.end(); // Exit session if we can't get a space
         });
-      } catch (e) {
-        console.error("enterXR Critical Error:", e);
-      }
     }).catch((err) => {
       console.error("enterXR: makeXRCompatible failed!", err);
+      if (window.screenLog) window.screenLog(`XR Error: makeXRCompatible ${err}`, "red");
     });
 
     this._preventRender = true;
@@ -1096,6 +1215,48 @@ class Scene {
     this._guiXR.init(this._gl);
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
     if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
+
+    // Brush Tip (Pencil Cone)
+    if (!this._vrControllerTip) {
+      // Cylinder: Top=0 (Point), Bottom=5mm, Height=5cm
+      var mesh = new Multimesh(Primitives.createCylinder(this._gl, 0.0, 0.005, 0.05, 16));
+      // Do NOT normalize size, rely on explicit dimensions
+      // mesh.normalizeSize(); 
+
+      const mat = mesh.getMatrix();
+      mat4.identity(mat);
+
+      // 1. Rotate so +Y becomes -Z
+      mat4.rotateX(mat, mat, -Math.PI / 2);
+
+      // 2. Translate along Y (which maps to -Z) so Base moves to 0
+      const offY = this._isQuestStandalone ? 0.075 : 0.025;
+      mat4.translate(mat, mat, [0, offY, 0]);
+
+      mesh.setShaderType(Enums.Shader.FLAT);
+      mesh.setFlatColor([0.3, 0.3, 0.3]); // Dark Gray
+      mesh.init();
+      mesh.initRender();
+      this._vrControllerTip = mesh;
+    }
+
+    // Brush Radius Sphere (Semi-transparent)
+    // Brush Radius Sphere (Semi-transparent)
+    if (!this._vrBrushRadiusSphere) {
+      // High Res (64x64), Radius 1.0 (to match Selection Ring size)
+      // Use MeshStatic directly (Primitives returns MeshStatic) - Avoid Multimesh overhead/issues
+      // High Res (64x64), Radius 1.0 (to match Selection Ring size)
+      var meshS = Primitives.createSphere(this._gl, 1.0, 64, 64);
+
+      meshS.setShaderType(Enums.Shader.UNLIT);
+      // For Additive Blending (ONE, ONE), the RGB values control brightness/opacity directly.
+      // 0.2 = 20% Additive Glow
+      meshS.setFlatColor([0.2, 0.2, 0.2]);
+      meshS.setOpacity(1.0); // Opacity unused in additive logic with pre-dimmed color, but keep 1.0
+      meshS.init();
+      meshS.initRender();
+      this._vrBrushRadiusSphere = meshS;
+    }
   }
 
   loadVRController(handedness) {
@@ -1298,7 +1459,7 @@ class Scene {
       }
 
       // Render to WebXR framebuffer
-      this.renderVR(glLayer, pose);
+      this.renderVR(glLayer, pose, frame, refSpace);
     }
   }
 
@@ -1422,6 +1583,16 @@ class Scene {
         if (source.handedness === 'right') this._vrPoseRight = mat;
       }
 
+      // RELIABLE POINTER MATRIX (TargetRay) for Visuals
+      if (source.handedness === 'right' && source.targetRaySpace) {
+        const ptrPose = frame.getPose(source.targetRaySpace, refSpace);
+        if (ptrPose) {
+          this._vrRightRayMatrix = ptrPose.transform.matrix;
+        } else {
+          this._vrRightRayMatrix = null;
+        }
+      }
+
       // 2. Menu Raycasting (Right Hand Only)
       if (source.handedness === 'right') {
         let rayPose = null;
@@ -1463,12 +1634,12 @@ class Scene {
           const hit = this._vrMenu.intersect(origin, dir);
 
           // DEBUG: Log Intersection Attempts (Throttled but visible)
-          if (!this._logIntersect) this._logIntersect = 0;
-          if (this._logIntersect++ % 60 === 0 && window.screenLog) {
-            const originStr = `${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}`;
-            window.screenLog(`Ray(${isFallback ? 'Grip' : 'Ray'}): [${originStr}] Hit:${!!hit}`, hit ? "lime" : "orange");
-            if (hit) window.screenLog(`Hit UV: ${hit.uv[0].toFixed(2)}, ${hit.uv[1].toFixed(2)}`, "lime");
-          }
+          // if (!this._logIntersect) this._logIntersect = 0;
+          // if (this._logIntersect++ % 60 === 0 && window.screenLog) {
+          // const originStr = `${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}`;
+          // window.screenLog(`Ray(${isFallback ? 'Grip' : 'Ray'}): [${originStr}] Hit:${!!hit}`, hit ? "lime" : "orange");
+          // if (hit) window.screenLog(`Hit UV: ${hit.uv[0].toFixed(2)}, ${hit.uv[1].toFixed(2)}`, "lime");
+          // }
 
           if (hit) {
             this._isPointingAtMenu = true;
@@ -1494,10 +1665,10 @@ class Scene {
         } else {
           // Log Failure
           if (window.screenLog && this._logThrottle % 120 === 0) {
-            const hasRaySpace = !!source.targetRaySpace;
-            const hasGripSpace = !!source.gripSpace;
-            const hasMenu = !!this._vrMenu;
-            window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
+            // const hasRaySpace = !!source.targetRaySpace;
+            // const hasGripSpace = !!source.gripSpace;
+            // const hasMenu = !!this._vrMenu;
+            // window.screenLog(`Ray Fail: RaySp:${hasRaySpace} GripSp:${hasGripSpace} Menu:${hasMenu}`, "red");
           }
         }
       }
@@ -1725,11 +1896,28 @@ class Scene {
     this.updateVROffsets();
   }
   processVRSculpting(source, frame, refSpace) {
-    const pose = frame.getPose(source.gripSpace, refSpace);
+    const space = source.targetRaySpace || source.gripSpace;
+    const pose = frame.getPose(space, refSpace);
     if (!pose) return;
 
     // 1. Array Strictness & Pose Extraction
-    const physicalOrigin = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
+    // Offset Logic: Move 'Physical Origin' 5cm forward (-Z) in Controller Space
+    // We can do this by offsetting the position using orientation * offset
+    const p = pose.transform.position;
+    const q = pose.transform.orientation;
+
+    // Offset Vector (0, 0, -0.05) rotated by Q
+    const offset = vec3.fromValues(0, 0, -0.05);
+    vec3.transformQuat(offset, offset, [q.x, q.y, q.z, q.w]);
+
+    // physicalOrigin = p + offset
+    const physicalOrigin = [
+      p.x + offset[0],
+      p.y + offset[1],
+      p.z + offset[2]
+    ];
+
+    // const physicalOrigin = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
 
     // 2. Space Synchronization (Physical -> Model Space)
     // Model = Inv(Scale) * Inv(Rotation) * Inv(Translation) * Physical
@@ -1783,6 +1971,8 @@ class Scene {
     }
     const physicalRadius = sliderVal * 0.1; // Map to 0-10cm physical range
     const pickingRadius = physicalRadius * invScale;
+    this._vrLastPhysicalRadius = physicalRadius; // Store for renderVR (Tracking Space / Meters)
+    this._vrLastPickingRadius = pickingRadius; // Keep for debug/other uses
 
     // 4. Picking State Synchronization
     // FIX v0.5.40: Quadruple search radius (User Request)
@@ -1793,11 +1983,11 @@ class Scene {
     let picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, searchRadius);
 
     // DEBUG: Picking Trace
-    if (window.screenLog && this._logThrottle % 30 === 0) {
-      const p = enginePos;
-      const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 10).toFixed(1)} Pos:${p[0].toFixed(1)},${p[1].toFixed(1)},${p[2].toFixed(1)}`;
-      // window.screenLog(msg, picked ? "lime" : "orange");
-    }
+    // if (window.screenLog && this._logThrottle % 60 === 0) {
+    //   const p = enginePos;
+    //   const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm`;
+    //   window.screenLog(msg, picked ? "lime" : "red");
+    // }
 
     if (picked) {
       // CRITICAL FIX: The picking logic expects the squared radius in ENGINE units
@@ -1972,7 +2162,13 @@ class Scene {
       }
     }
   }
+
+  _preventDefault(event) {
+    event.preventDefault();
+  }
 }
+
+
 
 
 

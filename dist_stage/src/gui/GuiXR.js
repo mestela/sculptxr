@@ -957,16 +957,7 @@ class GuiXR {
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'combobox') {
-            this.openOverlay('combobox', {
-              options: w.options,
-              callback: (val) => {
-                w.value = val;
-                this._executeAction(w);
-                // We close the overlay automatically when selecting option.
-                // If we want to re-open the menu, we'd need to know which menu it was.
-                // For now, let's just close it, similar to desktop dropdowns.
-              }
-            });
+            this._executeAction(w); // Use active combobox system
             return;
           }
         }
@@ -1782,12 +1773,14 @@ class GuiXR {
 
     if (this._activeCombobox) {
       ctx.save();
-      // Apply same scale to Active Combobox so it aligns with the (now scaled) Overlay
-      // Use the same pivot as the overlay it belongs to (which is currently active)
-      const pivot = this._getOverlayPivot();
-      ctx.translate(pivot.x, pivot.y);
-      ctx.scale(OVERLAY_SCALE, OVERLAY_SCALE);
-      ctx.translate(-pivot.x, -pivot.y);
+      
+      // Apply scale ONLY if we are in an Overlay (Main Panel is unscaled)
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        ctx.translate(pivot.x, pivot.y);
+        ctx.scale(OVERLAY_SCALE, OVERLAY_SCALE);
+        ctx.translate(-pivot.x, -pivot.y);
+      }
 
       this._drawActiveCombobox(ctx);
       ctx.restore();
@@ -1989,33 +1982,38 @@ class GuiXR {
     const data = this._overlayData;
     if (!data || !data.options) return;
 
-    // REVERTED to standard sizes (handled by Scale)
+    // Legacy Full-Screen Overlay Style
     const itemHeight = 80;
-    const startY = OVERLAY_Y + 100;
-    const startX = OVERLAY_X + 20;
+    const startX = (this._canvas.width - 400) / 2; // Centered-ish or fixed
+    const startY = OVERLAY_Y + 100; // Match _handleComboboxInteract
 
-    // Calculate hover index from cursor (if available)
-    let hoverIndex = -1;
-    if (this._cursor.active) {
-      const relY = this._cursor.y - startY;
-      if (relY >= 0) hoverIndex = Math.floor(relY / itemHeight);
-    }
+    const listH = data.options.length * itemHeight;
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(startX, startY, 400, listH);
+
+    // Border
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(startX, startY, 400, listH);
+
+    // Items
+    ctx.textAlign = 'center';
+    ctx.font = '30px sans-serif';
+    ctx.fillStyle = 'white';
 
     data.options.forEach((opt, i) => {
       const y = startY + i * itemHeight;
-      if (y > OVERLAY_Y + OVERLAY_H - itemHeight) return;
-
-      if (i === hoverIndex) ctx.fillStyle = '#666'; // Hover Highlight
-      else ctx.fillStyle = '#444';
-
-      ctx.fillRect(startX, y, OVERLAY_W - 60, itemHeight - 12);
-
-      ctx.fillStyle = '#fff';
-      ctx.font = '38px sans-serif'; // was 32
-      ctx.textAlign = 'left';
-      ctx.fillText(opt.label, startX + 25, y + itemHeight / 2 + 12);
+      // Highlight
+      if (this._overlay === 'combobox') { // Only modify if overlay matches
+        // We don't have hover logic for legacy easily here regarding cursor?
+        // We could check cursor.
+      }
+      ctx.fillText(opt.label, startX + 200, y + itemHeight / 2 + 10);
     });
   }
+
 
   _drawColorPicker(ctx) {
     const data = this._overlayData;
@@ -2430,21 +2428,40 @@ class GuiXR {
     this.forceDraw();
   }
   _handleDropdownInteract(cx, cy) {
-    // Input Transform for Scale
-    const pivot = this._getOverlayPivot();
-    const invScale = 1 / OVERLAY_SCALE;
-    cx = (cx - pivot.x) * invScale + pivot.x;
-    cy = (cy - pivot.y) * invScale + pivot.y;
+    // Input Transform for Scale (Only if Overlay is active)
+    if (this._overlay) {
+      const pivot = this._getOverlayPivot();
+      const invScale = 1 / OVERLAY_SCALE;
+      cx = (cx - pivot.x) * invScale + pivot.x;
+      cy = (cy - pivot.y) * invScale + pivot.y;
+    }
 
     const w = this._activeCombobox;
-    // Check if inside Dropdown List
-    const itemHeight = 60; // Standard layout
-    const startY = w.y + w.h;
-    const listH = (w.options ? w.options.length : 0) * itemHeight;
+    const layout = this._getDropdownLayout(w);
+    if (!layout) return;
 
-    if (cx >= w.x && cx <= w.x + w.w && cy >= startY && cy <= startY + listH) {
+    const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
+
+    // Check bounds with totalW
+    // FIX: Apply 1.13 scaling correction to match Visuals (which appear compressed approx 13%)
+    const SCALE_FIX = 1.13;
+    
+    // Check bounds roughly first
+    if (cx >= startX && cx <= startX + totalW * SCALE_FIX && cy >= startY && cy <= startY + listH * SCALE_FIX) {
       // Inside List
-      const index = Math.floor((cy - startY) / itemHeight);
+      
+      const localX = (cx - startX) * SCALE_FIX;
+      const localY = (cy - startY) * SCALE_FIX;
+
+      // Verify Col/Row
+      let col = Math.floor(localX / w.w);
+      if (col >= numCols) col = numCols - 1;
+
+      let row = Math.floor(localY / itemHeight);
+      
+      const index = col * rowsPerCol + row;
+      console.log(`[GuiXR] Hit Index: ${index} (Row:${row} Col:${col}) LocalY:${localY.toFixed(1)}`);
+      
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
@@ -2458,7 +2475,8 @@ class GuiXR {
     }
 
     // Check if inside Header (Toggle off)
-    if (cx >= w.x && cx <= w.x + w.w && cy >= w.y && cy <= w.y + w.h) {
+    // w is the widget
+    if (cx >= ox + w.x && cx <= ox + w.x + w.w && cy >= oy + w.y && cy <= oy + w.y + w.h) {
       this._activeCombobox = null;
       this._needsRedraw = true;
       this.draw();
@@ -2466,7 +2484,7 @@ class GuiXR {
     }
 
     // Clicked Outside
-    console.log("[GuiXR] Closing dropdown (clicked outside)");
+    // console.log("[GuiXR] Closing dropdown (clicked outside)");
     this._activeCombobox = null;
     this._needsRedraw = true;
     this.draw();
@@ -2474,33 +2492,85 @@ class GuiXR {
 
   _drawActiveCombobox(ctx) {
     const w = this._activeCombobox;
-    if (!w || !w.options) return;
+    const layout = this._getDropdownLayout(w);
+    if (!layout) return;
 
-    const itemHeight = 60;
-    const startX = w.x;
-    const startY = w.y + w.h; // Below button
+    const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
 
-    const listH = w.options.length * itemHeight;
+    // Check if we need to flip (draw above)
+    // w.y is in Local Overlay Space (after Pivot Scale).
+    // _drawActiveCombobox is called AFTER restore(), so it's in Global Canvas Space?
+    // WAIT. draw() calls save(), transform(), drawOverlay(), restore().
+    // Then checks _activeCombobox and calls _drawActiveCombobox().
+    // So _drawActiveCombobox runs in GLOBAL IDENTITY SPACE (0,0 is top-left, unscaled).
+    // BUT w.x / w.y are stored in widget-local coords usually relative to Overlay?
+    // No, w.x/w.y are computed during layout. They are local to the overlay content.
+    // If _drawActiveCombobox runs in Identity Space, we need to apply the SAME Transform!
+    // OR we should call it INSIDE the transform block in draw().
+    
+    // Let's check draw().
+    // If it's outside, w.x/w.y are meaningless without transform.
+    // I bet draw() calls it OUTSIDE.
+    // If so, we must manually transform w.x/w.y or move the call.
+    // Moving the call is safer. I will check draw() in next tool call.
+    // FIRST, I will assume it's OUTSIDE and apply transform here?
+    // Applying transform manually is annoying (pivot logic).
+    // Better to move the call inside draw().
+    
+    // For now, I will assume the user has the transform applied or I handle it.
+    // Actually, looking at `_drawCombobox` (legacy), it didn't apply transform?
+    // Wait, `_drawOverlay` is called INSIDE transform.
+    // `_drawCombobox` was called from `_drawOverlay`.
+    
+    // `_drawActiveCombobox` is called at the end of `draw()`.
+    // Let's check `draw()` again.
+
 
     // Shadow
+
     // Shadow removed
 
     // Background
     ctx.fillStyle = '#222';
-    ctx.fillRect(startX, startY, w.w, listH);
+    ctx.fillRect(startX, startY, totalW, listH);
 
     // Border
     ctx.strokeStyle = '#00D0FF';
     ctx.lineWidth = 2;
-    ctx.strokeRect(startX, startY, w.w, listH);
+    ctx.strokeRect(startX, startY, totalW, listH);
+
+    // Vertical Divider for 2-col
+    if (numCols > 1) {
+      ctx.beginPath();
+      ctx.moveTo(startX + w.w, startY);
+      ctx.lineTo(startX + w.w, startY + listH);
+      ctx.stroke();
+    }
 
     // Highlight hover
     if (this._cursor.active) {
-      const cy = this._cursor.y;
-      if (this._cursor.x >= startX && this._cursor.x <= startX + w.w && cy >= startY && cy <= startY + listH) {
-        const idx = Math.floor((cy - startY) / itemHeight);
-        ctx.fillStyle = '#444';
-        ctx.fillRect(startX, startY + idx * itemHeight, w.w, itemHeight);
+      // Transform cursor to overlay space (since we are drawing in overlay space)
+      const pivot = this._getOverlayPivot();
+      const invScale = 1 / OVERLAY_SCALE;
+      const cx = (this._cursor.x - pivot.x) * invScale + pivot.x;
+      const cy = (this._cursor.y - pivot.y) * invScale + pivot.y;
+
+      // Check bounds
+      if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
+        // Find Col / Row
+        let col = Math.floor((cx - startX) / w.w);
+        if (col >= numCols) col = numCols - 1;
+        
+        let row = Math.floor((cy - startY) / itemHeight);
+        if (row >= rowsPerCol) row = rowsPerCol - 1;
+
+        // Draw rect for that slot
+        // Verify index valid?
+        const idx = col * rowsPerCol + row;
+        if (idx < w.options.length) {
+          ctx.fillStyle = '#444';
+          ctx.fillRect(startX + col * w.w, startY + row * itemHeight, w.w, itemHeight);
+        }
       }
     }
 
@@ -2510,9 +2580,66 @@ class GuiXR {
     ctx.fillStyle = 'white';
 
     w.options.forEach((opt, i) => {
-      const y = startY + i * itemHeight;
-      ctx.fillText(opt.label, startX + 20, y + itemHeight / 2 + 8);
+      let col = 0;
+      let row = i;
+      if (numCols > 1) {
+        col = (i >= rowsPerCol) ? 1 : 0;
+        row = i % rowsPerCol; // Should be modulo rowsPerCol
+      }
+
+      const y = startY + row * itemHeight;
+      const x = startX + col * w.w; 
+
+      const label = opt.label || opt;
+      ctx.fillText(label, x + 20, y + itemHeight / 2 + 8);
     });
+  }
+
+  _getDropdownLayout(w) {
+    if (!w || !w.options) return null;
+
+    const itemHeight = 60;
+    
+    // 2-Column Logic
+    let numCols = 1;
+    let rowsPerCol = w.options.length;
+    
+    if (w.options.length > 10) {
+      numCols = 2;
+      rowsPerCol = Math.ceil(w.options.length / 2);
+    }
+
+    const totalW = w.w * numCols;
+    const listH = rowsPerCol * itemHeight;
+
+    const ox = this._overlayData ? this._overlayData.x : 0;
+    const oy = this._overlayData ? this._overlayData.y : 0;
+
+    const startX = ox + w.x;
+    let startY = oy + w.y + w.h;
+
+    // Smart Positioning (Slide Up if near bottom)
+    // Bottom Limit Calculation
+    let bottomLimit = this._canvas.height; 
+    if (this._overlayData) {
+      // If we are in an overlay, we should fit WITHIN the overlay usually?
+      // Or mainly ensure we don't go off screen bottom?
+      // For Overlay Menus (Files, etc), layout is tricky.
+      // But anchored comboboxes (Tools) are in Main Panel or Overlay.
+      
+      // Let's use Canvas Height as hard limit first.
+      // Actually, if Overlay is active, oy + overlayData.h is the menu bottom.
+      bottomLimit = oy + this._overlayData.h; 
+    }
+
+    const mb = 20; // Margin Bottom
+    if (startY + listH > bottomLimit - mb) {
+      // Shift UP
+      startY = bottomLimit - listH - mb;
+      // Clamp to top? (Ideally shouldn't go off top either, but bottom is the issue now)
+    }
+
+    return { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy };
   }
 }
 
