@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.220 - Fix VR Brush Alignment (Ray Picking) -->';
+export const VERSION = 'v0.6.228 - Fix Air Drawing Offset for Standalone VR -->';

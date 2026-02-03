@@ -1621,7 +1621,7 @@ class GuiXR {
           ctx.textAlign = 'left';
           ctx.fillText(`${wid.label}:`, wid.x + 20, wid.y + wid.h / 2 + 10);
 
-          let valStr = wid.value.toFixed(wid.precision || 2);
+          let valStr = (wid.value !== undefined && wid.value !== null) ? wid.value.toFixed(wid.precision || 2) : 'ERR';
           ctx.textAlign = 'right';
           ctx.fillStyle = '#aaa';
           ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
@@ -2443,15 +2443,14 @@ class GuiXR {
     const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
 
     // Check bounds with totalW
-    // FIX: Apply 1.13 scaling correction to match Visuals (which appear compressed approx 13%)
-    const SCALE_FIX = 1.13;
+    // SCALE_FIX removed: Input is already transformed to overlay space.
     
-    // Check bounds roughly first
-    if (cx >= startX && cx <= startX + totalW * SCALE_FIX && cy >= startY && cy <= startY + listH * SCALE_FIX) {
+    // Check bounds
+    if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
       // Inside List
       
-      const localX = (cx - startX) * SCALE_FIX;
-      const localY = (cy - startY) * SCALE_FIX;
+      const localX = (cx - startX);
+      const localY = (cy - startY);
 
       // Verify Col/Row
       let col = Math.floor(localX / w.w);

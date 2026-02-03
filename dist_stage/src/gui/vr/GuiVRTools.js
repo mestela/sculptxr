@@ -65,6 +65,91 @@ export default function getToolsWidgets(main, activeToolIndex) {
   });
   y += 40 + gapSection;
 
+  // 2b. Voxel Specific Tools (Resolution, Bake, Wireframe)
+  if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
+    widgets.push({ type: 'info', label: 'Voxel Settings', x: col1X, y: y });
+    y += gapHeader;
+
+    // Radius already handled above? Yes.
+
+    // Resolution Slider (32-256)
+    // We need to get current resolution. SculptVoxel doesn't expose it easily in public prop?
+    // SculptVoxel has `_voxelState.dims[0]`
+    const voxelResolution = activeTool._voxelState ? activeTool._voxelState.dims[0] : 64;
+
+    widgets.push({
+      type: 'slider',
+      id: 'voxel_res',
+      label: 'Resolution',
+      x: col1X, y: y, w: 550, h: 40,
+      value: voxelResolution,
+      min: 32, max: 256, step: 32, precision: 0,
+      onInput: (val) => {
+        // Debounce? Rebuilding grid is expensive.
+        // But slider usually only calls onInput during drag? 
+        // Maybe we want onChange? GuiXR sliders call onInput continuously.
+        // We really want "onRelease" or throttle.
+        // For now, let's rely on user not dragging wildly, or we can check if implementation handles it.
+        // SculptVoxel.setResolution does a rebuild.
+        // Maybe we should only trigger on "MouseUp"? GuiXR doesn't support that easily yet?
+        // Let's rely on a "Apply" button OR just let it be laggy for now (it's Beta).
+        // OR better: Slider just updates a local val, and we have an "Update" button?
+        // User asked for "Resolution slider".
+        // Let's try direct update first.
+        // Actually, let's wrap it in a debounce in the callback if needed, but here simple is better.
+        if (activeTool && activeTool.setResolution) {
+          activeTool.setResolution(val);
+          main.render();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      }
+    });
+    y += 40 + gapBtn;
+
+    // Wireframe Toggle
+    widgets.push({
+      type: 'checkbox',
+      id: 'voxel_wireframe',
+      label: 'Show Wireframe',
+      x: col1X, y: y, w: 550, h: btnH,
+      value: (activeTool._voxelMesh && activeTool._voxelMesh.getShaderType() === Enums.Shader.WIREFRAME),
+      onInteract: () => {
+        if (activeTool && activeTool.toggleVoxelWireframe) {
+          activeTool.toggleVoxelWireframe();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      }
+    });
+    y += btnH + gapBtn;
+
+    // Bake Button
+    widgets.push({
+      type: 'button',
+      id: 'voxel_bake',
+      label: 'Bake to Mesh',
+      x: col1X, y: y, w: 550, h: btnH,
+      onInteract: () => {
+        if (activeTool && activeTool.bakeToMesh) {
+          activeTool.bakeToMesh();
+          if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
+        }
+      }
+    });
+    y += btnH + gapSection;
+
+    // Skip the standard "Common" stuff? 
+    // Voxel tool supports Negative (handled below).
+    // Does NOT use Clay/Accumulate/Thin Surface.
+    // So we might want to "return widgets" here or continue?
+    // "Negative" is useful.
+    // "Clay", "Accumulate" are not.
+    // "Alpha" is maybe useful (if we use it for sculpting shape? Voxel usually is sphere).
+    // Let's continue but maybe we can conditionally hide Clay/Accumulate?
+    // The user didn't ask to HIDE them, but "only when voxel tool is active" referred to the NEW controls.
+    // Let's just continue to standard controls for now to avoid breaking parity expectations unless requested.
+  }
+
+
   // Negative, Clay, Accumulate, Thin surface
   widgets.push({
     type: 'checkbox',

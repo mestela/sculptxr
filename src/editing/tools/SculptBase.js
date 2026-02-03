@@ -20,6 +20,8 @@ class SculptBase {
     this._cbContinuous = this.updateContinuous.bind(this); // callback continuous
     this._lastMouseX = 0.0;
     this._lastMouseY = 0.0;
+    this._radius = 50.0;
+    this._intensity = 0.5;
   }
 
   setRadius(val) {

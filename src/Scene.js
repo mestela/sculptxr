@@ -1906,8 +1906,14 @@ class Scene {
     const p = pose.transform.position;
     const q = pose.transform.orientation;
 
-    // Offset Vector (0, 0, -0.05) rotated by Q
-    const offset = vec3.fromValues(0, 0, -0.05);
+    // Offset Logic: Move 'Physical Origin' to the Visual Tip
+    // Matches initVRControllers geometry: Center = -offY, Tip = -(offY + 0.025)
+    // PCVR: -0.05 | Standalone: -0.10
+    const offY = this._isQuestStandalone ? 0.075 : 0.025;
+    const tipOffsetZ = -(offY + 0.025);
+
+    // Offset Vector (0, 0, tipOffsetZ) rotated by Q
+    const offset = vec3.fromValues(0, 0, tipOffsetZ);
     vec3.transformQuat(offset, offset, [q.x, q.y, q.z, q.w]);
 
     // physicalOrigin = p + offset
@@ -2030,7 +2036,15 @@ class Scene {
     //   window.screenLog(msg, picked ? "lime" : "red");
     // }
 
-    if (picked) {
+    // 5. Stroke Lifecycle (Corrected API)
+    const buttons = source.gamepad.buttons;
+    const isTriggerPressed = buttons[0].pressed;
+
+    // Check if tool allows air (Voxel) to prevent snapping
+    const tool = this._sculptManager.getCurrentTool();
+    const allowAir = (tool && tool._allowAir === true);
+
+    if (picked && !allowAir) {
       // OVERRIDE: Ray picking usually uses screen-projected radius. We must force VR Physical Radius.
       this._picking._rWorld2 = pickingRadius * pickingRadius;
 
@@ -2058,9 +2072,7 @@ class Scene {
       // if (window.screenLog && this._logThrottle % 60 === 0 && source.gamepad.buttons[0].pressed) window.screenLog("No Mesh Hit (Too far?)", "grey");
     }
 
-    // 5. Stroke Lifecycle (Corrected API)
-    const buttons = source.gamepad.buttons;
-    const isTriggerPressed = buttons[0].pressed;
+
 
     // DEBUG: Cursor Drift
     // HIDDEN to prevent Red Sphere Artifacts
@@ -2072,8 +2084,6 @@ class Scene {
 
 
     // Allow Start ONLY if Picked OR Tool Allows Air (Voxel). Allow Continue ALWAYS if Trigger is held.
-    const tool = this._sculptManager.getCurrentTool();
-    const allowAir = (tool && tool._allowAir === true);
     const canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir);
 
     if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
