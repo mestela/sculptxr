@@ -2044,12 +2044,12 @@ class Scene {
     const tool = this._sculptManager.getCurrentTool();
     const allowAir = (tool && tool._allowAir === true);
 
-    if (picked && !allowAir) {
+    if (picked || allowAir) {
       // OVERRIDE: Ray picking usually uses screen-projected radius. We must force VR Physical Radius.
       this._picking._rWorld2 = pickingRadius * pickingRadius;
 
       // Sync local radius
-      const mesh = this._picking.getMesh();
+      const mesh = this._picking.getMesh() || this.getMesh();
       if (mesh) {
         this._picking._rLocal2 = this._picking._rWorld2 / mesh.getScale2();
 

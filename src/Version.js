@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.234 - Move Tool Air Mode & Voxel Explicit Air -->';
+export const VERSION = 'v0.6.235 - Fix Move Tool Radius in Air Mode -->';
