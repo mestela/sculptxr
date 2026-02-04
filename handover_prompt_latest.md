@@ -17,6 +17,10 @@ We have implemented:
 4.  **Sensitivity Tuning**: 1:1 Rotation and distance-based Pan/Zoom.
 5.  **Clipping Fix**: Reduced near plane to `0.01` to help visibility.
 
+## STRATEGIC PIVOT (Next Session)
+> [!IMPORTANT]
+> **CLEAN SLATE PROTOCOL**: Treat `feature/desktop-6dof` as a prototype. Start next session by creating a clean branch from `main`. Implement VR-to-Desktop porting with correct FOV, clipping, and background.
+
 ## Critical Issues (Immediate Attention Required)
 > [!CRITICAL]
 > **VR INTERACTION BROKEN**: The user reports that setting up Desktop 6DOF has **broken VR interaction**. This is the highest priority fix.
