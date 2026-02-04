@@ -4,7 +4,7 @@
 *SculptGL running on desktop, with SculptXR running natively on a Quest 3 in foreground in AR/passthrough mode.*
 
 ## Overview
-**Active Development**: This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
+This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
