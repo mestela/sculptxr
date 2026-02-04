@@ -21,6 +21,13 @@ We have implemented:
 > [!IMPORTANT]
 > **CLEAN SLATE PROTOCOL**: Treat `feature/desktop-6dof` as a prototype. Start next session by creating a clean branch from `main`. Implement VR-to-Desktop porting with correct FOV, clipping, and background.
 
+## Future Feature Queue (To Be Added to README in New Branch)
+*   **Muscle Brush (Adobe Modeler Style)**: 
+    *   Two-handed tool.
+    *   Bendy tube geometry where start/end track the two controllers.
+    *   Thumbsticks adjust "bulge" (radius) in the middle.
+    *   Used for intuitive organic blocking/sweeping of shapes (Voxel addition).
+
 ## Critical Issues (Immediate Attention Required)
 > [!CRITICAL]
 > **VR INTERACTION BROKEN**: The user reports that setting up Desktop 6DOF has **broken VR interaction**. This is the highest priority fix.
