@@ -18,6 +18,9 @@ We have implemented:
 5.  **Clipping Fix**: Reduced near plane to `0.01` to help visibility.
 
 ## Critical Issues (Immediate Attention Required)
+> [!CRITICAL]
+> **VR INTERACTION BROKEN**: The user reports that setting up Desktop 6DOF has **broken VR interaction**. This is the highest priority fix.
+
 The user has reported the following issues in v0.6.282:
 
 1.  **Rotation Pivots**: 
