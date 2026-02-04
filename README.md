@@ -139,7 +139,7 @@ It should work on any WebXR compatible device. So far I've tested on
 
 ## Quick Start
 
-Note that these instructions are for SculptGl, not sculptXR. I'm not using this, I'm just sending static files to my website atm.
+Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.
 
 1. Install dependencies:
    ```bash
