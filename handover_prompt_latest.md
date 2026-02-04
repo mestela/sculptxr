@@ -27,6 +27,10 @@ We have implemented:
     *   Bendy tube geometry where start/end track the two controllers.
     *   Thumbsticks adjust "bulge" (radius) in the middle.
     *   Used for intuitive organic blocking/sweeping of shapes (Voxel addition).
+*   **Physics Sculpting (AirDraw Style)**:
+    *   **Concept**: Voxel strokes become physical objects (chains, rings, falling debris).
+    *   **Tech**: Integrate a JS Physics Engine (e.g., `Rapier.js` (WASM), `Cannon-es`, or `Ammo.js`).
+    *   **Flow**: Toggle "Physics" on/off. Draw shape -> shape turns into dynamic rigid body -> falls/collides.
 
 ## Critical Issues (Immediate Attention Required)
 > [!CRITICAL]
