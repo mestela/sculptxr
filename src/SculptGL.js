@@ -428,6 +428,20 @@ class SculptGL extends Scene {
 
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
+
+    // EXPERIMENTAL: Desktop 6DOF Toggle
+    if (e.which === 68) { // D
+      if (this._desktopInputMode) {
+        // Toggle OFF
+        this._desktopInputMode = false;
+        if (window.screenLog) window.screenLog("Desktop 6DOF Mode: OFF", "orange");
+      } else {
+        // Toggle ON (Immediate)
+        this._desktopInputMode = true;
+        if (window.screenLog) window.screenLog("Desktop 6DOF Mode: ON (Grip to Move Camera)", "lime");
+      }
+    }
+
     this._gui.callFunc('onKeyUp', e);
   }
 
@@ -793,9 +807,16 @@ class SculptGL extends Scene {
     }
 
     try {
-      const session = await navigator.xr.requestSession(mode, {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-      });
+      const config = { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] };
+      let session = null;
+      try {
+        session = await navigator.xr.requestSession(mode, config);
+      } catch (err) {
+        console.warn(`Full XR config failed, retrying with minimal config...`, err);
+        if (window.screenLog) window.screenLog("Retrying XR with minimal config...", "orange");
+        // Fallback: minimal features
+        session = await navigator.xr.requestSession(mode, { optionalFeatures: ['local-floor'] });
+      }
 
       // TRUSTED EVENT LISTENER for File I/O
       session.addEventListener('select', (event) => {
@@ -820,7 +841,8 @@ class SculptGL extends Scene {
       // console.log(`Started XR Session: ${mode}`);
     } catch (e) {
       console.error(`Failed to start ${mode} session:`, e);
-      if (window.screenLog) window.screenLog(`SculptXR ${VERSION}`, "lime");
+      if (window.screenLog) window.screenLog(`Failed: ${e.message}`, "red");
+      // window.alert(`XR Session Failed: ${e.message}`);
     }
   }
 

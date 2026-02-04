@@ -86,7 +86,7 @@ class Camera {
     this._rotY = 0.0; // y rot for orbit camera
 
     // near far
-    this._near = 0.05;
+    this._near = 0.01;
     this._far = 5000.0;
 
     this._timers = {}; // animation timers
@@ -261,7 +261,12 @@ class Camera {
     var distToBoxCenter = vec3.dist(eye, boxCenter);
 
     var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
-    this._near = Math.max(0.01, distToBoxCenter - boxRadius);
+    // Relax near clip for VR Controllers visibility
+    // Force minimum 0.01 (1cm) to ensure hands/brush are visible
+    // AND disable the "push away" logic which clips nearby objects.
+    this._near = 0.01;
+    // this._near = Math.max(0.01, distToBoxCenter - boxRadius - 5.0); 
+
     this._far = boxRadius + distToBoxCenter;
     this.updateProjection();
   }

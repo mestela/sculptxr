@@ -163,12 +163,24 @@ class Selection {
 
   render(main) {
     // ABORT if we are in VR (VR uses renderVR)
+    // In Desktop 6DOF, we are technically in a VR Session but we use this render method.
     if (main.getXRMode && main.getXRMode()) return;
 
     // if there's an offset then it means we are editing the tool radius
-    var pickedMesh = main.getPicking().getMesh() && !this._isEditMode;
-    if (pickedMesh) this._updateMatricesMesh(main.getCamera(), main);
-    else this._updateMatricesBackground(main.getCamera(), main);
+    var picking = main.getPicking();
+    var pickedMesh = picking.getMesh() && !this._isEditMode;
+
+    if (pickedMesh) {
+      if (main._desktopInputMode) {
+        // Desktop 6DOF: Use Physical Radius (VR Logic)
+        this._updateMatricesMeshVR(main.getCamera(), main, picking.getWorldRadius(), main.getSculptManager().getSymmetry());
+      } else {
+        // Standard Desktop: Use Tool Screen Radius
+        this._updateMatricesMesh(main.getCamera(), main);
+      }
+    } else {
+      this._updateMatricesBackground(main.getCamera(), main);
+    }
 
     var drawCircle = main._action === Enums.Action.NOTHING;
     vec3.set(this._color, 0.8, drawCircle && pickedMesh ? 0.0 : 0.4, 0.0);

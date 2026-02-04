@@ -5,8 +5,9 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.6.238</title>
-    <!-- VERSION: v0.6.238 - Final Polish (Move Tool Unconstrained) -->
+    <meta name="description" content="SculptXR v0.6.282 - 1:1 Rot & Clip Fix">
+    <title>SculptXR v0.6.282</title>
+    <!-- VERSION: v0.6.282 - 1:1 Rot & Clip Fix -->
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -244,7 +245,8 @@
       "render/shaders/glsl/outline.glsl": "./src/render/shaders/glsl/outline.glsl.js",
       "render/shaders/glsl/pbr.glsl": "./src/render/shaders/glsl/pbr.glsl.js",
       
-      "Scene": "./src/Scene.js?v=0.6.207",
+      "Scene": "./src/Scene.js?v=0.6.282",
+      "Camera": "./src/math3d/Camera.js?v=0.6.282",
       "SculptGL": "./src/SculptGL.js?v=0.6.55",
       "Version": "./src/Version.js",
       "render/shaders/ShaderBase.js": "./src/render/shaders/ShaderBase.js",
@@ -306,6 +308,18 @@
             if (window.screenLog) window.screenLog(`PROMISE: ${event.reason}`, 'crimson');
         });
     </script>
+    <script>
+        // Manual Desktop 6DOF Calibration Controls (Initialized globally to satisfy ReferenceError)
+        window.d6 = {
+            s: 80.0, // Sensitivity
+            x: 0.0,  // Offset X
+            y: 0.0,  // Offset Y
+            z: 0.0,  // Offset Z
+            f: 0.5,  // Forward Offset (Reduced to 0.5m ~ arm length)
+            log: function () { console.log(`d6: s=${this.s.toFixed(1)} x=${this.x.toFixed(2)} y=${this.y.toFixed(2)} z=${this.z.toFixed(2)} f=${this.f.toFixed(1)}`); }
+        };
+        console.log("d6 initialized globally.");
+    </script>
 
     <script type="module">
         import Scene from 'Scene';
@@ -359,8 +373,9 @@
                     } else {
                         // Fallback
                         const ta = document.createElement('textarea');
-                        ta.value = text;
+                        ta.value = logContainer.innerText;
                         document.body.appendChild(ta);
+
                         ta.select();
                         document.execCommand('copy');
                         document.body.removeChild(ta);
@@ -412,8 +427,21 @@
                         btnVR.textContent = 'Enter VR';
                         btnVR.addEventListener('click', () => onEnterVR('immersive-vr'));
                     } else {
-                        btnVR.style.display = 'none';
+                        // FORCE VISIBLE for debugging
+                        // btnVR.style.display = 'none'; 
+                        btnVR.style.opacity = '0.5';
+                        btnVR.textContent = 'Force VR';
+                        btnVR.title = 'System reports VR not supported, but forcing enabled.';
+                        btnVR.addEventListener('click', () => onEnterVR('immersive-vr'));
+                        if (window.screenLog) window.screenLog("VR Check Failed (False), but forcing button.", "orange");
                     }
+                }).catch((err) => {
+                    console.error(err);
+                    if (window.screenLog) window.screenLog("VR Check Error: " + err.message, "red");
+                    // Force button show for debug
+                    btnVR.textContent = 'Force VR (Error)';
+                    btnVR.style.background = 'red';
+                    btnVR.addEventListener('click', () => onEnterVR('immersive-vr'));
                 });
 
                 // Check AR

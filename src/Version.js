@@ -1,1 +1,1 @@
-export const VERSION = 'v0.6.238 - Final Polish (Move Tool Unconstrained) -->';
+export const VERSION = 'v0.6.282 - 1:1 Rot & Clip Fix -->';

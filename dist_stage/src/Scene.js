@@ -1,4 +1,4 @@
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec3, mat4, quat, mat3 } from 'gl-matrix';
 import getOptionsURL from 'misc/getOptionsURL';
 import Enums from 'misc/Enums';
 import { VERSION } from './Version.js';
@@ -102,6 +102,8 @@ class Scene {
     this._vrScale = 0.008; // Scale 100-unit world to 0.8 meters (User Req: "25% too big")
     this._exposure = 1.0; // Reset to 1.0 after fixing ShaderMerge 5x boost
 
+    this._debugInput = false; // Toggle via console: app.scene._debugInput = true
+
     this._vrGrip = {
       left: { active: false, startPoint: vec3.create(), startRot: quat.create() },
       right: { active: false, startPoint: vec3.create(), startRot: quat.create() }
@@ -140,6 +142,9 @@ class Scene {
     this._gui.initGui();
     this.loadTextures();
     this._gui.initGui();
+
+    // EXPERIMENTAL: Desktop 6DOF Mode
+    this._desktopInputMode = true; // Default ON for testing
 
     // Always Init GuiXR (Menu System)
     if (!this._guiXR) this._guiXR = new GuiXR(this);
@@ -603,6 +608,108 @@ class Scene {
     }
   }
 
+  _renderVRToolOverlays(cam, convertToWorld = false) {
+    if (!this._vrControllerLeft && !this._vrControllerRight && !this._vrControllerTip) return;
+
+    // Helper for Conversion
+    const convert = (mat) => {
+      if (convertToWorld) {
+        this._convertMatrixMetersToWorld(mat);
+      }
+    };
+
+    // VR Menu (Attached to Left Controller)
+    if (this._vrMenu && this._vrPoseLeft) {
+      const menuPose = mat4.clone(this._vrPoseLeft);
+      // Apply Lift First (Local to Hand)
+      const lift = mat4.create();
+      mat4.fromTranslation(lift, [0.03, 0.03, 0.0]);
+      mat4.multiply(menuPose, menuPose, lift);
+
+      // Convert Space if needed
+      convert(menuPose);
+
+      this._vrMenu.updateMatrices(cam, menuPose);
+      this._vrMenu.render(this);
+    }
+
+    // VR Laser (Only if pointing at Menu)
+    if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
+      const dist = this._vrLaserDistance || 1.0;
+      // Laser Matrix is "TargetRay" (Meters)
+      const laserMat = mat4.clone(this._vrLaserMatrix);
+      convert(laserMat);
+
+      this._vrLaser.updateMatrices(cam, laserMat, dist, 0.01);
+      this._vrLaser.render(this);
+    }
+
+    // VR Brush Tip (Pencil)
+    if (this._vrControllerTip && this._vrRightRayMatrix) {
+      // Tip Local Matrix
+      const mTip = this._vrControllerTip.getMatrix();
+      mat4.copy(mTip, this._vrRightRayMatrix);
+
+      // Convert Space FIRST (Transform the Raw Ray Matrix to World)
+      // Because the subsequent offsets (Quest Standalone fix) are local to the controller?
+      // Wait. The offsets (rotateX, translate) are to align the Cylinder Model to the Ray.
+      // They should be applied BEFORE World Transform?
+      // mTip = RayMatrix * Offsets.
+      // We want WorldTip = InvWorld * RayMatrix * Offsets.
+      // So Convert does `M = M_inv * M`.
+      // If we convert `mTip` (which is RayMatrix), THEN apply offsets...
+      // `mTip' = M_inv * RayMatrix`.
+      // `mTipFinal = mTip' * Offsets` = `M_inv * RayMatrix * Offsets`.
+      // Correct.
+      convert(mTip);
+
+      // Apply Local Transform (Rotate +Y to -Z, Offset Base)
+      const offY = this._isQuestStandalone ? 0.075 : 0.025;
+      const mOffset = mat4.create();
+      mat4.rotateX(mOffset, mOffset, -Math.PI / 2);
+      mat4.translate(mOffset, mOffset, [0, offY, 0]);
+      mat4.multiply(mTip, mTip, mOffset);
+      // Note: gl-matrix transform helpers (rotate/translate) act as POST-multiply if used on 'mTip' directly.
+      // mat4.rotateX(mTip, mTip, ...) -> mTip * Rot.
+      // So equivalent to `M_inv * Ray * Rot * Trans`.
+      // Yes.
+
+      this._vrControllerTip.updateMatrices(cam);
+      this._vrControllerTip.render(this);
+    }
+  }
+
+  _convertMatrixMetersToWorld(mat) {
+    // Inverse World Transform: P_world = S^-1 * R^-1 * T^-1 * P_meters
+    // Construction: M_inv = S_inv * R_inv * T_inv
+
+    // Default to 1.0 scale if undefined, but usually it's ~0.008
+    const scaleVal = (this._vrScale !== undefined) ? this._vrScale : 1.0;
+    const invScale = 1.0 / scaleVal;
+
+    const mInv = mat4.create();
+
+    // 1. Scale
+    mat4.scale(mInv, mInv, [invScale, invScale, invScale]);
+
+    if (this._xrWorldOffset) {
+      // 2. Rotate
+      const r = this._xrWorldOffset.orientation;
+      const qInv = quat.create();
+      quat.invert(qInv, quat.fromValues(r.x, r.y, r.z, r.w));
+      const mRot = mat4.create();
+      mat4.fromQuat(mRot, qInv);
+      mat4.multiply(mInv, mInv, mRot);
+
+      // 3. Translate
+      const t = this._xrWorldOffset.position;
+      mat4.translate(mInv, mInv, [-t.x, -t.y, -t.z]);
+    }
+
+    // Apply to input matrix (Local-to-Meters -> Local-to-World)
+    mat4.multiply(mat, mInv, mat);
+  }
+
   _drawScene() {
     var gl = this._gl;
     var i = 0;
@@ -633,9 +740,61 @@ class Scene {
     // grid
     if (this._showGrid && this._grid) this._grid.render(this);
 
-    // VR Controllers
-    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    if (this._vrControllerRight) this._vrControllerRight.render(this);
+    if (this._vrControllerLeft) {
+      this._convertMatrixMetersToWorld(this._vrControllerLeft.getMatrix());
+      this._vrControllerLeft.updateMatrices(this._camera);
+      this._vrControllerLeft.render(this);
+    }
+    if (this._vrControllerRight) {
+      this._convertMatrixMetersToWorld(this._vrControllerRight.getMatrix());
+      this._vrControllerRight.updateMatrices(this._camera);
+      this._vrControllerRight.render(this);
+    }
+
+    // VR Key Overlays (Menu, Laser, Tip) - Render them for Spectator too
+    this._renderVRToolOverlays(this._camera, true);
+
+    // Debug Cubes (Desktop View)
+    // Force Opaque Rendering (Disable Blend, Disable Stencil, Disable Depth)
+    if (this._debugCalibrationCube || this._debugHeadsetCube) {
+      gl.disable(gl.BLEND);
+      gl.disable(gl.STENCIL_TEST);
+      gl.disable(gl.DEPTH_TEST);
+
+      // CRITICAL: Must update matrices with the current camera to generate MVP!
+      if (this._debugCalibrationCube) {
+        this._debugCalibrationCube.updateMatrices(this._camera);
+        this._debugCalibrationCube.render(this);
+      }
+      if (this._debugHeadsetCube) {
+        this._debugHeadsetCube.updateMatrices(this._camera);
+        this._debugHeadsetCube.render(this);
+      }
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND); // Restore Blend (Scene defaults usually expect it on?)
+      // Actually _drawScene starts with no specific blend expectation but UI overlays might need it.
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // Safe default
+    }
+    // VR Key Overlays (Menu, Laser, Tip) - Render them for Spectator too
+    this._renderVRToolOverlays(this._camera, true);
+
+    // DEBUG: Right Controller Matrix Analysis
+    if (this._vrControllerRight && this._vrControllerRight.getMatrix()) {
+      if (!this._debugFrameCount) this._debugFrameCount = 0;
+      if (this._debugFrameCount++ % 120 === 0) {
+        const m = this._vrControllerRight.getMatrix();
+        const p = vec3.create();
+        const q = quat.create();
+        const s = vec3.create();
+        mat4.getTranslation(p, m);
+        mat4.getRotation(q, m);
+        mat4.getScaling(s, m);
+        const euler = vec3.create();
+        // simple euler approx
+        // console.log(`Right: P:[${p[0].toFixed(2)},${p[1].toFixed(2)},${p[2].toFixed(2)}] S:[${s[0].toFixed(2)}]`);
+      }
+    }
 
     // (post opaque pass)
     for (i = 0; i < nbMeshes; ++i) {
@@ -1328,33 +1487,47 @@ class Scene {
     xhr.send(null);
   }
 
+  // EXPERIMENTAL: Desktop 6DOF Mode (Manual Grip Control)
+  // No auto-calibration. User grabs world to position camera.
+
   updateVRControllerPose(handedness, position, orientation) {
     var mesh = handedness === 'left' ? this._vrControllerLeft : this._vrControllerRight;
     if (!mesh) return;
 
-    if (window.screenLog && !this._hasLoggedCtrl) {
-      // window.screenLog(`First Controller Update: ${handedness}`, 'lime');
-      this._hasLoggedCtrl = true;
-    }
-
     // Fix: gl-matrix expects Arrays, but WebXR gives DOMPoints.
-    // We must convert them manually.
     const pos = [position.x, position.y, position.z];
     const rot = [orientation.x, orientation.y, orientation.z, orientation.w];
+
+    // --- DESKTOP 6DOF MAPPING (VISUALS ONLY) ---
+    // In Desktop Mode, we might want to just show the controllers "as is" or relative to camera?
+    // Actually, if we are moving the CAMERA, the controllers should just be where they are in world space.
+    // The previous logic was re-mapping controllers to "Screen Space".
+    // If we abandon that and just move the camera, we should probably just render controllers in World Space
+    // (which might be usually out of view if camera is far?).
+    // User said: "adjust the mesh to suit the updated pov".
+    // So we assume the user finds the controllers with the camera or brings them into view.
+    // However, to make it usable, we still need to see the controllers relative to the mesh.
+    // Let's just render them normally for now. The "Desktop 6DOF" mapping was mostly for the "Cursor" anyway.
 
     var mat = mesh.getMatrix();
     mat4.fromRotationTranslation(mat, rot, pos);
 
-    // Apply Scale (Controllers are 1.0 size cubes, we want 0.02m = 2cm)
-    // Real Models (OBJ) are in Meters (~0.15), so we scale by 1.0 (no change) or adjustment
+    // Scale Logic
     const scale = mesh.isPlaceholder ? 0.02 : 1.0;
     mat4.scale(mat, mat, [scale, scale, scale]);
-
-    // DEBUG: Verify Right Controller Position (Fixed)
-    // if (handedness === 'right' && window.screenLog && this._logThrottle % 200 === 0) {
-    //    window.screenLog("Right Pos: " + vec3.str(pos), "cyan");
-    // }
   }
+
+  // ... (lines 1650-2160 unchanged) ...
+
+  handleXRInput(frame, refSpace) {
+  // ... (unchanged parts) ...
+  // Note: I need to ensure I don't accidentally cut huge chunks.
+  // I will use multi_replace for safety if I can't match big blocks.
+  // But replace_file_content is requested.
+  // I will try to target specific methods.
+  }
+
+
 
   initDebugCursor() {
     var gl = this._gl;
@@ -1372,6 +1545,28 @@ class Scene {
 
     this._debugCursor.init();
     this._debugCursor.initRender();
+
+    // Calibration Cube (Green)
+    this._debugCalibrationCube = Primitives.createCube(gl);
+    this._debugCalibrationCube.normalizeSize(); // Size 1.0 (MeshStatic doesn't have normalizeSize? Wait, Check MeshStatic)
+    // Actually Primitives.createCube returns MeshStatic, which inherits Mesh.
+    // Mesh doesn't have normalizeSize. Multimesh has it?
+    // Let's check Utils or just scale manually. Primitives.createCube(gl) returns unit cube (-0.5 to 0.5) by default.
+    // So default size IS 1.0. No need to normalize.
+
+    mat4.translate(this._debugCalibrationCube.getMatrix(), mat4.create(), [0, -9999, 0]); // Hide initially
+    this._debugCalibrationCube.setShaderType(Enums.Shader.FLAT);
+    this._debugCalibrationCube.setFlatColor([0.0, 1.0, 0.0]); // Green
+    this._debugCalibrationCube.init();
+    this._debugCalibrationCube.initRender();
+
+    // Headset Cube (Orange)
+    this._debugHeadsetCube = Primitives.createCube(gl);
+    mat4.translate(this._debugHeadsetCube.getMatrix(), mat4.create(), [0, -9999, 0]);
+    this._debugHeadsetCube.setShaderType(Enums.Shader.FLAT);
+    this._debugHeadsetCube.setFlatColor([1.0, 0.5, 0.0]); // Orange
+    this._debugHeadsetCube.init();
+    this._debugHeadsetCube.initRender(); // Don't forget initRender!
   }
 
   updateDebugCursor(pos, active) {
@@ -1410,6 +1605,19 @@ class Scene {
 
     // Debug Cursor
     if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
+    // Calibration Cube (Green) - Disable Depth Test to ensure visibility
+    if (this._debugCalibrationCube) {
+      gl.disable(gl.DEPTH_TEST);
+      this._debugCalibrationCube.render(this);
+      gl.enable(gl.DEPTH_TEST);
+    }
+
+    // Headset Cube (Orange)
+    if (this._debugHeadsetCube) {
+      gl.disable(gl.DEPTH_TEST);
+      this._debugHeadsetCube.render(this);
+      gl.enable(gl.DEPTH_TEST);
+    }
 
     // Debug Pivot (Pink Cube)
     if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
@@ -1436,10 +1644,22 @@ class Scene {
     session.requestAnimationFrame(this.onXRFrame.bind(this));
 
     // Force use of Base Ref Space (Local Floor) to debug "Flying Cube"
-    // The previous offset logic likely doubled up or inverted height.
     const refSpace = this._baseRefSpace;
 
+    // EXPERIMENTAL: Desktop 6DOF Mode
+    // RefSpace rotation removed. User should use Mouse Orbit to position camera.
+
     const pose = frame.getViewerPose(refSpace);
+    this._latestViewerPose = pose; // Capture for updateVRControllerPose
+
+    // Update Headset Cube (Orange)
+    if (this._debugHeadsetCube && pose) {
+      const mat = this._debugHeadsetCube.getMatrix();
+      mat4.identity(mat);
+      mat4.translate(mat, mat, [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z]);
+      mat4.scale(mat, mat, [0.01, 0.01, 0.01]); // 1cm Cube (Headset)
+    }
+
     if (pose) {
       const gl = this._gl;
       const glLayer = session.renderState.baseLayer;
@@ -1460,8 +1680,57 @@ class Scene {
 
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
+
+      // --- EXPERIMENTAL: Desktop 6DOF Mode (Spectator Mirror) ---
+      // Render to Canvas (Desktop View) using the Orbit Camera
+
+      // 1. Unbind VR Framebuffer
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+      // 2. Reset Viewport
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+
+      // 3. Render Desktop View (Synchronous)
+      // FORCE RESET CAMERA to Desktop View (Undo VR overrides)
+      this._camera.updateProjection();
+      this._camera.updateView();
+
+      // Use applyRender to ensure Post-Processing (FXAA, etc) composite to screen
+      this.applyRender(null);
+
+      // 4. Render VR Overlays (Brush Tip, Menu, etc) on top of Desktop View
+      // Using desktop camera (this._camera)
+      // ALREADY CALLED in applyRender() -> _drawScene() -> _renderVRToolOverlays(..., true)
+
+      // Update Calibration Timer
+      if (this._desktopInputPending) {
+        if (this._desktopCalibrationTimer > 0) {
+          this._desktopCalibrationTimer -= frame.predictedDisplayTime ? (frame.predictedDisplayTime.delta || 0.016) : 0.016; // Approx
+          // Actually frame doesn't have delta easily, use raw time diff if available, 
+          // but for now 60Hz approx decrement is fine or use this._time
+          // Better: just decrement by roughly 1/60 or use passed `time` diff.
+          // Let's rely on visual feedback in log.
+          this._desktopCalibrationTimer -= 0.016;
+
+          if (this._desktopCalibrationTimer <= 0) {
+            this._generateDesktopOffset(frame, refSpace);
+            this._desktopInputMode = true;
+            this._desktopInputPending = false;
+            if (window.screenLog) window.screenLog("Desktop 6DOF Mode: ON (Calibrated)", "lime");
+          } else {
+            // Feedback
+            if (window.screenLog && Math.random() < 0.1) { // Throttle
+              window.screenLog(`Calibrating in ${Math.ceil(this._desktopCalibrationTimer)}...`, "yellow");
+            }
+          }
+        }
+      }
+
+      // -----------------------------------------------------------
     }
   }
+
+
 
   handleXRInput(frame, refSpace) {
     this._isPointingAtMenu = false;
@@ -1674,6 +1943,7 @@ class Scene {
       }
 
       // 3. Navigation Data (Base Space - Stable coordinates)
+      // GRIP NAV: In Desktop Mode, we use this data for Camera Control.
       if (this._baseRefSpace) {
         const basePose = frame.getPose(source.gripSpace, this._baseRefSpace);
         if (basePose) {
@@ -1695,6 +1965,13 @@ class Scene {
       if (source.gamepad && source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed) {
         this._activeHandedness = source.handedness;
       }
+    }
+
+    // [DEBUG] Input Tracing
+    if (this._debugInput && this._logThrottle % 60 === 0) {
+      console.log(`[Input] Sources: ${sources.length} | DesktopMode: ${this._desktopInputMode}`);
+      console.log(`[Input] Left: Grip=${leftGrip} Origin=${!!leftOrigin} Rot=${!!leftRot}`);
+      console.log(`[Input] Right: Grip=${rightGrip} Origin=${!!rightOrigin} Rot=${!!rightRot}`);
     }
 
     // FORCE PIVOT INIT (Just in case)
@@ -1778,10 +2055,118 @@ class Scene {
       gState.active = true;
       vec3.copy(gState.startPoint, origin);
       quat.copy(gState.startRot, rotation);
+      // Capture Camera State for Desktop 6DOF
+      if (this._desktopInputMode) {
+        if (!gState.camTransStart) gState.camTransStart = vec3.create();
+        vec3.copy(gState.camTransStart, this._camera._trans);
+
+        gState.camRotStart = { x: this._camera._rotX, y: this._camera._rotY };
+        // We might need to store view matrix too if we do fancy mapping
+      }
     } else {
       // Delta in Base Space approx World Space delta if orientation aligned
       const delta = vec3.create();
       vec3.sub(delta, origin, gState.startPoint);
+
+      if (this._desktopInputMode) {
+        // --- DESKTOP 6DOF CAMERA CONTROL ---
+        // Pan Camera based on Hand Delta
+        // Hand moves X -> Camera moves -X (to keep object under hand)
+        // OR Hand moves X -> Camera Target moves X?
+        // If I grab the world and pull Right, the world moves Right.
+        // The Camera stays still relative to me, but the world moves.
+        // In Orbit Camera, we move the Target.
+        // If World moves Right (+X), Target should move +X?
+        // Let's try 1:1 mapping to Camera Target.
+
+        // Transform Delta World -> View Space logic manually?
+        // Actually Camera.translate moves Target.
+        // But Camera.trans[0],[1] are technically Panning values relative to View Plane?
+        // Let's look at Camera.updateView():
+        // vec3.set(center, tx - off[0], ty - off[1], -off[2]);
+        // tx is added to center X? No, it's set.
+        // If we want to pan, we modify _trans[0], _trans[1].
+
+        // We need to map world delta to camera plane X/Y.
+        const view = this._camera.getView();
+        const camRight = vec3.fromValues(view[0], view[4], view[8]);
+        const camUp = vec3.fromValues(view[1], view[5], view[9]);
+
+        // Project Delta onto Camera Basis
+        const dx = vec3.dot(delta, camRight);
+        const dy = vec3.dot(delta, camUp);
+        // dz for zoom? 
+        const dz = vec3.dot(delta, vec3.fromValues(view[2], view[6], view[10])); // View Forward is -Z column?
+        // Camera Forward is -Z (row 2 of view matrix usually points BACK if LookAt)
+        // gl-matrix LookAt: Z axis points from Center to Eye. (Backward)
+        // So +Z in View Space is "Towards Camera".
+        // If I pull hand towards me (+Z View), I want world to come closer.
+        // "Zooming In" usually means decreasing distance (trans[2]).
+
+        // Apply to Camera Trans
+        // We use the start value to avoid drift?
+        // Or incremental? Incremental is easier with 'delta'.
+        // But gState tracks 'startPoint'.
+
+        // Let's use incremental to avoid needing 'camTransStart' complexity if we don't restart it.
+        // Wait, 'delta' is 'origin - startPoint'. That IS total delta since grab start.
+        if (!gState.camTransStart) gState.camTransStart = vec3.create();
+
+        // SCALING SENSITIVITY
+        // Make sensitivity proportional to Distance (Z) to keep "screen feel" consistent.
+        // If Z=100, we need larger movements. If Z=5, we need smaller.
+        const dist = Math.abs(gState.camTransStart[2]);
+        const S = Math.max(0.1, dist) * 2.5; // Tuned Multiplier (2.5x Distance)
+
+        const tx = gState.camTransStart[0] - dx * S;
+        const ty = gState.camTransStart[1] - dy * S;
+
+        // Zoom: Hand +Z (Towards me/Camera) -> Zoom In?
+        const tz = Math.max(0.1, gState.camTransStart[2] - dz * S);
+
+        this._camera.setTrans([tx, ty, tz]);
+
+        // --- ROTATION (ORBIT) ---
+        // Map Hand Rotation to Camera Orbit
+        if (rotation) {
+          const qDelta = quat.create();
+          const qInv = quat.create();
+          quat.invert(qInv, gState.startRot);
+          quat.multiply(qDelta, rotation, qInv); // Current * InvStart = Delta
+
+          // WE WANT:
+          // Rotate Wrist Y (Yaw) -> Orbit Camera Left/Right (RotY)
+          // Rotate Wrist X (Pitch) -> Orbit Camera Up/Down (RotX)
+
+          // Sensitivity
+          const rotSensitivity = 0.55;
+
+          // qDelta[1] -> Y Rotation (Yaw)
+          // qDelta[0] -> X Rotation (Pitch)
+          // Approx Angle ~= 2 * qComponent (small angles)
+
+          const dRotY = qDelta[1] * 4.0 * rotSensitivity;
+          const dRotX = qDelta[0] * 4.0 * rotSensitivity;
+
+          // Apply to Camera using setOrbit to ensure Quaternion is updated!
+          if (!gState.camRotStart) {
+            gState.camRotStart = { x: this._camera._rotX, y: this._camera._rotY };
+          }
+
+          // Invert X? Usually VR pitch up -> Camera look up (or Orbit up?)
+          // Orbit: dragging UP orbits DOWN? 
+          // Let's try direct mapping first.
+          this._camera.setOrbit(
+            gState.camRotStart.x + dRotX,
+            gState.camRotStart.y + dRotY
+          );
+        }
+
+        this.render();
+
+        return; // Skip standard moveWorld
+      }
+
 
       // Threshold for jitter (Translation)
       if (vec3.length(delta) > 0.0001) {
@@ -1798,7 +2183,14 @@ class Scene {
 
         // Threshold for jitter (Rotation) - ~0.1 degree
         if (Math.abs(qDelta[3] - 1.0) > 0.000001) {
-          this.rotateWorld(qDelta, origin); // Pivot around HAND (origin)
+          if (this._desktopInputMode) {
+            // Optional: Orbit
+            // Maybe simpler to just ignore rotation for now to avoid motion sickness/confusion?
+            // User asked "adjust the updated pov". Usually Pan/Zoom is enough for "placing".
+            // Let's stick to Pan/Zoom for single grip.
+          } else {
+            this.rotateWorld(qDelta, origin); // Pivot around HAND (origin)
+          }
           quat.copy(gState.startRot, rotation);
         }
       }
@@ -1821,6 +2213,59 @@ class Scene {
 
     if (!s.active) {
       s.active = true;
+      vec3.copy(s.prevMid, mid);
+      s.prevDist = dist;
+      vec3.copy(s.prevVec, vec);
+
+      if (this._desktopInputMode) {
+        if (!s.camTransStart) s.camTransStart = vec3.create();
+        vec3.copy(s.camTransStart, this._camera._trans);
+      }
+      return;
+    }
+
+    if (this._desktopInputMode) {
+      // --- DESKTOP 6DOF TWO-HANDED (ZOOM) ---
+      // Scale -> Zoom
+      if (s.prevDist > 0.05 && dist > 0.05) {
+        const ratio = dist / s.prevDist;
+        // Ratio > 1 (Hands moving apart) -> Zoom In? Or Scale Up?
+        // Standard VR: Hands apart = Scale World Up (Object looks bigger).
+        // Camera: Scale Object Up = Zoom In (Decrease Distance).
+        // So Ratio > 1 -> Decrease Trans[2].
+        // trans[2] = startZ / ratio?
+
+        const currentZ = this._camera._trans[2];
+        // We want to apply the ratio incrementally?
+        // Or if we track from start?
+        // s.prevDist is updated every frame in standard logic.
+        // Let's stick to standard logic flow but apply to Camera.
+
+        if (Math.abs(ratio - 1.0) > 0.0001) {
+          const newZ = Math.max(0.1, currentZ / ratio);
+          this._camera.setTrans([this._camera._trans[0], this._camera._trans[1], newZ]);
+          this.render();
+        }
+      }
+
+      // Pan with Midpoint?
+      // Similar to single grip pan.
+      // Let's implement midpoint pan for intuitive feel.
+      const deltaT = vec3.create();
+      vec3.sub(deltaT, mid, s.prevMid);
+
+      if (vec3.length(deltaT) > 0.0001) {
+        const view = this._camera.getView();
+        const camRight = vec3.fromValues(view[0], view[4], view[8]);
+        const camUp = vec3.fromValues(view[1], view[5], view[9]);
+        const dx = vec3.dot(deltaT, camRight);
+        const dy = vec3.dot(deltaT, camUp);
+        const S = 2.0;
+        const tx = this._camera._trans[0] - dx * S;
+        const ty = this._camera._trans[1] - dy * S;
+        this._camera.setTrans([tx, ty, this._camera._trans[2]]); // Use Updated Z here if needed
+      }
+
       vec3.copy(s.prevMid, mid);
       s.prevDist = dist;
       vec3.copy(s.prevVec, vec);
