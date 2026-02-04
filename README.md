@@ -3,9 +3,8 @@
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
 *SculptGL running on desktop, with SculptXR running natively on a Quest 3 in foreground in AR/passthrough mode.*
 
-## Status
-**Active Development**: This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities, specifically a VR Menu system.
-(The original project is no longer actively maintained by the author).
+## Overview
+**Active Development**: This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 **[Try the Live VR Build Here](https://tokeru.com/sculptxr/)** 
 
