@@ -117,6 +117,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Symmetry behaves strangely in desktop mode (investigate).
     - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
     - Should re-enable mouse controls to adjust the screen offset, eaier than using the consoel commands. Also just standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
+    -idea! calibrate/adjust with grip controls. press c, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap c to exit out, now you're good to go.
 
 ## Quick Start
 Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.
