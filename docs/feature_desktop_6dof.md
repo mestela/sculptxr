@@ -6,6 +6,23 @@
 2.  **Broadcasting**: Streamers can show a steady camera angle while working.
 3.  **Debugging**: Developers can inspect the scene without wearing the headset.
 
+## User guide
+1. Connect your headset to PCVR mode (tested with Meta Link, have not tried other PC setups)
+2. Put on your headset
+3. Open Chrome, navigate to tokeru.com/sculptxr
+4. Press the 'Enter VR' button
+5. When you can see the VR mode, take the headset off, place it on your desk facing you. Ensure the headset is a little off the edge of the desk, so the left and right fishye cameras on the side of the headset can see the ground
+6. Press the 'D' key to toggle the desktop mode
+7. Position yourself back a bit, so that even if you fully extend your arms forward, the controllers are still in front of the headset
+8. Use the grip handles to position the sculpt comfortably on your monitor
+9. If you need to adjust the offset, you can type `setSpectatorOffset(x, y, z)` in the console to adjust this live.
+
+Note that the quest 3 is very aggressive about turning itself off. You need to put tape over the proximity sensor inside the headset, in the standalone settings turn off power saving, set the max time to 4 hours, and even _then_ the headset will turn itself off if it doesn't detect movement after a few minutes.
+
+I think you can disable this in the developer tools, but I haven't tried it.
+
+
+
 ## Implementation Details
 
 ### 1. Parity Rendering
