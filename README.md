@@ -141,6 +141,12 @@ It should work on any WebXR compatible device. So far I've tested on
     - Combobox for tool too slow; revert back to button panel i think
     - Default smooth strength too high
     - Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.
+    - Trigger on left controller should activate 'sub' mode (and change colour of circle radius indicator)
+
+- **Desktop 6DOF (Beta Issues)**:
+    - Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).
+    - Symmetry behaves strangely in desktop mode (investigate).
+    - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
     
 
 ## Quick Start
