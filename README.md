@@ -13,11 +13,12 @@ Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOe
 The VR Interface is a Work In Progress. Not all menus and UI elements from the desktop version are fully functional or present in VR yet. We are actively porting them over. 
 
 ## Releases
-- v0.6.293: **Desktop 6DOF (Spectator Mode)**:
+- v0.7.0: **Desktop 6DOF (Spectator Mode)**:
+    - **Desktop Mode**: Simulated "Seated" view for non-VR users.
     - **Parity Render**: Desktop view now renders exact same tools/mesh as VR (Solved "Missing Controller" bug).
     - **Zero Offset**: Desktop camera is rotated 180° to provide a stable "Seated" view of the sculpture.
-    - **Sphere Depth**: Brush radius sphere now cleanly intersects with the mesh (enabled Depth Test).
-    - **Usage**: Press `D` to toggle Desktop Stabilization.
+    - **Sphere Depth**: Brush cursor now properly intersects with the mesh (enabled Depth Test).
+    - **WebGL 1 Compatibility**: Restored support for older devices/browsers.
     - [Read the Feature Guide](docs/feature_desktop_6dof.md)
 - v0.6.238: **Move Tool Polish**: Enabled Air Mode (move without surface intersection) and fixed radius scaling to match other tools.
 - v0.6.220: **VR Brush Alignment**: Implemented Ray-based Picking (Laser) for precise brush positioning. Brush cursor now aligns perfectly with the controller's aim direction.
