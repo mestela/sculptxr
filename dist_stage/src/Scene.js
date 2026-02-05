@@ -281,10 +281,10 @@ class Scene {
     var gridm = grid.getMatrix();
     // mat4.translate(gridm, gridm, [0.0, -0.45, 0.0]); // Reset to 0 for VR
     mat4.translate(gridm, gridm, [0.0, -0.5, 0.0]); // Floor level (sphere is radius 0.25 (scaled 0.005 * 50?))
-    var scale = 0.1; // Was 2.5, reduce for VR (1/25th size)
+    var scale = 0.4; // Was 0.1, User requested 4x bigger
     mat4.scale(gridm, gridm, [scale, scale, scale]);
     this._grid.setShaderType(Enums.Shader.FLAT);
-    grid.setFlatColor([0.04, 0.04, 0.04]);
+    grid.setFlatColor([0.3, 0.3, 0.3]);
   }
 
   setOrUnsetMesh(mesh, multiSelect) {
@@ -529,7 +529,7 @@ class Scene {
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.depthMask(false);
       gl.disable(gl.CULL_FACE);
-      gl.disable(gl.DEPTH_TEST);
+      gl.enable(gl.DEPTH_TEST);
 
       this._vrBrushRadiusSphere.render(this);
 
@@ -1244,10 +1244,10 @@ class Scene {
       // High Res (64x64), Radius 1.0 (to match Selection Ring size)
       var meshS = Primitives.createSphere(this._gl, 1.0, 64, 64);
 
-      meshS.setShaderType(Enums.Shader.UNLIT);
+      meshS.setShaderType(Enums.Shader.FRESNEL);
       // For Additive Blending (ONE, ONE), the RGB values control brightness/opacity directly.
-      // 0.2 = 20% Additive Glow
-      meshS.setFlatColor([0.2, 0.2, 0.2]);
+      // FRESNEL dims center, so boost base color: 0.2 -> 0.5
+      meshS.setFlatColor([0.5, 0.5, 0.5]);
       meshS.setOpacity(1.0); // Opacity unused in additive logic with pre-dimmed color, but keep 1.0
       meshS.init();
       meshS.initRender();

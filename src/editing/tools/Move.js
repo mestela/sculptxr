@@ -208,6 +208,7 @@ class Move extends SculptBase {
 
     // Standardized Move Logic (World -> Local)
     var mesh = this.getMesh();
+    if (!mesh) return;
     var mInv = mat4.create();
     mat4.invert(mInv, mesh.getMatrix());
 
