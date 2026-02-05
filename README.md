@@ -13,6 +13,12 @@ Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOe
 The VR Interface is a Work In Progress. Not all menus and UI elements from the desktop version are fully functional or present in VR yet. We are actively porting them over. 
 
 ## Releases
+- v0.6.293: **Desktop 6DOF (Spectator Mode)**:
+    - **Parity Render**: Desktop view now renders exact same tools/mesh as VR (Solved "Missing Controller" bug).
+    - **Zero Offset**: Desktop camera is rotated 180° to provide a stable "Seated" view of the sculpture.
+    - **Sphere Depth**: Brush radius sphere now cleanly intersects with the mesh (enabled Depth Test).
+    - **Usage**: Press `D` to toggle Desktop Stabilization.
+    - [Read the Feature Guide](docs/feature_desktop_6dof.md)
 - v0.6.238: **Move Tool Polish**: Enabled Air Mode (move without surface intersection) and fixed radius scaling to match other tools.
 - v0.6.220: **VR Brush Alignment**: Implemented Ray-based Picking (Laser) for precise brush positioning. Brush cursor now aligns perfectly with the controller's aim direction.
 - v0.6.219: **Final Polish**: Log cleanup and version hardening.
@@ -111,7 +117,7 @@ It should work on any WebXR compatible device. So far I've tested on
     - Transform tool/gizmo missing
     - ~~Lots of 'minor' UI missing (need to take an inventory of all the menu items)~~
     - Re-symmetrize function, choose left->right, right->left
-    - Spectator Mode: Implement Desktop Mirroring for PCVR (See `docs/spectator_mode_implementation.md`)
+    - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
     - Drag tool not working correctly with symmetry
     - Reference image support
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
