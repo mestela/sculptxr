@@ -423,6 +423,13 @@ class SculptGL extends Scene {
   ////////////////
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
+
+    // [DESKTOP 6DOF] Toggle Desktop Offset Mode
+    if (e.which === 68) { // 'D'
+      if (this.toggleDesktopOffset) this.toggleDesktopOffset();
+      else if (window.sculptgl_instance && window.sculptgl_instance.toggleDesktopOffset) window.sculptgl_instance.toggleDesktopOffset();
+    }
+
     this._gui.callFunc('onKeyDown', e);
   }
 

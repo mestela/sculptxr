@@ -117,9 +117,25 @@ class Scene {
     this._vrMenu = null;
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
+
+    // Desktop 6DOF Offset (Spectator Camera)
+    this._desktopOffsetMode = false;
+    // Offset relative to HMD: [x, y, z] in meters.
+    // User Request: "Move forward 50cm, up 50cm".
+    // Note: If HMD is facing User, "Forward" is towards User.
+    // If we Rotate 180, we are looking effectively "Standard Forward".
+    this._desktopOffset = vec3.fromValues(0.0, 0.0, 0.0); 
   }
 
   start() {
+    // [DESKTOP 6DOF] Console Tuning Helper (Standard X, Y, Z)
+    window.setSpectatorOffset = (x, y, z) => {
+      this._desktopOffset[0] = x;
+      this._desktopOffset[1] = y;
+      this._desktopOffset[2] = z;
+      console.log(`Spectator Offset Set: [${x}, ${y}, ${z}]`);
+      this.render();
+    };
 
     this.initWebGL();
     if (!this._gl)
@@ -351,220 +367,200 @@ class Scene {
   }
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
+  // Shared Render Logic (Parity for Spectator)
+  _renderSceneVR(cam, viewMatrix, projMatrix) {
+    const gl = this._gl;
+    const meshes = this._meshes;
+
+    // --- SETUP VIEW ---
+    mat4.copy(cam._view, viewMatrix);
+
+    // [DESKTOP 6DOF] Offset Camera View (Applied to Shared Logic)
+    if (this._desktopOffsetMode) {
+      mat4.rotateY(cam._view, cam._view, Math.PI);
+      mat4.translate(cam._view, cam._view, [
+        -this._desktopOffset[0],
+        -this._desktopOffset[1],
+        -this._desktopOffset[2]
+      ]);
+    }
+
+    mat4.copy(cam._proj, projMatrix);
+
+    // --- PASS 1: REAL WORLD (Controllers/Debug) ---
+    // Render Controllers
+    if (this._vrControllerLeft) {
+      this._vrControllerLeft.updateMatrices(cam);
+      this._vrControllerLeft.render(this);
+    }
+    if (this._vrControllerRight) {
+      this._vrControllerRight.updateMatrices(cam);
+      this._vrControllerRight.render(this);
+    }
+
+    // VR Menu (Pass 1)
+    if (this._vrMenu && this._vrPoseLeft) {
+      const menuPose = mat4.clone(this._vrPoseLeft);
+      const lift = mat4.create();
+      mat4.fromTranslation(lift, [0.03, 0.03, 0.0]);
+      mat4.multiply(menuPose, menuPose, lift);
+
+      this._vrMenu.updateMatrices(cam, menuPose);
+      this._vrMenu.render(this);
+    }
+
+    // VRLaser (Pass 1)
+    if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
+      const dist = this._vrLaserDistance || 1.0;
+      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
+      this._vrLaser.render(this);
+    }
+
+    // Debug Pivot
+    if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
+      gl.disable(gl.DEPTH_TEST);
+      this._debugPivotMesh.updateMatrices(cam);
+      this._debugPivotMesh.render(this);
+      gl.enable(gl.DEPTH_TEST);
+    }
+
+    // VR Brush Tip (Pass 1)
+    if (this._vrControllerTip && this._vrRightRayMatrix) {
+      const mTip = this._vrControllerTip.getMatrix();
+      mat4.copy(mTip, this._vrRightRayMatrix);
+      const offY = this._isQuestStandalone ? 0.075 : 0.025;
+      mat4.rotateX(mTip, mTip, -Math.PI / 2);
+      mat4.translate(mTip, mTip, [0, offY, 0]);
+
+      this._vrControllerTip.updateMatrices(cam);
+      this._vrControllerTip.render(this);
+    }
+
+    // --- PASS 2: SCALED WORLD (Meshes/Grid) ---
+    // Apply World Transforms
+    if (this._xrWorldOffset) {
+      const t = this._xrWorldOffset.position;
+      const r = this._xrWorldOffset.orientation;
+      const worldMat = mat4.create();
+      mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+      mat4.multiply(cam._view, cam._view, worldMat);
+    }
+
+    if (this._vrScale !== 1.0) {
+      mat4.scale(cam._view, cam._view, [this._vrScale, this._vrScale, this._vrScale]);
+    }
+
+    // Grid
+    if (this._showGrid && this._grid) {
+      this._grid.updateMatrices(cam);
+      this._grid.render(this);
+    }
+
+    // Meshes (Opaque)
+    for (let k = 0, l = meshes.length; k < l; ++k) {
+      if (!meshes[k].isVisible()) continue;
+      meshes[k].updateMatrices(cam);
+      meshes[k].render(this);
+    }
+
+    // Meshes (Wireframe)
+    gl.enable(gl.BLEND);
+    gl.depthFunc(gl.LESS);
+    for (let k = 0, l = meshes.length; k < l; ++k) {
+      if (meshes[k].getShowWireframe()) meshes[k].renderWireframe(this);
+    }
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+
+    // Brush Indicator (Pass 2 - World Space)
+    if (this._sculptManager && this._picking.getMesh()) {
+      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+      gl.disable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      this._sculptManager.getSelection().renderVR(this, cam, radius);
+      gl.disable(gl.BLEND);
+      gl.enable(gl.DEPTH_TEST);
+    }
+
+    // --- PASS 3: OVERLAY (Reset View) ---
+    // Reset View Matrix to Base (Offset logic inside Pass 3 block?)
+    // Actually, we modified cam._view in place.
+    // We need to restore it to: (Base + Offset).
+    // The easiest way is to re-copy viewMatrix and re-apply offset.
+    // Optimization: Just Undo World Transform?
+    // Safer: Re-setup.
+    mat4.copy(cam._view, viewMatrix);
+    if (this._desktopOffsetMode) {
+      mat4.rotateY(cam._view, cam._view, Math.PI);
+      mat4.translate(cam._view, cam._view, [
+        -this._desktopOffset[0],
+        -this._desktopOffset[1],
+        -this._desktopOffset[2]
+      ]);
+    }
+    // Proj is same.
+
+    // Render VR Brush Radius Sphere (Pass 3)
+    if (this._vrBrushRadiusSphere && this._vrRightRayMatrix && this._vrControllerTip) {
+      const mSphere = this._vrBrushRadiusSphere.getMatrix();
+      mat4.copy(mSphere, this._vrRightRayMatrix);
+      const offY = this._isQuestStandalone ? 0.10 : 0.05;
+      mat4.rotateX(mSphere, mSphere, -Math.PI / 2);
+      mat4.translate(mSphere, mSphere, [0, offY, 0]);
+
+      // Normalize Scale logic...
+      // Simply Reset Scale to 1, then apply radius
+      // Extract translation/rotation?
+      // Or just normalize columns as before
+      const sx = Math.hypot(mSphere[0], mSphere[1], mSphere[2]);
+      const sy = Math.hypot(mSphere[4], mSphere[5], mSphere[6]);
+      const sz = Math.hypot(mSphere[8], mSphere[9], mSphere[10]);
+      if (sx > 1e-6) { mSphere[0] /= sx; mSphere[1] /= sx; mSphere[2] /= sx; }
+      if (sy > 1e-6) { mSphere[4] /= sy; mSphere[5] /= sy; mSphere[6] /= sy; }
+      if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
+
+      const r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
+      mat4.scale(mSphere, mSphere, [r, r, r]);
+
+      this._vrBrushRadiusSphere.updateMatrices(cam);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.DEPTH_TEST);
+
+      this._vrBrushRadiusSphere.render(this);
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.enable(gl.CULL_FACE);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+  }
+
+  // Simplified VR Render (Delegates to _renderSceneVR)
   renderVR(glLayer, pose, frame, refSpace) {
     var gl = this._gl;
     var cam = this._camera;
     var views = pose.views;
-
-    // VR Exposure Override (Default 1.0 matches Desktop now)
-    // var oldExposure = this._exposure;
-    // this._exposure = 1.0; 
-
-    // FBO is already bound by callee
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     // Lazy init controllers if missing (and GL is ready)
     if (!this._vrControllerLeft || !this._vrControllerRight) {
       this.initVRControllers();
     }
 
-    var meshes = this._meshes;
-    var grid = this._grid;
-
-    // VR Controllers
-    var ctrls = [];
-    if (this._vrControllerLeft) ctrls.push(this._vrControllerLeft);
-    if (this._vrControllerRight) ctrls.push(this._vrControllerRight);
+    // FBO is already bound by callee (usually glLayer.framebuffer)
+    // Clear once for the whole VR buffer (Left+Right)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     for (var i = 0; i < views.length; ++i) {
       var view = views[i];
       var viewport = glLayer.getViewport(view);
       gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 
-      // --- PASS 1: REAL WORLD (Controllers/Debug) ---
-      // Apply raw XR view matrix
-      mat4.copy(cam._view, view.transform.inverse.matrix);
-      mat4.copy(cam._proj, view.projectionMatrix);
-
-      // Render Controllers (Real World)
-      for (var j = 0; j < ctrls.length; ++j) {
-        ctrls[j].updateMatrices(cam);
-        ctrls[j].render(this);
-      }
-
-      // VR Menu (Attached to Left Controller) - Pass 1
-      if (this._vrMenu && this._vrPoseLeft) {
-        // [USER REQUEST] Lift menu 3cm to avoid Z-fighting with controller
-        const menuPose = mat4.clone(this._vrPoseLeft);
-        const lift = mat4.create();
-        // [USER REQUEST] Lift menu 3cm (Y) and shift 3cm Right (X) to reveal buttons
-        mat4.fromTranslation(lift, [0.03, 0.03, 0.0]);
-        mat4.multiply(menuPose, menuPose, lift);
-
-        this._vrMenu.updateMatrices(cam, menuPose);
-        this._vrMenu.render(this);
-      }
-
-      // VRLaser (Pass 1) - Only if pointing at Menu
-      if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
-        // Default to 1.0 if undefined
-        const dist = this._vrLaserDistance || 1.0;
-        // [USER REQUEST] Push laser start 1cm away to avoid intersecting controller
-        this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
-        this._vrLaser.render(this);
-      }
-
-      // Debug Pivot (Pink/Green Cube) - Pass 1
-      if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
-        gl.disable(gl.DEPTH_TEST);
-        this._debugPivotMesh.updateMatrices(cam);
-        this._debugPivotMesh.render(this);
-        gl.enable(gl.DEPTH_TEST);
-      }
-
-      // VR Brush Tip (Pencil) via Reliable Ray Matrix
-      if (this._vrControllerTip) {
-        // DEBUG: Throttle log every 180 frames (approx 2s at 90fps)
-        if (this._logThrottle++ % 180 === 0) {
-          if (window.screenLog) {
-            const hasMatrix = !!this._vrRightRayMatrix;
-            // const tipVis = this._vrControllerTip.isVisible();
-            const poseStatus = this._vrRightRayMatrix ? `Pos=[${this._vrRightRayMatrix[12].toFixed(2)},${this._vrRightRayMatrix[13].toFixed(2)}]` : "NoMat";
-            // window.screenLog(`Ptr: M=${hasMatrix ? 'OK' : 'NULL'} ${poseStatus}`, hasMatrix ? "lime" : "orange");
-            // if (!hasMatrix && this._logThrottle % 360 === 0) window.screenLog("Wait: Ptr Matrix Missing", "orange");
-          }
-        }
-
-        if (this._vrRightRayMatrix) {
-          // 1. Update Tip Matrix
-          const mTip = this._vrControllerTip.getMatrix();
-          mat4.copy(mTip, this._vrRightRayMatrix);
-
-          // Apply Local Transform (Rotate +Y to -Z, Offset Base)
-          // Standalone (OculusBrowser) needs 7.5cm, PCVR needs 2.5cm
-          const offY = this._isQuestStandalone ? 0.075 : 0.025;
-          mat4.rotateX(mTip, mTip, -Math.PI / 2);
-          mat4.translate(mTip, mTip, [0, offY, 0]);
-
-          this._vrControllerTip.updateMatrices(cam);
-          this._vrControllerTip.render(this);
-
-          // 2. Update Radius Sphere code REMOVED (Moved to Pass 3 Overlay)
-          // Storing matrix for Pass 3 use is handled by _vrRightRayMatrix existence.
-        }
-      }
-
-      // Log Once
-      if (window.screenLog && Math.random() < 0.005) {
-        // if (window.screenLog && Math.random() < 0.01) window.screenLog(`VR Rendering: ${meshes.length} Meshes`, "grey");
-      }
-
-      // --- PASS 2: SCALED/TRANSFORMED WORLD (Content) ---
-      // Apply World Transform to View Matrix
-      // View = View * WorldMatrix
-
-      if (this._xrWorldOffset) {
-        // Apply Translation/Rotation
-        const t = this._xrWorldOffset.position;
-        const r = this._xrWorldOffset.orientation;
-
-        const worldMat = mat4.create();
-        mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-        mat4.multiply(cam._view, cam._view, worldMat);
-      }
-
-      if (this._vrScale !== 1.0) {
-        mat4.scale(cam._view, cam._view, [this._vrScale, this._vrScale, this._vrScale]);
-      }
-
-      // Grid
-      if (this._showGrid && grid) {
-        grid.updateMatrices(cam);
-        grid.render(this);
-      }
-
-      // Meshes
-      for (let k = 0, l = meshes.length; k < l; ++k) {
-        if (!meshes[k].isVisible()) continue;
-        meshes[k].updateMatrices(cam);
-        meshes[k].render(this);
-      }
-
-      // Wireframe (Pass 2)
-      gl.enable(gl.BLEND);
-      gl.depthFunc(gl.LESS);
-      for (let k = 0, l = meshes.length; k < l; ++k) {
-        if (meshes[k].getShowWireframe())
-          meshes[k].renderWireframe(this);
-      }
-      gl.depthFunc(gl.LEQUAL);
-      gl.disable(gl.BLEND);
-
-      // Brush Indicator (NEW) - Pass 2 (World Scaled)
-      // Rendered here to match Mesh Coordinates
-      if (this._sculptManager && this._picking.getMesh()) {
-        const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
-
-        // Visuals: On Top + Blending
-        gl.disable(gl.DEPTH_TEST);
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-        // Use 'cam' (current camera with World Scale applied)
-        this._sculptManager.getSelection().renderVR(this, cam, radius);
-
-        gl.disable(gl.BLEND);
-        gl.enable(gl.DEPTH_TEST);
-      }
-
-      // --- PASS 3: OVERLAY (Real World, Always On Top) ---
-      // Restore Real World Matrices (Inverse of View Transform)
-      mat4.copy(cam._view, view.transform.inverse.matrix);
-      mat4.copy(cam._proj, view.projectionMatrix);
-
-      // Render VR Brush Radius Sphere (Moved from Pass 1)
-      if (this._vrBrushRadiusSphere && this._vrRightRayMatrix && this._vrControllerTip) {
-        // We reuse the Ray Matrix from Pass 1 (which tracks the controller)
-        const mSphere = this._vrBrushRadiusSphere.getMatrix();
-        mat4.copy(mSphere, this._vrRightRayMatrix);
-
-        // Transform: Rotate X -90 (Align Y with Z), Translate Y (Tip Center)
-        // Standalone: 10cm (7.5cm base + 2.5cm half-length), PCVR: 5cm (2.5cm base + 2.5cm half-length)
-        const offY = this._isQuestStandalone ? 0.10 : 0.05;
-        mat4.rotateX(mSphere, mSphere, -Math.PI / 2);
-        mat4.translate(mSphere, mSphere, [0, offY, 0]);
-
-        // FIX: Normalize rotation columns to remove existing scale (Double Scaling Bug Prevention)
-        const sx = Math.hypot(mSphere[0], mSphere[1], mSphere[2]);
-        const sy = Math.hypot(mSphere[4], mSphere[5], mSphere[6]);
-        const sz = Math.hypot(mSphere[8], mSphere[9], mSphere[10]);
-
-        // Inverse scale to normalize
-        if (sx > 1e-6) { mSphere[0] /= sx; mSphere[1] /= sx; mSphere[2] /= sx; }
-        if (sy > 1e-6) { mSphere[4] /= sy; mSphere[5] /= sy; mSphere[6] /= sy; }
-        if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
-
-        // Scale by Radius
-        const radius = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
-        mat4.scale(mSphere, mSphere, [radius, radius, radius]);
-
-        this._vrBrushRadiusSphere.updateMatrices(cam);
-
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.ONE, gl.ONE);
-
-        gl.depthMask(false); // No depth write
-        gl.disable(gl.CULL_FACE); // Double sided
-        gl.disable(gl.DEPTH_TEST); // Always visible (Ghost through mesh)
-
-        this._vrBrushRadiusSphere.render(this);
-
-        gl.enable(gl.DEPTH_TEST);
-        gl.enable(gl.CULL_FACE);
-        gl.depthMask(true);
-        gl.disable(gl.BLEND);
-      }
-
+      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix);
     }
   }
 
@@ -718,7 +714,7 @@ class Scene {
     var canvas = document.getElementById('canvas');
     var gl = this._gl = canvas.getContext('webgl', attributes) || canvas.getContext('experimental-webgl', attributes);
     if (!gl) {
-      window.alert('Could not initialise WebGL. No WebGL, no SculptGL. Sorry.');
+      window.alert('Values: WebGL context could not be retrieved.');
       return;
     }
 
@@ -1460,6 +1456,27 @@ class Scene {
 
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
+
+      // [DESKTOP 6DOF] Spectator Render (Parity Strategy)
+      if (this._desktopOffsetMode) {
+        const gl = this._gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        if (pose.views.length > 0) {
+          const view = pose.views[0];
+          // Use Desktop Aspect Ratio for Projection
+          // Note: We use a temporary projection matrix to match desktop window
+          const aspect = this._canvasWidth / this._canvasHeight;
+          const prob = mat4.create();
+          mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
+
+          // Render Shared Logic
+          // This applies the offset internally (Parity with HMD)
+          this._renderSceneVR(this._camera, view.transform.inverse.matrix, prob);
+        }
+      }
     }
   }
 
@@ -2218,6 +2235,12 @@ class Scene {
 
   _preventDefault(event) {
     event.preventDefault();
+  }
+
+  toggleDesktopOffset() {
+    this._desktopOffsetMode = !this._desktopOffsetMode;
+    if (window.screenLog) window.screenLog(`Desktop 6DOF: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
+    this.render();
   }
 }
 
