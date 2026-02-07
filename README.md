@@ -20,6 +20,103 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.35**: **Desktop Preview Polish**:
+    - **Feature**: Full "Desktop Preview" for VR Menu (Shift-Alt-V).
+    - **Fix**: Resolved "phantom" highlighting where background tabs would light up or click through the overlay menu.
+    - **Fix**: Polished hover states for overlay buttons (white border, brightness boost).
+    - **Fix**: Removed debug logs for a cleaner console experience.
+
+- **v0.7.33**: **Desktop Overlay Click Block**:
+    - **Fix**: Applied the same spatial blocking to **clicks** that was applied to hovers. This prevents clicking "background tabs" (like About & Help) through the overlay menu when buttons overlap.
+
+- **v0.7.32**: **Desktop Overlay Log Cleanup**:
+    - **Cleanup**: Removed spammy debug logs (`[GuiXR] Map: ...`) to keep the console clean for VR testing.
+
+- **v0.7.31**: **Desktop Overlay Spatial Fix**:
+    - **Fix**: Re-enabled tab highlighting when the overlay is open, BUT only if the cursor is *outside* the overlay menu bounds. This allows you to select tabs if the menu is not covering them, but prevents accidental tab clicks when interacting with the menu.
+
+- **v0.7.30**: **Desktop Overlay Tab Collision Fix**:
+    - **Fix**: Disabled background tab highlighting while the overlay menu is open. This prevents "phantom" highlights on tabs (like "About & Help") when hovering over overlay buttons that sit visually on top of the tab area.
+
+- **v0.7.29**: **Desktop Overlay Polish**:
+    - **Fix**: Removed valid-but-distracting gray borders from un-hovered overlay buttons.
+    - **Fix**: Ensured main tab highlights are cleared when interacting with the overlay menu (fixed stale "About & Help" highlight).
+
+- **v0.7.28**: **Desktop Overlay Highlight Final**:
+    - **Fix**: Finalized the robust highlighting logic (fixed previous update failure). Border is now drawn last to ensure visibility.
+
+- **v0.7.27**: **Desktop Overlay Robust Highlight**:
+    - **Fix**: Adjusted overlay highlighting z-order to ensure buttons and comboboxes don't obscure the selection. Added a clean white border on top of all hovered items.
+
+- **v0.7.26**: **Desktop Overlay Green Highlight**:
+    - **Debug**: Changed overlay hover highlight to bright GREEN to make it obvious if it's working or not.
+
+- **v0.7.25**: **Desktop Overlay Reference Fix**:
+    - **Fix**: Declared `hitWidget` variable to prevent ReferenceError in debug logs.
+
+- **v0.7.24**: **Desktop Overlay Syntax Final**:
+    - **Fix**: Finally fixed the syntax error in `GuiXR.js` (removed premature closing brace).
+
+- **v0.7.23**: **Desktop Overlay Brace Fix**:
+    - **Fix**: Resolved another syntax error (premature closing brace) in `GuiXR.js`.
+
+- **v0.7.22**: **Desktop Overlay Syntax Fix**:
+    - **Fix**: Resolved syntax error caused by stray code in the previous debug patch.
+
+- **v0.7.21**: **Desktop Overlay Debug**:
+    - **Debugging**: Added logs to `_updateOverlayHover` to trace hit testing math for overlay widgets.
+
+- **v0.7.20**: **Desktop Highlight Fix**:
+    - **Fix**: Added a render loop to `togglePreview` to ensure the GUI redraws when hover states change (since the main VR loop might not be running or updating GuiXR in desktop mode).
+
+- **v0.7.19**: **Desktop Coord Fix Retry**:
+    - **Fix**: Re-applied the coordinate fix (previous attempt failed to patch). Now correctly passing normalized coordinates to `setCursor`.
+
+- **v0.7.18**: **Desktop Coord Fix**:
+    - **Fix**: Removed double multiplication of coordinates in Desktop Preview. `setCursor` already scales by canvas size, so we now pass normalized coordinates.
+
+- **v0.7.17**: **Desktop Debug Rect**:
+    - **Debugging**: Added logs to `mapEventToPixels` to check `getBoundingClientRect()` values.
+
+- **v0.7.16**: **Desktop Input Fix**:
+    - **Fix**: Hardcoded canvas size for Desktop Preview input mapping to avoid issues with high-DPI displays or renderer resizing.
+
+- **v0.7.15**: **Desktop Fix 2**:
+    - **Fix**: Resolved `ReferenceError` preventing debug logs from working in Desktop Preview.
+
+- **v0.7.14**: **Desktop Tracing**:
+    - **Debugging**: Added verbose logs to `onInteract` to diagnose why clicks might be ignored in Desktop Preview.
+
+- **v0.7.13**: **Desktop Debug Fix**:
+    - **Fix**: Corrected control flow in `onInteract` which was preventing Tab and Widget interaction in Desktop Preview mode.
+
+- **v0.7.12**: **Desktop Debug Logs**:
+    - **Debugging**: Added console logs to `Shift-Alt-V` input to trace why mouse interaction might be failing.
+
+- **v0.7.11**: **Desktop Menu Debug**:
+    - **Debugging**: Fixed `Shift-Alt-V` preview mode to correctly handle mouse input, allowing easy testing of VR menus on desktop.
+
+- **v0.7.10**: **Menu Input Priority**:
+    - **Fix**: Clicking a menu button that overlaps a Tab Header now correctly triggers the button instead of switching the tab.
+
+- **v0.7.9**: **Menu Hover Fix**:
+    - **Highlight Stability**: Fixed an issue where menu buttons could stay highlighted when moving quickly between them.
+
+- **v0.7.8**: **VR Menu Polish**:
+    - **Toggle-to-Close**: Clicking the active menu tab (e.g. "Files") while open will now close it.
+    - **Hover Focus**: Top Menu Tabs will now highlight when hovered, even if a menu dropdown is currently open.
+
+- **v0.7.7**: **VR Menu Flow**:
+    - **Fast Switching**: Clicking a Top Menu Tab now instantly opens it, even if another menu is already open (no longer need to click "Back" or empty space first).
+    - **Cleanup**: Improved overlay closing logic.
+
+- **v0.7.6**: **Controller Calibration Mode**: [Read the Feature Guide](docs/feature_desktop_6dof.md)
+    - **Move Me**: Press 'C' to toggle Calibration Mode.
+    - **Grip & Drag**: Hold grip to move the Spectator Camera relative to the world.
+    - **Twist**: Hold grip and twist to rotate the Spectator Camera.
+    - **Visuals**: Sculpt mesh hides automatically during calibration for a clearer view.
+    - **Decoupled**: Calibration only affects the Spectator View; VR Headset view remains 1:1.
+
 - **v0.7.0**: **Desktop 6DOF (Spectator Mode)**: [Read the Feature Guide](docs/feature_desktop_6dof.md)
     - **Desktop Mode**: Simulated "Seated" view for non-VR users.
     - **Parity Render**: Desktop view now renders exact same tools/mesh as VR (Solved "Missing Controller" bug).
@@ -89,9 +186,10 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Re-symmetrize function, choose left->right, right->left
     - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
     - Drag tool not working correctly with symmetry
+    - Drag and move support rotation
     - Reference image support
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - Desktop mode with 6dof controllers! That should be possible to hack together!
+    - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
 - **UI + UX**  
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
@@ -117,7 +215,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Symmetry behaves strangely in desktop mode (investigate).
     - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
     - Should re-enable mouse controls to adjust the screen offset, eaier than using the consoel commands. Also just standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
-    -idea! calibrate/adjust with grip controls. press c, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap c to exit out, now you're good to go.
+    - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
 
 ## Quick Start
 Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.

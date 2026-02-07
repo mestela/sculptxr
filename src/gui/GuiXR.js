@@ -204,11 +204,28 @@ class GuiXR {
     return { x: CANVAS_SIZE / 2, y: CANVAS_SIZE / 2 };
   }
 
+  closeOverlay() {
+    this._overlay = null;
+    this._overlayData = null;
+    this._needsRedraw = true;
+  }
+
   // Console Helper for Tab Switching
   switchTab(tabName) {
     const tabIdx = GLOBAL_TABS.indexOf(tabName);
 
-    // Check if it's one of our dropdown tabs
+    // Toggle-to-Close Logic
+    // If the active overlay corresponds to this tab, close it and return.
+    if (this._overlay === 'menu' && this._overlayData && this._overlayData.tabName === tabName) {
+      console.log(`[GuiXR] Toggling closed tab: ${tabName}`);
+      this.closeOverlay();
+      this._activeCombobox = null;
+      return;
+    }
+
+    // Auto-close existing overlay/combobox to prevent stack buildup
+    this.closeOverlay();
+    this._activeCombobox = null;
     if (tabIdx !== -1) {
       const w = this._canvas.width;
 
@@ -318,27 +335,45 @@ class GuiXR {
     document.body.appendChild(div);
     this._previewContainer = div;
 
-    console.log("[GuiXR] Desktop Preview Visible (Interactive).");
+    console.log(`[GuiXR] Desktop Preview Visible. Canvas: ${this._canvas.width}x${this._canvas.height}`);
+
+    // Start Desktop Render Loop
+    const loop = () => {
+      if (!this._previewContainer) return;
+      if (this._needsRedraw) {
+        this.draw();
+      }
+      requestAnimationFrame(loop);
+    };
+    loop();
 
     // Attach Events
-    const mapEventToNormalized = (e) => {
+    const mapEventToPixels = (e) => {
       const rect = this._canvas.getBoundingClientRect();
       const x = (e.clientX - rect.left) / rect.width;
       const y = (e.clientY - rect.top) / rect.height;
-      return { u: x, v: y };
+
+      if (Math.random() < 0.05 || e.type === 'pointerdown') {
+
+      }
+
+      return {
+        x: x,
+        y: y
+      };
     };
 
     const onPointerDown = (e) => {
       if (e.button !== 0) return; // Only left click
       e.preventDefault();
-      const { u, v } = mapEventToNormalized(e);
-      this.setCursor(u, v);
-      this.onInteract(u, v, true);
+      const { x, y } = mapEventToPixels(e);
+      this.setCursor(x, y);
+      this.onInteract(x, y, true);
     };
     const onPointerMove = (e) => {
       e.preventDefault();
-      const { u, v } = mapEventToNormalized(e);
-      this.setCursor(u, v);
+      const { x, y } = mapEventToPixels(e);
+      this.setCursor(x, y);
     };
     const onPointerUp = (e) => {
       e.preventDefault();
@@ -423,10 +458,60 @@ class GuiXR {
     if (this._overlay) {
       // If Overlay is 'menu', we might want to highlight buttons inside it?
       // YES, handled by _updateOverlayHover.
-      this._hoverWidget = null;
-      this._hoverTab = null;
+
+      // 0a. Check if we are physically OVER the overlay box
+      let isOverOverlay = false;
+      if (this._overlayData) {
+        // Calculate the Visual Bounds of the Overlay
+        // Logic must match _drawOverlay transforms:
+        // Translate(pivot), Scale(1.13), Translate(-pivot)
+        // Or simplified: relative to pivot, scale applied.
+
+        // However, simple Bounds Check:
+        // The overlay is drawn at this._overlayData.x/y (Pivot) with Scaling.
+        // Let's use the same inverse math as _updateOverlayHover to see if we are "inside".
+        // In _updateOverlayHover:
+        // const pivot = { x: data.x, y: data.y };
+        // const scx = (cx - pivot.x) * invScale + pivot.x;
+        // rx = scx - pivot.x => (cx - pivot.x) * invScale
+        //
+        // So 'rx' is the unscaled relative X.
+        // If rx is within [0, data.w], we are inside horizontally.
+
+        const data = this._overlayData;
+        const pivotX = data.x;
+        const pivotY = data.y;
+        const invScale = 1 / OVERLAY_SCALE; // 1 / 1.13
+
+        // Transform Cursor to Overlay Local Space
+        const localX = (cx - pivotX) * invScale;
+        const localY = (cy - pivotY) * invScale;
+
+        if (localX >= 0 && localX <= data.w && localY >= 0 && localY <= data.h) {
+          isOverOverlay = true;
+        }
+      }
+
+      if (isOverOverlay) {
+        // We are hitting the overlay. Block Tab Hover.
+        if (this._hoverTab) {
+          this._hoverTab = null;
+          this._needsRedraw = true;
+        }
+        this._hoverWidget = null;
+        this._updateOverlayHover();
+        return; // Consume event
+      }
+
+      // If NOT over overlay, we allow fall-through to Header/Tab check.
+      // But we still update overlay hover (to handle "Mouse off" state clearing?)
+      // Actually _updateOverlayHover handles "mouse off" internally if we call it?
+      // If we DON'T call it, highlighting might stick?
+      // Let's call it, but ignore hits? 
+      // No, if we are NOT over overlay, _updateOverlayHover will naturally find nothing (and clear highlight).
       this._updateOverlayHover();
-      return;
+
+      // FALL THROUGH to check Tabs (if cy < HEADER_HEIGHT)
     }
 
     if (this._activeCombobox) {
@@ -512,20 +597,45 @@ class GuiXR {
     const ry = scy - oy;
 
     let newHover = null;
+    let hitWidget = null;
+    let logHit = false;
+    // Debounce log
+    if (Math.random() < 0.02) logHit = true;
+
+    if (logHit) {
+
+    }
+
     for (const w of this._overlayData.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
+          hitWidget = w;
           newHover = w;
+
           break;
         }
       }
     }
 
+
+
+    // Force Redraw if we have a hover but it wasn't updated? No.
+    // Logic seems solid.
+    // I will enable the log to see it in action.
+
     // New Property for Overlay Hover
     if (this._hoverOverlayWidget !== newHover) {
+      // Debug Logging for transition
+      const oldId = this._hoverOverlayWidget ? (this._hoverOverlayWidget.id || this._hoverOverlayWidget.label) : 'null';
+      const newId = newHover ? (newHover.id || newHover.label) : 'null';
+      // console.log(`[GuiXR] Hover Change: ${oldId} -> ${newId}`);
+
       this._hoverOverlayWidget = newHover;
       this._needsRedraw = true;
       this._requestDraw();
+    } else {
+      // Even if same, if we moved significantly or just to be safe?
+      // No, if same, no need to redraw.
     }
   }
 
@@ -631,10 +741,65 @@ class GuiXR {
       return;
     }
 
-    // 0. Check Overlay
+    // 0. Check Overlay (with Tab Switching Priority)
     if (this._overlay) {
       if (!isPressed) return; // Only interact on press
       if (now - this._inputDebounce < 250) return;
+
+      // PRIORITY: Check if clicking a TAB HEADER (Outside Overlay)
+      // Only allowed if we are NOT clicking on the Overlay itself.
+
+      let isOverOverlay = false;
+      if (this._overlayData) {
+        const data = this._overlayData;
+        const pivotX = data.x;
+        const pivotY = data.y;
+        const invScale = 1 / OVERLAY_SCALE;
+
+        const localX = (cx - pivotX) * invScale;
+        const localY = (cy - pivotY) * invScale;
+
+        if (localX >= 0 && localX <= data.w && localY >= 0 && localY <= data.h) {
+          isOverOverlay = true;
+        }
+      }
+
+      // If we are NOT over the overlay, AND we are in the header area, check tabs.
+      if (!isOverOverlay && cy < TAB_HEIGHT * 3) {
+        // We need to re-run the Tab Hit logic here because it's usually blocked by Overlay
+        const w = this._canvas.width;
+        if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
+          const row1 = GLOBAL_TABS.slice(0, 3);
+          const row2 = GLOBAL_TABS.slice(3, 6);
+          const row3 = GLOBAL_TABS.slice(6);
+
+          let switched = false;
+          // Row 1
+          if (cy < TAB_HEIGHT) {
+            const r1W = w / row1.length;
+            const idx = Math.floor(cx / r1W);
+            if (idx >= 0 && idx < row1.length) { this.switchTab(row1[idx]); switched = true; }
+          }
+          // Row 2
+          else if (cy < TAB_HEIGHT * 2) {
+            const r2W = w / row2.length;
+            const idx = Math.floor(cx / r2W);
+            if (idx >= 0 && idx < row2.length) { this.switchTab(row2[idx]); switched = true; }
+          }
+          // Row 3
+          else if (cy < TAB_HEIGHT * 3) {
+            const r3W = w / row3.length;
+            const idx = Math.floor(cx / r3W);
+            if (idx >= 0 && idx < row3.length) { this.switchTab(row3[idx]); switched = true; }
+          }
+
+          if (switched) {
+            this._inputDebounce = now;
+            return;
+          }
+        }
+      }
+
       this._inputDebounce = now;
       this._handleOverlayInteract(cx, cy, isPressed);
       return;
@@ -686,6 +851,14 @@ class GuiXR {
       }
     }
 
+    // Scrollbar Interaction Check (Needed for Debug Log)
+    const canvasW = this._canvas.width;
+    const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
+
+    if (isPressed) {
+      console.log(`[GuiXR] Interact: ${cx.toFixed(0)}, ${cy.toFixed(0)} | Target: ${targetWid ? targetWid.id : 'None'} | Scroll: ${isScrollInteraction} | Overlay: ${this._overlay}`);
+    }
+
     // Dynamic Debounce
     let debounceTime = 250;
     // Faster interaction for continuous controls
@@ -696,10 +869,6 @@ class GuiXR {
 
     // Check Tabs
     if (!targetWid && cy < TAB_HEIGHT) debounceTime = 250;
-
-    // Scrollbar Debounce Override
-    const canvasW = this._canvas.width;
-    const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
 
     if (isScrollInteraction) {
       debounceTime = 0; // Immediate response for scrollbar
@@ -771,38 +940,76 @@ class GuiXR {
     // But `this._activeCombobox` overrides input in `onInteract`.
 
 
-    // 1. Check Tabs (Header)
-    if (isPressed && (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode))) {
+    // 3. Check Widgets
+    if (targetWid && isPressed && this._lastScrollY === undefined) {
+      if (targetWid.disabled) return;
+
+      if (targetWid.type === 'slider') {
+        this._activeSlider = targetWid;
+        // ... (Slider Logic remains same, but we need to ensure we return)
+        const sliderW = targetWid.w;
+        const sliderX = targetWid.x;
+
+        let t = (cx - sliderX) / sliderW;
+        t = Math.max(0, Math.min(1, t));
+
+        let val = t;
+        if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
+          val = targetWid.min + t * (targetWid.max - targetWid.min);
+          if (targetWid.step) {
+            const steps = Math.round((val - targetWid.min) / targetWid.step);
+            val = targetWid.min + steps * targetWid.step;
+          }
+        }
+
+        if (targetWid.value !== val) {
+          targetWid.value = val;
+          if (targetWid.onInput) targetWid.onInput(val);
+          this._executeAction(targetWid);
+          this._needsRedraw = true;
+        }
+        return;
+      }
+
+      if (targetWid.type === 'section_header') {
+        const sec = targetWid.label;
+        this._sectionStates[sec] = !this._sectionStates[sec];
+        this._needsRedraw = true;
+        this.draw();
+        return;
+      }
+
+      this._handleWidgetClick(targetWid);
+      return;
+    }
+
+    // 4. Check Tabs (Header) - Only if NOT a widget interaction
+    // We check this AFTER widgets to ensure widgets (like top-aligned ones?) don't get blocked?
+    // Actually, Tabs are at the very top. Widgets are usually below.
+    // Except Overlay... which is handled at step 0.
+
+    if (isPressed && cy < HEADER_HEIGHT) {
+      // Check which tab
+      const w = this._canvas.width;
+      if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
       const row1 = GLOBAL_TABS.slice(0, 3);
       const row2 = GLOBAL_TABS.slice(3, 6);
       const row3 = GLOBAL_TABS.slice(6);
 
-      // Row 1
-      if (cy < TAB_HEIGHT) {
         const r1W = w / row1.length;
+        const r2W = w / row2.length;
+        const r3W = w / row3.length; // 2 items
+
+        if (cy < TAB_HEIGHT) {
         const idx = Math.floor(cx / r1W);
         if (idx >= 0 && idx < row1.length) this.switchTab(row1[idx]);
-        return;
-      }
-      // Row 2
-      if (cy < TAB_HEIGHT * 2) {
-        const r2W = w / row2.length;
+        } else if (cy < TAB_HEIGHT * 2) {
         const idx = Math.floor(cx / r2W);
         if (idx >= 0 && idx < row2.length) this.switchTab(row2[idx]);
-        return;
-      }
-      // Row 3
-      if (cy < TAB_HEIGHT * 3) {
-        const r3W = w / row3.length;
+        } else if (cy < TAB_HEIGHT * 3) {
         const idx = Math.floor(cx / r3W);
-        if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
-        return;
-      }
-    } else {
-      // Fallback logic if needed, but above covers all GLOBAL_TABS interaction
-      if (cy < HEADER_HEIGHT) {
-        // Just reset to sidebar?
-        console.log("Clicked header in unknown mode");
+          if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
+        }
         return;
       }
     }
@@ -1476,6 +1683,11 @@ class GuiXR {
     this._needsRedraw = false;
     this._needsUpload = true; // Signal that we have a new texture to upload
 
+    // Safety: If overlay is closed, clear hover
+    if (!this._overlay) {
+      this._hoverOverlayWidget = null;
+    }
+
     const ctx = this._ctx;
     const w = CANVAS_SIZE;
     const h = CANVAS_SIZE;
@@ -1841,13 +2053,12 @@ class GuiXR {
         const wx = x + wid.x;
         const wy = y + wid.y;
 
-        // Hover Highlight for Overlay
-        if (this._hoverOverlayWidget === wid) {
-          ctx.fillStyle = '#333';
+        const isHover = (this._hoverOverlayWidget === wid);
+
+        // Hover Background (Generic)
+        if (isHover) {
+          ctx.fillStyle = '#444'; 
           ctx.fillRect(wx, wy, wid.w, wid.h);
-          ctx.strokeStyle = '#aaa';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(wx, wy, wid.w, wid.h);
         }
 
         ctx.textAlign = 'left';
@@ -1931,18 +2142,18 @@ class GuiXR {
           ctx.fillText(disp.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'button') {
-          ctx.fillStyle = '#333';
+          ctx.fillStyle = isHover ? '#555' : '#333';
           ctx.fillRect(wx, wy, wid.w, wid.h);
 
-          ctx.strokeStyle = '#555';
-          ctx.strokeRect(wx, wy, wid.w, wid.h);
+          // ctx.strokeStyle = '#555';
+          // ctx.strokeRect(wx, wy, wid.w, wid.h);
 
           ctx.fillStyle = '#eee';
           ctx.textAlign = 'center';
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'combobox') {
-          ctx.fillStyle = '#252525';
+          ctx.fillStyle = isHover ? '#353535' : '#252525';
           ctx.fillRect(wx, wy, wid.w, wid.h);
           ctx.strokeStyle = '#444';
           ctx.strokeRect(wx, wy, wid.w, wid.h);
@@ -1968,6 +2179,13 @@ class GuiXR {
           ctx.lineTo(wx + wid.w - 10, wy + wid.h / 2 - 5);
           ctx.lineTo(wx + wid.w - 15, wy + wid.h / 2 + 5);
           ctx.fill();
+        }
+
+        // Hover Border (On Top)
+        if (isHover) {
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(wx, wy, wid.w, wid.h);
         }
       });
 

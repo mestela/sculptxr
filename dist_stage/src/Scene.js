@@ -98,13 +98,19 @@ class Scene {
       ? new XRRigidTransform({ x: 0.01, y: 1.09, z: -0.34 })
       : null;
 
+    // [DESKTOP 6DOF] Spectator Camera State
+    this._desktopOffsetMode = true; // Default ON (Zero Offset)
+    this._desktopOffset = [0.0, 0.0, 0.0]; // Fixed Offset (0,0,0)
+    this._desktopRotation = quat.create(); // Rotation
+    this._isCalibratingSpectator = false; // "Move Me" Mode
+
     this._activeHandedness = 'right';
     this._vrScale = 0.008; // Scale 100-unit world to 0.8 meters (User Req: "25% too big")
     this._exposure = 1.0; // Reset to 1.0 after fixing ShaderMerge 5x boost
 
     this._vrGrip = {
-      left: { active: false, startPoint: vec3.create(), startRot: quat.create() },
-      right: { active: false, startPoint: vec3.create(), startRot: quat.create() }
+      left: { active: false, startPoint: vec3.create(), startRotation: quat.create() },
+      right: { active: false, startPoint: vec3.create(), startRotation: quat.create() }
     };
 
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
@@ -374,17 +380,6 @@ class Scene {
 
     // --- SETUP VIEW ---
     mat4.copy(cam._view, viewMatrix);
-
-    // [DESKTOP 6DOF] Offset Camera View (Applied to Shared Logic)
-    if (this._desktopOffsetMode) {
-      mat4.rotateY(cam._view, cam._view, Math.PI);
-      mat4.translate(cam._view, cam._view, [
-        -this._desktopOffset[0],
-        -this._desktopOffset[1],
-        -this._desktopOffset[2]
-      ]);
-    }
-
     mat4.copy(cam._proj, projMatrix);
 
     // --- PASS 1: REAL WORLD (Controllers/Debug) ---
@@ -484,21 +479,9 @@ class Scene {
     }
 
     // --- PASS 3: OVERLAY (Reset View) ---
-    // Reset View Matrix to Base (Offset logic inside Pass 3 block?)
-    // Actually, we modified cam._view in place.
-    // We need to restore it to: (Base + Offset).
-    // The easiest way is to re-copy viewMatrix and re-apply offset.
-    // Optimization: Just Undo World Transform?
-    // Safer: Re-setup.
+    // Reset View Matrix to Base
     mat4.copy(cam._view, viewMatrix);
-    if (this._desktopOffsetMode) {
-      mat4.rotateY(cam._view, cam._view, Math.PI);
-      mat4.translate(cam._view, cam._view, [
-        -this._desktopOffset[0],
-        -this._desktopOffset[1],
-        -this._desktopOffset[2]
-      ]);
-    }
+
     // Proj is same.
 
     // Render VR Brush Radius Sphere (Pass 3)
@@ -580,11 +563,13 @@ class Scene {
     if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
 
     // Meshes (Pass 2: World Scaled)
-    // See renderVR() logic for matrix scaling
-    var meshes = this._meshes;
-    for (var i = 0, l = meshes.length; i < l; ++i) {
-      if (!meshes[i].isVisible()) continue;
-      meshes[i].render(this);
+    // HIDE SCULPT during Calibration (Focus on Controllers/World alignment)
+    if (!this._isCalibratingSpectator) {
+      var meshes = this._meshes;
+      for (var i = 0, l = meshes.length; i < l; ++i) {
+        if (!meshes[i].isVisible()) continue;
+        meshes[i].render(this);
+      }
     }
 
     // Brush Indicator (NEW)
@@ -1393,35 +1378,7 @@ class Scene {
     // NUKED
   }
 
-  _drawSceneVR() {
-    var gl = this._gl;
-    gl.enable(gl.DEPTH_TEST);
 
-    // grid
-    if (this._showGrid) this._grid.render(this);
-
-    // VR Controllers
-    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    if (this._vrControllerRight) this._vrControllerRight.render(this);
-
-    // Debug Cursor
-    if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
-
-    // Debug Pivot (Pink Cube)
-    if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
-      gl.disable(gl.DEPTH_TEST);
-      this._debugPivotMesh.render(this);
-      gl.enable(gl.DEPTH_TEST);
-    }
-
-    // Meshes
-    // Just render opaque meshes for now
-    var meshes = this._meshes;
-    for (var i = 0, l = meshes.length; i < l; ++i) {
-      if (!meshes[i].isVisible()) continue;
-      meshes[i].render(this);
-    }
-  }
 
   updateDebugPivot(pos, active) {
     // NUKED: Debug Cube Forbidden
@@ -1472,9 +1429,22 @@ class Scene {
           const prob = mat4.create();
           mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
 
+          // Apply Offset (Here, for Spectator ONLY)
+          const viewMat = mat4.clone(view.transform.inverse.matrix);
+          mat4.rotateY(viewMat, viewMat, Math.PI);
+          mat4.translate(viewMat, viewMat, [
+            -this._desktopOffset[0],
+            -this._desktopOffset[1],
+            -this._desktopOffset[2]
+          ]);
+
+          // Apply Rotation
+          const matRot = mat4.create();
+          mat4.fromQuat(matRot, this._desktopRotation);
+          mat4.multiply(viewMat, viewMat, matRot);
+
           // Render Shared Logic
-          // This applies the offset internally (Parity with HMD)
-          this._renderSceneVR(this._camera, view.transform.inverse.matrix, prob);
+          this._renderSceneVR(this._camera, viewMat, prob);
         }
       }
     }
@@ -1757,6 +1727,25 @@ class Scene {
     if (bothGripped) {
       this._vrTwoHanded.latch = true;
       this.processVRTwoHanded(leftOrigin, rightOrigin);
+    } else if (this._isCalibratingSpectator) {
+      // [CALIBRATION MODE] "Move Me"
+      // World stays still, you move the Spectator Camera.
+      this._vrTwoHanded.active = false;
+      // Force Debug Pivot OFF
+      if (this.updateDebugPivot) this.updateDebugPivot(null, false);
+
+      if (leftGrip && leftOrigin && leftRot) {
+        this.processSpectatorCalibration('left', leftOrigin, leftRot);
+      } else {
+        this._vrGrip.left.active = false;
+      }
+
+      if (rightGrip && rightOrigin && rightRot) {
+        this.processSpectatorCalibration('right', rightOrigin, rightRot);
+      } else {
+        this._vrGrip.right.active = false;
+      }
+
     } else {
       this._vrTwoHanded.active = false;
       if (this.updateDebugPivot) this.updateDebugPivot(null, false);
@@ -1794,7 +1783,7 @@ class Scene {
     if (!gState.active) {
       gState.active = true;
       vec3.copy(gState.startPoint, origin);
-      quat.copy(gState.startRot, rotation);
+      quat.copy(gState.startRotation, rotation);
     } else {
       // Delta in Base Space approx World Space delta if orientation aligned
       const delta = vec3.create();
@@ -1810,13 +1799,13 @@ class Scene {
       if (rotation) {
         const qDelta = quat.create();
         const qInv = quat.create();
-        quat.invert(qInv, gState.startRot);
+        quat.invert(qInv, gState.startRotation);
         quat.multiply(qDelta, rotation, qInv); // Current * InvStart = Delta
 
         // Threshold for jitter (Rotation) - ~0.1 degree
         if (Math.abs(qDelta[3] - 1.0) > 0.000001) {
           this.rotateWorld(qDelta, origin); // Pivot around HAND (origin)
-          quat.copy(gState.startRot, rotation);
+          quat.copy(gState.startRotation, rotation);
         }
       }
     }
@@ -2239,8 +2228,72 @@ class Scene {
 
   toggleDesktopOffset() {
     this._desktopOffsetMode = !this._desktopOffsetMode;
-    if (window.screenLog) window.screenLog(`Desktop 6DOF: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
+    // if (window.screenLog) window.screenLog(`Desktop 6DOF: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
     this.render();
+  }
+
+  toggleSpectatorCalibration() {
+    this._isCalibratingSpectator = !this._isCalibratingSpectator;
+    const label = this._isCalibratingSpectator ? "CALIBRATION MODE (Move Me)" : "Standard Mode";
+    // if (window.screenLog) window.screenLog(label, this._isCalibratingSpectator ? "magenta" : "lime");
+    console.log(label);
+    this.render();
+  }
+
+  processSpectatorCalibration(handedness, origin, rotation) {
+    const gState = this._vrGrip[handedness];
+
+    if (!gState.active) {
+      // START DRAG
+      gState.active = true;
+      vec3.copy(gState.startPoint, origin);
+      quat.copy(gState.startRotation, rotation);
+    } else {
+      // DRAG (Translation)
+      const delta = vec3.create();
+      vec3.sub(delta, origin, gState.startPoint);
+
+      // DRAG (Rotation)
+      const deltaRot = quat.create();
+      const invStart = quat.create();
+      quat.invert(invStart, gState.startRotation);
+      quat.multiply(deltaRot, rotation, invStart); // diff = current * invStart
+
+      // Normalize deltaRot to avoid drift?
+      quat.normalize(deltaRot, deltaRot);
+
+      // Thresholds
+      const moved = vec3.length(delta) > 0.0001;
+      // Check angle?
+      const angle = quat.getAxisAngle(vec3.create(), deltaRot); // This is expensive/dummy, just check similarity?
+      // Just apply always if active?
+
+      if (moved || Math.abs(angle) > 0.0001) {
+        // Apply Translation
+        this._desktopOffset[0] -= delta[0];
+        this._desktopOffset[1] -= delta[1];
+        this._desktopOffset[2] -= delta[2];
+
+        // Apply Rotation (Accumulate)
+        // Order: View = View * Rot.
+        // We want to Rotate the "Spectator Rig".
+        // If I rotate hand RIGHT, I want World to rotate RIGHT?
+        // Or "Move Me"? If I rotate hand RIGHT (Clockwise), I am "Twisting the world Clockwise".
+        // So the Camera should rotate Clockwise?
+        // Let's try direct multiplication.
+        quat.multiply(this._desktopRotation, this._desktopRotation, deltaRot);
+        quat.normalize(this._desktopRotation, this._desktopRotation);
+
+        // Reset Start Points (Incremental)
+        vec3.copy(gState.startPoint, origin);
+        quat.copy(gState.startRotation, rotation);
+
+        // Force Render (Not needed during VR Frame Loop)
+        // this.render();
+
+
+      }
+    }
   }
 }
 

@@ -430,6 +430,12 @@ class SculptGL extends Scene {
       else if (window.sculptgl_instance && window.sculptgl_instance.toggleDesktopOffset) window.sculptgl_instance.toggleDesktopOffset();
     }
 
+    // [CALIBRATION] Toggle Calibration Mode
+    if (e.which === 67) { // 'C'
+      if (this.toggleSpectatorCalibration) this.toggleSpectatorCalibration();
+      else if (window.sculptgl_instance && window.sculptgl_instance.toggleSpectatorCalibration) window.sculptgl_instance.toggleSpectatorCalibration();
+    }
+
     this._gui.callFunc('onKeyDown', e);
   }
 
