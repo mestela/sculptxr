@@ -1,6 +1,6 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.7.56 (BETA) - VR Scene Menu & Desktop Debug
+**Project Status**: v0.7.57 (BETA) - VR Scene Menu & Desktop Debug
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
 **Checkpoint**:
 - `sculptxr` (BETA): **v0.7.56** (VR Scene Menu, Desktop Mode Button + Debug Logs)
@@ -17,26 +17,25 @@ We have recently implemented major VR UI updates and are currently debugging a s
 - **VR Files Menu**: Fixed texture size sliders and export handlers.
 
 ## Outstanding Issues (Next Session)
-1.  **Desktop Mode Failure (Beta Tester)**:
+1.  **Desktop Mode Failure (WAITING FOR LOGS)**:
     *   **Symptom**: Tester clicks "Desktop Mode", button turns RED (state toggles), but VR view remains unchanged (no black background/desktop render).
-    *   **Status**: Deployed `v0.7.56` with verbose logging in `Scene.js` (`onXRFrame`) to verify if `pose.views` yields any data during the spectator render pass.
-    *   **Next Step**: Wait for tester logs to confirm if `Desktop Render: Active` appears and what `Views=` count is.
-2.  **Verify VR Scene Menu**: Multi-select and Merge/Isolate implementations need field verification in VR.
-3.  **Torus Parameters**: VR Scene Menu lacks Torus parameter sliders (skipped for now).
-4.  **Performance**: VR GUI rendering optimization still relevant.
+    *   **Status**: Code reviewed. `Scene.js` logic depends on `pose.views`.
+    *   **Action**: **DO NOT TOUCH CODE** until logs are received.
+    *   **Required Log**: `Desktop Render: Active. Views=...`
+2.  **VR Scene Menu**:
+    *   **Multi-select/Merge/Isolate**: Logic verified in code, needs VR verification (Headset required).
+    *   **Torus**: Parameters are missing. Need implementation (low priority).
+3.  **Performance**: VR GUI optimization (Backlog).
 
 ## Recent Changes
+*   **v0.7.57**: **Docs**: Updated `walkthrough.md` with investigation notes.
 *   **v0.7.57**: **Fix**: Resolved Isolate issue where Voxel Debug Cube would appear.
-*   **v0.7.56**: **Debug**: Added verbose logging to `onXRFrame` spectator path to diagnose missing desktop render.
-*   **v0.7.55**: **Debug**: Added logging to "Desktop Mode" button and `toggleDesktopOffset`.
-*   **v0.7.54**: **Feature**: Added "Desktop Mode" button to `index.html`.
-*   **v0.7.53**: **Feature**: VR Scene Menu Update (Multi-select, Merge, Isolate).
-*   **v0.7.50**: **Feature**: VR Files Menu Polish (Texture Export, Checkbox Persistence).
+*   **v0.7.56**: **Debug**: Added verbose logging to `onXRFrame` spectator path.
 
 ## Deployment
 *   **PROD**: `./deploy.sh` (Deploys to tokeru.com/sculptxr)
 *   **BETA**: `./deploy_beta.sh` (Deploys to tokeru.com/sculptxrbeta)
 
 ## Next Task
-*   Review logs from beta tester regarding Desktop Mode failure.
-*   Verify VR Scene Menu functionality.
+*   **WAIT** for beta tester logs regarding Desktop Mode.
+*   **Verify** VR Scene Menu when headset is available.
