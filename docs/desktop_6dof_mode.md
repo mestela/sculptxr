@@ -58,7 +58,7 @@ The VR workspace and Desktop Camera share the same World Space (`SCENE_TRANSFORM
 *   **Rotation**: The Desktop Camera is rotated **180° around Y** to face the "Front" of the sculpture (matching the default VR seated position).
 *   **Offset**: Default offset is `(0, 0, 0)`.
     *   *History*: We tested inverted Y offsets, but `(0,0,0)` proved most ergonomic for the standard "Seated at pivot" feel.
-    *   *Runtime Tuning*: You can type `setSpectatorOffset(x, y, z)` in the console to adjust this live.
+    *   *Runtime Tuning*: Press C to enable calibration mode, use the grip triggers to adjust, press C again to exit calibration.
 
 ### 4. Input Controls
 *   **Toggle**: Press **`D`** on the keyboard to toggle the "Desktop Offset" mode.
