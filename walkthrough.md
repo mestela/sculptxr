@@ -221,8 +221,13 @@ Validate the new VR Scene Menu (Multi-select, Merge, Isolate) and debug the "Des
     *   **"Tiny"**: Likely due to `_vrScale` (0.008) shrinking the world, combined with the camera being at 0,0,0.
     *   **Conclusion**: The logic is "working" (rendering), but the *View Transform* is likely garbage (0,0,0) because the headset isn't tracking properly during the test, or the "Counter-View" rotation isn't compensating enough for a 0,0,0 origin.
 
+## Resolution (Feb 08)
+*   **Cause**: **User Error**. The beta tester had not covered the headset's **Proximity Sensor**.
+*   **Effect**: When the headset was placed on the desk, it went to sleep/standby, stopping tracking and sending invalid/identity poses.
+*   **Fix**: Covering the sensor (tape/sticker) keeps the headset active, ensuring valid poses are sent even when not worn.
+*   **Action**: Updated `docs/desktop_6dof_mode.md` with explicit instructions to cover the sensor.
+
 ## Next Steps
-*   **Debug**: Add a "Force Offset" or "Simulate Headset" toggle to test Desktop Mode without a headset (mock pose).
 *   **Torus**: Parameters are currently missing in VR.
 
 
