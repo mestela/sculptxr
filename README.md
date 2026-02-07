@@ -204,7 +204,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky
-    - UX for importing meshes is clunky (forced back into 2d mode to get standard browser import dialog)
+    - Really need to make 100% native dialog for inport/export. Ie the panel should show popups, have a file browser. Tricky.
     - Double handed grip needs work, gets hard to control when the world has been scaled too large
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
