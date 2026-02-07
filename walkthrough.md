@@ -209,7 +209,20 @@ Validate the new VR Scene Menu (Multi-select, Merge, Isolate) and debug the "Des
     *   **Merge**: Confirmed logic exists.
     *   **Isolate**: `v0.7.57` fixed the "Red Debug Cube" appearing during Isolate (it was a leftover `debugPivotMesh` visibility toggle).
 
+## Investigation Update (Feb 07)
+*   **Logs Receiver**: Tester logs show:
+    ```
+    Desktop Render: Active. Views=2
+    ```
+    This confirms the Spectator Render Pass *is* executing and receiving a valid Stereo View from WebXR.
+*   **Visual Symptom**: Tester provided a screenshot showing the view "inside the sphere, tiny, seeing controllers distorted at the origin".
+*   **Analysis**:
+    *   **"Distorted at origin"**: Suggests the Camera and Controllers are overlapping at (0,0,0). This often happens when tracking is lost or the headset is sleeping, causing the `ViewerPose` to default to an Identity transform.
+    *   **"Tiny"**: Likely due to `_vrScale` (0.008) shrinking the world, combined with the camera being at 0,0,0.
+    *   **Conclusion**: The logic is "working" (rendering), but the *View Transform* is likely garbage (0,0,0) because the headset isn't tracking properly during the test, or the "Counter-View" rotation isn't compensating enough for a 0,0,0 origin.
+
 ## Next Steps
-*   **Torus**: Parameters are currently missing in VR (and commented out in Desktop). Need implementation.
-*   **Desktop Mode**: Awaiting logs to confirm if `Desktop Render` block is even reached.
+*   **Debug**: Add a "Force Offset" or "Simulate Headset" toggle to test Desktop Mode without a headset (mock pose).
+*   **Torus**: Parameters are currently missing in VR.
+
 

@@ -17,11 +17,11 @@ We have recently implemented major VR UI updates and are currently debugging a s
 - **VR Files Menu**: Fixed texture size sliders and export handlers.
 
 ## Outstanding Issues (Next Session)
-1.  **Desktop Mode Failure (WAITING FOR LOGS)**:
-    *   **Symptom**: Tester clicks "Desktop Mode", button turns RED (state toggles), but VR view remains unchanged (no black background/desktop render).
-    *   **Status**: Code reviewed. `Scene.js` logic depends on `pose.views`.
-    *   **Action**: **DO NOT TOUCH CODE** until logs are received.
-    *   **Required Log**: `Desktop Render: Active. Views=...`
+1.  **Desktop Mode Failure (LOGS RECEIVED)**:
+    *   **Symptom**: Tester clicks "Desktop Mode", button turns RED. Logs show `Desktop Render: Active. Views=2`.
+    *   **Visuals**: User reports "inside sphere, tiny, distorted controllers at origin", suggesting headset tracking loss (Pose=Identity) or scale issues.
+    *   **Status**: Logic executing. Pose likely invalid/zeroed during test.
+    *   **Next Step**: Implement a "Debug/Mock Pose" mode to verify offset logic without relying on erratic headset tracking.
 2.  **VR Scene Menu**:
     *   **Multi-select/Merge/Isolate**: Logic verified in code, needs VR verification (Headset required).
     *   **Torus**: Parameters are missing. Need implementation (low priority).
@@ -37,5 +37,5 @@ We have recently implemented major VR UI updates and are currently debugging a s
 *   **BETA**: `./deploy_beta.sh` (Deploys to tokeru.com/sculptxrbeta)
 
 ## Next Task
-*   **WAIT** for beta tester logs regarding Desktop Mode.
-*   **Verify** VR Scene Menu when headset is available.
+*   **Investigate** "Distorted at Origin" issue (Mock Pose / Force Offset).
+*   **Implement** Torus parameters in VR.
