@@ -354,7 +354,7 @@ class GuiXR {
       const y = (e.clientY - rect.top) / rect.height;
 
       if (Math.random() < 0.05 || e.type === 'pointerdown') {
-        // console.log(`[GuiXR] Map: client=${e.clientX},${e.clientY} rect=${rect.left},${rect.top} w=${rect.width} h=${rect.height} -> norm=${x.toFixed(2)},${y.toFixed(2)}`);
+
       }
 
       return {
@@ -603,7 +603,7 @@ class GuiXR {
     if (Math.random() < 0.02) logHit = true;
 
     if (logHit) {
-      // console.log(`[GuiXR] Overlay Hover: cx=${cx.toFixed(0)}, cy=${cy.toFixed(0)}, ox=${ox.toFixed(0)}, oy=${oy.toFixed(0)} => rx=${rx.toFixed(0)}, ry=${ry.toFixed(0)}`);
+
     }
 
     for (const w of this._overlayData.widgets) {
@@ -611,7 +611,7 @@ class GuiXR {
         if (!w.disabled && !w.header) {
           hitWidget = w;
           newHover = w;
-          // if (logHit) console.log(`[GuiXR] Hit Widget: ${w.id || w.label} @ ${w.x},${w.y} ${w.w}x${w.h}`);
+
           break;
         }
       }
