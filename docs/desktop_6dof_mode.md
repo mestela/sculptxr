@@ -12,7 +12,7 @@
 2. Put on your headset
 3. Open Chrome, navigate to tokeru.com/sculptxr
 4. Press the 'Enter VR' button
-5. When you can see the VR mode, take the headset off, place it on your desk facing you. Ensure the headset is a little off the edge of the desk, so the left and right fishye cameras on the side of the headset can see the ground
+5. When you can see the VR mode, take the headset off, place it on your desk facing you. PLACEMENT IS IMPORTANT! Ensure the headset is a little off the edge of the desk, so the left and right fishye cameras on the side of the headset can see the ground.
 6. Press the 'D' key to toggle the desktop mode
 7. Position yourself back a bit, so that even if you fully extend your arms forward, the controllers are still in front of the headset
 8. Use the grip handles to position the sculpt comfortably on your monitor
@@ -25,11 +25,19 @@ Now when you use the grip controls, you move everything, including your controls
 
 This process doesn't feel as intuitive as it should, I'll revisit at some point.
 
-## Tape on the proximity sensor
+## Disable auto-standby
 
-Note that the quest 3 is very aggressive about turning itself off. You need to put tape over the proximity sensor inside the headset, in the standalone settings turn off power saving, set the max time to 4 hours, and even _then_ the headset will turn itself off if it doesn't detect movement after a few minutes.
+Note that the quest 3 is (correctly) very quick to turn itself off to save battery. It has 2 main ways to do this; a light sensor near your eyebrows to detect when you're wearing it, and a timeout if it detects the headset has been still for more than 2 minutes.
 
-I think you can disable this in the developer tools, but I haven't tried it.
+To defeat the light sensor, block it with somethng opaque (a sticker, some painters tape etc)
+
+To defeat the motion sensor, for now I'm just trying to remember to tap the headset every 30 seconds. :) 
+
+Apparenty this development tool lets you turn off both things, but I haven't tried it yet:
+
+https://developers.meta.com/horizon/documentation/unity/ts-mqdh/
+
+
 
 
 
