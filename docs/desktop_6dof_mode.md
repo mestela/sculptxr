@@ -8,7 +8,7 @@
 
 ## User guide
 0. Cover the proximity/light sensor inside the headset with a sticker or opaque tape (its the thing roughly where the middle of your eyebrows would be)
-1. Connect your headset to PCVR mode (tested with Meta Link, have not tried other PC setups)
+1. Connect your headset to PCVR mode (tested with Meta Link in both USB and wifi mode, have not tried other PC setups)
 2. Put on your headset
 3. Open Chrome, navigate to tokeru.com/sculptxr
 4. Press the 'Enter VR' button
