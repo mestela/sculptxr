@@ -36,39 +36,56 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Selection', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
+  // Multi-select Checkbox
+  widgets.push({
+    type: 'checkbox', id: 'multiselect', label: 'Multi-select', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: !!main._vrMultiSelect,
+    onInteract: () => { main._vrMultiSelect = !main._vrMultiSelect; }
+  });
+  y += ITEM_H + GAP;
+
   widgets.push({
     type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H,
     onInteract: () => {
       try { main.duplicateSelection(); }
-      catch (e) { if (window.screenLog) window.screenLog(`Err: ${e.message}`, 'red'); console.error(e); }
+      catch (e) { console.error(e); }
     }
   });
   y += ITEM_H + GAP;
+
   widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
   y += ITEM_H + GAP;
+
   widgets.push({
     type: 'button', id: 'merge', label: 'Merge', x: 0, y: y, w: menuW, h: ITEM_H,
     onInteract: () => {
       try {
-        const selMeshes = main.getSelectedMeshes();
-        if (selMeshes.length < 2) return;
-        const newMesh = Remesh.mergeMeshes(selMeshes, main.getMesh() || selMeshes[0]);
-        main.removeMeshes(selMeshes);
-        main.getStateManager().pushStateAddRemove(newMesh, selMeshes.slice());
-        main.getMeshes().push(newMesh);
-        main.setMesh(newMesh);
+        if (main.getGui() && main.getGui()._ctrlScene) {
+          main.getGui()._ctrlScene.merge();
+          // Auto-disable multi-select after merge
+          main._vrMultiSelect = false;
+        }
       } catch (e) {
-        if (window.screenLog) window.screenLog(`Merge Err: ${e.message}`, 'red');
         console.error(e);
       }
     }
   });
   y += ITEM_H + GAP;
 
-  // Isolate (Checkbox?)
-  // We'll leave it as false for now, or check for hidden meshes if feasible.
-  const isIsolate = false; 
-  widgets.push({ type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H, value: isIsolate });
+  // Isolate
+  let isIsolate = false;
+  if (main.getGui() && main.getGui()._ctrlScene) {
+    isIsolate = main.getGui()._ctrlScene.hasHiddenMeshes();
+  }
+  widgets.push({
+    type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: isIsolate,
+    onInteract: () => {
+      if (main.getGui() && main.getGui()._ctrlScene) {
+        main.getGui()._ctrlScene.toggleShowHide();
+      }
+    }
+  });
   y += ITEM_H + GAP;
 
   // Separator?

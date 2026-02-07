@@ -1,34 +1,42 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.7.49 (PROD) - VR Polish Release
+**Project Status**: v0.7.56 (BETA) - VR Scene Menu & Desktop Debug
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
 **Checkpoint**:
-- `sculptxr` (PROD): **v0.7.49** (Includes Radial Color Picker, VR Fixes, Log Cleanup)
+- `sculptxr` (BETA): **v0.7.56** (VR Scene Menu, Desktop Mode Button + Debug Logs)
 
 ## MANDATORY: Project Rules & Guidelines
 [project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
 
-## Current Focus: VR Polish & Stability
-The **VR Experience** has been significantly polished with v0.7.49.
-- **Radial Color Picker**: Restored for intuitve color selection in Paint mode.
-- **Input Fixes**: Right Thumbstick correctly scales brush radius. Move Brush radius jump fixed.
-- **Visuals**: Symmetry line is thinner.
-- **Stability**: Added crash protection for Selection operations.
+## Current Focus: VR Menu Polish & Desktop Mode Debugging
+We have recently implemented major VR UI updates and are currently debugging a specific issue with the "Desktop Mode" feature for a beta tester.
+
+### Recent Accomplishments
+- **VR Scene Menu**: Implemented **Multi-select**, **Merge**, and **Isolate** functionalities in VR, delegating logic to the robust Desktop `GuiScene.js`.
+- **Desktop Mode Button**: Added a dedicated "Desktop Mode" button to the main UI (`index.html`) to toggle 6DOF Spectator Mode without keyboard shortcuts.
+- **VR Files Menu**: Fixed texture size sliders and export handlers.
 
 ## Outstanding Issues (Next Session)
-1.  **Quest 3 Crash on Reload**: Clearing cache and reloading often crashes the browser on standalone Quest 3. Needs investigation potentially involving memory usage or WebGL context loss handling.
-2.  **Dynamic Topology**: Code path active but functional status in VR needs deep verification.
-3.  **Multiresolution**: UI exists but VR support needs implementation/verification.
-4.  **Performance**: Continue optimizing VR rendering loop.
+1.  **Desktop Mode Failure (Beta Tester)**:
+    *   **Symptom**: Tester clicks "Desktop Mode", button turns RED (state toggles), but VR view remains unchanged (no black background/desktop render).
+    *   **Status**: Deployed `v0.7.56` with verbose logging in `Scene.js` (`onXRFrame`) to verify if `pose.views` yields any data during the spectator render pass.
+    *   **Next Step**: Wait for tester logs to confirm if `Desktop Render: Active` appears and what `Views=` count is.
+2.  **Verify VR Scene Menu**: Multi-select and Merge/Isolate implementations need field verification in VR.
+3.  **Torus Parameters**: VR Scene Menu lacks Torus parameter sliders (skipped for now).
+4.  **Performance**: VR GUI rendering optimization still relevant.
 
 ## Recent Changes
-*   **v0.7.49**: **VR Polish**: Restored Radial Color Picker, Fixed Thumbstick Radius, Thinner Symmetry Line, Improved Crash Stability.
-*   **v0.7.48**: **Fix**: Fixed Move Brush radius jump (80->20%) and silenced logs.
-*   **v0.7.47**: **Cleanup**: Silenced `[GuiXR]` debug logs.
+*   **v0.7.57**: **Fix**: Resolved Isolate issue where Voxel Debug Cube would appear.
+*   **v0.7.56**: **Debug**: Added verbose logging to `onXRFrame` spectator path to diagnose missing desktop render.
+*   **v0.7.55**: **Debug**: Added logging to "Desktop Mode" button and `toggleDesktopOffset`.
+*   **v0.7.54**: **Feature**: Added "Desktop Mode" button to `index.html`.
+*   **v0.7.53**: **Feature**: VR Scene Menu Update (Multi-select, Merge, Isolate).
+*   **v0.7.50**: **Feature**: VR Files Menu Polish (Texture Export, Checkbox Persistence).
 
 ## Deployment
 *   **PROD**: `./deploy.sh` (Deploys to tokeru.com/sculptxr)
 *   **BETA**: `./deploy_beta.sh` (Deploys to tokeru.com/sculptxrbeta)
 
-## Next task
-* Ask user.
+## Next Task
+*   Review logs from beta tester regarding Desktop Mode failure.
+*   Verify VR Scene Menu functionality.

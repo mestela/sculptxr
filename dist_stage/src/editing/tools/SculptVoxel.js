@@ -51,8 +51,9 @@ class SculptVoxel extends SculptBase {
 
     // ... (lines 49-68 omitted for brevity if unchanged, but I need to match context)
 
-    if (main.addNewMesh) main.addNewMesh(this._debugCube);
-    else main.addMesh(this._debugCube);
+    // [USER REQUEST] Do NOT add debug cube to scene list to prevent Isolate issues
+    // if (main.addNewMesh) main.addNewMesh(this._debugCube);
+    // else main.addMesh(this._debugCube);
 
     // if (window.screenLog) window.screenLog("Voxel: Debug Cube Added (Size 1.0) at [0, 1.3, -1.5]", "yellow");
 

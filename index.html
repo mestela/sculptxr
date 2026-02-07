@@ -5,8 +5,8 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.7.52</title>
-    <!-- VERSION: v0.7.52 - Disabled Sketchfab Link -->
+    <title>SculptXR v0.7.57</title>
+    <!-- v0.7.57 - Isolate Fix (Hide Debug Cube) -->
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -260,6 +260,7 @@
     <div id="xr-ui">
         <button id="vr-button" class="xr-button">Enter VR</button>
         <button id="ar-button" class="xr-button" style="display: none;">Enter AR</button>
+        <button id="desktop-button" class="xr-button" style="background: #444;">Desktop Mode</button>
     </div>
 
     <div id="log"></div>
@@ -439,6 +440,27 @@
             } else {
                 if (btnVR) btnVR.style.display = 'none';
                 if (btnAR) btnAR.style.display = 'none';
+            }
+
+            // Desktop Mode Button
+            const btnDesktop = document.getElementById('desktop-button');
+            if (btnDesktop) {
+                btnDesktop.addEventListener('click', () => {
+                    console.log("[Desktop Button] Clicked");
+                    if (window.screenLog) window.screenLog("[Desktop Button] Clicked", "cyan");
+
+                    if (app && app.toggleDesktopOffset) {
+                        app.toggleDesktopOffset();
+                        // Optional: Visual feedback?
+                        const isActive = app._desktopOffsetMode;
+                        btnDesktop.textContent = isActive ? "Exit Desktop" : "Desktop Mode";
+                        btnDesktop.style.background = isActive ? "#d44" : "#444";
+                        console.log(`[Desktop Button] State: ${isActive}`);
+                    } else {
+                        console.error("[Desktop Button] 'app' or 'toggleDesktopOffset' missing!");
+                        if (window.screenLog) window.screenLog("[Desktop Button] App missing!", "red");
+                    }
+                });
             }
 
             async function onEnterVR(sessionType) {

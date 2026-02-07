@@ -55,7 +55,14 @@ class SculptBase {
       if (!picking.getMesh() && !this._allowAir) return false;
     }
 
+    // [VR] Multi-select Check
+    if (main._vrMultiSelect) ctrl = true;
+
     var mesh = main.setOrUnsetMesh(picking.getMesh(), ctrl);
+
+    // [VR] Return early if Multi-select is active to prevent sculpting
+    if (main._vrMultiSelect) return false;
+
     // If allowAir, we might proceed without a mesh selection
     if (!mesh && !this._allowAir)
       return false;
@@ -262,6 +269,9 @@ class SculptBase {
   sculptStrokeXR(picking) {
     var main = this._main;
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
+
+    // Safety: Prevent sculpting if Multi-select is active
+    if (main._vrMultiSelect) return;
 
     // Use Controller Distance (Robust like Move.js) instead of Surface Distance (Fragile)
     var worldPos = main._vrControllerPos;

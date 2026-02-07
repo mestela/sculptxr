@@ -187,3 +187,29 @@ Achieve feature parity between Desktop and VR menus, specifically enabling **Dyn
     2.  Select "Matcap" mode.
     3.  Click "Import Matcap".
     4.  Verify file dialog opens.
+
+# Walkthrough: VR Scene Menu & Desktop Logic (v0.7.57)
+
+## Goal
+Validate the new VR Scene Menu (Multi-select, Merge, Isolate) and debug the "Desktop Mode" failure reported by beta testers.
+
+## Investigation (Desktop Mode)
+*   **Symptom**: "Desktop Mode" button toggles state (RED) but VR view remains unchanged (no desktop render).
+*   **Code Review**:
+    *   `Scene.js`: `onXRFrame` checks `this._desktopOffsetMode`.
+    *   **Logic**: It iterates `frame.getViewerPose(refSpace).views`.
+    *   **Hypothesis**: If `pose.views` is empty or only contains 2 views (Left/Right) without a helper mechanism, the custom Spectator Camera (`_renderSceneVR` with offset) might not be triggering or overlaying correctly if the main loop clears it.
+    *   **Action**: Added verbose logging to `onXRFrame` to confirm `Views` count in the next session.
+
+## Feature Logic (VR Scene Menu)
+*   **Delegation**: `GuiVRScene.js` delegates all heavy lifting to `GuiScene.js` (Desktop).
+    *   `merge()` -> `Remesh.mergeMeshes`
+    *   `isolate()` -> `GuiScene.showHide()`
+*   **Status**:
+    *   **Merge**: Confirmed logic exists.
+    *   **Isolate**: `v0.7.57` fixed the "Red Debug Cube" appearing during Isolate (it was a leftover `debugPivotMesh` visibility toggle).
+
+## Next Steps
+*   **Torus**: Parameters are currently missing in VR (and commented out in Desktop). Need implementation.
+*   **Desktop Mode**: Awaiting logs to confirm if `Desktop Render` block is even reached.
+

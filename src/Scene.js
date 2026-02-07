@@ -1461,6 +1461,8 @@ class Scene {
 
       // [DESKTOP 6DOF] Spectator Render (Parity Strategy)
       if (this._desktopOffsetMode) {
+        if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog(`Desktop Render: Active. Views=${pose.views.length}`, "cyan");
+
         const gl = this._gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
@@ -1490,6 +1492,8 @@ class Scene {
 
           // Render Shared Logic
           this._renderSceneVR(this._camera, viewMat, prob);
+        } else {
+          if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog("Desktop Render: No Views!", "red");
         }
       }
     }
@@ -2144,7 +2148,7 @@ class Scene {
           // window.screenLog("Sculpt: START STROKE (r=" + sliderVal.toFixed(2) + ")", "lime");
         }
 
-        this._sculptManager.start(false);
+        this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
       }
       this._sculptManager.preUpdate(); // Sync position
@@ -2276,7 +2280,8 @@ class Scene {
 
   toggleDesktopOffset() {
     this._desktopOffsetMode = !this._desktopOffsetMode;
-    // if (window.screenLog) window.screenLog(`Desktop 6DOF: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
+    console.log(`[Desktop Mode] Toggled: ${this._desktopOffsetMode}`);
+    if (window.screenLog) window.screenLog(`Desktop Mode: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
     this.render();
   }
 
