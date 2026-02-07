@@ -26,7 +26,7 @@ export default function getFilesWidgets(main) {
   };
 
   // State Lookup
-  const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._guiFiles : null;
+  const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
   const exportAll = guiFiles ? guiFiles._exportAll : true;
   const objZbrush = guiFiles ? guiFiles._objColorZbrush : false;
   const objAppend = guiFiles ? guiFiles._objColorAppended : false;
@@ -48,12 +48,14 @@ export default function getFilesWidgets(main) {
   addButton('export_stl', 'Save .stl');
   addCheckbox('export_zbrush', 'OBJ color zbrush', objZbrush);
   addCheckbox('export_append', 'OBJ color append', objAppend);
-  addButton('go_sketchfab', 'Go to Sketchfab !');
+  // addButton('go_sketchfab', 'Go to Sketchfab !');
+  widgets.push({ type: 'button', id: 'go_sketchfab', label: 'Go to Sketchfab ! (Disabled)', x, y, w: contentW, h: itemH, textAlign: 'left', disabled: true });
+  y += itemH;
 
   // --- Export Textures ---
   y += 10;
   addHeader('Export textures');
-  widgets.push({ type: 'slider', id: 'tex_size', label: 'Size', x, y, w: contentW, h: itemH, value: 0.5 });
+  widgets.push({ type: 'slider', id: 'tex_size', label: 'Size', x, y, w: contentW, h: itemH, min: 8, max: 13, step: 1, value: 10, precision: 0 });
   y += itemH;
 
   addButton('save_diffuse', 'Save diffuse');

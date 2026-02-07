@@ -1,29 +1,34 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.7.42 (BETA) - Testing
+**Project Status**: v0.7.49 (PROD) - VR Polish Release
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
 **Checkpoint**:
-- `sculptxr-beta` (BETA): **v0.7.42** (Includes all new VR features)
-- `sculptxr` (PROD): **v0.7.41** (Reverted to stable state)
+- `sculptxr` (PROD): **v0.7.49** (Includes Radial Color Picker, VR Fixes, Log Cleanup)
 
 ## MANDATORY: Project Rules & Guidelines
 [project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
 
-## Current Focus: Testing VR Features on Beta
-The **VR Overlay Menu** updates (Paint PBR, Masking Actions, Scene Logic) are deployed to **BETA**.
-- **Paint Tool**: Added Color/Material sliders.
-- **Masking Tool**: Added Clear/Invert/Blur/Sharpen buttons.
-- **Scene Management**: Wired up Primitives, Reset, Duplicate, Delete, Merge.
+## Current Focus: VR Polish & Stability
+The **VR Experience** has been significantly polished with v0.7.49.
+- **Radial Color Picker**: Restored for intuitve color selection in Paint mode.
+- **Input Fixes**: Right Thumbstick correctly scales brush radius. Move Brush radius jump fixed.
+- **Visuals**: Symmetry line is thinner.
+- **Stability**: Added crash protection for Selection operations.
 
 ## Outstanding Issues (Next Session)
-1.  **Verify v0.7.42 on Beta**: Ensure all new VR controls work as expected.
-2.  **Performance Tuning**: General optimization for standalone VR.
-3.  **Scrolling**: VR Scrollbar drag works, but content clipping/masking could be smoother.
+1.  **Quest 3 Crash on Reload**: Clearing cache and reloading often crashes the browser on standalone Quest 3. Needs investigation potentially involving memory usage or WebGL context loss handling.
+2.  **Dynamic Topology**: Code path active but functional status in VR needs deep verification.
+3.  **Multiresolution**: UI exists but VR support needs implementation/verification.
+4.  **Performance**: Continue optimizing VR rendering loop.
 
 ## Recent Changes
-*   **v0.7.42 (BETA)**: **VR Feature**: Wired up Paint PBR, Masking Actions, Scene Primitives & Merge.
-*   **v0.7.41 (PROD)**: **Tweak**: Changed default **Move Brush** radius from 150 to 80.
+*   **v0.7.49**: **VR Polish**: Restored Radial Color Picker, Fixed Thumbstick Radius, Thinner Symmetry Line, Improved Crash Stability.
+*   **v0.7.48**: **Fix**: Fixed Move Brush radius jump (80->20%) and silenced logs.
+*   **v0.7.47**: **Cleanup**: Silenced `[GuiXR]` debug logs.
 
 ## Deployment
-*   **BETA**: `./deploy_beta.sh`
-*   **PROD**: `./deploy.sh` (LOCKED - Use only when v0.7.42 is verified)
+*   **PROD**: `./deploy.sh` (Deploys to tokeru.com/sculptxr)
+*   **BETA**: `./deploy_beta.sh` (Deploys to tokeru.com/sculptxrbeta)
+
+## Next task
+* Ask user.

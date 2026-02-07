@@ -1186,167 +1186,7 @@ export default class GuiXR {
     return w ? w.value : undefined;
   }
 
-  _executeAction(w) {
-    const main = this._main;
-    const id = w.id;
 
-    if (w.type === 'slider') {
-      if (id === 'symmetryOffset') {
-        const mesh = main.getMesh();
-        if (mesh) {
-          mesh.setSymmetryOffset(w.value);
-          main.render();
-        }
-      } else if (isFinite(w.min) && isFinite(w.max)) {
-        // Generic Min/Max Slider Support
-      // w.value is ALREADY mapped by onInteract (or initialized mapped)
-      let val = w.value;
-        if (w.step) {
-          const steps = Math.round((val - w.min) / w.step);
-          val = w.min + steps * w.step;
-        }
-
-        // console.log(`[GuiXR] Slider Action: ${id} = ${val}`);
-
-        if (id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
-        else if (id === 'fov') { main.getCamera().setFov(val); main.render(); }
-        else if (id === 'radius' || id === 'intensity') {
-          const tool = main.getSculptManager().getCurrentTool();
-          if (tool) {
-            if (id === 'radius') tool._radius = val;
-            if (id === 'intensity') tool._intensity = val;
-            main.render();
-          } else {
-            console.warn(`[GuiXR] No active tool for ${id}`);
-          }
-        }
-        // Add other generic sliders here
-      }
-      return;
-    }
-
-    if (w.type === 'checkbox') {
-      const val = w.value;
-      if (id === 'grid') { main._showGrid = val; main.render(); }
-      else if (id === 'contour') { main._showContour = val; main.render(); }
-      else if (id === 'show_sym') { ShaderBase.showSymmetryLine = val; main.render(); }
-      else if (id === 'darken') { ShaderBase.darkenUnselected = val; main.render(); }
-      else if (id === 'camera_mode') {
-        const mode = val ? Enums.CameraMode.ORTHOGRAPHIC : Enums.CameraMode.PERSPECTIVE;
-        main.getCamera().setMode(mode);
-        main.render();
-      }
-      else if (id === 'import_scale') main._autoMatrix = val;
-      else if (id === 'import_srgb') main._vertexSRGB = val;
-      else if (['export_all', 'export_zbrush', 'export_append'].includes(id)) {
-        const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._guiFiles : null;
-        if (guiFiles) {
-          if (id === 'export_all') guiFiles._exportAll = val;
-          else if (id === 'export_zbrush') guiFiles._objColorZbrush = val;
-          else if (id === 'export_append') guiFiles._objColorAppended = val;
-        }
-      }
-      return;
-    }
-
-    // Files
-    if (id === 'import_obj') {
-      const fileInput = document.getElementById('fileopen');
-      if (fileInput) fileInput.click();
-    }
-    else if (id === 'export_sgl') {
-      const exportAll = this._getWidgetValue('Files', 'export_all');
-      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
-      if (meshes.length) saveAs(Export.exportSGL(meshes, main), 'yourMesh.sgl');
-    }
-    else if (id === 'export_obj') {
-      const exportAll = this._getWidgetValue('Files', 'export_all');
-      const colorZbrush = this._getWidgetValue('Files', 'export_zbrush');
-      const colorAppend = this._getWidgetValue('Files', 'export_append');
-      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
-      if (meshes.length) saveAs(Export.exportOBJ(meshes, colorZbrush, colorAppend), 'yourMesh.obj');
-    }
-    else if (id === 'export_ply') {
-      const exportAll = this._getWidgetValue('Files', 'export_all');
-      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
-      if (meshes.length) saveAs(Export.exportBinaryPLY(meshes), 'yourMesh.ply');
-    }
-    else if (id === 'export_stl') {
-      const exportAll = this._getWidgetValue('Files', 'export_all');
-      const meshes = (exportAll === true) ? main.getMeshes() : main.getSelectedMeshes();
-      if (meshes.length) saveAs(Export.exportBinarySTL(meshes), 'yourMesh.stl');
-    }
-    else if (id === 'go_sketchfab') {
-      if (this._main && this._main.getGui() && this._main.getGui().exportSketchfab) {
-        this._main.getGui().exportSketchfab();
-      }
-    }
-
-    if (id === 'undo') { main.getStateManager().undo(); main.render(); }
-    else if (id === 'redo') { main.getStateManager().redo(); main.render(); }
-    else if (id === 'reset') { if (window.confirm('Reset Scene?')) main.clearScene(); }
-    else if (id === 'addSphere') main.addSphere();
-    else if (id === 'addCube') main.addCube();
-    else if (id === 'addCylinder') main.addCylinder();
-    else if (id === 'addTorus') main.addTorus();
-    else if (id === 'duplicateSelection') main.duplicateSelection();
-    else if (id === 'deleteSelection') main.deleteCurrentSelection();
-    else if (id === 'merge') {
-      const sel = main.getSelectedMeshes();
-      if (sel.length >= 2) {
-        const newMesh = Remesh.mergeMeshes(sel, main.getMesh() || sel[0]);
-        main.removeMeshes(sel);
-        main.getStateManager().pushStateAddRemove(newMesh, sel.slice());
-        main.getMeshes().push(newMesh);
-        main.setMesh(newMesh);
-      }
-    }
-
-    // Background interaction
-    else if (id === 'bg_reset') { main.getBackground().deleteTexture(); main.render(); }
-    else if (id === 'bg_import') { const el = document.getElementById('backgroundopen'); if (el) el.click(); }
-    else if (id === 'bg_fill') { main.getBackground()._fill = w.value; main.onCanvasResize(); }
-    else if (id === 'bg_blur') { main.getBackground()._blur = w.value; main.render(); }
-    else if (id === 'bg_type') {
-      main.getBackground().setType(w.value);
-      main.onCanvasResize();
-      main.render();
-    }
-
-    // Camera
-    else if (id === 'cam_reset') { main.getCamera().resetView(); main.render(); }
-    else if (id === 'cam_front') { main.getCamera().toggleViewFront(); main.render(); }
-    else if (id === 'cam_left') { main.getCamera().toggleViewLeft(); main.render(); }
-    else if (id === 'cam_top') { main.getCamera().toggleViewTop(); main.render(); }
-    else if (id === 'cam_proj') { main.getCamera().setProjectionType(w.value); main.render(); }
-    else if (id === 'cam_mode') { main.getCamera().setMode(w.value); main.render(); }
-    else if (id === 'cam_pivot') { main.getCamera().toggleUsePivot(); main.render(); }
-    else if (id === 'cam_speed') { main._cameraSpeed = w.value; }
-
-    // Tablet
-    else if (id === 'tablet_radius') { Tablet.radiusFactor = w.value; }
-    else if (id === 'tablet_intensity') { Tablet.intensityFactor = w.value; }
-
-    // Language
-    else if (id === 'language') {
-      TR.select = w.value;
-      // Ideally reload GUI but here just close overlay.
-    }
-
-    // Extra UI
-    else if (id === 'extra_pixel_ratio') { main._pixelRatio = w.value; main.onCanvasResize(); }
-    else if (id === 'extra_vox_res') {
-      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
-      if (tool && tool.setResolution) tool.setResolution(w.value);
-    }
-    else if (id === 'extra_vox_rad') {
-      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
-      if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(w.value);
-    }
-
-    // About
-    else if (id === 'about_link') { window.open('http://stephaneginier.com', '_blank'); }
-  }
 
 
 
@@ -1428,6 +1268,8 @@ export default class GuiXR {
           } else {
             // Legacy Fallbacks
             if (w.id === 'radius') this.updateRadius(val); // Should be covered by onInput now
+            if (w.id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
+            if (w.id === 'fov') { main.getCamera().setFov(val); main.render(); }
             if (w.id === 'intensity' && this._main.getSculptManager().getCurrentTool()) {
               this._main.getSculptManager().getCurrentTool().setIntensity(val);
             }
@@ -1551,6 +1393,8 @@ export default class GuiXR {
     const main = this._main;
     if (!main) return;
 
+    const id = w.id;
+
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
       w.onInteract();
@@ -1564,6 +1408,32 @@ export default class GuiXR {
       this._sectionStates[w.label] = !this._sectionStates[w.label];
       this._needsRedraw = true;
       this.forceDraw(); // Force redraw to recalc layout
+      return;
+    }
+
+    // Generic Checkbox Handling (Restored)
+    if (w.type === 'checkbox') {
+      const val = w.value;
+      const id = w.id;
+      if (id === 'grid') { main._showGrid = val; main.render(); }
+      else if (id === 'contour') { main._showContour = val; main.render(); }
+      else if (id === 'show_sym') { ShaderBase.showSymmetryLine = val; main.render(); }
+      else if (id === 'darken') { ShaderBase.darkenUnselected = val; main.render(); }
+      else if (id === 'camera_mode') {
+        const mode = val ? Enums.CameraMode.ORTHOGRAPHIC : Enums.CameraMode.PERSPECTIVE;
+        main.getCamera().setMode(mode);
+        main.render();
+      }
+      else if (['export_all', 'export_zbrush', 'export_append', 'import_scale', 'import_srgb'].includes(id)) {
+        const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
+        if (guiFiles) {
+          if (id === 'export_all') guiFiles._exportAll = val;
+          else if (id === 'export_zbrush') guiFiles._objColorZbrush = val;
+          else if (id === 'export_append') guiFiles._objColorAppended = val;
+          else if (id === 'import_scale') main._autoMatrix = val;
+          else if (id === 'import_srgb') main._vertexSRGB = val;
+        }
+      }
       return;
     }
 
@@ -1657,12 +1527,83 @@ export default class GuiXR {
       console.warn("AR Passthrough not yet implemented");
     }
 
-    if (w.id === 'export_obj') {
-      const blob = new Blob([Export.exportOBJ(main.getMeshes(), true, false)], { type: 'model/obj' });
-      saveAs(blob, 'sculptgl_vr_export.obj');
+    // Files (Delegated to GuiFiles)
+    if (id === 'import_obj') {
+      const fileInput = document.getElementById('fileopen');
+      if (fileInput) fileInput.click();
     }
-    if (w.id === 'export_stl') Export.exportSTL(main);
-    if (w.id === 'import_obj') document.getElementById('fileopen')?.click();
+    else if (id === 'tex_size') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.onTextureSize(w.value);
+    }
+    else if (id === 'save_diffuse') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveColor();
+    }
+    else if (id === 'save_roughness') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveRoughness();
+    }
+    else if (id === 'save_metalness') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveMetalness();
+    }
+    else if (id === 'export_sgl') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSGL();
+    }
+    else if (id === 'export_obj') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsOBJ();
+    }
+    else if (id === 'export_ply') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsPLY();
+    }
+    else if (id === 'export_stl') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSTL();
+    }
+    else if (id === 'go_sketchfab') {
+      if (main.getGui() && main.getGui().exportSketchfab) main.getGui().exportSketchfab();
+    }
+
+    // Background interaction
+    else if (id === 'bg_reset') { main.getBackground().deleteTexture(); main.render(); }
+    else if (id === 'bg_import') { const el = document.getElementById('backgroundopen'); if (el) el.click(); }
+    else if (id === 'bg_fill') { main.getBackground()._fill = w.value; main.onCanvasResize(); }
+    else if (id === 'bg_blur') { main.getBackground()._blur = w.value; main.render(); }
+    else if (id === 'bg_type') {
+      main.getBackground().setType(w.value);
+      main.onCanvasResize();
+      main.render();
+    }
+
+    // Camera
+    else if (id === 'cam_reset') { main.getCamera().resetView(); main.render(); }
+    else if (id === 'cam_front') { main.getCamera().toggleViewFront(); main.render(); }
+    else if (id === 'cam_left') { main.getCamera().toggleViewLeft(); main.render(); }
+    else if (id === 'cam_top') { main.getCamera().toggleViewTop(); main.render(); }
+    else if (id === 'cam_proj') { main.getCamera().setProjectionType(w.value); main.render(); }
+    else if (id === 'cam_mode') { main.getCamera().setMode(w.value); main.render(); }
+    else if (id === 'cam_pivot') { main.getCamera().toggleUsePivot(); main.render(); }
+    else if (id === 'cam_speed') { main._cameraSpeed = w.value; }
+
+    // Tablet
+    else if (id === 'tablet_radius') { Tablet.radiusFactor = w.value; }
+    else if (id === 'tablet_intensity') { Tablet.intensityFactor = w.value; }
+
+    // Language
+    else if (id === 'language') {
+      TR.select = w.value;
+      // Ideally reload GUI but here just close overlay.
+    }
+
+    // Extra UI
+    else if (id === 'extra_pixel_ratio') { main._pixelRatio = w.value; main.onCanvasResize(); }
+    else if (id === 'extra_vox_res') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool.setResolution) tool.setResolution(w.value);
+    }
+    else if (id === 'extra_vox_rad') {
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(w.value);
+    }
+
+    // About
+    else if (id === 'about_link') { window.open('http://stephaneginier.com', '_blank'); }
 
     // Visual Feedback
     this._clickedWidget = w;

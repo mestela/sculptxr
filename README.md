@@ -24,7 +24,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - **Feature**: **Radial Color Picker**: Restored the embedded radial color picker for the Paint tool in VR.
     - **Fix**: **Thumbstick Radius**: Fixed right thumbstick up/down input to correctly adjust tool radius (was jumping to ~20%).
     - **Fix**: **Symmetry Line**: Made the symmetry line thinner and less obtrusive in VR.
-    - **Fix**: **Contour Rendering**: Enabled contour/outline rendering in VR for better selection visibility.
     - **Fix**: **Crash Protection**: Added safeguards for "Duplicate" and "Merge" operations to prevent VR session crashes.
     - **Cleanup**: Silenced `[GuiXR]` logs for a cleaner console.
 
@@ -198,7 +197,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Reference image support
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
-    - Symmetry for voxel brush
+    - Symmetry for voxel tool
+    - Straight line mode for voxel tool
 - **UI + UX**  
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
