@@ -1,1 +1,1 @@
-export const VERSION = 'v0.7.35 - Desktop Preview Final Polish -->';
+export const VERSION = 'v0.7.41 - Tweaked Move Radius -->';

@@ -1,28 +1,26 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.7.35 (PROD) - STABLE
+**Project Status**: v0.7.41 (BETA) - STABLE
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v0.7.35` deployed to `sculptxr` (Production).
+**Checkpoint**: `v0.7.41` deployed to `sculptxrbeta`. v0.7.35 is on PROD.
 
 ## MANDATORY: Project Rules & Guidelines
 [project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
 
-## Current Focus: Polishing & Refinement
-The **VR Overlay Menu** and **Desktop Preview** are now fully functional and polished.
-- **Desktop Preview**: Shift-Alt-V to toggle a live preview of the VR menu on desktop for rapid iteration.
-- **Overlay Highlighting**: Fixed "phantom" highlights, "clicked-through" tabs, and incorrect visual layering.
-- **Spatial Blocking**: Overlay correctly blocks interaction with background tabs when active.
+## Current Focus: Polish & Refinement
+The **VR Overlay Menu** is feature-complete relative to Desktop.
+- **Dynamic Topology**: Fully functional controls in VR.
+- **Rendering**: Import Matcap/UV enabled.
 
 ## Outstanding Issues (Next Session)
-1.  **Menu Completeness**: Continue porting missing menu sections (only Sculpting/Rendering/About are largely done).
-2.  **Performance Tuning**: General optimization for standalone VR.
-3.  **Dynamic Topology in VR**: Still needs UI engagement validation.
+1.  **Performance Tuning**: General optimization for standalone VR.
+2.  **Scrolling**: VR Scrollbar drag works, but content clipping/masking could be smoother.
+3.  **File Dialogs in VR**: Known limitation - file inputs require OS-level interaction (switching to Meta menu).
 
 ## Recent Changes
-*   **v0.7.35**: **Desktop Preview Polish**: Final cleanup, removed debug logs, polished hover states, fixed "phantom" tab highlighting.
-*   **v0.7.33**: **Click Blocking**: Applied spatial blocking to clicks to prevent acting on background tabs through the overlay.
-*   **v0.7.31**: **Spatial Hover Fix**: Applied spatial blocking to hover to prevent highlighting background tabs through the overlay.
-*   **v0.7.0 -> v0.7.30**: Extensive work on **Desktop 6DOF Mode**, **Calibration**, and **Overlay Menu** architecture.
+*   **v0.7.41**: **Tweak**: Changed default **Move Brush** radius from 150 to 80.
+*   **v0.7.40**: **Bug Fix**: Fixed "Level -" and "Level +" buttons in VR.
+*   **v0.7.39**: **UX Refinement**: Replaced Multiresolution "Level" slider with buttons.
 
 ## Deployment
 *   **BETA**: `./deploy_beta.sh`

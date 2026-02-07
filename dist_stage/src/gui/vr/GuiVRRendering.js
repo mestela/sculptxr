@@ -39,7 +39,11 @@ export default function getRenderingWidgets(main) {
     value: shaderType,
     options: shaderOptions,
     onSelect: (id) => {
-      console.log(`[GuiVR] onSelect shader id: ${id} (type: ${typeof id})`);
+      // console.log(`[GuiVR] onSelect shader id: ${id} (type: ${typeof id})`);
+      if (id === Enums.Shader.UV && !mesh.hasUV()) {
+        console.warn("[GuiVR] Cannot switch to UV Shader: Mesh has no UVs.");
+        return;
+      }
       mesh.setShaderType(id);
       main.render();
       if (main.guiXR) main.guiXR._needsUpdate = true;
@@ -136,7 +140,10 @@ export default function getRenderingWidgets(main) {
       id: 'import_matcap',
       label: TR('renderingImportMatcap'),
       x: col1X, y: y, w: 400, h: btnH,
-      disabled: true
+      onInteract: () => {
+        const el = document.getElementById('matcapopen');
+        if (el) el.click();
+      }
     });
     y += btnH + gapSection;
   }
@@ -152,7 +159,10 @@ export default function getRenderingWidgets(main) {
       id: 'import_uv',
       label: TR('renderingImportUV'),
       x: col1X, y: y, w: 400, h: btnH,
-      disabled: true
+      onInteract: () => {
+        const el = document.getElementById('textureopen');
+        if (el) el.click();
+      }
     });
     y += btnH + gapSection;
   }

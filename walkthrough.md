@@ -1,7 +1,7 @@
 # Walkthrough: VR Brush Performance Optimization (v0.6.4)
 
 ## Goal
-Fix the significant slowdown (lag) experienced when using large brushes in VR, while maintaining robust "snapping" behavior.
+Fix the significant slowdown (lag) experienced when using large brushes in VR, with robust "snapping" behavior.
 
 ## Problem Analysis
 *   **Symptom**: Large brushes caused frame drops.
@@ -159,3 +159,31 @@ To facilitate faster iteration on these complex layouts without constant headset
 ## Verification
 -   **Preview**: Use `Shift+Alt+V` to verify layout alignment.
 -   **Function**: Verify "Subdivide" actually increases vertex count (visible in wireframe).
+
+# Walkthrough: VR Dynamic Topology & Menu Completeness (v0.7.36)
+
+## Goal
+Achieve feature parity between Desktop and VR menus, specifically enabling **Dynamic Topology** and **Rendering Import** workflows in VR.
+
+## Features Added
+1.  **Dynamic Topology (VR)**:
+    -   **Enabled Controls**: Activated functionality for "Subdivision", "Decimation", and "Linear" sliders/checkboxes in the VR Topology tab.
+    -   **Multiresolution**: Wired up "Subdivide", "Reverse", "Del Lower", and "Del Higher" buttons to their respective core functions.
+    -   **Integration**: Directly manipulates `MeshDynamic` static properties (`SUBDIVISION_FACTOR`, etc.) to align with desktop behavior.
+
+2.  **Rendering Imports (VR)**:
+    -   **Matcap Import**: Clicking "Import Matcap" in VR now triggers the browser's file dialog (via `document.getElementById('matcapopen').click()`).
+    -   **UV Import**: Clicking "Import UV" triggers the texture file dialog.
+    -   *Note*: In immersive VR, this may require the user to peek at the desktop or use a browser that supports overlay file pickers.
+
+## Verification
+-   **Dynamic Topology**:
+    1.  Open VR Menu -> Topology.
+    2.  Enable "Activated".
+    3.  Adjust "Subdivision" slider.
+    4.  Sculpt and observe mesh density changing dynamically.
+-   **Imports**:
+    1.  Open VR Menu -> Rendering.
+    2.  Select "Matcap" mode.
+    3.  Click "Import Matcap".
+    4.  Verify file dialog opens.

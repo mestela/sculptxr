@@ -190,6 +190,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Reference image support
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
+    - Symmetry for voxel brush
 - **UI + UX**  
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
