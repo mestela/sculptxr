@@ -16,7 +16,16 @@
 6. Press the 'D' key to toggle the desktop mode
 7. Position yourself back a bit, so that even if you fully extend your arms forward, the controllers are still in front of the headset
 8. Use the grip handles to position the sculpt comfortably on your monitor
-9. If you need to adjust the offset, you can type `setSpectatorOffset(x, y, z)` in the console to adjust this live.
+
+## Calibration/offset
+
+It's likely that if you rest your hands comfortably, it feels misaligned to the view. To fix, tap C.
+
+Now when you use the grip controls, you move everything, including your controls. Eg if your controls feel too far to the right and tilted too far forward, tap C, move everything to the left, tilt back. Press C again, And see if your resting position feels better.
+
+This process doesn't feel as intuitive as it should, I'll revisit at some point.
+
+## Tape on the proximity sensor
 
 Note that the quest 3 is very aggressive about turning itself off. You need to put tape over the proximity sensor inside the headset, in the standalone settings turn off power saving, set the max time to 4 hours, and even _then_ the headset will turn itself off if it doesn't detect movement after a few minutes.
 
