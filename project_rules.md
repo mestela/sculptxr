@@ -93,6 +93,7 @@ See [Deployment Protocol](#deployment-protocol)
 1.  **NO EMOJIS**: Do not use emojis in ANY response, title, task name, or commit message. Zero tolerance.
 2.  **Professional Tone**: Keep all communication professional, concise, and sober.
 3.  **No False Confidence**: Do not use words like "final", "real", "definitive", "corrected" to describe a solution. Use "updated", "new iteration", "attempt".
+4.  **Step ID Prefix**: ALWAYS prefix your chat response with "Step Id: {id}".
 
 ```
 

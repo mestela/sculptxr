@@ -37,5 +37,4 @@ We have recently implemented major VR UI updates and are currently debugging a s
 *   **BETA**: `./deploy_beta.sh` (Deploys to tokeru.com/sculptxrbeta)
 
 ## Next Task
-*   **Implement** Torus parameters in VR.
 *   **Verify** VR Scene Menu.
