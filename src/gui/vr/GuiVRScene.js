@@ -1,5 +1,4 @@
 import ShaderBase from 'render/shaders/ShaderBase';
-import Remesh from 'editing/Remesh';
 
 export default function getSceneWidgets(main) {
   const widgets = [];
@@ -16,17 +15,17 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Scene', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'button', id: 'reset', label: 'Reset / Clear', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.clearScene() });
+  widgets.push({ type: 'button', id: 'reset', label: 'Reset / Clear', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
 
   // Primitives
-  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addSphere() });
+  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCube() });
+  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCylinder() });
+  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addTorus() });
+  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
 
   // Separator?
@@ -36,22 +35,11 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Selection', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.duplicateSelection() });
+  widgets.push({ type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
+  widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({
-    type: 'button', id: 'merge', label: 'Merge', x: 0, y: y, w: menuW, h: ITEM_H,
-    onInteract: () => {
-      const selMeshes = main.getSelectedMeshes();
-      if (selMeshes.length < 2) return;
-      const newMesh = Remesh.mergeMeshes(selMeshes, main.getMesh() || selMeshes[0]);
-      main.removeMeshes(selMeshes);
-      main.getStateManager().pushStateAddRemove(newMesh, selMeshes.slice());
-      main.getMeshes().push(newMesh);
-      main.setMesh(newMesh);
-    }
-  });
+  widgets.push({ type: 'button', id: 'merge', label: 'Merge', x: 0, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
 
   // Isolate (Checkbox?)
@@ -67,21 +55,18 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Extra', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showGrid, onInteract: () => { main._showGrid = !main._showGrid; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showGrid });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showContour, onInteract: () => { main._showContour = !main._showContour; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showContour });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.showSymmetryLine, onInteract: () => { ShaderBase.showSymmetryLine = !ShaderBase.showSymmetryLine; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.showSymmetryLine });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.darkenUnselected, onInteract: () => { ShaderBase.darkenUnselected = !ShaderBase.darkenUnselected; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: 0, y: y, w: menuW, h: ITEM_H, value: ShaderBase.darkenUnselected });
   y += ITEM_H + GAP;
 
   const mesh = main.getMesh();
   const symOffset = mesh ? mesh.getSymmetryOffset() : 0;
-  widgets.push({
-    type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: 0, y: y, w: menuW, h: ITEM_H, value: symOffset, min: -1, max: 1, step: 0.001,
-    onInput: (val) => { if (mesh) { mesh.setSymmetryOffset(val); main.render(); } }
-  });
+  widgets.push({ type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: 0, y: y, w: menuW, h: ITEM_H, value: symOffset });
   y += ITEM_H + GAP;
 
   return {

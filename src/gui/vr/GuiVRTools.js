@@ -2,7 +2,6 @@ import Enums from 'misc/Enums';
 import TR from 'gui/GuiTR';
 import Tools from 'editing/tools/Tools';
 import Picking from 'math3d/Picking';
-import { vec3 } from 'gl-matrix';
 
 export default function getToolsWidgets(main, activeToolIndex) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
@@ -65,103 +64,6 @@ export default function getToolsWidgets(main, activeToolIndex) {
     onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
   });
   y += 40 + gapSection;
-
-  // 2b. Tool Specific Settings
-  // --- PAINT ---
-  if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
-    widgets.push({ type: 'info', label: 'Paint Settings', x: col1X, y: y });
-    y += gapHeader;
-
-    // Color (RGB Sliders)
-    const color = activeTool._color;
-    widgets.push({
-      type: 'slider', id: 'color_r', label: 'R', x: col1X, y: y, w: 350, h: 40,
-      value: color[0], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[0] = val; main.render(); }
-    });
-    y += 45;
-    widgets.push({
-      type: 'slider', id: 'color_g', label: 'G', x: col1X, y: y, w: 350, h: 40,
-      value: color[1], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[1] = val; main.render(); }
-    });
-    y += 45;
-    widgets.push({
-      type: 'slider', id: 'color_b', label: 'B', x: col1X, y: y, w: 350, h: 40,
-      value: color[2], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[2] = val; main.render(); }
-    });
-    y += 45 + gapBtn;
-
-    // Material (Roughness, Metallic)
-    widgets.push({
-      type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 40,
-      value: activeTool._material[0], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { activeTool._material[0] = val; main.render(); }
-    });
-    y += 45;
-    widgets.push({
-      type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 40,
-      value: activeTool._material[1], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { activeTool._material[1] = val; main.render(); }
-    });
-    y += 45 + gapBtn;
-
-    // Paint All Button
-    widgets.push({
-      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X, y: y, w: 350, h: btnH,
-      onInteract: () => { activeTool.paintAll(); main.render(); }
-    });
-    y += btnH + gapSection;
-  }
-
-  // --- MASKING ---
-  if (activeToolIndex === Enums.Tools.MASKING && activeTool) {
-    widgets.push({ type: 'info', label: 'Masking Actions', x: col1X, y: y });
-    y += gapHeader;
-
-    // Clear / Invert
-    widgets.push({
-      type: 'button', id: 'mask_clear', label: 'Clear Mask', x: col1X, y: y, w: 170, h: btnH,
-      onInteract: () => { activeTool.clear(); main.render(); }
-    });
-    widgets.push({
-      type: 'button', id: 'mask_invert', label: 'Invert Mask', x: col1X + 180, y: y, w: 170, h: btnH,
-      onInteract: () => { activeTool.invert(); main.render(); }
-    });
-    y += btnH + gapBtn;
-
-    // Blur / Sharpen
-    widgets.push({
-      type: 'button', id: 'mask_blur', label: 'Blur', x: col1X, y: y, w: 170, h: btnH,
-      onInteract: () => { activeTool.blur(); main.render(); }
-    });
-    widgets.push({
-      type: 'button', id: 'mask_sharpen', label: 'Sharpen', x: col1X + 180, y: y, w: 170, h: btnH,
-      onInteract: () => { activeTool.sharpen(); main.render(); }
-    });
-    y += btnH + gapSection;
-  }
-
-  // --- MOVE ---
-  if (activeToolIndex === Enums.Tools.MOVE && activeTool) {
-    widgets.push({
-      type: 'checkbox', id: 'topo_check', label: 'Topological Check', x: col1X, y: y, w: 350, h: btnH,
-      value: activeTool._topoCheck,
-      onInteract: () => { activeTool._topoCheck = !activeTool._topoCheck; }
-    });
-    y += btnH + gapSection;
-  }
-
-  // --- FLATTEN / SCRAPE / PINCH / CREASE / LOCALSCALE / SMOOTH ---
-  // Add Culling Option for these tools
-  if ([Enums.Tools.FLATTEN, Enums.Tools.SCRAPE, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.LOCALSCALE, Enums.Tools.SMOOTH].includes(activeToolIndex)) {
-    // Already have "Thin Surface" (Culling) in generic list below?
-    // Let's check generic list.
-    // Yes, generic list adds "Thin Surface" (Culling) later.
-    // So we don't need to add it here specificallly unless we want to prioritize it.
-    // Generic placement is fine.
-  }
 
   // 2b. Voxel Specific Tools (Resolution, Bake, Wireframe)
   if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {

@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: v0.7.41 (PROD) - STABLE
+**Project Status**: v0.7.41 (BETA) - STABLE
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v0.7.41` deployed to `sculptxr` (PROD).
+**Checkpoint**: `v0.7.41` deployed to `sculptxrbeta`. v0.7.35 is on PROD.
 
 ## MANDATORY: Project Rules & Guidelines
 [project_rules.md](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/project_rules.md)
