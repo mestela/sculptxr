@@ -2,6 +2,7 @@ import Enums from 'misc/Enums';
 import TR from 'gui/GuiTR';
 import Tools from 'editing/tools/Tools';
 import Picking from 'math3d/Picking';
+import { vec3 } from 'gl-matrix';
 
 export default function getToolsWidgets(main, activeToolIndex) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
@@ -64,6 +65,95 @@ export default function getToolsWidgets(main, activeToolIndex) {
     onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
   });
   y += 40 + gapSection;
+
+  // 2b. Tool Specific Settings
+  // --- PAINT ---
+  if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
+    widgets.push({ type: 'info', label: 'Paint Settings', x: col1X, y: y });
+    y += gapHeader;
+
+    // Color (RGB Sliders)
+    // Color Picker (Replacing RGB Sliders)
+    const color = activeTool._color;
+    widgets.push({
+      type: 'colorpicker_embedded',
+      id: 'picker',
+      label: 'Color',
+      x: col1X, y: y, w: 350, h: 350, // Square-ish
+      // value: color, // Passed via tool ref actually
+    });
+    // Height of picker (350) + gap
+    y += 350 + gapSection;
+
+    // Material (Roughness, Metallic)
+    widgets.push({
+      type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 40,
+      value: activeTool._material[0], min: 0, max: 1, step: 0.01, precision: 2,
+      onInput: (val) => { activeTool._material[0] = val; main.render(); }
+    });
+    y += 45;
+    widgets.push({
+      type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 40,
+      value: activeTool._material[1], min: 0, max: 1, step: 0.01, precision: 2,
+      onInput: (val) => { activeTool._material[1] = val; main.render(); }
+    });
+    y += 45 + gapBtn;
+
+    // Paint All Button
+    widgets.push({
+      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X, y: y, w: 350, h: btnH,
+      onInteract: () => { activeTool.paintAll(); main.render(); }
+    });
+    y += btnH + gapSection;
+  }
+
+  // --- MASKING ---
+  if (activeToolIndex === Enums.Tools.MASKING && activeTool) {
+    widgets.push({ type: 'info', label: 'Masking Actions', x: col1X, y: y });
+    y += gapHeader;
+
+    // Clear / Invert
+    widgets.push({
+      type: 'button', id: 'mask_clear', label: 'Clear Mask', x: col1X, y: y, w: 170, h: btnH,
+      onInteract: () => { activeTool.clear(); main.render(); }
+    });
+    widgets.push({
+      type: 'button', id: 'mask_invert', label: 'Invert Mask', x: col1X + 180, y: y, w: 170, h: btnH,
+      onInteract: () => { activeTool.invert(); main.render(); }
+    });
+    y += btnH + gapBtn;
+
+    // Blur / Sharpen
+    widgets.push({
+      type: 'button', id: 'mask_blur', label: 'Blur', x: col1X, y: y, w: 170, h: btnH,
+      onInteract: () => { activeTool.blur(); main.render(); }
+    });
+    widgets.push({
+      type: 'button', id: 'mask_sharpen', label: 'Sharpen', x: col1X + 180, y: y, w: 170, h: btnH,
+      onInteract: () => { activeTool.sharpen(); main.render(); }
+    });
+    y += btnH + gapSection;
+  }
+
+  // --- MOVE ---
+  if (activeToolIndex === Enums.Tools.MOVE && activeTool) {
+    widgets.push({
+      type: 'checkbox', id: 'topo_check', label: 'Topological Check', x: col1X, y: y, w: 350, h: btnH,
+      value: activeTool._topoCheck,
+      onInteract: () => { activeTool._topoCheck = !activeTool._topoCheck; }
+    });
+    y += btnH + gapSection;
+  }
+
+  // --- FLATTEN / SCRAPE / PINCH / CREASE / LOCALSCALE / SMOOTH ---
+  // Add Culling Option for these tools
+  if ([Enums.Tools.FLATTEN, Enums.Tools.SCRAPE, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.LOCALSCALE, Enums.Tools.SMOOTH].includes(activeToolIndex)) {
+    // Already have "Thin Surface" (Culling) in generic list below?
+    // Let's check generic list.
+    // Yes, generic list adds "Thin Surface" (Culling) later.
+    // So we don't need to add it here specificallly unless we want to prioritize it.
+    // Generic placement is fine.
+  }
 
   // 2b. Voxel Specific Tools (Resolution, Bake, Wireframe)
   if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
@@ -131,7 +221,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       onInteract: () => {
         if (activeTool && activeTool.bakeToMesh) {
           activeTool.bakeToMesh();
-          if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
+          // if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
         }
       }
     });
@@ -159,12 +249,12 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._negative : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
         activeTool._negative = !activeTool._negative;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
       } else {
-        if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
+        // if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
       }
     }
   });
@@ -178,7 +268,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._clay : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
         activeTool._clay = !activeTool._clay;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -195,7 +285,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._accumulate : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
         activeTool._accumulate = !activeTool._accumulate;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -234,7 +324,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     onInteract: () => {
       if (activeTool && activeTool._lockPosition !== undefined) {
         activeTool._lockPosition = !activeTool._lockPosition;
-        if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
+        // if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
     }
@@ -265,7 +355,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       if (activeTool) {
         const name = alphaNames[idx];
         activeTool._idAlpha = name;
-        if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
+        // if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
         // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
@@ -283,9 +373,9 @@ export default function getToolsWidgets(main, activeToolIndex) {
       const input = document.getElementById('alphaopen');
       if (input) {
         input.click();
-        if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
+        // if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
       } else {
-        if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
+        // if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
       }
     }
   });
@@ -310,7 +400,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
         value: mgr._symmetry,
         onInteract: () => {
           mgr._symmetry = !mgr._symmetry;
-          if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
+          // if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
           main.render();
           if (main.guiXR) main.guiXR._needsRedraw = true;
         }
@@ -327,7 +417,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
         value: mgr._continuous,
         onInteract: () => {
           mgr._continuous = !mgr._continuous;
-          if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
+          // if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
           main.render();
           if (main.guiXR) main.guiXR._needsRedraw = true;
         }

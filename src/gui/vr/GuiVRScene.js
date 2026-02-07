@@ -36,20 +36,31 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', label: 'Selection', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.duplicateSelection() });
+  widgets.push({
+    type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      try { main.duplicateSelection(); }
+      catch (e) { if (window.screenLog) window.screenLog(`Err: ${e.message}`, 'red'); console.error(e); }
+    }
+  });
   y += ITEM_H + GAP;
   widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
   y += ITEM_H + GAP;
   widgets.push({
     type: 'button', id: 'merge', label: 'Merge', x: 0, y: y, w: menuW, h: ITEM_H,
     onInteract: () => {
-      const selMeshes = main.getSelectedMeshes();
-      if (selMeshes.length < 2) return;
-      const newMesh = Remesh.mergeMeshes(selMeshes, main.getMesh() || selMeshes[0]);
-      main.removeMeshes(selMeshes);
-      main.getStateManager().pushStateAddRemove(newMesh, selMeshes.slice());
-      main.getMeshes().push(newMesh);
-      main.setMesh(newMesh);
+      try {
+        const selMeshes = main.getSelectedMeshes();
+        if (selMeshes.length < 2) return;
+        const newMesh = Remesh.mergeMeshes(selMeshes, main.getMesh() || selMeshes[0]);
+        main.removeMeshes(selMeshes);
+        main.getStateManager().pushStateAddRemove(newMesh, selMeshes.slice());
+        main.getMeshes().push(newMesh);
+        main.setMesh(newMesh);
+      } catch (e) {
+        if (window.screenLog) window.screenLog(`Merge Err: ${e.message}`, 'red');
+        console.error(e);
+      }
     }
   });
   y += ITEM_H + GAP;

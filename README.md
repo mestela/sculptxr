@@ -20,6 +20,14 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.49**: **VR Polish & Fixes**:
+    - **Feature**: **Radial Color Picker**: Restored the embedded radial color picker for the Paint tool in VR.
+    - **Fix**: **Thumbstick Radius**: Fixed right thumbstick up/down input to correctly adjust tool radius (was jumping to ~20%).
+    - **Fix**: **Symmetry Line**: Made the symmetry line thinner and less obtrusive in VR.
+    - **Fix**: **Contour Rendering**: Enabled contour/outline rendering in VR for better selection visibility.
+    - **Fix**: **Crash Protection**: Added safeguards for "Duplicate" and "Merge" operations to prevent VR session crashes.
+    - **Cleanup**: Silenced `[GuiXR]` logs for a cleaner console.
+
 - **v0.7.35**: **Desktop Preview Polish**:
     - **Feature**: Full "Desktop Preview" for VR Menu (Shift-Alt-V).
     - **Fix**: Resolved "phantom" highlighting where background tabs would light up or click through the overlay menu.
@@ -217,6 +225,10 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
     - Should re-enable mouse controls to adjust the screen offset, eaier than using the consoel commands. Also just standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
     - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
+
+- **Known Issues**:
+    - **Quest 3 Crash on Reload**: Clearing cache and reloading the page on Quest 3 often crashes the browser. This is under investigation but difficult to debug without direct device access. Workaround: Close the tab or browser window and reopen if it hangs.
+
 
 ## Quick Start
 Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.

@@ -67,7 +67,7 @@ const OVERLAY_Y = (CANVAS_SIZE - OVERLAY_H) / 2;
 
 const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 
-class GuiXR {
+export default class GuiXR {
 
   constructor(main, canvas) {
     this._main = main;
@@ -150,7 +150,7 @@ class GuiXR {
     // Top Rows: Files, Scene, History, Background, Camera...
     // Below: The Sidebar Stack.
 
-    setTimeout(() => this.syncToolRadius(), 500);
+    // setTimeout(() => this.syncToolRadius(), 500);
 
     // Desktop Preview Toggle (Dev Tool)
     window.addEventListener('keydown', (e) => {
@@ -217,7 +217,7 @@ class GuiXR {
     // Toggle-to-Close Logic
     // If the active overlay corresponds to this tab, close it and return.
     if (this._overlay === 'menu' && this._overlayData && this._overlayData.tabName === tabName) {
-      console.log(`[GuiXR] Toggling closed tab: ${tabName}`);
+      // console.log(`[GuiXR] Toggling closed tab: ${tabName}`);
       this.closeOverlay();
       this._activeCombobox = null;
       return;
@@ -335,7 +335,7 @@ class GuiXR {
     document.body.appendChild(div);
     this._previewContainer = div;
 
-    console.log(`[GuiXR] Desktop Preview Visible. Canvas: ${this._canvas.width}x${this._canvas.height}`);
+    // console.log(`[GuiXR] Desktop Preview Visible. Canvas: ${this._canvas.width}x${this._canvas.height}`);
 
     // Start Desktop Render Loop
     const loop = () => {
@@ -598,13 +598,13 @@ class GuiXR {
 
     let newHover = null;
     let hitWidget = null;
-    let logHit = false;
+    // let logHit = false;
     // Debounce log
-    if (Math.random() < 0.02) logHit = true;
+    // if (Math.random() < 0.02) logHit = true;
 
-    if (logHit) {
+    // if (logHit) {
 
-    }
+    // }
 
     for (const w of this._overlayData.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
@@ -856,15 +856,17 @@ class GuiXR {
     const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
 
     if (isPressed) {
-      console.log(`[GuiXR] Interact: ${cx.toFixed(0)}, ${cy.toFixed(0)} | Target: ${targetWid ? targetWid.id : 'None'} | Scroll: ${isScrollInteraction} | Overlay: ${this._overlay}`);
+      // console.log(`[GuiXR] Interact: ${cx.toFixed(0)}, ${cy.toFixed(0)} | Target: ${targetWid ? targetWid.id : 'None'} | Scroll: ${isScrollInteraction} | Overlay: ${this._overlay}`);
     }
 
     // Dynamic Debounce
     let debounceTime = 250;
     // Faster interaction for continuous controls
-    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic' || targetWid.type === 'section_header')) {
-      if (targetWid.type === 'section_header') debounceTime = 300; // prevent double toggle
-      else debounceTime = 16; 
+    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic')) {
+      debounceTime = 16; // ~60fps for continuous controls
+    }
+    if (targetWid && targetWid.type === 'section_header') {
+      debounceTime = 300; // prevent double toggle
     }
 
     // Check Tabs
@@ -1093,7 +1095,7 @@ class GuiXR {
 
     if (isPressed) {
       if (cx < ox || cx > ox + ow || cy < oy || cy > oy + oh) {
-        console.log("[GuiXR] Closing overlay (clicked outside)");
+        // console.log("[GuiXR] Closing overlay (clicked outside)");
         this.closeOverlay();
         return;
       }
@@ -1102,7 +1104,7 @@ class GuiXR {
       const closeSize = 60;
       // Note: This logic assumes close button is always at top-right of the DEFINED overlay box
       if (cx > ox + ow - closeSize && cy < oy + closeSize) {
-        console.log("[GuiXR] Closing overlay (close button)");
+        // console.log("[GuiXR] Closing overlay (close button)");
         this.closeOverlay();
         return;
       }
@@ -1128,11 +1130,11 @@ class GuiXR {
     if (relY < 0) return; // Clicked header area
 
     const index = Math.floor(relY / itemHeight);
-    console.log(`[GuiXR] Combobox Click relY=${relY} index=${index}`);
+    // console.log(`[GuiXR] Combobox Click relY=${relY} index=${index}`);
 
     if (index >= 0 && index < data.options.length) {
       const opt = data.options[index];
-      console.log(`[GuiXR] Selected option ${index}: ${opt.label}`);
+      // console.log(`[GuiXR] Selected option ${index}: ${opt.label}`);
       if (data.callback) data.callback(opt.id !== undefined ? opt.id : index);
       this.closeOverlay();
     }
@@ -1204,7 +1206,7 @@ class GuiXR {
           val = w.min + steps * w.step;
         }
 
-      console.log(`[GuiXR] Slider Action: ${id} = ${val}`);
+        // console.log(`[GuiXR] Slider Action: ${id} = ${val}`);
 
         if (id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
         else if (id === 'fov') { main.getCamera().setFov(val); main.render(); }
@@ -1383,7 +1385,7 @@ class GuiXR {
   }
 
   openOverlay(type, data) {
-    console.log(`[GuiXR] Opening overlay: ${type}`);
+    // console.log(`[GuiXR] Opening overlay: ${type}`);
     this._overlay = type;
     this._overlayData = data;
     this._overlayOpenTime = performance.now();
@@ -2640,15 +2642,21 @@ class GuiXR {
     if (!this._cursor.active) return null;
     return { u: this._cursor.x / this._canvas.width, v: this._cursor.y / this._canvas.height };
   }
-  updateRadius(val) {
-    this._radius = val;
-    const tools = this._tabWidgets['TOOLS'];
-    if (tools) {
-      const w = tools.find(w => w.id === 'radius');
-      if (w) w.value = val;
+  updateRadiusWidget(val) {
+    // Helper to update the radius slider visual if it exists
+    if (!this._tabWidgets['TOOLS']) return; // Not generated yet? or use a better lookup
+    // Actually we need to search in active tools widget if it's there
+    // If not, we don't need to do anything as it will be regenerated with correct value.
+    // But if it IS visible, we should update it.
+
+    // We can try to find it in the current widgets list if we don't trust _tabWidgets
+    const widgets = this._getWidgets();
+    const w = widgets.find(w => w.id === 'radius');
+    if (w) {
+      w.value = val;
+      this._needsRedraw = true;
+      this.draw();
     }
-    this.syncToolRadius();
-    this.forceDraw();
   }
   _handleDropdownInteract(cx, cy) {
     // Input Transform for Scale (Only if Overlay is active)
@@ -2682,12 +2690,12 @@ class GuiXR {
       let row = Math.floor(localY / itemHeight);
       
       const index = col * rowsPerCol + row;
-      console.log(`[GuiXR] Hit Index: ${index} (Row:${row} Col:${col}) LocalY:${localY.toFixed(1)}`);
+      // console.log(`[GuiXR] Hit Index: ${index} (Row:${row} Col:${col}) LocalY:${localY.toFixed(1)}`);
       
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
-        console.log(`[GuiXR] Dropdown select index=${index} optId=${opt.id} val=${val}`);
+        // console.log(`[GuiXR] Dropdown select index=${index} optId=${opt.id} val=${val}`);
         if (w.onSelect) w.onSelect(val);
         this._activeCombobox = null;
         this._needsRedraw = true;
@@ -2863,6 +2871,178 @@ class GuiXR {
 
     return { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy };
   }
+
+  _handleEmbeddedColorPicker(w) {
+    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    if (!tool) return;
+
+    const rgb = tool._color;
+    const hsv = [0, 0, 0];
+    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
+    let [h, s, v] = hsv;
+
+    const mx = this._cursor.x;
+    const my = this._cursor.y;
+
+    // Config (MUST MATCH DRAW LOGIC)
+    const cx = w.x + w.w * 0.5;
+    const cy = w.y + w.h * 0.5;
+    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const thickness = 20; // 50% thinner
+    const outerRadius = maxR;
+    const innerRadius = outerRadius - thickness;
+
+    // Square fits INSIDE innerRadius
+    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
+    const sqSize = sqHalf * 2;
+
+    const dx = mx - cx;
+    const dy = my - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // 1. Hue Ring Interaction (Annulus)
+    if (dist >= innerRadius - 10 && dist <= outerRadius + 10) {
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += Math.PI * 2;
+      h = angle / (Math.PI * 2);
+
+      const newRgb = Utils.hsv2rgb(h, s, v);
+      vec3.copy(tool._color, newRgb);
+      this._needsRedraw = true;
+      this._requestDraw();
+      this._main.render();
+      return;
+    }
+
+    // 2. SV Square Interaction
+    if (Math.abs(dx) <= sqHalf + 10 && Math.abs(dy) <= sqHalf + 10) {
+      const cDx = Math.max(-sqHalf, Math.min(sqHalf, dx));
+      const cDy = Math.max(-sqHalf, Math.min(sqHalf, dy));
+
+      s = (cDx + sqHalf) / sqSize;
+      v = 1.0 - (cDy + sqHalf) / sqSize;
+
+      s = Math.max(0, Math.min(1, s));
+      v = Math.max(0, Math.min(1, v));
+
+      const newRgb = Utils.hsv2rgb(h, s, v);
+      vec3.copy(tool._color, newRgb);
+      this._needsRedraw = true;
+      this._requestDraw();
+      this._main.render();
+      return;
+    }
+  }
+
+  _drawEmbeddedColorPicker(ctx, w) {
+    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    if (!tool) return;
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+
+    const rgb = tool._color;
+    const hsv = [0, 0, 0];
+    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
+    const [hue, s, v] = hsv;
+
+    const x = w.x;
+    const y = w.y;
+
+    // --- 1. Geometry Setup ---
+    const cx = x + w.w * 0.5;
+    const cy = y + w.h * 0.5;
+    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const thickness = 20; // 50% thinner
+    const outerRadius = maxR;
+    const innerRadius = outerRadius - thickness;
+
+    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
+    const sqSize = sqHalf * 2;
+    const sqX = cx - sqHalf;
+    const sqY = cy - sqHalf;
+
+    // --- 2. Draw Hue Ring ---
+    if (ctx.createConicGradient) {
+      ctx.save();
+      ctx.beginPath();
+      // Re-defining gradient for proper HSV Clockwise (Standard)
+      const g2 = ctx.createConicGradient(0, cx, cy);
+      g2.addColorStop(0, "red");
+      g2.addColorStop(1 / 6, "yellow");
+      g2.addColorStop(2 / 6, "lime"); // Green
+      g2.addColorStop(3 / 6, "cyan");
+      g2.addColorStop(4 / 6, "blue");
+      g2.addColorStop(5 / 6, "magenta");
+      g2.addColorStop(1, "red");
+
+      ctx.fillStyle = g2;
+      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+      ctx.arc(cx, cy, innerRadius, Math.PI * 2, 0, true);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
+      ctx.fillStyle = '#888';
+      ctx.fill();
+    }
+
+    // --- 3. Sat/Val Square ---
+    ctx.fillStyle = 'white';
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    const gH = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
+    gH.addColorStop(0, 'rgba(255,255,255,1)');
+    gH.addColorStop(1, `hsl(${hue * 360}, 100%, 50%)`);
+    ctx.fillStyle = gH;
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalCompositeOperation = 'source-over';
+
+    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    const gSat = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
+    gSat.addColorStop(0, 'white');
+    gSat.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gSat;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+    const gVal = ctx.createLinearGradient(sqX, sqY, sqX, sqY + sqSize);
+    gVal.addColorStop(0, 'rgba(0,0,0,0)');
+    gVal.addColorStop(1, 'black');
+    ctx.fillStyle = gVal;
+    ctx.fillRect(sqX, sqY, sqSize, sqSize);
+
+
+    // --- 5. Indicators ---
+    const angle = hue * Math.PI * 2;
+    const rInd = (innerRadius + outerRadius) * 0.5;
+    const indX = cx + Math.cos(angle) * rInd;
+    const indY = cy + Math.sin(angle) * rInd;
+
+    ctx.beginPath();
+    ctx.arc(indX, indY, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fill();
+
+    const svX = sqX + s * sqSize;
+    const svY = sqY + (1.0 - v) * sqSize;
+
+    ctx.beginPath();
+    ctx.arc(svX, svY, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = (v < 0.5) ? 'white' : 'black';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const cssFinal = `rgb(${Math.floor(rgb[0] * 255)}, ${Math.floor(rgb[1] * 255)}, ${Math.floor(rgb[2] * 255)})`;
+    ctx.fillStyle = cssFinal;
+    ctx.fill();
+  }
 }
 
-export default GuiXR;
+

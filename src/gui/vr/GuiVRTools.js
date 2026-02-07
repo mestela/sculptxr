@@ -73,25 +73,17 @@ export default function getToolsWidgets(main, activeToolIndex) {
     y += gapHeader;
 
     // Color (RGB Sliders)
+    // Color Picker (Replacing RGB Sliders)
     const color = activeTool._color;
     widgets.push({
-      type: 'slider', id: 'color_r', label: 'R', x: col1X, y: y, w: 350, h: 40,
-      value: color[0], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[0] = val; main.render(); }
+      type: 'colorpicker_embedded',
+      id: 'picker',
+      label: 'Color',
+      x: col1X, y: y, w: 350, h: 350, // Square-ish
+      // value: color, // Passed via tool ref actually
     });
-    y += 45;
-    widgets.push({
-      type: 'slider', id: 'color_g', label: 'G', x: col1X, y: y, w: 350, h: 40,
-      value: color[1], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[1] = val; main.render(); }
-    });
-    y += 45;
-    widgets.push({
-      type: 'slider', id: 'color_b', label: 'B', x: col1X, y: y, w: 350, h: 40,
-      value: color[2], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { color[2] = val; main.render(); }
-    });
-    y += 45 + gapBtn;
+    // Height of picker (350) + gap
+    y += 350 + gapSection;
 
     // Material (Roughness, Metallic)
     widgets.push({
@@ -229,7 +221,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       onInteract: () => {
         if (activeTool && activeTool.bakeToMesh) {
           activeTool.bakeToMesh();
-          if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
+          // if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
         }
       }
     });
@@ -257,12 +249,12 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._negative : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
         activeTool._negative = !activeTool._negative;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
       } else {
-        if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
+        // if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
       }
     }
   });
@@ -276,7 +268,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._clay : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
         activeTool._clay = !activeTool._clay;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -293,7 +285,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeTool ? activeTool._accumulate : false,
     onInteract: () => {
       if (activeTool) {
-        if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
+        // if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
         activeTool._accumulate = !activeTool._accumulate;
         main.render();
         if (main.guiXR) main.guiXR._needsRedraw = true;
@@ -332,7 +324,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     onInteract: () => {
       if (activeTool && activeTool._lockPosition !== undefined) {
         activeTool._lockPosition = !activeTool._lockPosition;
-        if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
+        // if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
     }
@@ -363,7 +355,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       if (activeTool) {
         const name = alphaNames[idx];
         activeTool._idAlpha = name;
-        if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
+        // if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
         // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
@@ -381,9 +373,9 @@ export default function getToolsWidgets(main, activeToolIndex) {
       const input = document.getElementById('alphaopen');
       if (input) {
         input.click();
-        if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
+        // if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
       } else {
-        if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
+        // if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
       }
     }
   });
@@ -408,7 +400,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
         value: mgr._symmetry,
         onInteract: () => {
           mgr._symmetry = !mgr._symmetry;
-          if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
+          // if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
           main.render();
           if (main.guiXR) main.guiXR._needsRedraw = true;
         }
@@ -425,7 +417,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
         value: mgr._continuous,
         onInteract: () => {
           mgr._continuous = !mgr._continuous;
-          if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
+          // if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
           main.render();
           if (main.guiXR) main.guiXR._needsRedraw = true;
         }

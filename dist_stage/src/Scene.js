@@ -550,6 +550,32 @@ class Scene {
 
   _drawSceneVR() {
     var gl = this._gl;
+
+    ///////////////
+    // CONTOUR 1/2
+    ///////////////
+    gl.disable(gl.DEPTH_TEST);
+    var showContour = this._selectMeshes.length > 0 && this._showContour && ShaderLib[Enums.Shader.CONTOUR].color[3] > 0.0;
+
+    // VR RTT Handling (Hack)
+    // We bind the Contour RTT, render flat color, then MUST restore the WebXR framebuffer.
+    // However, WebXR framebuffer is NOT exposed easily here unless we pass it down or query it.
+    // gl.getParameter(gl.FRAMEBUFFER_BINDING) works in Chrome for WebXR usually.
+
+    let previousFBO = null;
+    if (showContour && this._rttContour) {
+      previousFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s) {
+        sel[s].renderFlatColor(this);
+      }
+
+      // RESTORE VR FBO
+      gl.bindFramebuffer(gl.FRAMEBUFFER, previousFBO);
+    }
+
     gl.enable(gl.DEPTH_TEST);
 
     // grid
@@ -574,13 +600,32 @@ class Scene {
 
     // Brush Indicator (NEW)
     // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
-    if (this._sculptManager && this._picking.getMesh()) {
-      // rWorld2 is set in handleXRInput (picking logic)
-      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
-
       // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
       // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
       this._sculptManager.getSelection().renderVR(this, this._camera, radius);
+
+    ///////////////
+    // CONTOUR 2/2
+    ///////////////
+    if (showContour && this._rttContour) {
+      gl.disable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND);
+      // Rtt.render() draws a fullscreen quad.
+      // In VR, "fullscreen" means the current viewport (one eye).
+      // Since _rttContour texture contains the FULL screen capture from 1/2,
+      // If we render it back, it might be stretched if RTT size != Viewport size?
+      // RTT is resized to Canvas Size usually.
+      // VR Viewport is usually smaller/different.
+      // However, since we rendered the flat color using the VR Viewport (implicitly?),
+      // Wait, when we bound RTT, we didn't change viewport.
+      // If RTT is huge (Canvas Size) and VR Viewport is small, we rendered into a corner of the RTT.
+      // Then if we render the RTT quad, we need to sample that corner.
+      // Rtt.render() uses standard UVs (0..1).
+      // This might look incorrect if UVs don't match.
+      // But let's try.
+      this._rttContour.render(this);
+      gl.disable(gl.BLEND);
+      gl.enable(gl.DEPTH_TEST);
     }
   }
 
@@ -1528,20 +1573,23 @@ class Scene {
               state.lastRadiusTime = now;
 
               let change = 0.0;
-              if (valY < -T_PRESS) change = 0.05; // UP -> +5%
-              if (valY > T_PRESS) change = -0.05; // DOWN -> -5%
+              const tools = this._sculptManager.getCurrentTool();
+              const maxRadius = 250.0;
+              if (valY < -T_PRESS) change = maxRadius * 0.05; // UP -> +5% of max
+              if (valY > T_PRESS) change = -maxRadius * 0.05; // DOWN -> -5% of max
 
-              if (change !== 0 && this._guiXR) {
-                const oldVal = this._guiXR._radius;
-                const newVal = Math.max(0.01, Math.min(1.0, oldVal + change));
+              if (change !== 0 && tools) {
+                const oldVal = tools._radius;
+                const newVal = Math.max(5.0, Math.min(maxRadius, oldVal + change));
 
-                if (window.screenLog) window.screenLog(`Radius: ${(oldVal * 100).toFixed(0)}% -> ${(newVal * 100).toFixed(0)}%`, "yellow");
+                // if (window.screenLog) window.screenLog(`Radius: ${newVal.toFixed(0)}`, "yellow");
 
-                // Use new helper to sync Widget + Texture
-                this._guiXR.updateRadius(newVal);
+                tools.setRadius(newVal);
 
-                // Sync Tool
-                if (this._sculptManager) this._sculptManager.getTool().setRadius(newVal * 100);
+                // Update GuiXR Slider if visible
+                if (this._guiXR) {
+                  this._guiXR.updateRadiusWidget(newVal);
+                }
 
                 // Force Render
                 this._main ? this._main.render() : this.render();
