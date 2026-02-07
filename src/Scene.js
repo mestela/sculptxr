@@ -1461,7 +1461,6 @@ class Scene {
 
       // [DESKTOP 6DOF] Spectator Render (Parity Strategy)
       if (this._desktopOffsetMode) {
-        if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog(`Desktop Render: Active. Views=${pose.views.length}`, "cyan");
 
         const gl = this._gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1492,8 +1491,6 @@ class Scene {
 
           // Render Shared Logic
           this._renderSceneVR(this._camera, viewMat, prob);
-        } else {
-          if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog("Desktop Render: No Views!", "red");
         }
       }
     }
@@ -2280,8 +2277,6 @@ class Scene {
 
   toggleDesktopOffset() {
     this._desktopOffsetMode = !this._desktopOffsetMode;
-    console.log(`[Desktop Mode] Toggled: ${this._desktopOffsetMode}`);
-    if (window.screenLog) window.screenLog(`Desktop Mode: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
     this.render();
   }
 

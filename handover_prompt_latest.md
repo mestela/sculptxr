@@ -27,6 +27,7 @@ We have recently implemented major VR UI updates and are currently debugging a s
 3.  **Performance**: VR GUI optimization (Backlog).
 
 ## Recent Changes
+*   **v0.7.58**: **Cleanup**: Removed "Desktop Mode" button and debug logging after successful resolution.
 *   **v0.7.57**: **Docs**: Updated `walkthrough.md` with investigation notes.
 *   **v0.7.57**: **Fix**: Resolved Isolate issue where Voxel Debug Cube would appear.
 *   **v0.7.56**: **Debug**: Added verbose logging to `onXRFrame` spectator path.
