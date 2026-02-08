@@ -2229,9 +2229,9 @@ class Scene {
       // window.screenLog(`Scene: Trig=${isTriggerPressed} Pick=${!!picked} Sculpt=${this._vrSculpting} Air=${allowAir} Active=${!!isToolActive}`, "gray");
     }
 
-    if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
-      if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");
-    }
+    // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
+    //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");
+    // }
 
     // Capture state for change detection
     if (this._lastCanSculpt !== canSculpt || (this._vrSculpting && !canSculpt)) {
