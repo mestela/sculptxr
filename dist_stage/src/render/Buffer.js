@@ -21,6 +21,7 @@ class Buffer {
   }
 
   update(data, nbElts) {
+    if (!data) return; // Safety check
     this.bind();
 
     // OPTIMIZATION: Removed gl.getError loop (Caused 85ms stalls in VR)

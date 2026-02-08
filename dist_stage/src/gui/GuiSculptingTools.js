@@ -296,4 +296,9 @@ GuiTools[Enums.Tools.VOXEL] = {
   }
 };
 
+GuiTools[Enums.Tools.GRAB] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 export default GuiSculptingTools;

@@ -341,6 +341,20 @@ class Mesh {
     return Math.sqrt(this.getScale2());
   }
 
+  setScale(scale) {
+    var m = this._transformData._matrix;
+    var cur = this.getScale();
+    if (cur === 0.0) return;
+    var ratio = scale / cur;
+    m[0] *= ratio; m[1] *= ratio; m[2] *= ratio;
+    m[4] *= ratio; m[5] *= ratio; m[6] *= ratio;
+    m[8] *= ratio; m[9] *= ratio; m[10] *= ratio;
+  }
+
+  setMatrix(mat) {
+    mat4.copy(this._transformData._matrix, mat);
+  }
+
   getSymmetryOrigin() {
     var orig = vec3.create();
     var tdata = this._transformData;

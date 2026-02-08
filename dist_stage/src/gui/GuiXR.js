@@ -12,7 +12,7 @@ import getSceneWidgets from 'gui/vr/GuiVRScene.js';
 import getRenderingWidgets from 'gui/vr/GuiVRRendering.js';
 import getFilesWidgets from 'gui/vr/GuiVRFiles.js';
 import getHistoryWidgets from 'gui/vr/GuiVRHistory.js';
-import getBackgroundWidgets from 'gui/vr/GuiVRBackground.js';
+import getReferenceWidgets from 'gui/vr/GuiVRReference.js'; // Replaces Background
 import getCameraWidgets from 'gui/vr/GuiVRCamera.js';
 import getTabletWidgets from 'gui/vr/GuiVRTablet.js';
 import getLanguageWidgets from 'gui/vr/GuiVRLanguage.js';
@@ -41,7 +41,7 @@ const CANVAS_SIZE = 1024;
 
 // Group 1: Global Tabs (Top)
 // Group 1: Global Tabs (Top)
-const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Background', 'Camera', 'Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
+const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Camera', 'Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
@@ -125,7 +125,7 @@ export default class GuiXR {
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
       'Sculpting & Painting': (main) => getToolsWidgets(main, main.getSculptManager().getToolIndex()),
-      'Background': getBackgroundWidgets,
+      'Reference': getReferenceWidgets,
       'Camera': getCameraWidgets,
       'Tablet pressure': getTabletWidgets,
       'Language': getLanguageWidgets,
@@ -245,7 +245,7 @@ export default class GuiXR {
       if (tabName === 'Files') data = getFilesWidgets(this._main);
       else if (tabName === 'Scene') data = getSceneWidgets(this._main);
       else if (tabName === 'History') data = getHistoryWidgets(this._main);
-      else if (tabName === 'Background') data = getBackgroundWidgets(this._main);
+      else if (tabName === 'Reference') data = getReferenceWidgets(this._main);
       else if (tabName === 'Camera') data = getCameraWidgets(this._main);
       else if (tabName === 'Tablet pressure') data = getTabletWidgets(this._main);
       else if (tabName === 'Language') data = getLanguageWidgets(this._main);

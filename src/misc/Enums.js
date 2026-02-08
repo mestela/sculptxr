@@ -29,7 +29,8 @@ Enums.Tools = {
   MASKING: 10,
   LOCALSCALE: 11,
   TRANSFORM: 12,
-  VOXEL: 13
+  VOXEL: 13,
+  GRAB: 14
 };
 
 // display shader type

@@ -143,6 +143,37 @@ class Scene {
       this.render();
     };
 
+    // [DEBUG] Grab Tool Helper
+    window.debug = window.debug || {};
+    window.debug.grab = () => {
+      if (!this._sculptManager) return "No SculptManager";
+      const tool = this._sculptManager.getCurrentTool();
+      if (!tool || tool.constructor.name !== 'Grab') return "Current tool is not Grab";
+
+      const active = tool._activeController;
+      const mesh = tool._grabbedMesh;
+
+      let msg = `Grab Tool State:\n`;
+      msg += `  Active Controller: ${active ? (active.handedness || 'Unknown') : 'None'}\n`;
+      if (active && active.matrix) {
+        const m = active.matrix;
+        msg += `  Ctl Mat: [${m[12].toFixed(2)}, ${m[13].toFixed(2)}, ${m[14].toFixed(2)}]\n`;
+        // check scale
+        const sx = Math.hypot(m[0], m[1], m[2]);
+        msg += `  Ctl Scale: ${sx.toFixed(4)}\n`;
+      }
+
+      msg += `  Grabbed Mesh: ${mesh ? mesh.getID() : 'None'}\n`;
+      if (mesh) {
+        const m = mesh.getMatrix();
+        msg += `  Mesh Mat: [${m[12].toFixed(2)}, ${m[13].toFixed(2)}, ${m[14].toFixed(2)}]\n`;
+      }
+
+      console.log(msg);
+      if (window.screenLog) window.screenLog(msg, "lime");
+      return msg;
+    };
+
     this.initWebGL();
     if (!this._gl)
       return;
@@ -2189,7 +2220,48 @@ class Scene {
           // window.screenLog(`VR Input: Src=${activeSource ? activeSource.handedness : 'null'} Trig=${isTriggerPressed} Neg=${isNegative}`, "cyan");
         }
 
-        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative });
+        // Collect Controllers for Grab Tool
+        const controllers = [];
+        if (this._vrControllerLeft) {
+          // Attach gamepad if available from session?
+          // Scene doesn't store picking source easily here locally, but we can query session.
+          // Actually `Grab.js` needs picking ray origin too?
+          // `this._vrControllerLeft` has matrix.
+          // We need BUTTON state.
+          // Let's pass the input sources directly?
+          if (session && session.inputSources) {
+            // augment controller object with button state if we can match them
+            // For now, let's just pass the session input sources effectively?
+            // Or just let `Grab.js` query navigator.getGamepads()?
+            // `navigator.getGamepads()` is standard.
+            // But `frame.session.inputSources` is cleaner for WebXR.
+          }
+        }
+
+        // Let's passed explicit controller objects that include buttons if we can find them
+        const xrControllers = [];
+        if (session && session.inputSources) {
+          for (let src of session.inputSources) {
+            if (!src.gamepad) continue;
+            // Match with our internal controller objects?
+            // Left/Right
+            const ctl = (src.handedness === 'left') ? this._vrControllerLeft : this._vrControllerRight;
+            if (ctl) {
+              xrControllers.push({
+                handedness: src.handedness,
+                buttons: src.gamepad.buttons,
+                matrix: ctl.getMatrix(), // Local or World? World if updated?
+                rayOrigin: (src.handedness === 'left') ? (this._vrPoseLeft ? this._vrPoseLeft.subarray(12, 15) : null) : (this._vrPoseRight ? this._vrPoseRight.subarray(12, 15) : null),
+                // This is getting complicated to construct.
+                // Let's just pass `session.inputSources` and let the tool parse it?
+                // But tool needs SPACE (ray).
+                // Picking has ray.
+              });
+            }
+          }
+        }
+
+        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers });
       } else {
         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
         this._sculptManager.update();

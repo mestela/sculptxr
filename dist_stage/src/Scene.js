@@ -1461,7 +1461,6 @@ class Scene {
 
       // [DESKTOP 6DOF] Spectator Render (Parity Strategy)
       if (this._desktopOffsetMode) {
-        if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog(`Desktop Render: Active. Views=${pose.views.length}`, "cyan");
 
         const gl = this._gl;
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1492,8 +1491,6 @@ class Scene {
 
           // Render Shared Logic
           this._renderSceneVR(this._camera, viewMat, prob);
-        } else {
-          if (window.screenLog && this._logThrottle % 240 === 0) window.screenLog("Desktop Render: No Views!", "red");
         }
       }
     }
@@ -2192,7 +2189,48 @@ class Scene {
           // window.screenLog(`VR Input: Src=${activeSource ? activeSource.handedness : 'null'} Trig=${isTriggerPressed} Neg=${isNegative}`, "cyan");
         }
 
-        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative });
+        // Collect Controllers for Grab Tool
+        const controllers = [];
+        if (this._vrControllerLeft) {
+          // Attach gamepad if available from session?
+          // Scene doesn't store picking source easily here locally, but we can query session.
+          // Actually `Grab.js` needs picking ray origin too?
+          // `this._vrControllerLeft` has matrix.
+          // We need BUTTON state.
+          // Let's pass the input sources directly?
+          if (session && session.inputSources) {
+            // augment controller object with button state if we can match them
+            // For now, let's just pass the session input sources effectively?
+            // Or just let `Grab.js` query navigator.getGamepads()?
+            // `navigator.getGamepads()` is standard.
+            // But `frame.session.inputSources` is cleaner for WebXR.
+          }
+        }
+
+        // Let's passed explicit controller objects that include buttons if we can find them
+        const xrControllers = [];
+        if (session && session.inputSources) {
+          for (let src of session.inputSources) {
+            if (!src.gamepad) continue;
+            // Match with our internal controller objects?
+            // Left/Right
+            const ctl = (src.handedness === 'left') ? this._vrControllerLeft : this._vrControllerRight;
+            if (ctl) {
+              xrControllers.push({
+                handedness: src.handedness,
+                buttons: src.gamepad.buttons,
+                matrix: ctl.getMatrix(), // Local or World? World if updated?
+                rayOrigin: (src.handedness === 'left') ? (this._vrPoseLeft ? this._vrPoseLeft.subarray(12, 15) : null) : (this._vrPoseRight ? this._vrPoseRight.subarray(12, 15) : null),
+                // This is getting complicated to construct.
+                // Let's just pass `session.inputSources` and let the tool parse it?
+                // But tool needs SPACE (ray).
+                // Picking has ray.
+              });
+            }
+          }
+        }
+
+        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers });
       } else {
         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
         this._sculptManager.update();
@@ -2280,8 +2318,6 @@ class Scene {
 
   toggleDesktopOffset() {
     this._desktopOffsetMode = !this._desktopOffsetMode;
-    console.log(`[Desktop Mode] Toggled: ${this._desktopOffsetMode}`);
-    if (window.screenLog) window.screenLog(`Desktop Mode: ${this._desktopOffsetMode ? "ON" : "OFF"}`, this._desktopOffsetMode ? "lime" : "white");
     this.render();
   }
 

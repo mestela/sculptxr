@@ -12,6 +12,8 @@ var MOUSE_LEFT = 1;
 var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
 
+import ReferenceManager from 'editing/ReferenceManager';
+
 // Manage events
 class SculptGL extends Scene {
 
@@ -47,6 +49,8 @@ class SculptGL extends Scene {
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
     window.app = this; // Ensure 'app' is also set globally
+    window.sculptgl = this; // Alias for user convenience
+    this._referenceManager = new ReferenceManager(this);
 
     // Convenience for Console Debugging
     Object.defineProperty(this, 'guiXR', {
@@ -99,6 +103,14 @@ class SculptGL extends Scene {
         } else {
           window.screenLog("Voxel State not ready", "red");
         }
+      },
+      grab: () => {
+        const tool = this._sculptManager.getTool(Enums.Tools.GRAB);
+        if (!tool) return "Grab tool not found";
+        const active = tool._activeController;
+        if (!active) return "No active controller in Grab tool";
+        const m = active.matrix;
+        return `Active Controller:\nPos: ${m[12]}, ${m[13]}, ${m[14]}\nMesh Grabbed: ${!!tool._grabbedMesh}`;
       },
       bake: () => {
         const tool = this._sculptManager.getTool(Enums.Tools.VOXEL);

@@ -450,5 +450,14 @@ export default function getToolsWidgets(main, activeToolIndex) {
     }
   }
 
+  // --- GRAB TOOL ---
+  if (activeToolIndex === Enums.Tools.GRAB && activeTool) {
+    widgets.push({ type: 'info', label: 'Grab Settings', x: col1X, y: y });
+    y += gapHeader;
+    // No specific settings yet? 
+    // Maybe "Uniform Scale" toggle for 2-handed?
+    // For now just placeholder or nothing.
+  }
+
   return widgets;
 }
