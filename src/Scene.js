@@ -2200,6 +2200,22 @@ class Scene {
 
 
 
+    // TRIGGER DEBOUNCE (Fix for jittery input / signal drops)
+    const nowDebounce = performance.now();
+    if (isTriggerPressed) {
+      this._vrTriggerReleaseTime = 0; // Reset
+    } else if (this._vrSculpting) {
+      // Trigger is UP, but we are sculpting. Check grace period.
+      if (!this._vrTriggerReleaseTime) this._vrTriggerReleaseTime = nowDebounce;
+
+      // 150ms Grace Period
+      if (nowDebounce - this._vrTriggerReleaseTime < 150) {
+        isTriggerPressed = true; // PHANTOM HOLD
+        // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("Trigger Grace Period...", "gray");
+      }
+    }
+
+    /* 6. Dispatch Conditions */
     // Allow Start ONLY if Picked OR Tool Allows Air (Voxel). Allow Continue ALWAYS if Trigger is held.
     const canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir);
 
@@ -2211,6 +2227,7 @@ class Scene {
       if (!this._vrSculpting) {
         this._vrSculpting = true;
         this._vrLockedHand = source.handedness; // LOCK HAND
+        this._vrTriggerReleaseTime = 0; // Reset Timer
 
         // Deep Trace: Start Stroke
         if (window.screenLog && this._logThrottle++ % 60 === 0) {
@@ -2227,6 +2244,7 @@ class Scene {
       if (this._vrSculpting) {
         this._vrSculpting = false;
         this._vrLockedHand = null; // UNLOCK HAND
+        this._vrTriggerReleaseTime = 0;
 
         // Deep Trace: End Stroke
         if (window.screenLog || true) {
