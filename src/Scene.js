@@ -1774,10 +1774,26 @@ class Scene {
     // 5. Dispatch Sculpting (Active Hand)
     // XRInputSourceArray is not a real array, so .find() fails.
     let activeSource = null;
-    for (const s of sources) {
-      if (s.handedness === 'right') { // Forced Right Hand for Stability
-        activeSource = s;
-        break;
+
+    // Smart Source Selection: Prioritize Trigger Press
+    const right = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'right') : null;
+    const left = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'left') : null;
+
+    // Check Triggers
+    const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;
+    const leftPressed = left && left.gamepad && left.gamepad.buttons[0] && left.gamepad.buttons[0].pressed;
+
+    if (rightPressed) activeSource = right;
+    else if (leftPressed) activeSource = left;
+    else {
+      // Fallback to Right, then Left, then First
+      // But we need to search 'sources' properly if Array.from failed or wasn't used above (it should exist in modern browsers)
+      // If we can't find specific hands, just pick the first one?
+      // Let's iterate if variables are null
+      if (right) activeSource = right;
+      else if (left) activeSource = left;
+      else {
+        for (const s of sources) { activeSource = s; break; }
       }
     }
 
