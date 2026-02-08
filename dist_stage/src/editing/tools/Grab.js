@@ -247,6 +247,7 @@ class Grab extends SculptBase {
           // }
 
           this._main.setMesh(this._grabbedMesh);
+          this._main.render();
         } else {
           // Released or Lost Controller
           this._grabbedMesh = null;
