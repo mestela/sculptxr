@@ -49,11 +49,12 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Add primitives menu missing
     - Transform tool/gizmo missing
     - Re-symmetrize function, choose left->right, right->left
-    - Drag and move support rotation
+    - Drag and move tools should support 6dof rotation
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - Symmetry for voxel tool
     - Straight line mode for voxel tool
-    - Paint is a bit glitchy
+    - Paint is a bit glitchy after 0.7.118
+    - Left handed mode
     - Symmetry is really glitchy, needs to be reimplemented
     - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
     - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
