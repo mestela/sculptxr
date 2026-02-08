@@ -53,6 +53,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - Symmetry for voxel tool
     - Straight line mode for voxel tool
+    - Paint is a bit glitchy
+    - Symmetry is really glitchy, needs to be reimplemented
     - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
     - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
     - ~~Reference image support~~ - **Working v0.7.118**
@@ -60,7 +62,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Grab brush~~ - **DONE v0.7.118**
 
 - **UI + UX**  
-    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky

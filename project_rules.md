@@ -1,5 +1,17 @@
 # SculptGL WebXR Project Rules
 
+## 🚀 Release Workflow
+**Goal:** Maintain a clean history and simple README while keeping full records.
+
+1.  **Documentation**:
+    -   **Add** new release notes to top of `docs/releases.md`.
+    -   **Update** `README.md`: Keep only the **latest 3 releases**. Link to `docs/releases.md` for older history.
+2.  **Version**:
+    -   **Increment** version in `index.html` (e.g., `<title>SculptXR v0.7.121</title>`).
+3.  **Deploy**:
+    -   Run `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
+    -   Script will auto-check git tags and refuse overwrite (unless `FORCE=1`).
+
 ## Workflow Rules (STRICT ADHERENCE)
 1. **PLANNING MODE IS SACRED**: When in "Planning Mode" or asked to "Plan", **NO CODE EDITS** are permitted. Analysis and reading only.
 2. **BETA FIRST**: ALL code changes must be deployed to `sculptvrbeta` (`./deploy_beta.sh`) first.
