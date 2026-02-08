@@ -673,7 +673,6 @@ class SculptGL extends Scene {
   onDeviceUp() {
     // Prevent mouse-up from killing an active VR stroke
     if (this._vrSculpting) {
-      if (window.screenLog || true) console.log("🖱️ MouseUp Ignored (VR Sculpting Active)");
       return;
     }
 

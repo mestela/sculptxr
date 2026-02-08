@@ -2098,12 +2098,15 @@ class Scene {
     // 2.5 Menu Guard: If pointing at menu, block sculpting
     // This requires handleXRInput to have run and set this._isPointingAtMenu
 
-    // DEBUG LOG: Verify this logic
-    if (this._isPointingAtMenu) {
-      // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "lime");
+    // FIX: Only block STARTING given we are not already sculpting/grabbing
+    const currentTool = this._sculptManager.getCurrentTool();
+    const isToolActive = currentTool && currentTool._grabbedMesh;
+    const isSculpting = this._vrSculpting;
+
+    // Only block if we are NOT already busy
+    if (this._isPointingAtMenu && !isSculpting && !isToolActive) {
+      if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "orange");
       return;
-    } else {
-      // if (window.screenLog && source.gamepad.buttons[0].pressed) window.screenLog("SCULPT ALLOWED (No Menu Hit)", "red");
     }
 
     // 4. Picking State Synchronization (RAY CASTING)
@@ -2166,6 +2169,14 @@ class Scene {
     const buttons = source.gamepad.buttons;
     const isTriggerPressed = buttons[0].pressed;
 
+    // DEBUG: RAW INPUT TRACE
+    if (window.screenLog && this._logThrottle % 15 === 0) {
+      // Log every few frames to monitor stability
+      if (isTriggerPressed || this._vrSculpting) {
+        window.screenLog(`Input Dump: Src=${source.handedness} Btn0=${buttons[0].pressed} Val=${buttons[0].value.toFixed(2)}`, isTriggerPressed ? "white" : "gray");
+      }
+    }
+
     // Check if tool allows air (Voxel) to prevent snapping
     const tool = this._sculptManager.getCurrentTool();
     const allowAir = (tool && tool._allowAir === true);
@@ -2200,27 +2211,29 @@ class Scene {
 
 
 
-    // TRIGGER DEBOUNCE (Fix for jittery input / signal drops)
-    const nowDebounce = performance.now();
-    if (isTriggerPressed) {
-      this._vrTriggerReleaseTime = 0; // Reset
-    } else if (this._vrSculpting) {
-      // Trigger is UP, but we are sculpting. Check grace period.
-      if (!this._vrTriggerReleaseTime) this._vrTriggerReleaseTime = nowDebounce;
-
-      // 150ms Grace Period
-      if (nowDebounce - this._vrTriggerReleaseTime < 150) {
-        isTriggerPressed = true; // PHANTOM HOLD
-        // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("Trigger Grace Period...", "gray");
-      }
-    }
+    // TRIGGER DEBOUNCE REMOVED
 
     /* 6. Dispatch Conditions */
     // Allow Start ONLY if Picked OR Tool Allows Air (Voxel). Allow Continue ALWAYS if Trigger is held.
-    const canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir);
+    // FIX: If tool reports it is "active" (like Grab holding a mesh), we MUST NOT end the stroke.
+    // (currentTool and isToolActive defined above at Menu Block)
+
+    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive);
+
+    if (window.screenLog && this._logThrottle % 60 === 0) {
+      // window.screenLog(`Scene: Trig=${isTriggerPressed} Pick=${!!picked} Sculpt=${this._vrSculpting} Air=${allowAir} Active=${!!isToolActive}`, "gray");
+    }
 
     if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
-      // window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Tool=${tool ? tool.constructor.name : 'None'}`, "orange");
+      if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");
+    }
+
+    // Capture state for change detection
+    if (this._lastCanSculpt !== canSculpt || (this._vrSculpting && !canSculpt)) {
+      if (window.screenLog) {
+        // window.screenLog(`Scene Logic Change: Can=${canSculpt} Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive} Sculpting=${this._vrSculpting}`, canSculpt ? "lime" : "red");
+      }
+      this._lastCanSculpt = canSculpt;
     }
 
     if (canSculpt) {
@@ -2230,9 +2243,7 @@ class Scene {
         this._vrTriggerReleaseTime = 0; // Reset Timer
 
         // Deep Trace: Start Stroke
-        if (window.screenLog && this._logThrottle++ % 60 === 0) {
-          // window.screenLog("Sculpt: START STROKE (r=" + sliderVal.toFixed(2) + ")", "lime");
-        }
+        if (window.screenLog) window.screenLog(`Scene: START STROKE (${source.handedness})`, "lime");
 
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
@@ -2242,16 +2253,12 @@ class Scene {
       // ... existing code ...
     } else {
       if (this._vrSculpting) {
+        const reason = !isTriggerPressed ? "Trigger Released" : "Logic Blocked";
+        if (window.screenLog) window.screenLog(`Scene: END STROKE (${reason}) Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive}`, "red");
+
         this._vrSculpting = false;
         this._vrLockedHand = null; // UNLOCK HAND
         this._vrTriggerReleaseTime = 0;
-
-        // Deep Trace: End Stroke
-        if (window.screenLog || true) {
-          const reason = !isTriggerPressed ? "TriggerRelease" : (!picked && !allowAir ? "RayMiss & !Air" : "Unknown");
-          // window.screenLog(`Sculpt END: ${reason} (Trig=${isTriggerPressed} Pick=${!!picked} Air=${allowAir})`, "orange");
-          console.log(`[Scene] Sculpt END: ${reason} (Hand=${source.handedness} Trig=${isTriggerPressed} Pick=${!!picked})`);
-        }
 
         this._sculptManager.end();
         this._action = Enums.Action.NOTHING;
@@ -2297,43 +2304,86 @@ class Scene {
           // window.screenLog(`VR Input: Src=${activeSource ? activeSource.handedness : 'null'} Trig=${isTriggerPressed} Neg=${isNegative}`, "cyan");
         }
 
-        // Collect Controllers for Grab Tool
-        const controllers = [];
-        if (this._vrControllerLeft) {
-          // Attach gamepad if available from session?
-          // Scene doesn't store picking source easily here locally, but we can query session.
-          // Actually `Grab.js` needs picking ray origin too?
-          // `this._vrControllerLeft` has matrix.
-          // We need BUTTON state.
-          // Let's pass the input sources directly?
-          if (session && session.inputSources) {
-            // augment controller object with button state if we can match them
-            // For now, let's just pass the session input sources effectively?
-            // Or just let `Grab.js` query navigator.getGamepads()?
-            // `navigator.getGamepads()` is standard.
-            // But `frame.session.inputSources` is cleaner for WebXR.
-          }
-        }
-
-        // Let's passed explicit controller objects that include buttons if we can find them
+        // Collect Controllers for Grab Tool (TRANSFORMED TO SCENE SPACE)
         const xrControllers = [];
         if (session && session.inputSources) {
+
+          // Pre-calc transforms
+          if (this._vrScale === undefined || this._vrScale < 0.0001) this._vrScale = 1.0;
+          const vrScale = this._vrScale;
+          const invScale = 1.0 / vrScale;
+
+          // World Offset Inverse
+          let qInvWorld = quat.create();
+          let posInvWorld = vec3.create();
+          if (this._xrWorldOffset) {
+            const r = this._xrWorldOffset.orientation;
+            const t = this._xrWorldOffset.position;
+            const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+            quat.invert(qInvWorld, qRot);
+            // Inverse Translation Vector
+            vec3.set(posInvWorld, t.x, t.y, t.z);
+          } else {
+            quat.identity(qInvWorld);
+          }
+
           for (let src of session.inputSources) {
             if (!src.gamepad) continue;
-            // Match with our internal controller objects?
-            // Left/Right
+
+            // Get Physical Matrix (World Space)
             const ctl = (src.handedness === 'left') ? this._vrControllerLeft : this._vrControllerRight;
             if (ctl) {
+              const physMat = ctl.getMatrix(); // This is Physical World Matrix (set (Pass 1))
+              const sceneMat = mat4.create();
+              mat4.copy(sceneMat, physMat);
+
+              // TRANSFORM TO VIRTUAL SCENE SPACE
+              // 1. Apply Inverse World Offset
+              if (this._xrWorldOffset) {
+                // The physical matrix M_phys transforms 0,0,0 to P_phys.
+                // We want M_virt.
+                // P_phys = T_world * P_virt
+                // M_phys = T_world * M_virt
+                // M_virt = inv(T_world) * M_phys
+
+                // T_world matrix
+                const tWorld = mat4.create();
+                const r = this._xrWorldOffset.orientation;
+                const t = this._xrWorldOffset.position;
+                mat4.fromRotationTranslation(tWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+
+                // Add Scale to T_world? 
+                // Pass 2 renders with: View * WorldMat * ScaleMat
+                // So P_phys = T_world * Scale * P_virt
+                // M_phys = T_world * Scale * M_virt
+                // M_virt = inv(Scale) * inv(T_world) * M_phys
+
+                const invTWorld = mat4.create();
+                mat4.invert(invTWorld, tWorld);
+
+                mat4.multiply(sceneMat, invTWorld, sceneMat);
+              }
+
+              // 2. Apply Inverse Scale
+              if (vrScale !== 1.0) {
+                const invScaleMat = mat4.create();
+                mat4.scale(invScaleMat, invScaleMat, [invScale, invScale, invScale]);
+                mat4.multiply(sceneMat, invScaleMat, sceneMat);
+              }
+
               xrControllers.push({
                 handedness: src.handedness,
                 buttons: src.gamepad.buttons,
-                matrix: ctl.getMatrix(), // Local or World? World if updated?
-                rayOrigin: (src.handedness === 'left') ? (this._vrPoseLeft ? this._vrPoseLeft.subarray(12, 15) : null) : (this._vrPoseRight ? this._vrPoseRight.subarray(12, 15) : null),
-                // This is getting complicated to construct.
-                // Let's just pass `session.inputSources` and let the tool parse it?
-                // But tool needs SPACE (ray).
-                // Picking has ray.
+                matrix: sceneMat, // VIRTUAL SCENE MATRIX
               });
+
+              // DEBUG: MATRIX TRACE (Throttled)
+              if (window.screenLog && this._logThrottle % 60 === 0 && src.handedness === 'right') {
+                const pPos = vec3.create(); mat4.getTranslation(pPos, physMat);
+                const sPos = vec3.create(); mat4.getTranslation(sPos, sceneMat);
+                const wPos = this._xrWorldOffset ? this._xrWorldOffset.position : { x: 0, y: 0, z: 0 };
+                window.screenLog(`Mat Debug: Scale=${vrScale.toFixed(4)} Phys=[${pPos[0].toFixed(2)},${pPos[1].toFixed(2)},${pPos[2].toFixed(2)}] Scene=[${sPos[0].toFixed(2)},${sPos[1].toFixed(2)},${sPos[2].toFixed(2)}]`, "yellow");
+              }
             }
           }
         }
