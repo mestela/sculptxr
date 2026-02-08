@@ -144,36 +144,17 @@ class Grab extends SculptBase {
       } else if (rightTrigger || leftTrigger) {
         this._isTwoHanded = false;
         const active = rightTrigger ? right : left;
-        this._activeController = active; // CRITICAL: Set active controller for debug and tool logic
 
-        // Validate Matrix (prevent 0,0,0 jump)
+        // Valid Controller Check
         const mat = active.matrix;
-        const sx = Math.hypot(mat[0], mat[1], mat[2]);
-        if (sx < 0.001) {
-          if (window.screenLog && Math.random() < 0.1) window.screenLog(`Grab: Controller Scale ~0 (Uninitialized?)`, "red");
-          return; // Abort if controller invalid
-        }
+        if (Math.hypot(mat[0], mat[1], mat[2]) < 0.001) return;
 
+        // 1. Picking Phase (if nothing grabbed)
         if (!this._grabbedMesh) {
-          // Try to pick (Raycast)
-          // We need picking ray from active controller
-          // Active controller object has 'rayOrigin' and 'rayDirection' if it came from Scene.js?
-          // Let's check what Scene passes.
-          // Scene passes { matrix, position, rotation, ... } ?
-          // It passes picked controllers.
-
-          // If 'rayOrigin' is missing, we compute it from matrix?
-          // But options.controllers should have whatever we put in Scene.js.
-          // Let's assume Scene.js populates these. If not, we need to fix Scene.js.
-          // Scene.chk.mjs lines 2150+ showed:
-          // controllers.push(this._vrControllerLeft);
-          // _vrControllerLeft has { matrix, buttons, handedness, ... }
-          // It MIGHT NOT have rayOrigin/rayDirection pre-calculated on the object?
-
           let origin = active.rayOrigin;
           let direction = active.rayDirection;
 
-          // If missing, calculate from matrix
+          // Fallback Ray Calc
           if (!origin || !direction) {
             origin = vec3.create();
             direction = vec3.create();
@@ -183,92 +164,52 @@ class Grab extends SculptBase {
             vec3.normalize(direction, direction);
           }
 
-          // Use Picking to intersection
-          // if (window.screenLog && Math.random() < 0.05) window.screenLog(`Grab: Raycast Origin=${origin[0].toFixed(2)}`, "yellow");
-
           if (picking.intersectionRayMeshes(this._main.getMeshes(), origin, direction)) {
             const mesh = picking.getMesh();
-            // const isRef = !!(mesh && mesh.isReference);
-            // const ctor = mesh ? mesh.constructor.name : 'null';
-            // if (window.screenLog) window.screenLog(`Grab: Hit ${mesh.getID()} (${ctor}) Ref=${isRef}`, "lime");
-
-            if (mesh) { // Grab any mesh
+            if (mesh) { 
               this._grabbedMesh = mesh;
-              // CRITICAL: Set active controller here too to ensures it sticks
-              this._activeController = active;
+              this._activeController = active; // First assignment
 
               // Calculate Offset
-              // Local transform relative to controller
-              // meshWorld = controllerWorld * localOffset
-              // localOffset = activeControllerInv * meshWorld
               this._grabOffsetMatrix = mat4.create();
               const invCtl = mat4.create();
               mat4.invert(invCtl, active.matrix);
               mat4.multiply(this._grabOffsetMatrix, invCtl, mesh.getMatrix());
 
-              // if (window.screenLog) window.screenLog(`Grab Start: ${mesh.getID()}`, "green");
               if (this._main.setMesh) this._main.setMesh(mesh);
             }
           }
         }
 
-        // Logic Continuation for Grabbed Mesh
-        if (this._grabbedMesh && this._activeController) {
-          // REFRESH Active Controller from Current Frame (Critical for Stale Matrix Fix)
-          // Find the controller in the current 'controllers' list that matches our stored handedness
-          const currentActive = controllers.find(c => c.handedness === this._activeController.handedness);
-
-          // If we lost tracking of the hand, release or wait? 
-          // Better to abort this frame or release if it's gone.
-          if (currentActive) {
-            this._activeController = currentActive; // Update reference to fresh object
-          } else {
-            // Lost tracking of active hand
-            this._grabbedMesh = null;
-            this._activeController = null;
-            this._isTwoHanded = false;
-            return;
-          }
-
-          const active = this._activeController;
-
-          // Update Position
-          // meshWorld = activeController * offset
-          if (window.screenLog) {
-            const m = active.matrix;
-            // Throttled log to prevent spam but ensure visibility
-            if (!this._lastLogTime || performance.now() - this._lastLogTime > 500) {
-              this._lastLogTime = performance.now();
-               // window.screenLog(`Grab Ctl Mat: ${m[12].toFixed(2)},${m[13].toFixed(2)},${m[14].toFixed(2)}`, "yellow");
+        // 2. Update Phase (if grabbed, including just grabbed)
+        if (this._grabbedMesh) {
+          // Refresh Controller (Stale Matrix Fix)
+          if (this._activeController) {
+            const currentActive = controllers.find(c => c.handedness === this._activeController.handedness);
+             if (currentActive) this._activeController = currentActive;
+             else {
+               // Lost tracking
+               this._grabbedMesh = null;
+               this._activeController = null;
+               return;
              }
            }
 
-          const newMat = mat4.create();
-          mat4.multiply(newMat, active.matrix, this._grabOffsetMatrix);
+          // Apply Transform
+          if (this._activeController) {
+             const active = this._activeController;
+             const newMat = mat4.create();
+             mat4.multiply(newMat, active.matrix, this._grabOffsetMatrix);
 
-          // transformData is just an object, we need to set _matrix directly?
-          // We can use Mesh.setMatrix now
-          if (this._grabbedMesh.setMatrix) {
-            this._grabbedMesh.setMatrix(newMat);
-          } else {
-            // Fallback just in case
-            var tData = this._grabbedMesh.getTransformData();
-            mat4.copy(tData._matrix, newMat);
-          }
-
-          // if (window.screenLog) {
-          //   var pos = vec3.create();
-          //   mat4.getTranslation(pos, newMat);
-          //   window.screenLog(`Grab Moving: ${pos[0].toFixed(2)},${pos[1].toFixed(2)},${pos[2].toFixed(2)}`, "cyan");
-          // }
-
-          this._main.setMesh(this._grabbedMesh);
-          this._main.render();
-        } else {
-          // Released or Lost Controller
-          this._grabbedMesh = null;
-          this._activeController = null;
-          this._isTwoHanded = false;
+             if (this._grabbedMesh.setMatrix) {
+               this._grabbedMesh.setMatrix(newMat);
+             } else {
+               var tData = this._grabbedMesh.getTransformData();
+               mat4.copy(tData._matrix, newMat);
+             }
+             this._main.setMesh(this._grabbedMesh);
+             this._main.render();
+           }
         }
       } else {
         // Released

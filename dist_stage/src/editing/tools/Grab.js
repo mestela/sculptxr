@@ -214,6 +214,22 @@ class Grab extends SculptBase {
 
         // Logic Continuation for Grabbed Mesh
         if (this._grabbedMesh && this._activeController) {
+          // REFRESH Active Controller from Current Frame (Critical for Stale Matrix Fix)
+          // Find the controller in the current 'controllers' list that matches our stored handedness
+          const currentActive = controllers.find(c => c.handedness === this._activeController.handedness);
+
+          // If we lost tracking of the hand, release or wait? 
+          // Better to abort this frame or release if it's gone.
+          if (currentActive) {
+            this._activeController = currentActive; // Update reference to fresh object
+          } else {
+            // Lost tracking of active hand
+            this._grabbedMesh = null;
+            this._activeController = null;
+            this._isTwoHanded = false;
+            return;
+          }
+
           const active = this._activeController;
 
           // Update Position
