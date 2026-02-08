@@ -198,22 +198,21 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Add primitives menu missing
     - Transform tool/gizmo missing
     - Re-symmetrize function, choose left->right, right->left
-    - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
-    - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
     - Drag and move support rotation
-    - ~~Reference image support~~ - **Working v0.7.118**
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
     - Symmetry for voxel tool
     - Straight line mode for voxel tool
+    - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
+    - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
+    - ~~Reference image support~~ - **Working v0.7.118**
+    - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
+
 - **UI + UX**  
-    - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
+    
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - Really need to make 100% native dialog for inport/export. Ie the panel should show popups, have a file browser. Tricky.
-    - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
-    - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Matcap misaligned; its upside down and slightly different in left/right eyes
     - Default move brush size is too big
@@ -225,6 +224,10 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Default smooth strength too high
     - Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.
     - Trigger on left controller should activate 'sub' mode (and change colour of circle radius indicator)
+    - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
+    - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
+    - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
+
 
 - **Desktop 6DOF (Beta Issues)**:
     - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
