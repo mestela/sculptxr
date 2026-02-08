@@ -206,6 +206,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
     - ~~Reference image support~~ - **Working v0.7.118**
     - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
+    - ~~Grab brush~~ - **DONE v0.7.118**
 
 - **UI + UX**  
     
