@@ -184,16 +184,19 @@ class Grab extends SculptBase {
           }
 
           // Use Picking to intersection
-          if (window.screenLog && Math.random() < 0.05) window.screenLog(`Grab: Raycast Origin=${origin[0].toFixed(2)}`, "yellow");
+          // if (window.screenLog && Math.random() < 0.05) window.screenLog(`Grab: Raycast Origin=${origin[0].toFixed(2)}`, "yellow");
 
           if (picking.intersectionRayMeshes(this._main.getMeshes(), origin, direction)) {
             const mesh = picking.getMesh();
-            const isRef = !!(mesh && mesh.isReference);
-            const ctor = mesh ? mesh.constructor.name : 'null';
-            if (window.screenLog) window.screenLog(`Grab: Hit ${mesh.getID()} (${ctor}) Ref=${isRef}`, "lime");
+            // const isRef = !!(mesh && mesh.isReference);
+            // const ctor = mesh ? mesh.constructor.name : 'null';
+            // if (window.screenLog) window.screenLog(`Grab: Hit ${mesh.getID()} (${ctor}) Ref=${isRef}`, "lime");
 
             if (mesh) { // Grab any mesh
               this._grabbedMesh = mesh;
+              // CRITICAL: Set active controller here too to ensures it sticks
+              this._activeController = active;
+
               // Calculate Offset
               // Local transform relative to controller
               // meshWorld = controllerWorld * localOffset
@@ -203,13 +206,16 @@ class Grab extends SculptBase {
               mat4.invert(invCtl, active.matrix);
               mat4.multiply(this._grabOffsetMatrix, invCtl, mesh.getMatrix());
 
-              if (window.screenLog) window.screenLog(`Grab Start: ${mesh.getID()}`, "green");
+              // if (window.screenLog) window.screenLog(`Grab Start: ${mesh.getID()}`, "green");
               if (this._main.setMesh) this._main.setMesh(mesh);
             }
           }
         }
 
-        if (this._grabbedMesh) {
+        // Logic Continuation for Grabbed Mesh
+        if (this._grabbedMesh && this._activeController) {
+          const active = this._activeController;
+
           // Update Position
           // meshWorld = activeController * offset
           if (window.screenLog) {
@@ -217,9 +223,9 @@ class Grab extends SculptBase {
             // Throttled log to prevent spam but ensure visibility
             if (!this._lastLogTime || performance.now() - this._lastLogTime > 500) {
               this._lastLogTime = performance.now();
-              window.screenLog(`Grab Ctl Mat: ${m[12].toFixed(2)},${m[13].toFixed(2)},${m[14].toFixed(2)}`, "yellow");
-            }
-          }
+               // window.screenLog(`Grab Ctl Mat: ${m[12].toFixed(2)},${m[13].toFixed(2)},${m[14].toFixed(2)}`, "yellow");
+             }
+           }
 
           const newMat = mat4.create();
           mat4.multiply(newMat, active.matrix, this._grabOffsetMatrix);
@@ -234,13 +240,18 @@ class Grab extends SculptBase {
             mat4.copy(tData._matrix, newMat);
           }
 
-          if (window.screenLog) {
-            var pos = vec3.create();
-            mat4.getTranslation(pos, newMat);
-            window.screenLog(`Grab Moving: ${pos[0].toFixed(2)},${pos[1].toFixed(2)},${pos[2].toFixed(2)}`, "cyan");
-          }
+          // if (window.screenLog) {
+          //   var pos = vec3.create();
+          //   mat4.getTranslation(pos, newMat);
+          //   window.screenLog(`Grab Moving: ${pos[0].toFixed(2)},${pos[1].toFixed(2)},${pos[2].toFixed(2)}`, "cyan");
+          // }
 
           this._main.setMesh(this._grabbedMesh);
+        } else {
+          // Released or Lost Controller
+          this._grabbedMesh = null;
+          this._activeController = null;
+          this._isTwoHanded = false;
         }
       } else {
         // Released

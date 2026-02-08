@@ -169,8 +169,12 @@ class Scene {
         msg += `  Mesh Mat: [${m[12].toFixed(2)}, ${m[13].toFixed(2)}, ${m[14].toFixed(2)}]\n`;
       }
 
+
       console.log(msg);
-      if (window.screenLog) window.screenLog(msg, "lime");
+      if (window.screenLog) {
+        window.screenLog(msg, "lime");
+        if (!active) window.screenLog("Hint: Hold Trigger to see Active Controller", "yellow");
+      }
       return msg;
     };
 

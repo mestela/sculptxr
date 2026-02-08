@@ -95,7 +95,9 @@ class SculptBase {
   }
 
   pushState() {
-    this._main.getStateManager().pushStateGeometry(this.getMesh());
+    var mesh = this.getMesh();
+    if (!mesh) return;
+    this._main.getStateManager().pushStateGeometry(mesh);
   }
 
   startSculpt() {
