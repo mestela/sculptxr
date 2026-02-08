@@ -143,6 +143,37 @@ class Scene {
       this.render();
     };
 
+    // [DEBUG] Grab Tool Helper
+    window.debug = window.debug || {};
+    window.debug.grab = () => {
+      if (!this._sculptManager) return "No SculptManager";
+      const tool = this._sculptManager.getCurrentTool();
+      if (!tool || tool.constructor.name !== 'Grab') return "Current tool is not Grab";
+
+      const active = tool._activeController;
+      const mesh = tool._grabbedMesh;
+
+      let msg = `Grab Tool State:\n`;
+      msg += `  Active Controller: ${active ? (active.handedness || 'Unknown') : 'None'}\n`;
+      if (active && active.matrix) {
+        const m = active.matrix;
+        msg += `  Ctl Mat: [${m[12].toFixed(2)}, ${m[13].toFixed(2)}, ${m[14].toFixed(2)}]\n`;
+        // check scale
+        const sx = Math.hypot(m[0], m[1], m[2]);
+        msg += `  Ctl Scale: ${sx.toFixed(4)}\n`;
+      }
+
+      msg += `  Grabbed Mesh: ${mesh ? mesh.getID() : 'None'}\n`;
+      if (mesh) {
+        const m = mesh.getMatrix();
+        msg += `  Mesh Mat: [${m[12].toFixed(2)}, ${m[13].toFixed(2)}, ${m[14].toFixed(2)}]\n`;
+      }
+
+      console.log(msg);
+      if (window.screenLog) window.screenLog(msg, "lime");
+      return msg;
+    };
+
     this.initWebGL();
     if (!this._gl)
       return;

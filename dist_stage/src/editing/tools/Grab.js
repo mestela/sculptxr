@@ -146,6 +146,14 @@ class Grab extends SculptBase {
         const active = rightTrigger ? right : left;
         this._activeController = active; // CRITICAL: Set active controller for debug and tool logic
 
+        // Validate Matrix (prevent 0,0,0 jump)
+        const mat = active.matrix;
+        const sx = Math.hypot(mat[0], mat[1], mat[2]);
+        if (sx < 0.001) {
+          if (window.screenLog && Math.random() < 0.1) window.screenLog(`Grab: Controller Scale ~0 (Uninitialized?)`, "red");
+          return; // Abort if controller invalid
+        }
+
         if (!this._grabbedMesh) {
           // Try to pick (Raycast)
           // We need picking ray from active controller

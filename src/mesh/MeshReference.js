@@ -157,8 +157,15 @@ class MeshReference extends MeshStatic {
     return true;
   }
 
-  updateDuplicateGeometry() {
-    // No duplicate geometry for reference images
+  updateDuplicateGeometry(iVerts) {
+    // Reference meshes don't have duplicate geometry (hard edges) like normal meshes might?
+    // Or rather, we just want to skip this expensive update.
+    return;
+  }
+
+  updateDuplicateColorsAndMaterials(iVerts) {
+    // Override to prevent crash on missing duplicateStartCount
+    return;
   }
 
   optimize() {
