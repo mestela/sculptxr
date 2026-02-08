@@ -1775,29 +1775,49 @@ class Scene {
     // XRInputSourceArray is not a real array, so .find() fails.
     let activeSource = null;
 
-    // Smart Source Selection: Prioritize Trigger Press
-    const right = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'right') : null;
-    const left = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'left') : null;
 
-    // Check Triggers
+    // Smart Source Selection: Prioritize Trigger Press
+    // Loop manually to be safe on all browsers
+    let right = null;
+    let left = null;
+    for (const s of sources) {
+      if (s.handedness === 'right') right = s;
+      if (s.handedness === 'left') left = s;
+    }
+
+    // Check Triggers & Log
     const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;
     const leftPressed = left && left.gamepad && left.gamepad.buttons[0] && left.gamepad.buttons[0].pressed;
 
-    if (rightPressed) activeSource = right;
-    else if (leftPressed) activeSource = left;
-    else {
-      // Fallback to Right, then Left, then First
-      // But we need to search 'sources' properly if Array.from failed or wasn't used above (it should exist in modern browsers)
-      // If we can't find specific hands, just pick the first one?
-      // Let's iterate if variables are null
-      if (right) activeSource = right;
+    // Priority: Locked Hand (if sculpting) > Pressed Hand > Right Hand > Left Hand > First Found
+    if (this._vrSculpting && this._vrLockedHand) {
+      // Find the locked hand source
+      const locked = (this._vrLockedHand === 'right') ? right : left;
+      if (locked) activeSource = locked;
+      // If locked hand is missing (lost tracking?), we might want to end?
+      // But for now let's fall through or keep null (which prevents processVRSculpting call, effectively pausing or ending)
+    } else {
+      if (rightPressed) activeSource = right;
+      else if (leftPressed) activeSource = left;
+      else if (right) activeSource = right;
       else if (left) activeSource = left;
       else {
         for (const s of sources) { activeSource = s; break; }
       }
     }
 
-    if (activeSource) this.processVRSculpting(activeSource, frame, refSpace);
+    // DEBUG: Source Selection
+    if (window.screenLog && this._logThrottle % 60 === 0) {
+      // window.screenLog(`VR Src: R=${right ? (rightPressed?'YES':'no') : 'miss'} L=${left ? (leftPressed?'YES':'no') : 'miss'} -> Active=${activeSource ? activeSource.handedness : 'NONE'}`, "yellow");
+    }
+
+    if (activeSource) {
+      // If sculpting just started, lock the hand
+      if (this._vrSculpting && !this._vrLockedHand) {
+        this._vrLockedHand = activeSource.handedness;
+      }
+      this.processVRSculpting(activeSource, frame, refSpace);
+    }
 
     // Update VRLaser Matrix (Right Hand / Active Source)
     if (activeSource && this._vrLaser) {
@@ -2190,6 +2210,7 @@ class Scene {
     if (canSculpt) {
       if (!this._vrSculpting) {
         this._vrSculpting = true;
+        this._vrLockedHand = source.handedness; // LOCK HAND
 
         // Deep Trace: Start Stroke
         if (window.screenLog && this._logThrottle++ % 60 === 0) {
@@ -2200,6 +2221,24 @@ class Scene {
         this._action = Enums.Action.SCULPT_EDIT;
       }
       this._sculptManager.preUpdate(); // Sync position
+
+      // ... existing code ...
+    } else {
+      if (this._vrSculpting) {
+        this._vrSculpting = false;
+        this._vrLockedHand = null; // UNLOCK HAND
+
+        // Deep Trace: End Stroke
+        if (window.screenLog || true) {
+          const reason = !isTriggerPressed ? "TriggerRelease" : (!picked && !allowAir ? "RayMiss & !Air" : "Unknown");
+          // window.screenLog(`Sculpt END: ${reason} (Trig=${isTriggerPressed} Pick=${!!picked} Air=${allowAir})`, "orange");
+          console.log(`[Scene] Sculpt END: ${reason} (Hand=${source.handedness} Trig=${isTriggerPressed} Pick=${!!picked})`);
+        }
+
+        this._sculptManager.end();
+        this._action = Enums.Action.NOTHING;
+      }
+    }
 
       // CRITICAL: pass picking to updateXR if supported, else standard update
       if (typeof this._sculptManager.updateXR === 'function') {
@@ -2300,16 +2339,7 @@ class Scene {
         }
       }
 
-    } else {
-      if (this._vrSculpting) {
-        this._vrSculpting = false;
-        // Deep Trace: End Stroke
-        // if (window.screenLog) window.screenLog("Sculpt: END STROKE", "lime");
 
-        this._sculptManager.end();
-        this._action = Enums.Action.NOTHING;
-      }
-    }
 
     // 5. Debug Cursor (Visual Feedback)
     if (this.updateDebugCursor) {

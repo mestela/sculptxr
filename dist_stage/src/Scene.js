@@ -1775,26 +1775,32 @@ class Scene {
     // XRInputSourceArray is not a real array, so .find() fails.
     let activeSource = null;
 
-    // Smart Source Selection: Prioritize Trigger Press
-    const right = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'right') : null;
-    const left = sources.length > 0 ? (Array.from ? Array.from(sources) : []).find(s => s.handedness === 'left') : null;
 
-    // Check Triggers
+    // Smart Source Selection: Prioritize Trigger Press
+    // Loop manually to be safe on all browsers
+    let right = null;
+    let left = null;
+    for (const s of sources) {
+      if (s.handedness === 'right') right = s;
+      if (s.handedness === 'left') left = s;
+    }
+
+    // Check Triggers & Log
     const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;
     const leftPressed = left && left.gamepad && left.gamepad.buttons[0] && left.gamepad.buttons[0].pressed;
 
+    // Priority: Pressed Hand > Right Hand > Left Hand > First Found
     if (rightPressed) activeSource = right;
     else if (leftPressed) activeSource = left;
+    else if (right) activeSource = right;
+    else if (left) activeSource = left;
     else {
-      // Fallback to Right, then Left, then First
-      // But we need to search 'sources' properly if Array.from failed or wasn't used above (it should exist in modern browsers)
-      // If we can't find specific hands, just pick the first one?
-      // Let's iterate if variables are null
-      if (right) activeSource = right;
-      else if (left) activeSource = left;
-      else {
         for (const s of sources) { activeSource = s; break; }
-      }
+    }
+
+    // DEBUG: Source Selection
+    if (window.screenLog && this._logThrottle % 60 === 0) {
+    // window.screenLog(`VR Src: R=${right ? (rightPressed?'YES':'no') : 'miss'} L=${left ? (leftPressed?'YES':'no') : 'miss'} -> Active=${activeSource ? activeSource.handedness : 'NONE'}`, "yellow");
     }
 
     if (activeSource) this.processVRSculpting(activeSource, frame, refSpace);
@@ -2304,7 +2310,11 @@ class Scene {
       if (this._vrSculpting) {
         this._vrSculpting = false;
         // Deep Trace: End Stroke
-        // if (window.screenLog) window.screenLog("Sculpt: END STROKE", "lime");
+        if (window.screenLog || true) {
+          const reason = !isTriggerPressed ? "TriggerRelease" : (!picked && !allowAir ? "RayMiss & !Air" : "Unknown");
+          // window.screenLog(`Sculpt END: ${reason} (Trig=${isTriggerPressed} Pick=${!!picked} Air=${allowAir})`, "orange");
+          console.log(`[Scene] Sculpt END: ${reason} (Trig=${isTriggerPressed} Pick=${!!picked} Air=${allowAir})`);
+        }
 
         this._sculptManager.end();
         this._action = Enums.Action.NOTHING;
