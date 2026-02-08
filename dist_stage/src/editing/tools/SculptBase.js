@@ -264,7 +264,8 @@ class SculptBase {
   }
 
   // WebXR Support
-  updateXR(picking) {
+  updateXR(picking, isPressed) {
+    if (!isPressed) return;
     this.sculptStrokeXR(picking);
   }
 

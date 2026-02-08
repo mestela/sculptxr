@@ -1793,9 +1793,17 @@ class Scene {
     if (this._vrSculpting && this._vrLockedHand) {
       // Find the locked hand source
       const locked = (this._vrLockedHand === 'right') ? right : left;
-      if (locked) activeSource = locked;
-      // If locked hand is missing (lost tracking?), we might want to end?
-      // But for now let's fall through or keep null (which prevents processVRSculpting call, effectively pausing or ending)
+      if (locked) {
+        activeSource = locked;
+      } else {
+        // LOST TRACKING OF LOCKED HAND -> END STROKE
+        if (window.screenLog) window.screenLog("Scene: Lost Locked Hand -> Ending Stroke", "orange");
+        this._vrSculpting = false;
+        this._vrLockedHand = null;
+        this._sculptManager.end();
+        this._action = Enums.Action.NOTHING;
+        return;
+      }
     } else {
       if (rightPressed) activeSource = right;
       else if (leftPressed) activeSource = left;
@@ -2105,7 +2113,10 @@ class Scene {
 
     // Only block if we are NOT already busy
     if (this._isPointingAtMenu && !isSculpting && !isToolActive) {
-      if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog("SCULPT BLOCKED (Menu Hit)", "orange");
+      // DEBUG: STICKY BRUSH DIAGNOSIS
+      if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
+        window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${buttons[0].pressed} Val=${buttons[0].value.toFixed(2)}`, buttons[0].pressed ? "lime" : "red");
+      }
       return;
     }
 
@@ -2169,13 +2180,7 @@ class Scene {
     const buttons = source.gamepad.buttons;
     const isTriggerPressed = buttons[0].pressed;
 
-    // DEBUG: RAW INPUT TRACE
-    if (window.screenLog && this._logThrottle % 15 === 0) {
-      // Log every few frames to monitor stability
-      if (isTriggerPressed || this._vrSculpting) {
-        window.screenLog(`Input Dump: Src=${source.handedness} Btn0=${buttons[0].pressed} Val=${buttons[0].value.toFixed(2)}`, isTriggerPressed ? "white" : "gray");
-      }
-    }
+    // Log Removed
 
     // Check if tool allows air (Voxel) to prevent snapping
     const tool = this._sculptManager.getCurrentTool();
@@ -2243,7 +2248,7 @@ class Scene {
         this._vrTriggerReleaseTime = 0; // Reset Timer
 
         // Deep Trace: Start Stroke
-        if (window.screenLog) window.screenLog(`Scene: START STROKE (${source.handedness})`, "lime");
+        // if (window.screenLog) window.screenLog(`Scene: START STROKE (${source.handedness})`, "lime");
 
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
@@ -2254,7 +2259,7 @@ class Scene {
     } else {
       if (this._vrSculpting) {
         const reason = !isTriggerPressed ? "Trigger Released" : "Logic Blocked";
-        if (window.screenLog) window.screenLog(`Scene: END STROKE (${reason}) Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive}`, "red");
+        // if (window.screenLog) window.screenLog(`Scene: END STROKE (${reason}) Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive}`, "red");
 
         this._vrSculpting = false;
         this._vrLockedHand = null; // UNLOCK HAND
@@ -2378,12 +2383,14 @@ class Scene {
               });
 
               // DEBUG: MATRIX TRACE (Throttled)
+              /*
               if (window.screenLog && this._logThrottle % 60 === 0 && src.handedness === 'right') {
                 const pPos = vec3.create(); mat4.getTranslation(pPos, physMat);
                 const sPos = vec3.create(); mat4.getTranslation(sPos, sceneMat);
                 const wPos = this._xrWorldOffset ? this._xrWorldOffset.position : { x: 0, y: 0, z: 0 };
                 window.screenLog(`Mat Debug: Scale=${vrScale.toFixed(4)} Phys=[${pPos[0].toFixed(2)},${pPos[1].toFixed(2)},${pPos[2].toFixed(2)}] Scene=[${sPos[0].toFixed(2)},${sPos[1].toFixed(2)},${sPos[2].toFixed(2)}]`, "yellow");
               }
+              */
             }
           }
         }

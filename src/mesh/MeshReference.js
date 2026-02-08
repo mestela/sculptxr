@@ -75,10 +75,10 @@ class MeshReference extends MeshStatic {
     ]);
 
     var tAr = new Float32Array([
-      0.0, 1.0,
-      1.0, 1.0,
+      0.0, 0.0,
       1.0, 0.0,
-      0.0, 0.0
+      1.0, 1.0,
+      0.0, 1.0
     ]);
 
     // Ensure Colors and Materials are initialized (RenderData expects them)

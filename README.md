@@ -20,6 +20,13 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.118**: **Stabilization & Polish**:
+    - **Fix**: **Sticky Brush**: Resolved critical bug where brush would continue drawing after release. Fixed `SculptBase.js` to respect trigger state in `updateXR`.
+    - **Fix**: **Reference Images**: Flipped UVs in `MeshReference.js` to fix upside-down images.
+    - **Fix**: **Grab Tool**: Improved stability with Delta Transforms, Locked Hand Priority, and "Active Mesh" fallback for easier picking.
+    - **Fix**: **Ghost Trigger**: Prevented "stale" trigger inputs from blocking the other hand.
+    - **Cleanup**: Massive removal of debug logs ("SCULPT BLOCKED", "Input Dump", "START STROKE") for a clean console.
+
 - **v0.7.49**: **VR Polish & Fixes**:
     - **Feature**: **Radial Color Picker**: Restored the embedded radial color picker for the Paint tool in VR.
     - **Fix**: **Thumbstick Radius**: Fixed right thumbstick up/down input to correctly adjust tool radius (was jumping to ~20%).
@@ -192,9 +199,9 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Transform tool/gizmo missing
     - Re-symmetrize function, choose left->right, right->left
     - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
-    - Drag tool not working correctly with symmetry
+    - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
     - Drag and move support rotation
-    - Reference image support
+    - ~~Reference image support~~ - **Working v0.7.118**
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
     - Symmetry for voxel tool
@@ -205,7 +212,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - Really need to make 100% native dialog for inport/export. Ie the panel should show popups, have a file browser. Tricky.
-    - Double handed grip needs work, gets hard to control when the world has been scaled too large
+    - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Matcap misaligned; its upside down and slightly different in left/right eyes

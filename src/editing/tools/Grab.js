@@ -106,7 +106,7 @@ class Grab extends SculptBase {
 
     // State Machine
     if (shouldLog) {
-      window.screenLog(`Grab Inputs: L=${leftTrigger} R=${rightTrigger} Mesh=${!!this._grabbedMesh}`, leftTrigger && rightTrigger ? "cyan" : "gray");
+      // Log Removed
     }
 
     // CRITICAL FIX: Only allow Two-Handed if we ALREADY HAVE A MESH.
@@ -184,7 +184,7 @@ class Grab extends SculptBase {
           const manualOrigin = vec3.create();
           vec3.transformMat4(manualOrigin, [0, 0, 0], active.matrix);
           // Window Log the comparison
-          window.screenLog(`Ray Compare: Scene=[${origin ? origin[0].toFixed(2) : 'null'}] Manual=[${manualOrigin[0].toFixed(2)}]`, "cyan");
+          // window.screenLog(`Ray Compare: Scene=[${origin ? origin[0].toFixed(2) : 'null'}] Manual=[${manualOrigin[0].toFixed(2)}]`, "cyan");
         }
 
         // Fallback Ray Calc (Using SCENE SPACE Matrix)
@@ -199,7 +199,7 @@ class Grab extends SculptBase {
 
         // Log Picking Attempt
         if (shouldLog) {
-          window.screenLog(`Grab Ray: O=[${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}] D=[${direction[0].toFixed(2)},${direction[1].toFixed(2)},${direction[2].toFixed(2)}]`, "white");
+          // window.screenLog(`Grab Ray: O=[${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}] D=[${direction[0].toFixed(2)},${direction[1].toFixed(2)},${direction[2].toFixed(2)}]`, "white");
         }
 
         const hit = picking.intersectionRayMeshes(this._main.getMeshes(), origin, direction);
@@ -208,14 +208,14 @@ class Grab extends SculptBase {
         // Fallback: Use Active Mesh (Relaxed Grabbing)
         if (!mesh && this._main.getMesh()) {
           mesh = this._main.getMesh();
-          if (shouldLog) window.screenLog(`Grab: Fallback to Active Mesh ${mesh.getID()}`, "cyan");
+          // if (shouldLog) window.screenLog(`Grab: Fallback to Active Mesh ${mesh.getID()}`, "cyan");
         }
 
         if (mesh) {
           this._grabbedMesh = mesh;
           this._activeController = active; // First assignment
 
-          if (window.screenLog) window.screenLog(`Grab: CAUGHT Mesh ${mesh.getID()}`, "green");
+          // if (window.screenLog) window.screenLog(`Grab: CAUGHT Mesh ${mesh.getID()}`, "green");
 
           // Calculate Offset (For Fallback/Init)
           this._grabOffsetMatrix = mat4.create();
@@ -226,8 +226,7 @@ class Grab extends SculptBase {
           if (this._main.setMesh) this._main.setMesh(mesh);
         } else {
           if (shouldLog) {
-            const mCount = this._main.getMeshes().length;
-            window.screenLog(`Grab: MISS (Meshes=${mCount})`, "orange");
+            // Log Removed
           }
         }
       }

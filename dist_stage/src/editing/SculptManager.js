@@ -125,7 +125,7 @@ class SculptManager {
     if (tool && tool.updateXR) {
       tool.updateXR(picking, isPressed, origin, dir, options);
     } else {
-      if (window.screenLog && isPressed && Math.random() < 0.05) window.screenLog(`ManagerXR: No updateXR for tool ${this._toolIndex}`, "red");
+      // Log Removed
     }
   }
 
