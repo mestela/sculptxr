@@ -17,6 +17,7 @@ class Grab extends SculptBase {
     this._initialDist = 1.0;
     this._initialScale = 1.0;
     this._initialMidpoint = vec3.create();
+    this._allowAir = true; // Allow Grab to function even if Scene picking misses
   }
 
   // Override start/end/update to handle TRIGGER inputs manually?

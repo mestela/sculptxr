@@ -671,6 +671,9 @@ class SculptGL extends Scene {
   // HANDLES EVENTS
   ////////////////
   onDeviceUp() {
+    // Prevent mouse-up from killing an active VR stroke
+    if (this._vrSculpting) return;
+
     this.setCanvasCursor('default');
     Multimesh.RENDER_HINT = Multimesh.NONE;
     if (this._sculptManager) this._sculptManager.end();
@@ -718,6 +721,9 @@ class SculptGL extends Scene {
     if (this._focusGui)
       return;
 
+    // Prevent mouse-down from interfering with active VR stroke
+    if (this._vrSculpting) return;
+
     this.setMousePosition(event);
 
     var mouseX = this._mouseX;
@@ -762,7 +768,10 @@ class SculptGL extends Scene {
   onDeviceMove(event) {
     if (this._focusGui)
       return;
-    this.setMousePosition(event);
+    // Prevent mouse-move from interfering with active VR stroke
+    if (this._vrSculpting) return;
+
+    this.setCanvasCursor(event);
 
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
