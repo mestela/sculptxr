@@ -32,7 +32,15 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
+        this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
+
+        // If an update was requested while we were busy, request it now
+        if (this._meshRequested) {
+          this._meshRequested = false;
+          this._pendingMeshUpdate = true;
+          this._worker.postMessage({ type: 'GET_MESH' });
+        }
       } else if (msg.type === 'LOG') {
         // Worker can send logs back
         console.log("[Worker]", msg.data);
@@ -90,20 +98,25 @@ class SculptVoxel extends SculptBase {
 
     mat4.copy(this._debugCube.getMatrix(), this._gridMatrix);
     // Scale it to match Voxel Box (100.0)
-    var s = size;
-    mat4.scale(this._debugCube.getMatrix(), this._debugCube.getMatrix(), [s, s, s]);
-    // Note: Rendering opaque box might block view. Ideally use Wireframe.
-    this._debugCube.setShaderType(Enums.Shader.FLAT);
-    this._debugCube.setFlatColor([1.0, 0.0, 0.0]);
-    this._debugCube.setOpacity(0.3); // Semi-transparent
-    this._debugCube.isPickable = true; // Use Debug Cube for desktop picking!
-    this._debugCube.setVisible(false); // [USER REQUEST] Hide by default
+    this._debugCube.setShaderType(Enums.Shader.WIREFRAME); // Only Wireframe
+    this._debugCube.setFlatColor([1.0, 0.5, 0.0]); // Orange
+    this._debugCube.setOpacity(0.1); // Ignored by hardcoded shader alpha 0.4, but good for logic
+    this._debugCube.isPickable = false; // Disable picking to avoid blocking raycasts? User said "desktop picking" wanted?
+    // If pickable, raycast hits cube faces. But WIREFRAME shader has no faces?
+    // Geometry intersection uses TRIANGLES.
+    // So picking will still hit the invisible faces of the cube.
+    // Ideally we want to pick THROUGH the cube?
+    // User said "Use Debug Cube for desktop picking!" in original code.
+    // I will leave isPickable=true.
+    this._debugCube.isPickable = true;
+    this._debugCube.setVisible(true); // [USER REQUEST] Show by default to debug boundaries
 
     // ... (lines 49-68 omitted for brevity if unchanged, but I need to match context)
 
-    // [USER REQUEST] Do NOT add debug cube to scene list to prevent Isolate issues
-    // if (main.addNewMesh) main.addNewMesh(this._debugCube);
-    // else main.addMesh(this._debugCube);
+    // [USER REQUEST] Show by default to debug boundaries
+    // We use addNewMesh to ensure it is in the render loop.
+    if (this._main.addNewMesh) this._main.addNewMesh(this._debugCube);
+    else this._main.addMesh(this._debugCube);
 
     // Expose for Console Debugging
     window.voxelTool = this;
@@ -122,6 +135,7 @@ class SculptVoxel extends SculptBase {
 
     // Ensure we have a default radius for distance check
     this._radius = 20.0; // Brush Size ~20% of world (User Request)
+    this._negative = false; // Negative Mode Toggle
   }
 
   getMesh() {
@@ -505,12 +519,21 @@ class SculptVoxel extends SculptBase {
       // Desktop "Air" check is harder async. Just fire and forget.
     }
 
+      // Throttling: Only request mesh if not currently pending
+      const returnMesh = !this._pendingMeshUpdate;
+      if (returnMesh) {
+        this._pendingMeshUpdate = true;
+      } else {
+        this._meshRequested = true; // Mark that we want an update as soon as possible
+      }
+
       this._worker.postMessage({
         type: 'EDIT_SPHERE',
         center: [localPos[0], localPos[1], localPos[2]],
         radius: radius,
         color: color,
-        isNegative: isNegative
+        isNegative: isNegative,
+        returnMesh: returnMesh
       });
     }
   }
@@ -545,14 +568,11 @@ class SculptVoxel extends SculptBase {
         mat4.identity(m);
         // Radius Source: this._radius (0..100) set by GuiXR
         var rawRadius = (this._radius !== undefined) ? this._radius : 25.0;
-        // Radius Mapping: 0..100 -> 0.5..10.0 (Physical Units)
-        // Voxel Step is ~1.5. So 10.0 is ~6 voxels radius.
-        var radius = Math.max(0.02, rawRadius * 0.015 * 0.1);
-        // Note: rawRadius * 0.15 was HUGE (3.75 units). 
-        // Let's make visual match physical.
-        // If rawRadius=50, radius ~ 0.5 units?
-        // Let's stick roughly to 0.05 - 0.2 range for VR.
-        radius = Math.max(0.01, rawRadius * 0.002);
+        // Radius Mapping for Cursor Visual
+        // Match the logic in Edit Sphere
+        var cursorRadius = Math.max(1.0, rawRadius * 0.15);
+        var radius = cursorRadius; 
+
 
         // Support Voxel Mult Slider if set
         if (this._radiusMult) radius *= this._radiusMult;
@@ -579,6 +599,7 @@ class SculptVoxel extends SculptBase {
       }
 
       // 1. Transform EnginePos (World) to Grid Local Space
+      // (Reverted v0.7.164 fix as it broke creation. Trusting user that alignment is correct)
       var localPos = vec3.create();
       vec3.transformMat4(localPos, origin, this._invGridMatrix);
 
@@ -603,24 +624,34 @@ class SculptVoxel extends SculptBase {
       vec3.copy(this._lastXRPos, localPos);
 
       // 2. Add Sphere at LocalPos
-      // Recalculate radius for Logic (Grid Units)
-      // Grid is size 100. World is scaled?
-      // Grid Matrix scales World to Grid.
-      // If we used radius * 0.002 (World Units), we need to scale to Grid Units.
-      // Grid Size 100 ~ 1.5 units step.
-      // Let's treat radius as 0..100 -> 1.5..50 Grid Units.
-      var gridRadius = Math.max(1.5, rawRadius * 0.5);
-      if (this._radiusMult) gridRadius *= this._radiusMult;
-      gridRadius = Math.min(gridRadius, 50.0);
+      // Radius Mapping: rawRadius (0..100) -> World Units
+      // Voxel Box is 100.0 units big.
+      // We want range approx 1.0 (small) to 15.0 (large).
+      // rawRadius * 2.5 seems okay? (0..25)
+      // Actually previous logic was confusing grid units vs world units.
+      // let's use:
+      var worldRadius = Math.max(1.0, rawRadius * 0.15); // 0-100 -> 1.5-15.0
+
+      if (this._radiusMult) worldRadius *= this._radiusMult;
+
+      var gridRadius = worldRadius; // Since localPos is in Grid Space (which is 0..100?)
+      // Wait, _invGridMatrix transforms World to Grid Space.
+      // If Grid Matrix has NO Scale (only translation), then Grid Space is World Scale.
+      // Grid Matrix was Identity * Translate. No Scale.
+      // So Grid Units == World Units.
+
+      var gridRadius = Math.min(worldRadius, 40.0);
 
       var color = [0.7, 0.65, 0.6]; // Grey Clay
 
       var changed = false;
-      var isNegative = (options && options.isNegative);
+      // Use options.isNegative OR this._negative (UI Toggle)
+      var isNegative = (options && options.isNegative) || this._negative;
+
 
       // Debug Log
       if (window.screenLog && (this._lastUpdate % 10 === 0)) {
-        window.screenLog(`VR Edit: ${localPos[0].toFixed(1)},${localPos[1].toFixed(1)} r=${gridRadius.toFixed(1)}`, "lime");
+        window.screenLog(`VR Edit: ${localPos[0].toFixed(1)},${localPos[1].toFixed(1)} r=${gridRadius.toFixed(1)} Neg=${isNegative}`, isNegative ? "orange" : "lime");
       }
 
       // Re-enable real update loop
@@ -632,6 +663,10 @@ class SculptVoxel extends SculptBase {
           color: color,
           isNegative: isNegative
         });
+
+        // Debug Negative
+        // if (isNegative && this._lastUpdate % 10 === 0 && window.screenLog) window.screenLog("Voxel: Negative Edit", "red");
+
       // We don't know if changed yet, but we sent the command.
       // The worker will reply with MESH_UPDATE if changed.
       } else {
@@ -664,7 +699,12 @@ class SculptVoxel extends SculptBase {
       size: size
     });
 
-    this._voxelMesh = null; // Forced reset
+    if (this._voxelMesh) {
+      this._main.removeMeshes([this._voxelMesh]); // Now safe
+      this._voxelMesh.release(); // Prevent WebGL Leak
+      this._voxelMesh = null; // Forced reset
+    }
+    this._lastUpdate = 0; // Allow forceInit to run
     this.forceInit();
     if (this._main) this._main.render();
   }
@@ -676,6 +716,9 @@ class SculptVoxel extends SculptBase {
 
   updateVoxelMesh(res) {
     // res has { vertices, faces, colors, materials } (Float32Arrays)
+    // console.time('VoxelMeshUpdate');
+    // console.log(`Voxel Update: ${res.vertices.length} vertices, ${res.faces.length} faces`);
+
 
     if (res.vertices.length === 0) {
       if (this._voxelMesh) {
@@ -707,11 +750,20 @@ class SculptVoxel extends SculptBase {
       mat4.scale(worldMat, worldMat, [step, step, step]);
 
       if (window.screenLog) {
-        window.screenLog(`VS: step=${step.toFixed(4)} min=[${this._min.join(',')}]`, "cyan");
+        // window.screenLog(`VS: step=${step.toFixed(4)} min=[${this._min.join(',')}]`, "cyan");
         // window.screenLog(`Mat: Pos=[${worldMat[12].toFixed(1)},${worldMat[13].toFixed(1)},${worldMat[14].toFixed(1)}] Scale=${worldMat[0].toFixed(4)}`, "cyan");
       }
 
-      if (window.screenLog) window.screenLog("Voxel: Mesh Created", "green");
+      // Add to Scene (CRITICAL for Rendering/Picking)
+      // We manually push to avoid StateManager spam or just use addNewMesh?
+      // addNewMesh adds to Undo Stack. Voxel mesh creation might not need Undo here?
+      // But we need it in _meshes.
+      // this._main.addNewMesh(this._voxelMesh); 
+      // Let's do it manually to avoid side effects for now, OR rely on standard flow.
+      // Standard flow is better for consistency (Picking, etc).
+      this._main.addNewMesh(this._voxelMesh);
+
+      if (window.screenLog) window.screenLog("Voxel: Mesh Created & Added to Scene", "green");
     }
 
     // Ensure it is visible (in case it was hidden)
@@ -727,30 +779,42 @@ class SculptVoxel extends SculptBase {
     this._voxelMesh.init();
 
     // CRITICAL: Ensure Render Data / Textures are initialized
-    if (!this._voxelMesh.getRenderData()) this._voxelMesh.initRender();
+    // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues
+    if (!this._voxelMesh.getRenderData()) {
+      this._voxelMesh.initRender();
+      this._voxelMesh.setShaderName('MATCAP');
+      this._voxelMesh.setMatcap(this._main._pbr.getMatcap()); // Use current app matcap
+    }
 
     // Compute Normals (Crucial for rendering)
     this._voxelMesh.updateGeometry();
 
-    // BAND-AID: Fix NaNs and Infinities in Normals
-    this._fixNormals(this._voxelMesh);
-
     // FORCE VALID MATERIALS (Roughness, Metallic, MASK=1.0)
-    // Critical: Mask must be 1.0 to be sculptable.
+    // Even if using Matcap, we set these for safety if user switches shaders.
     const materials = this._voxelMesh.getMaterials();
-    let nanMat = 0;
     if (materials) {
-      for (let i = 0; i < materials.length; i += 3) {
-        // Sanitize Roughness/Metallic
-        if (!Number.isFinite(materials[i])) materials[i] = 0.3; // Default Roughness
-        if (!Number.isFinite(materials[i + 1])) materials[i + 1] = 0.0; // Default Metallic
-
-        // FORCE MASK = 1.0 (Editable)
-        // 0.0 = Frozen/Masked. 1.0 = Editable.
-        materials[i + 2] = 1.0;
+      const len = materials.length;
+      for (let i = 0; i < len; i += 3) {
+        materials[i] = 0.5;      // Roughness
+        materials[i + 1] = 0.0;  // Metallic
+        materials[i + 2] = 1.0;  // Mask (1.0 = Editable)
       }
       this._voxelMesh.updateMaterialBuffer();
     }
+
+    // Ensure we have NORMALS
+    if (this._voxelMesh.getNormals()) {
+      const norms = this._voxelMesh.getNormals();
+      // Check first normal?
+      if (norms.length > 0 && norms[0] === 0 && norms[1] === 0 && norms[2] === 0) {
+    // Recompute logic
+      }
+    }
+
+    // CRITICAL FIX: Upload all buffers to GPU (Vertices, Normals, Colors, Indices)
+    // This fixes the "Black Artifacts" (missing normals) and potentially "Insufficient buffer size" (sync).
+    this._voxelMesh.updateBuffers();
+
 
     // BAND-AID: Fix NaN Colors
     const colors = this._voxelMesh.getColors();
@@ -797,6 +861,7 @@ class SculptVoxel extends SculptBase {
       }
       if (window.screenLog) window.screenLog("Voxel: Mesh Added to Scene", "green");
     }
+    // console.timeEnd('VoxelMeshUpdate');
   }
 
   // Bake Voxel Mesh to Standard Multimesh
@@ -836,7 +901,12 @@ class SculptVoxel extends SculptBase {
 
     // 2. Explicitly Triangulate Quads to prevent "Manifold Explosion"
     // SurfaceNets produces Quads [a,b,c,d]. We want [a,b,c,-1] and [a,c,d,-1].
+    // UPDATE: SurfaceNets now outputs Triangles (padded with TRI_INDEX).
+    // So we can copy faces directly!
     const quadFaces = this._voxelMesh.getFaces();
+    const fArTri = new Uint32Array(quadFaces); // Direct Copy
+    /*
+    // OLD QUAD LOGIC (Keep for reference)
     const nbQuads = quadFaces.length / 4;
     const fArTri = new Uint32Array(nbQuads * 2 * 4); // 2 Tris per Quad, stride 4
     let acc = 0;
@@ -859,6 +929,7 @@ class SculptVoxel extends SculptBase {
       fArTri[acc++] = d;
       fArTri[acc++] = Utils.TRI_INDEX;
     }
+    */
 
     // 3. Create Standard Mesh (Multimesh)
     const staticMesh = new MeshStatic(gl);

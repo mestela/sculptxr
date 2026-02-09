@@ -1025,8 +1025,10 @@ class Scene {
 
   removeMeshes(rm) {
     var meshes = this._meshes;
-    for (var i = 0; i < rm.length; ++i)
-      meshes.splice(this.getIndexMesh(rm[i]), 1);
+    for (var i = 0; i < rm.length; ++i) {
+      var idx = this.getIndexMesh(rm[i]);
+      if (idx >= 0) meshes.splice(idx, 1);
+    }
   }
 
   getIndexMesh(mesh, select) {
@@ -1792,22 +1794,32 @@ class Scene {
     const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;
     const leftPressed = left && left.gamepad && left.gamepad.buttons[0] && left.gamepad.buttons[0].pressed;
 
+    // Helper: Specific Tool Override
+    const tool = this._sculptManager.getCurrentTool();
+    const isVoxel = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
+
     // Priority: Locked Hand (if sculpting) > Pressed Hand > Right Hand > Left Hand > First Found
     if (this._vrSculpting && this._vrLockedHand) {
       // Find the locked hand source
       const locked = (this._vrLockedHand === 'right') ? right : left;
       if (locked) {
         activeSource = locked;
+      }
+    } else if (isVoxel) {
+      // PROPER VOXEL BEHAVIOR:
+      // Right Hand = Sculpt/Carve (Action)
+      // Left Hand = Modifier (Negative)
+      // ALWAYS use Right Hand for positioning/action if available.
+      if (right) {
+        activeSource = right;
+      // Trigger action only if Right Trigger is pressed
+      // Left Trigger just modifies the state (passed via options below)
       } else {
-        // LOST TRACKING OF LOCKED HAND -> END STROKE
-        if (window.screenLog) window.screenLog("Scene: Lost Locked Hand -> Ending Stroke", "orange");
-        this._vrSculpting = false;
-        this._vrLockedHand = null;
-        this._sculptManager.end();
-        this._action = Enums.Action.NOTHING;
-        return;
+        // Fallback to whatever is available if Right is missing (unlikely?)
+        activeSource = left || sources[0];
       }
     } else {
+      // Standard Logic for other tools (Ambidextrous)
       if (rightPressed) activeSource = right;
       else if (leftPressed) activeSource = left;
       else if (right) activeSource = right;

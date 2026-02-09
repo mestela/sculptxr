@@ -31,7 +31,7 @@ self.onmessage = function (e) {
         // TODO
         break;
       case 'EDIT_SPHERE':
-        editSphere(msg.center, msg.radius, msg.color, msg.isNegative);
+        editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.returnMesh);
         break;
       case 'GET_MESH':
         // Force full remesh (debug)
@@ -53,7 +53,7 @@ function init(res, size) {
   // postMesh(); 
 }
 
-function editSphere(center, radius, color, isNegative) {
+function editSphere(center, radius, color, isNegative, returnMesh) {
   if (!voxelState) return;
 
   let changed = false;
@@ -63,7 +63,7 @@ function editSphere(center, radius, color, isNegative) {
     changed = voxelState.addSphere(center, radius, color);
   }
 
-  if (changed) {
+  if (changed && returnMesh) {
     postMesh();
   }
 }
@@ -71,7 +71,9 @@ function editSphere(center, radius, color, isNegative) {
 function postMesh() {
   if (!voxelState) return;
 
+  console.time('Worker:ComputeMesh');
   const res = voxelState.computeMesh();
+  console.timeEnd('Worker:ComputeMesh');
   // res = { vertices, faces, colors, materials } (Float32Arrays/Uint32Arrays)
 
   // We must TRANSFER the buffers to avoid copy overhead.

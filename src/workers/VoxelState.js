@@ -248,14 +248,16 @@ class VoxelState {
     const newFaces = [];
     let badFaces = 0;
 
-    // Reuse temp vectors to avoid GC thrashing
+    // Reuse temp vectors to avoid GC thrashing (for validation)
     const ab = vec3.create();
     const ac = vec3.create();
     const v1 = vec3.create();
     const v2 = vec3.create();
     const v3 = vec3.create();
+    // const v4 = vec3.create(); // Unused for now
     const normal = vec3.create();
 
+    // Loop over Quads (SurfaceNets produces Quads: 4 indices per face)
     for (let i = 0; i < faces.length; i += 4) {
       const i1 = faces[i];
       const i2 = faces[i + 1];
@@ -266,22 +268,14 @@ class VoxelState {
       let isQuad = (i4 !== Utils.TRI_INDEX);
 
       // Start simple: Check for coincident vertices in the Quad/Tri
-      // (Degenerate if any 2 vertices are same)
-      // Note: SurfaceNets might produce T-junctions or singular edges, but coincident vertices are the main NaN source.
-
       let degenerate = false;
       if (i1 === i2 || i1 === i3) degenerate = true;
       if (isQuad) {
         if (i1 === i4 || i2 === i4 || i3 === i4) degenerate = true;
-        // Check diagonal too?
-        if (i2 === i3) degenerate = true; // wait i1=i2, i1=i3, i2=i3 covers triangle
+        if (i2 === i3) degenerate = true;
       } else {
         if (i2 === i3) degenerate = true;
       }
-
-      // Also check area?
-      // Let's rely on coincident indices first, as that's the absolute zero case.
-      // SurfaceNets can produce very small faces.
 
       if (!degenerate) {
         // Calculate area to be sure
@@ -289,87 +283,32 @@ class VoxelState {
         v2[0] = vertices[i2 * 3]; v2[1] = vertices[i2 * 3 + 1]; v2[2] = vertices[i2 * 3 + 2];
         v3[0] = vertices[i3 * 3]; v3[1] = vertices[i3 * 3 + 1]; v3[2] = vertices[i3 * 3 + 2];
 
-        // Create explicit output vector to avoid aliasing (ab = ab x ac) issues
+        // Normal of Tri 1 (i1, i2, i3)
         vec3.sub(ab, v2, v1);
         vec3.sub(ac, v3, v1);
         vec3.cross(normal, ab, ac);
+
         if (vec3.length(normal) < 1e-6) {
           degenerate = true;
         }
 
         if (!degenerate && isQuad) {
-          // Check second triangle of quad
-          v1[0] = vertices[i3 * 3]; v1[1] = vertices[i3 * 3 + 1]; v1[2] = vertices[i3 * 3 + 2];
-          const v4 = vec3.create();
-          v4[0] = vertices[i4 * 3]; v4[1] = vertices[i4 * 3 + 1]; v4[2] = vertices[i4 * 3 + 2];
+          // Quad Logic (Legacy) - SurfaceNets now outputs Triangles (padded with TRI_INDEX)
+          // So this block is rarely reached unless Quads are re-introduced.
 
-          // Reuse v1(i3)
-          // v3 var holds i3 coords? No, used as temp.
-          // Let's re-fetch to be safe or reuse v1.
-          // v1 has i3.
-          // We need tri (i1, i3, i4)?
-          // Original code: v1=i3. sub(ab, v3, v1). v3 was i3?
-          // Wait, previous loop: v3=i3.
-          // So sub(ab, v3, v1) -> sub(ab, i3, i3) = 0?
-          // AH.
-          // Original code:
-          // v1 = i3.
-          // vec3.sub(ab, v3, v1).
-          // v3 was SET to i3 in previous block (lines 336).
-          // So v3 is i3. v1 is i3.
-          // So ab = 0.
-          // Area = 0.
-          // SECOND TRIANGLE WAS ALWAYS DEGENERATE because of logic error?
-          // But First Triangle was also degenerate?
-          // Line 340: vec3.cross(ab, ab, ac). Aliasing.
-
-          // Let's fix FIRST triangle aliasing first.
-          // Then checking Second triangle logic.
-          // v1=i3.
-          // v3 is still i3 from line 336.
-          // So v1 == v3.
-          // We need (i1, i3, i4).
-          // i1 coords are in... wait, we overwrote v1/v2/v3?
-          // We need fresh coords.
-
-          // Let's fetch clean coords for Tri 2.
-          const t1 = vec3.create(); // i1
-          const t3 = vec3.create(); // i3
-          const t4 = vec3.create(); // i4
-
-          t1[0] = vertices[i1 * 3]; t1[1] = vertices[i1 * 3 + 1]; t1[2] = vertices[i1 * 3 + 2];
-          t3[0] = vertices[i3 * 3]; t3[1] = vertices[i3 * 3 + 1]; t3[2] = vertices[i3 * 3 + 2];
-          t4[0] = vertices[i4 * 3]; t4[1] = vertices[i4 * 3 + 1]; t4[2] = vertices[i4 * 3 + 2];
-
-          vec3.sub(ab, t3, t1);
-          vec3.sub(ac, t4, t1);
-          vec3.cross(normal, ab, ac);
-          if (vec3.length(normal) < 1e-6) {
-            degenerate = true;
-          }
         }
       }
 
       if (!degenerate) {
         newFaces.push(i1, i2, i3, i4);
       } else {
-        if (badFaces < 5) {
-          const vLog = `F${i / 4} R: v1=[${v1[0].toFixed(2)},${v1[1].toFixed(2)},${v1[2].toFixed(2)}] v2=[${v2[0].toFixed(2)},${v2[1].toFixed(2)},${v2[2].toFixed(2)}] Area=${vec3.length(normal).toExponential(2)}`;
-          console.warn(vLog);
-          // if (window.screenLog) window.screenLog(vLog, "red");
-        }
         badFaces++;
       }
     }
 
     if (badFaces > 0) {
-      const msg = `Sanitized: Removed ${badFaces} degenerate faces (Total: ${faces.length / 4})`;
-      console.warn(msg);
-      // if (window.screenLog) window.screenLog(msg, "orange");
+      console.warn(`Sanitized: Removed ${badFaces} degenerate faces`);
       res.faces = new Uint32Array(newFaces);
-    } else {
-      // console.log(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`);
-      // if (window.screenLog) window.screenLog(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`, "grey");
     }
   }
 

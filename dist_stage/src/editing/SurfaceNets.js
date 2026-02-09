@@ -1,3 +1,5 @@
+import Utils from '../misc/Utils.js';
+
 var SurfaceNets = {};
 SurfaceNets.BLOCK = false;
 
@@ -153,10 +155,18 @@ var createFace = function (edgeMask, mask, buffer, R, m, x, faces) {
     var dv = R[iv];
 
     //Remember to flip orientation depending on the sign of the corner.
-    if (mask & 1)
-      faces.push(buffer[m], buffer[m - du], buffer[m - du - dv], buffer[m - dv]);
-    else
-      faces.push(buffer[m], buffer[m - dv], buffer[m - du - dv], buffer[m - du]);
+    //Remember to flip orientation depending on the sign of the corner.
+    var i1, i2, i3, i4;
+    if (mask & 1) {
+      i1 = buffer[m]; i2 = buffer[m - du]; i3 = buffer[m - du - dv]; i4 = buffer[m - dv];
+    } else {
+      i1 = buffer[m]; i2 = buffer[m - dv]; i3 = buffer[m - du - dv]; i4 = buffer[m - du];
+    }
+
+    if (i1 >= 0 && i2 >= 0 && i3 >= 0 && i4 >= 0) {
+      faces.push(i1, i2, i3, Utils.TRI_INDEX);
+      faces.push(i1, i3, i4, Utils.TRI_INDEX);
+    }
   }
 };
 
@@ -173,6 +183,7 @@ SurfaceNets.computeSurface = function (voxels, bounds) {
   var grid = new Float32Array(8);
   var nbBuf = 1;
   var buffer = new Int32Array(R[2] * 2);
+  buffer.fill(-1);
 
   // Bounds (Default to full grid if missing)
   var minX = bounds ? bounds.min[0] : 0;
@@ -222,8 +233,20 @@ SurfaceNets.computeSurface = function (voxels, bounds) {
   // If nbBuf=1: m = 1 + width * (1 + height). = 1 + width + width*height. (Row 1, Col 1 of Slice 2?)
   // Yes. It adds a 1-pixel border margin in buffer?
 
-    var bufferOffset = nbBuf * bufStrideZ; // Slice Access
-    // We iterate 0..dims-1. Buffer is dims+1.
+    // Buffer layout: [Slice0][Slice1]
+    // Width of one slice in buffer is bufStrideZ
+    var bufferOffset = nbBuf * bufStrideZ;
+
+    // SAFETY: Clear the buffer slice we are about to use
+    // value -1 means "no vertex on this edge"
+    // We must clear it because we reuse this slice for the next Z step.
+    buffer.fill(-1, bufferOffset, bufferOffset + bufStrideZ);
+
+    // Safety check for bounds
+    if (bufferOffset + bufStrideZ > buffer.length) {
+      console.error("SurfaceNets: Buffer Overflow Risk");
+      continue;
+    }
 
     for (x[1] = minY; x[1] < maxY; ++x[1]) {
       // Calc n, m for start of row

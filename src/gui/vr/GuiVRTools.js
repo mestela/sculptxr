@@ -163,9 +163,8 @@ export default function getToolsWidgets(main, activeToolIndex) {
     // Radius already handled above? Yes.
 
     // Resolution Slider (32-256)
-    // We need to get current resolution. SculptVoxel doesn't expose it easily in public prop?
-    // SculptVoxel has `_voxelState.dims[0]`
-    const voxelResolution = activeTool._voxelState ? activeTool._voxelState.dims[0] : 64;
+    // We need to get current resolution. SculptVoxel has `_res`
+    const voxelResolution = activeTool._res || 64;
 
     widgets.push({
       type: 'slider',
@@ -173,7 +172,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       label: 'Resolution',
       x: col1X, y: y, w: 550, h: 40,
       value: voxelResolution,
-      min: 32, max: 256, step: 32, precision: 0,
+      min: 16, max: 256, step: 16, precision: 0,
       onInput: (val) => {
         // Debounce? Rebuilding grid is expensive.
         // But slider usually only calls onInput during drag? 

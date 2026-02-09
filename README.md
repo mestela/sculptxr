@@ -20,6 +20,11 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.174**: **Voxel Performance & Fixes**:
+    - **Fix**: **Rendering**: Resolved black artifacts and `GL_INVALID_OPERATION` by ensuring `updateBuffers()` is called after Voxel mesh updates.
+    - **Performance**: **Worker Throttling**: Implemented `returnMesh` flag and message throttling to prevent Voxel Worker from flooding the main thread during rapid sculpting.
+    - **Fix**: **Memory Leak**: Fixed `Scene.js` `removeMeshes` bug (unsafe splice) and added `release()` to prevent voxel meshes from leaking memory on resolution change.
+
 - **v0.7.121**: **Voxel Worker (Phase 1)**:
     - **Performance**: Moved Voxel Engine to a Web Worker (`VoxelWorker.js`).
     - **Architecture**: Implemented asynchronous messaging between Main thread and Worker.
@@ -31,12 +36,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - **Fix**: **Grab Tool**: Improved stability with Delta Transforms, Locked Hand Priority, and "Active Mesh" fallback for easier picking.
     - **Fix**: **Ghost Trigger**: Prevented "stale" trigger inputs from blocking the other hand.
     - **Cleanup**: Massive removal of debug logs ("SCULPT BLOCKED", "Input Dump", "START STROKE") for a clean console.
-
-- **v0.7.35**: **Desktop Preview Polish**:
-    - **Feature**: Full "Desktop Preview" for VR Menu (Shift-Alt-V).
-    - **Fix**: Resolved "phantom" highlighting where background tabs would light up or click through the overlay menu.
-    - **Fix**: Polished hover states for overlay buttons (white border, brightness boost).
-    - **Fix**: Removed debug logs for a cleaner console experience.
 
 [View Full Release History](docs/releases.md)
 

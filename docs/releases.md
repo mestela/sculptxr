@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+- **v0.7.174**: **Voxel Performance & Fixes**:
+    - **Fix**: **Rendering**: Resolved black artifacts and `GL_INVALID_OPERATION` by ensuring `updateBuffers()` is called after Voxel mesh updates.
+    - **Performance**: **Worker Throttling**: Implemented `returnMesh` flag and message throttling to prevent Voxel Worker from flooding the main thread during rapid sculpting.
+    - **Fix**: **Memory Leak**: Fixed `Scene.js` `removeMeshes` bug (unsafe splice) and added `release()` to prevent voxel meshes from leaking memory on resolution change.
+    - **Fix**: **Bake**: Updated `bakeToMesh` to handle new `SurfaceNets` triangulation (Triangles instead of Quads).
+
 - **v0.7.151**: **Fix**:
     - **Manager**: Disabled synchronous Voxel Undo in `SculptManager.js` to prevent `StateVoxel` crash.
     - **Inputs**: Fixed Voxel Negative Mode (Left Trigger/Squeeze) in `Scene.js`.
