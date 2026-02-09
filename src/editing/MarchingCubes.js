@@ -1,6 +1,7 @@
-import Utils from 'misc/Utils';
+import Utils from '../misc/Utils.js';
 
 var MarchingCubes = {};
+console.log("MarchingCubes evaluating...");
 MarchingCubes.BLOCK = false;
 
 var edgeTable = new Uint32Array([

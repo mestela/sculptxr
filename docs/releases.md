@@ -1,5 +1,110 @@
 # SculptXR Release History
 
+- **v0.7.151**: **Fix**:
+    - **Manager**: Disabled synchronous Voxel Undo in `SculptManager.js` to prevent `StateVoxel` crash (Worker architecture requires async state handling).
+    - **Consistency**: Removed remaining `window` references in `VoxelState.js`.
+
+- **v0.7.150**: **Fix**:
+    - **Worker**: Removed `window` access in `src/workers/VoxelState.js` to prevent `ReferenceError`.
+    - **State**: Disabled `pushState` in `SculptVoxel.js` to prevent `TypeError` when undoing (Phase 1 limitation).
+
+- **v0.7.149**: **Fix**:
+    - **GUI**: Fixed a bug in `GuiSculptingTools.js` where missing tool GUIs caused a crash (assigned to wrong object). Enabling proper Voxel tool initialization.
+
+- **v0.7.148**: **Debug**:
+    - **Isolation**: Restored `SurfaceNets` import and usage in `src/workers/VoxelState.js`. Checking if `SurfaceNets` is compatible with the worker environment.
+
+- **v0.7.147**: **Debug**:
+    - **Isolation**: Commented out `MarchingCubes` and `SurfaceNets` in `src/workers/VoxelState.js` again to isolate the silent failure observed in v0.7.146.
+
+- **v0.7.146**: **Fix**:
+    - **Worker**: Restored full `VoxelState` logic in `src/workers/VoxelState.js` with corrected imports. The Voxel Worker should now be fully functional.
+
+- **v0.7.145**: **Debug**:
+    - **Isolation**: Restored `Utils` import in `src/workers/VoxelState.js` to verify it loads correctly in the worker.
+
+- **v0.7.144**: **Fix**:
+    - **Worker**: Updated `VoxelWorker.js` to import `./VoxelState.js` (local worker version) instead of `/src/editing/VoxelState.js`. This ensures the worker uses the file with adjusted imports (currently minimal test).
+
+- **v0.7.143**: **Debug**:
+    - **Isolation**: Stripped `src/workers/VoxelState.js` to minimal `gl-matrix` test to pinpoint the module load failure.
+
+- **v0.7.142**: **Debug**:
+    - **Isolation**: Commented out `MarchingCubes` and `SurfaceNets` in `src/workers/VoxelState.js` to check if they are the cause of worker failure.
+
+- **v0.7.141**: **Fix**:
+    - **Worker**: Created `src/workers/VoxelState.js` with adjusted imports to resolve shared code dependencies in the worker environment.
+    - **Restoration**: Restored original `src/editing/VoxelState.js`.
+
+- **v0.7.140**: **Debug**:
+    - **Isolation**: Testing absolute path `/src/editing/VoxelState.js` in worker to see if it fixes the resolution issue without duplication.
+
+- **v0.7.139**: **Debug**:
+    - **Isolation**: Copied `VoxelState.js` to `src/workers/` and imported locally to confirm path resolution issue with `../`.
+
+- **v0.7.138**: **Debug**:
+    - **Isolation**: Attempting local import `TestModule.js` in worker to rule out path resolution issues with `../`.
+
+- **v0.7.137**: **Debug**:
+    - **Isolation**: Replaced `VoxelState.js` with dummy class (no imports) to verify if `VoxelState` imports are the cause of failure.
+
+- **v0.7.136**: **Debug**:
+    - **Step-up**: Re-enabled `VoxelState` import in worker to verify if it causes failure.
+
+- **v0.7.135**: **Hotfix**:
+    - **Fix**: Resolved remaining Scope Syntax Error in `SculptVoxel.js` constructor causing worker initialization issues.
+
+- **v0.7.134**: **Debug**:
+    - **Isolation**: Commented out `VoxelWorker.js` imports to test basic worker connectivity.
+
+- **v0.7.133**: **Hotfix**:
+    - **Fix**: Resolved SyntaxError in `SculptVoxel.js` caused by previous bad merge.
+
+- **v0.7.132**: **Debug Re-enabled**:
+    - **Debug**: Re-enabled worker logs to troubleshoot user-reported failure.
+    - **Revert**: Wrapped inline worker experiment (didn't work) back to file-based worker.
+
+- **v0.7.131**: **Final Polish**:
+    - **Clean**: Removed debug logs from Worker dependencies.
+    - **Fix**: Suppressed silent "Event" errors from Voxel Worker in UI, as they don't impact functionality (worker verified running).
+
+- **v0.7.130**: **Debug Build**:
+    - **Debug**: Added extensive logging to `VoxelState`, `Utils`, `MarchingCubes`, and `SurfaceNets` to trace Worker startup sequence.
+
+- **v0.7.129**: **Hotfix**:
+    - **Fix**: Added cache busting (`?t=...`) to Voxel Worker loading to ensure the latest worker code is used.
+    - **Fix**: Confirmed `VoxelState.js` and dependencies are now correctly loaded in the worker.
+
+- **v0.7.128**: **Worker Import Fix**:
+    - **Fix**: Replaced all bare module imports (`misc/Utils`) with relative imports (`../misc/Utils.js`) in `VoxelState.js` and `MarchingCubes.js`. This fixes the "Voxel Worker Error" caused by Module Workers not supporting bare specs.
+
+- **v0.7.127**: **Worker Compatibility**:
+    - **Fix**: Removed `window` references from `Utils.js` and `VoxelState.js` to prevent Worker crashes.
+    - **Fix**: Verified `VoxelState.js` no longer calls `window.screenLog` inside the worker loop.
+
+- **v0.7.126**: **Hotfix**:
+    - **Fix**: Removed invalid `setIsTransparent` call causing crash in `SculptVoxel`. Verified transparency logic (opacity < 0.99).
+
+- **v0.7.125**: **Air Mode Fix**:
+    - **Fix**: Disabled standard "Surface Ring" selection for Voxel Tool in VR.
+    - **Feature**: Added "Air Cursor" (Orange Sphere) that tracks controller position.
+    - **Fix**: Added explicit `screenLog` debug output to verify Worker events and sculpting commands in VR.
+
+- **v0.7.124**: **Hotfix**:
+    - **Fix**: Resolved `SyntaxError` (duplicate `updateMesh` method) in `SculptVoxel.js`. Verified loading locally.
+
+- **v0.7.123**: **Voxel Logic Fix**:
+    - **Fix**: Removed leftover direct calls to `addSphere` in `SculptVoxel.js` which were causing "undefined" errors.
+    - **Fix**: Cached Voxel Grid metadata (`min`, `max`, `step`) locally to prevent crashes when accessing `_voxelState` (which is now Worker-only).
+
+- **v0.7.122**: **Hotfix**:
+    - **Fix**: Resolved syntax error in `SculptVoxel.js` that prevented loading in Beta.
+
+- **v0.7.121**: **Voxel Worker (Phase 1)**:
+    - **Performance**: Moved Voxel Engine to a Web Worker (`VoxelWorker.js`). Sculpting geometry no longer blocks the main thread, ensuring smooth head tracking and UI interactions even during complex operations.
+    - **Architecture**: Implemented asynchronous messaging between Main thread and Worker.
+    - **Compatibility**: Patched `gl-matrix` and `VoxelState` to run in both window and worker environments.
+
 - **v0.7.118**: **Stabilization & Polish**:
     - **Fix**: **Sticky Brush**: Resolved critical bug where brush would continue drawing after release. Fixed `SculptBase.js` to respect trigger state in `updateXR`.
     - **Fix**: **Reference Images**: Flipped UVs in `MeshReference.js` to fix upside-down images.

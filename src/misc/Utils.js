@@ -1,6 +1,7 @@
-import { vec3 } from 'gl-matrix';
+import { vec3 } from '../../lib/gl-matrix-wrapper.js';
 
 var Utils = {};
+console.log("Utils evaluating...");
 
 Utils.SCALE = 100.0; // scale factor
 Utils.TAG_FLAG = 1; // flag value for comparison (always >= tags values)
@@ -197,12 +198,12 @@ Utils.throttle = function (func, wait) {
       args[i] = arguments[i];
 
     if (remaining <= 0 || remaining > wait) {
-      window.clearTimeout(timeout);
+      clearTimeout(timeout);
       timeout = null;
       previous = now;
       result = func.apply(func, args);
     } else if (!timeout) {
-      timeout = window.setTimeout(later, remaining);
+      timeout = setTimeout(later, remaining);
     }
     return result;
   };

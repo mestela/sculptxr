@@ -1,5 +1,5 @@
 import SculptBase from 'editing/tools/SculptBase';
-import VoxelState from 'editing/VoxelState';
+// import VoxelState from 'editing/VoxelState'; // Worker only now
 import MeshStatic from 'mesh/meshStatic/MeshStatic';
 import Multimesh from 'mesh/multiresolution/Multimesh';
 import { vec3, mat4 } from 'gl-matrix';
@@ -16,7 +16,46 @@ class SculptVoxel extends SculptBase {
     // Initialize Voxel Grid
     // Box size 100.0 (matches Utils.SCALE / Desktop Scale)
     // Resolution 64 (Better quality for larger space)
-    this._voxelState = new VoxelState(64, 100.0);
+    // Initialize Voxel Worker
+    // Box size 100.0 (matches Utils.SCALE / Desktop Scale)
+    // Resolution 64 (Better quality for larger space)
+    this._worker = new Worker('src/workers/VoxelWorker.js', { type: 'module' });
+
+    this._worker.onerror = (e) => {
+      console.error("Voxel Worker Error:", e);
+      if (window.screenLog) window.screenLog(`Worker Error: ${e.message}`, "red");
+    };
+
+    this._worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'MESH_UPDATE') {
+        this.updateVoxelMesh(msg.data);
+      } else if (msg.type === 'LOG') {
+        // Worker can send logs back
+        console.log("[Worker]", msg.data);
+      }
+    };
+
+    // Send Init to Worker
+    const res = 64;
+    const size = 100.0;
+    this._worker.postMessage({
+      type: 'INIT',
+      res: res,
+      size: size
+    });
+
+    if (window.screenLog) window.screenLog("Voxel: Worker Inited", "green");
+
+    // Cache Grid Info (simulating VoxelState metadata)
+    this._res = res;
+    this._size = size;
+    this._step = size / res;
+    // min is -size/2
+    const half = size * 0.5;
+    this._min = vec3.fromValues(-half, -half, -half);
+    this._max = vec3.fromValues(half, half, half);
+
     this._allowAir = true; // Allow sculpting without surface picking
 
     // The mesh that represents the voxels
@@ -27,9 +66,17 @@ class SculptVoxel extends SculptBase {
     mat4.translate(this._gridMatrix, this._gridMatrix, [0.0, 1.3, -1.5]);
     this._invGridMatrix = mat4.create();
     mat4.invert(this._invGridMatrix, this._gridMatrix);
-    this._allowAir = true; // [VR] Allow drawing in air (Scene.js checks this)
 
     this._lastUpdate = 0;
+    this._pendingMeshUpdate = false;
+
+    // Air Cursor (Visual Feedback)
+    this._cursorMesh = Primitives.createSphere(main._gl);
+    this._cursorMesh.setMode(main._gl.TRIANGLES);
+    this._cursorMesh.setShaderType(Enums.Shader.FLAT);
+    this._cursorMesh.setFlatColor([1.0, 0.5, 0.0]); // Orange
+    this._cursorMesh.setOpacity(0.4);
+    this._cursorMesh.setVisible(false);
 
     // DEBUG: Add a reference cube to verify location/rendering
     // Use Primitives to ensure correct faces formatting (Quads/Triangles)
@@ -40,7 +87,7 @@ class SculptVoxel extends SculptBase {
 
     mat4.copy(this._debugCube.getMatrix(), this._gridMatrix);
     // Scale it to match Voxel Box (100.0)
-    var s = 100.0;
+    var s = size;
     mat4.scale(this._debugCube.getMatrix(), this._debugCube.getMatrix(), [s, s, s]);
     // Note: Rendering opaque box might block view. Ideally use Wireframe.
     this._debugCube.setShaderType(Enums.Shader.FLAT);
@@ -54,8 +101,6 @@ class SculptVoxel extends SculptBase {
     // [USER REQUEST] Do NOT add debug cube to scene list to prevent Isolate issues
     // if (main.addNewMesh) main.addNewMesh(this._debugCube);
     // else main.addMesh(this._debugCube);
-
-    // if (window.screenLog) window.screenLog("Voxel: Debug Cube Added (Size 1.0) at [0, 1.3, -1.5]", "yellow");
 
     // Expose for Console Debugging
     window.voxelTool = this;
@@ -162,50 +207,7 @@ class SculptVoxel extends SculptBase {
     this._main.getStateManager().pushStateVoxel(this._voxelState);
   }
 
-  updateMesh() {
-    // Generate new mesh data
-    const res = this._voxelState.computeMesh();
 
-    // Create or Update MeshStatic
-    var main = this._main;
-    var gl = main._gl;
-
-    if (!this._voxelMesh) {
-      this._voxelMesh = new MeshStatic(gl);
-      this._voxelMesh.setMode(gl.TRIANGLES);
-      this._voxelMesh.setUseDrawArrays(false); // Indexed Geometry is faster/smaller
-      this._voxelMesh.setFlatShading(true);    // Skip normal computation, use shader derivatives
-
-      this._voxelMesh.setID(this._voxelMesh.getID());
-
-      // Default to MATCAP for better visibility
-      this._voxelMesh.setShaderType(Enums.Shader.MATCAP);
-
-      main.addMesh(this._voxelMesh);
-      if (window.screenLog) window.screenLog("Voxel: Mesh Created (MATCAP)", "lime");
-    }
-
-    // Set Data
-    this._voxelMesh.setVertices(res.vertices); // Float32Array
-    this._voxelMesh.setFaces(res.faces);       // Uint32Array
-
-    // MINIMAL UPDATE (Avoids initTopology/Octree which are O(N) or worse)
-    // 1. Resize/Init Colors & Materials
-    this._voxelMesh.initColorsAndMaterials();
-
-    // 2. Resize/Init Normals & Other Arrays
-    // allocateArrays uses getNbVertices to resize _normalsXYZ etc.
-    this._voxelMesh.allocateArrays();
-
-    // 3. Set Color/Prop Defaults (after alloc)
-    this._voxelMesh.setFlatColor([0.2, 0.9, 0.2]); // Bright Green
-    this._voxelMesh.setOpacity(1.0);
-    this._voxelMesh.setMatcap(0);
-
-    // 4. Upload to GPU (Skip Geometry/Normal calculation logic)
-    // We rely on Flat Shading in ShaderMatcap (using dFdx/dFdy) so we don't need vertex normals.
-    this._voxelMesh.updateBuffers();
-  }
 
   logVoxelInfo() {
     if (!this._voxelMesh) {
@@ -310,9 +312,16 @@ class SculptVoxel extends SculptBase {
   forceInit() {
     // Force an initial sphere at the center so we have a mesh to see immediately
     if (this._lastUpdate === 0) {
-      if (window.screenLog) window.screenLog("Voxel: Initial Sphere DISABLED", "grey");
-      // this._voxelState.addSphere([0, 0, 0], 15.0, [0.2, 1.0, 0.2]); // 15 unit sphere
-      // this.updateMesh();
+      if (window.screenLog) window.screenLog("Voxel: Initial Sphere...", "green");
+      if (this._worker) {
+        this._worker.postMessage({
+          type: 'EDIT_SPHERE',
+          center: [0, 0, 0],
+          radius: 15.0,
+          color: [0.2, 1.0, 0.2],
+          isNegative: false
+        });
+      }
       this._lastUpdate = 1;
     }
   }
@@ -384,9 +393,14 @@ class SculptVoxel extends SculptBase {
   }
 
   postRender(selection) {
-    // Hide default selection ring
-    if (!this._main._xrSession) {
-      // selection.render(this._main); 
+    if (this._main._xrSession) {
+      // In VR, draw our custom Air Cursor
+      if (this._cursorMesh && this._cursorMesh.isVisible()) {
+        this._cursorMesh.render(this._main);
+      }
+    } else {
+    // Desktop: Standard Selection?
+    // selection.render(this._main);
     }
   }
 
@@ -482,19 +496,18 @@ class SculptVoxel extends SculptBase {
     }
 
     var changed = false;
-    if (isNegative) {
-      changed = this._voxelState.subtractSphere(localPos, radius);
-      if (window.screenLog && (this._lastUpdate % 30 === 0)) window.screenLog("Desk: Neg Mod!", "red");
-    } else {
-      changed = this._voxelState.addSphere(localPos, radius, color);
-    }
+    if (this._worker) {
+      if (isNegative) {
+        // Desktop "Air" check is harder async. Just fire and forget.
+      }
 
-    if (changed) {
-      if (window.screenLog && (this._lastUpdate++ % 30 === 0)) window.screenLog(`Voxel: Mod! FaceCount: ${this._voxelMesh ? this._voxelMesh.getNbFaces() : 0}`, "lime");
-      this.updateMesh();
-    } else {
-      // Log failure reason in Desktop too
-      // if (window.screenLog && Math.random() < 0.05) window.screenLog("Voxel: No Change", "grey");
+      this._worker.postMessage({
+        type: 'EDIT_SPHERE',
+        center: [localPos[0], localPos[1], localPos[2]],
+        radius: radius,
+        color: color,
+        isNegative: isNegative
+      });
     }
   }
 
@@ -520,6 +533,41 @@ class SculptVoxel extends SculptBase {
       // VoxelXR Update
       // Ensure we hide distracting meshes
       // this.hideOtherMeshes();
+
+      // Show/Update Cursor
+      if (this._cursorMesh) {
+        this._cursorMesh.setVisible(true);
+        var m = this._cursorMesh.getMatrix();
+        mat4.identity(m);
+        // Radius Source: this._radius (0..100) set by GuiXR
+        var rawRadius = (this._radius !== undefined) ? this._radius : 25.0;
+        // Radius Mapping: 0..100 -> 0.5..10.0 (Physical Units)
+        // Voxel Step is ~1.5. So 10.0 is ~6 voxels radius.
+        var radius = Math.max(0.02, rawRadius * 0.015 * 0.1);
+        // Note: rawRadius * 0.15 was HUGE (3.75 units). 
+        // Let's make visual match physical.
+        // If rawRadius=50, radius ~ 0.5 units?
+        // Let's stick roughly to 0.05 - 0.2 range for VR.
+        radius = Math.max(0.01, rawRadius * 0.002);
+
+        // Support Voxel Mult Slider if set
+        if (this._radiusMult) radius *= this._radiusMult;
+
+        // Position at Controller Tip (origin)
+        mat4.translate(m, m, origin); // origin is vec3 pos? 
+        // Wait, origin is usually [x, y, z] from controller.
+        // It's not a matrix? Scene.js passes `vec3.transformMat4(origin, ...)`? 
+        // No, Scene.js passes `ct.position`.
+        // Let's verify origin is vec3.
+        if (origin.length === 3) {
+          mat4.translate(m, m, [origin[0], origin[1], origin[2]]);
+        } else if (origin.length === 16) {
+          // If it passed a matrix? SculptManager calls updateXR(..., origin, dir)
+          // Usually origin is vec3.
+        }
+
+        mat4.scale(m, m, [radius, radius, radius]);
+      }
 
       if (!isPressed) {
         this._lastXRPos = null; // Reset stroke
@@ -551,38 +599,40 @@ class SculptVoxel extends SculptBase {
       vec3.copy(this._lastXRPos, localPos);
 
       // 2. Add Sphere at LocalPos
-      // Radius Source: this._radius (0..100) set by GuiXR
-      var rawRadius = (this._radius !== undefined) ? this._radius : 25.0;
-      
-      // Radius Mapping: 0..100 -> 0.5..10.0 (Physical Units)
-      // Voxel Step is ~1.5. So 10.0 is ~6 voxels radius.
-      var radius = Math.max(1.5, rawRadius * 0.15); 
-
-      // Support Voxel Mult Slider if set
-      if (this._radiusMult) radius *= this._radiusMult;
-
-      // Guard: Max Radius (Prevent Huge Blob)
-      radius = Math.min(radius, 50.0);
+      // Recalculate radius for Logic (Grid Units)
+      // Grid is size 100. World is scaled?
+      // Grid Matrix scales World to Grid.
+      // If we used radius * 0.002 (World Units), we need to scale to Grid Units.
+      // Grid Size 100 ~ 1.5 units step.
+      // Let's treat radius as 0..100 -> 1.5..50 Grid Units.
+      var gridRadius = Math.max(1.5, rawRadius * 0.5);
+      if (this._radiusMult) gridRadius *= this._radiusMult;
+      gridRadius = Math.min(gridRadius, 50.0);
 
       var color = [0.7, 0.65, 0.6]; // Grey Clay
 
       var changed = false;
       var isNegative = (options && options.isNegative);
 
-      // Re-enable real update loop
-      if (isNegative) {
-        changed = this._voxelState.subtractSphere(localPos, radius);
-      } else {
-        changed = this._voxelState.addSphere(localPos, radius, color);
+      // Debug Log
+      if (window.screenLog && (this._lastUpdate % 10 === 0)) {
+        window.screenLog(`VR Edit: ${localPos[0].toFixed(1)},${localPos[1].toFixed(1)} r=${gridRadius.toFixed(1)}`, "lime");
       }
 
-      if (changed) {
-        this.updateMesh();
+      // Re-enable real update loop
+      if (this._worker) {
+        this._worker.postMessage({
+          type: 'EDIT_SPHERE',
+          center: [localPos[0], localPos[1], localPos[2]],
+          radius: gridRadius,
+          color: color,
+          isNegative: isNegative
+        });
+      // We don't know if changed yet, but we sent the command.
+      // The worker will reply with MESH_UPDATE if changed.
       } else {
-        // Log lack of change (maybe out of bounds or air subtract)
-        // if (window.screenLog && (this._lastUpdate % 60 === 0)) window.screenLog("VR: No Change (Air?)", "grey");
+        if (window.screenLog) window.screenLog("Voxel: Worker not ready", "red");
       }
-      this._lastUpdate++;
     } catch (e) {
       if (window.screenLog) window.screenLog(`Voxel XR Error: ${e.message}`, "red");
       console.error(e);
@@ -590,14 +640,26 @@ class SculptVoxel extends SculptBase {
   }
 
   setResolution(res) {
-    // if (window.screenLog) window.screenLog(`VoxelState: step=${step} min=${this._voxelState.min[0]},${this._voxelState.min[1]},${this._voxelState.min[2]}`, "orange");
-    // if (window.screenLog) window.screenLog(`GridMat: ${containerMat[12].toFixed(2)},${containerMat[13].toFixed(2)},${containerMat[14].toFixed(2)}`, "orange");
-    if (res === this._voxelState.dims[0]) return;
-    // if (window.screenLog) window.screenLog(`Voxel: Rebuilding Grid (${res}^3)...`, "orange");
+    if (res === this._res) return;
 
-    // Preserve size, just change res
-    // Current size is 100.0
-    this._voxelState = new VoxelState(res, 100.0);
+    // Update local cache
+    this._res = res;
+    // Keep same size for now, or reset?
+    // Let's assume size stays 100.0 or we can make it dynamic later.
+    const size = this._size || 100.0;
+
+    this._step = size / res;
+    const half = size * 0.5;
+    this._min = vec3.fromValues(-half, -half, -half);
+    this._max = vec3.fromValues(half, half, half);
+
+    // Send Re-Init to Worker
+    this._worker.postMessage({
+      type: 'INIT',
+      res: res,
+      size: size
+    });
+
     this._voxelMesh = null; // Forced reset
     this.forceInit();
     if (this._main) this._main.render();
@@ -608,11 +670,7 @@ class SculptVoxel extends SculptBase {
     if (window.screenLog) window.screenLog(`Voxel: Radius Mult ${val.toFixed(2)}`, "cyan");
   }
 
-  updateMesh() {
-    var res = this._voxelState.computeMesh();
-    // res has { vertices, faces, colors, materials } (Float32Arrays)
-
-    var res = this._voxelState.computeMesh();
+  updateVoxelMesh(res) {
     // res has { vertices, faces, colors, materials } (Float32Arrays)
 
     if (res.vertices.length === 0) {
@@ -631,27 +689,22 @@ class SculptVoxel extends SculptBase {
 
       // Set Matrix
       mat4.identity(this._voxelMesh.getMatrix());
-      mat4.translate(this._voxelMesh.getMatrix(), this._voxelMesh.getMatrix(), this._voxelState.min);
+      mat4.translate(this._voxelMesh.getMatrix(), this._voxelMesh.getMatrix(), this._min);
       // Uniform scale by step
-      var step = this._voxelState.step;
+      var step = this._step;
       mat4.scale(this._voxelMesh.getMatrix(), this._voxelMesh.getMatrix(), [step, step, step]);
 
       var worldMat = this._voxelMesh.getMatrix(); // Currently Min+Scale
       var containerMat = this._gridMatrix;
 
-      if (window.screenLog) {
-        // window.screenLog(`VoxelState: step=${step} min=${this._voxelState.min[0]},${this._voxelState.min[1]},${this._voxelState.min[2]}`, "orange");
-        // window.screenLog(`GridMat: ${containerMat[12].toFixed(2)},${containerMat[13].toFixed(2)},${containerMat[14].toFixed(2)}`, "orange");
-      }
-
       // M = Container * Translation(Min) * Scale(Step)
       mat4.copy(worldMat, containerMat);
-      mat4.translate(worldMat, worldMat, this._voxelState.min);
+      mat4.translate(worldMat, worldMat, this._min);
       mat4.scale(worldMat, worldMat, [step, step, step]);
 
       if (window.screenLog) {
-        window.screenLog(`VS: step=${step.toFixed(4)} min=[${this._voxelState.min.join(',')}]`, "cyan");
-        window.screenLog(`Mat: Pos=[${worldMat[12].toFixed(1)},${worldMat[13].toFixed(1)},${worldMat[14].toFixed(1)}] Scale=${worldMat[0].toFixed(4)}`, "cyan");
+        window.screenLog(`VS: step=${step.toFixed(4)} min=[${this._min.join(',')}]`, "cyan");
+        // window.screenLog(`Mat: Pos=[${worldMat[12].toFixed(1)},${worldMat[13].toFixed(1)},${worldMat[14].toFixed(1)}] Scale=${worldMat[0].toFixed(4)}`, "cyan");
       }
 
       if (window.screenLog) window.screenLog("Voxel: Mesh Created", "green");
@@ -708,13 +761,8 @@ class SculptVoxel extends SculptBase {
       if (nanColor > 0) {
         // if (window.screenLog) window.screenLog(`FIXED: ${nanColor} NaN/Inf Colors`, "red");
         this._voxelMesh.updateColorBuffer();
+        this._voxelMesh.setShaderType(Enums.Shader.FLAT);
       }
-    }
-
-    // Set Shader Type AFTER init and data are present
-    // FORCE FLAT SHADER (Matcap ignores uFlat, so we must use FLAT shader for faceted look)
-    if (this._voxelMesh.getShaderType() !== Enums.Shader.FLAT) {
-      this._voxelMesh.setShaderType(Enums.Shader.FLAT);
     }
 
     // DISABLE FLAT SHADING DERIVATIVES (Debug: rely on vertex normals)
@@ -744,13 +792,6 @@ class SculptVoxel extends SculptBase {
         this._main.addMesh(this._voxelMesh);
       }
       if (window.screenLog) window.screenLog("Voxel: Mesh Added to Scene", "green");
-    }
-
-    if (window.screenLog) {
-      const nbTris = this._voxelMesh.getNbTriangles();
-      const useDA = this._voxelMesh.isUsingDrawArrays();
-      // window.screenLog(`Voxel: Validating. Tris:${nbTris} DA:${useDA}`, "grey");
-      // console.log(`Voxel: Tris:${nbTris} DA:${useDA} Faces:${res.faces.length / 4}`);
     }
   }
 
@@ -1034,7 +1075,7 @@ class SculptVoxel extends SculptBase {
   }
 
   // Debug Helper: Check vertices for NaN
-  checkNaN(arr, name) {
+  checkNaN(arr) {
     for (let i = 0; i < arr.length; i++) {
       if (isNaN(arr[i])) {
         return true;

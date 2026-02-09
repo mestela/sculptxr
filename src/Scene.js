@@ -503,7 +503,10 @@ class Scene {
     gl.disable(gl.BLEND);
 
     // Brush Indicator (Pass 2 - World Space)
-    if (this._sculptManager && this._picking.getMesh()) {
+    var currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
+    var isVoxel = currentTool && currentTool.constructor.name === 'SculptVoxel';
+
+    if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
       const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
       gl.disable(gl.DEPTH_TEST);
       gl.enable(gl.BLEND);

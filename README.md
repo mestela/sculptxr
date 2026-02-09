@@ -20,19 +20,17 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.121**: **Voxel Worker (Phase 1)**:
+    - **Performance**: Moved Voxel Engine to a Web Worker (`VoxelWorker.js`).
+    - **Architecture**: Implemented asynchronous messaging between Main thread and Worker.
+    - **Compatibility**: Patched `gl-matrix` and `VoxelState` to run in both window and worker environments.
+
 - **v0.7.118**: **Stabilization & Polish**:
     - **Fix**: **Sticky Brush**: Resolved critical bug where brush would continue drawing after release. Fixed `SculptBase.js` to respect trigger state in `updateXR`.
     - **Fix**: **Reference Images**: Flipped UVs in `MeshReference.js` to fix upside-down images.
     - **Fix**: **Grab Tool**: Improved stability with Delta Transforms, Locked Hand Priority, and "Active Mesh" fallback for easier picking.
     - **Fix**: **Ghost Trigger**: Prevented "stale" trigger inputs from blocking the other hand.
     - **Cleanup**: Massive removal of debug logs ("SCULPT BLOCKED", "Input Dump", "START STROKE") for a clean console.
-
-- **v0.7.49**: **VR Polish & Fixes**:
-    - **Feature**: **Radial Color Picker**: Restored the embedded radial color picker for the Paint tool in VR.
-    - **Fix**: **Thumbstick Radius**: Fixed right thumbstick up/down input to correctly adjust tool radius (was jumping to ~20%).
-    - **Fix**: **Symmetry Line**: Made the symmetry line thinner and less obtrusive in VR.
-    - **Fix**: **Crash Protection**: Added safeguards for "Duplicate" and "Merge" operations to prevent VR session crashes.
-    - **Cleanup**: Silenced `[GuiXR]` logs for a cleaner console.
 
 - **v0.7.35**: **Desktop Preview Polish**:
     - **Feature**: Full "Desktop Preview" for VR Menu (Shift-Alt-V).

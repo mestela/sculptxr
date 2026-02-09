@@ -1,11 +1,12 @@
 import { vec3 } from '../../lib/gl-matrix-wrapper.js';
 import Utils from '../misc/Utils.js';
-import MarchingCubes from './MarchingCubes.js';
-import SurfaceNets from './SurfaceNets.js';
+// import MarchingCubes from '../editing/MarchingCubes.js';
+import SurfaceNets from '../editing/SurfaceNets.js';
 
 class VoxelState {
 
   constructor(res = 128, size = 200.0) {
+    console.log("VoxelState: Constructor Start");
     this._resolution = res;
     this._size = size; // Physical size of the box (200.0 meters)
 
@@ -42,6 +43,8 @@ class VoxelState {
     // Init colors/mats to default
     this._voxels.colorField.fill(0.8); // Grey
     this._voxels.materialField.fill(0.2); // Rougness?
+
+    console.log("VoxelState: Constructor End");
   }
 
   get min() { return this._min; }
@@ -196,9 +199,8 @@ class VoxelState {
       if (izMin < this._activeMin[2]) this._activeMin[2] = izMin;
 
       if (ixMax > this._activeMax[0]) this._activeMax[0] = ixMax;
-      if (iyMax > this._activeMax[1]) this._activeMax[1] = iyMax;
       if (izMax > this._activeMax[2]) this._activeMax[2] = izMax;
-      if (window.screenLog && Math.random() < 0.2) window.screenLog(`VS.add: Expanded [${ixMin},${iyMin},${izMin}]-[${ixMax},${iyMax},${izMax}]`, "grey");
+      // if (window.screenLog && Math.random() < 0.2) window.screenLog(`VS.add: Expanded [${ixMin},${iyMin},${izMin}]-[${ixMax},${iyMax},${izMax}]`, "grey");
     }
 
     return changed;
@@ -225,10 +227,11 @@ class VoxelState {
         Math.min(this._dims[2], this._activeMax[2] + 2)
       ]
     };
-    if (window.screenLog) window.screenLog(`VS.compute: Bounds [${bounds.min}] to [${bounds.max}]`, "cyan");
+    // if (window.screenLog) window.screenLog(`VS.compute: Bounds [${bounds.min}] to [${bounds.max}]`, "cyan");
 
     // Use SurfaceNets (Dual Contouring style)
     const res = SurfaceNets.computeSurface(this._voxels, bounds); // Pass bounds!
+    // const res = { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) }; // Mock result
 
     // Log Raw Stats
     // if (window.screenLog) window.screenLog(`VS: Generated ${res.vertices.length/3} verts, ${res.faces.length/4} quads`, "grey");
@@ -353,7 +356,7 @@ class VoxelState {
         if (badFaces < 5) {
           const vLog = `F${i / 4} R: v1=[${v1[0].toFixed(2)},${v1[1].toFixed(2)},${v1[2].toFixed(2)}] v2=[${v2[0].toFixed(2)},${v2[1].toFixed(2)},${v2[2].toFixed(2)}] Area=${vec3.length(normal).toExponential(2)}`;
           console.warn(vLog);
-          if (window.screenLog) window.screenLog(vLog, "red");
+          // if (window.screenLog) window.screenLog(vLog, "red");
         }
         badFaces++;
       }
@@ -362,8 +365,8 @@ class VoxelState {
     if (badFaces > 0) {
       const msg = `Sanitized: Removed ${badFaces} degenerate faces (Total: ${faces.length / 4})`;
       console.warn(msg);
-      if (window.screenLog) window.screenLog(msg, "orange");
-      res.faces = new Uint32Array(newFaces); 
+      // if (window.screenLog) window.screenLog(msg, "orange");
+      res.faces = new Uint32Array(newFaces);
     } else {
       // console.log(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`);
       // if (window.screenLog) window.screenLog(`Sanitized: Clean mesh (0/${faces.length / 4} bad)`, "grey");

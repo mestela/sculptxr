@@ -11,15 +11,17 @@ var GuiTools = GuiSculptingTools.tools;
 
 GuiSculptingTools.initGuiTools = function (sculpt, menu, main) {
   // init each tools ui
+  console.log("GuiSculptingTools.initGuiTools: VOXEL Index =", Enums.Tools.VOXEL);
   for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
     if (!Tools[i]) continue;
     var uTool = GuiTools[i];
     if (!uTool) {
       console.error('No gui for tool index : ' + i);
-      GuiSculptingTools[i] = {
+      GuiTools[i] = { // FIX: Assign to GuiTools array, not GuiSculptingTools object
         _ctrls: [],
         init: function () {}
       };
+      uTool = GuiTools[i]; // Update ref
     }
     uTool.init(sculpt.getTool(i), menu, main);
     GuiSculptingTools.hide(i);
