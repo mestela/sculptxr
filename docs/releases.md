@@ -1,7 +1,9 @@
 # SculptXR Release History
 
 - **v0.7.151**: **Fix**:
-    - **Manager**: Disabled synchronous Voxel Undo in `SculptManager.js` to prevent `StateVoxel` crash (Worker architecture requires async state handling).
+    - **Manager**: Disabled synchronous Voxel Undo in `SculptManager.js` to prevent `StateVoxel` crash.
+    - **Inputs**: Fixed Voxel Negative Mode (Left Trigger/Squeeze) in `Scene.js`.
+    - **Logs**: Cleaned up spammy debug logs in `VoxelState.js` and `Scene.js`.
     - **Consistency**: Removed remaining `window` references in `VoxelState.js`.
 
 - **v0.7.150**: **Fix**:

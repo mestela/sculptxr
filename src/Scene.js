@@ -2289,23 +2289,26 @@ class Scene {
           vec3.transformQuat(dir, dir, qInv2);
         }
 
-        // Check for LEFT TRIGGER (Modifier)
+        // Check for LEFT TRIGGER (Modifier) or SQUEEZE
         let isNegative = false;
         // Find left input source
-        // FIX: 'sources' was undefined. Retrieve from current session.
         const session = frame.session;
         if (session && session.inputSources) {
           for (let src of session.inputSources) {
-            if (src.handedness === 'left' && src.gamepad && src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
-              isNegative = true;
-              break;
+            if (src.handedness === 'left' && src.gamepad) {
+              // Button 0 (Trigger) or Button 1 (Squeeze)
+              if ((src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) ||
+                (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed)) {
+                isNegative = true;
+                break;
+               }
             }
           }
         }
 
-        if (isNegative && window.screenLog && this._logThrottle % 60 === 0) {
-          // window.screenLog("VR: Negative Modifier!", "red");
-        }
+        // if (isNegative && window.screenLog && this._logThrottle % 60 === 0) {
+        //   window.screenLog("VR: Negative Modifier!", "red");
+        // }
 
         // DEBUG: Trace Input
         if (window.screenLog && (this._logThrottle % 60 === 0)) {

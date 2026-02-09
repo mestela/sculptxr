@@ -632,6 +632,10 @@ class SculptVoxel extends SculptBase {
           color: color,
           isNegative: isNegative
         });
+
+        // Debug Negative
+        // if (isNegative && this._lastUpdate % 10 === 0 && window.screenLog) window.screenLog("Voxel: Negative Edit", "red");
+
       // We don't know if changed yet, but we sent the command.
       // The worker will reply with MESH_UPDATE if changed.
       } else {

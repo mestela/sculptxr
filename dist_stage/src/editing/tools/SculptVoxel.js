@@ -19,13 +19,16 @@ class SculptVoxel extends SculptBase {
     // Initialize Voxel Worker
     // Box size 100.0 (matches Utils.SCALE / Desktop Scale)
     // Resolution 64 (Better quality for larger space)
-    this._worker = new Worker('src/workers/VoxelWorker.js', { type: 'module' });
+    this._worker = new Worker(`src/workers/VoxelWorker.js?t=${Date.now()}`, { type: 'module' });
 
     this._worker.onerror = (e) => {
-      console.error("Voxel Worker Error:", e);
-      if (window.screenLog) window.screenLog(`Worker Error: ${e.message}`, "red");
+      if (e.message) {
+        console.error("Voxel Worker Error:", e);
+        if (window.screenLog) window.screenLog(`Worker Error: ${e.message}`, "red");
+      } else {
+        console.warn("Voxel Worker Silent Error (ignored):", e);
+      }
     };
-
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
@@ -204,7 +207,8 @@ class SculptVoxel extends SculptBase {
 
   // Override SculptBase.pushState to use Voxel State
   pushState() {
-    this._main.getStateManager().pushStateVoxel(this._voxelState);
+    // this._main.getStateManager().pushStateVoxel(this._voxelState);
+    console.warn("Voxel Undo temporarily disabled in Worker Mode");
   }
 
 
@@ -497,9 +501,9 @@ class SculptVoxel extends SculptBase {
 
     var changed = false;
     if (this._worker) {
-      if (isNegative) {
-        // Desktop "Air" check is harder async. Just fire and forget.
-      }
+    if (isNegative) {
+      // Desktop "Air" check is harder async. Just fire and forget.
+    }
 
       this._worker.postMessage({
         type: 'EDIT_SPHERE',
