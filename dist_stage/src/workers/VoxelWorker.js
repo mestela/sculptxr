@@ -54,7 +54,7 @@ self.onmessage = function (e) {
 };
 
 function init(res, size) {
-  console.log(`VoxelWorker: Init ${res}^3 Size=${size}`);
+  // console.log(`VoxelWorker: Init ${res}^3 Size=${size}`);
   voxelState = new VoxelState(res, size);
   // Force initial empty mesh
   // voxelState.clear();

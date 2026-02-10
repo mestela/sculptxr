@@ -33,8 +33,8 @@ class SculptVoxel extends SculptBase {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
-        if (window.screenLog) window.screenLog(`Voxel: Update Radius=${this._radius} V=${data.vertices.length}`, "grey");
-        console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
+        // if (window.screenLog) window.screenLog(`Voxel: Update Radius=${this._radius} V=${data.vertices.length}`, "grey");
+        // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
 
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
@@ -47,7 +47,7 @@ class SculptVoxel extends SculptBase {
         }
       } else if (msg.type === 'LOG') {
         // Worker can send logs back
-        console.log("[Worker]", msg.data);
+        // console.log("[Worker]", msg.data);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
       }
@@ -161,10 +161,10 @@ class SculptVoxel extends SculptBase {
     // Toggle Shader between FLAT and MATCAP
     if (this._voxelMesh.getShaderType() === Enums.Shader.MATCAP) {
       this._voxelMesh.setShaderType(Enums.Shader.FLAT);
-      console.log("Voxel Mesh: FLAT");
+      // console.log("Voxel Mesh: FLAT");
     } else {
       this._voxelMesh.setShaderType(Enums.Shader.MATCAP);
-      console.log("Voxel Mesh: MATCAP");
+      // console.log("Voxel Mesh: MATCAP");
     }
     this._main.render();
   }
@@ -692,7 +692,7 @@ class SculptVoxel extends SculptBase {
       }
 
       // [DEBUG] Trace trace
-      if (Math.random() < 0.05) console.log("Voxel: updateXR stroke sent", localPos);
+      // if (Math.random() < 0.05) console.log("Voxel: updateXR stroke sent", localPos);
 
     } catch (e) {
       if (window.screenLog) window.screenLog(`Voxel XR Error: ${e.message}`, "red");
@@ -750,7 +750,7 @@ class SculptVoxel extends SculptBase {
       return;
     }
 
-    console.log("Voxel: Updating Mesh...");
+    // console.log("Voxel: Updating Mesh...");
     var isNew = false;
     // If no mesh exists, create it
     if (!this._voxelMesh) {
@@ -805,7 +805,16 @@ class SculptVoxel extends SculptBase {
     this._voxelMesh.setMaterials(res.materials);
 
     // Re-init (topology, octree, normals)
-    this._voxelMesh.init();
+    // Re-init (topology, octree, normals)
+    // OPTIMIZATION: Manually init necessary components to avoid heavy compute
+    // this._voxelMesh.init(); 
+    this._voxelMesh.initColorsAndMaterials();
+    this._voxelMesh.allocateArrays();
+    this._voxelMesh.initFaceRings(); // Needed for Normals
+    // this._voxelMesh.optimize(); // SKIP (Expensive cache optimization)
+    // this._voxelMesh.initEdges(); // SKIP (Wireframe only)
+    // this._voxelMesh.initVertexRings(); // SKIP (Smoothing only)
+    this._voxelMesh.initRenderTriangles(); // Needed for picking?
 
     // CRITICAL: Ensure Render Data / Textures are initialized
     // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues

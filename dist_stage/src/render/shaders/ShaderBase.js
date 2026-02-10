@@ -182,20 +182,20 @@ ShaderBase.updateUniforms = (function () {
 ShaderBase.draw = function (mesh, main) {
   var gl = mesh.getGL();
 
-  var err = gl.getError();
-  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Draw-Start Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+  // var err = gl.getError();
+  // if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Draw-Start Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
 
   gl.useProgram(this.program);
-  err = gl.getError();
-  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UseProgram Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+  // err = gl.getError();
+  // if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UseProgram Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
 
   this.bindAttributes(mesh);
-  err = gl.getError();
-  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-BindAttributes Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+  // err = gl.getError();
+  // if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-BindAttributes Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
 
   this.updateUniforms(mesh, main);
-  err = gl.getError();
-  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UpdateUniforms Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+  // err = gl.getError();
+  // if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UpdateUniforms Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
 
   this.drawBuffer(mesh);
 };
