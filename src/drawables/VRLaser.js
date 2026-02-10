@@ -1,8 +1,8 @@
 import { mat4, vec3, mat3 } from 'gl-matrix';
-import Buffer from 'render/Buffer';
-import ShaderLib from 'render/ShaderLib';
-import Enums from 'misc/Enums';
-import Primitives from 'drawables/Primitives';
+import Buffer from '../render/Buffer.js?v=fix_3';
+import ShaderLib from '../render/ShaderLib.js?v=fix_3';
+import Enums from '../misc/Enums.js?v=fix_3';
+import Primitives from './Primitives.js?v=fix_3';
 
 class VRLaser {
 

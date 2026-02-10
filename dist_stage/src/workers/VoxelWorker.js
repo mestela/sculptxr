@@ -5,12 +5,12 @@
 // Import dependencies (Standard ES Modules for Workers in modern browsers)
 // We need VoxelState and SurfaceNets. 
 // Since we are in strict mode, we might need to adjust imports if they use window/DOM.
-// import { vec3 } from '../../lib/gl-matrix-wrapper.js';
-// import VoxelState from '../editing/VoxelState.js'; // relative path failed
-// import VoxelState from './VoxelState.js'; // local copy worked
-// import VoxelState from '/src/editing/VoxelState.js'; // absolute path
-import VoxelState from './VoxelState.js'; // local copy (src/workers/VoxelState.js)
-import TestModule from './TestModule.js';
+// import { vec3 } from '../../lib/gl-matrix-wrapper.js?v=fix_3';
+// import VoxelState from '../editing/VoxelState.js?v=fix_3'; // relative path failed
+// import VoxelState from './VoxelState.js?v=fix_3'; // local copy worked
+// import VoxelState from '/src/editing/VoxelState.js?v=fix_3'; // absolute path
+import VoxelState from './VoxelState.js?v=fix_3'; // local copy (src/workers/VoxelState.js)
+import TestModule from './TestModule.js?v=fix_3';
 // SurfaceNets is a static object, should import fine
 // BUT standard imports might fail if not served correctly or if they have other deps.
 // Given the project structure, let's assume standard relative imports work in Chrome/Quest.
@@ -37,6 +37,14 @@ self.onmessage = function (e) {
         // Force full remesh (debug)
         postMesh();
         break;
+      case 'CLEAR':
+        if (voxelState) {
+          // VoxelState.js needs a clear method, or we reset it
+          if (voxelState.clear) voxelState.clear();
+          else voxelState = new VoxelState(voxelState.resolution, voxelState.size);
+        }
+        postMesh();
+        break;
       default:
         console.warn('VoxelWorker: Unknown message', msg.type);
     }
@@ -48,9 +56,9 @@ self.onmessage = function (e) {
 function init(res, size) {
   console.log(`VoxelWorker: Init ${res}^3 Size=${size}`);
   voxelState = new VoxelState(res, size);
-  // Force initial empty mesh or sphere? 
+  // Force initial empty mesh
   // voxelState.clear();
-  // postMesh(); 
+  postMesh();
 }
 
 function editSphere(center, radius, color, isNegative, returnMesh) {
@@ -71,9 +79,13 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
 function postMesh() {
   if (!voxelState) return;
 
-  console.time('Worker:ComputeMesh');
+  // console.time('Worker:ComputeMesh');
   const res = voxelState.computeMesh();
-  console.timeEnd('Worker:ComputeMesh');
+  // console.timeEnd('Worker:ComputeMesh');
+
+  // DEBUG: Log mesh stats
+  // console.log(`Worker: Posting Mesh V=${res.vertices.length} F=${res.faces.length}`);
+
   // res = { vertices, faces, colors, materials } (Float32Arrays/Uint32Arrays)
 
   // We must TRANSFER the buffers to avoid copy overhead.

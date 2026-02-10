@@ -1,5 +1,10 @@
 # SculptXR Release History
 
+- **v0.7.175**: **Debug Voxel Init & GL Launch Errors**:
+    - **Fix**: **Voxel Init**: `VoxelWorker` now immediately posts an empty mesh on `INIT` to prevent the "no voxel mesh exists yet" warning and allow immediate interaction.
+    - **Debug**: **GL Safety**: Added `glDrawElements` safety check in `ShaderBase.js` to log "Insufficient Buffer" errors with Mesh ID and counts, preventing potential crashes or silent failures.
+    - **Performance**: Enabled `console.time` for Voxel Mesh Updates to help profile performance.
+
 - **v0.7.174**: **Voxel Performance & Fixes**:
     - **Fix**: **Rendering**: Resolved black artifacts and `GL_INVALID_OPERATION` by ensuring `updateBuffers()` is called after Voxel mesh updates.
     - **Performance**: **Worker Throttling**: Implemented `returnMesh` flag and message throttling to prevent Voxel Worker from flooding the main thread during rapid sculpting.

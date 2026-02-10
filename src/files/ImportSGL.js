@@ -1,7 +1,7 @@
-import Utils from 'misc/Utils';
-import MeshStatic from 'mesh/meshStatic/MeshStatic';
-import ExportSGL from 'files/ExportSGL';
-import ShaderBase from 'render/shaders/ShaderBase';
+import Utils from '../misc/Utils.js?v=fix_3';
+import MeshStatic from '../mesh/meshStatic/MeshStatic.js?v=fix_3';
+import ExportSGL from './ExportSGL.js?v=fix_3';
+import ShaderBase from '../render/shaders/ShaderBase.js?v=fix_3';
 
 var Import = {};
 

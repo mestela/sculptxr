@@ -1,8 +1,8 @@
-import Enums from 'misc/Enums';
-import Remesh from 'editing/Remesh';
+import Enums from '../../misc/Enums.js?v=fix_3';
+import Remesh from '../../editing/Remesh.js?v=fix_3';
 
-import Multimesh from 'mesh/multiresolution/Multimesh';
-import MeshDynamic from 'mesh/dynamic/MeshDynamic';
+import Multimesh from '../../mesh/multiresolution/Multimesh.js?v=fix_3';
+import MeshDynamic from '../../mesh/dynamic/MeshDynamic.js?v=fix_3';
 
 export default function getTopologyWidgets(main) {
   const widgets = [];

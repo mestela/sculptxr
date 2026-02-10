@@ -1,4 +1,4 @@
-import ShaderBase from 'render/shaders/ShaderBase';
+import ShaderBase from './ShaderBase.js?v=fix_3';
 
 var ShaderNormal = ShaderBase.getCopy();
 ShaderNormal.vertexName = ShaderNormal.fragmentName = 'ShowNormal';

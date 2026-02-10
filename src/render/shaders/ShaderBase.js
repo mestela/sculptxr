@@ -1,9 +1,9 @@
 import { vec3 } from 'gl-matrix';
-import getOptionsURL from 'misc/getOptionsURL';
-import Utils from 'misc/Utils';
-import Attribute from 'render/Attribute';
-import colorSpaceGLSL from 'render/shaders/glsl/colorSpace.glsl';
-import curvatureGLSL from 'render/shaders/glsl/curvature.glsl';
+import getOptionsURL from '../../misc/getOptionsURL.js?v=fix_3';
+import Utils from '../../misc/Utils.js?v=fix_3';
+import Attribute from '../Attribute.js?v=fix_3';
+import colorSpaceGLSL from './glsl/colorSpace.glsl.js?v=fix_3';
+import curvatureGLSL from './glsl/curvature.glsl.js?v=fix_3';
 
 var ShaderBase = {};
 ShaderBase.vertexName = 'VertexName';
@@ -181,9 +181,22 @@ ShaderBase.updateUniforms = (function () {
 
 ShaderBase.draw = function (mesh, main) {
   var gl = mesh.getGL();
+
+  var err = gl.getError();
+  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Draw-Start Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+
   gl.useProgram(this.program);
+  err = gl.getError();
+  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UseProgram Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+
   this.bindAttributes(mesh);
+  err = gl.getError();
+  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-BindAttributes Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+
   this.updateUniforms(mesh, main);
+  err = gl.getError();
+  if (err !== gl.NO_ERROR) console.error(`[ShaderBase] Post-UpdateUniforms Error Shader:${this.vertexName} Mesh:${mesh.getID()} Err:${err}`);
+
   this.drawBuffer(mesh);
 };
 
@@ -194,7 +207,11 @@ ShaderBase.drawBuffer = function (mesh) {
   } else {
     mesh.getIndexBuffer().bind();
     var idxType = mesh.getIndexType ? mesh.getIndexType() : gl.UNSIGNED_INT;
-    gl.drawElements(mesh.getMode(), mesh.getCount(), idxType, 0);
+    try {
+        gl.drawElements(mesh.getMode(), mesh.getCount(), idxType, 0);
+      } catch (e) {
+        console.error(`[ShaderBase] Exception Mesh ${mesh.getID()}: ${e}`);
+      }
   }
   gl.bindBuffer(gl.ARRAY_BUFFER, null);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);

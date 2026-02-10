@@ -1,5 +1,5 @@
-import Utils from 'misc/Utils';
-import Remesh from 'editing/Remesh';
+import Utils from '../misc/Utils.js?v=fix_3';
+import Remesh from '../editing/Remesh.js?v=fix_3';
 
 var Export = {};
 

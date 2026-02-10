@@ -1,4 +1,4 @@
-import Utils from '../misc/Utils.js';
+import Utils from '../misc/Utils.js?v=fix_3';
 
 var SurfaceNets = {};
 SurfaceNets.BLOCK = false;

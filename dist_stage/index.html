@@ -5,8 +5,8 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.7.174</title>
-    <!-- v0.7.174 - Voxel Performance & Fixes (Black Artifacts, Worker Throttling, Memory Leaks) -->
+    <title>SculptXR v0.7.256</title>
+    <!-- v0.7.256 - Fix Crashes -->
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -88,16 +88,16 @@
       "zip": "./lib/zip-wrapper.js",
       "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js",
 
-      "misc/Polyfill": "./src/misc/Polyfill.js?v=0.6.55",
-      "misc/Tablet": "./src/misc/Tablet.js?v=0.6.55",
-      "misc/Enums": "./src/misc/Enums.js?v=0.6.55",
-      "misc/Utils": "./src/misc/Utils.js?v=0.6.55",
+      "misc/Polyfill": "./src/misc/Polyfill.js?v=0.7.211",
+      "misc/Tablet": "./src/misc/Tablet.js?v=0.7.211",
+      "misc/Enums": "./src/misc/Enums.js?v=0.7.211",
+      "misc/Utils": "./src/misc/Utils.js?v=0.7.211",
       "misc/getOptionsURL": "./src/misc/getOptionsURL.js",
       
-      "math3d/Camera": "./src/math3d/Camera.js?v=0.6.55",
-      "math3d/Picking": "./src/math3d/Picking.js?v=0.6.55",
-      "math3d/Geometry": "./src/math3d/Geometry.js?v=0.6.55",
-      "math3d/OctreeCell": "./src/math3d/OctreeCell.js?v=0.6.55",
+      "math3d/Camera": "./src/math3d/Camera.js?v=0.7.211",
+      "math3d/Picking": "./src/math3d/Picking.js?v=0.7.211",
+      "math3d/Geometry": "./src/math3d/Geometry.js?v=0.7.211",
+      "math3d/OctreeCell": "./src/math3d/OctreeCell.js?v=0.7.211",
       
       "gui/Gui": "./src/gui/Gui.js",
       "gui/GuiBackground": "./src/gui/GuiBackground.js",
@@ -115,16 +115,21 @@
       "gui/GuiTopology": "./src/gui/GuiTopology.js",
       "gui/GuiTR": "./src/gui/GuiTR.js",
       "gui/GuiTR": "./src/gui/GuiTR.js",
-      "gui/GuiXR": "./src/gui/GuiXR.js?v=0.6.70",
+      "gui/GuiXR": "./src/gui/GuiXR.js?v=0.7.211",
 
-      "gui/vr/GuiVRTools": "./src/gui/vr/GuiVRTools.js?v=0.6.70",
-      "gui/vr/GuiVRScene": "./src/gui/vr/GuiVRScene.js?v=0.6.70",
-      "gui/vr/GuiVRRendering": "./src/gui/vr/GuiVRRendering.js?v=0.6.70",
-      "gui/vr/GuiVRFiles": "./src/gui/vr/GuiVRFiles.js?v=0.6.70",
-      "gui/vr/GuiVRHistory": "./src/gui/vr/GuiVRHistory.js?v=0.6.70",
-      "gui/vr/GuiVRReference": "./src/gui/vr/GuiVRReference.js?v=0.6.70",
+      "gui/vr/GuiVRTools": "./src/gui/vr/GuiVRTools.js?v=0.7.211",
+      "gui/vr/GuiVRScene": "./src/gui/vr/GuiVRScene.js?v=0.7.211",
+      "gui/vr/GuiVRRendering": "./src/gui/vr/GuiVRRendering.js?v=0.7.211",
+      "gui/vr/GuiVRFiles": "./src/gui/vr/GuiVRFiles.js?v=0.7.211",
+      "gui/vr/GuiVRHistory": "./src/gui/vr/GuiVRHistory.js?v=0.7.211",
+      "gui/vr/GuiVRReference": "./src/gui/vr/GuiVRReference.js?v=0.7.211",
       "gui/vr/GuiVRSettings": "./src/gui/vr/GuiVRSettings.js",
-      "gui/vr/GuiVRTopology": "./src/gui/vr/GuiVRTopology.js?v=0.6.94",
+      "gui/vr/GuiVRTopology": "./src/gui/vr/GuiVRTopology.js?v=0.7.211",
+      "gui/vr/GuiVRCamera": "./src/gui/vr/GuiVRCamera.js?v=0.7.211",
+      "gui/vr/GuiVRTablet": "./src/gui/vr/GuiVRTablet.js?v=0.7.211",
+      "gui/vr/GuiVRLanguage": "./src/gui/vr/GuiVRLanguage.js?v=0.7.211",
+      "gui/vr/GuiVRExtraUI": "./src/gui/vr/GuiVRExtraUI.js?v=0.7.211",
+      "gui/vr/GuiVRAbout": "./src/gui/vr/GuiVRAbout.js?v=0.7.211",
       
       "gui/tr/chinese": "./src/gui/tr/chinese.js",
       "gui/tr/english": "./src/gui/tr/english.js",
@@ -166,53 +171,53 @@
       "editing/tools/Transform": "./src/editing/tools/Transform.js",
       "editing/tools/Twist": "./src/editing/tools/Twist.js",
 
-      "files/Export": "./src/files/Export.js?v=0.6.55",
-      "files/ExportMaterialise": "./src/files/ExportMaterialise.js?v=0.6.55",
-      "files/ExportOBJ": "./src/files/ExportOBJ.js?v=0.6.55",
-      "files/ExportPLY": "./src/files/ExportPLY.js?v=0.6.55",
-      "files/ExportSculpteo": "./src/files/ExportSculpteo.js?v=0.6.55",
-      "files/ExportSGL": "./src/files/ExportSGL.js?v=0.6.55",
-      "files/ExportSketchfab": "./src/files/ExportSketchfab.js?v=0.6.55",
-      "files/ExportSTL": "./src/files/ExportSTL.js?v=0.6.55",
-      "files/Import": "./src/files/Import.js?v=0.6.55",
-      "files/ImportOBJ": "./src/files/ImportOBJ.js?v=0.6.55",
-      "files/ImportPLY": "./src/files/ImportPLY.js?v=0.6.55",
-      "files/ImportSGL": "./src/files/ImportSGL.js?v=0.6.55",
-      "files/ImportSTL": "./src/files/ImportSTL.js?v=0.6.55",
+      "files/Export": "./src/files/Export.js?v=0.7.211",
+      "files/ExportMaterialise": "./src/files/ExportMaterialise.js?v=0.7.211",
+      "files/ExportOBJ": "./src/files/ExportOBJ.js?v=0.7.211",
+      "files/ExportPLY": "./src/files/ExportPLY.js?v=0.7.211",
+      "files/ExportSculpteo": "./src/files/ExportSculpteo.js?v=0.7.211",
+      "files/ExportSGL": "./src/files/ExportSGL.js?v=0.7.211",
+      "files/ExportSketchfab": "./src/files/ExportSketchfab.js?v=0.7.211",
+      "files/ExportSTL": "./src/files/ExportSTL.js?v=0.7.211",
+      "files/Import": "./src/files/Import.js?v=0.7.211",
+      "files/ImportOBJ": "./src/files/ImportOBJ.js?v=0.7.211",
+      "files/ImportPLY": "./src/files/ImportPLY.js?v=0.7.211",
+      "files/ImportSGL": "./src/files/ImportSGL.js?v=0.7.211",
+      "files/ImportSTL": "./src/files/ImportSTL.js?v=0.7.211",
       
-      "mesh/Mesh": "./src/mesh/Mesh.js?v=0.6.55",
-      "mesh/MeshReference": "./src/mesh/MeshReference.js?v=0.6.55",
-      "./src/mesh/Mesh.js": "./src/mesh/MeshSafe.js?v=0.6.55",
-      "mesh/MeshData": "./src/mesh/MeshData.js?v=0.6.55",
-      "mesh/RenderData": "./src/mesh/RenderData.js?v=0.6.55",
-      "mesh/TransformData": "./src/mesh/TransformData.js?v=0.6.55",
-      "mesh/dynamic/Decimation": "./src/mesh/dynamic/Decimation.js?v=0.6.55",
-      "mesh/dynamic/MeshDynamic": "./src/mesh/dynamic/MeshDynamic.js?v=0.6.55",
-      "mesh/dynamic/Subdivision": "./src/mesh/dynamic/Subdivision.js?v=0.6.55",
-      "mesh/meshStatic/MeshStatic": "./src/mesh/meshStatic/MeshStatic.js?v=0.6.55",
-      "mesh/multiresolution/MeshResolution": "./src/mesh/multiresolution/MeshResolution.js?v=0.6.55",
-      "mesh/multiresolution/Multimesh": "./src/mesh/multiresolution/Multimesh.js?v=0.6.55",
+      "mesh/Mesh": "./src/mesh/Mesh.js?v=0.7.211",
+      "mesh/MeshReference": "./src/mesh/MeshReference.js?v=0.7.211",
+      "./src/mesh/Mesh.js": "./src/mesh/MeshSafe.js?v=0.7.211",
+      "mesh/MeshData": "./src/mesh/MeshData.js?v=0.7.211",
+      "mesh/RenderData": "./src/mesh/RenderData.js?v=0.7.211",
+      "mesh/TransformData": "./src/mesh/TransformData.js?v=0.7.211",
+      "mesh/dynamic/Decimation": "./src/mesh/dynamic/Decimation.js?v=0.7.211",
+      "mesh/dynamic/MeshDynamic": "./src/mesh/dynamic/MeshDynamic.js?v=0.7.211",
+      "mesh/dynamic/Subdivision": "./src/mesh/dynamic/Subdivision.js?v=0.7.211",
+      "mesh/meshStatic/MeshStatic": "./src/mesh/meshStatic/MeshStatic.js?v=0.7.211",
+      "mesh/multiresolution/MeshResolution": "./src/mesh/multiresolution/MeshResolution.js?v=0.7.211",
+      "mesh/multiresolution/Multimesh": "./src/mesh/multiresolution/Multimesh.js?v=0.7.211",
       
-      "render/Attribute": "./src/render/Attribute.js?v=0.6.55",
-      "render/Buffer": "./src/render/Buffer.js?v=0.6.55",
-      "render/ShaderLib": "./src/render/ShaderLib.js?v=0.6.55",
+      "render/Attribute": "./src/render/Attribute.js?v=0.7.211",
+      "render/Buffer": "./src/render/Buffer.js?v=0.7.211",
+      "render/ShaderLib": "./src/render/ShaderLib.js?v=0.7.211",
       "render/WebGLCaps": "./src/render/WebGLCaps.js",
       
-      "render/shaders/ShaderBackground": "./src/render/shaders/ShaderBackground.js?v=0.6.55",
-      "render/shaders/ShaderBase": "./src/render/shaders/ShaderBase.js?v=0.6.55",
-      "render/shaders/ShaderBlur": "./src/render/shaders/ShaderBlur.js?v=0.6.55",
-      "render/shaders/ShaderContour": "./src/render/shaders/ShaderContour.js?v=0.6.55",
-      "render/shaders/ShaderFlat": "./src/render/shaders/ShaderFlat.js?v=0.6.55",
-      "render/shaders/ShaderFxaa": "./src/render/shaders/ShaderFxaa.js?v=0.6.55",
-      "render/shaders/ShaderMatcap": "./src/render/shaders/ShaderMatcap.js?v=0.6.55",
-      "render/shaders/ShaderMerge": "./src/render/shaders/ShaderMerge.js?v=0.6.55",
-      "render/shaders/ShaderNormal": "./src/render/shaders/ShaderNormal.js?v=0.6.55",
-      "render/shaders/ShaderPaintUV": "./src/render/shaders/ShaderPaintUV.js?v=0.6.55",
-      "render/shaders/ShaderPBR": "./src/render/shaders/ShaderPBR.js?v=0.6.55",
-      "render/shaders/ShaderSelection": "./src/render/shaders/ShaderSelection.js?v=0.6.55",
-      "render/shaders/ShaderUV": "./src/render/shaders/ShaderUV.js?v=0.6.55",
-      "render/shaders/ShaderWireframe": "./src/render/shaders/ShaderWireframe.js?v=0.6.55",
-      "render/shaders/ShaderTexture": "./src/render/shaders/ShaderTexture.js?v=0.6.55",
+      "render/shaders/ShaderBackground": "./src/render/shaders/ShaderBackground.js?v=0.7.211",
+      "render/shaders/ShaderBase": "./src/render/shaders/ShaderBase.js?v=0.7.211",
+      "render/shaders/ShaderBlur": "./src/render/shaders/ShaderBlur.js?v=0.7.211",
+      "render/shaders/ShaderContour": "./src/render/shaders/ShaderContour.js?v=0.7.211",
+      "render/shaders/ShaderFlat": "./src/render/shaders/ShaderFlat.js?v=0.7.211",
+      "render/shaders/ShaderFxaa": "./src/render/shaders/ShaderFxaa.js?v=0.7.211",
+      "render/shaders/ShaderMatcap": "./src/render/shaders/ShaderMatcap.js?v=0.7.211",
+      "render/shaders/ShaderMerge": "./src/render/shaders/ShaderMerge.js?v=0.7.211",
+      "render/shaders/ShaderNormal": "./src/render/shaders/ShaderNormal.js?v=0.7.211",
+      "render/shaders/ShaderPaintUV": "./src/render/shaders/ShaderPaintUV.js?v=0.7.211",
+      "render/shaders/ShaderPBR": "./src/render/shaders/ShaderPBR.js?v=0.7.211",
+      "render/shaders/ShaderSelection": "./src/render/shaders/ShaderSelection.js?v=0.7.211",
+      "render/shaders/ShaderUV": "./src/render/shaders/ShaderUV.js?v=0.7.211",
+      "render/shaders/ShaderWireframe": "./src/render/shaders/ShaderWireframe.js?v=0.7.211",
+      "render/shaders/ShaderTexture": "./src/render/shaders/ShaderTexture.js?v=0.7.211",
 
       "states/StateAddRemove": "./src/states/StateAddRemove.js",
       "states/StateColorAndMaterial": "./src/states/StateColorAndMaterial.js",
@@ -227,13 +232,13 @@
       "drawables/Primitives": "./src/drawables/Primitives.js",
       "drawables/Rtt": "./src/drawables/Rtt.js",
       "drawables/Selection": "./src/drawables/Selection.js",
-      "drawables/VRLaser": "./src/drawables/VRLaser.js?v=0.6.29",
+      "drawables/VRLaser": "./src/drawables/VRLaser.js?v=0.7.211",
       "drawables/VRMenu": "./src/drawables/VRMenu.js",
 
       "misc/": "./src/misc/",
       "math3d/": "./src/math3d/",
       "gui/": "./src/gui/",
-      "gui/GuiXR": "./src/gui/GuiXR.js",
+      "gui/GuiXR": "./src/gui/GuiXR.js?v=fix_4",
       "editor/": "./src/editor/",
       "editing/": "./src/editing/",
       "files/": "./src/files/",
@@ -249,8 +254,8 @@
       "render/shaders/glsl/outline.glsl": "./src/render/shaders/glsl/outline.glsl.js",
       "render/shaders/glsl/pbr.glsl": "./src/render/shaders/glsl/pbr.glsl.js",
       
-      "Scene": "./src/Scene.js?v=0.6.207",
-      "SculptGL": "./src/SculptGL.js?v=0.6.55",
+      "Scene": "./src/Scene.js?v=0.7.211",
+      "SculptGL": "./src/SculptGL.js?v=0.7.211",
       "Version": "./src/Version.js",
       "render/shaders/ShaderBase.js": "./src/render/shaders/ShaderBase.js",
       "render/shaders/ShaderWireframe.js": "./src/render/shaders/ShaderWireframe.js",
@@ -281,45 +286,10 @@
     <input type='file' id='matcapopen' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
     <input type='file' id='referenceopen' style='opacity: 0; position: absolute; pointer-events: none; z-index: -1;' />
 
-    <!-- v0.7.43 - Restored VR Color Picker & Polish -->
-    <!-- <script src="src/Version.js?v=0.7.43"></script> -->
-    <!-- GLOBAL ERROR HANDLER (Non-Module) -->
-    <script>
-        window.screenLog = (msg, color = 'white') => {
-            const logDiv = document.getElementById('log');
-            if (logDiv) {
-                const line = document.createElement('div');
-                line.style.color = color;
-                line.textContent = msg;
-                logDiv.appendChild(line);
-                logDiv.scrollTop = logDiv.scrollHeight;
-            }
-        };
-
-            window.toggleLog = () => {
-                const logDiv = document.getElementById('log');
-                if (logDiv) {
-                    logDiv.style.display = logDiv.style.display === 'none' ? 'block' : 'none';
-                    console.log(`Log window is now ${logDiv.style.display === 'none' ? 'HIDDEN' : 'VISIBLE'}`);
-                }
-            };
-            // Shortcut: Alt+L to toggle log? Maybe not needed, console command requested.
-
-        window.addEventListener('error', (event) => {
-            console.error("GLOBAL ERROR:", event.error);
-            if (window.screenLog) window.screenLog(`ERROR: ${event.message || event.error}`, 'red');
-        });
-
-        window.addEventListener('unhandledrejection', (event) => {
-            console.error("UNHANDLED REJECTION:", event.reason);
-            if (window.screenLog) window.screenLog(`PROMISE: ${event.reason}`, 'crimson');
-        });
-    </script>
-
     <script type="module">
         import Scene from 'Scene';
         import SculptGL from 'SculptGL';
-                                                                                                        import { VERSION } from 'Version';
+                                                                                                    import { VERSION } from 'Version';
 
         window.onload = async () => {
             document.title = `SculptXR ${VERSION}`;

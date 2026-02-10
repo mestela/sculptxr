@@ -1,8 +1,8 @@
 import { vec3, mat4 } from 'gl-matrix';
-import Geometry from 'math3d/Geometry';
-import Tablet from 'misc/Tablet';
-import Utils from 'misc/Utils';
-import TR from 'gui/GuiTR';
+import Geometry from './Geometry.js?v=fix_3';
+import Tablet from '../misc/Tablet.js?v=fix_3';
+import Utils from '../misc/Utils.js?v=fix_3';
+import TR from '../gui/GuiTR.js?v=fix_3';
 
 var _TMP_NEAR = [0.0, 0.0, 0.0];
 var _TMP_NEAR_1 = [0.0, 0.0, 0.0];

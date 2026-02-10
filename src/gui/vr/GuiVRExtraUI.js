@@ -1,6 +1,6 @@
-import TR from 'gui/GuiTR';
-import ShaderContour from 'render/shaders/ShaderContour';
-import Enums from 'misc/Enums';
+import TR from '../GuiTR.js?v=fix_3';
+import ShaderContour from '../../render/shaders/ShaderContour.js?v=fix_3';
+import Enums from '../../misc/Enums.js?v=fix_3';
 
 export default function getExtraUIWidgets(main) {
   const widgets = [];

@@ -1,5 +1,5 @@
 import { zip } from 'zip';
-import ExportSTL from 'files/ExportSTL';
+import ExportSTL from './ExportSTL.js?v=fix_3';
 
 var Export = {};
 

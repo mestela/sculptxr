@@ -1,4 +1,4 @@
-import ShaderBase from 'render/shaders/ShaderBase';
+import ShaderBase from '../render/shaders/ShaderBase.js?v=fix_3';
 
 var Export = {};
 

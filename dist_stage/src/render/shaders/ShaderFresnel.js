@@ -1,4 +1,4 @@
-import ShaderBase from 'render/shaders/ShaderBase';
+import ShaderBase from './ShaderBase.js?v=fix_3';
 
 var ShaderFresnel = ShaderBase.getCopy();
 ShaderFresnel.vertexName = ShaderFresnel.fragmentName = 'FresnelColor';

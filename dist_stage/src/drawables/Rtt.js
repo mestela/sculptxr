@@ -1,6 +1,6 @@
-import Buffer from 'render/Buffer';
-import Shader from 'render/ShaderLib';
-import WebGLCaps from 'render/WebGLCaps';
+import Buffer from '../render/Buffer.js?v=fix_3';
+import Shader from '../render/ShaderLib.js?v=fix_3';
+import WebGLCaps from '../render/WebGLCaps.js?v=fix_3';
 
 var singletonBuffer;
 

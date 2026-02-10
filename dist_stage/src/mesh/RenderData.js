@@ -1,6 +1,6 @@
-import getOptionsURL from 'misc/getOptionsURL';
-import Buffer from 'render/Buffer';
-import ShaderMatcap from 'render/shaders/ShaderMatcap';
+import getOptionsURL from '../misc/getOptionsURL.js?v=fix_3';
+import Buffer from '../render/Buffer.js?v=fix_3';
+import ShaderMatcap from '../render/shaders/ShaderMatcap.js?v=fix_3';
 
 var RenderData = function (gl) {
   var opts = getOptionsURL();

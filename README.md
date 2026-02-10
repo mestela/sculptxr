@@ -20,6 +20,10 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.175**: **Debug Voxel Init & GL Launch Errors**:
+    - **Fix**: **Voxel Init**: `VoxelWorker` now immediately posts an empty mesh on `INIT` to prevent the "no voxel mesh exists yet" warning.
+    - **Debug**: **GL Safety**: Added `glDrawElements` safety check in `ShaderBase.js` to log "Insufficient Buffer" errors.
+
 - **v0.7.174**: **Voxel Performance & Fixes**:
     - **Fix**: **Rendering**: Resolved black artifacts and `GL_INVALID_OPERATION` by ensuring `updateBuffers()` is called after Voxel mesh updates.
     - **Performance**: **Worker Throttling**: Implemented `returnMesh` flag and message throttling to prevent Voxel Worker from flooding the main thread during rapid sculpting.

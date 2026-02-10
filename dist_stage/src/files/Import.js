@@ -1,7 +1,7 @@
-import ImportOBJ from 'files/ImportOBJ';
-import ImportSGL from 'files/ImportSGL';
-import ImportPLY from 'files/ImportPLY';
-import ImportSTL from 'files/ImportSTL';
+import ImportOBJ from './ImportOBJ.js?v=fix_3';
+import ImportSGL from './ImportSGL.js?v=fix_3';
+import ImportPLY from './ImportPLY.js?v=fix_3';
+import ImportSTL from './ImportSTL.js?v=fix_3';
 
 var Import = {
   importOBJ: ImportOBJ.importOBJ,

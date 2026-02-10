@@ -1,12 +1,12 @@
-import SculptBase from 'editing/tools/SculptBase';
-// import VoxelState from 'editing/VoxelState'; // Worker only now
-import MeshStatic from 'mesh/meshStatic/MeshStatic';
-import Multimesh from 'mesh/multiresolution/Multimesh';
+import SculptBase from './SculptBase.js?v=fix_3';
+// import VoxelState from '../VoxelState.js?v=fix_3'; // Worker only now
+import MeshStatic from '../../mesh/meshStatic/MeshStatic.js?v=fix_3';
+import Multimesh from '../../mesh/multiresolution/Multimesh.js?v=fix_3';
 import { vec3, mat4 } from 'gl-matrix';
-import Utils from 'misc/Utils';
-import Primitives from 'drawables/Primitives';
-import Enums from 'misc/Enums';
-import Geometry from 'math3d/Geometry';
+import Utils from '../../misc/Utils.js?v=fix_3';
+import Primitives from '../../drawables/Primitives.js?v=fix_3';
+import Enums from '../../misc/Enums.js?v=fix_3';
+import Geometry from '../../math3d/Geometry.js?v=fix_3';
 
 class SculptVoxel extends SculptBase {
 
@@ -32,6 +32,10 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
+        const data = msg.data;
+        if (window.screenLog) window.screenLog(`Voxel: Update Radius=${this._radius} V=${data.vertices.length}`, "grey");
+        console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
+
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
 
@@ -44,6 +48,8 @@ class SculptVoxel extends SculptBase {
       } else if (msg.type === 'LOG') {
         // Worker can send logs back
         console.log("[Worker]", msg.data);
+      } else {
+        console.log("Voxel: Unknown Worker Message", msg);
       }
     };
 
@@ -92,7 +98,7 @@ class SculptVoxel extends SculptBase {
     // DEBUG: Add a reference cube to verify location/rendering
     // Use Primitives to ensure correct faces formatting (Quads/Triangles)
     this._debugCube = Primitives.createCube(main._gl);
-    this._debugCube.setMode(main._gl.TRIANGLES); // Primitives uses Quads, but handled as Tris in render
+    this._debugCube.setMode(main._gl.LINES); // Use LINES to avoid Quad/Tri mismatch (8 vertices, 24 indices = 12 lines)
 
     // Primitives.createCube already calls init() and initRender()
 
@@ -115,8 +121,8 @@ class SculptVoxel extends SculptBase {
 
     // [USER REQUEST] Show by default to debug boundaries
     // We use addNewMesh to ensure it is in the render loop.
-    if (this._main.addNewMesh) this._main.addNewMesh(this._debugCube);
-    else this._main.addMesh(this._debugCube);
+    // if (this._main.addNewMesh) this._main.addNewMesh(this._debugCube);
+    // else this._main.addMesh(this._debugCube);
 
     // Expose for Console Debugging
     window.voxelTool = this;
@@ -330,6 +336,7 @@ class SculptVoxel extends SculptBase {
   forceInit() {
     // Force an initial sphere at the center so we have a mesh to see immediately
     if (this._lastUpdate === 0) {
+      /* [USER REQUEST] Initial Sphere Disabled for Air Drawing
       if (window.screenLog) window.screenLog("Voxel: Initial Sphere...", "green");
       if (this._worker) {
         this._worker.postMessage({
@@ -339,7 +346,9 @@ class SculptVoxel extends SculptBase {
           color: [0.2, 1.0, 0.2],
           isNegative: false
         });
+        console.log("Voxel: forceInit sent EDIT_SPHERE");
       }
+      */
       this._lastUpdate = 1;
     }
   }
@@ -656,12 +665,21 @@ class SculptVoxel extends SculptBase {
 
       // Re-enable real update loop
       if (this._worker) {
+        // Throttling: Only request mesh if not currently pending
+        const returnMesh = !this._pendingMeshUpdate;
+        if (returnMesh) {
+          this._pendingMeshUpdate = true;
+        } else {
+          this._meshRequested = true; // Mark that we want an update as soon as possible
+        }
+
         this._worker.postMessage({
           type: 'EDIT_SPHERE',
           center: [localPos[0], localPos[1], localPos[2]],
           radius: gridRadius,
           color: color,
-          isNegative: isNegative
+          isNegative: isNegative,
+          returnMesh: returnMesh
         });
 
         // Debug Negative
@@ -672,6 +690,10 @@ class SculptVoxel extends SculptBase {
       } else {
         if (window.screenLog) window.screenLog("Voxel: Worker not ready", "red");
       }
+
+      // [DEBUG] Trace trace
+      if (Math.random() < 0.05) console.log("Voxel: updateXR stroke sent", localPos);
+
     } catch (e) {
       if (window.screenLog) window.screenLog(`Voxel XR Error: ${e.message}`, "red");
       console.error(e);
@@ -721,17 +743,20 @@ class SculptVoxel extends SculptBase {
 
 
     if (res.vertices.length === 0) {
+      // console.warn("Voxel: Received empty mesh.");
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);
       }
       return;
     }
 
+    console.log("Voxel: Updating Mesh...");
     var isNew = false;
     // If no mesh exists, create it
     if (!this._voxelMesh) {
       this._voxelMesh = new MeshStatic(this._main._gl);
-      this._voxelMesh.setMode(this._main._gl.TRIANGLES);
+      this._voxelMesh._isVoxel = true; // Flag to lock shader to FLAT
+      // this._voxelMesh.setMode(Enums.Mode.SCULPT); // Enums.Mode is undefined!
       isNew = true;
 
       // Set Matrix
@@ -749,9 +774,13 @@ class SculptVoxel extends SculptBase {
       mat4.translate(worldMat, worldMat, this._min);
       mat4.scale(worldMat, worldMat, [step, step, step]);
 
-      if (window.screenLog) {
-        // window.screenLog(`VS: step=${step.toFixed(4)} min=[${this._min.join(',')}]`, "cyan");
-        // window.screenLog(`Mat: Pos=[${worldMat[12].toFixed(1)},${worldMat[13].toFixed(1)},${worldMat[14].toFixed(1)}] Scale=${worldMat[0].toFixed(4)}`, "cyan");
+      if (window.screenLog && (this._lastUpdate % 100 === 0)) {
+        // Debug Matrix
+        const p = worldMat;
+        console.log(`Voxel Matrix: Pos=[${p[12].toFixed(2)},${p[13].toFixed(2)},${p[14].toFixed(2)}]`);
+        // Check Vertices for NaN
+        const v = this._voxelMesh.getVertices();
+        if (v && v.length > 0 && isNaN(v[0])) console.error("Voxel Vertices contain NaN!");
       }
 
       // Add to Scene (CRITICAL for Rendering/Picking)
@@ -780,10 +809,13 @@ class SculptVoxel extends SculptBase {
 
     // CRITICAL: Ensure Render Data / Textures are initialized
     // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues
-    if (!this._voxelMesh.getRenderData()) {
+    // CRITICAL: Ensure Render Data / Textures are initialized
+    // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues
+    if (isNew || this._voxelMesh.getShaderType() !== Enums.Shader.FLAT) {
       this._voxelMesh.initRender();
-      this._voxelMesh.setShaderName('MATCAP');
-      this._voxelMesh.setMatcap(this._main._pbr.getMatcap()); // Use current app matcap
+      this._voxelMesh.setShaderType(Enums.Shader.FLAT);
+      this._voxelMesh.setFlatShading(true);
+      // this._voxelMesh.setMatcap(this._main._pbr.getMatcap()); 
     }
 
     // Compute Normals (Crucial for rendering)
@@ -861,7 +893,7 @@ class SculptVoxel extends SculptBase {
       }
       if (window.screenLog) window.screenLog("Voxel: Mesh Added to Scene", "green");
     }
-    // console.timeEnd('VoxelMeshUpdate');
+    if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
   }
 
   // Bake Voxel Mesh to Standard Multimesh
@@ -994,7 +1026,8 @@ class SculptVoxel extends SculptBase {
     main.addNewMesh(multiMesh);
 
     // 6. Reset Voxel State (Clear Grid)
-    this._voxelState.clear();
+    // this._voxelState.clear(); // VoxelState is in Worker now
+    this._worker.postMessage({ type: 'CLEAR' });
 
     // CRITICAL: REMOVE the Voxel Mesh to prevent occlusion
     this._voxelMesh.setVisible(false); // NUCLEAR OPTION: Hide it first!

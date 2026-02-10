@@ -1,12 +1,12 @@
-import TR from 'gui/GuiTR';
-import Remesh from 'editing/Remesh';
-import Mesh from 'mesh/Mesh';
-import MeshStatic from 'mesh/meshStatic/MeshStatic';
-import Multimesh from 'mesh/multiresolution/Multimesh';
-import MeshDynamic from 'mesh/dynamic/MeshDynamic';
-import StateMultiresolution from 'states/StateMultiresolution';
-import getOptionsURL from 'misc/getOptionsURL';
-import Enums from 'misc/Enums';
+import TR from './GuiTR.js?v=fix_3';
+import Remesh from '../editing/Remesh.js?v=fix_3';
+import Mesh from '../mesh/Mesh.js?v=fix_3';
+import MeshStatic from '../mesh/meshStatic/MeshStatic.js?v=fix_3';
+import Multimesh from '../mesh/multiresolution/Multimesh.js?v=fix_3';
+import MeshDynamic from '../mesh/dynamic/MeshDynamic.js?v=fix_3';
+import StateMultiresolution from '../states/StateMultiresolution.js?v=fix_3';
+import getOptionsURL from '../misc/getOptionsURL.js?v=fix_3';
+import Enums from '../misc/Enums.js?v=fix_3';
 
 class GuiMultiresolution {
 

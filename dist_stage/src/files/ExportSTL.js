@@ -1,5 +1,5 @@
 import { vec3 } from 'gl-matrix';
-import Remesh from 'editing/Remesh';
+import Remesh from '../editing/Remesh.js?v=fix_3';
 
 var Export = {};
 

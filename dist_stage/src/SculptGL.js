@@ -1,18 +1,18 @@
-import 'misc/Polyfill';
-import { VERSION } from './Version.js';
+import './misc/Polyfill.js';
+import { VERSION } from './Version.js?v=fix_3';
 import { vec3, mat4 } from 'gl-matrix';
 import { Manager as HammerManager, Pan, Pinch, Tap } from 'hammerjs';
-import Tablet from 'misc/Tablet';
-import Enums from 'misc/Enums';
-import Utils from 'misc/Utils';
-import Scene from 'Scene';
-import Multimesh from 'mesh/multiresolution/Multimesh';
+import Tablet from './misc/Tablet.js?v=fix_3';
+import Enums from './misc/Enums.js?v=fix_3';
+import Utils from './misc/Utils.js?v=fix_3';
+import Scene from './Scene.js?v=fix_3';
+import Multimesh from './mesh/multiresolution/Multimesh.js?v=fix_3';
 
 var MOUSE_LEFT = 1;
 var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
 
-import ReferenceManager from 'editing/ReferenceManager';
+import ReferenceManager from './editing/ReferenceManager.js?v=fix_3';
 
 // Manage events
 class SculptGL extends Scene {

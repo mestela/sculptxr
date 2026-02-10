@@ -37,8 +37,10 @@ class Buffer {
       this._gl.bufferSubData(this._type, 0, data);
     }
 
-    // var err = this._gl.getError();
-    // if (err !== this._gl.NO_ERROR) { ... }
+    var err = this._gl.getError();
+    if (err !== this._gl.NO_ERROR) {
+      console.error(`[Buffer] GL Error during update: ${err} Tag:${this._tag} Type:${this._type} Size:${this._size} DataLen:${data ? data.length : 'null'}`);
+    }
   }
 }
 

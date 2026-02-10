@@ -1,6 +1,6 @@
-import Buffer from 'render/Buffer';
-import Shader from 'render/ShaderLib';
-import Enums from 'misc/Enums';
+import Buffer from '../render/Buffer.js?v=fix_3';
+import Shader from '../render/ShaderLib.js?v=fix_3';
+import Enums from '../misc/Enums.js?v=fix_3';
 
 class Background {
 

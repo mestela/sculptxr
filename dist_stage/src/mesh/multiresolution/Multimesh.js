@@ -1,8 +1,8 @@
-import MeshResolution from 'mesh/multiresolution/MeshResolution';
-import Mesh from 'mesh/Mesh';
-import Buffer from 'render/Buffer';
-import Subdivision from 'editing/Subdivision';
-import Reversion from 'editing/Reversion';
+import MeshResolution from './MeshResolution.js?v=fix_3';
+import Mesh from '../Mesh.js?v=fix_3';
+import Buffer from '../../render/Buffer.js?v=fix_3';
+import Subdivision from '../../editing/Subdivision.js?v=fix_3';
+import Reversion from '../../editing/Reversion.js?v=fix_3';
 
 class Multimesh extends Mesh {
 
@@ -222,7 +222,55 @@ class Multimesh extends Mesh {
   }
 
   render(main) {
-    return this._canUseLowRender(main) ? this._renderLow(main) : super.render(main);
+    if (this._canUseLowRender(main)) {
+      return this._renderLow(main);
+    }
+    // Ensure the main RenderData uses the current mesh's index buffer
+    var currentMesh = this.getCurrentMesh();
+    var render = this.getRenderData();
+    render._indexBuffer = currentMesh.getIndexBuffer();
+
+    // Debug Mismatch
+    // Buffer.js stores size in _size (element count, matches data.length)
+    var curIB = currentMesh.getIndexBuffer()._size;
+    var curVB = currentMesh.getRenderData()._vertexBuffer._size;
+    var mainVB = this.getRenderData()._vertexBuffer._size;
+
+    // Theoretical max index
+    var nbVerts = currentMesh.getNbVertices();
+
+    // Scan for max index
+    let maxIndex = 0;
+    // MeshResolution likely uses getFaces() which returns Uint32Array
+    var faces = currentMesh.getFaces();
+    if (faces) {
+      // 98304 faces * 4 = 393216 elements in fAr (including TRI_INDEX=-1)
+      // or if it is just a raw array... let's trust getNbFaces()
+      // Actually fAr is usually size * 4
+      var l = faces.length;
+      for (var i = 0; i < l; ++i) {
+        if (faces[i] < 4294967295 && faces[i] > maxIndex) maxIndex = faces[i];
+      }
+    } else {
+      maxIndex = -1;
+    }
+
+    var curCB = currentMesh.getColorBuffer() ? currentMesh.getColorBuffer()._size : 0;
+    var curMB = currentMesh.getMaterialBuffer() ? currentMesh.getMaterialBuffer()._size : 0;
+
+    /*
+    console.warn(`[Multimesh] ID:${this.getID()} Draw! 
+      CurIB:${curIB} (indices)
+      CurVB:${curVB} (floats) -> ${curVB / 3} verts
+      CurCB:${curCB} (floats) -> ${curCB / 3} verts
+      CurMB:${curMB} (floats) -> ${curMB / 3} verts
+      NBVerts:${nbVerts}
+      MaxIndex:${maxIndex}
+      Diff:${(curVB - mainVB)}
+    `);
+    */
+
+    return super.render(main);
   }
 
   renderWireframe(main) {

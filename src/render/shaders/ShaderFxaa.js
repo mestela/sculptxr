@@ -1,7 +1,7 @@
-import ShaderBase from 'render/shaders/ShaderBase';
-import Attribute from 'render/Attribute';
-import getOptionsURL from 'misc/getOptionsURL';
-import fxaaGLSL from 'render/shaders/glsl/fxaa.glsl';
+import ShaderBase from './ShaderBase.js?v=fix_3';
+import Attribute from '../Attribute.js?v=fix_3';
+import getOptionsURL from '../../misc/getOptionsURL.js?v=fix_3';
+import fxaaGLSL from './glsl/fxaa.glsl.js?v=fix_3';
 
 var ShaderFxaa = ShaderBase.getCopy();
 ShaderFxaa.vertexName = ShaderFxaa.fragmentName = 'Fxaa';

@@ -1,5 +1,5 @@
-import TR from 'gui/GuiTR';
-import Tablet from 'misc/Tablet';
+import TR from '../GuiTR.js?v=fix_3';
+import Tablet from '../../misc/Tablet.js?v=fix_3';
 
 export default function getTabletWidgets(main) {
   const widgets = [];

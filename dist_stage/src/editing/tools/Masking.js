@@ -1,9 +1,9 @@
 import { vec3, mat3 } from 'gl-matrix';
-import Utils from 'misc/Utils';
-import SculptBase from 'editing/tools/SculptBase';
-import Paint from 'editing/tools/Paint';
-import Smooth from 'editing/tools/Smooth';
-import MeshStatic from 'mesh/meshStatic/MeshStatic';
+import Utils from '../../misc/Utils.js?v=fix_3';
+import SculptBase from './SculptBase.js?v=fix_3';
+import Paint from './Paint.js?v=fix_3';
+import Smooth from './Smooth.js?v=fix_3';
+import MeshStatic from '../../mesh/meshStatic/MeshStatic.js?v=fix_3';
 
 class Masking extends SculptBase {
 

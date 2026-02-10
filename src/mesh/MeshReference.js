@@ -1,7 +1,7 @@
-import MeshStatic from 'mesh/meshStatic/MeshStatic';
-import RenderData from 'mesh/RenderData';
-import Shader from 'render/ShaderLib';
-import Enums from 'misc/Enums';
+import MeshStatic from './meshStatic/MeshStatic.js?v=fix_3';
+import RenderData from './RenderData.js?v=fix_3';
+import Shader from '../render/ShaderLib.js?v=fix_3';
+import Enums from '../misc/Enums.js?v=fix_3';
 
 class MeshReference extends MeshStatic {
 

@@ -1,6 +1,6 @@
-import Enums from 'misc/Enums';
-import Utils from 'misc/Utils';
-import Geometry from 'math3d/Geometry';
+import Enums from '../../misc/Enums.js?v=fix_3';
+import Utils from '../../misc/Utils.js?v=fix_3';
+import Geometry from '../../math3d/Geometry.js?v=fix_3';
 import { vec3, mat4 } from 'gl-matrix';
 
 // Overview sculpt :

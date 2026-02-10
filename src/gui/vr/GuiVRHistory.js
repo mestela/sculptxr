@@ -1,4 +1,4 @@
-import StateManager from 'states/StateManager';
+import StateManager from '../../states/StateManager.js?v=fix_3';
 
 export default function getHistoryWidgets(main) {
   const widgets = [];

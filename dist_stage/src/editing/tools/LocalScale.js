@@ -1,4 +1,4 @@
-import SculptBase from 'editing/tools/SculptBase';
+import SculptBase from './SculptBase.js?v=fix_3';
 
 class LocalScale extends SculptBase {
 

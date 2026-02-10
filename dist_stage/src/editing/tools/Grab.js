@@ -1,6 +1,6 @@
 import { vec3, mat4, quat } from 'gl-matrix';
-import SculptBase from 'editing/tools/SculptBase';
-import Utils from 'misc/Utils';
+import SculptBase from './SculptBase.js?v=fix_3';
+import Utils from '../../misc/Utils.js?v=fix_3';
 
 class Grab extends SculptBase {
 

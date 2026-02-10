@@ -1,24 +1,24 @@
-import Enums from 'misc/Enums';
+import Enums from '../misc/Enums.js?v=fix_3';
 
-import ShaderPBR from 'render/shaders/ShaderPBR';
-import ShaderMatcap from 'render/shaders/ShaderMatcap';
-import ShaderNormal from 'render/shaders/ShaderNormal';
-import ShaderUV from 'render/shaders/ShaderUV';
-import ShaderWireframe from 'render/shaders/ShaderWireframe';
-import ShaderFlat from 'render/shaders/ShaderFlat';
-import ShaderSelection from 'render/shaders/ShaderSelection';
+import ShaderPBR from './shaders/ShaderPBR.js?v=fix_3';
+import ShaderMatcap from './shaders/ShaderMatcap.js?v=fix_3';
+import ShaderNormal from './shaders/ShaderNormal.js?v=fix_3';
+import ShaderUV from './shaders/ShaderUV.js?v=fix_3';
+import ShaderWireframe from './shaders/ShaderWireframe.js?v=fix_3';
+import ShaderFlat from './shaders/ShaderFlat.js?v=fix_3';
+import ShaderSelection from './shaders/ShaderSelection.js?v=fix_3';
 
-import ShaderBackground from 'render/shaders/ShaderBackground';
-import ShaderMerge from 'render/shaders/ShaderMerge';
-import ShaderFxaa from 'render/shaders/ShaderFxaa';
-import ShaderContour from 'render/shaders/ShaderContour';
+import ShaderBackground from './shaders/ShaderBackground.js?v=fix_3';
+import ShaderMerge from './shaders/ShaderMerge.js?v=fix_3';
+import ShaderFxaa from './shaders/ShaderFxaa.js?v=fix_3';
+import ShaderContour from './shaders/ShaderContour.js?v=fix_3';
 
-import ShaderPaintUV from 'render/shaders/ShaderPaintUV';
-import ShaderBlur from 'render/shaders/ShaderBlur';
-import ShaderTexture from 'render/shaders/ShaderTexture';
+import ShaderPaintUV from './shaders/ShaderPaintUV.js?v=fix_3';
+import ShaderBlur from './shaders/ShaderBlur.js?v=fix_3';
+import ShaderTexture from './shaders/ShaderTexture.js?v=fix_3';
 
-import ShaderUnlit from 'render/shaders/ShaderUnlit';
-import ShaderFresnel from 'render/shaders/ShaderFresnel';
+import ShaderUnlit from './shaders/ShaderUnlit.js?v=fix_3';
+import ShaderFresnel from './shaders/ShaderFresnel.js?v=fix_3';
 
 var ShaderLib = [];
 

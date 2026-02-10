@@ -1,4 +1,4 @@
-import ShaderBase from 'render/shaders/ShaderBase';
+import ShaderBase from './ShaderBase.js?v=fix_3';
 
 var ShaderFlat = ShaderBase.getCopy();
 ShaderFlat.vertexName = ShaderFlat.fragmentName = 'FlatColor';

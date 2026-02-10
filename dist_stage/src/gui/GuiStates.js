@@ -1,6 +1,6 @@
-import TR from 'gui/GuiTR';
-import Enums from 'misc/Enums';
-import StateManager from 'states/StateManager';
+import TR from './GuiTR.js?v=fix_3';
+import Enums from '../misc/Enums.js?v=fix_3';
+import StateManager from '../states/StateManager.js?v=fix_3';
 
 class GuiTablet {
 

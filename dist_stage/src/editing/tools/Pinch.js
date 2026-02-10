@@ -1,5 +1,5 @@
-import Tablet from 'misc/Tablet';
-import SculptBase from 'editing/tools/SculptBase';
+import Tablet from '../../misc/Tablet.js?v=fix_3';
+import SculptBase from './SculptBase.js?v=fix_3';
 
 class Pinch extends SculptBase {
 

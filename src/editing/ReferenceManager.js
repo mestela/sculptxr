@@ -1,5 +1,5 @@
-import MeshReference from 'mesh/MeshReference';
-import Utils from 'misc/Utils';
+import MeshReference from '../mesh/MeshReference.js?v=fix_3';
+import Utils from '../misc/Utils.js?v=fix_3';
 
 class ReferenceManager {
 

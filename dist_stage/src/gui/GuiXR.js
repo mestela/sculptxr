@@ -1,31 +1,32 @@
-import Enums from 'misc/Enums';
-import TR from 'gui/GuiTR';
-import Export from 'files/Export';
+import Enums from '../misc/Enums.js?v=fix_3';
+
+import TR from './GuiTR.js?v=fix_3';
+import Export from '../files/Export.js?v=fix_3';
 import { saveAs } from 'file-saver';
-import Shader from 'render/ShaderLib';
-import Utils from 'misc/Utils';
+import Shader from '../render/ShaderLib.js?v=fix_3';
+import Utils from '../misc/Utils.js?v=fix_3';
 import { vec3 } from 'gl-matrix';
 
-// Modular Imports
-import getToolsWidgets from 'gui/vr/GuiVRTools.js';
-import getSceneWidgets from 'gui/vr/GuiVRScene.js';
-import getRenderingWidgets from 'gui/vr/GuiVRRendering.js';
-import getFilesWidgets from 'gui/vr/GuiVRFiles.js';
-import getHistoryWidgets from 'gui/vr/GuiVRHistory.js';
-import getReferenceWidgets from 'gui/vr/GuiVRReference.js'; // Replaces Background
-import getCameraWidgets from 'gui/vr/GuiVRCamera.js';
-import getTabletWidgets from 'gui/vr/GuiVRTablet.js';
-import getLanguageWidgets from 'gui/vr/GuiVRLanguage.js';
-import getExtraUIWidgets from 'gui/vr/GuiVRExtraUI.js';
-import getAboutWidgets from 'gui/vr/GuiVRAbout.js';
-import getTopologyWidgets from 'gui/vr/GuiVRTopology.js';
-import Tablet from 'misc/Tablet';
+// Modular Imports - Relative with explicit extensions to bypass map issues
+import getToolsWidgets from './vr/GuiVRTools.js?v=fix_3';
+import getSceneWidgets from './vr/GuiVRScene.js?v=fix_3';
+import getRenderingWidgets from './vr/GuiVRRendering.js?v=fix_3';
+import getFilesWidgets from './vr/GuiVRFiles.js?v=fix_3';
+import getHistoryWidgets from './vr/GuiVRHistory.js?v=fix_3';
+import getReferenceWidgets from './vr/GuiVRReference.js?v=fix_3'; // Replaces Background
+import getCameraWidgets from './vr/GuiVRCamera.js?v=fix_3';
+import getTabletWidgets from './vr/GuiVRTablet.js?v=fix_3';
+import getLanguageWidgets from './vr/GuiVRLanguage.js?v=fix_3';
+import getExtraUIWidgets from './vr/GuiVRExtraUI.js?v=fix_3';
+import getAboutWidgets from './vr/GuiVRAbout.js?v=fix_3';
+import getTopologyWidgets from './vr/GuiVRTopology.js?v=fix_3';
+import Tablet from '../misc/Tablet.js?v=fix_3';
 
 // Direct access for property setters
-import MeshDynamic from 'mesh/dynamic/MeshDynamic';
-import Remesh from 'editing/Remesh';
-import ShaderBase from 'render/shaders/ShaderBase';
-import StateManager from 'states/StateManager';
+import MeshDynamic from '../mesh/dynamic/MeshDynamic.js?v=fix_3';
+import Remesh from '../editing/Remesh.js?v=fix_3';
+import ShaderBase from '../render/shaders/ShaderBase.js?v=fix_3';
+import StateManager from '../states/StateManager.js?v=fix_3';
 
 const TAB_HEIGHT = 68; // Increased from 52 (+30%)
 const TAB_ROWS = 3; // Rows of tabs
@@ -70,6 +71,7 @@ const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 export default class GuiXR {
 
   constructor(main, canvas) {
+    console.log("GuiXR vFixed Loaded");
     this._main = main;
     this._gl = main._gl;
 
@@ -447,7 +449,7 @@ export default class GuiXR {
   _updateHover() {
     if (!this._cursor.active) {
       this._hoverWidget = null;
-      this._hoverTab = null; 
+      this._hoverTab = null;
       return;
     }
 
@@ -562,7 +564,7 @@ export default class GuiXR {
     }
 
     if (this._hoverWidget !== newHover) {
-      this._hoverWidget = newHover; 
+      this._hoverWidget = newHover;
       this._needsRedraw = true;
       this._requestDraw();
     }
@@ -894,40 +896,40 @@ export default class GuiXR {
     // 1. Scrollbar Interaction
     if (isScrollInteraction) {
       const trackW = 40;
-    const trackX = w - trackW;
+      const trackX = w - trackW;
 
-    // Check if we hit scrollbar (only if below header)
-    if (cx >= trackX && cy > HEADER_HEIGHT) {
-      if (!this._isDraggingScrollbar && isPressed) {
-        this._isDraggingScrollbar = true;
+      // Check if we hit scrollbar (only if below header)
+      if (cx >= trackX && cy > HEADER_HEIGHT) {
+        if (!this._isDraggingScrollbar && isPressed) {
+          this._isDraggingScrollbar = true;
+          this._lastScrollY = cy;
+          return;
+        }
+      }
+
+      if (this._isDraggingScrollbar) {
+        if (!isPressed) {
+          this._isDraggingScrollbar = false;
+          this._lastScrollY = undefined;
+          return;
+        }
+
+        if (this._lastScrollY !== undefined) {
+          const deltaY = cy - this._lastScrollY;
+          const trackH = this._canvas.height - HEADER_HEIGHT;
+          const contentH = trackH + this._maxScroll;
+          const ratio = contentH / trackH;
+
+          if (Math.abs(deltaY) > 0) {
+            this._scrollOffset += deltaY * ratio;
+            this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+            this._needsRedraw = true;
+            this._requestDraw();
+          }
+        }
         this._lastScrollY = cy;
         return;
       }
-    }
-
-    if (this._isDraggingScrollbar) {
-      if (!isPressed) {
-        this._isDraggingScrollbar = false;
-        this._lastScrollY = undefined;
-        return;
-      }
-
-      if (this._lastScrollY !== undefined) {
-        const deltaY = cy - this._lastScrollY;
-        const trackH = this._canvas.height - HEADER_HEIGHT;
-        const contentH = trackH + this._maxScroll;
-        const ratio = contentH / trackH;
-
-        if (Math.abs(deltaY) > 0) {
-          this._scrollOffset += deltaY * ratio;
-          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
-          this._needsRedraw = true;
-          this._requestDraw();
-        }
-      }
-      this._lastScrollY = cy;
-      return;
-    }
 
     }
 
@@ -994,22 +996,22 @@ export default class GuiXR {
       // Check which tab
       const w = this._canvas.width;
       if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
-      const row1 = GLOBAL_TABS.slice(0, 3);
-      const row2 = GLOBAL_TABS.slice(3, 6);
-      const row3 = GLOBAL_TABS.slice(6);
+        const row1 = GLOBAL_TABS.slice(0, 3);
+        const row2 = GLOBAL_TABS.slice(3, 6);
+        const row3 = GLOBAL_TABS.slice(6);
 
         const r1W = w / row1.length;
         const r2W = w / row2.length;
         const r3W = w / row3.length; // 2 items
 
         if (cy < TAB_HEIGHT) {
-        const idx = Math.floor(cx / r1W);
-        if (idx >= 0 && idx < row1.length) this.switchTab(row1[idx]);
+          const idx = Math.floor(cx / r1W);
+          if (idx >= 0 && idx < row1.length) this.switchTab(row1[idx]);
         } else if (cy < TAB_HEIGHT * 2) {
-        const idx = Math.floor(cx / r2W);
-        if (idx >= 0 && idx < row2.length) this.switchTab(row2[idx]);
+          const idx = Math.floor(cx / r2W);
+          if (idx >= 0 && idx < row2.length) this.switchTab(row2[idx]);
         } else if (cy < TAB_HEIGHT * 3) {
-        const idx = Math.floor(cx / r3W);
+          const idx = Math.floor(cx / r3W);
           if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
         }
         return;
@@ -1242,17 +1244,17 @@ export default class GuiXR {
 
   _handleWidgetClick(w) {
     if (w.type === 'slider') {
-  let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
+      let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
-  // Generic Min/Max Mapping
-  let val = t;
-  if (isFinite(w.min) && isFinite(w.max)) {
-    val = w.min + t * (w.max - w.min);
-    if (w.step) {
-      const steps = Math.round((val - w.min) / w.step);
-      val = w.min + steps * w.step;
-    }
-  }
+      // Generic Min/Max Mapping
+      let val = t;
+      if (isFinite(w.min) && isFinite(w.max)) {
+        val = w.min + t * (w.max - w.min);
+        if (w.step) {
+          const steps = Math.round((val - w.min) / w.step);
+          val = w.min + steps * w.step;
+        }
+      }
       w.value = val;
       this._needsRedraw = true;
       this.draw();
@@ -1716,7 +1718,7 @@ export default class GuiXR {
         ctx.textAlign = 'left';
         ctx.fillText(isOpen ? 'v' : '>', wid.x + 20, wid.y + wid.h / 2 + 10);
 
-        ctx.font = 'bold 36px sans-serif'; 
+        ctx.font = 'bold 36px sans-serif';
         ctx.fillStyle = '#eee';
         ctx.fillText(wid.label, wid.x + 60, wid.y + wid.h / 2 + 10);
 
@@ -1730,7 +1732,7 @@ export default class GuiXR {
         ctx.fillStyle = '#888';
         ctx.font = 'italic 24px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(wid.label, wid.x, wid.y + 24); 
+        ctx.fillText(wid.label, wid.x, wid.y + 24);
       }
       else {
         // GENERIC WIDGET HANDLING (Slider, Checkbox, Combobox, Button, ColorPicker)
@@ -1933,7 +1935,7 @@ export default class GuiXR {
 
     if (this._activeCombobox) {
       ctx.save();
-      
+
       // Apply scale ONLY if we are in an Overlay (Main Panel is unscaled)
       if (this._overlay) {
         const pivot = this._getOverlayPivot();
@@ -2000,7 +2002,7 @@ export default class GuiXR {
 
         // Hover Background (Generic)
         if (isHover) {
-          ctx.fillStyle = '#444'; 
+          ctx.fillStyle = '#444';
           ctx.fillRect(wx, wy, wid.w, wid.h);
         }
 
@@ -2081,7 +2083,7 @@ export default class GuiXR {
           }
 
           ctx.fillStyle = '#aaa';
-          ctx.textAlign = 'right'; 
+          ctx.textAlign = 'right';
           ctx.fillText(disp.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'button') {
@@ -2133,7 +2135,7 @@ export default class GuiXR {
       });
 
       // No restore needed (caller handles it)
-      return; 
+      return;
     }
 
     if (this._overlay === 'combobox') {
@@ -2389,24 +2391,24 @@ export default class GuiXR {
     if (ctx.createConicGradient) {
       ctx.save();
       ctx.beginPath();
-    // Rotate -90 deg so Red is at Top? Or Right?
-    // Standard HSV wheel usually has Red at Right (0 deg) or Top (90 deg).
-    // Let's keep 0 at Right (Standard Math).
-    // But Conic Gradient starts at 3 o'clock by default? No, usually 0 is 3 o'clock.
-    // Wait, Conic Gradient starts at 0 (3 o'clock) going CLOCKWISE?
-    // Let's test standard: Red->Yellow...
-    // If I use the CSS colors above (Red, Magenta, Blue...) that is COUNTER-CLOCKWISE.
-    // Standard H is Red(0), Yellow(60), Green(120), Cyan(180), Blue(240), Magenta(300).
-    // So Red -> Yellow is increasing angle (Clockwise in Canvas? Y-down).
-    // 0 is 3 o'clock.
-    // So standard conic:
-    // 0: Red
-    // 1/6: Yellow
-    // 2/6: Green
-    // 3/6: Cyan
-    // 4/6: Blue
-    // 5/6: Magenta
-    // 1: Red
+      // Rotate -90 deg so Red is at Top? Or Right?
+      // Standard HSV wheel usually has Red at Right (0 deg) or Top (90 deg).
+      // Let's keep 0 at Right (Standard Math).
+      // But Conic Gradient starts at 3 o'clock by default? No, usually 0 is 3 o'clock.
+      // Wait, Conic Gradient starts at 0 (3 o'clock) going CLOCKWISE?
+      // Let's test standard: Red->Yellow...
+      // If I use the CSS colors above (Red, Magenta, Blue...) that is COUNTER-CLOCKWISE.
+      // Standard H is Red(0), Yellow(60), Green(120), Cyan(180), Blue(240), Magenta(300).
+      // So Red -> Yellow is increasing angle (Clockwise in Canvas? Y-down).
+      // 0 is 3 o'clock.
+      // So standard conic:
+      // 0: Red
+      // 1/6: Yellow
+      // 2/6: Green
+      // 3/6: Cyan
+      // 4/6: Blue
+      // 5/6: Magenta
+      // 1: Red
 
       // Re-defining gradient for proper HSV Clockwise (Standard)
       const g2 = ctx.createConicGradient(0, cx, cy);
@@ -2616,11 +2618,11 @@ export default class GuiXR {
 
     // Check bounds with totalW
     // SCALE_FIX removed: Input is already transformed to overlay space.
-    
+
     // Check bounds
     if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
       // Inside List
-      
+
       const localX = (cx - startX);
       const localY = (cy - startY);
 
@@ -2629,10 +2631,10 @@ export default class GuiXR {
       if (col >= numCols) col = numCols - 1;
 
       let row = Math.floor(localY / itemHeight);
-      
+
       const index = col * rowsPerCol + row;
       // console.log(`[GuiXR] Hit Index: ${index} (Row:${row} Col:${col}) LocalY:${localY.toFixed(1)}`);
-      
+
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
@@ -2678,7 +2680,7 @@ export default class GuiXR {
     // No, w.x/w.y are computed during layout. They are local to the overlay content.
     // If _drawActiveCombobox runs in Identity Space, we need to apply the SAME Transform!
     // OR we should call it INSIDE the transform block in draw().
-    
+
     // Let's check draw().
     // If it's outside, w.x/w.y are meaningless without transform.
     // I bet draw() calls it OUTSIDE.
@@ -2687,12 +2689,12 @@ export default class GuiXR {
     // FIRST, I will assume it's OUTSIDE and apply transform here?
     // Applying transform manually is annoying (pivot logic).
     // Better to move the call inside draw().
-    
+
     // For now, I will assume the user has the transform applied or I handle it.
     // Actually, looking at `_drawCombobox` (legacy), it didn't apply transform?
     // Wait, `_drawOverlay` is called INSIDE transform.
     // `_drawCombobox` was called from `_drawOverlay`.
-    
+
     // `_drawActiveCombobox` is called at the end of `draw()`.
     // Let's check `draw()` again.
 
@@ -2731,7 +2733,7 @@ export default class GuiXR {
         // Find Col / Row
         let col = Math.floor((cx - startX) / w.w);
         if (col >= numCols) col = numCols - 1;
-        
+
         let row = Math.floor((cy - startY) / itemHeight);
         if (row >= rowsPerCol) row = rowsPerCol - 1;
 
@@ -2759,7 +2761,7 @@ export default class GuiXR {
       }
 
       const y = startY + row * itemHeight;
-      const x = startX + col * w.w; 
+      const x = startX + col * w.w;
 
       const label = opt.label || opt;
       ctx.fillText(label, x + 20, y + itemHeight / 2 + 8);
@@ -2770,11 +2772,11 @@ export default class GuiXR {
     if (!w || !w.options) return null;
 
     const itemHeight = 60;
-    
+
     // 2-Column Logic
     let numCols = 1;
     let rowsPerCol = w.options.length;
-    
+
     if (w.options.length > 10) {
       numCols = 2;
       rowsPerCol = Math.ceil(w.options.length / 2);
@@ -2791,16 +2793,16 @@ export default class GuiXR {
 
     // Smart Positioning (Slide Up if near bottom)
     // Bottom Limit Calculation
-    let bottomLimit = this._canvas.height; 
+    let bottomLimit = this._canvas.height;
     if (this._overlayData) {
       // If we are in an overlay, we should fit WITHIN the overlay usually?
       // Or mainly ensure we don't go off screen bottom?
       // For Overlay Menus (Files, etc), layout is tricky.
       // But anchored comboboxes (Tools) are in Main Panel or Overlay.
-      
+
       // Let's use Canvas Height as hard limit first.
       // Actually, if Overlay is active, oy + overlayData.h is the menu bottom.
-      bottomLimit = oy + this._overlayData.h; 
+      bottomLimit = oy + this._overlayData.h;
     }
 
     const mb = 20; // Margin Bottom

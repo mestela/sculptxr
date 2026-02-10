@@ -1,4 +1,4 @@
-import TR from 'gui/GuiTR';
+import TR from '../GuiTR.js?v=fix_3';
 
 export default function getLanguageWidgets(main) {
   const widgets = [];
