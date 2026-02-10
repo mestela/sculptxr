@@ -33,7 +33,12 @@ class SculptVoxel extends SculptBase {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
-        // if (window.screenLog) window.screenLog(`Voxel: Update Radius=${this._radius} V=${data.vertices.length}`, "grey");
+        if (msg.computeTime) {
+          const logMsg = `Voxel: Worker=${msg.computeTime.toFixed(1)}ms V=${msg.data.vertices.length/3}`;
+          console.log(logMsg);
+          if (window.screenLog) window.screenLog(logMsg, "grey");
+        }
+        
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
 
         this._pendingMeshUpdate = false;
@@ -163,6 +168,12 @@ class SculptVoxel extends SculptBase {
       this._voxelMesh.setShaderType(Enums.Shader.FLAT);
       // console.log("Voxel Mesh: FLAT");
     } else {
+      // Lazy Init Normals if missing
+      if (!this._voxelMesh.getNormals() || this._voxelMesh.getNormals().length === 0) {
+          if (window.screenLog) window.screenLog("Computing Normals...", "yellow");
+          this._voxelMesh.initFaceRings();
+          this._voxelMesh.updateGeometry();
+      }
       this._voxelMesh.setShaderType(Enums.Shader.MATCAP);
       // console.log("Voxel Mesh: MATCAP");
     }
@@ -216,6 +227,14 @@ class SculptVoxel extends SculptBase {
       console.log("Voxel Mesh: FLAT");
       if (window.screenLog) window.screenLog("Voxel: FLAT", "lime");
     } else {
+      // Lazy Init Normals/Topology if missing
+      if (!this._voxelMesh.getNormals() || this._voxelMesh.getNormals().length === 0) {
+          if (window.screenLog) window.screenLog("Computing Topology...", "yellow");
+          this._voxelMesh.initFaceRings();
+          this._voxelMesh.initEdges();
+          this._voxelMesh.updateGeometry();
+      }
+      
       this._voxelMesh.setShaderType(Enums.Shader.WIREFRAME);
       this._voxelMesh.setShowWireframe(true); // Ensure buffer built
       this._voxelMesh.updateWireframeBuffer();
@@ -810,25 +829,32 @@ class SculptVoxel extends SculptBase {
     // this._voxelMesh.init(); 
     this._voxelMesh.initColorsAndMaterials();
     this._voxelMesh.allocateArrays();
-    this._voxelMesh.initFaceRings(); // Needed for Normals
+    // this._voxelMesh.initFaceRings(); // SKIP: Only needed for vertex normals (smooth shading)
     // this._voxelMesh.optimize(); // SKIP (Expensive cache optimization)
     // this._voxelMesh.initEdges(); // SKIP (Wireframe only)
     // this._voxelMesh.initVertexRings(); // SKIP (Smoothing only)
-    this._voxelMesh.initRenderTriangles(); // Needed for picking?
-
+    this._voxelMesh.initRenderTriangles(); // Needed for picking (intersectSphere/Ray uses RenderData?)
+    // Actually Picking uses generic Faces if available? 
+    // MeshStatic.js intersectSphere uses Octree or Faces.
+    
     // CRITICAL: Ensure Render Data / Textures are initialized
-    // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues
-    // CRITICAL: Ensure Render Data / Textures are initialized
-    // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Black issues
+    // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Matcap switch lag if user toggles later?
+    // No, stay FLAT for performance.
+    
     if (isNew || this._voxelMesh.getShaderType() !== Enums.Shader.FLAT) {
       this._voxelMesh.initRender();
       this._voxelMesh.setShaderType(Enums.Shader.FLAT);
       this._voxelMesh.setFlatShading(true);
-      // this._voxelMesh.setMatcap(this._main._pbr.getMatcap()); 
     }
 
-    // Compute Normals (Crucial for rendering)
-    this._voxelMesh.updateGeometry();
+    // SKIP: this._voxelMesh.updateGeometry(); // Too heavy (computes normals)
+    // INSTEAD: Just update AABBs for Octree/Picking
+    // OPTIMIZATION: Use updateFacesAabb (skips normal compute)
+    this._voxelMesh.updateFacesAabb(); 
+    this._voxelMesh.updateOctree();
+    
+    // Clear normals to ensure Picking knows to use fallback
+    this._voxelMesh.setNormals(null);
 
     // FORCE VALID MATERIALS (Roughness, Metallic, MASK=1.0)
     // Even if using Matcap, we set these for safety if user switches shaders.

@@ -23,11 +23,7 @@ if [ -f "$LAST_VERSION_FILE" ]; then
         echo "🛑 ERROR: Version $CURRENT_VERSION was already deployed!"
         echo "   Rule: 'Every new attempt gets a new version number'"
         echo "   Please increment the version in index.html."
-        echo "   (Or use FORCE=1 ./deploy.sh to override)"
-        if [ "$FORCE" != "1" ]; then
-            exit 1
-        fi
-        echo "⚠️  FORCE OVERRIDE ENABLED"
+        exit 1
     fi
 fi
 echo "Current Version: $CURRENT_VERSION"

@@ -52,32 +52,46 @@ var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
   var materials = voxels.materialField;
   var data = voxels.distanceField;
 
-  //Read in 8 field values around this vertex and store them in an array
-  //Also calculate 8-bit mask, like in marching cubes, so we can speed up sign checks later
-  var c1 = 0;
-  var c2 = 0;
-  var c3 = 0;
-  var m1 = 0;
-  var m2 = 0;
-  var m3 = 0;
-  var invSum = 0;
-
   var mask = 0;
   var g = 0;
   var rx = dims[0];
   var rxy = dims[0] * dims[1];
+
+  // 1st Pass: Compute Mask (Fast - only checks signs)
   for (var k = 0; k < 2; ++k) {
     for (var j = 0; j < 2; ++j) {
       for (var i = 0; i < 2; ++i) {
         var id = n + i + j * rx + k * rxy;
-        var id3 = id * 3;
         var p = data[id];
         grid[g] = p;
         mask |= (p < 0.0) ? (1 << g) : 0;
         g++;
+      }
+    }
+  }
+
+  // Early Out: No surface crossing here
+  if (mask === 0 || mask === 0xff) {
+    return mask;
+  }
+
+  // 2nd Pass: Accumulate Attributes (Slow - reads large arrays)
+  var c1 = 0, c2 = 0, c3 = 0;
+  var m1 = 0, m2 = 0, m3 = 0;
+  var invSum = 0;
+
+  g = 0; // Reset Grid Index
+  for (var k = 0; k < 2; ++k) {
+    for (var j = 0; j < 2; ++j) {
+      for (var i = 0; i < 2; ++i) {
+        var id = n + i + j * rx + k * rxy;
+        var p = grid[g++]; // Reuse prefetched distance
+
         if (p !== Infinity) {
-          p = Math.min(1 / Math.abs(p), 1e15);
+          p = Math.min(1.0 / Math.abs(p), 1e15);
           invSum += p;
+
+          var id3 = id * 3;
           c1 += colors[id3] * p;
           c2 += colors[id3 + 1] * p;
           c3 += colors[id3 + 2] * p;
@@ -89,11 +103,11 @@ var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
     }
   }
 
-  if (mask !== 0 && mask !== 0xff) {
-    if (invSum > 0.0) invSum = 1.0 / invSum;
-    cols.push(c1 * invSum, c2 * invSum, c3 * invSum);
-    mats.push(m1 * invSum, m2 * invSum, m3 * invSum);
+  if (invSum > 0.0) {
+    invSum = 1.0 / invSum;
   }
+  cols.push(c1 * invSum, c2 * invSum, c3 * invSum);
+  mats.push(m1 * invSum, m2 * invSum, m3 * invSum);
 
   return mask;
 };

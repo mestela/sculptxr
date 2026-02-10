@@ -1,18 +1,56 @@
 class OctreeCell {
 
   constructor(parent) {
+    this._children = [];
+    this._aabbLoose = new Float32Array(6);
+    this._aabbSplit = new Float32Array(6);
+    this._iFaces = [];
+    this.reset(parent);
+  }
+
+  reset(parent) {
     this._parent = parent ? parent : null; // parent
     this._depth = parent ? parent._depth + 1 : 0; // depth of current node
-    this._children = []; // children
+    this._children.length = 0; // children
 
     // extended boundary for intersect test
-    this._aabbLoose = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    var loose = this._aabbLoose;
+    loose[0] = Infinity;
+    loose[1] = Infinity;
+    loose[2] = Infinity;
+    loose[3] = -Infinity;
+    loose[4] = -Infinity;
+    loose[5] = -Infinity;
 
     // boundary in order to store exactly the face according to their center
-    this._aabbSplit = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    this._iFaces = []; // faces (if cell is a leaf)
+    var split = this._aabbSplit;
+    split[0] = Infinity;
+    split[1] = Infinity;
+    split[2] = Infinity;
+    split[3] = -Infinity;
+    split[4] = -Infinity;
+    split[5] = -Infinity;
 
+    this._iFaces.length = 0; // faces (if cell is a leaf)
     this._flag = 0; // to track deleted cell
+  }
+
+  static getFree(parent) {
+    if (OctreeCell.POOL.length > 0) {
+      var cell = OctreeCell.POOL.pop();
+      cell.reset(parent);
+      return cell;
+    }
+    return new OctreeCell(parent);
+  }
+
+  release() {
+    var children = this._children;
+    for (var i = 0, nb = children.length; i < nb; ++i) {
+      children[i].release();
+    }
+    children.length = 0;
+    OctreeCell.POOL.push(this);
   }
 
   resetNbFaces(nbFaces) {
@@ -99,14 +137,14 @@ class OctreeCell {
     var ycen = (ymax + ymin) * 0.5;
     var zcen = (zmax + zmin) * 0.5;
 
-    var child0 = new OctreeCell(this);
-    var child1 = new OctreeCell(this);
-    var child2 = new OctreeCell(this);
-    var child3 = new OctreeCell(this);
-    var child4 = new OctreeCell(this);
-    var child5 = new OctreeCell(this);
-    var child6 = new OctreeCell(this);
-    var child7 = new OctreeCell(this);
+    var child0 = OctreeCell.getFree(this);
+    var child1 = OctreeCell.getFree(this);
+    var child2 = OctreeCell.getFree(this);
+    var child3 = OctreeCell.getFree(this);
+    var child4 = OctreeCell.getFree(this);
+    var child5 = OctreeCell.getFree(this);
+    var child6 = OctreeCell.getFree(this);
+    var child7 = OctreeCell.getFree(this);
 
     var iFaces0 = child0._iFaces;
     var iFaces1 = child1._iFaces;
@@ -366,7 +404,9 @@ class OctreeCell {
 OctreeCell.FLAG = 0;
 
 OctreeCell.MAX_DEPTH = 8;
-OctreeCell.MAX_FACES = 100; // maximum faces per cell
+OctreeCell.MAX_FACES = 250; // maximum faces per cell
+OctreeCell.POOL = []; // Object Pool
+
 (function () {
   var nb = 1 + 7 * OctreeCell.MAX_DEPTH;
   var stack = OctreeCell.STACK = new Array(nb);

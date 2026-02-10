@@ -79,12 +79,12 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
 function postMesh() {
   if (!voxelState) return;
 
-  // console.time('Worker:ComputeMesh');
+  var t0 = performance.now();
   const res = voxelState.computeMesh();
-  // console.timeEnd('Worker:ComputeMesh');
+  var t1 = performance.now();
 
   // DEBUG: Log mesh stats
-  // console.log(`Worker: Posting Mesh V=${res.vertices.length} F=${res.faces.length}`);
+  // console.log(`Worker: ComputeMesh ${(t1 - t0).toFixed(2)}ms V=${res.vertices.length / 3} F=${res.faces.length / 4}`);
 
   // res = { vertices, faces, colors, materials } (Float32Arrays/Uint32Arrays)
 
@@ -98,6 +98,7 @@ function postMesh() {
 
   self.postMessage({
     type: 'MESH_UPDATE',
-    data: res
+    data: res,
+    computeTime: t1 - t0
   }, transferList);
 }

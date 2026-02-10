@@ -802,6 +802,71 @@ class Mesh {
     }
   }
 
+  /** Update a group of faces aabb only (skip normals) */
+  updateFacesAabb(iFaces) {
+    var faceBoxes = this.getFaceBoxes();
+    var faceCenters = this.getFaceCenters();
+    var vAr = this.getVertices();
+    var fAr = this.getFaces();
+
+    var full = iFaces === undefined;
+    var nbFaces = full ? this.getNbFaces() : iFaces.length;
+    for (var i = 0; i < nbFaces; ++i) {
+      var ind = full ? i : iFaces[i];
+      var idTri = ind * 3;
+      var idFace = ind * 4;
+      var idBox = ind * 6;
+      var ind1 = fAr[idFace] * 3;
+      var ind2 = fAr[idFace + 1] * 3;
+      var ind3 = fAr[idFace + 2] * 3;
+      var ind4 = fAr[idFace + 3];
+      var isQuad = ind4 !== Utils.TRI_INDEX;
+      if (isQuad) ind4 *= 3;
+
+      var v1x = vAr[ind1];
+      var v1y = vAr[ind1 + 1];
+      var v1z = vAr[ind1 + 2];
+      var v2x = vAr[ind2];
+      var v2y = vAr[ind2 + 1];
+      var v2z = vAr[ind2 + 2];
+      var v3x = vAr[ind3];
+      var v3y = vAr[ind3 + 1];
+      var v3z = vAr[ind3 + 2];
+
+      // compute boxes
+      var xmin = v1x < v2x ? v1x < v3x ? v1x : v3x : v2x < v3x ? v2x : v3x;
+      var xmax = v1x > v2x ? v1x > v3x ? v1x : v3x : v2x > v3x ? v2x : v3x;
+      var ymin = v1y < v2y ? v1y < v3y ? v1y : v3y : v2y < v3y ? v2y : v3y;
+      var ymax = v1y > v2y ? v1y > v3y ? v1y : v3y : v2y > v3y ? v2y : v3y;
+      var zmin = v1z < v2z ? v1z < v3z ? v1z : v3z : v2z < v3z ? v2z : v3z;
+      var zmax = v1z > v2z ? v1z > v3z ? v1z : v3z : v2z > v3z ? v2z : v3z;
+
+      if (isQuad) {
+        var v4x = vAr[ind4];
+        var v4y = vAr[ind4 + 1];
+        var v4z = vAr[ind4 + 2];
+        if (v4x < xmin) xmin = v4x;
+        if (v4x > xmax) xmax = v4x;
+        if (v4y < ymin) ymin = v4y;
+        if (v4y > ymax) ymax = v4y;
+        if (v4z < zmin) zmin = v4z;
+        if (v4z > zmax) zmax = v4z;
+      }
+
+      // boxes
+      faceBoxes[idBox] = xmin;
+      faceBoxes[idBox + 1] = ymin;
+      faceBoxes[idBox + 2] = zmin;
+      faceBoxes[idBox + 3] = xmax;
+      faceBoxes[idBox + 4] = ymax;
+      faceBoxes[idBox + 5] = zmax;
+      // compute centers
+      faceCenters[idTri] = (xmin + xmax) * 0.5;
+      faceCenters[idTri + 1] = (ymin + ymax) * 0.5;
+      faceCenters[idTri + 2] = (zmin + zmax) * 0.5;
+    }
+  }
+
   /** Get more faces (n-ring) */
   expandsFaces(iFaces, nRing) {
     var tagFlag = ++Utils.TAG_FLAG;
@@ -1582,17 +1647,20 @@ class Mesh {
     return this._meshData._octree.collectIntersectSphere(vert, radiusSquared, collectFaces, collectLeaves ? this._meshData._leavesToUpdate : undefined);
   }
 
-  /**
-   * Update Octree
-   * For each faces we check if its position inside the octree has changed
-   * if so... we mark this face and we remove it from its former cells
-   * We push back the marked faces into the octree
-   */
+
+  /** Update Octree */
   updateOctree(iFaces) {
-    if (iFaces)
-      this.updateOctreeAdd(this.updateOctreeRemove(iFaces));
-    else
-      this.computeOctree();
+    if (iFaces) { // Update EXISTING octree with new faces?
+      // For now we don't support partial update of Octree from scratch in this method often.
+      // Usually we rebuild.
+      // But if we do partial... we need to access the octree.
+      // This path is rarely used in Voxel.
+      if (!this._meshData._octree) this._meshData._octree = OctreeCell.getFree();
+    } else {
+      if (this._meshData._octree) this._meshData._octree.release();
+      this._meshData._octree = OctreeCell.getFree();
+    }
+    this._meshData._octree.build(this, iFaces);
   }
 
   computeAabb() {
@@ -1660,7 +1728,8 @@ class Mesh {
     var zmax2 = zmax + dfz;
 
     // octree construction
-    var octree = this._meshData._octree = new OctreeCell();
+    if (this._meshData._octree) this._meshData._octree.release();
+    var octree = this._meshData._octree = OctreeCell.getFree();
     octree.resetNbFaces(this.getNbFaces());
     octree.setAabbLoose(xmin, ymin, zmin, xmax, ymax, zmax);
     octree.setAabbSplit(xmin2, ymin2, zmin2, xmax2, ymax2, zmax2);

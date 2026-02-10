@@ -206,7 +206,131 @@ class VoxelState {
     return changed;
   }
 
+  tightenBounds() {
+    // Scan inwards to find tighter Active Bounds
+    // We only care about Negative Values (Solid) because Surface is around < 0.0
+    // Optimisation: Scan Z first (contiguous slices)
+
+    // Safety check - if already inverted, reset? Or assume correct?
+    // Let's reset to full bounds if inverted, then tighten.
+    // Or just clamp current bounds if valid.
+
+    let minX = this._activeMin[0], minY = this._activeMin[1], minZ = this._activeMin[2];
+    let maxX = this._activeMax[0], maxY = this._activeMax[1], maxZ = this._activeMax[2];
+
+    const res = this._resolution;
+    const df = this._distanceField;
+    const strideY = res;
+    const strideZ = res * res;
+
+    // Bounds Check: If min > max, the grid is effectively empty. Reset to inverted so we can detect new content.
+    if (minX > maxX || minY > maxY || minZ > maxZ) {
+      this.clear(); // Resets activeMin/Max
+      return;
+    }
+
+    // 1. Scan Z Min (Upwards)
+    let found = false;
+    for (let k = minZ; k <= maxZ; ++k) {
+      const offsetK = k * strideZ;
+      for (let j = minY; j <= maxY; ++j) {
+        const offsetJ = offsetK + j * strideY;
+        for (let i = minX; i <= maxX; ++i) {
+          if (df[offsetJ + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { minZ = k; break; }
+    }
+    if (!found) { // Empty Grid
+      this.clear();
+      return;
+    }
+
+    // 2. Scan Z Max (Downwards)
+    found = false;
+    for (let k = maxZ; k >= minZ; --k) {
+      const offsetK = k * strideZ;
+      for (let j = minY; j <= maxY; ++j) {
+        const offsetJ = offsetK + j * strideY;
+        for (let i = minX; i <= maxX; ++i) {
+          if (df[offsetJ + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { maxZ = k; break; }
+    }
+
+    // 3. Scan Y Min (Upwards)
+    // Now restricted by new Z bounds!
+    found = false;
+    for (let j = minY; j <= maxY; ++j) {
+      for (let k = minZ; k <= maxZ; ++k) {
+        const offset = k * strideZ + j * strideY;
+        for (let i = minX; i <= maxX; ++i) {
+          if (df[offset + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { minY = j; break; }
+    }
+
+    // 4. Scan Y Max (Downwards)
+    found = false;
+    for (let j = maxY; j >= minY; --j) {
+      for (let k = minZ; k <= maxZ; ++k) {
+        const offset = k * strideZ + j * strideY;
+        for (let i = minX; i <= maxX; ++i) {
+          if (df[offset + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { maxY = j; break; }
+    }
+
+    // 5. Scan X Min (Upwards)
+    found = false;
+    for (let i = minX; i <= maxX; ++i) {
+      for (let k = minZ; k <= maxZ; ++k) {
+        const offsetK = k * strideZ;
+        for (let j = minY; j <= maxY; ++j) {
+          if (df[offsetK + j * strideY + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { minX = i; break; }
+    }
+
+    // 6. Scan X Max (Downwards)
+    found = false;
+    for (let i = maxX; i >= minX; --i) {
+      for (let k = minZ; k <= maxZ; ++k) {
+        const offsetK = k * strideZ;
+        for (let j = minY; j <= maxY; ++j) {
+          if (df[offsetK + j * strideY + i] < 0.0) { found = true; break; }
+        }
+        if (found) break;
+      }
+      if (found) { maxX = i; break; }
+    }
+
+    // Verify bounds validity?
+    // Clamp to [0, res]?
+    // Typically loop indices are safe.
+
+    this._activeMin[0] = minX; this._activeMin[1] = minY; this._activeMin[2] = minZ;
+    this._activeMax[0] = maxX; this._activeMax[1] = maxY; this._activeMax[2] = maxZ;
+  }
+
   computeMesh() {
+    // 1. Attempt to tighten bounds (Cheap scan if object is small)
+    this.tightenBounds();
+
+    // Check if empty
+    if (this._activeMin[0] > this._activeMax[0]) {
+      return { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) };
+    }
+
     // Clamp Bounds (Ensure padding of 1 for correct gradients/iso-surface)
     // SurfaceNets needs to look at n-1 or n+1?
     // It creates faces for "current" voxel by looking back?

@@ -549,7 +549,25 @@ class Picking {
 
   computePickedNormal() {
     if (!this._mesh || this._pickedFace < 0) return;
-    this.polyLerp(this._mesh.getNormals(), this._pickedNormal);
+    // OPTIMIZATION: Fallback if normals are missing (e.g. Voxel Flat Shader)
+    const normals = this._mesh.getNormals();
+    if (normals && normals.length > 0) {
+      this.polyLerp(normals, this._pickedNormal);
+    } else {
+      // Compute Face Normal
+      const fAr = this._mesh.getFaces();
+      const vAr = this._mesh.getVertices();
+      const id = this._pickedFace * 4;
+      const iv1 = fAr[id] * 3;
+      const iv2 = fAr[id + 1] * 3;
+      const iv3 = fAr[id + 2] * 3;
+
+      const v1 = vAr.subarray(iv1, iv1 + 3);
+      const v2 = vAr.subarray(iv2, iv2 + 3);
+      const v3 = vAr.subarray(iv3, iv3 + 3);
+
+      Geometry.triangleNormal(this._pickedNormal, v1, v2, v3);
+    }
     return vec3.normalize(this._pickedNormal, this._pickedNormal);
   }
 

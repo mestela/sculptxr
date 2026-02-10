@@ -1,5 +1,52 @@
 # SculptXR Release History
 
+- **v0.7.272**: Redeploy Voxel Opt
+    - **Note**: Re-deployed v0.7.271 changes to ensure they are active.
+    - **Speed**: Includes `tightenBounds` optimization.
+- **v0.7.271**: Voxel Bounds Optimization
+
+    - **Speed**: Implemented `tightenBounds` to shrink the active computation area when voxels are erased.
+    - **Target**: Should eliminate the ~90ms processing time for "empty" or sparse voxel grids.
+- **v0.7.270**: Hotfix Syntax Error 2
+
+    - **Fix**: Removed extra brace in `GuiXR.js` that caused `SyntaxError`.
+- **v0.7.269**: Hotfix Syntax Error
+
+    - **Fix**: Resolved `SyntaxError` in `GuiXR.js` (Unexpected token `{`).
+    - **Debug**: Version info is now correctly drawn in `GuiXR.draw`.
+- **v0.7.268**: Voxel Optimization
+
+    - **Speed**: Optimized `SurfaceNets` to skip expensive Attribute interpolation (Colors/Materials) for empty voxels.
+    - **Target**: Should reduce `VoxelWorker` compute time significantly.
+- **v0.7.267**: Debug Info in UI
+
+    - **Debug**: Added Version and Build Description to the top of the Debug Window / VR Panel.
+- **v0.7.266**: Console Debugging
+
+    - **Debug**: Enabled standard `console.log` for Voxel Worker timings (check F12).
+- **v0.7.265**: Dev Ops Fix
+
+    - **Fix**: Removed `FORCE` override from deploy scripts to prevent accidental overwrites.
+    - **Note**: Officially bumped to v0.7.265 to resolve prev version conflict.
+- **v0.7.264**: Voxel Profiling & Tuning
+
+    - **Tuning**: Increased `OctreeCell.MAX_FACES` (100 -> 250) to reduce tree depth/overhead for dense meshes.
+    - **Debug**: Added Worker timing logs to identify bottleneck (`Worker=` vs `V=`).
+- **v0.7.263**: Hotfix for Voxel Crash (Again)
+
+    - **Fix**: Resolved `Cannot read properties of null` in `Mesh.updateOctree` (fixed `this._meshData` access).
+- **v0.7.262**: Hotfix for Voxel Crash
+
+    - **Fix**: Resolved `OctreeCell.reset` crash on launch (missing array initialization).
+- **v0.7.261**: Voxel GC Optimization
+
+    - **Optimization**: **Octree Pooling**: Implemented Object Pooling for Octree cells to drastically reduce Garbage Collection overhead (20ms -> near 0ms).
+    - **Optimization**: **AABB Updates**: Added `updateFacesAabb` to skip normal computation during Voxel mesh updates.
+- **v0.7.260**: Voxel Optimization
+
+    - **Performance**: Skipped heavy vertex normal computation for Voxel Mesh (FLAT shader).
+    - **Optimization**: Lazy-load normals only when switching to Matcap/Wireframe.
+    - **Fix**: Added fallback in `Picking.js` for missing normals.
 - **v0.7.259**: **GL Error Fix**:
     - **Fix**: **Mesh Allocation**: Resolved `GL_INVALID_OPERATION` (1282) by ensuring `Mesh.allocateArrays` correctly resizes buffers when mesh grows (critical for Voxel sculpting).
     - **Optimization**: **Buffer Updates**: Implemented `glBufferData` (orphaning) for Dynamic buffers to prevent pipeline stalls and synchronization issues.

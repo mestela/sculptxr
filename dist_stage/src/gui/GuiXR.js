@@ -1641,6 +1641,19 @@ export default class GuiXR {
     ctx.fillStyle = '#202020';
     ctx.fillRect(0, 0, w, h);
 
+    // Draw Version Info (Debug)
+    ctx.fillStyle = '#666';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'right';
+    const vText = `SculptXR ${VERSION}`;
+    ctx.fillText(vText, w - 10, 24);
+
+    const buildDesc = "Voxel Slowdown Debugging";
+    ctx.font = '12px sans-serif';
+    ctx.fillText(buildDesc, w - 10, 42);
+    ctx.textAlign = 'left';
+
+
     // --- DRAW HEADERS / TABS (FIRST - TO BE COVERED SROLLING) ---
     // User requested minimal "fluff" - Flat colors, no shadows.
 
