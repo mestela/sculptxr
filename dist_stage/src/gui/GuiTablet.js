@@ -1,5 +1,5 @@
-import TR from './GuiTR.js?v=fix_3';
-import Tablet from '../misc/Tablet.js?v=fix_3';
+import TR from './GuiTR.js';
+import Tablet from '../misc/Tablet.js';
 
 class GuiTablet {
 

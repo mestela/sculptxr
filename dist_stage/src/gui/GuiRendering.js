@@ -1,8 +1,8 @@
-import TR from './GuiTR.js?v=fix_3';
-import RenderData from '../mesh/RenderData.js?v=fix_3';
-import Shader from '../render/ShaderLib.js?v=fix_3';
-import getOptionsURL from '../misc/getOptionsURL.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
+import TR from './GuiTR.js';
+import RenderData from '../mesh/RenderData.js';
+import Shader from '../render/ShaderLib.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
+import Enums from '../misc/Enums.js';
 
 var ShaderMERGE = Shader[Enums.Shader.MERGE];
 var ShaderUV = Shader[Enums.Shader.UV];

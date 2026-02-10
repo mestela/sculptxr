@@ -1,5 +1,5 @@
-import TR from '../GuiTR.js?v=fix_3';
-import ReferenceManager from '../../editing/ReferenceManager.js?v=fix_3'; // Implementation needed?
+import TR from '../GuiTR.js';
+import ReferenceManager from '../../editing/ReferenceManager.js'; // Implementation needed?
 // Actually we can just implement upload logic here if simple. 
 // But Image Loading is async. 
 

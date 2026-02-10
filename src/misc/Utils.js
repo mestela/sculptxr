@@ -1,4 +1,4 @@
-import { vec3 } from '../../lib/gl-matrix-wrapper.js?v=fix_3';
+import { vec3 } from '../../lib/gl-matrix-wrapper.js';
 
 var Utils = {};
 console.log("Utils evaluating...");

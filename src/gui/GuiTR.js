@@ -1,14 +1,14 @@
-import getOptionsURL from '../misc/getOptionsURL.js?v=fix_3';
-import english from './tr/english.js?v=fix_3';
-import chinese from './tr/chinese.js?v=fix_3';
-import japanese from './tr/japanese.js?v=fix_3';
-import korean from './tr/korean.js?v=fix_3';
-import russian from './tr/russian.js?v=fix_3';
-import turkish from './tr/turkish.js?v=fix_3';
-import swedish from './tr/swedish.js?v=fix_3';
-import french from './tr/french.js?v=fix_3';
-import german from './tr/german.js?v=fix_3';
-import italian from './tr/italian.js?v=fix_3';
+import getOptionsURL from '../misc/getOptionsURL.js';
+import english from './tr/english.js';
+import chinese from './tr/chinese.js';
+import japanese from './tr/japanese.js';
+import korean from './tr/korean.js';
+import russian from './tr/russian.js';
+import turkish from './tr/turkish.js';
+import swedish from './tr/swedish.js';
+import french from './tr/french.js';
+import german from './tr/german.js';
+import italian from './tr/italian.js';
 
 var GuiTR = function (key) {
   var str = GuiTR.languages[GuiTR.select][key] || GuiTR.languages.english[key];

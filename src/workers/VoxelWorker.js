@@ -5,12 +5,12 @@
 // Import dependencies (Standard ES Modules for Workers in modern browsers)
 // We need VoxelState and SurfaceNets. 
 // Since we are in strict mode, we might need to adjust imports if they use window/DOM.
-// import { vec3 } from '../../lib/gl-matrix-wrapper.js?v=fix_3';
-// import VoxelState from '../editing/VoxelState.js?v=fix_3'; // relative path failed
-// import VoxelState from './VoxelState.js?v=fix_3'; // local copy worked
-// import VoxelState from '/src/editing/VoxelState.js?v=fix_3'; // absolute path
-import VoxelState from './VoxelState.js?v=fix_3'; // local copy (src/workers/VoxelState.js)
-import TestModule from './TestModule.js?v=fix_3';
+// import { vec3 } from '../../lib/gl-matrix-wrapper.js';
+// import VoxelState from '../editing/VoxelState.js'; // relative path failed
+// import VoxelState from './VoxelState.js'; // local copy worked
+// import VoxelState from '/src/editing/VoxelState.js'; // absolute path
+import VoxelState from './VoxelState.js'; // local copy (src/workers/VoxelState.js)
+import TestModule from './TestModule.js';
 // SurfaceNets is a static object, should import fine
 // BUT standard imports might fail if not served correctly or if they have other deps.
 // Given the project structure, let's assume standard relative imports work in Chrome/Quest.
@@ -71,8 +71,12 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
     changed = voxelState.addSphere(center, radius, color);
   }
 
-  if (changed && returnMesh) {
-    postMesh();
+  if (returnMesh) {
+    if (changed) {
+      postMesh();
+    } else {
+      self.postMessage({ type: 'MESH_UNCHANGED' });
+    }
   }
 }
 

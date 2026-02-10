@@ -1,7 +1,7 @@
-import Utils from '../../misc/Utils.js?v=fix_3';
-import Subdivision from '../../editing/Subdivision.js?v=fix_3';
-import Mesh from '../Mesh.js?v=fix_3';
-import createMeshData from '../MeshData.js?v=fix_3';
+import Utils from '../../misc/Utils.js';
+import Subdivision from '../../editing/Subdivision.js';
+import Mesh from '../Mesh.js';
+import createMeshData from '../MeshData.js';
 
 class MeshResolution extends Mesh {
 

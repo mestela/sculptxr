@@ -1,6 +1,6 @@
-import { VERSION } from './Version.js?v=fix_3';
+import { VERSION } from './Version.js';
 import { vec3 } from 'gl-matrix';
-import GuiXR from './gui/GuiXR.js?v=fix_3';
+import GuiXR from './gui/GuiXR.js';
 
 console.log("Scene Debug Module Loaded");
 

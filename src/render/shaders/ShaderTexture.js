@@ -1,5 +1,5 @@
-import ShaderBase from './ShaderBase.js?v=fix_3';
-import Attribute from '../Attribute.js?v=fix_3';
+import ShaderBase from './ShaderBase.js';
+import Attribute from '../Attribute.js';
 
 var ShaderTexture = ShaderBase.getCopy();
 ShaderTexture.vertexName = ShaderTexture.fragmentName = 'TextureUnlit';

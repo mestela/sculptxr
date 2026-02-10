@@ -15,7 +15,8 @@
         1.  Increment `index.html` version (e.g., `v0.7.272`).
         2.  Run `./deploy_beta.sh`.
         3.  **ONLY THEN** ask the user to test.
-    *   **Prohibited**: Asking "Can you test this?" without deploying.
+        4.  **ALWAYS** state the specific version number in the chat (e.g., "Deployed v0.7.280").
+    *   **Prohibited**: Asking "Can you test this?" without deploying or without stating the version.
 
 3.  **Debug Visibility**:
     *   **Rule**: `VERSION` and `Build Description` MUST be visible in VR/Screen Log.

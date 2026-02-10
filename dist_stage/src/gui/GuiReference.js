@@ -1,6 +1,6 @@
-import Enums from '../misc/Enums.js?v=fix_3';
-import TR from './GuiTR.js?v=fix_3';
-import ReferenceManager from '../editing/ReferenceManager.js?v=fix_3'; // To be created? Or just handle in GuiReference for now?
+import Enums from '../misc/Enums.js';
+import TR from './GuiTR.js';
+import ReferenceManager from '../editing/ReferenceManager.js'; // To be created? Or just handle in GuiReference for now?
 // Actually we agreed to put logic in ReferenceManager usually? 
 // But current GuiBackground handles logic directly in GuiBackground usually?
 // Let's stick to GuiReference managing the UI and maybe a simple ReferenceManager or just Scene methods.
@@ -26,7 +26,7 @@ class GuiReference {
   // Static method for VR Widgets?
   // GuiXR uses `getBackgroundWidgets` currently import from... where?
   // GuiXR imports `getBackgroundWidgets` likely from a separate file or defines it?
-  // Checked GuiXR.js: `import getBackgroundWidgets from './vr/GuiVRBackground.js?v=fix_3';` ? 
+  // Checked GuiXR.js: `import getBackgroundWidgets from './vr/GuiVRBackground.js';` ? 
   // No, `GuiXR.js` imports were not fully shown in previous view.
   // Let's check `GuiXR.js` imports.
 }

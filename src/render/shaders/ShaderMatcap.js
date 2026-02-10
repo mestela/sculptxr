@@ -1,5 +1,5 @@
-import TR from '../../gui/GuiTR.js?v=fix_3';
-import ShaderBase from './ShaderBase.js?v=fix_3';
+import TR from '../../gui/GuiTR.js';
+import ShaderBase from './ShaderBase.js';
 import { mat3, mat4 } from 'gl-matrix';
 
 var ShaderMatcap = ShaderBase.getCopy();

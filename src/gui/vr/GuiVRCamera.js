@@ -1,6 +1,6 @@
-import TR from '../GuiTR.js?v=fix_3';
-import Enums from '../../misc/Enums.js?v=fix_3';
-import StateManager from '../../states/StateManager.js?v=fix_3';
+import TR from '../GuiTR.js';
+import Enums from '../../misc/Enums.js';
+import StateManager from '../../states/StateManager.js';
 
 export default function getCameraWidgets(main) {
   const widgets = [];

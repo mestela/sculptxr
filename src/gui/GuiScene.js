@@ -1,6 +1,6 @@
-import TR from './GuiTR.js?v=fix_3';
-import Remesh from '../editing/Remesh.js?v=fix_3';
-import ShaderBase from '../render/shaders/ShaderBase.js?v=fix_3';
+import TR from './GuiTR.js';
+import Remesh from '../editing/Remesh.js';
+import ShaderBase from '../render/shaders/ShaderBase.js';
 
 class GuiScene {
 

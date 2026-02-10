@@ -1,9 +1,9 @@
 import { vec3, mat3, mat4 } from 'gl-matrix';
-import Enums from '../misc/Enums.js?v=fix_3';
-import Utils from '../misc/Utils.js?v=fix_3';
-import OctreeCell from '../math3d/OctreeCell.js?v=fix_3';
-import Shader from '../render/ShaderLib.js?v=fix_3';
-import RenderData from './RenderData.js?v=fix_3';
+import Enums from '../misc/Enums.js';
+import Utils from '../misc/Utils.js';
+import OctreeCell from '../math3d/OctreeCell.js';
+import Shader from '../render/ShaderLib.js';
+import RenderData from './RenderData.js';
 
 /*
 Basic usage:
@@ -75,6 +75,10 @@ class Mesh {
 
   setMaterials(mAr) {
     this._meshData._materialsPBR = mAr;
+  }
+
+  setNormals(nAr) {
+    this._meshData._normalsXYZ = nAr;
   }
 
   setVerticesDuplicateStartCount(startCount) {
@@ -679,6 +683,71 @@ class Mesh {
       }
     }
     return new Uint32Array(verts.subarray(0, acc));
+  }
+
+  /** Update a group of faces aabb only */
+  updateFacesAabb(iFaces) {
+    var faceBoxes = this.getFaceBoxes();
+    var faceCenters = this.getFaceCenters();
+    var vAr = this.getVertices();
+    var fAr = this.getFaces();
+
+    var full = iFaces === undefined;
+    var nbFaces = full ? this.getNbFaces() : iFaces.length;
+    for (var i = 0; i < nbFaces; ++i) {
+      var ind = full ? i : iFaces[i];
+      var idTri = ind * 3;
+      var idFace = ind * 4;
+      var idBox = ind * 6;
+      var ind1 = fAr[idFace] * 3;
+      var ind2 = fAr[idFace + 1] * 3;
+      var ind3 = fAr[idFace + 2] * 3;
+      var ind4 = fAr[idFace + 3];
+      var isQuad = ind4 !== Utils.TRI_INDEX;
+      if (isQuad) ind4 *= 3;
+
+      var v1x = vAr[ind1];
+      var v1y = vAr[ind1 + 1];
+      var v1z = vAr[ind1 + 2];
+      var v2x = vAr[ind2];
+      var v2y = vAr[ind2 + 1];
+      var v2z = vAr[ind2 + 2];
+      var v3x = vAr[ind3];
+      var v3y = vAr[ind3 + 1];
+      var v3z = vAr[ind3 + 2];
+
+      // compute boxes
+      var xmin = v1x < v2x ? v1x < v3x ? v1x : v3x : v2x < v3x ? v2x : v3x;
+      var xmax = v1x > v2x ? v1x > v3x ? v1x : v3x : v2x > v3x ? v2x : v3x;
+      var ymin = v1y < v2y ? v1y < v3y ? v1y : v3y : v2y < v3y ? v2y : v3y;
+      var ymax = v1y > v2y ? v1y > v3y ? v1y : v3y : v2y > v3y ? v2y : v3y;
+      var zmin = v1z < v2z ? v1z < v3z ? v1z : v3z : v2z < v3z ? v2z : v3z;
+      var zmax = v1z > v2z ? v1z > v3z ? v1z : v3z : v2z > v3z ? v2z : v3z;
+
+      if (isQuad) {
+        var v4x = vAr[ind4];
+        var v4y = vAr[ind4 + 1];
+        var v4z = vAr[ind4 + 2];
+        if (v4x < xmin) xmin = v4x;
+        if (v4x > xmax) xmax = v4x;
+        if (v4y < ymin) ymin = v4y;
+        if (v4y > ymax) ymax = v4y;
+        if (v4z < zmin) zmin = v4z;
+        if (v4z > zmax) zmax = v4z;
+      }
+
+      // boxes
+      faceBoxes[idBox] = xmin;
+      faceBoxes[idBox + 1] = ymin;
+      faceBoxes[idBox + 2] = zmin;
+      faceBoxes[idBox + 3] = xmax;
+      faceBoxes[idBox + 4] = ymax;
+      faceBoxes[idBox + 5] = zmax;
+      // compute centers
+      faceCenters[idTri] = (xmin + xmax) * 0.5;
+      faceCenters[idTri + 1] = (ymin + ymax) * 0.5;
+      faceCenters[idTri + 2] = (zmin + zmax) * 0.5;
+    }
   }
 
   /** Update a group of faces normal and aabb */

@@ -1,7 +1,7 @@
 import { mat4, vec3 } from 'gl-matrix';
-import MeshStatic from '../mesh/meshStatic/MeshStatic.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
-import Primitives from './Primitives.js?v=fix_3';
+import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
+import Enums from '../misc/Enums.js';
+import Primitives from './Primitives.js';
 
 class Gnomon {
 

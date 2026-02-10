@@ -1,7 +1,7 @@
 import { mat4, vec3, mat3 } from 'gl-matrix';
-import Buffer from '../render/Buffer.js?v=fix_3';
-import ShaderLib from '../render/ShaderLib.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
+import Buffer from '../render/Buffer.js';
+import ShaderLib from '../render/ShaderLib.js';
+import Enums from '../misc/Enums.js';
 
 // Helper Class for 3D Cursor
 class CursorMesh {

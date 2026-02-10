@@ -1,8 +1,8 @@
-import MeshResolution from './MeshResolution.js?v=fix_3';
-import Mesh from '../Mesh.js?v=fix_3';
-import Buffer from '../../render/Buffer.js?v=fix_3';
-import Subdivision from '../../editing/Subdivision.js?v=fix_3';
-import Reversion from '../../editing/Reversion.js?v=fix_3';
+import MeshResolution from './MeshResolution.js';
+import Mesh from '../Mesh.js';
+import Buffer from '../../render/Buffer.js';
+import Subdivision from '../../editing/Subdivision.js';
+import Reversion from '../../editing/Reversion.js';
 
 class Multimesh extends Mesh {
 

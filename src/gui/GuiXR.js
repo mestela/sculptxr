@@ -1,32 +1,32 @@
-import Enums from '../misc/Enums.js?v=fix_3';
+import Enums from '../misc/Enums.js';
 
-import TR from './GuiTR.js?v=fix_3';
-import Export from '../files/Export.js?v=fix_3';
+import TR from './GuiTR.js';
+import Export from '../files/Export.js';
 import { saveAs } from 'file-saver';
-import Shader from '../render/ShaderLib.js?v=fix_3';
-import Utils from '../misc/Utils.js?v=fix_3';
+import Shader from '../render/ShaderLib.js';
+import Utils from '../misc/Utils.js';
 import { vec3 } from 'gl-matrix';
 
 // Modular Imports - Relative with explicit extensions to bypass map issues
-import getToolsWidgets from './vr/GuiVRTools.js?v=fix_3';
-import getSceneWidgets from './vr/GuiVRScene.js?v=fix_3';
-import getRenderingWidgets from './vr/GuiVRRendering.js?v=fix_3';
-import getFilesWidgets from './vr/GuiVRFiles.js?v=fix_3';
-import getHistoryWidgets from './vr/GuiVRHistory.js?v=fix_3';
-import getReferenceWidgets from './vr/GuiVRReference.js?v=fix_3'; // Replaces Background
-import getCameraWidgets from './vr/GuiVRCamera.js?v=fix_3';
-import getTabletWidgets from './vr/GuiVRTablet.js?v=fix_3';
-import getLanguageWidgets from './vr/GuiVRLanguage.js?v=fix_3';
-import getExtraUIWidgets from './vr/GuiVRExtraUI.js?v=fix_3';
-import getAboutWidgets from './vr/GuiVRAbout.js?v=fix_3';
-import getTopologyWidgets from './vr/GuiVRTopology.js?v=fix_3';
-import Tablet from '../misc/Tablet.js?v=fix_3';
+import getToolsWidgets from './vr/GuiVRTools.js';
+import getSceneWidgets from './vr/GuiVRScene.js';
+import getRenderingWidgets from './vr/GuiVRRendering.js';
+import getFilesWidgets from './vr/GuiVRFiles.js';
+import getHistoryWidgets from './vr/GuiVRHistory.js';
+import getReferenceWidgets from './vr/GuiVRReference.js'; // Replaces Background
+import getCameraWidgets from './vr/GuiVRCamera.js';
+import getTabletWidgets from './vr/GuiVRTablet.js';
+import getLanguageWidgets from './vr/GuiVRLanguage.js';
+import getExtraUIWidgets from './vr/GuiVRExtraUI.js';
+import getAboutWidgets from './vr/GuiVRAbout.js';
+import getTopologyWidgets from './vr/GuiVRTopology.js';
+import Tablet from '../misc/Tablet.js';
 
 // Direct access for property setters
-import MeshDynamic from '../mesh/dynamic/MeshDynamic.js?v=fix_3';
-import Remesh from '../editing/Remesh.js?v=fix_3';
-import ShaderBase from '../render/shaders/ShaderBase.js?v=fix_3';
-import StateManager from '../states/StateManager.js?v=fix_3';
+import MeshDynamic from '../mesh/dynamic/MeshDynamic.js';
+import Remesh from '../editing/Remesh.js';
+import ShaderBase from '../render/shaders/ShaderBase.js';
+import StateManager from '../states/StateManager.js';
 
 const TAB_HEIGHT = 68; // Increased from 52 (+30%)
 const TAB_ROWS = 3; // Rows of tabs

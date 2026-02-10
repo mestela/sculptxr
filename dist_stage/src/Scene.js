@@ -1,33 +1,32 @@
 import { vec3, mat4, quat } from 'gl-matrix';
-import getOptionsURL from './misc/getOptionsURL.js?v=fix_3';
-import Enums from './misc/Enums.js?v=fix_3';
-import { VERSION } from './Version.js?v=fix_3';
-import Utils from './misc/Utils.js?v=fix_3';
-import SculptManager from './editing/SculptManager.js?v=fix_3';
-import Subdivision from './editing/Subdivision.js?v=fix_3';
-import Import from './files/Import.js?v=fix_3';
-import Gui from './gui/Gui.js?v=fix_3';
-import Camera from './math3d/Camera.js?v=fix_3';
-import Picking from './math3d/Picking.js?v=fix_3';
-import Background from './drawables/Background.js?v=fix_3';
-import Mesh from './mesh/Mesh.js?v=fix_3';
-import Multimesh from './mesh/multiresolution/Multimesh.js?v=fix_3';
-import Primitives from './drawables/Primitives.js?v=fix_3';
-import StateManager from './states/StateManager.js?v=fix_3';
-import RenderData from './mesh/RenderData.js?v=fix_3';
-import Rtt from './drawables/Rtt.js?v=fix_3';
-import ShaderLib from './render/ShaderLib.js?v=fix_3';
-import MeshStatic from './mesh/meshStatic/MeshStatic.js?v=fix_3';
-import WebGLCaps from './render/WebGLCaps.js?v=fix_3';
-import GuiXR from './gui/GuiXR.js?v=fix_3';
-import VRMenu from './drawables/VRMenu.js?v=fix_3';
-import VRLaser from './drawables/VRLaser.js?v=fix_3';
+import getOptionsURL from './misc/getOptionsURL.js';
+import Enums from './misc/Enums.js';
+import { VERSION } from './Version.js';
+import Utils from './misc/Utils.js';
+import SculptManager from './editing/SculptManager.js';
+import Subdivision from './editing/Subdivision.js';
+import Import from './files/Import.js';
+import Gui from './gui/Gui.js';
+import Camera from './math3d/Camera.js';
+import Picking from './math3d/Picking.js';
+import Background from './drawables/Background.js';
+import Mesh from './mesh/Mesh.js';
+import Multimesh from './mesh/multiresolution/Multimesh.js';
+import Primitives from './drawables/Primitives.js';
+import StateManager from './states/StateManager.js';
+import RenderData from './mesh/RenderData.js';
+import Rtt from './drawables/Rtt.js';
+import ShaderLib from './render/ShaderLib.js';
+import MeshStatic from './mesh/meshStatic/MeshStatic.js';
+import WebGLCaps from './render/WebGLCaps.js';
+import GuiXR from './gui/GuiXR.js';
+import VRMenu from './drawables/VRMenu.js';
+import VRLaser from './drawables/VRLaser.js';
 
 
 class Scene {
 
   constructor() {
-    console.log("SCENE CONSTRUCTOR RUNNING");
     this._gl = null; // webgl context
 
     this._cameraSpeed = 0.25;
@@ -207,9 +206,7 @@ class Scene {
 
     var modelURL = getOptionsURL().modelurl;
     if (modelURL) this.addModelURL(modelURL);
-    else {
-      // this.addSphere(); // [USER REQUEST] Default sphere disabled for Voxel Engine focus
-    }
+    else this.addSphere(); // [USER REQUEST] Default sphere re-enabled
 
     // [DEBUG] Visualize Sphere Lift Target
     // this.updateDebugPivot([0, 1.3, -0.5], true);
@@ -379,23 +376,13 @@ class Scene {
     // We only want a WebGLFramebuffer or null.
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
 
-    var gl = this._gl;
-    if (!gl) return;
-
-    var err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] Pre-render Error Err:${err}`);
-
     this._preventRender = false;
     this.updateMatricesAndSort();
 
-    err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] Post-UpdateMatrices Error Err:${err}`);
+    var gl = this._gl;
+    if (!gl) return;
 
-    if (this._drawFullScene) {
-      this._drawScene();
-      err = gl.getError();
-      if (err !== gl.NO_ERROR) console.error(`[Scene] Post-DrawScene Error Err:${err}`);
-    }
+    if (this._drawFullScene) this._drawScene();
 
     gl.disable(gl.DEPTH_TEST);
 
@@ -682,9 +669,6 @@ class Scene {
 
   _drawScene() {
     var gl = this._gl;
-    var err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] _drawScene Start Error Err:${err}`);
-
     var i = 0;
     var meshes = this._meshes;
     var nbMeshes = meshes.length;
@@ -702,9 +686,6 @@ class Scene {
     }
     gl.enable(gl.DEPTH_TEST);
 
-    err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] Post-Contour Error Err:${err}`);
-
     ///////////////
     // OPAQUE PASS
     ///////////////
@@ -713,50 +694,23 @@ class Scene {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
 
-    err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] Post-OpaqueBind Error Err:${err}`);
-
     // grid
-    if (this._showGrid && this._grid) {
-      this._grid.render(this);
-      err = gl.getError();
-      if (err !== gl.NO_ERROR) console.error(`[Scene] Post-Grid Error Err:${err}`);
-    }
+    if (this._showGrid && this._grid) this._grid.render(this);
 
     // VR Controllers
-    if (this._vrControllerLeft) {
-      this._vrControllerLeft.render(this);
-      err = gl.getError();
-      if (err !== gl.NO_ERROR) console.error(`[Scene] Post-VRLeft Error Err:${err}`);
-    }
-    if (this._vrControllerRight) {
-      this._vrControllerRight.render(this);
-      err = gl.getError();
-      if (err !== gl.NO_ERROR) console.error(`[Scene] Post-VRRight Error Err:${err}`);
-    }
+    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
+    if (this._vrControllerRight) this._vrControllerRight.render(this);
 
     // (post opaque pass)
     for (i = 0; i < nbMeshes; ++i) {
       if (meshes[i].isTransparent()) break;
       meshes[i].render(this);
     }
-
-    err = gl.getError();
-    if (err !== gl.NO_ERROR) console.error(`[Scene] Post-MainMeshes Error Err:${err}`);
-
     var startTransparent = i;
-    // console.warn(`[Scene] StartTransparent Index:${startTransparent} NbMeshes:${nbMeshes}`);
-
-    if (this._meshPreview) {
-      this._meshPreview.render(this);
-      if ((err = gl.getError()) !== gl.NO_ERROR) console.error(`[Scene] Post-MeshPreview Error Err:${err}`);
-    }
+    if (this._meshPreview) this._meshPreview.render(this);
 
     // background
-    if (this._background) {
-      this._background.render();
-      if ((err = gl.getError()) !== gl.NO_ERROR) console.error(`[Scene] Post-Background Error Err:${err}`);
-    }
+    if (this._background) this._background.render();
 
     ///////////////
     // TRANSPARENT PASS
@@ -774,9 +728,6 @@ class Scene {
       if (meshes[i].getShowWireframe())
         meshes[i].renderWireframe(this);
     }
-
-    if ((err = gl.getError()) !== gl.NO_ERROR) console.error(`[Scene] Post-Wireframe Error Err:${err}`);
-
     gl.depthFunc(gl.LEQUAL);
 
     gl.depthMask(false);
@@ -788,8 +739,6 @@ class Scene {
       gl.cullFace(gl.BACK); // ... and then front
       meshes[i].render(this);
     }
-
-    if ((err = gl.getError()) !== gl.NO_ERROR) console.error(`[Scene] Post-Transparent Error Err:${err}`);
 
     gl.disable(gl.CULL_FACE);
 
@@ -1016,7 +965,6 @@ class Scene {
 
   addNewMesh(mesh) {
     this._meshes.push(mesh);
-    // console.log(`[Scene] Added Mesh ID:${mesh.getID()} Type:${mesh.constructor.name}`);
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
     return mesh;

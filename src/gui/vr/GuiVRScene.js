@@ -1,5 +1,5 @@
-import ShaderBase from '../../render/shaders/ShaderBase.js?v=fix_3';
-import Remesh from '../../editing/Remesh.js?v=fix_3';
+import ShaderBase from '../../render/shaders/ShaderBase.js';
+import Remesh from '../../editing/Remesh.js';
 
 export default function getSceneWidgets(main) {
   const widgets = [];

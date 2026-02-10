@@ -1,12 +1,12 @@
-import SculptBase from './SculptBase.js?v=fix_3';
-// import VoxelState from '../VoxelState.js?v=fix_3'; // Worker only now
-import MeshStatic from '../../mesh/meshStatic/MeshStatic.js?v=fix_3';
-import Multimesh from '../../mesh/multiresolution/Multimesh.js?v=fix_3';
+import SculptBase from './SculptBase.js';
+// import VoxelState from '../VoxelState.js'; // Worker only now
+import MeshStatic from '../../mesh/meshStatic/MeshStatic.js';
+import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import { vec3, mat4 } from 'gl-matrix';
-import Utils from '../../misc/Utils.js?v=fix_3';
-import Primitives from '../../drawables/Primitives.js?v=fix_3';
-import Enums from '../../misc/Enums.js?v=fix_3';
-import Geometry from '../../math3d/Geometry.js?v=fix_3';
+import Utils from '../../misc/Utils.js';
+import Primitives from '../../drawables/Primitives.js';
+import Enums from '../../misc/Enums.js';
+import Geometry from '../../math3d/Geometry.js';
 
 class SculptVoxel extends SculptBase {
 
@@ -44,6 +44,14 @@ class SculptVoxel extends SculptBase {
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
 
+        // If an update was requested while we were busy, request it now
+        if (this._meshRequested) {
+          this._meshRequested = false;
+          this._pendingMeshUpdate = true;
+          this._worker.postMessage({ type: 'GET_MESH' });
+        }
+      } else if (msg.type === 'MESH_UNCHANGED') {
+        this._pendingMeshUpdate = false;
         // If an update was requested while we were busy, request it now
         if (this._meshRequested) {
           this._meshRequested = false;

@@ -1,11 +1,11 @@
-import Utils from '../misc/Utils.js?v=fix_3';
-import StAddRemove from './StateAddRemove.js?v=fix_3';
-import StColorAndMaterial from './StateColorAndMaterial.js?v=fix_3';
-import StGeometry from './StateGeometry.js?v=fix_3';
-import StDynamic from './StateDynamic.js?v=fix_3';
-import StMultiresolution from './StateMultiresolution.js?v=fix_3';
-import StCustom from './StateCustom.js?v=fix_3';
-import StVoxel from './StateVoxel.js?v=fix_3';
+import Utils from '../misc/Utils.js';
+import StAddRemove from './StateAddRemove.js';
+import StColorAndMaterial from './StateColorAndMaterial.js';
+import StGeometry from './StateGeometry.js';
+import StDynamic from './StateDynamic.js';
+import StMultiresolution from './StateMultiresolution.js';
+import StCustom from './StateCustom.js';
+import StVoxel from './StateVoxel.js';
 
 class StateManager {
 

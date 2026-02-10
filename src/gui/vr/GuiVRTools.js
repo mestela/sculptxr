@@ -1,7 +1,7 @@
-import Enums from '../../misc/Enums.js?v=fix_3';
-import TR from '../GuiTR.js?v=fix_3';
-import Tools from '../../editing/tools/Tools.js?v=fix_3';
-import Picking from '../../math3d/Picking.js?v=fix_3';
+import Enums from '../../misc/Enums.js';
+import TR from '../GuiTR.js';
+import Tools from '../../editing/tools/Tools.js';
+import Picking from '../../math3d/Picking.js';
 import { vec3 } from 'gl-matrix';
 
 export default function getToolsWidgets(main, activeToolIndex) {

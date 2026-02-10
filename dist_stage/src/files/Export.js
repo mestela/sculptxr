@@ -1,10 +1,10 @@
-import ExportOBJ from './ExportOBJ.js?v=fix_3';
-import ExportSGL from './ExportSGL.js?v=fix_3';
-import ExportPLY from './ExportPLY.js?v=fix_3';
-import ExportSTL from './ExportSTL.js?v=fix_3';
-import ExportSketchfab from './ExportSketchfab.js?v=fix_3';
-import ExportSculpteo from './ExportSculpteo.js?v=fix_3';
-import ExportMaterialise from './ExportMaterialise.js?v=fix_3';
+import ExportOBJ from './ExportOBJ.js';
+import ExportSGL from './ExportSGL.js';
+import ExportPLY from './ExportPLY.js';
+import ExportSTL from './ExportSTL.js';
+import ExportSketchfab from './ExportSketchfab.js';
+import ExportSculpteo from './ExportSculpteo.js';
+import ExportMaterialise from './ExportMaterialise.js';
 
 var Export = {};
 Export.exportOBJ = ExportOBJ.exportOBJ;

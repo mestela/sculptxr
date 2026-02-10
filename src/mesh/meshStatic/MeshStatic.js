@@ -1,8 +1,8 @@
-import Mesh from '../Mesh.js?v=fix_3';
-import TransformData from '../TransformData.js?v=fix_3';
-import MeshData from '../MeshData.js?v=fix_3';
-import RenderData from '../RenderData.js?v=fix_3';
-import Enums from '../../misc/Enums.js?v=fix_3';
+import Mesh from '../Mesh.js';
+import TransformData from '../TransformData.js';
+import MeshData from '../MeshData.js';
+import RenderData from '../RenderData.js';
+import Enums from '../../misc/Enums.js';
 
 class MeshStatic extends Mesh {
 
@@ -15,6 +15,7 @@ class MeshStatic extends Mesh {
     this._meshData = new MeshData();
     this._transformData = new TransformData();
   }
+
 
   setShaderType(type) {
     if (this._isVoxel && type !== Enums.Shader.FLAT && type !== Enums.Shader.WIREFRAME) type = Enums.Shader.FLAT;

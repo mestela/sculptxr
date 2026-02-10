@@ -1,12 +1,12 @@
-import TR from './GuiTR.js?v=fix_3';
+import TR from './GuiTR.js';
 import { saveAs } from 'file-saver';
 import { zip } from 'zip';
-import Export from '../files/Export.js?v=fix_3';
+import Export from '../files/Export.js';
 
-import Rtt from '../drawables/Rtt.js?v=fix_3';
-import ShaderPaintUV from '../render/shaders/ShaderPaintUV.js?v=fix_3';
-import ShaderBlur from '../render/shaders/ShaderBlur.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
+import Rtt from '../drawables/Rtt.js';
+import ShaderPaintUV from '../render/shaders/ShaderPaintUV.js';
+import ShaderBlur from '../render/shaders/ShaderBlur.js';
+import Enums from '../misc/Enums.js';
 
 class GuiFiles {
 

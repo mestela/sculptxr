@@ -1,4 +1,4 @@
-import Enums from './Enums.js?v=fix_3';
+import Enums from './Enums.js';
 
 var keyAction = Enums.KeyAction;
 

@@ -1,4 +1,4 @@
-import Enums from '../../misc/Enums.js?v=fix_3';
+import Enums from '../../misc/Enums.js';
 
 export default function getSettingsWidgets(main) {
   const widgets = [];

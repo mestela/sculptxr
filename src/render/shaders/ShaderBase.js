@@ -1,9 +1,9 @@
 import { vec3 } from 'gl-matrix';
-import getOptionsURL from '../../misc/getOptionsURL.js?v=fix_3';
-import Utils from '../../misc/Utils.js?v=fix_3';
-import Attribute from '../Attribute.js?v=fix_3';
-import colorSpaceGLSL from './glsl/colorSpace.glsl.js?v=fix_3';
-import curvatureGLSL from './glsl/curvature.glsl.js?v=fix_3';
+import getOptionsURL from '../../misc/getOptionsURL.js';
+import Utils from '../../misc/Utils.js';
+import Attribute from '../Attribute.js';
+import colorSpaceGLSL from './glsl/colorSpace.glsl.js';
+import curvatureGLSL from './glsl/curvature.glsl.js';
 
 var ShaderBase = {};
 ShaderBase.vertexName = 'VertexName';

@@ -1,7 +1,7 @@
 import { mat3, mat4, vec3 } from 'gl-matrix';
-import Buffer from '../render/Buffer.js?v=fix_3';
-import ShaderLib from '../render/ShaderLib.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
+import Buffer from '../render/Buffer.js';
+import ShaderLib from '../render/ShaderLib.js';
+import Enums from '../misc/Enums.js';
 
 var _TMP_MATPV = mat4.create();
 var _TMP_MAT = mat4.create();
@@ -133,7 +133,7 @@ class Selection {
     var mesh = picking.getMesh();
     var constRadius = DOT_RADIUS * (worldRadius / screenRadius);
 
-    picking.polyLerp(mesh.getNormals(), _TMP_AXIS);
+    vec3.copy(_TMP_AXIS, picking.computePickedNormal());
     vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
     vec3.normalize(_TMP_AXIS, _TMP_AXIS);
     var rad = Math.acos(vec3.dot(_BASE, _TMP_AXIS));
@@ -200,7 +200,7 @@ class Selection {
     var mesh = picking.getMesh();
 
     // 1. Get Surface Normal
-    picking.polyLerp(mesh.getNormals(), _TMP_AXIS);
+    vec3.copy(_TMP_AXIS, picking.computePickedNormal());
     vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
     vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 
@@ -234,7 +234,7 @@ class Selection {
       var pickingSym = main.getPickingSymmetry();
       if (pickingSym.getMesh()) {
         // Calculate Sym Normal
-        pickingSym.polyLerp(mesh.getNormals(), _TMP_AXIS);
+        vec3.copy(_TMP_AXIS, pickingSym.computePickedNormal());
         vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
         vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 

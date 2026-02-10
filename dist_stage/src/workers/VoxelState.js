@@ -1,7 +1,7 @@
-import { vec3 } from '../../lib/gl-matrix-wrapper.js?v=fix_3';
-import Utils from '../misc/Utils.js?v=fix_3';
-// import MarchingCubes from '../editing/MarchingCubes.js?v=fix_3';
-import SurfaceNets from '../editing/SurfaceNets.js?v=fix_3';
+import { vec3 } from '../../lib/gl-matrix-wrapper.js';
+import Utils from '../misc/Utils.js';
+// import MarchingCubes from '../editing/MarchingCubes.js';
+import SurfaceNets from '../editing/SurfaceNets.js';
 
 class VoxelState {
 

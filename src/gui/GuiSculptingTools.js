@@ -1,9 +1,9 @@
 import { vec3 } from 'gl-matrix';
-import Tools from '../editing/tools/Tools.js?v=fix_3';
-import TR from './GuiTR.js?v=fix_3';
-import Picking from '../math3d/Picking.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
-import Utils from '../misc/Utils.js?v=fix_3';
+import Tools from '../editing/tools/Tools.js';
+import TR from './GuiTR.js';
+import Picking from '../math3d/Picking.js';
+import Enums from '../misc/Enums.js';
+import Utils from '../misc/Utils.js';
 
 var GuiSculptingTools = {};
 GuiSculptingTools.tools = [];

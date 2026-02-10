@@ -1,4 +1,4 @@
-import ShaderBase from './ShaderBase.js?v=fix_3';
+import ShaderBase from './ShaderBase.js';
 
 var ShaderWireframe = ShaderBase.getCopy();
 ShaderWireframe.vertexName = ShaderWireframe.fragmentName = 'Wireframe';

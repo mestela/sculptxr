@@ -1,8 +1,8 @@
 import { vec2, vec3, mat3, mat4, quat } from 'gl-matrix';
-import getOptionsURL from '../misc/getOptionsURL.js?v=fix_3';
-import Enums from '../misc/Enums.js?v=fix_3';
-import Utils from '../misc/Utils.js?v=fix_3';
-import Geometry from './Geometry.js?v=fix_3';
+import getOptionsURL from '../misc/getOptionsURL.js';
+import Enums from '../misc/Enums.js';
+import Utils from '../misc/Utils.js';
+import Geometry from './Geometry.js';
 
 var easeOutQuart = function (r) {
   r = Math.min(1.0, r) - 1.0;

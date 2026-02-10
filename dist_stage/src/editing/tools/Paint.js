@@ -1,6 +1,6 @@
 import { vec3 } from 'gl-matrix';
-import Tablet from '../../misc/Tablet.js?v=fix_3';
-import SculptBase from './SculptBase.js?v=fix_3';
+import Tablet from '../../misc/Tablet.js';
+import SculptBase from './SculptBase.js';
 
 class Paint extends SculptBase {
 
