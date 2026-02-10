@@ -443,9 +443,14 @@ class Mesh {
       this._meshData._materialsPBR = tmp;
 
     } else {
-      this._meshData._normalsXYZ = this._meshData._normalsXYZ || new Float32Array(nbVertices * 3);
-      this._meshData._colorsRGB = this._meshData._colorsRGB || new Float32Array(nbVertices * 3);
-      this._meshData._materialsPBR = this._meshData._materialsPBR || new Float32Array(nbVertices * 3);
+      if (!this._meshData._normalsXYZ || this._meshData._normalsXYZ.length !== nbVertices * 3)
+        this._meshData._normalsXYZ = new Float32Array(nbVertices * 3);
+
+      if (!this._meshData._colorsRGB || this._meshData._colorsRGB.length !== nbVertices * 3)
+        this._meshData._colorsRGB = new Float32Array(nbVertices * 3);
+
+      if (!this._meshData._materialsPBR || this._meshData._materialsPBR.length !== nbVertices * 3)
+        this._meshData._materialsPBR = new Float32Array(nbVertices * 3);
     }
 
     this._meshData._vertOnEdge = new Uint8Array(nbVertices);

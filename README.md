@@ -20,6 +20,10 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.259**: **GL Error Fix**:
+    - **Fix**: **Mesh Allocation**: Resolved `GL_INVALID_OPERATION` by fixing buffer resizing logic.
+    - **Optimization**: **Buffer Updates**: Optimized Dynamic Buffer updates.
+
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.

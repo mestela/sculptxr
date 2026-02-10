@@ -18,26 +18,30 @@
     *   Use `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
 
 ## Current Focus:
-**Performance Optimization (Voxel Sculpting)**
-*   **Goal**: Reduce frame drops during voxel strokes.
-*   **Status**: Initial optimizations deployed (v0.7.258). Pending user verification.
-*   **Optimizations Applied**:
-    *   Disabled `gl.getError` (37% frame time).
-    *   Skipped `initEdges`/`initVertexRings` in Voxel Mesh updates (~15% frame time).
-*   **Next Steps**:
-    *   Profile again. If still slow, investigate `updateFacesAabbAndNormal` (next hotspot).
+**Voxel Architecture Revamp (Greenfield)**
+*   **Goal**: Move away from monolithic `SculptVoxel.js` + `VoxelWorker.js` to a clean, scalable async architecture.
+*   **Status**: Planning.
+*   **Context**:
+    *   Current Voxel implementation is a mix of old SculptGL code and new Worker logic.
+    *   Need to support larger grids (infinite/chunked?) and cleaner state management.
+*   **Immediate Next Steps**:
+    *   Refactor `SculptVoxel.js` to be a thin client.
+    *   Design `VoxelEngine` (Worker-side) to handle chunks.
+
+## Completed Tasks:
+*   **Performance (GL)**: Fixed `GL_INVALID_OPERATION` 1282 and `Mesh.allocateArrays` bug (v0.7.259).
+*   **Performance**: Optimized Voxel Mesh updates (v0.7.258).
+*   **Offset**: Fixed Voxel Bake Offset (v0.7.257).
+*   **Rendering**: Fixed Black Artifacts and GL Errors (v0.7.175).
 
 ## Outstanding Issues:
-*   **Bounds**: Current fixed grid (256^3) is too small and memory-heavy for expansion.
-*   **Greenfield**: SculptGL is 100% Pure JS. No existing Workers or WASM to leverage. We are building the async architecture from scratch.
+*   **Bounds**: Fixed grid (256^3) is too limiting.
+*   **Memory**: Large grids consume too much RAM. Need sparse/chunked storage.
 
-## Implementation Steps (Performance):
-1.  **Verify**: Check if v0.7.258 resolves frame drops.
-2.  **Optimize**:
-    *   Avoid re-uploading unchanged buffers? (Dynamic Draw is already set).
-    *   Throttle `MESH_UPDATE` frequency?
-    *   Offload Normal computation to Worker? (SurfaceNets produces faces, but normals are computed on Main Thread).
-3.  **Verify**: Ensure 72/90Hz consistency in VR.
+## Implementation Steps (Greenfield):
+1.  **Design**: Define `Chunk` structure and `VoxelManager`.
+2.  **Prototype**: Create `VoxelEngine` worker that manages chunks.
+3.  **Migration**: Port `SculptVoxel` to use new engine.
 
 ## Deployment
 *   **PROD**: `./deploy.sh`

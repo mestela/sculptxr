@@ -30,17 +30,18 @@ class Buffer {
     if (nbElts !== undefined && nbElts !== data.length)
       data = data.subarray(0, nbElts);
 
-    if (data.length > this._size) {
+    // OPTIMIZATION: Always orphan/reallocate for DYNAMIC_DRAW to avoid synchronization stalls
+    if (data.length > this._size || this._hint === this._gl.DYNAMIC_DRAW) {
       this._gl.bufferData(this._type, data, this._hint);
       this._size = data.length;
     } else {
       this._gl.bufferSubData(this._type, 0, data);
     }
 
-    var err = this._gl.getError();
-    if (err !== this._gl.NO_ERROR) {
-      console.error(`[Buffer] GL Error during update: ${err} Tag:${this._tag} Type:${this._type} Size:${this._size} DataLen:${data ? data.length : 'null'}`);
-    }
+    // var err = this._gl.getError();
+    // if (err !== this._gl.NO_ERROR) {
+    //   console.error(`[Buffer] GL Error during update: ${err} Tag:${this._tag} Type:${this._type} Size:${this._size} DataLen:${data ? data.length : 'null'}`);
+    // }
   }
 }
 
