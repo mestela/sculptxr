@@ -1,35 +1,29 @@
 
 class StateVoxel {
 
-  constructor(main, voxelState) {
+  constructor(main, tool) {
     this._main = main;
-    this._voxelState = voxelState;
-    // Snapshot the Distance Field (Deep Copy)
-    this._distanceField = new Float32Array(voxelState.getDistanceField());
+    this._tool = tool; // Store reference to tool (which holds the worker)
   }
 
   isNoop() {
-    return this._distanceField.length === 0;
+    return false;
   }
 
   undo() {
-    this._voxelState.setDistanceField(this._distanceField);
-    // Find the tool and force update?
-    // Ideally VoxelState should emit change or we call tool update.
-    // Let's assume global tool or Main access?
-    // Accessing via Global for now as VoxelTool is singleton-ish in this context
-    if (window.voxelTool) {
-      window.voxelTool.updateMesh();
-      window.voxelTool._main.render();
+    if (this._tool && this._tool._worker) {
+      this._tool._worker.postMessage({ type: 'UNDO' });
     }
   }
 
   redo() {
-    this.undo();
+    if (this._tool && this._tool._worker) {
+      this._tool._worker.postMessage({ type: 'REDO' });
+    }
   }
 
   createRedo() {
-    return new StateVoxel(this._main, this._voxelState);
+    return new StateVoxel(this._main, this._tool);
   }
 }
 

@@ -54,8 +54,8 @@ class StateManager {
     this.pushState(new StMultiresolution(this._main, multimesh, type));
   }
 
-  pushStateVoxel(voxelState) {
-    this.pushState(new StVoxel(this._main, voxelState));
+  pushStateVoxel(tool) {
+    this.pushState(new StVoxel(this._main, tool));
   }
 
   setNewMaxStack(maxStack) {

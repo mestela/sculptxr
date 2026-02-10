@@ -6,9 +6,10 @@ import SurfaceNets from '../editing/SurfaceNets.js';
 class VoxelState {
 
   constructor(res = 128, size = 200.0) {
-    console.log("VoxelState: Constructor Start");
-    this._resolution = res;
-    this._size = size; // Physical size of the box (200.0 meters)
+    console.log(`VoxelState: Constructor Start (Res=${res}, Size=${size})`);
+    try {
+      this._resolution = res;
+      this._size = size; // Physical size of the box (200.0 meters)
 
     // Centered at (0, 0, 0) - full scene coverage
     this._min = [-size * 0.5, -size * 0.5, -size * 0.5];
@@ -45,6 +46,10 @@ class VoxelState {
     this._voxels.materialField.fill(0.2); // Rougness?
 
     console.log("VoxelState: Constructor End");
+    } catch (e) {
+      console.error("VoxelState: Constructor Failed", e);
+      throw e;
+    }
   }
 
   get min() { return this._min; }
@@ -58,6 +63,15 @@ class VoxelState {
     // Reset Bounds to Inverted
     this._activeMin.set([this._resolution, this._resolution, this._resolution]);
     this._activeMax.set([0, 0, 0]);
+  }
+
+  // Unified Edit Wrapper
+  editSphere(center, radius, color, isNegative) {
+    if (isNegative) {
+      return this.subtractSphere(center, radius);
+    } else {
+      return this.addSphere(center, radius, color);
+    }
   }
 
   // Boolean Union: min(existing, new)

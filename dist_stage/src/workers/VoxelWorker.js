@@ -1,34 +1,70 @@
+// VoxelWorker.js - Dynamic Import Version
+// This enables us to catch import errors (404, syntax, etc) which otherwise silent-fail the worker.
 
-// VoxelWorker.js
-// Runs VoxelState and SurfaceNets in a background thread.
+console.log("VoxelWorker: Script Loading... (Dynamic)");
 
-// Import dependencies (Standard ES Modules for Workers in modern browsers)
-// We need VoxelState and SurfaceNets. 
-// Since we are in strict mode, we might need to adjust imports if they use window/DOM.
-// import { vec3 } from '../../lib/gl-matrix-wrapper.js';
-// import VoxelState from '../editing/VoxelState.js'; // relative path failed
-// import VoxelState from './VoxelState.js'; // local copy worked
-// import VoxelState from '/src/editing/VoxelState.js'; // absolute path
-import VoxelState from './VoxelState.js'; // local copy (src/workers/VoxelState.js)
-import TestModule from './TestModule.js';
-// SurfaceNets is a static object, should import fine
-// BUT standard imports might fail if not served correctly or if they have other deps.
-// Given the project structure, let's assume standard relative imports work in Chrome/Quest.
-
-console.log("VoxelWorker: Script Starting...");
-console.log("Imported Test:", TestModule);
+let VoxelState = null;
+let TestModule = null;
+let isReady = false;
 let voxelState = null;
+
+// Undo/Redo History
+const history = [];
+let historyPtr = -1;
+const MAX_HISTORY = 20; // Limit memory usage
+
+// Async Init to catch import errors
+(async function () {
+  try {
+    console.log("VoxelWorker: Importing TestModule...");
+    // Handle potentially different base paths? No, strictly relative to this file.
+    const tm = await import('./TestModule.js');
+    TestModule = tm.default;
+    console.log("VoxelWorker: TestModule Loaded ->", TestModule);
+
+    console.log("VoxelWorker: Importing VoxelState...");
+    const vs = await import('./VoxelState.js');
+    VoxelState = vs.default;
+    console.log("VoxelWorker: VoxelState Loaded");
+
+    isReady = true;
+
+    // If we queued any messages, process them here? 
+    // For now, simpler to just start accepting.
+
+  } catch (e) {
+    console.error("VoxelWorker: CRITICAL IMPORT ERROR", e);
+    // Report to main thread (optional, console is visible)
+    self.postMessage({ type: 'ERROR', message: e.message, stack: e.stack });
+  }
+})();
+
+self.onerror = function (e) {
+  console.error("VoxelWorker_GlobalError:", e.message, e.filename, e.lineno, e);
+};
 
 self.onmessage = function (e) {
   const msg = e.data;
+
+  if (!isReady) {
+    console.warn(`VoxelWorker: Received message '${msg.type}' before imports ready. Retrying in 100ms...`);
+    setTimeout(() => self.onmessage(e), 100);
+    return;
+  }
 
   try {
     switch (msg.type) {
       case 'INIT':
         init(msg.res, msg.size);
         break;
-      case 'RESIZE':
-        // TODO
+      case 'SNAPSHOT':
+        snapshot();
+        break;
+      case 'UNDO':
+        undo();
+        break;
+      case 'REDO':
+        redo();
         break;
       case 'EDIT_SPHERE':
         editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.returnMesh);
@@ -37,14 +73,20 @@ self.onmessage = function (e) {
         inflateSphere(msg.center, msg.radius, msg.strength, msg.returnMesh);
         break;
       case 'GET_MESH':
-        // Force full remesh (debug)
         postMesh();
         break;
       case 'CLEAR':
         if (voxelState) {
-          // VoxelState.js needs a clear method, or we reset it
           if (voxelState.clear) voxelState.clear();
           else voxelState = new VoxelState(voxelState.resolution, voxelState.size);
+        }
+        // Reset History
+        if (voxelState) {
+          history.length = 0;
+          const df = voxelState.getDistanceField();
+          const copy = new Float32Array(df);
+          history.push({ df: copy });
+          historyPtr = 0;
         }
         postMesh();
         break;
@@ -57,69 +99,98 @@ self.onmessage = function (e) {
 };
 
 function init(res, size) {
-  // console.log(`VoxelWorker: Init ${res}^3 Size=${size}`);
+  if (!VoxelState) {
+    console.error("VoxelWorker: Cannot Init, VoxelState class missing.");
+    return;
+  }
   voxelState = new VoxelState(res, size);
-  // Force initial empty mesh
-  // voxelState.clear();
+  history.length = 0;
+
+  // Push Initial State (Empty)
+  const df = voxelState.getDistanceField();
+  const copy = new Float32Array(df);
+  history.push({ df: copy });
+  historyPtr = 0;
+
   postMesh();
+}
+
+function snapshot() {
+  if (!voxelState) return;
+
+  // 1. Truncate Future
+  if (historyPtr < history.length - 1) {
+    history.length = historyPtr + 1;
+  }
+
+  // 2. Clone Current (Last Safe) to create New Editable Tip
+  const currentDF = voxelState.getDistanceField();
+  const newDF = new Float32Array(currentDF); // Clone
+
+  // 3. Push & Advance
+  history.push({ df: newDF });
+  historyPtr++;
+
+  // 4. Swap VoxelState to use New Tip
+  voxelState.setDistanceField(newDF);
+
+  // 5. Limit Size
+  if (history.length > MAX_HISTORY) {
+    history.shift();
+    historyPtr--;
+  }
+}
+
+function undo() {
+  if (historyPtr > 0) {
+    historyPtr--;
+    restoreState();
+  }
+}
+
+function redo() {
+  if (historyPtr < history.length - 1) {
+    historyPtr++;
+    restoreState();
+  }
+}
+
+function restoreState() {
+  if (!voxelState || historyPtr < 0) return;
+  const state = history[historyPtr];
+  if (state && state.df) {
+    voxelState.setDistanceField(state.df);
+    postMesh();
+  }
 }
 
 function editSphere(center, radius, color, isNegative, returnMesh) {
   if (!voxelState) return;
 
-  let changed = false;
-  if (isNegative) {
-    changed = voxelState.subtractSphere(center, radius);
-  } else {
-    changed = voxelState.addSphere(center, radius, color);
-  }
+  // Apply edit
+  voxelState.editSphere(center, radius, color, isNegative);
 
-  if (returnMesh) {
-    if (changed) {
-      postMesh();
-    } else {
-      self.postMessage({ type: 'MESH_UNCHANGED' });
-    }
-  }
+  // Return mesh?
+  if (returnMesh) postMesh();
 }
 
 function inflateSphere(center, radius, strength, returnMesh) {
   if (!voxelState) return;
-
-  const changed = voxelState.inflateSphere(center, radius, strength);
-
-  if (returnMesh) {
-    if (changed) {
-      postMesh();
-    } else {
-      self.postMessage({ type: 'MESH_UNCHANGED' });
-    }
-  }
+  voxelState.inflateSphere(center, radius, strength);
+  if (returnMesh) postMesh();
 }
 
 function postMesh() {
   if (!voxelState) return;
 
-  var t0 = performance.now();
-  const res = voxelState.computeMesh();
-  var t1 = performance.now();
-
-  // DEBUG: Log mesh stats
-  // console.log(`Worker: ComputeMesh ${(t1 - t0).toFixed(2)}ms V=${res.vertices.length / 3} F=${res.faces.length / 4}`);
-
-  // res = { vertices, faces, colors, materials } (Float32Arrays/Uint32Arrays)
-
-  // We must TRANSFER the buffers to avoid copy overhead.
-  const transferList = [
-    res.vertices.buffer,
-    res.faces.buffer,
-    res.colors.buffer,
-    res.materials.buffer
-  ];
+  // Timing
+  // const t0 = performance.now();
+  const meshData = voxelState.computeMesh();
+  // const t1 = performance.now();
 
   self.postMessage({
     type: 'MESH_UPDATE',
-    data: res,
-    computeTime: t1 - t0
-  }, transferList);
+    data: meshData,
+    // computeTime: t1 - t0
+  }, [meshData.vertices.buffer, meshData.colors.buffer, meshData.materials.buffer, meshData.faces.buffer]);
 }

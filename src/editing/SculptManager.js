@@ -82,8 +82,8 @@ class SculptManager {
     // Push State for Undo/Redo
     if (this._main.getStateManager()) {
       if (tool.constructor.name === 'SculptVoxel') {
-        // Voxel Undo - Disabled for Worker Phase 1
-        // if (tool._voxelState) this._main.getStateManager().pushStateVoxel(tool._voxelState);
+        // Voxel Undo - Worker Command
+        this._main.getStateManager().pushStateVoxel(tool);
       } else if (this._main.getMesh() && this._main.getMesh().isDynamic) {
         // Dynamic Mesh Undo
         this._main.getStateManager().pushStateGeometry(this._main.getMesh());

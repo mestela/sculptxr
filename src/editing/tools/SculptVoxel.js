@@ -678,7 +678,18 @@ class SculptVoxel extends SculptBase {
 
       if (!isPressed) {
         this._lastXRPos = null; // Reset stroke
+        this._xrStrokeActive = false;
         return;
+      }
+
+      // Detect Start of Stroke (VR)
+      if (!this._xrStrokeActive) {
+        this._xrStrokeActive = true;
+        if (this._worker) {
+          if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
+          else console.log("Voxel: VR Start (Snapshot)");
+          this._worker.postMessage({ type: 'SNAPSHOT' });
+        }
       }
 
       // 1. Transform EnginePos (World) to Grid Local Space

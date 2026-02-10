@@ -641,6 +641,11 @@ class SculptVoxel extends SculptBase {
   updateXR(picking, isPressed, origin, dir, options) {
     try {
       // VoxelXR Update
+      // FORCE LOG (Throttled)
+      if (window.screenLog && Math.random() < 0.05) {
+        window.screenLog(`Vx: UpdXR P=${isPressed} Act=${this._xrStrokeActive}`, "grey");
+      }
+
       // Ensure we hide distracting meshes
       // this.hideOtherMeshes();
 
@@ -678,7 +683,18 @@ class SculptVoxel extends SculptBase {
 
       if (!isPressed) {
         this._lastXRPos = null; // Reset stroke
+        this._xrStrokeActive = false;
         return;
+      }
+
+      // Detect Start of Stroke (VR)
+      if (!this._xrStrokeActive) {
+        this._xrStrokeActive = true;
+        if (this._worker) {
+          if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
+          else console.log("Voxel: VR Start (Snapshot)");
+          this._worker.postMessage({ type: 'SNAPSHOT' });
+        }
       }
 
       // 1. Transform EnginePos (World) to Grid Local Space
@@ -734,11 +750,6 @@ class SculptVoxel extends SculptBase {
       var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
       if (mode === 0 && isNegative) mode = 1; // Add + Neg -> Sub
 
-      // Debug Log
-      if (window.screenLog && (this._lastUpdate % 10 === 0)) {
-        window.screenLog(`VR Edit: M=${mode} Neg=${isNegative}`, isNegative ? "orange" : "lime");
-      }
-
       // Re-enable real update loop
       if (this._worker) {
         // Throttling: Only request mesh if not currently pending
@@ -774,14 +785,8 @@ class SculptVoxel extends SculptBase {
             returnMesh: returnMesh
           });
         }
-
-        // Debug Negative
-        // if (isNegative && this._lastUpdate % 10 === 0 && window.screenLog) window.screenLog("Voxel: Negative Edit", "red");
-
-      // We don't know if changed yet, but we sent the command.
-      // The worker will reply with MESH_UPDATE if changed.
       } else {
-        if (window.screenLog) window.screenLog("Voxel: Worker not ready", "red");
+        // Worker not ready
       }
 
       // [DEBUG] Trace trace

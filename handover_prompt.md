@@ -1,22 +1,30 @@
-# Handover: Debugging VR Voxel Buttons & Future Optimizations (v0.7.300)
+# Handover: Debugging Voxel Undo/Redo (v0.7.314)
 
 ## Current Status
-- **Goal:** Fix VR Voxel Buttons (Add/Sub/Inflate) not switching modes or updating UI active state.
-- **Latest Version:** `v0.7.300` (Deployed to Beta).
-- **Behavior:**
-  - Voxel Sculpting works (Add/Subtract via negative modifier).
-  - **VR Buttons (Sub, Inflate) seem dead.** Users report "no logs" when pressing them.
-  - Checkboxes/Sliders elsewhere work, but Voxel buttons are silent.
+- **Goal:** Fix Voxel Undo/Redo (Per Stroke).
+- **Latest Version:** `v0.7.314` (Deployed to Beta).
+- **Implementation:**
+  - `SculptVoxel.js`: Added `SNAPSHOT` logic to `updateXR` (lines 685+) to detect stroke start.
+  - `SculptManager.js`: Enabled `pushStateVoxel` in `start()`.
+  - `VoxelWorker.js`: Implemented `SNAPSHOT`, `UNDO`, `REDO` handlers.
+- **Problem:**
+  - User reports **NO LOGS** for "Voxel: VR Start (Snapshot)" when sculpting in VR.
+  - Sculpting *works* (voxels change), but the snapshot trigger seems silent.
+  - Code *is* present on disk in `src/editing/tools/SculptVoxel.js`.
+
+## Hypotheses
+1.  **Browser Caching:** The user might be running an old version despite the deploy. (Check `VERSION` global in their console?)
+2.  **Logic Gap:** `updateXR` might not be called? Or `isPressed` is flaky?
+    - If `updateXR` wasn't called, they wouldn't be able to sculpt (unless `Scene.js` calls something else?).
+    - `Scene.js` calls `tool.updateXR` directly.
+3.  **Condition Failure:** `!this._xrStrokeActive` check might be failing if it never resets? (It resets on `!isPressed`).
 
 ## Immediate Tasks (Next Session)
-1.  **Debug VR Button Hit:** Investigated `GuiXR._getHoveredWidget` to see what is blocking the Voxel buttons.
-2.  **Fix Interaction:** Ensure `setVoxelMode` is reachable.
-
-## Future Optimizations (Discussed)
-1.  **Voxel Smooth Shading:** Implementation plan ready (reuse `SurfaceNets` shared vertices + SDF gradient).
-2.  **BVH Raycasting:** `three-mesh-bvh` for standard tools (huge speedup for high-poly non-voxel meshes).
+1.  **Verify Version:** Ask user to type `VERSION` in console to confirm v0.7.314.
+2.  **Force Log:** Add a log to the *very top* of `updateXR` to see if it runs at all.
+3.  **Check `isPressed`:** Log `isPressed` value in `updateXR`.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxrbeta/`
 -   **Local:** `npm run dev` (running on port 8000).
--   **Files:** `src/gui/vr/GuiVRTools.js` (Buttons), `src/gui/GuiXR.js` (Interaction).
+-   **Key Files:** `src/editing/tools/SculptVoxel.js`, `src/Scene.js`.
