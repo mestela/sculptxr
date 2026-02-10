@@ -734,11 +734,6 @@ class SculptVoxel extends SculptBase {
       var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
       if (mode === 0 && isNegative) mode = 1; // Add + Neg -> Sub
 
-      // Debug Log
-      if (window.screenLog && (this._lastUpdate % 10 === 0)) {
-        window.screenLog(`VR Edit: M=${mode} Neg=${isNegative}`, isNegative ? "orange" : "lime");
-      }
-
       // Re-enable real update loop
       if (this._worker) {
         // Throttling: Only request mesh if not currently pending
@@ -774,14 +769,8 @@ class SculptVoxel extends SculptBase {
             returnMesh: returnMesh
           });
         }
-
-        // Debug Negative
-        // if (isNegative && this._lastUpdate % 10 === 0 && window.screenLog) window.screenLog("Voxel: Negative Edit", "red");
-
-      // We don't know if changed yet, but we sent the command.
-      // The worker will reply with MESH_UPDATE if changed.
       } else {
-        if (window.screenLog) window.screenLog("Voxel: Worker not ready", "red");
+        // Worker not ready
       }
 
       // [DEBUG] Trace trace

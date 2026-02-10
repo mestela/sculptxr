@@ -177,21 +177,13 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
     // Helper to set mode
     const setVoxelMode = (m, neg) => {
-      console.log(`[GuiVRTools] setVoxelMode called: Mode=${m} Neg=${neg}`);
       if (activeTool) {
         activeTool._mode = m;
         activeTool._negative = neg;
-        console.log(`[GuiVRTools] activeTool updated: Mode=${activeTool._mode} Neg=${activeTool._negative}`);
         // Force re-render of UI to show active state
         if (main.guiXR) {
-          // We need to force a full refresh of the widget because 'active' state is baked into data.active at creation time for now??
-          // Actually GuiVR usually updates 'active' state if we pass a function? No, 'data.active' is usually static or checked on draw?
-          // Let's check GuiVR implementation (GuiVR/GuiXR). 
-          // Using 'refreshToolsWidget' is a heavy hummer but works.
           main.guiXR.refreshToolsWidget();
         }
-      } else {
-        console.error("[GuiVRTools] setVoxelMode: No active tool!");
       }
     };
 
