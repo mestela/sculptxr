@@ -292,9 +292,29 @@ GuiTools[Enums.Tools.TRANSFORM] = {
 GuiTools[Enums.Tools.VOXEL] = {
   _ctrls: [],
   init: function (tool, fold, main) {
-    // Voxel tools might have radius/color?
-    // For now just basic placeholder
-    // this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+
+    // Mode Selector
+    // 0: Add, 1: Sub, 2: Inflate
+    // We need a dropdown or buttons?
+    // Enums.Action? No, local mode.
+    // Let's use a combobox or similar.
+    var options = { 'Add': 0, 'Subtract': 1, 'Inflate': 2 };
+    var ctrlMode = fold.addCombobox('Mode', tool, '_mode', options);
+    this._ctrls.push(ctrlMode);
+
+    // Intensity/Strength (only for Inflate?)
+    // Actually SculptVoxel uses it for Inflate strength (default 0.5)
+    // Reuse addCtrlIntensity but map it to _strength?
+    // addCtrlIntensity maps to _intensity (0..1).
+    // Let's use a custom slider for Strength (0..1 or 0..2?)
+    var ctrlStrength = fold.addSlider('Strength', tool._strength * 100, function (val) {
+      tool._strength = val / 100;
+    }, 0, 100, 1);
+    this._ctrls.push(ctrlStrength);
+
+    this._ctrls.push(fold.addButton('Flip Winding', tool, 'flipWinding'));
+    this._ctrls.push(fold.addButton('Clear', tool, 'clear'));
   }
 };
 

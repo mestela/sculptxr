@@ -206,6 +206,80 @@ class VoxelState {
     return changed;
   }
 
+  // Inflate/Deflate: df[i] -= strength * falloff
+  inflateSphere(center, radius, strength) {
+    var res = this._resolution;
+    var step = this._step;
+    var min = this._min;
+
+    // Center in Grid Coords (0 to res)
+    var cx = (center[0] - min[0]) / step;
+    var cy = (center[1] - min[1]) / step;
+    var cz = (center[2] - min[2]) / step;
+
+    // Grid Bounds
+    var rGrid = Math.ceil(radius / step) + 1;
+    var ixMin = Math.max(0, Math.floor(cx - rGrid));
+    var ixMax = Math.min(res, Math.ceil(cx + rGrid));
+    var iyMin = Math.max(0, Math.floor(cy - rGrid));
+    var iyMax = Math.min(res, Math.ceil(cy + rGrid));
+    var izMin = Math.max(0, Math.floor(cz - rGrid));
+    var izMax = Math.min(res, Math.ceil(cz + rGrid));
+
+    var df = this._distanceField;
+
+    var rx = res;
+    var rxy = res * res;
+
+    var changed = false;
+
+    for (var k = izMin; k < izMax; ++k) {
+      for (var j = iyMin; j < iyMax; ++j) {
+        for (var i = ixMin; i < ixMax; ++i) {
+
+          // Voxel Position in World
+          var valX = min[0] + i * step;
+          var valY = min[1] + j * step;
+          var valZ = min[2] + k * step;
+
+          // Distance to Sphere Center
+          var dx = valX - center[0];
+          var dy = valY - center[1];
+          var dz = valZ - center[2];
+          var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (dist < radius) {
+            // Falloff (Linear for now, 1.0 at center, 0.0 at radius)
+            var falloff = 1.0 - (dist / radius);
+            // Smoothstep falloff?
+            // falloff = falloff * falloff * (3 - 2 * falloff);
+
+            var index = i + j * rx + k * rxy;
+            // df[index] -= strength * falloff * step; // Was scaled by step
+            df[index] -= strength * falloff; // World Units strength (stronger, resolution independent magnitude)
+
+            changed = true;
+          }
+        }
+      }
+    }
+
+    // Update Active Bounds (Conservative: expand if we inflated near edges?)
+    // Actually inflate usually expands surface.
+    // We should just expand bounds by radius to be safe if changed.
+    if (changed) {
+      if (ixMin < this._activeMin[0]) this._activeMin[0] = ixMin;
+      if (iyMin < this._activeMin[1]) this._activeMin[1] = iyMin;
+      if (izMin < this._activeMin[2]) this._activeMin[2] = izMin;
+
+      if (ixMax > this._activeMax[0]) this._activeMax[0] = ixMax;
+      if (iyMax > this._activeMax[1]) this._activeMax[1] = iyMax;
+      if (izMax > this._activeMax[2]) this._activeMax[2] = izMax;
+    }
+
+    return changed;
+  }
+
   tightenBounds() {
     // Scan inwards to find tighter Active Bounds
     // We only care about Negative Values (Solid) because Surface is around < 0.0

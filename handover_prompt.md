@@ -1,43 +1,22 @@
-# Handover Prompt (Protocol Enforced)
+# Handover: Debugging VR Voxel Buttons & Future Optimizations (v0.7.300)
 
-**Project Status**: Voxel Freeze Fix & Rendering Cleanup
-**Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v0.7.292` (Deployed to Beta)
+## Current Status
+- **Goal:** Fix VR Voxel Buttons (Add/Sub/Inflate) not switching modes or updating UI active state.
+- **Latest Version:** `v0.7.300` (Deployed to Beta).
+- **Behavior:**
+  - Voxel Sculpting works (Add/Subtract via negative modifier).
+  - **VR Buttons (Sub, Inflate) seem dead.** Users report "no logs" when pressing them.
+  - Checkboxes/Sliders elsewhere work, but Voxel buttons are silent.
 
-## 🚨 CRITICAL INSTRUCTIONS (READ THIS FIRST)
-1.  **CACHE IS INNOCENT**: The user **manually clears cache** (Application -> Clear Storage) every time.
-    *   **NEVER** blame caching.
-    *   **NEVER** try "cache busting" (adding `?v=xyz`) as a primary fix. It has been tried and failed.
-    *   **If you think it's caching, YOU ARE WRONG.** It is a logic issue or a git/deployment issue.
+## Immediate Tasks (Next Session)
+1.  **Debug VR Button Hit:** Investigated `GuiXR._getHoveredWidget` to see what is blocking the Voxel buttons.
+2.  **Fix Interaction:** Ensure `setVoxelMode` is reachable.
 
-2.  **THE ISSUE**:
-    *   `_drawScene` logs ("Start", "Grid", "Meshes") are **MISSING**.
-    *   `applyRender` logging **WORKS** (`[Scene] applyRender Start` appears).
-    *   `applyRender` calls `_drawScene`.
-    *   **Paradox**: `applyRender` says it calls `_drawScene`, but `_drawScene` doesn't print its first log line.
+## Future Optimizations (Discussed)
+1.  **Voxel Smooth Shading:** Implementation plan ready (reuse `SurfaceNets` shared vertices + SDF gradient).
+2.  **BVH Raycasting:** `three-mesh-bvh` for standard tools (huge speedup for high-poly non-voxel meshes).
 
-3.  **REQUIRED ACTION**:
-    *   **DIFF AGAINST MASTER**: The answer lies in the difference between the current branch and `master`.
-    *   Do NOT guess. Do NOT hypothesis.
-    *   **Execute this command immediately**:
-        ```bash
-        git diff master src/Scene.js > diff_master_scene.txt
-        ```
-    *   **READ THE DIFF**. Look for:
-        -   Changes in `start()` (Is `_drawScene` overwritten?).
-        -   Changes in `_drawScene` definition.
-        -   Changes in `applyRender`.
-
-## Context
--   **Files**: `src/Scene.js` is the core. `src/SculptGL.js` extends it.
--   **Debugging So Far**:
-    -   Added unconditional logs.
-    -   Initialized `_logThrottle`.
-    -   Removed `window.screenLog` checks.
-    -   Confirmed `master` branch exists locally.
--   **Current State**: Grid and Sphere are invisible. Logs stop partially through the frame.
-
-## Next Steps
-1.  Run `git diff master src/Scene.js`.
-2.  Analyze why `_drawScene` is seemingly skipped or crashing silently (though `try-catch` in `applyRender` catches nothing?).
-3.  **Fix**: Restore the working logic from master.
+## Environment
+-   **URL:** `https://tokeru.com/sculptxrbeta/`
+-   **Local:** `npm run dev` (running on port 8000).
+-   **Files:** `src/gui/vr/GuiVRTools.js` (Buttons), `src/gui/GuiXR.js` (Interaction).

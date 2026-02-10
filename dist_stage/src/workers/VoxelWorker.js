@@ -33,6 +33,9 @@ self.onmessage = function (e) {
       case 'EDIT_SPHERE':
         editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.returnMesh);
         break;
+      case 'INFLATE':
+        inflateSphere(msg.center, msg.radius, msg.strength, msg.returnMesh);
+        break;
       case 'GET_MESH':
         // Force full remesh (debug)
         postMesh();
@@ -70,6 +73,20 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
   } else {
     changed = voxelState.addSphere(center, radius, color);
   }
+
+  if (returnMesh) {
+    if (changed) {
+      postMesh();
+    } else {
+      self.postMessage({ type: 'MESH_UNCHANGED' });
+    }
+  }
+}
+
+function inflateSphere(center, radius, strength, returnMesh) {
+  if (!voxelState) return;
+
+  const changed = voxelState.inflateSphere(center, radius, strength);
 
   if (returnMesh) {
     if (changed) {

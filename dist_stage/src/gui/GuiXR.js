@@ -1154,7 +1154,7 @@ export default class GuiXR {
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
-          // console.log(`[GuiXR] Menu Click: ${w.id}`);
+          console.log(`[GuiXR] Menu Click Hit: ID=${w.id} Label=${w.label} Type=${w.type}`);
 
           if (w.type === 'slider') {
             const val = Math.max(0, Math.min(1, (rx - w.x) / w.w));
@@ -1169,7 +1169,8 @@ export default class GuiXR {
             this._executeAction(w);
             // Close menu on action? 
             // Keep open for specific actions like Undo/Redo or Tools
-            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus'].includes(w.id);
+            // ALSO keep open for Voxel Mode buttons (vx_add, vx_sub, etc)
+            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def'].includes(w.id);
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'combobox') {
@@ -1180,6 +1181,7 @@ export default class GuiXR {
         return;
       }
     }
+    console.log(`[GuiXR] Menu Click Miss: rx=${rx} ry=${ry}`);
   }
 
   _getWidgetValue(tab, id) {
@@ -1396,9 +1398,11 @@ export default class GuiXR {
     if (!main) return;
 
     const id = w.id;
+    console.log(`[GuiXR] _executeAction: ID=${id} Type=${w.type}`);
 
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
+      console.log(`[GuiXR] Executing onInteract for ${id}`);
       w.onInteract();
       return;
     }
@@ -1417,6 +1421,8 @@ export default class GuiXR {
     if (w.type === 'checkbox') {
       const val = w.value;
       const id = w.id;
+      if (window.screenLog) window.screenLog(`Chk: ${id} = ${val}`, "white");
+
       if (id === 'grid') { main._showGrid = val; main.render(); }
       else if (id === 'contour') { main._showContour = val; main.render(); }
       else if (id === 'show_sym') { ShaderBase.showSymmetryLine = val; main.render(); }
@@ -1449,6 +1455,7 @@ export default class GuiXR {
 
     // Tool Selection (Dynamic Updates)
     if (typeof w.id === 'number') {
+      if (window.screenLog) window.screenLog(`Tool: ${w.id}`, "white");
       const sm = main.getSculptManager();
       sm.setToolIndex(w.id);
       this.refreshToolsWidget(); // Rebuild widgets for new tool
@@ -1757,6 +1764,9 @@ export default class GuiXR {
         if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
         if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
         if (wid.id === 'symmetry' && this._main.getSculptManager()) isActive = this._main.getSculptManager().getSymmetry();
+
+        // Explicit Active State (e.g. Voxel Buttons)
+        if (wid.data && wid.data.active) isActive = true;
 
         // Paint Toggles
         if (wid.id === 'pick_color') {

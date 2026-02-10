@@ -164,7 +164,72 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
     // Resolution Slider (32-256)
     // We need to get current resolution. SculptVoxel has `_res`
+    // Voxel settings
     const voxelResolution = activeTool._res || 64;
+
+    // Mode Buttons (Add, Sub, Inflate, Deflate)
+    const btnW = (550 - (3 * 10)) / 4; // 550 total width, 3 gaps
+    const mode = activeTool._mode || 0; // 0=Add, 1=Sub, 2=Inflate, 3=Deflate (implied by Inflate + Negative?)
+    const isNeg = activeTool._negative; // Current negative state
+
+    // DEBUG: Log current state construction
+    // console.log(`GuiVRTools Build: Mode=${mode} Neg=${isNeg}`);
+
+    // Helper to set mode
+    const setVoxelMode = (m, neg) => {
+      console.log(`[GuiVRTools] setVoxelMode called: Mode=${m} Neg=${neg}`);
+      if (activeTool) {
+        activeTool._mode = m;
+        activeTool._negative = neg;
+        console.log(`[GuiVRTools] activeTool updated: Mode=${activeTool._mode} Neg=${activeTool._negative}`);
+        // Force re-render of UI to show active state
+        if (main.guiXR) {
+          // We need to force a full refresh of the widget because 'active' state is baked into data.active at creation time for now??
+          // Actually GuiVR usually updates 'active' state if we pass a function? No, 'data.active' is usually static or checked on draw?
+          // Let's check GuiVR implementation (GuiVR/GuiXR). 
+          // Using 'refreshToolsWidget' is a heavy hummer but works.
+          main.guiXR.refreshToolsWidget();
+        }
+      } else {
+        console.error("[GuiVRTools] setVoxelMode: No active tool!");
+      }
+    };
+
+    // ACTIVE STATE?
+    // We can highlight the active button.
+    // GuiVR currently doesn't support "toggle" buttons natively in 'button' type, 
+    // but we can simulate it or just use them as triggers.
+    // User wants "options", implies selection.
+
+    // Add
+    widgets.push({
+      type: 'button', id: 'vx_add', label: 'Add', x: col1X, y: y, w: btnW, h: btnH,
+      data: { active: (mode === 0 && !isNeg) },
+      onInteract: () => setVoxelMode(0, false)
+    });
+
+    // Sub
+    widgets.push({
+      type: 'button', id: 'vx_sub', label: 'Sub', x: col1X + btnW + 10, y: y, w: btnW, h: btnH,
+      data: { active: (mode === 1 || (mode === 0 && isNeg)) }, // Support both explicit Sub mode and Negative Add
+      onInteract: () => setVoxelMode(1, false)
+    });
+
+    // Inflate
+    widgets.push({
+      type: 'button', id: 'vx_inf', label: 'Inflate', x: col1X + 2 * (btnW + 10), y: y, w: btnW, h: btnH,
+      data: { active: (mode === 2 && !isNeg) },
+      onInteract: () => setVoxelMode(2, false)
+    });
+
+    // Deflate
+    widgets.push({
+      type: 'button', id: 'vx_def', label: 'Deflate', x: col1X + 3 * (btnW + 10), y: y, w: btnW, h: btnH,
+      data: { active: (mode === 2 && isNeg) },
+      onInteract: () => setVoxelMode(2, true)
+    });
+
+    y += btnH + gapBtn;
 
     widgets.push({
       type: 'slider',

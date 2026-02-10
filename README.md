@@ -98,6 +98,14 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
 
+And also (largely voxel focused):
+1. could we add smooth shading to the voxel object during sculpting? if its going to be a huge performance degredation, don't bother.
+2. when i change the voxel res, the current voxel object gets deleted. can it  be resampled into the new voxel grid?
+3. symmetry in voxel mode would be good
+4. a smooth brush for voxel mode would be good.
+5. inflate/dilate for voxel would be good
+6. smooth shading mode for voxel?
+7. Undo doesn't work in the new voxel system
 
 - **Desktop 6DOF (Beta Issues)**:
     - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**

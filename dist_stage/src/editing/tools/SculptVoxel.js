@@ -29,14 +29,19 @@ class SculptVoxel extends SculptBase {
         console.warn("Voxel Worker Silent Error (ignored):", e);
       }
     };
+
+    // Tool State
+    this._mode = 0; // 0: Add, 1: Sub, 2: Inflate
+    this._strength = 0.5;
+
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
-          const logMsg = `Voxel: Worker=${msg.computeTime.toFixed(1)}ms V=${msg.data.vertices.length/3}`;
-          console.log(logMsg);
-          if (window.screenLog) window.screenLog(logMsg, "grey");
+          // const logMsg = `Voxel: Worker=${msg.computeTime.toFixed(1)}ms V=${msg.data.vertices.length/3}`;
+          // console.log(logMsg);
+          // if (window.screenLog) window.screenLog(logMsg, "grey");
         }
         
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
@@ -542,19 +547,35 @@ class SculptVoxel extends SculptBase {
     // Wait, user ASKED for Desktop Shift.
 
     // Let's try:
-    var isNegative = (this._main._shiftKey === true);
+    var isNegative = (this._main._shiftKey === true) || (this._negative === true);
 
-    // DEBUG: Throttled logging to prevent UI freeze
-    if (window.screenLog && (this._lastUpdate % 10 === 0)) {
-      window.screenLog(`Desk: Shift=${isNegative} R=${radius.toFixed(1)} P=${localPos[0].toFixed(1)}`, isNegative ? "orange" : "grey");
+    // Inflate Mode?
+    // How do we toggle modes?
+    // 1. GUI (we can add a 'mode' prop to SculptVoxel)
+    // 2. Keyboard?
+    // Let's add `this._mode` property (0=Add, 1=Sub, 2=Inflate)
+    // Default to Add (0). If shift, force Sub (1).
+    // If Inflate (2), then ignore shift? Or Shift=Deflate?
+
+    var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
+    if (isNegative && mode === 0) mode = 1; // Shift override for Brush
+
+    // DEBUG: Mode Verification
+    // if (window.screenLog && (this._lastUpdate % 30 === 0)) {
+    // window.screenLog(`Strk: Mode=${mode} Neg=${isNegative}`, "cyan");
+    // }
+
+    // FORCE LOG for User Request
+    if (window.screenLog) {
+      let mStr = "ADD";
+      if (mode === 1) mStr = "SUB";
+      if (mode === 2) mStr = isNegative ? "DEFLATE" : "INFLATE";
+      // Remove throttle for now to ensure visibility
+      window.screenLog(`Vx: ${mStr} (M=${mode} N=${isNegative})`, "yellow");
     }
 
     var changed = false;
     if (this._worker) {
-    if (isNegative) {
-      // Desktop "Air" check is harder async. Just fire and forget.
-    }
-
       // Throttling: Only request mesh if not currently pending
       const returnMesh = !this._pendingMeshUpdate;
       if (returnMesh) {
@@ -563,14 +584,32 @@ class SculptVoxel extends SculptBase {
         this._meshRequested = true; // Mark that we want an update as soon as possible
       }
 
-      this._worker.postMessage({
-        type: 'EDIT_SPHERE',
-        center: [localPos[0], localPos[1], localPos[2]],
-        radius: radius,
-        color: color,
-        isNegative: isNegative,
-        returnMesh: returnMesh
-      });
+      if (mode === 2) {
+        // INFLATE
+        // Strength should be adjustable? Default 0.5?
+        // Shift could invert strength to Deflate?
+        var strength = (this._strength !== undefined) ? this._strength : 0.5;
+        if (isNegative) strength = -strength;
+
+        this._worker.postMessage({
+          type: 'INFLATE',
+          center: [localPos[0], localPos[1], localPos[2]],
+          radius: radius,
+          strength: strength,
+          returnMesh: returnMesh
+        });
+      } else {
+        // ADD / SUB
+        var isSub = (mode === 1);
+        this._worker.postMessage({
+          type: 'EDIT_SPHERE',
+          center: [localPos[0], localPos[1], localPos[2]],
+          radius: radius,
+          color: color,
+          isNegative: isSub,
+          returnMesh: returnMesh
+        });
+      }
     }
   }
 
@@ -588,7 +627,15 @@ class SculptVoxel extends SculptBase {
     mesh.updateGeometry();
     mesh.updateBuffers();
     this._main.render();
+    mesh.updateBuffers();
+    this._main.render();
     console.log("Voxel Mesh Winding Flipped");
+  }
+
+  clear() {
+    if (this._worker) {
+      this._worker.postMessage({ type: 'CLEAR' });
+    }
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
@@ -684,10 +731,12 @@ class SculptVoxel extends SculptBase {
       // Use options.isNegative OR this._negative (UI Toggle)
       var isNegative = (options && options.isNegative) || this._negative;
 
+      var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
+      if (mode === 0 && isNegative) mode = 1; // Add + Neg -> Sub
 
       // Debug Log
       if (window.screenLog && (this._lastUpdate % 10 === 0)) {
-        window.screenLog(`VR Edit: ${localPos[0].toFixed(1)},${localPos[1].toFixed(1)} r=${gridRadius.toFixed(1)} Neg=${isNegative}`, isNegative ? "orange" : "lime");
+        window.screenLog(`VR Edit: M=${mode} Neg=${isNegative}`, isNegative ? "orange" : "lime");
       }
 
       // Re-enable real update loop
@@ -700,14 +749,31 @@ class SculptVoxel extends SculptBase {
           this._meshRequested = true; // Mark that we want an update as soon as possible
         }
 
-        this._worker.postMessage({
-          type: 'EDIT_SPHERE',
-          center: [localPos[0], localPos[1], localPos[2]],
-          radius: gridRadius,
-          color: color,
-          isNegative: isNegative,
-          returnMesh: returnMesh
-        });
+        if (mode === 2) {
+          // INFLATE / DEFLATE
+          var strength = (this._strength !== undefined) ? this._strength : 0.5;
+          if (isNegative) strength = -strength; // Deflate
+
+          this._worker.postMessage({
+            type: 'INFLATE',
+            center: [localPos[0], localPos[1], localPos[2]],
+            radius: gridRadius,
+            strength: strength,
+            returnMesh: returnMesh
+          });
+
+        } else {
+          // ADD / SUB
+          var isSub = (mode === 1);
+          this._worker.postMessage({
+            type: 'EDIT_SPHERE',
+            center: [localPos[0], localPos[1], localPos[2]],
+            radius: gridRadius,
+            color: color,
+            isNegative: isSub,
+            returnMesh: returnMesh
+          });
+        }
 
         // Debug Negative
         // if (isNegative && this._lastUpdate % 10 === 0 && window.screenLog) window.screenLog("Voxel: Negative Edit", "red");
