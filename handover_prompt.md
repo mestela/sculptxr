@@ -1,30 +1,24 @@
-# Handover: Debugging Voxel Undo/Redo (v0.7.314)
+# Handover: Voxel Undo/Redo Polish (v0.7.316)
 
 ## Current Status
-- **Goal:** Fix Voxel Undo/Redo (Per Stroke).
-- **Latest Version:** `v0.7.314` (Deployed to Beta).
-- **Implementation:**
-  - `SculptVoxel.js`: Added `SNAPSHOT` logic to `updateXR` (lines 685+) to detect stroke start.
-  - `SculptManager.js`: Enabled `pushStateVoxel` in `start()`.
-  - `VoxelWorker.js`: Implemented `SNAPSHOT`, `UNDO`, `REDO` handlers.
-- **Problem:**
-  - User reports **NO LOGS** for "Voxel: VR Start (Snapshot)" when sculpting in VR.
-  - Sculpting *works* (voxels change), but the snapshot trigger seems silent.
-  - Code *is* present on disk in `src/editing/tools/SculptVoxel.js`.
+- **Goal:** Polish Voxel Undo/Redo (Fix Erratic Behavior).
+- **Latest Version:** `v0.7.316` (Deployed to Beta).
+- **Status:**
+  - **Undo/Redo Works**: User confirmed it basically works.
+  - **Issues**: Behavior is "erratic" (sometimes skips, sometimes double undos).
+  - **Code**: `SculptVoxel.js` has `SNAPSHOT` logic. `VoxelWorker.js` deals with history.
 
-## Hypotheses
-1.  **Browser Caching:** The user might be running an old version despite the deploy. (Check `VERSION` global in their console?)
-2.  **Logic Gap:** `updateXR` might not be called? Or `isPressed` is flaky?
-    - If `updateXR` wasn't called, they wouldn't be able to sculpt (unless `Scene.js` calls something else?).
-    - `Scene.js` calls `tool.updateXR` directly.
-3.  **Condition Failure:** `!this._xrStrokeActive` check might be failing if it never resets? (It resets on `!isPressed`).
+## Known Issues
+- **Erratic Undo**: detailed by user as "sometimes it doesn't undo, then it will undo 2 steps".
+  - *Hypothesis*: Race condition between `SNAPSHOT` and worker processing?
+  - *Hypothesis*: `SNAPSHOT` trigger in `updateXR` might be firing multiple times or missed?
+  - *Hypothesis*: Circular buffer index logic in `VoxelWorker` might be off-by-one?
 
-## Immediate Tasks (Next Session)
-1.  **Verify Version:** Ask user to type `VERSION` in console to confirm v0.7.314.
-2.  **Force Log:** Add a log to the *very top* of `updateXR` to see if it runs at all.
-3.  **Check `isPressed`:** Log `isPressed` value in `updateXR`.
+## Immediate Tasks
+1.  **Investigate Worker Logic**: Review `VoxelWorker.js` history management.
+2.  **Debounce Snapshot**: Ensure `SNAPSHOT` isn't sent multiple times per stroke (though `_xrStrokeActive` should prevent this).
+3.  **Visual Feedback**: Maybe add a sound or visual cue when Undo happens?
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxrbeta/`
--   **Local:** `npm run dev` (running on port 8000).
--   **Key Files:** `src/editing/tools/SculptVoxel.js`, `src/Scene.js`.
+-   **Local:** `npm run dev` (port 8000).

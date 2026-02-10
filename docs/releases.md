@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+- **v0.7.316**: Voxel Undo/Redo (Functional)
+    - **Feature**: Enabled Voxel Undo/Redo per stroke.
+    - **Note**: Basic functionality working, but reported as "erratic" (investigating).
+    - **Cleanup**: Removed debug logs.
+
+
 - **v0.7.272**: Redeploy Voxel Opt
     - **Note**: Re-deployed v0.7.271 changes to ensure they are active.
     - **Speed**: Includes `tightenBounds` optimization.
