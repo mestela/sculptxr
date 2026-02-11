@@ -102,7 +102,6 @@ class VoxelState {
     var rxy = res * res;
 
     var changed = false;
-    var hits = 0;
 
     for (var k = izMin; k < izMax; ++k) {
       for (var j = iyMin; j < iyMax; ++j) {
@@ -125,7 +124,6 @@ class VoxelState {
           if (dist < oldDist) {
             df[index] = dist;
             changed = true;
-            hits++;
 
             // Simple Color splat (TODO: Mixing)
             if (color) {
@@ -198,8 +196,12 @@ class VoxelState {
           var index = i + j * rx + k * rxy;
           var oldDist = df[index];
 
-          if (-dist > oldDist) {
-            df[index] = -dist;
+          // SUBTRACTION: dist = max(val, -d)
+          // d = dist to sphere surface (negative inside).
+          // We want the resulting distance to be at least -d (distance to the cutout surface).
+          var val = -d; // Inverted sphere distance
+          if (val > oldDist) {
+            df[index] = val;
             changed = true;
           }
         }
@@ -213,8 +215,8 @@ class VoxelState {
       if (izMin < this._activeMin[2]) this._activeMin[2] = izMin;
 
       if (ixMax > this._activeMax[0]) this._activeMax[0] = ixMax;
+      if (iyMax > this._activeMax[1]) this._activeMax[1] = iyMax;
       if (izMax > this._activeMax[2]) this._activeMax[2] = izMax;
-      // if (window.screenLog && Math.random() < 0.2) window.screenLog(`VS.add: Expanded [${ixMin},${iyMin},${izMin}]-[${ixMax},${iyMax},${izMax}]`, "grey");
     }
 
     return changed;
@@ -535,6 +537,12 @@ class VoxelState {
       return;
     }
     this._distanceField.set(newField);
+
+    // CRITICAL: Reset Active Bounds to full size
+    // Otherwise 'tightenBounds' will only scan within the generic/previous bounds of the 'future' state,
+    // potentially clipping the restored content.
+    this._activeMin.set([0, 0, 0]);
+    this._activeMax.set([this._resolution, this._resolution, this._resolution]);
   }
 
 }

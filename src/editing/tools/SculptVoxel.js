@@ -46,6 +46,21 @@ class SculptVoxel extends SculptBase {
         
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
 
+        if (msg.id !== undefined) {
+          console.log(`[Worker] Mesh Update ID: ${msg.id}`);
+          if (window.screenLog) window.screenLog(`Mesh ID: ${msg.id}`, "cyan");
+        }
+
+        if (msg.type === 'LOG') {
+          // Parse ID from Log
+          // "Snapshot Created: 8 (Ptr=8)"
+          // "Undo -> Snapshot: 7 (Ptr=7)"
+          const match = msg.data.match(/Snapshot: (\d+)/);
+          if (match) {
+            this._workerSnapshotID = parseInt(match[1]);
+          }
+        }
+
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
 
@@ -65,7 +80,9 @@ class SculptVoxel extends SculptBase {
         }
       } else if (msg.type === 'LOG') {
         // Worker can send logs back
-        // console.log("[Worker]", msg.data);
+        console.log("[Worker]", msg.data);
+        if (window.screenLog) window.screenLog(msg.data, "lime");
+        else console.warn("screenLog missing for:", msg.data);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
       }
