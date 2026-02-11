@@ -1,23 +1,22 @@
-# Handover: Voxel Undo/Redo Polish (v0.7.316)
+# Handover: Voxel Undo/Redo FIXED (v0.7.335)
 
 ## Current Status
 - **Goal:** Polish Voxel Undo/Redo (Fix Erratic Behavior).
-- **Latest Version:** `v0.7.316` (Deployed to Beta).
-- **Status:**
-  - **Undo/Redo Works**: User confirmed it basically works.
-  - **Issues**: Behavior is "erratic" (sometimes skips, sometimes double undos).
-  - **Code**: `SculptVoxel.js` has `SNAPSHOT` logic. `VoxelWorker.js` deals with history.
+- **Latest Version:** `v0.7.335` (Deployed to Beta).
+- **Status:** **FIXED**.
+  - **Undo/Redo**: Works reliably.
+  - **Input**: Left Thumbstick Left/Right (No Debounce).
+  - **Logic**: "Smart Undo" handles both Reset and Step Back. Active strokes are auto-saved to Redo stack.
 
-## Known Issues
-- **Erratic Undo**: detailed by user as "sometimes it doesn't undo, then it will undo 2 steps".
-  - *Hypothesis*: Race condition between `SNAPSHOT` and worker processing?
-  - *Hypothesis*: `SNAPSHOT` trigger in `updateXR` might be firing multiple times or missed?
-  - *Hypothesis*: Circular buffer index logic in `VoxelWorker` might be off-by-one?
+## Solutions Implemented
+1.  **Smart Undo**: Distinguishes between "Reset Active Stroke" and "Step Back History".
+2.  **Snapshot-on-Dirty**: Undoing an active stroke saves it first, allowing Redo.
+3.  **Correct Pointer Arithmetic**: Fixed off-by-one error in `historyPtr` management.
 
-## Immediate Tasks
-1.  **Investigate Worker Logic**: Review `VoxelWorker.js` history management.
-2.  **Debounce Snapshot**: Ensure `SNAPSHOT` isn't sent multiple times per stroke (though `_xrStrokeActive` should prevent this).
-3.  **Visual Feedback**: Maybe add a sound or visual cue when Undo happens?
+## Next Steps
+-   **Voxel Features**: Brush Shapes? Smooth Tool?
+-   **Rendering**: improve voxel mesh shading?
+-   **Performance**: optimize meshing for large volumes?
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxrbeta/`
