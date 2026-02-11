@@ -1581,26 +1581,39 @@ class Scene {
           const lastX = state.axes[2] || 0;
 
           // State Machine: Only fire if we were neutral
-          const wasNeutralX = Math.abs(lastX) < T_RELEASE;
-          const isPressedX = Math.abs(valX) > T_PRESS;
+          // State Machine: Explicit "Wait for Neutral" to avoid bounce/repeat issues
+          if (state.waitingForNeutral) {
+            if (Math.abs(valX) < T_RELEASE) {
+              state.waitingForNeutral = false;
+              // if (window.screenLog) window.screenLog("Shortcuts: Reset", "gray");
+            }
+          } else {
+            // Ready to fire
+            if (Math.abs(valX) > T_PRESS) {
+              const now = performance.now();
+              // Double Check Debounce (just in case)
+              if (now - (state.lastUndoRedoTime || 0) > 300) {
+                state.lastUndoRedoTime = now;
+                state.waitingForNeutral = true;
 
-          if (wasNeutralX && isPressedX) {
-            if (valX < -T_PRESS) {
-              if (window.screenLog) window.screenLog(`Shortcuts: Undo (Val=${valX.toFixed(2)})`, "lime");
-              else console.log("Shortcuts: Undo");
+                 if (valX < -T_PRESS) {
+                   if (window.screenLog) window.screenLog(`Shortcuts: Undo (Val=${valX.toFixed(2)})`, "lime");
+                   else console.log("Shortcuts: Undo");
 
-              if (this._stateManager) {
-                this._stateManager.undo();
-                this._main ? this._main.render() : this.render();
-              }
-            } else if (valX > T_PRESS) {
-              if (window.screenLog) window.screenLog(`Shortcuts: Redo (Val=${valX.toFixed(2)})`, "lime");
-              else console.log("Shortcuts: Redo");
+                   if (this._stateManager) {
+                     this._stateManager.undo();
+                     this._main ? this._main.render() : this.render();
+                   }
+                 } else if (valX > T_PRESS) {
+                   if (window.screenLog) window.screenLog(`Shortcuts: Redo (Val=${valX.toFixed(2)})`, "lime");
+                   else console.log("Shortcuts: Redo");
 
-              if (this._stateManager) {
-                this._stateManager.redo();
-                this._main ? this._main.render() : this.render();
-              }
+                   if (this._stateManager) {
+                     this._stateManager.redo();
+                     this._main ? this._main.render() : this.render();
+                   }
+                 }
+               }
             }
           }
           state.axes[2] = valX;
