@@ -78,7 +78,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
     - ~~Grab brush~~ - **DONE v0.7.118**
     - ~~Voxel add, sub, inflate, deflate brushes~~ - **DONE v0.7.360**
-    - ~~Voxel Resampling~~ - **DONE v0.7.360**
+    - ~~Voxel Resampling~~ - **Stabilized v0.7.369**
     - ~~Voxel Bake~~ - **DONE v0.7.360**
     - ~~Voxel symmetry~~ - **DONE v0.7.360**
     - ~~Voxel undo/redo~~ - **DONE v0.7.360**
