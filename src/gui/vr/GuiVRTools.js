@@ -268,6 +268,24 @@ export default function getToolsWidgets(main, activeToolIndex) {
     });
     y += btnH + gapBtn;
 
+    // Smooth Shading Toggle
+    /*
+    widgets.push({
+      type: 'checkbox',
+      id: 'voxel_smooth',
+      label: 'Smooth Shading',
+      x: col1X, y: y, w: 550, h: btnH,
+      value: (activeTool._smooth === true),
+      onInteract: () => {
+        if (activeTool && activeTool.toggleSmooth) {
+          activeTool.toggleSmooth();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      }
+    });
+    y += btnH + gapBtn;
+    */
+
     // Bake Button
     widgets.push({
       type: 'button',

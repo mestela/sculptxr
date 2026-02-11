@@ -1398,11 +1398,11 @@ export default class GuiXR {
     if (!main) return;
 
     const id = w.id;
-    console.log(`[GuiXR] _executeAction: ID=${id} Type=${w.type}`);
+    // console.log(`[GuiXR] _executeAction: ID=${id} Type=${w.type}`);
 
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
-      console.log(`[GuiXR] Executing onInteract for ${id}`);
+      // console.log(`[GuiXR] Executing onInteract for ${id}`);
       w.onInteract();
       return;
     }

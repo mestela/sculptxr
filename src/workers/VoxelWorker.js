@@ -25,7 +25,7 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     console.log("VoxelWorker: TestModule Loaded ->", TestModule);
 
     console.log("VoxelWorker: Importing VoxelState...");
-    const vs = await import('./VoxelState.js');
+    const vs = await import('../editing/VoxelState.js');
     VoxelState = vs.default;
     console.log("VoxelWorker: VoxelState Loaded");
 
@@ -49,7 +49,7 @@ self.onmessage = function (e) {
   const msg = e.data;
 
   if (!isReady) {
-    console.warn(`VoxelWorker: Received message '${msg.type}' before imports ready. Retrying in 100ms...`);
+    // console.warn(`VoxelWorker: Received message '${msg.type}' before imports ready. Retrying in 100ms...`);
     setTimeout(() => self.onmessage(e), 100);
     return;
   }
@@ -58,6 +58,9 @@ self.onmessage = function (e) {
     switch (msg.type) {
       case 'INIT':
         init(msg.res, msg.size);
+        break;
+      case 'RESAMPLE':
+        resample(msg.res);
         break;
       case 'SNAPSHOT':
         snapshot();
@@ -73,6 +76,9 @@ self.onmessage = function (e) {
         break;
       case 'INFLATE':
         inflateSphere(msg.center, msg.radius, msg.strength, msg.returnMesh);
+        break;
+      case 'SMOOTH':
+        setSmooth(msg.value);
         break;
       case 'GET_MESH':
         postMesh();
@@ -121,6 +127,35 @@ function init(res, size) {
   postMesh();
 }
 
+function resample(res) {
+  if (!voxelState) return;
+
+  // Resample
+  voxelState.resample(res);
+
+  // Clear History (Complex to resample history, so just reset for now?)
+  // Ideally we should try to resample history too, but memory usage explodes.
+  // Let's reset history but keep current state.
+  history.length = 0;
+  snapshotCounter++; // New era
+
+  const df = voxelState.getDistanceField();
+  const copy = new Float32Array(df);
+  history.push({ df: copy, id: snapshotCounter });
+  historyPtr = 0;
+
+  self.postMessage({ type: 'LOG', data: `Voxel Resampled to ${res}. History Reset.` });
+
+  postMesh();
+}
+
+function setSmooth(val) {
+  if (!voxelState) return;
+  voxelState.smooth = val;
+  // Re-compute mesh immediately
+  postMesh();
+}
+
 function snapshot() {
   if (!voxelState) return;
 
@@ -158,7 +193,7 @@ function snapshot() {
 
   const b = voxelState._activeMin;
   const B = voxelState._activeMax;
-  self.postMessage({ type: 'LOG', data: `Snapshot Created: ${snapshotCounter} (Ptr=${historyPtr}) Vol=${vol} Reused=${reused} Bounds=[${b[0]},${b[1]},${b[2]}]-[${B[0]},${B[1]},${B[2]}]` });
+  // self.postMessage({ type: 'LOG', data: `Snapshot Created: ${snapshotCounter} (Ptr=${historyPtr}) Vol=${vol} Reused=${reused} Bounds=[${b[0]},${b[1]},${b[2]}]-[${B[0]},${B[1]},${B[2]}]` });
 }
 
 function undo() {
@@ -179,9 +214,9 @@ function undo() {
       if (df[i] <= 0.0) vol++;
     }
 
-    self.postMessage({ type: 'LOG', data: `Undo -> Snapshot: ${id} (Ptr=${historyPtr + 1}->${historyPtr}) Vol=${vol}` });
+    // self.postMessage({ type: 'LOG', data: `Undo -> Snapshot: ${id} (Ptr=${historyPtr + 1}->${historyPtr}) Vol=${vol}` });
   } else {
-    self.postMessage({ type: 'LOG', data: `Undo Failed: Bottom of Stack (Ptr=${historyPtr})` });
+    // self.postMessage({ type: 'LOG', data: `Undo Failed: Bottom of Stack (Ptr=${historyPtr})` });
   }
 }
 
@@ -197,9 +232,9 @@ function redo() {
     for (let i = 0; i < df.length; i++) {
       if (df[i] <= 0.0) vol++;
     }
-    self.postMessage({ type: 'LOG', data: `Redo -> Snapshot: ${id} (Ptr=${historyPtr}) Vol=${vol}` });
+    // self.postMessage({ type: 'LOG', data: `Redo -> Snapshot: ${id} (Ptr=${historyPtr}) Vol=${vol}` });
   } else {
-    self.postMessage({ type: 'LOG', data: `Redo Failed: Top of Stack (Ptr=${historyPtr})` });
+    // self.postMessage({ type: 'LOG', data: `Redo Failed: Top of Stack (Ptr=${historyPtr})` });
   }
 }
 
@@ -207,6 +242,12 @@ function restoreState() {
   if (!voxelState || historyPtr < 0) return;
   const state = history[historyPtr];
   if (state && state.df) {
+    if (state.df.length !== voxelState.getDistanceField().length) {
+      console.error(`VoxelWorker: Undo/Redo Mismatch! Hist=${state.df.length} Curr=${voxelState.getDistanceField().length}`);
+      // Try to recover? Resampling undo history is hard.
+      // For now, just warn.
+      return;
+    }
     voxelState.setDistanceField(state.df);
     postMesh();
   }
@@ -219,7 +260,7 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
   const changed = voxelState.editSphere(center, radius, color, isNegative);
 
   if (!changed) {
-    self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Radius=${radius})` });
+    // self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Radius=${radius})` });
   } else {
     isDirty = true;
   }
@@ -249,10 +290,15 @@ function postMesh() {
     currentID = history[historyPtr].id;
   }
 
+  const transferList = [meshData.vertices.buffer, meshData.colors.buffer, meshData.materials.buffer, meshData.faces.buffer];
+  if (meshData.normals) {
+    transferList.push(meshData.normals.buffer);
+  }
+
   self.postMessage({
     type: 'MESH_UPDATE',
     data: meshData,
     id: currentID // Tag with ACTUAL ID of the state we just computed
     // computeTime: t1 - t0
-  }, [meshData.vertices.buffer, meshData.colors.buffer, meshData.materials.buffer, meshData.faces.buffer]);
+  }, transferList);
 }

@@ -5,9 +5,9 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.7.339</title>
-    <!-- v0.7.339: Fix Voxel Subtract Error (Worker File) -->
-    <script>var VERSION = '0.7.339';</script>
+    <title>SculptXR v0.7.360</title>
+    <!-- v0.7.360: Fix SculptBase Null Normals Crash -->
+    <script>var VERSION = '0.7.360';</script>
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -292,6 +292,17 @@
                                                                                                     import { VERSION } from 'Version';
 
         window.onload = async () => {
+            // Expose screenLog globally
+            window.screenLog = (msg, color) => {
+                const logEl = document.getElementById('log');
+                if (logEl) {
+                    const line = document.createElement('div');
+                    line.textContent = msg;
+                    if (color) line.style.color = color;
+                    logEl.appendChild(line);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            };
             document.title = `SculptXR ${VERSION}`;
 
             // Version Header in Log

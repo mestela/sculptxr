@@ -371,4 +371,17 @@ Geometry.getPerpendicularVector = function (vec) {
   return perp;
 };
 
+/** Compute the normal of a triangle */
+Geometry.triangleNormal = (function () {
+  var ab = [0.0, 0.0, 0.0];
+  var ac = [0.0, 0.0, 0.0];
+  return function (out, v1, v2, v3) {
+    vec3.sub(ab, v2, v1);
+    vec3.sub(ac, v3, v1);
+    vec3.cross(out, ab, ac);
+    vec3.normalize(out, out);
+    return out;
+  };
+})();
+
 export default Geometry;

@@ -184,7 +184,7 @@ var createFace = function (edgeMask, mask, buffer, R, m, x, faces) {
   }
 };
 
-SurfaceNets.computeSurface = function (voxels, bounds) {
+SurfaceNets.computeSurface = function (voxels, bounds, computeNormals = false) {
   var dims = voxels.dims;
 
   var vertices = [];
@@ -289,10 +289,82 @@ SurfaceNets.computeSurface = function (voxels, bounds) {
     }
   }
 
+  // Optional: Compute Smooth Normals (Gradient of SDF)
+  let normals = null;
+  // console.log(`SurfaceNets: computeNormals=${computeNormals}`);
+  if (computeNormals) {
+    // console.log("SurfaceNets: Starting Normal Computation...");
+    const data = voxels.distanceField;
+    const count = vertices.length / 3;
+    normals = new Float32Array(vertices.length);
+
+    // Grid Dimensions
+    const dx = dims[0];
+    const dy = dims[1];
+    const dz = dims[2];
+    const dxdy = dx * dy;
+
+    // Safe sampling helper
+    // clamp coords to [0, dim-1]
+    const sample = (ix, iy, iz) => {
+      if (ix < 0) ix = 0; else if (ix >= dx) ix = dx - 1;
+      if (iy < 0) iy = 0; else if (iy >= dy) iy = dy - 1;
+      if (iz < 0) iz = 0; else if (iz >= dz) iz = dz - 1;
+      return data[ix + iy * dx + iz * dxdy];
+    }
+
+    for (let i = 0; i < count; ++i) {
+      const id = i * 3;
+      const vx = vertices[id];
+      const vy = vertices[id + 1];
+      const vz = vertices[id + 2];
+
+      // Central Difference Gradient
+      // We use the continuous/interpolated position vx,vy,vz?
+      // Actually SDF is discrete. We can just sample nearest neighbors of the integer cell?
+      // Or better: Sample at round(vx), round(vy)...
+      // Since SurfaceNets vertices are on edges, they are "between" voxels.
+      // Let's sample 6 neighbors around the rounded integer coordinate.
+      // Or trilinear?
+      // Central difference on integer grid is usually enough for smooth look.
+
+      const ix = Math.round(vx);
+      const iy = Math.round(vy);
+      const iz = Math.round(vz);
+
+      const d1 = sample(ix - 1, iy, iz);
+      const d2 = sample(ix + 1, iy, iz);
+      const d3 = sample(ix, iy - 1, iz);
+      const d4 = sample(ix, iy + 1, iz);
+      const d5 = sample(ix, iy, iz - 1);
+      const d6 = sample(ix, iy, iz + 1);
+
+      // Gradient = (d2-d1, d4-d3, d6-d5)
+      let nx = d2 - d1;
+      let ny = d4 - d3;
+      let nz = d6 - d5;
+
+      // Normalize
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 1e-6) {
+        const inv = 1.0 / len;
+        nx *= inv; ny *= inv; nz *= inv;
+      } else {
+        nx = 0; ny = 0; nz = 1; // Fallback
+      }
+
+      normals[id] = nx;
+      normals[id + 1] = ny;
+      normals[id + 2] = nz;
+    }
+    // console.log(`SurfaceNets: Normals Computed (Count=${normals.length})`);
+  }
+
   return {
     colors: new Float32Array(cols),
     materials: new Float32Array(mats),
     vertices: new Float32Array(vertices),
+    normals: normals,
     faces: new Uint32Array(faces)
   };
 };

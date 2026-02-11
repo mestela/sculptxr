@@ -47,8 +47,7 @@ class SculptVoxel extends SculptBase {
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
 
         if (msg.id !== undefined) {
-          console.log(`[Worker] Mesh Update ID: ${msg.id}`);
-          if (window.screenLog) window.screenLog(`Mesh ID: ${msg.id}`, "cyan");
+          // console.log(`[Worker] Mesh Update ID: ${msg.id}`);
         }
 
         if (msg.type === 'LOG') {
@@ -380,6 +379,14 @@ class SculptVoxel extends SculptBase {
     this._main.render();
   }
 
+  toggleSmooth() {
+    this._smooth = !this._smooth;
+    if (this._worker) {
+      this._worker.postMessage({ type: 'SMOOTH', value: this._smooth });
+      if (window.screenLog) window.screenLog(`Voxel Smooth: ${this._smooth ? "ON" : "OFF"}`, this._smooth ? "lime" : "orange");
+    }
+  }
+
   logInfo() {
     console.log("Voxel Tool Info:");
     console.log(" - DebugCube:", this._debugCube);
@@ -694,23 +701,24 @@ class SculptVoxel extends SculptBase {
 
       // Symmetry Visuals
       const sym = this._main.getSculptManager().getSymmetry();
+
       if (this._cursorMeshSym) {
         if (sym) {
           this._cursorMeshSym.setVisible(true);
+          // Calculate Mirrored Position
+          // 1. World -> Local (Grid)
+          const symLocalPos = vec3.create();
+          vec3.transformMat4(symLocalPos, origin, this._invGridMatrix);
+
           const mSym = this._cursorMeshSym.getMatrix();
           mat4.identity(mSym);
 
-          // Calculate Mirrored Position
-          // 1. World -> Local (Grid)
-          const localPos = vec3.create();
-          vec3.transformMat4(localPos, origin, this._invGridMatrix);
-
           // 2. Mirror X (Local)
-          localPos[0] = -localPos[0];
+          symLocalPos[0] = -symLocalPos[0];
 
           // 3. Local -> World
           const worldPosSym = vec3.create();
-          vec3.transformMat4(worldPosSym, localPos, this._gridMatrix);
+          vec3.transformMat4(worldPosSym, symLocalPos, this._gridMatrix);
 
           // 4. Position & Scale
           mat4.translate(mSym, mSym, worldPosSym);
@@ -886,9 +894,23 @@ class SculptVoxel extends SculptBase {
     this._min = vec3.fromValues(-half, -half, -half);
     this._max = vec3.fromValues(half, half, half);
 
-    // Send Re-Init to Worker
+    // Send Re-Init or Resample
+    // If we already had a resolution, we are Resampling (preserving data)
+    // If this._res was undefined/null before this call, it is an INIT.
+    // Wait, we just set this._res = res above.
+    // We need to check if we *had* a resolution before.
+    // But we overwrite it immediately.
+    // Let's check if this._voxelMesh exists? Or just rely on the fact that if we are calling this, we probably want to resample if it's not the first time.
+    // Actually, `this._res` is initialized to something?
+    // Let's trust that if the worker is running, we can RESAMPLE.
+    // But `INIT` is safer for first run.
+
+    // Better logic: Move `this._res = res` AFTER the check.
+
+    const type = (this._voxelMesh) ? 'RESAMPLE' : 'INIT';
+
     this._worker.postMessage({
-      type: 'INIT',
+      type: type,
       res: res,
       size: size
     });
@@ -970,13 +992,46 @@ class SculptVoxel extends SculptBase {
     // Ensure it is visible (in case it was hidden)
     this._voxelMesh.setVisible(true);
 
+    // Verify Array Lengths
+    const nbVerts = res.vertices.length / 3;
+    if (res.colors.length !== nbVerts * 3) {
+      console.warn(`SculptVoxel: Colors mismatch! V=${nbVerts} C=${res.colors.length / 3}. Fixing...`);
+      const newCols = new Float32Array(nbVerts * 3);
+      newCols.set(res.colors.subarray(0, Math.min(res.colors.length, newCols.length)));
+      res.colors = newCols;
+    }
+    if (res.materials.length !== nbVerts * 3) {
+      console.warn(`SculptVoxel: Materials mismatch! V=${nbVerts} M=${res.materials.length / 3}. Fixing...`);
+      const newMats = new Float32Array(nbVerts * 3);
+      newMats.set(res.materials.subarray(0, Math.min(res.materials.length, newMats.length)));
+      // Fill remaining with default
+      for (let k = res.materials.length; k < newMats.length; k += 3) {
+        newMats[k] = 0.18; newMats[k + 1] = 0.08; newMats[k + 2] = 1.0;
+      }
+      res.materials = newMats;
+    }
+    if (res.normals && res.normals.length !== nbVerts * 3) {
+      console.warn(`SculptVoxel: Normals mismatch! V=${nbVerts} N=${res.normals.length / 3}. Discarding normals.`);
+      res.normals = null; // Better to have no normals than scrambled ones
+    }
+
     // Update Buffers
     this._voxelMesh.setVertices(res.vertices);
     this._voxelMesh.setFaces(res.faces);
     this._voxelMesh.setColors(res.colors);
     this._voxelMesh.setMaterials(res.materials);
 
-    // Re-init (topology, octree, normals)
+    // SMooth Shading Support
+    if (res.normals && res.normals.length > 0) {
+      if (window.screenLog) window.screenLog(`SculptVoxel: Normals Received (${res.normals.length})`, "lime");
+      else console.log(`SculptVoxel: Normals Received (${res.normals.length})`);
+      this._voxelMesh.setNormals(res.normals);
+    } else {
+      if (window.screenLog) window.screenLog(`SculptVoxel: No Normals`, "grey");
+      else console.log(`SculptVoxel: No Normals`);
+      this._voxelMesh.setNormals(null); // Clear if disabled
+    }
+
     // Re-init (topology, octree, normals)
     // OPTIMIZATION: Manually init necessary components to avoid heavy compute
     // this._voxelMesh.init(); 
@@ -987,17 +1042,25 @@ class SculptVoxel extends SculptBase {
     // this._voxelMesh.initEdges(); // SKIP (Wireframe only)
     // this._voxelMesh.initVertexRings(); // SKIP (Smoothing only)
     this._voxelMesh.initRenderTriangles(); // Needed for picking (intersectSphere/Ray uses RenderData?)
-    // Actually Picking uses generic Faces if available? 
-    // MeshStatic.js intersectSphere uses Octree or Faces.
-    
+
     // CRITICAL: Ensure Render Data / Textures are initialized
     // Force Matcap Shader (Standard SculptXR look) to avoid PBR/Matcap switch lag if user toggles later?
-    // No, stay FLAT for performance.
     
-    if (isNew || this._voxelMesh.getShaderType() !== Enums.Shader.FLAT) {
+    if (isNew) {
       this._voxelMesh.initRender();
-      this._voxelMesh.setShaderType(Enums.Shader.FLAT);
-      this._voxelMesh.setFlatShading(true);
+    }
+
+    // Auto-Select Shader based on Normals presence
+    if (res.normals && res.normals.length > 0) {
+      if (this._voxelMesh.getShaderType() !== Enums.Shader.MATCAP) {
+        this._voxelMesh.setShaderType(Enums.Shader.MATCAP);
+        this._voxelMesh.setFlatShading(false);
+      }
+    } else {
+      if (this._voxelMesh.getShaderType() !== Enums.Shader.FLAT) {
+        this._voxelMesh.setShaderType(Enums.Shader.FLAT);
+        this._voxelMesh.setFlatShading(true);
+      }
     }
 
     // SKIP: this._voxelMesh.updateGeometry(); // Too heavy (computes normals)

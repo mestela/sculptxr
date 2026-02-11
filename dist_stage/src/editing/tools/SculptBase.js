@@ -429,6 +429,10 @@ class SculptBase {
     var iVertsFront = new Uint32Array(Utils.getMemory(4 * nbVertsSelected), 0, nbVertsSelected);
     var acc = 0;
     var nAr = this.getMesh().getNormals();
+    if (!nAr) {
+      // Fallback: No normals, no culling
+      return iVertsInRadius;
+    }
 
     // FIX v0.6.46: View-Independent Culling for VR
     // In VR, "eyeDir" is unreliable/irrelevant. We should cull backfaces relative to the SURFACE NORMAL.

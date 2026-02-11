@@ -48,8 +48,8 @@ class Multimesh extends Mesh {
       return this.getCurrentMesh();
 
     var nbFaces = this.getCurrentMesh().getNbFaces();
-    var strTimer = 'addLevel : ' + nbFaces + ' -> ' + nbFaces * 4;
-    console.time(strTimer);
+    // var strTimer = 'addLevel : ' + nbFaces + ' -> ' + nbFaces * 4;
+    // console.time(strTimer);
 
     var baseMesh = this.getCurrentMesh();
     var newMesh = new MeshResolution(baseMesh);
@@ -61,7 +61,7 @@ class Multimesh extends Mesh {
     this.pushMesh(newMesh);
     this.initRender();
 
-    console.timeEnd(strTimer);
+    // console.timeEnd(strTimer);
 
     return newMesh;
   }

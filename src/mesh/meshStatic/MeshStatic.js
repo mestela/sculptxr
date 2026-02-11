@@ -17,19 +17,19 @@ class MeshStatic extends Mesh {
   }
 
 
-  setShaderType(type) {
-    if (this._isVoxel && type !== Enums.Shader.FLAT && type !== Enums.Shader.WIREFRAME) type = Enums.Shader.FLAT;
-    super.setShaderType(type);
-  }
+  // setShaderType(type) {
+  //   if (this._isVoxel && type !== Enums.Shader.FLAT && type !== Enums.Shader.WIREFRAME) type = Enums.Shader.FLAT;
+  //   super.setShaderType(type);
+  // }
 
-  getShaderType() {
-    if (this._isVoxel) {
-      // If underlying is WIREFRAME, return it.
-      if (this._renderData && this._renderData._shaderType === Enums.Shader.WIREFRAME) return Enums.Shader.WIREFRAME;
-      return Enums.Shader.FLAT;
-    }
-    return super.getShaderType();
-  }
+  // getShaderType() {
+  //   if (this._isVoxel) {
+  //     // If underlying is WIREFRAME, return it.
+  //     if (this._renderData && this._renderData._shaderType === Enums.Shader.WIREFRAME) return Enums.Shader.WIREFRAME;
+  //     return Enums.Shader.FLAT;
+  //   }
+  //   return super.getShaderType();
+  // }
 }
 
 export default MeshStatic;

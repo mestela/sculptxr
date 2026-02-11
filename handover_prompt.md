@@ -1,26 +1,23 @@
-# Handover: Voxel Subtract Fix (v0.7.339)
+# Handover: Log Cleanup & Next Steps (v0.7.348)
 
 ## Current Status
-- **Goal:** Fix Voxel Subtraction Error.
-- **Latest Version:** `v0.7.339` (Deployed to Beta).
-- **Status:** **VERIFICATION NEEDED**.
-  - **Fix**: Corrected typo `d` -> `dist` in `src/workers/VoxelState.js`.
-  - **Note**: There were *two* `VoxelState.js` files. The worker was using a duplicate in `src/workers/`.
+- **Goal:** Voxel Symmetry & Log Cleanup.
+- **Latest Version:** `v0.7.348` (Deployed to Beta).
+- **Status:** **COMPLETED**.
+  - **Symmetry**: Implemented (X-Axis). Logic verified via logs.
+  - **Logs**: Silenced noisy logs in `VoxelWorker`, `GuiXR`, and `Multimesh`.
+  - **Voxel Subtract**: Fixed.
 
 ## Solutions Implemented
-1.  **Bug Fix**: Resolved `ReferenceError: d is not defined` in the worker file.
-2.  **Symmetry**: Dual dispatch for VR voxel tools.
+1.  **Log Cleanup**: Commented out spammy logs in `src/workers/VoxelWorker.js`, `src/gui/GuiXR.js`, and `src/mesh/multiresolution/Multimesh.js`.
+2.  **Symmetry**: Dual dispatch in `SculptVoxel.js`.
+3.  **Voxel Fixes**: Resolved `d is not defined` error.
 
 ## Next Steps
-Ask user to choose:
-1. could we add smooth shading to the voxel object during sculpting? if its going to be a huge performance degredation, don't bother.
-2. when i change the voxel res, the current voxel object gets deleted. can it  be resampled into the new voxel grid?
-3. symmetry in voxel mode would be good
-4. a smooth brush for voxel mode would be good.
-5. inflate/dilate for voxel would be good
-6. smooth shading mode for voxel?
-7. Undo doesn't work in the new voxel system
-
+Potential tasks for next session:
+1.  **Smooth Shading**: Add smooth shading to voxel objects (currently flat shaded).
+2.  **Resampling**: Resample current object when changing voxel resolution (currently destroys data).
+3.  **Undo/Redo Verification**: confirm undo works reliably with symmetry.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxrbeta/`
