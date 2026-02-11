@@ -665,11 +665,7 @@ class VoxelState {
   }
 
   resample(newRes) {
-    console.log(`VoxelState: Resampling ${this._resolution} -> ${newRes}`);
-    if (newRes === this._resolution) {
-      console.log("VoxelState: Resolution Unchanged. Skipping.");
-      return;
-    }
+    if (newRes === this._resolution) return;
 
     const oldRes = this._resolution;
     const oldStep = this._step;
@@ -686,7 +682,6 @@ class VoxelState {
       return oldDF[x + y * oldRes + z * oldRes * oldRes];
     };
 
-    console.time("VoxelState.resample");
     // Trilinear Interpolation
     for (let k = 0; k < newRes; k++) {
       for (let j = 0; j < newRes; j++) {
@@ -735,7 +730,6 @@ class VoxelState {
         }
       }
     }
-    console.timeEnd("VoxelState.resample");
 
     // Update State
     this._resolution = newRes;
@@ -759,7 +753,6 @@ class VoxelState {
     // Reset Active Bounds to full
     this._activeMin.set([0, 0, 0]);
     this._activeMax.set([newRes, newRes, newRes]);
-    console.log("VoxelState: Resample Complete. New Bounds Reset.");
   }
 }
 

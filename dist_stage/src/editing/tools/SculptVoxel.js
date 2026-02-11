@@ -40,7 +40,6 @@ class SculptVoxel extends SculptBase {
       const msg = e.data;
       if (msg.type === 'LOG') {
         if (window.screenLog) window.screenLog(msg.data, "grey");
-        else console.log("[Worker]", msg.data);
       } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
@@ -891,11 +890,7 @@ class SculptVoxel extends SculptBase {
   }
 
   applyResolution() {
-    console.log(`SculptVoxel: applyResolution called. Pending=${this._pendingRes}`);
-    if (!this._pendingRes) {
-      console.warn("SculptVoxel: No pending resolution!");
-      return;
-    }
+    if (!this._pendingRes) return;
     this.setResolution(this._pendingRes);
     if (window.screenLog) window.screenLog(`Voxel: Resampling to ${this._pendingRes}...`, "lime");
     // Reset pending? No, keep it sync.
@@ -904,10 +899,7 @@ class SculptVoxel extends SculptBase {
   setResolution(res) {
     // this._res = res; // BUG: This was setting it too early!
     this._pendingRes = res; // Sync pending
-    if (res === this._res) {
-      console.log(`SculptVoxel: Resolution ${res} matches current. Skipping.`);
-      return;
-    }
+    if (res === this._res) return;
 
     // Update local cache
     this._res = res;

@@ -131,9 +131,7 @@ function resample(res) {
   if (!voxelState) return;
 
   // Resample
-  self.postMessage({ type: 'LOG', data: `VoxelWorker: Calling VoxelState.resample(${res})...` });
   voxelState.resample(res);
-  self.postMessage({ type: 'LOG', data: `VoxelWorker: Resample returned. Resetting History...` });
 
   // Clear History (Complex to resample history, so just reset for now?)
   // Ideally we should try to resample history too, but memory usage explodes.
@@ -146,7 +144,7 @@ function resample(res) {
   history.push({ df: copy, id: snapshotCounter });
   historyPtr = 0;
 
-  self.postMessage({ type: 'LOG', data: `Voxel Resampled to ${res}. History Reset. Reposting Mesh...` });
+  self.postMessage({ type: 'LOG', data: `Voxel Resampled to ${res}. History Reset.` });
 
   postMesh();
 }
