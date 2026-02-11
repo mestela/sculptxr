@@ -1575,6 +1575,8 @@ class Scene {
 
         // LEFT HAND: AXIS 2 (Left/Right) - Undo/Redo
         if (source.handedness === 'left') {
+          // THUMBSTICK UNDO DISABLED (Moved to Buttons X/Y)
+          // LEFT HAND: AXIS 2 (Left/Right) - Undo/Redo
           const valX = axes[2];
           const lastX = state.axes[2] || 0;
 
@@ -1584,13 +1586,17 @@ class Scene {
 
           if (wasNeutralX && isPressedX) {
             if (valX < -T_PRESS) {
-              if (window.screenLog) window.screenLog("Shortcuts: Undo (Left Stick)", "lime");
+              if (window.screenLog) window.screenLog(`Shortcuts: Undo (Val=${valX.toFixed(2)})`, "lime");
+              else console.log("Shortcuts: Undo");
+
               if (this._stateManager) {
                 this._stateManager.undo();
                 this._main ? this._main.render() : this.render();
               }
             } else if (valX > T_PRESS) {
-              if (window.screenLog) window.screenLog("Shortcuts: Redo (Left Stick)", "lime");
+              if (window.screenLog) window.screenLog(`Shortcuts: Redo (Val=${valX.toFixed(2)})`, "lime");
+              else console.log("Shortcuts: Redo");
+
               if (this._stateManager) {
                 this._stateManager.redo();
                 this._main ? this._main.render() : this.render();
@@ -1598,6 +1604,49 @@ class Scene {
             }
           }
           state.axes[2] = valX;
+
+          /*
+          // BUTTONS: X (4) = Undo, Y (5) = Redo
+          const btns = source.gamepad.buttons;
+          if (btns.length > 5) {
+            const now = performance.now();
+            const DEBOUNCE = 300; // 300ms debounce
+
+            // Button 4 (X) - Undo
+            const btnX = btns[4];
+            const isPressedX = btnX.pressed;
+            const wasPressedX = state.btnX || false;
+
+            if (isPressedX && !wasPressedX) {
+              if (now - (state.lastUndoTime || 0) > DEBOUNCE) {
+                if (window.screenLog) window.screenLog("Shortcuts: Undo (X Button)", "lime");
+                if (this._stateManager) {
+                  this._stateManager.undo();
+                  this._main ? this._main.render() : this.render();
+                }
+                state.lastUndoTime = now;
+              }
+            }
+            state.btnX = isPressedX;
+
+            // Button 5 (Y) - Redo
+            const btnY = btns[5];
+            const isPressedY = btnY.pressed;
+            const wasPressedY = state.btnY || false;
+
+            if (isPressedY && !wasPressedY) {
+              if (now - (state.lastRedoTime || 0) > DEBOUNCE) {
+                if (window.screenLog) window.screenLog("Shortcuts: Redo (Y Button)", "lime");
+                if (this._stateManager) {
+                  this._stateManager.redo();
+                  this._main ? this._main.render() : this.render();
+                }
+                state.lastRedoTime = now;
+              }
+            }
+            state.btnY = isPressedY;
+          }
+          */
         }
 
         // RIGHT HAND: AXIS 3 (Up/Down) - Radius +/- 5%

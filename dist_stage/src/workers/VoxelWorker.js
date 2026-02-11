@@ -11,7 +11,9 @@ let voxelState = null;
 // Undo/Redo History
 const history = [];
 let historyPtr = -1;
+let snapshotCounter = 0;
 const MAX_HISTORY = 20; // Limit memory usage
+let isDirty = false; // Tracks if the current snapshot has been modified
 
 // Async Init to catch import errors
 (async function () {
@@ -85,8 +87,9 @@ self.onmessage = function (e) {
           history.length = 0;
           const df = voxelState.getDistanceField();
           const copy = new Float32Array(df);
-          history.push({ df: copy });
+          history.push({ df: copy, id: 0 });
           historyPtr = 0;
+          snapshotCounter = 0;
         }
         postMesh();
         break;
@@ -105,12 +108,15 @@ function init(res, size) {
   }
   voxelState = new VoxelState(res, size);
   history.length = 0;
+  snapshotCounter = 0;
 
   // Push Initial State (Empty)
   const df = voxelState.getDistanceField();
   const copy = new Float32Array(df);
-  history.push({ df: copy });
+  history.push({ df: copy, id: snapshotCounter });
   historyPtr = 0;
+
+  self.postMessage({ type: 'LOG', data: `Voxel Init. Snapshot: ${snapshotCounter}` });
 
   postMesh();
 }
@@ -118,40 +124,82 @@ function init(res, size) {
 function snapshot() {
   if (!voxelState) return;
 
-  // 1. Truncate Future
-  if (historyPtr < history.length - 1) {
-    history.length = historyPtr + 1;
-  }
-
-  // 2. Clone Current (Last Safe) to create New Editable Tip
   const currentDF = voxelState.getDistanceField();
   const newDF = new Float32Array(currentDF); // Clone
+  let reused = false;
 
-  // 3. Push & Advance
-  history.push({ df: newDF });
-  historyPtr++;
+  // If Dirty OR First time -> New History Step
+  if (isDirty || historyPtr < 0 || history.length === 0) {
+    if (historyPtr < history.length - 1) {
+      history.length = historyPtr + 1; // Truncate
+    }
+    snapshotCounter++;
+    historyPtr++;
+    history.push({ df: newDF, id: snapshotCounter });
 
-  // 4. Swap VoxelState to use New Tip
-  voxelState.setDistanceField(newDF);
-
-  // 5. Limit Size
-  if (history.length > MAX_HISTORY) {
-    history.shift();
-    historyPtr--;
+    // Limit Size
+    if (history.length > MAX_HISTORY) {
+      history.shift();
+      historyPtr--;
+    }
+  } else {
+    // Reuse current step (Clean)
+    reused = true;
   }
+
+  // Compute Volume
+  let vol = 0;
+  for (let i = 0; i < newDF.length; i++) {
+    if (newDF[i] <= 0.0) vol++;
+  }
+
+  voxelState.setDistanceField(newDF);
+  isDirty = false; // Reset dirty
+
+  const b = voxelState._activeMin;
+  const B = voxelState._activeMax;
+  self.postMessage({ type: 'LOG', data: `Snapshot Created: ${snapshotCounter} (Ptr=${historyPtr}) Vol=${vol} Reused=${reused} Bounds=[${b[0]},${b[1]},${b[2]}]-[${B[0]},${B[1]},${B[2]}]` });
 }
 
 function undo() {
+  // If we have unsaved changes, save them first so we can Redo later.
+  if (isDirty) {
+    snapshot();
+  }
+
   if (historyPtr > 0) {
     historyPtr--;
-    restoreState();
+    restoreState(history[historyPtr]);
+    isDirty = false;
+
+    const id = history[historyPtr].id;
+    const df = history[historyPtr].df;
+    let vol = 0;
+    for (let i = 0; i < df.length; i++) {
+      if (df[i] <= 0.0) vol++;
+    }
+
+    self.postMessage({ type: 'LOG', data: `Undo -> Snapshot: ${id} (Ptr=${historyPtr + 1}->${historyPtr}) Vol=${vol}` });
+  } else {
+    self.postMessage({ type: 'LOG', data: `Undo Failed: Bottom of Stack (Ptr=${historyPtr})` });
   }
 }
 
 function redo() {
   if (historyPtr < history.length - 1) {
     historyPtr++;
-    restoreState();
+    restoreState(history[historyPtr]);
+    isDirty = false;
+
+    const id = history[historyPtr].id;
+    const df = history[historyPtr].df;
+    let vol = 0;
+    for (let i = 0; i < df.length; i++) {
+      if (df[i] <= 0.0) vol++;
+    }
+    self.postMessage({ type: 'LOG', data: `Redo -> Snapshot: ${id} (Ptr=${historyPtr}) Vol=${vol}` });
+  } else {
+    self.postMessage({ type: 'LOG', data: `Redo Failed: Top of Stack (Ptr=${historyPtr})` });
   }
 }
 
@@ -168,15 +216,22 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
   if (!voxelState) return;
 
   // Apply edit
-  voxelState.editSphere(center, radius, color, isNegative);
+  const changed = voxelState.editSphere(center, radius, color, isNegative);
 
-  // Return mesh?
+  if (!changed) {
+    self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Radius=${radius})` });
+  } else {
+    isDirty = true;
+  }
+
   if (returnMesh) postMesh();
 }
 
 function inflateSphere(center, radius, strength, returnMesh) {
   if (!voxelState) return;
-  voxelState.inflateSphere(center, radius, strength);
+  if (voxelState.inflateSphere(center, radius, strength)) {
+    isDirty = true;
+  }
   if (returnMesh) postMesh();
 }
 
@@ -188,9 +243,16 @@ function postMesh() {
   const meshData = voxelState.computeMesh();
   // const t1 = performance.now();
 
+  // Determine the ID of the current state
+  let currentID = snapshotCounter;
+  if (historyPtr >= 0 && historyPtr < history.length) {
+    currentID = history[historyPtr].id;
+  }
+
   self.postMessage({
     type: 'MESH_UPDATE',
     data: meshData,
+    id: currentID // Tag with ACTUAL ID of the state we just computed
     // computeTime: t1 - t0
   }, [meshData.vertices.buffer, meshData.colors.buffer, meshData.materials.buffer, meshData.faces.buffer]);
 }

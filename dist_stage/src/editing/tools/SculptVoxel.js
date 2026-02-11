@@ -46,6 +46,21 @@ class SculptVoxel extends SculptBase {
         
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
 
+        if (msg.id !== undefined) {
+          console.log(`[Worker] Mesh Update ID: ${msg.id}`);
+          if (window.screenLog) window.screenLog(`Mesh ID: ${msg.id}`, "cyan");
+        }
+
+        if (msg.type === 'LOG') {
+          // Parse ID from Log
+          // "Snapshot Created: 8 (Ptr=8)"
+          // "Undo -> Snapshot: 7 (Ptr=7)"
+          const match = msg.data.match(/Snapshot: (\d+)/);
+          if (match) {
+            this._workerSnapshotID = parseInt(match[1]);
+          }
+        }
+
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
 
@@ -65,7 +80,9 @@ class SculptVoxel extends SculptBase {
         }
       } else if (msg.type === 'LOG') {
         // Worker can send logs back
-        // console.log("[Worker]", msg.data);
+        console.log("[Worker]", msg.data);
+        if (window.screenLog) window.screenLog(msg.data, "lime");
+        else console.warn("screenLog missing for:", msg.data);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
       }
@@ -112,6 +129,14 @@ class SculptVoxel extends SculptBase {
     this._cursorMesh.setFlatColor([1.0, 0.5, 0.0]); // Orange
     this._cursorMesh.setOpacity(0.4);
     this._cursorMesh.setVisible(false);
+
+    // Symmetry Cursor (Visual Feedback)
+    this._cursorMeshSym = Primitives.createSphere(main._gl);
+    this._cursorMeshSym.setMode(main._gl.TRIANGLES);
+    this._cursorMeshSym.setShaderType(Enums.Shader.FLAT);
+    this._cursorMeshSym.setFlatColor([1.0, 0.5, 0.0]); // Orange (Same color)
+    this._cursorMeshSym.setOpacity(0.4);
+    this._cursorMeshSym.setVisible(false);
 
     // DEBUG: Add a reference cube to verify location/rendering
     // Use Primitives to ensure correct faces formatting (Quads/Triangles)
@@ -457,6 +482,9 @@ class SculptVoxel extends SculptBase {
       if (this._cursorMesh && this._cursorMesh.isVisible()) {
         this._cursorMesh.render(this._main);
       }
+      if (this._cursorMeshSym && this._cursorMeshSym.isVisible()) {
+        this._cursorMeshSym.render(this._main);
+      }
     } else {
     // Desktop: Standard Selection?
     // selection.render(this._main);
@@ -641,11 +669,6 @@ class SculptVoxel extends SculptBase {
   updateXR(picking, isPressed, origin, dir, options) {
     try {
       // VoxelXR Update
-      // FORCE LOG (Throttled)
-      if (window.screenLog && Math.random() < 0.05) {
-        window.screenLog(`Vx: UpdXR P=${isPressed} Act=${this._xrStrokeActive}`, "grey");
-      }
-
       // Ensure we hide distracting meshes
       // this.hideOtherMeshes();
 
@@ -661,24 +684,49 @@ class SculptVoxel extends SculptBase {
         var cursorRadius = Math.max(1.0, rawRadius * 0.15);
         var radius = cursorRadius; 
 
-
         // Support Voxel Mult Slider if set
         if (this._radiusMult) radius *= this._radiusMult;
 
         // Position at Controller Tip (origin)
-        mat4.translate(m, m, origin); // origin is vec3 pos? 
-        // Wait, origin is usually [x, y, z] from controller.
-        // It's not a matrix? Scene.js passes `vec3.transformMat4(origin, ...)`? 
-        // No, Scene.js passes `ct.position`.
-        // Let's verify origin is vec3.
-        if (origin.length === 3) {
-          mat4.translate(m, m, [origin[0], origin[1], origin[2]]);
-        } else if (origin.length === 16) {
-          // If it passed a matrix? SculptManager calls updateXR(..., origin, dir)
-          // Usually origin is vec3.
-        }
-
+        mat4.translate(m, m, origin);
         mat4.scale(m, m, [radius, radius, radius]);
+      }
+
+      // Symmetry Visuals
+      const sym = this._main.getSculptManager().getSymmetry();
+      if (this._cursorMeshSym) {
+        if (sym) {
+          this._cursorMeshSym.setVisible(true);
+          const mSym = this._cursorMeshSym.getMatrix();
+          mat4.identity(mSym);
+
+          // Calculate Mirrored Position
+          // 1. World -> Local (Grid)
+          const localPos = vec3.create();
+          vec3.transformMat4(localPos, origin, this._invGridMatrix);
+
+          // 2. Mirror X (Local)
+          localPos[0] = -localPos[0];
+
+          // 3. Local -> World
+          const worldPosSym = vec3.create();
+          vec3.transformMat4(worldPosSym, localPos, this._gridMatrix);
+
+          // 4. Position & Scale
+          mat4.translate(mSym, mSym, worldPosSym);
+
+          // Use same radius as main cursor
+          // Recalculate radius to be safe or reuse? Reusing logic for consistency.
+          var rawRadius = (this._radius !== undefined) ? this._radius : 25.0;
+          var cursorRadius = Math.max(1.0, rawRadius * 0.15);
+          var radius = cursorRadius;
+          if (this._radiusMult) radius *= this._radiusMult;
+
+          mat4.scale(mSym, mSym, [radius, radius, radius]);
+
+        } else {
+          this._cursorMeshSym.setVisible(false);
+        }
       }
 
       if (!isPressed) {
@@ -757,7 +805,7 @@ class SculptVoxel extends SculptBase {
         if (returnMesh) {
           this._pendingMeshUpdate = true;
         } else {
-          this._meshRequested = true; // Mark that we want an update as soon as possible
+          this._meshRequested = true;
         }
 
         if (mode === 2) {
@@ -765,6 +813,7 @@ class SculptVoxel extends SculptBase {
           var strength = (this._strength !== undefined) ? this._strength : 0.5;
           if (isNegative) strength = -strength; // Deflate
 
+          // Main Stroke
           this._worker.postMessage({
             type: 'INFLATE',
             center: [localPos[0], localPos[1], localPos[2]],
@@ -773,9 +822,22 @@ class SculptVoxel extends SculptBase {
             returnMesh: returnMesh
           });
 
+          // Symmetry Stroke
+          if (sym) {
+            this._worker.postMessage({
+              type: 'INFLATE',
+              center: [-localPos[0], localPos[1], localPos[2]],
+              radius: gridRadius,
+              strength: strength,
+              returnMesh: false // Don't ask for mesh twice
+            });
+          }
+
         } else {
           // ADD / SUB
           var isSub = (mode === 1);
+
+          // Main Stroke
           this._worker.postMessage({
             type: 'EDIT_SPHERE',
             center: [localPos[0], localPos[1], localPos[2]],
@@ -784,6 +846,18 @@ class SculptVoxel extends SculptBase {
             isNegative: isSub,
             returnMesh: returnMesh
           });
+
+          // Symmetry Stroke
+          if (sym) {
+            this._worker.postMessage({
+              type: 'EDIT_SPHERE',
+              center: [-localPos[0], localPos[1], localPos[2]],
+              radius: gridRadius,
+              color: color,
+              isNegative: isSub,
+              returnMesh: false // Don't ask for mesh twice
+            });
+          }
         }
       } else {
         // Worker not ready

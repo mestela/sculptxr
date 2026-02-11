@@ -199,7 +199,7 @@ class VoxelState {
           // SUBTRACTION: dist = max(val, -d)
           // d = dist to sphere surface (negative inside).
           // We want the resulting distance to be at least -d (distance to the cutout surface).
-          var val = -d; // Inverted sphere distance
+          var val = -dist; // Inverted sphere distance
           if (val > oldDist) {
             df[index] = val;
             changed = true;
