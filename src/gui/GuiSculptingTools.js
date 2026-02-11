@@ -292,12 +292,17 @@ GuiTools[Enums.Tools.TRANSFORM] = {
 GuiTools[Enums.Tools.VOXEL] = {
   _ctrls: [],
   init: function (tool, fold, main) {
-    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+    // Resolution
+    this._ctrls.push(fold.addTitle("Resolution"));
+    var ctrlRes = fold.addSlider("Res", tool._res, function (val) {
+      if (tool.setResolutionPreview) tool.setResolutionPreview(val);
+      else tool.setResolution(val);
+    }, 16, 400, 1);
+    this._ctrls.push(ctrlRes);
 
-    // Mode Selector
-    // 0: Add, 1: Sub, 2: Inflate
-    // We need a dropdown or buttons?
-    // Enums.Action? No, local mode.
+    this._ctrls.push(fold.addButton("Resample (No Undo)", function () {
+      if (tool.applyResolution) tool.applyResolution();
+    }));
     // Let's use a combobox or similar.
     var options = { 'Add': 0, 'Subtract': 1, 'Inflate': 2 };
     var ctrlMode = fold.addCombobox('Mode', tool, '_mode', options);

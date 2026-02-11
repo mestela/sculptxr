@@ -228,24 +228,26 @@ export default function getToolsWidgets(main, activeToolIndex) {
       id: 'voxel_res',
       label: 'Resolution',
       x: col1X, y: y, w: 550, h: 40,
-      value: voxelResolution,
+      value: (activeTool && activeTool._pendingRes) ? activeTool._pendingRes : voxelResolution,
       min: 16, max: 256, step: 16, precision: 0,
       onInput: (val) => {
-        // Debounce? Rebuilding grid is expensive.
-        // But slider usually only calls onInput during drag? 
-        // Maybe we want onChange? GuiXR sliders call onInput continuously.
-        // We really want "onRelease" or throttle.
-        // For now, let's rely on user not dragging wildly, or we can check if implementation handles it.
-        // SculptVoxel.setResolution does a rebuild.
-        // Maybe we should only trigger on "MouseUp"? GuiXR doesn't support that easily yet?
-        // Let's rely on a "Apply" button OR just let it be laggy for now (it's Beta).
-        // OR better: Slider just updates a local val, and we have an "Update" button?
-        // User asked for "Resolution slider".
-        // Let's try direct update first.
-        // Actually, let's wrap it in a debounce in the callback if needed, but here simple is better.
-        if (activeTool && activeTool.setResolution) {
-          activeTool.setResolution(val);
-          main.render();
+        if (activeTool && activeTool.setResolutionPreview) {
+          activeTool.setResolutionPreview(val);
+        }
+      }
+    });
+
+    y += 40 + gapBtn;
+
+    // Resample Button
+    widgets.push({
+      type: 'button',
+      id: 'voxel_resample',
+      label: 'Resample (No Undo)',
+      x: col1X, y: y, w: 550, h: 40,
+      onInteract: () => {
+        if (activeTool && activeTool.applyResolution) {
+          activeTool.applyResolution();
           if (main.guiXR) main.guiXR._needsRedraw = true;
         }
       }

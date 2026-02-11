@@ -664,6 +664,103 @@ class VoxelState {
     this._activeMax.set([this._resolution, this._resolution, this._resolution]);
   }
 
+  resample(newRes) {
+    console.log(`VoxelState: Resampling ${this._resolution} -> ${newRes}`);
+    if (newRes === this._resolution) {
+      console.log("VoxelState: Resolution Unchanged. Skipping.");
+      return;
+    }
+
+    const oldRes = this._resolution;
+    const oldStep = this._step;
+    const oldMin = this._min;
+    const oldDF = this._distanceField;
+
+    const newStep = (oldStep * oldRes) / newRes; // Assuming same physical size
+    const newDF = new Float32Array(newRes * newRes * newRes);
+    newDF.fill(10000.0); // Default to Far
+
+    // Helper to sample old grid
+    const getVal = (x, y, z) => {
+      if (x < 0 || x >= oldRes || y < 0 || y >= oldRes || z < 0 || z >= oldRes) return 10000.0; // Empty
+      return oldDF[x + y * oldRes + z * oldRes * oldRes];
+    };
+
+    console.time("VoxelState.resample");
+    // Trilinear Interpolation
+    for (let k = 0; k < newRes; k++) {
+      for (let j = 0; j < newRes; j++) {
+        for (let i = 0; i < newRes; i++) {
+
+          // World Pos
+          const wx = oldMin[0] + i * newStep;
+          const wy = oldMin[1] + j * newStep;
+          const wz = oldMin[2] + k * newStep;
+
+          // Old Grid Coord
+          const ox = (wx - oldMin[0]) / oldStep;
+          const oy = (wy - oldMin[1]) / oldStep;
+          const oz = (wz - oldMin[2]) / oldStep;
+
+          const x0 = Math.floor(ox); const x1 = x0 + 1;
+          const y0 = Math.floor(oy); const y1 = y0 + 1;
+          const z0 = Math.floor(oz); const z1 = z0 + 1;
+
+          const tx = ox - x0;
+          const ty = oy - y0;
+          const tz = oz - z0;
+
+          // Sample 8 corners
+          const c000 = getVal(x0, y0, z0);
+          const c100 = getVal(x1, y0, z0);
+          const c010 = getVal(x0, y1, z0);
+          const c110 = getVal(x1, y1, z0);
+          const c001 = getVal(x0, y0, z1);
+          const c101 = getVal(x1, y0, z1);
+          const c011 = getVal(x0, y1, z1);
+          const c111 = getVal(x1, y1, z1);
+
+          // Interpolate
+          const nx00 = c000 * (1 - tx) + c100 * tx;
+          const nx01 = c001 * (1 - tx) + c101 * tx;
+          const nx10 = c010 * (1 - tx) + c110 * tx;
+          const nx11 = c011 * (1 - tx) + c111 * tx;
+
+          const ny0 = nx00 * (1 - ty) + nx10 * ty;
+          const ny1 = nx01 * (1 - ty) + nx11 * ty;
+
+          const val = ny0 * (1 - tz) + ny1 * tz;
+
+          newDF[i + j * newRes + k * newRes * newRes] = val;
+        }
+      }
+    }
+    console.timeEnd("VoxelState.resample");
+
+    // Update State
+    this._resolution = newRes;
+    this._step = newStep;
+    this._dims[0] = newRes;
+    this._dims[1] = newRes;
+    this._dims[2] = newRes;
+    this._distanceField = newDF;
+    this._voxels.distanceField = newDF;
+    this._voxels.dims = this._dims;
+    this._voxels.step = this._step;
+    this._voxels.min = this._min;
+    this._voxels.max = this._max;
+    // Reallocate Color/Mat fields if they exist! (They do in constructor)
+    this._voxels.colorField = new Float32Array(newRes * newRes * newRes * 3);
+    this._voxels.colorField.fill(0.8);
+    this._voxels.materialField = new Float32Array(newRes * newRes * newRes * 3);
+    this._voxels.materialField.fill(0.2);
+
+
+    // Reset Active Bounds to full
+    this._activeMin.set([0, 0, 0]);
+    this._activeMax.set([newRes, newRes, newRes]);
+    console.log("VoxelState: Resample Complete. New Bounds Reset.");
+  }
 }
 
 export default VoxelState;

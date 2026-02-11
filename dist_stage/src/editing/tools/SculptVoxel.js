@@ -33,10 +33,15 @@ class SculptVoxel extends SculptBase {
     // Tool State
     this._mode = 0; // 0: Add, 1: Sub, 2: Inflate
     this._strength = 0.5;
+    this._res = 64;
+    this._pendingRes = 64;
 
     this._worker.onmessage = (e) => {
       const msg = e.data;
-      if (msg.type === 'MESH_UPDATE') {
+      if (msg.type === 'LOG') {
+        if (window.screenLog) window.screenLog(msg.data, "grey");
+        else console.log("[Worker]", msg.data);
+      } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
           // const logMsg = `Voxel: Worker=${msg.computeTime.toFixed(1)}ms V=${msg.data.vertices.length/3}`;
@@ -880,8 +885,29 @@ class SculptVoxel extends SculptBase {
     }
   }
 
+  setResolutionPreview(res) {
+    this._pendingRes = res;
+    if (window.screenLog) window.screenLog(`Voxel Res: ${res} (Pending)`, "cyan");
+  }
+
+  applyResolution() {
+    console.log(`SculptVoxel: applyResolution called. Pending=${this._pendingRes}`);
+    if (!this._pendingRes) {
+      console.warn("SculptVoxel: No pending resolution!");
+      return;
+    }
+    this.setResolution(this._pendingRes);
+    if (window.screenLog) window.screenLog(`Voxel: Resampling to ${this._pendingRes}...`, "lime");
+    // Reset pending? No, keep it sync.
+  }
+
   setResolution(res) {
-    if (res === this._res) return;
+    // this._res = res; // BUG: This was setting it too early!
+    this._pendingRes = res; // Sync pending
+    if (res === this._res) {
+      console.log(`SculptVoxel: Resolution ${res} matches current. Skipping.`);
+      return;
+    }
 
     // Update local cache
     this._res = res;
@@ -1027,8 +1053,8 @@ class SculptVoxel extends SculptBase {
       else console.log(`SculptVoxel: Normals Received (${res.normals.length})`);
       this._voxelMesh.setNormals(res.normals);
     } else {
-      if (window.screenLog) window.screenLog(`SculptVoxel: No Normals`, "grey");
-      else console.log(`SculptVoxel: No Normals`);
+      // if (window.screenLog) window.screenLog(`SculptVoxel: No Normals`, "grey");
+      // else console.log(`SculptVoxel: No Normals`);
       this._voxelMesh.setNormals(null); // Clear if disabled
     }
 
