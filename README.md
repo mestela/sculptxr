@@ -101,7 +101,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 - **UI + UX**  
     - Lock selection
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
+    - ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
     - Jump between passthrough (AR) and immersive (VR) modes is janky
     - Really need to make 100% native dialog for inport/export. Ie the panel should show popups, have a file browser. Tricky.
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
@@ -113,7 +113,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Combobox for tool has misaligned highlight
     - Combobox for tool too slow; revert back to button panel i think
     - Default smooth strength too high
-    - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~
+    - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
     - Trigger on left controller should activate 'sub' mode (and change colour of circle radius indicator)
     - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
