@@ -42,7 +42,7 @@ const CANVAS_SIZE = 1024;
 
 // Group 1: Global Tabs (Top)
 // Group 1: Global Tabs (Top)
-const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Camera', 'Tablet pressure', 'Language', 'Extra UI', 'About & Help'];
+const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'About & Help'];
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
@@ -736,9 +736,10 @@ export default class GuiXR {
 
     // Normalize generic view if needed, but usually they are absolute.
     // Let's assume absolute for now but apply scroll.
+    // Let's assume absolute for now but apply scroll.
     const offsetWidgets = widgets.map(w => ({
       ...w,
-      y: w.y + currentY - 130 // 130 was original offset
+      y: w.y + currentY // Start at Header Bottom
     }));
 
     return offsetWidgets;
@@ -752,6 +753,17 @@ export default class GuiXR {
     */
 
     if (!this._cursor.active) return;
+    
+    // ...
+    // Note: I am not replacing onInteract, just the _getWidgets part above it.
+    // But the replace_file_content tool requires contiguous blocks.
+    // I will target the _getWidgets function ending.
+    
+    // Wait, the tool requires StartLine/EndLine.
+    // Lines 741-742 were the offset.
+    // Lines 1778 was the textAlign.
+    // I need TWO calls.
+
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
@@ -1775,7 +1787,7 @@ export default class GuiXR {
       else if (wid.type === 'info') {
         ctx.fillStyle = '#888';
         ctx.font = 'italic 24px sans-serif';
-        ctx.textAlign = 'left';
+        ctx.textAlign = wid.textAlign || 'left';
         ctx.fillText(wid.label, wid.x, wid.y + 24);
       }
       else {
@@ -2086,6 +2098,11 @@ export default class GuiXR {
           ctx.moveTo(wx, wy + wid.h - 5);
           ctx.lineTo(wx + wid.w, wy + wid.h - 5);
           ctx.stroke();
+        } else if (wid.type === 'info') {
+          ctx.fillStyle = '#bbb';
+          ctx.font = this.styles.fontOverlay;
+          ctx.textAlign = wid.textAlign || 'left';
+          ctx.fillText(wid.label, wx + (wid.textAlign === 'center' ? 0 : 5), wy + wid.h / 2 + 6);
         } else if (wid.type === 'checkbox') {
           // Checkbox logic - Solid BG
           ctx.fillStyle = isHover ? '#444' : '#333';

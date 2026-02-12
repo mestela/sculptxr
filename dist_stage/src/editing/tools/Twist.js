@@ -1,4 +1,4 @@
-import { vec2, vec3, quat } from 'gl-matrix';
+import { vec2, vec3, quat, mat4 } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 
@@ -67,6 +67,14 @@ class Twist extends SculptBase {
 
   /** On stroke */
   stroke(picking, mx, my, lx, ly, twistData) {
+    if (typeof mx === 'boolean') {
+      // VR Mode: stroke(picking, isSym)
+      this.strokeXR(picking, mx);
+      return;
+    }
+
+    // Mouse Mode
+    // var iVertsInRadius = picking.getPickedVertices(); // Used below
     var iVertsInRadius = picking.getPickedVertices();
 
     // undo-redo
@@ -78,53 +86,173 @@ class Twist extends SculptBase {
 
     picking.updateAlpha(false);
     picking.setIdAlpha(this._idAlpha);
-    this.twist(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), mx, my, lx, ly, twistData, picking);
+
+    // Calculate Angle for Mouse
+    var mouseCenter = twistData.center;
+    var vecMouse = [mx - mouseCenter[0], my - mouseCenter[1]];
+    if (vec2.len(vecMouse) < 10) return; // Min drag distance
+    vec2.normalize(vecMouse, vecMouse);
+
+    var vecOldMouse = [lx - mouseCenter[0], ly - mouseCenter[1]];
+    vec2.normalize(vecOldMouse, vecOldMouse);
+    var angle = Geometry.signedAngle2d(vecMouse, vecOldMouse);
+
+    // Twist
+    this._twistMesh(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), twistData.normal, angle, picking);
 
     var mesh = this.getMesh();
     mesh.updateGeometry(mesh.getFacesFromVertices(iVertsInRadius), iVertsInRadius);
   }
 
-  /** Twist the vertices around the mouse point intersection */
-  twist(iVerts, center, radiusSquared, mouseX, mouseY, lastMouseX, lastMouseY, twistData, picking) {
+  // Override SculptBase.updateXR to get extra arguments (origin, dir)
+  updateXR(picking, isPressed, origin, dir) {
+    if (!isPressed) return;
+    this.strokeXR(picking, false, origin, dir);
+
+    if (this._main.getSculptManager().getSymmetry()) {
+      var pickingSym = this._main.getPickingSymmetry();
+      // Only stroke if pickingSym has a mesh? 
+      // Actually strokeXR will try to pick. 
+      // But we need to know if we should even try.
+      // SculptBase checks `pickingSym` existence.
+      if (pickingSym) {
+        // We need to sync local radius?
+        pickingSym.setLocalRadius2(picking.getLocalRadius2());
+        this.strokeXR(pickingSym, true, origin, dir);
+      }
+    }
+  }
+
+  /** VR Stroke Logic */
+  strokeXR(picking, isSym, origin, dir) {
+    var main = this._main;
+    // Fallback if origin/dir not provided (shouldn't happen with updated Scene/Manager)
+    if (!origin || !dir) {
+      if (main._vrControllerPos) origin = main._vrControllerPos;
+      else return;
+
+      // Fallback Dir?
+      dir = [0, 0, -1]; // Dummy
+    }
+
     var mesh = this.getMesh();
-    var mouseCenter = twistData.center;
-    var vecMouse = [mouseX - mouseCenter[0], mouseY - mouseCenter[1]];
-    if (vec2.len(vecMouse) < 30)
-      return;
-    vec2.normalize(vecMouse, vecMouse);
-    var nPlane = twistData.normal;
-    var rot = [0.0, 0.0, 0.0, 0.0];
-    var vecOldMouse = [lastMouseX - mouseCenter[0], lastMouseY - mouseCenter[1]];
-    vec2.normalize(vecOldMouse, vecOldMouse);
-    var angle = Geometry.signedAngle2d(vecMouse, vecOldMouse);
+    var invMat = mat4.create();
+    mat4.invert(invMat, mesh.getMatrix());
+
+    // 1. Center of Rotation (Controller Tip in Local Space)
+    var center = vec3.create();
+    vec3.transformMat4(center, origin, invMat);
+
+    // 2. Axis of Rotation (Controller Dir in Local Space)
+    // Transform direction (ignore translation)
+    var axis = vec3.create();
+    var zero = vec3.create();
+    var localDir = vec3.create();
+    vec3.transformMat4(zero, [0, 0, 0], invMat);
+    vec3.transformMat4(localDir, dir, invMat);
+    vec3.sub(axis, localDir, zero);
+    vec3.normalize(axis, axis);
+
+    // Symmetry adjustment for Axis and Center
+    if (isSym) {
+      // Mirror Center
+      var ptPlane = mesh.getSymmetryOrigin();
+      var nPlane = mesh.getSymmetryNormal();
+      Geometry.mirrorPoint(center, ptPlane, nPlane);
+
+      // Mirror Axis?
+      var axisSym = vec3.clone(axis);
+      Geometry.mirrorPoint(axisSym, [0, 0, 0], nPlane); // Mirror vector
+      axis = axisSym;
+    }
+
+    // FORCE PICKING: Use the calculated Drill Center
+    // This ensures symmetry works AND allows "Air Sculpting" (Drill behavior)
+    picking.setIntersectionPoint(center); // Local Space
+    picking._mesh = mesh; // Ensure picking knows the mesh
+    // picking.updateLocalAndWorldRadius2(); // If we changed world radius?
+    // We assume picking radius is already set by caller (updateXR)
+    picking.pickVerticesInSphere(picking.getLocalRadius2());
+    picking.computePickedNormal(); // Optional but good for consistency
+
+    var iVertsInRadius = picking.getPickedVertices();
+
+    // undo-redo
+    this._main.getStateManager().pushVertices(iVertsInRadius);
+    iVertsInRadius = this.dynamicTopology(picking);
+
+    // Culling?
+    if (this._culling) {
+      // Use negative normal as eye dir proxy for VR
+      var n = picking.getPickedNormal(); // This is now valid because we computed picked normal
+      var eyeDir = vec3.create();
+      vec3.negate(eyeDir, n);
+      iVertsInRadius = this.getFrontVertices(iVertsInRadius, eyeDir);
+    }
+
+    picking.updateAlpha(false);
+    picking.setIdAlpha(this._idAlpha);
+
+    // 3. Angle (Drill Mode)
+    var angle = this._intensity * 0.15;
+    if (this._negative) angle = -angle;
+    if (isSym) angle = -angle; // Reverse for Symmetry
+
+    // Twist
+    this._twistMesh(iVertsInRadius, center, picking.getLocalRadius2(), axis, angle, picking);
+
+    mesh.updateGeometry(mesh.getFacesFromVertices(iVertsInRadius), iVertsInRadius);
+    this.updateRender(); // Ensure render update
+  }
+
+  _twistMesh(iVerts, center, radiusSquared, nPlane, angle, picking) {
+    var mesh = this.getMesh();
     var vAr = mesh.getVertices();
     var mAr = mesh.getMaterials();
     var invRadius = 1.0 / Math.sqrt(radiusSquared);
+
     var cx = center[0];
     var cy = center[1];
     var cz = center[2];
+
+    var rot = [0.0, 0.0, 0.0, 0.0];
     var coord = [0.0, 0.0, 0.0];
+
     for (var i = 0, l = iVerts.length; i < l; ++i) {
       var ind = iVerts[i] * 3;
       var vx = vAr[ind];
       var vy = vAr[ind + 1];
       var vz = vAr[ind + 2];
+
       var dx = vx - cx;
       var dy = vy - cy;
       var dz = vz - cz;
+
       var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) * invRadius;
+      if (dist >= 1.0) continue;
+
       var fallOff = dist * dist;
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
       fallOff *= angle * mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
+
       quat.setAxisAngle(rot, nPlane, fallOff);
+
       vec3.set(coord, vx, vy, vz);
       vec3.sub(coord, coord, center);
       vec3.transformQuat(coord, coord, rot);
       vec3.add(coord, coord, center);
+
       vAr[ind] = coord[0];
       vAr[ind + 1] = coord[1];
       vAr[ind + 2] = coord[2];
     }
+  }
+
+  /** Twist the vertices around the mouse point intersection */
+  twist(iVerts, center, radiusSquared, mouseX, mouseY, lastMouseX, lastMouseY, twistData, picking) {
+    // Deprecated: Logic moved to stroke/strokeXR and _twistMesh
+    // Keeping for safety if called externally?
+    // But local refactoring replaced it.
   }
 }
 

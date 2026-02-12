@@ -1,23 +1,20 @@
-# Handover: Voxel Resampling & Polish (v0.7.370)
+# Handover: VR Twist & Voxel Polish (v0.7.389)
 
 ## Current Status
-- **Goal:** Voxel Resampling & Stabilization.
-- **Latest Version:** `v0.7.370` (Deployed to Production).
-- **Status:** **COMPLETED**.
-  - **Voxel Resampling**: Implemented trilinear interpolation for resizing.
-  - **UI**: Added "Resample (No Undo)" button and preview-only slider.
-  - **Fixes**: Resolved premature return bug in `setResolution` and fixed worker logging.
+- **Goal:** VR Tool parity and Voxel improvements.
+- **Latest Version:** `v0.7.389` (Deployed to Production).
+- **Status:** **STABLE** (Reverted Voxel Line Tool changes).
+  - **Twist Brush**: Now works in VR (Drill Mode) with correct symmetry.
+  - **Voxel Line Tool**: Attempted but reverted due to UX issues (Grip vs Trigger).
+  - **Voxel Resampling**: Stabilized.
 
 ## Solutions Implemented
-1.  **Resampling**: `VoxelState.resample(newRes)` preserves data.
-2.  **Worker Communication**: Fixed silent failure by removing buggy early return in `SculptVoxel.js`.
-3.  **Logging**: Cleaned up debug logs in `VoxelWorker.js` and `SculptVoxel.js`.
+1.  **VR Twist**: Implemented `strokeXR` in `Twist.js` using `updateXR` override, fixing `mat4` and center access.
+2.  **Symmetry**: Fixed VR symmetry for Twist and Voxel Inflate.
+3.  **Deploy**: Automated deployment script `deploy_beta.sh` is reliable.
 
 ## Next Steps
-Potential tasks for next session:
-1.  **Smooth Shading**: Add smooth shading to voxel objects (partially implemented but hidden).
-2.  **Undo/Redo Verification**: confirm undo works reliably with symmetry (marked as done but good to double check).
-3.  **Voxel Smooth Brush**: Implement a proper smooth brush for voxels.
+Ask user
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`

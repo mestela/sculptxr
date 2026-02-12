@@ -77,19 +77,22 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - Dynamic Topology (code path is active, but not working, unsure why)
-    - Multiresolution not yet supported in VR
-    - Add primitives menu missing
+    - Voxel smooth shading - hard!
+    - Voxel smooth brush
+    - Xray mode
     - Transform tool/gizmo missing
     - Re-symmetrize function, choose left->right, right->left
     - Drag and move tools should support 6dof rotation
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
-    - ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
     - Straight line mode for voxel tool
     - Paint is a bit glitchy after 0.7.118
     - Left handed mode
     - Symmetry is really glitchy, needs to be reimplemented
+    - ~~Dynamic Topology (code path is active, but not working, unsure why)~~
+    - ~~Multiresolution not yet supported in VR~~
+    - ~~Add primitives menu missing~~
+    - ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
+    - ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
     - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
     - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
     - ~~Reference image support~~ - **Working v0.7.118**
@@ -100,27 +103,25 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Voxel Bake~~ - **DONE v0.7.360**
     - ~~Voxel symmetry~~ - **DONE v0.7.360**
     - ~~Voxel undo/redo~~ - **DONE v0.7.360**
-    - Voxel smooth shading - hard!
-    - Voxel smooth brush
-    - Xray mode
+    
 
 - **UI + UX**  
     - Lock selection
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
     - Jump between passthrough (AR) and immersive (VR) modes is janky
-    - Really need to make 100% native dialog for inport/export. Ie the panel should show popups, have a file browser. Tricky.
-    - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
+    - Really need to make 100% VR native dialog, filebrowser for import/export
+    - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Matcap misaligned; its upside down and slightly different in left/right eyes
-    - Default move brush size is too big
-    - ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
-    - ~~Trigger on left controller should invoke sub mode~~
     - Drag on empty space of menu panel should scroll
     - Combobox for tool has misaligned highlight
-    - Combobox for tool too slow; revert back to button panel i think
-    - Default smooth strength too high
+    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
+    - Trigger on left controller should always activate 'sub' mode (and change colour of circle radius indicator)
+    - ~~Default move brush size is too big~~
+    - ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
+    - ~~Default smooth strength too high~~
+    - ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
+    - ~~Trigger on left controller should invoke sub mode~~
     - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
-    - Trigger on left controller should activate 'sub' mode (and change colour of circle radius indicator)
     - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**

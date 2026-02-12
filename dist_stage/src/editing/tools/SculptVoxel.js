@@ -1244,11 +1244,7 @@ class SculptVoxel extends SculptBase {
 
     const main = this._main;
 
-    // [USER REQUEST] Turn off symmetry after bake
-    if (main.getSculptManager()) {
-      main.getSculptManager().setSymmetry(false);
-      if (main.guiXR) main.guiXR.refreshSymmetry(); // If widget exists
-    }
+
 
     const gl = main._gl;
 
