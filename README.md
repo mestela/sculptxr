@@ -136,6 +136,25 @@ It should work on any WebXR compatible device. So far I've tested on:
 - **Known Issues**:
     - **Quest 3 Crash on Reload**: Clearing cache and reloading the page on Quest 3 often crashes the browser. This is under investigation but difficult to debug without direct device access. Workaround: Close the tab or browser window and reopen if it hangs.
 
+## Clear Browser Cache
+When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
+
+There might be better ways, but here's what I do to ensure the build is clean, nothing is cached:
+
+### Desktop Chrome
+
+- R.click on the page, Inspect
+- Network tab, 'Disable Cache' toggle, turn it on.
+- Applications tab, Storage, 'Clear site data'
+
+If the Inspect tab doesn't have enough room, the Network or Applications tab might be under the >> button in the top bar.
+
+### Quest 3 browser
+
+- Click the 3 dots button in the top right of the browser
+- Clear Browsing Data
+- Clear Data
+
 
 ## Quick Start
 Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.
