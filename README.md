@@ -20,6 +20,12 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.381**: **UI Polish & Voxel Symmetry**:
+    - **UI**: **Flame Style**: Removed borders, added solid backgrounds, standardized heights/text sizes.
+    - **UI**: **Overlay**: Fixed overflow in Files menu, exposed `window.guiXR.styles` for theming.
+    - **Fix**: **Voxel Symmetry**: Fixed Inflate/Deflate ignoring symmetry.
+    - **Feature**: **Trigger Modulation**: Added Analog Trigger support for Radius/Intensity (Rabbit/Turtle mode).
+
 - **v0.7.261**: Voxel GC Optimization (Octree Pooling).
 - **v0.7.260**: Voxel Normal Optimization (Skip expensive compute).
 
@@ -67,7 +73,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Re-symmetrize function, choose left->right, right->left
     - Drag and move tools should support 6dof rotation
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - Symmetry for voxel tool
+    - ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
     - Straight line mode for voxel tool
     - Paint is a bit glitchy after 0.7.118
     - Left handed mode
