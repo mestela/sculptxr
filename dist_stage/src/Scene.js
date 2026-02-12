@@ -2475,7 +2475,14 @@ class Scene {
           }
         }
 
-        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers });
+        // EXTRACT ANALOG TRIGGER VALUE
+        let triggerValue = 1.0;
+        if (source && source.gamepad && source.gamepad.buttons[0]) {
+          triggerValue = source.gamepad.buttons[0].value;
+          // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog(`TrigVal: ${triggerValue.toFixed(2)}`, "cyan");
+        }
+
+        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
       } else {
         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
         this._sculptManager.update();

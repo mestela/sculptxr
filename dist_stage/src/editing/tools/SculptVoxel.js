@@ -599,6 +599,27 @@ class SculptVoxel extends SculptBase {
     var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
     if (isNegative && mode === 0) mode = 1; // Shift override for Brush
 
+    // INTENSITY MODULATION
+    // Base Strength (0..1)
+    var strength = (this._strength !== undefined) ? this._strength : 0.5;
+
+    // Modulate Intensity
+    if (this._modulateIntensity) {
+      // Extract Trigger Value (Need to pass it here or store it?)
+      // updateXR stores it in `this._lastTriggerValue`? No.
+      // We are in `stroke()`, called by `updateXR` (indirectly? No, updateXR calls stroke logic directly or via separate method?)
+      // Wait, `SculptVoxel.js` has `updateXR` which calls `_lastXRPos` logic and `postMessage` directly?
+      // Yes, `updateXR` (lines 680+) handles the VR stroke.
+      // This `stroke()` method (lines 538+) seems to be for MOUSE/TABLET?
+      // Let's check where `updateXR` calls `_worker.postMessage`.
+      // It's at line 782+ (in my previous read).
+      // Ah, I am editing `stroke()` which might be wrong if VR uses `updateXR`.
+      // `updateXR` duplicates some logic or uses `stroke`?
+      // `updateXR` has its own `postMessage` calls (lines 830+ in previous read).
+      // I need to apply Intensity Modulation in `updateXR`, NOT here (unless `stroke` is used by VR too? Scene.js calls updateXR).
+      // Let's abort this edit and apply it to `updateXR` instead.
+    }
+
     // DEBUG: Mode Verification
     // if (window.screenLog && (this._lastUpdate % 30 === 0)) {
     // window.screenLog(`Strk: Mode=${mode} Neg=${isNegative}`, "cyan");
@@ -700,7 +721,9 @@ class SculptVoxel extends SculptBase {
 
         // Position at Controller Tip (origin)
         mat4.translate(m, m, origin);
-        mat4.scale(m, m, [radius, radius, radius]);
+        // User reported visual is half the size of actual edit. Scaling by 2.0.
+        const rVisual = radius * 2.0;
+        mat4.scale(m, m, [rVisual, rVisual, rVisual]);
       }
 
       // Symmetry Visuals
@@ -782,50 +805,98 @@ class SculptVoxel extends SculptBase {
       if (!this._lastXRPos) this._lastXRPos = vec3.create();
       vec3.copy(this._lastXRPos, localPos);
 
-      // 2. Add Sphere at LocalPos
-      // Radius Mapping: rawRadius (0..100) -> World Units
-      // Voxel Box is 100.0 units big.
-      // We want range approx 1.0 (small) to 15.0 (large).
-      // rawRadius * 2.5 seems okay? (0..25)
-      // Actually previous logic was confusing grid units vs world units.
-      // let's use:
-      var worldRadius = Math.max(1.0, rawRadius * 0.15); // 0-100 -> 1.5-15.0
+      // TRIGGER MODULATION LOGIC
+      // Extract Trigger Value (0..1)
+      let triggerValue = 1.0;
+      if (options && options.triggerValue !== undefined) {
+        triggerValue = options.triggerValue;
+      } else {
+        // Fallback: If not passed, assume 1.0 (Full Press) or 0.0?
+        // If isPressed is true, we assume it's pressed.
+        // But for modulation we need the value.
+        // If Scene.js didn't pass it, we can't modulate.
+      }
 
+      // Radius Base
+      var rawRadius = (this._radius !== undefined) ? this._radius : 25.0;
+      var worldRadius = Math.max(1.0, rawRadius * 0.15); // 0-100 -> 1.5-15.0
       if (this._radiusMult) worldRadius *= this._radiusMult;
 
-      var gridRadius = worldRadius; // Since localPos is in Grid Space (which is 0..100?)
-      // Wait, _invGridMatrix transforms World to Grid Space.
-      // If Grid Matrix has NO Scale (only translation), then Grid Space is World Scale.
-      // Grid Matrix was Identity * Translate. No Scale.
-      // So Grid Units == World Units.
+      // Modulate Radius
+      if (this._modulateRadius) {
+        // Bias Logic
+        // S = Bias (-1.0 to 1.0)
+        // t = triggerValue
+        // k = S > 0 ? 1.0 - S * 0.8 : 1.0 + (-S * 3.0)
+        // t_adj = pow(t, k)
+        const S = (this._pressureBias !== undefined) ? this._pressureBias : 0.0;
+        let k = 1.0;
+        if (S > 0) k = 1.0 - (S * 0.8);       // Concave (Fast start)
+        else if (S < 0) k = 1.0 + (-S * 3.0); // Convex (Slow start)
+        const t_adj = Math.pow(triggerValue, k);
 
-      var gridRadius = Math.min(worldRadius, 40.0);
+        const minPct = (this._minRadiusPct !== undefined) ? this._minRadiusPct : 10;
+        const minRadius = worldRadius * (minPct / 100.0);
+        worldRadius = minRadius + (worldRadius - minRadius) * t_adj;
 
-      var color = [0.7, 0.65, 0.6]; // Grey Clay
+        // DEBUG: Radius Modulation
+        // if (window.screenLog && Math.random() < 0.05) window.screenLog(`RadMod: ${(worldRadius).toFixed(2)} (t=${triggerValue.toFixed(2)})`, "cyan");
+      }
 
-      var changed = false;
+      var gridRadius = worldRadius;
+      // Throttling for mesh updates?
+      // VR runs at 72/90/120Hz. We can post edits every frame.
+      // But invalidating mesh every frame might be expensive if we ask for `returnMesh: true`.
+      // We should ask for mesh only every N frames or based on time?
+      // Or just let Worker handle it? Worker is async.
+      // If we flood it, it lags.
+      // Let's rely on standard logic (maybe throttle `returnMesh`?)
+      // The desktop `stroke` logic throttles `returnMesh`.
+
+      const now = performance.now();
+      const returnMesh = (!this._lastMeshTime || now - this._lastMeshTime > 32); // Max 30fps mesh updates?
+      if (returnMesh) this._lastMeshTime = now;
+
+      var color = [0.8, 0.8, 0.8]; // Valid default
+      if (picking && picking.color) color = picking.color;
+      const sm = this._main.getSculptManager();
+      if (sm && sm._activeColor) color = sm._activeColor;
+
       // Use options.isNegative OR this._negative (UI Toggle)
       var isNegative = (options && options.isNegative) || this._negative;
 
-      var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
-      if (mode === 0 && isNegative) mode = 1; // Add + Neg -> Sub
+      // INTENSITY MODULATION
+      // We calculate 'strength' which is used for INFLATE.
+      // For ADD/SUB (Edit Sphere), VoxelState currently doesn't support variable density/strength,
+      // so we use strength only to determine sign (Add vs Sub) if we wanted to merge them,
+      // but 'mode' already defines Add vs Sub.
+      // "Intensity Modulation" for Add/Sub is effectively ignored until VoxelState supports it.
 
-      // Re-enable real update loop
+      var strength = (this._intensity !== undefined) ? this._intensity : 0.5;
+      if (this._modulateIntensity) {
+        // Reuse triggerValue (0..1)
+        const S = (this._pressureBias !== undefined) ? this._pressureBias : 0.0;
+        let k = 1.0;
+        if (S > 0) k = 1.0 - (S * 0.8);
+        else if (S < 0) k = 1.0 + (-S * 3.0);
+        const t_adj = Math.pow(triggerValue, k);
+
+        const minPct = (this._minIntensityPct !== undefined) ? this._minIntensityPct : 10;
+        const minStrength = strength * (minPct / 100.0);
+        strength = minStrength + (strength - minStrength) * t_adj;
+      }
+
+      // Apply Negative Sign if needed (for Inflate/Deflate)
+      if (isNegative) strength = -strength;
+
+
       if (this._worker) {
-        // Throttling: Only request mesh if not currently pending
-        const returnMesh = !this._pendingMeshUpdate;
-        if (returnMesh) {
-          this._pendingMeshUpdate = true;
-        } else {
-          this._meshRequested = true;
-        }
+        // Check mode
+        var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
+        if (isNegative && mode === 0) mode = 1; // Add + Neg -> Sub
 
         if (mode === 2) {
-          // INFLATE / DEFLATE
-          var strength = (this._strength !== undefined) ? this._strength : 0.5;
-          if (isNegative) strength = -strength; // Deflate
-
-          // Main Stroke
+          // INFLATE
           this._worker.postMessage({
             type: 'INFLATE',
             center: [localPos[0], localPos[1], localPos[2]],
@@ -833,23 +904,10 @@ class SculptVoxel extends SculptBase {
             strength: strength,
             returnMesh: returnMesh
           });
-
-          // Symmetry Stroke
-          if (sym) {
-            this._worker.postMessage({
-              type: 'INFLATE',
-              center: [-localPos[0], localPos[1], localPos[2]],
-              radius: gridRadius,
-              strength: strength,
-              returnMesh: false // Don't ask for mesh twice
-            });
-          }
-
         } else {
-          // ADD / SUB
+          // EDIT_SPHERE
           var isSub = (mode === 1);
 
-          // Main Stroke
           this._worker.postMessage({
             type: 'EDIT_SPHERE',
             center: [localPos[0], localPos[1], localPos[2]],
@@ -874,7 +932,6 @@ class SculptVoxel extends SculptBase {
       } else {
         // Worker not ready
       }
-
       // [DEBUG] Trace trace
       // if (Math.random() < 0.05) console.log("Voxel: updateXR stroke sent", localPos);
 
@@ -1162,7 +1219,7 @@ class SculptVoxel extends SculptBase {
       }
       if (window.screenLog) window.screenLog("Voxel: Mesh Added to Scene", "green");
     }
-    if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
+    // if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
   }
 
   // Bake Voxel Mesh to Standard Multimesh

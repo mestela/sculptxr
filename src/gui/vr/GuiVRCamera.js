@@ -6,7 +6,7 @@ export default function getCameraWidgets(main) {
   const widgets = [];
   const menuW = 400;
   let y = 10;
-  const ITEM_H = 40;
+  const ITEM_H = 50;
   const GAP = 5;
 
   const camera = main.getCamera();

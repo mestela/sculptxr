@@ -1783,54 +1783,68 @@ export default class GuiXR {
         }
 
         // Base Styles
+        // Base Styles
         ctx.textAlign = 'center';
-        ctx.font = '32px sans-serif';
+        ctx.font = '24px sans-serif';
 
-        // --- SLIDER ---
+        // --- SLIDER (Main Panel) ---
         if (wid.type === 'slider') {
-          // Track
-          ctx.fillStyle = '#222';
-          ctx.fillRect(wid.x, wid.y + wid.h * 0.4, wid.w, wid.h * 0.2);
+          // Flame Style Polish: Larger Text, Thin Bar at Bottom
 
+          // 1. Text Info (Larger)
+          // 1. Text Info (Larger)
+          // 1. Text Info (Larger)
+          ctx.font = '24px sans-serif';
+          ctx.fillStyle = '#ccc';
+          ctx.textAlign = 'left';
+          // Move text up a bit or center it in the space above bar
+          ctx.fillText(`${wid.label}`, wid.x + 2, wid.y + 28);
+
+          let valStr = (wid.value !== undefined && wid.value !== null) ? wid.value.toFixed(wid.precision || 2) : 'ERR';
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#fff';
+          ctx.fillText(valStr, wid.x + wid.w - 2, wid.y + 28);
+
+          // 2. Slider Track (Thin, Bottom)
+          const barH = 6;
+          const barY = wid.y + wid.h - barH - 4; // 4px padding from bottom
+          ctx.fillStyle = '#222';
+          ctx.fillRect(wid.x + 2, barY, wid.w - 4, barH);
+
+          // 3. Slider Fill (Value)
           let t = wid.value;
           if (isFinite(wid.min) && isFinite(wid.max)) {
             t = (wid.value - wid.min) / (wid.max - wid.min);
           }
           t = Math.max(0, Math.min(1, t));
 
-          const knobX = wid.x + t * wid.w;
-          ctx.fillStyle = '#00D0FF';
-          ctx.fillRect(knobX - 10, wid.y, 20, wid.h);
+          const fillW = (wid.w - 4) * t;
+          ctx.fillStyle = '#00D0FF'; // Active Color
+          ctx.fillRect(wid.x + 2, barY, fillW, barH);
 
-          ctx.fillStyle = '#eee';
-          ctx.textAlign = 'left';
-          ctx.fillText(`${wid.label}:`, wid.x + 20, wid.y + wid.h / 2 + 10);
+          // Marker Line
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(wid.x + 2 + fillW - 2, barY - 2, 4, barH + 4);
 
-          let valStr = (wid.value !== undefined && wid.value !== null) ? wid.value.toFixed(wid.precision || 2) : 'ERR';
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#aaa';
-          ctx.fillText(valStr, wid.x + wid.w - 10, wid.y + wid.h / 2 + 10);
         }
           // --- CHECKBOX / TOGGLE ---
         else if (wid.type === 'checkbox' || wid.type === 'toggle') {
-          ctx.fillStyle = '#222';
+          // Solid Background, No Border
+          ctx.fillStyle = wid.disabled ? '#2a2a2a' : (isActive ? '#444' : '#333');
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-
-          ctx.strokeStyle = isActive ? '#fff' : '#666';
-          ctx.lineWidth = isActive ? 2 : 2;
-          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
           ctx.fillStyle = wid.disabled ? '#555' : 'white';
           ctx.textAlign = 'left';
+          ctx.font = '24px sans-serif';
           ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
 
           const checkW = 40;
           const checkX = wid.x + wid.w - checkW - 10;
           const checkY = wid.y + (wid.h - checkW) / 2;
 
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(checkX, checkY, checkW, checkW);
+          // Checkbox Frame
+          ctx.fillStyle = '#111';
+          ctx.fillRect(checkX, checkY, checkW, checkW);
 
           if (wid.value) {
             ctx.strokeStyle = '#00D0FF';
@@ -1845,11 +1859,9 @@ export default class GuiXR {
         }
           // --- COMBOBOX ---
         else if (wid.type === 'combobox') {
-          ctx.fillStyle = '#222';
+          // Solid Background, No Border
+          ctx.fillStyle = '#333';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-          ctx.strokeStyle = '#888';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
 
           let displayLabel = wid.label;
           if (wid.options) {
@@ -1874,6 +1886,7 @@ export default class GuiXR {
           }
 
           ctx.textAlign = 'left';
+          ctx.font = '24px sans-serif';
           ctx.fillStyle = 'white';
           ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
 
@@ -1886,16 +1899,13 @@ export default class GuiXR {
         }
           // --- GENERIC BUTTON ---
         else if (wid.type === 'button') {
-          ctx.fillStyle = isActive ? '#00A040' : '#444';
+          ctx.fillStyle = isActive ? '#00A040' : '#333';
           if (wid.disabled) ctx.fillStyle = '#222';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-          ctx.strokeStyle = isActive ? '#fff' : '#888';
-          ctx.lineWidth = isActive ? 4 : 2;
-          ctx.strokeRect(wid.x, wid.y, wid.w, wid.h);
-
           ctx.fillStyle = wid.disabled ? '#555' : 'white';
           ctx.textAlign = 'center';
+          ctx.font = '24px sans-serif';
           ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
         }
       } // END ELSE (Generic Widgets)
@@ -1903,9 +1913,9 @@ export default class GuiXR {
       // --- GENERIC HOVER HIGHLIGHT (For ALL widgets, drawn LAST so it's ON TOP) ---
       const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
       if (isHovered && wid.type !== 'info') {
-        const INSET = 3;
+        const INSET = 2; // Reduced from 3
         ctx.strokeStyle = '#dfdfdf'; // Brighter Gray
-        ctx.lineWidth = 6;           // Thicker
+        ctx.lineWidth = 4;           // Reduced from 6
         ctx.strokeRect(wid.x + INSET, wid.y + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
       }
     }
@@ -2052,62 +2062,67 @@ export default class GuiXR {
           ctx.lineTo(wx + wid.w, wy + wid.h - 5);
           ctx.stroke();
         } else if (wid.type === 'checkbox') {
-          // Checkbox logic
+          // Checkbox logic - Solid BG
+          ctx.fillStyle = isHover ? '#444' : '#333';
+          ctx.fillRect(wx, wy, wid.w, wid.h);
+
           const boxSize = 24;
           const boxX = wx + wid.w - boxSize - 5;
           const boxY = wy + (wid.h - boxSize) / 2;
 
           ctx.fillStyle = '#111';
           ctx.fillRect(boxX, boxY, boxSize, boxSize);
-          ctx.strokeStyle = '#555';
-          ctx.strokeRect(boxX, boxY, boxSize, boxSize);
 
           if (wid.value) {
             ctx.fillStyle = '#0f0'; // Checkmark
             ctx.fillRect(boxX + 4, boxY + 4, boxSize - 8, boxSize - 8);
           }
 
-          ctx.font = '18px sans-serif';
+          ctx.font = '24px sans-serif';
           ctx.fillStyle = '#ddd';
           ctx.textAlign = 'left';
           ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'slider') {
-          // Slider Logic
-          ctx.font = '18px sans-serif';
+          // Flame Style Overlay Slider Polish
+
+          // 1. Text Info (Larger)
+          // 1. Text Info (Larger)
+          // 1. Text Info (Larger)
+          ctx.font = '24px sans-serif';
+          ctx.textAlign = 'left';
           ctx.fillStyle = '#ddd';
-          ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
+          ctx.fillText(wid.label, wx + 2, wy + 28);
 
-          // Draw Slider Bar
-          const sliderW = 120;
-          const sliderH = 6;
-          const sliderX = wx + wid.w - sliderW - 10;
-          const sliderY = wy + wid.h / 2 - sliderH / 2;
-
-          ctx.fillStyle = '#111';
-          ctx.fillRect(sliderX, sliderY, sliderW, sliderH);
-
-          // Knob
-          // Value normalized 0..1
+          // Value
           let nVal = wid.value;
-          // Ensure it is normalized if we have min/max ? 
-          // Actually existing widgets seem to carry normalized value mostly?
-          // If not, we might need normalizing logic.
-          // For now assuming 0..1 as per existing render.
-
-          const knobX = sliderX + sliderW * Math.max(0, Math.min(1, nVal));
-          ctx.fillStyle = '#888';
-          ctx.fillRect(knobX - 5, sliderY - 5, 10, 16);
-
-          // Display actual value text
           let disp = nVal;
           if (wid.min !== undefined && wid.max !== undefined) {
             disp = wid.min + nVal * (wid.max - wid.min);
           }
 
-          ctx.fillStyle = '#aaa';
           ctx.textAlign = 'right';
-          ctx.fillText(disp.toFixed(2), sliderX - 10, wy + wid.h / 2 + 6);
+          ctx.fillStyle = '#aaa';
+          ctx.fillText(disp.toFixed(2), wx + wid.w - 2, wy + 28);
+
+          // 2. Slider Track (Thin, Bottom)
+          const barH = 6;
+          const barY = wy + wid.h - barH - 4;
+          ctx.fillStyle = '#111';
+          ctx.fillRect(wx + 2, barY, wid.w - 4, barH); // Full Width Background
+
+          // 3. Slider Fill
+          const knobX = (wid.w - 4) * Math.max(0, Math.min(1, wid.value)); // wid.value is normalized for overlay? Yes, mostly.
+          // Wait, verify normalization for overlay sliders again.
+          // In Main Panel we do manual norm. In Overlay, `wid.value` IS the 0-1 value for drawing usually.
+          // But let's be safe: overlay draw logic uses `wid.value` as 't'.
+
+          ctx.fillStyle = '#888';
+          ctx.fillRect(wx + 2, barY, knobX, barH);
+
+          // Marker
+          ctx.fillStyle = '#ccc';
+          ctx.fillRect(wx + 2 + knobX - 2, barY - 2, 4, barH + 4);
 
         } else if (wid.type === 'button') {
           ctx.fillStyle = isHover ? '#555' : '#333';
@@ -2118,13 +2133,12 @@ export default class GuiXR {
 
           ctx.fillStyle = '#eee';
           ctx.textAlign = 'center';
+          ctx.font = '24px sans-serif';
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'combobox') {
-          ctx.fillStyle = isHover ? '#353535' : '#252525';
+          ctx.fillStyle = isHover ? '#444' : '#333';
           ctx.fillRect(wx, wy, wid.w, wid.h);
-          ctx.strokeStyle = '#444';
-          ctx.strokeRect(wx, wy, wid.w, wid.h);
 
           ctx.font = '18px sans-serif';
           ctx.fillStyle = '#ddd';
@@ -2151,9 +2165,10 @@ export default class GuiXR {
 
         // Hover Border (On Top)
         if (isHover) {
+          const INSET = 2;
           ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(wx, wy, wid.w, wid.h);
+          ctx.lineWidth = 4;
+          ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
         }
       });
 

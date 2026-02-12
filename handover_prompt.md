@@ -1,23 +1,24 @@
-# Handover: Log Cleanup & Next Steps (v0.7.348)
+# Handover: Voxel Resampling & Polish (v0.7.370)
 
 ## Current Status
-- **Goal:** Voxel Symmetry & Log Cleanup.
-- **Latest Version:** `v0.7.348` (Deployed to Beta).
+- **Goal:** Voxel Resampling & Stabilization.
+- **Latest Version:** `v0.7.370` (Deployed to Production).
 - **Status:** **COMPLETED**.
-  - **Symmetry**: Implemented (X-Axis). Logic verified via logs.
-  - **Logs**: Silenced noisy logs in `VoxelWorker`, `GuiXR`, and `Multimesh`.
-  - **Voxel Subtract**: Fixed.
+  - **Voxel Resampling**: Implemented trilinear interpolation for resizing.
+  - **UI**: Added "Resample (No Undo)" button and preview-only slider.
+  - **Fixes**: Resolved premature return bug in `setResolution` and fixed worker logging.
 
 ## Solutions Implemented
-1.  **Log Cleanup**: Commented out spammy logs in `src/workers/VoxelWorker.js`, `src/gui/GuiXR.js`, and `src/mesh/multiresolution/Multimesh.js`.
-2.  **Symmetry**: Dual dispatch in `SculptVoxel.js`.
-3.  **Voxel Fixes**: Resolved `d is not defined` error.
+1.  **Resampling**: `VoxelState.resample(newRes)` preserves data.
+2.  **Worker Communication**: Fixed silent failure by removing buggy early return in `SculptVoxel.js`.
+3.  **Logging**: Cleaned up debug logs in `VoxelWorker.js` and `SculptVoxel.js`.
 
 ## Next Steps
 Potential tasks for next session:
-1.  **Smooth Shading**: Add smooth shading to voxel objects (currently flat shaded).
-2.  **Resampling**: Resample current object when changing voxel resolution (currently destroys data).
-3.  **Undo/Redo Verification**: confirm undo works reliably with symmetry.
+1.  **Smooth Shading**: Add smooth shading to voxel objects (partially implemented but hidden).
+2.  **Undo/Redo Verification**: confirm undo works reliably with symmetry (marked as done but good to double check).
+3.  **Voxel Smooth Brush**: Implement a proper smooth brush for voxels.
 
 ## Environment
--   **URL:** `https://tokeru.com/sculptxrbeta/`
+-   **URL:** `https://tokeru.com/sculptxr/`
+-   **Beta:** `https://tokeru.com/sculptxrbeta/`

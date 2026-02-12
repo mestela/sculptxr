@@ -84,8 +84,10 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Voxel undo/redo~~ - **DONE v0.7.360**
     - Voxel smooth shading - hard!
     - Voxel smooth brush
+    - Xray mode
 
 - **UI + UX**  
+    - Lock selection
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Menu layout is clunky, but covers all desktop options now. slowly adding functionality.
     - Jump between passthrough (AR) and immersive (VR) modes is janky
@@ -93,13 +95,13 @@ It should work on any WebXR compatible device. So far I've tested on:
     - **Visual Feedback**: Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Matcap misaligned; its upside down and slightly different in left/right eyes
     - Default move brush size is too big
-    - Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges
-    - Trigger on left controller should invoke sub mode
+    - ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
+    - ~~Trigger on left controller should invoke sub mode~~
     - Drag on empty space of menu panel should scroll
     - Combobox for tool has misaligned highlight
     - Combobox for tool too slow; revert back to button panel i think
     - Default smooth strength too high
-    - Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.
+    - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~
     - Trigger on left controller should activate 'sub' mode (and change colour of circle radius indicator)
     - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    

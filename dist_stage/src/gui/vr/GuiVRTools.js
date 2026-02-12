@@ -48,7 +48,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'slider',
     id: 'radius',
     label: 'Radius',
-    x: col1X, y: y, w: 350, h: 40,
+    x: col1X, y: y, w: 350, h: 50,
     value: activeTool ? activeTool._radius : 50,
     min: 5, max: 250, precision: 0,
     onInput: (val) => { if (activeTool) { activeTool._radius = val; main.render(); } }
@@ -59,12 +59,12 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'slider',
     id: 'intensity',
     label: 'Intensity',
-    x: 400, y: y, w: 350, h: 40,
+    x: 400, y: y, w: 350, h: 50,
     value: activeTool ? activeTool._intensity : 0.5,
     min: 0, max: 1, precision: 2,
     onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
   });
-  y += 40 + gapSection;
+  y += 50 + gapSection;
 
   // 2b. Tool Specific Settings
   // --- PAINT ---
@@ -87,17 +87,17 @@ export default function getToolsWidgets(main, activeToolIndex) {
 
     // Material (Roughness, Metallic)
     widgets.push({
-      type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 40,
+      type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 50,
       value: activeTool._material[0], min: 0, max: 1, step: 0.01, precision: 2,
       onInput: (val) => { activeTool._material[0] = val; main.render(); }
     });
-    y += 45;
+    y += 55;
     widgets.push({
-      type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 40,
+      type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 50,
       value: activeTool._material[1], min: 0, max: 1, step: 0.01, precision: 2,
       onInput: (val) => { activeTool._material[1] = val; main.render(); }
     });
-    y += 45 + gapBtn;
+    y += 55 + gapBtn;
 
     // Paint All Button
     widgets.push({
@@ -302,6 +302,80 @@ export default function getToolsWidgets(main, activeToolIndex) {
       }
     });
     y += btnH + gapSection;
+
+    // --- TRIGGER MODULATION ---
+    widgets.push({ type: 'info', label: 'Trigger Modulation', x: col1X, y: y });
+    y += gapHeader;
+
+    // Toggle: Modulate Radius
+    widgets.push({
+      type: 'checkbox',
+      id: 'mod_radius',
+      label: 'Radius (Pressure)',
+      x: col1X, y: y, w: 400, h: btnH,
+      value: activeTool ? activeTool._modulateRadius : false,
+      onInteract: () => {
+        if (activeTool) {
+          activeTool._modulateRadius = !activeTool._modulateRadius;
+          main.render();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      }
+    });
+    y += btnH + gapBtn;
+
+    // Toggle: Modulate Intensity
+    widgets.push({
+      type: 'checkbox',
+      id: 'mod_intensity',
+      label: 'Intensity (Pressure)',
+      x: col1X, y: y, w: 400, h: btnH,
+      value: activeTool ? activeTool._modulateIntensity : true,
+      onInteract: () => {
+        if (activeTool) {
+          activeTool._modulateIntensity = !activeTool._modulateIntensity;
+          main.render();
+          if (main.guiXR) main.guiXR._needsRedraw = true;
+        }
+      }
+    });
+    y += btnH + gapBtn;
+
+    // Min Radius Slider
+    widgets.push({
+      type: 'slider',
+      id: 'min_radius_pct',
+      label: 'Min Radius %',
+      x: col1X, y: y, w: 550, h: 40,
+      value: activeTool ? (activeTool._minRadiusPct !== undefined ? activeTool._minRadiusPct : 10) : 10,
+      min: 1, max: 100, precision: 0,
+      onInput: (val) => { if (activeTool) { activeTool._minRadiusPct = val; } }
+    });
+    y += 40 + gapBtn;
+
+    // Min Intensity Slider
+    widgets.push({
+      type: 'slider',
+      id: 'min_intensity_pct',
+      label: 'Min Intensity %',
+      x: col1X, y: y, w: 550, h: 40,
+      value: activeTool ? (activeTool._minIntensityPct !== undefined ? activeTool._minIntensityPct : 10) : 10,
+      min: 0, max: 100, precision: 0,
+      onInput: (val) => { if (activeTool) { activeTool._minIntensityPct = val; } }
+    });
+    y += 40 + gapBtn;
+
+    // Bias Slider
+    widgets.push({
+      type: 'slider',
+      id: 'pressure_bias',
+      label: 'Pressure Bias (Min <-> Max)',
+      x: col1X, y: y, w: 550, h: 40,
+      value: activeTool ? (activeTool._pressureBias !== undefined ? activeTool._pressureBias : 0) : 0,
+      min: -0.95, max: 0.95, precision: 2, step: 0.05,
+      onInput: (val) => { if (activeTool) { activeTool._pressureBias = val; } }
+    });
+    y += 40 + gapSection;
 
     // Skip the standard "Common" stuff? 
     // Voxel tool supports Negative (handled below).

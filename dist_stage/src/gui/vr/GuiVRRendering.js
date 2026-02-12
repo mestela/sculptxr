@@ -56,12 +56,12 @@ export default function getRenderingWidgets(main) {
     type: 'slider',
     id: 'curvature',
     label: TR('renderingCurvature'),
-    x: col1X, y: y, w: 400, h: 40,
+    x: col1X, y: y, w: 400, h: 50,
     min: 0, max: 100,
     value: mesh.getCurvature() * 20.0, 
     onInput: (val) => { mesh.setCurvature(val / 20.0); main.render(); }
   });
-  y += 40 + gapBtn;
+  y += 50 + gapBtn;
 
   // Filmic Tonemapping
   widgets.push({
@@ -105,12 +105,12 @@ export default function getRenderingWidgets(main) {
       type: 'slider',
       id: 'exposure',
       label: TR('renderingExposure'),
-      x: col1X, y: y, w: 400, h: 40,
+      x: col1X, y: y, w: 400, h: 50,
       value: ShaderPBR.exposure,
       min: 0, max: 5,
       onInput: (val) => { ShaderPBR.exposure = val; main.render(); }
     });
-    y += 40 + gapSection;
+    y += 50 + gapSection;
   }
 
   // --- 3. MATERIAL (MATCAP) ---
@@ -175,14 +175,14 @@ export default function getRenderingWidgets(main) {
     type: 'slider',
     id: 'transparency',
     label: TR('renderingTransparency'),
-    x: col1X, y: y, w: 400, h: 40,
+    x: col1X, y: y, w: 400, h: 50,
     value: (1.0 - mesh.getOpacity()) * 100,
     onInput: (val) => {
       mesh.setOpacity(1.0 - val / 100.0);
       main.render();
     }
   });
-  y += 40 + gapBtn;
+  y += 50 + gapBtn;
 
   widgets.push({
     type: 'checkbox',
