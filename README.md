@@ -127,15 +127,13 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 - **Desktop 6DOF (Beta Issues)**:
-    - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
     - Symmetry behaves strangely in desktop mode (investigate).
     - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
-    - Should re-enable mouse controls to adjust the screen offset, eaier than using the consoel commands. Also just standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
+    - Should re-enable mouse controls to adjust the screen offset.
+    - Standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
     - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
-
-- **Known Issues**:
-    - **Quest 3 Crash on Reload**: Clearing cache and reloading the page on Quest 3 often crashes the browser. This is under investigation but difficult to debug without direct device access. Workaround: Close the tab or browser window and reopen if it hangs.
-
+    - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
+    
 ## Clear Browser Cache
 When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
 
