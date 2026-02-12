@@ -22,7 +22,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 - **v0.7.401**: **VR Menu Refinement**:
     - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
-    - **UI**: **Settings**: Simplified "Extra UI" into a clean "Settings" tab.
     - **UI**: **About & Help**: Added dynamic version, website/github links, credits, and a controls cheatsheet.
     - **Fix**: **Widget Rendering**: Fixed `info` widgets not rendering in overlays.
 
