@@ -4,7 +4,7 @@ export default function getSettingsWidgets(main) {
   const widgets = [];
   const menuW = 400;
   let y = 10;
-  const ITEM_H = 50;
+  const ITEM_H = 40;
   const HEADER_H = 30;
   const GAP = 5;
 

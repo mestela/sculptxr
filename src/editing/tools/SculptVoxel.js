@@ -904,6 +904,17 @@ class SculptVoxel extends SculptBase {
             strength: strength,
             returnMesh: returnMesh
           });
+
+          // Symmetry Stroke
+          if (sym) {
+            this._worker.postMessage({
+              type: 'INFLATE',
+              center: [-localPos[0], localPos[1], localPos[2]],
+              radius: gridRadius,
+              strength: strength,
+              returnMesh: false
+            });
+          }
         } else {
           // EDIT_SPHERE
           var isSub = (mode === 1);

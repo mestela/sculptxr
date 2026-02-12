@@ -4,7 +4,7 @@ export default function getFilesWidgets(main) {
 
   const w = 350; // Menu Width
   const pad = 10;
-  const itemH = 50;
+  const itemH = 40;
   const headerH = 30;
 
   let y = 10;

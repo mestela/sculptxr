@@ -162,6 +162,30 @@ export default class GuiXR {
     });
 
     this._pendingDraw = false;
+
+    // Style Exposure (Runtime Customization)
+    this.styles = {
+      // Main Panel
+      fontMain: '24px sans-serif',
+      fontMainBold: 'bold 24px sans-serif',
+      colorBg: '#202020',
+      colorWidgetBg: '#333',
+      colorWidgetHover: '#444',
+      colorText: '#fff',
+      colorTextDim: '#ccc',
+      colorAccent: '#00D0FF',
+
+      // Overlay
+      overlayBg: 'rgba(0, 0, 0, 0.8)',
+      overlayMenuBg: '#222',
+      overlayMenuBorder: '#444',
+      fontOverlay: '20px sans-serif',
+      fontOverlayHeader: 'bold 16px sans-serif',
+      overlayItemHeight: 40 // Not directly used yet, but good for reference
+    };
+
+    // Expose for Console
+    window.guiXR = this;
   }
 
   _requestDraw() {
@@ -2019,10 +2043,11 @@ export default class GuiXR {
 
       // Menu Box
       // Shadow removed
-      ctx.fillStyle = '#222'; // Dark Menu BG
+      // Menu Box
+      ctx.fillStyle = this.styles.overlayMenuBg;
       ctx.fillRect(x, y, mw, mh);
 
-      ctx.strokeStyle = '#444';
+      ctx.strokeStyle = this.styles.overlayMenuBorder;
       ctx.lineWidth = 1;
       ctx.strokeRect(x, y, mw, mh);
 
@@ -2035,7 +2060,7 @@ export default class GuiXR {
 
         // Hover Background (Generic)
         if (isHover) {
-          ctx.fillStyle = '#444';
+          ctx.fillStyle = this.styles.colorWidgetHover;
           ctx.fillRect(wx, wy, wid.w, wid.h);
         }
 
@@ -2051,11 +2076,11 @@ export default class GuiXR {
         // Scaling on the fly during draw is easier for now to satisfy "Scale by 20%".
         // But `_updateHover` also uses these coordinates for hit testing.
         if (wid.header) {
-          ctx.font = 'bold 18px sans-serif';
+          ctx.font = this.styles.fontOverlayHeader;
           ctx.fillStyle = '#aaa';
           ctx.fillText(wid.label, wx + 5, wy + wid.h - 10);
           // Separator line
-          ctx.strokeStyle = '#444';
+          ctx.strokeStyle = this.styles.overlayMenuBorder;
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(wx, wy + wid.h - 5);
@@ -2078,7 +2103,7 @@ export default class GuiXR {
             ctx.fillRect(boxX + 4, boxY + 4, boxSize - 8, boxSize - 8);
           }
 
-          ctx.font = '24px sans-serif';
+          ctx.font = this.styles.fontOverlay;
           ctx.fillStyle = '#ddd';
           ctx.textAlign = 'left';
           ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
@@ -2089,7 +2114,7 @@ export default class GuiXR {
           // 1. Text Info (Larger)
           // 1. Text Info (Larger)
           // 1. Text Info (Larger)
-          ctx.font = '24px sans-serif';
+          ctx.font = this.styles.fontOverlay;
           ctx.textAlign = 'left';
           ctx.fillStyle = '#ddd';
           ctx.fillText(wid.label, wx + 2, wy + 28);
@@ -2133,14 +2158,14 @@ export default class GuiXR {
 
           ctx.fillStyle = '#eee';
           ctx.textAlign = 'center';
-          ctx.font = '24px sans-serif';
+          ctx.font = this.styles.fontOverlay;
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'combobox') {
           ctx.fillStyle = isHover ? '#444' : '#333';
           ctx.fillRect(wx, wy, wid.w, wid.h);
 
-          ctx.font = '18px sans-serif';
+          ctx.font = this.styles.fontOverlay;
           ctx.fillStyle = '#ddd';
           ctx.textAlign = 'left';
           ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
