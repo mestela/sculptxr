@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+- **v0.7.401**: **VR Menu Refinement**:
+    - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
+    - **UI**: **Settings**: Simplified "Extra UI" into a clean "Settings" tab.
+    - **UI**: **About & Help**: Added dynamic version, website/github links, credits, and a controls cheatsheet.
+    - **Fix**: **Widget Rendering**: Fixed `info` widgets not rendering in overlays.
+
 - **v0.7.316**: Voxel Undo/Redo (Functional)
     - **Feature**: Enabled Voxel Undo/Redo per stroke.
     - **Note**: Basic functionality working, but reported as "erratic" (investigating).
