@@ -1,5 +1,34 @@
 # SculptXR Release History
 
+- **v0.7.258**: **Voxel Performance**:
+    - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
+    - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
+
+- **v0.7.257**: **Log Cleanup & Voxel Polish**:
+    - **Fix**: **Logs**: Removed verbose debug logs (`MESH_UPDATE`, `Updating Mesh...`) from `SculptVoxel.js` and `VoxelWorker.js`.
+    - **Fix**: **Voxel Offset**: Confirmed Voxel Bake Offset was a non-issue.
+
+- **v0.7.175**: **Debug Voxel Init & GL Launch Errors**:
+    - **Fix**: **Voxel Init**: `VoxelWorker` now immediately posts an empty mesh on `INIT` to prevent the "no voxel mesh exists yet" warning.
+    - **Debug**: **GL Safety**: Added `glDrawElements` safety check in `ShaderBase.js` to log "Insufficient Buffer" errors.
+
+- **v0.7.174**: **Voxel Performance & Fixes**:
+    - **Fix**: **Rendering**: Resolved black artifacts and `GL_INVALID_OPERATION` by ensuring `updateBuffers()` is called after Voxel mesh updates.
+    - **Performance**: **Worker Throttling**: Implemented `returnMesh` flag and message throttling to prevent Voxel Worker from flooding the main thread during rapid sculpting.
+    - **Fix**: **Memory Leak**: Fixed `Scene.js` `removeMeshes` bug (unsafe splice) and added `release()` to prevent voxel meshes from leaking memory on resolution change.
+
+- **v0.7.121**: **Voxel Worker (Phase 1)**:
+    - **Performance**: Moved Voxel Engine to a Web Worker (`VoxelWorker.js`).
+    - **Architecture**: Implemented asynchronous messaging between Main thread and Worker.
+    - **Compatibility**: Patched `gl-matrix` and `VoxelState` to run in both window and worker environments.
+
+- **v0.7.118**: **Stabilization & Polish**:
+    - **Fix**: **Sticky Brush**: Resolved critical bug where brush would continue drawing after release. Fixed `SculptBase.js` to respect trigger state in `updateXR`.
+    - **Fix**: **Reference Images**: Flipped UVs in `MeshReference.js` to fix upside-down images.
+    - **Fix**: **Grab Tool**: Improved stability with Delta Transforms, Locked Hand Priority, and "Active Mesh" fallback for easier picking.
+    - **Fix**: **Ghost Trigger**: Prevented "stale" trigger inputs from blocking the other hand.
+    - **Cleanup**: Massive removal of debug logs ("SCULPT BLOCKED", "Input Dump", "START STROKE") for a clean console.
+    
 - **v0.7.401**: **VR Menu Refinement**:
     - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
     - **UI**: **Settings**: Simplified "Extra UI" into a clean "Settings" tab.
