@@ -20,6 +20,11 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+- **v0.7.389**: **VR Twist Brush (Drill Mode)**:
+    - **Feature**: **Drill Mode**: Twist brush now works in VR! Point and twist to drill the mesh.
+    - **Feature**: **Symmetry**: Fully supported with mirrored position and reversed rotation.
+    - **Fix**: **Crash**: Resolved `mat4` and `center` access errors in VR.
+
 - **v0.7.381**: **UI Polish & Voxel Symmetry**:
     - **UI**: **Flame Style**: Removed borders, added solid backgrounds, standardized heights/text sizes.
     - **UI**: **Overlay**: Fixed overflow in Files menu, exposed `window.guiXR.styles` for theming.
@@ -74,6 +79,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Drag and move tools should support 6dof rotation
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
+    - ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
     - Straight line mode for voxel tool
     - Paint is a bit glitchy after 0.7.118
     - Left handed mode
