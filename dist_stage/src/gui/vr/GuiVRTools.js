@@ -37,6 +37,7 @@ export default function getToolsWidgets(main, activeToolIndex) {
       if (main.guiXR) main.guiXR.refreshToolsWidget();
     }
   });
+
   y += btnH + gapSection;
 
 

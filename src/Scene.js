@@ -134,6 +134,7 @@ class Scene {
 
     // [Step 1] Hand Swap Feature
     this._dominantHand = 'right'; // 'right' or 'left'
+    this._selectionLocked = false; // Lock Selection State
     this._vrIsNegative = false; // Universal Sub Mode State
   }
 
@@ -2338,8 +2339,19 @@ class Scene {
     vec3.scale(rayOrigin, rayOrigin, invScale);
 
     // C. Perform Intersection
-    this._picking._rWorld2 = pickingRadius * pickingRadius; // Pre-set radius squared for logic that might check it
-    let picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+    // Lock Selection Logic: If locked and we have a mesh, skip picking
+    this._picking._rWorld2 = pickingRadius * pickingRadius;
+
+    let picked = false;
+    if (this._selectionLocked && this._picking.getMesh()) {
+      // Keep current mesh, but we might still need to update intersection point on THAT mesh?
+      // actually intersectionRayMeshes does both selection AND intersection point update.
+      // If we skip it, we don't update the cursor position!
+      // We must force intersection ONLY on the current mesh.
+      picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, engineDir);
+    } else {
+      picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+    }
 
     // DEBUG: Picking Trace
     // if (window.screenLog && this._logThrottle % 60 === 0) {
