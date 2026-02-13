@@ -86,7 +86,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 - **UI + UX**  
     - Lock selection
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - Jump between passthrough (AR) and immersive (VR) modes is janky
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Matcap misaligned; its upside down and slightly different in left/right eyes
