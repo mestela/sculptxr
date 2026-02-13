@@ -64,7 +64,26 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Xray mode
 
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    
+
+- **UI + UX**  
+    - Lock selection
+    - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
+    - Really need to make 100% VR native dialog, filebrowser for import/export
+    - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
+    - Matcap misaligned; its upside down and slightly different in left/right eyes
+    - Drag on empty space of menu panel should scroll
+    - Combobox for tool has misaligned highlight
+    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
+    - Trigger on left controller should always activate 'sub' mode (and change colour of circle radius indicator)
+
+- **Desktop 6DOF (Beta Issues)**:
+    - Symmetry behaves strangely in desktop mode (investigate).
+    - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
+    - Should re-enable mouse controls to adjust the screen offset.
+    - Standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
+
+
+## Done
     - ~~Left handed mode~~ - **DONE v0.7.416**
     - ~~Dynamic Topology (code path is active, but not working, unsure why)~~
     - ~~Multiresolution not yet supported in VR~~
@@ -81,18 +100,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Voxel Bake~~ - **DONE v0.7.360**
     - ~~Voxel symmetry~~ - **DONE v0.7.360**
     - ~~Voxel undo/redo~~ - **DONE v0.7.360**
-    
-
-- **UI + UX**  
-    - Lock selection
-    - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
-    - Really need to make 100% VR native dialog, filebrowser for import/export
-    - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
-    - Matcap misaligned; its upside down and slightly different in left/right eyes
-    - Drag on empty space of menu panel should scroll
-    - Combobox for tool has misaligned highlight
-    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
-    - Trigger on left controller should always activate 'sub' mode (and change colour of circle radius indicator)
     - ~~Default move brush size is too big~~
     - ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
     - ~~Default smooth strength too high~~
@@ -102,16 +109,9 @@ It should work on any WebXR compatible device. So far I've tested on:
     - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
     - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
     - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
-
-
-- **Desktop 6DOF (Beta Issues)**:
-    - Symmetry behaves strangely in desktop mode (investigate).
-    - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
-    - Should re-enable mouse controls to adjust the screen offset.
-    - Standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
     - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
     - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
-    
+
 ## Clear Browser Cache
 When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
 
