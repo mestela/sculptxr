@@ -29,9 +29,9 @@ export default function getAboutWidgets(main) {
   widgets.push({ type: 'header', label: 'Controls', x: 0, y: y, w: menuW, h: 30, header: true });
   y += 35;
 
-  widgets.push({ type: 'info', label: 'Left Stick: Undo / Redo', x: 10, y: y, w: menuW, h: ITEM_H });
+  widgets.push({ type: 'info', label: 'Secondary Stick: Undo / Redo', x: 10, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
-  widgets.push({ type: 'info', label: 'Right Stick: Brush Size / Intensity', x: 10, y: y, w: menuW, h: ITEM_H });
+  widgets.push({ type: 'info', label: 'Dominant Stick: Brush Size / Intensity', x: 10, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
   widgets.push({ type: 'info', label: 'Grip: Move / Scale World', x: 10, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;

@@ -16,6 +16,7 @@ import getHistoryWidgets from './vr/GuiVRHistory.js';
 import getReferenceWidgets from './vr/GuiVRReference.js'; // Replaces Background
 import getCameraWidgets from './vr/GuiVRCamera.js';
 import getTabletWidgets from './vr/GuiVRTablet.js';
+import getSettingsWidgets from './vr/GuiVRSettings.js';
 import getLanguageWidgets from './vr/GuiVRLanguage.js';
 import getExtraUIWidgets from './vr/GuiVRExtraUI.js';
 import getAboutWidgets from './vr/GuiVRAbout.js';
@@ -42,7 +43,7 @@ const CANVAS_SIZE = 1024;
 
 // Group 1: Global Tabs (Top)
 // Group 1: Global Tabs (Top)
-const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'About & Help'];
+const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Settings', 'About & Help'];
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
@@ -128,6 +129,22 @@ export default class GuiXR {
       'Topology': getTopologyWidgets,
       'Sculpting & Painting': (main) => getToolsWidgets(main, main.getSculptManager().getToolIndex()),
       'Reference': getReferenceWidgets,
+      'Settings': getCameraWidgets, // Wait, Camera Widgets ARE the settings? User said "hid the settings menu".
+      // Actually, GuiVRCamera.js exports getCameraWidgets but the tab was likely named 'Camera'.
+      // If I rename 'Camera' to 'Settings' in the UI, I should use getCameraWidgets?
+      // Or create a new getSettingsWidgets wrapping Camera + Input?
+      // GuiVRSettings.js exists but was unused?
+      // Let's use GuiVRSettings.js if it exists and works, or merge Camera into it.
+      // GuiVRSettings.js exported getSettingsWidgets.
+      // Let's use THAT for 'Settings'.
+      'Settings': (main) => {
+        // We might want to combine Camera + Input here?
+        // GuiVRSettings.js (content read earlier) had "Camera" header.
+        // Let's use GuiVRSettings.js.
+        // I need to import it first?
+        // It was NOT imported in GuiXR.js. I need to add import.
+        return getSettingsWidgets(main);
+      },
       'Camera': getCameraWidgets,
       'Tablet pressure': getTabletWidgets,
       'Language': getLanguageWidgets,
@@ -268,15 +285,11 @@ export default class GuiXR {
       const x = idxInRow * rowW;
 
       let data = null;
-      if (tabName === 'Files') data = getFilesWidgets(this._main);
-      else if (tabName === 'Scene') data = getSceneWidgets(this._main);
-      else if (tabName === 'History') data = getHistoryWidgets(this._main);
-      else if (tabName === 'Reference') data = getReferenceWidgets(this._main);
-      else if (tabName === 'Camera') data = getCameraWidgets(this._main);
-      else if (tabName === 'Tablet pressure') data = getTabletWidgets(this._main);
-      else if (tabName === 'Language') data = getLanguageWidgets(this._main);
-      else if (tabName === 'Extra UI') data = getExtraUIWidgets(this._main);
-      else if (tabName === 'About & Help') data = getAboutWidgets(this._main);
+      // Use generator map if available
+      const gen = this._widgetGenerators[tabName];
+      if (gen) {
+        data = gen(this._main);
+      }
 
       if (data) {
         let overlayX = x;

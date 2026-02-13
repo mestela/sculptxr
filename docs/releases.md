@@ -4,7 +4,16 @@
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
 
-- **v0.7.257**: **Log Cleanup & Voxel Polish**:
+- **v0.7.416**: **Hand Swap & VR Polish**:
+    - **Feature**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.
+        - **Interaction**: Swaps Tool/Menu hands and pointer rays.
+        - **Logic**: Voxel Negative Mode (Carve) correctly maps to the **Non-Dominant** trigger.
+        - **Visuals**: Brush tip and radius indicator follow shift to appropriate hand.
+    - **UI**: **Settings**: Restored Settings Menu, added Input section, removed broken Camera options.
+    - **UI**: **Help**: Updated "Controls" cheatsheet to use "Dominant/Secondary" terminology.
+    - **Fix**: **Menu Alignment**: Fixed VR Menu offset to correctly appear on the inner side of the controller for both hands.
+
+- **v0.7.258**: **Voxel Performance**:
     - **Fix**: **Logs**: Removed verbose debug logs (`MESH_UPDATE`, `Updating Mesh...`) from `SculptVoxel.js` and `VoxelWorker.js`.
     - **Fix**: **Voxel Offset**: Confirmed Voxel Bake Offset was a non-issue.
 

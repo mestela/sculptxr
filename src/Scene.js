@@ -130,7 +130,10 @@ class Scene {
     // User Request: "Move forward 50cm, up 50cm".
     // Note: If HMD is facing User, "Forward" is towards User.
     // If we Rotate 180, we are looking effectively "Standard Forward".
-    this._desktopOffset = vec3.fromValues(0.0, 0.0, 0.0); 
+    this._desktopOffset = vec3.fromValues(0.0, 0.0, 0.0);
+
+    // [Step 1] Hand Swap Feature
+    this._dominantHand = 'right'; // 'right' or 'left'
   }
 
   start() {
@@ -141,6 +144,11 @@ class Scene {
       this._desktopOffset[2] = z;
       console.log(`Spectator Offset Set: [${x}, ${y}, ${z}]`);
       this.render();
+    };
+
+    // [Step 1] Hand Swap Helper
+    window.setDominantHand = (hand) => {
+      this.setDominantHand(hand);
     };
 
     // [DEBUG] Grab Tool Helper
@@ -407,6 +415,16 @@ class Scene {
     return this._exposure;
   }
 
+  setDominantHand(hand) {
+    if (hand !== 'left' && hand !== 'right') {
+      console.warn("setDominantHand: Invalid handedness (use 'left' or 'right')");
+      return;
+    }
+    this._dominantHand = hand;
+    console.log(`Dominant Hand set to: ${this._dominantHand}`);
+    if (window.screenLog) window.screenLog(`Dominant Hand: ${this._dominantHand}`, "lime");
+  }
+
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix) {
@@ -429,10 +447,20 @@ class Scene {
     }
 
     // VR Menu (Pass 1)
-    if (this._vrMenu && this._vrPoseLeft) {
-      const menuPose = mat4.clone(this._vrPoseLeft);
+    // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand
+    const menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
+    if (this._vrMenu && menuAnchor) {
+      const menuPose = mat4.clone(menuAnchor);
       const lift = mat4.create();
-      mat4.fromTranslation(lift, [0.03, 0.03, 0.0]);
+      // [Step 5 Fix] Menu Offset
+      // VRMenu has internal offset of +0.15 (Right). Width is 0.30.
+      // Left Hand (Right Dom): We want it on Right. Internal +0.15 puts it at 0.0->0.30.
+      // Right Hand (Left Dom): We want it on Left. Center should be at -0.15 - gap.
+      // Target Center: -0.20?
+      // Internal is +0.15. We need: Lift + 0.15 = -0.20 => Lift = -0.35.
+
+      const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
+      mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
       mat4.multiply(menuPose, menuPose, lift);
 
       this._vrMenu.updateMatrices(cam, menuPose);
@@ -455,9 +483,33 @@ class Scene {
     }
 
     // VR Brush Tip (Pass 1)
-    if (this._vrControllerTip && this._vrRightRayMatrix) {
+    // [Step 2] Hand Swap: Use Dominant Hand for Brush Tip
+    const domHand = this._dominantHand === 'left' ? this._vrControllerLeft : this._vrControllerRight;
+    // We need the Matrix of the "Pointer" (Ray or Grip).
+    // Currently _vrRightRayMatrix is hardcoded to Right Hand.
+    // We should rename _vrRightRayMatrix to _vrDominantRayMatrix in Step 3,
+    // For now, let's just grab the matrix from the dominant controller mesh?
+    // No, controller mesh is Grip Space. Brush Tip needs Ray Space if possible.
+    // Let's use _vrDominantRayMatrix if available (we will add it in Step 3),
+    // Or fallback to _vrRightRayMatrix for now if we haven't renamed it?
+    // Actually, Step 2 is Visuals. Step 3 is Input.
+    // If I change Visuals to use "Dominant Hand", I need the Matrix for the Dominant Hand.
+    // Scene.js updateVRControllerPose updates the Mesh Matrix.
+    // Let's use the Mesh Matrix for now?
+    // Wait, Brush Tip attaches to "TargetRay" usually.
+    // Let's look at `updateXR` or `onXRFrame`.
+    // We need `_vrDominantRayMatrix`.
+    // Let's stick to modifying `handleXRInput` in Step 3 to provide `_vrDominantRayMatrix`.
+    // BUT Step 2 is supposed to be Visuals.
+    // I can't render the visual at the right place if I don't have the matrix.
+    // So Step 2 might need a tiny bit of Input Logic (capturing the matrix).
+
+    // Let's patch `handleXRInput` locally here to capture `_vrDominantRayMatrix`.
+    // See `handleXRInput` changes below.
+
+    if (this._vrControllerTip && this._vrDominantRayMatrix) {
       const mTip = this._vrControllerTip.getMatrix();
-      mat4.copy(mTip, this._vrRightRayMatrix);
+      mat4.copy(mTip, this._vrDominantRayMatrix);
       const offY = this._isQuestStandalone ? 0.075 : 0.025;
       mat4.rotateX(mTip, mTip, -Math.PI / 2);
       mat4.translate(mTip, mTip, [0, offY, 0]);
@@ -523,9 +575,9 @@ class Scene {
     // Proj is same.
 
     // Render VR Brush Radius Sphere (Pass 3)
-    if (this._vrBrushRadiusSphere && this._vrRightRayMatrix && this._vrControllerTip) {
+    if (this._vrBrushRadiusSphere && this._vrDominantRayMatrix && this._vrControllerTip) {
       const mSphere = this._vrBrushRadiusSphere.getMatrix();
-      mat4.copy(mSphere, this._vrRightRayMatrix);
+      mat4.copy(mSphere, this._vrDominantRayMatrix);
       const offY = this._isQuestStandalone ? 0.10 : 0.05;
       mat4.rotateX(mSphere, mSphere, -Math.PI / 2);
       mat4.translate(mSphere, mSphere, [0, offY, 0]);
@@ -1567,14 +1619,18 @@ class Scene {
         if (!this._vrStateRight) this._vrStateRight = { axes: [] };
 
         const state = source.handedness === 'left' ? this._vrStateLeft : this._vrStateRight;
+        // [Step 3] Hand Swap: Shortcuts adhere to NON-DOMINANT hand
+        // [Step 3] Hand Swap: Radius Control adheres to DOMINANT hand
+        const isDom = source.handedness === this._dominantHand;
+        const isNonDom = !isDom;
         const axes = source.gamepad.axes;
 
         // Thresholds
         const T_PRESS = 0.7;
         const T_RELEASE = 0.3;
 
-        // LEFT HAND: AXIS 2 (Left/Right) - Undo/Redo
-        if (source.handedness === 'left') {
+        // NON-DOMINANT HAND: AXIS 2 (Left/Right) - Undo/Redo
+        if (isNonDom) {
           // THUMBSTICK UNDO DISABLED (Moved to Buttons X/Y)
           // LEFT HAND: AXIS 2 (Left/Right) - Undo/Redo
           const valX = axes[2];
@@ -1662,8 +1718,8 @@ class Scene {
           */
         }
 
-        // RIGHT HAND: AXIS 3 (Up/Down) - Radius +/- 5%
-        if (source.handedness === 'right') {
+        // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%
+        if (isDom) {
           const valY = axes[3];
           const isPressedY = Math.abs(valY) > T_PRESS;
 
@@ -1722,6 +1778,28 @@ class Scene {
       }
 
       // RELIABLE POINTER MATRIX (TargetRay) for Visuals
+      // [Step 2 Fix] Capture Dominant Ray Matrix
+      if (source.handedness === this._dominantHand) {
+        // Try Target Ray first
+        if (source.targetRaySpace) {
+          const ptrPose = frame.getPose(source.targetRaySpace, refSpace);
+          if (ptrPose) {
+            this._vrDominantRayMatrix = ptrPose.transform.matrix;
+          } else {
+            this._vrDominantRayMatrix = null;
+          }
+        } else if (source.gripSpace) {
+          // Fallback to Grip Space if Ray is missing (rare but possible)
+          const gripPose = frame.getPose(source.gripSpace, refSpace);
+          if (gripPose) {
+            this._vrDominantRayMatrix = gripPose.transform.matrix;
+          }
+        }
+      }
+
+      // Keep Legacy _vrRightRayMatrix for now (for old Menu Logic, until Step 4)
+
+      // Keep Legacy _vrRightRayMatrix for now if needed?
       if (source.handedness === 'right' && source.targetRaySpace) {
         const ptrPose = frame.getPose(source.targetRaySpace, refSpace);
         if (ptrPose) {
@@ -1731,8 +1809,8 @@ class Scene {
         }
       }
 
-      // 2. Menu Raycasting (Right Hand Only)
-      if (source.handedness === 'right') {
+      // 2. Menu Raycasting (Dominant Hand Only)
+      if (source.handedness === this._dominantHand) {
         let rayPose = null;
         let isFallback = false;
 
@@ -1860,7 +1938,10 @@ class Scene {
     const tool = this._sculptManager.getCurrentTool();
     const isVoxel = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
 
-    // Priority: Locked Hand (if sculpting) > Pressed Hand > Right Hand > Left Hand > First Found
+    // Priority: Locked Hand (if sculpting) > Pressed Hand > Dominant Hand > Other Hand > First Found
+    const domSource = this._dominantHand === 'left' ? left : right;
+    const nonDomSource = this._dominantHand === 'left' ? right : left;
+
     if (this._vrSculpting && this._vrLockedHand) {
       // Find the locked hand source
       const locked = (this._vrLockedHand === 'right') ? right : left;
@@ -1869,23 +1950,24 @@ class Scene {
       }
     } else if (isVoxel) {
       // PROPER VOXEL BEHAVIOR:
-      // Right Hand = Sculpt/Carve (Action)
-      // Left Hand = Modifier (Negative)
-      // ALWAYS use Right Hand for positioning/action if available.
-      if (right) {
-        activeSource = right;
-      // Trigger action only if Right Trigger is pressed
-      // Left Trigger just modifies the state (passed via options below)
+      // Dominant Hand = Sculpt/Carve (Action)
+      // Non-Dominant Hand = Modifier (Negative or just ignored for pos)
+      // ALWAYS use Dominant Hand for positioning/action if available.
+      if (domSource) {
+        activeSource = domSource;
+      // Trigger action only if Dominant Trigger is pressed
+      // Non-Dominant Trigger just modifies the state (passed via options below)
       } else {
-        // Fallback to whatever is available if Right is missing (unlikely?)
-        activeSource = left || sources[0];
+        // Fallback to whatever is available
+        activeSource = nonDomSource || sources[0];
       }
     } else {
-      // Standard Logic for other tools (Ambidextrous)
-      if (rightPressed) activeSource = right;
-      else if (leftPressed) activeSource = left;
-      else if (right) activeSource = right;
-      else if (left) activeSource = left;
+      // Standard Logic for other tools
+      if (rightPressed) activeSource = right; // If right is pressing, use right
+      else if (leftPressed) activeSource = left; // If left is pressing, use left
+      // If NO pressing, default to DOMINANT Hand
+      else if (domSource) activeSource = domSource;
+      else if (nonDomSource) activeSource = nonDomSource;
       else {
         for (const s of sources) { activeSource = s; break; }
       }
@@ -2363,19 +2445,21 @@ class Scene {
           vec3.transformQuat(dir, dir, qInv2);
         }
 
-        // Check for LEFT TRIGGER (Modifier) or SQUEEZE
+        // Check for NON-DOMINANT TRIGGER (Modifier) or SQUEEZE
         let isNegative = false;
-        // Find left input source
+        // Find non-dominant input source
         const session = frame.session;
+        const nonDomHand = this._dominantHand === 'left' ? 'right' : 'left';
+
         if (session && session.inputSources) {
           for (let src of session.inputSources) {
-            if (src.handedness === 'left' && src.gamepad) {
+            if (src.handedness === nonDomHand && src.gamepad) {
               // Button 0 (Trigger) or Button 1 (Squeeze)
               if ((src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) ||
                 (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed)) {
                 isNegative = true;
                 break;
-               }
+              }
             }
           }
         }
