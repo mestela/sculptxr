@@ -73,12 +73,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
-    - Matcap misaligned; its upside down and slightly different in left/right eyes
-    - Drag on empty space of menu panel should scroll
-    - Combobox for tool has misaligned highlight
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
-    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
-    - ~~Trigger on left controller should always activate 'sub' mode~~ - **DONE v0.7.423**
+    
 
 - **Desktop 6DOF (Beta Issues)**:
     - Symmetry behaves strangely in desktop mode (investigate).
@@ -88,6 +84,10 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~Combobox for tool has misaligned highlight~~
+- ~~Matcap misaligned; its upside down and slightly different in left/right eyes~~ - **DONE v0.7.429**
+- ~~Drag on empty space of menu panel should scroll~~ - **DONE v0.7.429**
+- ~~Trigger on left controller should always activate 'sub' mode~~ - **DONE v0.7.423**
 - ~~Left handed mode~~ - **DONE v0.7.416**
 - ~~Dynamic Topology (code path is active, but not working, unsure why)~~
 - ~~Multiresolution not yet supported in VR~~
