@@ -1,4 +1,4 @@
-import { vec3, mat4 } from 'gl-matrix';
+import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 
@@ -23,6 +23,7 @@ class Move extends SculptBase {
       vProxy: null
     };
     this._idAlpha = 0;
+    this._lastVRQuat = quat.create(); // [VR] 6DOF
   }
 
   startSculpt() {
@@ -59,6 +60,11 @@ class Move extends SculptBase {
           if (pickingSym.getMesh())
             this.initMoveData(pickingSym, this._moveDataSym);
       }
+    }
+
+    // [VR] Capture Initial Rotation
+    if (main._xrSession && main._vrControllerQuat) {
+      quat.copy(this._lastVRQuat, main._vrControllerQuat);
     }
   }
 
@@ -133,7 +139,7 @@ class Move extends SculptBase {
     main.setCanvasCursor('default');
   }
 
-  move(iVerts, center, radiusSquared, moveData, picking) {
+  move(iVerts, center, radiusSquared, moveData, picking, rotQuat, useSym) {
     var mesh = this.getMesh();
     var vAr = mesh.getVertices();
     var mAr = mesh.getMaterials();
@@ -146,6 +152,13 @@ class Move extends SculptBase {
     var dirx = dir[0];
     var diry = dir[1];
     var dirz = dir[2];
+
+    var vTemp = [0.0, 0.0, 0.0];
+
+    // Symmetry Plane Data
+    var ptPlane = useSym ? mesh.getSymmetryOrigin() : null;
+    var nPlane = useSym ? mesh.getSymmetryNormal() : null;
+
     for (var i = 0, l = iVerts.length; i < l; ++i) {
       var ind = iVerts[i] * 3;
       var j = i * 3;
@@ -159,9 +172,42 @@ class Move extends SculptBase {
       var fallOff = dist * dist;
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
       fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
-      vAr[ind] += dirx * fallOff;
-      vAr[ind + 1] += diry * fallOff;
-      vAr[ind + 2] += dirz * fallOff;
+
+
+
+      if (useSym) {
+        // Linear Blend to avoid "Bum Crease" (Bulge/Dip at center)
+        // We want Weight(Primary) + Weight(Sym) = 1.0 for coincident vertices.
+        // Solution: Blend based on "Side of Plane" relative to Brush Center.
+        // Factor = 0.5 + 0.5 * (VertexDist * BrushSide / Radius)
+
+        var vDist = (vx - ptPlane[0]) * nPlane[0] + (vy - ptPlane[1]) * nPlane[1] + (vz - ptPlane[2]) * nPlane[2];
+
+        // Determine which side of the plane the BRUSH CENTER is on
+        var cDist = (cx - ptPlane[0]) * nPlane[0] + (cy - ptPlane[1]) * nPlane[1] + (cz - ptPlane[2]) * nPlane[2];
+        var brushSide = cDist >= 0 ? 1.0 : -1.0;
+
+        // If Vertex is on the same side as Brush, weight > 0.5
+        // If Vertex is on opposite side, weight < 0.5
+        var symFactor = 0.5 + 0.5 * (vDist * brushSide / radius);
+        symFactor = Math.min(Math.max(symFactor, 0.0), 1.0); // Clamp 0..1
+
+        fallOff *= symFactor;
+      }
+
+      // Apply Rotation if present
+      var rotX = 0, rotY = 0, rotZ = 0;
+      if (rotQuat) {
+        vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+        vec3.transformQuat(vTemp, vTemp, rotQuat);
+        rotX = vTemp[0] - dx;
+        rotY = vTemp[1] - dy;
+        rotZ = vTemp[2] - dz;
+      }
+
+      vAr[ind] += (dirx + rotX) * fallOff;
+      vAr[ind + 1] += (diry + rotY) * fallOff;
+      vAr[ind + 2] += (dirz + rotZ) * fallOff;
     }
   }
 
@@ -201,23 +247,67 @@ class Move extends SculptBase {
 
     const main = this._main;
     const currentPos = main._vrControllerPos; // Set in Scene.js processVRSculpting
+    const currentQuat = main._vrControllerQuat;
     
     // if (window.screenLog && this._main._logThrottle % 60 === 0) window.screenLog("Move: sculptStrokeXR", "white");
 
-    if (!currentPos) return;
+    if (!currentPos || !currentQuat) return;
 
     // Standardized Move Logic (World -> Local)
     var mesh = this.getMesh();
     if (!mesh) return;
+
+    // DEBUG: Check if we are reaching this
+    if (window.screenLog && this._main._logThrottle % 30 === 0) {
+      window.screenLog(`Move: Active. iVerts: ${this._moveData.iVerts ? this._moveData.iVerts.length : 0}`, "white");
+    }
+
     var mInv = mat4.create();
     mat4.invert(mInv, mesh.getMatrix());
 
-    // Calculate Local Space Delta
+    // Calculate Local Space Pos Delta
     var vStartLocal = vec3.clone(this._lastVRPos);
     vec3.transformMat4(vStartLocal, vStartLocal, mInv);
 
     var vCurrLocal = vec3.clone(currentPos);
     vec3.transformMat4(vCurrLocal, vCurrLocal, mInv);
+
+    // Calculate Local Space Rot Delta
+    // Q_delta = Q_current * inv(Q_start)
+    // But we need it in MESH LOCAL SPACE.
+    // The controller rotation is in WORLD space.
+    // To apply to vertices, we need the rotation relative to the mesh.
+    // Actually, simple way: 
+    // 1. Get Delta in World Space: dQ = Current * inv(Start)
+    // 2. Transform this delta into Local Space?
+    //    Or transform vectors to world, rotate, back to local?
+    //    Ideally: R_local = inv(MeshRot) * R_world * MeshRot ??
+
+    // Let's try: Get World Delta, apply to Local Vectors (transformed to world direction, rotated, back to local)
+    // OR simpler:
+    // Convert Controller Quats to Local Space Quats first?
+    // Q_local = inv(Q_mesh) * Q_controller
+
+    // Mesh Rotation Quat
+    var qMesh = quat.create();
+    mat4.getRotation(qMesh, mesh.getMatrix());
+    var qMeshInv = quat.create();
+    quat.invert(qMeshInv, qMesh);
+
+    // Start Local Quat
+    var qStartLocal = quat.create();
+    quat.multiply(qStartLocal, qMeshInv, this._lastVRQuat);
+
+    // Current Local Quat
+    var qCurrLocal = quat.create();
+    quat.multiply(qCurrLocal, qMeshInv, currentQuat);
+
+    // Delta Local Quat
+    var qDeltaLocal = quat.create();
+    var qStartInv = quat.create();
+    quat.invert(qStartInv, qStartLocal);
+    quat.multiply(qDeltaLocal, qCurrLocal, qStartInv);
+
 
     // Apply Local Delta to Primary
     const moveData = this._moveData;
@@ -243,17 +333,9 @@ class Move extends SculptBase {
     // Apply Primary Move
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
-
-      if (window.screenLog && this._main._logThrottle % 30 === 0) {
-        const d = moveData.dir;
-        // window.screenLog(`Move Dir: ${d[0].toFixed(2)}, ${d[1].toFixed(2)}, ${d[2].toFixed(2)}`, "cyan");
-        // window.screenLog(`Curr: ${vCurrLocal[0].toFixed(2)}`, "grey");
-      }
-
-       this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking);
+      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qDeltaLocal, useSym);
     }
 
-    // Apply Symmetry Move
     // Apply Symmetry Move
     if (useSym) {
         const moveDataSym = this._moveDataSym;
@@ -262,14 +344,26 @@ class Move extends SculptBase {
           var symStartLocal = vec3.clone(vStartLocal);
           var symCurrLocal = vec3.clone(vCurrLocal);
 
-          var ptPlane = mesh.getSymmetryOrigin();
-          var nPlane = mesh.getSymmetryNormal();
+          var ptPlane = mesh.getSymmetryOrigin(); // Local (0,0,0) usually
+          var nPlane = mesh.getSymmetryNormal(); // Local (1,0,0) usually
           Geometry.mirrorPoint(symStartLocal, ptPlane, nPlane);
           Geometry.mirrorPoint(symCurrLocal, ptPlane, nPlane);
 
           vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
-            
-            this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym);
+
+          // Mirror Rotation
+          // Correct Mirror Symmetery: Preserve X (Pitch), Invert Y (Yaw), Invert Z (Roll)
+          var qDeltaSym = quat.clone(qDeltaLocal);
+          // qDeltaSym[0] = -qDeltaSym[0]; // X Preserved
+          qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
+          qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+
+          // DEBUG: Verify Symmetry
+          if (window.screenLog && this._main._logThrottle % 60 === 0) {
+            // window.screenLog(`SymRot: ${qDeltaSym[0].toFixed(2)}, ${qDeltaSym[1].toFixed(2)}, ${qDeltaSym[2].toFixed(2)}`, "yellow");
+          }
+
+          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
         }
     }
 

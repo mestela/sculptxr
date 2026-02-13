@@ -25,7 +25,12 @@ It should work on any WebXR compatible device. So far I've tested on:
     - **Bug Fix**: Fixed crash on launch related to Drag tool registration.
 *   **v0.7.429**: Added **Drag-to-Scroll** for main panel, fixed Combobox highlights and interaction logic.
 *   **v0.7.416**: **Hand Swap** support, Left Trigger Feedback (Sub Mode), and Universal Sub Mode visuals.
-*   **v0.7.258**: **Voxel Performance** optimization (37% frame time reduction).- **v0.7.423**: **Universal Sub Mode & Visuals**:
+### Recent Updates
+- **v0.7.443**: 6DOF Move Tool (Position + Rotation) with improved symmetry compensation.
+- **v0.7.434**: UX Polish (Hidden Drag, Smooth tweaks).
+- **v0.7.431**: Crease Tool "Pinch-Pull" mode.
+- **v0.7.429**: UI Cleanup & Bug fixes.
+- **v0.7.423**: **Universal Sub Mode & Visuals**:
     - **Feature**: **Universal Sub Mode**: Holding the **Left Trigger** now subtracts/inverts the brush action for ALL tools (Right Hand).
     - **Visual**: **Red Cursor**: The brush cursor turns **RED** when Sub Mode is active.
     - **Fix**: **Left Hand Sculpting Disabled**: The Left Hand can no longer accidentally sculpt; it is reserved for modifiers and future navigation.
@@ -63,7 +68,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 - **Functionality**:
     - Re-symmetrize function, choose left->right, right->left
     - Drag and move tools should support 6dof rotation
-    - Crease in sub mode should pull out a crease
     - Transform tool/gizmo missing
     - Paint is a bit glitchy after 0.7.118
     - Symmetry needs to be reimplemented
@@ -90,6 +94,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
 - ~~Combobox for tool has misaligned highlight~~
 - ~~Matcap misaligned; its upside down and slightly different in left/right eyes~~ - **DONE v0.7.429**
 - ~~Drag on empty space of menu panel should scroll~~ - **DONE v0.7.429**

@@ -6,11 +6,10 @@
 - **v0.7.434** (Current): **Tool Improvements**:
     - **Hide Drag**: Disabled unstable Drag tool.
     - **Crease Pull**: Sub Mode (Left Trigger) now pulls creases outward.
-    - **Smooth**: Adjusted Sharpen intensity (Negative Smooth) to be safer, currently disabled by default.
-    - **Bug Fix**: Fixed crash on launch related to Drag tool registration.
-
-- **v0.7.429**: **UI Polish & Regression Fixes**:
-    - **Feature**: **Drag-to-Scroll**: Enable smooth scrolling by dragging anywhere on the main panel background (just like a phone).
+    - **(v0.7.443) 6DOF Move Tool**: The Move tool now supports full 6-degree-of-freedom rotation! Twisting your wrist will now twist the mesh. Also improved symmetry behavior to prevent "bum creases" when working near the center line.
+- **(v0.7.434) Tool Polish**: Dispersed "Sharpen" from Smooth tool defaults (too aggressive). Hidden "Drag" tool from VR UI (redundant/buggy).
+- **(v0.7.431) Crease Tool**: Added "Pinch-Pull" mode to Crease tool for sharper edges.
+- **(v0.7.430) UI Polish**: Removed "Lock Selection" button (confusing). Fixed tool selection regression.**: **Drag-to-Scroll**: Enable smooth scrolling by dragging anywhere on the main panel background (just like a phone).
     - **Fix**: **Combobox Interaction**: Fixed regression where tool selection was blocked by UI updates.
     - **Fix**: **Combobox Highlight**: Corrected cursor alignment for dropdown items when using overlays or scrolling.
     - **Cleanup**: Temporarily removed "Lock Selection" UI to focus on stability.

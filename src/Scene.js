@@ -2257,6 +2257,22 @@ class Scene {
     // 3. Inverse Scaling
     vec3.scale(enginePos, enginePos, invScale);
 
+    // Rotation Logic (World -> Engine)
+    // EngineRot = Inv(WorldRot) * PhysRot
+    const qPhys = quat.fromValues(q.x, q.y, q.z, q.w);
+    const engineQuat = quat.create();
+
+    if (this._xrWorldOffset) {
+      const r = this._xrWorldOffset.orientation;
+      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+      const qInv = quat.create();
+      quat.invert(qInv, qRot);
+      quat.multiply(engineQuat, qInv, qPhys);
+    } else {
+      quat.copy(engineQuat, qPhys);
+    }
+    this._vrControllerQuat = engineQuat;
+
     // CRITICAL: Update shared state for SculptBase/SculptManager parity
     this._vrControllerPos = enginePos;
 
