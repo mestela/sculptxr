@@ -20,16 +20,16 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-- **v0.7.401**: **VR Menu Refinement**:
-    - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
-    - **UI**: **About & Help**: Added dynamic version, website/github links, credits, and a controls cheatsheet.
-    - **Fix**: **Widget Rendering**: Fixed `info` widgets not rendering in overlays.
-
 - **v0.7.416**: **Hand Swap & VR Polish**:
     - **Feature**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.
     - **UI**: **Settings**: Restored Settings Menu, added Input section, removed broken Camera options.
     - **UI**: **Help**: Updated "Controls" cheatsheet to use "Dominant/Secondary" terminology.
     - **Fix**: **Menu Alignment**: Fixed VR Menu offset to correctly appear on the inner side of the controller for both hands.
+
+- **v0.7.401**: **VR Menu Refinement**:
+    - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
+    - **UI**: **About & Help**: Added dynamic version, website/github links, credits, and a controls cheatsheet.
+    - **Fix**: **Widget Rendering**: Fixed `info` widgets not rendering in overlays.
 
 - **v0.7.389**: **VR Twist Brush (Drill Mode)**:
     - **Feature**: **Drill Mode**: Twist brush now works in VR! Point and twist to drill the mesh.
