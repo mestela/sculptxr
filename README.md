@@ -53,19 +53,19 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - Voxel smooth shading - hard!
-    - Voxel smooth brush
-    - Xray mode
     - Transform tool/gizmo missing
     - Re-symmetrize function, choose left->right, right->left
     - Drag and move tools should support 6dof rotation
+    - Paint is a bit glitchy after 0.7.118
+    - Symmetry needs to be reimplemented
+    - Voxel straight line mode
+    - Voxel smooth shading
+    - Voxel smooth brush
+    - Xray mode
+
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - Straight line mode for voxel tool
-    - Paint is a bit glitchy after 0.7.118
-    - Paint is a bit glitchy after 0.7.118
+    
     - ~~Left handed mode~~ - **DONE v0.7.416**
-    - Symmetry is really glitchy, needs to be reimplemented
-    - Symmetry is really glitchy, needs to be reimplemented
     - ~~Dynamic Topology (code path is active, but not working, unsure why)~~
     - ~~Multiresolution not yet supported in VR~~
     - ~~Add primitives menu missing~~
