@@ -923,8 +923,8 @@ export default class GuiXR {
     // Check Tabs
     if (!targetWid && cy < TAB_HEIGHT) debounceTime = 250;
 
-    if (isScrollInteraction) {
-      debounceTime = 0; // Immediate response for scrollbar
+    if (isScrollInteraction || this._isDraggingContent || (!targetWid && cy > HEADER_HEIGHT)) {
+      debounceTime = 0; // Immediate response for scrollbar & content drag
     } else {
       // For all other widgets, if we are NOT pressing, we shouldn't consume the debounce timer
       // preventing the subsequent PRESS from registering.
@@ -1117,8 +1117,39 @@ export default class GuiXR {
 
     // 4. Background Drag (Content Scrolling)
     // We allow drag if we started below header, OR if we are already dragging (even if we drifted up)
-    // 4. Background Drag (Content Scrolling) - DISABLED BY USER REQUEST
-    // Only Scrollbar (handled above) is allowed for scrolling now.
+    if (this._isDraggingContent || (cy > HEADER_HEIGHT && !targetWid)) {
+      if (isPressed) {
+        if (!this._isDraggingContent) {
+          // Start Drag
+          this._isDraggingContent = true;
+          this._lastScrollY = cy;
+          return;
+        }
+
+        // Continue Drag
+        if (this._lastScrollY !== undefined) {
+          const deltaY = cy - this._lastScrollY;
+          const trackH = this._canvas.height - HEADER_HEIGHT;
+          const contentH = trackH + this._maxScroll;
+          // Scale Factor: 1 pixel drag = 1 pixel scroll?
+          // Or proportional?
+          // Standard touch drag is 1:1 usually.
+          // But our scrollOffset increases to scroll DOWN.
+          // Dragging UP (deltaY < 0) should increase scrollOffset (scrolling down).
+          // So we subtract deltaY.
+          this._scrollOffset -= deltaY;
+          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+          this._needsRedraw = true;
+          this._requestDraw();
+        }
+        this._lastScrollY = cy;
+        return;
+      } else {
+        // Stop Drag
+        this._isDraggingContent = false;
+        this._lastScrollY = undefined;
+      }
+    }
 
     // Debug Log for Header Hover (Optional)
     if (this._lastScrollY !== undefined) {
