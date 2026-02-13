@@ -1,21 +1,22 @@
-# Handover: VR Twist & Voxel Polish (v0.7.389)
+# Handover: Hand Swap & Hard Reset (v0.7.416+)
 
 ## Current Status
-- **Goal:** VR Tool parity and Voxel improvements.
-- **Latest Version:** `v0.7.389` (Deployed to Production).
-- **Status:** **STABLE** (Reverted Voxel Line Tool changes).
-  - **Twist Brush**: Now works in VR (Drill Mode) with correct symmetry.
-  - **Voxel Line Tool**: Attempted but reverted due to UX issues (Grip vs Trigger).
-  - **Voxel Resampling**: Stabilized.
+- **Goal:** VR Tool Polish and User Convenience.
+- **Latest Version:** `v0.7.416` (Deployed to Production).
+- **Status:** **STABLE** (Hand Swap Feature Complete).
+  - **Hand Swap**: Left-Handed mode fully implemented (Settings > Input).
+  - **VR Menu**: Alignment fixed for both hands.
+  - **GitHub**: Access restored via `gh` CLI (requires `brew install gh` if missing).
 
 ## Solutions Implemented
-1.  **VR Twist**: Implemented `strokeXR` in `Twist.js` using `updateXR` override, fixing `mat4` and center access.
-2.  **Symmetry**: Fixed VR symmetry for Twist and Voxel Inflate.
-3.  **Deploy**: Automated deployment script `deploy_beta.sh` is reliable.
+1.  **Hand Swap**: Refactored `Scene.js` input loop to support dynamic dominant hand switching.
+2.  **Documentation**: Updated README with screenshots and detailed release notes.
+3.  **Deployment**: Automated deployment remains reliable (`deploy.sh` for prod, `deploy_beta.sh` for beta).
 
 ## Next Steps
-Ask user
+Ask user.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`
 -   **Beta:** `https://tokeru.com/sculptxrbeta/`
+-   **Repo:** `https://github.com/mestela/sculptxr`

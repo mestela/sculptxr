@@ -10,7 +10,6 @@ Try the latest build [here!](https://tokeru.com/sculptxr/)
 
 Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
 
-The VR Interface is a Work In Progress. Not all menus and UI elements from the desktop version are fully functional or present in VR yet. We are actively porting them over. 
 
 ## Supported Platforms
 It should work on any WebXR compatible device. So far I've tested on:
