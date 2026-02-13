@@ -2815,11 +2815,16 @@ export default class GuiXR {
 
     // Highlight hover
     if (this._cursor.active) {
-      // Transform cursor to overlay space (since we are drawing in overlay space)
-      const pivot = this._getOverlayPivot();
-      const invScale = 1 / OVERLAY_SCALE;
-      const cx = (this._cursor.x - pivot.x) * invScale + pivot.x;
-      const cy = (this._cursor.y - pivot.y) * invScale + pivot.y;
+      // Transform cursor to overlay space (since we are drawing in overlay space, IF active)
+      let cx = this._cursor.x;
+      let cy = this._cursor.y;
+
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        const invScale = 1 / OVERLAY_SCALE;
+        cx = (cx - pivot.x) * invScale + pivot.x;
+        cy = (cy - pivot.y) * invScale + pivot.y;
+      }
 
       // Check bounds
       if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
