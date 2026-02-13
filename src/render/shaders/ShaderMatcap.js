@@ -102,7 +102,7 @@ ShaderMatcap.fragment = [
   '  normal = normalize(uRotCorrection * normal);',
   '  ',
   '  vec2 texCoord = normal.xy * 0.5 + 0.5;',
-  '  texCoord.y = 1.0 - texCoord.y;', // Flip Y
+  '  // texCoord.y = 1.0 - texCoord.y; // Flip Y removed to fix orientation',
   '  vec3 color = sRGBToLinear(texture2D(uTexture0, texCoord).rgb) * sRGBToLinear(vColor);',
   '  gl_FragColor = encodeFragColor(color, uAlpha);',
   '}'
