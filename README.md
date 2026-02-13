@@ -18,7 +18,12 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-*   **v0.7.429** (Current): Added **Drag-to-Scroll** for main panel, fixed Combobox highlights and interaction logic.
+*   **v0.7.434** (Current): **Tool Improvements**:
+    - **Hide Drag**: Disabled unstable Drag tool.
+    - **Crease Pull**: Sub Mode (Left Trigger) now pulls creases outward.
+    - **Smooth**: Adjusted Sharpen intensity (Negative Smooth) to be safer, currently disabled by default.
+    - **Bug Fix**: Fixed crash on launch related to Drag tool registration.
+*   **v0.7.429**: Added **Drag-to-Scroll** for main panel, fixed Combobox highlights and interaction logic.
 *   **v0.7.416**: **Hand Swap** support, Left Trigger Feedback (Sub Mode), and Universal Sub Mode visuals.
 *   **v0.7.258**: **Voxel Performance** optimization (37% frame time reduction).- **v0.7.423**: **Universal Sub Mode & Visuals**:
     - **Feature**: **Universal Sub Mode**: Holding the **Left Trigger** now subtracts/inverts the brush action for ALL tools (Right Hand).
