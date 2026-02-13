@@ -13,8 +13,7 @@ Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOe
 
 ## Supported Platforms
 It should work on any WebXR compatible device. So far I've tested on:
-- Quest 2 native browser
-- Quest 3 native browser
+- Quest 2 and Quest 3 browser in standalone
 - Google Chrome on Windows PCVR via Meta Link and Quest 3
 
 ## Releases
