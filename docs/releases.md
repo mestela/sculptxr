@@ -3,6 +3,11 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
+- **v0.7.429**: **UI Polish & Regression Fixes**:
+    - **Feature**: **Drag-to-Scroll**: Enable smooth scrolling by dragging anywhere on the main panel background (just like a phone).
+    - **Fix**: **Combobox Interaction**: Fixed regression where tool selection was blocked by UI updates.
+    - **Fix**: **Combobox Highlight**: Corrected cursor alignment for dropdown items when using overlays or scrolling.
+    - **Cleanup**: Temporarily removed "Lock Selection" UI to focus on stability.
 
 - **v0.7.416**: **Hand Swap & VR Polish**:
     - **Feature**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.

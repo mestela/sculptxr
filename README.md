@@ -18,7 +18,9 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-- **v0.7.423**: **Universal Sub Mode & Visuals**:
+*   **v0.7.429** (Current): Added **Drag-to-Scroll** for main panel, fixed Combobox highlights and interaction logic.
+*   **v0.7.416**: **Hand Swap** support, Left Trigger Feedback (Sub Mode), and Universal Sub Mode visuals.
+*   **v0.7.258**: **Voxel Performance** optimization (37% frame time reduction).- **v0.7.423**: **Universal Sub Mode & Visuals**:
     - **Feature**: **Universal Sub Mode**: Holding the **Left Trigger** now subtracts/inverts the brush action for ALL tools (Right Hand).
     - **Visual**: **Red Cursor**: The brush cursor turns **RED** when Sub Mode is active.
     - **Fix**: **Left Hand Sculpting Disabled**: The Left Hand can no longer accidentally sculpt; it is reserved for modifiers and future navigation.
