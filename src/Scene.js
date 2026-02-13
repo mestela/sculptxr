@@ -134,6 +134,7 @@ class Scene {
 
     // [Step 1] Hand Swap Feature
     this._dominantHand = 'right'; // 'right' or 'left'
+    this._vrIsNegative = false; // Universal Sub Mode State
   }
 
   start() {
@@ -560,10 +561,15 @@ class Scene {
 
     if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
       const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+
+      // Update Selection Color for Negative Mode
+      const selection = this._sculptManager.getSelection();
+      if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
+
       gl.disable(gl.DEPTH_TEST);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      this._sculptManager.getSelection().renderVR(this, cam, radius);
+      selection.renderVR(this, cam, radius);
       gl.disable(gl.BLEND);
       gl.enable(gl.DEPTH_TEST);
     }
@@ -692,7 +698,12 @@ class Scene {
     // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
       // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
       // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
-      this._sculptManager.getSelection().renderVR(this, this._camera, radius);
+
+    // Update Selection Color for Negative Mode
+    const selection = this._sculptManager.getSelection();
+    if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
+
+    selection.renderVR(this, this._camera, radius);
 
     ///////////////
     // CONTOUR 2/2
@@ -1191,6 +1202,7 @@ class Scene {
     });
 
     this._preventRender = true;
+    this._vrIsNegative = false;
   }
 
   updateVROffsets() {
@@ -1963,10 +1975,10 @@ class Scene {
       }
     } else {
       // Standard Logic for other tools
-      if (rightPressed) activeSource = right; // If right is pressing, use right
-      else if (leftPressed) activeSource = left; // If left is pressing, use left
-      // If NO pressing, default to DOMINANT Hand
-      else if (domSource) activeSource = domSource;
+      // FORCE DOMINANT HAND (User Request: Disable Non-Dominant Hand Sculpting)
+      if (domSource) activeSource = domSource;
+      else if (rightPressed) activeSource = right;
+      else if (leftPressed) activeSource = left;
       else if (nonDomSource) activeSource = nonDomSource;
       else {
         for (const s of sources) { activeSource = s; break; }
@@ -2337,7 +2349,9 @@ class Scene {
 
     // 5. Stroke Lifecycle (Corrected API)
     const buttons = source.gamepad.buttons;
-    const isTriggerPressed = buttons[0].pressed;
+    // FORCE DISABLE IF NOT DOMINANT HAND (Double Safety)
+    const isDominant = (source.handedness === this._dominantHand);
+    const isTriggerPressed = isDominant && buttons[0].pressed;
 
     // Log Removed
 
@@ -2464,6 +2478,19 @@ class Scene {
           }
         }
 
+        this._vrIsNegative = isNegative; // Logic for Rendering
+
+        // Universal Sub Mode: Override Tool Negative State
+        // We only override if isNegative is TRUE.
+        // If isNegative is FALSE, we respect the tool's original state.
+        // To do this cleanly without trashing the GUI state:
+        // We set a temporary flag or just manipulate it, BUT we must restore it?
+        // Actually, if we just set tool._negative = true, the GUI logic might get confused if we don't revert it.
+        // Let's use a "Force Negative" approach if possible, but simplest is to save/restore.
+
+
+
+
         // if (isNegative && window.screenLog && this._logThrottle % 60 === 0) {
         //   window.screenLog("VR: Negative Modifier!", "red");
         // }
@@ -2566,7 +2593,15 @@ class Scene {
           // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog(`TrigVal: ${triggerValue.toFixed(2)}`, "cyan");
         }
 
+        // Universal Sub Mode: Override Tool Negative State
+        const tool = this._sculptManager.getCurrentTool();
+        const origNegative = tool._negative;
+        if (isNegative && tool) tool._negative = true;
+
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
+
+        // Restore original state immediately
+        if (isNegative && tool) tool._negative = origNegative;
       } else {
         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
         this._sculptManager.update();

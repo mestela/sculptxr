@@ -177,6 +177,10 @@ class Selection {
     this._isEditMode = false;
   }
 
+  setIsNegative(bool) {
+    this._isNegative = bool;
+  }
+
   renderVR(main, camera, worldRadius) {
     if (!main.getPicking().getMesh()) {
       // if (window.screenLog && Math.random() < 0.01) window.screenLog("RenderVR: No Mesh", "red");
@@ -188,8 +192,14 @@ class Selection {
     // VR Specific Matrix Update
     this._updateMatricesMeshVR(camera, main, worldRadius, useSym);
 
-    // Draw (Blue for VR)
-    vec3.set(this._color, 0.0, 0.0, 0.8);
+    // Draw (Blue for VR, Red for Negative)
+    if (this._isNegative) {
+      vec3.set(this._color, 0.8, 0.0, 0.0); // RED
+    } else {
+      vec3.set(this._color, 0.0, 0.0, 0.8); // BLUE
+    }
+
+    ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, true, useSym);
     ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, true, useSym);
 
     // if (window.screenLog && Math.random() < 0.01) window.screenLog("RenderVR: DRAW", "lime");

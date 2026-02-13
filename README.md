@@ -18,10 +18,11 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-- **v0.7.416**: **Hand Swap & VR Polish**:
-    - **Feature**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.
-    - **UI**: **Settings**: Restored Settings Menu, added Input section, removed broken Camera options.
-    - **UI**: **Help**: Updated "Controls" cheatsheet to use "Dominant/Secondary" terminology.
+- **v0.7.423**: **Universal Sub Mode & Visuals**:
+    - **Feature**: **Universal Sub Mode**: Holding the **Left Trigger** now subtracts/inverts the brush action for ALL tools (Right Hand).
+    - **Visual**: **Red Cursor**: The brush cursor turns **RED** when Sub Mode is active.
+    - **Fix**: **Left Hand Sculpting Disabled**: The Left Hand can no longer accidentally sculpt; it is reserved for modifiers and future navigation.
+    - **Fix**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.
     - **Fix**: **Menu Alignment**: Fixed VR Menu offset to correctly appear on the inner side of the controller for both hands.
 
 - **v0.7.401**: **VR Menu Refinement**:
@@ -62,7 +63,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Voxel smooth shading
     - Voxel smooth brush
     - Xray mode
-
+    - twist brush occasional console error
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
@@ -74,7 +75,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Drag on empty space of menu panel should scroll
     - Combobox for tool has misaligned highlight
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
-    - Trigger on left controller should always activate 'sub' mode (and change colour of circle radius indicator)
+    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
+    - ~~Trigger on left controller should always activate 'sub' mode~~ - **DONE v0.7.423**
 
 - **Desktop 6DOF (Beta Issues)**:
     - Symmetry behaves strangely in desktop mode (investigate).
@@ -84,33 +86,33 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
-    - ~~Left handed mode~~ - **DONE v0.7.416**
-    - ~~Dynamic Topology (code path is active, but not working, unsure why)~~
-    - ~~Multiresolution not yet supported in VR~~
-    - ~~Add primitives menu missing~~
-    - ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
-    - ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
-    - ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
-    - ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
-    - ~~Reference image support~~ - **Working v0.7.118**
-    - ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
-    - ~~Grab brush~~ - **DONE v0.7.118**
-    - ~~Voxel add, sub, inflate, deflate brushes~~ - **DONE v0.7.360**
-    - ~~Voxel Resampling~~ - **Stabilized v0.7.369**
-    - ~~Voxel Bake~~ - **DONE v0.7.360**
-    - ~~Voxel symmetry~~ - **DONE v0.7.360**
-    - ~~Voxel undo/redo~~ - **DONE v0.7.360**
-    - ~~Default move brush size is too big~~
-    - ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
-    - ~~Default smooth strength too high~~
-    - ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
-    - ~~Trigger on left controller should invoke sub mode~~
-    - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
-    - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
-    - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
-    - ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
-    - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
-    - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
+- ~~Left handed mode~~ - **DONE v0.7.416**
+- ~~Dynamic Topology (code path is active, but not working, unsure why)~~
+- ~~Multiresolution not yet supported in VR~~
+- ~~Add primitives menu missing~~
+- ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
+- ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
+- ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
+- ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
+- ~~Reference image support~~ - **Working v0.7.118**
+- ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
+- ~~Grab brush~~ - **DONE v0.7.118**
+- ~~Voxel add, sub, inflate, deflate brushes~~ - **DONE v0.7.360**
+- ~~Voxel Resampling~~ - **Stabilized v0.7.369**
+- ~~Voxel Bake~~ - **DONE v0.7.360**
+- ~~Voxel symmetry~~ - **DONE v0.7.360**
+- ~~Voxel undo/redo~~ - **DONE v0.7.360**
+- ~~Default move brush size is too big~~
+- ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
+- ~~Default smooth strength too high~~
+- ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
+- ~~Trigger on left controller should invoke sub mode~~
+- ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
+- ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
+- ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
+- ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
+- ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
+- ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
 
 ## Clear Browser Cache
 When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
