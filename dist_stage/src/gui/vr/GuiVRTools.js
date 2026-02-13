@@ -23,7 +23,11 @@ export default function getToolsWidgets(main, activeToolIndex) {
   y += gapHeader;
 
   // Build Options from Tools array
-  const toolOptions = Tools.map((t, i) => ({ label: TR(t.uiName), id: i }));
+  // Filter out Drag tool (Index 6) and LocalScale if confusing? LocalScale is Index 10?
+  // Let's just filter by name or ID if possible, or just skip it.
+  // Tools array has objects with `uiName`.
+  const toolOptions = Tools.map((t, i) => ({ label: TR(t.uiName), id: i }))
+    .filter(t => t.label !== 'Drag'); // Hide Drag
 
   widgets.push({
     type: 'combobox',

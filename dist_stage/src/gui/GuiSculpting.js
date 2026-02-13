@@ -40,9 +40,9 @@ class GuiSculpting {
     menu.addTitle(TR('sculptTool'));
 
     // sculpt tool
-    var optTools = [];
+    var optTools = {};
     for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
-      if (Tools[i]) optTools[i] = TR(Tools[i].uiName);
+      if (Tools[i]) optTools[TR(Tools[i].uiName)] = i;
     }
     this._ctrlSculpt = menu.addCombobox(TR('sculptTool'), this._sculptManager.getToolIndex(), this.onChangeTool.bind(this), optTools);
 

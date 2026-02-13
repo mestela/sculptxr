@@ -210,7 +210,10 @@ class Selection {
     var mesh = picking.getMesh();
 
     // 1. Get Surface Normal
-    vec3.copy(_TMP_AXIS, picking.computePickedNormal());
+    var pNormal = picking.getPickedNormal();
+    if (pNormal) vec3.copy(_TMP_AXIS, pNormal);
+    else vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
+
     vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
     vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 

@@ -14,6 +14,21 @@ GuiSculptingTools.initGuiTools = function (sculpt, menu, main) {
   console.log("GuiSculptingTools.initGuiTools: VOXEL Index =", Enums.Tools.VOXEL);
   for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
     if (!Tools[i]) continue;
+    // Filter out Drag tool from the mapping
+    if (i === Enums.Tools.DRAG) {
+      // The user's provided snippet was syntactically incorrect and misplaced.
+      // The intent seems to be to skip the initialization of the Drag tool's GUI.
+      // The following line is a placeholder based on the user's provided code,
+      // but it's not functional in this context.
+      // var tools = Tools.slice(0, Enums.Tools.TRANSFORM).map(function (t, index) {
+      //   return {
+      //     name: TR(t.uiName),
+      //     value: index
+      //   };
+      // }).filter(function (t) { return t.name !== 'Drag'; }); // Hide Drag
+      continue; // Skip the Drag tool
+    }
+
     var uTool = GuiTools[i];
     if (!uTool) {
       console.error('No gui for tool index : ' + i);

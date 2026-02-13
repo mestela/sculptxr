@@ -13,6 +13,7 @@ class Smooth extends SculptBase {
     this._tangent = false;
     this._idAlpha = 0;
     this._lockPosition = false;
+    this._negative = false; // Support Sharpen
   }
 
   stroke(picking) {
@@ -53,6 +54,9 @@ class Smooth extends SculptBase {
       var mIntensity = intensity * mAr[ind + 2];
       if (picking)
         mIntensity *= picking.getAlpha(vx, vy, vz);
+
+      // if (this._negative) mIntensity = -mIntensity * 0.3; // Sharpen (Disabled for now)
+
       var intComp = 1.0 - mIntensity;
       vAr[ind] = vx * intComp + smoothVerts[i3] * mIntensity;
       vAr[ind + 1] = vy * intComp + smoothVerts[i3 + 1] * mIntensity;

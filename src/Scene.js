@@ -2607,8 +2607,8 @@ class Scene {
 
         // Universal Sub Mode: Override Tool Negative State
         const tool = this._sculptManager.getCurrentTool();
-        const origNegative = tool._negative;
-        if (isNegative && tool) tool._negative = true;
+        const origNegative = tool ? tool._negative : false;
+        if (isNegative && tool) tool._negative = !origNegative;
 
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
 
