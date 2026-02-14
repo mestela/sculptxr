@@ -72,7 +72,7 @@ const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 export default class GuiXR {
 
   constructor(main, canvas) {
-    console.log("GuiXR vFixed Loaded");
+
     this._main = main;
     this._gl = main._gl;
 

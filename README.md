@@ -76,7 +76,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-
     - Transform tool/gizmo missing
     - Paint is a bit glitchy after 0.7.118
     - Voxel straight line mode
@@ -86,8 +85,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
-    
-- ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
     - nearly time to think abotu tider panel
     - panel tear off/pin in place?
     - show more heads up things?
@@ -109,6 +106,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
 - ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**
 - ~~Twist brush occasional console error~~ - **DONE v0.7.443**
 - ~~Re-symmetrize function, choose left->right, right->left~~ - **DONE v0.7.434**
