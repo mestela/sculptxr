@@ -9,6 +9,7 @@
 ## Current Status
 - **Goal:** Robust Symmetry, Undo/Redo, and Polish.
 - **Latest Version:** `v0.7.485` (Deployed to Production).
+- **Last Step Id:** 863
 - **Status:** **STABLE**.
   - **Robust Undo**: Fixed "tearing" and "creases" by ensuring all affected vertices (including topological matches and neighbors) are captured in the Undo state.
   - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
@@ -21,7 +22,7 @@
 4.  **Multimesh.js**: Delegated `getSymmetryData` to the active mesh.
 
 ## Next task
-Investigate: Symmetry behaves strangely in desktop mode (reported in README).
+ask user.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`
