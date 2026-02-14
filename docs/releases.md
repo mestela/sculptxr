@@ -3,7 +3,11 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
-- **v0.7.485** (Current): **Symmetry & Undo Fixed**:
+- **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
+    - **Fix**: **Crash**: Resolved a crash in `Move.startSculpt` when the headset is removed or tracking is lost (null mesh check).
+    - **Fix**: **Symmetry Normals**: Fixed visual artifacts ("tide marks") on the symmetry side by ensuring normals are updated based on the *topologically mapped* vertices, not the geometric brush sphere.
+    - **Cleanup**: Removed legacy `?v=...` query strings from `index.html` and standardized imports for `Move.js` and `SculptBase.js`.
+- **v0.7.485**: **Symmetry & Undo Fixed**:
     - **Fix**: **Robust Undo**: Solved "crease" and "tearing" artifacts when undoing Symmetrize or Symmetry Move operations.
     - **Fix**: **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
     - **Fix**: **Multiresolution**: Fixed a bug where `Multimesh` levels weren't inheriting symmetry data correctly.

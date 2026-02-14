@@ -32,8 +32,7 @@ class Move extends SculptBase {
     var picking = main.getPicking();
     this.initMoveData(picking, this._moveData);
 
-    // VERIFY UPDATE
-    // console.error("SculptXR verify: Move.js v0.7.491 loaded with NULL CHECKS");
+
 
     if (main.getSculptManager().getSymmetry()) {
       var pickingSym = main.getPickingSymmetry();

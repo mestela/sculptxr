@@ -19,7 +19,11 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-*   **v0.7.485** (Current): **Symmetry & Undo Fixed**:
+*   **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
+    - **Fix**: **Crash**: Resolved persistent crash in Move Tool when mesh is null.
+    - **Fix**: **Symmetry Normals**: Fixed "tide mark" artifacts by correctly updating normals for topologically mapped vertices.
+    - **Cleanup**: Standardized imports and removed version hacks.
+*   **v0.7.485***: **Symmetry & Undo Fixed**:
     - **Robust Undo/Redo**: Fixed state tracking for Symmetrize and Move with Symmetry, preventing "tearing" and "creases".
     - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
     - **Cached Mapping**: Optimized symmetry calculations by caching the topological map.
