@@ -3,7 +3,11 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
-- **v0.7.470** (Current): **Symmetry Improvement**:
+- **v0.7.485** (Current): **Symmetry & Undo Fixed**:
+    - **Fix**: **Robust Undo**: Solved "crease" and "tearing" artifacts when undoing Symmetrize or Symmetry Move operations.
+    - **Fix**: **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
+    - **Fix**: **Multiresolution**: Fixed a bug where `Multimesh` levels weren't inheriting symmetry data correctly.
+- **v0.7.470**: **Symmetry Improvement**:
     - **Feature**: **Topological Symmetry**: "Re-symmetrize" now uses a graph traversal algorithm to find perfect 1-to-1 vertex pairs, even if the mesh is heavily deformed.
     - **Feature**: **Side Tracking**: The system now tracks which side (Left/Right) a vertex belongs to topologically, allowing correct mirroring even if vertices cross the symmetry plane.
     - **Fix**: **Center Snapping**: Vertices on the symmetry plane are now forcibly snapped to `x=0` to prevent seam tearing.

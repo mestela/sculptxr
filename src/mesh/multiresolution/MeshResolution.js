@@ -290,6 +290,11 @@ class MeshResolution extends Mesh {
     }
   }
 
+  getSymmetryData() {
+    if (!this._symmetryData) this._symmetryData = new MeshSymmetry(this);
+    return this._symmetryData;
+  }
+
   symmetrize(direction) {
     if (!this._symmetryData) this._symmetryData = new MeshSymmetry(this);
     this._symmetryData.symmetrize(direction);

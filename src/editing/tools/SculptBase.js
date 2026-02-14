@@ -2,6 +2,7 @@ import Enums from '../../misc/Enums.js';
 import Utils from '../../misc/Utils.js';
 import Geometry from '../../math3d/Geometry.js';
 import { vec3, mat4 } from 'gl-matrix';
+import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 
 // Overview sculpt :
 // start (check if we hit the mesh, start state stack) -> startSculpt
@@ -232,11 +233,121 @@ class SculptBase {
 
     var pick2;
     if (pickingSym) {
-      pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
-      pick2 = pickingSym.getMesh();
+      // TOPOLOGICAL SYMMETRY SNAP
+      // 1. Check if we have a valid main pick
+      const pickedFace = picking.getPickedFace();
+      if (pick1 && pickedFace !== -1) {
+        try {
+          // Get the symmetry map (Topological or Geometric Fallback)
+          // Robust Fallback: Handle if getSymmetryData is missing on mesh instance
+          let symData = null;
+          if (typeof mesh.getSymmetryData === 'function') {
+            symData = mesh.getSymmetryData();
+          } else {
+            if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+            symData = mesh._symmetryData;
+          }
+          const symMap = symData ? symData.getMap() : null;
+
+          if (symMap) {
+            const fAr = mesh.getFaces();
+            const vAr = mesh.getVertices();
+            const iFace = pickedFace * 4;
+
+            if (iFace >= 0 && iFace + 3 < fAr.length) {
+              const iv1 = fAr[iFace];
+              const iv2 = fAr[iFace + 1];
+              const iv3 = fAr[iFace + 2];
+
+              // Check if mapped
+              if (iv1 < symMap.length && iv2 < symMap.length && iv3 < symMap.length) {
+                const mv1 = symMap[iv1];
+                const mv2 = symMap[iv2];
+                const mv3 = symMap[iv3];
+
+                if (mv1 !== -1 && mv2 !== -1 && mv3 !== -1) {
+                  // We have a full matching triangle!
+                  // Barycentric...
+                  const v1 = vAr.subarray(iv1 * 3, iv1 * 3 + 3);
+                  const v2 = vAr.subarray(iv2 * 3, iv2 * 3 + 3);
+                  const v3 = vAr.subarray(iv3 * 3, iv3 * 3 + 3);
+                  const uvw = Geometry.barycentric(picking.getIntersectionPoint(), v1, v2, v3);
+
+                  // Mirrored Triangle
+                  const rv1 = vAr.subarray(mv1 * 3, mv1 * 3 + 3);
+                  const rv2 = vAr.subarray(mv2 * 3, mv2 * 3 + 3);
+                  const rv3 = vAr.subarray(mv3 * 3, mv3 * 3 + 3);
+
+                  // Interpolate
+                  const symPos = [0.0, 0.0, 0.0];
+                  vec3.scaleAndAdd(symPos, symPos, rv1, uvw[0]);
+                  vec3.scaleAndAdd(symPos, symPos, rv2, uvw[1]);
+                  vec3.scaleAndAdd(symPos, symPos, rv3, uvw[2]);
+
+                  // Snap pickingSym
+                  pickingSym.setIntersectionPoint(symPos);
+                  pickingSym._mesh = mesh; // Force hit
+                  pickingSym.intersectionSphereMeshes([mesh], symPos, Math.sqrt(picking._rWorld2));
+                  pick2 = pickingSym.getMesh();
+                } else {
+      // Fallback
+                  pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
+                  pick2 = pickingSym.getMesh();
+                }
+              } else {
+                // Index OOB? Fallback
+                pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
+                pick2 = pickingSym.getMesh();
+              }
+            }
+          } else {
+            // No map
+            pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
+            pick2 = pickingSym.getMesh();
+          }
+        } catch (e) {
+          console.error("Topo Sym Mouse Error:", e);
+          pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
+          pick2 = pickingSym.getMesh();
+        }
+      } else {
+        // No main pick
+        pickingSym.intersectionMouseMesh(mesh, mouseX, mouseY);
+        pick2 = pickingSym.getMesh();
+      }
+
       if (pick2) {
         pickingSym.setLocalRadius2(picking.getLocalRadius2());
-        pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+
+        // TOPOLOGICAL VERTEX SELECTION
+        var symMapUsed = false;
+        if (pick1) {
+          // Robust Fallback
+          let symData = null;
+          if (typeof mesh.getSymmetryData === 'function') {
+            symData = mesh.getSymmetryData();
+          } else {
+            if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+            symData = mesh._symmetryData;
+          }
+          const symMap = symData ? symData.getMap() : null;
+          if (symMap) {
+            const mainVerts = picking.getPickedVertices();
+            const newVerts = new Uint32Array(mainVerts.length);
+            let acc = 0;
+            for (let i = 0; i < mainVerts.length; ++i) {
+              const id = mainVerts[i];
+              const mid = symMap[id];
+              if (mid !== -1) newVerts[acc++] = mid;
+            }
+            pickingSym._pickedVertices = newVerts.subarray(0, acc);
+            symMapUsed = true;
+          }
+        }
+
+        if (!symMapUsed) {
+          pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+        }
         pickingSym.computePickedNormal();
 
         // FORCE SYMMETRY: Override Normal
@@ -368,11 +479,100 @@ class SculptBase {
         const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
 
         const searchRadius = Math.min(rWorld * 4.0, MAX_SEARCH_RADIUS);
+
+        // TOPOLOGICAL SYMMETRY SNAP (VR)
+        let snapped = false;
+        try {
+          if (pick1 && picking.getPickedFace() !== -1) {
+            // Robust Fallback
+            let symData = null;
+            if (typeof mesh.getSymmetryData === 'function') {
+              symData = mesh.getSymmetryData();
+            } else {
+              if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+              symData = mesh._symmetryData;
+            }
+            const symMap = symData ? symData.getMap() : null;
+
+            if (symMap) {
+              const fAr = mesh.getFaces();
+              const vAr = mesh.getVertices();
+              const iFace = picking.getPickedFace() * 4;
+
+              // GUARD: Index out of bounds
+              if (iFace < 0 || iFace + 3 >= fAr.length) throw new Error("Face index OOB");
+
+              const iv1 = fAr[iFace];
+              const iv2 = fAr[iFace + 1];
+              const iv3 = fAr[iFace + 2];
+
+              // GUARD: Vertex index OOB
+              if (iv1 >= symMap.length || iv2 >= symMap.length || iv3 >= symMap.length) throw new Error("Vertex index OOB");
+
+              const mv1 = symMap[iv1];
+              const mv2 = symMap[iv2];
+              const mv3 = symMap[iv3];
+
+              if (mv1 !== -1 && mv2 !== -1 && mv3 !== -1) {
+                const v1 = vAr.subarray(iv1 * 3, iv1 * 3 + 3);
+                const v2 = vAr.subarray(iv2 * 3, iv2 * 3 + 3);
+                const v3 = vAr.subarray(iv3 * 3, iv3 * 3 + 3);
+                const uvw = Geometry.barycentric(picking.getIntersectionPoint(), v1, v2, v3);
+
+                const rv1 = vAr.subarray(mv1 * 3, mv1 * 3 + 3);
+                const rv2 = vAr.subarray(mv2 * 3, mv2 * 3 + 3);
+                const rv3 = vAr.subarray(mv3 * 3, mv3 * 3 + 3);
+
+                // Reuse symWorldPos as temp var for result
+                symWorldPos.fill(0.0);
+                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv1, uvw[0]);
+                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv2, uvw[1]);
+                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv3, uvw[2]); // local pos
+
+                // Local -> World
+                vec3.transformMat4(symWorldPos, symWorldPos, mesh.getMatrix());
+                snapped = true;
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Topo Sym Error:", e);
+        }
+
         pickingSym.intersectionSphereMeshes([mesh], symWorldPos, searchRadius);
 
         if (pickingSym.getMesh()) {
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
-          pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+
+          // TOPOLOGICAL VERTEX SELECTION
+          var symMapUsed = false;
+          if (pick1) {
+            // Robust Fallback
+            let symData = null;
+            if (typeof mesh.getSymmetryData === 'function') {
+              symData = mesh.getSymmetryData();
+            } else {
+              if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+              symData = mesh._symmetryData;
+            }
+            const symMap = symData ? symData.getMap() : null;
+            if (symMap) {
+              const mainVerts = picking.getPickedVertices();
+              const newVerts = new Uint32Array(mainVerts.length);
+              let acc = 0;
+              for (let i = 0; i < mainVerts.length; ++i) {
+                const id = mainVerts[i];
+                const mid = symMap[id];
+                if (mid !== -1) newVerts[acc++] = mid;
+              }
+              pickingSym._pickedVertices = newVerts.subarray(0, acc);
+              symMapUsed = true;
+            }
+          }
+
+          if (!symMapUsed) {
+            pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+          }
           pickingSym.computePickedNormal();
 
           // FIX v0.6.44: Normal Consistency Check

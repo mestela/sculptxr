@@ -20,7 +20,8 @@ class StateGeometry {
     this.pullVertices();
     var mesh = this._mesh;
     var iFaces = mesh.getFacesFromVertices(this._idVertState);
-    mesh.updateGeometry(iFaces, this._idVertState);
+    var iVertsToUpdate = mesh.getVerticesFromFaces(iFaces); // Also update neighbors
+    mesh.updateGeometry(iFaces, iVertsToUpdate);
     mesh.updateGeometryBuffers();
     vec3.copy(mesh.getCenter(), this._center);
     this._main.setMesh(mesh);

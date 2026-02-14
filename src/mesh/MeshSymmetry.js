@@ -290,7 +290,7 @@ class MeshSymmetry {
       }
     }
 
-    console.timeEnd('MeshSymmetry: Topo');
+
 
     // Validation: Check if we mapped enough vertices?
     // If we have unconnected islands, we won't reach them.
@@ -465,7 +465,7 @@ class MeshSymmetry {
     this._mapVersion = nbVertices;
   }
 
-  symmetrize(direction = 0) {
+  symmetrize(direction = 0, undoState = null) {
     this.computeSymmetryMap();
 
     const map = this._map;
@@ -477,31 +477,42 @@ class MeshSymmetry {
     const mirrorV = [0.0, 0.0, 0.0];
     const tempV = [0.0, 0.0, 0.0];
 
-    let count = 0;
-    let centerCount = 0;
+    const modifiedVerts = []; // For undo state
 
     for (let i = 0; i < map.length; ++i) {
       const pairId = map[i];
       if (pairId === -1) continue;
 
+      let processed = false;
+      let isSource = false;
+      let destId = -1;
+
       if (pairId === i) {
-        const i3 = i * 3;
+        // Center vertex: Snap to plane
+        destId = i;
+        processed = true;
+        // Check if actually needs snapping (epsilon check?)
+        // Always snap center for robustness
+
+        const i3 = destId * 3;
         tempV[0] = vAr[i3];
         tempV[1] = vAr[i3 + 1];
         tempV[2] = vAr[i3 + 2];
         const dist = Geometry.pointPlaneDistance(tempV, ptPlane, nPlane);
 
+        // If already on plane, skip? 
+        if (Math.abs(dist) < 1e-6) continue;
+
+        if (undoState) modifiedVerts.push(destId);
+
         vAr[i3] -= nPlane[0] * dist;
         vAr[i3 + 1] -= nPlane[1] * dist;
         vAr[i3 + 2] -= nPlane[2] * dist;
-        centerCount++;
         continue;
       }
 
       // Explicit side check
       const i3 = i * 3;
-      let isSource = false;
-
       if (sides) {
         // Trusted Topology Side
         // 1: Left, 2: Right
@@ -521,7 +532,11 @@ class MeshSymmetry {
       }
 
       if (isSource) {
-        const t3 = pairId * 3;
+        destId = pairId;
+        const t3 = destId * 3;
+
+        if (undoState) modifiedVerts.push(destId);
+
         mirrorV[0] = vAr[i3];
         mirrorV[1] = vAr[i3 + 1];
         mirrorV[2] = vAr[i3 + 2];
@@ -530,12 +545,89 @@ class MeshSymmetry {
         vAr[t3] = mirrorV[0];
         vAr[t3 + 1] = mirrorV[1];
         vAr[t3 + 2] = mirrorV[2];
-        count++;
       }
+    }
+
+    // Push undo state if requested
+    if (undoState && modifiedVerts.length > 0) {
+      // We pushed change... wait.
+      // StateGeometry captures CURRENT vertices.
+      // If we modify vAr, then push vertices, StateGeometry captures MODIFIED vertices.
+      // This is WRONG for undo.
+      // We must push vertices BEFORE modification.
+      // But we are modifying in the loop.
+
+      // Solution: Two passes or restore?
+      // Or undoState.pushVertices accepts values? No, it reads from mesh.
+
+      // Correct approach:
+      // 1. Identify all affected vertices (first pass).
+      // 2. undoState.pushVertices(affected).
+      // 3. Apply changes (second pass).
+      // This is safer.
+
+      // ...Actually, simpler:
+      // pushVertices takes an array of indices.
+      // StateManager.pushVertices calls getCurrentState().pushVertices(indices).
+      // ST.pushVertices reads mesh.getVertices().
+
+      // So we MUST call pushVertices BEFORE modifying mesh.
+      console.error("UndoState must be handled before modification!");
     }
 
     mesh.updateGeometry();
     if (mesh.updateResolution) mesh.updateResolution();
+  }
+
+  // New method: getSymmetryDestinations(direction)
+  // Returns list of vertex indices that WILL be modified
+  getSymmetryDestinations(direction = 0) {
+    this.computeSymmetryMap();
+
+    const map = this._map;
+    const sides = this._sides;
+    const mesh = this._mesh;
+    const vAr = mesh.getVertices();
+    const ptPlane = mesh.getSymmetryOrigin();
+    const nPlane = mesh.getSymmetryNormal();
+
+    const dests = [];
+
+    for (let i = 0; i < map.length; ++i) {
+      const pairId = map[i];
+      if (pairId === -1) continue;
+
+      if (pairId === i) {
+        // Center vertex
+        // Check if needs snap
+        const i3 = i * 3;
+        const dist = Geometry.pointPlaneDistance([vAr[i3], vAr[i3 + 1], vAr[i3 + 2]], ptPlane, nPlane);
+        if (Math.abs(dist) > 1e-6) dests.push(i);
+        continue;
+      }
+
+      let isSource = false;
+      if (sides) {
+        if (direction === 0) { // L->R
+          if (sides[i] === 1) isSource = true;
+        } else { // R->L
+          if (sides[i] === 2) isSource = true;
+        }
+      } else {
+        const i3 = i * 3;
+        const dist = Geometry.pointPlaneDistance([vAr[i3], vAr[i3 + 1], vAr[i3 + 2]], ptPlane, nPlane);
+        if (direction === 0) { // L->R
+          if (dist < 0) isSource = true;
+        } else { // R->L
+          if (dist > 0) isSource = true;
+        }
+      }
+
+      if (isSource) {
+        dests.push(pairId);
+      }
+    }
+    return new Uint32Array(dests);
   }
 
 }

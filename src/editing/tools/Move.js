@@ -1,6 +1,7 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
+import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 
 class Move extends SculptBase {
   // v0.7.446: Cache Bust
@@ -33,11 +34,11 @@ class Move extends SculptBase {
 
     if (main.getSculptManager().getSymmetry()) {
       var pickingSym = main.getPickingSymmetry();
+      var mesh = this.getMesh();
       
       // VR Symmetry Init
       if (main._xrSession && main._vrControllerPos) {
-          // Mirror 'world' pos
-          var mesh = this.getMesh();
+        // Mirror 'world' pos
           var worldPos = vec3.clone(main._vrControllerPos);
           var mInv = mat4.create();
           mat4.invert(mInv, mesh.getMatrix());
@@ -54,11 +55,59 @@ class Move extends SculptBase {
             this.initMoveData(pickingSym, this._moveDataSym);
           }
       } else {
-          pickingSym.intersectionMouseMesh();
+        pickingSym.intersectionMouseMesh(mesh);
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
     
-          if (pickingSym.getMesh())
+        if (pickingSym.getMesh()) {
             this.initMoveData(pickingSym, this._moveDataSym);
+        }
+      }
+
+      // TOPOLOGICAL VERTEX SNAP (Corrects Drift)
+      if (pickingSym.getMesh()) {
+        // Robust Fallback
+        let symData = null;
+        if (typeof mesh.getSymmetryData === 'function') {
+          symData = mesh.getSymmetryData();
+        } else {
+          if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+          symData = mesh._symmetryData; // Assuming imported via SculptBase or global scope
+        }
+        const symMap = symData ? symData.getMap() : null;
+
+        if (symMap && this._moveData.iVerts) {
+          const mainVerts = this._moveData.iVerts;
+          const nbVerts = mainVerts.length;
+          const newVerts = new Uint32Array(nbVerts);
+          let acc = 0;
+          for (let i = 0; i < nbVerts; ++i) {
+            const id = mainVerts[i];
+            const mid = symMap[id];
+            if (mid !== -1) newVerts[acc++] = mid;
+          }
+          // Update Sym Move Data with EXACT mapped vertices
+          const symVerts = newVerts.subarray(0, acc);
+          this._moveDataSym.iVerts = symVerts;
+          // IMPORTANT: Push these to Undo State (they might differ from geometric picking)
+          main.getStateManager().pushVertices(symVerts);
+
+          // Re-fetch proxy data for these specific vertices
+          const vAr = mesh.getVertices();
+          const vProxy = this._moveDataSym.vProxy = new Float32Array(acc * 3);
+          const iVerts = this._moveDataSym.iVerts;
+          for (let i = 0; i < acc; ++i) {
+            const ind = iVerts[i] * 3;
+            const j = i * 3;
+            vProxy[j] = vAr[ind];
+            vProxy[j + 1] = vAr[ind + 1];
+            vProxy[j + 2] = vAr[ind + 2];
+          }
+
+          // Also update pickingSym center to match topological center?
+          // Ideally yes, but Move tool uses `center` for falloff calculation. 
+          // If we use the geometric center but topological vertices, the falloff might be slightly skewed if deformed.
+          // But fixing vertices is 90% of the battle.
+        }
       }
     }
 
@@ -73,13 +122,18 @@ class Move extends SculptBase {
       picking.pickVerticesInSphereTopological(picking.getLocalRadius2());
     else
       picking.pickVerticesInSphere(picking.getLocalRadius2());
+
     vec3.copy(moveData.center, picking.getIntersectionPoint());
     var iVerts = picking.getPickedVertices();
     moveData.iVerts = new Uint32Array(iVerts); // Clone vertices
+
     // undo-redo
     this._main.getStateManager().pushVertices(iVerts);
 
-    var vAr = picking.getMesh().getVertices();
+    var mesh = picking.getMesh();
+    if (!mesh) return; // Guard against null mesh
+
+    var vAr = mesh.getVertices();
     var nbVerts = iVerts.length;
     var vProxy = moveData.vProxy = new Float32Array(nbVerts * 3);
     for (var i = 0; i < nbVerts; ++i) {
@@ -128,7 +182,47 @@ class Move extends SculptBase {
 
     if (useSym) {
       this.updateMoveDir(pickingSym, mouseX, mouseY, true);
-      this.move(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), this._moveDataSym, pickingSym);
+
+      const moveData = this._moveData;
+      const moveDataSym = this._moveDataSym;
+
+      // Check if Topo Snap active (Master-Slave)
+      if (moveData.iVerts && moveDataSym.iVerts && moveData.iVerts.length === moveDataSym.iVerts.length) {
+        // Master-Slave Mirroring
+        const iVerts = moveData.iVerts;
+        const iVertsSym = moveDataSym.iVerts;
+        const nbVerts = iVerts.length;
+
+        const vAr = mesh.getVertices();
+        const vProxy = moveData.vProxy;
+        const symProxy = moveDataSym.vProxy;
+        const nPlane = mesh.getSymmetryNormal();
+        const delta = [0.0, 0.0, 0.0];
+
+        for (let i = 0; i < nbVerts; ++i) {
+          const id = iVerts[i];
+          const idSym = iVertsSym[i];
+          const i3 = id * 3;
+          const i3Sym = idSym * 3;
+          const j = i * 3;
+
+          // Calc Delta
+          delta[0] = vAr[i3] - vProxy[j];
+          delta[1] = vAr[i3 + 1] - vProxy[j + 1];
+          delta[2] = vAr[i3 + 2] - vProxy[j + 2];
+
+          // Mirror Delta
+          Geometry.mirrorPoint(delta, [0, 0, 0], nPlane);
+
+          // Apply
+          vAr[i3Sym] = symProxy[j] + delta[0];
+          vAr[i3Sym + 1] = symProxy[j + 1] + delta[1];
+          vAr[i3Sym + 2] = symProxy[j + 2] + delta[2];
+        }
+      } else {
+      // Fallback
+        this.move(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), this._moveDataSym, pickingSym);
+      }
     }
 
     var mesh = this.getMesh();
@@ -337,27 +431,71 @@ class Move extends SculptBase {
     if (useSym) {
         const moveDataSym = this._moveDataSym;
         if (moveDataSym.iVerts) {
-          // Calculate correctly mirrored delta
-          var symStartLocal = vec3.clone(vStartLocal);
-          var symCurrLocal = vec3.clone(vCurrLocal);
 
-          var ptPlane = mesh.getSymmetryOrigin(); // Local (0,0,0) usually
-          var nPlane = mesh.getSymmetryNormal(); // Local (1,0,0) usually
-          Geometry.mirrorPoint(symStartLocal, ptPlane, nPlane);
-          Geometry.mirrorPoint(symCurrLocal, ptPlane, nPlane);
+          // MASTER-SLAVE SYMMETRY:
+          // Instead of calculating falloff/deformation independently (which causes drift),
+          // we explicitly mirror the displacement of the primary vertices to the symmetry vertices.
 
-          vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
+          const iVerts = moveData.iVerts;
+          const iVertsSym = moveDataSym.iVerts;
+          const nbVerts = iVerts.length;
 
-          // Mirror Rotation
-          // Correct Mirror Symmetery: Preserve X (Pitch), Invert Y (Yaw), Invert Z (Roll)
-          var qDeltaSym = quat.clone(qDeltaLocal);
-          // qDeltaSym[0] = -qDeltaSym[0]; // X Preserved
-          qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
-          qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+          if (iVertsSym.length === nbVerts) {
+            const vAr = mesh.getVertices();
+            const vProxy = moveData.vProxy;
+            // vProxy has original primary positions
+            // vAr now has modified primary positions (after this.move call above)
 
+            const ptPlane = mesh.getSymmetryOrigin();
+            const nPlane = mesh.getSymmetryNormal();
+            const mirrorV = [0.0, 0.0, 0.0];
+            const delta = [0.0, 0.0, 0.0];
+            const symProxy = moveDataSym.vProxy;
 
+            for (let i = 0; i < nbVerts; ++i) {
+              const id = iVerts[i];
+              const idSym = iVertsSym[i];
 
-          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
+              const i3 = id * 3;
+              const i3Sym = idSym * 3;
+
+              // Calculate Delta from Primary
+              // vNew - vOld
+              // We can't just use vAr[i3] - vProxy[i*3] because vProxy is compact array
+              const j = i * 3;
+              delta[0] = vAr[i3] - vProxy[j];
+              delta[1] = vAr[i3 + 1] - vProxy[j + 1];
+              delta[2] = vAr[i3 + 2] - vProxy[j + 2];
+
+              // Mirror Delta
+              Geometry.mirrorPoint(delta, [0, 0, 0], nPlane); // vector mirror (origin 0)
+
+              // Construct Sym Position: SymOrigin + MirroredDelta
+              // We use symProxy as the stable origin
+              vAr[i3Sym] = symProxy[j] + delta[0];
+              vAr[i3Sym + 1] = symProxy[j + 1] + delta[1];
+              vAr[i3Sym + 2] = symProxy[j + 2] + delta[2];
+            }
+          } else {
+          // Fallback if counts mismatch (Shouldn't happen with Topo Snap)
+            // Calculate correctly mirrored delta
+            var symStartLocal = vec3.clone(vStartLocal);
+            var symCurrLocal = vec3.clone(vCurrLocal);
+
+            var ptPlane = mesh.getSymmetryOrigin();
+            var nPlane = mesh.getSymmetryNormal();
+            Geometry.mirrorPoint(symStartLocal, ptPlane, nPlane);
+            Geometry.mirrorPoint(symCurrLocal, ptPlane, nPlane);
+
+            vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
+
+            // Mirror Rotation
+            var qDeltaSym = quat.clone(qDeltaLocal);
+            qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
+            qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+
+            this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
+          }
         }
     }
 

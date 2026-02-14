@@ -78,6 +78,8 @@
     -   `task.md` (Checklist)
     -   `implementation_plan.md` (Design)
     -   `project_rules.md` (Constraints)
+4.  **Task Initialization**: ALWAYS initialize `task.md` by copying the header from `task_template.md`. This ensures Critical Rules remain in active context.
+
 
 ## VR Implementation Rules
 1.  **Single Source of Truth**: `Scene.js` is the sole handler for VR input (`handleXRInput`). Do not spread logic across `SculptGL.js`.

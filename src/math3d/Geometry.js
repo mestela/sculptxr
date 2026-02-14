@@ -384,4 +384,27 @@ Geometry.triangleNormal = (function () {
   };
 })();
 
+/** Compute barycentric coordinates (u, v, w) for point p with respect to triangle (a, b, c) */
+Geometry.barycentric = (function () {
+  var v0 = [0.0, 0.0, 0.0];
+  var v1 = [0.0, 0.0, 0.0];
+  var v2 = [0.0, 0.0, 0.0];
+  return function (p, a, b, c) {
+    vec3.sub(v0, b, a);
+    vec3.sub(v1, c, a);
+    vec3.sub(v2, p, a);
+    var d00 = vec3.dot(v0, v0);
+    var d01 = vec3.dot(v0, v1);
+    var d11 = vec3.dot(v1, v1);
+    var d20 = vec3.dot(v2, v0);
+    var d21 = vec3.dot(v2, v1);
+    var denom = d00 * d11 - d01 * d01;
+    if (denom === 0.0) return [0, 0, 0]; // Degenerate triangle
+    var v = (d11 * d20 - d01 * d21) / denom;
+    var w = (d00 * d21 - d01 * d20) / denom;
+    var u = 1.0 - v - w;
+    return [u, v, w];
+  };
+})();
+
 export default Geometry;

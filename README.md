@@ -19,7 +19,12 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
-*   **v0.7.434** (Current): **Tool Improvements**:
+*   **v0.7.485** (Current): **Symmetry & Undo Fixed**:
+    - **Robust Undo/Redo**: Fixed state tracking for Symmetrize and Move with Symmetry, preventing "tearing" and "creases".
+    - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
+    - **Cached Mapping**: Optimized symmetry calculations by caching the topological map.
+    - **True Centering**: Vertices on the symmetry plane are now correctly snapped and handled.
+*   **v0.7.434**: **Tool Improvements**:
     - **Hide Drag**: Disabled unstable Drag tool.
     - **Crease Pull**: Sub Mode (Left Trigger) now pulls creases outward.
     - **Smooth**: Adjusted Sharpen intensity (Negative Smooth) to be safer, currently disabled by default.
@@ -78,7 +83,14 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
+    - menus dont appear if scroll is low
+    - nearly time to think abotu tider panel
+    - panel tear off/pin in place?
+    - show more heads up things?
+    - toolbar/shortcut bar?
     - Lock selection
+    - outliner? 
+    - different undo queue for desktop vs standalone
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)

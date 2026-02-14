@@ -568,16 +568,42 @@ export default function getToolsWidgets(main, activeToolIndex) {
         type: 'button', id: 'sym_lr', label: 'Sym L->R', x: col1X, y: y, w: btnW_Sym, h: btnH,
         onInteract: () => {
           const mesh = main.getMesh();
-          if (mesh) mesh.symmetrize(0);
-          main.render();
+          if (mesh) {
+            // Undo Support
+            if (typeof mesh.getSymmetryData === 'function') {
+              const symData = mesh.getSymmetryData();
+              if (symData) {
+                const verts = symData.getSymmetryDestinations(0);
+                if (verts.length > 0) {
+                  main.getStateManager().pushStateGeometry(mesh);
+                  main.getStateManager().pushVertices(verts);
+                }
+              }
+            }
+            if (typeof mesh.symmetrize === 'function') mesh.symmetrize(0);
+            main.render();
+          }
         }
       });
       widgets.push({
         type: 'button', id: 'sym_rl', label: 'Sym R->L', x: col1X + btnW_Sym + 10, y: y, w: btnW_Sym, h: btnH,
         onInteract: () => {
           const mesh = main.getMesh();
-          if (mesh) mesh.symmetrize(1);
-          main.render();
+          if (mesh) {
+            // Undo Support
+            if (typeof mesh.getSymmetryData === 'function') {
+              const symData = mesh.getSymmetryData();
+              if (symData) {
+                const verts = symData.getSymmetryDestinations(1);
+                if (verts.length > 0) {
+                  main.getStateManager().pushStateGeometry(mesh);
+                  main.getStateManager().pushVertices(verts);
+                }
+              }
+            }
+            if (typeof mesh.symmetrize === 'function') mesh.symmetrize(1);
+            main.render();
+          }
         }
       });
       y += btnH + gapBtn;

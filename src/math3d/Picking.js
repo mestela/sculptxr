@@ -451,9 +451,9 @@ class Picking {
     return vec3.sqrDist(inter, this._mesh.getVertices().subarray(iv, iv + 3)) <= rLocal2;
   }
 
-  /** Find all the vertices inside the sphere (with topological check) */
   pickVerticesInSphereTopological(rLocal2) {
     var mesh = this._mesh;
+    if (!mesh) return new Uint32Array(0);
     var nbVertices = mesh.getNbVertices();
     var vAr = mesh.getVertices();
     var fAr = mesh.getFaces();

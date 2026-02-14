@@ -66,14 +66,38 @@ class GuiSculpting {
   }
 
   onSymLR() {
-    var mesh = this._main.getMesh();
-    if (mesh) mesh.symmetrize(0);
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    // Undo Support
+    const symData = mesh.getSymmetryData();
+    if (symData) {
+      const verts = symData.getSymmetryDestinations(0); // 0 = L->R
+      if (verts.length > 0) {
+        this._main.getStateManager().pushStateGeometry(mesh);
+        this._main.getStateManager().pushVertices(verts);
+      }
+    }
+
+    mesh.symmetrize(0);
     this._main.render();
   }
 
   onSymRL() {
-    var mesh = this._main.getMesh();
-    if (mesh) mesh.symmetrize(1);
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    // Undo Support
+    const symData = mesh.getSymmetryData();
+    if (symData) {
+      const verts = symData.getSymmetryDestinations(1); // 1 = R->L
+      if (verts.length > 0) {
+        this._main.getStateManager().pushStateGeometry(mesh);
+        this._main.getStateManager().pushVertices(verts);
+      }
+    }
+
+    mesh.symmetrize(1);
     this._main.render();
   }
 
