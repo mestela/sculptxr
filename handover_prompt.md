@@ -1,4 +1,4 @@
-# Handover: 6DOF Move Tool & Polish (v0.7.470)
+# Handover: Robust Symmetry & Undo (v0.7.485)
 
 > [!IMPORTANT]
 > **CRITICAL RULES FOR THIS SESSION**:
@@ -7,20 +7,21 @@
 > 3.  **Beta Deployment**: ALL code changes must be deployed to Beta (`./deploy_beta.sh`) before asking for testing.
 
 ## Current Status
-- **Goal:** Implement Robust Symmetry and Polish.
-- **Latest Version:** `v0.7.470` (Deployed to Production).
+- **Goal:** Robust Symmetry, Undo/Redo, and Polish.
+- **Latest Version:** `v0.7.485` (Deployed to Production).
 - **Status:** **STABLE**.
-  - **Topological Symmetry**: "Re-symmetrize" now uses graph traversal for perfect 1-to-1 mapping.
-  - **Side Tracking**: Robust handling of vertices crossing the symmetry plane.
-  - **Center Snapping**: Vertices on the plane are snapped to x=0.
+  - **Robust Undo**: Fixed "tearing" and "creases" by ensuring all affected vertices (including topological matches and neighbors) are captured in the Undo state.
+  - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
+  - **Multiresolution Fix**: Fixed bug where `Multimesh` levels weren't inheriting symmetry data correctly.
 
 ## Solutions Implemented
-1.  **MeshSymmetry.js**: Replaced geometric search with Topological Graph Traversal (BFS) + Side Tracking.
-2.  **Performance**: Cached symmetry maps to prevent re-computation on deformed meshes.
-3.  **Deployment**: Production deployment verified.
+1.  **StateGeometry.js**: Updated to refresh neighbor normals during Undo/Redo.
+2.  **Move.js**: Added explicit `pushVertices` for topologically snapped symmetry vertices.
+3.  **MeshResolution.js**: Added missing `getSymmetryData` method.
+4.  **Multimesh.js**: Delegated `getSymmetryData` to the active mesh.
 
 ## Next task
-Debug live symmetry issues with Brush tools.
+Investigate: Symmetry behaves strangely in desktop mode (reported in README).
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`
