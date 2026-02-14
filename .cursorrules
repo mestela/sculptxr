@@ -1,0 +1,11 @@
+# Project Rules (Auto-Injected)
+
+You are working on the SculptXR project. You must strictly adhere to the following rules:
+
+1.  **Step ID**: Start EVERY response with `Step Id: {id}`. Increment from the user's last `Step Id`.
+2.  **Deployment**: EVERY code change requires a Beta Deployment (`./deploy_beta.sh`) before asking the user to test.
+3.  **No Caching Blame**: Browser caching is NEVER the valid cause of bugs.
+4.  **No "Fixed" Claims**: Use "Updated", "Attempted", "Iterated" instead of "Fixed" until verified by the user.
+
+**Verification**:
+At the start of every session (or when first loading this context), print: "I have read the injected rules."

@@ -1,10 +1,10 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
-import SculptBase from './SculptBase.js';
+import SculptBase from 'editing/tools/SculptBase';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 
 class Move extends SculptBase {
-  // v0.7.446: Cache Bust
+  // v0.7.491: Clean Import & Null Check
   constructor(main) {
     super(main);
 
@@ -32,12 +32,15 @@ class Move extends SculptBase {
     var picking = main.getPicking();
     this.initMoveData(picking, this._moveData);
 
+    // VERIFY UPDATE
+    // console.error("SculptXR verify: Move.js v0.7.491 loaded with NULL CHECKS");
+
     if (main.getSculptManager().getSymmetry()) {
       var pickingSym = main.getPickingSymmetry();
       var mesh = this.getMesh();
       
       // VR Symmetry Init
-      if (main._xrSession && main._vrControllerPos) {
+      if (main._xrSession && main._vrControllerPos && mesh) {
         // Mirror 'world' pos
           var worldPos = vec3.clone(main._vrControllerPos);
           var mInv = mat4.create();
@@ -55,16 +58,18 @@ class Move extends SculptBase {
             this.initMoveData(pickingSym, this._moveDataSym);
           }
       } else {
-        pickingSym.intersectionMouseMesh(mesh);
+        if (mesh) {
+          pickingSym.intersectionMouseMesh(mesh);
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
-    
-        if (pickingSym.getMesh()) {
+
+          if (pickingSym.getMesh()) {
             this.initMoveData(pickingSym, this._moveDataSym);
+          }
         }
       }
 
       // TOPOLOGICAL VERTEX SNAP (Corrects Drift)
-      if (pickingSym.getMesh()) {
+      if (pickingSym.getMesh() && mesh) {
         // Robust Fallback
         let symData = null;
         if (typeof mesh.getSymmetryData === 'function') {
@@ -226,9 +231,21 @@ class Move extends SculptBase {
     }
 
     var mesh = this.getMesh();
-    mesh.updateGeometry(mesh.getFacesFromVertices(picking.getPickedVertices()), picking.getPickedVertices());
-    if (useSym)
-      mesh.updateGeometry(mesh.getFacesFromVertices(pickingSym.getPickedVertices()), pickingSym.getPickedVertices());
+    var mesh = this.getMesh();
+    // FIX v0.7.492: Use moveData.iVerts for proper normal updates
+    if (this._moveData.iVerts) {
+      mesh.updateGeometry(mesh.getFacesFromVertices(this._moveData.iVerts), this._moveData.iVerts);
+    } else {
+      mesh.updateGeometry(mesh.getFacesFromVertices(picking.getPickedVertices()), picking.getPickedVertices());
+    }
+
+    if (useSym) {
+      if (this._moveDataSym.iVerts) {
+        mesh.updateGeometry(mesh.getFacesFromVertices(this._moveDataSym.iVerts), this._moveDataSym.iVerts);
+      } else {
+        mesh.updateGeometry(mesh.getFacesFromVertices(pickingSym.getPickedVertices()), pickingSym.getPickedVertices());
+      }
+    }
     this.updateRender();
     main.setCanvasCursor('default');
   }
@@ -336,8 +353,50 @@ class Move extends SculptBase {
     vec3.normalize(eyeDir, eyeDir);
   }
 
+  // WebXR Support
+  updateXR(picking, isPressed) {
+    // Custom Move Logic:
+    // Hover: Update Anchor (_lastVRPos) continuously so we are ready to drag from current pos.
+    // Drag: Lock Anchor (do NOT update _lastVRPos) so we can calculate delta from start.
+
+    const main = this._main;
+    const worldPos = main._vrControllerPos;
+
+    if (!isPressed) {
+      // HOVER: Update Anchor & Visuals
+      if (worldPos) {
+        if (!this._lastVRPos) this._lastVRPos = vec3.create();
+        vec3.copy(this._lastVRPos, worldPos);
+
+        // Also capture rotation for 6DOF
+        if (main._vrControllerQuat) quat.copy(this._lastVRQuat, main._vrControllerQuat);
+      }
+
+      // Visuals only (Cursor)
+      // We need to trigger a "Hover Probe" to update picking intersection
+      // SculptBase.makeStrokeXR(..., false) does exactly this.
+      // But Move.js overrides makeStrokeXR... 
+      // Actually Move.js overrides SCULPTStrokeXR, but relies on SculptBase.makeStrokeXR?
+      // No, Move.js does NOT override makeStrokeXR. It overrides SCULPTStrokeXR.
+      // So we can call super.makeStrokeXR(picking, null, false) for visuals?
+      // SculptBase.makeStrokeXR(picking, pickingSym, isSculpting)
+
+      const pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
+      // Re-use SculptBase logic for cursor update
+      super.makeStrokeXR(picking, pickingSym, false);
+      this.updateRender();
+
+      return;
+    }
+
+    // DRAG: Call specific Move Logic
+    // This will calculate delta from the LOCKED _lastVRPos
+    this.sculptStrokeXR(picking);
+  }
+
   sculptStrokeXR(picking) {
-    if (!this._lastVRPos) return; // Should be set in SculptBase.start
+    // Note: this method is called ONLY when isPressed = true (via custom updateXR above)
+    if (!this._lastVRPos) return; // Should be set in Hover phase
 
     const main = this._main;
     const currentPos = main._vrControllerPos; // Set in Scene.js processVRSculpting
@@ -499,9 +558,23 @@ class Move extends SculptBase {
         }
     }
 
-    mesh.updateGeometry(mesh.getFacesFromVertices(picking.getPickedVertices()), picking.getPickedVertices());
-    if (pickingSym && pickingSym.getMesh() && this._moveDataSym.iVerts) {
-         mesh.updateGeometry(mesh.getFacesFromVertices(pickingSym.getPickedVertices()), pickingSym.getPickedVertices());
+    // FIX v0.7.492: Use the ACTUAL modified vertices for updateGeometry, not the potentially stale picking vertices
+    // This ensures normals are recomputed for all vertices that were moved.
+    if (moveData.iVerts) {
+      mesh.updateGeometry(mesh.getFacesFromVertices(moveData.iVerts), moveData.iVerts);
+    } else {
+      mesh.updateGeometry(mesh.getFacesFromVertices(picking.getPickedVertices()), picking.getPickedVertices());
+    }
+
+    if (useSym) {
+      const moveDataSym = this._moveDataSym;
+      if (pickingSym && pickingSym.getMesh()) {
+        if (moveDataSym.iVerts) {
+          mesh.updateGeometry(mesh.getFacesFromVertices(moveDataSym.iVerts), moveDataSym.iVerts);
+        } else {
+          mesh.updateGeometry(mesh.getFacesFromVertices(pickingSym.getPickedVertices()), pickingSym.getPickedVertices());
+        }
+      }
     }
     this.updateRender();
   }

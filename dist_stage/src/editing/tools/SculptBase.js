@@ -214,6 +214,7 @@ class SculptBase {
   }
 
   updateRender() {
+    if (!this.getMesh()) return;
     this.updateMeshBuffers();
     this._main.render();
   }
@@ -385,11 +386,12 @@ class SculptBase {
 
   // WebXR Support
   updateXR(picking, isPressed) {
-    if (!isPressed) return;
-    this.sculptStrokeXR(picking);
+    // FIX: Continuous Picking Update (Hover)
+    // We always want to update the cursor position, even if not sculpting.
+    this.sculptStrokeXR(picking, isPressed);
   }
 
-  sculptStrokeXR(picking) {
+  sculptStrokeXR(picking, isPressed) {
     var main = this._main;
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
 
@@ -399,9 +401,20 @@ class SculptBase {
     // Use Controller Distance (Robust like Move.js) instead of Surface Distance (Fragile)
     var worldPos = main._vrControllerPos;
     if (!worldPos || !this._lastVRPos) {
+      if (worldPos) this._lastVRPos = vec3.clone(worldPos); // Init if missing
       return;
     }
 
+    // HOVER STATE (Trigger Released)
+    if (!isPressed) {
+      // Just update picking/cursor, no sculpting
+      this.makeStrokeXR(picking, pickingSym, false);
+      this._lastVRPos = vec3.clone(worldPos); // Keep sync
+      this.updateRender();
+      return;
+    }
+
+    // SCULPTING STATE (Trigger Pressed)
     var dist = vec3.dist(worldPos, this._lastVRPos);
     var rWorld = Math.sqrt(picking._rWorld2);
     var minSpacing = 0.15 * rWorld;
@@ -411,7 +424,7 @@ class SculptBase {
       return;
     }
 
-    this.makeStrokeXR(picking, pickingSym);
+    this.makeStrokeXR(picking, pickingSym, true);
 
     vec3.copy(this._lastVRPos, worldPos);
     // Also update _lastInter nicely if we can, but it's less critical now
@@ -426,9 +439,10 @@ class SculptBase {
     this.updateRender();
   }
 
-  makeStrokeXR(picking, pickingSym) {
+  makeStrokeXR(picking, pickingSym, isSculpting = true) {
 
     var mesh = this.getMesh();
+    if (!mesh) return;
     // picking is already updated by handleXRInput
 
     var pick1 = picking.getMesh();
@@ -438,7 +452,7 @@ class SculptBase {
     }
 
     var dynTopo = mesh.isDynamic && !this._lockPosition;
-    if (dynTopo && pick1)
+    if (isSculpting && dynTopo && pick1)
       this.stroke(picking, false);
 
     var pick2;
@@ -605,13 +619,13 @@ class SculptBase {
     // everything "behind" the tangent plane of the stroke.
     // This prevents backface drift for BOTH Main and Symmetry brushes.
 
-    if (!dynTopo && pick1) {
+    if (isSculpting && !dynTopo && pick1) {
       // Main Brush: Use NEGATIVE Normal (pointing INTO surface) to keep front faces
       var nMain = picking.getPickedNormal();
       vec3.negate(picking.getEyeDirection(), nMain); 
       this.stroke(picking, false);
     }
-    if (pick2) {
+    if (isSculpting && pick2) {
       // Symmetry Brush: Use NEGATIVE Normal
       var nSym = pickingSym.getPickedNormal();
       vec3.negate(pickingSym.getEyeDirection(), nSym);

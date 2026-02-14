@@ -8,7 +8,7 @@ import Pinch from './Pinch.js';
 import Crease from './Crease.js';
 import Drag from './Drag.js';
 import Paint from './Paint.js';
-import Move from './Move.js';
+import Move from 'editing/tools/Move';
 import Masking from './Masking.js';
 import LocalScale from './LocalScale.js';
 import Transform from './Transform.js';

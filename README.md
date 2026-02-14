@@ -83,6 +83,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
+    - brush circle incorrectly oriented before first stroke
     - menus dont appear if scroll is low
     - nearly time to think abotu tider panel
     - panel tear off/pin in place?

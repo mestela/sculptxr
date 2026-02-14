@@ -1,4 +1,4 @@
-# Handover: Robust Symmetry & Undo (v0.7.485)
+# Handover: Robust Symmetry & Undo (v0.7.490)
 
 > [!IMPORTANT]
 > **CRITICAL RULES FOR THIS SESSION**:
@@ -7,22 +7,26 @@
 > 3.  **Beta Deployment**: ALL code changes must be deployed to Beta (`./deploy_beta.sh`) before asking for testing.
 
 ## Current Status
-- **Goal:** Robust Symmetry, Undo/Redo, and Polish.
-- **Latest Version:** `v0.7.485` (Deployed to Production).
-- **Last Step Id:** 863
-- **Status:** **STABLE**.
-  - **Robust Undo**: Fixed "tearing" and "creases" by ensuring all affected vertices (including topological matches and neighbors) are captured in the Undo state.
-  - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
-  - **Multiresolution Fix**: Fixed bug where `Multimesh` levels weren't inheriting symmetry data correctly.
+- **Goal:** Fix Move Tool Null Crash & Symmetry Undo Artifacts.
+- **Latest Version:** `v0.7.490` (Deployed to Beta).
+- **Last Step Id:** 302
+- **Status:** **CRITICAL INVESTIGATION REQUIRED**.
+  - **Move Tool Crash**: `Move.startSculpt` crashes when `mesh` is null (e.g. headset removed).
+  - **Symmetry Undo Artifact**: "Tide mark" on symmetry side after Undo. Likely caused by the crash interrupting the stroke start before `pushVertices` captures the symmetry state.
+  - **Persistence Issue**: Fixes were applied to `src/editing/tools/Move.js` (null checks added), but the user reports the **CRASH PERSISTS** with stack traces pointing to the **OLD** line numbers.
+  - **Constraint**: `deploy_beta.sh` is considered "fine" by the user. Do not blame it or caching.
 
-## Solutions Implemented
-1.  **StateGeometry.js**: Updated to refresh neighbor normals during Undo/Redo.
-2.  **Move.js**: Added explicit `pushVertices` for topologically snapped symmetry vertices.
-3.  **MeshResolution.js**: Added missing `getSymmetryData` method.
-4.  **Multimesh.js**: Delegated `getSymmetryData` to the active mesh.
+## Solutions Attempted
+1.  **Null Checks**: Added `if (mesh)` guards in `startSculpt` and `makeStrokeXR`.
+2.  **Force Update**: Updated `index.html` importmap to use `Move.js?v=490`.
+3.  **Verification**: Verified `Move.js` on disk has the checks.
 
-## Next task
-ask user.
+## Next Steps
+1.  **Investigate Execution Path**: Why is the browser executing old code?
+    - Check if `Move.js` is bundled or served from a different location?
+    - Check if `SculptGL.js` imports a *different* `Move.js`?
+2.  **Fix "Tide Mark"**: Once the crash is fixed, verify if `StateGeometry` correctly restores the symmetry side.
+    - If `startSculpt` completes, it *should* push the correct vertices.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`
