@@ -67,7 +67,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - Re-symmetrize function, choose left->right, right->left
+
     - Transform tool/gizmo missing
     - Paint is a bit glitchy after 0.7.118
     - Voxel straight line mode
@@ -93,6 +93,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~Re-symmetrize function, choose left->right, right->left~~ - **DONE v0.7.434**
 - ~~Drag and move tools should support 6dof rotation~~ - **DONE v0.7.443**
 - ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
 - ~~Combobox for tool has misaligned highlight~~
