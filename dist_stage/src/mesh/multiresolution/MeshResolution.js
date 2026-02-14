@@ -2,7 +2,9 @@ import Utils from '../../misc/Utils.js';
 import Subdivision from '../../editing/Subdivision.js';
 import Mesh from '../Mesh.js';
 import createMeshData from '../MeshData.js';
+import MeshSymmetry from '../MeshSymmetry.js';
 
+// v0.7.459: Force Reload
 class MeshResolution extends Mesh {
 
   constructor(mesh, keepMesh) {
@@ -286,6 +288,11 @@ class MeshResolution extends Mesh {
       dAr[j + 1] = tx * dx + ty * dy + tz * dz;
       dAr[j + 2] = bix * dx + biy * dy + biz * dz;
     }
+  }
+
+  symmetrize(direction) {
+    if (!this._symmetryData) this._symmetryData = new MeshSymmetry(this);
+    this._symmetryData.symmetrize(direction);
   }
 }
 

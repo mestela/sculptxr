@@ -3,7 +3,11 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
-- **v0.7.434** (Current): **Tool Improvements**:
+- **v0.7.470** (Current): **Symmetry Improvement**:
+    - **Feature**: **Topological Symmetry**: "Re-symmetrize" now uses a graph traversal algorithm to find perfect 1-to-1 vertex pairs, even if the mesh is heavily deformed.
+    - **Feature**: **Side Tracking**: The system now tracks which side (Left/Right) a vertex belongs to topologically, allowing correct mirroring even if vertices cross the symmetry plane.
+    - **Fix**: **Center Snapping**: Vertices on the symmetry plane are now forcibly snapped to `x=0` to prevent seam tearing.
+- **v0.7.434**: **Tool Improvements**:
     - **Hide Drag**: Disabled unstable Drag tool.
     - **Crease Pull**: Sub Mode (Left Trigger) now pulls creases outward.
     - **(v0.7.443) 6DOF Move Tool**: The Move tool now supports full 6-degree-of-freedom rotation! Twisting your wrist will now twist the mesh. Also improved symmetry behavior to prevent "bum creases" when working near the center line.

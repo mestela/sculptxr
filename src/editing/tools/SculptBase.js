@@ -238,6 +238,15 @@ class SculptBase {
         pickingSym.setLocalRadius2(picking.getLocalRadius2());
         pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
         pickingSym.computePickedNormal();
+
+        // FORCE SYMMETRY: Override Normal
+        if (pick1) {
+          var nPlane = mesh.getSymmetryNormal();
+          var nMain = picking.getPickedNormal();
+          var nSym = pickingSym.getPickedNormal();
+          // Mirror vector: use origin [0,0,0] for plane
+          Geometry.mirrorPoint(nSym, nMain, [0, 0, 0], nPlane);
+        }
       }
     }
 
@@ -373,33 +382,22 @@ class SculptBase {
             const nMain = picking.getPickedNormal(); // Local Normal
             const nSym = pickingSym.getPickedNormal(); // Local Normal
 
-            // Mirror the MAIN normal to see what we EXPECT at symmetry point
-            var nExpected = vec3.clone(nMain);
-            Geometry.mirrorPoint(nExpected, [0, 0, 0], nPlane); // Mirror vector only (origin 0)
+            // FORCE SYMMETRY: Override Normal with Perfect Mirror
+            // This fixes "Drift" by ensuring strokes always converge/diverge exactly as expected
+            Geometry.mirrorPoint(nSym, nMain, [0, 0, 0], nPlane);
 
-            // Check alignment (Dot Product)
-            // If vectors are roughly same direction, dot > 0.
-            // If they are opposite (backface drift), dot < 0.
-            // We can be strict (> 0.5) or lenient (> 0.0).
-            // Let's try lenient first to avoid skipping valid curved surfaces.
-            const conformity = vec3.dot(nExpected, nSym);
+            // We accept pick2 with the forced normal.
+            pick2 = pickingSym.getMesh();
 
-            if (conformity < 0.0) {
-              // Reject Drift
-              // if (window.screenLog && Math.random() < 0.1) window.screenLog(`Sym Rejected: Drift ${conformity.toFixed(2)}`, "orange");
-              pick2 = null;
-            } else {
-              pick2 = pickingSym.getMesh();
-            }
           } else {
-          // If main brush didn't hit, we can't compare.
-          // Allow symmetry to work alone? Or drift risk?
-          // Usually strokes start on surface. Let's allow it.
+            // If main brush didn't hit, we can't compare.
+            // Allow symmetry to work alone.
             pick2 = pickingSym.getMesh();
           }
         }
       }
     }
+
 
     // FIX v0.6.49: Force "Surface-Relative" Culling
     // In VR, we lack a valid Camera EyeDir relative to the surface.

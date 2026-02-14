@@ -3,7 +3,7 @@ import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 
 class Move extends SculptBase {
-
+  // v0.7.446: Cache Bust
   constructor(main) {
     super(main);
 
@@ -248,8 +248,8 @@ class Move extends SculptBase {
     const main = this._main;
     const currentPos = main._vrControllerPos; // Set in Scene.js processVRSculpting
     const currentQuat = main._vrControllerQuat;
-    
-    // if (window.screenLog && this._main._logThrottle % 60 === 0) window.screenLog("Move: sculptStrokeXR", "white");
+
+
 
     if (!currentPos || !currentQuat) return;
 
@@ -257,10 +257,7 @@ class Move extends SculptBase {
     var mesh = this.getMesh();
     if (!mesh) return;
 
-    // DEBUG: Check if we are reaching this
-    if (window.screenLog && this._main._logThrottle % 30 === 0) {
-      window.screenLog(`Move: Active. iVerts: ${this._moveData.iVerts ? this._moveData.iVerts.length : 0}`, "white");
-    }
+
 
     var mInv = mat4.create();
     mat4.invert(mInv, mesh.getMatrix());
@@ -358,10 +355,7 @@ class Move extends SculptBase {
           qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
           qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
 
-          // DEBUG: Verify Symmetry
-          if (window.screenLog && this._main._logThrottle % 60 === 0) {
-            // window.screenLog(`SymRot: ${qDeltaSym[0].toFixed(2)}, ${qDeltaSym[1].toFixed(2)}, ${qDeltaSym[2].toFixed(2)}`, "yellow");
-          }
+
 
           this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
         }

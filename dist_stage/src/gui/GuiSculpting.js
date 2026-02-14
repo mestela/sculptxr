@@ -51,6 +51,7 @@ class GuiSculpting {
     this._ctrlTitleCommon = menu.addTitle(TR('sculptCommon'));
     // symmetry
     this._ctrlSymmetry = menu.addCheckbox(TR('sculptSymmetry'), this._sculptManager._symmetry, this.onSymmetryChange.bind(this));
+    menu.addDualButton(TR('sculptSymLR'), TR('sculptSymRL'), this, this, 'onSymLR', 'onSymRL');
     // continuous
     this._ctrlContinuous = menu.addCheckbox(TR('sculptContinuous'), this._sculptManager, '_continuous');
 
@@ -61,6 +62,18 @@ class GuiSculpting {
 
   onSymmetryChange(value) {
     this._sculptManager._symmetry = value;
+    this._main.render();
+  }
+
+  onSymLR() {
+    var mesh = this._main.getMesh();
+    if (mesh) mesh.symmetrize(0);
+    this._main.render();
+  }
+
+  onSymRL() {
+    var mesh = this._main.getMesh();
+    if (mesh) mesh.symmetrize(1);
     this._main.render();
   }
 

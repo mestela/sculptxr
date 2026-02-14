@@ -4,6 +4,7 @@ import Utils from '../misc/Utils.js';
 import OctreeCell from '../math3d/OctreeCell.js';
 import Shader from '../render/ShaderLib.js';
 import RenderData from './RenderData.js';
+import MeshSymmetry from './MeshSymmetry.js';
 
 /*
 Basic usage:
@@ -31,6 +32,7 @@ class Mesh {
     this._transformData = null;
     this._renderData = null;
     this._isVisible = true;
+    this._symmetryData = null;
   }
 
   static sortFunction(meshA, meshB) {
@@ -372,6 +374,15 @@ class Mesh {
 
   getSymmetryNormal() {
     return this._transformData._symmetryNormal;
+  }
+
+  getSymmetryData() {
+    if (!this._symmetryData) this._symmetryData = new MeshSymmetry(this);
+    return this._symmetryData;
+  }
+
+  symmetrize(direction) {
+    this.getSymmetryData().symmetrize(direction);
   }
 
   getFacePosInLeaf() {
@@ -2446,6 +2457,11 @@ class Mesh {
     cArOld.set(cArNew);
     mArOld.set(mArNew);
 
+  }
+
+  symmetrize(direction) {
+    if (!this._symmetryData) this._symmetryData = new MeshSymmetry(this);
+    this._symmetryData.symmetrize(direction);
   }
 }
 

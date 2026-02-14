@@ -1,21 +1,21 @@
-# Handover: Drag-to-Scroll & Stability (v0.7.429+)
+# Handover: 6DOF Move Tool & Polish (v0.7.443)
 
 ## Current Status
-- **Goal:** Enhancing Main Panel Usability and Stability.
-- **Latest Version:** `v0.7.429` (Deployed to Production).
+- **Goal:** Implement Robust Symmetry and Polish.
+- **Latest Version:** `v0.7.470` (Deployed to Production).
 - **Status:** **STABLE**.
-  - **Drag-to-Scroll**: Main Panel background can now be dragged to scroll (smooth & responsive).
-  - **Regression Fix**: Tool Selection logic restored (was broken in v0.7.427).
-  - **Lock Selection**: UI removed temporarily (needs further work).
-  - **Left Hand Mode**: Fully functional (v0.7.416).
+  - **Topological Symmetry**: "Re-symmetrize" now uses graph traversal for perfect 1-to-1 mapping.
+  - **Side Tracking**: Robust handling of vertices crossing the symmetry plane.
+  - **Center Snapping**: Vertices on the plane are snapped to x=0.
 
 ## Solutions Implemented
-1.  **Drag-to-Scroll**: Modified `GuiXR.js` `onInteract` to prioritize background drags while respecting widget interactions.
-2.  **Debounce Logic**: Set `debounceTime = 0` for scroll interactions to ensure 60fps responsiveness.
-3.  **Deployment**: Production deployment script (`deploy_production.sh`) created and verified.
+1.  **MeshSymmetry.js**: Replaced geometric search with Topological Graph Traversal (BFS) + Side Tracking.
+2.  **Performance**: Cached symmetry maps to prevent re-computation on deformed meshes.
+3.  **Deployment**: Production deployment verified.
 
 ## Next task
-Ask user
+## Next task
+Debug live symmetry issues with Brush tools.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`

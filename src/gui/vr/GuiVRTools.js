@@ -561,6 +561,26 @@ export default function getToolsWidgets(main, activeToolIndex) {
         }
       });
       y += btnH + gapBtn;
+
+      // Re-symmetrize Buttons
+      const btnW_Sym = (300 - 10) / 2;
+      widgets.push({
+        type: 'button', id: 'sym_lr', label: 'Sym L->R', x: col1X, y: y, w: btnW_Sym, h: btnH,
+        onInteract: () => {
+          const mesh = main.getMesh();
+          if (mesh) mesh.symmetrize(0);
+          main.render();
+        }
+      });
+      widgets.push({
+        type: 'button', id: 'sym_rl', label: 'Sym R->L', x: col1X + btnW_Sym + 10, y: y, w: btnW_Sym, h: btnH,
+        onInteract: () => {
+          const mesh = main.getMesh();
+          if (mesh) mesh.symmetrize(1);
+          main.render();
+        }
+      });
+      y += btnH + gapBtn;
     }
 
     if (showContinuous) {

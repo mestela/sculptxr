@@ -1,4 +1,5 @@
-# SculptXR - WebXR Sculpting
+# SculptXR (v0.7.470)
+- WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
 *SculptGL running on desktop, with SculptXR running natively on a Quest 3 in foreground in AR/passthrough mode.*
@@ -67,15 +68,13 @@ It should work on any WebXR compatible device. So far I've tested on:
 ## Todo
 - **Functionality**:
     - Re-symmetrize function, choose left->right, right->left
-    - Drag and move tools should support 6dof rotation
     - Transform tool/gizmo missing
     - Paint is a bit glitchy after 0.7.118
-    - Symmetry needs to be reimplemented
     - Voxel straight line mode
     - Voxel smooth shading
     - Voxel smooth brush
     - Xray mode
-    - twist brush occasional console error
+    - Twist brush occasional console error
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
@@ -94,6 +93,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~Drag and move tools should support 6dof rotation~~ - **DONE v0.7.443**
 - ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
 - ~~Combobox for tool has misaligned highlight~~
 - ~~Matcap misaligned; its upside down and slightly different in left/right eyes~~ - **DONE v0.7.429**

@@ -276,6 +276,11 @@ class Multimesh extends Mesh {
   renderWireframe(main) {
     return this._canUseLowRender(main) ? this._renderWireframeLow(main) : super.renderWireframe(main);
   }
+
+  symmetrize(direction) {
+    this.getCurrentMesh().symmetrize(direction);
+    this.updateResolution();
+  }
 }
 
 Multimesh.RENDER_HINT = 0;
