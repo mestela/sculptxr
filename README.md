@@ -85,7 +85,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
-    - nearly time to think abotu tider panel
+    - nearly time to think about tider panel
     - panel tear off/pin in place?
     - show more heads up things?
     - toolbar/shortcut bar?
