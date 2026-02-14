@@ -72,7 +72,7 @@ const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 export default class GuiXR {
 
   constructor(main, canvas) {
-    console.log("GuiXR vFixed Loaded");
+
     this._main = main;
     this._gl = main._gl;
 
@@ -993,56 +993,9 @@ export default class GuiXR {
     // But `this._activeCombobox` overrides input in `onInteract`.
 
 
-    // 3. Check Widgets
-    if (targetWid && isPressed && this._lastScrollY === undefined) {
-      if (targetWid.disabled) return;
-
-      if (targetWid.type === 'slider') {
-        this._activeSlider = targetWid;
-        // ... (Slider Logic remains same, but we need to ensure we return)
-        const sliderW = targetWid.w;
-        const sliderX = targetWid.x;
-
-        let t = (cx - sliderX) / sliderW;
-        t = Math.max(0, Math.min(1, t));
-
-        let val = t;
-        if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
-          val = targetWid.min + t * (targetWid.max - targetWid.min);
-          if (targetWid.step) {
-            const steps = Math.round((val - targetWid.min) / targetWid.step);
-            val = targetWid.min + steps * targetWid.step;
-          }
-        }
-
-        if (targetWid.value !== val) {
-          targetWid.value = val;
-          if (targetWid.onInput) targetWid.onInput(val);
-          this._executeAction(targetWid);
-          this._needsRedraw = true;
-        }
-        return;
-      }
-
-      if (targetWid.type === 'section_header') {
-        const sec = targetWid.label;
-        this._sectionStates[sec] = !this._sectionStates[sec];
-        this._needsRedraw = true;
-        this.draw();
-        return;
-      }
-
-      this._handleWidgetClick(targetWid);
-      return;
-    }
-
-    // 4. Check Tabs (Header) - Only if NOT a widget interaction
-    // We check this AFTER widgets to ensure widgets (like top-aligned ones?) don't get blocked?
-    // Actually, Tabs are at the very top. Widgets are usually below.
-    // Except Overlay... which is handled at step 0.
-
+    // 3. Check Tabs (Header) - PRIORITY over Widgets
+    // Check this BEFORE widgets to ensure we can always click tabs even if widgets are scrolled 'under' them.
     if (isPressed && cy < HEADER_HEIGHT) {
-      // Check which tab
       const w = this._canvas.width;
       if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
         const row1 = GLOBAL_TABS.slice(0, 3);
@@ -1051,7 +1004,7 @@ export default class GuiXR {
 
         const r1W = w / row1.length;
         const r2W = w / row2.length;
-        const r3W = w / row3.length; // 2 items
+        const r3W = w / row3.length;
 
         if (cy < TAB_HEIGHT) {
           const idx = Math.floor(cx / r1W);
@@ -1067,10 +1020,7 @@ export default class GuiXR {
       }
     }
 
-
-    // 2. Active Slider Lock (Moved to top)
-
-    // 3. Check Widgets
+    // 4. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
       if (targetWid.disabled) return;
 

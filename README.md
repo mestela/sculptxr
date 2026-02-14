@@ -83,12 +83,11 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Voxel smooth shading
     - Voxel smooth brush
     - Xray mode
-    - Twist brush occasional console error
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
 
 - **UI + UX**  
-    - brush circle incorrectly oriented before first stroke
-    - menus dont appear if scroll is low
+    
+- ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
     - nearly time to think abotu tider panel
     - panel tear off/pin in place?
     - show more heads up things?
@@ -110,6 +109,8 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**
+- ~~Twist brush occasional console error~~ - **DONE v0.7.443**
 - ~~Re-symmetrize function, choose left->right, right->left~~ - **DONE v0.7.434**
 - ~~Drag and move tools should support 6dof rotation~~ - **DONE v0.7.443**
 - ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
