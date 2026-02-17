@@ -306,7 +306,56 @@ GuiTools[Enums.Tools.TRANSFORM] = {
 
 GuiTools[Enums.Tools.TRANSFORM_VR] = {
   _ctrls: [],
-  init: function () { }
+  init: function (tool, fold, main) {
+    const ROW_Labels = ['T', 'R', 'S'];
+    const COL_Labels = ['X', 'Y', 'Z'];
+
+    // Helper to refresh UI (since buttons need to update their visual state)
+    // Actually in GuiVR, buttons don't have "active" state easily?
+    // We can use the Label to show state? "[ X ]" vs "X"
+    // Or we just rely on `main.guiXR.refreshToolsWidget()` which rebuilds everything?
+    // Let's assume hitting a button triggers a rebuild if we call it.
+
+    const refresh = () => {
+      if (main.guiXR) main.guiXR.refreshToolsWidget();
+    };
+
+    const gap = 10;
+    const btnW = 100; // 350 total -> 3*100 + 2*10 = 320. Fits.
+
+    // 3x3 Grid
+    for (let r = 0; r < 3; ++r) {
+      // MODE ROW
+      // We want to group them?
+      // Actually layout is just x, y coordinate.
+      // We can add them sequentially.
+
+      // Buttons for X, Y, Z in this Row (Mode)
+      // If Mode == r, then we show the Axis State.
+      // If Mode != r, clicking sets Mode to r.
+
+      const isCurrentMode = (tool._mode === r);
+      // Label prefix?
+      const prefix = ROW_Labels[r];
+
+      // Add a header or just use the buttons?
+      // Let's use buttons.
+
+      // We need to pass x, y explicitly to `add*` functions if we want custom layout?
+      // GuiVR usually stacks vertically unless we do custom pushing?
+      // The `fold` passed here is the `GuiVR` or `GuiVRFolder`?
+      // In `GuiVRTools.js`, `fold` seems to be the `activeTool` specific context?
+      // No, `GuiVRTools.initGuiTools` passes `menu`.
+      // `menu` isn't passed here?
+      // Wait. `GuiVRTools.js` `getToolsWidgets` constructs a JSON array `widgets`.
+      // It DOES NOT use `init` like `GuiSculptingTools.js`.
+      // `GuiVRTools.js` exports `getToolsWidgets`.
+      // `GuiSculptingTools.js` uses `init`.
+      // I am editing `GuiVRTools.js` which builds widgets ARRAY.
+      // I don't use `init` function logic inside `GuiVRTools.js`!
+      // I am editing the `getToolsWidgets` function directly.
+    }
+  }
 };
 
 GuiTools[Enums.Tools.VOXEL] = {

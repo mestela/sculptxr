@@ -10,6 +10,10 @@ class TransformVR extends SculptBase {
     this._startMeshMatrix = mat4.create();
     this._controllerRight = vec3.create(); // Local X of controller at start
     this._initInput = false;
+
+    // State
+    this._mode = 0; // 0=Translate, 1=Rotate, 2=Scale
+    this._axisMask = [true, false, false]; // [X, Y, Z] (Start with X-only)
   }
 
   start(ctrl) {
@@ -66,30 +70,16 @@ class TransformVR extends SculptBase {
       // 2. Store Start Matrix
       mat4.copy(this._startMeshMatrix, mesh.getMatrix());
 
-      // 3. Calculate Controller Right Vector (X-Axis) in World Space
-      // Transform local X (1,0,0) by controller Quat
-      vec3.set(this._controllerRight, 1.0, 0.0, 0.0);
-      vec3.transformQuat(this._controllerRight, this._controllerRight, controllerQuat);
+      // 3. Calculate Controller Axes in World Space
+      // (Used for projection if needed, though for now we project onto MESH axes)
+      const q = controllerQuat;
+
+      this._controllerRight = vec3.fromValues(1, 0, 0);
+      vec3.transformQuat(this._controllerRight, this._controllerRight, q);
       vec3.normalize(this._controllerRight, this._controllerRight);
 
-      // Push Undo State (Geometry state stores matrix too?)
-      // StateGeometry usually stores vertices. StateCustom?
-      // Actually Transform tool uses pushState() which pushes StateGeometry.
-      // And applyEditMatrix modifies vertices directly in desktop Transform?
-      // Wait, desktop transform modifies vertices?
-      // "applyEditMatrix(iVerts) ... vec3.transformMat4(vTemp, vTemp, em)"
-      // Yes, desktop transform bakes the matrix into vertices!
-      // But for VR, we probably just want to move the "Mesh Object" (matrix) for now?
-      // The user said "TransformVR... object should also move".
-      // If we move the matrix, it's cheaper.
-      // But if we want to bake it later, we can.
-      // For now, let's just modify the matrix.
-      // We should push a "Matrix State" ideally?
-      // StateGeometry stores the matrix too?
-      // Let's check StateGeometry.
-
-      // For now, simple start:
-      // Just matrix update.
+      // We might need Up/Forward for other constraints if we want "Controller Space" movement
+      // But for now we project onto MESH axes, so we only need to know we started.
     }
 
     // UPDATE GESTURE
@@ -98,68 +88,87 @@ class TransformVR extends SculptBase {
     const delta = vec3.create();
     vec3.sub(delta, controllerPos, this._startControllerPos);
 
-    // 2. Project Delta onto Controller Right Vector
-    // scalar = dot(delta, controllerRight)
-    let moveAmount = vec3.dot(delta, this._controllerRight);
-
-    // FIX: Apply Inverse Mesh Scale ONLY (Delta is already in Scene Space)
-    // 1. Delta is in Scene Space (Physical / _vrScale)
-    // 2. We want Local Delta.
-    //    LocalDelta = SceneDelta / MeshScale
-
-    let scaleFactor = 1.0;
-
-    // VR Scale (View Scale) - ALREADY APPLIED TO DELTA via Scene Logic
-    // if (main._vrScale) {
-    //   scaleFactor *= main._vrScale;
-    // }
-
-    // Mesh Scale (Model Scale)
-    // We need the scale along the specific axis we are moving (Local X).
-    // Or just uniform scale if we assume uniform.
-    // Let's take the length of the Local X axis vector in World Space (from Start Matrix).
-    // StartMatrix contains Rotation * Scale.
-    // mat4.getScaling() extracts factors.
+    // Get Mesh Scale for LOCAL scaling correction
     const meshScale = vec3.create();
     mat4.getScaling(meshScale, this._startMeshMatrix);
-    // Move is along Local X, so use X scale.
-    // If scale is 0, avoid NaN.
-    if (Math.abs(meshScale[0]) > 0.0001) {
-      scaleFactor *= meshScale[0];
-    }
 
-    // Apply
-    if (scaleFactor > 0.00001) {
-      if (Math.random() < 0.01) {
-        console.log(`[TransformVR] Delta:${vec3.length(delta).toFixed(4)} Move:${moveAmount.toFixed(4)} MeshScale:${meshScale[0].toFixed(4)} Factor:${scaleFactor.toFixed(4)} Result:${(moveAmount / scaleFactor).toFixed(4)}`);
-      }
-      moveAmount /= scaleFactor;
-    }
-
-    // 3. Construct Translation Matrix in LOCAL SPACE
-    // Reuse variable or use new scope?
-    // Let's use a new variable name or just reuse the logic cleanly.
-
-    // Mat4.fromTranslation handles [x, y, z]
     const translationMatrix = mat4.create();
-    mat4.fromTranslation(translationMatrix, [moveAmount, 0.0, 0.0]);
 
-    const newMat = mat4.create();
-    mat4.multiply(newMat, this._startMeshMatrix, translationMatrix);
+    // MODE: TRANSLATE
+    if (this._mode === 0) {
+      const mask = this._axisMask;
 
-    // 4. Apply
-    // mesh.setMatrix(newMat);
-    // Explicit Fallback/Debug if setMatrix is missing
-    if (typeof mesh.setMatrix === 'function') {
-      mesh.setMatrix(newMat);
-    } else {
-      console.warn("TransformVR: mesh.setMatrix missing on", mesh.constructor.name);
-      const mDest = mesh.getMatrix();
-      if (mDest) mat4.copy(mDest, newMat);
+      // Check for Free Move (All Axes True)
+      if (mask[0] && mask[1] && mask[2]) {
+        // FREE MOVE (Matches Hand Delta exactly, World Space)
+        mat4.fromTranslation(translationMatrix, delta);
+
+        const newMat = mat4.create();
+        // Pre-multiply for World Translation (Matches Hand)
+        mat4.multiply(newMat, translationMatrix, this._startMeshMatrix);
+
+        this._applyMatrix(mesh, newMat);
+        return;
+
+      } else {
+        // CONSTRAINED AXIS MOVEMENT (Mesh Local Axes)
+
+        const qRot = quat.create();
+        mat4.getRotation(qRot, this._startMeshMatrix);
+
+        const vX = vec3.fromValues(1, 0, 0);
+        const vY = vec3.fromValues(0, 1, 0);
+        const vZ = vec3.fromValues(0, 0, 1);
+
+        vec3.transformQuat(vX, vX, qRot);
+        vec3.transformQuat(vY, vY, qRot);
+        vec3.transformQuat(vZ, vZ, qRot);
+
+        const localMove = vec3.create();
+
+        if (mask[0]) {
+          const dist = vec3.dot(delta, vX); // Project onto World X of Mesh
+          const s = Math.abs(meshScale[0]) > 0.0001 ? meshScale[0] : 1.0;
+          localMove[0] = dist / s; // Remove Scale for Local Translate
+        }
+        if (mask[1]) {
+          const dist = vec3.dot(delta, vY);
+          const s = Math.abs(meshScale[1]) > 0.0001 ? meshScale[1] : 1.0;
+          localMove[1] = dist / s;
+        }
+        if (mask[2]) {
+          const dist = vec3.dot(delta, vZ);
+          const s = Math.abs(meshScale[2]) > 0.0001 ? meshScale[2] : 1.0;
+          localMove[2] = dist / s;
+        }
+
+        mat4.fromTranslation(translationMatrix, localMove);
+        const newMat = mat4.create();
+        // Post-multiply for Local Translation
+        mat4.multiply(newMat, this._startMeshMatrix, translationMatrix);
+
+        this._applyMatrix(mesh, newMat);
+        return;
+      }
     }
 
+    // ROTATE / SCALE Placeholder
+    if (this._mode > 0) {
+      // Not implemented yet
+      return;
+    }
+  }
+
+  _applyMatrix(mesh, mat) {
+    if (typeof mesh.setMatrix === 'function') {
+      mesh.setMatrix(mat);
+    } else {
+      // Silenced Warning
+      const mDest = mesh.getMatrix();
+      if (mDest) mat4.copy(mDest, mat);
+    }
     // Update Drawables?
-    main.render();
+    this._main.render();
   }
 }
 

@@ -164,7 +164,57 @@ export default function getToolsWidgets(main, activeToolIndex) {
     // Generic placement is fine.
   }
 
-  // 2b. Voxel Specific Tools (Resolution, Bake, Wireframe)
+  // --- TRANSFORM VR ---
+  if (activeToolIndex === Enums.Tools.TRANSFORM_VR && activeTool) {
+    widgets.push({ type: 'info', label: 'Transform Constraints', x: col1X, y: y });
+    y += gapHeader;
+
+    const ROW_Labels = ['Translate', 'Rotate', 'Scale']; // Not used for buttons, maybe for info?
+    const COL_Labels = ['X', 'Y', 'Z'];
+    const btnSize = (350 - 20) / 3; // 3 buttons, 10px gaps
+
+    // Helper to refresh
+    const refresh = () => { if (main.guiXR) main.guiXR.refreshToolsWidget(); };
+
+    for (let r = 0; r < 3; ++r) {
+      for (let c = 0; c < 3; ++c) {
+        // ID: tx_0_0, etc.
+        const isActiveMode = (activeTool._mode === r);
+        const isAxisActive = isActiveMode && activeTool._axisMask[c];
+
+        const label = COL_Labels[c];
+        // Visual feedback for active state:
+        // GuiVR doesn't support color change easily via this API?
+        // We can prepend "> " or something? or "[ X ]".
+        const displayLabel = isAxisActive ? `[ ${label} ]` : label;
+
+        widgets.push({
+          type: 'button',
+          id: `tr_${r}_${c}`,
+          label: label, // Just Label
+          x: col1X + c * (btnSize + 10),
+          y: y,
+          w: btnSize,
+          h: btnH,
+          data: { active: isAxisActive }, // Highlight!
+          onInteract: () => {
+            if (activeTool._mode !== r) {
+              // Switch Mode
+              activeTool._mode = r;
+              activeTool._axisMask = [false, false, false];
+              activeTool._axisMask[c] = true;
+            } else {
+              // Toggle Axis
+              activeTool._axisMask[c] = !activeTool._axisMask[c];
+            }
+            refresh();
+          }
+        });
+      }
+      y += btnH + gapBtn;
+    }
+    y += gapSection;
+  }
   if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
     widgets.push({ type: 'info', label: 'Voxel Settings', x: col1X, y: y });
     y += gapHeader;
