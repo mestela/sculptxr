@@ -304,6 +304,11 @@ GuiTools[Enums.Tools.TRANSFORM] = {
   init: function () {}
 };
 
+GuiTools[Enums.Tools.TRANSFORM_VR] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 GuiTools[Enums.Tools.VOXEL] = {
   _ctrls: [],
   init: function (tool, fold, main) {

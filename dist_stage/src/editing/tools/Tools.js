@@ -8,10 +8,11 @@ import Pinch from './Pinch.js';
 import Crease from './Crease.js';
 import Drag from './Drag.js';
 import Paint from './Paint.js';
-import Move from 'editing/tools/Move';
+import Move from './Move.js';
 import Masking from './Masking.js';
 import LocalScale from './LocalScale.js';
 import Transform from './Transform.js';
+import TransformVR from './TransformVR.js';
 import SculptVoxel from './SculptVoxel.js';
 import Grab from './Grab.js';
 
@@ -32,6 +33,7 @@ Tools[Enums.Tools.LOCALSCALE] = LocalScale;
 Tools[Enums.Tools.TRANSFORM] = Transform;
 Tools[Enums.Tools.VOXEL] = SculptVoxel;
 Tools[Enums.Tools.GRAB] = Grab;
+Tools[Enums.Tools.TRANSFORM_VR] = TransformVR;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -48,5 +50,6 @@ Tools[Enums.Tools.LOCALSCALE].uiName = 'sculptLocalScale';
 Tools[Enums.Tools.TRANSFORM].uiName = 'sculptTransform';
 Tools[Enums.Tools.VOXEL].uiName = 'sculptVoxel';
 Tools[Enums.Tools.GRAB].uiName = 'sculptGrab';
+Tools[Enums.Tools.TRANSFORM_VR].uiName = 'sculptTransformVR';
 
 export default Tools;

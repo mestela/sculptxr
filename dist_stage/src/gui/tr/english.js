@@ -121,6 +121,7 @@ var TR = {
   sculptTransform: 'Transform (E)',
   sculptVoxel: 'Voxel',
   sculptGrab: 'Grab (G)',
+  sculptTransformVR: 'Transform VR',
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',
