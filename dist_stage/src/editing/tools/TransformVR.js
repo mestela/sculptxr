@@ -227,9 +227,86 @@ class TransformVR extends SculptBase {
       return;
     }
 
-    // SCALE Placeholder
-    if (this._mode > 2) {
-      return; 
+    // MODE: SCALE
+    if (this._mode === 2) {
+      const mask = this._axisMask;
+
+      const pos = vec3.create();
+      const rot = quat.create();
+      const scale = vec3.create();
+      mat4.getTranslation(pos, this._startMeshMatrix);
+      mat4.getRotation(rot, this._startMeshMatrix);
+      mat4.getScaling(scale, this._startMeshMatrix);
+
+      const vStart = vec3.create();
+      const vCurr = vec3.create();
+      vec3.sub(vStart, this._startControllerPos, pos);
+      vec3.sub(vCurr, controllerPos, pos);
+
+      // UNIFORM SCALE (All 3 axes)
+      if (mask[0] && mask[1] && mask[2]) {
+        const dStart = vec3.length(vStart);
+        const dCurr = vec3.length(vCurr);
+
+        if (dStart < 0.0001) return; // Prevent divide by zero
+
+        const factor = dCurr / dStart;
+
+        // Apply Uniform Scale
+        vec3.scale(scale, scale, factor);
+
+        const newMat = mat4.create();
+        mat4.fromRotationTranslationScale(newMat, rot, pos, scale);
+
+        this._applyMatrix(mesh, newMat);
+        return;
+
+      } else {
+        // NON-UNIFORM SCALE (1 or 2 axes)
+        // Project onto Local Axes
+
+        // 1. Get World Axes
+        const vX = vec3.fromValues(1, 0, 0);
+        const vY = vec3.fromValues(0, 1, 0);
+        const vZ = vec3.fromValues(0, 0, 1);
+        vec3.transformQuat(vX, vX, rot);
+        vec3.transformQuat(vY, vY, rot);
+        vec3.transformQuat(vZ, vZ, rot);
+
+        // 2. Compute Factors
+        // We use projected lengths. 
+        // Note: Sign matters! dot(v, axis) gives signed distance.
+        // If we cross the center, sign flips -> negative scale -> mirroring.
+
+        const factors = vec3.fromValues(1, 1, 1);
+
+        if (mask[0]) {
+          const s = vec3.dot(vStart, vX);
+          const c = vec3.dot(vCurr, vX);
+          if (Math.abs(s) > 0.0001) factors[0] = c / s;
+        }
+
+        if (mask[1]) {
+          const s = vec3.dot(vStart, vY);
+          const c = vec3.dot(vCurr, vY);
+          if (Math.abs(s) > 0.0001) factors[1] = c / s;
+        }
+
+        if (mask[2]) {
+          const s = vec3.dot(vStart, vZ);
+          const c = vec3.dot(vCurr, vZ);
+          if (Math.abs(s) > 0.0001) factors[2] = c / s;
+        }
+
+        // Apply Factors
+        vec3.multiply(scale, scale, factors);
+
+        const newMat = mat4.create();
+        mat4.fromRotationTranslationScale(newMat, rot, pos, scale);
+
+        this._applyMatrix(mesh, newMat);
+        return;
+      }
     }
   }
 
