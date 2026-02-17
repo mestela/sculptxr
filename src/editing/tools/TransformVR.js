@@ -7,6 +7,7 @@ class TransformVR extends SculptBase {
     super(main);
 
     this._startControllerPos = vec3.create();
+    this._startControllerQuat = quat.create(); // Store Start Quat
     this._startMeshMatrix = mat4.create();
     this._controllerRight = vec3.create(); // Local X of controller at start
     this._initInput = false;
@@ -38,10 +39,6 @@ class TransformVR extends SculptBase {
   }
 
   end() {
-    // Apply final matrix?
-    // In SculptXR, matrix changes are usually instant.
-    // Undo history?
-    // We should push state at start.
     this._initInput = false;
   }
 
@@ -66,20 +63,16 @@ class TransformVR extends SculptBase {
 
       // 1. Store Start Pos
       vec3.copy(this._startControllerPos, controllerPos);
+      quat.copy(this._startControllerQuat, controllerQuat);
 
       // 2. Store Start Matrix
       mat4.copy(this._startMeshMatrix, mesh.getMatrix());
 
       // 3. Calculate Controller Axes in World Space
-      // (Used for projection if needed, though for now we project onto MESH axes)
       const q = controllerQuat;
-
       this._controllerRight = vec3.fromValues(1, 0, 0);
       vec3.transformQuat(this._controllerRight, this._controllerRight, q);
       vec3.normalize(this._controllerRight, this._controllerRight);
-
-      // We might need Up/Forward for other constraints if we want "Controller Space" movement
-      // But for now we project onto MESH axes, so we only need to know we started.
     }
 
     // UPDATE GESTURE
@@ -152,10 +145,91 @@ class TransformVR extends SculptBase {
       }
     }
 
-    // ROTATE / SCALE Placeholder
-    if (this._mode > 0) {
-      // Not implemented yet
+    // MODE: ROTATE (Generalized Arcball / Lever)
+    if (this._mode === 1) {
+      const mask = this._axisMask;
+
+      // Pivot is Mesh Center
+      const pos = vec3.create();
+      const rot = quat.create();
+      const scale = vec3.create();
+      mat4.getTranslation(pos, this._startMeshMatrix);
+      mat4.getRotation(rot, this._startMeshMatrix);
+      mat4.getScaling(scale, this._startMeshMatrix);
+
+      // Vectors from Pivot to Controller (Start vs Current)
+      const vStart = vec3.create();
+      const vCurr = vec3.create();
+      vec3.sub(vStart, this._startControllerPos, pos);
+      vec3.sub(vCurr, controllerPos, pos);
+
+      // Normalize
+      vec3.normalize(vStart, vStart);
+      vec3.normalize(vCurr, vCurr);
+
+      // Compute Axis of Rotation (Cross Product)
+      // vStart x vCurr gives axis perpendicular to the plane of movement
+      const axis = vec3.create();
+      vec3.cross(axis, vStart, vCurr);
+
+      const len = vec3.length(axis);
+      if (len < 0.0001) return; // No rotation
+
+      vec3.scale(axis, axis, 1.0 / len); // Normalize Axis
+
+      // Compute Angle
+      // dot = cos(theta)
+      let dot = vec3.dot(vStart, vCurr);
+      dot = Math.min(1.0, Math.max(-1.0, dot)); // Clamp
+      const angle = Math.acos(dot);
+
+      if (Math.abs(angle) < 0.0001) return;
+
+      // CONSTRAIN AXIS
+      // We want to project the WORLD axis onto acceptable Local Axes
+
+      // 1. Transform World Axis to Local Axis
+      // L = inv(R) * W
+      const qInv = quat.create();
+      quat.conjugate(qInv, rot);
+
+      const axisLocal = vec3.create();
+      vec3.transformQuat(axisLocal, axis, qInv);
+
+      // 2. Apply Mask
+      // If we are strictly constrained to X, we only keep X component?
+      // Wait. If we rotate around X, the axis IS X.
+      // So yes, we just zero out forbidden axes.
+      if (!mask[0]) axisLocal[0] = 0.0;
+      if (!mask[1]) axisLocal[1] = 0.0;
+      if (!mask[2]) axisLocal[2] = 0.0;
+
+      if (vec3.length(axisLocal) < 0.0001) return; // No allowed rotation
+      vec3.normalize(axisLocal, axisLocal);
+
+      // 3. Transform Back to World
+      vec3.transformQuat(axis, axisLocal, rot);
+      vec3.normalize(axis, axis);
+
+      // 4. Apply Rotation Delta
+      const qDelta = quat.create();
+      quat.setAxisAngle(qDelta, axis, angle);
+
+      // Global Rotation
+      const newRot = quat.create();
+      quat.multiply(newRot, qDelta, rot);
+
+      // Recompose
+      const newMat = mat4.create();
+      mat4.fromRotationTranslationScale(newMat, newRot, pos, scale);
+
+      this._applyMatrix(mesh, newMat);
       return;
+    }
+
+    // SCALE Placeholder
+    if (this._mode > 2) {
+      return; 
     }
   }
 
@@ -163,11 +237,9 @@ class TransformVR extends SculptBase {
     if (typeof mesh.setMatrix === 'function') {
       mesh.setMatrix(mat);
     } else {
-      // Silenced Warning
       const mDest = mesh.getMatrix();
       if (mDest) mat4.copy(mDest, mat);
     }
-    // Update Drawables?
     this._main.render();
   }
 }
