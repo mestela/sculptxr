@@ -1,6 +1,6 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
-import Gizmo from '../Gizmo.js';
+import GizmoVR, { GIZMO_TYPE } from '../GizmoVR.js';
 
 class TransformVR extends SculptBase {
 
@@ -15,9 +15,9 @@ class TransformVR extends SculptBase {
 
     // State
     this._mode = 0; // 0=Translate, 1=Rotate, 2=Scale
-    this._axisMask = [true, false, false]; // [X, Y, Z] (Start with X-only)
+    this._axisMask = [true, true, true]; // [X, Y, Z]
 
-    this._gizmo = new Gizmo(main);
+    this._gizmo = new GizmoVR(main);
   }
 
   start(ctrl) {
@@ -48,7 +48,7 @@ class TransformVR extends SculptBase {
   updateXR(picking, isPressed, origin, dir) { // Added origin, dir arguments matching SculptManager
     // 1. Update Gizmo Scale & Matrices (ALWAYS, even if not pressed)
     if (this._gizmo) {
-      this._gizmo.updateMatricesVR(this._main.getCamera());
+      this._gizmo.update(this._main.getCamera());
 
       // 2. Hover Logic (Only if not dragging)
       if (!this._initInput) {
@@ -60,27 +60,30 @@ class TransformVR extends SculptBase {
         const rayOrigin = origin || controllerPos;
         const rayDir = dir || [0, 0, -1]; // Fallback to Z-forward if missing
 
+        if (!origin || !dir) {
+          // console.warn("TransformVR: Missing origin/dir", { origin, dir });
+        }
+
+        if (!origin || !dir) {
+          // console.warn("TransformVR: Missing origin/dir", { origin, dir });
+        }
+
         if (rayOrigin && rayDir) {
-          var hitType = this._gizmo.onVRHover(rayOrigin, rayDir);
+          var hitType = this._gizmo.intersect(rayOrigin, rayDir);
 
           if (hitType !== -1) {
+            this._updateStateFromGizmo(hitType);
+
             // Use the Gizmo's last intersection point
             var hitPos = this._gizmo._selected._lastInter;
             // Visualize where the ray actually hit the Gizmo
-            // We can reuse the "Pivot" debug sphere since it's blue/visible
             if (main.updateDebugPivot) {
               // hitPos is in Local Space (approx 0..1)
               // We need to transform it to World Space using the Selected Part's matrix
               var worldHit = vec3.create();
-              // FIX: _selected is a wrapper, use _finalMatrix directly
               var mat = this._gizmo._selected._finalMatrix;
               if (mat) {
                 vec3.transformMat4(worldHit, hitPos, mat);
-
-                if (Math.random() < 0.01) {
-                  console.log(`Gizmo Hit: Local[${hitPos[0].toFixed(2)},${hitPos[1].toFixed(2)},${hitPos[2].toFixed(2)}] World[${worldHit[0].toFixed(2)},${worldHit[1].toFixed(2)},${worldHit[2].toFixed(2)}]`);
-                }
-
                 main.updateDebugPivot(worldHit, true);
                 window.debugPivotScale = 0.01; // Small marker
               }
@@ -99,8 +102,6 @@ class TransformVR extends SculptBase {
       this._initInput = false;
       return;
     }
-
-
 
     const main = this._main;
     const mesh = this.getMesh();
@@ -251,9 +252,6 @@ class TransformVR extends SculptBase {
       vec3.transformQuat(axisLocal, axis, qInv);
 
       // 2. Apply Mask
-      // If we are strictly constrained to X, we only keep X component?
-      // Wait. If we rotate around X, the axis IS X.
-      // So yes, we just zero out forbidden axes.
       if (!mask[0]) axisLocal[0] = 0.0;
       if (!mask[1]) axisLocal[1] = 0.0;
       if (!mask[2]) axisLocal[2] = 0.0;
@@ -364,18 +362,46 @@ class TransformVR extends SculptBase {
     }
   }
 
+  _updateStateFromGizmo(type) {
+    // Mode: 0=Translate, 1=Rotate, 2=Scale
+    // Type bitmask mapping
+
+    // Reset Defaults
+    this._mode = 0;
+    this._axisMask = [false, false, false];
+
+    if (type & GIZMO_TYPE.TRANS_X) { this._mode = 0; this._axisMask = [true, false, false]; }
+    else if (type & GIZMO_TYPE.TRANS_Y) { this._mode = 0; this._axisMask = [false, true, false]; }
+    else if (type & GIZMO_TYPE.TRANS_Z) { this._mode = 0; this._axisMask = [false, false, true]; }
+
+    // Plane Translation (Move in 2 axes)
+    else if (type & GIZMO_TYPE.PLANE_X) { this._mode = 0; this._axisMask = [false, true, true]; } // Plane Normal X -> YZ Move
+    else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; } // Plane Normal Y -> XZ Move
+    else if (type & GIZMO_TYPE.PLANE_Z) { this._mode = 0; this._axisMask = [true, true, false]; } // Plane Normal Z -> XY Move
+
+    else if (type & GIZMO_TYPE.ROT_X) { this._mode = 1; this._axisMask = [true, false, false]; }
+    else if (type & GIZMO_TYPE.ROT_Y) { this._mode = 1; this._axisMask = [false, true, false]; }
+    else if (type & GIZMO_TYPE.ROT_Z) { this._mode = 1; this._axisMask = [false, false, true]; }
+    else if (type & GIZMO_TYPE.ROT_W) { this._mode = 1; this._axisMask = [true, true, true]; } // Free Rotate
+
+    else if (type & GIZMO_TYPE.SCALE_X) { this._mode = 2; this._axisMask = [true, false, false]; }
+    else if (type & GIZMO_TYPE.SCALE_Y) { this._mode = 2; this._axisMask = [false, true, false]; }
+    else if (type & GIZMO_TYPE.SCALE_Z) { this._mode = 2; this._axisMask = [false, false, true]; }
+    else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; } // Uniform Scale
+  }
+
   _applyMatrix(mesh, mat) {
-    if (typeof mesh.setMatrix === 'function') {
-      if (mDest) mat4.copy(mDest, mat);
-    }
+    // Corrected _applyMatrix
+    mat4.copy(mesh.getMatrix(), mat);
+    // Force octree/world bound update if needed?
+    // Usually SculptGL updates AABB lazily or during render/tool usage.
+    // Ensure we trigger a render.
     this._main.render();
   }
 
-
-
   renderVR(scene, cam) {
     if (this._gizmo) {
-      this._gizmo.renderVR(cam);
+      this._gizmo.render(cam);
     }
   }
 }
