@@ -610,6 +610,55 @@ class Picking {
     if (isQuad) vec3.scaleAndAdd(out, out, vField.subarray(iv4, iv4 + 3), len4 * invSum);
     return out;
   }
+
+  /** Intersection for VR (Bypasses Screen Projection) */
+  intersectionRayMeshesVR(meshes, origin, direction, physicalRadius) {
+    var nearDistance = Infinity;
+    var nearMesh = null;
+    var nearFace = -1;
+
+    // vNear = origin
+    // vFar = origin + direction * length
+    vec3.copy(_TMP_NEAR_1, origin);
+    vec3.scaleAndAdd(_TMP_FAR, origin, direction, 5000.0);
+
+    for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
+      var mesh = meshes[i];
+      if (!mesh.isVisible()) continue;
+
+      mat4.invert(_TMP_INV, mesh.getMatrix());
+      vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
+      vec3.transformMat4(_TMP_FAR, _TMP_FAR, _TMP_INV);
+
+      if (!this.intersectionRayMesh(mesh, _TMP_NEAR, _TMP_FAR)) continue;
+
+      var interTest = this.getIntersectionPoint();
+      // Distance check (world space)
+      vec3.transformMat4(_TMP_V1, interTest, mesh.getMatrix());
+      var testDistance = vec3.dist(origin, _TMP_V1);
+
+      if (testDistance < nearDistance) {
+        nearDistance = testDistance;
+        nearMesh = mesh;
+        vec3.copy(_TMP_INTER_1, interTest);
+        nearFace = this.getPickedFace();
+      }
+    }
+
+    this._mesh = nearMesh;
+    vec3.copy(this._interPoint, _TMP_INTER_1);
+    this._pickedFace = nearFace;
+
+    // VR RADIUS FIX: Use Physical Radius directly
+    if (nearFace !== -1) {
+      this._rWorld2 = physicalRadius * physicalRadius;
+      this._rLocal2 = this._rWorld2 / nearMesh.getScale2();
+    } else {
+      this._rLocal2 = 0.0;
+    }
+
+    return !!nearMesh;
+  }
 }
 
 // TODO update i18n strings in a dynamic way

@@ -2522,17 +2522,9 @@ class Scene {
     }
     vec3.normalize(engineDir, engineDir);
 
-    // B. Compute Ray Origin (Model Space) - Start closer to controller (1cm) to avoid missing nearby surfaces
-    const rayOffset = vec3.fromValues(0, 0, -0.01); // 1cm offset
-    if (pose && pose.transform && pose.transform.orientation) {
-      const q = pose.transform.orientation;
-      vec3.transformQuat(rayOffset, rayOffset, [q.x, q.y, q.z, q.w]);
-    }
-    const rayOriginPhysical = [
-      p.x + rayOffset[0],
-      p.y + rayOffset[1],
-      p.z + rayOffset[2]
-    ];
+    // B. Compute Ray Origin (Model Space) - Use Exact Controller Position
+    // Removed 1cm offset to match Visual Laser alignment
+    const rayOriginPhysical = [p.x, p.y, p.z];
 
     // Transform Ray Origin to Model Space
     const rayOrigin = vec3.create();

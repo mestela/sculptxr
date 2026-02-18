@@ -267,7 +267,9 @@ class GizmoVR {
       console.log("Pickables:", this._pickables.length);
     }
 
-    pick.intersectionRayMeshes(this._pickables, origin, direction);
+    // Use VR Intersection logic (Bypasses Screen Projection)
+    // Physical Radius 5cm (0.05) for easier grabbing
+    pick.intersectionRayMeshesVR(this._pickables, origin, direction, 0.05);
 
     if (this._selected) this._selected._isSelected = false;
 

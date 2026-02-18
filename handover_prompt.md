@@ -8,10 +8,10 @@
 
 ## Current Status
 **TransformVR Constraints Implemented**
-The `TransformVR` tool now supports precise constraints via the 3x3 Grid UI:
-- **Translation**: X/Y/Z axis constraints are fully functional and 1:1 with physical movement.
-- **Rotation**: "Lever" based rotation (Generalized Arcball) allows for reliable single-axis or free rotation.
-- **Scale**: Uniform and Non-Uniform scaling is implemented and verified.
+- **GizmoVR**: Refactored to `GizmoVR.js` to mirror `Picking.js` logic.
+  - **Status**: Constraining works correctly when picking succeeds.
+  - **Issue**: Picking is unreliable/offset in VR. Visual and console debugging enabled (`debugGizmoVR()`).
+  - **Next Step**: Investigate why `intersectionRayMeshes` fails or is offset for Gizmo meshes specifically (Scale baking vs Matrix transform?).
 
 
 ## Solutions Attempted
