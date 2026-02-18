@@ -639,6 +639,14 @@ class Scene {
       gl.enable(gl.DEPTH_TEST);
     }
 
+    // Render Current Tool VR (Gizmo, etc.)
+    if (this._sculptManager) {
+      const tool = this._sculptManager.getCurrentTool();
+      if (tool && tool.renderVR) {
+        tool.renderVR(this, cam);
+      }
+    }
+
     // --- PASS 3: OVERLAY (Reset View) ---
     // Reset View Matrix to Base
     mat4.copy(cam._view, viewMatrix);

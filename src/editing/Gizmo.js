@@ -342,8 +342,8 @@ class Gizmo {
     return center;
   }
 
-  _updateMatrices() {
-    var camera = this._main.getCamera();
+  _updateMatrices(camera) {
+    camera = camera || this._main.getCamera();
     var trMesh = this._computeCenterGizmo();
     var eye = camera.computePosition();
 
@@ -376,11 +376,11 @@ class Gizmo {
     this._scaleW.updateFinalMatrix(traScale);
   }
 
-  _drawGizmo(elt) {
+  _drawGizmo(elt, camera) {
     elt.updateMatrix();
     var drawGeo = elt._drawGeo;
     drawGeo.setFlatColor(elt._isSelected ? elt._colorSelect : elt._color);
-    drawGeo.updateMatrices(this._main.getCamera());
+    drawGeo.updateMatrices(camera || this._main.getCamera());
     drawGeo.render(this._main);
   }
 
@@ -693,29 +693,29 @@ class Gizmo {
     return scene;
   }
 
-  render() {
-    this._updateMatrices();
+  render(camera) {
+    this._updateMatrices(camera);
 
     var type = this._isEditing && this._selected ? this._selected._type : this._activatedType;
 
-    if (type & ROT_W) this._drawGizmo(this._rotW);
+    if (type & ROT_W) this._drawGizmo(this._rotW, camera);
 
-    if (type & TRANS_X) this._drawGizmo(this._transX);
-    if (type & TRANS_Y) this._drawGizmo(this._transY);
-    if (type & TRANS_Z) this._drawGizmo(this._transZ);
+    if (type & TRANS_X) this._drawGizmo(this._transX, camera);
+    if (type & TRANS_Y) this._drawGizmo(this._transY, camera);
+    if (type & TRANS_Z) this._drawGizmo(this._transZ, camera);
 
-    if (type & PLANE_X) this._drawGizmo(this._planeX);
-    if (type & PLANE_Y) this._drawGizmo(this._planeY);
-    if (type & PLANE_Z) this._drawGizmo(this._planeZ);
+    if (type & PLANE_X) this._drawGizmo(this._planeX, camera);
+    if (type & PLANE_Y) this._drawGizmo(this._planeY, camera);
+    if (type & PLANE_Z) this._drawGizmo(this._planeZ, camera);
 
-    if (type & ROT_X) this._drawGizmo(this._rotX);
-    if (type & ROT_Y) this._drawGizmo(this._rotY);
-    if (type & ROT_Z) this._drawGizmo(this._rotZ);
+    if (type & ROT_X) this._drawGizmo(this._rotX, camera);
+    if (type & ROT_Y) this._drawGizmo(this._rotY, camera);
+    if (type & ROT_Z) this._drawGizmo(this._rotZ, camera);
 
-    if (type & SCALE_X) this._drawGizmo(this._scaleX);
-    if (type & SCALE_Y) this._drawGizmo(this._scaleY);
-    if (type & SCALE_Z) this._drawGizmo(this._scaleZ);
-    if (type & SCALE_W) this._drawGizmo(this._scaleW);
+    if (type & SCALE_X) this._drawGizmo(this._scaleX, camera);
+    if (type & SCALE_Y) this._drawGizmo(this._scaleY, camera);
+    if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
+    if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
 
     if (this._isEditing) this._lineHelper.render(this._main);
   }

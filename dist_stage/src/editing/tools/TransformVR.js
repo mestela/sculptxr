@@ -1,5 +1,6 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
+import Gizmo from '../Gizmo.js';
 
 class TransformVR extends SculptBase {
 
@@ -15,6 +16,8 @@ class TransformVR extends SculptBase {
     // State
     this._mode = 0; // 0=Translate, 1=Rotate, 2=Scale
     this._axisMask = [true, false, false]; // [X, Y, Z] (Start with X-only)
+
+    this._gizmo = new Gizmo(main);
   }
 
   start(ctrl) {
@@ -47,6 +50,8 @@ class TransformVR extends SculptBase {
       this._initInput = false;
       return;
     }
+
+
 
     const main = this._main;
     const mesh = this.getMesh();
@@ -318,6 +323,12 @@ class TransformVR extends SculptBase {
       if (mDest) mat4.copy(mDest, mat);
     }
     this._main.render();
+  }
+
+  renderVR(scene, cam) {
+    if (this._gizmo) {
+      this._gizmo.render(cam);
+    }
   }
 }
 
