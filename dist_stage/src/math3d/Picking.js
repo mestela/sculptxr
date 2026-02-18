@@ -611,6 +611,118 @@ class Picking {
     return out;
   }
 
+  /** Intersection between a thick ray (segment) and a mesh */
+  intersectionRayMeshThick(mesh, vNearOrig, vFarOrig, radiusSq) {
+    // reset picking
+    this._mesh = null;
+    this._pickedFace = -1;
+
+    vec3.copy(_TMP_NEAR, vNearOrig);
+    vec3.copy(_TMP_FAR, vFarOrig);
+
+    // Apply Symmetry (Optional? For Gizmos usually irrelevant but good for consistency)
+    if (this._xSym) {
+      var ptPlane = mesh.getSymmetryOrigin();
+      var nPlane = mesh.getSymmetryNormal();
+      Geometry.mirrorPoint(_TMP_NEAR, ptPlane, nPlane);
+      Geometry.mirrorPoint(_TMP_FAR, ptPlane, nPlane);
+    }
+
+    var vAr = mesh.getVertices();
+    var fAr = mesh.getFaces();
+
+    var distance = Infinity;
+    var nbFaces = fAr.length / 4; // Quads/Tris
+
+    // We iterate ALL faces (Structure dependent)
+    // Optimization: Check bounding box first? 
+    // Gizmos are small, full iteration is fine.
+
+    // Temp vars for Segment-Segment
+    var closestRay = [0.0, 0.0, 0.0];
+    var closestEdge = [0.0, 0.0, 0.0];
+
+    for (var i = 0; i < nbFaces; ++i) {
+      var indFace = i * 4;
+      var iv1 = fAr[indFace] * 3;
+      var iv2 = fAr[indFace + 1] * 3;
+      var iv3 = fAr[indFace + 2] * 3;
+      var iv4 = fAr[indFace + 3];
+
+      _TMP_V1[0] = vAr[iv1]; _TMP_V1[1] = vAr[iv1 + 1]; _TMP_V1[2] = vAr[iv1 + 2];
+      _TMP_V2[0] = vAr[iv2]; _TMP_V2[1] = vAr[iv2 + 1]; _TMP_V2[2] = vAr[iv2 + 2];
+      _TMP_V3[0] = vAr[iv3]; _TMP_V3[1] = vAr[iv3 + 1]; _TMP_V3[2] = vAr[iv3 + 2];
+
+      // Check Edge 1 (V1-V2)
+      var d1 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V1, _TMP_V2, closestRay, closestEdge);
+      if (d1 < radiusSq) {
+        var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+        if (distToCam < distance) {
+          distance = distToCam;
+          vec3.copy(this._interPoint, closestEdge); // Snap to Edge
+          this._pickedFace = i;
+        }
+      }
+
+      // Check Edge 2 (V2-V3)
+      var d2 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V2, _TMP_V3, closestRay, closestEdge);
+      if (d2 < radiusSq) {
+        var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+        if (distToCam < distance) {
+          distance = distToCam;
+          vec3.copy(this._interPoint, closestEdge);
+          this._pickedFace = i;
+        }
+      }
+
+      // Check Edge 3 (V3-V1) or (V3-V4)
+      if (iv4 === Utils.TRI_INDEX) {
+        // Triangle
+        var d3 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V3, _TMP_V1, closestRay, closestEdge);
+        if (d3 < radiusSq) {
+          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+          if (distToCam < distance) {
+            distance = distToCam;
+            vec3.copy(this._interPoint, closestEdge);
+            this._pickedFace = i;
+          }
+        }
+      } else {
+        // Quad (Check V3-V4 and V4-V1)
+        var iv4i = iv4 * 3;
+        var v4 = [vAr[iv4i], vAr[iv4i + 1], vAr[iv4i + 2]];
+
+        // Edge 3 (V3-V4)
+        var d3 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V3, v4, closestRay, closestEdge);
+        if (d3 < radiusSq) {
+          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+          if (distToCam < distance) {
+            distance = distToCam;
+            vec3.copy(this._interPoint, closestEdge);
+            this._pickedFace = i;
+          }
+        }
+
+        // Edge 4 (V4-V1)
+        var d4 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, v4, _TMP_V1, closestRay, closestEdge);
+        if (d4 < radiusSq) {
+          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+          if (distToCam < distance) {
+            distance = distToCam;
+            vec3.copy(this._interPoint, closestEdge);
+            this._pickedFace = i;
+          }
+        }
+      }
+    }
+
+    if (this._pickedFace !== -1) {
+      this._mesh = mesh;
+      return true; // Match found
+    }
+    return false;
+  }
+
   /** Intersection for VR (Bypasses Screen Projection) */
   intersectionRayMeshesVR(meshes, origin, direction, physicalRadius) {
     var nearDistance = Infinity;
@@ -620,7 +732,11 @@ class Picking {
     // vNear = origin
     // vFar = origin + direction * length
     vec3.copy(_TMP_NEAR_1, origin);
-    vec3.scaleAndAdd(_TMP_FAR, origin, direction, 5000.0);
+    vec3.scaleAndAdd(_TMP_FAR, origin, direction, 5000.0); // 50m range
+
+    // Scale physical radius to World Units (approximate, since picking is in local space usually)
+    // Actually intersectionRayMesh takes Ray in Local Space.
+    // So we need to scale the radius to Local Space.
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
@@ -630,7 +746,23 @@ class Picking {
       vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
       vec3.transformMat4(_TMP_FAR, _TMP_FAR, _TMP_INV);
 
-      if (!this.intersectionRayMesh(mesh, _TMP_NEAR, _TMP_FAR)) continue;
+      // Local Radius Squared
+      // World Radius = physicalRadius (e.g. 0.05)
+      // Local Radius = World Radius / Scale
+      var scale = mesh.getScale();
+      var localRadius = physicalRadius / scale;
+      var localRadiusSq = localRadius * localRadius;
+
+      // First check EXACT Ray Cast (Priority)
+      var hitExact = this.intersectionRayMesh(mesh, _TMP_NEAR, _TMP_FAR);
+      var hitThick = false;
+
+      // If no exact hit, check Thick
+      if (!hitExact) {
+        hitThick = this.intersectionRayMeshThick(mesh, _TMP_NEAR, _TMP_FAR, localRadiusSq);
+      }
+
+      if (!hitExact && !hitThick) continue;
 
       var interTest = this.getIntersectionPoint();
       // Distance check (world space)

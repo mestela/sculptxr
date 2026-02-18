@@ -19,6 +19,9 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+*   **v0.7.619**: **Gizmo Rotation & Picking Fix**:
+    - **Fix**: **Rotation Handles**: Corrected the orientation of X (Red) and Z (Blue) rotation rings in `GizmoVR.js`.
+    - **Improvement**: **Thick Picking**: Increased the physical picking thickness of rotation rings to ~5-8cm, making them much easier to grab in VR.
 *   **v0.7.602**: **Gizmo Scale Fix**:
     - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
     - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).

@@ -407,4 +407,73 @@ Geometry.barycentric = (function () {
   };
 })();
 
+/** Compute the squared distance between two segments */
+Geometry.distanceSqSegmentSegment = (function () {
+  var u = [0.0, 0.0, 0.0];
+  var v = [0.0, 0.0, 0.0];
+  var w = [0.0, 0.0, 0.0];
+  return function (p1, p2, p3, p4, outP1, outP2) {
+    vec3.sub(u, p2, p1);
+    vec3.sub(v, p4, p3);
+    vec3.sub(w, p1, p3);
+    var a = vec3.dot(u, u);
+    var b = vec3.dot(u, v);
+    var c = vec3.dot(v, v);
+    var d = vec3.dot(u, w);
+    var e = vec3.dot(v, w);
+    var D = a * c - b * b;
+    var sc, sN, sD = D;
+    var tc, tN, tD = D;
+
+    if (D < 1e-8) { // parallel
+      sN = 0.0;
+      sD = 1.0;
+      tN = e;
+      tD = c;
+    } else {
+      sN = (b * e - c * d);
+      tN = (a * e - b * d);
+      if (sN < 0.0) {
+        sN = 0.0;
+        tN = e;
+        tD = c;
+      } else if (sN > sD) {
+        sN = sD;
+        tN = e + b;
+        tD = c;
+      }
+    }
+
+    if (tN < 0.0) {
+      tN = 0.0;
+      if (-d < 0.0) sN = 0.0;
+      else if (-d > a) sN = sD;
+      else {
+        sN = -d;
+        sD = a;
+      }
+    } else if (tN > tD) {
+      tN = tD;
+      if ((-d + b) < 0.0) sN = 0.0;
+      else if ((-d + b) > a) sN = sD;
+      else {
+        sN = (-d + b);
+        sD = a;
+      }
+    }
+
+    sc = (Math.abs(sN) < 1e-8 ? 0.0 : sN / sD);
+    tc = (Math.abs(tN) < 1e-8 ? 0.0 : tN / tD);
+
+    if (outP1) vec3.scaleAndAdd(outP1, p1, u, sc);
+    if (outP2) vec3.scaleAndAdd(outP2, p3, v, tc);
+
+    var dx = w[0] + (sc * u[0]) - (tc * v[0]);
+    var dy = w[1] + (sc * u[1]) - (tc * v[1]);
+    var dz = w[2] + (sc * u[2]) - (tc * v[2]);
+
+    return dx * dx + dy * dy + dz * dz;
+  };
+})();
+
 export default Geometry;

@@ -1,23 +1,31 @@
-# Handover 
+# Handover Prompt
 
-> [!IMPORTANT]
-> **CRITICAL RULES FOR THIS SESSION**:
-> 1.  **Step ID**: Start EVERY response with `Step Id: {id}`. Increment from the user's last `Step Id`.
-> 2.  **No Caching Blame**: Browser caching is NEVER the valid cause of bugs here. Do not suggest clearing cache.
-> 3.  **Beta Deployment**: ALL code changes must be deployed to Beta (`./deploy_beta.sh`) before asking for testing.
+## Current Task: Fix Picking Logic & Gizmo Interaction
 
-## Current Status
-**TransformVR Constraints Implemented**
-- **GizmoVR**: Refactored to `GizmoVR.js` to mirror `Picking.js` logic.
-  - **Status**: Constraining works correctly when picking succeeds.
-  - **Issue**: Picking is unreliable/offset in VR. Visual and console debugging enabled (`debugGizmoVR()`).
-  - **Next Step**: Investigate why `intersectionRayMeshes` fails or is offset for Gizmo meshes specifically (Scale baking vs Matrix transform?).
-
-
-## Solutions Attempted
+- **State**: `v0.7.619` (Fix Deployed).
+- **Status**:
+    - [x] **Rotate Handles Fixed**: Rings are now correctly oriented (X, Y, Z align with World Axes).
+    - [x] **Picking Thickness Increased**: Rings are now ~10x thicker (invisible proxy) for easier grabbing.
+    - [x] **Visibility Fixed**: Resolved bug where rings were invisible due to argument order.
+    - [ ] **Plane/Thin Picking**: Still using Ray Cast on proxy. "Tube Cast" was skipped in favor of "Fatter Proxy".
 
 ## Next Steps
 
+1.  **Verify & Polish**:
+    -   Continue testing Gizmo interaction in VR.
+    -   Ensure "Center Handle" (Uniform Scale/Translate) works as expected.
+    -   Check if "Plane Handles" (Square Panels) need similar thickness boosts.
+
+2.  **Code Cleanup**:
+    -   Remove `window.debugGizmoVR` logs from `GizmoVR.js`.
+
+## Working Notes
+-   `GizmoVR.js`: `_createCircle` now accepts `axis` to orient the Torus.
+-   **Picking**: We are relying on `THICKNESS_PICK` scaling to make thin objects hit-able.
+-   **Unit Scale**: `vrScale` affects physical size.
+
+## Solutions Attempted
+-   **Tube Casting**: Considered but deferred. "Fat Proxy" seems sufficient for now.
 
 ## Environment
 -   **URL:** `https://tokeru.com/sculptxr/`

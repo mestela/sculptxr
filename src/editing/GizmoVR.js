@@ -383,6 +383,7 @@ class GizmoVR {
   _createCircle(rot, rad, axis, color, radius, mthick, scale) {
     if (!rot._baseMatrix) rot._baseMatrix = mat4.create();
     const mat = rot._baseMatrix;
+    mat4.identity(mat);
 
     // Primitives.createTorus makes a torus lying on XZ plane (Normal = Y)
     // We need to rotate it to align with the desired 'axis'
@@ -395,8 +396,6 @@ class GizmoVR {
       const q = quat.create();
       quat.rotationTo(q, up, axis);
       mat4.fromQuat(mat, q);
-    } else {
-      mat4.identity(mat);
     }
 
     // Debug Log
@@ -409,7 +408,7 @@ class GizmoVR {
     rot._pickGeo = Primitives.createTorus(
       this._gl,
       radius * scale,
-      THICKNESS_PICK * mthick * scale,
+      THICKNESS * mthick * scale, // Revert to standard thickness (Tube Cast handles tolerance)
       rad,
       6,
       64

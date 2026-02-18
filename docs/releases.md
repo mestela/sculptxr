@@ -3,6 +3,10 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
+- **v0.7.619**: **Gizmo Rotation & Picking Fix**:
+    - **Fix**: **Rotation Handles**: Corrected the orientation of X (Red) and Z (Blue) rotation rings in `GizmoVR.js`. They are no longer coincident with the Green ring.
+    - **Improvement**: **Thick Picking**: Increased the physical picking thickness of rotation rings to ~5-8cm, making them much easier to grab in VR without requiring pixel-perfect accuracy.
+    - **Debug**: Resolved "Invisible Rings" issue caused by incorrect argument order in `_initRotate`.
 - **v0.7.602**: **Gizmo Scale Fix**:
     - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
     - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).
