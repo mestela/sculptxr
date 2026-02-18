@@ -234,6 +234,44 @@ class Scene {
         tool.forceInit();
       }
     }
+
+    // [DEBUG] Pivot Sphere Helpers
+    window.debugPivotScale = 0.02; // Default 2cm
+    window.debugPivotAttach = false; // Default: World Pivot
+
+    window.setPivotScale = (s) => {
+      window.debugPivotScale = s;
+      console.log(`Pivot Scale: ${s}`);
+      if (window.screenLog) window.screenLog(`Pivot Scale: ${s}`, "lime");
+    };
+
+    window.attachPivotToController = (val) => {
+      // val can be boolean or "origin"
+      window.debugPivotAttach = val;
+      console.log(`Pivot Mode: ${val}`);
+      if (window.screenLog) window.screenLog(`Pivot Mode: ${val}`, "lime");
+    };
+
+    window.getPivotInfo = () => {
+      if (!this._debugPivotSphere) return "No Debug Sphere";
+      const m = this._debugPivotSphere.getMatrix();
+      const pos = [m[12], m[13], m[14]];
+      const scale = [
+        Math.hypot(m[0], m[1], m[2]),
+        Math.hypot(m[4], m[5], m[6]),
+        Math.hypot(m[8], m[9], m[10])
+      ];
+      console.log("Pivot Sphere Pos:", pos);
+      console.log("Pivot Sphere Scale:", scale);
+
+      if (this._mesh) {
+        console.log("Mesh Center (Local):", this._mesh.getCenter());
+        console.log("Mesh Matrix:", this._mesh.getMatrix());
+      } else {
+        console.log("No Mesh Selected");
+      }
+      return { pos, scale };
+    };
   }
 
   addModelURL(url) {
@@ -575,9 +613,64 @@ class Scene {
       gl.enable(gl.DEPTH_TEST);
     }
 
+    // [DEBUG] Pivot Sphere (World Space / Mesh Mode)
+    if (this._debugPivotSphere && !window.debugPivotAttach && this._mesh) {
+      const mPivot = this._debugPivotSphere.getMatrix();
+      mat4.identity(mPivot);
+
+      const center = vec3.create();
+      vec3.transformMat4(center, this._mesh.getCenter(), this._mesh.getMatrix());
+      mat4.translate(mPivot, mPivot, center);
+
+      // Compensate for VR Scale so it remains "Physically 2cm"
+      // If World has scale S, we need radius R/S.
+      let r = window.debugPivotScale || 0.02;
+      if (this._vrScale && this._vrScale > 0.0001) r /= this._vrScale;
+      mat4.scale(mPivot, mPivot, [r, r, r]);
+
+      this._debugPivotSphere.updateMatrices(cam);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.DEPTH_TEST);
+      this._debugPivotSphere.render(this);
+      gl.enable(gl.DEPTH_TEST);
+    }
+
     // --- PASS 3: OVERLAY (Reset View) ---
     // Reset View Matrix to Base
     mat4.copy(cam._view, viewMatrix);
+
+    // [DEBUG] Pivot Sphere (Physical Space / Controller Mode)
+    if (this._debugPivotSphere && window.debugPivotAttach) {
+      const mPivot = this._debugPivotSphere.getMatrix();
+      mat4.identity(mPivot);
+
+      if (window.debugPivotAttach === true && this._vrDominantRayMatrix) {
+        mat4.copy(mPivot, this._vrDominantRayMatrix);
+        const offY = this._isQuestStandalone ? 0.10 : 0.05;
+        mat4.rotateX(mPivot, mPivot, -Math.PI / 2);
+        mat4.translate(mPivot, mPivot, [0, offY, 0]);
+        mat4.translate(mPivot, mPivot, [0, 0.20, 0]); // 20cm
+      } else if (window.debugPivotAttach === "origin") {
+        // Origin 0,0,0
+      }
+
+      const r = window.debugPivotScale || 0.02;
+      mat4.scale(mPivot, mPivot, [r, r, r]);
+
+      this._debugPivotSphere.updateMatrices(cam);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.disable(gl.CULL_FACE);
+      gl.disable(gl.DEPTH_TEST);
+      this._debugPivotSphere.render(this);
+      gl.enable(gl.DEPTH_TEST);
+    }
 
     // Proj is same.
 
@@ -612,6 +705,58 @@ class Scene {
       gl.enable(gl.DEPTH_TEST);
 
       this._vrBrushRadiusSphere.render(this);
+
+      gl.enable(gl.DEPTH_TEST);
+      gl.enable(gl.CULL_FACE);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+
+    // [DEBUG] Gizmo Test Sphere (Render Pass 3 Copy)
+    if (this._debugGizmoSphere && this._vrDominantRayMatrix) {
+      const mGizmo = this._debugGizmoSphere.getMatrix();
+      mat4.copy(mGizmo, this._vrDominantRayMatrix);
+      const offY = this._isQuestStandalone ? 0.10 : 0.05;
+
+      // Rotate basic alignment (same as radius sphere)
+      mat4.rotateX(mGizmo, mGizmo, -Math.PI / 2);
+      mat4.translate(mGizmo, mGizmo, [0, offY, 0]);
+
+      // OFFSET 10cm along -Z (Ray Direction)
+      // Since we rotated -90 X, Local Z became World Y? 
+      // Let's look at tip alignment: rotateX(-90). 
+      // Original: Y=Up, Z=Forward.
+      // Rotated: Y->Z (Forward), Z->-Y (Down).
+      // Wait. Standard GL: Y=Up, -Z=Forward.
+      // Controller Grip: -Z is usually "Forward" (pointing away from user).
+      // If we rotate X -90...
+      // Y axis becomes -Z axis.
+      // So translating Y moves along -Z.
+
+      // Let's ADD 0.10 to the Y translation to move it FURTHER out.
+      mat4.translate(mGizmo, mGizmo, [0, 0.10, 0]); // Add 10cm offset
+
+      // Normalize Scale (same logic)
+      const sx = Math.hypot(mGizmo[0], mGizmo[1], mGizmo[2]);
+      const sy = Math.hypot(mGizmo[4], mGizmo[5], mGizmo[6]);
+      const sz = Math.hypot(mGizmo[8], mGizmo[9], mGizmo[10]);
+      if (sx > 1e-6) { mGizmo[0] /= sx; mGizmo[1] /= sx; mGizmo[2] /= sx; }
+      if (sy > 1e-6) { mGizmo[4] /= sy; mGizmo[5] /= sy; mGizmo[6] /= sy; }
+      if (sz > 1e-6) { mGizmo[8] /= sz; mGizmo[9] /= sz; mGizmo[10] /= sz; }
+
+      // Fixed tiny size for debug
+      const r = 0.02; // 2cm radius
+      mat4.scale(mGizmo, mGizmo, [r, r, r]);
+
+      this._debugGizmoSphere.updateMatrices(cam);
+
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.depthMask(false);
+      gl.disable(gl.CULL_FACE);
+      gl.enable(gl.DEPTH_TEST);
+
+      this._debugGizmoSphere.render(this);
 
       gl.enable(gl.DEPTH_TEST);
       gl.enable(gl.CULL_FACE);
@@ -1387,6 +1532,28 @@ class Scene {
       meshS.init();
       meshS.initRender();
       this._vrBrushRadiusSphere = meshS;
+    }
+
+    // [DEBUG] Gizmo Test Sphere (Duplicate of Radius Sphere)
+    if (!this._debugGizmoSphere) {
+      var meshG = Primitives.createSphere(this._gl, 1.0, 64, 64);
+      meshG.setShaderType(Enums.Shader.FRESNEL);
+      meshG.setFlatColor([0.2, 0.8, 0.2]); // Greenish to distinguish
+      meshG.setOpacity(1.0);
+      meshG.init();
+      meshG.initRender();
+      this._debugGizmoSphere = meshG;
+    }
+
+    // [DEBUG] Pivot Test Sphere (Blue)
+    if (!this._debugPivotSphere) {
+      var meshP = Primitives.createSphere(this._gl, 1.0, 64, 64);
+      meshP.setShaderType(Enums.Shader.FRESNEL);
+      meshP.setFlatColor([0.2, 0.2, 0.8]); // Blue
+      meshP.setOpacity(1.0);
+      meshP.init();
+      meshP.initRender();
+      this._debugPivotSphere = meshP;
     }
   }
 
