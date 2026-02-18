@@ -255,7 +255,7 @@ class Scene {
       if (window.screenLog) window.screenLog(`Pivot Mode: ${val}`, "lime");
     };
 
-    window.debugGizmoScale = 0.0; // 0.0 = Use Auto calculation
+    // window.debugGizmoScale = 0.0; // REMOVED: Caused initial visibility issue
     window.setGizmoScale = (s) => {
       window.debugGizmoScale = s;
       console.log(`Gizmo Scale Force: ${s}`);

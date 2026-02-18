@@ -19,6 +19,9 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Releases
 
+*   **v0.7.602**: **Gizmo Scale Fix**:
+    - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
+    - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).
 *   **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
     - **Fix**: **Crash**: Resolved persistent crash in Move Tool when mesh is null.
     - **Fix**: **Symmetry Normals**: Fixed "tide mark" artifacts by correctly updating normals for topologically mapped vertices.
@@ -91,6 +94,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - toolbar/shortcut bar?
     - Lock selection
     - outliner? 
+    - fix two handed grip scale misalignment. 
     - different undo queue for desktop vs standalone
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Really need to make 100% VR native dialog, filebrowser for import/export

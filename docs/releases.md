@@ -3,6 +3,10 @@
 - **v0.7.258**: **Voxel Performance**:
     - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
     - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
+- **v0.7.602**: **Gizmo Scale Fix**:
+    - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
+    - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).
+    - **Debug**: Added `debugQueryGizmoScale` for runtime inspection.
 - **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
     - **Fix**: **Crash**: Resolved a crash in `Move.startSculpt` when the headset is removed or tracking is lost (null mesh check).
     - **Fix**: **Symmetry Normals**: Fixed visual artifacts ("tide marks") on the symmetry side by ensuring normals are updated based on the *topologically mapped* vertices, not the geometric brush sphere.

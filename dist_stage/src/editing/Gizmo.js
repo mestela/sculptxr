@@ -458,14 +458,8 @@ class Gizmo {
       // if (Math.random() < 0.01) console.log(`Gizmo Mesh Scale: ${sx} Radius: ${meshRadius} Final: ${scaleFactor}`);
     } else {
       // Default to something visible if no mesh?
-      scaleFactor = 0.25; // Default 25cm
+      scaleFactor = 0.25 * vrScale; // Default 25cm (Scaled by VR Scale)
     }
-
-    if (window.debugGizmoScale !== undefined) {
-      scaleFactor = window.debugGizmoScale;
-    }
-
-    // scaleFactor < 0.0001 check moved down
 
     if (window.debugGizmoAttach === 'controller') {
       var main = this._main;
@@ -485,15 +479,47 @@ class Gizmo {
     }
 
     if (window.debugGizmoScale !== undefined) {
-      scaleFactor = window.debugGizmoScale;
+      // Allow overriding the BASE scale factor too if needed, but usually we just want vertex scale.
+      // scaleFactor = window.debugGizmoScale;
     }
 
     if (scaleFactor < 0.0001) scaleFactor = 0.0001; // Avoid singular matrix
 
-    this._resize(scaleFactor);
+    // USER REQUEST: Vertices scaled by 1.0 (Verified via debugGizmoScale = 1)
+    var VERTEX_SCALE = 1.0;
+    if (window.debugGizmoScale !== undefined && window.debugGizmoScale !== 0) {
+      VERTEX_SCALE = window.debugGizmoScale;
+    }
+
+    // Safety Fallback
+    if (VERTEX_SCALE === 0) VERTEX_SCALE = 1.0;
+
+    this._resize(scaleFactor * VERTEX_SCALE);
 
     var traScale = mat4.create();
     mat4.translate(traScale, traScale, trMesh);
+
+    // Debug Function (Exposed to Console)
+    if (!window.debugQueryGizmoScale) {
+      window.debugQueryGizmoScale = () => {
+        console.log("=== Gizmo Scale Debug ===");
+        console.log("Gizmo Instance:", this);
+        console.log("Current Scale Factor (Base):", scaleFactor);
+        console.log("Vertex Scale Multiplier:", VERTEX_SCALE);
+        console.log("Total Resize Scale:", scaleFactor * VERTEX_SCALE);
+
+        if (this._transX && this._transX._drawGeo) {
+          var m = this._transX._drawGeo.getMatrix();
+          var s = new Float32Array(3);
+          mat4.getScaling(s, m);
+          console.log("Actual Mesh Scale (TransX):", s);
+          console.log("Actual Mesh Matrix:", m);
+        } else {
+          console.warn("Gizmo TransX or DrawGeo not ready");
+        }
+        return "Check Console";
+      };
+    }
 
     // If Controller, we might want rotation too?
     if (window.debugGizmoAttach === 'controller' && this._main._vrControllerQuat) {
