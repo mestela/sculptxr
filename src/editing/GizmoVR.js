@@ -380,7 +380,30 @@ class GizmoVR {
     pla._drawGeo.setShaderType(Enums.Shader.FLAT);
   }
 
-  _createCircle(rot, rad, color, radius, mthick, scale) {
+  _createCircle(rot, rad, axis, color, radius, mthick, scale) {
+    if (!rot._baseMatrix) rot._baseMatrix = mat4.create();
+    const mat = rot._baseMatrix;
+
+    // Primitives.createTorus makes a torus lying on XZ plane (Normal = Y)
+    // We need to rotate it to align with the desired 'axis'
+    // axis is the Normal of the ring
+
+    // Default Y-axis (0,1,0) -> No rotation
+    if (axis[0] !== 0.0 || axis[1] !== 1.0 || axis[2] !== 0.0) {
+      // Rotate from Y to target axis
+      const up = vec3.fromValues(0.0, 1.0, 0.0);
+      const q = quat.create();
+      quat.rotationTo(q, up, axis);
+      mat4.fromQuat(mat, q);
+    } else {
+      mat4.identity(mat);
+    }
+
+    // Debug Log
+    if (window.debugGizmoVR) {
+      console.log(`CreateCircle Axis: [${axis}], Matrix: [${mat}]`);
+    }
+
     vec3.copy(rot._color, color);
 
     rot._pickGeo = Primitives.createTorus(
@@ -424,18 +447,19 @@ class GizmoVR {
   }
 
   _initRotate(scale) {
-    this._createCircle(this._rotX, Math.PI, COLOR_X, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotY, Math.PI, COLOR_Y, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotZ, Math.PI, COLOR_Z, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotW, Math.PI * 2, COLOR_GREY, ROT_RADIUS, 1.0, scale);
+    const axis = vec3.create();
+    this._createCircle(this._rotX, Math.PI, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotY, Math.PI, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotZ, Math.PI, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotW, Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_GREY, ROT_RADIUS, 1.0, scale);
   }
 
   _initScale(scale) {
-    const axis = [0.0, 0.0, 0.0];
+    const axis = vec3.create();
     this._createCube(this._scaleX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X, scale);
     this._createCube(this._scaleY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, scale);
     this._createCube(this._scaleZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z, scale);
-    this._createCircle(this._scaleW, Math.PI * 2, COLOR_SW, SCALE_RADIUS, 2.0, scale);
+    this._createCircle(this._scaleW, Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_SW, SCALE_RADIUS, 2.0, scale);
   }
 }
 
