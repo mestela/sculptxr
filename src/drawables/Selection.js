@@ -214,7 +214,13 @@ class Selection {
     if (pNormal) vec3.copy(_TMP_AXIS, pNormal);
     else vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
 
-    vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
+    var nm = mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix());
+    if (nm) {
+      vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, nm);
+    } else {
+      // Fallback if matrix is singular
+      vec3.set(_TMP_AXIS, 1, 0, 0);
+    }
     vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 
     // 2. Derive Orientation

@@ -183,9 +183,25 @@ class Gizmo {
     this._editTransInv = mat4.create();
     this._editScaleRotInv = [];
 
-    this._initTranslate();
-    this._initRotate();
-    this._initScale();
+    // this._initTranslate();
+    // this._initRotate();
+    // this._initScale();
+    // this._initPickables();
+
+    this._currentScale = -1.0; // Force init
+    this._resize(1.0);
+    this._currentScale = 1.0;
+    this._resize(1.0);
+  }
+
+  _resize(scale) {
+    if (Math.abs(this._currentScale - scale) < scale * 0.1) return; // Verify diff > 10%
+    this._currentScale = scale;
+
+    // Nuking old geometries? Browsers handle GC.
+    this._initTranslate(scale);
+    this._initRotate(scale);
+    this._initScale(scale);
     this._initPickables();
   }
 
@@ -217,89 +233,91 @@ class Gizmo {
     if (type & SCALE_W) pickables.push(this._scaleW._pickGeo);
   }
 
-  _createArrow(tra, axis, color) {
+  _createArrow(tra, axis, color, scale = 1.0) {
+    tra._baseMatrix = mat4.create(); // RESET base matrix!
     var mat = tra._baseMatrix;
     mat4.rotate(mat, mat, Math.PI * 0.5, axis);
-    mat4.translate(mat, mat, [0.0, ARROW_LENGTH * 0.5, 0.0]);
+    mat4.translate(mat, mat, [0.0, ARROW_LENGTH * 0.5 * scale, 0.0]);
     vec3.copy(tra._color, color);
 
     tra._pickGeo = Primitives.createArrow(
       this._gl,
-      THICKNESS_PICK,
-      ARROW_LENGTH,
-      ARROW_CONE_THICK * 0.4
+      THICKNESS_PICK * scale,
+      ARROW_LENGTH * scale,
+      ARROW_CONE_THICK * 0.4 // FIXED: Do not scale Ratio
     );
     tra._pickGeo._gizmo = tra;
     tra._drawGeo = Primitives.createArrow(
       this._gl,
-      THICKNESS,
-      ARROW_LENGTH,
-      ARROW_CONE_THICK,
-      ARROW_CONE_LENGTH
+      THICKNESS * scale,
+      ARROW_LENGTH * scale,
+      ARROW_CONE_THICK, // FIXED: Do not scale Ratio
+      ARROW_CONE_LENGTH // FIXED: Do not scale Ratio
     );
     tra._drawGeo.setShaderType(Enums.Shader.FLAT);
   }
 
-  _createPlane(pla, color, wx, wy, wz, hx, hy, hz) {
+  _createPlane(pla, color, wx, wy, wz, hx, hy, hz, scale = 1.0) {
     vec3.copy(pla._color, color);
 
-    pla._pickGeo = Primitives.createPlane(this._gl, 0.0, 0.0, 0.0, wx, wy, wz, hx, hy, hz);
+    pla._pickGeo = Primitives.createPlane(this._gl, 0.0, 0.0, 0.0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._pickGeo._gizmo = pla;
-    pla._drawGeo = Primitives.createPlane(this._gl, 0.0, 0.0, 0.0, wx, wy, wz, hx, hy, hz);
+    pla._drawGeo = Primitives.createPlane(this._gl, 0.0, 0.0, 0.0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._drawGeo.setShaderType(Enums.Shader.FLAT);
   }
 
-  _initTranslate() {
+  _initTranslate(scale = 1.0) {
     var axis = [0.0, 0.0, 0.0];
-    this._createArrow(this._transX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X);
-    this._createArrow(this._transY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y);
-    this._createArrow(this._transZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z);
+    this._createArrow(this._transX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X, scale);
+    this._createArrow(this._transY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, scale);
+    this._createArrow(this._transZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z, scale);
 
     var s = ARROW_LENGTH * 0.2;
-    this._createPlane(this._planeX, COLOR_X, 0.0, s, 0.0, 0.0, 0.0, s);
-    this._createPlane(this._planeY, COLOR_Y, s, 0.0, 0.0, 0.0, 0.0, s);
-    this._createPlane(this._planeZ, COLOR_Z, s, 0.0, 0.0, 0.0, s, 0.0);
+    this._createPlane(this._planeX, COLOR_X, 0.0, s, 0.0, 0.0, 0.0, s, scale);
+    this._createPlane(this._planeY, COLOR_Y, s, 0.0, 0.0, 0.0, 0.0, s, scale);
+    this._createPlane(this._planeZ, COLOR_Z, s, 0.0, 0.0, 0.0, s, 0.0, scale);
   }
 
-  _createCircle(rot, rad, color, radius = ROT_RADIUS, mthick = 1.0) {
+  _createCircle(rot, rad, color, radius = ROT_RADIUS, mthick = 1.0, scale = 1.0) {
     vec3.copy(rot._color, color);
     rot._pickGeo = Primitives.createTorus(
       this._gl,
-      radius,
-      THICKNESS_PICK * mthick,
+      radius * scale,
+      THICKNESS_PICK * mthick * scale,
       rad,
       6,
       64
     );
     rot._pickGeo._gizmo = rot;
-    rot._drawGeo = Primitives.createTorus(this._gl, radius, THICKNESS * mthick, rad, 6, 64);
+    rot._drawGeo = Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
   }
 
-  _initRotate() {
-    this._createCircle(this._rotX, Math.PI, COLOR_X);
-    this._createCircle(this._rotY, Math.PI, COLOR_Y);
-    this._createCircle(this._rotZ, Math.PI, COLOR_Z);
-    this._createCircle(this._rotW, Math.PI * 2, COLOR_GREY);
+  _initRotate(scale = 1.0) {
+    this._createCircle(this._rotX, Math.PI, COLOR_X, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotY, Math.PI, COLOR_Y, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotZ, Math.PI, COLOR_Z, ROT_RADIUS, 1.0, scale);
+    this._createCircle(this._rotW, Math.PI * 2, COLOR_GREY, ROT_RADIUS, 1.0, scale);
   }
 
-  _createCube(sca, axis, color) {
+  _createCube(sca, axis, color, scale = 1.0) {
+    sca._baseMatrix = mat4.create(); // RESET base matrix!
     var mat = sca._baseMatrix;
     mat4.rotate(mat, mat, Math.PI * 0.5, axis);
-    mat4.translate(mat, mat, [0.0, ROT_RADIUS, 0.0]);
+    mat4.translate(mat, mat, [0.0, ROT_RADIUS * scale, 0.0]);
     vec3.copy(sca._color, color);
-    sca._pickGeo = Primitives.createCube(this._gl, CUBE_SIDE_PICK);
+    sca._pickGeo = Primitives.createCube(this._gl, CUBE_SIDE_PICK * scale);
     sca._pickGeo._gizmo = sca;
-    sca._drawGeo = Primitives.createCube(this._gl, CUBE_SIDE);
+    sca._drawGeo = Primitives.createCube(this._gl, CUBE_SIDE * scale);
     sca._drawGeo.setShaderType(Enums.Shader.FLAT);
   }
 
-  _initScale() {
+  _initScale(scale = 1.0) {
     var axis = [0.0, 0.0, 0.0];
-    this._createCube(this._scaleX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X);
-    this._createCube(this._scaleY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y);
-    this._createCube(this._scaleZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z);
-    this._createCircle(this._scaleW, Math.PI * 2, COLOR_SW, SCALE_RADIUS, 2.0);
+    this._createCube(this._scaleX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X, scale);
+    this._createCube(this._scaleY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, scale);
+    this._createCube(this._scaleZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z, scale);
+    this._createCircle(this._scaleW, Math.PI * 2, COLOR_SW, SCALE_RADIUS, 2.0, scale);
   }
 
   _updateArcRotation(eye) {
@@ -374,6 +392,175 @@ class Gizmo {
     this._scaleY.updateFinalMatrix(traScale);
     this._scaleZ.updateFinalMatrix(traScale);
     this._scaleW.updateFinalMatrix(traScale);
+    this._scaleW.updateFinalMatrix(traScale);
+  }
+
+  _updatePickGeometryMatrices() {
+    // Copy _finalMatrix (Component) to _pickGeo (Mesh) matrix
+    // Because Picking.js uses mesh.getMatrix()
+    var comps = [
+      this._transX, this._transY, this._transZ,
+      this._planeX, this._planeY, this._planeZ,
+      this._rotX, this._rotY, this._rotZ, this._rotW,
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
+    ];
+
+    for (var i = 0; i < comps.length; ++i) {
+      if (comps[i] && comps[i]._pickGeo) {
+        // Assuming _pickGeo is a Mesh-like object with _transformData
+        var dest = comps[i]._pickGeo.getMatrix();
+        mat4.copy(dest, comps[i].getMatrix()); // getMatrix() returns _finalMatrix
+      }
+    }
+  }
+
+  updateMatricesVR(camera) {
+    camera = camera || this._main.getCamera();
+    var trMesh = this._computeCenterGizmo();
+
+    // Constant physical size in VR
+    // Default GIZMO_SIZE is approx 0.1? No, let's check constants.
+    // If we want 20cm (0.2m)
+    // And _vrScale is WorldUnits/Meter.
+    // We want scale = 0.2 / _vrScale.
+
+    var vrScale = this._main._vrScale || 50.0;
+
+    // "Mesh Scale" Mode (User Request)
+    // Ignore _vrScale complications. Just give it a solid physical presence relative to the mesh?
+    // Or just 1.0?
+    // Let's try matching the Selected Mesh Scale if available, else 1.0.
+    var scaleFactor = 1.0;
+    var meshes = this._main.getSelectedMeshes();
+    if (meshes.length > 0) {
+      // Try to extract scale from matrix
+      var meshMat = meshes[0].getMatrix();
+      var sx = vec3.len([meshMat[0], meshMat[1], meshMat[2]]);
+
+      // Compute Mesh Radius from Octree AABB
+      var meshRadius = 1.0;
+      var mesh = meshes[0];
+      if (mesh.getOctree) {
+        var octree = mesh.getOctree();
+        if (octree && octree._aabbLoose) {
+          var aabb = octree._aabbLoose;
+          // Use diagonal or max dim
+          var dx = aabb[3] - aabb[0];
+          var dy = aabb[4] - aabb[1];
+          var dz = aabb[5] - aabb[2];
+          // Use 0.5 * max dime as approximate radius equivalent
+          meshRadius = Math.max(dx, Math.max(dy, dz)) * 0.5;
+        }
+      }
+
+      scaleFactor = sx * meshRadius;
+
+      // if (Math.random() < 0.01) console.log(`Gizmo Mesh Scale: ${sx} Radius: ${meshRadius} Final: ${scaleFactor}`);
+    } else {
+      // Default to something visible if no mesh?
+      scaleFactor = 0.25; // Default 25cm
+    }
+
+    if (window.debugGizmoScale !== undefined) {
+      scaleFactor = window.debugGizmoScale;
+    }
+
+    // scaleFactor < 0.0001 check moved down
+
+    if (window.debugGizmoAttach === 'controller') {
+      var main = this._main;
+      if (main._vrControllerPos && main._vrControllerQuat) {
+        trMesh = vec3.clone(main._vrControllerPos);
+        // Apply Offset (20cm forward)
+        var fwd = vec3.fromValues(0, 0, -1);
+        vec3.transformQuat(fwd, fwd, main._vrControllerQuat);
+        vec3.scaleAndAdd(trMesh, trMesh, fwd, 0.2 * vrScale); // 20cm in front (World Units)
+
+        // Override Scale to 0.25m (25cm)
+        scaleFactor = 0.25 * vrScale;
+      }
+    } else if (window.debugGizmoAttach === 'world') {
+      trMesh = vec3.fromValues(0, 1.0 * vrScale, 0); // 1m up (World Units)
+      scaleFactor = 0.25 * vrScale;
+    }
+
+    if (window.debugGizmoScale !== undefined) {
+      scaleFactor = window.debugGizmoScale;
+    }
+
+    if (scaleFactor < 0.0001) scaleFactor = 0.0001; // Avoid singular matrix
+
+    this._resize(scaleFactor);
+
+    var traScale = mat4.create();
+    mat4.translate(traScale, traScale, trMesh);
+
+    // If Controller, we might want rotation too?
+    if (window.debugGizmoAttach === 'controller' && this._main._vrControllerQuat) {
+      var q = this._main._vrControllerQuat;
+      var matRot = mat4.create();
+      mat4.fromQuat(matRot, q);
+      mat4.multiply(traScale, traScale, matRot);
+    }
+
+    // Scale is 1.0 (Vertex Baked)
+    mat4.scale(traScale, traScale, [1.0, 1.0, 1.0]);
+
+    var eye = camera.computePosition();
+    this._updateArcRotation(vec3.normalize(eye, vec3.sub(eye, trMesh, eye)));
+
+    this._transX.updateFinalMatrix(traScale);
+    this._transX.updateMatrix();
+    this._transY.updateFinalMatrix(traScale);
+    this._transY.updateMatrix();
+    this._transZ.updateFinalMatrix(traScale);
+    this._transZ.updateMatrix();
+
+    this._planeX.updateFinalMatrix(traScale);
+    this._planeX.updateMatrix();
+    this._planeY.updateFinalMatrix(traScale);
+    this._planeY.updateMatrix();
+    this._planeZ.updateFinalMatrix(traScale);
+    this._planeZ.updateMatrix();
+
+    this._rotX.updateFinalMatrix(traScale);
+    this._rotX.updateMatrix();
+    this._rotY.updateFinalMatrix(traScale);
+    this._rotY.updateMatrix();
+    this._rotZ.updateFinalMatrix(traScale);
+    this._rotZ.updateMatrix();
+    this._rotW.updateFinalMatrix(traScale);
+    this._rotW.updateMatrix();
+
+    this._scaleX.updateFinalMatrix(traScale);
+    this._scaleX.updateMatrix();
+    this._scaleY.updateFinalMatrix(traScale);
+    this._scaleY.updateMatrix();
+    this._scaleZ.updateFinalMatrix(traScale);
+    this._scaleZ.updateMatrix();
+    this._scaleW.updateFinalMatrix(traScale);
+    this._scaleW.updateMatrix();
+  }
+
+  onVRHover(origin, direction) {
+    if (this._isEditing) return -1;
+
+    var pick = this._main.getPicking();
+    pick.intersectionRayMeshes(this._pickables, origin, direction);
+
+    if (this._selected) this._selected._isSelected = false;
+
+    var mesh = pick.getMesh();
+    if (!mesh) {
+      this._selected = null;
+      return -1;
+    }
+
+    this._selected = mesh._gizmo;
+    this._selected._isSelected = true;
+    vec3.copy(this._selected._lastInter, pick.getIntersectionPoint());
+
+    return this._selected._type;
   }
 
   _drawGizmo(elt, camera) {
@@ -695,6 +882,33 @@ class Gizmo {
 
   render(camera) {
     this._updateMatrices(camera);
+
+    var type = this._isEditing && this._selected ? this._selected._type : this._activatedType;
+
+    if (type & ROT_W) this._drawGizmo(this._rotW, camera);
+
+    if (type & TRANS_X) this._drawGizmo(this._transX, camera);
+    if (type & TRANS_Y) this._drawGizmo(this._transY, camera);
+    if (type & TRANS_Z) this._drawGizmo(this._transZ, camera);
+
+    if (type & PLANE_X) this._drawGizmo(this._planeX, camera);
+    if (type & PLANE_Y) this._drawGizmo(this._planeY, camera);
+    if (type & PLANE_Z) this._drawGizmo(this._planeZ, camera);
+
+    if (type & ROT_X) this._drawGizmo(this._rotX, camera);
+    if (type & ROT_Y) this._drawGizmo(this._rotY, camera);
+    if (type & ROT_Z) this._drawGizmo(this._rotZ, camera);
+
+    if (type & SCALE_X) this._drawGizmo(this._scaleX, camera);
+    if (type & SCALE_Y) this._drawGizmo(this._scaleY, camera);
+    if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
+    if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
+
+    if (this._isEditing) this._lineHelper.render(this._main);
+  }
+
+  renderVR(camera) {
+    // Skip _updateMatrices because updateMatricesVR is called in updateXR
 
     var type = this._isEditing && this._selected ? this._selected._type : this._activatedType;
 

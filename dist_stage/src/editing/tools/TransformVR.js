@@ -45,7 +45,56 @@ class TransformVR extends SculptBase {
     this._initInput = false;
   }
 
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir) { // Added origin, dir arguments matching SculptManager
+    // 1. Update Gizmo Scale & Matrices (ALWAYS, even if not pressed)
+    if (this._gizmo) {
+      this._gizmo.updateMatricesVR(this._main.getCamera());
+
+      // 2. Hover Logic (Only if not dragging)
+      if (!this._initInput) {
+        // Use the controller ray provided by SculptManager or global
+        const main = this._main;
+        const controllerPos = main._vrControllerPos; // Or use origin argument?
+
+        // Let's use the arguments if valid, else fallback
+        const rayOrigin = origin || controllerPos;
+        const rayDir = dir || [0, 0, -1]; // Fallback to Z-forward if missing
+
+        if (rayOrigin && rayDir) {
+          var hitType = this._gizmo.onVRHover(rayOrigin, rayDir);
+
+          if (hitType !== -1) {
+            // Use the Gizmo's last intersection point
+            var hitPos = this._gizmo._selected._lastInter;
+            // Visualize where the ray actually hit the Gizmo
+            // We can reuse the "Pivot" debug sphere since it's blue/visible
+            if (main.updateDebugPivot) {
+              // hitPos is in Local Space (approx 0..1)
+              // We need to transform it to World Space using the Selected Part's matrix
+              var worldHit = vec3.create();
+              // FIX: _selected is a wrapper, use _finalMatrix directly
+              var mat = this._gizmo._selected._finalMatrix;
+              if (mat) {
+                vec3.transformMat4(worldHit, hitPos, mat);
+
+                if (Math.random() < 0.01) {
+                  console.log(`Gizmo Hit: Local[${hitPos[0].toFixed(2)},${hitPos[1].toFixed(2)},${hitPos[2].toFixed(2)}] World[${worldHit[0].toFixed(2)},${worldHit[1].toFixed(2)},${worldHit[2].toFixed(2)}]`);
+                }
+
+                main.updateDebugPivot(worldHit, true);
+                window.debugPivotScale = 0.01; // Small marker
+              }
+            }
+          } else {
+            // Hide debug pivot if no hit
+            if (main.updateDebugPivot) {
+              main.updateDebugPivot([0, 0, 0], false);
+            }
+          }
+        }
+      }
+    }
+
     if (!isPressed) {
       this._initInput = false;
       return;
@@ -317,17 +366,16 @@ class TransformVR extends SculptBase {
 
   _applyMatrix(mesh, mat) {
     if (typeof mesh.setMatrix === 'function') {
-      mesh.setMatrix(mat);
-    } else {
-      const mDest = mesh.getMatrix();
       if (mDest) mat4.copy(mDest, mat);
     }
     this._main.render();
   }
 
+
+
   renderVR(scene, cam) {
     if (this._gizmo) {
-      this._gizmo.render(cam);
+      this._gizmo.renderVR(cam);
     }
   }
 }

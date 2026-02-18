@@ -55,6 +55,12 @@ class Scene {
     this._pickingSym = new Picking(this, true); // the symmetrical picking
 
     // TODO primitive builder
+    // Debug Commands
+    window.setGizmoScale = function (s) { window.debugGizmoScale = s; console.log("Gizmo Scale Forced: " + s); };
+    window.attachGizmoToController = function () { window.debugGizmoAttach = 'controller'; console.log("Gizmo Attached to Controller"); };
+    window.attachGizmoToWorld = function () { window.debugGizmoAttach = 'world'; console.log("Gizmo Attached to World (0,1,0)"); };
+    window.attachGizmoToMesh = function () { window.debugGizmoAttach = 'mesh'; window.debugGizmoScale = undefined; console.log("Gizmo Attached to Mesh (Default)"); };
+
     this._meshPreview = null;
     this._torusLength = 0.5;
     this._torusWidth = 0.1;
@@ -246,10 +252,14 @@ class Scene {
     };
 
     window.attachPivotToController = (val) => {
-      // val can be boolean or "origin"
-      window.debugPivotAttach = val;
-      console.log(`Pivot Mode: ${val}`);
       if (window.screenLog) window.screenLog(`Pivot Mode: ${val}`, "lime");
+    };
+
+    window.debugGizmoScale = 0.0; // 0.0 = Use Auto calculation
+    window.setGizmoScale = (s) => {
+      window.debugGizmoScale = s;
+      console.log(`Gizmo Scale Force: ${s}`);
+      if (window.screenLog) window.screenLog(`Gizmo Scale: ${s}`, "cyan");
     };
 
     window.getPivotInfo = () => {
@@ -1700,13 +1710,22 @@ class Scene {
   }
 
   updateDebugPivot(pos, active) {
-    // NUKED
-  }
+    if (!this._debugPivotMesh) return;
 
+    if (active && pos) {
+      if (!this._debugPivotMesh.isVisible()) this._debugPivotMesh.setVisible(true);
 
+      // Reset matrix
+      const mat = this._debugPivotMesh.getMatrix();
+      mat4.identity(mat);
+      mat4.translate(mat, mat, pos);
 
-  updateDebugPivot(pos, active) {
-    // NUKED: Debug Cube Forbidden
+      // Scale it (default 1.0, or use debugPivotScale)
+      const s = window.debugPivotScale || 1.0;
+      mat4.scale(mat, mat, [s, s, s]);
+    } else {
+      if (this._debugPivotMesh.isVisible()) this._debugPivotMesh.setVisible(false);
+    }
   }
 
   onXRFrame(time, frame) {
