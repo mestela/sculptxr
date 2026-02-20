@@ -109,7 +109,7 @@ class GizmoVR {
       const components = [
         this._transX, this._transY, this._transZ,
         this._planeX, this._planeY, this._planeZ,
-        this._rotX, this._rotY, this._rotZ, this._rotW,
+        this._rotX, this._rotY, this._rotZ, 
         this._scaleX, this._scaleY, this._scaleZ, this._scaleW
       ];
       console.log("Components:", components);
@@ -260,7 +260,7 @@ class GizmoVR {
     const components = [
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
-      this._rotX, this._rotY, this._rotZ, this._rotW,
+      this._rotX, this._rotY, this._rotZ, 
       this._scaleX, this._scaleY, this._scaleZ, this._scaleW
     ];
 
@@ -283,7 +283,7 @@ class GizmoVR {
     const components = [
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
-      this._rotX, this._rotY, this._rotZ, this._rotW,
+      this._rotX, this._rotY, this._rotZ, 
       this._scaleX, this._scaleY, this._scaleZ, this._scaleW
     ];
 
@@ -374,7 +374,7 @@ class GizmoVR {
     const components = [
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
-      this._rotX, this._rotY, this._rotZ, this._rotW,
+      this._rotX, this._rotY, this._rotZ, 
       this._scaleX, this._scaleY, this._scaleZ, this._scaleW
     ];
 
@@ -505,7 +505,7 @@ class GizmoVR {
     this._createCircle(this._rotX, Math.PI, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, ROT_RADIUS, 1.0, scale);
     this._createCircle(this._rotY, Math.PI, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, ROT_RADIUS, 1.0, scale);
     this._createCircle(this._rotZ, Math.PI, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, ROT_RADIUS, 1.0, scale);
-    this._createCircle(this._rotW, Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_GREY, ROT_RADIUS, 1.0, scale);
+    // this._createCircle( Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_GREY, ROT_RADIUS, 1.0, scale);
   }
 
   _initScale(scale) {
