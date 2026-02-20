@@ -7,9 +7,11 @@ import TR from '../gui/GuiTR.js';
 var _TMP_NEAR = [0.0, 0.0, 0.0];
 var _TMP_NEAR_1 = [0.0, 0.0, 0.0];
 var _TMP_FAR = [0.0, 0.0, 0.0];
+var _TMP_FAR_1 = [0.0, 0.0, 0.0];
 var _TMP_INV = mat4.create();
 var _TMP_INTER = [0.0, 0.0, 0.0];
 var _TMP_INTER_1 = [0.0, 0.0, 0.0];
+var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
 var _TMP_V1 = [0.0, 0.0, 0.0];
 var _TMP_V2 = [0.0, 0.0, 0.0];
 var _TMP_V3 = [0.0, 0.0, 0.0];
@@ -613,6 +615,9 @@ class Picking {
 
   /** Intersection between a thick ray (segment) and a mesh */
   intersectionRayMeshThick(mesh, vNearOrig, vFarOrig, radiusSq) {
+    var dir = _TMP_DIR_PICK;
+    vec3.sub(dir, vFarOrig, vNearOrig);
+    vec3.normalize(dir, dir);
     // reset picking
     this._mesh = null;
     this._pickedFace = -1;
@@ -670,16 +675,19 @@ class Picking {
       }
 
       if (d1 < radiusSq) {
-        var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-        if (distToCam < distance) {
-          distance = distToCam;
-          vec3.copy(this._interPoint, closestEdge); // Snap to Edge
-          this._pickedFace = i;
+        vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
+        if (vec3.dot(_TMP_V1, dir) > 0.0001) {
+          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+          if (distToCam < distance) {
+            distance = distToCam;
+            vec3.copy(this._interPoint, closestEdge); // Snap to Edge
+            this._pickedFace = i;
 
-          if (window.debugPicking) {
-            var worldPt = vec3.create();
-            vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
-            if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true); // Green
+            if (window.debugPicking) {
+              var worldPt = vec3.create();
+              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true); // Green
+            }
           }
         }
       }
@@ -687,24 +695,8 @@ class Picking {
       // Check Edge 2 (V2-V3)
       var d2 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V2, _TMP_V3, closestRay, closestEdge);
       if (d2 < radiusSq) {
-        var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-        if (distToCam < distance) {
-          distance = distToCam;
-          vec3.copy(this._interPoint, closestEdge);
-          this._pickedFace = i;
-          if (window.debugPicking) {
-            var worldPt = vec3.create();
-            vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
-            if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
-          }
-        }
-      }
-
-      // Check Edge 3 (V3-V1) or (V3-V4)
-      if (iv4 === Utils.TRI_INDEX) {
-        // Triangle
-        var d3 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V3, _TMP_V1, closestRay, closestEdge);
-        if (d3 < radiusSq) {
+        vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
+        if (vec3.dot(_TMP_V1, dir) > 0.0001) {
           var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
           if (distToCam < distance) {
             distance = distToCam;
@@ -714,6 +706,28 @@ class Picking {
               var worldPt = vec3.create();
               vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
               if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+            }
+          }
+        }
+      }
+
+      // Check Edge 3 (V3-V1) or (V3-V4)
+      if (iv4 === Utils.TRI_INDEX) {
+        // Triangle
+        var d3 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V3, _TMP_V1, closestRay, closestEdge);
+        if (d3 < radiusSq) {
+          vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
+          if (vec3.dot(_TMP_V1, dir) > 0.0001) {
+            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+            if (distToCam < distance) {
+              distance = distToCam;
+              vec3.copy(this._interPoint, closestEdge);
+              this._pickedFace = i;
+              if (window.debugPicking) {
+                var worldPt = vec3.create();
+                vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+                if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+              }
             }
           }
         }
@@ -725,15 +739,18 @@ class Picking {
         // Edge 3 (V3-V4)
         var d3 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V3, v4, closestRay, closestEdge);
         if (d3 < radiusSq) {
-          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-          if (distToCam < distance) {
-            distance = distToCam;
-            vec3.copy(this._interPoint, closestEdge);
-            this._pickedFace = i;
-            if (window.debugPicking) {
-              var worldPt = vec3.create();
-              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
-              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+          vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
+          if (vec3.dot(_TMP_V1, dir) > 0.0001) {
+            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+            if (distToCam < distance) {
+              distance = distToCam;
+              vec3.copy(this._interPoint, closestEdge);
+              this._pickedFace = i;
+              if (window.debugPicking) {
+                var worldPt = vec3.create();
+                vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+                if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+              }
             }
           }
         }
@@ -741,15 +758,18 @@ class Picking {
         // Edge 4 (V4-V1)
         var d4 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, v4, _TMP_V1, closestRay, closestEdge);
         if (d4 < radiusSq) {
-          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-          if (distToCam < distance) {
-            distance = distToCam;
-            vec3.copy(this._interPoint, closestEdge);
-            this._pickedFace = i;
-            if (window.debugPicking) {
-              var worldPt = vec3.create();
-              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
-              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+          vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
+          if (vec3.dot(_TMP_V1, dir) > 0.0001) {
+            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
+            if (distToCam < distance) {
+              distance = distToCam;
+              vec3.copy(this._interPoint, closestEdge);
+              this._pickedFace = i;
+              if (window.debugPicking) {
+                var worldPt = vec3.create();
+                vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+                if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+              }
             }
           }
         }
@@ -772,7 +792,7 @@ class Picking {
     // vNear = origin
     // vFar = origin + direction * length
     vec3.copy(_TMP_NEAR_1, origin);
-    vec3.scaleAndAdd(_TMP_FAR, origin, direction, 5000.0); // 50m range
+    vec3.scaleAndAdd(_TMP_FAR_1, origin, direction, 100.0); // 100m range (better precision)
 
     // Scale physical radius to World Units (approximate, since picking is in local space usually)
     // Actually intersectionRayMesh takes Ray in Local Space.
@@ -784,7 +804,7 @@ class Picking {
 
       mat4.invert(_TMP_INV, mesh.getMatrix());
       vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
-      vec3.transformMat4(_TMP_FAR, _TMP_FAR, _TMP_INV);
+      vec3.transformMat4(_TMP_FAR, _TMP_FAR_1, _TMP_INV);
 
       // Local Radius Squared
       // World Radius = physicalRadius (e.g. 0.05)

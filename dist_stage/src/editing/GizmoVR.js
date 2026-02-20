@@ -262,61 +262,68 @@ class GizmoVR {
   }
 
   intersect(origin, direction) {
-    const pick = this._main.getPicking();
+    // Legacy support (Virtual Space)
+    return this.intersectPhysical(origin, direction, (0.05 * (this._main._vrScale || 50.0)), false);
+  }
 
-    // Debug Trace (Optional)
-    // Debug Trace (Optional - Throttled)
-    if (window.debugGizmoIntersection) {
-      if (!this._logThrottle) this._logThrottle = 0;
-      if (this._logThrottle % 60 === 0) {
-        console.log("GizmoVR.intersect called");
-        console.log("Origin:", origin);
-        console.log("Direction:", direction);
-        console.log("Pickables:", this._pickables.length);
+  intersectPhysical(origin, direction, radius, isPhysical = true) {
+    const main = this._main;
+    const pick = main.getPicking();
+
+    // 1. Transform Gizmo Components to Intersection Space
+    const components = [
+      this._transX, this._transY, this._transZ,
+      this._planeX, this._planeY, this._planeZ,
+      this._rotX, this._rotY, this._rotZ, this._rotW,
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
+    ];
+
+    const backups = new Array(components.length);
+    if (isPhysical) {
+      const engToPhys = mat4.create();
+      main.computeEngineToPhysicalMatrix(engToPhys);
+
+      for (let i = 0; i < components.length; ++i) {
+        const elt = components[i];
+        if (!elt._pickGeo) continue;
+        const mesh = elt._pickGeo;
+        backups[i] = mat4.clone(mesh.getMatrix());
+        const physMat = mat4.create();
+        mat4.mul(physMat, engToPhys, backups[i]);
+        mat4.copy(mesh.getMatrix(), physMat);
       }
     }
 
-    // Use VR Intersection logic (Bypasses Screen Projection)
-    // Physical Radius 5cm (0.05) for easier grabbing
-    // Adjust for World Scale (vrScale) because Picking.js uses local units which match World Units for Gizmo (Scale=1.0)
-    const vrScale = this._main._vrScale || 50.0;
-    const radius = window.gizmoPickRadius !== undefined ? window.gizmoPickRadius : (0.05 * vrScale);
-
-    // Auto-enable debug picking if gizmo debug is on
-    if (window.debugGizmoIntersection) window.debugPicking = true;
-
+    // 2. Perform Intersection
     pick.intersectionRayMeshesVR(this._pickables, origin, direction, radius);
+
+    // 3. Restore Matrices
+    if (isPhysical) {
+      for (let i = 0; i < components.length; ++i) {
+        if (backups[i]) mat4.copy(components[i]._pickGeo.getMatrix(), backups[i]);
+      }
+    }
 
     if (this._selected) this._selected._isSelected = false;
 
     const mesh = pick.getMesh();
 
-    // Visual Debugging of Intersection
-    // Visual Debugging of Intersection
+    // Visual Debugging
     if (window.debugGizmoIntersection) {
       if (!this._logThrottle) this._logThrottle = 0;
       const shouldLog = (this._logThrottle++ % 60 === 0);
 
-      const hit = !!mesh;
-      const pt = pick.getIntersectionPoint(); // Local
-
+      const pt = pick.getIntersectionPoint(); // Local Space of pickable
       const worldPt = vec3.create();
+
       if (mesh) {
-        // Store Local Hit for tools
         if (mesh._gizmo) {
           vec3.copy(mesh._gizmo._lastInter, pt);
         }
-
         vec3.transformMat4(worldPt, pt, mesh.getMatrix());
         if (shouldLog) console.log("Hit:", mesh._gizmo._type, "at", worldPt);
-        // Draw a green sphere at hit
-        this._main.updateDebugPivot(worldPt, true);
-        // window.debugPivotScale = 0.02; // Small
+        main.updateDebugPivot(worldPt, true);
       } else {
-        // Draw red sphere at 'far' to show ray direction?
-        const far = vec3.create();
-        vec3.scaleAndAdd(far, origin, direction, 0.5); // 50cm out
-        // this._main.updateDebugPivot(far, true);
         if (shouldLog) console.log("No Hit");
       }
     }

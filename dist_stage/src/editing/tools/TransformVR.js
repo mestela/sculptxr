@@ -52,47 +52,28 @@ class TransformVR extends SculptBase {
 
       // 2. Hover Logic (Only if not dragging)
       if (!this._initInput) {
-        // Use the controller ray provided by SculptManager or global
         const main = this._main;
-        const controllerPos = main._vrControllerPos; // Or use origin argument?
 
-        // Let's use the arguments if valid, else fallback
-        const rayOrigin = origin || controllerPos;
-        const rayDir = dir || [0, 0, -1]; // Fallback to Z-forward if missing
+        // Phase 2: Use Physical Pose if available
+        const physOrigin = main._vrControllerPosPhys;   // In Meters
+        const physDir = main._vrControllerDirPhys;     // Normalized vector
 
-        if (!origin || !dir) {
-          // console.warn("TransformVR: Missing origin/dir", { origin, dir });
-        }
-
-        if (!origin || !dir) {
-          // console.warn("TransformVR: Missing origin/dir", { origin, dir });
-        }
-
-        if (rayOrigin && rayDir) {
-          var hitType = this._gizmo.intersect(rayOrigin, rayDir);
+        if (physOrigin && physDir) {
+          // Physical pick radius: 5cm (0.05m)
+          const radius = window.gizmoPickRadiusPhys !== undefined ? window.gizmoPickRadiusPhys : 0.05;
+          var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
 
           if (hitType !== -1) {
             this._updateStateFromGizmo(hitType);
-
-            // Use the Gizmo's last intersection point
-            var hitPos = this._gizmo._selected._lastInter;
-            // Visualize where the ray actually hit the Gizmo
-            if (main.updateDebugPivot) {
-              // hitPos is in Local Space (approx 0..1)
-              // We need to transform it to World Space using the Selected Part's matrix
-              var worldHit = vec3.create();
-              var mat = this._gizmo._selected._finalMatrix;
-              if (mat) {
-                vec3.transformMat4(worldHit, hitPos, mat);
-                // main.updateDebugPivot(worldHit, true); // Let GizmoVR handle it
-                // window.debugPivotScale = 0.01; // Small marker
-              }
-            }
-          } else {
-            // Hide debug pivot if no hit
-            if (main.updateDebugPivot) {
-              // main.updateDebugPivot([0, 0, 0], false);
-            }
+          }
+        } else {
+          // Fallback to Virtual Space (Engine Units)
+          const rayOrigin = origin || main._vrControllerPos;
+          const rayDir = dir || [0, 0, -1];
+          if (rayOrigin && rayDir) {
+            const vrScale = main._vrScale || 50.0;
+            const radius = window.gizmoPickRadius !== undefined ? window.gizmoPickRadius : (0.05 * vrScale);
+            this._gizmo.intersectPhysical(rayOrigin, rayDir, radius, false);
           }
         }
       }

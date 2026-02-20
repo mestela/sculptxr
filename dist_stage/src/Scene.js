@@ -24,7 +24,7 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
-console.log("Scene.js loaded v0.7.635");
+console.log("Scene.js loaded v0.7.642");
 
 class Scene {
 
@@ -700,7 +700,8 @@ class Scene {
     var isVoxel = currentTool && currentTool.constructor.name === 'SculptVoxel';
 
     if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
-      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+      const radiusMeters = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+      const radius = radiusMeters / (this._vrScale || 1.0);
 
       // Update Selection Color for Negative Mode
       const selection = this._sculptManager.getSelection();
@@ -714,8 +715,8 @@ class Scene {
       gl2.enable(gl2.DEPTH_TEST);
     }
 
-    // [DEBUG] Pivot Sphere (World Space / Mesh Mode)
-    if (this._debugPivotSphere && !window.debugPivotAttach && this._mesh) {
+    // [DEBUG] Pivot Sphere (World Space / Mesh Mode) - DISABLED (User: "hangover")
+    if (false && this._debugPivotSphere && !window.debugPivotAttach && this._mesh) {
       const mPivot = this._debugPivotSphere.getMatrix();
       mat4.identity(mPivot);
 
@@ -1554,6 +1555,19 @@ class Scene {
 
     this._preventRender = true;
     this._vrIsNegative = false;
+  }
+
+  computeEngineToPhysicalMatrix(out) {
+    mat4.identity(out);
+    if (this._xrWorldOffset) {
+      const t = this._xrWorldOffset.position;
+      const r = this._xrWorldOffset.orientation;
+      mat4.fromRotationTranslation(out, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+    }
+    if (this._vrScale !== 1.0) {
+      mat4.scale(out, out, [this._vrScale, this._vrScale, this._vrScale]);
+    }
+    return out;
   }
 
   updateVROffsets() {
@@ -2628,6 +2642,10 @@ class Scene {
       p.y + offset[1],
       p.z + offset[2]
     ];
+    this._vrControllerPosPhys = physicalOrigin;
+    const rayDirPhys = vec3.fromValues(0, 0, -1);
+    vec3.transformQuat(rayDirPhys, rayDirPhys, [q.x, q.y, q.z, q.w]);
+    this._vrControllerDirPhys = rayDirPhys;
 
     // const physicalOrigin = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
 
@@ -2641,17 +2659,7 @@ class Scene {
 
     // Apply Inverse World Transform
     if (this._xrWorldOffset) {
-      const t = this._xrWorldOffset.position;
-      const r = this._xrWorldOffset.orientation;
-
-      // 1. Inverse Translation (P - T)
-      vec3.sub(enginePos, enginePos, [t.x, t.y, t.z]);
-
-      // 2. Inverse Rotation (Apply Conjugate/Inverse Rotation)
-      const qInv = quat.create();
-      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
-      quat.invert(qInv, qRot);
-      vec3.transformQuat(enginePos, enginePos, qInv);
+      vec3.transformMat4(enginePos, enginePos, this._xrWorldOffset.inverse.matrix);
     }
 
     // 3. Inverse Scaling
@@ -2736,13 +2744,7 @@ class Scene {
     const rayOrigin = vec3.create();
     vec3.copy(rayOrigin, rayOriginPhysical);
     if (this._xrWorldOffset) {
-      const t = this._xrWorldOffset.position;
-      const r = this._xrWorldOffset.orientation;
-      vec3.sub(rayOrigin, rayOrigin, [t.x, t.y, t.z]);
-      const qInv = quat.create();
-      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
-      quat.invert(qInv, qRot);
-      vec3.transformQuat(rayOrigin, rayOrigin, qInv);
+      vec3.transformMat4(rayOrigin, rayOrigin, this._xrWorldOffset.inverse.matrix);
     }
     vec3.scale(rayOrigin, rayOrigin, invScale);
 
@@ -3018,7 +3020,7 @@ class Scene {
         const origNegative = tool ? tool._negative : false;
         if (isNegative && tool) tool._negative = !origNegative;
 
-        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
+        this._sculptManager.updateXR(this._picking, isTriggerPressed, this._vrControllerPos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
 
         // Restore original state immediately
         if (isNegative && tool) tool._negative = origNegative;
@@ -3060,7 +3062,7 @@ class Scene {
         }
       } else {
         // Show at Controller Tip (Red)
-        this.updateDebugCursor(enginePos, true, cursorSize);
+        this.updateDebugCursor(this._vrControllerPos, true, cursorSize);
         if (this._debugCursor) this._debugCursor.setFlatColor(picked ? [1.0, 1.0, 0.0] : [1.0, 0.0, 0.0]);
       }
     }
