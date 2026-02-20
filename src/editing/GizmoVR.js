@@ -368,8 +368,16 @@ class GizmoVR {
 
   render(camera) {
     const gl = this._gl;
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.CULL_FACE);
+
+    // Clear depth for Gizmo pass so it always overdraws meshes
+    // but maintain internal depth consistency (no internal overdraw)
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+
+    // Enable blending for 0.5 opacity
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     const components = [
       this._transX, this._transY, this._transZ,
@@ -389,10 +397,13 @@ class GizmoVR {
         elt.updateMatrix(); // Ensure up to date
         const drawGeo = elt._drawGeo;
         drawGeo.setFlatColor(elt._isSelected ? COLOR_SELECT : elt._color);
+        drawGeo.setOpacity(0.5);
         drawGeo.updateMatrices(camera);
         drawGeo.render(this._main);
       }
     }
+    // Deep culling restored in Pass 2 wrap-up
+    gl.disable(gl.BLEND);
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
   }
