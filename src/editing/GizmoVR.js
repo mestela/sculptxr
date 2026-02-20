@@ -97,6 +97,7 @@ class GizmoVR {
     this._selected = null;
 
     // Initialize geometry
+    this._lastScale = 1.0;
     this._resize(1.0);
 
     // Debug Hook
@@ -236,7 +237,11 @@ class GizmoVR {
     // Or just 1.0 and scale the matrix by vrScale?
     // The primitives usage in `Gizmo.js` baked scale into vertices.
     // Let's stick to baking for now to ensure visual consistency with what we had.
-    this._resize(scaleFactor);
+    // Let's stick to baking for now to ensure visual consistency with what we had.
+    if (Math.abs(scaleFactor - this._lastScale) > 0.0001) {
+      this._resize(scaleFactor);
+      this._lastScale = scaleFactor;
+    }
 
     // 3. Build Final Components Matrix
     const baseMat = mat4.create();
@@ -260,45 +265,59 @@ class GizmoVR {
     const pick = this._main.getPicking();
 
     // Debug Trace (Optional)
+    // Debug Trace (Optional - Throttled)
     if (window.debugGizmoIntersection) {
-      console.log("GizmoVR.intersect called");
-      console.log("Origin:", origin);
-      console.log("Direction:", direction);
-      console.log("Pickables:", this._pickables.length);
+      if (!this._logThrottle) this._logThrottle = 0;
+      if (this._logThrottle % 60 === 0) {
+        console.log("GizmoVR.intersect called");
+        console.log("Origin:", origin);
+        console.log("Direction:", direction);
+        console.log("Pickables:", this._pickables.length);
+      }
     }
 
     // Use VR Intersection logic (Bypasses Screen Projection)
     // Physical Radius 5cm (0.05) for easier grabbing
-    pick.intersectionRayMeshesVR(this._pickables, origin, direction, 0.05);
+    // Adjust for World Scale (vrScale) because Picking.js uses local units which match World Units for Gizmo (Scale=1.0)
+    const vrScale = this._main._vrScale || 50.0;
+    const radius = window.gizmoPickRadius !== undefined ? window.gizmoPickRadius : (0.05 * vrScale);
+
+    // Auto-enable debug picking if gizmo debug is on
+    if (window.debugGizmoIntersection) window.debugPicking = true;
+
+    pick.intersectionRayMeshesVR(this._pickables, origin, direction, radius);
 
     if (this._selected) this._selected._isSelected = false;
 
     const mesh = pick.getMesh();
 
     // Visual Debugging of Intersection
+    // Visual Debugging of Intersection
     if (window.debugGizmoIntersection) {
+      if (!this._logThrottle) this._logThrottle = 0;
+      const shouldLog = (this._logThrottle++ % 60 === 0);
+
       const hit = !!mesh;
       const pt = pick.getIntersectionPoint(); // Local
-      // If we hit, we need to show where.
-      // Since Gizmo parts are Identity Matrix (mostly, except _finalMatrix), 
-      // AND picking does transform back to world...
-      // Wait, picking.getIntersectionPoint() is LOCAL to the mesh.
-      // We need WORLD point for the debugger.
+
       const worldPt = vec3.create();
       if (mesh) {
+        // Store Local Hit for tools
+        if (mesh._gizmo) {
+          vec3.copy(mesh._gizmo._lastInter, pt);
+        }
+
         vec3.transformMat4(worldPt, pt, mesh.getMatrix());
-        console.log("Hit:", mesh._gizmo._type, "at", worldPt);
+        if (shouldLog) console.log("Hit:", mesh._gizmo._type, "at", worldPt);
         // Draw a green sphere at hit
         this._main.updateDebugPivot(worldPt, true);
-        window.debugPivotScale = 0.02; // Small
+        // window.debugPivotScale = 0.02; // Small
       } else {
         // Draw red sphere at 'far' to show ray direction?
         const far = vec3.create();
         vec3.scaleAndAdd(far, origin, direction, 0.5); // 50cm out
-        this._main.updateDebugPivot(far, true);
-        // Force Red? Scene.js updateDebugPivot uses setFlatColor... getting complex.
-        // Let's just trust logs.
-        console.log("No Hit");
+        // this._main.updateDebugPivot(far, true);
+        if (shouldLog) console.log("No Hit");
       }
     }
 
@@ -330,7 +349,8 @@ class GizmoVR {
     for (let i = 0; i < components.length; ++i) {
       const elt = components[i];
       // Only render if active (technically _pickables only added active ones, but we iterate all here)
-      // Check if it has geometry
+      // If mode is 'hit', Picking.js updates the matrix, we just render it.
+
       if (elt._drawGeo) {
         elt.updateMatrix(); // Ensure up to date
         const drawGeo = elt._drawGeo;
@@ -399,9 +419,9 @@ class GizmoVR {
     }
 
     // Debug Log
-    if (window.debugGizmoVR) {
-      console.log(`CreateCircle Axis: [${axis}], Matrix: [${mat}]`);
-    }
+    // if (window.debugGizmoVR) {
+    //   console.log(`CreateCircle Axis: [${axis}], Matrix: [${mat}]`);
+    // }
 
     vec3.copy(rot._color, color);
 

@@ -24,6 +24,8 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
+console.log("Scene.js loaded v0.7.635");
+
 class Scene {
 
   constructor() {
@@ -262,6 +264,95 @@ class Scene {
       if (window.screenLog) window.screenLog(`Gizmo Scale: ${s}`, "cyan");
     };
 
+    // [DEBUG] Hit Sphere Helpers (User Requested)
+    window.debugHitScale = 0.02; // Default 2cm
+    window.debugHitAttach = 'hit'; // 'hit', 'controller', 'origin', 'mesh'
+
+    window.setDebugScale = (s) => {
+      window.debugHitScale = s;
+      console.log(`Debug Hit Scale: ${s}`);
+      if (window.screenLog) window.screenLog(`Hit Scale: ${s}`, "lime");
+    };
+
+    window.setDebugAttach = (mode) => {
+      // mode: 'hit' (default), 'controller', 'origin', 'mesh'
+      window.debugHitAttach = mode;
+      console.log(`Debug Attach Mode: ${mode}`);
+      if (window.screenLog) window.screenLog(`Attach: ${mode}`, "lime");
+    };
+
+    window.debugQuerySpace = () => {
+      const scale = this._vrScale || 50.0;
+      const invScale = 1.0 / scale;
+      console.log("=== Space Query ===");
+      console.log("vrScale (World->Meters):", scale);
+      console.log("1 Unit =", (scale).toFixed(4), "Meters");
+      console.log("1 Meter =", (invScale).toFixed(4), "Units");
+
+      const p = this._picking.getIntersectionPoint();
+      if (p) {
+        console.log("Last Hit (Local):", p);
+        const m = this._picking.getMesh();
+        if (m) {
+          const worldPt = vec3.create();
+          vec3.transformMat4(worldPt, p, m.getMatrix());
+          console.log("Last Hit (World):", worldPt);
+          console.log("Last Hit (Meters approx):", [worldPt[0] * scale, worldPt[1] * scale, worldPt[2] * scale]);
+        }
+      } else {
+        console.log("No Last Hit");
+      }
+
+      if (this._debugHitSphere) {
+        const mat = this._debugHitSphere.getMatrix();
+        const pos = [mat[12], mat[13], mat[14]];
+        const s = Math.hypot(mat[0], mat[1], mat[2]);
+        console.log("Sphere Matrix Pos:", pos);
+        console.log("Sphere Matrix Scale:", s);
+        console.log("Sphere Matrix Scale (Meters):", s * scale);
+      }
+      return "Check Console";
+    };
+
+    // EXPOSE SCENE FOR DEBUGGING
+    window.debugScene = this;
+
+    window.debugCheckScale = () => {
+      console.log("VR Scale:", this._vrScale);
+      console.log("Debug Hit Scale:", window.debugHitScale || 0.02);
+      return this._vrScale;
+    };
+
+    window.debugForceXYZ = (x, y, z, r) => {
+      this._forceDebugXYZ = vec3.fromValues(x, y, z);
+      this._forceDebugRadius = r || 0.05; // 5cm default
+      return "Forcing Sphere to " + x + "," + y + "," + z;
+    };
+
+    window.debugTestSphere = () => {
+      const cam = this._camera;
+      if (!cam) return "No Camera";
+
+      const pos = vec3.create();
+      const fwd = vec3.fromValues(0, 0, -1);
+      const q = cam._quatRot; // Use internal quat
+      vec3.transformQuat(fwd, fwd, q);
+
+      const scale = this._vrScale || 50.0;
+      let dist = 0.5 / scale; // 0.5 Meters / Scale = World Units
+
+      const camPos = cam.computePosition();
+      vec3.scaleAndAdd(pos, camPos, fwd, dist);
+
+      console.log("Camera Pos:", camPos);
+      console.log("VR Scale:", scale);
+      console.log("Sphere Dist (World):", dist);
+      console.log("Sphere Pos:", pos);
+
+      this._forceDebugRawScale = true; // FORCE VISIBILITY
+      return window.debugForceXYZ(pos[0], pos[1], pos[2], 0.05);
+    };
+
     window.getPivotInfo = () => {
       if (!this._debugPivotSphere) return "No Debug Sphere";
       const m = this._debugPivotSphere.getMatrix();
@@ -478,8 +569,8 @@ class Scene {
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix) {
-    const gl = this._gl;
-    const meshes = this._meshes;
+    const gl2 = this._gl;
+    const meshes2 = this._meshes;
 
     // --- SETUP VIEW ---
     mat4.copy(cam._view, viewMatrix);
@@ -526,10 +617,10 @@ class Scene {
 
     // Debug Pivot
     if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
-      gl.disable(gl.DEPTH_TEST);
+      gl2.disable(gl2.DEPTH_TEST);
       this._debugPivotMesh.updateMatrices(cam);
       this._debugPivotMesh.render(this);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.enable(gl2.DEPTH_TEST);
     }
 
     // VR Brush Tip (Pass 1)
@@ -589,20 +680,20 @@ class Scene {
     }
 
     // Meshes (Opaque)
-    for (let k = 0, l = meshes.length; k < l; ++k) {
-      if (!meshes[k].isVisible()) continue;
-      meshes[k].updateMatrices(cam);
-      meshes[k].render(this);
+    for (let k = 0, l = meshes2.length; k < l; ++k) {
+      if (!meshes2[k].isVisible()) continue;
+      meshes2[k].updateMatrices(cam);
+      meshes2[k].render(this);
     }
 
     // Meshes (Wireframe)
-    gl.enable(gl.BLEND);
-    gl.depthFunc(gl.LESS);
-    for (let k = 0, l = meshes.length; k < l; ++k) {
-      if (meshes[k].getShowWireframe()) meshes[k].renderWireframe(this);
+    gl2.enable(gl2.BLEND);
+    gl2.depthFunc(gl2.LESS);
+    for (let k = 0, l = meshes2.length; k < l; ++k) {
+      if (meshes2[k].getShowWireframe()) meshes2[k].renderWireframe(this);
     }
-    gl.depthFunc(gl.LEQUAL);
-    gl.disable(gl.BLEND);
+    gl2.depthFunc(gl2.LEQUAL);
+    gl2.disable(gl2.BLEND);
 
     // Brush Indicator (Pass 2 - World Space)
     var currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
@@ -615,12 +706,12 @@ class Scene {
       const selection = this._sculptManager.getSelection();
       if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
 
-      gl.disable(gl.DEPTH_TEST);
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl2.disable(gl2.DEPTH_TEST);
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
       selection.renderVR(this, cam, radius);
-      gl.disable(gl.BLEND);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.disable(gl2.BLEND);
+      gl2.enable(gl2.DEPTH_TEST);
     }
 
     // [DEBUG] Pivot Sphere (World Space / Mesh Mode)
@@ -640,13 +731,13 @@ class Scene {
 
       this._debugPivotSphere.updateMatrices(cam);
 
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      gl.depthMask(false);
-      gl.disable(gl.CULL_FACE);
-      gl.disable(gl.DEPTH_TEST);
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.ONE, gl2.ONE);
+      gl2.depthMask(false);
+      gl2.disable(gl2.CULL_FACE);
+      gl2.disable(gl2.DEPTH_TEST);
       this._debugPivotSphere.render(this);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.enable(gl2.DEPTH_TEST);
     }
 
     // Render Current Tool VR (Gizmo, etc.)
@@ -654,6 +745,76 @@ class Scene {
       const tool = this._sculptManager.getCurrentTool();
       if (tool && tool.renderVR) {
         tool.renderVR(this, cam);
+      }
+    }
+
+    // [DEBUG] Hit Sphere (Pass 2 - World Space)
+    if (this._debugHitSphere) {
+      if (this._forceDebugXYZ) {
+        const mHit = this._debugHitSphere.getMatrix();
+        mat4.identity(mHit);
+        mat4.translate(mHit, mHit, this._forceDebugXYZ);
+
+        let s = this._forceDebugRadius;
+        // Convert Meters to World Units (unless forced raw)
+        if (!this._forceDebugRawScale && this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
+
+        mat4.scale(mHit, mHit, [s, s, s]);
+        console.log(`[ForceDebug] Pos: ${this._forceDebugXYZ} Scale: ${s}`);
+        this._debugHitSphere.render(this);
+
+      } else if (window.debugHitAttach !== 'controller') {
+        const mode = window.debugHitAttach || 'hit';
+        const mHit = this._debugHitSphere.getMatrix();
+
+        // If mode is 'hit', Picking.js/GizmoVR.js updates the matrix.
+        // If mode is 'mesh' or 'origin', we update it here.
+        if (mode === 'origin') {
+          mat4.identity(mHit);
+          let s = window.debugHitScale || 0.02;
+          if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
+          mat4.scale(mHit, mHit, [s, s, s]);
+          this._debugHitSphere.setVisible(true);
+
+        } else if (mode === 'mesh' && this._mesh) {
+          mat4.identity(mHit);
+          const center = vec3.create();
+          vec3.transformMat4(center, this._mesh.getCenter(), this._mesh.getMatrix());
+          mat4.translate(mHit, mHit, center);
+          let s = window.debugHitScale || 0.02;
+          if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
+          mat4.scale(mHit, mHit, [s, s, s]);
+          this._debugHitSphere.setVisible(true);
+        }
+
+        if (this._debugHitSphere.isVisible()) {
+          // Backup Matrix (because updateMatrices might reset it if it thinks it's dirty from pos/rot/scale)
+          const mBackup = mat4.clone(this._debugHitSphere.getMatrix());
+
+          this._debugHitSphere.updateMatrices(cam);
+
+          // RESTORE Matrix
+          const m = this._debugHitSphere.getMatrix();
+          mat4.copy(m, mBackup);
+
+          // Debug Log
+          if (window.debugGizmoIntersection && !this._logSphereThrottle) this._logSphereThrottle = 0;
+          if (window.debugGizmoIntersection && this._logSphereThrottle++ % 120 === 0) {
+            const pos = [m[12], m[13], m[14]];
+            const s = Math.hypot(m[0], m[1], m[2]);
+            const vrScale = this._vrScale || 50.0;
+            console.log(`[Scene Pass 2] Sphere Pos: [${pos[0].toFixed(2)}, ${pos[1].toFixed(2)}, ${pos[2].toFixed(2)}] Scale: ${s.toFixed(4)} (Meters: ${(s * vrScale).toFixed(4)})`);
+          }
+
+          gl2.enable(gl2.BLEND);
+          gl2.blendFunc(gl2.ONE, gl2.ONE);
+          gl2.depthMask(false);
+          gl2.disable(gl2.CULL_FACE);
+          gl2.disable(gl2.DEPTH_TEST);
+          this._debugHitSphere.render(this);
+          gl2.enable(gl2.DEPTH_TEST);
+          gl2.disable(gl2.BLEND);
+        }
       }
     }
 
@@ -681,13 +842,13 @@ class Scene {
 
       this._debugPivotSphere.updateMatrices(cam);
 
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      gl.depthMask(false);
-      gl.disable(gl.CULL_FACE);
-      gl.disable(gl.DEPTH_TEST);
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.ONE, gl2.ONE);
+      gl2.depthMask(false);
+      gl2.disable(gl2.CULL_FACE);
+      gl2.disable(gl2.DEPTH_TEST);
       this._debugPivotSphere.render(this);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.enable(gl2.DEPTH_TEST);
     }
 
     // Proj is same.
@@ -716,18 +877,44 @@ class Scene {
 
       this._vrBrushRadiusSphere.updateMatrices(cam);
 
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      gl.depthMask(false);
-      gl.disable(gl.CULL_FACE);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.ONE, gl2.ONE);
+      gl2.depthMask(false);
+      gl2.disable(gl2.CULL_FACE);
+      gl2.enable(gl2.DEPTH_TEST);
 
       this._vrBrushRadiusSphere.render(this);
 
-      gl.enable(gl.DEPTH_TEST);
-      gl.enable(gl.CULL_FACE);
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
+      gl2.enable(gl2.DEPTH_TEST);
+      gl2.enable(gl2.CULL_FACE);
+      gl2.depthMask(true);
+      gl2.disable(gl2.BLEND);
+    }
+
+    // [DEBUG] Hit Sphere (Render Pass 3 - Physical/Overlay Space)
+    if (this._debugHitSphere && window.debugHitAttach === 'controller') {
+      const mHit = this._debugHitSphere.getMatrix();
+      if (this._vrDominantRayMatrix) {
+        mat4.copy(mHit, this._vrDominantRayMatrix);
+        const offY = this._isQuestStandalone ? 0.075 : 0.025;
+        mat4.rotateX(mHit, mHit, -Math.PI / 2);
+        mat4.translate(mHit, mHit, [0, offY + 0.05, 0]); // 5cm past tip
+
+        const s = window.debugHitScale || 0.02;
+        mat4.scale(mHit, mHit, [s, s, s]);
+        this._debugHitSphere.setVisible(true);
+
+        this._debugHitSphere.updateMatrices(cam);
+
+        gl2.enable(gl2.BLEND);
+        gl2.blendFunc(gl2.ONE, gl2.ONE);
+        gl2.depthMask(false);
+        gl2.disable(gl2.CULL_FACE);
+        gl2.disable(gl2.DEPTH_TEST); // Always on top
+        this._debugHitSphere.render(this);
+        gl2.enable(gl2.DEPTH_TEST);
+        gl2.disable(gl2.BLEND);
+      }
     }
 
     // [DEBUG] Gizmo Test Sphere (Render Pass 3 Copy)
@@ -768,18 +955,18 @@ class Scene {
 
       this._debugGizmoSphere.updateMatrices(cam);
 
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      gl.depthMask(false);
-      gl.disable(gl.CULL_FACE);
-      gl.enable(gl.DEPTH_TEST);
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.ONE, gl2.ONE);
+      gl2.depthMask(false);
+      gl2.disable(gl2.CULL_FACE);
+      gl2.enable(gl2.DEPTH_TEST);
 
       this._debugGizmoSphere.render(this);
 
-      gl.enable(gl.DEPTH_TEST);
-      gl.enable(gl.CULL_FACE);
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
+      gl2.enable(gl2.DEPTH_TEST);
+      gl2.enable(gl2.CULL_FACE);
+      gl2.depthMask(true);
+      gl2.disable(gl2.BLEND);
     }
   }
 
@@ -1573,6 +1760,17 @@ class Scene {
       meshP.initRender();
       this._debugPivotSphere = meshP;
     }
+
+    // [DEBUG] Hit Sphere (Yellow - for Picking)
+    if (!this._debugHitSphere) {
+      var meshH = Primitives.createSphere(this._gl, 1.0, 64, 64);
+      meshH.setShaderType(Enums.Shader.FLAT);
+      meshH.setFlatColor([0.9, 0.9, 0.2]); // Yellow
+      meshH.setOpacity(1.0);
+      meshH.init();
+      meshH.initRender();
+      this._debugHitSphere = meshH;
+    }
   }
 
   loadVRController(handedness) {
@@ -1710,21 +1908,29 @@ class Scene {
   }
 
   updateDebugPivot(pos, active) {
-    if (!this._debugPivotMesh) return;
+    if (!this._debugHitSphere) return;
 
     if (active && pos) {
-      if (!this._debugPivotMesh.isVisible()) this._debugPivotMesh.setVisible(true);
+      if (!this._debugHitSphere.isVisible()) this._debugHitSphere.setVisible(true);
 
-      // Reset matrix
-      const mat = this._debugPivotMesh.getMatrix();
-      mat4.identity(mat);
-      mat4.translate(mat, mat, pos);
+      // We only update the matrix here if mode is 'hit'
+      // If mode is 'controller' etc, render loop handles it.
+      if (window.debugHitAttach === 'hit') {
+        const mat = this._debugHitSphere.getMatrix();
+        mat4.identity(mat);
+        mat4.translate(mat, mat, pos);
 
-      // Scale it (default 1.0, or use debugPivotScale)
-      const s = window.debugPivotScale || 1.0;
-      mat4.scale(mat, mat, [s, s, s]);
+        let s = window.debugHitScale || 0.02;
+        // Compensate for VR Scale to keep it "Physical Size"
+        if (this._vrScale && this._vrScale > 0.0001) s *= this._vrScale;
+
+        mat4.scale(mat, mat, [s, s, s]);
+      }
     } else {
-      if (this._debugPivotMesh.isVisible()) this._debugPivotMesh.setVisible(false);
+      // Only hide if we aren't forcing another attach mode
+      if (window.debugHitAttach === 'hit') {
+        if (this._debugHitSphere.isVisible()) this._debugHitSphere.setVisible(false);
+      }
     }
   }
 

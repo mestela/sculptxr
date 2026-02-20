@@ -84,14 +84,14 @@ class TransformVR extends SculptBase {
               var mat = this._gizmo._selected._finalMatrix;
               if (mat) {
                 vec3.transformMat4(worldHit, hitPos, mat);
-                main.updateDebugPivot(worldHit, true);
-                window.debugPivotScale = 0.01; // Small marker
+                // main.updateDebugPivot(worldHit, true); // Let GizmoVR handle it
+                // window.debugPivotScale = 0.01; // Small marker
               }
             }
           } else {
             // Hide debug pivot if no hit
             if (main.updateDebugPivot) {
-              main.updateDebugPivot([0, 0, 0], false);
+              // main.updateDebugPivot([0, 0, 0], false);
             }
           }
         }

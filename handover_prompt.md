@@ -1,34 +1,17 @@
 # Handover Prompt
-
-## Current Task: Fix Picking Logic & Gizmo Interaction
-
-- **State**: `v0.7.619` (Fix Deployed).
-- **Status**:
-    - [x] **Rotate Handles Fixed**: Rings are now correctly oriented (X, Y, Z align with World Axes).
-    - [x] **Picking Thickness Increased**: Rings are now ~10x thicker (invisible proxy) for easier grabbing.
-    - [x] **Visibility Fixed**: Resolved bug where rings were invisible due to argument order.
-    - [ ] **Plane/Thin Picking**: Still using Ray Cast on proxy. "Tube Cast" was skipped in favor of "Fatter Proxy".
-
-## Next Steps
-
-1.  **Verify & Polish**:
-    -   Continue testing Gizmo interaction in VR.
-    -   Ensure "Center Handle" (Uniform Scale/Translate) works as expected.
-    -   Check if "Plane Handles" (Square Panels) need similar thickness boosts.
-
-2.  **Code Cleanup**:
-    -   Remove `window.debugGizmoVR` logs from `GizmoVR.js`.
-
-## Working Notes
--   `GizmoVR.js`: `_createCircle` now accepts `axis` to orient the Torus.
--   **Picking**: We are relying on `THICKNESS_PICK` scaling to make thin objects hit-able.
--   **Unit Scale**: `vrScale` affects physical size.
-
-## Solutions Attempted
--   **Tube Casting**: Considered but deferred. "Fat Proxy" seems sufficient for now.
-
+## Current Task: Fixing GizmoVR Coordinate Space Mismatch
+- **State**: `v0.7.639` (Beta).
+- **Critical Finding**: **Coordinate Space Mismatch Confirmed.**
+    - The GizmoVR ray intersection logic is testing against **World Space** geometry using a **Camera Space** ray.
+    - **Evidence**: Aiming the controller 180 degrees backwards (towards the camera origin) hits the Gizmo components that are visually rendered in front of the user (offset by `_xrWorldOffset`).
+    - The `_xrWorldOffset` (e.g., Pull Back 55cm, Lift 1.2m) is applied to the **Visuals** but **NOT** to the **Ray Math**.
+## The Fix Plan
+1.  **Locate Ray Origin**: Find where `_vrControllerPos` / Ray Origin is derived in [Scene.js](cci:7://file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/src/Scene.js:0:0-0:0) (likely raw `getPose` in Camera Space).
+2.  **Apply Offset**: Before passing the Ray to `GizmoVR.intersect`, apply the `_xrWorldOffset` matrix to both Origin and Direction.
+    - `vec3.transformMat4(rayOrigin, rayOrigin, xrWorldMatrix)`
+    - `vec3.transformMat4(rayDir, rayDir, xrWorldMatrix)` (Direction vector, so `w=0`)
+3.  **Verify**: Aiming at the visual Gizmo should now correctly hit the mathematical Gizmo.
 ## Environment
--   **URL:** `https://tokeru.com/sculptxr/`
+-   **URL:** `https://tokeru.com/sculptxrbeta/`
 -   **Repo:** `https://github.com/mestela/sculptxr`
--   **Deploy Prod:** `./deploy_production.sh`
 -   **Deploy Beta:** `./deploy_beta.sh`

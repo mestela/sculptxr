@@ -655,12 +655,32 @@ class Picking {
 
       // Check Edge 1 (V1-V2)
       var d1 = Geometry.distanceSqSegmentSegment(_TMP_NEAR, _TMP_FAR, _TMP_V1, _TMP_V2, closestRay, closestEdge);
+      if (window.debugPicking) {
+        // Visual debug for close calls (within 5x radius)
+        if (d1 < radiusSq * 25.0) {
+          // We can't easily draw lines, but we can log or draw a sphere at the candidate
+          // Need to transform closestEdge to World for debug view
+          var worldPt = vec3.create();
+          vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+          // Draw RED if miss, GREEN if hit (logic below)
+          var isHit = d1 < radiusSq;
+          // We need a way to accumulate debug points? 
+          // For now, let's just use the main debug sphere for the BEST hit.
+        }
+      }
+
       if (d1 < radiusSq) {
         var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
         if (distToCam < distance) {
           distance = distToCam;
           vec3.copy(this._interPoint, closestEdge); // Snap to Edge
           this._pickedFace = i;
+
+          if (window.debugPicking) {
+            var worldPt = vec3.create();
+            vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+            if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true); // Green
+          }
         }
       }
 
@@ -672,6 +692,11 @@ class Picking {
           distance = distToCam;
           vec3.copy(this._interPoint, closestEdge);
           this._pickedFace = i;
+          if (window.debugPicking) {
+            var worldPt = vec3.create();
+            vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+            if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+          }
         }
       }
 
@@ -685,6 +710,11 @@ class Picking {
             distance = distToCam;
             vec3.copy(this._interPoint, closestEdge);
             this._pickedFace = i;
+            if (window.debugPicking) {
+              var worldPt = vec3.create();
+              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+            }
           }
         }
       } else {
@@ -700,6 +730,11 @@ class Picking {
             distance = distToCam;
             vec3.copy(this._interPoint, closestEdge);
             this._pickedFace = i;
+            if (window.debugPicking) {
+              var worldPt = vec3.create();
+              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+            }
           }
         }
 
@@ -711,6 +746,11 @@ class Picking {
             distance = distToCam;
             vec3.copy(this._interPoint, closestEdge);
             this._pickedFace = i;
+            if (window.debugPicking) {
+              var worldPt = vec3.create();
+              vec3.transformMat4(worldPt, closestEdge, mesh.getMatrix());
+              if (this._main.updateDebugPivot) this._main.updateDebugPivot(worldPt, true);
+            }
           }
         }
       }
