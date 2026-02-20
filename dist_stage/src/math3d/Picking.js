@@ -842,9 +842,11 @@ class Picking {
     vec3.copy(this._interPoint, _TMP_INTER_1);
     this._pickedFace = nearFace;
 
-    // VR RADIUS FIX: Use Physical Radius directly
+    // VR RADIUS FIX: Store in Engine Units (apply inverse vrScale)
     if (nearFace !== -1) {
-      this._rWorld2 = physicalRadius * physicalRadius;
+      const vrScale = this._main._vrScale || 50.0;
+      const pickingRadius = physicalRadius / vrScale;
+      this._rWorld2 = pickingRadius * pickingRadius;
       this._rLocal2 = this._rWorld2 / nearMesh.getScale2();
     } else {
       this._rLocal2 = 0.0;

@@ -24,7 +24,7 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
-console.log("Scene.js loaded v0.7.644");
+console.log("Scene.js loaded v0.7.645");
 
 class Scene {
 
@@ -700,8 +700,7 @@ class Scene {
     var isVoxel = currentTool && currentTool.constructor.name === 'SculptVoxel';
 
     if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
-      const radiusMeters = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
-      const radius = radiusMeters / (this._vrScale || 1.0);
+      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
 
       // Update Selection Color for Negative Mode
       const selection = this._sculptManager.getSelection();
