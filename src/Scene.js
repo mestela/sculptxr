@@ -24,7 +24,7 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
-console.log("Scene.js loaded v0.7.646");
+console.log("Scene.js loaded v0.7.656");
 
 class Scene {
 
@@ -700,7 +700,15 @@ class Scene {
     var isVoxel = currentTool && currentTool.constructor.name === 'SculptVoxel';
 
     if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
-      const radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+      let radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
+
+      // Force radius to 0.5 for Gizmo interactions
+      const currentTool = this._sculptManager.getCurrentTool();
+      if (currentTool && currentTool.constructor.name === 'TransformVR') {
+        if (currentTool._gizmo && currentTool._gizmo._selected) {
+          radius = 0.5;
+        }
+      }
 
       // Update Selection Color for Negative Mode
       const selection = this._sculptManager.getSelection();
@@ -2712,6 +2720,23 @@ class Scene {
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
         window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${buttons[0].pressed} Val=${buttons[0].value.toFixed(2)}`, buttons[0].pressed ? "lime" : "red");
       }
+
+      // Phase 7: Still update the tool for Scale/Matrices so it doesn't "pop", 
+      // but force isPressed=false so it doesn't sculpt/drag through the menu.
+      const rayPose = frame.getPose(source.targetRaySpace, refSpace);
+      const dir = vec3.create();
+      if (rayPose) {
+        vec3.set(dir, -rayPose.transform.matrix[8], -rayPose.transform.matrix[9], -rayPose.transform.matrix[10]);
+      } else {
+        vec3.set(dir, 0, 0, -1); // Fallback
+      }
+      vec3.normalize(dir, dir);
+      this._sculptManager.updateXR(this._picking, false, enginePos, dir, {
+        isNegative: false,
+        controllers: [],
+        triggerValue: 0.0,
+        handedness: source.handedness
+      });
       return;
     }
 
@@ -2751,8 +2776,14 @@ class Scene {
     // Lock Selection Logic: If locked and we have a mesh, skip picking
     this._picking._rWorld2 = pickingRadius * pickingRadius;
 
+    // GIZMO DRAG GUARD: If TransformVR is dragging, skip re-picking to keep cursor on handle
+    const isTransformDrag = currentTool && currentTool.constructor.name === 'TransformVR' && currentTool._initInput;
+
     let picked = false;
-    if (this._selectionLocked && this._picking.getMesh()) {
+    if (isTransformDrag) {
+      // Skip picking, keep current intersection
+      picked = true;
+    } else if (this._selectionLocked && this._picking.getMesh()) {
       // Keep current mesh, but we might still need to update intersection point on THAT mesh?
       // actually intersectionRayMeshes does both selection AND intersection point update.
       // If we skip it, we don't update the cursor position!
@@ -3019,7 +3050,12 @@ class Scene {
         const origNegative = tool ? tool._negative : false;
         if (isNegative && tool) tool._negative = !origNegative;
 
-        this._sculptManager.updateXR(this._picking, isTriggerPressed, this._vrControllerPos, dir, { isNegative: isNegative, controllers: xrControllers, triggerValue: triggerValue });
+        this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
+          isNegative: isNegative,
+          controllers: xrControllers,
+          triggerValue: triggerValue,
+          handedness: source.handedness
+        });
 
         // Restore original state immediately
         if (isNegative && tool) tool._negative = origNegative;

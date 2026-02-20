@@ -45,7 +45,7 @@ class TransformVR extends SculptBase {
     this._initInput = false;
   }
 
-  updateXR(picking, isPressed, origin, dir) { // Added origin, dir arguments matching SculptManager
+  updateXR(picking, isPressed, origin, dir, options) { // Added origin, dir arguments matching SculptManager
     // 1. Update Gizmo Scale & Matrices (ALWAYS, even if not pressed)
     if (this._gizmo) {
       this._gizmo.update(this._main.getCamera());
@@ -59,8 +59,8 @@ class TransformVR extends SculptBase {
         const physDir = main._vrControllerDirPhys;     // Normalized vector
 
         if (physOrigin && physDir) {
-          // Sync Gizmo Pick Radius with dynamic Brush Radius
-          const radius = main._vrLastPhysicalRadius !== undefined ? main._vrLastPhysicalRadius : 0.05;
+          // Phase 9: Tighten snapping radius to exactly 2.0cm (0.02)
+          const radius = 0.02; 
           var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
 
           if (hitType !== -1) {
@@ -72,7 +72,8 @@ class TransformVR extends SculptBase {
           const rayDir = dir || [0, 0, -1];
           if (rayOrigin && rayDir) {
             const vrScale = main._vrScale || 50.0;
-            const radius = window.gizmoPickRadius !== undefined ? window.gizmoPickRadius : (0.05 * vrScale);
+            // Phase 9: Tighten virtual fallback to 2cm equivalent
+            const radius = 0.02 * vrScale;
             this._gizmo.intersectPhysical(rayOrigin, rayDir, radius, false);
           }
         }
@@ -80,7 +81,16 @@ class TransformVR extends SculptBase {
     }
 
     if (!isPressed) {
-      this._initInput = false;
+      // ONLY release if it's the hand that actually owns the drag
+      if (!this._vrActiveHand || (options && options.handedness === this._vrActiveHand)) {
+        this._initInput = false;
+        this._vrActiveHand = null;
+      }
+      return;
+    }
+
+    // MULTI-HAND GUARD: If we are already dragging with one hand, ignore the other
+    if (this._initInput && options && options.handedness !== this._vrActiveHand) {
       return;
     }
 
@@ -96,6 +106,9 @@ class TransformVR extends SculptBase {
     if (!this._initInput) {
       // START OF GESTURE
       this._initInput = true;
+      if (options && options.handedness) {
+        this._vrActiveHand = options.handedness;
+      }
 
       // 1. Store Start Pos
       vec3.copy(this._startControllerPos, controllerPos);

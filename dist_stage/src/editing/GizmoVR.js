@@ -3,11 +3,11 @@ import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
 
 // Configuration constants
-const COLOR_X = vec3.fromValues(0.7, 0.2, 0.2);
-const COLOR_Y = vec3.fromValues(0.2, 0.7, 0.2);
-const COLOR_Z = vec3.fromValues(0.2, 0.2, 0.7);
-const COLOR_GREY = vec3.fromValues(0.4, 0.4, 0.4);
-const COLOR_SW = vec3.fromValues(0.8, 0.4, 0.2);
+const COLOR_X = vec3.fromValues(1.0, 0.2, 0.2);
+const COLOR_Y = vec3.fromValues(0.2, 1.0, 0.2);
+const COLOR_Z = vec3.fromValues(0.2, 0.2, 1.0);
+const COLOR_GREY = vec3.fromValues(0.5, 0.5, 0.5);
+const COLOR_SW = vec3.fromValues(1.0, 0.5, 0.2);
 const COLOR_SELECT = vec3.fromValues(1.0, 1.0, 0.0);
 
 // Geometry constants
@@ -207,7 +207,9 @@ class GizmoVR {
     let scaleFactor = baseSize * vrScale;
 
     // Enforce reasonable minimum (User confirmed 10.0 worked)
-    if (scaleFactor < 5.0) scaleFactor = 10.0;
+    // FORCE minimum to at least 15 units if vrScale is active
+    if (this._main._vrScale && scaleFactor < 15.0) scaleFactor = 15.0;
+    else if (scaleFactor < 5.0) scaleFactor = 5.0;
 
     if (window.debugGizmoScale) {
       scaleFactor = window.debugGizmoScale;
@@ -354,7 +356,7 @@ class GizmoVR {
       }
     }
 
-    if (!mesh) {
+    if (!mesh || !mesh._gizmo) {
       this._selected = null;
       return -1;
     }
@@ -397,11 +399,12 @@ class GizmoVR {
         elt.updateMatrix(); // Ensure up to date
         const drawGeo = elt._drawGeo;
         drawGeo.setFlatColor(elt._isSelected ? COLOR_SELECT : elt._color);
-        drawGeo.setOpacity(0.5);
+        drawGeo.setOpacity(0.8);
         drawGeo.updateMatrices(camera);
         drawGeo.render(this._main);
       }
     }
+
     // Deep culling restored in Pass 2 wrap-up
     gl.disable(gl.BLEND);
     gl.enable(gl.DEPTH_TEST);
