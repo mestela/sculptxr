@@ -82,26 +82,29 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - Transform tool/gizmo missing
     - Paint is a bit glitchy after 0.7.118
+    - all tools should be sphere intersect based, not aim based? maybe push to post v1?
+( for post v1)
     - Voxel straight line mode
     - Voxel smooth shading
     - Voxel smooth brush
     - Xray mode
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
+    - multiplayer
 
-- **UI + UX**  
+- **UI + UX** 
+- fix two handed grip scale misalignment. 
+- Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
+(for post v1) 
     - nearly time to think about tider panel
     - panel tear off/pin in place?
     - show more heads up things?
     - toolbar/shortcut bar?
     - Lock selection
     - outliner? 
-    - fix two handed grip scale misalignment. 
     - different undo queue for desktop vs standalone
     - Two-handed-grip pivot point needs an overlay icon, not the current purple cube
     - Really need to make 100% VR native dialog, filebrowser for import/export
-    - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
 
@@ -113,6 +116,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+~~- Transform tool/gizmo missing~~ **DONE v0.7.644**
 - ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
 - ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**
 - ~~Twist brush occasional console error~~ - **DONE v0.7.443**
