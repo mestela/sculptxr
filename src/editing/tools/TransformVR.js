@@ -59,8 +59,8 @@ class TransformVR extends SculptBase {
         const physDir = main._vrControllerDirPhys;     // Normalized vector
 
         if (physOrigin && physDir) {
-          // Physical pick radius: 5cm (0.05m)
-          const radius = window.gizmoPickRadiusPhys !== undefined ? window.gizmoPickRadiusPhys : 0.05;
+          // Sync Gizmo Pick Radius with dynamic Brush Radius
+          const radius = main._vrLastPhysicalRadius !== undefined ? main._vrLastPhysicalRadius : 0.05;
           var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
 
           if (hitType !== -1) {

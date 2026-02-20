@@ -24,7 +24,7 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
-console.log("Scene.js loaded v0.7.642");
+console.log("Scene.js loaded v0.7.643");
 
 class Scene {
 

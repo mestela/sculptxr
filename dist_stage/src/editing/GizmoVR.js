@@ -295,7 +295,24 @@ class GizmoVR {
     }
 
     // 2. Perform Intersection
+    // Backup state to prevent destructive clearing if we miss the gizmo
+    const oldMesh = pick.getMesh();
+    const oldFace = pick.getPickedFace();
+    const oldPoint = vec3.clone(pick.getIntersectionPoint());
+    const oldR2 = pick._rWorld2;
+    const oldRL2 = pick._rLocal2;
+
     pick.intersectionRayMeshesVR(this._pickables, origin, direction, radius);
+
+    const hitMesh = pick.getMesh();
+    if (!hitMesh && oldMesh) {
+      // Restore if we missed the gizmo but had a world hit
+      pick._mesh = oldMesh;
+      pick._pickedFace = oldFace;
+      vec3.copy(pick._interPoint, oldPoint);
+      pick._rWorld2 = oldR2;
+      pick._rLocal2 = oldRL2;
+    }
 
     // 3. Restore Matrices
     if (isPhysical) {

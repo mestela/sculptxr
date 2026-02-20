@@ -247,6 +247,15 @@ class GizmoVR {
     const baseMat = mat4.create();
     mat4.translate(baseMat, baseMat, center);
 
+    // Sync Rotation with Mesh
+    if (meshes.length > 0) {
+      const qRot = quat.create();
+      mat4.getRotation(qRot, meshes[0].getMatrix());
+      const mRot = mat4.create();
+      mat4.fromQuat(mRot, qRot);
+      mat4.multiply(baseMat, baseMat, mRot);
+    }
+
     // Update all components
     const components = [
       this._transX, this._transY, this._transZ,
@@ -295,7 +304,24 @@ class GizmoVR {
     }
 
     // 2. Perform Intersection
+    // Backup state to prevent destructive clearing if we miss the gizmo
+    const oldMesh = pick.getMesh();
+    const oldFace = pick.getPickedFace();
+    const oldPoint = vec3.clone(pick.getIntersectionPoint());
+    const oldR2 = pick._rWorld2;
+    const oldRL2 = pick._rLocal2;
+
     pick.intersectionRayMeshesVR(this._pickables, origin, direction, radius);
+
+    const hitMesh = pick.getMesh();
+    if (!hitMesh && oldMesh) {
+      // Restore if we missed the gizmo but had a world hit
+      pick._mesh = oldMesh;
+      pick._pickedFace = oldFace;
+      vec3.copy(pick._interPoint, oldPoint);
+      pick._rWorld2 = oldR2;
+      pick._rLocal2 = oldRL2;
+    }
 
     // 3. Restore Matrices
     if (isPhysical) {
@@ -343,6 +369,7 @@ class GizmoVR {
   render(camera) {
     const gl = this._gl;
     gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
 
     const components = [
       this._transX, this._transY, this._transZ,
@@ -367,6 +394,7 @@ class GizmoVR {
       }
     }
     gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
   }
 
   // --- Geometry Creation Helpers ---

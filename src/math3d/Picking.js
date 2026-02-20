@@ -636,7 +636,8 @@ class Picking {
     var vAr = mesh.getVertices();
     var fAr = mesh.getFaces();
 
-    var distance = Infinity;
+    var minRadiusSq = Infinity;
+    var distance = Infinity; // distanceToCamera - keep for tie-breaking or mesh-sorting
     var nbFaces = fAr.length / 4; // Quads/Tris
 
     // We iterate ALL faces (Structure dependent)
@@ -677,9 +678,9 @@ class Picking {
       if (d1 < radiusSq) {
         vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
         if (vec3.dot(_TMP_V1, dir) > 0.0001) {
-          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-          if (distToCam < distance) {
-            distance = distToCam;
+          if (d1 < minRadiusSq) {
+            minRadiusSq = d1;
+            distance = vec3.sqrDist(_TMP_NEAR, closestRay);
             vec3.copy(this._interPoint, closestEdge); // Snap to Edge
             this._pickedFace = i;
 
@@ -697,9 +698,9 @@ class Picking {
       if (d2 < radiusSq) {
         vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
         if (vec3.dot(_TMP_V1, dir) > 0.0001) {
-          var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-          if (distToCam < distance) {
-            distance = distToCam;
+          if (d2 < minRadiusSq) {
+            minRadiusSq = d2;
+            distance = vec3.sqrDist(_TMP_NEAR, closestRay);
             vec3.copy(this._interPoint, closestEdge);
             this._pickedFace = i;
             if (window.debugPicking) {
@@ -718,9 +719,9 @@ class Picking {
         if (d3 < radiusSq) {
           vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
           if (vec3.dot(_TMP_V1, dir) > 0.0001) {
-            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-            if (distToCam < distance) {
-              distance = distToCam;
+            if (d3 < minRadiusSq) {
+              minRadiusSq = d3;
+              distance = vec3.sqrDist(_TMP_NEAR, closestRay);
               vec3.copy(this._interPoint, closestEdge);
               this._pickedFace = i;
               if (window.debugPicking) {
@@ -741,9 +742,9 @@ class Picking {
         if (d3 < radiusSq) {
           vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
           if (vec3.dot(_TMP_V1, dir) > 0.0001) {
-            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-            if (distToCam < distance) {
-              distance = distToCam;
+            if (d3 < minRadiusSq) {
+              minRadiusSq = d3;
+              distance = vec3.sqrDist(_TMP_NEAR, closestRay);
               vec3.copy(this._interPoint, closestEdge);
               this._pickedFace = i;
               if (window.debugPicking) {
@@ -760,9 +761,9 @@ class Picking {
         if (d4 < radiusSq) {
           vec3.sub(_TMP_V1, closestRay, _TMP_NEAR);
           if (vec3.dot(_TMP_V1, dir) > 0.0001) {
-            var distToCam = vec3.sqrDist(_TMP_NEAR, closestRay);
-            if (distToCam < distance) {
-              distance = distToCam;
+            if (d4 < minRadiusSq) {
+              minRadiusSq = d4;
+              distance = vec3.sqrDist(_TMP_NEAR, closestRay);
               vec3.copy(this._interPoint, closestEdge);
               this._pickedFace = i;
               if (window.debugPicking) {
