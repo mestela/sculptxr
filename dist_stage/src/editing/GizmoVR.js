@@ -376,8 +376,6 @@ class GizmoVR {
     gl.clear(gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
-
-    // Enable blending for 0.5 opacity
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -386,18 +384,17 @@ class GizmoVR {
       this._planeX, this._planeY, this._planeZ,
       this._rotX, this._rotY, this._rotZ, 
       this._scaleX, this._scaleY, this._scaleZ, this._scaleW
-    ];
-
-
-
-    for (let i = 0; i < components.length; ++i) {
+    ]; for (let i = 0; i < components.length; ++i) {
       const elt = components[i];
-      // Only render if active (technically _pickables only added active ones, but we iterate all here)
-      // If mode is 'hit', Picking.js updates the matrix, we just render it.
-
       if (elt._drawGeo) {
-        elt.updateMatrix(); // Ensure up to date
+        elt.updateMatrix(); 
         const drawGeo = elt._drawGeo;
+
+        // SELECTIVE CULLING: Disable for planar handles so they are double-sided
+        const isPlane = (elt === this._planeX || elt === this._planeY || elt === this._planeZ);
+        if (isPlane) gl.disable(gl.CULL_FACE);
+        else gl.enable(gl.CULL_FACE);
+
         drawGeo.setFlatColor(elt._isSelected ? COLOR_SELECT : elt._color);
         drawGeo.setOpacity(0.8);
         drawGeo.updateMatrices(camera);
@@ -416,7 +413,10 @@ class GizmoVR {
   _createArrow(tra, axis, color, scale) {
     tra._baseMatrix = mat4.create();
     const mat = tra._baseMatrix;
-    mat4.rotate(mat, mat, Math.PI * 0.5, axis);
+    const up = vec3.fromValues(0.0, 1.0, 0.0);
+    const q = quat.create();
+    quat.rotationTo(q, up, axis);
+    mat4.fromQuat(mat, q);
     mat4.translate(mat, mat, [0.0, ARROW_LENGTH * 0.5 * scale, 0.0]);
     vec3.copy(tra._color, color);
 
@@ -491,7 +491,10 @@ class GizmoVR {
   _createCube(sca, axis, color, scale) {
     sca._baseMatrix = mat4.create();
     const mat = sca._baseMatrix;
-    mat4.rotate(mat, mat, Math.PI * 0.5, axis);
+    const up = vec3.fromValues(0.0, 1.0, 0.0);
+    const q = quat.create();
+    quat.rotationTo(q, up, axis);
+    mat4.fromQuat(mat, q);
     mat4.translate(mat, mat, [0.0, ROT_RADIUS * scale, 0.0]);
     vec3.copy(sca._color, color);
 
@@ -504,9 +507,9 @@ class GizmoVR {
 
   _initTranslate(scale) {
     const axis = [0.0, 0.0, 0.0];
-    this._createArrow(this._transX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X, scale);
+    this._createArrow(this._transX, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, scale);
     this._createArrow(this._transY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, scale);
-    this._createArrow(this._transZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z, scale);
+    this._createArrow(this._transZ, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, scale);
 
     const s = ARROW_LENGTH * 0.2;
     this._createPlane(this._planeX, COLOR_X, 0.0, s, 0.0, 0.0, 0.0, s, scale);
@@ -524,9 +527,9 @@ class GizmoVR {
 
   _initScale(scale) {
     const axis = vec3.create();
-    this._createCube(this._scaleX, vec3.set(axis, 0.0, 0.0, -1.0), COLOR_X, scale);
+    this._createCube(this._scaleX, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, scale);
     this._createCube(this._scaleY, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_Y, scale);
-    this._createCube(this._scaleZ, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_Z, scale);
+    this._createCube(this._scaleZ, vec3.set(axis, 0.0, 0.0, 1.0), COLOR_Z, scale);
     this._createCircle(this._scaleW, Math.PI * 2, vec3.set(axis, 0.0, 1.0, 0.0), COLOR_SW, SCALE_RADIUS, 2.0, scale);
   }
 }

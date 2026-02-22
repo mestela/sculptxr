@@ -769,7 +769,7 @@ class Scene {
 
         mat4.scale(mHit, mHit, [s, s, s]);
         console.log(`[ForceDebug] Pos: ${this._forceDebugXYZ} Scale: ${s}`);
-        this._debugHitSphere.render(this);
+        // this._debugHitSphere.render(this);
 
       } else if (window.debugHitAttach !== 'controller') {
         const mode = window.debugHitAttach || 'hit';
@@ -819,7 +819,7 @@ class Scene {
           gl2.depthMask(false);
           gl2.disable(gl2.CULL_FACE);
           gl2.disable(gl2.DEPTH_TEST);
-          this._debugHitSphere.render(this);
+          // this._debugHitSphere.render(this);
           gl2.enable(gl2.DEPTH_TEST);
           gl2.disable(gl2.BLEND);
         }
@@ -919,7 +919,7 @@ class Scene {
         gl2.depthMask(false);
         gl2.disable(gl2.CULL_FACE);
         gl2.disable(gl2.DEPTH_TEST); // Always on top
-        this._debugHitSphere.render(this);
+        // this._debugHitSphere.render(this);
         gl2.enable(gl2.DEPTH_TEST);
         gl2.disable(gl2.BLEND);
       }
@@ -969,7 +969,7 @@ class Scene {
       gl2.disable(gl2.CULL_FACE);
       gl2.enable(gl2.DEPTH_TEST);
 
-      this._debugGizmoSphere.render(this);
+      // this._debugGizmoSphere.render(this);
 
       gl2.enable(gl2.DEPTH_TEST);
       gl2.enable(gl2.CULL_FACE);
@@ -1037,11 +1037,11 @@ class Scene {
     if (this._showGrid) this._grid.render(this);
 
     // VR Controllers (Pass 1: Real World)
-    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    if (this._vrControllerRight) this._vrControllerRight.render(this);
+    // if (this._vrControllerLeft) this._vrControllerLeft.render(this);
+    // if (this._vrControllerRight) this._vrControllerRight.render(this);
 
     // Debug Cursor
-    if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
+    // if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
 
     // Meshes (Pass 2: World Scaled)
     // HIDE SCULPT during Calibration (Focus on Controllers/World alignment)
@@ -1691,6 +1691,7 @@ class Scene {
       mesh.normalizeSize();
       // Start Hidden (Scale 0)
       mat4.scale(mesh.getMatrix(), mat4.create(), [0.0, 0.0, 0.0]);
+      mesh.setVisible(false); // FORCED HIDDEN
 
       mesh.setShaderType(Enums.Shader.FLAT);
       mesh.setFlatColor(color);
@@ -1790,6 +1791,7 @@ class Scene {
       meshH.setOpacity(1.0);
       meshH.init();
       meshH.initRender();
+      meshH.setVisible(false); // FORCED OFF
       this._debugHitSphere = meshH;
     }
   }
@@ -1915,7 +1917,7 @@ class Scene {
 
     if (active && pos) {
       if (!this._debugCursor.isVisible()) {
-        this._debugCursor.setVisible(true);
+        // this._debugCursor.setVisible(true);
       }
       var mat = this._debugCursor.getMatrix();
       mat4.identity(mat);
@@ -1932,7 +1934,7 @@ class Scene {
     if (!this._debugHitSphere) return;
 
     if (active && pos) {
-      if (!this._debugHitSphere.isVisible()) this._debugHitSphere.setVisible(true);
+      // if (!this._debugHitSphere.isVisible()) this._debugHitSphere.setVisible(true);
 
       // We only update the matrix here if mode is 'hit'
       // If mode is 'controller' etc, render loop handles it.
@@ -2787,16 +2789,9 @@ class Scene {
     // This prevents the "other hand" from polluting global state (rayOrigin, enginePos, etc.) 
     // or triggering hover/selection events during a drag.
     if (isTransformDrag && this._vrLockedHand && source.handedness !== this._vrLockedHand) {
-      if (window.screenLog && this._logThrottle % 60 === 0) {
-        window.screenLog(`Scene: Isolated ${source.handedness}`, "grey");
-      }
       return;
     }
 
-    if (window.screenLog && this._logThrottle % 30 === 0 && currentTool && currentTool.constructor.name === 'TransformVR') {
-      const isTrig = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0].pressed : false;
-      window.screenLog(`Scene DragGuard: hand=${source.handedness} isDrag=${isTransformDrag} trig=${isTrig}`, isTransformDrag ? "lime" : "orange");
-    }
 
     let picked = false;
     if (isTransformDrag) {
@@ -3130,7 +3125,7 @@ class Scene {
 
     if (active && pos) {
       if (!this._debugCursor.isVisible()) {
-        this._debugCursor.setVisible(true);
+        // this._debugCursor.setVisible(true);
       }
       var mat = this._debugCursor.getMatrix();
       mat4.identity(mat);

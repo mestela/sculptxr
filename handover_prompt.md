@@ -1,25 +1,27 @@
 # Handover Prompt
-## Current Status: v0.7.658 (Stable Beta)
-The GizmoVR intersection and multi-hand stability have been significantly improved, but **frantic drag jitter/popping** remains the primary unresolved issue.
+## Current Status: v0.7.680 (CRASHED / UNSTABLE)
+The session ended with a hard crash and several critical regressions. The "Sticky Drag" and "Mesh Locking" fixes are implemented but the application is currently non-functional in VR.
 
-### Accomplished in this session:
-- **Coordinate Space Alignment**: Resolved the Camera/World space mismatch. Raycasting now correctly uses `_xrWorldOffset` for accurate aiming.
-- **Multi-Hand Isolation**: Each controller now has independent data streams (`enginePos`, `engineQuat` passed via `options`).
-- **Stroke Stability**: Implemented a "Stroke Lock" in `Scene.js`. The drag is now locked to the active hand, preventing the idle hand from terminating the gesture.
-- **Precision Snapping**: Tightened handle selection radius to **1cm** physical for surgical targeting.
+### [CRITICAL] App Crash:
+- **Error**: `Uncaught ReferenceError: components is not defined` at `GizmoVR.js:382`.
+- **Cause**: During the "Selective Culling" refactor for Gizmo planes, the local `components` array variable was accidentally deleted from the `render()` scope while still being used in the loop.
+- **Symptom**: One or both eyes stop rendering in VR, and the app throws continuous exceptions on every frame.
 
-### Primary Blocker for Next Session:
-- **Frantic Drag Jitter**: Scaling and Translation (specifically X-Translate) still exhibit popping/bouncing behavior once a drag is initiated. 
-    - **Note**: Hand-swapping has been ruled out as the cause (logs confirm a single active hand).
-    - **Focus**: Investigative focus should shift to the feedback loop in `TransformVR.js` drag delta calculations and potential matrix resolution issues.
+### [REGRESSIONS] in v0.7.680:
+- **Trans-X Logic**: Selecting the Red (X) handle causes movement on both X and Y. This is due to a copy-paste index error in `TransformVR.js` (`localMove[1]` was assigned instead of `localMove[0]`).
+- **Green X-Ray Sphere**: A persistent green sphere remains visible on the controller despite multiple suppression attempts in `Scene.js`.
 
-## Environment
+### [STABLE FIXES] (Implemented but need verification once crash is resolved):
+- **Mesh Locking**: `TransformVR.js` now correctly caches the mesh at start of drag using `this._dragMesh`.
+- **Selection Protection**: A second hand cannot change the global selection while a drag is active.
+- **Controller Isolation**: `Scene.js` ignores input from the non-dominant hand during an active Transform drag.
+
+### Environment
 - **URL**: [https://tokeru.com/sculptxrbeta/](https://tokeru.com/sculptxrbeta/)
-- **Repo**: `mestela/sculptxr`
+- **Version**: v0.7.680 (Requires fix to `GizmoVR.js:382`)
 - **Deploy**: `./deploy_beta.sh`
 
-## Technical Context
-- `src/editing/tools/TransformVR.js`: Drag delta and constraint math.
-- `src/Scene.js`: XR Input loop and stroke state machine.
-- `src/editing/GizmoVR.js`: Component intersection logic.
-- `docs/vr_gizmo_raycasting_fix.md`: Technical documentation of the coordinate space solution.
+### Technical Context
+- `src/editing/tools/TransformVR.js`: Contains the Trans-X index bug (~line 194).
+- `src/editing/GizmoVR.js`: Contains the `ReferenceError` (~line 382).
+- `src/Scene.js`: Primary location for the ghost "Green Sphere" (likely `_vrControllerLeft` placeholder or `_debugHitSphere`).

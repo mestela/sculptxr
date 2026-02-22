@@ -27,7 +27,6 @@ class TransformVR extends SculptBase {
   }
 
   start(ctrl) {
-    if (window.screenLog) window.screenLog("T-VR: start() called", "cyan");
     var main = this._main;
     var picking = main.getPicking();
 
@@ -38,8 +37,7 @@ class TransformVR extends SculptBase {
     // If we're already dragging, do NOT let start() proceed.
     // This prevents a second hand from changing the global selection mid-drag.
     if (this._initInput) {
-      if (window.screenLog) window.screenLog("T-VR: start() -> IGNORED (Drag Active)", "lime");
-      return false;
+      return false; 
     }
 
     // Check if we hit a mesh
@@ -54,10 +52,6 @@ class TransformVR extends SculptBase {
   }
 
   end() {
-    // Protect end() from clearing state if it's not the active interaction
-    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 5 === 0) {
-      window.screenLog("T-VR: end() received", "red");
-    }
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
@@ -77,7 +71,7 @@ class TransformVR extends SculptBase {
           const physDir = main._vrControllerDirPhys;
 
           if (physOrigin && physDir) {
-            const radius = 0.02;
+            const radius = 0.02; 
             var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
             if (hitType !== -1) {
               this._updateStateFromGizmo(hitType);
@@ -105,9 +99,6 @@ class TransformVR extends SculptBase {
       if (this._vrActiveHand && currentHand === this._vrActiveHand) {
         this._graceFrames = (this._graceFrames || 0) + 1;
         if (this._graceFrames > 5) {
-          if (this._initInput && window.screenLog) {
-            window.screenLog(`T-VR DROP: hand=${currentHand} frames=${this._graceFrames}`, "orange");
-          }
           this._initInput = false;
           this._vrActiveHand = null;
            this._lastHoverHand = null;
@@ -129,17 +120,13 @@ class TransformVR extends SculptBase {
 
     // START OF GESTURE
     if (!this._initInput) {
-    // Find Mesh to Drag
+      // Find Mesh to Drag
       const mesh = this.getMesh();
       if (!mesh) return;
 
       this._initInput = true;
       this._vrActiveHand = currentHand;
       this._dragMesh = mesh; // MESH LOCKING: Cache the target mesh
-
-      if (window.screenLog) {
-        window.screenLog(`T-VR START: hand=${this._vrActiveHand} mesh=${mesh.getID()} mode=${this._mode}`, "lime");
-      }
 
       vec3.copy(this._startControllerPos, main._vrControllerPos);
       quat.copy(this._startControllerQuat, main._vrControllerQuat);
@@ -168,10 +155,6 @@ class TransformVR extends SculptBase {
     mat4.getScaling(meshScale, this._startMeshMatrix);
 
     const translationMatrix = mat4.create();
-
-    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 60 === 0) {
-      window.screenLog(`T-VR DRAG: mesh=${mesh.getID()} delta=${delta[0].toFixed(2)}`, "magenta");
-    }
 
     // MODE: TRANSLATE
     if (this._mode === 0) {
@@ -208,7 +191,7 @@ class TransformVR extends SculptBase {
         if (mask[0]) {
           const dist = vec3.dot(delta, vX); // Project onto World X of Mesh
           const s = Math.abs(meshScale[0]) > 0.0001 ? meshScale[0] : 1.0;
-          localMove[0] = dist / s; // Remove Scale for Local Translate
+          localMove[0] = dist / s;
         }
         if (mask[1]) {
           const dist = vec3.dot(delta, vY);
@@ -396,7 +379,7 @@ class TransformVR extends SculptBase {
 
     // Plane Translation (Move in 2 axes)
     else if (type & GIZMO_TYPE.PLANE_X) { this._mode = 0; this._axisMask = [false, true, true]; }
-    else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; }
+    else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; } 
     else if (type & GIZMO_TYPE.PLANE_Z) { this._mode = 0; this._axisMask = [true, true, false]; } 
 
     else if (type & GIZMO_TYPE.ROT_X) { this._mode = 1; this._axisMask = [true, false, false]; }
@@ -407,11 +390,7 @@ class TransformVR extends SculptBase {
     else if (type & GIZMO_TYPE.SCALE_X) { this._mode = 2; this._axisMask = [true, false, false]; }
     else if (type & GIZMO_TYPE.SCALE_Y) { this._mode = 2; this._axisMask = [false, true, false]; }
     else if (type & GIZMO_TYPE.SCALE_Z) { this._mode = 2; this._axisMask = [false, false, true]; }
-    else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; }
-
-    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 5 === 0) {
-      window.screenLog(`Gizmo Select: type=${type} mode=${this._mode} mask=[${this._axisMask.join(',')}]`, "yellow");
-    }
+    else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; } 
   }
 
   _applyMatrix(mesh, mat) {
