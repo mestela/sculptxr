@@ -52,6 +52,32 @@ class TransformVR extends SculptBase {
   }
 
   end() {
+    if (this._initInput && this._dragMesh && this._undoMatrix) {
+      const mesh = this._dragMesh;
+      const oldMat = mat4.clone(this._undoMatrix);
+      const oldCen = vec3.clone(this._undoCenter);
+      const newMat = mat4.clone(mesh.getMatrix());
+      const newCen = vec3.clone(mesh.getCenter());
+      const main = this._main;
+
+      main.getStateManager().pushStateCustom(() => {
+        // UNDO
+        mat4.copy(mesh.getMatrix(), oldMat);
+        vec3.copy(mesh.getCenter(), oldCen);
+        main.render();
+      }, () => {
+        // REDO
+        mat4.copy(mesh.getMatrix(), newMat);
+        vec3.copy(mesh.getCenter(), newCen);
+        main.render();
+      });
+    }
+
+    this._initInput = false;
+    this._undoMatrix = null;
+    this._undoCenter = null;
+    this._dragMesh = null;
+    super.end();
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
@@ -127,6 +153,12 @@ class TransformVR extends SculptBase {
       this._initInput = true;
       this._vrActiveHand = currentHand;
       this._dragMesh = mesh; // MESH LOCKING: Cache the target mesh
+
+      // UNDO SUPPORT: Capture state once at start of drag
+      this._undoMatrix = mat4.clone(mesh.getMatrix());
+      this._undoCenter = vec3.clone(mesh.getCenter());
+
+      mat4.identity(mesh.getEditMatrix()); 
 
       vec3.copy(this._startControllerPos, main._vrControllerPos);
       quat.copy(this._startControllerQuat, main._vrControllerQuat);
