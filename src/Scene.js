@@ -24,7 +24,7 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 
 
-console.log("Scene.js loaded v0.7.656");
+console.log("Scene.js loaded v0.7.658");
 
 class Scene {
 
@@ -2717,8 +2717,10 @@ class Scene {
     // Only block if we are NOT already busy
     if (this._isPointingAtMenu && !isSculpting && !isToolActive) {
       // DEBUG: STICKY BRUSH DIAGNOSIS
+      // buttons defined below at 2804, let's fix that
+      const trigger = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0] : { pressed: false, value: 0 };
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
-        window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${buttons[0].pressed} Val=${buttons[0].value.toFixed(2)}`, buttons[0].pressed ? "lime" : "red");
+        window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${trigger.pressed} Val=${trigger.value.toFixed(2)}`, trigger.pressed ? "lime" : "red");
       }
 
       // Phase 7: Still update the tool for Scale/Matrices so it doesn't "pop", 
@@ -2735,7 +2737,8 @@ class Scene {
         isNegative: false,
         controllers: [],
         triggerValue: 0.0,
-        handedness: source.handedness
+        handedness: source.handedness,
+        quat: engineQuat
       });
       return;
     }
@@ -2779,6 +2782,22 @@ class Scene {
     // GIZMO DRAG GUARD: If TransformVR is dragging, skip re-picking to keep cursor on handle
     const isTransformDrag = currentTool && currentTool.constructor.name === 'TransformVR' && currentTool._initInput;
 
+    // CONTROLLER ISOLATION: 
+    // If a Transform drag is active, ignore input from any hand other than the locked one.
+    // This prevents the "other hand" from polluting global state (rayOrigin, enginePos, etc.) 
+    // or triggering hover/selection events during a drag.
+    if (isTransformDrag && this._vrLockedHand && source.handedness !== this._vrLockedHand) {
+      if (window.screenLog && this._logThrottle % 60 === 0) {
+        window.screenLog(`Scene: Isolated ${source.handedness}`, "grey");
+      }
+      return;
+    }
+
+    if (window.screenLog && this._logThrottle % 30 === 0 && currentTool && currentTool.constructor.name === 'TransformVR') {
+      const isTrig = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0].pressed : false;
+      window.screenLog(`Scene DragGuard: hand=${source.handedness} isDrag=${isTransformDrag} trig=${isTrig}`, isTransformDrag ? "lime" : "orange");
+    }
+
     let picked = false;
     if (isTransformDrag) {
       // Skip picking, keep current intersection
@@ -2801,9 +2820,10 @@ class Scene {
 
     // 5. Stroke Lifecycle (Corrected API)
     const buttons = source.gamepad.buttons;
-    // FORCE DISABLE IF NOT DOMINANT HAND (Double Safety)
+    // PHASE 11 Fix: If we are already sculpting/dragging with this hand, it IS the trigger state that matters
+    // regardless of global dominance.
     const isDominant = (source.handedness === this._dominantHand);
-    const isTriggerPressed = isDominant && buttons[0].pressed;
+    const isTriggerPressed = (this._vrLockedHand === source.handedness) ? buttons[0].pressed : (isDominant && buttons[0].pressed);
 
     // Log Removed
 
@@ -3054,7 +3074,8 @@ class Scene {
           isNegative: isNegative,
           controllers: xrControllers,
           triggerValue: triggerValue,
-          handedness: source.handedness
+          handedness: source.handedness,
+          quat: engineQuat
         });
 
         // Restore original state immediately

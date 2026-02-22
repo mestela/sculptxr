@@ -18,111 +18,144 @@ class TransformVR extends SculptBase {
     this._axisMask = [true, true, true]; // [X, Y, Z]
 
     this._gizmo = new GizmoVR(main);
+
+    // Robustness
+    this._graceFrames = 0;
+    this._vrActiveHand = null;
+    this._lastHoverHand = null;
+    this._dragMesh = null; // MESH LOCKING: Specific mesh being dragged
   }
 
   start(ctrl) {
+    if (window.screenLog) window.screenLog("T-VR: start() called", "cyan");
     var main = this._main;
     var picking = main.getPicking();
 
     // VR Interaction Only
     if (!main._xrSession) return false;
 
+    // SELECTION PROTECTION:
+    // If we're already dragging, do NOT let start() proceed.
+    // This prevents a second hand from changing the global selection mid-drag.
+    if (this._initInput) {
+      if (window.screenLog) window.screenLog("T-VR: start() -> IGNORED (Drag Active)", "lime");
+      return false;
+    }
+
     // Check if we hit a mesh
     var mesh = picking.getMesh();
     if (!mesh && !this._allowAir) return false;
 
-    // Set Selection
+    // Set Selection (This updates main.setMesh)
     if (!main.setOrUnsetMesh(mesh, ctrl))
       return false;
-
-    // Init Logic handled in updateXR on first press
-    this._initInput = false;
 
     return true; // Occupy the tool
   }
 
   end() {
-    this._initInput = false;
+    // Protect end() from clearing state if it's not the active interaction
+    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 5 === 0) {
+      window.screenLog("T-VR: end() received", "red");
+    }
   }
 
-  updateXR(picking, isPressed, origin, dir, options) { // Added origin, dir arguments matching SculptManager
-    // 1. Update Gizmo Scale & Matrices (ALWAYS, even if not pressed)
+  updateXR(picking, isPressed, origin, dir, options) {
     if (this._gizmo) {
       this._gizmo.update(this._main.getCamera());
 
-      // 2. Hover Logic (Only if not dragging)
-      if (!this._initInput) {
+      // 1. Hover Logic (Only if not dragging AND not in grace period)
+      if (!this._initInput && (!this._graceFrames || this._graceFrames === 0)) {
         const main = this._main;
+        const currentHand = options ? options.handedness : "unknown";
 
-        // Phase 2: Use Physical Pose if available
-        const physOrigin = main._vrControllerPosPhys;   // In Meters
-        const physDir = main._vrControllerDirPhys;     // Normalized vector
+        // Handedness Isolation
+        if (currentHand === main._dominantHand || !this._lastHoverHand || currentHand === this._lastHoverHand) {
+          this._lastHoverHand = currentHand;
 
-        if (physOrigin && physDir) {
-          // Phase 9: Tighten snapping radius to exactly 2.0cm (0.02)
-          const radius = 0.02; 
-          var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
+          const physOrigin = main._vrControllerPosPhys;
+          const physDir = main._vrControllerDirPhys;
 
-          if (hitType !== -1) {
-            this._updateStateFromGizmo(hitType);
-          }
-        } else {
-          // Fallback to Virtual Space (Engine Units)
-          const rayOrigin = origin || main._vrControllerPos;
-          const rayDir = dir || [0, 0, -1];
-          if (rayOrigin && rayDir) {
-            const vrScale = main._vrScale || 50.0;
-            // Phase 9: Tighten virtual fallback to 2cm equivalent
-            const radius = 0.02 * vrScale;
-            this._gizmo.intersectPhysical(rayOrigin, rayDir, radius, false);
+          if (physOrigin && physDir) {
+            const radius = 0.02;
+            var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
+            if (hitType !== -1) {
+              this._updateStateFromGizmo(hitType);
+            }
+          } else {
+            const rayOrigin = origin || main._vrControllerPos;
+            const rayDir = dir || [0, 0, -1];
+            if (rayOrigin && rayDir) {
+              const vrScale = main._vrScale || 50.0;
+              const radius = 0.02 * vrScale;
+              var vrHitType = this._gizmo.intersectPhysical(rayOrigin, rayDir, radius, false);
+              if (vrHitType !== -1) {
+                this._updateStateFromGizmo(vrHitType);
+              }
+            }
           }
         }
       }
     }
 
+    const currentHand = options ? options.handedness : "unknown";
+
+    // 2. Trigger Sensitivity Protection (Grace Period)
     if (!isPressed) {
-      // ONLY release if it's the hand that actually owns the drag
-      if (!this._vrActiveHand || (options && options.handedness === this._vrActiveHand)) {
-        this._initInput = false;
-        this._vrActiveHand = null;
+      if (this._vrActiveHand && currentHand === this._vrActiveHand) {
+        this._graceFrames = (this._graceFrames || 0) + 1;
+        if (this._graceFrames > 5) {
+          if (this._initInput && window.screenLog) {
+            window.screenLog(`T-VR DROP: hand=${currentHand} frames=${this._graceFrames}`, "orange");
+          }
+          this._initInput = false;
+          this._vrActiveHand = null;
+           this._lastHoverHand = null;
+           this._dragMesh = null; // Clear Mesh Lock
+           this._graceFrames = 0;
+         }
       }
       return;
     }
 
-    // MULTI-HAND GUARD: If we are already dragging with one hand, ignore the other
-    if (this._initInput && options && options.handedness !== this._vrActiveHand) {
+    // Handedness isolation: Only follow the hand that started the drag
+    if (this._initInput && currentHand !== this._vrActiveHand) {
       return;
     }
 
+    this._graceFrames = 0; // Hand is back!
+
     const main = this._main;
-    const mesh = this.getMesh();
+
+    // START OF GESTURE
+    if (!this._initInput) {
+    // Find Mesh to Drag
+      const mesh = this.getMesh();
+      if (!mesh) return;
+
+      this._initInput = true;
+      this._vrActiveHand = currentHand;
+      this._dragMesh = mesh; // MESH LOCKING: Cache the target mesh
+
+      if (window.screenLog) {
+        window.screenLog(`T-VR START: hand=${this._vrActiveHand} mesh=${mesh.getID()} mode=${this._mode}`, "lime");
+      }
+
+      vec3.copy(this._startControllerPos, main._vrControllerPos);
+      quat.copy(this._startControllerQuat, main._vrControllerQuat);
+      mat4.copy(this._startMeshMatrix, mesh.getMatrix());
+
+      const q = main._vrControllerQuat;
+      this._controllerRight = vec3.fromValues(1, 0, 0);
+      vec3.transformQuat(this._controllerRight, this._controllerRight, q);
+    }
+
+    // USE LOCKED MESH
+    const mesh = this._dragMesh;
     if (!mesh) return;
 
     const controllerPos = main._vrControllerPos;
     const controllerQuat = main._vrControllerQuat;
-
-    if (!controllerPos || !controllerQuat) return;
-
-    if (!this._initInput) {
-      // START OF GESTURE
-      this._initInput = true;
-      if (options && options.handedness) {
-        this._vrActiveHand = options.handedness;
-      }
-
-      // 1. Store Start Pos
-      vec3.copy(this._startControllerPos, controllerPos);
-      quat.copy(this._startControllerQuat, controllerQuat);
-
-      // 2. Store Start Matrix
-      mat4.copy(this._startMeshMatrix, mesh.getMatrix());
-
-      // 3. Calculate Controller Axes in World Space
-      const q = controllerQuat;
-      this._controllerRight = vec3.fromValues(1, 0, 0);
-      vec3.transformQuat(this._controllerRight, this._controllerRight, q);
-      vec3.normalize(this._controllerRight, this._controllerRight);
-    }
 
     // UPDATE GESTURE
 
@@ -135,6 +168,10 @@ class TransformVR extends SculptBase {
     mat4.getScaling(meshScale, this._startMeshMatrix);
 
     const translationMatrix = mat4.create();
+
+    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 60 === 0) {
+      window.screenLog(`T-VR DRAG: mesh=${mesh.getID()} delta=${delta[0].toFixed(2)}`, "magenta");
+    }
 
     // MODE: TRANSLATE
     if (this._mode === 0) {
@@ -217,7 +254,6 @@ class TransformVR extends SculptBase {
       vec3.normalize(vCurr, vCurr);
 
       // Compute Axis of Rotation (Cross Product)
-      // vStart x vCurr gives axis perpendicular to the plane of movement
       const axis = vec3.create();
       vec3.cross(axis, vStart, vCurr);
 
@@ -227,7 +263,6 @@ class TransformVR extends SculptBase {
       vec3.scale(axis, axis, 1.0 / len); // Normalize Axis
 
       // Compute Angle
-      // dot = cos(theta)
       let dot = vec3.dot(vStart, vCurr);
       dot = Math.min(1.0, Math.max(-1.0, dot)); // Clamp
       const angle = Math.acos(dot);
@@ -235,10 +270,6 @@ class TransformVR extends SculptBase {
       if (Math.abs(angle) < 0.0001) return;
 
       // CONSTRAIN AXIS
-      // We want to project the WORLD axis onto acceptable Local Axes
-
-      // 1. Transform World Axis to Local Axis
-      // L = inv(R) * W
       const qInv = quat.create();
       quat.conjugate(qInv, rot);
 
@@ -319,11 +350,6 @@ class TransformVR extends SculptBase {
         vec3.transformQuat(vY, vY, rot);
         vec3.transformQuat(vZ, vZ, rot);
 
-        // 2. Compute Factors
-        // We use projected lengths. 
-        // Note: Sign matters! dot(v, axis) gives signed distance.
-        // If we cross the center, sign flips -> negative scale -> mirroring.
-
         const factors = vec3.fromValues(1, 1, 1);
 
         if (mask[0]) {
@@ -369,27 +395,28 @@ class TransformVR extends SculptBase {
     else if (type & GIZMO_TYPE.TRANS_Z) { this._mode = 0; this._axisMask = [false, false, true]; }
 
     // Plane Translation (Move in 2 axes)
-    else if (type & GIZMO_TYPE.PLANE_X) { this._mode = 0; this._axisMask = [false, true, true]; } // Plane Normal X -> YZ Move
-    else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; } // Plane Normal Y -> XZ Move
-    else if (type & GIZMO_TYPE.PLANE_Z) { this._mode = 0; this._axisMask = [true, true, false]; } // Plane Normal Z -> XY Move
+    else if (type & GIZMO_TYPE.PLANE_X) { this._mode = 0; this._axisMask = [false, true, true]; }
+    else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; }
+    else if (type & GIZMO_TYPE.PLANE_Z) { this._mode = 0; this._axisMask = [true, true, false]; } 
 
     else if (type & GIZMO_TYPE.ROT_X) { this._mode = 1; this._axisMask = [true, false, false]; }
     else if (type & GIZMO_TYPE.ROT_Y) { this._mode = 1; this._axisMask = [false, true, false]; }
     else if (type & GIZMO_TYPE.ROT_Z) { this._mode = 1; this._axisMask = [false, false, true]; }
-    else if (type & GIZMO_TYPE.ROT_W) { this._mode = 1; this._axisMask = [true, true, true]; } // Free Rotate
+    else if (type & GIZMO_TYPE.ROT_W) { this._mode = 1; this._axisMask = [true, true, true]; } 
 
     else if (type & GIZMO_TYPE.SCALE_X) { this._mode = 2; this._axisMask = [true, false, false]; }
     else if (type & GIZMO_TYPE.SCALE_Y) { this._mode = 2; this._axisMask = [false, true, false]; }
     else if (type & GIZMO_TYPE.SCALE_Z) { this._mode = 2; this._axisMask = [false, false, true]; }
-    else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; } // Uniform Scale
+    else if (type & GIZMO_TYPE.SCALE_W) { this._mode = 2; this._axisMask = [true, true, true]; }
+
+    if (window.screenLog && window.app && window.app._scene && window.app._scene._logThrottle % 5 === 0) {
+      window.screenLog(`Gizmo Select: type=${type} mode=${this._mode} mask=[${this._axisMask.join(',')}]`, "yellow");
+    }
   }
 
   _applyMatrix(mesh, mat) {
-    // Corrected _applyMatrix
+    if (!mesh) return;
     mat4.copy(mesh.getMatrix(), mat);
-    // Force octree/world bound update if needed?
-    // Usually SculptGL updates AABB lazily or during render/tool usage.
-    // Ensure we trigger a render.
     this._main.render();
   }
 
