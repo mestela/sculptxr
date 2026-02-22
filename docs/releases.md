@@ -1,6 +1,8 @@
 # SculptXR Release History
 
-- **v0.7.685** (Current): **Transform Gizmo Undo & Polish**:
+- **v0.7.686** (Current): **Final Gizmo Release**:
+    - **Documentation**: Added comprehensive implementation notes for VR Gizmo and State Management.
+- **v0.7.685**: **Transform Gizmo Undo & Polish**:
     - **Feature**: **Undo/Redo for Gizmo**: Full support for undoing and redoing Translate, Rotate, and Scale operations performed with the Transform Gizmo.
     - **Fix**: **Rotation Alignment**: Handles are now correctly aligned with their respective axes using quaternion math.
     - **Fix**: **Rendering Crash**: Resolved a `ReferenceError` that occurred during stereo rendering of the Gizmo.

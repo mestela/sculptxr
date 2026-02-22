@@ -1,4 +1,4 @@
-# SculptXR (v0.7.685)
+# SculptXR (v0.7.686)
 - WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -8,6 +8,9 @@
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
+*   **v0.7.686**: **Final Gizmo Release**:
+    - **Documentation**: Added comprehensive implementation notes for VR Gizmo and State Management.
+    - **Version**: Final merge of transform gizmo features into master.
 
 Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
 
