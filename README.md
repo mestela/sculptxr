@@ -1,4 +1,4 @@
-# SculptXR (v0.7.470)
+# SculptXR (v0.7.685)
 - WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -18,6 +18,11 @@ It should work on any WebXR compatible device. So far I've tested on:
 - Google Chrome on Windows PCVR via Meta Link and Quest 3
 
 ## Releases
+*   **v0.7.685**: **Transform Gizmo Undo & Polish**:
+    - **Feature**: **Undo/Redo for Gizmo**: Full support for undoing and redoing Translate, Rotate, and Scale operations performed with the Transform Gizmo.
+    - **Fix**: **Rotation Alignment**: Handles are now correctly aligned with their respective axes using quaternion math.
+    - **Fix**: **Rendering Crash**: Resolved a `ReferenceError` that occurred during stereo rendering of the Gizmo.
+    - **Polish**: **Visual Cleanup**: Removed persistent green debug sphere and ensured backface visibility for gizmo planes.
 
 *   **v0.7.619**: **Gizmo Rotation & Picking Fix**:
     - **Fix**: **Rotation Handles**: Corrected the orientation of X (Red) and Z (Blue) rotation rings in `GizmoVR.js`.

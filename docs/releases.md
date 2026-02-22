@@ -1,8 +1,10 @@
 # SculptXR Release History
 
-- **v0.7.258**: **Voxel Performance**:
-    - **Optimization**: **Draw Loop**: Disabled `gl.getError` calls in `ShaderBase.js` (was consuming ~37% of frame time).
-    - **Optimization**: **Voxel Updates**: Optimized `updateVoxelMesh` to skip unnecessary topology calculations.
+- **v0.7.685** (Current): **Transform Gizmo Undo & Polish**:
+    - **Feature**: **Undo/Redo for Gizmo**: Full support for undoing and redoing Translate, Rotate, and Scale operations performed with the Transform Gizmo.
+    - **Fix**: **Rotation Alignment**: Handles are now correctly aligned with their respective axes using quaternion math.
+    - **Fix**: **Rendering Crash**: Resolved a `ReferenceError` that occurred during stereo rendering of the Gizmo.
+    - **Polish**: **Visual Cleanup**: Removed persistent green debug sphere and ensured backface visibility for gizmo planes.
 - **v0.7.619**: **Gizmo Rotation & Picking Fix**:
     - **Fix**: **Rotation Handles**: Corrected the orientation of X (Red) and Z (Blue) rotation rings in `GizmoVR.js`. They are no longer coincident with the Green ring.
     - **Improvement**: **Thick Picking**: Increased the physical picking thickness of rotation rings to ~5-8cm, making them much easier to grab in VR without requiring pixel-perfect accuracy.
@@ -11,7 +13,7 @@
     - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
     - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).
     - **Debug**: Added `debugQueryGizmoScale` for runtime inspection.
-- **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
+- **v0.7.492**: **Move Tool Crash & Symmetry Fix**:
     - **Fix**: **Crash**: Resolved a crash in `Move.startSculpt` when the headset is removed or tracking is lost (null mesh check).
     - **Fix**: **Symmetry Normals**: Fixed visual artifacts ("tide marks") on the symmetry side by ensuring normals are updated based on the *topologically mapped* vertices, not the geometric brush sphere.
     - **Cleanup**: Removed legacy `?v=...` query strings from `index.html` and standardized imports for `Move.js` and `SculptBase.js`.
