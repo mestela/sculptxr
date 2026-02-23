@@ -7,6 +7,7 @@ import Utils from '../../misc/Utils.js';
 import Primitives from '../../drawables/Primitives.js';
 import Enums from '../../misc/Enums.js';
 import Geometry from '../../math3d/Geometry.js';
+import VoxelBounds from '../../drawables/VoxelBounds.js';
 
 class SculptVoxel extends SculptBase {
 
@@ -141,29 +142,8 @@ class SculptVoxel extends SculptBase {
     this._cursorMeshSym.setOpacity(0.4);
     this._cursorMeshSym.setVisible(false);
 
-    // DEBUG: Add a reference cube to verify location/rendering
-    // Use Primitives to ensure correct faces formatting (Quads/Triangles)
-    this._debugCube = Primitives.createCube(main._gl);
-    this._debugCube.setMode(main._gl.LINES); // Use LINES to avoid Quad/Tri mismatch (8 vertices, 24 indices = 12 lines)
-
-    // Primitives.createCube already calls init() and initRender()
-
-    mat4.copy(this._debugCube.getMatrix(), this._gridMatrix);
-    // Scale it to match Voxel Box (100.0)
-    this._debugCube.setShaderType(Enums.Shader.WIREFRAME); // Only Wireframe
-    this._debugCube.setFlatColor([1.0, 0.5, 0.0]); // Orange
-    this._debugCube.setOpacity(0.1); // Ignored by hardcoded shader alpha 0.4, but good for logic
-    this._debugCube.isPickable = false; // Disable picking to avoid blocking raycasts? User said "desktop picking" wanted?
-    // If pickable, raycast hits cube faces. But WIREFRAME shader has no faces?
-    // Geometry intersection uses TRIANGLES.
-    // So picking will still hit the invisible faces of the cube.
-    // Ideally we want to pick THROUGH the cube?
-    // User said "Use Debug Cube for desktop picking!" in original code.
-    // I will leave isPickable=true.
-    this._debugCube.isPickable = true;
-    this._debugCube.setVisible(true); // [USER REQUEST] Show by default to debug boundaries
-
-    // ... (lines 49-68 omitted for brevity if unchanged, but I need to match context)
+    // Voxel Bounds Indicator (Replaces primitive cube)
+    this._voxelBounds = new VoxelBounds(main._gl);
 
     // [USER REQUEST] Show by default to debug boundaries
     // We use addNewMesh to ensure it is in the render loop.
@@ -488,6 +468,10 @@ class SculptVoxel extends SculptBase {
   }
 
   postRender(selection) {
+    if (this._voxelBounds) {
+      this._voxelBounds.render(this._main, this._size, this._gridMatrix);
+    }
+
     if (this._main._xrSession) {
       // In VR, draw our custom Air Cursor
       if (this._cursorMesh && this._cursorMesh.isVisible()) {
@@ -1474,6 +1458,12 @@ class SculptVoxel extends SculptBase {
       if (window.screenLog) window.screenLog(`Fixed Normals: NaNs=${nbNaNs} Zeros=${nbZeros}`, "orange");
       mesh.setNormals(normals); // Re-assign if needed (Reference sharing usually works)
       mesh.updateNormalBuffer();
+    }
+  }
+
+  renderVR(main, camera) {
+    if (this._voxelBounds) {
+      this._voxelBounds.render(main, this._size, this._gridMatrix);
     }
   }
 

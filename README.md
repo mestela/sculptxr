@@ -101,7 +101,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-- symmetry issues voxel remesh can't restore symmetry 
+
 - post v1
     - Voxel straight line mode
     - Voxel smooth shading
@@ -134,6 +134,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~symmetry issues voxel remesh can't restore symmetry~~ **DONE v0.7.696**
 - ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
 - ~~ tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
 - ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
