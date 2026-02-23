@@ -1,5 +1,7 @@
 # SculptXR Release History
 
+- **v0.7.691 - v0.7.692**: **VR Move Tool Symmetry Fix**:
+    - **Fix**: **Symmetry Tearing**: Reverted the Move tool's custom "Master-Slave Topological Mirror" logic back to vanilla SculptGL mathematical "Dual Independent Evaluation" alongside `symFactor`. This completely resolves the horizontal mesh tearing and crossover bug when dragging the center line, allowing seamless pulls across the symmetry plane and restoring the minor "bum crease" (which correctly keeps the mesh sealed).
 - **v0.7.688 - v0.7.690**: **Volume Intersect Default**:
     - **Feature**: Replaced default "Aim/Laser" picking with "Volume Intersect" sphere picking for more predictable brush behavior on surfaces.
     - **Fix**: Crease tool explicitly uses Aim picking to prevent snapping to ridges.
