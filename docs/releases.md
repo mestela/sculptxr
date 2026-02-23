@@ -1,5 +1,7 @@
 # SculptXR Release History
 
+- **v0.7.801**: **Move Tool Symmetry Fix**:
+    - **Fix**: **Symmetry Tearing**: Restored precise Move tool symmetry by removing the 1000-triangle limit in `Picking.js:intersectionSphereMeshes`. This ensures aligned brush centers for primary and mirrored controllers on high-poly meshes.
 - **v0.7.800**: **Voxel Stability & Performance Release**:
     - **Optimization**: **Ray Picking**: Switched SculptVoxel to use efficient Ray Picking in VR, eliminating frame-loop stalls and display warping.
     - **Robustness**: Added a triangle count safeguard (1000 tris) to `intersectionSphereMeshes` to prevent main-thread hangs on high-poly meshes.

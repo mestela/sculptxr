@@ -1,4 +1,4 @@
-# SculptXR (v0.7.800)
+# SculptXR (v0.7.801)
 - WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -8,6 +8,8 @@
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
+*   **v0.7.801**: **Move Tool Symmetry Fix**:
+    - **Fix**: **Symmetry Regression**: Resolved the issue where the Move tool pulled unevenly across the symmetry plane by removing the arbitrary 1000-triangle limit in `Picking.js`.
 *   **v0.7.800**: **Voxel Stability & Performance Release**:
     - **Optimization**: **Ray Picking**: Switched SculptVoxel to use Ray Picking in VR, eliminating CPU stalls and display warping.
     - **Robustness**: Added triangle count safeguards (1000 tris) to prevent hangs on high-poly meshes.
