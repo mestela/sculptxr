@@ -101,7 +101,7 @@ class SculptVoxel extends SculptBase {
       size: size
     });
 
-    if (window.screenLog) window.screenLog("Voxel: Worker Inited", "green");
+    // if (window.screenLog) window.screenLog("Voxel: Worker Inited", "green");
 
     // Cache Grid Info (simulating VoxelState metadata)
     this._res = res;
@@ -246,7 +246,7 @@ class SculptVoxel extends SculptBase {
       this._voxelMesh.setShaderType(Enums.Shader.FLAT);
       this._voxelMesh.setFlatShading(true);
       console.log("Voxel Mesh: FLAT");
-      if (window.screenLog) window.screenLog("Voxel: FLAT", "lime");
+      // if (window.screenLog) window.screenLog("Voxel: FLAT", "lime");
     } else {
       // Lazy Init Normals/Topology if missing
       if (!this._voxelMesh.getNormals() || this._voxelMesh.getNormals().length === 0) {
@@ -448,7 +448,7 @@ class SculptVoxel extends SculptBase {
       // But for Voxel tool, maybe we want to allow it anyway?
       // SculptBase.start return true if we hit something OR if this._allowAir?
       // Let's check SculptBase.js later.
-      if (window.screenLog) window.screenLog("Voxel: start() picking miss (Normal for Air)", "grey");
+      // if (window.screenLog) window.screenLog("Voxel: start() picking miss (Normal for Air)", "grey");
     } else {
       // if (window.screenLog) window.screenLog("Voxel: start() success (Hit Surface)", "lime");
 
@@ -615,7 +615,7 @@ class SculptVoxel extends SculptBase {
       if (mode === 1) mStr = "SUB";
       if (mode === 2) mStr = isNegative ? "DEFLATE" : "INFLATE";
       // Remove throttle for now to ensure visibility
-      window.screenLog(`Vx: ${mStr} (M=${mode} N=${isNegative})`, "yellow");
+      // window.screenLog(`Vx: ${mStr} (M=${mode} N=${isNegative})`, "yellow");
     }
 
     var changed = false;
@@ -758,8 +758,8 @@ class SculptVoxel extends SculptBase {
       if (!this._xrStrokeActive) {
         this._xrStrokeActive = true;
         if (this._worker) {
-          if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
-          else console.log("Voxel: VR Start (Snapshot)");
+          // if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
+          // else console.log("Voxel: VR Start (Snapshot)");
           this._worker.postMessage({ type: 'SNAPSHOT' });
         }
       }
@@ -1356,7 +1356,7 @@ class SculptVoxel extends SculptBase {
       main.removeMeshes([this._debugCube]);
     }
 
-    if (window.screenLog) window.screenLog("Voxel: Bake Complete! Switched to Brush.", "green");
+    // if (window.screenLog) window.screenLog("Voxel: Bake Complete! Switched to Brush.", "green");
 
     // 7. Auto-Switch to Brush (Standard Workflow)
     main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
