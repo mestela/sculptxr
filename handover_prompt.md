@@ -1,27 +1,26 @@
 # SculptXR Handover Prompt
 
-## Objective: Fix Tool Symmetry Failure after Voxel Mirror
+## Objective: v1.0 Stabilization (Feature Freeze)
 
-You are picking up from a session where we successfully fixed the Voxel Mirror implementation (Vertex Compaction & Symmetry Plane Alignment), ensuring it generates a perfectly watertight and symmetrically aligned mesh. However, tools that rely on symmetry (like the Move brush) are currently failing to affect the mirrored side of the mesh after a Voxel Mirror operation.
+The project has entered the **v0.8.0** release cycle. We are officially in a **Feature Freeze**. The objective for this phase is to reach **v1.0** by focusing exclusively on bug fixes, performance optimizations, and UX stability.
 
-## Current Findings
+### Current Status
+- **Baseline**: `v0.8.0` is live on the Beta channel.
+- **Recent Fix**: Resolved a major symmetry regression in the Move tool (removed a 1000-triangle limit in `Picking.js` that caused brush center offsets).
+- **Major Features Complete**: Voxel Remeshing, Transform Gizmo (desktop/VR), Symmetrical Geometric Mapping, and Voxel Bounding Box UI.
 
-1. **Topological vs. Geometric Symmetry**: 
-    - We theorized that `MeshSymmetry.computeSymmetryMapTopo()` correctly bails out after a voxel remesh because the topology is no longer a perfect graph mirror.
-    - We wrote a standalone test script (`testGeoSym.js`) for the fallback `MeshSymmetry.computeSymmetryMapGeo()` array construction, and it **works perfectly**, matching even misaligned/un-mirrored vertices geographically to the nearest neighbor across the symmetry plane based on the `SNAP_RADIUS` (local radius * 0.1). 
-    - Therefore, the issue *isn't* that the mesh has no symmetry map; `MeshSymmetry` is correctly identifying bilateral pairs geographically.
+### Core Rules for this Phase
+1. **NO NEW FEATURES**: Do not implement new tools or experimental features unless explicitly asked for a bug fix that requires an architectural change.
+2. **STABILITY FIRST**: Prioritize fixing "pop", "jitter", or "drift" in VR interactions.
+3. **VERSIONING**: 
+    - The **Source of Truth** for the version is the `<title>` tag in [index.html](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/index.html).
+    - The `deploy.sh` script automatically syncs this version into `src/Version.js` during deployment.
+    - Every new deployment (Beta or Production) REQUIRES a version bump in `index.html`.
 
-2. **Move Tool Symmetry Architecture (`Move.js`)**:
-    - We analyzed `Move.js` and discovered that it **completely bypasses topological vertex snapping** (`pickingSym._pickedVertices`) during its `move()` function.
-    - Instead, it pulls the bilateral pairs but applies a spatial blend called `symFactor` (`Factor = 0.5 + 0.5 * (VertexDist * BrushSide / Radius)`) to smoothly blend bilateral strokes across the seam, preventing the "bum crease" artifact.
-    - In VR, `Move.js` heavily overrides `sculptStrokeXR` and explicitly processes the primary picking (`this._moveData`) and symmetric picking (`this._moveDataSym`) as two independent interactions, manually calculating local-space controller deltas (`qDeltaLocal`).
+### Known Areas to Watch
+- **Symmetry Snapping**: Monitor the consistency of geometric symmetry mapping on remeshed voxel meshes.
+- **VR Transform Alignment**: Ensure the Transform Gizmo and Grab tools remain perfectly centered and do not drift during extended sculpting sessions.
+- **Performance**: Maintain 90Hz in VR. Avoid introducing any code that iterates through every face/vertex on the main thread during `sculptStroke`.
 
-3. **Potential Culprits Found in `SculptBase.js` & `Picking.js`**:
-    - **Backface Culling (`SculptBase.makeStrokeXR`)**: In `v0.6.49`, a fix was added to force surface-relative culling in VR. It negates the `PickedNormal` to use as the `EyeDirection` for `getFrontVertices()`. If the mirrored normal is calculated slightly off (due to geometric picking instead of topological picking), this aggressive culling might be discarding 100% of the mirrored stroke's vertices.
-    - **Symmetric Sphere Intersection (`Picking.intersectionSphereMeshes`)**: In `SculptBase.makeStrokeXR`, the symmetry marker relies heavily on `pickingSym.intersectionSphereMeshes([mesh], symWorldPos, searchRadius);`. If `symWorldPos` isn't piercing the remeshed geometry due to slight dimensional rounding, the secondary picking sphere fails completely (`pick2 = pickingSym.getMesh()` evaluates to false), causing the tool to drop the bilateral stroke silently.
-
-## Next Steps
-
-1. Start by investigating `SculptBase.js` line `616` (`getFrontVertices()` backface culling) and determine if it masks out the mirrored stroke in geometric fallback situations. You can temporarily bypass the `vec3.negate(pickingSym.getEyeDirection(), nSym)` logic to test this.
-2. Investigate whether `pickingSym.getMesh()` actually resolves to a valid mesh during `makeStrokeXR` the moment a tool is pressed down (`isPressed = true`) after a voxel remesh. If it's returning `null`, debug why `intersectionSphereMeshes` is failing to find a hit at `symWorldPos`.
-3. Check `pickingSym.computePickedNormal()` to ensure it's not returning `NaN` or a wild angle on the remeshed side, which would corrupt the stroke vectors.
+## Next Mission
+Wait for user bug reports or regression findings. If a bug is reported, perform deep root-cause analysis (similar to the Move Symmetry investigation in `research.md`) before applying a surgical fix.
