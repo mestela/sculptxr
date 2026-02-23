@@ -248,7 +248,7 @@ class SculptBase {
             if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
             symData = mesh._symmetryData;
           }
-          const symMap = symData ? symData.getMap() : null;
+          const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
 
           if (symMap) {
             const fAr = mesh.getFaces();
@@ -331,7 +331,7 @@ class SculptBase {
             if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
             symData = mesh._symmetryData;
           }
-          const symMap = symData ? symData.getMap() : null;
+          const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
           if (symMap) {
             const mainVerts = picking.getPickedVertices();
             const newVerts = new Uint32Array(mainVerts.length);
@@ -506,7 +506,7 @@ class SculptBase {
               if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
               symData = mesh._symmetryData;
             }
-            const symMap = symData ? symData.getMap() : null;
+            const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
 
             if (symMap) {
               const fAr = mesh.getFaces();
@@ -569,7 +569,7 @@ class SculptBase {
               if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
               symData = mesh._symmetryData;
             }
-            const symMap = symData ? symData.getMap() : null;
+            const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
             if (symMap) {
               const mainVerts = picking.getPickedVertices();
               const newVerts = new Uint32Array(mainVerts.length);

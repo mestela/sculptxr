@@ -8,6 +8,11 @@ class MeshSymmetry {
     this._mesh = mesh;
     this._map = null; // Uint32Array: map[i] = pairedIndex (or -1)
     this._mapVersion = -1; // Mesh version when map was computed
+    this._isTopo = false; // Flag to indicate if current map is topologically accurate
+  }
+
+  isTopo() {
+    return this._isTopo;
   }
 
   getMap() {
@@ -39,9 +44,11 @@ class MeshSymmetry {
     // 2. Fallback to Geometric Symmetry (Robust for Dyntopo / Asymmetric Topology)
 
     if (this.computeSymmetryMapTopo()) {
+      this._isTopo = true;
       return;
     }
 
+    this._isTopo = false;
     this.computeSymmetryMapGeo();
   }
 

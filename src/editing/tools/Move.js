@@ -45,7 +45,12 @@ class Move extends SculptBase {
           var mInv = mat4.create();
           mat4.invert(mInv, mesh.getMatrix());
           vec3.transformMat4(worldPos, worldPos, mInv); // To Local
-          worldPos[0] = -worldPos[0]; // Mirror X
+
+        // Use proper symmetry mathematics
+        var ptPlane = mesh.getSymmetryOrigin();
+        var nPlane = mesh.getSymmetryNormal();
+        Geometry.mirrorPoint(worldPos, ptPlane, nPlane);
+
           vec3.transformMat4(worldPos, worldPos, mesh.getMatrix()); // Back to World
           
           pickingSym.intersectionSphereMeshes([mesh], worldPos, picking.getWorldRadius());
