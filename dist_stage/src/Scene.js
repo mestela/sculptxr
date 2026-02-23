@@ -2810,7 +2810,7 @@ class Scene {
 
       // Feature Toggle: Crease and Transform use Ray/Aim intersect instead of volume
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR')) {
+      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 
@@ -2821,7 +2821,7 @@ class Scene {
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR')) {
+      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 

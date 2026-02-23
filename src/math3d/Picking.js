@@ -278,8 +278,10 @@ class Picking {
       fAr = mesh.getFaces();
 
       // Find closest face
+      var faceCount = 0;
       for (var j = 0; j < iFaces.length; ++j) {
-        var indFace = iFaces[j] * 4;
+      if (faceCount++ > 1000) break; // PERFORMANCE SAFEGUARD: Do not check more than 1000 triangles per mesh
+      var indFace = iFaces[j] * 4;
 
         // Get vertices
         var iv1 = fAr[indFace] * 3;

@@ -85,11 +85,7 @@ class VoxelBounds {
 
     // Draw Unlit Wireframe
     const shader = ShaderLib[Enums.Shader.UNLIT].getOrCreate(gl);
-
-    // Disable depth testing so the bounding box always renders over the mesh
-    gl.disable(gl.DEPTH_TEST);
     shader.draw(this, main);
-    gl.enable(gl.DEPTH_TEST);
   }
 
   // ==== ShaderBase Rigorous Interface Fake ====
