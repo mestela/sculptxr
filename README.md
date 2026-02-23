@@ -1,5 +1,5 @@
 # SculptXR (v0.7.801)
-- WebXR Sculpting
+WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
 *SculptGL running on desktop, with SculptXR running natively on a Quest 3 in foreground in AR/passthrough mode.*
@@ -7,31 +7,19 @@
 ## Overview
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
-Try the latest build [here!](https://tokeru.com/sculptxr/)
-*   **v0.7.801**: **Move Tool Symmetry Fix**:
-    - **Fix**: **Symmetry Regression**: Resolved the issue where the Move tool pulled unevenly across the symmetry plane by removing the arbitrary 1000-triangle limit in `Picking.js`.
-*   **v0.7.800**: **Voxel Stability & Performance Release**:
-    - **Optimization**: **Ray Picking**: Switched SculptVoxel to use Ray Picking in VR, eliminating CPU stalls and display warping.
-    - **Robustness**: Added triangle count safeguards (1000 tris) to prevent hangs on high-poly meshes.
-    - **UI**: **Voxel Bounding Box**: Added a static orange wireframe representing maximum volume limits.
-    - **UI**: **Depth Integration**: Fixed bounds to respect scene depth (no longer always on top).
-    - **UX**: **Transform Lock**: Voxel meshes are now locked to prevent alignment drift.
-*   **v0.7.693 - v0.7.696**: **Voxel Mirror Tool Symmetry Fix**:
-    - **Fix**: **Symmetry Failure**: Resolved a critical issue where sculpting tools failed to apply symmetry after a mesh had undergone a Voxel Mirror operation. 
-    - **System**: Forced `SculptBase` to cleanly fallback to pure mathematical plane projection and spatial Sphere picking when topological symmetry is broken (like after a Remesh).
-    - **Fix**: **Move Tool Mirrors**: Fixed the Move Tool's VR symmetry origin projection math to use arbitrary plane points and normals.
-*   **v0.7.691 - v0.7.692**: **VR Move Tool Symmetry**:
-    - **Fix**: Reverted the Move tool's custom Master-Slave topological mirror logic back to vanilla SculptGL mathematical Dual Independent Evaluation alongside `symFactor`. This completely resolves the horizontal mesh tearing and crossover bug when dragging the center line.
-*   **v0.7.688 - v0.7.690**: **Volume Intersect Default**:
-    - **Feature**: Replaced default "Aim/Laser" picking with "Volume Intersect" sphere picking for more predictable brush behavior on surfaces.
-    - **UI**: Added "Aim Picking Mode (Raycast)" toggle in VR Settings > Input to optionally revert.
-    - **UI**: Added "Aim Picking Mode (Raycast)" toggle in VR Settings > Input to optionally revert to the old interaction style across all tools.
-    - **UI**: Hidden "Local Scale" and "Transform" from the VR Tools menu.
-*   **v0.7.687**: **Two-Handed Scale Fix**:
-    - **Fix**: **Math Bug**: Corrected a vector math bug in `Scene.scaleWorld` that mistakenly divided the coordinate offset by the scale ratio instead of multiplying it. 
-    - **UX**: **Dolly Zoom**: The held object now maintains its physical distance from the user during a two-handed scale.
+Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
 
-Watch a demo of the Feb 4 build [here!](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
+Try the latest build [here!](https://tokeru.com/sculptxr/)
+
+*   v0.7.801: Move Tool Symmetry Fix
+*   v0.7.800: Voxel Stability & Performance Release
+*   v0.7.696: Voxel Mirror Tool Symmetry Fix
+*   v0.7.692: VR Move Tool Symmetry
+*   v0.7.690: Volume Intersect Default
+*   v0.7.687: Two-Handed Scale Fix
+
+
+[View Full Release History](docs/releases.md)
 
 
 ## Supported Platforms
@@ -39,73 +27,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 - Quest 2 and Quest 3 browser in standalone
 - Google Chrome on Windows PCVR via Meta Link and Quest 3
 
-## Releases
-*   **v0.7.685**: **Transform Gizmo Undo & Polish**:
-    - **Feature**: **Undo/Redo for Gizmo**: Full support for undoing and redoing Translate, Rotate, and Scale operations performed with the Transform Gizmo.
-    - **Fix**: **Rotation Alignment**: Handles are now correctly aligned with their respective axes using quaternion math.
-    - **Fix**: **Rendering Crash**: Resolved a `ReferenceError` that occurred during stereo rendering of the Gizmo.
-    - **Polish**: **Visual Cleanup**: Removed persistent green debug sphere and ensured backface visibility for gizmo planes.
-
-*   **v0.7.619**: **Gizmo Rotation & Picking Fix**:
-    - **Fix**: **Rotation Handles**: Corrected the orientation of X (Red) and Z (Blue) rotation rings in `GizmoVR.js`.
-    - **Improvement**: **Thick Picking**: Increased the physical picking thickness of rotation rings to ~5-8cm, making them much easier to grab in VR.
-*   **v0.7.602**: **Gizmo Scale Fix**:
-    - **Fix**: **Scale**: Corrected Gizmo scale to 1.0 (was 4x too big).
-    - **Fix**: **Visibility**: Resolved bug where Gizmo was invisible on load (`0.0` scale init override).
-*   **v0.7.492** (Current): **Move Tool Crash & Symmetry Fix**:
-    - **Fix**: **Crash**: Resolved persistent crash in Move Tool when mesh is null.
-    - **Fix**: **Symmetry Normals**: Fixed "tide mark" artifacts by correctly updating normals for topologically mapped vertices.
-    - **Cleanup**: Standardized imports and removed version hacks.
-*   **v0.7.485***: **Symmetry & Undo Fixed**:
-    - **Robust Undo/Redo**: Fixed state tracking for Symmetrize and Move with Symmetry, preventing "tearing" and "creases".
-    - **Topological Snap**: Symmetry now correctly handles topological matches even when vertices have drifted slightly.
-    - **Cached Mapping**: Optimized symmetry calculations by caching the topological map.
-    - **True Centering**: Vertices on the symmetry plane are now correctly snapped and handled.
-*   **v0.7.434**: **Tool Improvements**:
-    - **Hide Drag**: Disabled unstable Drag tool.
-    - **Crease Pull**: Sub Mode (Left Trigger) now pulls creases outward.
-    - **Smooth**: Adjusted Sharpen intensity (Negative Smooth) to be safer, currently disabled by default.
-    - **Bug Fix**: Fixed crash on launch related to Drag tool registration.
-*   **v0.7.429**: Added **Drag-to-Scroll** for main panel, fixed Combobox highlights and interaction logic.
-*   **v0.7.416**: **Hand Swap** support, Left Trigger Feedback (Sub Mode), and Universal Sub Mode visuals.
-### Recent Updates
-- **v0.7.443**: 6DOF Move Tool (Position + Rotation) with improved symmetry compensation.
-- **v0.7.434**: UX Polish (Hidden Drag, Smooth tweaks).
-- **v0.7.431**: Crease Tool "Pinch-Pull" mode.
-- **v0.7.429**: UI Cleanup & Bug fixes.
-- **v0.7.423**: **Universal Sub Mode & Visuals**:
-    - **Feature**: **Universal Sub Mode**: Holding the **Left Trigger** now subtracts/inverts the brush action for ALL tools (Right Hand).
-    - **Visual**: **Red Cursor**: The brush cursor turns **RED** when Sub Mode is active.
-    - **Fix**: **Left Hand Sculpting Disabled**: The Left Hand can no longer accidentally sculpt; it is reserved for modifiers and future navigation.
-    - **Fix**: **Left Hand Mode**: Added "Dominant Hand Swap" toggle in **Settings > Input**.
-    - **Fix**: **Menu Alignment**: Fixed VR Menu offset to correctly appear on the inner side of the controller for both hands.
-
-- **v0.7.401**: **VR Menu Refinement**:
-    - **UI**: **Menu Cleanup**: Removed desktop-only menus (Camera, Tablet, Language) from VR view.
-    - **UI**: **About & Help**: Added dynamic version, website/github links, credits, and a controls cheatsheet.
-    - **Fix**: **Widget Rendering**: Fixed `info` widgets not rendering in overlays.
-
-- **v0.7.389**: **VR Twist Brush (Drill Mode)**:
-    - **Feature**: **Drill Mode**: Twist brush now works in VR! Point and twist to drill the mesh.
-    - **Feature**: **Symmetry**: Fully supported with mirrored position and reversed rotation.
-    - **Fix**: **Crash**: Resolved `mat4` and `center` access errors in VR.
-
-- **v0.7.381**: **UI Polish & Voxel Symmetry**:
-    - **UI**: **Flame Style**: Removed borders, added solid backgrounds, standardized heights/text sizes.
-    - **UI**: **Overlay**: Fixed overflow in Files menu, exposed `window.guiXR.styles` for theming.
-    - **Fix**: **Voxel Symmetry**: Fixed Inflate/Deflate ignoring symmetry.
-    - **Feature**: **Trigger Modulation**: Added Analog Trigger support for Radius/Intensity (Rabbit/Turtle mode).
-
-- **v0.7.261**: Voxel GC Optimization (Octree Pooling).
-- **v0.7.260**: Voxel Normal Optimization (Skip expensive compute).
-
-- **v0.7.259**: Fix GL Error 1282 (Buffer Mismatch).
-    - **Fix**: **Mesh Allocation**: Resolved `GL_INVALID_OPERATION` by fixing buffer resizing logic.
-    - **Optimization**: **Buffer Updates**: Optimized Dynamic Buffer updates.
-
-
-
-[View Full Release History](docs/releases.md)
 
 ## Todo
 - final shakedown of runtime issues (occasional select errors, shader compile errors) -- fuzzing?
@@ -141,7 +62,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 - ~~Show Voxel Grid/Boundary Box (Users report drawing out of bounds)~~ **DONE v0.7.800**
 - ~~symmetry issues voxel remesh can't restore symmetry~~ **DONE v0.7.696**
 - ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
-- ~~ tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
+- ~~tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
 - ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
 - ~~Transform tool/gizmo missing~~ **DONE v0.7.644**
 - ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
