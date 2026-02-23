@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+- **v0.7.693 - v0.7.696**: **Voxel Mirror Tool Symmetry Fix**:
+    - **Fix**: **Symmetry Failure**: Resolved a critical issue where sculpting tools failed to apply symmetry after a mesh had undergone a Voxel Mirror operation. 
+    - **System**: Differentiated between Topological and Geometric symmetry maps. Forced `SculptBase` to cleanly fallback to pure mathematical plane projection and spatial Sphere picking when topological maps are invalid (like after a Remesh), rather than attempting to interpolate broken barycentric coordinates.
+    - **Fix**: **Move Tool Mirrors**: Fixed the Move Tool's VR symmetry origin projection math to use arbitrary plane points and normals rather than a hardcoded X-axis flip.
 - **v0.7.691 - v0.7.692**: **VR Move Tool Symmetry Fix**:
     - **Fix**: **Symmetry Tearing**: Reverted the Move tool's custom "Master-Slave Topological Mirror" logic back to vanilla SculptGL mathematical "Dual Independent Evaluation" alongside `symFactor`. This completely resolves the horizontal mesh tearing and crossover bug when dragging the center line, allowing seamless pulls across the symmetry plane and restoring the minor "bum crease" (which correctly keeps the mesh sealed).
 - **v0.7.688 - v0.7.690**: **Volume Intersect Default**:

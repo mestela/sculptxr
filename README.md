@@ -1,4 +1,4 @@
-# SculptXR (v0.7.692)
+# SculptXR (v0.7.696)
 - WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -8,6 +8,10 @@
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
+*   **v0.7.693 - v0.7.696**: **Voxel Mirror Tool Symmetry Fix**:
+    - **Fix**: **Symmetry Failure**: Resolved a critical issue where sculpting tools failed to apply symmetry after a mesh had undergone a Voxel Mirror operation. 
+    - **System**: Forced `SculptBase` to cleanly fallback to pure mathematical plane projection and spatial Sphere picking when topological symmetry is broken (like after a Remesh).
+    - **Fix**: **Move Tool Mirrors**: Fixed the Move Tool's VR symmetry origin projection math to use arbitrary plane points and normals.
 *   **v0.7.691 - v0.7.692**: **VR Move Tool Symmetry**:
     - **Fix**: Reverted the Move tool's custom Master-Slave topological mirror logic back to vanilla SculptGL mathematical Dual Independent Evaluation alongside `symFactor`. This completely resolves the horizontal mesh tearing and crossover bug when dragging the center line.
 *   **v0.7.688 - v0.7.690**: **Volume Intersect Default**:
@@ -97,7 +101,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-- symmetry issues, move will break symetry at center line, voxel remesh can't restore symmetry 
+- symmetry issues voxel remesh can't restore symmetry 
 - post v1
     - Voxel straight line mode
     - Voxel smooth shading
@@ -130,6 +134,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
 - ~~ tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
 - ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
 ~~- Transform tool/gizmo missing~~ **DONE v0.7.644**
