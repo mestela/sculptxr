@@ -212,6 +212,7 @@ class Grab extends SculptBase {
         }
 
         if (mesh) {
+          if (mesh._isVoxel) return; // LOCK TRANSFORM
           this._grabbedMesh = mesh;
           this._activeController = active; // First assignment
 

@@ -31,6 +31,7 @@ class Transform extends SculptBase {
   start(ctrl) {
     var main = this._main;
     var mesh = this.getMesh();
+    if (mesh && mesh._isVoxel) return false; // LOCK TRANSFORM
     var picking = main.getPicking();
 
     if (mesh && this._gizmo.onMouseDown()) {

@@ -28,6 +28,8 @@ class TransformVR extends SculptBase {
 
   start(ctrl) {
     var main = this._main;
+    var mesh = this.getMesh();
+    if (mesh && mesh._isVoxel) return false; // LOCK TRANSFORM
     var picking = main.getPicking();
 
     // VR Interaction Only
@@ -41,7 +43,7 @@ class TransformVR extends SculptBase {
     }
 
     // Check if we hit a mesh
-    var mesh = picking.getMesh();
+    // var mesh = picking.getMesh(); // This line was moved up
     if (!mesh && !this._allowAir) return false;
 
     // Set Selection (This updates main.setMesh)
@@ -125,6 +127,7 @@ class TransformVR extends SculptBase {
       if (this._vrActiveHand && currentHand === this._vrActiveHand) {
         this._graceFrames = (this._graceFrames || 0) + 1;
         if (this._graceFrames > 5) {
+          if (this._dragMesh && this._dragMesh._isVoxel) return; // LOCK TRANSFORM
           this._initInput = false;
           this._vrActiveHand = null;
            this._lastHoverHand = null;
@@ -148,7 +151,7 @@ class TransformVR extends SculptBase {
     if (!this._initInput) {
       // Find Mesh to Drag
       const mesh = this.getMesh();
-      if (!mesh) return;
+      if (!mesh || mesh._isVoxel) return;
 
       this._initInput = true;
       this._vrActiveHand = currentHand;
