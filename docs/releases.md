@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+- **v0.7.688 - v0.7.690**: **Volume Intersect Default**:
+    - **Feature**: Replaced default "Aim/Laser" picking with "Volume Intersect" sphere picking for more predictable brush behavior on surfaces.
+    - **Fix**: Crease tool explicitly uses Aim picking to prevent snapping to ridges.
+    - **Fix**: Twist brush radius indicator is hidden to prevent confusion.
+    - **UI**: Added "Aim Picking Mode (Raycast)" toggle in VR Settings > Input to optionally revert to the old interaction style across all tools.
+    - **UI**: Hidden "Local Scale" and "Transform" from the VR Tools menu.
 - **v0.7.687** (Current): **Two-Handed Jaws Scale Fix**:
     - **Fix**: **Math Bug**: Corrected a vector math bug in `Scene.scaleWorld` that mistakenly divided the coordinate offset by the scale ratio instead of multiplying it. 
     - **UX**: **Dolly Zoom**: The held object now perfectly maintains its physical distance from the user (Jaws/Vertigo effect) during a two-handed scale, completely eliminating the "flying away" or "getting uncomfortably close" issues.
