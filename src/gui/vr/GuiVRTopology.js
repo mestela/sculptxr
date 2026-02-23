@@ -133,6 +133,41 @@ export default function getTopologyWidgets(main) {
       }
     }
   });
+  y += btnH + gapBtn;
+
+  widgets.push({
+    type: 'button', id: 'voxel_mirror_lr', label: 'Mirror L \u2192 R', x: col1X, y: y, w: 170, h: btnH,
+    onInteract: () => {
+      if (main.getMesh()) {
+        const mesh = main.getMesh();
+        const wasDynamic = mesh.isDynamic;
+        let nmesh = Remesh.voxelMirror(mesh, 0);
+        if (wasDynamic) nmesh = new MeshDynamic(nmesh);
+        main.getStateManager().pushStateAddRemove(nmesh, [mesh]);
+        main.getMeshes().splice(main.getIndexMesh(mesh), 1);
+        main.getMeshes().push(nmesh);
+        main.setMesh(nmesh);
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'voxel_mirror_rl', label: 'Mirror R \u2192 L', x: 200, y: y, w: 170, h: btnH,
+    onInteract: () => {
+      if (main.getMesh()) {
+        const mesh = main.getMesh();
+        const wasDynamic = mesh.isDynamic;
+        let nmesh = Remesh.voxelMirror(mesh, 1);
+        if (wasDynamic) nmesh = new MeshDynamic(nmesh);
+        main.getStateManager().pushStateAddRemove(nmesh, [mesh]);
+        main.getMeshes().splice(main.getIndexMesh(mesh), 1);
+        main.getMeshes().push(nmesh);
+        main.setMesh(nmesh);
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
   y += btnH + gapSection;
 
 

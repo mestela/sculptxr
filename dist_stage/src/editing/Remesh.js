@@ -480,4 +480,129 @@ Remesh.mergeMeshes = function (meshes, baseMesh) {
   return createMesh(baseMesh, arr.faces, arr.vertices, arr.colors, arr.materials);
 };
 
+Remesh.voxelMirror = function (mesh, direction) {
+  var keepDir = direction === 0 ? -1 : 1;
+  var ptPlane = mesh.getSymmetryOrigin();
+  var nPlane = mesh.getSymmetryNormal();
+  var vAr = mesh.getVertices();
+  var fAr = mesh.getFaces();
+  var nbFaces = mesh.getNbFaces();
+
+  var facesMask = new Uint8Array(nbFaces);
+  var keepCount = 0;
+
+  for (var i = 0; i < nbFaces; ++i) {
+    var idTri = i * 4;
+    var iv1 = fAr[idTri] * 3;
+    var iv2 = fAr[idTri + 1] * 3;
+    var iv3 = fAr[idTri + 2] * 3;
+    var iv4 = fAr[idTri + 3];
+
+    var dist1 = (vAr[iv1] - ptPlane[0]) * nPlane[0] + (vAr[iv1 + 1] - ptPlane[1]) * nPlane[1] + (vAr[iv1 + 2] - ptPlane[2]) * nPlane[2];
+    var dist2 = (vAr[iv2] - ptPlane[0]) * nPlane[0] + (vAr[iv2 + 1] - ptPlane[1]) * nPlane[1] + (vAr[iv2 + 2] - ptPlane[2]) * nPlane[2];
+    var dist3 = (vAr[iv3] - ptPlane[0]) * nPlane[0] + (vAr[iv3 + 1] - ptPlane[1]) * nPlane[1] + (vAr[iv3 + 2] - ptPlane[2]) * nPlane[2];
+
+    var dist4 = 0;
+    if (iv4 !== Utils.TRI_INDEX) {
+      var iv4_3 = iv4 * 3;
+      dist4 = (vAr[iv4_3] - ptPlane[0]) * nPlane[0] + (vAr[iv4_3 + 1] - ptPlane[1]) * nPlane[1] + (vAr[iv4_3 + 2] - ptPlane[2]) * nPlane[2];
+    }
+
+    var keepBase = false;
+    if (keepDir === -1) {
+      if (dist1 <= 0 || dist2 <= 0 || dist3 <= 0 || (iv4 !== Utils.TRI_INDEX && dist4 <= 0)) keepBase = true;
+    } else {
+      if (dist1 >= 0 || dist2 >= 0 || dist3 >= 0 || (iv4 !== Utils.TRI_INDEX && dist4 >= 0)) keepBase = true;
+    }
+
+    if (keepBase) {
+      facesMask[i] = 1;
+      keepCount++;
+    }
+  }
+
+  // Compact Vertices
+  var nbVertices = mesh.getNbVertices();
+  var vertMap = new Int32Array(nbVertices);
+  vertMap.fill(-1);
+  var uniqueVerts = 0;
+
+  for (var i = 0; i < nbFaces; ++i) {
+    if (facesMask[i] === 0) continue;
+    var idTri = i * 4;
+    for (var j = 0; j < 4; ++j) {
+      var iv = fAr[idTri + j];
+      if (iv !== Utils.TRI_INDEX && vertMap[iv] === -1) {
+        vertMap[iv] = uniqueVerts++;
+      }
+    }
+  }
+
+  var vArNew = new Float32Array(uniqueVerts * 3);
+  var cArOld = mesh.getColors();
+  var cArNew = cArOld ? new Float32Array(uniqueVerts * 3) : null;
+  var mArOld = mesh.getMaterials();
+  var mArNew = mArOld ? new Float32Array(uniqueVerts * 3) : null;
+
+  for (var i = 0; i < nbVertices; ++i) {
+    var newId = vertMap[i];
+    if (newId !== -1) {
+      var i3 = i * 3;
+      var n3 = newId * 3;
+      vArNew[n3] = vAr[i3];
+      vArNew[n3 + 1] = vAr[i3 + 1];
+      vArNew[n3 + 2] = vAr[i3 + 2];
+      if (cArNew) {
+        cArNew[n3] = cArOld[i3];
+        cArNew[n3 + 1] = cArOld[i3 + 1];
+        cArNew[n3 + 2] = cArOld[i3 + 2];
+      }
+      if (mArNew) {
+        mArNew[n3] = mArOld[i3];
+        mArNew[n3 + 1] = mArOld[i3 + 1];
+        mArNew[n3 + 2] = mArOld[i3 + 2];
+      }
+    }
+  }
+
+  var facesBase = new Uint32Array(keepCount * 4);
+  var acc = 0;
+  for (var i = 0; i < nbFaces; ++i) {
+    if (facesMask[i] === 0) continue;
+    var idTri = i * 4;
+    var acc4 = acc * 4;
+    facesBase[acc4] = vertMap[fAr[idTri]];
+    facesBase[acc4 + 1] = vertMap[fAr[idTri + 1]];
+    facesBase[acc4 + 2] = vertMap[fAr[idTri + 2]];
+    facesBase[acc4 + 3] = fAr[idTri + 3] === Utils.TRI_INDEX ? Utils.TRI_INDEX : vertMap[fAr[idTri + 3]];
+    acc++;
+  }
+
+  var meshBase = new MeshStatic(mesh.getGL());
+  meshBase.setID(mesh.getID());
+  meshBase.setVertices(vArNew);
+  if (cArNew) meshBase.setColors(cArNew);
+  if (mArNew) meshBase.setMaterials(mArNew);
+  meshBase.setFaces(facesBase);
+  meshBase.init();
+  mat4.copy(meshBase.getMatrix(), mesh.getMatrix());
+
+  var meshClone = new MeshStatic(mesh.getGL());
+  meshClone.setID(mesh.getID());
+  meshClone.setVertices(new Float32Array(vArNew));
+  if (cArNew) meshClone.setColors(new Float32Array(cArNew));
+  if (mArNew) meshClone.setMaterials(new Float32Array(mArNew));
+  meshClone.setFaces(new Uint32Array(facesBase));
+  meshClone.init();
+  var mClone = meshClone.getMatrix();
+  mat4.copy(mClone, mesh.getMatrix());
+  mat4.translate(mClone, mClone, ptPlane);
+  mat4.scale(mClone, mClone, [-1, 1, 1]);
+  mat4.translate(mClone, mClone, [-ptPlane[0], -ptPlane[1], -ptPlane[2]]);
+
+  var nmesh = Remesh.remesh([meshBase, meshClone], mesh, false);
+
+  return nmesh;
+};
+
 export default Remesh;
