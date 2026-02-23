@@ -67,52 +67,7 @@ class Move extends SculptBase {
         }
       }
 
-      // TOPOLOGICAL VERTEX SNAP (Corrects Drift)
-      if (pickingSym.getMesh() && mesh) {
-        // Robust Fallback
-        let symData = null;
-        if (typeof mesh.getSymmetryData === 'function') {
-          symData = mesh.getSymmetryData();
-        } else {
-          if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
-          symData = mesh._symmetryData; // Assuming imported via SculptBase or global scope
-        }
-        const symMap = symData ? symData.getMap() : null;
-
-        if (symMap && this._moveData.iVerts) {
-          const mainVerts = this._moveData.iVerts;
-          const nbVerts = mainVerts.length;
-          const newVerts = new Uint32Array(nbVerts);
-          let acc = 0;
-          for (let i = 0; i < nbVerts; ++i) {
-            const id = mainVerts[i];
-            const mid = symMap[id];
-            if (mid !== -1) newVerts[acc++] = mid;
-          }
-          // Update Sym Move Data with EXACT mapped vertices
-          const symVerts = newVerts.subarray(0, acc);
-          this._moveDataSym.iVerts = symVerts;
-          // IMPORTANT: Push these to Undo State (they might differ from geometric picking)
-          main.getStateManager().pushVertices(symVerts);
-
-          // Re-fetch proxy data for these specific vertices
-          const vAr = mesh.getVertices();
-          const vProxy = this._moveDataSym.vProxy = new Float32Array(acc * 3);
-          const iVerts = this._moveDataSym.iVerts;
-          for (let i = 0; i < acc; ++i) {
-            const ind = iVerts[i] * 3;
-            const j = i * 3;
-            vProxy[j] = vAr[ind];
-            vProxy[j + 1] = vAr[ind + 1];
-            vProxy[j + 2] = vAr[ind + 2];
-          }
-
-          // Also update pickingSym center to match topological center?
-          // Ideally yes, but Move tool uses `center` for falloff calculation. 
-          // If we use the geometric center but topological vertices, the falloff might be slightly skewed if deformed.
-          // But fixing vertices is 90% of the battle.
-        }
-      }
+      // TOPOLOGICAL VERTEX SNAP REMOVED - Incompatible with symFactor spatial blend
     }
 
     // [VR] Capture Initial Rotation
@@ -182,51 +137,11 @@ class Move extends SculptBase {
     var mouseX = main._mouseX;
     var mouseY = main._mouseY;
     this.updateMoveDir(picking, mouseX, mouseY);
-    this.move(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), this._moveData, picking);
+    this.move(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), this._moveData, picking, null, useSym);
 
     if (useSym) {
       this.updateMoveDir(pickingSym, mouseX, mouseY, true);
-
-      const moveData = this._moveData;
-      const moveDataSym = this._moveDataSym;
-
-      // Check if Topo Snap active (Master-Slave)
-      if (moveData.iVerts && moveDataSym.iVerts && moveData.iVerts.length === moveDataSym.iVerts.length) {
-        // Master-Slave Mirroring
-        const iVerts = moveData.iVerts;
-        const iVertsSym = moveDataSym.iVerts;
-        const nbVerts = iVerts.length;
-
-        const vAr = mesh.getVertices();
-        const vProxy = moveData.vProxy;
-        const symProxy = moveDataSym.vProxy;
-        const nPlane = mesh.getSymmetryNormal();
-        const delta = [0.0, 0.0, 0.0];
-
-        for (let i = 0; i < nbVerts; ++i) {
-          const id = iVerts[i];
-          const idSym = iVertsSym[i];
-          const i3 = id * 3;
-          const i3Sym = idSym * 3;
-          const j = i * 3;
-
-          // Calc Delta
-          delta[0] = vAr[i3] - vProxy[j];
-          delta[1] = vAr[i3 + 1] - vProxy[j + 1];
-          delta[2] = vAr[i3 + 2] - vProxy[j + 2];
-
-          // Mirror Delta
-          Geometry.mirrorPoint(delta, [0, 0, 0], nPlane);
-
-          // Apply
-          vAr[i3Sym] = symProxy[j] + delta[0];
-          vAr[i3Sym + 1] = symProxy[j + 1] + delta[1];
-          vAr[i3Sym + 2] = symProxy[j + 2] + delta[2];
-        }
-      } else {
-      // Fallback
-        this.move(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), this._moveDataSym, pickingSym);
-      }
+      this.move(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), this._moveDataSym, pickingSym, null, useSym);
     }
 
     var mesh = this.getMesh();
@@ -489,54 +404,7 @@ class Move extends SculptBase {
     if (useSym) {
         const moveDataSym = this._moveDataSym;
         if (moveDataSym.iVerts) {
-
-          // MASTER-SLAVE SYMMETRY:
-          // Instead of calculating falloff/deformation independently (which causes drift),
-          // we explicitly mirror the displacement of the primary vertices to the symmetry vertices.
-
-          const iVerts = moveData.iVerts;
-          const iVertsSym = moveDataSym.iVerts;
-          const nbVerts = iVerts.length;
-
-          if (iVertsSym.length === nbVerts) {
-            const vAr = mesh.getVertices();
-            const vProxy = moveData.vProxy;
-            // vProxy has original primary positions
-            // vAr now has modified primary positions (after this.move call above)
-
-            const ptPlane = mesh.getSymmetryOrigin();
-            const nPlane = mesh.getSymmetryNormal();
-            const mirrorV = [0.0, 0.0, 0.0];
-            const delta = [0.0, 0.0, 0.0];
-            const symProxy = moveDataSym.vProxy;
-
-            for (let i = 0; i < nbVerts; ++i) {
-              const id = iVerts[i];
-              const idSym = iVertsSym[i];
-
-              const i3 = id * 3;
-              const i3Sym = idSym * 3;
-
-              // Calculate Delta from Primary
-              // vNew - vOld
-              // We can't just use vAr[i3] - vProxy[i*3] because vProxy is compact array
-              const j = i * 3;
-              delta[0] = vAr[i3] - vProxy[j];
-              delta[1] = vAr[i3 + 1] - vProxy[j + 1];
-              delta[2] = vAr[i3 + 2] - vProxy[j + 2];
-
-              // Mirror Delta
-              Geometry.mirrorPoint(delta, [0, 0, 0], nPlane); // vector mirror (origin 0)
-
-              // Construct Sym Position: SymOrigin + MirroredDelta
-              // We use symProxy as the stable origin
-              vAr[i3Sym] = symProxy[j] + delta[0];
-              vAr[i3Sym + 1] = symProxy[j + 1] + delta[1];
-              vAr[i3Sym + 2] = symProxy[j + 2] + delta[2];
-            }
-          } else {
-          // Fallback if counts mismatch (Shouldn't happen with Topo Snap)
-            // Calculate correctly mirrored delta
+          // Dual Independent Evaluation (Vanilla behavior)
             var symStartLocal = vec3.clone(vStartLocal);
             var symCurrLocal = vec3.clone(vCurrLocal);
 
@@ -552,8 +420,7 @@ class Move extends SculptBase {
             qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
             qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
 
-            this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
-          }
+          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
         }
     }
 

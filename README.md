@@ -96,8 +96,8 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - all tools should be sphere intersect based, not aim based? maybe push to post v1?
-( for post v1)
+- symmetry issues, move will break symetry at cnter line, voxel remesh can't restore symmetry 
+- post v1
     - Voxel straight line mode
     - Voxel smooth shading
     - Voxel smooth brush
@@ -129,6 +129,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~ tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
 - ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
 ~~- Transform tool/gizmo missing~~ **DONE v0.7.644**
 - ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
