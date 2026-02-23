@@ -22,6 +22,15 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'checkbox', id: 'aim_picking_mode', label: 'Aim Picking Mode (Raycast)', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: !main._vrUseVolumeIntersect,
+    onInteract: () => {
+      main._vrUseVolumeIntersect = !main._vrUseVolumeIntersect;
+      if (main.guiXR) main.guiXR._needsRedraw = true;
+    }
+  });
+  y += ITEM_H + GAP;
 
 
   return {

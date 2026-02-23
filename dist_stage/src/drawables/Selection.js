@@ -199,8 +199,10 @@ class Selection {
       vec3.set(this._color, 0.0, 0.0, 0.8); // BLUE
     }
 
-    ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, true, useSym);
-    ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, true, useSym);
+    const currentTool = main.getSculptManager().getCurrentTool();
+    const drawCircle = currentTool && currentTool.constructor.name !== 'Twist';
+
+    ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, drawCircle, useSym);
 
     // if (window.screenLog && Math.random() < 0.01) window.screenLog("RenderVR: DRAW", "lime");
   }

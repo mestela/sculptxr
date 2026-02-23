@@ -8,6 +8,9 @@
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
+*   **v0.7.687**: **Two-Handed Scale Fix**:
+    - **Fix**: **Math Bug**: Corrected a vector math bug in `Scene.scaleWorld` that mistakenly divided the coordinate offset by the scale ratio instead of multiplying it. 
+    - **UX**: **Dolly Zoom**: The held object now maintains its physical distance from the user during a two-handed scale.
 *   **v0.7.686**: **Final Gizmo Release**:
     - **Documentation**: Added comprehensive implementation notes for VR Gizmo and State Management.
     - **Version**: Final merge of transform gizmo features into master.
@@ -90,7 +93,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-    - Paint is a bit glitchy after 0.7.118
     - all tools should be sphere intersect based, not aim based? maybe push to post v1?
 ( for post v1)
     - Voxel straight line mode
@@ -101,7 +103,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - multiplayer
 
 - **UI + UX** 
-- fix two handed grip scale misalignment. 
+
 - Show Voxel Grid/Boundary Box (Users report drawing out of bounds)
 (for post v1) 
     - nearly time to think about tider panel
@@ -124,6 +126,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
 ~~- Transform tool/gizmo missing~~ **DONE v0.7.644**
 - ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
 - ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**

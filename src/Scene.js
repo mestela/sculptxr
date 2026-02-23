@@ -31,6 +31,11 @@ class Scene {
   constructor() {
     this._gl = null; // webgl context
 
+    this._vrDeviceRadius = 0.05;
+
+    // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
+    this._vrUseVolumeIntersect = true;
+
     this._cameraSpeed = 0.25;
 
     // cache canvas stuffs
@@ -2802,9 +2807,29 @@ class Scene {
       // actually intersectionRayMeshes does both selection AND intersection point update.
       // If we skip it, we don't update the cursor position!
       // We must force intersection ONLY on the current mesh.
-      picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, engineDir);
+
+      // Feature Toggle: Crease and Transform use Ray/Aim intersect instead of volume
+      let useVolume = this._vrUseVolumeIntersect;
+      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR')) {
+        useVolume = false;
+      }
+
+      if (useVolume) {
+        picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], enginePos, pickingRadius);
+      } else {
+        picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, engineDir);
+      }
     } else {
-      picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+      let useVolume = this._vrUseVolumeIntersect;
+      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR')) {
+        useVolume = false;
+      }
+
+      if (useVolume) {
+        picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, pickingRadius);
+      } else {
+        picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+      }
     }
 
     // DEBUG: Picking Trace

@@ -1,6 +1,9 @@
 # SculptXR Release History
 
-- **v0.7.686** (Current): **Final Gizmo Release**:
+- **v0.7.687** (Current): **Two-Handed Jaws Scale Fix**:
+    - **Fix**: **Math Bug**: Corrected a vector math bug in `Scene.scaleWorld` that mistakenly divided the coordinate offset by the scale ratio instead of multiplying it. 
+    - **UX**: **Dolly Zoom**: The held object now perfectly maintains its physical distance from the user (Jaws/Vertigo effect) during a two-handed scale, completely eliminating the "flying away" or "getting uncomfortably close" issues.
+- **v0.7.686**: **Final Gizmo Release**:
     - **Documentation**: Added comprehensive implementation notes for VR Gizmo and State Management.
 - **v0.7.685**: **Transform Gizmo Undo & Polish**:
     - **Feature**: **Undo/Redo for Gizmo**: Full support for undoing and redoing Translate, Rotate, and Scale operations performed with the Transform Gizmo.
