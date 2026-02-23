@@ -2599,7 +2599,7 @@ class Scene {
     let pos = vec3.fromValues(this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z);
     let diff = vec3.create();
     vec3.sub(diff, pos, pivot);
-    vec3.scale(diff, diff, 1.0 / ratio);
+    vec3.scale(diff, diff, ratio);
     vec3.add(pos, pivot, diff);
 
     this._xrWorldOffset = new XRRigidTransform({ x: pos[0], y: pos[1], z: pos[2] }, this._xrWorldOffset.orientation);
