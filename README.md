@@ -1,4 +1,4 @@
-# SculptXR (v0.7.696)
+# SculptXR (v0.7.800)
 - WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -8,6 +8,12 @@
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
+*   **v0.7.800**: **Voxel Stability & Performance Release**:
+    - **Optimization**: **Ray Picking**: Switched SculptVoxel to use Ray Picking in VR, eliminating CPU stalls and display warping.
+    - **Robustness**: Added triangle count safeguards (1000 tris) to prevent hangs on high-poly meshes.
+    - **UI**: **Voxel Bounding Box**: Added a static orange wireframe representing maximum volume limits.
+    - **UI**: **Depth Integration**: Fixed bounds to respect scene depth (no longer always on top).
+    - **UX**: **Transform Lock**: Voxel meshes are now locked to prevent alignment drift.
 *   **v0.7.693 - v0.7.696**: **Voxel Mirror Tool Symmetry Fix**:
     - **Fix**: **Symmetry Failure**: Resolved a critical issue where sculpting tools failed to apply symmetry after a mesh had undergone a Voxel Mirror operation. 
     - **System**: Forced `SculptBase` to cleanly fallback to pure mathematical plane projection and spatial Sphere picking when topological symmetry is broken (like after a Remesh).

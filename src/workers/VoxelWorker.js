@@ -1,7 +1,7 @@
 // VoxelWorker.js - Dynamic Import Version
 // This enables us to catch import errors (404, syntax, etc) which otherwise silent-fail the worker.
 
-console.log("VoxelWorker: Script Loading... (Dynamic)");
+// console.log("VoxelWorker: Script Loading... (Dynamic)");
 
 let VoxelState = null;
 let TestModule = null;
@@ -18,16 +18,16 @@ let isDirty = false; // Tracks if the current snapshot has been modified
 // Async Init to catch import errors
 (async function () {
   try {
-    console.log("VoxelWorker: Importing TestModule...");
+    // console.log("VoxelWorker: Importing TestModule...");
     // Handle potentially different base paths? No, strictly relative to this file.
     const tm = await import('./TestModule.js');
     TestModule = tm.default;
-    console.log("VoxelWorker: TestModule Loaded ->", TestModule);
+    // console.log("VoxelWorker: TestModule Loaded ->", TestModule);
 
-    console.log("VoxelWorker: Importing VoxelState...");
+    // console.log("VoxelWorker: Importing VoxelState...");
     const vs = await import('../editing/VoxelState.js');
     VoxelState = vs.default;
-    console.log("VoxelWorker: VoxelState Loaded");
+    // console.log("VoxelWorker: VoxelState Loaded");
 
     isReady = true;
 
@@ -122,7 +122,7 @@ function init(res, size) {
   history.push({ df: copy, id: snapshotCounter });
   historyPtr = 0;
 
-  self.postMessage({ type: 'LOG', data: `Voxel Init. Snapshot: ${snapshotCounter}` });
+  // self.postMessage({ type: 'LOG', data: `Voxel Init. Snapshot: ${snapshotCounter}` });
 
   postMesh();
 }
@@ -144,7 +144,7 @@ function resample(res) {
   history.push({ df: copy, id: snapshotCounter });
   historyPtr = 0;
 
-  self.postMessage({ type: 'LOG', data: `Voxel Resampled to ${res}. History Reset.` });
+  // self.postMessage({ type: 'LOG', data: `Voxel Resampled to ${res}. History Reset.` });
 
   postMesh();
 }

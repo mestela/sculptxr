@@ -1,5 +1,12 @@
 # SculptXR Release History
 
+- **v0.7.800**: **Voxel Stability & Performance Release**:
+    - **Optimization**: **Ray Picking**: Switched SculptVoxel to use efficient Ray Picking in VR, eliminating frame-loop stalls and display warping.
+    - **Robustness**: Added a triangle count safeguard (1000 tris) to `intersectionSphereMeshes` to prevent main-thread hangs on high-poly meshes.
+    - **UI**: **Voxel Bounding Box**: Added a static orange wireframe to visualize the maximum sculpting volume limits.
+    - **UI**: **Depth Integration**: Fixed the Voxel Boundary Box to respect scene depth; it no longer draws over everything in x-ray mode.
+    - **UX**: **Transform Lock**: Voxel meshes are now locked in place to prevent drift from the volumetric grid and bounding box.
+    - **Cleanup**: Stripped debug logs (`Voxel: VR Start`, etc.) from `SculptVoxel.js`.
 - **v0.7.693 - v0.7.696**: **Voxel Mirror Tool Symmetry Fix**:
     - **Fix**: **Symmetry Failure**: Resolved a critical issue where sculpting tools failed to apply symmetry after a mesh had undergone a Voxel Mirror operation. 
     - **System**: Differentiated between Topological and Geometric symmetry maps. Forced `SculptBase` to cleanly fallback to pure mathematical plane projection and spatial Sphere picking when topological maps are invalid (like after a Remesh), rather than attempting to interpolate broken barycentric coordinates.
