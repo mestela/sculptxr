@@ -56,4 +56,38 @@ Once the v1.0 milestone (stability & bugfixes) is achieved, the architecture sho
     - The project uses Webpack to bundle raw JS. Converting the files to **TypeScript** (or adding JSDoc types) is the highest priority. It would catch 90% of the runtime `cannot read property of undefined` bugs we encountered during the VR port.
     - Migrate from older Webpack to **Vite** for near-instant hot module reloading during development.
 3. **Centralized Logger**: Replace manual `console.log` and `window.screenLog` calls with a dedicated `Logger.js` utility. This allows for verbose debugging in development and zero overhead in production, without needing to manually comment out lines.
-4. **Standardize Naming**: The codebase switches between `picking`, `pickingSym`, `picker`, and `intersect`. A brief naming standardization pass would dramatically improve readability for future edge-case debugging.
+## 5. Feasibility of a Three.js Port
+
+Given the goal of stabilizing for v1 and looking forward to the future architecture, a major question is: **Should SculptXR be ported to Three.js?**
+
+The short answer is: **No, it is highly undesirable for a sculpting app targeting standalone VR.**
+
+Here is a breakdown of why sticking with the bespoke engine, despite its tech debt, is the correct choice for this specific class of application.
+
+### The Core Conflict: Scene Graph vs. Immediate Mode
+
+Three.js is a general-purpose 3D rendering framework built around a **Scene Graph**. It excels at managing hierarchies of objects, complex material pipelines, and rendering static or rigidly animating meshes.
+
+SculptXR is an **immediate-mode vertex editor**. The "mesh" is not a static asset; it is a highly volatile array of hundreds of thousands of floats that is mutating 90 times a second.
+
+#### 1. The Cost of Abstraction (Garbage Collection)
+In Three.js, updating a mesh typically involves modifying a `BufferGeometry` object. While Three.js allows you to update the underlying `Float32Array` attributes and flag them with `needsUpdate = true`, the framework's internal architecture still performs significant overhead:
+*   **Bounding Box/Sphere Recalculation:** Three.js automatically recalculates bounding volumes for frustum culling when geometry changes. For a 1-million polygon mesh being sculpted, doing this every frame in JavaScript is devastating. SculptXR handles this by only loosely updating localized Octree nodes.
+*   **Raycasting Overhead:** Three.js's built-in `Raycaster` builds a BVH (Bounding Volume Hierarchy) or iterates through triangles. On a mutating mesh, rebuilding a standard Three.js BVH every frame is impossible on a Quest 3. SculptXR uses a highly specialized, localized Octree that updates only the sculpted regions.
+*   **Memory Churn:** Three.js creates many small objects (Vector3s, Quaternions, Matrices) internally during its render loop and updates. In a 90Hz VR environment, this constant object allocation triggers JavaScript Garbage Collection (GC) pauses. A 5ms GC pause in VR is visually perceived as a jarring stutter or "dropped frame." SculptXR mitigates this by aggressively reusing pre-allocated `Float32Array` buffers for all mathematical operations.
+
+#### 2. The Bottleneck: CPU-to-GPU Uploads
+When transferring modifying geometry to the GPU, minimizing bandwidth is critical.
+*   **Three.js:** When you flag `geometry.attributes.position.needsUpdate = true`, Three.js (typically) uploads the *entire* vertex buffer to the GPU via `gl.bufferData`. If you have a 500k vertex mesh, you are transferring ~6MB of data 90 times a second, which will instantly choke a mobile GPU's memory bus.
+*   **SculptXR:** The bespoke `render/Buffer.js` is optimized for **localized updates**. It calculates the exact byte offset and length of the vertices that were modified during the current stroke and uses `gl.bufferSubData` to upload only that tiny chunk (e.g., 50 vertices). This is the secret sauce that makes high-poly sculpting possible on a mobile chipset.
+
+#### 3. WebGL State Management
+Three.js abstracts WebGL state (depth testing, blending, culling). While powerful, this abstraction comes with CPU overhead as the renderer traverses the scene graph and determines state changes. SculptXR's rendering pipeline (`processVRSculpting`, `_renderSceneVR`) explicitly hardcodes the GL state machine for maximum efficiency.
+
+### Conclusion: The Standalone VR Reality
+
+PCVR has the brute-force CPU power and memory bandwidth to potentially overcome the overhead of a Three.js port. However, standalone headsets like the Meta Quest 3 and GalaxyXR operate within strict thermal and power limits. They rely heavily on fixed-function hardware and specialized rendering paths (like Application SpaceWarp).
+
+A general-purpose framework like Three.js adds a layer of abstraction that, while fantastic for traditional games or architectural visualizers, fundamentally conflicts with the micro-second tolerances required for real-time vertex displacement on lower-power mobile SOCs.
+
+The tech debt in SculptXR (`Scene.js` monolith, lack of typescript) should be addressed by refactoring the *existing* engine into cleaner, modular components, rather than throwing the engine away for a framework that isn't built for this niche use case.
