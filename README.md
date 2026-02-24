@@ -30,8 +30,6 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-- final shakedown of runtime issues (occasional select errors, shader compile errors)
-
 (for post v1)
     - Voxel straight line mode
     - Voxel smooth shading
@@ -41,8 +39,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - multiplayer
 
 - **UI + UX** 
--warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)
-
 (for post v1) 
     - nearly time to think about tider panel
     - panel tear off/pin in place?
@@ -62,6 +58,8 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**
+- ~~final shakedown of runtime issues (occasional select errors, shader compile errors)~~ **DONE v0.8.3**
 - ~~Show Voxel Grid/Boundary Box (Users report drawing out of bounds)~~ **DONE v0.7.800**
 - ~~symmetry issues voxel remesh can't restore symmetry~~ **DONE v0.7.696**
 - ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
