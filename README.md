@@ -1,4 +1,4 @@
-# SculptXR (v0.8.3)
+# SculptXR (v0.8.17)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOe
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.8.17: Smooth VR Slider Physics Fix
 *   v0.8.3: OpenXR Warning Dialog
 *   v0.8.2: VR Fuzzer
 *   v0.8.1: VERSION Reference Fix

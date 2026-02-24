@@ -1,5 +1,10 @@
 # SculptXR Release History
 
+- **v0.8.17**: **Smooth VR Slider Physics Fix**:
+    - **Fix**: **Phantom UI Lag**: Resolved a severe stuttering issue exclusively affecting sliders embedded inside Overlay menus (like the 'Max Undo Steps' slider in the History tab).
+    - **Fix**: **Overlay Event Priority**: Discovered and fixed a flaw where the `GuiXR._overlay` click event was unconditionally consuming dragging inputs and firing them through `_handleMenuInteract` at a full 90hz, bypassing the smooth floating-point slider math block altogether. Brought the `_activeSlider` event trap to the absolute top of `GuiXR.onInteract()` to restore smooth slider updating regardless of parent container.
+    - **Fix**: **Zero Array Initialization**: Fixed a severe sub-bug in `_handleMenuInteract` where simply clicking the 'Max Undo Steps' slider passed an unscaled 0-1 ratio array sizing argument to `StateManager.setNewMaxStack(Math.round(val))`, wiping array lengths until dragged again. Now correctly maps the target ratio to `w.min/max` limits for initial clicks.
+
 - **v0.8.3**: **OpenXR Warning Dialog**:
     - **UX**: Added a 2-second timeout warning dialog advising users to restart Chrome if OpenXR fails to initialize (e.g., if Chrome starts before the Meta Link software is ready).
 - **v0.8.2**: **VR Fuzzer**:
