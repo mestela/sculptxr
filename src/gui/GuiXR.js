@@ -1685,8 +1685,6 @@ export default class GuiXR {
     }
 
     const ctx = this._ctx;
-    let cx = u * CANVAS_SIZE;
-    let cy = v * CANVAS_SIZE;
 
     const w = CANVAS_SIZE;
     const h = CANVAS_SIZE;
