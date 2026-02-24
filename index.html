@@ -5,10 +5,10 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR - v0.8.1</title> <!-- Preparing for major update -->
-    <meta name="description" content="SculptXR - WebXR Sculpting - v0.8.1" />
+    <title>SculptXR - v0.8.3</title> <!-- Preparing for major update -->
+    <meta name="description" content="SculptXR - WebXR Sculpting - v0.8.3" />
     <!-- v0.8.0: Starting new release cycle -->
-    <meta property="og:title" content="SculptXR - v0.8.1" />
+    <meta property="og:title" content="SculptXR - v0.8.3" />
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -274,6 +274,15 @@
         <button id="ar-button" class="xr-button" style="display: none;">Enter AR</button>
     </div>
 
+    <!-- Warning Dialog if OpenXR is not detected promptly -->
+    <div id="xr-warning"
+        style="display: none; position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 15px 25px; border-radius: 8px; font-family: sans-serif; text-align: center; z-index: 9999; border: 1px solid #444;">
+        <p style="margin: 0 0 10px 0; font-size: 16px;">OpenXR not detected.</p>
+        <p style="margin: 0 0 15px 0; font-size: 14px; color: #ccc;">Try restarting Chrome?</p>
+        <button onclick="document.getElementById('xr-warning').style.display='none'"
+            style="background: #2196F3; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">OK</button>
+    </div>
+
     <div id="log"></div>
     <div id="viewport">
         <canvas id='canvas'></canvas>
@@ -412,6 +421,14 @@
             // VR/AR Button Logic
             const btnVR = document.getElementById('vr-button');
             const btnAR = document.getElementById('ar-button');
+
+            // Quick timeout to warn users if Chrome hasn't registered OpenXR
+            setTimeout(() => {
+                if (btnVR && btnVR.style.display === 'none' && btnAR && btnAR.style.display === 'none') {
+                    const warning = document.getElementById('xr-warning');
+                    if (warning) warning.style.display = 'block';
+                }
+            }, 2000);
 
             // Check VR
             if ('xr' in navigator) {

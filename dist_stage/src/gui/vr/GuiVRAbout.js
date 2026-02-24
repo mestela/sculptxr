@@ -1,4 +1,5 @@
 import TR from '../GuiTR.js';
+import { VERSION } from '../../Version.js';
 
 export default function getAboutWidgets(main) {
   const widgets = [];
@@ -10,8 +11,8 @@ export default function getAboutWidgets(main) {
   widgets.push({ type: 'header', label: 'About & Help', x: 0, y: y, w: menuW, h: 30, header: true });
   y += 35;
 
-  const version = window.VERSION || '0.0.0';
-  widgets.push({ type: 'info', label: `SculptXR v${version}`, x: 10, y: y, w: menuW, h: ITEM_H });
+  const version = VERSION || '0.0.0';
+  widgets.push({ type: 'info', label: `SculptXR ${version}`, x: 10, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
 
   widgets.push({ type: 'info', label: 'Original by Stéphane Ginier', x: 10, y: y, w: menuW, h: ITEM_H });

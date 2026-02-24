@@ -75,6 +75,18 @@ class Scene {
     this._torusRadial = 32;
     this._torusTubular = 128;
 
+    // Fuzzer API
+    window.startFuzzing = function () {
+      window.vrFuzzMode = true;
+      console.log("VR Fuzzer Started! Make sure you are in VR.");
+      if (window.screenLog) window.screenLog("FUZZER ENABLED", "red");
+    };
+    window.stopFuzzing = function () {
+      window.vrFuzzMode = false;
+      console.log("VR Fuzzer Stopped.");
+      if (window.screenLog) window.screenLog("FUZZER DISABLED", "lime");
+    };
+
     // renderable stuffs
     var opts = getOptionsURL();
     this._showContour = opts.outline;
@@ -2041,9 +2053,46 @@ class Scene {
     // Reset Menu Pointing State (Per Frame)
     this._isPointingAtMenu = false;
 
+    // VR Fuzzer Mode (Overrides input for stress testing)
+    if (window.vrFuzzMode) {
+      if (!this._fuzzState) {
+        this._fuzzState = {
+          lastFlip: 0,
+          isTriggerPressed: false,
+          posLeft: vec3.fromValues(0, 1.2, -0.3),
+          posRight: vec3.fromValues(0, 1.2, -0.3),
+        };
+      }
+
+      const now = performance.now();
+      // Scramble states every 100ms
+      if (now - this._fuzzState.lastFlip > 100) {
+        this._fuzzState.lastFlip = now;
+        this._fuzzState.isTriggerPressed = Math.random() > 0.5;
+        this._fuzzState.isGripPressed = Math.random() > 0.8;
+        this._fuzzState.undoPressed = Math.random() > 0.95;
+        this._fuzzState.redoPressed = Math.random() > 0.95;
+
+        // Randomize Positions within Sculptable Area
+        const range = 0.5;
+        vec3.set(this._fuzzState.posLeft, (Math.random() - 0.5) * range, 1.2 + (Math.random() - 0.5) * range, -0.5 + (Math.random() * range));
+        vec3.set(this._fuzzState.posRight, (Math.random() - 0.5) * range, 1.2 + (Math.random() - 0.5) * range, -0.5 + (Math.random() * range));
+
+        // Randomize Brush Radius (Axis 3)
+        this._fuzzState.radiusAxis = (Math.random() - 0.5) * 2.0;
+
+        // Optionally switch tools randomly
+        if (Math.random() > 0.9 && this._sculptManager) {
+          const tools = Object.keys(Enums.Tools);
+          const randomToolKey = tools[Math.floor(Math.random() * tools.length)];
+          this._sculptManager.setToolIndex(Enums.Tools[randomToolKey]);
+          if (window.screenLog) window.screenLog(`Fuzzer switched tool to ${randomToolKey}`, "orange");
+        }
+      }
+    }
 
 
-    for (const source of sources) {
+    for (let source of sources) {
       // DEBUG: Scan Sources
       // if (window.screenLog && this._logThrottle % 120 === 0) {
       //   window.screenLog(`Src: ${source.handedness} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`, "yellow");
@@ -2051,7 +2100,44 @@ class Scene {
 
       if (!source.gripSpace) continue;
 
-      if (!source.gripSpace) continue;
+      // VR Fuzzer Overrides
+      if (window.vrFuzzMode && this._fuzzState) {
+        // Clone source so we don't mutate the frozen WebXR object
+        source = {
+          handedness: source.handedness,
+          targetRaySpace: source.targetRaySpace, // Keep original references for real polling if needed
+          gripSpace: source.gripSpace,
+          gamepad: {
+            buttons: [
+              { pressed: this._fuzzState.isTriggerPressed }, // Trigger
+              { pressed: this._fuzzState.isGripPressed }     // Grip
+            ],
+            axes: [
+              0, 0,
+              source.handedness === 'left' ? (this._fuzzState.undoPressed ? -1 : (this._fuzzState.redoPressed ? 1 : 0)) : 0,
+              source.handedness === 'right' ? this._fuzzState.radiusAxis : 0
+            ]
+          }
+        };
+
+        // Mock getPose on frame just for this iteration
+        if (!frame._originalGetPose) frame._originalGetPose = frame.getPose;
+        frame.getPose = (space, ref) => {
+          const originalPose = frame._originalGetPose.call(frame, space, ref);
+          const fpos = source.handedness === 'left' ? this._fuzzState.posLeft : this._fuzzState.posRight;
+          return {
+            transform: {
+              position: { x: fpos[0], y: fpos[1], z: fpos[2] },
+              orientation: { x: 0, y: 0, z: 0, w: 1 },
+              matrix: mat4.fromTranslation(mat4.create(), fpos)
+            }
+          };
+        };
+      } else if (frame._originalGetPose) {
+        // Restore original getPose if fuzz mode gets disabled mid-run
+        frame.getPose = frame._originalGetPose;
+        frame._originalGetPose = null;
+      }
 
       // VR SHORTCUTS
       if (source.gamepad) {

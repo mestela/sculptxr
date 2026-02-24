@@ -29,8 +29,9 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Todo
-- final shakedown of runtime issues (occasional select errors, shader compile errors) -- fuzzing?
 - **Functionality**:
+- final shakedown of runtime issues (occasional select errors, shader compile errors) -- fuzzing?
+
 (for post v1)
     - Voxel straight line mode
     - Voxel smooth shading
@@ -40,6 +41,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - multiplayer
 
 - **UI + UX** 
+-warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)
+
 (for post v1) 
     - nearly time to think about tider panel
     - panel tear off/pin in place?
