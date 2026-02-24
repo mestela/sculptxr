@@ -31,7 +31,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Todo
--crease brush breaks summetry
+-crease brush breaks symmetry
 -still some topology symmetry issues
 - **Functionality**:
 (for post v1)
