@@ -14,6 +14,7 @@ class StateManager {
     this._undos = []; // undo actions
     this._redos = []; // redo actions
     this._curUndoIndex = -1; // current index in undo
+    this.limit = /OculusBrowser/.test(navigator.userAgent) ? 15 : 50;
   }
 
   pushStateCustom(undocb, redocb, squash) {
@@ -59,7 +60,7 @@ class StateManager {
   }
 
   setNewMaxStack(maxStack) {
-    StateManager.STACK_LENGTH = maxStack;
+    this.limit = maxStack;
     var undos = this._undos;
     var redos = this._redos;
     while (this._curUndoIndex >= maxStack) {
@@ -75,8 +76,9 @@ class StateManager {
   pushState(state) {
     ++Utils.STATE_FLAG;
     var undos = this._undos;
+
     if (this._curUndoIndex === -1) undos.length = 0;
-    else if (undos.length >= StateManager.STACK_LENGTH) {
+    else if (undos.length >= this.limit) {
       undos.shift();
       --this._curUndoIndex;
     }
@@ -142,7 +144,5 @@ class StateManager {
     }
   }
 }
-
-StateManager.STACK_LENGTH = 15;
 
 export default StateManager;

@@ -46,7 +46,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - show more heads up things?
     - toolbar/shortcut bar?
     - outliner? 
-    - different undo queue length for desktop vs standalone    
+
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
@@ -59,6 +59,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    
 - ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**
 - ~~final shakedown of runtime issues (occasional select errors, shader compile errors)~~ **DONE v0.8.3**
 - ~~Show Voxel Grid/Boundary Box (Users report drawing out of bounds)~~ **DONE v0.7.800**

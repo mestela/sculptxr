@@ -17,7 +17,8 @@ class GuiTablet {
     menu.addButton(TR('stateRedo'), this, 'onRedo', 'CTRL+Y');
     menu.addTitle(TR('stateMaxStack'));
     var states = this._main.getStateManager();
-    menu.addSlider('', StateManager.STACK_LENGTH, states.setNewMaxStack.bind(states), 3, 50, 1);
+    const maxVal = /OculusBrowser/.test(navigator.userAgent) ? 30 : 500;
+    menu.addSlider('', states.limit, states.setNewMaxStack.bind(states), 3, maxVal, 1);
   }
 
   onUndo() {
