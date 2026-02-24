@@ -6,6 +6,7 @@ import { saveAs } from 'file-saver';
 import Shader from '../render/ShaderLib.js';
 import Utils from '../misc/Utils.js';
 import { vec3 } from 'gl-matrix';
+import { VERSION } from '../Version.js';
 
 // Modular Imports - Relative with explicit extensions to bypass map issues
 import getToolsWidgets from './vr/GuiVRTools.js';
