@@ -26,7 +26,10 @@ export default function getHistoryWidgets(main) {
   widgets.push({ type: 'header', label: 'Settings', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({ type: 'slider', id: 'stack_size', label: 'Stack Size', x: 0, y: y, w: menuW, h: ITEM_H, value: StateManager.STACK_LENGTH, min: 3, max: 50, step: 1 });
+  const maxVal = /OculusBrowser/.test(navigator.userAgent) ? 30 : 500;
+  const currentLimit = main.getStateManager().limit;
+  const normLimit = Math.max(0, Math.min(1, (currentLimit - 3) / (maxVal - 3)));
+  widgets.push({ type: 'slider', id: 'stack_size', label: 'Max Undo Steps', x: 0, y: y, w: menuW, h: ITEM_H, value: normLimit, min: 3, max: maxVal, precision: 0 });
   y += ITEM_H + GAP;
 
   return {

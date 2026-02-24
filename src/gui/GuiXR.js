@@ -210,34 +210,7 @@ export default class GuiXR {
     this._needsRedraw = true;
   }
 
-  // Synchronous Update Loop (CALLED BY SCENE.JS ON XR FRAME)
-  update() {
-    const start = performance.now();
 
-    // 1. Redraw if requested (Input/Hover changes)
-    if (this._needsRedraw) {
-      if (!this._needsUpdate) this._needsRedraw = true; // Ensure texture uploads if we draw
-
-      const t0 = performance.now();
-      this.draw();
-      const t1 = performance.now();
-
-      // Log Draw Time if slow (>4ms)
-      if (t1 - t0 > 4 && window.screenLog && this._logThrottle % 60 === 0) {
-        console.warn(`GuiXR Draw Slow: ${(t1 - t0).toFixed(2)}ms`);
-      }
-
-      this._needsRedraw = false;
-    }
-
-    // 2. Upload Texture to GPU (Throttled)
-    this.updateTexture();
-
-    const total = performance.now() - start;
-    if (total > 8 && window.screenLog && this._logThrottle % 60 === 0) {
-      console.warn(`GuiXR Total Update Slow: ${total.toFixed(2)}ms`);
-    }
-  }
 
   _getOverlayPivot() {
     // Pivot around Menu Origin if it's a menu
@@ -782,6 +755,63 @@ export default class GuiXR {
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
+    // 0.5. Active Slider Lock (High Priority)
+    // Must run BEFORE everything else to prevent overlays from stealing the drag event
+    if (this._activeSlider) {
+      if (!isPressed) {
+        if (this._activeSlider.id === 'stack_size' && this._main) {
+          this._main.getStateManager().setNewMaxStack(Math.round(this._activeSlider.value));
+        } else if (this._activeSlider.onRelease) {
+          this._activeSlider.onRelease(this._activeSlider.value);
+        }
+        this._activeSlider = null;
+        return;
+      }
+
+      const targetWid = this._activeSlider;
+      const sliderW = targetWid.w;
+      const sliderX = targetWid.x;
+
+      let scaledCx = cx;
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        const invScale = 1 / OVERLAY_SCALE;
+        scaledCx = (cx - pivot.x) * invScale + pivot.x;
+        // Also subtract data.x to make it relative to the menu box if it's a menu widget
+        if (this._overlayData && this._overlayData.x !== undefined) {
+          scaledCx -= this._overlayData.x;
+        }
+      }
+
+      // Calculate normalized value
+      let t = (scaledCx - sliderX) / sliderW;
+      t = Math.max(0, Math.min(1, t));
+
+      // Map to Min/Max
+      let val = t;
+      if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
+        val = targetWid.min + t * (targetWid.max - targetWid.min);
+        if (targetWid.step) {
+          const steps = Math.round((val - targetWid.min) / targetWid.step);
+          val = targetWid.min + steps * targetWid.step;
+          // Force integer UI strings for integer steps to avoid JS float precision issues (like 15.00000001)
+          if (targetWid.step % 1 === 0) val = Math.round(val);
+        }
+      }
+
+      // Update
+      if (targetWid.value !== val) {
+        targetWid.value = val;
+        if (targetWid.onInput) targetWid.onInput(val);
+        // Do not execute action continuously for stack size to prevent array reallocation lag
+        if (targetWid.id !== 'stack_size') {
+          this._executeAction(targetWid);
+        }
+        this._needsRedraw = true;
+      }
+      return;
+    }
+
     const now = performance.now();
 
     // 0. Dropdown Interaction (High Priority)
@@ -857,41 +887,7 @@ export default class GuiXR {
       return;
     }
 
-    // 0.5. Active Slider Lock (High Priority)
-    // Must run BEFORE !isPressed check (to allow clearing lock on release)
-    if (this._activeSlider) {
-      if (!isPressed) {
-        this._activeSlider = null;
-        return;
-      }
 
-      const targetWid = this._activeSlider;
-      const sliderW = targetWid.w;
-      const sliderX = targetWid.x;
-
-      // Calculate normalized value
-      let t = (cx - sliderX) / sliderW;
-      t = Math.max(0, Math.min(1, t));
-
-      // Map to Min/Max
-      let val = t;
-      if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
-        val = targetWid.min + t * (targetWid.max - targetWid.min);
-        if (targetWid.step) {
-          const steps = Math.round((val - targetWid.min) / targetWid.step);
-          val = targetWid.min + steps * targetWid.step;
-        }
-      }
-
-      // Update
-      if (targetWid.value !== val) {
-        targetWid.value = val;
-        if (targetWid.onInput) targetWid.onInput(val);
-        this._executeAction(targetWid);
-        this._needsRedraw = true;
-      }
-      return;
-    }
 
     // Find Target Widget for Debounce Logic
     let targetWid = null;
@@ -1174,6 +1170,7 @@ export default class GuiXR {
   }
 
   _handleMenuInteract(cx, cy) {
+    const t0 = performance.now();
     const data = this._overlayData;
     if (!data || !data.widgets) return;
 
@@ -1185,12 +1182,24 @@ export default class GuiXR {
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
-          console.log(`[GuiXR] Menu Click Hit: ID=${w.id} Label=${w.label} Type=${w.type}`);
+          // console.log(`[GuiXR] Menu Click Hit: ID=${w.id} Label=${w.label} Type=${w.type}`);
 
           if (w.type === 'slider') {
-            const val = Math.max(0, Math.min(1, (rx - w.x) / w.w));
+            this._activeSlider = w;
+            let t = Math.max(0, Math.min(1, (rx - w.x) / w.w));
+            let val = t;
+            if (isFinite(w.min) && isFinite(w.max)) {
+              val = w.min + t * (w.max - w.min);
+              if (w.step) {
+                const steps = Math.round((val - w.min) / w.step);
+                val = w.min + steps * w.step;
+                if (w.step % 1 === 0) val = Math.round(val);
+              }
+            }
             w.value = val;
-            this._executeAction(w);
+            if (w.id !== 'stack_size') {
+              this._executeAction(w);
+            }
             this._needsRedraw = true;
           } else if (w.type === 'checkbox') {
             w.value = !w.value;
@@ -1209,10 +1218,14 @@ export default class GuiXR {
             return;
           }
         }
+        const t1 = performance.now();
+        if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
         return;
       }
     }
-    console.log(`[GuiXR] Menu Click Miss: rx=${rx} ry=${ry}`);
+    const t1 = performance.now();
+    if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
+    // console.log(`[GuiXR] Menu Click Miss: rx=${rx} ry=${ry}`);
   }
 
   _getWidgetValue(tab, id) {
@@ -1286,6 +1299,7 @@ export default class GuiXR {
         if (w.step) {
           const steps = Math.round((val - w.min) / w.step);
           val = w.min + steps * w.step;
+          if (w.step % 1 === 0) val = Math.round(val);
         }
       }
       w.value = val;
@@ -1303,7 +1317,6 @@ export default class GuiXR {
           } else {
             // Legacy Fallbacks
             if (w.id === 'radius') this.updateRadius(val); // Should be covered by onInput now
-            if (w.id === 'stack_size') main.getStateManager().setNewMaxStack(Math.round(val));
             if (w.id === 'fov') { main.getCamera().setFov(val); main.render(); }
             if (w.id === 'intensity' && this._main.getSculptManager().getCurrentTool()) {
               this._main.getSculptManager().getCurrentTool().setIntensity(val);
@@ -1672,6 +1685,9 @@ export default class GuiXR {
     }
 
     const ctx = this._ctx;
+    let cx = u * CANVAS_SIZE;
+    let cy = v * CANVAS_SIZE;
+
     const w = CANVAS_SIZE;
     const h = CANVAS_SIZE;
 
@@ -2011,8 +2027,6 @@ export default class GuiXR {
       this._drawActiveCombobox(ctx);
       ctx.restore();
     }
-
-    this._needsRedraw = true;
   }
 
   _drawOverlay(ctx, w, h) {
@@ -2134,13 +2148,18 @@ export default class GuiXR {
           // Value
           let nVal = wid.value;
           let disp = nVal;
-          if (wid.min !== undefined && wid.max !== undefined) {
+          // IMPORTANT: If w.value is ALREADY absolute (e.g. > 1.0), do NOT remap it!
+          // We check if value looks un-normalized or if min/max exist
+          if (wid.min !== undefined && wid.max !== undefined && nVal <= 1.0 && nVal >= 0.0) {
             disp = wid.min + nVal * (wid.max - wid.min);
+          } else {
+            disp = nVal;
           }
 
           ctx.textAlign = 'right';
           ctx.fillStyle = '#aaa';
-          ctx.fillText(disp.toFixed(2), wx + wid.w - 2, wy + 28);
+          const precision = wid.precision !== undefined ? wid.precision : 2;
+          ctx.fillText(disp.toFixed(precision), wx + wid.w - 2, wy + 28);
 
           // 2. Slider Track (Thin, Bottom)
           const barH = 6;
@@ -2149,10 +2168,12 @@ export default class GuiXR {
           ctx.fillRect(wx + 2, barY, wid.w - 4, barH); // Full Width Background
 
           // 3. Slider Fill
-          const knobX = (wid.w - 4) * Math.max(0, Math.min(1, wid.value)); // wid.value is normalized for overlay? Yes, mostly.
-          // Wait, verify normalization for overlay sliders again.
-          // In Main Panel we do manual norm. In Overlay, `wid.value` IS the 0-1 value for drawing usually.
-          // But let's be safe: overlay draw logic uses `wid.value` as 't'.
+          // Calculate normalized ratio for the visual track
+          let tRatio = wid.value;
+          if (wid.min !== undefined && wid.max !== undefined && wid.value > 1.0) {
+            tRatio = (wid.value - wid.min) / (wid.max - wid.min);
+          }
+          const knobX = (wid.w - 4) * Math.max(0, Math.min(1, tRatio)); 
 
           ctx.fillStyle = '#888';
           ctx.fillRect(wx + 2, barY, knobX, barH);
@@ -2606,7 +2627,9 @@ export default class GuiXR {
     // 1. Redraw if requested (Input/Hover changes)
     if (this._needsRedraw) {
       if (!this._needsUpload) this._needsUpload = true;
-      this.draw();
+      // DO NOT draw immediately. Defer it to the throttled upload tick.
+      this._pendingDraw = true;
+      this._needsRedraw = false;
     }
 
     // 2. Upload Texture to GPU (Throttled)
@@ -2614,22 +2637,14 @@ export default class GuiXR {
   }
 
   updateTexture() {
-    // Force draw if pending (Fix for VR where window.RAF is throttled)
+    if (!this._needsUpload || !this._texture) return;
+
+    // Force draw if pending (happens right before the throttled upload)
     if (this._pendingDraw) {
-      this._needsRedraw = true;
-      this.draw();
+      this._needsRedraw = true; // Tell draw() it's allowed
+      this.draw();             // This blocks for ~20-50ms max, but only 30 times a sec
       this._pendingDraw = false;
     }
-
-    if (!this._needsUpload || !this._texture) return;
-    const now = performance.now();
-    if (!this._lastUpload) this._lastUpload = 0;
-    // Throttle to 30fps (33ms) to improve responsiveness while respecting VR bandwidth
-    if (now - this._lastUpload < 33) {
-      return;
-    }
-
-    this._lastUpload = now;
 
     const t0 = performance.now();
     const gl = this._gl;
