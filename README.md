@@ -46,7 +46,6 @@ It should work on any WebXR compatible device. So far I've tested on:
     - show more heads up things?
     - toolbar/shortcut bar?
     - outliner? 
-
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
