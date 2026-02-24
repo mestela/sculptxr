@@ -1,4 +1,4 @@
-# SculptXR (v0.7.801)
+# SculptXR (v0.8.3)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -11,12 +11,12 @@ Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOe
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.8.3: OpenXR Warning Dialog
+*   v0.8.2: VR Fuzzer
+*   v0.8.1: VERSION Reference Fix
 *   v0.7.801: Move Tool Symmetry Fix
 *   v0.7.800: Voxel Stability & Performance Release
 *   v0.7.696: Voxel Mirror Tool Symmetry Fix
-*   v0.7.692: VR Move Tool Symmetry
-*   v0.7.690: Volume Intersect Default
-*   v0.7.687: Two-Handed Scale Fix
 
 
 [View Full Release History](docs/releases.md)
@@ -30,7 +30,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - **Functionality**:
-- final shakedown of runtime issues (occasional select errors, shader compile errors) -- fuzzing?
+- final shakedown of runtime issues (occasional select errors, shader compile errors)
 
 (for post v1)
     - Voxel straight line mode

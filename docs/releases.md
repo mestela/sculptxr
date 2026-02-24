@@ -1,5 +1,13 @@
 # SculptXR Release History
 
+- **v0.8.3**: **OpenXR Warning Dialog**:
+    - **UX**: Added a 2-second timeout warning dialog advising users to restart Chrome if OpenXR fails to initialize (e.g., if Chrome starts before the Meta Link software is ready).
+- **v0.8.2**: **VR Fuzzer**:
+    - **Debug**: Implemented a VR Fuzzer inside `Scene.js`. When toggled via `window.startFuzzing()`, it injects rapid, randomized inputs (poses, buttons, radus changes) to stress-test the engine and help shake out intermittent VR bugs.
+- **v0.8.1**: **Version Reference Fix**:
+    - **Fix**: Resolved `ReferenceError: VERSION is not defined` in `GuiXR.js` and `GuiVRAbout.js` caused by the v0.8.0 constant refactor.
+- **v0.8.0**: **New Release Cycle**:
+    - **Refactor**: Replaced global `window.VERSION` with imported ES module constants.
 - **v0.7.801**: **Move Tool Symmetry Fix**:
     - **Fix**: **Symmetry Tearing**: Restored precise Move tool symmetry by removing the 1000-triangle limit in `Picking.js:intersectionSphereMeshes`. This ensures aligned brush centers for primary and mirrored controllers on high-poly meshes.
 - **v0.7.800**: **Voxel Stability & Performance Release**:
