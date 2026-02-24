@@ -10,7 +10,7 @@ ShaderWireframe.activeAttributes = {
   material: true
 };
 
-ShaderWireframe.uniformNames = ['uMVP', 'uEM', 'uColor'];
+ShaderWireframe.uniformNames = ['uMVP', 'uEM'];
 
 ShaderWireframe.vertex = [
   'attribute vec3 aVertex;',
@@ -26,9 +26,8 @@ ShaderWireframe.vertex = [
 ].join('\n');
 
 ShaderWireframe.fragment = [
-  'uniform vec3 uColor;',
   'void main() {',
-  '  gl_FragColor = vec4(uColor, 0.25);',
+  '  gl_FragColor = vec4(0.0, 0.0, 0.0, 0.4);',
   '}'
 ].join('\n');
 
@@ -55,9 +54,6 @@ ShaderWireframe.updateUniforms = function (mesh) {
   var gl = mesh.getGL();
   gl.uniformMatrix4fv(this.uniforms.uMVP, false, mesh.getMVP());
   gl.uniformMatrix4fv(this.uniforms.uEM, false, mesh.getEditMatrix());
-  // Use Flat Color if available, else Black
-  var color = mesh.getFlatColor ? mesh.getFlatColor() : [0.0, 0.0, 0.0];
-  gl.uniform3fv(this.uniforms.uColor, color || [0.0, 0.0, 0.0]);
 };
 
 export default ShaderWireframe;

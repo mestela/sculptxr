@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+- **v0.8.18**: **Wireframe Color Restore**:
+    - **Fix**: **Gray Wireframe**: Restored the mesh overlay wireframe color from red to its original translucent gray (`vec4(0.0, 0.0, 0.0, 0.4)`). A previous voxel-bounding box patch had accidentally linked the wireframe shader to the mesh's default `RenderData._flatColor` (which is pure red).
+
 - **v0.8.17**: **Smooth VR Slider Physics Fix**:
     - **Fix**: **Phantom UI Lag**: Resolved a severe stuttering issue exclusively affecting sliders embedded inside Overlay menus (like the 'Max Undo Steps' slider in the History tab).
     - **Fix**: **Overlay Event Priority**: Discovered and fixed a flaw where the `GuiXR._overlay` click event was unconditionally consuming dragging inputs and firing them through `_handleMenuInteract` at a full 90hz, bypassing the smooth floating-point slider math block altogether. Brought the `_activeSlider` event trap to the absolute top of `GuiXR.onInteract()` to restore smooth slider updating regardless of parent container.
