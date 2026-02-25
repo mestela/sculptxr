@@ -1,6 +1,6 @@
 import './misc/Polyfill.js';
 import { VERSION } from './Version.js';
-import { vec3, mat4 } from 'gl-matrix';
+import { vec3, mat4, quat } from 'gl-matrix';
 import { Manager as HammerManager, Pan, Pinch, Tap } from 'hammerjs';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
@@ -51,6 +51,18 @@ class SculptGL extends Scene {
     window.app = this; // Ensure 'app' is also set globally
     window.sculptgl = this; // Alias for user convenience
     this._referenceManager = new ReferenceManager(this);
+    window.debugDoubleTap = () => {
+      window._debugTapStats = true;
+      console.log("=== DOUBLE TAP DEBUG ENABLED ===");
+      console.log("- Run window.debugDoubleTap() again and it will just stay enabled -");
+    };
+
+    window.debugSpectator = () => {
+      console.log("=== SPECTATOR DEBUG ===");
+      console.log("Desktop Rotation Quat:", this._desktopRotation);
+      console.log("Camera View Matrix:", this._camera._view);
+      console.log("Active Zoom:", this._camera._trans[2]);
+    };
 
     // Convenience for Console Debugging
     Object.defineProperty(this, 'guiXR', {
@@ -340,6 +352,10 @@ class SculptGL extends Scene {
     canvas.addEventListener('mousemove', Utils.throttle(this.onMouseMove.bind(this), 16.66), false);
     canvas.addEventListener('mousewheel', cbMouseWheel, false);
     canvas.addEventListener('DOMMouseScroll', cbMouseWheel, false);
+    // Add native double-click as fallback to Hammer.js
+    canvas.addEventListener('dblclick', (e) => {
+      this.onDoubleTap(e);
+    }, false);
 
     //key
     window.addEventListener('keydown', this.onKeyDown.bind(this), false);
@@ -522,8 +538,19 @@ class SculptGL extends Scene {
     }
 
     var evProxy = this._eventProxy;
-    evProxy.pageX = e.center.x;
-    evProxy.pageY = e.center.y;
+
+    // Handle both Hammer.js (e.center) and native dblclick (e.pageX)
+    evProxy.pageX = e.center ? e.center.x : e.pageX;
+    evProxy.pageY = e.center ? e.center.y : e.pageY;
+
+    if (window._debugTapStats) {
+      console.log(`[SculptGL.js:onDoubleTap] Fired! Hammer=${!!e.center} X=${evProxy.pageX} Y=${evProxy.pageY}`);
+    }
+
+    if (evProxy.pageX === undefined) return; // Prevent crash if completely blank event
+
+    if (window.screenLog) window.screenLog(`onDoubleTap: Hammer=${!!e.center} X=${evProxy.pageX} Y=${evProxy.pageY}`, "cyan");
+
     this.setMousePosition(evProxy);
 
     var picking = this._picking;
@@ -695,6 +722,7 @@ class SculptGL extends Scene {
   }
 
   onDeviceWheel(dir) {
+
     if (dir > 0.0 && !this._isWheelingIn) {
       this._isWheelingIn = true;
       this._camera.start(this._mouseX, this._mouseY);
@@ -723,8 +751,8 @@ class SculptGL extends Scene {
     if (this._focusGui)
       return;
 
-    // Prevent mouse-down from interfering with active VR stroke, unless in Spectator Mode
-    if (this._vrSculpting && !this._desktopOffsetMode) return;
+    // Prevent mouse-down from interfering with active VR stroke
+    if (this._vrSculpting) return;
 
     this.setMousePosition(event);
 
@@ -773,22 +801,8 @@ class SculptGL extends Scene {
 
     this.setMousePosition(event);
 
-    // Prevent mouse-move from interfering with active VR stroke, unless in Spectator Mode
-    if (this._vrSculpting && !this._desktopOffsetMode) return;
-
-    if (this._desktopOffsetMode && this._xrSession) {
-      if (this._action === Enums.Action.CAMERA_ROTATE ||
-        this._action === Enums.Action.CAMERA_PAN ||
-        this._action === Enums.Action.CAMERA_ZOOM ||
-        this._action === Enums.Action.CAMERA_PAN_ZOOM_ALT) {
-
-        this.updateDesktopOffset(this._mouseX - this._lastMouseX, this._mouseY - this._lastMouseY, this._action);
-        this._lastMouseX = this._mouseX;
-        this._lastMouseY = this._mouseY;
-        this.render();
-        return;
-      }
-    }
+    // Prevent mouse-move from interfering with active VR stroke
+    if (this._vrSculpting) return;
 
     this.setCanvasCursor(event);
 

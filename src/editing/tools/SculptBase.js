@@ -131,7 +131,8 @@ class SculptBase {
     var main = this._main;
 
     // VR Bypass: handleXRInput does the intersection logic
-    if (main._xrSession) return;
+    // UNLESS we are in desktop spectator offset mode, where the mouse is active on the screen!
+    if (main._xrSession && !main._desktopOffsetMode) return;
 
     var picking = main.getPicking();
     var isSculpting = main._action === Enums.Action.SCULPT_EDIT;
@@ -417,16 +418,39 @@ class SculptBase {
     // SCULPTING STATE (Trigger Pressed)
     var dist = vec3.dist(worldPos, this._lastVRPos);
     var rWorld = Math.sqrt(picking._rWorld2);
+    if (rWorld < 1e-5) rWorld = main._vrLastPickingRadius || 0.05; // Fallback if previous frame missed
+
     var minSpacing = 0.15 * rWorld;
+    if (minSpacing < 0.001) minSpacing = 0.001; // Safety minimum
 
     if (dist <= minSpacing) {
       // if (window.screenLog && this._main._logThrottle % 60 === 0) window.screenLog(`SB: Skip dist=${dist.toFixed(4)}`, "grey");
       return;
     }
 
-    this.makeStrokeXR(picking, pickingSym, true);
+    var step = 1.0 / Math.floor(dist / minSpacing);
+    var currentPos = vec3.clone(worldPos);
+    var lerpedPos = vec3.create();
+    var mesh = this.getMesh();
 
-    vec3.copy(this._lastVRPos, worldPos);
+    for (var i = step; i <= 1.0; i += step) {
+      vec3.lerp(lerpedPos, this._lastVRPos, currentPos, i);
+
+      // Temporarily update controller pos for symmetry / makeStrokeXR logic
+      vec3.copy(main._vrControllerPos, lerpedPos);
+
+      // Re-evaluate intersection at this lerped position to properly grab vertices
+      if (mesh) {
+        picking.intersectionSphereMeshes([mesh], lerpedPos, rWorld);
+      }
+
+      this.makeStrokeXR(picking, pickingSym, true);
+    }
+
+    // Restore actual controller pos
+    vec3.copy(this._lastVRPos, currentPos);
+    vec3.copy(main._vrControllerPos, currentPos);
+
     // Also update _lastInter nicely if we can, but it's less critical now
     var inter = picking.getIntersectionPoint();
     if (inter) {

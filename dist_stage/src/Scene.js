@@ -112,10 +112,7 @@ class Scene {
     this._autoMatrix = opts.scalecenter; // scale and center the imported meshes
     this._vertexSRGB = true; // srgb vs linear colorspace for vertex color
 
-    // VR Interaction State
-    this._xrSession = null;
-    this._baseRefSpace = null;
-    this._xrRefSpace = null;
+    this._cachedExitVrScale = this._vrScale;
     // [CALIBRATED DEFAULTS] Trans[0.01, 1.09, -0.34] Scale[0.99]
     // We only set the offset here if XRRigidTransform is available, else null and init later.
     // XRRigidTransform is usually available in window if Secure Context.
@@ -123,10 +120,6 @@ class Scene {
       ? new XRRigidTransform({ x: 0.01, y: 1.09, z: -0.34 })
       : null;
 
-    // [DESKTOP 6DOF] Spectator Camera State
-    this._desktopOffsetMode = true; // Default ON (Zero Offset)
-    this._desktopOffset = [0.0, 0.0, 0.0]; // Fixed Offset (0,0,0)
-    this._desktopRotation = quat.create(); // Rotation
     this._isCalibratingSpectator = false; // "Move Me" Mode
     this._spectatorMode = 'independent'; // 'independent' or 'mirror'
     this._desktopCameraCache = {
@@ -192,7 +185,6 @@ class Scene {
     this._vrPoseRight = null;
 
     // Desktop 6DOF Offset (Spectator Camera)
-    this._desktopOffsetMode = true; // Enabled by default
     // Offset relative to HMD: [x, y, z] in meters.
     // User Request: "Move forward 50cm, up 50cm".
     // Note: If HMD is facing User, "Forward" is towards User.
@@ -1573,6 +1565,17 @@ class Scene {
       tool._ctrlAlpha.setValue(name);
   }
 
+  // ... wait, removing keyboard completely? Let's keep toggleWireframe
+  onKeyDown(event) {
+    if (event.handled === true) return;
+    event.handled = true;
+    switch (event.which) {
+      case 87: // W
+        // this.getSculptManager().getTool(Enums.Tools.WIREFRAME).toggle();
+        this.render();
+        break;
+    }
+  }
   enterXR(session) {
     this._xrSession = session;
     session.addEventListener('end', this.onXREnd.bind(this));
@@ -1742,6 +1745,7 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
+    this._vrSculpting = false;
 
     this._vrControllerLeft = null;
     this._vrControllerRight = null;
@@ -2054,134 +2058,114 @@ class Scene {
         }
       }
 
+      // [DESKTOP CAMERA PRESERVATION]
+      // Snapshot the live desktop camera state before renderVR mutates it
+      const liveDesktopView = mat4.clone(this._camera._view);
+      const liveDesktopProj = mat4.clone(this._camera._proj);
+
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
 
       // [DESKTOP 6DOF] Spectator Render Mode
-      if (this._desktopOffsetMode) {
+      if (this._spectatorMode === 'mirror' && pose.views.length > 0) {
+        const viewMat = mat4.create();
+        const prob = mat4.create();
 
-        if (this._spectatorMode === 'mirror' && pose.views.length > 0) {
-          const viewMat = mat4.create();
-          const prob = mat4.create();
+        // Track VR Headset (Perfect Mirror)
+        const view = pose.views[0];
+        const aspect = this._canvasWidth / this._canvasHeight;
+        mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
+        mat4.copy(viewMat, view.transform.inverse.matrix);
 
-          // Track VR Headset (Perfect Mirror)
-          const view = pose.views[0];
-          const aspect = this._canvasWidth / this._canvasHeight;
-          mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
-          mat4.copy(viewMat, view.transform.inverse.matrix);
+        // Draw directly to canvas here, because window RAF may be throttled/paused
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
+        gl.clearColor(0.2, 0.2, 0.2, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-          // Apply Spectator User Mouse Controls (Offsets)
-          mat4.translate(viewMat, viewMat, [
-            -this._desktopOffset[0],
-            -this._desktopOffset[1],
-            -this._desktopOffset[2]
-          ]);
+        // Render Shared Logic directly to canvas
+        // We must call updateMatricesAndSort before rendering to apply tool positions
+        this.updateMatricesAndSort();
+        this._renderSceneVR(this._camera, viewMat, prob);
 
-          const matRot = mat4.create();
-          mat4.fromQuat(matRot, this._desktopRotation);
-          mat4.multiply(viewMat, viewMat, matRot);
-
-          // Draw directly to canvas here, because window RAF may be throttled/paused
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
-          gl.clearColor(0.2, 0.2, 0.2, 1.0);
-          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-          // Render Shared Logic directly to canvas
-          // We must call updateMatricesAndSort before rendering to apply tool positions
-          this.updateMatricesAndSort();
-          this._renderSceneVR(this._camera, viewMat, prob);
-
-          // Force SculptManager post-render (gizmos/UI) to canvas
-          if (this._sculptManager) {
-            gl.disable(gl.DEPTH_TEST);
-            this._sculptManager.postRender();
-            gl.enable(gl.DEPTH_TEST);
-          }
-        } else {
-          // Independent Desktop Camera 
-          // We must bypass ALL VR scaling and offsets. The user wants the desktop camera
-          // to sit exactly where it was before VR launched, completely oblivious to hand/head/world movement.
-
-          const cacheScale = this._vrScale;
-          const cacheOffset = this._xrWorldOffset;
-
-          // Unhook VR Scale temporarily so matrix calculations resolve at 1:1 real world scaling
-          this._vrScale = 1.0;
-          this._xrWorldOffset = null;
-
-          // Restore pristine desktop camera FIRST so meshes use it for matrix caching
-          mat4.copy(this._camera._view, this._desktopCameraCache.view);
-          mat4.copy(this._camera._proj, this._desktopCameraCache.proj);
-
-          // Apply User Desktop Spectator Controls (D key offsets)
-          mat4.translate(this._camera._view, this._camera._view, [
-            -this._desktopOffset[0],
-            -this._desktopOffset[1],
-            -this._desktopOffset[2]
-          ]);
-
-          const matRot = mat4.create();
-          mat4.fromQuat(matRot, this._desktopRotation);
-          mat4.multiply(this._camera._view, this._camera._view, matRot);
-
-          // Force update of all mesh matrices using the newly applied desktop 1:1 scale and camera
-          this.updateMatricesAndSort();
-
-          if (window._triggerSpectatorLog) {
-            window._triggerSpectatorLog = false;
-            console.log("=== SPECTATOR RENDER PIPELINE DUMP ===");
-            console.log("Canvas Res:", this._canvasWidth, this._canvasHeight);
-            console.log("VR Scale During Pass:", this._vrScale);
-            console.log("Camera View Mat:", Array.from(this._camera._view).map(n => parseFloat(n).toFixed(2)).join(", "));
-            console.log("Camera Proj Mat:", Array.from(this._camera._proj).map(n => parseFloat(n).toFixed(2)).join(", "));
-
-            if (this._meshes && this._meshes.length > 0) {
-              const m0 = this._meshes[0];
-              console.log("First Mesh (Index 0):", m0.getID());
-              console.log("  Mesh Model Matrix:", Array.from(m0.getMatrix()).map(n => parseFloat(n).toFixed(2)).join(", "));
-              console.log("  Mesh MVP Matrix:", Array.from(m0.getMVP()).map(n => parseFloat(n).toFixed(2)).join(", "));
-
-              // Project a test point (0,0,0 local) to check final NDC
-              const testPt = vec3.create();
-              vec3.transformMat4(testPt, [0, 0, 0], m0.getMVP());
-              console.log("  Mesh Local Origin in NDC (x,y,z):", testPt[0].toFixed(2), testPt[1].toFixed(2), testPt[2].toFixed(2));
-
-              if (m0.getNbVertices() > 0) {
-                const verts = m0.getVertices();
-                const v0 = [verts[0], verts[1], verts[2]];
-                const pt0 = vec3.create();
-                vec3.transformMat4(pt0, v0, m0.getMVP());
-                console.log(`  Mesh Vert[0] (${v0[0].toFixed(2)}, ${v0[1].toFixed(2)}, ${v0[2].toFixed(2)}) in NDC:`, pt0[0].toFixed(2), pt0[1].toFixed(2), pt0[2].toFixed(2));
-              }
-            } else {
-              console.log("No meshes in scene to compute MVP.");
-            }
-            console.log("======================================");
-          }
-
-          // Render to Canvas Buffer directly using standard desktop pipeline
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
-          gl.clearColor(0.2, 0.2, 0.2, 1.0);
-          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-          // Force _renderSceneVR instead of _drawScene to avoid RTT composition failures.
-          // Because _vrScale and _xrWorldOffset are temporarily nullified above, 
-          // this acts as a perfect 1:1 standard desktop render pipeline without VR distortion.
-          this._renderSceneVR(this._camera, this._camera._view, this._camera._proj);
-
-          // Force SculptManager post-render (gizmos/UI) to canvas
-          if (this._sculptManager) {
-            gl.disable(gl.DEPTH_TEST);
-            this._sculptManager.postRender();
-            gl.enable(gl.DEPTH_TEST);
-          }
-
-          // Restore VR Environment for the next frame
-          this._vrScale = cacheScale;
-          this._xrWorldOffset = cacheOffset;
+        // Force SculptManager post-render (gizmos/UI) to canvas
+        if (this._sculptManager) {
+          gl.disable(gl.DEPTH_TEST);
+          this._sculptManager.postRender();
+          gl.enable(gl.DEPTH_TEST);
         }
+      } else {
+        // Independent Desktop Camera 
+        // We must bypass ALL VR scaling and offsets. The user wants the desktop camera
+        // to sit exactly where it was before VR launched, completely oblivious to hand/head/world movement.
+
+        const cacheScale = this._vrScale;
+        const cacheOffset = this._xrWorldOffset;
+
+        // Unhook VR Scale temporarily so matrix calculations resolve at 1:1 real world scaling
+        this._vrScale = 1.0;
+        this._xrWorldOffset = null;
+
+        // Restore pristine live desktop camera FIRST so meshes use it for matrix caching
+        mat4.copy(this._camera._view, liveDesktopView);
+        mat4.copy(this._camera._proj, liveDesktopProj);
+
+        // Force update of all mesh matrices using the newly applied desktop 1:1 scale and camera
+        this.updateMatricesAndSort();
+
+        if (window._triggerSpectatorLog) {
+          window._triggerSpectatorLog = false;
+          console.log("=== SPECTATOR RENDER PIPELINE DUMP ===");
+          console.log("Canvas Res:", this._canvasWidth, this._canvasHeight);
+          console.log("VR Scale During Pass:", this._vrScale);
+          console.log("Camera View Mat:", Array.from(this._camera._view).map(n => parseFloat(n).toFixed(2)).join(", "));
+          console.log("Camera Proj Mat:", Array.from(this._camera._proj).map(n => parseFloat(n).toFixed(2)).join(", "));
+
+          if (this._meshes && this._meshes.length > 0) {
+            const m0 = this._meshes[0];
+            console.log("First Mesh (Index 0):", m0.getID());
+            console.log("  Mesh Model Matrix:", Array.from(m0.getMatrix()).map(n => parseFloat(n).toFixed(2)).join(", "));
+            console.log("  Mesh MVP Matrix:", Array.from(m0.getMVP()).map(n => parseFloat(n).toFixed(2)).join(", "));
+
+            // Project a test point (0,0,0 local) to check final NDC
+            const testPt = vec3.create();
+            vec3.transformMat4(testPt, [0, 0, 0], m0.getMVP());
+            console.log("  Mesh Local Origin in NDC (x,y,z):", testPt[0].toFixed(2), testPt[1].toFixed(2), testPt[2].toFixed(2));
+
+            if (m0.getNbVertices() > 0) {
+              const verts = m0.getVertices();
+              const v0 = [verts[0], verts[1], verts[2]];
+              const pt0 = vec3.create();
+              vec3.transformMat4(pt0, v0, m0.getMVP());
+              console.log(`  Mesh Vert[0] (${v0[0].toFixed(2)}, ${v0[1].toFixed(2)}, ${v0[2].toFixed(2)}) in NDC:`, pt0[0].toFixed(2), pt0[1].toFixed(2), pt0[2].toFixed(2));
+            }
+          } else {
+            console.log("No meshes in scene to compute MVP.");
+          }
+          console.log("======================================");
+        }
+
+        // Render to Canvas Buffer directly using standard desktop pipeline
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
+        gl.clearColor(0.2, 0.2, 0.2, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        // Force _renderSceneVR instead of _drawScene to avoid RTT composition failures.
+        // Because _vrScale and _xrWorldOffset are temporarily nullified above, 
+        // this acts as a perfect 1:1 standard desktop render pipeline without VR distortion.
+        this._renderSceneVR(this._camera, this._camera._view, this._camera._proj);
+
+        // Force SculptManager post-render (gizmos/UI) to canvas
+        if (this._sculptManager) {
+          gl.disable(gl.DEPTH_TEST);
+          this._sculptManager.postRender();
+          gl.enable(gl.DEPTH_TEST);
+        }
+
+        // Restore VR Environment for the next frame
+        this._vrScale = cacheScale;
+        this._xrWorldOffset = cacheOffset;
       }
     }
   }
@@ -3405,11 +3389,6 @@ class Scene {
 
   _preventDefault(event) {
     event.preventDefault();
-  }
-
-  toggleDesktopOffset() {
-    this._desktopOffsetMode = !this._desktopOffsetMode;
-    this.render();
   }
 
   toggleSpectatorCalibration() {

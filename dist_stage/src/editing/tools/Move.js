@@ -110,6 +110,7 @@ class Move extends SculptBase {
   }
 
   copyVerticesProxy(picking, moveData) {
+    if (!moveData.vProxy) return;
     var iVerts = moveData.iVerts || picking.getPickedVertices(); // Use stored if avail
     var vAr = this.getMesh().getVertices();
     var vProxy = moveData.vProxy;
@@ -123,6 +124,7 @@ class Move extends SculptBase {
   }
 
   sculptStroke() {
+    if (!this.getMesh()) return;
     var main = this._main;
     var picking = main.getPicking();
     var pickingSym = main.getPickingSymmetry();

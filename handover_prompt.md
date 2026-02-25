@@ -1,26 +1,43 @@
 # SculptXR Handover Prompt
 
-## Objective: v1.0 Stabilization (Feature Freeze)
+## Objective: Revert v0.8.46 Regressions
 
-The project has entered the **v0.8.0** release cycle. We are officially in a **Feature Freeze**. The objective for this phase is to reach **v1.0** by focusing exclusively on bug fixes, performance optimizations, and UX stability.
+The project has entered the **v0.8.0** release cycle. We are officially in a **Feature Freeze**, but a major series of regressions were introduced between `v0.8.40` (Desktop Spectator Basics) and `v0.8.46`. The absolute priority is to revert these regressions and restore desktop and VR stability.
 
 ### Current Status
-- **Baseline**: `v0.8.0` is live on the Beta channel.
-- **Recent Fix**: Resolved a major symmetry regression in the Move tool (removed a 1000-triangle limit in `Picking.js` that caused brush center offsets).
-- **Major Features Complete**: Voxel Remeshing, Transform Gizmo (desktop/VR), Symmetrical Geometric Mapping, and Voxel Bounding Box UI.
+- **Baseline**: `v0.8.46` is on Beta, but it is deeply broken.
+- **Goal**: Read this document, apply the specific surgical fixes outlined, and bump to `v0.8.47`.
 
 ### Core Rules for this Phase
-1. **NO NEW FEATURES**: Do not implement new tools or experimental features unless explicitly asked for a bug fix that requires an architectural change.
-2. **STABILITY FIRST**: Prioritize fixing "pop", "jitter", or "drift" in VR interactions.
+1. **NO NEW FEATURES**: Do not implement new tools or experimental features. 
+2. **STABILITY FIRST**: Fix the syntax errors, desktop lockouts, and VR brush starvation immediately.
 3. **VERSIONING**: 
-    - The **Source of Truth** for the version is the `<title>` tag in [index.html](file:///Users/mattestela/.gemini/jetski/scratch/sculptxr/index.html).
-    - The `deploy.sh` script automatically syncs this version into `src/Version.js` during deployment.
-    - Every new deployment (Beta or Production) REQUIRES a version bump in `index.html`.
+    - The **Source of Truth** for the version is the `<title>` tag in `index.html`.
+    - Every new deployment (Beta or Production) REQUIRES a version bump in `index.html`. 
 
-### Known Areas to Watch
-- **Symmetry Snapping**: Monitor the consistency of geometric symmetry mapping on remeshed voxel meshes.
-- **VR Transform Alignment**: Ensure the Transform Gizmo and Grab tools remain perfectly centered and do not drift during extended sculpting sessions.
-- **Performance**: Maintain 90Hz in VR. Avoid introducing any code that iterates through every face/vertex on the main thread during `sculptStroke`.
+### The Regressions & Fix Clues
+
+**1. `quat is not defined` Error**
+- **Symptom**: Console throws a ReferenceError during double-click in spectator mode.
+- **Root Cause**: In `SculptGL.js`, `onDoubleTap()` uses `quat.identity()`, but `quat` is never imported at the top of the file.
+- **Fix Clue**: Update the gl-matrix import at the top of `SculptGL.js`: `import { vec3, mat4, quat } from 'gl-matrix';`
+
+**2. Desktop Interaction Broken (Post-VR)**
+- **Symptom**: After taking the headset off and exiting VR, the desktop mouse cannot sculpt, pan, or zoom (UI is frozen).
+- **Root Cause**: `SculptGL.js` mouse events have a guard: `if (this._vrSculpting && !this._desktopOffsetMode) return;`. When VR ends, `onXREnd()` in `Scene.js` fails to reset `_vrSculpting` to false, permanently locking out the mouse.
+- **Fix Clue**: Add `this._vrSculpting = false;` to the `onXREnd()` cleanup block in `Scene.js`.
+
+**3. VR Brushes Drawing Dots Instead of Strokes**
+- **Symptom**: VR brushes no longer draw continuous lines; they stamp discrete dots because stroke interpolation is starving.
+- **Root Cause**: In `Scene.js` `applyRender()`, a new fallback to prevent freezing during headset sleep is too aggressive:
+  ```javascript
+  if (this._xrSession && (performance.now() - (this._lastXRFrameTime || 0) < 200)) {
+      if (this._sculptManager) this._sculptManager.postRender();
+      return; // <-- DANGER! Starves the application layer!
+  }
+  ```
+  By returning early, `applyRender` (driven by `requestAnimationFrame`) never finishes executing, depriving `SculptManager` of its background update pulse needed for continuous stroke math.
+- **Fix Clue**: Remove the early `return;`. Instead, just skip the WebGL drawing phase `this._drawFullScene = false;` so the rest of the engine state can pump normally.
 
 ## Next Mission
-Wait for user bug reports or regression findings. If a bug is reported, perform deep root-cause analysis (similar to the Move Symmetry investigation in `research.md`) before applying a surgical fix.
+Please systematically apply these three fixes, test standard desktop sculpting, enter and exit VR to test the "Swap Workflow", and ensure VR brushes draw continuous strokes. Once verified, deploy `v0.8.47`.
