@@ -128,6 +128,11 @@ class Scene {
     this._desktopOffset = [0.0, 0.0, 0.0]; // Fixed Offset (0,0,0)
     this._desktopRotation = quat.create(); // Rotation
     this._isCalibratingSpectator = false; // "Move Me" Mode
+    this._spectatorMode = 'independent'; // 'independent' or 'mirror'
+    this._desktopCameraCache = {
+      view: mat4.create(),
+      proj: mat4.create()
+    };
 
     this._activeHandedness = 'right';
     this._vrScale = 0.008; // Scale 100-unit world to 0.8 meters (User Req: "25% too big")
@@ -141,6 +146,43 @@ class Scene {
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
     // Fix: Y=0 put it on the floor. Y=1.2 should be chest/head height.
     this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
+
+    window.debugSpectator = () => {
+      console.log("=== SPECTATOR DEBUG ===");
+      console.log("Desktop Mode:", this._spectatorMode);
+      console.log("VR Scale:", this._vrScale);
+      console.log("World Offset Pos:", this._xrWorldOffset ? `x:${this._xrWorldOffset.position.x.toFixed(2)} y:${this._xrWorldOffset.position.y.toFixed(2)} z:${this._xrWorldOffset.position.z.toFixed(2)}` : "null");
+      console.log("Desktop Cache View:", Array.from(this._desktopCameraCache.view).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Desktop Cache Proj:", Array.from(this._desktopCameraCache.proj).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Current Camera View:", Array.from(this._camera._view).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Current Camera Proj:", Array.from(this._camera._proj).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Camera Trans:", Array.from(this._camera._trans).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Camera Rot:", Array.from(this._camera._quatRot).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Camera Center:", Array.from(this._camera._center).map(n => parseFloat(n).toFixed(2)).join(", "));
+      console.log("Camera Offset:", Array.from(this._camera._offset).map(n => parseFloat(n).toFixed(2)).join(", "));
+      return "Check console for matrix dump.";
+    };
+
+    window.forceDesktopCameraTrans = (x, y, z) => {
+      this._camera._trans[0] = x;
+      this._camera._trans[1] = y;
+      this._camera._trans[2] = z;
+      this._camera.updateView();
+      // Update cache
+      mat4.copy(this._desktopCameraCache.view, this._camera._view);
+      mat4.copy(this._desktopCameraCache.proj, this._camera._proj);
+      return `Forced Trans to: ${x}, ${y}, ${z}`;
+    };
+
+    window.testSpectatorScale = (s) => {
+      window._debugSpectatorScale = s;
+      return `Testing custom scale: ${s}`;
+    };
+
+    window.debugSpectatorRender = () => {
+      window._triggerSpectatorLog = true;
+      return "Dump triggered for next frame...";
+    };
     this._vrTwoHanded = { active: false, prevMid: vec3.create(), prevDist: 0.0, prevVec: vec3.create() };
 
     // VR Menu State
@@ -150,7 +192,7 @@ class Scene {
     this._vrPoseRight = null;
 
     // Desktop 6DOF Offset (Spectator Camera)
-    this._desktopOffsetMode = false;
+    this._desktopOffsetMode = true; // Enabled by default
     // Offset relative to HMD: [x, y, z] in meters.
     // User Request: "Move forward 50cm, up 50cm".
     // Note: If HMD is facing User, "Forward" is towards User.
@@ -524,7 +566,7 @@ class Scene {
   }
 
   _requestRender() {
-    if (this._preventRender === true || this._xrSession)
+    if (this._preventRender === true)
       return false; // render already requested for the next frame
 
     window.requestAnimationFrame(this.applyRender.bind(this));
@@ -538,15 +580,19 @@ class Scene {
   }
 
   applyRender(arg) {
-    // requestAnimationFrame passes a timestamp (number) as first argument
-    // We only want a WebGLFramebuffer or null.
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
-
     this._preventRender = false;
     this.updateMatricesAndSort();
 
     var gl = this._gl;
     if (!gl) return;
+
+    // During XR, the canvas is rendered by onXRFrame (Spectator Camera)
+    // We only want to update the DOM GUI, not WebGL canvas here.
+    if (this._xrSession) {
+      if (this._sculptManager) this._sculptManager.postRender();
+      return;
+    }
 
     if (this._drawFullScene) this._drawScene();
 
@@ -1531,6 +1577,13 @@ class Scene {
     this._xrSession = session;
     session.addEventListener('end', this.onXREnd.bind(this));
 
+    // Cache the standard desktop camera exactly ONCE before any VR resolutions
+    // or matrices pollute the state.
+    this._camera.updateView();
+    this._camera.updateProjection();
+    mat4.copy(this._desktopCameraCache.view, this._camera._view);
+    mat4.copy(this._desktopCameraCache.proj, this._camera._proj);
+
     // Force Init Controllers & Menu IMMEDIATELY
     this.initVRControllers();
 
@@ -2004,38 +2057,130 @@ class Scene {
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
 
-      // [DESKTOP 6DOF] Spectator Render (Parity Strategy)
+      // [DESKTOP 6DOF] Spectator Render Mode
       if (this._desktopOffsetMode) {
 
-        const gl = this._gl;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        if (pose.views.length > 0) {
-          const view = pose.views[0];
-          // Use Desktop Aspect Ratio for Projection
-          // Note: We use a temporary projection matrix to match desktop window
-          const aspect = this._canvasWidth / this._canvasHeight;
+        if (this._spectatorMode === 'mirror' && pose.views.length > 0) {
+          const viewMat = mat4.create();
           const prob = mat4.create();
-          mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
 
-          // Apply Offset (Here, for Spectator ONLY)
-          const viewMat = mat4.clone(view.transform.inverse.matrix);
-          mat4.rotateY(viewMat, viewMat, Math.PI);
+          // Track VR Headset (Perfect Mirror)
+          const view = pose.views[0];
+          const aspect = this._canvasWidth / this._canvasHeight;
+          mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
+          mat4.copy(viewMat, view.transform.inverse.matrix);
+
+          // Apply Spectator User Mouse Controls (Offsets)
           mat4.translate(viewMat, viewMat, [
             -this._desktopOffset[0],
             -this._desktopOffset[1],
             -this._desktopOffset[2]
           ]);
 
-          // Apply Rotation
           const matRot = mat4.create();
           mat4.fromQuat(matRot, this._desktopRotation);
           mat4.multiply(viewMat, viewMat, matRot);
 
-          // Render Shared Logic
+          // Draw directly to canvas here, because window RAF may be throttled/paused
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
+          gl.clearColor(0.2, 0.2, 0.2, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+          // Render Shared Logic directly to canvas
+          // We must call updateMatricesAndSort before rendering to apply tool positions
+          this.updateMatricesAndSort();
           this._renderSceneVR(this._camera, viewMat, prob);
+
+          // Force SculptManager post-render (gizmos/UI) to canvas
+          if (this._sculptManager) {
+            gl.disable(gl.DEPTH_TEST);
+            this._sculptManager.postRender();
+            gl.enable(gl.DEPTH_TEST);
+          }
+        } else {
+          // Independent Desktop Camera 
+          // We must bypass ALL VR scaling and offsets. The user wants the desktop camera
+          // to sit exactly where it was before VR launched, completely oblivious to hand/head/world movement.
+
+          const cacheScale = this._vrScale;
+          const cacheOffset = this._xrWorldOffset;
+
+          // Unhook VR Scale temporarily so matrix calculations resolve at 1:1 real world scaling
+          this._vrScale = 1.0;
+          this._xrWorldOffset = null;
+
+          // Restore pristine desktop camera FIRST so meshes use it for matrix caching
+          mat4.copy(this._camera._view, this._desktopCameraCache.view);
+          mat4.copy(this._camera._proj, this._desktopCameraCache.proj);
+
+          // Apply User Desktop Spectator Controls (D key offsets)
+          mat4.translate(this._camera._view, this._camera._view, [
+            -this._desktopOffset[0],
+            -this._desktopOffset[1],
+            -this._desktopOffset[2]
+          ]);
+
+          const matRot = mat4.create();
+          mat4.fromQuat(matRot, this._desktopRotation);
+          mat4.multiply(this._camera._view, this._camera._view, matRot);
+
+          // Force update of all mesh matrices using the newly applied desktop 1:1 scale and camera
+          this.updateMatricesAndSort();
+
+          if (window._triggerSpectatorLog) {
+            window._triggerSpectatorLog = false;
+            console.log("=== SPECTATOR RENDER PIPELINE DUMP ===");
+            console.log("Canvas Res:", this._canvasWidth, this._canvasHeight);
+            console.log("VR Scale During Pass:", this._vrScale);
+            console.log("Camera View Mat:", Array.from(this._camera._view).map(n => parseFloat(n).toFixed(2)).join(", "));
+            console.log("Camera Proj Mat:", Array.from(this._camera._proj).map(n => parseFloat(n).toFixed(2)).join(", "));
+
+            if (this._meshes && this._meshes.length > 0) {
+              const m0 = this._meshes[0];
+              console.log("First Mesh (Index 0):", m0.getID());
+              console.log("  Mesh Model Matrix:", Array.from(m0.getMatrix()).map(n => parseFloat(n).toFixed(2)).join(", "));
+              console.log("  Mesh MVP Matrix:", Array.from(m0.getMVP()).map(n => parseFloat(n).toFixed(2)).join(", "));
+
+              // Project a test point (0,0,0 local) to check final NDC
+              const testPt = vec3.create();
+              vec3.transformMat4(testPt, [0, 0, 0], m0.getMVP());
+              console.log("  Mesh Local Origin in NDC (x,y,z):", testPt[0].toFixed(2), testPt[1].toFixed(2), testPt[2].toFixed(2));
+
+              if (m0.getNbVertices() > 0) {
+                const verts = m0.getVertices();
+                const v0 = [verts[0], verts[1], verts[2]];
+                const pt0 = vec3.create();
+                vec3.transformMat4(pt0, v0, m0.getMVP());
+                console.log(`  Mesh Vert[0] (${v0[0].toFixed(2)}, ${v0[1].toFixed(2)}, ${v0[2].toFixed(2)}) in NDC:`, pt0[0].toFixed(2), pt0[1].toFixed(2), pt0[2].toFixed(2));
+              }
+            } else {
+              console.log("No meshes in scene to compute MVP.");
+            }
+            console.log("======================================");
+          }
+
+          // Render to Canvas Buffer directly using standard desktop pipeline
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
+          gl.clearColor(0.2, 0.2, 0.2, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+          // Force _renderSceneVR instead of _drawScene to avoid RTT composition failures.
+          // Because _vrScale and _xrWorldOffset are temporarily nullified above, 
+          // this acts as a perfect 1:1 standard desktop render pipeline without VR distortion.
+          this._renderSceneVR(this._camera, this._camera._view, this._camera._proj);
+
+          // Force SculptManager post-render (gizmos/UI) to canvas
+          if (this._sculptManager) {
+            gl.disable(gl.DEPTH_TEST);
+            this._sculptManager.postRender();
+            gl.enable(gl.DEPTH_TEST);
+          }
+
+          // Restore VR Environment for the next frame
+          this._vrScale = cacheScale;
+          this._xrWorldOffset = cacheOffset;
         }
       }
     }
@@ -3328,6 +3473,26 @@ class Scene {
 
 
       }
+    }
+  }
+
+  updateDesktopOffset(dx, dy, action) {
+    if (action === Enums.Action.CAMERA_ROTATE) {
+      // Rotation
+      const deltaRot = quat.create();
+      // dx, dy are in pixels. Scale by a simple sensitivity factor.
+      quat.fromEuler(deltaRot, dy * 0.2, dx * 0.2, 0);
+      quat.multiply(this._desktopRotation, this._desktopRotation, deltaRot);
+      quat.normalize(this._desktopRotation, this._desktopRotation);
+    } else if (action === Enums.Action.CAMERA_PAN) {
+      // Panning (Translation)
+      const speed = 0.005;
+      this._desktopOffset[0] -= dx * speed;
+      this._desktopOffset[1] += dy * speed;
+    } else if (action === Enums.Action.CAMERA_ZOOM || action === Enums.Action.CAMERA_PAN_ZOOM_ALT) {
+      // Zoom
+      const speed = 0.01;
+      this._desktopOffset[2] += (dy + dx) * speed;
     }
   }
 }

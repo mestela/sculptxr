@@ -44,12 +44,25 @@ class GuiCamera {
     menu.addCombobox('', camera.getMode(), this.onCameraModeChange.bind(this), optionsMode);
     this._ctrlPivot = menu.addCheckbox(TR('cameraPivot'), camera.getUsePivot(), this.onPivotChange.bind(this));
 
+    // Desktop Spectator
+    menu.addTitle('Desktop VR');
+    var optionsSpec = {
+      'independent': 'Independent',
+      'mirror': 'Sync VR Headset'
+    };
+    menu.addCombobox('', this._main._spectatorMode, this.onSpectatorModeChange.bind(this), optionsSpec);
+
     // TR('CameraSpeed') ...
     menu.addSlider('speed', this._main, '_cameraSpeed', 0.05, 1.0, 0.001);
   }
 
   onCameraModeChange(value) {
     this._camera.setMode(value);
+    this._main.render();
+  }
+
+  onSpectatorModeChange(value) {
+    this._main._spectatorMode = value;
     this._main.render();
   }
 

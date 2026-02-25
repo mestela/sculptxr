@@ -42,7 +42,7 @@ class GuiSculpting {
     // sculpt tool
     var optTools = {};
     for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
-      if (Tools[i]) optTools[TR(Tools[i].uiName)] = i;
+      if (Tools[i]) optTools[i] = TR(Tools[i].uiName);
     }
     this._ctrlSculpt = menu.addCombobox(TR('sculptTool'), this._sculptManager.getToolIndex(), this.onChangeTool.bind(this), optTools);
 
@@ -127,6 +127,7 @@ class GuiSculpting {
   }
 
   onChangeTool(newValue) {
+    newValue = parseInt(newValue, 10);
     GuiSculptingTools.hide(this._sculptManager.getToolIndex());
     this._sculptManager.setToolIndex(newValue);
     GuiSculptingTools.show(newValue);

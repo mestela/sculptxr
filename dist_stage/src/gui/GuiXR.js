@@ -1684,10 +1684,17 @@ export default class GuiXR {
       this._hoverOverlayWidget = null;
     }
 
-    const ctx = this._ctx;
-
-    const w = CANVAS_SIZE;
-    const h = CANVAS_SIZE;
+    let ctx;
+    let w;
+    let h;
+    try {
+      ctx = this._ctx;
+      w = CANVAS_SIZE;
+      h = CANVAS_SIZE;
+    } catch (e) {
+      console.error("DEBUG CAUGHT AT 1688:", e);
+      throw e;
+    }
 
     // BG
     ctx.fillStyle = '#202020';

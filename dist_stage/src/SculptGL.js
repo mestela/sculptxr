@@ -723,8 +723,8 @@ class SculptGL extends Scene {
     if (this._focusGui)
       return;
 
-    // Prevent mouse-down from interfering with active VR stroke
-    if (this._vrSculpting) return;
+    // Prevent mouse-down from interfering with active VR stroke, unless in Spectator Mode
+    if (this._vrSculpting && !this._desktopOffsetMode) return;
 
     this.setMousePosition(event);
 
@@ -770,8 +770,25 @@ class SculptGL extends Scene {
   onDeviceMove(event) {
     if (this._focusGui)
       return;
-    // Prevent mouse-move from interfering with active VR stroke
-    if (this._vrSculpting) return;
+
+    this.setMousePosition(event);
+
+    // Prevent mouse-move from interfering with active VR stroke, unless in Spectator Mode
+    if (this._vrSculpting && !this._desktopOffsetMode) return;
+
+    if (this._desktopOffsetMode && this._xrSession) {
+      if (this._action === Enums.Action.CAMERA_ROTATE ||
+        this._action === Enums.Action.CAMERA_PAN ||
+        this._action === Enums.Action.CAMERA_ZOOM ||
+        this._action === Enums.Action.CAMERA_PAN_ZOOM_ALT) {
+
+        this.updateDesktopOffset(this._mouseX - this._lastMouseX, this._mouseY - this._lastMouseY, this._action);
+        this._lastMouseX = this._mouseX;
+        this._lastMouseY = this._mouseY;
+        this.render();
+        return;
+      }
+    }
 
     this.setCanvasCursor(event);
 

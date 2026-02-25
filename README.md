@@ -46,7 +46,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - multiplayer
 
 - **UI + UX** 
--wireframe colour ugly, fix
+
 (for post v1) 
     - nearly time to think about tider panel
     - panel tear off/pin in place?
@@ -65,6 +65,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Done
+- ~~wireframe colour ugly, fix~~  **DONE v0.8.18** 
 - ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    
 - ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**
 - ~~final shakedown of runtime issues (occasional select errors, shader compile errors)~~ **DONE v0.8.3**
