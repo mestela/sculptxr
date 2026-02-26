@@ -1782,7 +1782,7 @@ class Scene {
     this.updateMatricesAndSort();
 
     // 2. [v0.8.62 Fix] Force the Desktop GUI to sync its highlighted tool with the VR SculptManager's active tool
-    const guiSculpt = this._gui.getWidget(Enums.WidgetType.SCULPTING);
+    const guiSculpt = this._gui ? this._gui._ctrlSculpting : null;
     if (guiSculpt && guiSculpt._ctrlSculpt) {
       guiSculpt._ctrlSculpt.setValue(this._sculptManager.getToolIndex());
     }
@@ -2134,20 +2134,21 @@ class Scene {
       }
 
       // [DESKTOP CAMERA PRESERVATION]
-      // In VR, the renderVR and spectator passes mutate cam._view in-place.
-      // We purely back up the pristine Desktop View here and restore it at the extremely bottom of this frame.
-      // We do NOT use updateView() because calling it 120fps causes mousewheel-offset drift mathematics to explode.
-      const liveDesktopView = mat4.clone(this._camera._view);
-      const liveDesktopProj = mat4.clone(this._camera._proj);
+      // We use the pristine Desktop Camera cache as our base here.
+      // Because TRACKED mode bypasses restoration at the end of the frame,
+      // this._camera._view may already be mutated. Using the cache prevents exponential tumbling.
+      const liveDesktopView = mat4.clone(this._desktopCameraCache.view);
+      const liveDesktopProj = mat4.clone(this._desktopCameraCache.proj);
 
       // NOTE: We don't set _divertedView here yet, because the Spectator mode dictates the exact matrix the Desktop will see.
       // We will set _camera._divertedView down inside the Spectator blocks so picking aligns perfectly with the rendered frame.
-      this._camera._unprojectDiverted = true;
 
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
 
-      this._camera._unprojectDiverted = false;
+      // Now that the Headset render is fully complete, we can enable diverted view unprojection
+      // so that any asynchronous desktop mouse clicks process correctly using the spectator matrix.
+      this._camera._unprojectDiverted = true;
 
       // [SPECTATOR MATRIX RENDERING]
       const specMode = this._spectatorMode;
@@ -2272,8 +2273,12 @@ class Scene {
       // [DESKTOP CAMERA RESTORATION]
       // Globally restore the pristine Desktop Camera state so the next frame begins clean
       // and async desktop UI/Mouse interactions act geometrically on the unscaled real-world camera.
-      mat4.copy(this._camera._view, liveDesktopView);
-      mat4.copy(this._camera._proj, liveDesktopProj);
+      if (specMode !== Enums.SpectatorMode.TRACKED && specMode !== Enums.SpectatorMode.STATIONARY) {
+        mat4.copy(this._camera._view, liveDesktopView);
+        mat4.copy(this._camera._proj, liveDesktopProj);
+      }
+
+      this._camera._unprojectDiverted = false;
     }
   }
 

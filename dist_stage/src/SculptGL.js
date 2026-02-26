@@ -456,7 +456,7 @@ class SculptGL extends Scene {
     // [SPECTATOR MATRIX] Cycle Modes
     if (e.which === 68) { // 'D'
       this._spectatorMode = (this._spectatorMode + 1) % 4;
-      const modeNames = ["VR View (Mirror)", "DECOUPLED (Independent)", "TRACKED", "STATIONARY (Desktop 6DOF)"];
+      const modeNames = ["VR View (Mirror)", "DESKTOP", "TRACKED", "STATIONARY (Desktop 6DOF)"];
       if (window.screenLog) window.screenLog(`Spectator Mode: ${modeNames[this._spectatorMode]}`, "lime");
       this.render();
     }
@@ -782,7 +782,6 @@ class SculptGL extends Scene {
 
     var canEdit = false;
     if (button === MOUSE_LEFT && this._sculptManager) {
-      if (window.screenLog) window.screenLog(`DeviceDown: Shift=${event.shiftKey} MainShift=${this._shiftKey}`, "cyan");
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
 

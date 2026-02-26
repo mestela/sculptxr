@@ -23,7 +23,7 @@ var TR = {
   cameraPivot: 'Picking pivot',
   cameraSpectator: 'Spectator Mode (VR)',
   cameraSpectatorGoPro: 'VR View (Mirror)',
-  cameraSpectatorDecoupled: 'Decoupled',
+  cameraSpectatorDecoupled: 'Desktop',
   cameraSpectatorTracked: 'Tracked',
   cameraSpectatorStationary: 'Stationary (6DOF)',
 

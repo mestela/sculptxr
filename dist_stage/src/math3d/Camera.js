@@ -125,6 +125,8 @@ class Camera {
     this._usePivot = !this._usePivot;
   }
 
+
+
   getView() {
     return this._view;
   }
@@ -171,7 +173,7 @@ class Camera {
       vec3.transformMat4(_TMP_VEC3, picking.getIntersectionPoint(), picking.getMesh().getMatrix());
 
       // [v0.8.63 Fix] Synchronize Orbit Pivot with the Spectator Visual Offset
-      const spectatorTransform = main.getScene().getSpectatorTransform();
+      const spectatorTransform = main.getSpectatorTransform();
       if (spectatorTransform) {
         vec3.transformMat4(_TMP_VEC3, _TMP_VEC3, spectatorTransform);
       }
@@ -261,6 +263,18 @@ class Camera {
 
     mat4.mul(view, view, mat4.fromQuat(_TMP_MAT, this._quatRot));
     mat4.translate(view, view, vec3.negate(_TMP_VEC3, this._center));
+
+    // [v0.8.74 Fix] Sync valid desktop moves to cache so Tracked mode can see them
+    if (this._main && this._main._xrSession && this._main._desktopCameraCache) {
+      if (!this._unprojectDiverted) {
+        // Only sync if we are genuinely moving the desktop camera, not when evaluating diverted picking matrices
+        mat4.copy(this._main._desktopCameraCache.view, this._view);
+        vec3.copy(this._main._desktopCameraCache.trans, this._trans);
+        quat.copy(this._main._desktopCameraCache.quatRot, this._quatRot);
+        vec3.copy(this._main._desktopCameraCache.center, this._center);
+        vec3.copy(this._main._desktopCameraCache.offset, this._offset);
+      }
+    }
   }
 
   optimizeNearFar(bb) {
@@ -285,6 +299,13 @@ class Camera {
       this._proj[14] = -2 * this._near;
     } else {
       this.updateOrtho();
+    }
+
+    // [v0.8.74 Fix] Sync valid desktop proj to cache so Tracked mode can see them
+    if (this._main && this._main._xrSession && this._main._desktopCameraCache) {
+      if (!this._unprojectDiverted) {
+        mat4.copy(this._main._desktopCameraCache.proj, this._proj);
+      }
     }
   }
 
@@ -410,9 +431,6 @@ class Camera {
 
   computeWorldToScreenMatrix(mat) {
     mat = mat || mat4.create();
-    if (this._unprojectDiverted) {
-      return mat4.mul(mat, mat4.mul(mat, this._viewport, this._divertedProj), this._divertedView);
-    }
     return mat4.mul(mat, mat4.mul(mat, this._viewport, this._proj), this._view);
   }
 
