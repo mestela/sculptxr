@@ -2201,15 +2201,28 @@ class Scene {
         if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
           bypassVRScale = true;
 
-          if (!this._bakedDesktopView) {
+          // Wait until we have a valid _xrWorldOffset from WebXR before baking the initial state.
+          // This prevents a race condition where the first frame captures a null offset (0,0,0),
+          // permanently breaking the 'panPos' delta subtraction for the rest of the session.
+          if (!this._bakedDesktopView && this._xrWorldOffset) {
             this._bakedDesktopView = mat4.create();
             mat4.copy(this._bakedDesktopView, liveDesktopView);
 
-            this._bakedWorldOffset = vec3.create();
-            if (this._xrWorldOffset) {
-              vec3.copy(this._bakedWorldOffset, [this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z]);
-            }
+            this._bakedWorldOffset = vec3.fromValues(
+              this._xrWorldOffset.position.x,
+              this._xrWorldOffset.position.y,
+              this._xrWorldOffset.position.z
+            );
           }
+
+          if (!this._bakedDesktopView) {
+            // Fallback: If WebXR hasn't provided the offset yet, just render using the live view
+            // and skip matrix construction until the next frame.
+            mat4.copy(this._camera._view, liveDesktopView);
+            mat4.copy(this._camera._proj, liveDesktopProj);
+            return;
+          }
+
           const bakedDesktopView = this._bakedDesktopView;
 
           const invScaleMat = mat4.create();

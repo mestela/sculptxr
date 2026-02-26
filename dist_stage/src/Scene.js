@@ -2201,15 +2201,28 @@ class Scene {
         if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
           bypassVRScale = true;
 
-          if (!this._bakedDesktopView) {
+          // Wait until we have a valid _xrWorldOffset from WebXR before baking the initial state.
+          // This prevents a race condition where the first frame captures a null offset (0,0,0),
+          // permanently breaking the 'panPos' delta subtraction for the rest of the session.
+          if (!this._bakedDesktopView && this._xrWorldOffset) {
             this._bakedDesktopView = mat4.create();
             mat4.copy(this._bakedDesktopView, liveDesktopView);
 
-            this._bakedWorldOffset = vec3.create();
-            if (this._xrWorldOffset) {
-              vec3.copy(this._bakedWorldOffset, [this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z]);
-            }
+            this._bakedWorldOffset = vec3.fromValues(
+              this._xrWorldOffset.position.x,
+              this._xrWorldOffset.position.y,
+              this._xrWorldOffset.position.z
+            );
           }
+
+          if (!this._bakedDesktopView) {
+            // Fallback: If WebXR hasn't provided the offset yet, just render using the live view
+            // and skip matrix construction until the next frame.
+            mat4.copy(this._camera._view, liveDesktopView);
+            mat4.copy(this._camera._proj, liveDesktopProj);
+            return;
+          }
+
           const bakedDesktopView = this._bakedDesktopView;
 
           const invScaleMat = mat4.create();
@@ -2242,6 +2255,9 @@ class Scene {
           const panPos = mat4.create();
           const invPanPos = mat4.create();
 
+          const panRot = mat4.create();
+          const invPanRot = mat4.create();
+
           const scaledPanPos = mat4.create();
           const invScaledPanPos = mat4.create();
 
@@ -2260,6 +2276,10 @@ class Scene {
 
             mat4.fromTranslation(panPos, [t.x - sx, t.y - sy, t.z - sz]);
             mat4.invert(invPanPos, panPos);
+
+            // Pure Rotation (No translation/offset)
+            mat4.fromQuat(panRot, [r.x, r.y, r.z, r.w]);
+            mat4.invert(invPanRot, panRot);
 
             // Scaled Translation Delta (Virtual Scale)
             const vs = this._vrScale || 1.0;
@@ -2297,6 +2317,8 @@ class Scene {
               invWorldMat,
               panPos,
               invPanPos,
+              panRot,
+              invPanRot,
               scaledPanPos,
               invScaledPanPos,
               mPan,
@@ -2330,6 +2352,8 @@ class Scene {
               console.log("  'invWorldMat'     - Inverse of RAW Grip World Offset");
               console.log("  'panPos'          - PURE Translation DELTA (Physical Room Scale / Meters)");
               console.log("  'invPanPos'       - Inverse PURE Translation DELTA");
+              console.log("  'panRot'          - PURE Rotation (Orientation only)");
+              console.log("  'invPanRot'       - Inverse PURE Rotation");
               console.log("  'scaledPanPos'    - PURE Translation DELTA (Virtual Scale - Multiplied to 1:1 human feeling)");
               console.log("  'invScaledPanPos' - Inverse Scaled PURE Translation");
               console.log("  'scaleMat'        - Multiplies XYZ by VR Scale");
