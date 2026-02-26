@@ -2261,6 +2261,9 @@ class Scene {
           const scaledPanPos = mat4.create();
           const invScaledPanPos = mat4.create();
 
+          const bakedOffset = mat4.create();
+          const invBakedOffset = mat4.create();
+
           if (this._xrWorldOffset) {
             const t = this._xrWorldOffset.position;
             const r = this._xrWorldOffset.orientation;
@@ -2273,6 +2276,9 @@ class Scene {
             const sx = this._bakedWorldOffset ? this._bakedWorldOffset[0] : 0;
             const sy = this._bakedWorldOffset ? this._bakedWorldOffset[1] : 0;
             const sz = this._bakedWorldOffset ? this._bakedWorldOffset[2] : 0;
+
+            mat4.fromTranslation(bakedOffset, [sx, sy, sz]);
+            mat4.invert(invBakedOffset, bakedOffset);
 
             mat4.fromTranslation(panPos, [t.x - sx, t.y - sy, t.z - sz]);
             mat4.invert(invPanPos, panPos);
@@ -2326,15 +2332,17 @@ class Scene {
               mSpawn,
               mSpawnInv,
               cameraOffset,
-              invCameraOffset
+              invCameraOffset,
+              bakedOffset,
+              invBakedOffset
             };
 
             // Expose the global array pipelines for Chrome Console debugging
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ["bakedDesktopView", "invScaleMat"];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ["bakedDesktopView", "worldMat"];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ['bakedDesktopView', 'panRot', 'scaledPanPos'];
 
             if (!this._loggedTripodDebug) {
               console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
@@ -2344,6 +2352,8 @@ class Scene {
               console.log("  'bakedDesktopView'- FREEZES the trackball distance/framing so it acts as a true 6DOF camera");
               console.log("  'mSpawn'          - A clean, unconstrained forward-looking 6DOF base camera");
               console.log("  'mSpawnInv'       - Inverse of the clean base camera");
+              console.log("  'bakedOffset'     - The True Dynamic Headset Spawn Offset");
+              console.log("  'invBakedOffset'  - Inverse True Dynamic Headset Spawn Offset (Subtracts room height perfectly)");
               console.log("");
               console.log("  'cameraOffset'    - The Translation (Boom Arm) distance of the camera");
               console.log("  'invCameraOffset' - Moves the camera temporarily back to Origin to apply World math, then restores it");

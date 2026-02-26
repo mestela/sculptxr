@@ -1,43 +1,42 @@
 # SculptXR Handover Prompt
 
-## Objective: Revert v0.8.46 Regressions
+## Objective: Fix 6DOF Rotation Trackballing
 
-The project has entered the **v0.8.0** release cycle. We are officially in a **Feature Freeze**, but a major series of regressions were introduced between `v0.8.40` (Desktop Spectator Basics) and `v0.8.46`. The absolute priority is to revert these regressions and restore desktop and VR stability.
+The project is currently at `v0.8.108`. The user is trying to implement a "STATIONARY" 6DOF spectator mode where the desktop camera perfectly mirrors the physical translation and rotation of the VR headset, but at a massive virtual scale, without "trackballing" (orbiting) around the sculpt.
+
+We successfully isolated pure translation in `v0.8.104` using `scaledPanPos`. The user confirmed 1:1 forward/back panning works natively without moving the pivot.
+
+However, in `v0.8.108`, the user reported that combining translation and rotation in the interactive matrix debugger (`window.debugTripodVirt = ['bakedDesktopView', 'panRot', 'scaledPanPos']`) breaks the 1:1 movement and reverts to the "trackball" behavior, where the scene swings orbitally.
 
 ### Current Status
-- **Baseline**: `v0.8.46` is on Beta, but it is deeply broken.
-- **Goal**: Read this document, apply the specific surgical fixes outlined, and bump to `v0.8.47`.
+- **Baseline**: `v0.8.108` is on Beta.
+- **Physical Controllers (Pass 1)**: The array `window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"]` has been deployed to fix microscopic/teleported controllers, but the user went to sleep before testing it.
+- **Virtual World (Pass 2)**: The user's array `['bakedDesktopView', 'panRot', 'scaledPanPos']` logically causes an orbital trackball effect.
 
-### Core Rules for this Phase
-1. **NO NEW FEATURES**: Do not implement new tools or experimental features. 
-2. **STABILITY FIRST**: Fix the syntax errors, desktop lockouts, and VR brush starvation immediately.
-3. **VERSIONING**: 
-    - The **Source of Truth** for the version is the `<title>` tag in `index.html`.
-    - Every new deployment (Beta or Production) REQUIRES a version bump in `index.html`. 
+### The Physics of the Trackball Regression
+Why does `panRot * scaledPanPos` trackball?
 
-### The Regressions & Fix Clues
+1. `scaledPanPos` calculates a pure translation delta from the physical room origin.
+2. `panRot` is a pure `mat4.fromQuat` rotation matrix. Critically, **it rotates around the exact origin `[0,0,0]`**.
+3. `bakedDesktopView` pushes the entire scene 80 units backwards into the camera frustum so the sculpt is framed nicely in the viewport.
 
-**1. `quat is not defined` Error**
-- **Symptom**: Console throws a ReferenceError during double-click in spectator mode.
-- **Root Cause**: In `SculptGL.js`, `onDoubleTap()` uses `quat.identity()`, but `quat` is never imported at the top of the file.
-- **Fix Clue**: Update the gl-matrix import at the top of `SculptGL.js`: `import { vec3, mat4, quat } from 'gl-matrix';`
+When `buildMatrix` evaluates `['bakedDesktopView', 'panRot', 'scaledPanPos']`, it performs:
+`mat = bakedDesktopView * panRot * scaledPanPos`
 
-**2. Desktop Interaction Broken (Post-VR)**
-- **Symptom**: After taking the headset off and exiting VR, the desktop mouse cannot sculpt, pan, or zoom (UI is frozen).
-- **Root Cause**: `SculptGL.js` mouse events have a guard: `if (this._vrSculpting && !this._desktopOffsetMode) return;`. When VR ends, `onXREnd()` in `Scene.js` fails to reset `_vrSculpting` to false, permanently locking out the mouse.
-- **Fix Clue**: Add `this._vrSculpting = false;` to the `onXREnd()` cleanup block in `Scene.js`.
+In vector space (`v' = M * v`), operations evaluate **right-to-left**.
+1. **First**, the vertex `v` is translated by `scaledPanPos`. If the user walks 2 meters to the right, `v` shifts left.
+2. **Second**, `panRot` rotates the world. Because the vertex is no longer at `[0,0,0]`, rotating it swings it in a massive orbital arc around the origin! The further the user walks from the center of their room, the more violently the camera tracks in an orbit when they turn their head.
+3. **Third**, `bakedDesktopView` pushes this swung vertex 80 units away to render it.
 
-**3. VR Brushes Drawing Dots Instead of Strokes**
-- **Symptom**: VR brushes no longer draw continuous lines; they stamp discrete dots because stroke interpolation is starving.
-- **Root Cause**: In `Scene.js` `applyRender()`, a new fallback to prevent freezing during headset sleep is too aggressive:
-  ```javascript
-  if (this._xrSession && (performance.now() - (this._lastXRFrameTime || 0) < 200)) {
-      if (this._sculptManager) this._sculptManager.postRender();
-      return; // <-- DANGER! Starves the application layer!
-  }
-  ```
-  By returning early, `applyRender` (driven by `requestAnimationFrame`) never finishes executing, depriving `SculptManager` of its background update pulse needed for continuous stroke math.
-- **Fix Clue**: Remove the early `return;`. Instead, just skip the WebGL drawing phase `this._drawFullScene = false;` so the rest of the engine state can pump normally.
+### Next Session Mission
+When the user returns, you must explain that `panRot` cannot be blindly multiplied against a translated matrix, because the rotation pivot is `[0,0,0]`!
 
-## Next Mission
-Please systematically apply these three fixes, test standard desktop sculpting, enter and exit VR to test the "Swap Workflow", and ensure VR brushes draw continuous strokes. Once verified, deploy `v0.8.47`.
+To rotate the camera "in place" (like an FPS camera) after walking mathematically away from the origin, the rotation matrix must pivot around the *camera's current local position*, not the world origin.
+
+#### The Fix Strategy:
+1. **Confirm Pass 1**: Ask the user if `window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"]` successfully renders the physical VR controllers in their lap.
+2. **Re-architect Pass 2 Rotation**: You must create a new matrix logic in `Scene.js` (e.g., `localPanRot`) that applies the rotation *locally* relative to the translation delta, rather than globally around the sculpt origin. 
+    * To rotate around a pivot `P` (the camera's translation), you translate by `-P`, rotate, then translate by `+P`.
+    * Alternatively, look into the specific mathematical ordering of translation/rotation in `mat4.fromRotationTranslation`. If `worldMat` inherently trackballs because of `bakedDesktopView`'s 80-unit push, you may need to apply `panRot` first, *then* `scaledPanPos`, but ensure `bakedDesktopView` handles the 80 units as an isolated local zoom rather than a global modifier.
+
+Help the user dial in the perfect matrix array in the console before deploying code!
