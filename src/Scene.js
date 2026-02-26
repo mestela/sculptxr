@@ -1618,7 +1618,7 @@ class Scene {
     // Ensure context is compatible
     gl.makeXRCompatible().then(() => {
         const baseLayer = new XRWebGLLayer(session, gl);
-        session.updateRenderState({ baseLayer });
+      session.updateRenderState({ baseLayer, depthNear: 0.01, depthFar: 10000.0 });
 
       // Try 'local-floor' -> 'local' -> 'viewer'
       requestRefSpace(['local-floor', 'local', 'viewer'])
@@ -2129,11 +2129,13 @@ class Scene {
       }
 
       // [DESKTOP CAMERA PRESERVATION]
-      // We use the pristine Desktop Camera cache as our base here.
-      // Because TRACKED mode bypasses restoration at the end of the frame,
-      // this._camera._view may already be mutated. Using the cache prevents exponential tumbling.
-      const liveDesktopView = mat4.clone(this._desktopCameraCache.view);
-      const liveDesktopProj = mat4.clone(this._desktopCameraCache.proj);
+      // We rebuild the pure desktop camera from its internal trans/rot state.
+      // This allows mouse controls to work, while preventing the 'exponential tumbling'
+      // that would occur if we read last frame's mutated _camera._view.
+      this._camera.updateView();
+      this._camera.updateProjection();
+      const liveDesktopView = mat4.clone(this._camera._view);
+      const liveDesktopProj = mat4.clone(this._camera._proj);
 
       // NOTE: We don't set _divertedView here yet, because the Spectator mode dictates the exact matrix the Desktop will see.
       // We will set _camera._divertedView down inside the Spectator blocks so picking aligns perfectly with the rendered frame.
@@ -2312,8 +2314,24 @@ class Scene {
           } else if (specMode === Enums.SpectatorMode.STATIONARY) {
             // STATIONARY MODE (INTERACTIVE DEBUGGER)
             // Goal: Controllers locked to physical hands. Sculpt moves relative to user.
+            window.debugForceNearClip = 0.001; // Force near clip to allow grab tools right in front of the camera using Desktop.
 
             // Build the catalog of available matrix components
+            const invBakedDesktopView = mat4.create();
+            if (this._bakedDesktopView) mat4.invert(invBakedDesktopView, this._bakedDesktopView);
+
+            // This captures purely the manual panning/orbiting the user does with the mouse
+            // since the trackball was first "baked".
+            const liveOffset = mat4.create();
+            if (this._bakedDesktopView) {
+              mat4.multiply(liveOffset, liveDesktopView, invBakedDesktopView);
+            } else {
+              mat4.identity(liveOffset);
+            }
+
+            const invLiveOffset = mat4.create();
+            mat4.invert(invLiveOffset, liveOffset);
+
             const matrices = {
               liveDesktopView,
               bakedDesktopView,
@@ -2334,7 +2352,9 @@ class Scene {
               cameraOffset,
               invCameraOffset,
               bakedOffset,
-              invBakedOffset
+              invBakedOffset,
+              liveOffset,
+              invLiveOffset
             };
 
             // Expose the global array pipelines for Chrome Console debugging
@@ -2342,7 +2362,7 @@ class Scene {
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
             if (!window.debugTripodPhys) window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ['bakedDesktopView', 'panRot', 'scaledPanPos'];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {
               console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
@@ -2370,6 +2390,7 @@ class Scene {
               console.log("  'invScaleMat'     - Divides XYZ by VR Scale");
               console.log("  'mPan'            - The Offset relative to VR spawn");
               console.log("  'invPan'          - Inverse Offset relative to VR spawn");
+              console.log("  'liveOffset'      - Tacks on the Desktop Mouse controls (Pan, Orbit, Zoom)");
               this._loggedTripodDebug = true;
             }
 

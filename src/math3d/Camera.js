@@ -91,7 +91,7 @@ class Camera {
     this._rotY = 0.0; // y rot for orbit camera
 
     // near far
-    this._near = 0.05;
+    this._near = 0.01;
     this._far = 5000.0;
 
     this._timers = {}; // animation timers
@@ -286,9 +286,14 @@ class Camera {
     var boxCenter = vec3.set(_TMP_VEC3, (bb[0] + bb[3]) * 0.5, (bb[1] + bb[4]) * 0.5, (bb[2] + bb[5]) * 0.5);
     var distToBoxCenter = vec3.dist(eye, boxCenter);
 
-    var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
-    this._near = Math.max(0.01, distToBoxCenter - boxRadius);
-    this._far = boxRadius + distToBoxCenter;
+    if (window.debugForceNearClip !== undefined) {
+      this._near = window.debugForceNearClip;
+      this._far = 5000.0;
+    } else {
+      var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
+      this._near = Math.max(0.001, distToBoxCenter - boxRadius);
+      this._far = boxRadius + distToBoxCenter;
+    }
     this.updateProjection();
   }
 
