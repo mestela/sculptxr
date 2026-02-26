@@ -198,7 +198,6 @@ class Scene {
     // User Request: "Move forward 50cm, up 50cm".
     // Note: If HMD is facing User, "Forward" is towards User.
     // If we Rotate 180, we are looking effectively "Standard Forward".
-    this._desktopOffset = vec3.fromValues(0.0, 0.0, 0.0);
 
     // [Step 1] Hand Swap Feature
     this._dominantHand = 'right'; // 'right' or 'left'
@@ -207,14 +206,6 @@ class Scene {
   }
 
   start() {
-    // [DESKTOP 6DOF] Console Tuning Helper (Standard X, Y, Z)
-    window.setSpectatorOffset = (x, y, z) => {
-      this._desktopOffset[0] = x;
-      this._desktopOffset[1] = y;
-      this._desktopOffset[2] = z;
-      console.log(`Spectator Offset Set: [${x}, ${y}, ${z}]`);
-      this.render();
-    };
 
     // [Step 1] Hand Swap Helper
     window.setDominantHand = (hand) => {
@@ -632,7 +623,7 @@ class Scene {
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
-  _renderSceneVR(cam, viewMatrix, projMatrix) {
+  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
     const gl2 = this._gl;
     const meshes2 = this._meshes;
 
@@ -724,17 +715,21 @@ class Scene {
     }
 
     // --- PASS 2: SCALED WORLD (Meshes/Grid) ---
-    // Apply World Transforms
-    if (this._xrWorldOffset) {
-      const t = this._xrWorldOffset.position;
-      const r = this._xrWorldOffset.orientation;
-      const worldMat = mat4.create();
-      mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-      mat4.multiply(cam._view, cam._view, worldMat);
-    }
+    if (worldViewMatrixOverride) {
+      mat4.copy(cam._view, worldViewMatrixOverride);
+    } else {
+      // Apply standard physical VR Headset/Controller World Transforms
+      if (this._xrWorldOffset) {
+        const t = this._xrWorldOffset.position;
+        const r = this._xrWorldOffset.orientation;
+        const worldMat = mat4.create();
+        mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+        mat4.multiply(cam._view, cam._view, worldMat);
+      }
 
-    if (this._vrScale !== 1.0) {
-      mat4.scale(cam._view, cam._view, [this._vrScale, this._vrScale, this._vrScale]);
+      if (this._vrScale !== 1.0) {
+        mat4.scale(cam._view, cam._view, [this._vrScale, this._vrScale, this._vrScale]);
+      }
     }
 
     // Grid
@@ -2200,36 +2195,201 @@ class Scene {
         const specProj = mat4.clone(liveDesktopProj);
         let bypassVRScale = false;
 
+        const specViewPhys = mat4.create(); // MUST START OUTSIDE
+        mat4.copy(specViewPhys, specView);
+
         if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
           bypassVRScale = true;
 
-          if (specMode === Enums.SpectatorMode.STATIONARY) {
-            const tmp = mat4.create();
-            mat4.translate(tmp, tmp, this._desktopOffset);
-            mat4.rotateY(tmp, tmp, Math.PI); // 180 deg
-            mat4.mul(tmp, tmp, this._desktopRotation);
-            mat4.mul(specView, specView, tmp);
+          if (!this._bakedDesktopView) {
+            this._bakedDesktopView = mat4.create();
+            mat4.copy(this._bakedDesktopView, liveDesktopView);
+
+            this._bakedWorldOffset = vec3.create();
+            if (this._xrWorldOffset) {
+              vec3.copy(this._bakedWorldOffset, [this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z]);
+            }
           }
+          const bakedDesktopView = this._bakedDesktopView;
+
+          const invScaleMat = mat4.create();
+          const scaleMat = mat4.create();
+          if (this._vrScale !== 1.0 && this._vrScale > 0.0001) {
+            const invS = 1.0 / this._vrScale;
+            mat4.scale(invScaleMat, invScaleMat, [invS, invS, invS]);
+            mat4.scale(scaleMat, scaleMat, [this._vrScale, this._vrScale, this._vrScale]);
+          }
+
+          const worldMat = mat4.create();
+          const invWorldMat = mat4.create();
+
+          const mSpawn = mat4.create();
+          mat4.fromRotationTranslation(mSpawn, [0, 0, 0, 1], [0, 1.2, -0.55]);
+          const mSpawnInv = mat4.create();
+          mat4.invert(mSpawnInv, mSpawn);
+
+          // Extract just the translation of the bakedDesktopView to understand the trackball "boom arm" distance
+          const cameraOffset = mat4.create();
+          const invCameraOffset = mat4.create();
+          if (this._bakedDesktopView) {
+            mat4.fromTranslation(cameraOffset, [this._bakedDesktopView[12], this._bakedDesktopView[13], this._bakedDesktopView[14]]);
+            mat4.invert(invCameraOffset, cameraOffset);
+          }
+
+          const mPan = mat4.create();
+          const invPan = mat4.create();
+
+          const panPos = mat4.create();
+          const invPanPos = mat4.create();
+
+          const panRot = mat4.create();
+          const invPanRot = mat4.create();
+
+          const scaledPanPos = mat4.create();
+          const invScaledPanPos = mat4.create();
 
           if (this._xrWorldOffset) {
             const t = this._xrWorldOffset.position;
             const r = this._xrWorldOffset.orientation;
-            const mWorld = mat4.create();
-            mat4.fromRotationTranslation(mWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
 
-            const mSpawn = mat4.create();
-            mat4.fromRotationTranslation(mSpawn, [0, 0, 0, 1], [0, 1.2, -0.55]);
-            const mSpawnInv = mat4.create();
-            mat4.invert(mSpawnInv, mSpawn);
+            // Full offset (Translation + Rotation)
+            mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+            mat4.invert(invWorldMat, worldMat);
 
-            const mPan = mat4.create();
-            mat4.multiply(mPan, mSpawnInv, mWorld);
+            // Pure Translation Delta (Subtracts dynamically captured physical room start position)
+            const sx = this._bakedWorldOffset ? this._bakedWorldOffset[0] : 0;
+            const sy = this._bakedWorldOffset ? this._bakedWorldOffset[1] : 0;
+            const sz = this._bakedWorldOffset ? this._bakedWorldOffset[2] : 0;
 
+            mat4.fromTranslation(panPos, [t.x - sx, t.y - sy, t.z - sz]);
+            mat4.invert(invPanPos, panPos);
+
+            // Pure Rotation (No translation/offset)
+            mat4.fromQuat(panRot, [r.x, r.y, r.z, r.w]);
+            mat4.invert(invPanRot, panRot);
+
+            // Scaled Translation Delta (Virtual Scale)
+            const vs = this._vrScale || 1.0;
+            const invS = 1.0 / vs;
+            mat4.fromTranslation(scaledPanPos, [(t.x - sx) * invS, (t.y - sy) * invS, (t.z - sz) * invS]);
+            mat4.invert(invScaledPanPos, scaledPanPos);
+          }
+          mat4.multiply(mPan, mSpawnInv, worldMat);
+          mat4.invert(invPan, mPan);
+
+          if (specMode === Enums.SpectatorMode.TRACKED) {
+            // TRACKED MODE
+            // 1. Pass 1 (Controllers): Panning to track the world
+
+            mat4.copy(specViewPhys, liveDesktopView);
+            mat4.multiply(specViewPhys, specViewPhys, invScaleMat); // Scale to meters
+            mat4.multiply(specViewPhys, specViewPhys, mPan); // Track user movement
+
+            // 2. Pass 2 (World): Perfectly tracks mPan and dynamically frames sculpt
+            mat4.copy(specView, liveDesktopView);
             mat4.multiply(specView, specView, mPan);
+            mat4.multiply(specView, specView, worldMat);
+
+          } else if (specMode === Enums.SpectatorMode.STATIONARY) {
+            // STATIONARY MODE (INTERACTIVE DEBUGGER)
+            // Goal: Controllers locked to physical hands. Sculpt moves relative to user.
+
+            // Build the catalog of available matrix components
+            const matrices = {
+              liveDesktopView,
+              bakedDesktopView,
+              scaleMat,
+              invScaleMat,
+              worldMat,
+              invWorldMat,
+              panPos,
+              invPanPos,
+              panRot,
+              invPanRot,
+              scaledPanPos,
+              invScaledPanPos,
+              mPan,
+              invPan,
+              mSpawn,
+              mSpawnInv,
+              cameraOffset,
+              invCameraOffset
+            };
+
+            // Expose the global array pipelines for Chrome Console debugging
+            // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
+            // We must construct a completely clean, unconstrained VR-like initial state:
+            // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
+            if (!window.debugTripodPhys) window.debugTripodPhys = ["bakedDesktopView", "invScaleMat"];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ["bakedDesktopView", "worldMat"];
+
+            if (!this._loggedTripodDebug) {
+              console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
+              console.log("Dynamically rethink the exact camera tracking matrices in real-time.");
+              console.log("");
+              console.log("NEW COMPONENTS ADDED. DO NOT USE liveDesktopView:");
+              console.log("  'bakedDesktopView'- FREEZES the trackball distance/framing so it acts as a true 6DOF camera");
+              console.log("  'mSpawn'          - A clean, unconstrained forward-looking 6DOF base camera");
+              console.log("  'mSpawnInv'       - Inverse of the clean base camera");
+              console.log("");
+              console.log("  'cameraOffset'    - The Translation (Boom Arm) distance of the camera");
+              console.log("  'invCameraOffset' - Moves the camera temporarily back to Origin to apply World math, then restores it");
+              console.log("");
+              console.log("  'worldMat'        - The RAW Grip World Offset (Translation + Rotation)");
+              console.log("  'invWorldMat'     - Inverse of RAW Grip World Offset");
+              console.log("  'panPos'          - PURE Translation DELTA (Physical Room Scale / Meters)");
+              console.log("  'invPanPos'       - Inverse PURE Translation DELTA");
+              console.log("  'panRot'          - PURE Rotation (Orientation only)");
+              console.log("  'invPanRot'       - Inverse PURE Rotation");
+              console.log("  'scaledPanPos'    - PURE Translation DELTA (Virtual Scale - Multiplied to 1:1 human feeling)");
+              console.log("  'invScaledPanPos' - Inverse Scaled PURE Translation");
+              console.log("  'scaleMat'        - Multiplies XYZ by VR Scale");
+              console.log("  'invScaleMat'     - Divides XYZ by VR Scale");
+              console.log("  'mPan'            - The Offset relative to VR spawn");
+              console.log("  'invPan'          - Inverse Offset relative to VR spawn");
+              this._loggedTripodDebug = true;
+            }
+
+            const buildMatrix = (mat, instructions) => {
+              mat4.identity(mat);
+              if (Array.isArray(instructions)) {
+                instructions.forEach(inst => {
+                  if (matrices[inst]) {
+                    mat4.multiply(mat, mat, matrices[inst]);
+                  }
+                });
+              }
+            };
+
+            // 1. Pass 1 (Controllers)
+            buildMatrix(specViewPhys, window.debugTripodPhys);
+
+            // 2. Pass 2 (World)
+            buildMatrix(specView, window.debugTripodVirt);
           }
 
-          const relativeScale = this._vrScale > 0.0001 ? (this._vrScale / 0.008) : 1.0;
-          mat4.scale(specView, specView, [relativeScale, relativeScale, relativeScale]);
+          // --- TELEMETRY / ANTI-NAN EXPLOSION CHECK ---
+          const hasNaN = (mat) => Array.from(mat).some(Number.isNaN);
+          if (hasNaN(specViewPhys) || hasNaN(specView)) {
+            if (window.screenLog && !this._loggedNaN) {
+              window.screenLog("CRITICAL: STATIONARY MATRICES EXPLODED", "red");
+              this._loggedNaN = true;
+            }
+            mat4.identity(specViewPhys);
+            mat4.identity(specView);
+          }
+
+          if (window.dumpSpectatorState) {
+            console.log("=== Decoupled STATE DUMP (v0.8.91) ===");
+            console.log("liveDesktopView:", Array.from(liveDesktopView));
+            console.log("vrScale:", this._vrScale);
+            console.log("specViewPhys:", Array.from(specViewPhys));
+            console.log("specView:", Array.from(specView));
+            if (this._xrWorldOffset) {
+              console.log("World Offset Pos:", [this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z]);
+            }
+            window.dumpSpectatorState = false;
+          }
         }
 
         // Apply chosen matrix
@@ -2240,13 +2400,7 @@ class Scene {
         mat4.copy(this._camera._divertedView, specView);
         mat4.copy(this._camera._divertedProj, specProj);
 
-        // Temporarily clear VR matrices so _renderSceneVR just blindly obeys our custom specView
-        if (bypassVRScale) {
-          this._vrScale = 1.0;
-          this._xrWorldOffset = null;
-        }
-
-        // Force update of all mesh matrices
+        // Force update of all mesh matrices FIRST (so UI/Controllers build matrices with real VR scale)
         this.updateMatricesAndSort();
 
         // Render to Canvas Buffer directly using standard desktop pipeline
@@ -2255,8 +2409,12 @@ class Scene {
         gl.clearColor(0.2, 0.2, 0.2, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // Force _renderSceneVR instead of _drawScene to avoid RTT composition failures.
-        this._renderSceneVR(this._camera, specView, specProj);
+        // Feed the physical camera to the VR pipeline. It will draw controllers perfectly, 
+        // then Pass 2 will multiply by World/Scale matrices, returning `this._camera._view` back to the exact `specView`!
+        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null);
+
+        // Restore _camera._view just in case any postRender logic relies on the pure un-mutated Virtual camera
+        mat4.copy(this._camera._view, specView);
 
         // Force SculptManager post-render (gizmos/UI) to canvas
         if (this._sculptManager) {
@@ -2273,12 +2431,15 @@ class Scene {
       // [DESKTOP CAMERA RESTORATION]
       // Globally restore the pristine Desktop Camera state so the next frame begins clean
       // and async desktop UI/Mouse interactions act geometrically on the unscaled real-world camera.
-      if (specMode !== Enums.SpectatorMode.TRACKED && specMode !== Enums.SpectatorMode.STATIONARY) {
-        mat4.copy(this._camera._view, liveDesktopView);
-        mat4.copy(this._camera._proj, liveDesktopProj);
-      }
-
+      mat4.copy(this._camera._view, liveDesktopView);
+      mat4.copy(this._camera._proj, liveDesktopProj);
+    } else if (frame && this._camera._unprojectDiverted) {
+      // If we are NOT in TRACKED or STATIONARY, and unproject is true:
+      // We must have exited mode.
       this._camera._unprojectDiverted = false;
+      this._bakedDesktopView = null;
+      this._bakedWorldOffset = null;
+      this._loggedTripodDebug = false;
     }
   }
 
@@ -3564,26 +3725,6 @@ class Scene {
 
 
       }
-    }
-  }
-
-  updateDesktopOffset(dx, dy, action) {
-    if (action === Enums.Action.CAMERA_ROTATE) {
-      // Rotation
-      const deltaRot = quat.create();
-      // dx, dy are in pixels. Scale by a simple sensitivity factor.
-      quat.fromEuler(deltaRot, dy * 0.2, dx * 0.2, 0);
-      quat.multiply(this._desktopRotation, this._desktopRotation, deltaRot);
-      quat.normalize(this._desktopRotation, this._desktopRotation);
-    } else if (action === Enums.Action.CAMERA_PAN) {
-      // Panning (Translation)
-      const speed = 0.005;
-      this._desktopOffset[0] -= dx * speed;
-      this._desktopOffset[1] += dy * speed;
-    } else if (action === Enums.Action.CAMERA_ZOOM || action === Enums.Action.CAMERA_PAN_ZOOM_ALT) {
-      // Zoom
-      const speed = 0.01;
-      this._desktopOffset[2] += (dy + dx) * speed;
     }
   }
 }

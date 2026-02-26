@@ -85,6 +85,14 @@ class Gui {
     extra.addSlider('Res', 128, this.onVoxelRes.bind(this), 32, 256, 16);
     extra.addSlider('Rad Mult', 50.0, this.onVoxelRad.bind(this), 1.0, 100.0, 1.0);
 
+    extra.addTitle('Advanced');
+    extra.addCheckbox('Show Debug Log', window._showDebugLog !== false, (val) => {
+      window._showDebugLog = val;
+      const log = document.getElementById('log');
+      if (log) log.style.display = val ? 'block' : 'none';
+      if (val && window.screenLog) window.screenLog("Debug Log Enabled", "lime");
+    });
+
     this.addAboutButton();
 
     this.updateMesh();

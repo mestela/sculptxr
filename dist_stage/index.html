@@ -5,10 +5,10 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR - v0.8.74</title> <!-- Preparing for major update -->
-    <meta name="description" content="SculptXR - WebXR Sculpting - v0.8.74" />
+    <title>SculptXR - v0.8.104</title> <!-- Preparing for major update -->
+    <meta name="description" content="SculptXR - WebXR Sculpting - v0.8.104" />
     <!-- v0.8.0: Starting new release cycle -->
-    <meta property="og:title" content="SculptXR - v0.8.74" />
+    <meta property="og:title" content="SculptXR - v0.8.104" />
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -303,8 +303,13 @@
                                                                                                     import { VERSION } from 'Version';
 
         window.onload = async () => {
+            // Environment checks
+            const isProd = window.location.hostname === 'tokeru.com' && !window.location.pathname.includes('beta');
+            window._showDebugLog = !isProd; // Default true on localhost/beta
+
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
+                if (!window._showDebugLog) return;
                 const logEl = document.getElementById('log');
                 if (logEl) {
                     const line = document.createElement('div');
@@ -319,6 +324,7 @@
             // Version Header in Log
             const logEl = document.getElementById('log');
             if (logEl) {
+                logEl.style.display = window._showDebugLog ? 'block' : 'none';
                 const verLine = document.createElement('div');
                 verLine.textContent = `SculptXR ${VERSION}`;
                 verLine.style.fontWeight = "bold";
