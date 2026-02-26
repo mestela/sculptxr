@@ -21,6 +21,11 @@ var TR = {
   cameraOrthographic: 'Orthographic',
   cameraFov: 'Fov',
   cameraPivot: 'Picking pivot',
+  cameraSpectator: 'Spectator Mode (VR)',
+  cameraSpectatorGoPro: 'VR View (Mirror)',
+  cameraSpectatorDecoupled: 'Decoupled',
+  cameraSpectatorTracked: 'Tracked',
+  cameraSpectatorStationary: 'Stationary (6DOF)',
 
   // file
   fileTitle: 'Files (import/export)',

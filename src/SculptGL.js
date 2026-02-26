@@ -453,16 +453,22 @@ class SculptGL extends Scene {
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
 
-    // [DESKTOP 6DOF] Toggle Desktop Offset Mode
+    // [SPECTATOR MATRIX] Cycle Modes
     if (e.which === 68) { // 'D'
-      if (this.toggleDesktopOffset) this.toggleDesktopOffset();
-      else if (window.sculptgl_instance && window.sculptgl_instance.toggleDesktopOffset) window.sculptgl_instance.toggleDesktopOffset();
+      this._spectatorMode = (this._spectatorMode + 1) % 4;
+      const modeNames = ["VR View (Mirror)", "DECOUPLED (Independent)", "TRACKED", "STATIONARY (Desktop 6DOF)"];
+      if (window.screenLog) window.screenLog(`Spectator Mode: ${modeNames[this._spectatorMode]}`, "lime");
+      this.render();
     }
 
     // [CALIBRATION] Toggle Calibration Mode
     if (e.which === 67) { // 'C'
-      if (this.toggleSpectatorCalibration) this.toggleSpectatorCalibration();
-      else if (window.sculptgl_instance && window.sculptgl_instance.toggleSpectatorCalibration) window.sculptgl_instance.toggleSpectatorCalibration();
+      if (this._spectatorMode !== Enums.SpectatorMode.STATIONARY) {
+        if (window.screenLog) window.screenLog(`Calibration requires STATIONARY mode.`, "orange");
+      } else {
+        this._isCalibratingSpectator = !this._isCalibratingSpectator;
+        if (window.screenLog) window.screenLog(this._isCalibratingSpectator ? `Calibration: ENABLED` : `Calibration: DISABLED`, "lime");
+      }
     }
 
     this._gui.callFunc('onKeyDown', e);
@@ -562,6 +568,13 @@ class SculptGL extends Scene {
     }
 
     vec3.transformMat4(pivot, picking.getIntersectionPoint(), picking.getMesh().getMatrix());
+
+    // [v0.8.63 Fix] Synchronize framing with the Spectator Visual Offset
+    var spectatorTransform = this.getSpectatorTransform();
+    if (spectatorTransform) {
+      vec3.transformMat4(pivot, pivot, spectatorTransform);
+    }
+
     var zoom = cam._trans[2];
     if (!cam.isOrthographic()) {
       zoom = Math.min(zoom, vec3.dist(pivot, cam.computePosition()));
@@ -596,6 +609,13 @@ class SculptGL extends Scene {
       var zoom = 0.8 * this.computeRadiusFromBoundingBox(box);
       zoom *= this._camera.computeFrustumFit();
       vec3.set(pivot, (box[0] + box[3]) * 0.5, (box[1] + box[4]) * 0.5, (box[2] + box[5]) * 0.5);
+
+      // [v0.8.63 Fix] Synchronize framing with the Spectator Visual Offset
+      var spectatorTransform = this.getSpectatorTransform();
+      if (spectatorTransform) {
+        vec3.transformMat4(pivot, pivot, spectatorTransform);
+      }
+
       this._camera.setAndFocusOnPivot(pivot, zoom);
     } else {
       this._camera.resetView();

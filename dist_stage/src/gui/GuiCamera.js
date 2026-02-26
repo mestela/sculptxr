@@ -45,12 +45,16 @@ class GuiCamera {
     this._ctrlPivot = menu.addCheckbox(TR('cameraPivot'), camera.getUsePivot(), this.onPivotChange.bind(this));
 
     // Desktop Spectator
-    menu.addTitle('Desktop VR');
-    var optionsSpec = {
-      'independent': 'Independent',
-      'mirror': 'Sync VR Headset'
-    };
-    menu.addCombobox('', this._main._spectatorMode, this.onSpectatorModeChange.bind(this), optionsSpec);
+    menu.addTitle(TR('cameraSpectator'));
+    var optionsSpec = [];
+    optionsSpec[Enums.SpectatorMode.GOPRO] = TR('cameraSpectatorGoPro');
+    optionsSpec[Enums.SpectatorMode.DECOUPLED] = TR('cameraSpectatorDecoupled');
+    optionsSpec[Enums.SpectatorMode.TRACKED] = TR('cameraSpectatorTracked');
+    optionsSpec[Enums.SpectatorMode.STATIONARY] = TR('cameraSpectatorStationary');
+
+    // Default to DECOUPLED if not yet initialized as an integer
+    var initialMode = typeof this._main._spectatorMode === 'number' ? this._main._spectatorMode : Enums.SpectatorMode.DECOUPLED;
+    menu.addCombobox('', initialMode, this.onSpectatorModeChange.bind(this), optionsSpec);
 
     // TR('CameraSpeed') ...
     menu.addSlider('speed', this._main, '_cameraSpeed', 0.05, 1.0, 0.001);
@@ -62,7 +66,10 @@ class GuiCamera {
   }
 
   onSpectatorModeChange(value) {
-    this._main._spectatorMode = value;
+    this._main._spectatorMode = parseInt(value, 10);
+    // Force immediate camera refresh to prevent Decoupled mode from rendering blank
+    this._camera.updateView();
+    this._camera.updateProjection();
     this._main.render();
   }
 

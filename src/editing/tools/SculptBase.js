@@ -47,12 +47,13 @@ class SculptBase {
     var main = this._main;
     var picking = main.getPicking();
 
-    // VR Bypass: If in VR, we assume picking is already done by handleXRInput
-    if (!main._xrSession) {
+    // Is this a VR controller stroke or a Desktop mouse stroke?
+    if (!main._vrSculpting) {
+    // Desktop: Evaluate picking using the mouse
       if (!picking.intersectionMouseMeshes() && !this._allowAir)
         return false;
     } else {
-      // In VR, just check if we have a mesh picked OR allowAir
+      // VR: Evaluating using the VR Ray (already computed in handleXRInput)
       if (!picking.getMesh() && !this._allowAir) return false;
     }
 
@@ -130,9 +131,8 @@ class SculptBase {
   preUpdate(canBeContinuous) {
     var main = this._main;
 
-    // VR Bypass: handleXRInput does the intersection logic
-    // UNLESS we are in desktop spectator offset mode, where the mouse is active on the screen!
-    if (main._xrSession && !main._desktopOffsetMode) return;
+    // Desktop mouse dragging freely permitted, EXCEPT when the VR controller is actively holding the trigger.
+    if (main._vrSculpting) return;
 
     var picking = main.getPicking();
     var isSculpting = main._action === Enums.Action.SCULPT_EDIT;

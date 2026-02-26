@@ -121,10 +121,19 @@ class Scene {
       : null;
 
     this._isCalibratingSpectator = false; // "Move Me" Mode
-    this._spectatorMode = 'independent'; // 'independent' or 'mirror'
+    this._spectatorMode = Enums.SpectatorMode.DECOUPLED;
+
+    // STATIONARY Mode variables
+    this._desktopOffset = vec3.create();
+    this._desktopRotation = mat4.create();
+
     this._desktopCameraCache = {
       view: mat4.create(),
-      proj: mat4.create()
+      proj: mat4.create(),
+      trans: vec3.create(),
+      quatRot: quat.create(),
+      center: vec3.create(),
+      offset: vec3.create()
     };
 
     this._activeHandedness = 'right';
@@ -1586,6 +1595,10 @@ class Scene {
     this._camera.updateProjection();
     mat4.copy(this._desktopCameraCache.view, this._camera._view);
     mat4.copy(this._desktopCameraCache.proj, this._camera._proj);
+    vec3.copy(this._desktopCameraCache.trans, this._camera._trans);
+    quat.copy(this._desktopCameraCache.quatRot, this._camera._quatRot);
+    vec3.copy(this._desktopCameraCache.center, this._camera._center);
+    vec3.copy(this._desktopCameraCache.offset, this._camera._offset);
 
     // Force Init Controllers & Menu IMMEDIATELY
     this.initVRControllers();
@@ -1745,13 +1758,75 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
-    this._vrSculpting = false;
+
+    // Restore the exact Desktop view from before VR
+    vec3.copy(this._camera._trans, this._desktopCameraCache.trans);
+    quat.copy(this._camera._quatRot, this._desktopCameraCache.quatRot);
+    vec3.copy(this._camera._center, this._desktopCameraCache.center);
+
+    this._camera.updateView();
+    this._camera.updateProjection();
+
+    // Prevent lingering tools from thinking they are active
+    if (this._vrSculpting) {
+      this._vrSculpting = false;
+      if (this._sculptManager) this._sculptManager.end();
+    }
 
     this._vrControllerLeft = null;
     this._vrControllerRight = null;
     this.initVRControllers();
 
+    // 1. [v0.8.62 Fix] Force Mesh MVPs to flush the microscopic VR scale immediately.
+    // If we don't do this, the very first desktop mouse clicks will raycast into tiny invisible VR bounds and fail to select anything.
+    this.updateMatricesAndSort();
+
+    // 2. [v0.8.62 Fix] Force the Desktop GUI to sync its highlighted tool with the VR SculptManager's active tool
+    const guiSculpt = this._gui.getWidget(Enums.WidgetType.SCULPTING);
+    if (guiSculpt && guiSculpt._ctrlSculpt) {
+      guiSculpt._ctrlSculpt.setValue(this._sculptManager.getToolIndex());
+    }
+
+    this._action = Enums.Action.NOTHING;
     this.render();
+    console.log("VR Exit: Desktop camera & UI sync fully restored");
+  }
+
+  // Used by Desktop raycasting tools to synchronize the pivot with the spectator render pass
+  getSpectatorTransform() {
+    if (!this._xrSession || !this._xrWorldOffset) return null;
+    const specMode = this._spectatorMode;
+    if (specMode === Enums.SpectatorMode.DECOUPLED || specMode === Enums.SpectatorMode.GOPRO) return null;
+
+    const t = this._xrWorldOffset.position;
+    const r = this._xrWorldOffset.orientation;
+    const mWorld = mat4.create();
+    mat4.fromRotationTranslation(mWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+
+    const mSpawn = mat4.create();
+    mat4.fromRotationTranslation(mSpawn, [0, 0, 0, 1], [0, 1.2, -0.55]);
+
+    const mSpawnInv = mat4.create();
+    mat4.invert(mSpawnInv, mSpawn);
+
+    const mPan = mat4.create();
+    mat4.multiply(mPan, mSpawnInv, mWorld);
+
+    const fullTrans = mat4.create();
+
+    if (specMode === Enums.SpectatorMode.STATIONARY) {
+      // Stationary applies desktop rotate and flip first
+      mat4.translate(fullTrans, fullTrans, this._desktopOffset);
+      mat4.rotateY(fullTrans, fullTrans, Math.PI); // 180 deg
+      mat4.mul(fullTrans, fullTrans, this._desktopRotation);
+    }
+
+    mat4.multiply(fullTrans, fullTrans, mPan);
+
+    const relativeScale = this._vrScale > 0.0001 ? (this._vrScale / 0.008) : 1.0;
+    mat4.scale(fullTrans, fullTrans, [relativeScale, relativeScale, relativeScale]);
+
+    return fullTrans;
   }
 
   initVRControllers() {
@@ -2059,15 +2134,25 @@ class Scene {
       }
 
       // [DESKTOP CAMERA PRESERVATION]
-      // Snapshot the live desktop camera state before renderVR mutates it
+      // In VR, the renderVR and spectator passes mutate cam._view in-place.
+      // We purely back up the pristine Desktop View here and restore it at the extremely bottom of this frame.
+      // We do NOT use updateView() because calling it 120fps causes mousewheel-offset drift mathematics to explode.
       const liveDesktopView = mat4.clone(this._camera._view);
       const liveDesktopProj = mat4.clone(this._camera._proj);
+
+      // NOTE: We don't set _divertedView here yet, because the Spectator mode dictates the exact matrix the Desktop will see.
+      // We will set _camera._divertedView down inside the Spectator blocks so picking aligns perfectly with the rendered frame.
+      this._camera._unprojectDiverted = true;
 
       // Render to WebXR framebuffer
       this.renderVR(glLayer, pose, frame, refSpace);
 
-      // [DESKTOP 6DOF] Spectator Render Mode
-      if (this._spectatorMode === 'mirror' && pose.views.length > 0) {
+      this._camera._unprojectDiverted = false;
+
+      // [SPECTATOR MATRIX RENDERING]
+      const specMode = this._spectatorMode;
+
+      if (specMode === Enums.SpectatorMode.GOPRO && pose.views.length > 0) {
         const viewMat = mat4.create();
         const prob = mat4.create();
 
@@ -2076,6 +2161,9 @@ class Scene {
         const aspect = this._canvasWidth / this._canvasHeight;
         mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
         mat4.copy(viewMat, view.transform.inverse.matrix);
+
+        mat4.copy(this._camera._divertedView, viewMat);
+        mat4.copy(this._camera._divertedProj, prob);
 
         // Draw directly to canvas here, because window RAF may be throttled/paused
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2095,55 +2183,70 @@ class Scene {
           gl.enable(gl.DEPTH_TEST);
         }
       } else {
-        // Independent Desktop Camera 
-        // We must bypass ALL VR scaling and offsets. The user wants the desktop camera
-        // to sit exactly where it was before VR launched, completely oblivious to hand/head/world movement.
-
+        // Independent Desktop Camera Passes
         const cacheScale = this._vrScale;
         const cacheOffset = this._xrWorldOffset;
 
-        // Unhook VR Scale temporarily so matrix calculations resolve at 1:1 real world scaling
-        this._vrScale = 1.0;
-        this._xrWorldOffset = null;
-
-        // Restore pristine live desktop camera FIRST so meshes use it for matrix caching
-        mat4.copy(this._camera._view, liveDesktopView);
-        mat4.copy(this._camera._proj, liveDesktopProj);
-
-        // Force update of all mesh matrices using the newly applied desktop 1:1 scale and camera
-        this.updateMatricesAndSort();
-
-        if (window._triggerSpectatorLog) {
-          window._triggerSpectatorLog = false;
-          console.log("=== SPECTATOR RENDER PIPELINE DUMP ===");
-          console.log("Canvas Res:", this._canvasWidth, this._canvasHeight);
-          console.log("VR Scale During Pass:", this._vrScale);
-          console.log("Camera View Mat:", Array.from(this._camera._view).map(n => parseFloat(n).toFixed(2)).join(", "));
-          console.log("Camera Proj Mat:", Array.from(this._camera._proj).map(n => parseFloat(n).toFixed(2)).join(", "));
-
-          if (this._meshes && this._meshes.length > 0) {
-            const m0 = this._meshes[0];
-            console.log("First Mesh (Index 0):", m0.getID());
-            console.log("  Mesh Model Matrix:", Array.from(m0.getMatrix()).map(n => parseFloat(n).toFixed(2)).join(", "));
-            console.log("  Mesh MVP Matrix:", Array.from(m0.getMVP()).map(n => parseFloat(n).toFixed(2)).join(", "));
-
-            // Project a test point (0,0,0 local) to check final NDC
-            const testPt = vec3.create();
-            vec3.transformMat4(testPt, [0, 0, 0], m0.getMVP());
-            console.log("  Mesh Local Origin in NDC (x,y,z):", testPt[0].toFixed(2), testPt[1].toFixed(2), testPt[2].toFixed(2));
-
-            if (m0.getNbVertices() > 0) {
-              const verts = m0.getVertices();
-              const v0 = [verts[0], verts[1], verts[2]];
-              const pt0 = vec3.create();
-              vec3.transformMat4(pt0, v0, m0.getMVP());
-              console.log(`  Mesh Vert[0] (${v0[0].toFixed(2)}, ${v0[1].toFixed(2)}, ${v0[2].toFixed(2)}) in NDC:`, pt0[0].toFixed(2), pt0[1].toFixed(2), pt0[2].toFixed(2));
-            }
-          } else {
-            console.log("No meshes in scene to compute MVP.");
-          }
-          console.log("======================================");
+        // DECOUPLED blocks all VR transforms, freezing the world to the desktop screen context
+        if (specMode === Enums.SpectatorMode.DECOUPLED) {
+          this._vrScale = 1.0;
+          this._xrWorldOffset = null;
         }
+
+        // TRACKED and STATIONARY inherit the active _vrScale and _xrWorldOffset, mapping Grip pans/zooms to the UI
+        // We calculate precisely what the view should be here.
+        const specView = mat4.clone(liveDesktopView);
+        const specProj = mat4.clone(liveDesktopProj);
+        let bypassVRScale = false;
+
+        if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
+          bypassVRScale = true;
+
+          if (specMode === Enums.SpectatorMode.STATIONARY) {
+            const tmp = mat4.create();
+            mat4.translate(tmp, tmp, this._desktopOffset);
+            mat4.rotateY(tmp, tmp, Math.PI); // 180 deg
+            mat4.mul(tmp, tmp, this._desktopRotation);
+            mat4.mul(specView, specView, tmp);
+          }
+
+          if (this._xrWorldOffset) {
+            const t = this._xrWorldOffset.position;
+            const r = this._xrWorldOffset.orientation;
+            const mWorld = mat4.create();
+            mat4.fromRotationTranslation(mWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+
+            const mSpawn = mat4.create();
+            mat4.fromRotationTranslation(mSpawn, [0, 0, 0, 1], [0, 1.2, -0.55]);
+            const mSpawnInv = mat4.create();
+            mat4.invert(mSpawnInv, mSpawn);
+
+            const mPan = mat4.create();
+            mat4.multiply(mPan, mSpawnInv, mWorld);
+
+            mat4.multiply(specView, specView, mPan);
+          }
+
+          const relativeScale = this._vrScale > 0.0001 ? (this._vrScale / 0.008) : 1.0;
+          mat4.scale(specView, specView, [relativeScale, relativeScale, relativeScale]);
+        }
+
+        // Apply chosen matrix
+        mat4.copy(this._camera._view, specView);
+        mat4.copy(this._camera._proj, specProj);
+
+        // To make Desktop mouse clicks (Picking) accurate, the _diverted matrix must match EXACTLY what _renderSceneVR produces!
+        mat4.copy(this._camera._divertedView, specView);
+        mat4.copy(this._camera._divertedProj, specProj);
+
+        // Temporarily clear VR matrices so _renderSceneVR just blindly obeys our custom specView
+        if (bypassVRScale) {
+          this._vrScale = 1.0;
+          this._xrWorldOffset = null;
+        }
+
+        // Force update of all mesh matrices
+        this.updateMatricesAndSort();
 
         // Render to Canvas Buffer directly using standard desktop pipeline
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2152,9 +2255,7 @@ class Scene {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
         // Force _renderSceneVR instead of _drawScene to avoid RTT composition failures.
-        // Because _vrScale and _xrWorldOffset are temporarily nullified above, 
-        // this acts as a perfect 1:1 standard desktop render pipeline without VR distortion.
-        this._renderSceneVR(this._camera, this._camera._view, this._camera._proj);
+        this._renderSceneVR(this._camera, specView, specProj);
 
         // Force SculptManager post-render (gizmos/UI) to canvas
         if (this._sculptManager) {
@@ -2167,6 +2268,12 @@ class Scene {
         this._vrScale = cacheScale;
         this._xrWorldOffset = cacheOffset;
       }
+
+      // [DESKTOP CAMERA RESTORATION]
+      // Globally restore the pristine Desktop Camera state so the next frame begins clean
+      // and async desktop UI/Mouse interactions act geometrically on the unscaled real-world camera.
+      mat4.copy(this._camera._view, liveDesktopView);
+      mat4.copy(this._camera._proj, liveDesktopProj);
     }
   }
 

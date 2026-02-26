@@ -67,6 +67,14 @@ Enums.CameraMode = {
   PLANE: 2 // /!\ 
 };
 
+// spectator mode (VR to Desktop mapping)
+Enums.SpectatorMode = {
+  GOPRO: 0,
+  DECOUPLED: 1,
+  TRACKED: 2,
+  STATIONARY: 3
+};
+
 // used by multiresolution to choose which multi res level to render
 Enums.MultiState = {
   NONE: 0,

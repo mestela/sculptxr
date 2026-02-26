@@ -64,6 +64,11 @@ class Camera {
     this._proj = mat4.create(); // projection matrix
     this._viewport = mat4.create(); // viewport matrix
 
+    // Async thread-safe unprojection (Desktop Picking during VR renders)
+    this._unprojectDiverted = false;
+    this._divertedView = mat4.create();
+    this._divertedProj = mat4.create();
+
     this._lastNormalizedMouseXY = [0.0, 0.0]; // last mouse position ( 0..1 )
     this._width = 0.0; // viewport width
     this._height = 0.0; // viewport height
@@ -164,6 +169,13 @@ class Camera {
     picking.intersectionMouseMeshes(main.getMeshes(), mouseX, mouseY);
     if (picking.getMesh()) {
       vec3.transformMat4(_TMP_VEC3, picking.getIntersectionPoint(), picking.getMesh().getMatrix());
+
+      // [v0.8.63 Fix] Synchronize Orbit Pivot with the Spectator Visual Offset
+      const spectatorTransform = main.getScene().getSpectatorTransform();
+      if (spectatorTransform) {
+        vec3.transformMat4(_TMP_VEC3, _TMP_VEC3, spectatorTransform);
+      }
+
       this.setPivot(_TMP_VEC3);
     }
   }
@@ -398,6 +410,9 @@ class Camera {
 
   computeWorldToScreenMatrix(mat) {
     mat = mat || mat4.create();
+    if (this._unprojectDiverted) {
+      return mat4.mul(mat, mat4.mul(mat, this._viewport, this._divertedProj), this._divertedView);
+    }
     return mat4.mul(mat, mat4.mul(mat, this._viewport, this._proj), this._view);
   }
 
