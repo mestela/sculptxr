@@ -2361,36 +2361,13 @@ class Scene {
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "invScaleMat", "invBakedOffset"];
             if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {
-              console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
-              console.log("Dynamically rethink the exact camera tracking matrices in real-time.");
-              console.log("");
-              console.log("NEW COMPONENTS ADDED. DO NOT USE liveDesktopView:");
-              console.log("  'bakedDesktopView'- FREEZES the trackball distance/framing so it acts as a true 6DOF camera");
-              console.log("  'mSpawn'          - A clean, unconstrained forward-looking 6DOF base camera");
-              console.log("  'mSpawnInv'       - Inverse of the clean base camera");
-              console.log("  'bakedOffset'     - The True Dynamic Headset Spawn Offset");
-              console.log("  'invBakedOffset'  - Inverse True Dynamic Headset Spawn Offset (Subtracts room height perfectly)");
-              console.log("");
-              console.log("  'cameraOffset'    - The Translation (Boom Arm) distance of the camera");
-              console.log("  'invCameraOffset' - Moves the camera temporarily back to Origin to apply World math, then restores it");
-              console.log("");
-              console.log("  'worldMat'        - The RAW Grip World Offset (Translation + Rotation)");
-              console.log("  'invWorldMat'     - Inverse of RAW Grip World Offset");
-              console.log("  'panPos'          - PURE Translation DELTA (Physical Room Scale / Meters)");
-              console.log("  'invPanPos'       - Inverse PURE Translation DELTA");
-              console.log("  'panRot'          - PURE Rotation (Orientation only)");
-              console.log("  'invPanRot'       - Inverse PURE Rotation");
-              console.log("  'scaledPanPos'    - PURE Translation DELTA (Virtual Scale - Multiplied to 1:1 human feeling)");
-              console.log("  'invScaledPanPos' - Inverse Scaled PURE Translation");
-              console.log("  'scaleMat'        - Multiplies XYZ by VR Scale");
-              console.log("  'invScaleMat'     - Divides XYZ by VR Scale");
-              console.log("  'mPan'            - The Offset relative to VR spawn");
-              console.log("  'invPan'          - Inverse Offset relative to VR spawn");
-              console.log("  'liveOffset'      - Tacks on the Desktop Mouse controls (Pan, Orbit, Zoom)");
+              // console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
+              // console.log("Dynamically rethink the exact camera tracking matrices in real-time.");
+              // ... logs disabled for production clarity ...
               this._loggedTripodDebug = true;
             }
 

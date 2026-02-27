@@ -162,8 +162,15 @@ class Selection {
   }
 
   render(main) {
-    // ABORT if we are in VR (VR uses renderVR)
-    if (main.getXRMode && main.getXRMode()) return;
+    // ABORT if we are in VR (VR uses renderVR), UNLESS we are rendering a decoupled desktop spectator view.
+    // In STATIONARY mode, we want the desktop user to see their mouse cursor radius.
+    if (main.getXRMode && main.getXRMode()) {
+      // Check if we are currently drawing to the desktop canvas (null framebuffer)
+      const gl = this._gl;
+      if (gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null) {
+        return; // We are inside the VR headset pass, do not render desktop cursor here.
+      }
+    }
 
     // if there's an offset then it means we are editing the tool radius
     var pickedMesh = main.getPicking().getMesh() && !this._isEditMode;
