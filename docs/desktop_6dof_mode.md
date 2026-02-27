@@ -65,6 +65,13 @@ The VR workspace and Desktop Camera share the same World Space (`SCENE_TRANSFORM
     *   *Active*: Desktop Camera is fixed/stabilized.
     *   *Inactive*: Desktop Camera follows the Headset (Standard Mirroring).
 
+### 5. Coordinate Distortion & Tool Mirroring (v0.8.124)
+A major challenge with 6DOF Desktop mode is that the headset's positional tracking (which defines `panRot` and `scaledPanPos`) distorts the perceived desktop camera matrix. 
+When the user uses the mouse on the Desktop canvas, unprojecting those 2D coordinates back into 3D space causes severe mathematical divergence:
+*   **Infinite Brush Radius**: Standard unprojection scales the radius dynamically based on mouse drag distance. In 6DOF, drifting off the mesh caused the unprojected vector to scale to infinity, creating an exploding brush radius with hard, unblended edges. We fixed this by dynamically caching the initial `radius2` at `mousedown`, locking the physical footprint of the stroke.
+*   **Topological Symmetry Snap**: The standard `Move` tool symmetry drops a microscopic 3D collision sphere onto the mirrored side of the mesh to validate a topological hit. Because the 6DOF matrix offset was causing this sphere's radius to unproject as `~0.005`, the intersection validation missed and aborted symmetry entirely. We patched `Move.js` to intelligently trust the mathematically mapped topological vertex (`symMap`) and forcefully bypass the broken 3D collision check, restoring perfect mirror symmetry for desktop editors.
+*   **Dual Cursor Isolation**: Because VR controllers update the shared `Picking` singleton every frame, the Desktop UI's 2D raycaster erroneously re-projected the VR controller's 3D intersection back onto the 2D computer screen, rendering a distracting floating cursor. We fixed this by tagging intersections with `_isVRHit = true` and commanding `Selection.js` to disable the 2D cursor projection when a VR hit is active.
+
 ## Code Architecture
 *   **`Scene.js`**:
     *   `_renderSceneVR()`: Handles the multi-pass rendering (Left Eye, Right Eye, Spectator).

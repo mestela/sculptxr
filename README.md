@@ -57,14 +57,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
 
-- **Desktop 6DOF (Beta Issues)**:
-    - Symmetry behaves strangely in desktop mode (investigate).
-    - Tools should work based on Sphere Radius intersection 'hit' (currently relies heavily on Ray direction).
-    - Should re-enable mouse controls to adjust the screen offset.
-    - Standard desktop mode should be able to work too. Maybe D can takeover the desktop view with the VR view, disable all the desktop UI, D again re-enables the desktop UI, stops the VR view being sent to desktop.
-
-
 ## Done
+- ~~Desktop 6DOF completed: Symmetry restored, tool radius scaling fixed, mouse pan/orbit restored, dual cursor shadowing isolated.~~ **DONE v0.8.124**
 - ~~wireframe colour ugly, fix~~  **DONE v0.8.18** 
 - ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    
 - ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**

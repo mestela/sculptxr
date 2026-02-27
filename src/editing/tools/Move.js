@@ -111,12 +111,6 @@ class Move extends SculptBase {
                       pickingSym._mesh = mesh; // Force hit
                       pickingSym.intersectionSphereMeshes([mesh], symPos, picking.getWorldRadius());
                       snapped = true;
-
-                      console.log("[Move.js startSculpt] Topological Snap Succeeded", {
-                        worldRadius: picking.getWorldRadius(),
-                        localRadius2: picking.getLocalRadius2(),
-                        pickingSymMesh: !!pickingSym.getMesh()
-                      });
                     }
                   }
                 }
@@ -158,7 +152,6 @@ class Move extends SculptBase {
               }
 
               this._moveDataSym.radius2 = pickingSym.getLocalRadius2();
-              console.log("[Move.js startSculpt] Topological vertex proxy bound", { verts: nbVerts, moveDataSym: this._moveDataSym });
 
             } else {
               if (!snapped) {
@@ -166,7 +159,6 @@ class Move extends SculptBase {
               }
               pickingSym.setLocalRadius2(picking.getLocalRadius2());
               this.initMoveData(pickingSym, this._moveDataSym);
-              console.log("[Move.js startSculpt] Fallback bound", { moveDataSym: this._moveDataSym });
             }
           } else {
             console.log("[Move.js startSculpt] ABORT: pickingSym.getMesh() is falsy. snapped=", snapped);
@@ -245,13 +237,6 @@ class Move extends SculptBase {
     var mouseY = main._mouseY;
     this.updateMoveDir(picking, mouseX, mouseY);
 
-    console.log("[Move.js Debug] sculptStroke executing", {
-      useSym: useSym,
-      iVertsLength: this._moveData.iVerts ? this._moveData.iVerts.length : 0,
-      iVertsSymLength: this._moveDataSym.iVerts ? this._moveDataSym.iVerts.length : 0,
-      radius2: this._moveData.radius2
-    });
-
     // CRITICAL BUG FIX (Desktop Hard Edges): Use strictly the starting vertices and center, identical to VR
     var r2 = this._moveData.radius2 || picking.getLocalRadius2();
     this.move(this._moveData.iVerts, this._moveData.center, r2, this._moveData, picking, null, useSym);
@@ -313,9 +298,8 @@ class Move extends SculptBase {
       var alphaVal = picking.getAlpha(vx, vy, vz);
       fallOff *= mAr[ind + 2] * alphaVal;
 
-      if (i % 100 === 0 && !window.debugMoveSpam) {
-        console.log(`[Move.js] Vertex ${i}: dist_ratio=${dist.toFixed(2)}, mathFalloff=${fallOff.toFixed(2)}, alpha=${alphaVal.toFixed(2)}, radius=${radius.toFixed(2)}`);
-      }
+
+
 
 
 
