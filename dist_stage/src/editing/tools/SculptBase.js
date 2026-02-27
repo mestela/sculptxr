@@ -428,45 +428,16 @@ class SculptBase {
       return;
     }
 
-    var step = 1.0 / Math.floor(dist / minSpacing);
-    var currentPos = vec3.clone(worldPos);
-    var lerpedPos = vec3.create();
     var mesh = this.getMesh();
-
-    // OPTIMIZATION: Do not perform a full-face collision check on every interpolated point.
-    // That costs ~1.5 seconds per stroke. Instead, calculate the intersection for the final point,
-    // and manually inject the lerped geometric center directly into picking on each step.
-
-    // 1. Calculate intersection at current (final) position to grab the right face/normal
     if (mesh) {
       picking.intersectionSphereMeshes([mesh], worldPos, rWorld);
     }
 
-    var invMat = mat4.create();
-    if (mesh) mat4.invert(invMat, mesh.getMatrix());
-    var localLerp = vec3.create();
-
-    // We expect the normal/face to be basically the same over 1cm.
-    // So we just manually slide the mathematical hit position across that face.
-    for (var i = step; i <= 1.0; i += step) {
-      vec3.lerp(lerpedPos, this._lastVRPos, currentPos, i);
-
-      // Temporarily update controller pos for symmetry
-      vec3.copy(main._vrControllerPos, lerpedPos);
-
-      // Slide intersection dot (MUST BE IN LOCAL SPACE)
-      if (mesh) {
-        vec3.transformMat4(localLerp, lerpedPos, invMat);
-        picking.setIntersectionPoint(localLerp);
-        picking._mesh = mesh; // Force hit regardless of ray
-      }
-
-      this.makeStrokeXR(picking, pickingSym, true);
-    }
+    this.makeStrokeXR(picking, pickingSym, true);
 
     // Restore actual controller pos
-    vec3.copy(this._lastVRPos, currentPos);
-    vec3.copy(main._vrControllerPos, currentPos);
+    vec3.copy(this._lastVRPos, worldPos);
+    vec3.copy(main._vrControllerPos, worldPos);
 
     // Also update _lastInter nicely if we can, but it's less critical now
     var inter = picking.getIntersectionPoint();
