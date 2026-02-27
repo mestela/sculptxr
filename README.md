@@ -7,7 +7,7 @@ WebXR Sculpting
 ## Overview
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
-Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
+Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpOmaXs)
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
