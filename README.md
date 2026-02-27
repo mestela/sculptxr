@@ -41,7 +41,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     - Voxel smooth tool
     - voxel cube brush
     - Voxel move brush (see how many of the current poly tools can be ported over)
-    - video curves/tubes
+    - voxel curves/tubes
     - Xray mode
     - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
