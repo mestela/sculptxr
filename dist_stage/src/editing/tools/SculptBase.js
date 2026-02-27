@@ -497,15 +497,13 @@ class SculptBase {
 
         // Intersection
         var rWorld = Math.sqrt(picking._rWorld2);
-
         // FIX v0.6.4: Unit-Corrected Cap (5cm Physical)
-        // FIX: Ensure search radius accommodates huge brush sizes or fast swings
         const vrScale = this._main._vrScale || 1.0;
         const invScale = 1.0 / vrScale;
         const MAX_SEARCH_METERS = 0.15; // 15cm
         const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
 
-        const searchRadius = Math.max(rWorld * 4.0, MAX_SEARCH_RADIUS);
+        const searchRadius = Math.min(rWorld * 4.0, MAX_SEARCH_RADIUS);
 
         // TOPOLOGICAL SYMMETRY SNAP (VR)
         let snapped = false;
