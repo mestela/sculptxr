@@ -3078,8 +3078,17 @@ class Scene {
     // 2. Scaling
     // Threshold 5cm to prevent jitter when hands are too close
     if (s.prevDist > 0.05 && dist > 0.05) {
-      // Correct ratio: pulling hands apart (dist > prevDist) increases _vrScale (zooms OUT)
-      const ratio = dist / s.prevDist;
+      let ratio;
+      if (this._spectatorMode === Enums.SpectatorMode.STATIONARY) {
+        // Stationary: You are pulling the *world* closer to you.
+        // Pulling hands apart (dist > prevDist) stretches the world, so _vrScale decreases (zooms IN).
+        ratio = s.prevDist / dist;
+      } else {
+        // Tracked: You are scaling the *object* in your hands.
+        // Pulling hands apart (dist > prevDist) stretches the object, so _vrScale increases (zooms OUT)
+        ratio = dist / s.prevDist;
+      }
+
       // Use Hand Midpoint (mid) as Pivot for Natural Zoom
       if (Math.abs(ratio - 1.0) > 0.0001) this.scaleWorld(ratio, mid);
     }
