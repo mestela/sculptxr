@@ -31,6 +31,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Todo
+- In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen
 -crease brush breaks symmetry
 -still some topology symmetry issues
 - **Functionality**:
