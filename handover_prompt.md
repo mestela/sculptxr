@@ -1,42 +1,43 @@
 # SculptXR Handover Prompt
 
-## Objective: Fix 6DOF Rotation Trackballing
+## Objective: Fix VR Stroke Wavy Artifacts and Restore Topo-Symmetry
 
-The project is currently at `v0.8.108`. The user is trying to implement a "STATIONARY" 6DOF spectator mode where the desktop camera perfectly mirrors the physical translation and rotation of the VR headset, but at a massive virtual scale, without "trackballing" (orbiting) around the sculpt.
+The project is currently at `v0.8.132`. The user reported that VR strokes (especially with raycast tools like Crease) produce horrible zigzagging waves. Furthermore, symmetry is completely broken again, drawing only single dots on the mirrored side.
 
-We successfully isolated pure translation in `v0.8.104` using `scaledPanPos`. The user confirmed 1:1 forward/back panning works natively without moving the pivot.
+### What Happened in `v0.8.130` - `v0.8.132`?
 
-However, in `v0.8.108`, the user reported that combining translation and rotation in the interactive matrix debugger (`window.debugTripodVirt = ['bakedDesktopView', 'panRot', 'scaledPanPos']`) breaks the 1:1 movement and reverts to the "trackball" behavior, where the scene swings orbitally.
+We attempted to fix the zigzagging wavy lines in VR by applying "Lazy Mouse" smoothing and modifying the stroke interpolation logic in `src/editing/tools/SculptBase.js`.
 
-### Current Status
-- **Baseline**: `v0.8.108` is on Beta.
-- **Physical Controllers (Pass 1)**: The array `window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"]` has been deployed to fix microscopic/teleported controllers, but the user went to sleep before testing it.
-- **Virtual World (Pass 2)**: The user's array `['bakedDesktopView', 'panRot', 'scaledPanPos']` logically causes an orbital trackball effect.
+1. **The Core Issue:** `sculptStrokeXR` interpolates the physical controller's 3D position (`worldPos` floating in the air) using a step loop, and then forcefully drops a collision sphere (`intersectionSphereMeshes`) straight down onto the geometry to find the nearest vertex. For raycast tools like Crease, where the controller is far from the mesh, this "air drop" hit point shifts wildly away from the laser line, snapping randomly to different ridges on the surface.
+2. **Failed Attempt 1 (`v0.8.131`):** I tried changing `sculptStrokeXR` to interpolate the *surface intersection point* (`strokePos`) instead of the controller's `worldPos`. This completely broke all tools (returned to drawing dots) because the `minSpacing` calculation, required to step the loop, fundamentally relies on the physical distance the controller has traveled in 3D space (`dist = vec3.dist(worldPos, this._lastVRPos)`).
+3. **Failed Attempt 2 (`v0.8.132`):** I reverted the stroke interpolation loop back to using `worldPos`. I then enabled VR Lazy Mouse smoothing (`vec3.lerp`) universally for **all** VR modes, hoping that smoothing the physical controller input itself would eliminate the waves. 
 
-### The Physics of the Trackball Regression
-Why does `panRot * scaledPanPos` trackball?
+**The Result:** The user reported `v0.8.132` still has wavy strokes on the Crease tool, and **symmetry is completely broken again** doing the single-dot error.
 
-1. `scaledPanPos` calculates a pure translation delta from the physical room origin.
-2. `panRot` is a pure `mat4.fromQuat` rotation matrix. Critically, **it rotates around the exact origin `[0,0,0]`**.
-3. `bakedDesktopView` pushes the entire scene 80 units backwards into the camera frustum so the sculpt is framed nicely in the viewport.
+### The True Root Cause
 
-When `buildMatrix` evaluates `['bakedDesktopView', 'panRot', 'scaledPanPos']`, it performs:
-`mat = bakedDesktopView * panRot * scaledPanPos`
+The wavy strokes are caused by `intersectionSphereMeshes` being used blindly for all VR tools during the interpolation step. For tools like `Crease` and `TransformVR` that require precise laser-aimed raycasting (`intersectionRayMesh`), switching to a spherical "closest point" fallback dynamically snaps the stroke to whatever geometry is physically closest to the floating controller's interpolated position.
 
-In vector space (`v' = M * v`), operations evaluate **right-to-left**.
-1. **First**, the vertex `v` is translated by `scaledPanPos`. If the user walks 2 meters to the right, `v` shifts left.
-2. **Second**, `panRot` rotates the world. Because the vertex is no longer at `[0,0,0]`, rotating it swings it in a massive orbital arc around the origin! The further the user walks from the center of their room, the more violently the camera tracks in an orbit when they turn their head.
-3. **Third**, `bakedDesktopView` pushes this swung vertex 80 units away to render it.
+**Why did Symmetry Break?**
+In `v0.8.132`, the VR Lazy Mouse interpolation was enabled globally:
+```javascript
+const smoothedPos = vec3.create();
+vec3.lerp(smoothedPos, this._lastVRPos, worldPos, 0.15); // 85% old, 15% new
+vec3.copy(worldPos, smoothedPos);
+```
+Because `worldPos` is the reference to `main._vrControllerPos` that `Scene.js` also uses, mathematically squeezing the controller's delta to 15% velocity in the tool logic seems to have decoupled or desynced the physical controller matrix from the logical surface hit, completely breaking the Topological Symmetry threshold checks or the mirroring matrix.
 
 ### Next Session Mission
-When the user returns, you must explain that `panRot` cannot be blindly multiplied against a translated matrix, because the rotation pivot is `[0,0,0]`!
 
-To rotate the camera "in place" (like an FPS camera) after walking mathematically away from the origin, the rotation matrix must pivot around the *camera's current local position*, not the world origin.
+When the user returns, you must deeply investigate how to stabilize VR laser strokes without corrupting `worldPos` or symmetry.
 
 #### The Fix Strategy:
-1. **Confirm Pass 1**: Ask the user if `window.debugTripodPhys = ["bakedDesktopView", "invScaleMat", "invBakedOffset"]` successfully renders the physical VR controllers in their lap.
-2. **Re-architect Pass 2 Rotation**: You must create a new matrix logic in `Scene.js` (e.g., `localPanRot`) that applies the rotation *locally* relative to the translation delta, rather than globally around the sculpt origin. 
-    * To rotate around a pivot `P` (the camera's translation), you translate by `-P`, rotate, then translate by `+P`.
-    * Alternatively, look into the specific mathematical ordering of translation/rotation in `mat4.fromRotationTranslation`. If `worldMat` inherently trackballs because of `bakedDesktopView`'s 80-unit push, you may need to apply `panRot` first, *then* `scaledPanPos`, but ensure `bakedDesktopView` handles the 80 units as an isolated local zoom rather than a global modifier.
 
-Help the user dial in the perfect matrix array in the console before deploying code!
+1. **Revert the Global Smoothing:** Remove the global 15% `vec3.lerp` hack in `SculptBase.js` that was added in `v0.8.132`. Put the smoothing restriction back behind tracking so standard VR mode strokes aren't choked by artificial velocity limits.
+2. **Identify Raycast vs Volume Intersection:** In `Scene.js`, we use `this._picking.intersectionRayMesh(..., rayOrigin, engineDir)` for Crease. In `SculptBase.js`, the `for(...)` stroke loop blindly calls `picking.intersectionSphereMeshes([mesh], lerpedPos, rWorld)`.
+   * You must figure out how to maintain a true *raycast* intersection during the interpolation frame loop for tools that require aiming, rather than dropping a generic sphere.
+3. **Investigate the Symmetry Dotting:** 
+   * Review `makeStrokeXR` and the `pickingSym.setIntersectionPoint(symWorldPos)` bypass that was implemented in v0.8.130. 
+   * Figure out why it is aborting or rendering empty spheres again. The Lazy Mouse smoothing applied in `v0.8.132` likely destroyed the `dist` thresholds required for the mirror to fire successfully.
+
+Start by examining `src/editing/tools/SculptBase.js` around line 430 and strip out the failed smoothing!

@@ -1645,6 +1645,7 @@ class Scene {
 
     this._preventRender = true;
     this._vrIsNegative = false;
+    this._headHeightCalibrated = false;
   }
 
   computeEngineToPhysicalMatrix(out) {
@@ -1663,59 +1664,43 @@ class Scene {
   updateVROffsets() {
     if (!this._baseRefSpace) return;
 
-    // Hardcoded offsets (cleaner UI)
-    const valZ = 0.4;
-    const valY = -1.2; // -1.2 puts floor 1.2m below (approx seated/standing)
-
-    // We want to move the "origin" relative to the user.
-    // Using simple offset on Y and Z.
-    // XRRigidTransform(position, orientation)
-    // To move scene UP, we shift reference space DOWN?
-    // Or we shift origin... let's try direct translation.
-    // If I want the scene to be HIGHER, I need the floor to be lower relative to me?
-    // Actually, usually negative Y moves the reference space down (so I feel higher).
-    // Positive Y moves reference space up (so I feel lower).
-    // Let's assume Y slider = "Scene Height".
-    // If I increase Y, scene goes up.
-
-    // 1. View Reference Space Handling (Initial Pivot)   // "result = base * offset" ?
-    // "viewer_in_base = viewer_in_offset * offset_inverse" ?
-    // Documentation says: getOffsetReferenceSpace(originOffset)
-    // "Creates a new reference space where the origin is offset from the created reference space by the specified transformation."
-    // origin_new = origin_old * transform
-
-    // Let's just try mapping directly.
-    // offsetZ moves Forward/Back?
-    // offsetY moves Up/Down.
-
-    const offset = new XRRigidTransform({ x: 0, y: -valY, z: -valZ });
-    // Negating because usually we think "Move Scene Back" (negative Z) or "Move Scene Down" (negative Y)
-    // But let's verify behavior. Z=0.5 was "lift scene"?
-    // User said "sphere is too low below me". So they want to lift scene (Y+).
-    // If valY is positive, and we use -valY, origin moves DOWN.
-    // Which means viewer (at 0) is relatively HIGHER.
-    // Wait. If Origin moves DOWN, then content (at Origin) moves DOWN.
-    // So to lift scene, we need Positive Y offset?
-    // Let's stick to -valY and see. If slider is "Height", maybe we want +valY.
-    // I'll assume slider is "Viewer Height".
-    // If I increase "Viewer Height", I go UP, scene goes DOWN.
-    // So -valY makes sense for "Viewer Height".
-
-    this._xrRefSpace = this._baseRefSpace.getOffsetReferenceSpace(offset);
-
-    // Apply accumulated world nav
-    if (this._xrWorldOffset) {
-      // Tracking Debug (Throttled)
-      if (this._logThrottle % 60 === 0 && this._vrControllerPos) {
-        const p = this._vrControllerPos; // Vec3
-        // if (window.screenLog) window.screenLog(`Pos: ${p[0].toFixed(2)},${p[1].toFixed(2)},${p[2].toFixed(2)}`, "yellow");
-      }
-      // Compose offsets? 
-      // We want: Base -> InitialOffset -> WorldNav
-      // But getOffsetReferenceSpace takes an XRRigidTransform.
-      // We can chain them.
-      this._xrRefSpace = this._xrRefSpace.getOffsetReferenceSpace(this._xrWorldOffset);
+    let valY = -1.2;
+    const sliderY = document.getElementById('offsetY');
+    if (sliderY) {
+      valY = parseFloat(sliderY.value);
+    } else if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.offsetY !== undefined) {
+      valY = this._guiXR._uiSettings.offsetY;
     }
+
+    const valZ = 0.4;
+    const heightOffset = -valY; 
+
+    if (this._prevOffsetY === undefined) {
+      // INITIAL STARTUP: Overwrite the absolute Y height with the UI value.
+      // (Preserving any Z offsets already present from the constructor)
+      if (!this._xrWorldOffset) {
+        this._xrWorldOffset = new XRRigidTransform({ x: 0, y: heightOffset, z: -valZ });
+      } else {
+        const p = this._xrWorldOffset.position;
+        const o = this._xrWorldOffset.orientation;
+        this._xrWorldOffset = new XRRigidTransform({ x: p.x, y: heightOffset, z: p.z }, o);
+      }
+    } else {
+      // LIVE SLIDER: If slider is moved in VR, apply the delta to the current navigation state
+      if (this._xrWorldOffset) {
+        const deltaY = heightOffset - this._prevOffsetY;
+        if (Math.abs(deltaY) > 0.001) {
+          const p = this._xrWorldOffset.position;
+          const o = this._xrWorldOffset.orientation;
+          this._xrWorldOffset = new XRRigidTransform({ x: p.x, y: p.y + deltaY, z: p.z }, o);
+        }
+      }
+    }
+
+    this._prevOffsetY = heightOffset;
+
+    // We intentionally DO NOT create `this._xrRefSpace` anymore because 
+    // 6DoF mode requires raw headset poses from `_baseRefSpace`.
   }
 
   moveWorld(delta) {
@@ -2113,6 +2098,19 @@ class Scene {
 
     const pose = frame.getViewerPose(refSpace);
     if (pose) {
+      if (!this._headHeightCalibrated) {
+        this._headHeightCalibrated = true;
+        const headY = pose.transform.position.y;
+        if (!this._xrWorldOffset) {
+          this._xrWorldOffset = new XRRigidTransform({ x: 0, y: headY, z: -0.4 });
+        } else {
+          const p = this._xrWorldOffset.position;
+          const o = this._xrWorldOffset.orientation;
+          this._xrWorldOffset = new XRRigidTransform({ x: p.x, y: headY, z: p.z }, o);
+        }
+        // Removed `this._prevOffsetY = headY;` to prevent UI slider from jumping on world grab
+      }
+
       const gl = this._gl;
       const glLayer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);

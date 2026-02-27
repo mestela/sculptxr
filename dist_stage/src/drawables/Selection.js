@@ -228,8 +228,11 @@ class Selection {
 
     // 1. Get Surface Normal
     var pNormal = picking.getPickedNormal();
-    if (pNormal) vec3.copy(_TMP_AXIS, pNormal);
-    else vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
+    if (pNormal && pNormal.length >= 3) {
+      vec3.copy(_TMP_AXIS, pNormal);
+    } else {
+      vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
+    }
 
     var nm = mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix());
     if (nm) {

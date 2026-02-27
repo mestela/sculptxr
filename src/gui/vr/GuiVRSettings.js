@@ -32,6 +32,23 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({ type: 'header', label: 'Calibration', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  widgets.push({
+    type: 'slider', id: 'offsetY', label: 'Head Height', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: -2.0, max: 0.0, step: 0.1,
+    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.offsetY !== undefined ? main.getGui()._uiXR._uiSettings.offsetY : -1.2,
+    onInteract: (val) => {
+      // Store globally for persistence
+      if (main.getGui()._uiXR) {
+        main.getGui()._uiXR._uiSettings.offsetY = val;
+      }
+      // Apply immediately
+      main.updateVROffsets();
+    }
+  });
+  y += ITEM_H + GAP;
 
   return {
     width: menuW,

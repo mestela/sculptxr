@@ -429,6 +429,8 @@ class SculptBase {
     }
 
     var step = 1.0 / Math.floor(dist / minSpacing);
+    if (step < 0.1) step = 0.1; // PERFORMANCE CAP: Max 10 interpolations per frame to prevent freezing
+
     var currentPos = vec3.clone(worldPos);
     var lerpedPos = vec3.create();
     var mesh = this.getMesh();
@@ -439,7 +441,8 @@ class SculptBase {
       // Temporarily update controller pos for symmetry / makeStrokeXR logic
       vec3.copy(main._vrControllerPos, lerpedPos);
 
-      // Re-evaluate intersection at this lerped position to properly grab vertices
+      // We MUST re-evaluate intersection locally so `Crease`, `Flatten` etc 
+      // get the geometrically correct surface normal and center for this specific sub-step.
       if (mesh) {
         picking.intersectionSphereMeshes([mesh], lerpedPos, rWorld);
       }
@@ -511,12 +514,13 @@ class SculptBase {
         var rWorld = Math.sqrt(picking._rWorld2);
 
         // FIX v0.6.4: Unit-Corrected Cap (5cm Physical)
+        // FIX: Ensure search radius accommodates huge brush sizes or fast swings
         const vrScale = this._main._vrScale || 1.0;
         const invScale = 1.0 / vrScale;
-        const MAX_SEARCH_METERS = 0.05; // 5cm
+        const MAX_SEARCH_METERS = 0.15; // 15cm
         const MAX_SEARCH_RADIUS = MAX_SEARCH_METERS * invScale;
 
-        const searchRadius = Math.min(rWorld * 4.0, MAX_SEARCH_RADIUS);
+        const searchRadius = Math.max(rWorld * 4.0, MAX_SEARCH_RADIUS);
 
         // TOPOLOGICAL SYMMETRY SNAP (VR)
         let snapped = false;
@@ -552,23 +556,33 @@ class SculptBase {
               const mv3 = symMap[iv3];
 
               if (mv1 !== -1 && mv2 !== -1 && mv3 !== -1) {
+                // We have a full matching triangle!
+                // Barycentric...
                 const v1 = vAr.subarray(iv1 * 3, iv1 * 3 + 3);
                 const v2 = vAr.subarray(iv2 * 3, iv2 * 3 + 3);
                 const v3 = vAr.subarray(iv3 * 3, iv3 * 3 + 3);
                 const uvw = Geometry.barycentric(picking.getIntersectionPoint(), v1, v2, v3);
 
+                // Mirrored Triangle
                 const rv1 = vAr.subarray(mv1 * 3, mv1 * 3 + 3);
                 const rv2 = vAr.subarray(mv2 * 3, mv2 * 3 + 3);
                 const rv3 = vAr.subarray(mv3 * 3, mv3 * 3 + 3);
 
-                // Reuse symWorldPos as temp var for result
-                symWorldPos.fill(0.0);
-                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv1, uvw[0]);
-                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv2, uvw[1]);
-                vec3.scaleAndAdd(symWorldPos, symWorldPos, rv3, uvw[2]); // local pos
+                // Interpolate
+                const symPos = [0.0, 0.0, 0.0];
+                vec3.scaleAndAdd(symPos, symPos, rv1, uvw[0]);
+                vec3.scaleAndAdd(symPos, symPos, rv2, uvw[1]);
+                vec3.scaleAndAdd(symPos, symPos, rv3, uvw[2]);
 
-                // Local -> World
-                vec3.transformMat4(symWorldPos, symWorldPos, mesh.getMatrix());
+                // Snap pickingSym directly using the Local mapped coordinate
+                pickingSym.setIntersectionPoint(symPos);
+                pickingSym._mesh = mesh; // Force hit
+
+                // CRITICAL FIX: Bypass the geometric collision sphere on a perfect topological snap.
+                // Re-use the exactly calculated physics radiuses from the main brush
+                pickingSym._rWorld2 = picking._rWorld2;
+                pickingSym._rLocal2 = picking._rLocal2;
+
                 snapped = true;
               }
             }
@@ -577,7 +591,9 @@ class SculptBase {
           console.error("Topo Sym Error:", e);
         }
 
+        if (!snapped) {
         pickingSym.intersectionSphereMeshes([mesh], symWorldPos, searchRadius);
+        }
 
         if (pickingSym.getMesh()) {
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
