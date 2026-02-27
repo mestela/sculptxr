@@ -3078,8 +3078,8 @@ class Scene {
     // 2. Scaling
     // Threshold 5cm to prevent jitter when hands are too close
     if (s.prevDist > 0.05 && dist > 0.05) {
-      // Invert ratio: pulling hands apart (dist > prevDist) decreases _vrScale (zooms IN)
-      const ratio = s.prevDist / dist;
+      // Correct ratio: pulling hands apart (dist > prevDist) increases _vrScale (zooms OUT)
+      const ratio = dist / s.prevDist;
       // Use Hand Midpoint (mid) as Pivot for Natural Zoom
       if (Math.abs(ratio - 1.0) > 0.0001) this.scaleWorld(ratio, mid);
     }
