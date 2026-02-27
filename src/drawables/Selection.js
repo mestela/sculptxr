@@ -174,6 +174,14 @@ class Selection {
 
     // if there's an offset then it means we are editing the tool radius
     var pickedMesh = main.getPicking().getMesh() && !this._isEditMode;
+
+    // Fix Dual Cursor: If WebXR is active and the intersection data belongs to the VR controllers,
+    // do NOT draw the 3D mouse cursor hovering over the mesh, because it would just copy the VR intersection point.
+    // Instead, "pickedMesh = false" forces the desktop to draw the 2D cursor (circle) at the actual physical mouse position.
+    if (main.getXRMode && main.getXRMode() && main.getPicking()._isVRHit) {
+      pickedMesh = false;
+    }
+
     if (pickedMesh) this._updateMatricesMesh(main.getCamera(), main);
     else this._updateMatricesBackground(main.getCamera(), main);
 

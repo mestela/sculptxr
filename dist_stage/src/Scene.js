@@ -1121,7 +1121,9 @@ class Scene {
     const selection = this._sculptManager.getSelection();
     if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
 
-    selection.renderVR(this, this._camera, radius);
+    // VR cursors are drawn via _vrBrushRadiusSphere on Pass 3.
+    // Desktop cursors are drawn via SculptManager.postRender() on the null framebuffer.
+    // We no longer call selection.renderVR here, avoiding duplicate cursors inside the headset.
 
     ///////////////
     // CONTOUR 2/2
@@ -3078,7 +3080,8 @@ class Scene {
     // 2. Scaling
     // Threshold 5cm to prevent jitter when hands are too close
     if (s.prevDist > 0.05 && dist > 0.05) {
-      const ratio = dist / s.prevDist;
+      // Invert ratio: pulling hands apart (dist > prevDist) decreases _vrScale (zooms IN)
+      const ratio = s.prevDist / dist;
       // Use Hand Midpoint (mid) as Pivot for Natural Zoom
       if (Math.abs(ratio - 1.0) > 0.0001) this.scaleWorld(ratio, mid);
     }

@@ -39,7 +39,7 @@ class Move extends SculptBase {
       var mesh = this.getMesh();
       
       // VR Symmetry Init
-      if (main._xrSession && main._vrControllerPos && mesh) {
+      if (main._xrSession && main._vrControllerPos && mesh && picking._isVRHit) {
         // Mirror 'world' pos
           var worldPos = vec3.clone(main._vrControllerPos);
           var mInv = mat4.create();
@@ -63,16 +63,116 @@ class Move extends SculptBase {
           }
       } else {
         if (mesh) {
-          pickingSym.intersectionMouseMesh(mesh);
-          pickingSym.setLocalRadius2(picking.getLocalRadius2());
+          // TOPOLOGICAL SYMMETRY SNAP (Restored from SculptBase)
+          let snapped = false;
+          const pickedFace = picking.getPickedFace();
+          if (pickedFace !== -1) {
+            try {
+              let symData = null;
+              if (typeof mesh.getSymmetryData === 'function') {
+                symData = mesh.getSymmetryData();
+              } else {
+                if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
+                symData = mesh._symmetryData;
+              }
+              const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
 
-          if (pickingSym.getMesh()) {
-            this.initMoveData(pickingSym, this._moveDataSym);
+              if (symMap) {
+                const fAr = mesh.getFaces();
+                const vAr = mesh.getVertices();
+                const iFace = pickedFace * 4;
+
+                if (iFace >= 0 && iFace + 3 < fAr.length) {
+                  const iv1 = fAr[iFace];
+                  const iv2 = fAr[iFace + 1];
+                  const iv3 = fAr[iFace + 2];
+
+                  if (iv1 < symMap.length && iv2 < symMap.length && iv3 < symMap.length) {
+                    const mv1 = symMap[iv1];
+                    const mv2 = symMap[iv2];
+                    const mv3 = symMap[iv3];
+
+                    if (mv1 !== -1 && mv2 !== -1 && mv3 !== -1) {
+                      const v1 = vAr.subarray(iv1 * 3, iv1 * 3 + 3);
+                      const v2 = vAr.subarray(iv2 * 3, iv2 * 3 + 3);
+                      const v3 = vAr.subarray(iv3 * 3, iv3 * 3 + 3);
+                      const uvw = Geometry.barycentric(picking.getIntersectionPoint(), v1, v2, v3);
+
+                      const rv1 = vAr.subarray(mv1 * 3, mv1 * 3 + 3);
+                      const rv2 = vAr.subarray(mv2 * 3, mv2 * 3 + 3);
+                      const rv3 = vAr.subarray(mv3 * 3, mv3 * 3 + 3);
+
+                      const symPos = [0.0, 0.0, 0.0];
+                      vec3.scaleAndAdd(symPos, symPos, rv1, uvw[0]);
+                      vec3.scaleAndAdd(symPos, symPos, rv2, uvw[1]);
+                      vec3.scaleAndAdd(symPos, symPos, rv3, uvw[2]);
+
+                      pickingSym.setIntersectionPoint(symPos);
+                      pickingSym._mesh = mesh; // Force hit
+                      pickingSym.intersectionSphereMeshes([mesh], symPos, picking.getWorldRadius());
+                      snapped = true;
+
+                      console.log("[Move.js startSculpt] Topological Snap Succeeded", {
+                        worldRadius: picking.getWorldRadius(),
+                        localRadius2: picking.getLocalRadius2(),
+                        pickingSymMesh: !!pickingSym.getMesh()
+                      });
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("Move.js Topological Snap Failed", e);
+            }
+          }
+
+          // If we successfully computed the topological symmetric position, proceed even if the
+          // microscopic sphere hit validation failed due to severe camera offsets in 6DOF.
+          if (pickingSym.getMesh() || snapped) {
+            if (snapped && symMap) {
+              // TOPOLOGICAL VERTEX SELECTION: Map exactly
+              const mainVerts = picking.getPickedVertices();
+              const newVerts = new Uint32Array(mainVerts.length);
+              let acc = 0;
+              for (let i = 0; i < mainVerts.length; ++i) {
+                const id = mainVerts[i];
+                const mid = symMap[id];
+                if (mid !== -1) newVerts[acc++] = mid;
+              }
+              pickingSym._pickedVertices = newVerts.subarray(0, acc);
+              pickingSym.setLocalRadius2(picking.getLocalRadius2());
+
+              // Skip initMoveData to avoid overwriting _pickedVertices with pickVerticesInSphereTopological (which requires `_pickedFace`)
+              vec3.copy(this._moveDataSym.center, pickingSym.getIntersectionPoint());
+              this._moveDataSym.iVerts = new Uint32Array(pickingSym._pickedVertices);
+              this._main.getStateManager().pushVertices(pickingSym._pickedVertices);
+
+              var nbVerts = pickingSym._pickedVertices.length;
+              var vProxy = this._moveDataSym.vProxy = new Float32Array(nbVerts * 3);
+              for (var i = 0; i < nbVerts; ++i) {
+                var ind = pickingSym._pickedVertices[i] * 3;
+                var j = i * 3;
+                vProxy[j] = vAr[ind];
+                vProxy[j + 1] = vAr[ind + 1];
+                vProxy[j + 2] = vAr[ind + 2];
+              }
+
+              this._moveDataSym.radius2 = pickingSym.getLocalRadius2();
+              console.log("[Move.js startSculpt] Topological vertex proxy bound", { verts: nbVerts, moveDataSym: this._moveDataSym });
+
+            } else {
+              if (!snapped) {
+                pickingSym.intersectionMouseMesh(mesh);
+              }
+              pickingSym.setLocalRadius2(picking.getLocalRadius2());
+              this.initMoveData(pickingSym, this._moveDataSym);
+              console.log("[Move.js startSculpt] Fallback bound", { moveDataSym: this._moveDataSym });
+            }
+          } else {
+            console.log("[Move.js startSculpt] ABORT: pickingSym.getMesh() is falsy. snapped=", snapped);
           }
         }
       }
-
-      // TOPOLOGICAL VERTEX SNAP REMOVED - Incompatible with symFactor spatial blend
     }
 
     // [VR] Capture Initial Rotation
@@ -87,6 +187,7 @@ class Move extends SculptBase {
     else
       picking.pickVerticesInSphere(picking.getLocalRadius2());
 
+    moveData.radius2 = picking.getLocalRadius2();
     vec3.copy(moveData.center, picking.getIntersectionPoint());
     var iVerts = picking.getPickedVertices();
     moveData.iVerts = new Uint32Array(iVerts); // Clone vertices
@@ -130,12 +231,11 @@ class Move extends SculptBase {
     var pickingSym = main.getPickingSymmetry();
     var useSym = main.getSculptManager().getSymmetry() && pickingSym.getMesh();
 
-    picking.updateAlpha(this._lockPosition);
-    picking.setIdAlpha(this._idAlpha);
-    if (useSym) {
-      pickingSym.updateAlpha(false);
-      pickingSym.setIdAlpha(this._idAlpha);
-    }
+    // CRITICAL BUG FIX: Do NOT update Alpha or IdAlpha during the Move stroke!
+    // Move.js relies on a statically cached chunk of vertices (vProxy).
+    // If we update the alpha projection matrix to follow the mouse, the static
+    // vertices fall out of the bounding box and get culled (hard edge).
+    // SculptManager.start() already initialized perfect alpha masks at mouse-down.
 
     this.copyVerticesProxy(picking, this._moveData);
     if (useSym)
@@ -144,11 +244,22 @@ class Move extends SculptBase {
     var mouseX = main._mouseX;
     var mouseY = main._mouseY;
     this.updateMoveDir(picking, mouseX, mouseY);
-    this.move(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), this._moveData, picking, null, useSym);
+
+    console.log("[Move.js Debug] sculptStroke executing", {
+      useSym: useSym,
+      iVertsLength: this._moveData.iVerts ? this._moveData.iVerts.length : 0,
+      iVertsSymLength: this._moveDataSym.iVerts ? this._moveDataSym.iVerts.length : 0,
+      radius2: this._moveData.radius2
+    });
+
+    // CRITICAL BUG FIX (Desktop Hard Edges): Use strictly the starting vertices and center, identical to VR
+    var r2 = this._moveData.radius2 || picking.getLocalRadius2();
+    this.move(this._moveData.iVerts, this._moveData.center, r2, this._moveData, picking, null, useSym);
 
     if (useSym) {
       this.updateMoveDir(pickingSym, mouseX, mouseY, true);
-      this.move(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), this._moveDataSym, pickingSym, null, useSym);
+      var r2Sym = this._moveDataSym.radius2 || pickingSym.getLocalRadius2();
+      this.move(this._moveDataSym.iVerts, this._moveDataSym.center, r2Sym, this._moveDataSym, pickingSym, null, useSym);
     }
 
     var mesh = this.getMesh();
@@ -156,15 +267,11 @@ class Move extends SculptBase {
     // FIX v0.7.492: Use moveData.iVerts for proper normal updates
     if (this._moveData.iVerts) {
       mesh.updateGeometry(mesh.getFacesFromVertices(this._moveData.iVerts), this._moveData.iVerts);
-    } else {
-      mesh.updateGeometry(mesh.getFacesFromVertices(picking.getPickedVertices()), picking.getPickedVertices());
     }
 
     if (useSym) {
       if (this._moveDataSym.iVerts) {
         mesh.updateGeometry(mesh.getFacesFromVertices(this._moveDataSym.iVerts), this._moveDataSym.iVerts);
-      } else {
-        mesh.updateGeometry(mesh.getFacesFromVertices(pickingSym.getPickedVertices()), pickingSym.getPickedVertices());
       }
     }
     this.updateRender();
@@ -203,7 +310,12 @@ class Move extends SculptBase {
       var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) / radius;
       var fallOff = dist * dist;
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
-      fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
+      var alphaVal = picking.getAlpha(vx, vy, vz);
+      fallOff *= mAr[ind + 2] * alphaVal;
+
+      if (i % 100 === 0 && !window.debugMoveSpam) {
+        console.log(`[Move.js] Vertex ${i}: dist_ratio=${dist.toFixed(2)}, mathFalloff=${fallOff.toFixed(2)}, alpha=${alphaVal.toFixed(2)}, radius=${radius.toFixed(2)}`);
+      }
 
 
 

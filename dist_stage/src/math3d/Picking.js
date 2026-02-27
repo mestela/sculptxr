@@ -157,6 +157,7 @@ class Picking {
 
   /** Intersection between a ray the mouse position for every meshes */
   intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
+    this._isVRHit = false;
 
     var vNear = this.unproject(mouseX, mouseY, 0.0);
     var vFar = this.unproject(mouseX, mouseY, 0.1);
@@ -244,6 +245,7 @@ class Picking {
 
   /** Intersection between a sphere and meshes (Contact Picking for VR) */
   intersectionSphereMeshes(meshes, worldCenter, worldRadius) {
+    this._isVRHit = true;
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
@@ -542,11 +544,28 @@ class Picking {
   }
 
   unproject(x, y, z) {
-    return this._main.getCamera().unproject(x, y, z);
+    const cam = this._main.getCamera();
+    // Desktop picking align fix for STATIONARY / TRACKED VR
+    const isSpectator = this._main.getXRMode && this._main.getXRMode() &&
+      (this._main._spectatorMode === 0 || this._main._spectatorMode === 1);
+
+    if (isSpectator) cam._unprojectDiverted = true;
+    const res = cam.unproject(x, y, z);
+    if (isSpectator) cam._unprojectDiverted = false;
+
+    return res;
   }
 
   project(vec) {
-    return this._main.getCamera().project(vec);
+    const cam = this._main.getCamera();
+    const isSpectator = this._main.getXRMode && this._main.getXRMode() &&
+      (this._main._spectatorMode === 0 || this._main._spectatorMode === 1);
+
+    if (isSpectator) cam._unprojectDiverted = true;
+    const res = cam.project(vec);
+    if (isSpectator) cam._unprojectDiverted = false;
+
+    return res;
   }
 
   computePickedNormal() {
@@ -786,6 +805,7 @@ class Picking {
 
   /** Intersection for VR (Bypasses Screen Projection) */
   intersectionRayMeshesVR(meshes, origin, direction, physicalRadius) {
+    this._isVRHit = true;
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;

@@ -436,7 +436,9 @@ class Camera {
 
   computeWorldToScreenMatrix(mat) {
     mat = mat || mat4.create();
-    return mat4.mul(mat, mat4.mul(mat, this._viewport, this._proj), this._view);
+    const view = this._unprojectDiverted ? this._divertedView : this._view;
+    const proj = this._unprojectDiverted ? this._divertedProj : this._proj;
+    return mat4.mul(mat, mat4.mul(mat, this._viewport, proj), view);
   }
 
   /** Project the mouse coordinate into the world coordinate at a given z */

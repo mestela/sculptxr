@@ -38,7 +38,15 @@ export default function getToolsWidgets(main, activeToolIndex) {
     value: activeToolIndex,
     options: toolOptions,
     onSelect: (id) => {
-      main.getSculptManager().setToolIndex(id);
+      // main.getSculptManager().setToolIndex(id);
+      // Let the Desktop GUI orchestrate the change so all visual toggles update correctly
+      const guiGroup = main.getGui()._ctrlSculpting;
+      if (guiGroup && guiGroup._ctrlSculpt) {
+        guiGroup._ctrlSculpt.setValue(id);
+      } else {
+      // Fallback if GUI is missing
+        main.getSculptManager().setToolIndex(id);
+      }
       if (main.guiXR) main.guiXR.refreshToolsWidget();
     }
   });
