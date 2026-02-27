@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+- **v0.8.153**: **VR Interaction & Stability Update**:
+    - **Fix**: **Two-Handed Scaling Pivot**: Corrected a math inversion in `Scene.processVRTwoHanded` where spreading hands apart was shrinking the object instead of enlarging it. Added a smart `Stationary` mode check so that scaling the world (Stationary) and scaling the object (Tracked) both feel completely natural.
+    - **Fix**: **Continuous VR Strokes & Lag**: Restored the 90hz native evaluation rate by removing a faulty interpolation loop in `sculptStrokeXR`. Huge fast swipes no longer drop frames or cause "dotted" stroke tearing.
+    - **Fix**: **Topological Symmetry Performance**: Reverted a `Math.max` bounds check to a `Math.min` cap to prevent massive brush sizes from forcing the symmetry engine to evaluate the entire multi-resolution mesh every frame on hover, curing severe VR framerate drops.
+    - **Fix**: **VR Head Height Calibration**: Repaired a regression where the initial `XRRigidTransform` spawn point failed to dynamically incorporate the user's real physical headset Y-height (`pose.transform.position.y`), solving the bug where the mesh erroneously jumped when first grabbed.
+
 - **v0.8.18**: **Wireframe Color Restore**:
     - **Fix**: **Gray Wireframe**: Restored the mesh overlay wireframe color from red to its original translucent gray (`vec4(0.0, 0.0, 0.0, 0.4)`). A previous voxel-bounding box patch had accidentally linked the wireframe shader to the mesh's default `RenderData._flatColor` (which is pure red).
 
