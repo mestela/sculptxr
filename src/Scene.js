@@ -624,7 +624,7 @@ class Scene {
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
-  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, spectatorCompScale = 1.0) {
+  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
     const gl2 = this._gl;
     const meshes2 = this._meshes;
 
@@ -633,34 +633,18 @@ class Scene {
     mat4.copy(cam._proj, projMatrix);
 
     // --- PASS 1: REAL WORLD (Controllers/Debug) ---
-    const applyComp = (mesh) => {
-      if (spectatorCompScale !== 1.0 && mesh) {
-        let mat = mesh.getMatrix();
-        mat4.scale(mat, mat, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
-      }
-    };
-    const revertComp = (mesh) => {
-      if (spectatorCompScale !== 1.0 && mesh) {
-        let inv = 1.0 / spectatorCompScale;
-        let mat = mesh.getMatrix();
-        mat4.scale(mat, mat, [inv, inv, inv]);
-      }
-    };
+    // (Rendered unscaled, purely relative to the camera lens)
 
     // Render Controllers
-    applyComp(this._vrControllerLeft);
     if (this._vrControllerLeft) {
       this._vrControllerLeft.updateMatrices(cam);
       this._vrControllerLeft.render(this);
     }
-    revertComp(this._vrControllerLeft);
 
-    applyComp(this._vrControllerRight);
     if (this._vrControllerRight) {
       this._vrControllerRight.updateMatrices(cam);
       this._vrControllerRight.render(this);
     }
-    revertComp(this._vrControllerRight);
 
     // VR Menu (Pass 1)
     // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand
@@ -679,11 +663,6 @@ class Scene {
       mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
       mat4.multiply(menuPose, menuPose, lift);
 
-      // Lock Menu geometry to the global 2D HUD Screen scale
-      if (spectatorCompScale !== 1.0) {
-        mat4.scale(menuPose, menuPose, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
-      }
-
       this._vrMenu.updateMatrices(cam, menuPose);
       this._vrMenu.render(this);
     }
@@ -691,17 +670,15 @@ class Scene {
     // VRLaser (Pass 1)
     if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
       const dist = this._vrLaserDistance || 1.0;
-      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01 * spectatorCompScale);
+      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
       this._vrLaser.render(this);
     }
 
     // Debug Pivot
     if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
       gl2.disable(gl2.DEPTH_TEST);
-      applyComp(this._debugPivotMesh);
       this._debugPivotMesh.updateMatrices(cam);
       this._debugPivotMesh.render(this);
-      revertComp(this._debugPivotMesh);
       gl2.enable(gl2.DEPTH_TEST);
     }
 
@@ -736,10 +713,6 @@ class Scene {
       const offY = this._isQuestStandalone ? 0.075 : 0.025;
       mat4.rotateX(mTip, mTip, -Math.PI / 2);
       mat4.translate(mTip, mTip, [0, offY, 0]);
-
-      if (spectatorCompScale !== 1.0) {
-        mat4.scale(mTip, mTip, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
-      }
 
       this._vrControllerTip.updateMatrices(cam);
       this._vrControllerTip.render(this);
@@ -987,8 +960,8 @@ class Scene {
       if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
 
       const r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
-      const rs = r * spectatorCompScale;
-      mat4.scale(mSphere, mSphere, [rs, rs, rs]);
+      // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
+      mat4.scale(mSphere, mSphere, [r, r, r]);
 
       this._vrBrushRadiusSphere.updateMatrices(cam);
 
@@ -2439,7 +2412,7 @@ class Scene {
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "invScaleMat", "invWorldMat"];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'invBakedOffset'];
             if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {
@@ -2464,13 +2437,7 @@ class Scene {
             buildMatrix(specView, window.debugTripodVirt);
 
             // 1. Pass 1 (Controllers)
-            // GOLDEN RULE: For controllers (Pass 1) to perfectly align visually on the monitor 
-            // with the Raycaster output and Mesh (Pass 2), specViewPhys MUST BE derived by 
-            // applying the inverse physics scale and offset to the final specView. 
-            // This guarantees zero detachment, regardless of how debugTripodVirt spins the camera.
-            mat4.copy(specViewPhys, specView);
-            mat4.multiply(specViewPhys, specViewPhys, invScaleMat);
-            mat4.multiply(specViewPhys, specViewPhys, invWorldMat);
+            // GOLDEN RULE: For controllers (Pass 1) to perfectly align visually on the monitor
           }
 
           // --- TELEMETRY / ANTI-NAN EXPLOSION CHECK ---
@@ -2514,16 +2481,9 @@ class Scene {
         gl.clearColor(0.2, 0.2, 0.2, 1.0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // Feed the physical camera to the VR pipeline. It will draw controllers perfectly, 
-        // then Pass 2 will multiply by World/Scale matrices, returning `this._camera._view` back to the exact `specView`!
-        let compScale = 1.0;
-        if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
-          const baked = this._bakedVRScale || 0.008;
-          const live = this._vrScale || 1.0;
-          compScale = live / baked;
-        }
-
-        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null, compScale);
+        // Feed the physical camera to the VR pipeline. 
+        // Pass 2 will still multiply the Virtual Camera by World/Scale matrices as needed.
+        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null);
 
         // Restore _camera._view just in case any postRender logic relies on the pure un-mutated Virtual camera
         mat4.copy(this._camera._view, specView);

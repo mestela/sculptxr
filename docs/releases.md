@@ -1,7 +1,9 @@
 # SculptXR Release History
 
-- **v0.8.155 - v0.8.161**: **Crease Tool Overhaul & Smooth VR Strokes**:
-    - **Fix**: **Continuous VR Strokes (v0.8.161)**: Tuned the VR stroke interpolation distance (`minSpacing`) from 15% of brush radius down to 7%. This allows VR controllers tracking at 90Hz to draw buttery smooth, continuous lines when moving slowly, without causing over-accumulation. 
+- **v0.8.183**: **Stationary Mode Scale Fix**:
+    - **Fix**: **Controller & UI Scale Consistency**: Rewrote the physical camera tracking matrices (`debugTripodPhys`) in `STATIONARY` mode. The VR Controllers and UI now maintain true 1:1 physical scale visually on the desktop monitor, regardless of how much the user scales or dollies the trackball world.
+
+- **v0.8.155 - v0.8.161**: **Crease Tool Overhaul & Smooth VR Strokes**: 
     - **Feature**: **Crease Groove Tracking (v0.8.160)**: The Crease tool now dynamically calculates the barycenter (`aCenter`) of the vertices within its radius. This causes the brush's target to physically drop into the densest geometry, giving it a "magnetic" feel that effortlessly tracks and deepens existing creases instead of fighting the user and snapping to the valley rims.
     - **Fix**: **Symmetry Centerline Spikes (v0.8.159)**: Resolved the 200% force accumulation massive spike that occurred when symmetric strokes met in the middle. The brush now scales its intensity down based on its distance to the symmetry plane, hitting exactly 50% power directly on the centerline so that the left and right tools sum elegantly to a single 1.0 force stroke.
     - **Fix**: **Infinite Accumulation Spikes (v0.8.158)**: Radically changed the math inside `Crease.js`. It no longer applies an infinitely accumulating translation velocity against a frozen proxy mesh point. Instead, it applies a bounded `pinchDx = cx - vx` vector against the *live* vertex position. This permanently cures the massive VR polling-rate spikes by ensuring the vertices mathematically decelerate and halt at the cursor's center while preserving the sharp original profile.
