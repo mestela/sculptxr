@@ -2360,6 +2360,7 @@ class Scene {
             mat4.invert(invPanRot, panRot);
 
             // Scaled Translation Delta (Virtual Scale)
+            const vs = this._vrScale || 1.0;
             let invS;
             if (specMode === Enums.SpectatorMode.STATIONARY && bakedScale > 0.0001) {
               // Stationary mode uses proportional scaling from start (e.g. 1.0 -> 0.5)
