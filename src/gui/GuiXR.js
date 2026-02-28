@@ -467,6 +467,15 @@ export default class GuiXR {
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
+    // Force continuous redraws to evaluate dynamic options hover since options are not distinct widgets
+    if (this._activeCombobox || this._overlay === 'combobox') {
+      this._hoverWidget = null;
+      this._hoverTab = null;
+      this._needsRedraw = true;
+      this._requestDraw();
+      return;
+    }
+
     // 0. Priority Blocking: Overlay OR Active Combobox
     if (this._overlay) {
       // If Overlay is 'menu', we might want to highlight buttons inside it?
@@ -1834,7 +1843,8 @@ export default class GuiXR {
           }
         }
 
-        // Base Styles
+        const isHovered = (this._hoverWidget === wid);
+
         // Base Styles
         ctx.textAlign = 'center';
         ctx.font = '24px sans-serif';
@@ -1912,7 +1922,7 @@ export default class GuiXR {
           // --- COMBOBOX ---
         else if (wid.type === 'combobox') {
           // Solid Background, No Border
-          ctx.fillStyle = '#333';
+          ctx.fillStyle = isHovered ? '#444' : '#333';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
           let displayLabel = wid.label;
@@ -2863,6 +2873,11 @@ export default class GuiXR {
         const invScale = 1 / OVERLAY_SCALE;
         cx = (cx - pivot.x) * invScale + pivot.x;
         cy = (cy - pivot.y) * invScale + pivot.y;
+      }
+
+      if (!this._logComboHover) this._logComboHover = 0;
+      if (this._logComboHover++ % 60 === 0) {
+        console.log(`[GuiXR] Combobox Hover - Cursor: ${cx.toFixed(1)},${cy.toFixed(1)} Box: X(${startX}..${startX + totalW}) Y(${startY}..${startY + listH}) overlay: ${!!this._overlay}`);
       }
 
       // Check bounds

@@ -2267,7 +2267,7 @@ class Scene {
 
             // Console Command Helper to grab the perfect view matrix
             window.getDesktopView = () => {
-              const arr = Array.from(liveDesktopView);
+              const arr = Array.from(this._camera.getView());
               console.log(`Copy this into the console to save your default view:`);
               console.log(`window.defaultDesktopView = [${arr.map(n => n.toFixed(5)).join(', ')}];`);
               return arr;
