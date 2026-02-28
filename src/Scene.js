@@ -2412,7 +2412,7 @@ class Scene {
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'invBakedOffset'];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'bakedInvScaleMat', 'invBakedOffset'];
             if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {

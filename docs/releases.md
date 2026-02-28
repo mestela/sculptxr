@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+- **v0.8.185**: **Stationary Mode Micro-Controllers Fix**:
+    - **Fix**: **Meter to Unit Conversion**: Discovered that removing the dynamic `invScaleMat` in v0.8.183 correctly stopped controllers from squishing during world scale, but it also stripped the baseline 125x static scaling needed to convert physical meters to virtual map units. `v0.8.185` injects a frozen `bakedInvScaleMat` into the physical pipeline, ensuring the controllers puff up to a visible size for the virtual camera without fluctuating during dynamic world interaction.
+
 - **v0.8.184**: **Missing Controllers Fix**:
     - **Fix**: **Matrix Assignment**: Restored a missing assignment rule for `specViewPhys` that caused it to remain an unbound identity matrix, thus accidentally hiding the controllers inside the camera's near-plane in v0.8.183.
 
