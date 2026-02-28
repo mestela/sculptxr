@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+- **v0.8.184**: **Missing Controllers Fix**:
+    - **Fix**: **Matrix Assignment**: Restored a missing assignment rule for `specViewPhys` that caused it to remain an unbound identity matrix, thus accidentally hiding the controllers inside the camera's near-plane in v0.8.183.
+
 - **v0.8.183**: **Stationary Mode Scale Fix**:
     - **Fix**: **Controller & UI Scale Consistency**: Rewrote the physical camera tracking matrices (`debugTripodPhys`) in `STATIONARY` mode. The VR Controllers and UI now maintain true 1:1 physical scale visually on the desktop monitor, regardless of how much the user scales or dollies the trackball world.
 

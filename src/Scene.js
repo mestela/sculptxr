@@ -2438,6 +2438,7 @@ class Scene {
 
             // 1. Pass 1 (Controllers)
             // GOLDEN RULE: For controllers (Pass 1) to perfectly align visually on the monitor
+            buildMatrix(specViewPhys, window.debugTripodPhys);
           }
 
           // --- TELEMETRY / ANTI-NAN EXPLOSION CHECK ---
