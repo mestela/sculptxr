@@ -35,6 +35,7 @@ class Scene {
 
     // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
     this._vrUseVolumeIntersect = true;
+    window.debugPickRay = true;
 
     this._cameraSpeed = 0.25;
 
@@ -623,7 +624,7 @@ class Scene {
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
-  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
+  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, spectatorCompScale = 1.0) {
     const gl2 = this._gl;
     const meshes2 = this._meshes;
 
@@ -632,15 +633,34 @@ class Scene {
     mat4.copy(cam._proj, projMatrix);
 
     // --- PASS 1: REAL WORLD (Controllers/Debug) ---
+    const applyComp = (mesh) => {
+      if (spectatorCompScale !== 1.0 && mesh) {
+        let mat = mesh.getMatrix();
+        mat4.scale(mat, mat, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
+      }
+    };
+    const revertComp = (mesh) => {
+      if (spectatorCompScale !== 1.0 && mesh) {
+        let inv = 1.0 / spectatorCompScale;
+        let mat = mesh.getMatrix();
+        mat4.scale(mat, mat, [inv, inv, inv]);
+      }
+    };
+
     // Render Controllers
+    applyComp(this._vrControllerLeft);
     if (this._vrControllerLeft) {
       this._vrControllerLeft.updateMatrices(cam);
       this._vrControllerLeft.render(this);
     }
+    revertComp(this._vrControllerLeft);
+
+    applyComp(this._vrControllerRight);
     if (this._vrControllerRight) {
       this._vrControllerRight.updateMatrices(cam);
       this._vrControllerRight.render(this);
     }
+    revertComp(this._vrControllerRight);
 
     // VR Menu (Pass 1)
     // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand
@@ -659,6 +679,11 @@ class Scene {
       mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
       mat4.multiply(menuPose, menuPose, lift);
 
+      // Apply Comp Scale
+      if (spectatorCompScale !== 1.0) {
+        mat4.scale(menuPose, menuPose, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
+      }
+
       this._vrMenu.updateMatrices(cam, menuPose);
       this._vrMenu.render(this);
     }
@@ -666,15 +691,17 @@ class Scene {
     // VRLaser (Pass 1)
     if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
       const dist = this._vrLaserDistance || 1.0;
-      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
+      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01 * spectatorCompScale);
       this._vrLaser.render(this);
     }
 
     // Debug Pivot
     if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
       gl2.disable(gl2.DEPTH_TEST);
+      applyComp(this._debugPivotMesh);
       this._debugPivotMesh.updateMatrices(cam);
       this._debugPivotMesh.render(this);
+      revertComp(this._debugPivotMesh);
       gl2.enable(gl2.DEPTH_TEST);
     }
 
@@ -817,6 +844,22 @@ class Scene {
 
     // [DEBUG] Hit Sphere (Pass 2 - World Space)
     if (this._debugHitSphere) {
+      // INTERACTIVE DEBUGGER: VR Raycaster Visuals (Rendered in Engine Space)
+      if (window.debugRaycaster) {
+        gl2.disable(gl2.DEPTH_TEST);
+
+        if (this._debugRayOrigin) {
+          this._debugRayOrigin.updateMatrices(cam);
+          this._debugRayOrigin.render(this);
+        }
+        if (this._debugRayTarget) {
+          this._debugRayTarget.updateMatrices(cam);
+          this._debugRayTarget.render(this);
+        }
+
+        gl2.enable(gl2.DEPTH_TEST);
+      }
+
       if (this._forceDebugXYZ) {
         const mHit = this._debugHitSphere.getMatrix();
         mat4.identity(mHit);
@@ -1878,8 +1921,6 @@ class Scene {
     // Brush Radius Sphere (Semi-transparent)
     if (!this._vrBrushRadiusSphere) {
       // High Res (64x64), Radius 1.0 (to match Selection Ring size)
-      // Use MeshStatic directly (Primitives returns MeshStatic) - Avoid Multimesh overhead/issues
-      // High Res (64x64), Radius 1.0 (to match Selection Ring size)
       var meshS = Primitives.createSphere(this._gl, 1.0, 64, 64);
 
       meshS.setShaderType(Enums.Shader.FRESNEL);
@@ -1890,6 +1931,28 @@ class Scene {
       meshS.init();
       meshS.initRender();
       this._vrBrushRadiusSphere = meshS;
+    }
+
+    // [DEBUG] Raycaster Sphere (Origin)
+    if (!this._debugRayOrigin) {
+      var meshOrigin = Primitives.createSphere(this._gl, 1.0, 32, 32);
+      meshOrigin.setShaderType(Enums.Shader.FLAT);
+      meshOrigin.setFlatColor([0.0, 1.0, 1.0]); // Cyan
+      meshOrigin.setOpacity(1.0);
+      meshOrigin.init();
+      meshOrigin.initRender();
+      this._debugRayOrigin = meshOrigin;
+    }
+
+    // [DEBUG] Raycaster Sphere (Target)
+    if (!this._debugRayTarget) {
+      var meshTarget = Primitives.createSphere(this._gl, 1.0, 32, 32);
+      meshTarget.setShaderType(Enums.Shader.FLAT);
+      meshTarget.setFlatColor([1.0, 0.0, 1.0]); // Magenta
+      meshTarget.setOpacity(1.0);
+      meshTarget.init();
+      meshTarget.initRender();
+      this._debugRayTarget = meshTarget;
     }
 
     // [DEBUG] Gizmo Test Sphere (Duplicate of Radius Sphere)
@@ -2312,7 +2375,7 @@ class Scene {
             // 1. Pass 1 (Controllers): Panning to track the world
 
             mat4.copy(specViewPhys, liveDesktopView);
-            mat4.multiply(specViewPhys, specViewPhys, bakedInvScaleMat); // Scale to meters using UI-locked size
+            mat4.multiply(specViewPhys, specViewPhys, invScaleMat); // Scale to meters using LIVE physical tracking
             mat4.multiply(specViewPhys, specViewPhys, mPan); // Track user movement
 
             // 2. Pass 2 (World): Perfectly tracks mPan and dynamically frames sculpt
@@ -2371,7 +2434,7 @@ class Scene {
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "bakedInvScaleMat", "invBakedOffset"];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "invScaleMat", "invWorldMat"];
             if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {
@@ -2392,11 +2455,17 @@ class Scene {
               }
             };
 
-            // 1. Pass 1 (Controllers)
-            buildMatrix(specViewPhys, window.debugTripodPhys);
-
             // 2. Pass 2 (World)
             buildMatrix(specView, window.debugTripodVirt);
+
+            // 1. Pass 1 (Controllers)
+            // GOLDEN RULE: For controllers (Pass 1) to perfectly align visually on the monitor 
+            // with the Raycaster output and Mesh (Pass 2), specViewPhys MUST BE derived by 
+            // applying the inverse physics scale and offset to the final specView. 
+            // This guarantees zero detachment, regardless of how debugTripodVirt spins the camera.
+            mat4.copy(specViewPhys, specView);
+            mat4.multiply(specViewPhys, specViewPhys, invScaleMat);
+            mat4.multiply(specViewPhys, specViewPhys, invWorldMat);
           }
 
           // --- TELEMETRY / ANTI-NAN EXPLOSION CHECK ---
@@ -2442,7 +2511,14 @@ class Scene {
 
         // Feed the physical camera to the VR pipeline. It will draw controllers perfectly, 
         // then Pass 2 will multiply by World/Scale matrices, returning `this._camera._view` back to the exact `specView`!
-        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null);
+        let compScale = 1.0;
+        if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
+          const baked = this._bakedVRScale || 0.008;
+          const live = this._vrScale || 1.0;
+          compScale = live / baked;
+        }
+
+        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null, compScale);
 
         // Restore _camera._view just in case any postRender logic relies on the pure un-mutated Virtual camera
         mat4.copy(this._camera._view, specView);
@@ -3088,16 +3164,10 @@ class Scene {
     // 2. Scaling
     // Threshold 5cm to prevent jitter when hands are too close
     if (s.prevDist > 0.05 && dist > 0.05) {
-      let ratio;
-      if (this._spectatorMode === Enums.SpectatorMode.STATIONARY) {
-        // Stationary: You are pulling the *world* closer to you.
-        // Pulling hands apart (dist > prevDist) stretches the world, so _vrScale decreases (zooms IN).
-        ratio = s.prevDist / dist;
-      } else {
-        // Tracked: You are scaling the *object* in your hands.
-        // Pulling hands apart (dist > prevDist) stretches the object, so _vrScale increases (zooms OUT)
-        ratio = dist / s.prevDist;
-      }
+      // Pulling hands apart (dist > prevDist) stretches the object, so _vrScale increases (zooms IN)
+      // This MUST be the same for all modes, otherwise the mesh shrinks away from the user's physical hands
+      // and causes raycasting checks to immediately drop (cursor disappears).
+      let ratio = dist / s.prevDist;
 
       // Use Hand Midpoint (mid) as Pivot for Natural Zoom
       if (Math.abs(ratio - 1.0) > 0.0001) this.scaleWorld(ratio, mid);
@@ -3366,6 +3436,35 @@ class Scene {
     //   const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm`;
     //   window.screenLog(msg, picked ? "lime" : "red");
     // }
+
+    // [DEBUG] Interactive Raycaster Debugger
+    if (window.debugRaycaster) {
+      if (this._debugRayOrigin) {
+        const mOrigin = this._debugRayOrigin.getMatrix();
+        mat4.identity(mOrigin);
+        mat4.translate(mOrigin, mOrigin, rayOrigin);
+
+        let s = window.debugRayScale || 0.05;
+        if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
+        mat4.scale(mOrigin, mOrigin, [s, s, s]);
+      }
+      if (this._debugRayTarget) {
+        const mTarget = this._debugRayTarget.getMatrix();
+        mat4.identity(mTarget);
+        const targetPos = vec3.create();
+        vec3.scaleAndAdd(targetPos, rayOrigin, engineDir, 50.0);
+        mat4.translate(mTarget, mTarget, targetPos);
+
+        let s = window.debugRayScale || 0.05;
+        if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
+        mat4.scale(mTarget, mTarget, [s, s, s]);
+      }
+
+      if (window.screenLog && this._logThrottle % 60 === 0 && source.handedness === this._dominantHand) {
+        window.screenLog(`VRScale: ${this._vrScale.toFixed(3)} | RayOrigin(E): ${rayOrigin[0].toFixed(2)}, ${rayOrigin[1].toFixed(2)}, ${rayOrigin[2].toFixed(2)}`, 'cyan');
+        window.screenLog(`Pick: ${picked ? 'YES' : 'NO'} | PhysRad: ${(physicalRadius * 100).toFixed(2)}cm`, picked ? "lime" : "red");
+      }
+    }
 
     // 5. Stroke Lifecycle (Corrected API)
     const buttons = source.gamepad.buttons;
