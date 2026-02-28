@@ -52,6 +52,25 @@ class Crease extends SculptBase {
     var anz = aNormal[2];
     var deformIntensity = intensity * 0.07;
     var brushFactor = deformIntensity * radius;
+
+    // FIX v0.8.159: Centerline Symmetry Over-Accumulation
+    // Symmetrical brushes overlap at the center, doubling the force application (200%).
+    // We compute the distance to the symmetry plane and smoothly ramp down intensity to 50%
+    // so that the sum of both brushes equals exactly 100% force.
+    var useSymmetry = this._main.getSculptManager().getSymmetry();
+    var overlapFactor = 1.0;
+    if (useSymmetry) {
+      var ptPlane = mesh.getSymmetryOrigin();
+      var nPlane = mesh.getSymmetryNormal();
+      var distToPlane = Math.abs((cx - ptPlane[0]) * nPlane[0] + (cy - ptPlane[1]) * nPlane[1] + (cz - ptPlane[2]) * nPlane[2]);
+      if (distToPlane < radius) {
+        overlapFactor = 0.5 + 0.5 * (distToPlane / radius);
+      }
+    }
+
+    deformIntensity *= overlapFactor;
+    brushFactor *= overlapFactor;
+
     if (this._negative)
       brushFactor = -brushFactor;
     for (var i = 0, l = iVertsInRadius.length; i < l; ++i) {
