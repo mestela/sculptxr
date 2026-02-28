@@ -1,5 +1,12 @@
 # SculptXR Release History
 
+- **v0.8.155 - v0.8.161**: **Crease Tool Overhaul & Smooth VR Strokes**:
+    - **Fix**: **Continuous VR Strokes (v0.8.161)**: Tuned the VR stroke interpolation distance (`minSpacing`) from 15% of brush radius down to 7%. This allows VR controllers tracking at 90Hz to draw buttery smooth, continuous lines when moving slowly, without causing over-accumulation. 
+    - **Feature**: **Crease Groove Tracking (v0.8.160)**: The Crease tool now dynamically calculates the barycenter (`aCenter`) of the vertices within its radius. This causes the brush's target to physically drop into the densest geometry, giving it a "magnetic" feel that effortlessly tracks and deepens existing creases instead of fighting the user and snapping to the valley rims.
+    - **Fix**: **Symmetry Centerline Spikes (v0.8.159)**: Resolved the 200% force accumulation massive spike that occurred when symmetric strokes met in the middle. The brush now scales its intensity down based on its distance to the symmetry plane, hitting exactly 50% power directly on the centerline so that the left and right tools sum elegantly to a single 1.0 force stroke.
+    - **Fix**: **Infinite Accumulation Spikes (v0.8.158)**: Radically changed the math inside `Crease.js`. It no longer applies an infinitely accumulating translation velocity against a frozen proxy mesh point. Instead, it applies a bounded `pinchDx = cx - vx` vector against the *live* vertex position. This permanently cures the massive VR polling-rate spikes by ensuring the vertices mathematically decelerate and halt at the cursor's center while preserving the sharp original profile.
+    - **Fix**: **VR Rendering Crash (v0.8.156)**: Added a safety check for `symNormal` in `Selection.js` to prevent the right eye from going black if the symmetry brush hovered off the edge of the mesh.
+
 - **v0.8.154**: **Crease Volume Intersection Restore**:
     - **Fix**: **Crucial Revert Issue**: Ensured the explicitly requested `volume` intersection behavior for the Crease tool was restored after it was accidentally wiped during the Head Height bugfix revert earlier tonight.
 - **v0.8.153**: **VR Interaction & Stability Update**:

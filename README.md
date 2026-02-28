@@ -1,4 +1,4 @@
-# SculptXR (v0.8.154)
+# SculptXR (v0.8.161)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
@@ -11,7 +11,7 @@ Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOe
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   v0.8.154: Crease Volume Intersection Restore
+*   v0.8.161: Crease Tool Overhaul & Smooth VR Strokes
 *   v0.8.153: VR Interaction & Stability Update
 *   v0.8.18: Gray Wireframe Restore
 *   v0.8.17: Smooth VR Slider Physics Fix
