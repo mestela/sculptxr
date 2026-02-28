@@ -1,4 +1,4 @@
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -2285,6 +2285,12 @@ class Scene {
             mat4.scale(bakedInvScaleMat, bakedInvScaleMat, [invS, invS, invS]);
           }
 
+          const relativeScaleMat = mat4.create();
+          if (this._vrScale !== undefined && bakedScale > 0.0001) {
+            const relScale = this._vrScale / bakedScale;
+            mat4.scale(relativeScaleMat, relativeScaleMat, [relScale, relScale, relScale]);
+          }
+
           const worldMat = mat4.create();
           const invWorldMat = mat4.create();
 
@@ -2405,7 +2411,8 @@ class Scene {
               invBakedOffset,
               liveOffset,
               invLiveOffset,
-              bakedInvScaleMat
+              bakedInvScaleMat,
+              relativeScaleMat
             };
 
             // Expose the global array pipelines for Chrome Console debugging
@@ -2413,7 +2420,7 @@ class Scene {
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
             if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'bakedInvScaleMat', 'invBakedOffset'];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'relativeScaleMat'];
 
             if (!this._loggedTripodDebug) {
               // console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
@@ -2468,6 +2475,13 @@ class Scene {
         // Apply chosen matrix
         mat4.copy(this._camera._view, specView);
         mat4.copy(this._camera._proj, specProj);
+
+        // Store active Spectator rendering matrices for cross-checking in Interaction (processVRSculpting)
+        // These are required for optical alignment of raycasting when the virtual and physical matrices diverge.
+        if (!this._camera._specView) this._camera._specView = mat4.create();
+        if (!this._camera._specViewPhys) this._camera._specViewPhys = mat4.create();
+        mat4.copy(this._camera._specView, specView);
+        mat4.copy(this._camera._specViewPhys, specViewPhys);
 
         // To make Desktop mouse clicks (Picking) accurate, the _diverted matrix must match EXACTLY what _renderSceneVR produces!
         mat4.copy(this._camera._divertedView, specView);
@@ -3229,20 +3243,38 @@ class Scene {
     // const physicalOrigin = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
 
     // 2. Space Synchronization (Physical -> Model Space)
-    // Model = Inv(Scale) * Inv(Rotation) * Inv(Translation) * Physical
-    const vrScale = this._vrScale || 1.0;
-    const invScale = 1.0 / vrScale;
-
+    // Mathematical Divergence: Desktop 6DOF Spectator hacks the View matrices so they don't match the physics tracking.
     const enginePos = vec3.create();
-    vec3.copy(enginePos, physicalOrigin);
+    const invScale = 1.0 / (this._vrScale || 1.0);
 
-    // Apply Inverse World Transform
-    if (this._xrWorldOffset) {
-      vec3.transformMat4(enginePos, enginePos, this._xrWorldOffset.inverse.matrix);
+    if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
+    // OPTICAL UI MAPPING (Fixed 6DOF Mode):
+    // The physical controllers (specViewPhys) visually diverge from the virtual world (specView) on the monitor.
+    // We must mathematically trace where the optical pixel of the physical controller lands on the virtual world
+    // so the physics raycast ("enginePos") fires exactly where the spectator sees the controller.      
+      vec3.copy(enginePos, physicalOrigin);
+
+      // 1. Where does the controller exist relative to the physical camera lens?
+      vec3.transformMat4(enginePos, enginePos, this._camera._specViewPhys);
+
+      // 2. Map that optical position *backwards* out of the virtual camera into true Virtual Model Space.
+      const invHackedView = mat4.create();
+      mat4.invert(invHackedView, this._camera._specView);
+      vec3.transformMat4(enginePos, enginePos, invHackedView);
+
+    } else {
+      // STANDARD PCVR / STANDALONE MAPPING:
+      // Physics tracking perfectly matches Virtual rendering. Native matrices apply.
+      vec3.copy(enginePos, physicalOrigin);
+
+      // Apply Inverse World Transform (Pan/Zoom/Orbit offsets)
+      if (this._xrWorldOffset) {
+        vec3.transformMat4(enginePos, enginePos, this._xrWorldOffset.inverse.matrix);
+      }
+
+      // 3. Inverse Scaling
+      vec3.scale(enginePos, enginePos, invScale);
     }
-
-    // 3. Inverse Scaling
-    vec3.scale(enginePos, enginePos, invScale);
 
     // Rotation Logic (World -> Engine)
     // EngineRot = Inv(WorldRot) * PhysRot
@@ -3325,13 +3357,31 @@ class Scene {
       const qRot = quat.fromValues(q.x, q.y, q.z, q.w);
       vec3.transformQuat(engineDir, engineDir, qRot);
     }
-    // Transform Direction to Model Space (Inv Rotation only)
-    if (this._xrWorldOffset) {
-      const r = this._xrWorldOffset.orientation;
-      const qInv = quat.create();
-      const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
-      quat.invert(qInv, qRot);
-      vec3.transformQuat(engineDir, engineDir, qInv);
+
+    if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
+      // OPTICAL UI MAPPING: Direction
+      // 1. Convert physical controller heading into physical camera lens space
+      // Direction vectors only need the 3x3 rotation portion of the matrix (mat3)
+      const mat3Phys = mat3.create();
+      mat3.fromMat4(mat3Phys, this._camera._specViewPhys);
+      vec3.transformMat3(engineDir, engineDir, mat3Phys);
+
+      // 2. Trace optical direction back into Virtual World space
+      const invHackedView = mat4.create();
+      mat4.invert(invHackedView, this._camera._specView);
+      const mat3VirtInv = mat3.create();
+      mat3.fromMat4(mat3VirtInv, invHackedView);
+      vec3.transformMat3(engineDir, engineDir, mat3VirtInv);
+    } else {
+    // STANDARD MAPPING:
+      // Transform Direction to Model Space (Inv Rotation only)
+      if (this._xrWorldOffset) {
+        const r = this._xrWorldOffset.orientation;
+        const qInv = quat.create();
+        const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+        quat.invert(qInv, qRot);
+        vec3.transformQuat(engineDir, engineDir, qInv);
+      }
     }
     vec3.normalize(engineDir, engineDir);
 
@@ -3341,11 +3391,24 @@ class Scene {
 
     // Transform Ray Origin to Model Space
     const rayOrigin = vec3.create();
-    vec3.copy(rayOrigin, rayOriginPhysical);
-    if (this._xrWorldOffset) {
-      vec3.transformMat4(rayOrigin, rayOrigin, this._xrWorldOffset.inverse.matrix);
+
+    if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
+      // OPTICAL UI MAPPING: Origin
+      // This MUST perfectly mirror the enginePos optical translation logic
+      vec3.copy(rayOrigin, rayOriginPhysical);
+      vec3.transformMat4(rayOrigin, rayOrigin, this._camera._specViewPhys);
+
+      const invHackedView = mat4.create();
+      mat4.invert(invHackedView, this._camera._specView);
+      vec3.transformMat4(rayOrigin, rayOrigin, invHackedView);
+    } else {
+    // STANDARD MAPPING:
+      vec3.copy(rayOrigin, rayOriginPhysical);
+      if (this._xrWorldOffset) {
+        vec3.transformMat4(rayOrigin, rayOrigin, this._xrWorldOffset.inverse.matrix);
+      }
+      vec3.scale(rayOrigin, rayOrigin, invScale);
     }
-    vec3.scale(rayOrigin, rayOrigin, invScale);
 
     // C. Perform Intersection
     // Lock Selection Logic: If locked and we have a mesh, skip picking
