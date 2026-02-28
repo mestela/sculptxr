@@ -2271,12 +2271,32 @@ export default class GuiXR {
     ctx.textAlign = 'center';
     ctx.font = '30px sans-serif';
 
+    // _cursor.x and _cursor.y are actually 0-1 UV coordinates! We need to map them back to canvas pixels
+    // or compare using the mapped coordinates. Actually, according to _handleDropdownInteract,
+    // input is transformed if overlay is active, or we just map UV back to canvas.
+    // wait, where are cursor pixels derived?
+    const pw = this._canvas.width;
+    const ph = this._canvas.height;
+
+    // In _handleDropdownInteract, cx and cy are passed in as absolute pixel coordinates from _handleWidgetClick -> onInteract.
+    // BUT the stored this._cursor.x and this._cursor.y are set via setCursor(u, v) in GuiXR.js,
+    // which DOES store them as u * width and v * height!
+    //    setCursor(u, v) { this._cursor.x = u * this._canvas.width; ... }
+    // Let's verify startX and startY.
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
+    // Is the cursor bounded by the overlay popup?
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+
+    // We must transform the cursor from canvas pixels into the scaled Overlay coordinate system!
+    const localCursorX = (cx - pivot.x) * invScale + pivot.x;
+    const localCursorY = (cy - pivot.y) * invScale + pivot.y;
+
     data.options.forEach((opt, i) => {
       const y = startY + i * itemHeight;
-      const isHovered = (cx >= startX && cx <= startX + 400 && cy >= y && cy < y + itemHeight);
+      const isHovered = (localCursorX >= startX && localCursorX <= startX + 400 && localCursorY >= y && localCursorY < y + itemHeight);
 
       // Highlight Background
       if (isHovered) {

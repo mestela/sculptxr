@@ -2363,9 +2363,13 @@ class Scene {
             const vs = this._vrScale || 1.0;
             let invS;
             if (specMode === Enums.SpectatorMode.STATIONARY && bakedScale > 0.0001) {
-              // Stationary mode uses proportional scaling from start (e.g. 1.0 -> 0.5)
+              // Stationary mode: Always map the physical hand movement to the trackball's fixed 
+              // distance focal point (which is tied to the baked scale). This perfectly offsets
+              // the translation, restoring 1:1 camera panning regardless of the current relScale zooming.
+              invS = 1.0 / bakedScale;
+
+              // We do calculate relScale for the *virtual* pipeling later.
               const relScale = vs / bakedScale;
-              invS = 1.0 / relScale;
             } else {
               // Tracked mode uses raw absolute physical scaling (e.g. 0.008 -> 0.004)
               invS = 1.0 / vs;
