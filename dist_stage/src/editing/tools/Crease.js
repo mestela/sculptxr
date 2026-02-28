@@ -71,9 +71,18 @@ class Crease extends SculptBase {
       var brushModifier = Math.pow(fallOff, 5) * brushFactor;
       fallOff *= deformIntensity;
 
-      var nx = vx + dx * fallOff + anx * brushModifier;
-      var ny = vy + dy * fallOff + any * brushModifier;
-      var nz = vz + dz * fallOff + anz * brushModifier;
+      // FIX v0.8.158: Infinite Accumulation Spike
+      // dx, dy, dz use vProxy to keep the mathematical profile sharp.
+      // But adding dx * fallOff infinitely creates a massive spike over time.
+      // Instead, we boundedly pull the current alive vertex `vx` towards the `cx` center.
+      // The pinch inherently stops when vx = cx.
+      var pinchDx = cx - vx;
+      var pinchDy = cy - vy;
+      var pinchDz = cz - vz;
+
+      var nx = vx + pinchDx * fallOff * 2.0 + anx * brushModifier;
+      var ny = vy + pinchDy * fallOff * 2.0 + any * brushModifier;
+      var nz = vz + pinchDz * fallOff * 2.0 + anz * brushModifier;
 
       if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(nz)) {
         vAr[ind] = nx;
