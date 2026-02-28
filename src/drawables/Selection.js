@@ -273,7 +273,12 @@ class Selection {
       var pickingSym = main.getPickingSymmetry();
       if (pickingSym.getMesh()) {
         // Calculate Sym Normal
-        vec3.copy(_TMP_AXIS, pickingSym.computePickedNormal());
+        var symNormal = pickingSym.computePickedNormal();
+        if (symNormal && symNormal.length >= 3) {
+          vec3.copy(_TMP_AXIS, symNormal);
+        } else {
+          vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
+        }
         vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
         vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 

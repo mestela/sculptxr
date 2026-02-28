@@ -2215,6 +2215,8 @@ class Scene {
               this._xrWorldOffset.position.y,
               this._xrWorldOffset.position.z
             );
+
+            this._bakedVRScale = this._vrScale;
           }
 
           if (!this._bakedDesktopView) {
@@ -2233,6 +2235,13 @@ class Scene {
             const invS = 1.0 / this._vrScale;
             mat4.scale(invScaleMat, invScaleMat, [invS, invS, invS]);
             mat4.scale(scaleMat, scaleMat, [this._vrScale, this._vrScale, this._vrScale]);
+          }
+
+          const bakedInvScaleMat = mat4.create();
+          const bakedScale = this._bakedVRScale || 0.008;
+          if (bakedScale !== 1.0 && bakedScale > 0.0001) {
+            const invS = 1.0 / bakedScale;
+            mat4.scale(bakedInvScaleMat, bakedInvScaleMat, [invS, invS, invS]);
           }
 
           const worldMat = mat4.create();
@@ -2303,7 +2312,7 @@ class Scene {
             // 1. Pass 1 (Controllers): Panning to track the world
 
             mat4.copy(specViewPhys, liveDesktopView);
-            mat4.multiply(specViewPhys, specViewPhys, invScaleMat); // Scale to meters
+            mat4.multiply(specViewPhys, specViewPhys, bakedInvScaleMat); // Scale to meters using UI-locked size
             mat4.multiply(specViewPhys, specViewPhys, mPan); // Track user movement
 
             // 2. Pass 2 (World): Perfectly tracks mPan and dynamically frames sculpt
@@ -2354,14 +2363,15 @@ class Scene {
               bakedOffset,
               invBakedOffset,
               liveOffset,
-              invLiveOffset
+              invLiveOffset,
+              bakedInvScaleMat
             };
 
             // Expose the global array pipelines for Chrome Console debugging
             // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "invScaleMat", "invBakedOffset"];
+            if (!window.debugTripodPhys) window.debugTripodPhys = ["liveDesktopView", "bakedInvScaleMat", "invBakedOffset"];
             if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot'];
 
             if (!this._loggedTripodDebug) {
@@ -3327,9 +3337,9 @@ class Scene {
       // If we skip it, we don't update the cursor position!
       // We must force intersection ONLY on the current mesh.
 
-      // Feature Toggle: Crease and Transform use Ray/Aim intersect instead of volume
+      // Feature Toggle: Transform uses Ray/Aim intersect instead of volume
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 
@@ -3340,7 +3350,7 @@ class Scene {
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 

@@ -358,7 +358,8 @@ class SculptBase {
           var nMain = picking.getPickedNormal();
           var nSym = pickingSym.getPickedNormal();
           // Mirror vector: use origin [0,0,0] for plane
-          Geometry.mirrorPoint(nSym, nMain, [0, 0, 0], nPlane);
+          vec3.copy(nSym, nMain);
+          Geometry.mirrorPoint(nSym, [0, 0, 0], nPlane);
         }
       }
     }
@@ -621,7 +622,8 @@ class SculptBase {
 
             // FORCE SYMMETRY: Override Normal with Perfect Mirror
             // This fixes "Drift" by ensuring strokes always converge/diverge exactly as expected
-            Geometry.mirrorPoint(nSym, nMain, [0, 0, 0], nPlane);
+            vec3.copy(nSym, nMain);
+            Geometry.mirrorPoint(nSym, [0, 0, 0], nPlane);
 
             // We accept pick2 with the forced normal.
             pick2 = pickingSym.getMesh();
