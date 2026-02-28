@@ -1,4 +1,4 @@
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
