@@ -2270,16 +2270,33 @@ export default class GuiXR {
     // Items
     ctx.textAlign = 'center';
     ctx.font = '30px sans-serif';
-    ctx.fillStyle = 'white';
+
+    const cx = this._cursor.x;
+    const cy = this._cursor.y;
 
     data.options.forEach((opt, i) => {
       const y = startY + i * itemHeight;
-      // Highlight
-      if (this._overlay === 'combobox') { // Only modify if overlay matches
-        // We don't have hover logic for legacy easily here regarding cursor?
-        // We could check cursor.
+      const isHovered = (cx >= startX && cx <= startX + 400 && cy >= y && cy < y + itemHeight);
+
+      // Highlight Background
+      if (isHovered) {
+        ctx.fillStyle = '#444';
+        ctx.fillRect(startX, y, 400, itemHeight);
       }
+
+      ctx.fillStyle = isHovered ? '#fff' : '#aaa';
       ctx.fillText(opt.label, startX + 200, y + itemHeight / 2 + 10);
+
+      // Separator line
+      if (i > 0) {
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(startX, y);
+        ctx.lineTo(startX + 400, y);
+        ctx.stroke();
+        ctx.strokeStyle = '#555';
+      }
     });
   }
 

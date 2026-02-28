@@ -2249,7 +2249,13 @@ class Scene {
           // permanently breaking the 'panPos' delta subtraction for the rest of the session.
           if (!this._bakedDesktopView && this._xrWorldOffset) {
             this._bakedDesktopView = mat4.create();
-            mat4.copy(this._bakedDesktopView, liveDesktopView);
+
+            // Allow user to inject a perfect camera view over the initial state
+            if (window.defaultDesktopView) {
+              this._bakedDesktopView.set(window.defaultDesktopView);
+            } else {
+              mat4.copy(this._bakedDesktopView, liveDesktopView);
+            }
 
             this._bakedWorldOffset = vec3.fromValues(
               this._xrWorldOffset.position.x,
@@ -2258,6 +2264,14 @@ class Scene {
             );
 
             this._bakedVRScale = this._vrScale;
+
+            // Console Command Helper to grab the perfect view matrix
+            window.getDesktopView = () => {
+              const arr = Array.from(liveDesktopView);
+              console.log(`Copy this into the console to save your default view:`);
+              console.log(`window.defaultDesktopView = [${arr.map(n => n.toFixed(5)).join(', ')}];`);
+              return arr;
+            };
           }
 
           if (!this._bakedDesktopView) {
@@ -2346,8 +2360,16 @@ class Scene {
             mat4.invert(invPanRot, panRot);
 
             // Scaled Translation Delta (Virtual Scale)
-            const vs = this._vrScale || 1.0;
-            const invS = 1.0 / vs;
+            let invS;
+            if (specMode === Enums.SpectatorMode.STATIONARY && bakedScale > 0.0001) {
+              // Stationary mode uses proportional scaling from start (e.g. 1.0 -> 0.5)
+              const relScale = vs / bakedScale;
+              invS = 1.0 / relScale;
+            } else {
+              // Tracked mode uses raw absolute physical scaling (e.g. 0.008 -> 0.004)
+              invS = 1.0 / vs;
+            }
+
             mat4.fromTranslation(scaledPanPos, [(t.x - sx) * invS, (t.y - sy) * invS, (t.z - sz) * invS]);
             mat4.invert(invScaledPanPos, scaledPanPos);
           }
