@@ -7,9 +7,9 @@ The project is currently at `v0.8.153`. We successfully deployed a massive stabi
 The user reported two remaining issues that need to be addressed in the next session:
 
 ### Issue 1: Crease Brush Breaks Symmetry
-The `Crease` brush breaks symmetry when used in VR. Unlike other brushes that use volume intersection (`intersectionSphereMeshes`), the Crease tool was explicitly forced to use laser-raycast aiming (`intersectionRayMesh`) to prevent it from sliding off sharp ridges. 
-*   **The Problem**: The topological symmetry engine likely struggles to mirror a purely geometric raycast hit correctly, or the hit-point calculation used by the raycast doesn't accurately map to the mirrored vertex topology in the same way the sphere intersection does.
-*   **Where to investigate**: Compare how `SculptBase.js` / `makeStrokeXR` handles the `picking` and `pickingSym` objects when the primary tool is using Raycast vs Sphere.
+The `Crease` brush breaks symmetry when used in VR. We recently (in v0.8.154) corrected `Scene.js` to ensure the Crease tool explicitly uses volume intersection (`intersectionSphereMeshes`), making it smooth and stable like the standard brushes.
+*   **The Problem**: Despite using the exact same volume intersection logic as `Brush` and `Pinch`, the topological symmetry engine still fails to draw correctly on the mirrored side when using `Crease`. 
+*   **Where to investigate**: Compare the `SculptBase.js` stroke calculations (specifically what variables the mirror evaluates) for `Crease` vs `Brush`. Are they handling `intersectionSphereMeshes` outputs differently, or is the normal evaluation algorithm in `Crease.js` somehow throwing off the geometric mirror tether?
 
 ### Issue 2: Stationary Mode UI / Controller Scaling
 In `Stationary` (Desktop 6DOF) mode, the VR menu and the controller models themselves are scaling up and down when the user scales the world.

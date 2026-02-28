@@ -1,5 +1,7 @@
 # SculptXR Release History
 
+- **v0.8.154**: **Crease Volume Intersection Restore**:
+    - **Fix**: **Crucial Revert Issue**: Ensured the explicitly requested `volume` intersection behavior for the Crease tool was restored after it was accidentally wiped during the Head Height bugfix revert earlier tonight.
 - **v0.8.153**: **VR Interaction & Stability Update**:
     - **Fix**: **Two-Handed Scaling Pivot**: Corrected a math inversion in `Scene.processVRTwoHanded` where spreading hands apart was shrinking the object instead of enlarging it. Added a smart `Stationary` mode check so that scaling the world (Stationary) and scaling the object (Tracked) both feel completely natural.
     - **Fix**: **Continuous VR Strokes & Lag**: Restored the 90hz native evaluation rate by removing a faulty interpolation loop in `sculptStrokeXR`. Huge fast swipes no longer drop frames or cause "dotted" stroke tearing.

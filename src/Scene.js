@@ -3327,9 +3327,9 @@ class Scene {
       // If we skip it, we don't update the cursor position!
       // We must force intersection ONLY on the current mesh.
 
-      // Feature Toggle: Crease and Transform use Ray/Aim intersect instead of volume
+      // Feature Toggle: Transform uses Ray/Aim intersect instead of volume
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 
@@ -3340,7 +3340,7 @@ class Scene {
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'Crease' || currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
         useVolume = false;
       }
 
