@@ -679,7 +679,7 @@ class Scene {
       mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
       mat4.multiply(menuPose, menuPose, lift);
 
-      // Apply Comp Scale
+      // Lock Menu geometry to the global 2D HUD Screen scale
       if (spectatorCompScale !== 1.0) {
         mat4.scale(menuPose, menuPose, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
       }
@@ -736,6 +736,10 @@ class Scene {
       const offY = this._isQuestStandalone ? 0.075 : 0.025;
       mat4.rotateX(mTip, mTip, -Math.PI / 2);
       mat4.translate(mTip, mTip, [0, offY, 0]);
+
+      if (spectatorCompScale !== 1.0) {
+        mat4.scale(mTip, mTip, [spectatorCompScale, spectatorCompScale, spectatorCompScale]);
+      }
 
       this._vrControllerTip.updateMatrices(cam);
       this._vrControllerTip.render(this);
@@ -983,7 +987,8 @@ class Scene {
       if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
 
       const r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
-      mat4.scale(mSphere, mSphere, [r, r, r]);
+      const rs = r * spectatorCompScale;
+      mat4.scale(mSphere, mSphere, [rs, rs, rs]);
 
       this._vrBrushRadiusSphere.updateMatrices(cam);
 
