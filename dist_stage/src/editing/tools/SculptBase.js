@@ -421,7 +421,11 @@ class SculptBase {
     var rWorld = Math.sqrt(picking._rWorld2);
     if (rWorld < 1e-5) rWorld = main._vrLastPickingRadius || 0.05; // Fallback if previous frame missed
 
-    var minSpacing = 0.15 * rWorld;
+    // FIX v0.8.161: Continuous VR Stroke Spacing Tuning
+    // VR physically tracks true path at 90hz without requiring linear interpolation like a mouse.
+    // 15% distance limit created a visually chunky step rate. 2.5% caused over-accumulation.
+    // Tuned to 7% to balance smoothness with proper brush strength build-up.
+    var minSpacing = 0.07 * rWorld;
     if (minSpacing < 0.001) minSpacing = 0.001; // Safety minimum
 
     if (dist <= minSpacing) {

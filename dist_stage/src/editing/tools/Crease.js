@@ -26,16 +26,18 @@ class Crease extends SculptBase {
     if (this._culling)
       iVertsInRadius = this.getFrontVertices(iVertsInRadius, picking.getEyeDirection());
 
+    var aCenter = this.areaCenter(iVertsInRadius);
+
     picking.updateAlpha(this._lockPosition);
     picking.setIdAlpha(this._idAlpha);
-    this.crease(iVertsInRadius, picking.getPickedNormal(), picking.getIntersectionPoint(), picking.getLocalRadius2(), intensity, picking);
+    this.crease(iVertsInRadius, picking.getPickedNormal(), picking.getIntersectionPoint(), aCenter, picking.getLocalRadius2(), intensity, picking);
 
     var mesh = this.getMesh();
     mesh.updateGeometry(mesh.getFacesFromVertices(iVertsInRadius), iVertsInRadius);
   }
 
   /** Pinch+brush-like sculpt */
-  crease(iVertsInRadius, aNormal, center, radiusSquared, intensity, picking) {
+  crease(iVertsInRadius, aNormal, center, aCenter, radiusSquared, intensity, picking) {
     if (!aNormal || !center || radiusSquared <= 0.0) return;
     if (!Number.isFinite(aNormal[0]) || !Number.isFinite(aNormal[1]) || !Number.isFinite(aNormal[2])) return;
 
@@ -47,6 +49,13 @@ class Crease extends SculptBase {
     var cx = center[0];
     var cy = center[1];
     var cz = center[2];
+
+    // FIX v0.8.160: Crease Groove Tracking
+    // Use the actual center of mass (aCenter) of the local area to guide the pinch direction.
+    // Deep grooves have bunched vertices, causing aCenter to naturally sit inside the groove.
+    var gx = aCenter ? aCenter[0] : cx;
+    var gy = aCenter ? aCenter[1] : cy;
+    var gz = aCenter ? aCenter[2] : cz;
     var anx = aNormal[0];
     var any = aNormal[1];
     var anz = aNormal[2];
@@ -93,11 +102,11 @@ class Crease extends SculptBase {
       // FIX v0.8.158: Infinite Accumulation Spike
       // dx, dy, dz use vProxy to keep the mathematical profile sharp.
       // But adding dx * fallOff infinitely creates a massive spike over time.
-      // Instead, we boundedly pull the current alive vertex `vx` towards the `cx` center.
-      // The pinch inherently stops when vx = cx.
-      var pinchDx = cx - vx;
-      var pinchDy = cy - vy;
-      var pinchDz = cz - vz;
+      // Instead, we boundedly pull the current alive vertex `vx` towards the `gx` groove center.
+      // The pinch inherently stops when vx = gx.
+      var pinchDx = gx - vx;
+      var pinchDy = gy - vy;
+      var pinchDz = gz - vz;
 
       var nx = vx + pinchDx * fallOff * 2.0 + anx * brushModifier;
       var ny = vy + pinchDy * fallOff * 2.0 + any * brushModifier;
