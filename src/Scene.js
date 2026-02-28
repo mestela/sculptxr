@@ -2285,6 +2285,12 @@ class Scene {
             mat4.scale(bakedInvScaleMat, bakedInvScaleMat, [invS, invS, invS]);
           }
 
+          const relativeScaleMat = mat4.create();
+          if (this._vrScale !== undefined && bakedScale > 0.0001) {
+            const relScale = this._vrScale / bakedScale;
+            mat4.scale(relativeScaleMat, relativeScaleMat, [relScale, relScale, relScale]);
+          }
+
           const worldMat = mat4.create();
           const invWorldMat = mat4.create();
 
@@ -2405,7 +2411,8 @@ class Scene {
               invBakedOffset,
               liveOffset,
               invLiveOffset,
-              bakedInvScaleMat
+              bakedInvScaleMat,
+              relativeScaleMat
             };
 
             // Expose the global array pipelines for Chrome Console debugging
@@ -2413,7 +2420,7 @@ class Scene {
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
             if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'bakedInvScaleMat', 'invBakedOffset'];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'scaleMat'];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'relativeScaleMat'];
 
             if (!this._loggedTripodDebug) {
               // console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
