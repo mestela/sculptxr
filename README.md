@@ -127,7 +127,7 @@ The quest 3 will go into standby mode if it thinks you're not using it. Covering
 
 
 ## Clear Browser Cache
-The browser on the Quest 3 and Chrome desktop love to aggresively cache javascript files. This plays having with SculptXR where I'm frequently updating files.
+The browser on the Quest 3 and Chrome desktop love to aggresively cache javascript files. This plays havok with SculptXR where I'm frequently updating files.
 
 Here's what I do to clear the cache.
 
