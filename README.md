@@ -140,8 +140,10 @@ Here's what I do to clear the cache.
 
 ![](assets/console_network.jpg)
 <br>*Network, Disable Cache*<br>
+
 ![](assets/console_application.jpg)
 <br>*Application, Storage, Clear site data*<br>
+
 ![](assets/console_hidden.jpg)
 <br>*Options sometimes hidden under >> menu*<br>
 
