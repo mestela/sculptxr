@@ -18,45 +18,12 @@ Try the latest build [here!](https://tokeru.com/sculptxr/)
 
 [View Full Release History](docs/releases.md)
 
-
 ## Supported Platforms
 It should work on any WebXR compatible device. So far I've tested on:
 - Quest 2 and Quest 3 browser in standalone
 - Google Chrome on Windows PCVR via Meta Link and Quest 3
 
-
-## Todo
-- **Functionality**:
-    - voxel straight line mode
-    - voxel smooth shading
-    - voxel smooth tool
-    - voxel cube brush
-    - voxel move brush (see how many of the current poly tools can be ported over)
-    - voxel curves/tubes
-    - muscle tool
-    - xray material
-    - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - multiplayer
-- **UI + UX**
-    - isolate button inverted
-    - paint tool needs color swatch (fg/bg?)
-    - paint tool intensity needs remapping, low values hard to use
-    - paint tool restore eyedropper
-    - option to swap secondary trigger to smooth
-    - option to hide vr menu behind a button, so people can sculpt without the menu getting in the way. should be a hold-to-show, release-to-hide.
-    - vr menu tidy up, think about user flow
-    - panel tear off/pin in place?
-    - show more heads up things?
-    - toolbar/shortcut bar
-    - outliner
-    - Really need to make 100% VR native dialog, filebrowser for import/export
-    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
-    
-## Done
-The satisfying [crossed out todo list.](docs/isdone.md)
-
 ## Instructions
-
 ### Basics
 Press the 'Enter VR' button. If you're on a device that supports passthrough, press the 'Enter AR' button.
 
