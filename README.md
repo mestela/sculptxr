@@ -33,7 +33,7 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Todo
-- In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen
+
 
 
 - **Functionality**:
@@ -61,6 +61,7 @@ It should work on any WebXR compatible device. So far I've tested on:
     
 
 ## Done
+- ~~In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen~~ **DONE v0.8.227**
 - ~~crease brush breaks symmetry~~ **DONE v0.8.161**
 - ~~still some topology symmetry issues~~ **DONE v0.8.161**
 - ~~Desktop 6DOF completed: Symmetry restored, tool radius scaling fixed, mouse pan/orbit restored, dual cursor shadowing isolated.~~ **DONE v0.8.124**
