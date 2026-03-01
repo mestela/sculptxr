@@ -11,6 +11,7 @@
     - xray material
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
+    - render options? export depth, normal etc
 - **UI + UX**
     - option to swap secondary trigger to smooth
     - popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.
