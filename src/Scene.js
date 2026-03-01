@@ -2250,12 +2250,17 @@ class Scene {
           if (!this._bakedDesktopView && this._xrWorldOffset) {
             this._bakedDesktopView = mat4.create();
 
-            // Allow user to inject a perfect camera view over the initial state
-            if (window.defaultDesktopView) {
-              this._bakedDesktopView.set(window.defaultDesktopView);
-            } else {
-              mat4.copy(this._bakedDesktopView, liveDesktopView);
+            // Check if the user has requested a custom ergonomic trackball initialization
+            if (specMode === Enums.SpectatorMode.STATIONARY && window.defaultCameraState) {
+              vec3.copy(this._camera._trans, window.defaultCameraState.trans);
+              quat.copy(this._camera._quatRot, window.defaultCameraState.quatRot);
+              vec3.copy(this._camera._center, window.defaultCameraState.center);
+              this._camera.updateView();
+              mat4.copy(liveDesktopView, this._camera.getView());
+              console.log("Applied custom ergonomic trackball offset for Stationary Mode.");
             }
+
+            mat4.copy(this._bakedDesktopView, liveDesktopView);
 
             this._bakedWorldOffset = vec3.fromValues(
               this._xrWorldOffset.position.x,
@@ -2265,12 +2270,13 @@ class Scene {
 
             this._bakedVRScale = this._vrScale;
 
-            // Console Command Helper to grab the perfect view matrix
-            window.getDesktopView = () => {
-              const arr = Array.from(this._camera.getView());
-              console.log(`Copy this into the console to save your default view:`);
-              console.log(`window.defaultDesktopView = [${arr.map(n => n.toFixed(5)).join(', ')}];`);
-              return arr;
+            // Console Command Helper to grab the perfect view state (Replaces previous 4x4 array output)
+            window.getDesktopState = () => {
+              const t = Array.from(this._camera._trans).map(n => n.toFixed(5)).join(', ');
+              const q = Array.from(this._camera._quatRot).map(n => n.toFixed(5)).join(', ');
+              const c = Array.from(this._camera._center).map(n => n.toFixed(5)).join(', ');
+              console.log(`Copy this into your console to set your default view:`);
+              console.log(`window.defaultCameraState = { trans: [${t}], quatRot: [${q}], center: [${c}] };`);
             };
           }
 
