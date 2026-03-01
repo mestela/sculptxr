@@ -51,6 +51,8 @@ It should work on any WebXR compatible device. So far I've tested on:
 - **UI + UX** 
 
 (for post v1) 
+    - option to swap secondary trigger to smooth
+    - option to hide vr menu behind a button, so people can sculpt without the menu getting in the way. should be a hold-to-show, release-to-hide.
     - nearly time to think about tider panel
     - panel tear off/pin in place?
     - show more heads up things?
