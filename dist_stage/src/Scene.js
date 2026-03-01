@@ -2432,6 +2432,16 @@ class Scene {
             const invLiveOffset = mat4.create();
             mat4.invert(invLiveOffset, liveOffset);
 
+            // Manual user tuning variables
+            const manualOffset = mat4.create();
+            // User calibrated values (v0.8.209)
+            const manualT = window.debugStationaryOffset || [0, -30, 0];
+            const manualS = window.debugStationaryScale !== undefined ? window.debugStationaryScale : 1.66949;
+            mat4.fromTranslation(manualOffset, manualT);
+            if (manualS !== 1.0) {
+              mat4.scale(manualOffset, manualOffset, [manualS, manualS, manualS]);
+            }
+
             const matrices = {
               liveDesktopView,
               bakedDesktopView,
@@ -2456,7 +2466,8 @@ class Scene {
               liveOffset,
               invLiveOffset,
               bakedInvScaleMat,
-              relativeScaleMat
+              relativeScaleMat,
+              manualOffset
             };
 
             // Expose the global array pipelines for Chrome Console debugging
@@ -2464,7 +2475,34 @@ class Scene {
             // We must construct a completely clean, unconstrained VR-like initial state:
             // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
             if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'bakedInvScaleMat', 'invBakedOffset'];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'relativeScaleMat'];
+            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'relativeScaleMat', 'manualOffset'];
+
+            window.captureStationaryCalibration = () => {
+              console.log("=== SCULPTXR STATIONARY CALIBRATION ===");
+              console.log("Your chosen grip offsets mapped into manual variables:");
+
+              if (!this._xrWorldOffset || !this._bakedDesktopView) {
+                console.log("Error: World offset or baked state not found.");
+                return;
+              }
+
+              const invB = mat4.create();
+              mat4.invert(invB, this._bakedDesktopView);
+              const sx = invB[12];
+              const sy = invB[13];
+              const sz = invB[14];
+              const t = this._xrWorldOffset.position;
+
+              const vs = this._vrScale || 1.0;
+              const bakedScale = this._bakedDesktopVRScale || 0.008;
+
+              const tx = (t.x - sx).toFixed(5);
+              const ty = (t.y - sy).toFixed(5);
+              const tz = (t.z - sz).toFixed(5);
+              const s = (vs / bakedScale).toFixed(5);
+              console.log(`window.debugStationaryOffset = [${tx}, ${ty}, ${tz}];`);
+              console.log(`window.debugStationaryScale = ${s};`);
+            };
 
             if (!this._loggedTripodDebug) {
               // console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
