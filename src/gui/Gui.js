@@ -92,6 +92,16 @@ class Gui {
       if (log) log.style.display = val ? 'block' : 'none';
       if (val && window.screenLog) window.screenLog("Debug Log Enabled", "lime");
     });
+    extra.addButton('Clear Log', () => {
+      const logContainer = document.getElementById('log');
+      if (logContainer) {
+        // Keep the first child if it's a button (the Copy Log button)
+        while (logContainer.children.length > 1) {
+          logContainer.removeChild(logContainer.lastChild);
+        }
+        if (window.screenLog) window.screenLog("Log Cleared", "lime");
+      }
+    });
 
     this.addAboutButton();
 

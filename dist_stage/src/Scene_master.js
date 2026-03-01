@@ -640,9 +640,9 @@ class Scene {
     // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
       // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
       // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
+    if (!this._xrSession || !window.isUIHiddenForVR) {
       this._sculptManager.getSelection().renderVR(this, this._camera, radius);
-
-    ///////////////
+    } ///////////////
     // CONTOUR 2/2
     ///////////////
     if (showContour && this._rttContour) {

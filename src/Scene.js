@@ -141,6 +141,8 @@ class Scene {
     this._vrScale = 0.008; // Scale 100-unit world to 0.8 meters (User Req: "25% too big")
     this._exposure = 1.0; // Reset to 1.0 after fixing ShaderMerge 5x boost
 
+    this._exposure = 1.0; // Reset to 1.0 after fixing ShaderMerge 5x boost
+
     this._vrGrip = {
       left: { active: false, startPoint: vec3.create(), startRotation: quat.create() },
       right: { active: false, startPoint: vec3.create(), startRotation: quat.create() }
@@ -514,6 +516,15 @@ class Scene {
   }
 
   setCanvasCursor(style) {
+    if (window.screenLog && window._debugCursorLog) {
+      window.screenLog(`setCanvasCursor('${style}') HIDDEN=${window.isUIHiddenForVR}`, "orange");
+    }
+
+    if (window.isUIHiddenForVR && style !== 'none') {
+      if (window.screenLog && window._debugCursorLog) window.screenLog(`Blocked style: ${style}`, "red");
+      return;
+    }
+
     this._canvas.style.cursor = style;
   }
 
@@ -3295,11 +3306,38 @@ class Scene {
     const pose = frame.getPose(space, refSpace);
     if (!pose) return;
 
-    // 1. Array Strictness & Pose Extraction
-    // Offset Logic: Move 'Physical Origin' 5cm forward (-Z) in Controller Space
-    // We can do this by offsetting the position using orientation * offset
     const p = pose.transform.position;
     const q = pose.transform.orientation;
+
+    // [v0.8.212] Detect physical movement to trigger auto-hide of desktop UI
+    const posVec = vec3.fromValues(p.x, p.y, p.z);
+    let VRActivityDetected = false;
+
+    if (source.handedness === 'left') {
+      if (!this._vrLastPosLeft) this._vrLastPosLeft = vec3.create();
+      if (vec3.distance(this._vrLastPosLeft, posVec) > 0.0005) VRActivityDetected = true;
+      vec3.copy(this._vrLastPosLeft, posVec);
+    } else {
+      if (!this._vrLastPosRight) this._vrLastPosRight = vec3.create();
+      if (vec3.distance(this._vrLastPosRight, posVec) > 0.0005) VRActivityDetected = true;
+      vec3.copy(this._vrLastPosRight, posVec);
+    }
+
+    if (source.gamepad) {
+      for (let i = 0; i < source.gamepad.buttons.length; i++) {
+        if (source.gamepad.buttons[i].pressed) VRActivityDetected = true;
+      }
+    }
+
+    if (VRActivityDetected) {
+      // User Req: If physical mouse hasn't moved in 1000ms, hide the UI for VR
+      if (!window._lastMouseTime || (performance.now() - window._lastMouseTime) > 1000) {
+        window.isUIHiddenForVR = true;
+        if (this.setCanvasCursor) {
+          this.setCanvasCursor('none');
+        }
+      }
+    }
 
     // Offset Logic: Move 'Physical Origin' to the Visual Tip
     // Matches initVRControllers geometry: Center = -offY, Tip = -(offY + 0.025)
@@ -3887,9 +3925,9 @@ class Scene {
     if (!this._debugCursor) this.initDebugCursor();
     if (!this._debugCursor) return;
 
-    if (active && pos) {
+    if (active && pos && !window.isUIHiddenForVR) {
       if (!this._debugCursor.isVisible()) {
-        // this._debugCursor.setVisible(true);
+        this._debugCursor.setVisible(true);
       }
       var mat = this._debugCursor.getMatrix();
       mat4.identity(mat);

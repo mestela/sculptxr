@@ -170,6 +170,11 @@ class Selection {
       if (gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null) {
         return; // We are inside the VR headset pass, do not render desktop cursor here.
       }
+
+      // If the UI is hidden because VR controllers are active,不要 draw the desktop cursor either!
+      if (window.isUIHiddenForVR) {
+        return;
+      }
     }
 
     // if there's an offset then it means we are editing the tool radius
