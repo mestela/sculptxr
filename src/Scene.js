@@ -2167,6 +2167,8 @@ class Scene {
       const gl = this._gl;
       const glLayer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+      // BUGFIX: Desktop spectator pass overrides gl.clearColor. We MUST reset it to transparent here for AR Passthrough!
+      gl.clearColor(0.0, 0.0, 0.0, 0.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       // VR Menu Update (Sync with Frame)
