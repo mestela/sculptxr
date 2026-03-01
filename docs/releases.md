@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+## v0.9.0
+- **Milestone Release**: Bumped version to v0.9.0 for the next major development cycle.
+- **Verification**: Verified deployment stability on Quest 3 native browser during major version transition.
+
 ## v0.8.230
 - Tidy up: Massive repository deep clean, removing old testing scripts, generated diffs, numerous backup files from `src/`, and legacy debugging HTML pages.
 
