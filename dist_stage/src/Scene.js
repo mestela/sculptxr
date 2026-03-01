@@ -1290,7 +1290,7 @@ class Scene {
     var attributes = {
       antialias: true,
       stencil: true,
-      alpha: false,
+      alpha: true, // Enable alpha for AR Passthrough
       xrCompatible: true // Enable WebXR compatibility
     };
 
@@ -1651,7 +1651,9 @@ class Scene {
 
     // Ensure context is compatible
     gl.makeXRCompatible().then(() => {
-        const baseLayer = new XRWebGLLayer(session, gl);
+      // By default, XRWebGLLayer creates an opaque buffer even if the canvas has alpha: true.
+      // We MUST explicitly request an alpha channel here or immersive-ar passthrough will be solid black.
+      const baseLayer = new XRWebGLLayer(session, gl, { alpha: true });
       session.updateRenderState({ baseLayer, depthNear: 0.01, depthFar: 10000.0 });
 
       // Try 'local-floor' -> 'local' -> 'viewer'
@@ -2166,6 +2168,8 @@ class Scene {
       const gl = this._gl;
       const glLayer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+      // BUGFIX: Desktop spectator pass overrides gl.clearColor. We MUST reset it to transparent here for AR Passthrough!
+      gl.clearColor(0.0, 0.0, 0.0, 0.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       // VR Menu Update (Sync with Frame)
