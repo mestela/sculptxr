@@ -2,7 +2,7 @@
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr2.jpg)
-*SculptXR running natively on a Quest 3 in AR/passthrough mode.*
+<br>*SculptXR running natively on a Quest 3 in AR/passthrough mode.*
 
 ## Overview
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
@@ -127,9 +127,9 @@ The quest 3 will go into standby mode if it thinks you're not using it. Covering
 
 
 ## Clear Browser Cache
-When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
+The browser on the Quest 3 and Chrome desktop love to aggresively cache javascript files. This plays having with SculptXR where I'm frequently updating files.
 
-There might be better ways, but here's what I do to ensure the build is clean, nothing is cached:
+Here's what I do to clear the cache.
 
 ### Desktop Chrome
 
