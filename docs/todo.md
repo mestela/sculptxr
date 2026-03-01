@@ -14,6 +14,7 @@
 - **UI + UX**
     - option to swap secondary trigger to smooth
     - popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.
+    - smaller persistent menu for key things; tool select, radius, intensity.. colour when in paint?
     - subtract toggle as a button on the primary controller
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels? a 2d diagram?
