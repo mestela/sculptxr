@@ -1290,7 +1290,7 @@ class Scene {
     var attributes = {
       antialias: true,
       stencil: true,
-      alpha: false,
+      alpha: true, // Enable alpha for AR Passthrough
       xrCompatible: true // Enable WebXR compatibility
     };
 
@@ -1650,8 +1650,9 @@ class Scene {
     };
 
     // Ensure context is compatible
-    gl.makeXRCompatible().then(() => {
-        const baseLayer = new XRWebGLLayer(session, gl);
+    // By default, XRWebGLLayer creates an opaque buffer even if the canvas has alpha: true.
+    // We MUST explicitly request an alpha channel here or immersive-ar passthrough will be solid black.
+    const baseLayer = new XRWebGLLayer(session, gl, { alpha: true });
       session.updateRenderState({ baseLayer, depthNear: 0.01, depthFar: 10000.0 });
 
       // Try 'local-floor' -> 'local' -> 'viewer'
