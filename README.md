@@ -135,22 +135,18 @@ Here's what I do to clear the cache.
 
 1. R.click on the page, Inspect
 2. Network tab, 'Disable Cache' toggle, turn it on.
+3. Application tab, Storage, 'Clear site data'
+4. If the Inspect tab doesn't have enough room, the Network or Applications tab might be under the >> button in the top bar.
 
 ![Console Network](assets/console_network.jpg)
-
-3. Application tab, Storage, 'Clear site data'
-
 ![](assets/console_application.jpg)
-
-If the Inspect tab doesn't have enough room, the Network or Applications tab might be under the >> button in the top bar.
-
 ![](assets/console_hidden.jpg)
 
 ### Quest 3 browser
 
-- Click the 3 dots button in the top right of the browser
-- Clear Browsing Data
-- Clear Data
+1. Click the 3 dots button in the top right of the browser
+2. Clear Browsing Data
+3. Clear Data
 
 
 
