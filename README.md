@@ -138,9 +138,12 @@ Here's what I do to clear the cache.
 3. Application tab, Storage, 'Clear site data'
 4. If the Inspect tab doesn't have enough room, the Network or Applications tab might be under the >> button in the top bar.
 
-![](assets/console_network.jpg)<br>
-![](assets/console_application.jpg)<br>
-![](assets/console_hidden.jpg)<br>
+![](assets/console_network.jpg)
+<br>*Network, Disable Cache*<br>
+![](assets/console_application.jpg)
+<br>*Application, Storage, Clear site data*<br>
+![](assets/console_hidden.jpg)
+<br>*Options sometimes hidden under >> menu*<br>
 
 ### Quest 3 browser
 
@@ -153,16 +156,6 @@ Here's what I do to clear the cache.
 ## Original Project Resources
 - Live Demo: [stephaneginier.com/sculptgl](http://stephaneginier.com/sculptgl)
 - Website: [stephaneginier.com](http://stephaneginier.com/)
-
-## Tools
-Node.js is required.
-
-### Standalone Build
-```bash
-yarn add electron
-yarn add electron-packager
-yarn standalone
-```
 
 ## Credits
 - Original SculptGL by [Stéphane Ginier](http://stephaneginier.com/).
