@@ -467,6 +467,15 @@ export default class GuiXR {
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
+    // Force continuous redraws to evaluate dynamic options hover since options are not distinct widgets
+    if (this._activeCombobox || this._overlay === 'combobox') {
+      this._hoverWidget = null;
+      this._hoverTab = null;
+      this._needsRedraw = true;
+      this._requestDraw();
+      return;
+    }
+
     // 0. Priority Blocking: Overlay OR Active Combobox
     if (this._overlay) {
       // If Overlay is 'menu', we might want to highlight buttons inside it?
@@ -1834,7 +1843,8 @@ export default class GuiXR {
           }
         }
 
-        // Base Styles
+        const isHovered = (this._hoverWidget === wid);
+
         // Base Styles
         ctx.textAlign = 'center';
         ctx.font = '24px sans-serif';
@@ -1912,7 +1922,7 @@ export default class GuiXR {
           // --- COMBOBOX ---
         else if (wid.type === 'combobox') {
           // Solid Background, No Border
-          ctx.fillStyle = '#333';
+          ctx.fillStyle = isHovered ? '#444' : '#333';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
           let displayLabel = wid.label;
@@ -2270,16 +2280,53 @@ export default class GuiXR {
     // Items
     ctx.textAlign = 'center';
     ctx.font = '30px sans-serif';
-    ctx.fillStyle = 'white';
+
+    // _cursor.x and _cursor.y are actually 0-1 UV coordinates! We need to map them back to canvas pixels
+    // or compare using the mapped coordinates. Actually, according to _handleDropdownInteract,
+    // input is transformed if overlay is active, or we just map UV back to canvas.
+    // wait, where are cursor pixels derived?
+    const pw = this._canvas.width;
+    const ph = this._canvas.height;
+
+    // In _handleDropdownInteract, cx and cy are passed in as absolute pixel coordinates from _handleWidgetClick -> onInteract.
+    // BUT the stored this._cursor.x and this._cursor.y are set via setCursor(u, v) in GuiXR.js,
+    // which DOES store them as u * width and v * height!
+    //    setCursor(u, v) { this._cursor.x = u * this._canvas.width; ... }
+    // Let's verify startX and startY.
+    const cx = this._cursor.x;
+    const cy = this._cursor.y;
+
+    // Is the cursor bounded by the overlay popup?
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+
+    // We must transform the cursor from canvas pixels into the scaled Overlay coordinate system!
+    const localCursorX = (cx - pivot.x) * invScale + pivot.x;
+    const localCursorY = (cy - pivot.y) * invScale + pivot.y;
 
     data.options.forEach((opt, i) => {
       const y = startY + i * itemHeight;
-      // Highlight
-      if (this._overlay === 'combobox') { // Only modify if overlay matches
-        // We don't have hover logic for legacy easily here regarding cursor?
-        // We could check cursor.
+      const isHovered = (localCursorX >= startX && localCursorX <= startX + 400 && localCursorY >= y && localCursorY < y + itemHeight);
+
+      // Highlight Background
+      if (isHovered) {
+        ctx.fillStyle = '#444';
+        ctx.fillRect(startX, y, 400, itemHeight);
       }
+
+      ctx.fillStyle = isHovered ? '#fff' : '#aaa';
       ctx.fillText(opt.label, startX + 200, y + itemHeight / 2 + 10);
+
+      // Separator line
+      if (i > 0) {
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(startX, y);
+        ctx.lineTo(startX + 400, y);
+        ctx.stroke();
+        ctx.strokeStyle = '#555';
+      }
     });
   }
 
@@ -2826,6 +2873,11 @@ export default class GuiXR {
         const invScale = 1 / OVERLAY_SCALE;
         cx = (cx - pivot.x) * invScale + pivot.x;
         cy = (cy - pivot.y) * invScale + pivot.y;
+      }
+
+      if (!this._logComboHover) this._logComboHover = 0;
+      if (this._logComboHover++ % 60 === 0) {
+        console.log(`[GuiXR] Combobox Hover - Cursor: ${cx.toFixed(1)},${cy.toFixed(1)} Box: X(${startX}..${startX + totalW}) Y(${startY}..${startY + listH}) overlay: ${!!this._overlay}`);
       }
 
       // Check bounds

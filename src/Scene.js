@@ -2251,10 +2251,21 @@ class Scene {
             this._bakedDesktopView = mat4.create();
 
             // Check if the user has requested a custom ergonomic trackball initialization
-            if (specMode === Enums.SpectatorMode.STATIONARY && window.defaultCameraState) {
-              vec3.copy(this._camera._trans, window.defaultCameraState.trans);
-              quat.copy(this._camera._quatRot, window.defaultCameraState.quatRot);
-              vec3.copy(this._camera._center, window.defaultCameraState.center);
+            let targetState = window.defaultCameraState;
+
+            // If the user hasn't overridden it, use the verified ergonomic trackball preset
+            if (specMode === Enums.SpectatorMode.STATIONARY && !targetState) {
+              targetState = {
+                trans: [-4.03660, -35.40236, 145.00469],
+                quatRot: [0.00000, 0.00000, 0.00000, 1.00000],
+                center: [0.00000, 0.00000, 0.00000]
+              };
+            }
+
+            if (specMode === Enums.SpectatorMode.STATIONARY && targetState) {
+              vec3.copy(this._camera._trans, targetState.trans);
+              quat.copy(this._camera._quatRot, targetState.quatRot);
+              vec3.copy(this._camera._center, targetState.center);
               this._camera.updateView();
               mat4.copy(liveDesktopView, this._camera.getView());
               console.log("Applied custom ergonomic trackball offset for Stationary Mode.");

@@ -2249,6 +2249,28 @@ class Scene {
           // permanently breaking the 'panPos' delta subtraction for the rest of the session.
           if (!this._bakedDesktopView && this._xrWorldOffset) {
             this._bakedDesktopView = mat4.create();
+
+            // Check if the user has requested a custom ergonomic trackball initialization
+            let targetState = window.defaultCameraState;
+
+            // If the user hasn't overridden it, use the verified ergonomic trackball preset
+            if (specMode === Enums.SpectatorMode.STATIONARY && !targetState) {
+              targetState = {
+                trans: [-4.03660, -35.40236, 145.00469],
+                quatRot: [0.00000, 0.00000, 0.00000, 1.00000],
+                center: [0.00000, 0.00000, 0.00000]
+              };
+            }
+
+            if (specMode === Enums.SpectatorMode.STATIONARY && targetState) {
+              vec3.copy(this._camera._trans, targetState.trans);
+              quat.copy(this._camera._quatRot, targetState.quatRot);
+              vec3.copy(this._camera._center, targetState.center);
+              this._camera.updateView();
+              mat4.copy(liveDesktopView, this._camera.getView());
+              console.log("Applied custom ergonomic trackball offset for Stationary Mode.");
+            }
+
             mat4.copy(this._bakedDesktopView, liveDesktopView);
 
             this._bakedWorldOffset = vec3.fromValues(
@@ -2258,6 +2280,15 @@ class Scene {
             );
 
             this._bakedVRScale = this._vrScale;
+
+            // Console Command Helper to grab the perfect view state (Replaces previous 4x4 array output)
+            window.getDesktopState = () => {
+              const t = Array.from(this._camera._trans).map(n => n.toFixed(5)).join(', ');
+              const q = Array.from(this._camera._quatRot).map(n => n.toFixed(5)).join(', ');
+              const c = Array.from(this._camera._center).map(n => n.toFixed(5)).join(', ');
+              console.log(`Copy this into your console to set your default view:`);
+              console.log(`window.defaultCameraState = { trans: [${t}], quatRot: [${q}], center: [${c}] };`);
+            };
           }
 
           if (!this._bakedDesktopView) {
@@ -2347,7 +2378,20 @@ class Scene {
 
             // Scaled Translation Delta (Virtual Scale)
             const vs = this._vrScale || 1.0;
-            const invS = 1.0 / vs;
+            let invS;
+            if (specMode === Enums.SpectatorMode.STATIONARY && bakedScale > 0.0001) {
+              // Stationary mode: Always map the physical hand movement to the trackball's fixed 
+              // distance focal point (which is tied to the baked scale). This perfectly offsets
+              // the translation, restoring 1:1 camera panning regardless of the current relScale zooming.
+              invS = 1.0 / bakedScale;
+
+              // We do calculate relScale for the *virtual* pipeling later.
+              const relScale = vs / bakedScale;
+            } else {
+              // Tracked mode uses raw absolute physical scaling (e.g. 0.008 -> 0.004)
+              invS = 1.0 / vs;
+            }
+
             mat4.fromTranslation(scaledPanPos, [(t.x - sx) * invS, (t.y - sy) * invS, (t.z - sz) * invS]);
             mat4.invert(invScaledPanPos, scaledPanPos);
           }
