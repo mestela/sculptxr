@@ -11,6 +11,7 @@ Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOe
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.8.224: Stationary Mode UI Priority Fix
 *   v0.8.161: Crease Tool Overhaul & Smooth VR Strokes
 *   v0.8.153: VR Interaction & Stability Update
 *   v0.8.18: Gray Wireframe Restore
@@ -33,8 +34,8 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 ## Todo
 - In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen
--crease brush breaks symmetry
--still some topology symmetry issues
+
+
 - **Functionality**:
 (for post v1)
     - Voxel straight line mode
@@ -60,6 +61,8 @@ It should work on any WebXR compatible device. So far I've tested on:
     
 
 ## Done
+- ~~crease brush breaks symmetry~~ **DONE v0.8.161**
+- ~~still some topology symmetry issues~~ **DONE v0.8.161**
 - ~~Desktop 6DOF completed: Symmetry restored, tool radius scaling fixed, mouse pan/orbit restored, dual cursor shadowing isolated.~~ **DONE v0.8.124**
 - ~~wireframe colour ugly, fix~~  **DONE v0.8.18** 
 - ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    

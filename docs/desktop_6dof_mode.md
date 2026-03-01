@@ -72,6 +72,11 @@ When the user uses the mouse on the Desktop canvas, unprojecting those 2D coordi
 *   **Topological Symmetry Snap**: The standard `Move` tool symmetry drops a microscopic 3D collision sphere onto the mirrored side of the mesh to validate a topological hit. Because the 6DOF matrix offset was causing this sphere's radius to unproject as `~0.005`, the intersection validation missed and aborted symmetry entirely. We patched `Move.js` to intelligently trust the mathematically mapped topological vertex (`symMap`) and forcefully bypass the broken 3D collision check, restoring perfect mirror symmetry for desktop editors.
 *   **Dual Cursor Isolation**: Because VR controllers update the shared `Picking` singleton every frame, the Desktop UI's 2D raycaster erroneously re-projected the VR controller's 3D intersection back onto the 2D computer screen, rendering a distracting floating cursor. We fixed this by tagging intersections with `_isVRHit = true` and commanding `Selection.js` to disable the 2D cursor projection when a VR hit is active.
 
+### 6. Cursor Hiding & Mouse Priority (v0.8.224)
+In Stationary Mode, users frequently switch between using VR controllers and the physical mouse.
+*   **Mouse Priority**: Any movement of the physical mouse instantly reveals the system cursor, ensuring it is always available for fine UI interactions.
+*   **VR Action Hold**: When VR activity is detected, the system cursor is automatically hidden to prevent distraction. However, this hiding action is suppressed if the physical mouse has been moved within the last 1000ms, preventing the cursor from frustratingly flickering or disappearing while the user is actively using it while holding a controller in the other hand.
+
 ## Code Architecture
 *   **`Scene.js`**:
     *   `_renderSceneVR()`: Handles the multi-pass rendering (Left Eye, Right Eye, Spectator).

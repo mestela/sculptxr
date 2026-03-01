@@ -1,5 +1,10 @@
 # SculptXR Release History
 
+- **v0.8.224**: **Stationary Mode Cursor Priority Fix**:
+    - **Fix**: **Invisible Cursor Glitch**: Resolved a bug in `SculptGL.js` where hardware mouse movements were passing native Event objects instead of strings to `setCanvasCursor`, causing the canvas CSS to get permanently stuck on `none` during VR-to-Desktop transitions.
+    - **UX**: **Mouse Priority**: In Stationary mode, any physical mouse movement instantly overrides VR and reveals the cursor. VR controller activity will only hide the cursor if the physical mouse has been perfectly still for at least 1 full second. This fully supports developers operating the mouse with one hand while holding a VR controller in the other.
+    - **Cleanup**: Removed intense event diagnostic logging and complex synthetic time-latches that were causing UI flickering.
+
 - **v0.8.185**: **Stationary Mode Micro-Controllers Fix**:
     - **Fix**: **Meter to Unit Conversion**: Discovered that removing the dynamic `invScaleMat` in v0.8.183 correctly stopped controllers from squishing during world scale, but it also stripped the baseline 125x static scaling needed to convert physical meters to virtual map units. `v0.8.185` injects a frozen `bakedInvScaleMat` into the physical pipeline, ensuring the controllers puff up to a visible size for the virtual camera without fluctuating during dynamic world interaction.
 
