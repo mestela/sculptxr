@@ -138,9 +138,9 @@ Here's what I do to clear the cache.
 3. Application tab, Storage, 'Clear site data'
 4. If the Inspect tab doesn't have enough room, the Network or Applications tab might be under the >> button in the top bar.
 
-![Console Network](assets/console_network.jpg)
-![](assets/console_application.jpg)
-![](assets/console_hidden.jpg)
+![](assets/console_network.jpg)<br>
+![](assets/console_application.jpg)<br>
+![](assets/console_hidden.jpg)<br>
 
 ### Quest 3 browser
 
