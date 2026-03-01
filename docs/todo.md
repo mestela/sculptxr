@@ -12,12 +12,15 @@
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
 - **UI + UX**
-    - isolate button inverted
+    - option to swap secondary trigger to smooth
+    - popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.
+    - subtract toggle as a button on the primary controller
+    - buttons on controllers should be user configurable
+    - display assignments on controller buttons... floating labels? a 2d diagram?
+    - isolate in view/scene is inverted
     - paint tool needs color swatch (fg/bg?)
     - paint tool intensity needs remapping, low values hard to use
     - paint tool restore eyedropper
-    - option to swap secondary trigger to smooth
-    - option to hide vr menu behind a button, so people can sculpt without the menu getting in the way. should be a hold-to-show, release-to-hide.
     - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
     - show more heads up things?
