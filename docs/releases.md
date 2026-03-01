@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.8.229
+- Tidy up: Removed unreferenced matrix testing files, golden reference files, and temporary GUI code from project root.
+
 - **v0.8.224**: **Stationary Mode Cursor Priority Fix**:
     - **Fix**: **Invisible Cursor Glitch**: Resolved a bug in `SculptGL.js` where hardware mouse movements were passing native Event objects instead of strings to `setCanvasCursor`, causing the canvas CSS to get permanently stuck on `none` during VR-to-Desktop transitions.
     - **UX**: **Mouse Priority**: In Stationary mode, any physical mouse movement instantly overrides VR and reveals the cursor. VR controller activity will only hide the cursor if the physical mouse has been perfectly still for at least 1 full second. This fully supports developers operating the mouse with one hand while holding a VR controller in the other.
