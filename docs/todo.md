@@ -1,6 +1,32 @@
-# SculptXR Completed features
 
-## ~~Todo~~ Is Done
+## Todo
+- **Functionality**:
+    - voxel straight line mode
+    - voxel smooth shading
+    - voxel smooth tool
+    - voxel cube brush
+    - voxel move brush (see how many of the current poly tools can be ported over)
+    - voxel curves/tubes
+    - muscle tool
+    - xray material
+    - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
+    - multiplayer
+- **UI + UX**
+    - isolate button inverted
+    - paint tool needs color swatch (fg/bg?)
+    - paint tool intensity needs remapping, low values hard to use
+    - paint tool restore eyedropper
+    - option to swap secondary trigger to smooth
+    - option to hide vr menu behind a button, so people can sculpt without the menu getting in the way. should be a hold-to-show, release-to-hide.
+    - vr menu tidy up, think about user flow
+    - panel tear off/pin in place?
+    - show more heads up things?
+    - toolbar/shortcut bar
+    - outliner
+    - Really need to make 100% VR native dialog, filebrowser for import/export
+    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
+    
+## Done
 
 - ~~In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen~~ **DONE v0.8.227**
 - ~~crease brush breaks symmetry~~ **DONE v0.8.161**
