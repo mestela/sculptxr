@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.8.230
+- Tidy up: Massive repository deep clean, removing old testing scripts, generated diffs, numerous backup files from `src/`, and legacy debugging HTML pages.
+
 ## v0.8.229
 - Tidy up: Removed unreferenced matrix testing files, golden reference files, and temporary GUI code from project root.
 
