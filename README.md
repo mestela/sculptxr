@@ -1,29 +1,19 @@
 # SculptXR (v0.9.0)
 WebXR Sculpting
 
-![SculptGL VR Screenshot](assets/sculptgl_vr.webp)
-*SculptGL running on desktop, with SculptXR running natively on a Quest 3 in foreground in AR/passthrough mode.*
+![SculptGL VR Screenshot](assets/sculptgl_vr2.jpg)
+*SculptXR running natively on a Quest 3 in AR/passthrough mode.*
 
 ## Overview
 This is a fork of [SculptGL](http://stephaneginier.com/sculptgl) focused on adding WebXR capabilities. It is entirely done using Antigravity, sorry code purists.
 
-Watch a demo of the Feb 4 build [here.](https://www.youtube.com/watch?v=0gq1ZNOeHDY)
+Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpOmaXs)
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
 *   v0.9.0: Version bump for major release cycle
 *   v0.8.230: Tidy up unused repository files
 *   v0.8.228: Restore AR mode for standalone quest 3 browser
-*   v0.8.224: Stationary Mode UI Priority Fix
-*   v0.8.161: Crease Tool Overhaul & Smooth VR Strokes
-*   v0.8.153: VR Interaction & Stability Update
-*   v0.8.18: Gray Wireframe Restore
-*   v0.8.17: Smooth VR Slider Physics Fix
-*   v0.8.2: VR Fuzzer
-*   v0.8.1: VERSION Reference Fix
-*   v0.7.801: Move Tool Symmetry Fix
-*   v0.7.800: Voxel Stability & Performance Release
-*   v0.7.696: Voxel Mirror Tool Symmetry Fix
 
 
 [View Full Release History](docs/releases.md)
@@ -36,87 +26,105 @@ It should work on any WebXR compatible device. So far I've tested on:
 
 
 ## Todo
-
-
-
 - **Functionality**:
-(for post v1)
-    - Voxel straight line mode
-    - Voxel smooth shading
-    - Voxel smooth tool
+    - voxel straight line mode
+    - voxel smooth shading
+    - voxel smooth tool
     - voxel cube brush
-    - Voxel move brush (see how many of the current poly tools can be ported over)
+    - voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
-    - Xray mode
-    - Look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
+    - muscle tool
+    - xray material
+    - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
-
-- **UI + UX** 
-
-(for post v1) 
+- **UI + UX**
+    - isolate button inverted
+    - paint tool needs color swatch (fg/bg?)
+    - paint tool intensity needs remapping, low values hard to use
+    - paint tool restore eyedropper
     - option to swap secondary trigger to smooth
     - option to hide vr menu behind a button, so people can sculpt without the menu getting in the way. should be a hold-to-show, release-to-hide.
-    - nearly time to think about tider panel
+    - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
     - show more heads up things?
-    - toolbar/shortcut bar?
-    - outliner? 
+    - toolbar/shortcut bar
+    - outliner
     - Really need to make 100% VR native dialog, filebrowser for import/export
     - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
-
 ## Done
-- ~~In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen~~ **DONE v0.8.227**
-- ~~crease brush breaks symmetry~~ **DONE v0.8.161**
-- ~~still some topology symmetry issues~~ **DONE v0.8.161**
-- ~~Desktop 6DOF completed: Symmetry restored, tool radius scaling fixed, mouse pan/orbit restored, dual cursor shadowing isolated.~~ **DONE v0.8.124**
-- ~~wireframe colour ugly, fix~~  **DONE v0.8.18** 
-- ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    
-- ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**
-- ~~final shakedown of runtime issues (occasional select errors, shader compile errors)~~ **DONE v0.8.3**
-- ~~Show Voxel Grid/Boundary Box (Users report drawing out of bounds)~~ **DONE v0.7.800**
-- ~~symmetry issues voxel remesh can't restore symmetry~~ **DONE v0.7.696**
-- ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
-- ~~tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
-- ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
-- ~~Transform tool/gizmo missing~~ **DONE v0.7.644**
-- ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
-- ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**
-- ~~Twist brush occasional console error~~ - **DONE v0.7.443**
-- ~~Re-symmetrize function, choose left->right, right->left~~ - **DONE v0.7.434**
-- ~~Drag and move tools should support 6dof rotation~~ - **DONE v0.7.443**
-- ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
-- ~~Combobox for tool has misaligned highlight~~
-- ~~Matcap misaligned; its upside down and slightly different in left/right eyes~~ - **DONE v0.7.429**
-- ~~Drag on empty space of menu panel should scroll~~ - **DONE v0.7.429**
-- ~~Trigger on left controller should always activate 'sub' mode~~ - **DONE v0.7.423**
-- ~~Left handed mode~~ - **DONE v0.7.416**
-- ~~Dynamic Topology (code path is active, but not working, unsure why)~~
-- ~~Multiresolution not yet supported in VR~~
-- ~~Add primitives menu missing~~
-- ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
-- ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
-- ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
-- ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
-- ~~Reference image support~~ - **Working v0.7.118**
-- ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
-- ~~Grab brush~~ - **DONE v0.7.118**
-- ~~Voxel add, sub, inflate, deflate brushes~~ - **DONE v0.7.360**
-- ~~Voxel Resampling~~ - **Stabilized v0.7.369**
-- ~~Voxel Bake~~ - **DONE v0.7.360**
-- ~~Voxel symmetry~~ - **DONE v0.7.360**
-- ~~Voxel undo/redo~~ - **DONE v0.7.360**
-- ~~Default move brush size is too big~~
-- ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
-- ~~Default smooth strength too high~~
-- ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
-- ~~Trigger on left controller should invoke sub mode~~
-- ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
-- ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
-- ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
-- ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
-- ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
-- ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
+The satisfying [crossed out todo list.](docs/isdone.md)
+
+## Instructions
+
+### Basics
+Press the 'Enter VR' button. If you're on a device that supports passthrough, press the 'Enter AR' button.
+
+The right controller is the primary sculpting tool, the left contains the VR menu. I've duplicated every option from the SculptGL desktop UI into this menu, and dropped a few that don't make sense. It's a bit clunky atm, I'll work on a nicer menu for v2.
+
+Holding down the left trigger will activate 'sub' mode for most tools, so the brush tool will remove material instead of adding, inflate will deflate etc.
+
+Pushing the left controller thumbstick left/right will undo/redo.
+
+Pushing the right controller thumbstick up/down will change radius.
+
+Grip controls should work as expected, single grip will rotate/translate, both grip controls will scale the world.
+
+Saving and loading will often pop up a dialog in non-vr mode. If you choose an option and see nothing, tap the meta button to drop back into 2d mode, you'll probably find a file dialog waiting for you.
+
+If you're left handed, you can swap the controllers from the **Settings** menu.
+
+### Voxels
+
+In the tool combobox is a Voxel tool. This is a basic 'air draw toothpaste in 3d' tool like Adobe Medium, it has a sub palette of 4 modes, add, sub, inflate, deflate. It also lets you change the voxel resolution, and 'bake to mesh' will convert the voxel to regular polygons for further sculpting.
+
+### Desktop spectator mode
+
+If running on PCVR, the desktop will be in a spectator mode. It is a live preview of your sculpt from a stationary camera. You can move this camera with the regular mouse/tablet controls, and use the desktop sculpting tools. This means if there are certain operations easier to do in desktop, you can swap between them easily.
+
+In the desktop UI under Camera -> Spectator mode, you can decide how the desktop mode should behave:
+
+- **VR View (Mirror)** - a direct mirror of the VR view.
+- **Desktop** - the standard view, a stationary view that can be controlled independantly of the VR view
+- **Tracked** - A hybrid of VR View and desktop; it will match the orientation and scale of the VR View, but can be offset, and because it doesn't inherit translation, isn't as jittery or motion sickness inducing. Good for demos, working with a general audience.
+- **Stationary (6DOF)** - Inspired by Dreams on the Playstation, this mode lets you use 6dof controllers with your monitor. More details below.
+
+### Stationary (6DOF) Dreams mode
+Before starting, cover the light sensor in the quest headset with something opaque (it's inside the headset between the lenses). 
+
+Start SculptXR, Enter VR. Now remove the headset, and place it on your desk facing you. Make sure its slightly off the edge of the desk so that the lower fisheye cameras can see the floor.
+
+Select Stationary (6DOF) from the Camera -> Spectator on desktop, sit back at least 50cm from the headset.
+
+You should now see the sculpt and your controllers on screen. Start sculpting! It takes a little time to get used to without the stereo cues, use the radius circle indicator and the spherical indicator to judge your depth.
+
+If the default position feels uncomfortable (too high, too far away, too shifted left or right), use the mouse to adjust. Scrollwheel will move near/far, middle mouse will pan up/down/left/right. 
+
+My usual method is to adjust the view with the mouse so that the controllers feel comfortable in my lap, the use the grip controls to pull the sculpt into a comfortable position.
+
+#### Stationary mode and tracking issues
+My understanding is the Quest 3 makes a few (perfectly valid!) assumptions about tracking:
+
+- It can always see the floor
+- The headset is always moving a little bit so it can keep getting updates on where it is
+- The controllers are held in a natural grip out front, below, with the 'face' of the controller facing the cameras.
+
+When I first tested this Dreams mode putting the headset on my desk, I kept having the controllers drift and act strange. I eventually realised what was happening:
+
+- It couldn't see the floor
+- The headset was perfectly static, so it wasn't getting regular updates of where it was in space
+- The controllers were showing their backside to the cameras, and often either too close or off to the sides near the headset 'ears'.
+
+The Quest 3 is simply not designed for this tracking scenario. Hence you gotta help it a little. When placing it on your desk, ensure it's hanging off the edge a little so the cameras can see the floor. Careful, the quest 3 is  front heavy and likes to tip forward! If you have a way to mount it higher with more stability, perfect. 
+
+By shifting yourself further back, you're more likely to keep the controllers in sight of the cameras at all times.
+
+Despite not being designed to track the back of the controllers, the Quest 3 does a pretty good job. I find if controllers start to drift (usually because I've kept the controllers in a hard to track position for too long), just 'showing the face' of the controllers to the headset by tilting them forward for a second will reset tracking.
+
+
+#### Stationary mode and standby
+The quest 3 will go into standby mode if it thinks you're not using it. Covering the light sensor helps trick it, but if the headset hasn't moved for 2 minutes, it assumes it's not on your head and goes into standby. Currently I just tap or nudge the headset every 30 seconds. There are developer options to better control this, but I haven't tested them.
+
 
 ## Clear Browser Cache
 When testing and freqently updating the project, I found Chrome on desktop and the Chrome derived browser on the Quest 3 love to cache JS files. 
@@ -145,23 +153,6 @@ If the Inspect tab doesn't have enough room, the Network or Applications tab mig
 - Clear Data
 
 
-## Quick Start
-Note that these instructions are for SculptGl, not SculptXR. I'm just sending static files to my website atm.
-
-1. Install dependencies:
-   ```bash
-   yarn
-   ```
-2. Run development server:
-   ```bash
-   yarn dev
-   ```
-3. Visit `http://localhost:8000` (or the URL provided).
-
-Alternatively, you can use Python for a simple static server if you have built the source or are running pre-built files:
-```bash
-python3 -m http.server 8000
-```
 
 ## Original Project Resources
 - Live Demo: [stephaneginier.com/sculptgl](http://stephaneginier.com/sculptgl)

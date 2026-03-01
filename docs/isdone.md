@@ -1,0 +1,55 @@
+# SculptXR Completed features
+
+## ~~Todo~~ Is Done
+
+- ~~In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen~~ **DONE v0.8.227**
+- ~~crease brush breaks symmetry~~ **DONE v0.8.161**
+- ~~still some topology symmetry issues~~ **DONE v0.8.161**
+- ~~Desktop 6DOF completed: Symmetry restored, tool radius scaling fixed, mouse pan/orbit restored, dual cursor shadowing isolated.~~ **DONE v0.8.124**
+- ~~wireframe colour ugly, fix~~  **DONE v0.8.18** 
+- ~~different undo queue length for desktop vs standalone~~ **DONE v0.8.17**    
+- ~~warning if ar/vr isn't available, to try resatrting chrome (chrome needs to detect that webxr is available before launch)~~ **DONE v0.8.3**
+- ~~final shakedown of runtime issues (occasional select errors, shader compile errors)~~ **DONE v0.8.3**
+- ~~Show Voxel Grid/Boundary Box (Users report drawing out of bounds)~~ **DONE v0.7.800**
+- ~~symmetry issues voxel remesh can't restore symmetry~~ **DONE v0.7.696**
+- ~~symmetry issues, move will break symetry at center line~~ **DONE v0.7.692**
+- ~~tools sphere intersect based, aim as an option in settings.~~ **DONE v0.7.690**
+- ~~fix two handed grip scale misalignment.~~ **DONE v0.7.687**
+- ~~Transform tool/gizmo missing~~ **DONE v0.7.644**
+- ~~menus dont appear if scroll is low~~ - **DONE v0.7.493**
+- ~~brush circle incorrectly oriented before first stroke~~ - **DONE v0.7.443**
+- ~~Twist brush occasional console error~~ - **DONE v0.7.443**
+- ~~Re-symmetrize function, choose left->right, right->left~~ - **DONE v0.7.434**
+- ~~Drag and move tools should support 6dof rotation~~ - **DONE v0.7.443**
+- ~~Crease in sub mode should pull out a crease~~ - **DONE v0.7.434**
+- ~~Combobox for tool has misaligned highlight~~
+- ~~Matcap misaligned; its upside down and slightly different in left/right eyes~~ - **DONE v0.7.429**
+- ~~Drag on empty space of menu panel should scroll~~ - **DONE v0.7.429**
+- ~~Trigger on left controller should always activate 'sub' mode~~ - **DONE v0.7.423**
+- ~~Left handed mode~~ - **DONE v0.7.416**
+- ~~Dynamic Topology (code path is active, but not working, unsure why)~~
+- ~~Multiresolution not yet supported in VR~~
+- ~~Add primitives menu missing~~
+- ~~Symmetry for voxel tool~~ - **DONE v0.7.381**
+- ~~Twist brush VR support (Drill Mode)~~ - **DONE v0.7.389**
+- ~~Spectator Mode: Implement Desktop Mirroring for PCVR~~ - **DONE v0.6.293** (See `docs/feature_desktop_6dof.md`)
+- ~~Drag tool not working correctly with symmetry~~ - **Stabilized v0.7.118**
+- ~~Reference image support~~ - **Working v0.7.118**
+- ~~Desktop mode with 6dof controllers! That should be possible to hack together!~~ **DONE v0.7.0**
+- ~~Grab brush~~ - **DONE v0.7.118**
+- ~~Voxel add, sub, inflate, deflate brushes~~ - **DONE v0.7.360**
+- ~~Voxel Resampling~~ - **Stabilized v0.7.369**
+- ~~Voxel Bake~~ - **DONE v0.7.360**
+- ~~Voxel symmetry~~ - **DONE v0.7.360**
+- ~~Voxel undo/redo~~ - **DONE v0.7.360**
+- ~~Default move brush size is too big~~
+- ~~Menu layout is clunky, but covers all desktop options now. slowly adding functionality.~~ - **Refined v0.7.401**
+- ~~Default smooth strength too high~~
+- ~~Sphere radius indicator too prominent; should be fresnel effect so you only percieve the edges~~
+- ~~Trigger on left controller should invoke sub mode~~
+- ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
+- ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
+- ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
+- ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
+- ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
+- ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
