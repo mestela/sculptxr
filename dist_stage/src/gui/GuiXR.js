@@ -608,34 +608,44 @@ export default class GuiXR {
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
+    const data = this._overlayData;
+    const isToolPicker = data.isToolPicker;
+
+    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
+    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+
     const pivot = this._getOverlayPivot();
-    const invScale = 1 / OVERLAY_SCALE;
 
     // Transform Cursor to Local Overlay Space (Pivot Scale)
     const scx = (cx - pivot.x) * invScale + pivot.x;
     const scy = (cy - pivot.y) * invScale + pivot.y;
 
-    // Overlay coords
-    const ox = this._overlayData.x;
-    const oy = this._overlayData.y;
+    // Offset relative to the overlay's origin
+    const ox = data.x;
+    const oy = data.y;
     const rx = scx - ox;
     const ry = scy - oy;
 
     let newHover = null;
     let hitWidget = null;
-    // let logHit = false;
-    // Debounce log
-    // if (Math.random() < 0.02) logHit = true;
 
-    // if (logHit) {
+    // Debug log
+    let logHit = false;
+    if (Math.random() < 0.05 && isToolPicker) logHit = true;
 
-    // }
+    if (logHit && window.screenLog) {
+      window.screenLog(`[Hvr] cy:${cy.toFixed(0)} scy:${scy.toFixed(0)} ry:${ry.toFixed(0)} invScale:${invScale.toFixed(2)}`, 'orange');
+    }
 
     for (const w of this._overlayData.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
           hitWidget = w;
           newHover = w;
+
+          if (logHit && window.screenLog) {
+            window.screenLog(`[Hvr] HIT! ${w.id}`, 'lime');
+          }
 
           break;
         }
@@ -649,7 +659,7 @@ export default class GuiXR {
     // I will enable the log to see it in action.
 
     // New Property for Overlay Hover
-    if (this._hoverOverlayWidget !== newHover) {
+    if ((this._hoverOverlayWidget ? this._hoverOverlayWidget.id : null) !== (newHover ? newHover.id : null)) {
       // Debug Logging for transition
       const oldId = this._hoverOverlayWidget ? (this._hoverOverlayWidget.id || this._hoverOverlayWidget.label) : 'null';
       const newId = newHover ? (newHover.id || newHover.label) : 'null';
@@ -1142,8 +1152,13 @@ export default class GuiXR {
 
   _handleOverlayInteract(cx, cy, isPressed) {
     // Input Transform for Scale
+    const data = this._overlayData;
+    const isToolPicker = data && data.isToolPicker;
+
+    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
+    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+
     const pivot = this._getOverlayPivot();
-    const invScale = 1 / OVERLAY_SCALE;
     cx = (cx - pivot.x) * invScale + pivot.x;
     cy = (cy - pivot.y) * invScale + pivot.y;
 
@@ -1214,11 +1229,17 @@ export default class GuiXR {
     const rx = cx - data.x;
     const ry = cy - data.y;
 
+    if (data.isToolPicker && window.screenLog) {
+      window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
+    }
+
     // Check click on menu widgets
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
-          // console.log(`[GuiXR] Menu Click Hit: ID=${w.id} Label=${w.label} Type=${w.type}`);
+          if (data.isToolPicker && window.screenLog) {
+            window.screenLog(`[Click] HIT! ${w.id}`, 'lime');
+          }
 
           if (w.type === 'slider') {
             this._activeSlider = w;
@@ -1309,6 +1330,20 @@ export default class GuiXR {
   }
 
   openOverlay(type, data) {
+    if (data && data.isToolPicker) {
+      // This expands the dark background panel
+      data.w = 500; // Original is 660
+      data.h = 400; // Original is ~660
+
+      // Shift the entire block of buttons relative to the background
+      if (data.widgets) {
+        data.widgets.forEach(w => {
+          w.x -= 80; // Nudge all buttons 80px left
+          w.y -= 10; // Nudge all buttons 10px up
+        });
+      }
+    }
+
     // console.log(`[GuiXR] Opening overlay: ${type}`);
     this._overlay = type;
     this._overlayData = data;
@@ -1710,36 +1745,68 @@ export default class GuiXR {
   }
 
   syncWidgetValues() {
-    if (!this._main || !this._main.getSculptManager) return;
-    const sm = this._main.getSculptManager();
-    const toolIndex = sm.getToolIndex();
-    const tool = sm.getCurrentTool();
+    const main = this._main;
+    if (!main) return;
+    const sm = main.getSculptManager();
+    const activeTool = sm ? sm.getCurrentTool() : null;
 
-    let needsRedraw = false;
+    if (!activeTool) return;
+
+    // Fast-sync values from tool back to GuiXR widgets
+    // so any external changes (like changing tool via popup) update the sliders.
     const widgets = this._getWidgets();
+    let changed = false;
 
-    widgets.forEach(w => {
-      // Sliders & Checkboxes
-      if (tool) {
-        if (w.id === 'radius' && w.value !== tool._radius) { w.value = tool._radius; needsRedraw = true; }
-        if (w.id === 'intensity' && w.value !== tool._intensity) { w.value = tool._intensity; needsRedraw = true; }
-        if (w.id === 'negative' && w.value !== tool._negative) { w.value = tool._negative; needsRedraw = true; }
-        if (w.id === 'culling' && w.value !== tool._culling) { w.value = tool._culling; needsRedraw = true; }
-        if (w.id === 'accumulate' && w.value !== tool._accumulate) { w.value = tool._accumulate; needsRedraw = true; }
-      }
+    // Special case for 'tool_select' label on Mini-HUD
+    const activeToolDef = Tools[sm.getToolIndex()];
 
-      // Tool Select Button Text (Mini-HUD)
-      if (w.id === 'tool_select' && w.type === 'button') {
-        const activeToolDef = Tools[toolIndex];
+    for (const w of widgets) {
+      if (w.id === 'radius') {
+        if (w.value !== activeTool._radius) {
+          w.value = activeTool._radius;
+          changed = true;
+        }
+      } else if (w.id === 'intensity') {
+        if (w.value !== activeTool._intensity) {
+          w.value = activeTool._intensity;
+          changed = true;
+        }
+      } else if (w.id === 'negative') {
+        if (w.value !== activeTool._negative) {
+          w.value = activeTool._negative;
+          changed = true;
+        }
+      } else if (w.id === 'culling') {
+        if (w.value !== activeTool._culling) {
+          w.value = activeTool._culling;
+          changed = true;
+        }
+      } else if (w.id === 'accumulate') {
+        if (w.value !== activeTool._accumulate) {
+          w.value = activeTool._accumulate;
+          changed = true;
+        }
+      } else if (w.id === 'tool_select' && w.type === 'button') {
         const newLabel = 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : '');
         if (w.label !== newLabel) {
           w.label = newLabel;
-          needsRedraw = true;
+          changed = true;
         }
       }
-    });
 
-    if (needsRedraw) this._needsRedraw = true;
+      // Also force-update `lastValue` to trigger handle re-renders if the underlying value was reset by a new tool
+      if (w.type === 'slider') {
+        // Flame styling needs to manually catch up
+        if (w.value !== undefined && w._lastDrawValue !== w.value) {
+          w._lastDrawValue = w.value;
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) {
+      this._needsRedraw = true;
+    }
   }
 
   draw() {
@@ -1829,7 +1896,11 @@ export default class GuiXR {
     }
 
     // --- DRAW WIDGETS ---
-    const widgets = this._getWidgets();
+    // --- DRAW WIDGETS ---
+    let widgets = [];
+    if (!this._isPopupHUD) {
+      widgets = this._getWidgets();
+    }
     const mesh = this._main ? this._main.getMesh() : null;
     let activeTool = -1;
     if (this._main && this._main.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
@@ -2049,32 +2120,33 @@ export default class GuiXR {
 
 
 
+    if (!this._isPopupHUD) {
+      ctx.strokeStyle = '#00D0FF';
+      ctx.lineWidth = 15;
+      ctx.strokeRect(0, 0, w, h);
 
-    ctx.strokeStyle = '#00D0FF';
-    ctx.lineWidth = 15;
-    ctx.strokeRect(0, 0, w, h);
+      // --- DRAW SCROLLBAR if needed ---
+      if (this._viewMode === 'SIDEBAR' && this._maxScroll > 0) {
+        // Draw Scroll Track
+        const trackW = 40; // Increased width
+        const trackX = w - trackW;
+        const trackY = HEADER_HEIGHT;
+        const trackH = h - HEADER_HEIGHT;
 
-    // --- DRAW SCROLLBAR if needed ---
-    if (this._viewMode === 'SIDEBAR' && this._maxScroll > 0) {
-      // Draw Scroll Track
-      const trackW = 40; // Increased width
-      const trackX = w - trackW;
-      const trackY = HEADER_HEIGHT;
-      const trackH = h - HEADER_HEIGHT;
+        ctx.fillStyle = '#111';
+        ctx.fillRect(trackX, trackY, trackW, trackH);
 
-      ctx.fillStyle = '#111';
-      ctx.fillRect(trackX, trackY, trackW, trackH);
+        // Draw Scroll Thumb
+        // Thumb Size proportional to content
+        const contentH = trackH + this._maxScroll;
+        const thumbH = Math.max(50, (trackH / contentH) * trackH);
+        const thumbY = trackY + (this._scrollOffset / this._maxScroll) * (trackH - thumbH);
 
-      // Draw Scroll Thumb
-      // Thumb Size proportional to content
-      const contentH = trackH + this._maxScroll;
-      const thumbH = Math.max(50, (trackH / contentH) * trackH);
-      const thumbY = trackY + (this._scrollOffset / this._maxScroll) * (trackH - thumbH);
-
-      // Draw Scrollbar visual
-      ctx.fillStyle = '#666';
-      if (this._isDraggingScrollbar) ctx.fillStyle = '#aaa'; // Highlight dragging
-      ctx.fillRect(trackX + 2, thumbY, trackW - 4, thumbH);
+        // Draw Scrollbar visual
+        ctx.fillStyle = '#666';
+        if (this._isDraggingScrollbar) ctx.fillStyle = '#aaa'; // Highlight dragging
+        ctx.fillRect(trackX + 2, thumbY, trackW - 4, thumbH);
+      }
     }
 
     // --- DRAW OVERLAYS ---
@@ -2138,7 +2210,15 @@ export default class GuiXR {
       // Dimmer / Background blocker for Tool Picker
       if (this._overlayData.isToolPicker) {
         ctx.fillStyle = '#202020';
-        ctx.fillRect(0, 0, w, h);
+
+        // Since widgets define their own box, let's strictly draw the background to match 
+        // the provided `mw` and `mh` dimensions instead of filling the whole canvas `w`, `h`
+        ctx.fillRect(x, y, mw, mh);
+
+        // Add a subtle border to the Tool Picker background itself for definition
+        ctx.strokeStyle = this.styles.overlayMenuBorder || '#444';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, mw, mh);
       }
 
       // Menu Box
@@ -2156,7 +2236,11 @@ export default class GuiXR {
         const wx = x + wid.x;
         const wy = y + wid.y;
 
-        const isHover = (this._hoverOverlayWidget === wid);
+        const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
+
+        if (this._overlayData.isToolPicker && isHover && window.screenLog && Math.random() < 0.05) {
+          window.screenLog(`[Draw] Hovering: ${wid.id}`, 'cyan');
+        }
 
         // Hover Background (Generic)
         if (isHover) {
@@ -2264,18 +2348,33 @@ export default class GuiXR {
         } else if (wid.type === 'button') {
           const isActive = wid.data && wid.data.active;
 
-          if (!wid.noBg || isHover || isActive) {
-            ctx.fillStyle = isHover ? '#555' : (isActive ? '#333' : '#333');
-            // If we have a transparent popup, maybe make hover/active stand out more? 
-            ctx.fillStyle = isHover ? 'rgba(255,255,255,0.2)' : (isActive ? 'rgba(255,255,255,0.1)' : '#333');
-            if (wid.noBg && !isHover && !isActive) {
-              // Draw nothing 
+          ctx.fillStyle = isActive ? '#00A030' : (isHover ? '#555' : '#333');
+
+          if (wid.noBg && !isHover && !isActive) {
+            // Main menu default transparent button
+            ctx.strokeStyle = '#444';
+            ctx.strokeRect(wx, wy, wid.w, wid.h);
+          } else {
+            // Fill background
+            ctx.fillRect(wx, wy, wid.w, wid.h);
+
+            // Draw hover border
+            if (isHover) {
+              const INSET = 2;
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 4;
+              ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
+              ctx.lineWidth = 1; // Reset
+            } else if (isActive) {
+              ctx.strokeStyle = '#00f040';
+              ctx.strokeRect(wx, wy, wid.w, wid.h);
             } else {
-              ctx.fillRect(wx, wy, wid.w, wid.h);
+              ctx.strokeStyle = '#444';
+              ctx.strokeRect(wx, wy, wid.w, wid.h);
             }
           }
 
-          ctx.fillStyle = isActive ? '#00D0FF' : '#eee';
+          ctx.fillStyle = '#eee'; // Strict white/gray text instead of cyan for active
           ctx.textAlign = 'center';
           ctx.font = this.styles.fontOverlay;
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
@@ -2305,14 +2404,15 @@ export default class GuiXR {
           ctx.lineTo(wx + wid.w - 10, wy + wid.h / 2 - 5);
           ctx.lineTo(wx + wid.w - 15, wy + wid.h / 2 + 5);
           ctx.fill();
-        }
 
-        // Hover Border (On Top)
-        if (isHover) {
-          const INSET = 2;
-          ctx.strokeStyle = '#fff';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
+          // Combobox hover border
+          if (isHover) {
+            const INSET = 2;
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
+            ctx.lineWidth = 1;
+          }
         }
       });
 

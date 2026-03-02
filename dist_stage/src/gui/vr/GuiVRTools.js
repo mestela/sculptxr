@@ -60,17 +60,26 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
             data: { active: activeToolIndex === opt.id },
             onInteract: () => {
               const guiGroup = main.getGui()._ctrlSculpting;
-              if (guiGroup && guiGroup._ctrlSculpt) guiGroup._ctrlSculpt.setValue(opt.id);
-              else main.getSculptManager().setToolIndex(opt.id);
+              if (guiGroup && guiGroup._ctrlSculpt) {
+                // VERY IMPORTANT: Use setValue so all GUI/Tool callbacks fire correctly 
+                // and restore saved parameters like radius!
+                guiGroup._ctrlSculpt.setValue(opt.id);
+              } else {
+                main.getSculptManager().setToolIndex(opt.id);
+              }
 
               if (main._guiPopup) {
                 main._guiPopup.closeOverlay();
               }
               if (main._guiMini) {
                 main._guiMini.refreshToolsWidget();
+                main._guiMini.syncWidgetValues(); // Force values to update instantly
                 main._guiMini._needsRedraw = true;
               }
-              if (main._guiXR) main._guiXR.refreshToolsWidget();
+              if (main._guiXR) {
+                main._guiXR.refreshToolsWidget();
+                main._guiXR.syncWidgetValues();
+              }
             }
           });
         });

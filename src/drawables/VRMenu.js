@@ -303,7 +303,7 @@ class VRMenu {
 
     // --- DRAW 3D CURSOR ---
     const cursorUV = this._guiXR.getCursorUV();
-    if (cursorUV) {
+    if (cursorUV && !this._guiXR._isPopupHUD) {
       // Calculate Local Position
       const w = this._w;
       const h = this._h;

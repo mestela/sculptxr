@@ -2316,8 +2316,10 @@ class Scene {
       gl.clearColor(0.0, 0.0, 0.0, 0.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-      // VR Menu Update (Sync with Frame)
+      // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
       if (this._guiXR) this._guiXR.update();
+      if (this._guiMini) this._guiMini.update();
+      if (this._guiPopup) this._guiPopup.update();
 
       // Handle Input (PoC placeholder)
       if (typeof this.handleXRInput === 'function') {
@@ -3189,6 +3191,7 @@ class Scene {
           if (hit) {
             this._isPointingAtMenu = true;
             targetGuiXR.setCursor(hit.uv[0], hit.uv[1]);
+            targetGuiXR._updateHover(); // CRITICAL: Actually trigger the hit test loop using the new cursor coordinates!
 
             // Interact if Trigger Pressed (Button 0)
             if (source.gamepad && source.gamepad.buttons[0]) {
@@ -3391,6 +3394,9 @@ class Scene {
         }
       }
     }
+
+    // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
+    this._wasPointingAtMenu = this._isPointingAtMenu;
   }
 
   processVRGripState(handedness, origin, rotation) {
@@ -3657,11 +3663,24 @@ class Scene {
     const isToolActive = currentTool && currentTool._grabbedMesh;
     const isSculpting = this._vrSculpting;
 
+    // LATCH TRIGGERS AFTER MENU INTERACTION
+    // If the user was just pointing at a menu and clicked, the trigger is still pressed.
+    // We must block ALL new strokes until that trigger is fully released to 0.
+    const trigger = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0] : { pressed: false, value: 0 };
+
+    // Set the latch if we are pointing at a menu and the trigger goes down
+    if (this._isPointingAtMenu && trigger.value > 0.1) {
+      this._vrMenuTriggerLatch = true;
+    }
+
+    // Release the latch ONLY when the trigger is fully released
+    if (this._vrMenuTriggerLatch && trigger.value <= 0.05) {
+      this._vrMenuTriggerLatch = false;
+    }
+
     // Only block if we are NOT already busy
-    if (this._isPointingAtMenu && !isSculpting && !isToolActive) {
+    if ((this._isPointingAtMenu || this._wasPointingAtMenu || this._vrMenuTriggerLatch) && !isSculpting && !isToolActive) {
       // DEBUG: STICKY BRUSH DIAGNOSIS
-      // buttons defined below at 2804, let's fix that
-      const trigger = source.gamepad && source.gamepad.buttons ? source.gamepad.buttons[0] : { pressed: false, value: 0 };
       if (this._vrSculpting && window.screenLog && this._logThrottle % 30 === 0) {
         window.screenLog(`Stuck? Sc=${this._vrSculpting} Hand=${this._vrLockedHand} Src=${source.handedness} Btn=${trigger.pressed} Val=${trigger.value.toFixed(2)}`, trigger.pressed ? "lime" : "red");
       }
