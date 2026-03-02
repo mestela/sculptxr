@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+## v0.9.39
+- **Fix**: **Mini-HUD Radius Persistence**: Fixed a bug where selecting tools from the Mini-HUD popup would reset UI widgets (like the Radius slider) back to an arbitrary default (`0.20`), hiding the tool's actual saved state. Modified `syncWidgetValues` and `updateRadiusWidget` to ensure complete state synchronization across `_guiXR`, `_guiMini`, and `_guiPopup` render loops without breaking tool callbacks.
+- **Fix**: **Controller Thumbstick Radius**: Adjusted the hardware thumbstick (up/down) to dynamically scale the brush size in both the main menu and the new Mini-HUD instantly (via simultaneous calls to both UI contexts).
+
 ## v0.9.0
 - **Milestone Release**: Bumped version to v0.9.0 for the next major development cycle.
 - **Verification**: Verified deployment stability on Quest 3 native browser during major version transition.
