@@ -1,6 +1,7 @@
 import Enums from '../misc/Enums.js';
 
 import TR from './GuiTR.js';
+import Tools from '../editing/tools/Tools.js';
 import Export from '../files/Export.js';
 import { saveAs } from 'file-saver';
 import Shader from '../render/ShaderLib.js';
@@ -72,7 +73,7 @@ const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
 
 export default class GuiXR {
 
-  constructor(main, canvas) {
+  constructor(main, canvas, customWidth = null, customHeight = null) {
 
     this._main = main;
     this._gl = main._gl;
@@ -82,8 +83,8 @@ export default class GuiXR {
       this._ctx = canvas.getContext('2d');
     } else {
       this._canvas = document.createElement('canvas');
-      this._canvas.width = CANVAS_SIZE;
-      this._canvas.height = CANVAS_SIZE;
+      this._canvas.width = customWidth || CANVAS_SIZE;
+      this._canvas.height = customHeight || CANVAS_SIZE;
       this._ctx = this._canvas.getContext('2d');
     }
 
@@ -95,6 +96,8 @@ export default class GuiXR {
     // Preload Dropper Icon
     this._dropperIcon = new Image();
     this._dropperIcon.src = 'resources/dropper.png';
+
+    this._isVisible = false; // By default it is hidden until summoned
 
     this._needsRedraw = true; // Request Canvas Redraw
     this._needsUpload = true; // Request GPU Upload (formerly _needsUpdate)
@@ -128,7 +131,7 @@ export default class GuiXR {
       'History': getHistoryWidgets,
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
-      'Sculpting & Painting': (main) => getToolsWidgets(main, main.getSculptManager().getToolIndex()),
+      'Sculpting & Painting': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
       'Reference': getReferenceWidgets,
       'Settings': getCameraWidgets, // Wait, Camera Widgets ARE the settings? User said "hid the settings menu".
       // Actually, GuiVRCamera.js exports getCameraWidgets but the tab was likely named 'Camera'.
@@ -665,6 +668,32 @@ export default class GuiXR {
     const main = this._main;
     const gens = this._widgetGenerators;
 
+    if (this._isMiniHUD) {
+      if (!this._tabWidgets['Sculpting & Painting'] && gens['Sculpting & Painting']) {
+        this._tabWidgets['Sculpting & Painting'] = gens['Sculpting & Painting'](main, true);
+      }
+      const rawWidgets = this._tabWidgets['Sculpting & Painting'] || [];
+
+      // Filter to only the core bare minimum controls for the Mini-HUD
+      // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
+      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative'];
+      const filtered = rawWidgets.filter(w => allowedIds.includes(w.id));
+
+      // Re-pack vertically and clamp width for the new 300x500 Mini-HUD canvas
+      const paddingX = 15;
+      const targetWidth = this._canvas.width - (paddingX * 2);
+
+      let currentY = 20; // Start near the top
+      filtered.forEach(w => {
+        w.x = paddingX;        // Reset x to a small margin
+        w.w = targetWidth;     // Clamp width
+        w.y = currentY;        // Stack vertically
+        currentY += w.h + 20;  // Widget height + padding
+      });
+
+      return filtered;
+    }
+
     if (this._viewMode === 'SIDEBAR') {
       let allWidgets = [];
       let currentY = HEADER_HEIGHT - this._scrollOffset;
@@ -742,11 +771,9 @@ export default class GuiXR {
   }
 
   onInteract(u, v, isPressed) {
-    /*
-    if (window.screenLog && this._logThrottle++ % 30 === 0) {
-      window.screenLog(`Interact: ${u.toFixed(2)},${v.toFixed(2)} Active:${this._cursor.active} Press:${isPressed}`, 'yellow');
-    }
-    */
+    if (this._wasPressed === undefined) this._wasPressed = false;
+    const isRisingEdge = (isPressed && !this._wasPressed);
+    this._wasPressed = isPressed;
 
     if (!this._cursor.active) return;
     
@@ -825,7 +852,7 @@ export default class GuiXR {
 
     // 0. Dropdown Interaction (High Priority)
     if (this._activeCombobox) {
-      if (!isPressed) return; // Only interact on press
+      if (!isRisingEdge) return; // Only interact on PRESS explicitly
       if (now - this._inputDebounce < 250) return;
       this._inputDebounce = now;
       this._handleDropdownInteract(cx, cy);
@@ -834,7 +861,7 @@ export default class GuiXR {
 
     // 0. Check Overlay (with Tab Switching Priority)
     if (this._overlay) {
-      if (!isPressed) return; // Only interact on press
+      if (!isRisingEdge) return; // Only interact on press
       if (now - this._inputDebounce < 250) return;
 
       // PRIORITY: Check if clicking a TAB HEADER (Outside Overlay)
@@ -932,14 +959,14 @@ export default class GuiXR {
     if (isScrollInteraction || this._isDraggingContent || (!targetWid && cy > HEADER_HEIGHT)) {
       debounceTime = 0; // Immediate response for scrollbar & content drag
     } else {
-      // For all other widgets, if we are NOT pressing, we shouldn't consume the debounce timer
-      // preventing the subsequent PRESS from registering.
-      if (!isPressed) {
-        // Special case: we might need "Hover" events for some things? 
-        // Currently GuiXR mainly uses Hover for highlights (handled in setCursor/draw) 
-        // and Scroll Drag (handled above).
-        // So we can largely ignore !isPressed here for debounce purposes.
-        return;
+      // Only execute widget clicks on a STRICT RISING EDGE to prevent double-firings
+      // when holding the trigger for >250ms (unless it's a slider which needs continuous press)
+      const needsContinuous = (targetWid && targetWid.type === 'slider') || this._activeSlider;
+
+      if (needsContinuous) {
+        if (!isPressed) return; // Need continuous press
+      } else {
+        if (!isRisingEdge) return; // Normal widgets strictly need rising edge
       }
     }
 
@@ -1001,7 +1028,7 @@ export default class GuiXR {
 
     // 3. Check Tabs (Header) - PRIORITY over Widgets
     // Check this BEFORE widgets to ensure we can always click tabs even if widgets are scrolled 'under' them.
-    if (isPressed && cy < HEADER_HEIGHT) {
+    if (!this._isMiniHUD && isPressed && cy < HEADER_HEIGHT) {
       const w = this._canvas.width;
       if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
         const row1 = GLOBAL_TABS.slice(0, 3);
@@ -1682,7 +1709,41 @@ export default class GuiXR {
     this.updateTexture();
   }
 
+  syncWidgetValues() {
+    if (!this._main || !this._main.getSculptManager) return;
+    const sm = this._main.getSculptManager();
+    const toolIndex = sm.getToolIndex();
+    const tool = sm.getCurrentTool();
+
+    let needsRedraw = false;
+    const widgets = this._getWidgets();
+
+    widgets.forEach(w => {
+      // Sliders & Checkboxes
+      if (tool) {
+        if (w.id === 'radius' && w.value !== tool._radius) { w.value = tool._radius; needsRedraw = true; }
+        if (w.id === 'intensity' && w.value !== tool._intensity) { w.value = tool._intensity; needsRedraw = true; }
+        if (w.id === 'negative' && w.value !== tool._negative) { w.value = tool._negative; needsRedraw = true; }
+        if (w.id === 'culling' && w.value !== tool._culling) { w.value = tool._culling; needsRedraw = true; }
+        if (w.id === 'accumulate' && w.value !== tool._accumulate) { w.value = tool._accumulate; needsRedraw = true; }
+      }
+
+      // Tool Select Button Text (Mini-HUD)
+      if (w.id === 'tool_select' && w.type === 'button') {
+        const activeToolDef = Tools[toolIndex];
+        const newLabel = 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : '');
+        if (w.label !== newLabel) {
+          w.label = newLabel;
+          needsRedraw = true;
+        }
+      }
+    });
+
+    if (needsRedraw) this._needsRedraw = true;
+  }
+
   draw() {
+    this.syncWidgetValues();
     // OPTIMIZATION: Early exit if no redraw needed
     if (!this._needsRedraw) return;
     this._needsRedraw = false;
@@ -1693,82 +1754,79 @@ export default class GuiXR {
       this._hoverOverlayWidget = null;
     }
 
-    let ctx;
-    let w;
-    let h;
-    try {
-      ctx = this._ctx;
-      w = CANVAS_SIZE;
-      h = CANVAS_SIZE;
-    } catch (e) {
-      console.error("DEBUG CAUGHT AT 1688:", e);
-      throw e;
+    let ctx = this._ctx;
+    let w = this._canvas.width;
+    let h = this._canvas.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (!this._isPopupHUD) {
+      // BG
+      ctx.fillStyle = '#202020';
+      if (this._isMiniHUD) ctx.fillStyle = 'rgba(32,32,32,0.95)';
+      ctx.fillRect(0, 0, w, h);
+
+      // Draw Version Info (Debug)
+      ctx.fillStyle = '#666';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'right';
+      const vText = `SculptXR ${VERSION}`;
+      ctx.fillText(vText, w - 10, 24);
+
+      const buildDesc = "Voxel Slowdown Debugging";
+      ctx.font = '12px sans-serif';
+      ctx.fillText(buildDesc, w - 10, 42);
+      ctx.textAlign = 'left';
     }
-
-    // BG
-    ctx.fillStyle = '#202020';
-    ctx.fillRect(0, 0, w, h);
-
-    // Draw Version Info (Debug)
-    ctx.fillStyle = '#666';
-    ctx.font = '16px sans-serif';
-    ctx.textAlign = 'right';
-    const vText = `SculptXR ${VERSION}`;
-    ctx.fillText(vText, w - 10, 24);
-
-    const buildDesc = "Voxel Slowdown Debugging";
-    ctx.font = '12px sans-serif';
-    ctx.fillText(buildDesc, w - 10, 42);
-    ctx.textAlign = 'left';
 
 
     // --- DRAW HEADERS / TABS (FIRST - TO BE COVERED SROLLING) ---
-    // User requested minimal "fluff" - Flat colors, no shadows.
+    if (!this._isMiniHUD && !this._isPopupHUD) {
+      // Header Background
+      ctx.fillStyle = '#202020';
+      ctx.fillRect(0, 0, w, HEADER_HEIGHT);
+      // Bottom Border
+      ctx.fillStyle = '#444';
+      ctx.fillRect(0, HEADER_HEIGHT - 2, w, 2);
 
-    // Header Background
-    ctx.fillStyle = '#202020';
-    ctx.fillRect(0, 0, w, HEADER_HEIGHT);
-    // Bottom Border
-    ctx.fillStyle = '#444';
-    ctx.fillRect(0, HEADER_HEIGHT - 2, w, 2);
+      const row1 = GLOBAL_TABS.slice(0, 3);
+      const row2 = GLOBAL_TABS.slice(3, 6);
+      const row3 = GLOBAL_TABS.slice(6);
 
-    const row1 = GLOBAL_TABS.slice(0, 3);
-    const row2 = GLOBAL_TABS.slice(3, 6);
-    const row3 = GLOBAL_TABS.slice(6);
+      ctx.textAlign = 'center';
+      ctx.font = '32px sans-serif';
 
-    ctx.textAlign = 'center';
-    ctx.font = '32px sans-serif';
+      const drawRow = (row, rowIndex) => {
+        const rW = w / row.length;
+        const y = rowIndex * TAB_HEIGHT;
+        row.forEach((t, i) => {
+          const x = i * rW;
+          const isActive = (t === this._viewMode);
+          const isHovered = (t === this._hoverTab);
 
-    const drawRow = (row, rowIndex) => {
-      const rW = w / row.length;
-      const y = rowIndex * TAB_HEIGHT;
-      row.forEach((t, i) => {
-        const x = i * rW;
-        const isActive = (t === this._viewMode);
-        const isHovered = (t === this._hoverTab);
-
-        // Minimal Styling
-        ctx.fillStyle = isActive ? '#eee' : '#111';
-        ctx.fillRect(x, y, rW, TAB_HEIGHT);
-
-        // Hover Highlight
-        if (isHovered) {
-          ctx.fillStyle = '#333';
+          // Minimal Styling
+          ctx.fillStyle = isActive ? '#eee' : '#111';
           ctx.fillRect(x, y, rW, TAB_HEIGHT);
-        }
 
-        ctx.strokeStyle = (isHovered) ? '#aaa' : '#333';
-        ctx.lineWidth = (isHovered) ? 4 : 1;
-        ctx.strokeRect(x, y, rW, TAB_HEIGHT);
+          // Hover Highlight
+          if (isHovered) {
+            ctx.fillStyle = '#333';
+            ctx.fillRect(x, y, rW, TAB_HEIGHT);
+          }
 
-        ctx.fillStyle = isActive ? '#000' : '#888';
-        ctx.fillText(t, x + rW / 2, y + TAB_HEIGHT / 2 + 8);
-      });
-    };
+          ctx.strokeStyle = (isHovered) ? '#aaa' : '#333';
+          ctx.lineWidth = (isHovered) ? 4 : 1;
+          ctx.strokeRect(x, y, rW, TAB_HEIGHT);
 
-    drawRow(row1, 0);
-    drawRow(row2, 1);
-    drawRow(row3, 2);
+          ctx.fillStyle = isActive ? '#000' : '#888';
+          ctx.fillText(t, x + rW / 2, y + TAB_HEIGHT / 2 + 8);
+        });
+      };
+
+      drawRow(row1, 0);
+      drawRow(row2, 1);
+      drawRow(row3, 2);
+    }
 
     // --- DRAW WIDGETS ---
     const widgets = this._getWidgets();
@@ -1777,11 +1835,15 @@ export default class GuiXR {
     if (this._main && this._main.getSculptManager) activeTool = this._main.getSculptManager().getToolIndex();
 
     // Clip to Widget Area (Prevent Header Overdraw)
-    ctx.save();
-    ctx.beginPath();
-    // FIX: Allow slight overlap for Section Header highlight (startY - 4)
-    ctx.rect(0, HEADER_HEIGHT - 4, w, h - HEADER_HEIGHT + 4);
-    ctx.clip();
+    if (!this._isMiniHUD) {
+      ctx.save();
+      ctx.beginPath();
+      // FIX: Allow slight overlap for Section Header highlight (startY - 4)
+      ctx.rect(0, HEADER_HEIGHT - 4, w, h - HEADER_HEIGHT + 4);
+      ctx.clip();
+    } else {
+      ctx.save();
+    }
 
     for (let wid of widgets) {
       if (wid.disabled) ctx.fillStyle = '#222';
@@ -2073,19 +2135,21 @@ export default class GuiXR {
       // SCALING START
       const { x, y, w: mw, h: mh, widgets } = this._overlayData;
 
-      // Shadow / Dimmer for background?
-      // ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      // ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      // Dimmer / Background blocker for Tool Picker
+      if (this._overlayData.isToolPicker) {
+        ctx.fillStyle = '#202020';
+        ctx.fillRect(0, 0, w, h);
+      }
 
       // Menu Box
-      // Shadow removed
-      // Menu Box
-      ctx.fillStyle = this.styles.overlayMenuBg;
-      ctx.fillRect(x, y, mw, mh);
+      if (!this._overlayData.isToolPicker) {
+        ctx.fillStyle = this.styles.overlayMenuBg;
+        ctx.fillRect(x, y, mw, mh);
 
-      ctx.strokeStyle = this.styles.overlayMenuBorder;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, mw, mh);
+        ctx.strokeStyle = this.styles.overlayMenuBorder;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, mw, mh);
+      }
 
       // Draw Menu Widgets
       widgets.forEach(wid => {
@@ -2198,13 +2262,20 @@ export default class GuiXR {
           ctx.fillRect(wx + 2 + knobX - 2, barY - 2, 4, barH + 4);
 
         } else if (wid.type === 'button') {
-          ctx.fillStyle = isHover ? '#555' : '#333';
-          ctx.fillRect(wx, wy, wid.w, wid.h);
+          const isActive = wid.data && wid.data.active;
 
-          // ctx.strokeStyle = '#555';
-          // ctx.strokeRect(wx, wy, wid.w, wid.h);
+          if (!wid.noBg || isHover || isActive) {
+            ctx.fillStyle = isHover ? '#555' : (isActive ? '#333' : '#333');
+            // If we have a transparent popup, maybe make hover/active stand out more? 
+            ctx.fillStyle = isHover ? 'rgba(255,255,255,0.2)' : (isActive ? 'rgba(255,255,255,0.1)' : '#333');
+            if (wid.noBg && !isHover && !isActive) {
+              // Draw nothing 
+            } else {
+              ctx.fillRect(wx, wy, wid.w, wid.h);
+            }
+          }
 
-          ctx.fillStyle = '#eee';
+          ctx.fillStyle = isActive ? '#00D0FF' : '#eee';
           ctx.textAlign = 'center';
           ctx.font = this.styles.fontOverlay;
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
@@ -2675,6 +2746,18 @@ export default class GuiXR {
     ctx.fill();
   }
 
+  setVisibility(val) {
+    if (this._isVisible !== val) {
+      this._isVisible = val;
+      this._needsRedraw = true;
+    }
+  }
+
+  toggleVisibility() {
+    this._isVisible = !this._isVisible;
+    this._needsRedraw = true;
+  }
+
   update() {
     // 1. Redraw if requested (Input/Hover changes)
     if (this._needsRedraw) {
@@ -2925,11 +3008,11 @@ export default class GuiXR {
 
     const itemHeight = 60;
 
-    // 2-Column Logic
+    // 2-Column Logic (Main Menu Only)
     let numCols = 1;
     let rowsPerCol = w.options.length;
 
-    if (w.options.length > 10) {
+    if (!this._isMiniHUD && w.options.length > 10) {
       numCols = 2;
       rowsPerCol = Math.ceil(w.options.length / 2);
     }
@@ -2959,9 +3042,14 @@ export default class GuiXR {
 
     const mb = 20; // Margin Bottom
     if (startY + listH > bottomLimit - mb) {
-      // Shift UP
-      startY = bottomLimit - listH - mb;
-      // Clamp to top? (Ideally shouldn't go off top either, but bottom is the issue now)
+      // Shift UP (Ensure it stays visible on narrow canvases, clamp to top if needed)
+      startY = Math.max(10, bottomLimit - listH - mb);
+    }
+
+    // Safety check for right edge
+    if (startX + totalW > this._canvas.width - mb) {
+    // Only shift if it's the main menu, MiniHUD uses targetWidth/clamped x anyway
+    // But good practice.
     }
 
     return { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy };

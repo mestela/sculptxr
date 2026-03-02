@@ -4,8 +4,9 @@ import Tools from '../../editing/tools/Tools.js';
 import Picking from '../../math3d/Picking.js';
 import { vec3 } from 'gl-matrix';
 
-export default function getToolsWidgets(main, activeToolIndex) {
+export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
+  const activeToolDef = Tools[activeToolIndex];
   const widgets = [];
 
   // Spacing Constants
@@ -15,12 +16,10 @@ export default function getToolsWidgets(main, activeToolIndex) {
   const gapSection = 30;
   const gapHeader = 30;
 
-  let y = 130;
+  let y = 100; // Start higher up to maximize Mini-HUD space
 
-  // 1. Tool Selection (Combobox)
-  // Removing "Tool" italic header to match desktop 1:1 more closely or just saving space
-  widgets.push({ type: 'info', label: 'Tool', x: col1X, y: y }); 
-  y += gapHeader;
+  // 1. Tool Selection (Standalone Icon / Combobox Button)
+  // Removed "Tool" info header for a cleaner HUD look.
 
   // Build Options from Tools array
   // Filter out Drag tool, LocalScale, and Transform
@@ -30,28 +29,94 @@ export default function getToolsWidgets(main, activeToolIndex) {
   })
     .filter(t => t && t.label !== 'Drag' && t.id !== Enums.Tools.LOCALSCALE && t.id !== Enums.Tools.TRANSFORM); 
 
-  widgets.push({
-    type: 'combobox',
-    id: 'tool_select',
-    label: 'Tool',
-    x: col1X, y: y, w: 320, h: btnH,
-    value: activeToolIndex,
-    options: toolOptions,
-    onSelect: (id) => {
-      // main.getSculptManager().setToolIndex(id);
-      // Let the Desktop GUI orchestrate the change so all visual toggles update correctly
-      const guiGroup = main.getGui()._ctrlSculpting;
-      if (guiGroup && guiGroup._ctrlSculpt) {
-        guiGroup._ctrlSculpt.setValue(id);
-      } else {
-      // Fallback if GUI is missing
-        main.getSculptManager().setToolIndex(id);
-      }
-      if (main.guiXR) main.guiXR.refreshToolsWidget();
-    }
-  });
+  if (isMiniHUD) {
+    widgets.push({
+      type: 'button',
+      id: 'tool_select',
+      label: 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : ''),
+      x: col1X, y: y, w: 710, h: 80, // Much larger and wider, acts as the primary HUD button
+      onInteract: () => {
+        const toolPickerWidgets = [];
+        const pad = 5;
+        const cols = 3;
+        const btnW = 150;
+        const btnH = 60;
 
-  y += btnH + gapSection;
+        const boxW = cols * (btnW + pad) + pad;
+        const boxH = Math.ceil(toolOptions.length / cols) * (btnH + pad) + pad;
+
+        const startX = (660 - boxW) / 2;
+        const startY = 220 - (boxH / 2);
+
+        toolOptions.forEach((opt, idx) => {
+          const col = idx % cols;
+          const row = Math.floor(idx / cols);
+          toolPickerWidgets.push({
+            type: 'button', id: opt.id, label: opt.label,
+            x: startX + col * (btnW + pad) + pad,
+            y: startY + row * (btnH + pad) + pad,
+            w: btnW, h: btnH,
+            noBg: true,
+            data: { active: activeToolIndex === opt.id },
+            onInteract: () => {
+              const guiGroup = main.getGui()._ctrlSculpting;
+              if (guiGroup && guiGroup._ctrlSculpt) guiGroup._ctrlSculpt.setValue(opt.id);
+              else main.getSculptManager().setToolIndex(opt.id);
+
+              if (main._guiPopup) {
+                main._guiPopup.closeOverlay();
+              }
+              if (main._guiMini) {
+                main._guiMini.refreshToolsWidget();
+                main._guiMini._needsRedraw = true;
+              }
+              if (main._guiXR) main._guiXR.refreshToolsWidget();
+            }
+          });
+        });
+
+        if (main._guiPopup) {
+          main._guiPopup.openOverlay('menu', { x: 0, y: 0, w: 660, h: 660, widgets: toolPickerWidgets, isToolPicker: true });
+          main._guiPopup._needsRedraw = true;
+        }
+      }
+    });
+  } else {
+    widgets.push({ type: 'info', label: 'Select Tool', x: col1X, y: y, w: 200, h: 40 });
+    y += 40;
+    const pad = 15;
+    const cols = 3;
+    const btnW = 250;
+    const btnH = 60;
+    toolOptions.forEach((opt, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      widgets.push({
+        type: 'button',
+        id: opt.id,
+        label: opt.label,
+        x: col1X + col * (btnW + pad),
+        y: y + row * (btnH + pad),
+        w: btnW,
+        h: btnH,
+        data: { active: activeToolIndex === opt.id }, // Highlight active tool
+        onInteract: () => {
+          const guiGroup = main.getGui()._ctrlSculpting;
+          if (guiGroup && guiGroup._ctrlSculpt) {
+            guiGroup._ctrlSculpt.setValue(opt.id);
+          } else {
+            main.getSculptManager().setToolIndex(opt.id);
+          }
+          if (main.guiXR) main.guiXR.refreshToolsWidget();
+          if (main.guiMini) main.guiMini.refreshToolsWidget();
+        }
+      });
+    });
+    // Advance Y by the total grid height
+    y += Math.ceil(toolOptions.length / cols) * (btnH + pad) + pad;
+  }
+
+  y += 80 + gapSection;
 
 
   // 2. Brush Settings
@@ -62,23 +127,25 @@ export default function getToolsWidgets(main, activeToolIndex) {
     type: 'slider',
     id: 'radius',
     label: 'Radius',
-    x: col1X, y: y, w: 350, h: 50,
+    x: col1X, y: y, w: 710, h: 60, // Stacked and widened for easier hitting
     value: activeTool ? activeTool._radius : 50,
     min: 5, max: 250, precision: 0,
     onInput: (val) => { if (activeTool) { activeTool._radius = val; main.render(); } }
   });
+
+  y += 60 + gapBtn;
 
   // Intensity
   widgets.push({
     type: 'slider',
     id: 'intensity',
     label: 'Intensity',
-    x: 400, y: y, w: 350, h: 50,
+    x: col1X, y: y, w: 710, h: 60, // Stacked below Radius
     value: activeTool ? activeTool._intensity : 0.5,
     min: 0, max: 1, precision: 2,
     onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
   });
-  y += 50 + gapSection;
+  y += 60 + gapSection;
 
   // 2b. Tool Specific Settings
   // --- PAINT ---

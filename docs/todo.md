@@ -1,6 +1,8 @@
 
 ## Todo
 - **Functionality**:
+    - restore grab brush
+    - closer look at dyntopo
     - voxel straight line mode
     - voxel smooth shading
     - voxel smooth tool
@@ -12,6 +14,9 @@
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
     - render options? export depth, normal etc
+    - elastic tools, kelvinlets etc
+    - facegroups
+    - pose tool
 - **UI + UX**
     - option to swap secondary trigger to smooth
     - popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.

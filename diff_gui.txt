@@ -1,0 +1,118 @@
+diff --git a/src/gui/GuiXR.js b/src/gui/GuiXR.js
+index 8f0d27a..ae5f117 100644
+--- a/src/gui/GuiXR.js
++++ b/src/gui/GuiXR.js
+@@ -30,9 +30,9 @@ import Remesh from '../editing/Remesh.js';
+ import ShaderBase from '../render/shaders/ShaderBase.js';
+ import StateManager from '../states/StateManager.js';
+ 
+-const TAB_HEIGHT = 68; // Increased from 52 (+30%)
+-const TAB_ROWS = 3; // Rows of tabs
+-const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // Reserved for Tabs
++const TAB_HEIGHT = 0; // Mini-HUD has no tabs
++const TAB_ROWS = 0; // Rows of tabs
++const HEADER_HEIGHT = 0; // Reserved for Tabs
+ const CANVAS_SIZE = 1024;
+ // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
+ // Top Row: Files, Scene, History, Settings
+@@ -42,21 +42,14 @@ const CANVAS_SIZE = 1024;
+ // The mockup shows Tabs at the top, and then collapsible sections below.
+ // We will group widgets into "Sections" instead of just "Tabs".
+ 
+-// Group 1: Global Tabs (Top)
+ // Group 1: Global Tabs (Top)
+ const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Settings', 'About & Help'];
+-// Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
+-// Or does clicking one hide others?
+-// User said: "panel has collapsible sections like the desktop"
+-// This implies they are all stacked vertically.
+-
+-const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
++// Group 2: Layout Sections
++// Mini-HUD: Only show Sculpting tools
++const SECTIONS = ['Sculpting & Painting'];
+ 
+ // Map old Tabs to new Layout Logic
+ // Files, Scene, History, Settings -> Top Bar (Tabs)
+-// View -> Rendering Section
+-// Topology -> Topology Section
+-// Tools -> Sculpting & Painting Section
+ 
+ const COLOR_HEADER = '#111';
+ const COLOR_SECTION_BG = '#282828';
+@@ -96,14 +89,14 @@ export default class GuiXR {
+     this._dropperIcon = new Image();
+     this._dropperIcon.src = 'resources/dropper.png';
+ 
++    this._isVisible = true; // Overall visibility of the HUD
++
+     this._needsRedraw = true; // Request Canvas Redraw
+     this._needsUpload = true; // Request GPU Upload (formerly _needsUpdate)
+     this._textureAllocated = false;
+     this._activeTab = 'Sculpting & Painting'; // Default section open?
+     // Actually if they are collapsible, we need a map of open/closed states.
+     this._sectionStates = {
+-      'Rendering': false,
+-      'Topology': false,
+       'Sculpting & Painting': true
+     };
+ 
+@@ -1739,36 +1732,15 @@ export default class GuiXR {
+     ctx.textAlign = 'center';
+     ctx.font = '32px sans-serif';
+ 
++    /* Mini-HUD: Disable Global Tabs Rendering
+     const drawRow = (row, rowIndex) => {
+-      const rW = w / row.length;
+-      const y = rowIndex * TAB_HEIGHT;
+-      row.forEach((t, i) => {
+-        const x = i * rW;
+-        const isActive = (t === this._viewMode);
+-        const isHovered = (t === this._hoverTab);
+-
+-        // Minimal Styling
+-        ctx.fillStyle = isActive ? '#eee' : '#111';
+-        ctx.fillRect(x, y, rW, TAB_HEIGHT);
+-
+-        // Hover Highlight
+-        if (isHovered) {
+-          ctx.fillStyle = '#333';
+-          ctx.fillRect(x, y, rW, TAB_HEIGHT);
+-        }
+-
+-        ctx.strokeStyle = (isHovered) ? '#aaa' : '#333';
+-        ctx.lineWidth = (isHovered) ? 4 : 1;
+-        ctx.strokeRect(x, y, rW, TAB_HEIGHT);
+-
+-        ctx.fillStyle = isActive ? '#000' : '#888';
+-        ctx.fillText(t, x + rW / 2, y + TAB_HEIGHT / 2 + 8);
+-      });
++      // ...
+     };
+ 
+     drawRow(row1, 0);
+     drawRow(row2, 1);
+     drawRow(row3, 2);
++    */
+ 
+     // --- DRAW WIDGETS ---
+     const widgets = this._getWidgets();
+@@ -2675,6 +2647,18 @@ export default class GuiXR {
+     ctx.fill();
+   }
+ 
++  setVisibility(val) {
++    if (this._isVisible !== val) {
++      this._isVisible = val;
++      this._needsRedraw = true;
++    }
++  }
++
++  toggleVisibility() {
++    this._isVisible = !this._isVisible;
++    this._needsRedraw = true;
++  }
++
+   update() {
+     // 1. Redraw if requested (Input/Hover changes)
+     if (this._needsRedraw) {

@@ -22,6 +22,7 @@ import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
 import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
+import GazeTooltip from './drawables/GazeTooltip.js';
 
 
 console.log("Scene.js loaded v0.7.658");
@@ -206,6 +207,14 @@ class Scene {
     this._dominantHand = 'right'; // 'right' or 'left'
     this._selectionLocked = false; // Lock Selection State
     this._vrIsNegative = false; // Universal Sub Mode State
+
+    // VR Ergonomics: Hybrid Button Trackers
+    this._vrButtonStates = {
+      left: { X: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } },
+      right: { A: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } }
+    };
+    this._vrSubtractActive = false;
+    this._vrSmoothOverride = false;
   }
 
   start() {
@@ -270,9 +279,51 @@ class Scene {
     this.loadTextures();
     this._gui.initGui();
 
-    // Always Init GuiXR (Menu System)
     if (!this._guiXR) this._guiXR = new GuiXR(this);
     this._guiXR.init(this._gl);
+
+    if (!this._guiMini) {
+      // Create a much taller, narrower canvas for the Mini-HUD (e.g. 300x500)
+      this._guiMini = new GuiXR(this, null, 300, 500);
+      this._guiMini._isMiniHUD = true;
+      this._guiMini._isVisible = true; // Always visible
+    }
+    this._guiMini.init(this._gl);
+
+    if (!this._guiPopup) {
+      this._guiPopup = new GuiXR(this, null, 660, 660);
+      this._guiPopup._isPopupHUD = true;
+      this._guiPopup._isVisible = true; // Managed by overlay presence
+    }
+    this._guiPopup.init(this._gl);
+
+    // Create VRMenus if they don't exist
+    if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
+    if (!this._vrMiniHUD) {
+      this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
+      // Strip the baked-in Main Menu 15cm offset so we can control position precisely relative to grip
+      this._vrMiniHUD.setOffset(0, 0, 0);
+      this._vrMiniHUD.setRotation(0, 0, 0);
+    }
+    if (!this._vrPopup) {
+      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
+      this._vrPopup.setOffset(0, 0, 0);
+      this._vrPopup.setRotation(0, 0, 0);
+    }
+
+    // Global override for live tuning
+    window.MINI_HUD_TRANSFORM = {
+      x: 0,
+      y: 0.05,
+      z: 0.1,
+      rx: 90,
+      ry: 0,
+      rz: 0
+    };
+
+    // Init Gaze Tooltips
+    this._gazeTooltipLeft = new GazeTooltip(this._gl, "Hold X: Menu");
+    this._gazeTooltipRight = new GazeTooltip(this._gl, "Hold A: Sub");
 
     this.onCanvasResize();
 
@@ -657,25 +708,56 @@ class Scene {
       this._vrControllerRight.render(this);
     }
 
-    // VR Menu (Pass 1)
-    // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand
+    // VR Main Menu (Full Size)
     const menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
     if (this._vrMenu && menuAnchor) {
       const menuPose = mat4.clone(menuAnchor);
       const lift = mat4.create();
-      // [Step 5 Fix] Menu Offset
-      // VRMenu has internal offset of +0.15 (Right). Width is 0.30.
-      // Left Hand (Right Dom): We want it on Right. Internal +0.15 puts it at 0.0->0.30.
-      // Right Hand (Left Dom): We want it on Left. Center should be at -0.15 - gap.
-      // Target Center: -0.20?
-      // Internal is +0.15. We need: Lift + 0.15 = -0.20 => Lift = -0.35.
-
       const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
       mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
       mat4.multiply(menuPose, menuPose, lift);
-
       this._vrMenu.updateMatrices(cam, menuPose);
       this._vrMenu.render(this);
+    }
+
+    // VR Mini-HUD (Wrist Mounted)
+    if (this._vrMiniHUD && menuAnchor && (!this._guiXR || !this._guiXR._isVisible)) {
+      const hudPose = mat4.clone(menuAnchor);
+      const liftHUD = mat4.create();
+
+      const tform = window.MINI_HUD_TRANSFORM || { x: 0, y: 0.05, z: 0.1, rx: 90, ry: 0, rz: 0 };
+
+      // Apply mirror logic for dominant hand if needed.
+      // E.g. we want it on the inside of the controller.
+      // A default of x:0 means perfectly centered on the handle.
+      const signX = this._dominantHand === 'left' ? -1 : 1;
+
+      mat4.fromTranslation(liftHUD, [tform.x * signX, tform.y, tform.z]);
+
+      mat4.rotateX(liftHUD, liftHUD, tform.rx * Math.PI / 180.0);
+      mat4.rotateY(liftHUD, liftHUD, (tform.ry * signX) * Math.PI / 180.0);
+      mat4.rotateZ(liftHUD, liftHUD, tform.rz * Math.PI / 180.0);
+
+      mat4.multiply(hudPose, hudPose, liftHUD);
+
+      // Scale up slightly just for legibility if needed, but 1.0 is physically accurate
+      const miniScale = 1.0;
+      mat4.scale(hudPose, hudPose, [miniScale, miniScale, miniScale]);
+
+      this._vrMiniHUD.updateMatrices(cam, hudPose);
+      this._vrMiniHUD.render(this);
+
+      // Render Popup slightly forward and above the MiniHUD center
+      if (this._vrPopup && this._guiPopup && this._guiPopup._overlay) {
+        const popupPose = mat4.clone(hudPose);
+        const popupLift = mat4.create();
+        // Shift +Y to align with Tool select button (0.032m). Shift +Z or -Z to float over HUD. 
+        // Based on user feedback, +1.5cm put it BEHIND, so we need -1.5cm to bring it forward.
+        mat4.fromTranslation(popupLift, [0.0, 0.032, -0.015]);
+        mat4.multiply(popupPose, popupPose, popupLift);
+        this._vrPopup.updateMatrices(cam, popupPose);
+        this._vrPopup.render(this);
+      }
     }
 
     // VRLaser (Pass 1)
@@ -1067,6 +1149,58 @@ class Scene {
       gl2.depthMask(true);
       gl2.disable(gl2.BLEND);
     }
+
+    // --- GAZE TOOLTIPS (Pass 3) ---
+    // Calculate Headset Forward Vector
+    const headsetPos = cam.computePosition();
+    const headsetFwd = vec3.transformQuat(vec3.create(), [0, 0, -1], cam._quatRot);
+
+    // Helper for Ray-Point Distance calculation
+    const distToRay = (rayOrigin, rayDir, point) => {
+      const w = vec3.subtract(vec3.create(), point, rayOrigin);
+      const projAngle = vec3.dot(w, rayDir);
+
+      // If the point is behind the ray origin, it's not a match
+      if (projAngle <= 0) return Infinity;
+
+      const projVec = vec3.scale(vec3.create(), rayDir, projAngle);
+      const closestPoint = vec3.add(vec3.create(), rayOrigin, projVec);
+      return vec3.distance(point, closestPoint);
+    };
+
+    const GAZE_THRESHOLD = 0.20; // 20cm radius around controller
+
+    // Left Controller Tooltip
+    if (this._vrControllerLeft && this._gazeTooltipLeft && this._vrPoseLeft) {
+      const ctlPos = [this._vrPoseLeft[12], this._vrPoseLeft[13], this._vrPoseLeft[14]];
+      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
+
+      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
+      // Fade over time based on delta (assuming ~60fps, 0.1 delta = 6 frames to fade)
+      this._gazeTooltipLeft._opacity += (targetOpacity - this._gazeTooltipLeft._opacity) * 0.15;
+      this._gazeTooltipLeft.setOpacity(this._gazeTooltipLeft._opacity);
+
+      if (this._gazeTooltipLeft._isVisible) {
+        this._gazeTooltipLeft.updateMatrices(cam, ctlPos);
+        this._gazeTooltipLeft.render();
+      }
+    }
+
+    // Right Controller Tooltip
+    if (this._vrControllerRight && this._gazeTooltipRight && this._vrPoseRight) {
+      const ctlPos = [this._vrPoseRight[12], this._vrPoseRight[13], this._vrPoseRight[14]];
+      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
+
+      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
+      this._gazeTooltipRight._opacity += (targetOpacity - this._gazeTooltipRight._opacity) * 0.15;
+      this._gazeTooltipRight.setOpacity(this._gazeTooltipRight._opacity);
+
+      if (this._gazeTooltipRight._isVisible) {
+        this._gazeTooltipRight.updateMatrices(cam, ctlPos);
+        this._gazeTooltipRight.render();
+      }
+    }
+
   }
 
   // Simplified VR Render (Delegates to _renderSceneVR)
@@ -1882,6 +2016,16 @@ class Scene {
     if (!this._guiXR) this._guiXR = new GuiXR(this);
     this._guiXR.init(this._gl);
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
+
+    // Init VR Mini-HUD System
+    if (!this._guiMini) {
+      this._guiMini = new GuiXR(this);
+      this._guiMini._isMiniHUD = true;
+      this._guiMini._isVisible = true;
+    }
+    this._guiMini.init(this._gl);
+    if (!this._vrMiniHUD) this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
+
     if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
 
     // Brush Tip (Pencil Cone)
@@ -2873,6 +3017,75 @@ class Scene {
           }
           state.axes[3] = valY;
         }
+
+        // --- VR ERGONOMICS: HYBRID BUTTONS ---
+        const btns = source.gamepad.buttons;
+        if (btns.length > 4) {
+          const now = performance.now();
+          const HYBRID_THRESHOLD = 300; // ms
+
+          // DOMINANT HAND: 'A' or 'X' Button (Button 4) -> Toggle Subtract
+          if (isDom) {
+            const btnA = btns[4];
+            const tracker = this._vrButtonStates[this._dominantHand].A;
+            if (btnA && btnA.pressed !== tracker.pressed) {
+              if (btnA.pressed) {
+                // Button Down
+                tracker.time = now;
+                tracker.longPressActive = false;
+              } else {
+                // Button Up: Evaluate Quick Tap vs Long Press Release
+                const delta = now - tracker.time;
+                if (tracker.longPressActive) {
+                  // It was a momentary hold that is now releasing
+                  this._vrSubtractActive = false;
+                } else if (delta < HYBRID_THRESHOLD) {
+                  // Quick Tap: Toggle State
+                  this._vrSubtractActive = !this._vrSubtractActive;
+                }
+                tracker.longPressActive = false;
+              }
+              tracker.pressed = btnA.pressed;
+            } else if (btnA && btnA.pressed && !tracker.longPressActive) {
+              // Holding button down: Check if we crossed the threshold
+              if (now - tracker.time >= HYBRID_THRESHOLD) {
+                tracker.longPressActive = true;
+                this._vrSubtractActive = true; // Engage momentary mode
+              }
+            }
+          }
+
+          // NON-DOMINANT HAND: 'X' or 'A' Button (Button 4) -> Toggle Main Menu
+          if (isNonDom) {
+            const btnX = btns[4];
+            const handKey = this._dominantHand === 'right' ? 'left' : 'right';
+            const tracker = this._vrButtonStates[handKey].X;
+            if (btnX && btnX.pressed !== tracker.pressed) {
+              if (btnX.pressed) {
+                tracker.time = now;
+                tracker.longPressActive = false;
+              } else {
+                const delta = now - tracker.time;
+                if (tracker.longPressActive) {
+                  // Momentary Release -> Hide Menu
+                  if (this._guiXR) this._guiXR.setVisibility(false);
+                } else if (delta < HYBRID_THRESHOLD) {
+                  // Quick Tap -> Toggle Menu
+                  if (this._guiXR) this._guiXR.toggleVisibility();
+                }
+                tracker.longPressActive = false;
+              }
+              tracker.pressed = btnX.pressed;
+            } else if (btnX && btnX.pressed && !tracker.longPressActive) {
+              if (now - tracker.time >= HYBRID_THRESHOLD) {
+                tracker.longPressActive = true;
+                // Momentary Hold -> Show Menu
+                if (this._guiXR) this._guiXR.setVisibility(true);
+              }
+            }
+          }
+        }
+
       }
 
       // 1. Common Pose Gathering (for All Tasks)
@@ -2938,47 +3151,49 @@ class Scene {
           isFallback = true;
         }
 
-        if (rayPose && this._vrMenu) {
+        if (rayPose) {
           const mat = rayPose.transform.matrix;
 
           let origin, dir;
 
           if (isFallback) {
-            // Synthetic Ray from Grip (Approximate Pointing)
-            // Grip usually points -Z (forward) or needs slight offset.
-            // We'll use -Z for now.
             origin = vec3.fromValues(mat[12], mat[13], mat[14]);
-            // Grip Z=0 is center of handle?
-            // Direction: -Z column (8,9,10)
             dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
-
-            // Optional: Tilt ray down/up if needed? Start with straight -Z.
           } else {
-            // Standard Ray
             origin = vec3.fromValues(mat[12], mat[13], mat[14]);
             dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
           }
           vec3.normalize(dir, dir);
 
-          const hit = this._vrMenu.intersect(origin, dir);
+          let hit = null;
+          let targetGuiXR = null;
 
-          // DEBUG: Log Intersection Attempts (Throttled but visible)
-          // if (!this._logIntersect) this._logIntersect = 0;
-          // if (this._logIntersect++ % 60 === 0 && window.screenLog) {
-          // const originStr = `${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}`;
-          // window.screenLog(`Ray(${isFallback ? 'Grip' : 'Ray'}): [${originStr}] Hit:${!!hit}`, hit ? "lime" : "orange");
-          // if (hit) window.screenLog(`Hit UV: ${hit.uv[0].toFixed(2)}, ${hit.uv[1].toFixed(2)}`, "lime");
-          // }
+          // Check Main Menu First
+          if (this._vrMenu && this._guiXR && this._guiXR._isVisible) {
+            hit = this._vrMenu.intersect(origin, dir);
+            if (hit) targetGuiXR = this._guiXR;
+          }
+
+          // Check Popup HUD (Highest priority when active, over Mini-HUD)
+          if (!hit && this._vrPopup && this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay) {
+            hit = this._vrPopup.intersect(origin, dir);
+            if (hit) targetGuiXR = this._guiPopup;
+          }
+
+          // If Missed Main Menu, Check Mini-HUD (Only if Main Menu is closed)
+          if (!hit && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible && (!this._guiXR || !this._guiXR._isVisible)) {
+            hit = this._vrMiniHUD.intersect(origin, dir);
+            if (hit) targetGuiXR = this._guiMini;
+          }
 
           if (hit) {
             this._isPointingAtMenu = true;
-            this._guiXR.setCursor(hit.uv[0], hit.uv[1]);
+            targetGuiXR.setCursor(hit.uv[0], hit.uv[1]);
 
             // Interact if Trigger Pressed (Button 0)
             if (source.gamepad && source.gamepad.buttons[0]) {
               const pressed = source.gamepad.buttons[0].pressed;
-              // if (pressed && window.screenLog) window.screenLog("Trigger Pressed", "cyan");
-              this._guiXR.onInteract(hit.uv[0], hit.uv[1], pressed);
+              targetGuiXR.onInteract(hit.uv[0], hit.uv[1], pressed);
             }
 
             // Calc Laser Distance (plus overshoot)
@@ -2987,10 +3202,10 @@ class Scene {
             }
 
           } else {
-            this._guiXR.setCursor(-1, -1);
+            if (this._guiXR) this._guiXR.setCursor(-1, -1);
+            if (this._guiMini) this._guiMini.setCursor(-1, -1);
             this._vrLaserDistance = 1.0; // Reset length (though invisible)
           }
-
         } else {
           // Log Failure
           if (window.screenLog && this._logThrottle % 120 === 0) {
@@ -3741,14 +3956,18 @@ class Scene {
         if (session && session.inputSources) {
           for (let src of session.inputSources) {
             if (src.handedness === nonDomHand && src.gamepad) {
-              // Button 0 (Trigger) or Button 1 (Squeeze)
-              if ((src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) ||
-                (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed)) {
+              // Legacy Support: Button 1 (Squeeze)
+              if (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed) {
                 isNegative = true;
                 break;
               }
             }
           }
+        }
+
+        // Apply Hybrid Button State
+        if (this._vrSubtractActive) {
+          isNegative = true;
         }
 
         this._vrIsNegative = isNegative; // Logic for Rendering
@@ -3871,6 +4090,35 @@ class Scene {
         const origNegative = tool ? tool._negative : false;
         if (isNegative && tool) tool._negative = !origNegative;
 
+        // VR Ergonomics: Temporary Smooth Modifier
+        // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
+        let isSmoothOverride = false;
+        if (session && session.inputSources) {
+          for (let src of session.inputSources) {
+            if (src.handedness === nonDomHand && src.gamepad) {
+              // Button 0 (Index Trigger)
+              if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
+                isSmoothOverride = true;
+                break;
+              }
+            }
+          }
+        }
+
+        let previousToolIndex = -1;
+        if (isSmoothOverride) {
+          // 2 is SCULPT_SMOOTH in Enums.Tools
+          // Or we can just grab it by name if we don't know the Enum explicitly here.
+          // Let's rely on sculptManager._tools[2] or similar, but safer to find it.
+          const smoothToolIndex = this._sculptManager._tools.findIndex(t => t && t.constructor.name === 'Smooth');
+          if (smoothToolIndex !== -1 && tool !== this._sculptManager._tools[smoothToolIndex]) {
+            previousToolIndex = this._sculptManager._toolIndex;
+            this._sculptManager._toolIndex = smoothToolIndex;
+            // Sync radius from current tool to smooth tool so size feels consistent
+            this._sculptManager.getCurrentTool()._radius = tool._radius;
+          }
+        }
+
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
           controllers: xrControllers,
@@ -3881,6 +4129,9 @@ class Scene {
 
         // Restore original state immediately
         if (isNegative && tool) tool._negative = origNegative;
+        if (isSmoothOverride && previousToolIndex !== -1) {
+          this._sculptManager._toolIndex = previousToolIndex;
+        }
       } else {
         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
         this._sculptManager.update();

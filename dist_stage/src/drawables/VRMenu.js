@@ -88,9 +88,19 @@ class VRMenu {
   }
 
   _init() {
-    // Simple Quad (centered)
-    const w = 0.15; // 15cm width
-    const h = 0.15; // 15cm height
+    // We want the Quad size to match the Canvas aspect ratio, maintaining the 
+    // physical pixel density of the 1024x1024 / 0.30m setup.
+    // Total width is 2*w. Density = 1024 / 0.30 = 3413.33 px/meter.
+    const DENSITY = 1024 / 0.30;
+
+    const canvasWidth = this._guiXR._canvas ? this._guiXR._canvas.width : 1024;
+    const canvasHeight = this._guiXR._canvas ? this._guiXR._canvas.height : 1024;
+
+    const w = (canvasWidth / DENSITY) / 2.0;
+    const h = (canvasHeight / DENSITY) / 2.0;
+
+    this._w = w;
+    this._h = h;
 
     const vertices = new Float32Array([
       -w, -h, 0.0,
@@ -148,6 +158,11 @@ class VRMenu {
 
   setRotation(x, y, z) {
     vec3.set(this._rotation, x, y, z);
+    this.rebuildMatrix();
+  }
+
+  setOffset(x, y, z) {
+    vec3.set(this._offset, x, y, z);
     this.rebuildMatrix();
   }
 
@@ -214,20 +229,23 @@ class VRMenu {
     const lx = localOrigin[0] + localDir[0] * t;
     const ly = localOrigin[1] + localDir[1] * t;
 
-    // Check bounds
-    const w = 0.15;
-    const h = 0.15;
+    // Check bounds using exact generated dimensions
+    const w = this._w;
+    const h = this._h;
     if (lx < -w || lx > w || ly < -h || ly > h) return null;
 
     // Map to UV [0,1]
-    // -w -> 0, +w -> 1
-    // u = (lx + w) / (2*w)
-    // V calculation: Map 3D Top (+h) to Canvas Top (0)
-    // V calculation: Map 3D Top (+h) to Canvas Top (0)
     const u = (lx + w) / (2 * w);
-    const v = (ly + h) / (2 * h); // Re-Reverted (User says inverted)
 
-    // Throttle logs
+    // UV Mapping:
+    // Physical Quad bounds: -h (bottom/near) to h (top/away).
+    // Canvas bounds: 0 (top of UI, "Brush") to 1 (bottom of UI).
+    // GuiXR applies UNPACK_FLIP_Y_WEBGL=true, so texture V=0 matches canvas bottom, and V=1 matches canvas top!
+    // But GuiXR.onInteract ignores OpenGL V and uses raw `v`.
+    // We want physical bottom (-h) to map to the top of the UI (v = 0).
+    const v = (ly + h) / (2 * h);
+
+    // Throttle logs for debugging if you need to enable them later
     // if (Math.random() < 0.05) {
     //   console.log(`[VRMenu] Hit! Local: ${lx.toFixed(2)},${ly.toFixed(2)} UV: ${u.toFixed(2)},${v.toFixed(2)}`);
     // }
@@ -240,7 +258,8 @@ class VRMenu {
 
 
   render(main) {
-    if (this._guiXR) this._guiXR.updateTexture();
+    if (!this._guiXR || !this._guiXR._isVisible) return;
+    this._guiXR.updateTexture();
 
     // Debug Log (Throttle)
     if (!this._logThrottle) this._logThrottle = 0;
@@ -286,50 +305,13 @@ class VRMenu {
     const cursorUV = this._guiXR.getCursorUV();
     if (cursorUV) {
       // Calculate Local Position
-      // Menu Quad is [-w, -h] to [w, h] with w=0.15, h=0.15
-      const w = 0.15;
-      const h = 0.15;
-      // UV [0..1] -> [-w..w]
-      // x = -w + u*2w
-      // y = -h + (1-v)*2h (Canvas origin TL, GL origin BL?)
-      // GuiXR.js uses ctx (TL origin). 
-      // VRMenu constructor texCoords: TL=(0,1)? 
-      // texCoords:
-      // 0.0, 1.0 (BL in GL? No, texture coordinates usually 0,0 BL)
-      // Canvas 0,0 is Top-Left.
-      // Mesh:
-      // -w, -h (Bottom Left) -> UV(0, 1) ??
-      // Let's check VRMenu vertices/texcoords:
-      // -w, -h -> 0.0, 1.0  (Bottom Left Vertex has UV 0,1)
-      // This implies Texture T=1 is Bottom?
-      // Canvas T=0 is Top.
-      // Usually: GL 0,0 is Bottom Left.
-      // Canvas to Textures usually flips Y unless PREMULTIPLY_ALPHA / UNPACK_FLIP_Y_WEBGL is set.
-      // Scene.js: gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-      // So Canvas(0,0 TL) -> Texture(0,0 BL) ?? No.
-      // If FLIP_Y is true:
-      // Canvas Row 0 (Top) -> Texture Row 0 (Bottom).
-      // So Canvas Top -> Texture Bottom (V=0).
-      // Vertices:
-      // -w, -h (Bottom physical) has UV 0,1 ??
-      // If Texture Bottom is V=0.
-      // Then Bottom Physical should have V=0?
-      // Code: -w, -h -> 0.0, 1.0.
-      // Code: -w, h (Top Physical) -> 0.0, 0.0.
-      // So Top Physical -> V=0.
-      // Texture Bottom (V=0) is stored with Canvas Top?
-      // If FLIP_Y=true, Canvas Top becomes Texture Bottom.
-      // So Canvas(0,0) -> Texture(0,0).
-      // So Top Physical (-w, h) maps to Texture(0,0).
-      // So UV(0,0) is Top-Left of Canvas.
-      // Correct.
-      //
-      // So:
-      // u goes 0..1 (Left..Right) => -w..w
-      // v goes 0..1 (Top..Bottom) => h..-h
-
+      const w = this._w;
+      const h = this._h;
+      // Reverse map the exact same formula:
+      // u = (lx + w) / 2w  =>  lx = -w + u * 2w
+      // v = (ly + h) / 2h  =>  ly = -h + v * 2h
       const lx = -w + cursorUV.u * (2.0 * w);
-      const ly = h - cursorUV.v * (2.0 * h);
+      const ly = -h + cursorUV.v * (2.0 * h);
 
       if (this._cacheWorld && this._cursorMesh) {
         this._cursorMesh.updateMatrices(main.getCamera(), this._cacheWorld, lx, ly);

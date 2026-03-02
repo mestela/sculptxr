@@ -1,0 +1,419 @@
+diff --git a/src/Scene.js b/src/Scene.js
+index dd37b4f..d656c80 100644
+--- a/src/Scene.js
++++ b/src/Scene.js
+@@ -22,6 +22,7 @@ import WebGLCaps from './render/WebGLCaps.js';
+ import GuiXR from './gui/GuiXR.js';
+ import VRMenu from './drawables/VRMenu.js';
+ import VRLaser from './drawables/VRLaser.js';
++import GazeTooltip from './drawables/GazeTooltip.js';
+ 
+ 
+ console.log("Scene.js loaded v0.7.658");
+@@ -206,6 +207,14 @@ class Scene {
+     this._dominantHand = 'right'; // 'right' or 'left'
+     this._selectionLocked = false; // Lock Selection State
+     this._vrIsNegative = false; // Universal Sub Mode State
++
++    // VR Ergonomics: Hybrid Button Trackers
++    this._vrButtonStates = {
++      left: { X: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } },
++      right: { A: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } }
++    };
++    this._vrSubtractActive = false;
++    this._vrSmoothOverride = false;
+   }
+ 
+   start() {
+@@ -270,10 +279,13 @@ class Scene {
+     this.loadTextures();
+     this._gui.initGui();
+ 
+-    // Always Init GuiXR (Menu System)
+     if (!this._guiXR) this._guiXR = new GuiXR(this);
+     this._guiXR.init(this._gl);
+ 
++    // Init Gaze Tooltips
++    this._gazeTooltipLeft = new GazeTooltip(this._gl, "Hold X: Menu");
++    this._gazeTooltipRight = new GazeTooltip(this._gl, "Hold A: Sub");
++
+     this.onCanvasResize();
+ 
+     var modelURL = getOptionsURL().modelurl;
+@@ -658,22 +670,29 @@ class Scene {
+     }
+ 
+     // VR Menu (Pass 1)
+-    // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand
++    // [Step 4] Hand Swap: Menu attaches to NON-DOMINANT hand (Mini-HUD)
+     const menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
+     if (this._vrMenu && menuAnchor) {
+       const menuPose = mat4.clone(menuAnchor);
+       const lift = mat4.create();
+-      // [Step 5 Fix] Menu Offset
+-      // VRMenu has internal offset of +0.15 (Right). Width is 0.30.
+-      // Left Hand (Right Dom): We want it on Right. Internal +0.15 puts it at 0.0->0.30.
+-      // Right Hand (Left Dom): We want it on Left. Center should be at -0.15 - gap.
+-      // Target Center: -0.20?
+-      // Internal is +0.15. We need: Lift + 0.15 = -0.20 => Lift = -0.35.
+-
+-      const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
+-      mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
++
++      // Mini-HUD Positioning:
++      // Anchor to the wrist/top-of-hand. 
++      // X: slight offset to the outside
++      // Y: above the wrist
++      // Z: pulled back towards user
++      const sideOffset = this._dominantHand === 'left' ? -0.05 : 0.05;
++      mat4.fromTranslation(lift, [sideOffset, 0.08, 0.05]);
++
++      // Tilt the HUD up to face the user naturally
++      mat4.rotateX(lift, lift, -Math.PI / 4.0); // Tilt back 45 degrees
++
+       mat4.multiply(menuPose, menuPose, lift);
+ 
++      // Mini-HUD Scaling: Reduce by 75%
++      const miniScale = 0.25;
++      mat4.scale(menuPose, menuPose, [miniScale, miniScale, miniScale]);
++
+       this._vrMenu.updateMatrices(cam, menuPose);
+       this._vrMenu.render(this);
+     }
+@@ -1067,6 +1086,58 @@ class Scene {
+       gl2.depthMask(true);
+       gl2.disable(gl2.BLEND);
+     }
++
++    // --- GAZE TOOLTIPS (Pass 3) ---
++    // Calculate Headset Forward Vector
++    const headsetPos = cam.computePosition();
++    const headsetFwd = vec3.transformQuat(vec3.create(), [0, 0, -1], cam._quatRot);
++
++    // Helper for Ray-Point Distance calculation
++    const distToRay = (rayOrigin, rayDir, point) => {
++      const w = vec3.subtract(vec3.create(), point, rayOrigin);
++      const projAngle = vec3.dot(w, rayDir);
++
++      // If the point is behind the ray origin, it's not a match
++      if (projAngle <= 0) return Infinity;
++
++      const projVec = vec3.scale(vec3.create(), rayDir, projAngle);
++      const closestPoint = vec3.add(vec3.create(), rayOrigin, projVec);
++      return vec3.distance(point, closestPoint);
++    };
++
++    const GAZE_THRESHOLD = 0.20; // 20cm radius around controller
++
++    // Left Controller Tooltip
++    if (this._vrControllerLeft && this._gazeTooltipLeft && this._vrPoseLeft) {
++      const ctlPos = [this._vrPoseLeft[12], this._vrPoseLeft[13], this._vrPoseLeft[14]];
++      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
++
++      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
++      // Fade over time based on delta (assuming ~60fps, 0.1 delta = 6 frames to fade)
++      this._gazeTooltipLeft._opacity += (targetOpacity - this._gazeTooltipLeft._opacity) * 0.15;
++      this._gazeTooltipLeft.setOpacity(this._gazeTooltipLeft._opacity);
++
++      if (this._gazeTooltipLeft._isVisible) {
++        this._gazeTooltipLeft.updateMatrices(cam, ctlPos);
++        this._gazeTooltipLeft.render();
++      }
++    }
++
++    // Right Controller Tooltip
++    if (this._vrControllerRight && this._gazeTooltipRight && this._vrPoseRight) {
++      const ctlPos = [this._vrPoseRight[12], this._vrPoseRight[13], this._vrPoseRight[14]];
++      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
++
++      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
++      this._gazeTooltipRight._opacity += (targetOpacity - this._gazeTooltipRight._opacity) * 0.15;
++      this._gazeTooltipRight.setOpacity(this._gazeTooltipRight._opacity);
++
++      if (this._gazeTooltipRight._isVisible) {
++        this._gazeTooltipRight.updateMatrices(cam, ctlPos);
++        this._gazeTooltipRight.render();
++      }
++    }
++
+   }
+ 
+   // Simplified VR Render (Delegates to _renderSceneVR)
+@@ -2873,6 +2944,75 @@ class Scene {
+           }
+           state.axes[3] = valY;
+         }
++
++        // --- VR ERGONOMICS: HYBRID BUTTONS ---
++        const btns = source.gamepad.buttons;
++        if (btns.length > 4) {
++          const now = performance.now();
++          const HYBRID_THRESHOLD = 300; // ms
++
++          // DOMINANT HAND: 'A' or 'X' Button (Button 4) -> Toggle Subtract
++          if (isDom) {
++            const btnA = btns[4];
++            const tracker = this._vrButtonStates[this._dominantHand].A;
++            if (btnA && btnA.pressed !== tracker.pressed) {
++              if (btnA.pressed) {
++                // Button Down
++                tracker.time = now;
++                tracker.longPressActive = false;
++              } else {
++                // Button Up: Evaluate Quick Tap vs Long Press Release
++                const delta = now - tracker.time;
++                if (tracker.longPressActive) {
++                  // It was a momentary hold that is now releasing
++                  this._vrSubtractActive = false;
++                } else if (delta < HYBRID_THRESHOLD) {
++                  // Quick Tap: Toggle State
++                  this._vrSubtractActive = !this._vrSubtractActive;
++                }
++                tracker.longPressActive = false;
++              }
++              tracker.pressed = btnA.pressed;
++            } else if (btnA && btnA.pressed && !tracker.longPressActive) {
++              // Holding button down: Check if we crossed the threshold
++              if (now - tracker.time >= HYBRID_THRESHOLD) {
++                tracker.longPressActive = true;
++                this._vrSubtractActive = true; // Engage momentary mode
++              }
++            }
++          }
++
++          // NON-DOMINANT HAND: 'X' or 'A' Button (Button 4) -> Toggle Main Menu
++          if (isNonDom) {
++            const btnX = btns[4];
++            const handKey = this._dominantHand === 'right' ? 'left' : 'right';
++            const tracker = this._vrButtonStates[handKey].X;
++            if (btnX && btnX.pressed !== tracker.pressed) {
++              if (btnX.pressed) {
++                tracker.time = now;
++                tracker.longPressActive = false;
++              } else {
++                const delta = now - tracker.time;
++                if (tracker.longPressActive) {
++                  // Momentary Release -> Hide Menu
++                  if (this._guiXR) this._guiXR.setVisibility(false);
++                } else if (delta < HYBRID_THRESHOLD) {
++                  // Quick Tap -> Toggle Menu
++                  if (this._guiXR) this._guiXR.toggleVisibility();
++                }
++                tracker.longPressActive = false;
++              }
++              tracker.pressed = btnX.pressed;
++            } else if (btnX && btnX.pressed && !tracker.longPressActive) {
++              if (now - tracker.time >= HYBRID_THRESHOLD) {
++                tracker.longPressActive = true;
++                // Momentary Hold -> Show Menu
++                if (this._guiXR) this._guiXR.setVisibility(true);
++              }
++            }
++          }
++        }
++
+       }
+ 
+       // 1. Common Pose Gathering (for All Tasks)
+@@ -3741,9 +3881,8 @@ class Scene {
+         if (session && session.inputSources) {
+           for (let src of session.inputSources) {
+             if (src.handedness === nonDomHand && src.gamepad) {
+-              // Button 0 (Trigger) or Button 1 (Squeeze)
+-              if ((src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) ||
+-                (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed)) {
++              // Legacy Support: Button 1 (Squeeze)
++              if (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed) {
+                 isNegative = true;
+                 break;
+               }
+@@ -3751,6 +3890,11 @@ class Scene {
+           }
+         }
+ 
++        // Apply Hybrid Button State
++        if (this._vrSubtractActive) {
++          isNegative = true;
++        }
++
+         this._vrIsNegative = isNegative; // Logic for Rendering
+ 
+         // Universal Sub Mode: Override Tool Negative State
+@@ -3871,6 +4015,35 @@ class Scene {
+         const origNegative = tool ? tool._negative : false;
+         if (isNegative && tool) tool._negative = !origNegative;
+ 
++        // VR Ergonomics: Temporary Smooth Modifier
++        // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
++        let isSmoothOverride = false;
++        if (session && session.inputSources) {
++          for (let src of session.inputSources) {
++            if (src.handedness === nonDomHand && src.gamepad) {
++              // Button 0 (Index Trigger)
++              if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
++                isSmoothOverride = true;
++                break;
++              }
++            }
++          }
++        }
++
++        let previousToolIndex = -1;
++        if (isSmoothOverride) {
++          // 2 is SCULPT_SMOOTH in Enums.Tools
++          // Or we can just grab it by name if we don't know the Enum explicitly here.
++          // Let's rely on sculptManager._tools[2] or similar, but safer to find it.
++          const smoothToolIndex = this._sculptManager._tools.findIndex(t => t && t.constructor.name === 'Smooth');
++          if (smoothToolIndex !== -1 && tool !== this._sculptManager._tools[smoothToolIndex]) {
++            previousToolIndex = this._sculptManager._toolIndex;
++            this._sculptManager._toolIndex = smoothToolIndex;
++            // Sync radius from current tool to smooth tool so size feels consistent
++            this._sculptManager.getCurrentTool()._radius = tool._radius;
++          }
++        }
++
+         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
+           isNegative: isNegative,
+           controllers: xrControllers,
+@@ -3881,6 +4054,9 @@ class Scene {
+ 
+         // Restore original state immediately
+         if (isNegative && tool) tool._negative = origNegative;
++        if (isSmoothOverride && previousToolIndex !== -1) {
++          this._sculptManager._toolIndex = previousToolIndex;
++        }
+       } else {
+         if (window.screenLog) window.screenLog("Scene: No updateXR found!", "red");
+         this._sculptManager.update();
+diff --git a/src/drawables/VRMenu.js b/src/drawables/VRMenu.js
+index 82b380b..efe8e91 100644
+--- a/src/drawables/VRMenu.js
++++ b/src/drawables/VRMenu.js
+@@ -240,7 +240,8 @@ class VRMenu {
+ 
+ 
+   render(main) {
+-    if (this._guiXR) this._guiXR.updateTexture();
++    if (!this._guiXR || !this._guiXR._isVisible) return;
++    this._guiXR.updateTexture();
+ 
+     // Debug Log (Throttle)
+     if (!this._logThrottle) this._logThrottle = 0;
+diff --git a/src/gui/GuiXR.js b/src/gui/GuiXR.js
+index 8f0d27a..ae5f117 100644
+--- a/src/gui/GuiXR.js
++++ b/src/gui/GuiXR.js
+@@ -30,9 +30,9 @@ import Remesh from '../editing/Remesh.js';
+ import ShaderBase from '../render/shaders/ShaderBase.js';
+ import StateManager from '../states/StateManager.js';
+ 
+-const TAB_HEIGHT = 68; // Increased from 52 (+30%)
+-const TAB_ROWS = 3; // Rows of tabs
+-const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // Reserved for Tabs
++const TAB_HEIGHT = 0; // Mini-HUD has no tabs
++const TAB_ROWS = 0; // Rows of tabs
++const HEADER_HEIGHT = 0; // Reserved for Tabs
+ const CANVAS_SIZE = 1024;
+ // Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
+ // Top Row: Files, Scene, History, Settings
+@@ -42,21 +42,14 @@ const CANVAS_SIZE = 1024;
+ // The mockup shows Tabs at the top, and then collapsible sections below.
+ // We will group widgets into "Sections" instead of just "Tabs".
+ 
+-// Group 1: Global Tabs (Top)
+ // Group 1: Global Tabs (Top)
+ const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Settings', 'About & Help'];
+-// Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
+-// Or does clicking one hide others?
+-// User said: "panel has collapsible sections like the desktop"
+-// This implies they are all stacked vertically.
+-
+-const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
++// Group 2: Layout Sections
++// Mini-HUD: Only show Sculpting tools
++const SECTIONS = ['Sculpting & Painting'];
+ 
+ // Map old Tabs to new Layout Logic
+ // Files, Scene, History, Settings -> Top Bar (Tabs)
+-// View -> Rendering Section
+-// Topology -> Topology Section
+-// Tools -> Sculpting & Painting Section
+ 
+ const COLOR_HEADER = '#111';
+ const COLOR_SECTION_BG = '#282828';
+@@ -96,14 +89,14 @@ export default class GuiXR {
+     this._dropperIcon = new Image();
+     this._dropperIcon.src = 'resources/dropper.png';
+ 
++    this._isVisible = true; // Overall visibility of the HUD
++
+     this._needsRedraw = true; // Request Canvas Redraw
+     this._needsUpload = true; // Request GPU Upload (formerly _needsUpdate)
+     this._textureAllocated = false;
+     this._activeTab = 'Sculpting & Painting'; // Default section open?
+     // Actually if they are collapsible, we need a map of open/closed states.
+     this._sectionStates = {
+-      'Rendering': false,
+-      'Topology': false,
+       'Sculpting & Painting': true
+     };
+ 
+@@ -1739,36 +1732,15 @@ export default class GuiXR {
+     ctx.textAlign = 'center';
+     ctx.font = '32px sans-serif';
+ 
++    /* Mini-HUD: Disable Global Tabs Rendering
+     const drawRow = (row, rowIndex) => {
+-      const rW = w / row.length;
+-      const y = rowIndex * TAB_HEIGHT;
+-      row.forEach((t, i) => {
+-        const x = i * rW;
+-        const isActive = (t === this._viewMode);
+-        const isHovered = (t === this._hoverTab);
+-
+-        // Minimal Styling
+-        ctx.fillStyle = isActive ? '#eee' : '#111';
+-        ctx.fillRect(x, y, rW, TAB_HEIGHT);
+-
+-        // Hover Highlight
+-        if (isHovered) {
+-          ctx.fillStyle = '#333';
+-          ctx.fillRect(x, y, rW, TAB_HEIGHT);
+-        }
+-
+-        ctx.strokeStyle = (isHovered) ? '#aaa' : '#333';
+-        ctx.lineWidth = (isHovered) ? 4 : 1;
+-        ctx.strokeRect(x, y, rW, TAB_HEIGHT);
+-
+-        ctx.fillStyle = isActive ? '#000' : '#888';
+-        ctx.fillText(t, x + rW / 2, y + TAB_HEIGHT / 2 + 8);
+-      });
++      // ...
+     };
+ 
+     drawRow(row1, 0);
+     drawRow(row2, 1);
+     drawRow(row3, 2);
++    */
+ 
+     // --- DRAW WIDGETS ---
+     const widgets = this._getWidgets();
+@@ -2675,6 +2647,18 @@ export default class GuiXR {
+     ctx.fill();
+   }
+ 
++  setVisibility(val) {
++    if (this._isVisible !== val) {
++      this._isVisible = val;
++      this._needsRedraw = true;
++    }
++  }
++
++  toggleVisibility() {
++    this._isVisible = !this._isVisible;
++    this._needsRedraw = true;
++  }
++
+   update() {
+     // 1. Redraw if requested (Input/Hover changes)
+     if (this._needsRedraw) {
