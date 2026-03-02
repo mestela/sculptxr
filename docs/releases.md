@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.40
+- **Fix**: **Left Handed Mode Crash**: Resolved a `TypeError: Cannot read properties of undefined` crash that occurred when switching to "Left Handed" mode and pressing the primary controller button. The VR button state tracking logic in `Scene.js` was generalized from hardcoded physical mapping (`.A` / `.X`) to a unified `.Primary` key that dynamically binds correctly for both standard and inverted interaction profiles.
+
 ## v0.9.39
 - **Fix**: **Mini-HUD Radius Persistence**: Fixed a bug where selecting tools from the Mini-HUD popup would reset UI widgets (like the Radius slider) back to an arbitrary default (`0.20`), hiding the tool's actual saved state. Modified `syncWidgetValues` and `updateRadiusWidget` to ensure complete state synchronization across `_guiXR`, `_guiMini`, and `_guiPopup` render loops without breaking tool callbacks.
 - **Fix**: **Controller Thumbstick Radius**: Adjusted the hardware thumbstick (up/down) to dynamically scale the brush size in both the main menu and the new Mini-HUD instantly (via simultaneous calls to both UI contexts).
