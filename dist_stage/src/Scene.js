@@ -3004,9 +3004,12 @@ class Scene {
 
                 tools.setRadius(newVal);
 
-                // Update GuiXR Slider if visible
+                // Update GuiXR and GuiMini Sliders if visible
                 if (this._guiXR) {
                   this._guiXR.updateRadiusWidget(newVal);
+                }
+                if (this._guiMini) {
+                  this._guiMini.updateRadiusWidget(newVal);
                 }
 
                 // Force Render
