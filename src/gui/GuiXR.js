@@ -2912,7 +2912,6 @@ export default class GuiXR {
   }
   updateRadiusWidget(val) {
     // Helper to update the radius slider visual if it exists
-    if (!this._tabWidgets['TOOLS']) return; // Not generated yet? or use a better lookup
     // Actually we need to search in active tools widget if it's there
     // If not, we don't need to do anything as it will be regenerated with correct value.
     // But if it IS visible, we should update it.

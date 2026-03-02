@@ -116,8 +116,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
           } else {
             main.getSculptManager().setToolIndex(opt.id);
           }
-          if (main.guiXR) main.guiXR.refreshToolsWidget();
-          if (main.guiMini) main.guiMini.refreshToolsWidget();
+          if (main._guiXR) main._guiXR.refreshToolsWidget();
+          if (main._guiMini) main._guiMini.refreshToolsWidget();
         }
       });
     });
@@ -255,7 +255,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     const btnSize = (350 - 20) / 3; // 3 buttons, 10px gaps
 
     // Helper to refresh
-    const refresh = () => { if (main.guiXR) main.guiXR.refreshToolsWidget(); };
+    const refresh = () => { if (main._guiXR) main._guiXR.refreshToolsWidget(); };
 
     for (let r = 0; r < 3; ++r) {
       for (let c = 0; c < 3; ++c) {
@@ -321,8 +321,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         activeTool._mode = m;
         activeTool._negative = neg;
         // Force re-render of UI to show active state
-        if (main.guiXR) {
-          main.guiXR.refreshToolsWidget();
+        if (main._guiXR) {
+          main._guiXR.refreshToolsWidget();
         }
       }
     };
@@ -388,7 +388,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool && activeTool.applyResolution) {
           activeTool.applyResolution();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       }
     });
@@ -404,7 +404,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool && activeTool.toggleVoxelWireframe) {
           activeTool.toggleVoxelWireframe();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       }
     });
@@ -421,7 +421,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool && activeTool.toggleSmooth) {
           activeTool.toggleSmooth();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       }
     });
@@ -458,7 +458,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (activeTool) {
           activeTool._modulateRadius = !activeTool._modulateRadius;
           main.render();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       }
     });
@@ -475,7 +475,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (activeTool) {
           activeTool._modulateIntensity = !activeTool._modulateIntensity;
           main.render();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       }
     });
@@ -542,7 +542,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         // if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
         activeTool._negative = !activeTool._negative;
         main.render();
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       } else {
         // if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
       }
@@ -561,7 +561,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         // if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
         activeTool._clay = !activeTool._clay;
         main.render();
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
   });
@@ -578,7 +578,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         // if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
         activeTool._accumulate = !activeTool._accumulate;
         main.render();
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
   });
@@ -593,7 +593,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       if (activeTool) {
         activeTool._culling = !activeTool._culling;
         main.render();
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
   });
@@ -615,7 +615,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       if (activeTool && activeTool._lockPosition !== undefined) {
         activeTool._lockPosition = !activeTool._lockPosition;
         // if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
   });
@@ -647,7 +647,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         activeTool._idAlpha = name;
         // if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
         // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
-        if (main.guiXR) main.guiXR._needsRedraw = true;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
   });
@@ -692,7 +692,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
           mgr._symmetry = !mgr._symmetry;
           // if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
           main.render();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       });
       y += btnH + gapBtn;
@@ -755,7 +755,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
           mgr._continuous = !mgr._continuous;
           // if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
           main.render();
-          if (main.guiXR) main.guiXR._needsRedraw = true;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
         }
       });
       y += btnH + gapSection;

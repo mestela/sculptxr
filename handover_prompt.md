@@ -1,13 +1,12 @@
 # SculptXR Handover Prompt
 
 ## Current State
-The project is currently at **v0.9.22**.
+The project is currently at **v0.9.38**.
 We recently implemented a dual VR menu system with a "Mini-HUD" panel anchored to the non-dominant hand and a transient 3-column Tool Picker overlay.
+We have successfully fixed the UI rendering bugs where the hover states and active slider values were not updating visually on the new popups because their WebGL canvases were not being told to upload their textures in the `onXRFrame` render loop.
 
 ## Status / Current Bug
-The user has reported a new bug: **Clicking the tool button in the Mini-HUD incorrectly launches the main VR menu and shows the 3-column selection there instead of staying isolated or using its own instance.**
+The user has confirmed that the Mini-HUD and Tool Picker are now working correctly as of v0.9.38.
 
 **Pending Task:**
-- Investigate why the Mini-HUD is launching the main VR menu when the tool button is clicked.
-- Double-check if we are incorrectly reusing elements or doubling up on names (e.g. `guiXR.openOverlay` vs `guiMini.openOverlay` or `main.guiXR.setVisibility(true)` being called unintentionally).
-- Ensure separate instances of the tool combobox/picker are correctly handled so the Mini-HUD launches its own transient popup without bringing up the main VR menu.
+- ask user
