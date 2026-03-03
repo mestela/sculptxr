@@ -1,7 +1,7 @@
 
 ## Todo
 - **Functionality**:
-    - move brush slowdown in standalone while just hovering. other brushes too.
+    - ~~move brush slowdown in standalone while just hovering. other brushes too.~~ **DONE v0.9.44**
     - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo

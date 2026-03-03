@@ -464,7 +464,9 @@ class SculptBase {
 
     var pick1 = picking.getMesh();
     if (pick1) {
-      picking.pickVerticesInSphere(picking.getLocalRadius2());
+      if (isSculpting) {
+        picking.pickVerticesInSphere(picking.getLocalRadius2());
+      }
       picking.computePickedNormal();
     }
 
@@ -588,7 +590,7 @@ class SculptBase {
 
           // TOPOLOGICAL VERTEX SELECTION
           var symMapUsed = false;
-          if (pick1) {
+          if (isSculpting && pick1) {
             // Robust Fallback
             let symData = null;
             if (typeof mesh.getSymmetryData === 'function') {
@@ -612,7 +614,7 @@ class SculptBase {
             }
           }
 
-          if (!symMapUsed) {
+          if (isSculpting && !symMapUsed) {
             pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
           }
           pickingSym.computePickedNormal();
