@@ -1776,6 +1776,13 @@ export default class GuiXR {
           w.value = activeTool._negative;
           changed = true;
         }
+      } else if (w.id === 'wireframe') {
+        const mesh = this._main.getMesh();
+        const showWire = mesh ? mesh.getShowWireframe() : false;
+        if (w.value !== showWire) {
+          w.value = showWire;
+          changed = true;
+        }
       } else if (w.id === 'culling') {
         if (w.value !== activeTool._culling) {
           w.value = activeTool._culling;
