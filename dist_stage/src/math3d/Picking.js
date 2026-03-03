@@ -272,8 +272,26 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // Collect faces in sphere
-      var iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
+      // OPTIMIZATION: Small inner search radius first (5cm)
+      // We only need to find the absolute closest face to the controller for the cursor 'hit' point.
+      // Searching the full brush radius (e.g. 25cm) would pull in thousands of faces and O(N) distance checks.
+      var maxInnerSearchMeters = 0.05;
+      var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
+      maxInnerSearchMeters /= vrScale;
+
+      var innerLocalRadius = maxInnerSearchMeters / scale;
+      var innerLocalRadiusSq = innerLocalRadius * innerLocalRadius;
+
+      var searchRadiusSq = Math.min(localRadiusSq, innerLocalRadiusSq);
+
+      // Collect faces in small close-proximity sphere
+      var iFaces = mesh.intersectSphere(localCenter, searchRadiusSq);
+
+      // If missing but brush is large enough, fallback to the full expensive radius
+      if (iFaces.length === 0 && localRadiusSq > searchRadiusSq) {
+        iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
+      }
+
       if (iFaces.length === 0) continue;
 
       vAr = mesh.getVertices();
