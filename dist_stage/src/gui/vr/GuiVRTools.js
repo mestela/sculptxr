@@ -534,7 +534,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   widgets.push({
     type: 'checkbox',
     id: 'negative',
-    label: 'Negative (N or -Alt)',
+    label: 'Negative',
     x: col1X, y: y, w: 550, h: btnH,
     value: activeTool ? activeTool._negative : false,
     onInteract: () => {
@@ -545,6 +545,24 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (main._guiXR) main._guiXR._needsRedraw = true;
       } else {
         // if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
+      }
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
+    type: 'checkbox',
+    id: 'wireframe',
+    label: 'Wireframe',
+    x: col1X, y: y, w: 550, h: btnH,
+    value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
+    onInteract: () => {
+      const mesh = main.getMesh();
+      if (mesh) {
+        mesh.setShowWireframe(!mesh.getShowWireframe());
+        main.render();
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
       }
     }
   });
