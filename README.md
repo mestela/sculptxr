@@ -1,4 +1,4 @@
-# SculptXR (v0.9.0)
+# SculptXR (v0.9.43)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptgl_vr2.jpg)
@@ -11,9 +11,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.43: Ergonomics and VR UI Polish, including a new Mini-HUD system
 *   v0.9.0: Version bump for major release cycle
 *   v0.8.230: Tidy up unused repository files
-*   v0.8.228: Restore AR mode for standalone quest 3 browser
 
 
 [View Full Release History](docs/releases.md)
