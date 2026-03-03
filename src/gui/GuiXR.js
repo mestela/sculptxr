@@ -609,8 +609,9 @@ export default class GuiXR {
     const data = this._overlayData;
     const isToolPicker = data.isToolPicker;
 
-    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
-    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+    // Menus are scaled up by 1.13 (OVERLAY_SCALE), so we must invert the ray coordinate 
+    // to map back to the unscaled 1:1 layout space used by the widgets.
+    const invScale = 1.0 / OVERLAY_SCALE;
 
     const pivot = this._getOverlayPivot();
 
@@ -967,12 +968,14 @@ export default class GuiXR {
     } else {
       // Only execute widget clicks on a STRICT RISING EDGE to prevent double-firings
       // when holding the trigger for >250ms (unless it's a slider which needs continuous press)
-      const needsContinuous = (targetWid && targetWid.type === 'slider') || this._activeSlider;
+      // STRIKT START CHECK: To start any interaction on this layer, we MUST have a rising edge.
+      // This prevents "leakage" from overlays that close on the first frame of a press.
+      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent);
 
-      if (needsContinuous) {
-        if (!isPressed) return; // Need continuous press
+      if (isDragging) {
+        if (!isPressed) return; // Continue drag
       } else {
-        if (!isRisingEdge) return; // Normal widgets strictly need rising edge
+        if (!isRisingEdge) return; // Block fall-through!
       }
     }
 
@@ -1151,8 +1154,9 @@ export default class GuiXR {
     const data = this._overlayData;
     const isToolPicker = data && data.isToolPicker;
 
-    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
-    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+    // Menus are scaled up by 1.13 (OVERLAY_SCALE), so we must invert the ray coordinate 
+    // to map back to the unscaled 1:1 layout space used by the widgets.
+    const invScale = 1.0 / OVERLAY_SCALE;
 
     const pivot = this._getOverlayPivot();
     cx = (cx - pivot.x) * invScale + pivot.x;

@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+## v0.9.56
+- **UI**: **Hit-test Alignment Fix**: Resolved a coordinate misalignment issue in the Tool Picker and other overlays where the visual buttons and their hitboxes would diverge, especially at the edges of the screen. Fixed a scale mismatch where overlays were drawn at 1.13x scale but hit-tested at 1.0x scale.
+
+## v0.9.55
+- **UI**: **Mini-HUD Interaction Fix**: Resolved a critical issue where selecting a tool in the Mini-HUD tool picker would bleed the interaction event through to the radius slider beneath it on the next frame, unintentionally maximizing brush size. Implemented a strict rising-edge requirement for all base-layer interactions in `GuiXR.js`.
+
 ## v0.9.50
 - **Optimization**: **Scaled World O(N) Bottleneck**: Replaced the VR cursor's static 5cm inner-search with an iterative, expanding octree search. This fixes a massive frame rate drop that occurred when using the 2-hand gesture to scale the world down, which previously caused the 5cm physical search sphere to encompass the entire dense mesh, triggering O(N) distance checks on all ~50,000+ faces at 90hz. The iterative search guarantees the engine only evaluates the few polygons physically intersecting the closest edge of the controller, regardless of world scale or brush size.
 
