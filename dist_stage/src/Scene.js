@@ -747,8 +747,8 @@ class Scene {
 
       // Render Popup slightly forward and above the MiniHUD center
       if (this._vrPopup && this._guiPopup && this._guiPopup._overlay) {
-        const popupPose = mat4.clone(hudPose);
-        const popupLift = mat4.create();
+        let popupPose = mat4.clone(hudPose);
+        let popupLift = mat4.create();
 
         // Default offsets
         let px = 0.0;
@@ -760,10 +760,6 @@ class Scene {
           if (window.tpDebug.x !== undefined) px = window.tpDebug.x;
           if (window.tpDebug.y !== undefined) py = window.tpDebug.y;
           if (window.tpDebug.z !== undefined) pz = window.tpDebug.z;
-
-          if (window.screenLog && Math.random() < 0.05) {
-            window.screenLog(`Combo Offset: X:${px.toFixed(3)} Y:${py.toFixed(3)} Z:${pz.toFixed(3)}`, 'cyan');
-          }
         }
 
         mat4.fromTranslation(popupLift, [px, py, pz]);

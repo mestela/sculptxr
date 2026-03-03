@@ -1,7 +1,6 @@
 
 ## Todo
 - **Functionality**:
-    - more odd performance regressions in standalone, esp when the mesh is scaled small
     - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo
@@ -21,8 +20,8 @@
     - facegroups
     - pose tool
 - **UI + UX**
-    - some tools have a stupidly large brush radius. twist? what else?
-    - mini HUD alpha issue in AR; right side clips mesh
+    - still getting radius slider mishits when selecting pinch tool
+    - grip button remapped incorrectly? investigate
     - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
     - mini HUD colour chooser when in paint
@@ -40,6 +39,9 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~some tools have a stupidly large brush radius. twist? what else?~~  **DONE v0.9.64**
+- ~~mini HUD alpha issue in AR; right side clips mesh~~   **DONE v0.9.65**
+- ~~more odd performance regressions in standalone, esp when the mesh is scaled small~~  **DONE v0.9.46**
 - ~~fix latch to feel better (should react instantly, latch after 300ms)~~ **DONE v0.9.44**
 - ~~move brush slowdown in standalone while just hovering. other brushes too.~~ **DONE v0.9.44**
 - ~~option to swap secondary trigger to smooth~~ **DONE v0.9.42**
