@@ -18,12 +18,10 @@
     - facegroups
     - pose tool
 - **UI + UX**
-    - option to swap secondary trigger to smooth
-    - popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.
-    - smaller persistent menu for key things; tool select, radius, intensity.. colour when in paint?
-    - subtract toggle as a button on the primary controller
+    - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
+    - mini hud colour chooser when in paint
     - buttons on controllers should be user configurable
-    - display assignments on controller buttons... floating labels? a 2d diagram?
+    - display assignments on controller buttons... floating labels
     - isolate in view/scene is inverted
     - paint tool needs color swatch (fg/bg?)
     - paint tool intensity needs remapping, low values hard to use
@@ -34,10 +32,12 @@
     - toolbar/shortcut bar
     - outliner
     - Really need to make 100% VR native dialog, filebrowser for import/export
-    - Combobox for tool needs a rethink. separate panel? Stack of most recently used tools ala zbrush?
     
 ## Done
-
+- ~~option to swap secondary trigger to smooth~~ **DONE v0.9.42**
+- ~~popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.~~ **DONE v0.9.42**
+- ~~smaller persistent menu for key things; tool select, radius, intensity.. colour when in paint?~~ **DONE v0.9.42**
+- ~~subtract toggle as a button on the primary controller~~ **DONE v0.9.42**
 - ~~In stationary mode, the controllers and menu scale when scaling the world; they should remain the same size relative to the desktop screen~~ **DONE v0.8.227**
 - ~~crease brush breaks symmetry~~ **DONE v0.8.161**
 - ~~still some topology symmetry issues~~ **DONE v0.8.161**

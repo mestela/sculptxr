@@ -339,8 +339,6 @@ class Scene {
       const tool = this._sculptManager.getCurrentTool();
       const toolName = tool ? tool.constructor.name : "None";
       const toolIdx = this._sculptManager.getToolIndex();
-      // if (window.screenLog) window.screenLog(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`, "lime");
-      // console.log(`Auto-Selected Tool: ${toolName} (Idx: ${toolIdx})`);
 
       // Force Voxel Start if Voxel Tool provided
       if (toolName === 'SculptVoxel' && tool.forceInit) {
@@ -2009,7 +2007,6 @@ class Scene {
         this._vrControllerRight = makeCtrl([0.0, 0.0, 1.0]); // BLUE
         this.loadVRController('right');
       }
-      // if (window.screenLog) window.screenLog("Created Controllers (Loading Models...)", "lime");
     }
 
     // Init VR Menu System
@@ -2146,7 +2143,6 @@ class Scene {
         try {
           // Log header for debug
           var headerPreview = xhr.response ? xhr.response.substring(0, 50).replace(/\n/g, '\\n') : "null";
-          // console.log(`PLY Header (${handedness}): ${headerPreview}`);
 
           var meshes = Import.importPLY(xhr.response, this._gl);
           if (meshes && meshes.length > 0) {
@@ -2169,7 +2165,6 @@ class Scene {
               if (handedness === 'left') this._vrControllerLeft = mesh;
               else this._vrControllerRight = mesh;
 
-              // if (window.screenLog) window.screenLog(`Loaded ${handedness} Controller (PLY)`, "lime");
             } else {
               if (window.screenLog) window.screenLog(`Empty mesh for ${handedness}`, "orange");
             }
@@ -2666,8 +2661,6 @@ class Scene {
             };
 
             if (!this._loggedTripodDebug) {
-              // console.log("%c--- SCULPTXR TRIPOD INTERACTIVE DEBUGGER ---", "color: #00ff00; font-weight: bold; font-size: 14px;");
-              // console.log("Dynamically rethink the exact camera tracking matrices in real-time.");
               // ... logs disabled for production clarity ...
               this._loggedTripodDebug = true;
             }
@@ -2900,7 +2893,6 @@ class Scene {
           if (state.waitingForNeutral) {
             if (Math.abs(valX) < T_RELEASE) {
               state.waitingForNeutral = false;
-              // if (window.screenLog) window.screenLog("Shortcuts: Reset", "gray");
             }
           } else {
             // Ready to fire
@@ -3000,7 +2992,6 @@ class Scene {
                 const oldVal = tools._radius;
                 const newVal = Math.max(5.0, Math.min(maxRadius, oldVal + change));
 
-                // if (window.screenLog) window.screenLog(`Radius: ${newVal.toFixed(0)}`, "yellow");
 
                 tools.setRadius(newVal);
 
@@ -3376,7 +3367,6 @@ class Scene {
         const anyGripped = leftGrip || rightGrip;
         if (!anyGripped) {
           this._vrTwoHanded.latch = false; // RELEASE LATCH
-          // if (window.screenLog) window.screenLog("Double Grip Latch Released", "gray");
         }
 
         // Ensure single states are reset
@@ -3931,7 +3921,6 @@ class Scene {
         this._vrTriggerReleaseTime = 0; // Reset Timer
 
         // Deep Trace: Start Stroke
-        // if (window.screenLog) window.screenLog(`Scene: START STROKE (${source.handedness})`, "lime");
 
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
@@ -3942,7 +3931,6 @@ class Scene {
     } else {
       if (this._vrSculpting) {
         const reason = !isTriggerPressed ? "Trigger Released" : "Logic Blocked";
-        // if (window.screenLog) window.screenLog(`Scene: END STROKE (${reason}) Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive}`, "red");
 
         this._vrSculpting = false;
         this._vrLockedHand = null; // UNLOCK HAND
@@ -4233,7 +4221,6 @@ class Scene {
   toggleSpectatorCalibration() {
     this._isCalibratingSpectator = !this._isCalibratingSpectator;
     const label = this._isCalibratingSpectator ? "CALIBRATION MODE (Move Me)" : "Standard Mode";
-    // if (window.screenLog) window.screenLog(label, this._isCalibratingSpectator ? "magenta" : "lime");
     console.log(label);
     this.render();
   }

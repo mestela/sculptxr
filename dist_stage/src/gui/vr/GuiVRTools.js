@@ -313,7 +313,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     const isNeg = activeTool._negative; // Current negative state
 
     // DEBUG: Log current state construction
-    // console.log(`GuiVRTools Build: Mode=${mode} Neg=${isNeg}`);
 
     // Helper to set mode
     const setVoxelMode = (m, neg) => {
@@ -437,7 +436,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool && activeTool.bakeToMesh) {
           activeTool.bakeToMesh();
-          // if (window.screenLog) window.screenLog('Voxel Baked to Mesh', 'lime');
         }
       }
     });
@@ -539,12 +537,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     value: activeTool ? activeTool._negative : false,
     onInteract: () => {
       if (activeTool) {
-        // if (window.screenLog) window.screenLog('Toggling Negative', 'yellow');
         activeTool._negative = !activeTool._negative;
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
       } else {
-        // if (window.screenLog) window.screenLog('Error: No Active Tool', 'red');
       }
     }
   });
@@ -576,7 +572,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     value: activeTool ? activeTool._clay : false,
     onInteract: () => {
       if (activeTool) {
-        // if (window.screenLog) window.screenLog('Toggling Clay', 'yellow');
         activeTool._clay = !activeTool._clay;
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
@@ -593,7 +588,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     value: activeTool ? activeTool._accumulate : false,
     onInteract: () => {
       if (activeTool) {
-        // if (window.screenLog) window.screenLog('Toggling Accumulate', 'yellow');
         activeTool._accumulate = !activeTool._accumulate;
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
@@ -632,7 +626,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     onInteract: () => {
       if (activeTool && activeTool._lockPosition !== undefined) {
         activeTool._lockPosition = !activeTool._lockPosition;
-        // if (window.screenLog) window.screenLog(`Lock Position: ${activeTool._lockPosition}`, 'yellow');
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }
@@ -663,7 +656,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       if (activeTool) {
         const name = alphaNames[idx];
         activeTool._idAlpha = name;
-        // if (window.screenLog) window.screenLog(`Alpha Set: ${name}`, 'lime');
         // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
@@ -681,9 +673,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       const input = document.getElementById('alphaopen');
       if (input) {
         input.click();
-        // if (window.screenLog) window.screenLog('Desktop File Picker Opened', 'yellow');
       } else {
-        // if (window.screenLog) window.screenLog('Error: #alphaopen not found', 'red');
       }
     }
   });
@@ -708,7 +698,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         value: mgr._symmetry,
         onInteract: () => {
           mgr._symmetry = !mgr._symmetry;
-          // if (window.screenLog) window.screenLog(`Symmetry: ${mgr._symmetry}`, 'lime');
           main.render();
           if (main._guiXR) main._guiXR._needsRedraw = true;
         }
@@ -771,7 +760,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         value: mgr._continuous,
         onInteract: () => {
           mgr._continuous = !mgr._continuous;
-          // if (window.screenLog) window.screenLog(`Continuous: ${mgr._continuous}`, 'lime');
           main.render();
           if (main._guiXR) main._guiXR._needsRedraw = true;
         }
