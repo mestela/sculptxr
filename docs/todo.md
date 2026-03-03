@@ -1,6 +1,7 @@
 
 ## Todo
 - **Functionality**:
+    - more odd performance regressions in standalone, esp when the mesh is scaled small
     - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo
@@ -20,7 +21,6 @@
     - facegroups
     - pose tool
 - **UI + UX**
-    
     - some tools have a stupidly large brush radius. twist? what else?
     - mini HUD alpha issue in AR; right side clips mesh
     - mini HUD could be a little higher, slightly uncomfortable atm

@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.50
+- **Optimization**: **Scaled World O(N) Bottleneck**: Replaced the VR cursor's static 5cm inner-search with an iterative, expanding octree search. This fixes a massive frame rate drop that occurred when using the 2-hand gesture to scale the world down, which previously caused the 5cm physical search sphere to encompass the entire dense mesh, triggering O(N) distance checks on all ~50,000+ faces at 90hz. The iterative search guarantees the engine only evaluates the few polygons physically intersecting the closest edge of the controller, regardless of world scale or brush size.
+
 ## v0.9.49
 - **UX**: **Instant Button Latch**: The VR primary and secondary buttons (used for Negative Mode and Mini-HUD toggle) now respond instantly on press-down rather than waiting for release. If maintained as a long-press (transient hold over 300ms), the tool will seamlessly revert back to its previous state upon release.
 

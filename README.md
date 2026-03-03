@@ -1,4 +1,4 @@
-# SculptXR (v0.9.49)
+# SculptXR (v0.9.50)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.50: Performance Optimization: Bounded iterative Octree search fixes O(N) lag spikes when using large brushes on scaled-down worlds.
 *   v0.9.49: VR Ergonomics: Buttons now latch instantly on press, and intelligently revert if held as a transient press.
 *   v0.9.48: UI Polish: The 3D VR brush radius sphere is now dynamically tinted red or blue to show the tool's mode.
 *   v0.9.46: Performance Optimization: Multi-pass inner search constraint for VR cursor intersection, massive CPU saving on large brushes.

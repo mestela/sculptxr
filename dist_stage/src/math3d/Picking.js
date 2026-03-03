@@ -272,24 +272,45 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // OPTIMIZATION: Small inner search radius first (5cm)
-      // We only need to find the absolute closest face to the controller for the cursor 'hit' point.
-      // Searching the full brush radius (e.g. 25cm) would pull in thousands of faces and O(N) distance checks.
-      var maxInnerSearchMeters = 0.05;
+      // OPTIMIZATION: Multi-pass inner search (Iterative)
+      // When the world is scaled down significantly in VR (to work on fine details), 
+      // a "small" physical radius (e.g. 5cm) can encompass the entire dense mesh, 
+      // pulling in thousands of faces for distance checks and causing massive frame drops.
+      // We iteratively expand a search sphere to guarantee the first intersection is a "grazing" hit,
+      // minimizing the faces returned from the octree to strictly the closest surface details.
+
+      var maxLocalRadiusSq = localRadiusSq;
+      var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
       var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
-      maxInnerSearchMeters /= vrScale;
 
-      var innerLocalRadius = maxInnerSearchMeters / scale;
-      var innerLocalRadiusSq = innerLocalRadius * innerLocalRadius;
+      var bound = mesh.getLocalBound();
+      var dx = bound[3] - bound[0];
+      var dy = bound[4] - bound[1];
+      var dz = bound[5] - bound[2];
+      var meshLocalSize = Math.hypot(dx, dy, dz); // Using hypot for safety
 
-      var searchRadiusSq = Math.min(localRadiusSq, innerLocalRadiusSq);
+      // Step size is physically 5cm OR 5% of the mesh's bounding size, whichever is smaller.
+      var physicalStepLocal = (0.05 / vrScale) / scale;
+      var meshStepLocal = Math.max(0.0001, meshLocalSize * 0.05);
+      var stepLocal = Math.min(physicalStepLocal, meshStepLocal);
 
-      // Collect faces in small close-proximity sphere
-      var iFaces = mesh.intersectSphere(localCenter, searchRadiusSq);
+      // Protect against insanely huge volumetric brushes triggering too many steps (cap at 60 lookups)
+      if (maxLocalRadius / stepLocal > 60) {
+        stepLocal = maxLocalRadius / 60;
+      }
 
-      // If missing but brush is large enough, fallback to the full expensive radius
-      if (iFaces.length === 0 && localRadiusSq > searchRadiusSq) {
-        iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
+      var iFaces = [];
+      var currentSearchR = stepLocal;
+
+      while (currentSearchR <= maxLocalRadius) {
+        iFaces = mesh.intersectSphere(localCenter, currentSearchR * currentSearchR);
+        if (iFaces.length > 0) break;
+        currentSearchR += stepLocal;
+      }
+
+      // If we didn't hit anything and didn't reach the exact max radius, do final check
+      if (iFaces.length === 0 && currentSearchR - stepLocal < maxLocalRadius) {
+        iFaces = mesh.intersectSphere(localCenter, maxLocalRadiusSq);
       }
 
       if (iFaces.length === 0) continue;
