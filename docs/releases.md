@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+## v0.9.41
+- **UI Tweaks**: Added 'Wireframe' toggle directly to the Mini-HUD panel, below the Negative mode toggle.
+- **UI Tweaks**: Shortened "Negative (N or -Alt)" to just "Negative" to reduce text crowding.
+- **Fix**: Removed residual debug text (`SculptXR v...`) from the Mini-HUD rendering loop.
+- **Fix**: Resolved an intercept bug in `GuiXR.js`'s `_updateHover()` method where the `cy < HEADER_HEIGHT` logic (originally meant for tabs) was inappropriately clearing mouse highlights for UI widgets physically located at the top of the Mini-HUD canvas (like Tool Select and Radius).
+
 ## v0.9.40
 - **Fix**: **Left Handed Mode Crash**: Resolved a `TypeError: Cannot read properties of undefined` crash that occurred when switching to "Left Handed" mode and pressing the primary controller button. The VR button state tracking logic in `Scene.js` was generalized from hardcoded physical mapping (`.A` / `.X`) to a unified `.Primary` key that dynamically binds correctly for both standard and inverted interaction profiles.
 
