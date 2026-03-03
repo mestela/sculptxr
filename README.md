@@ -27,9 +27,13 @@ It should work on any WebXR compatible device. So far I've tested on:
 ### Basics
 Press the 'Enter VR' button. If you're on a device that supports passthrough, press the 'Enter AR' button.
 
-The right controller is the primary sculpting tool, the left contains the VR menu. I've duplicated every option from the SculptGL desktop UI into this menu, and dropped a few that don't make sense. It's a bit clunky atm, I'll work on a nicer menu for v2.
+The right controller is the primary sculpting tool. The left controller contains a mini menu to change tool, radius, intensity, negative mode, toggle wireframe.
 
-Holding down the left trigger will activate 'sub' mode for most tools, so the brush tool will remove material instead of adding, inflate will deflate etc.
+Right trigger will sculpt. Holding down left trigger while using right trigger will smooth.
+
+The A button will engage 'negative' mode, so a brush build up will become a brush carve for example.
+
+The X button will launch the full VR Menu.
 
 Pushing the left controller thumbstick left/right will undo/redo.
 
