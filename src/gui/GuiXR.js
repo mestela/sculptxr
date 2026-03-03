@@ -547,7 +547,7 @@ export default class GuiXR {
     }
 
     // 1. Check Tabs (Header Area)
-    if (cy < HEADER_HEIGHT) {
+    if (!this._isMiniHUD && !this._isPopupHUD && cy < HEADER_HEIGHT) {
       this._hoverWidget = null;
 
       const rW = CANVAS_SIZE / 3;
@@ -686,7 +686,7 @@ export default class GuiXR {
 
       // Filter to only the core bare minimum controls for the Mini-HUD
       // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
-      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative'];
+      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe'];
       const filtered = rawWidgets.filter(w => allowedIds.includes(w.id));
 
       // Re-pack vertically and clamp width for the new 300x500 Mini-HUD canvas
@@ -1834,16 +1834,18 @@ export default class GuiXR {
       ctx.fillRect(0, 0, w, h);
 
       // Draw Version Info (Debug)
-      ctx.fillStyle = '#666';
-      ctx.font = '16px sans-serif';
-      ctx.textAlign = 'right';
-      const vText = `SculptXR ${VERSION}`;
-      ctx.fillText(vText, w - 10, 24);
+      if (!this._isMiniHUD) {
+        ctx.fillStyle = '#666';
+        ctx.font = '16px sans-serif';
+        ctx.textAlign = 'right';
+        const vText = `SculptXR ${VERSION}`;
+        ctx.fillText(vText, w - 10, 24);
 
-      const buildDesc = "Voxel Slowdown Debugging";
-      ctx.font = '12px sans-serif';
-      ctx.fillText(buildDesc, w - 10, 42);
-      ctx.textAlign = 'left';
+        const buildDesc = "Voxel Slowdown Debugging";
+        ctx.font = '12px sans-serif';
+        ctx.fillText(buildDesc, w - 10, 42);
+        ctx.textAlign = 'left';
+      }
     }
 
 
