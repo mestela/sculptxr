@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+## v0.9.46
+- **Optimization**: **O(N) Picking Bottleneck**: Added a multi-pass inner search constraint to `Picking.js:intersectionSphereMeshes` that checks a 5cm proximity radius before defaulting to the full brush volumetric sweep. This drastically reduces CPU load when hovering with massive brush radii over dense geometry by evaluating strictly the nearest dozen triangles rather than thousands, solving the large-brush framerate drop across all tools.
+
+## v0.9.44
+- **Optimization**: **Redundant Topology Hit Detect**: Prevented instances of `pickVerticesInSphere` from firing continuously on every hover frame when `isSculpting` is false within `SculptBase.js`.
+
 ## v0.9.43
 - **Fix**: **Sync Wireframe Toggle**: Enabled the new 'Wireframe' checkbox on the Mini-HUD to stay visually synced with the active mesh's state, rather than just firing one-way callbacks.
 - **Cleanup**: Stripped stale debug logging (`window.screenLog`) statements from `Scene.js` and `GuiVRTools.js` in preparation for main deployment.

@@ -1,4 +1,4 @@
-# SculptXR (v0.9.44)
+# SculptXR (v0.9.46)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,10 +11,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.46: Performance Optimization: Multi-pass inner search constraint for VR cursor intersection, massive CPU saving on large brushes.
 *   v0.9.44: Performance Optimization: Eliminated redundant topology intersection checks during VR hover.
 *   v0.9.43: Ergonomics and VR UI Polish, including a new Mini-HUD system
-*   v0.9.0: Version bump for major release cycle
-*   v0.8.230: Tidy up unused repository files
 
 
 [View Full Release History](docs/releases.md)
