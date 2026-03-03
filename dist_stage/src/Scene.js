@@ -210,8 +210,8 @@ class Scene {
 
     // VR Ergonomics: Hybrid Button Trackers
     this._vrButtonStates = {
-      left: { X: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } },
-      right: { A: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } }
+      left: { Primary: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } },
+      right: { Primary: { pressed: false, time: 0 }, Trigger: { pressed: false, time: 0 } }
     };
     this._vrSubtractActive = false;
     this._vrSmoothOverride = false;
@@ -3032,7 +3032,7 @@ class Scene {
           // DOMINANT HAND: 'A' or 'X' Button (Button 4) -> Toggle Subtract
           if (isDom) {
             const btnA = btns[4];
-            const tracker = this._vrButtonStates[this._dominantHand].A;
+            const tracker = this._vrButtonStates[this._dominantHand].Primary;
             if (btnA && btnA.pressed !== tracker.pressed) {
               if (btnA.pressed) {
                 // Button Down
@@ -3064,7 +3064,7 @@ class Scene {
           if (isNonDom) {
             const btnX = btns[4];
             const handKey = this._dominantHand === 'right' ? 'left' : 'right';
-            const tracker = this._vrButtonStates[handKey].X;
+            const tracker = this._vrButtonStates[handKey].Primary;
             if (btnX && btnX.pressed !== tracker.pressed) {
               if (btnX.pressed) {
                 tracker.time = now;
