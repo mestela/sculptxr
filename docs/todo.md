@@ -16,14 +16,16 @@
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
     - render options? export depth, normal etc
+    - smear/relax brush to even out topology
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
 - **UI + UX**
-    - mini hud alpha issue in AR; right side clips mesh
-    - mini hud could be a little higher, slightly uncomfortable atm
+    - tint sphere with current mode; red for +ve, blue for -ve
+    - mini HUD alpha issue in AR; right side clips mesh
+    - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
-    - mini hud colour chooser when in paint
+    - mini HUD colour chooser when in paint
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
     - isolate in view/scene is inverted
