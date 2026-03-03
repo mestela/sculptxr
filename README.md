@@ -1,7 +1,7 @@
 # SculptXR (v0.9.43)
 WebXR Sculpting
 
-![SculptGL VR Screenshot](assets/sculptgl_vr2.jpg)
+![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
 <br>*SculptXR running natively on a Quest 3 in AR/passthrough mode.*
 
 ## Overview
