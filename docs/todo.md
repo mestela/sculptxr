@@ -20,6 +20,7 @@
     - facegroups
     - pose tool
 - **UI + UX**
+    - update version string in lower right corner of desktop
     - still getting radius slider mishits when selecting pinch tool
     - grip button remapped incorrectly? investigate
     - mini HUD could be a little higher, slightly uncomfortable atm
