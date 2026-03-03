@@ -31,7 +31,9 @@ ShaderTexture.fragment = [
   'varying vec2 vTexCoord;',
   'uniform sampler2D uTexture;',
   'void main() {',
-  '  gl_FragColor = texture2D(uTexture, vTexCoord);',
+  '  vec4 texColor = texture2D(uTexture, vTexCoord);',
+  '  if (texColor.a < 0.01) discard;',
+  '  gl_FragColor = texColor;',
   '}'
 ].join('\n');
 

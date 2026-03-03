@@ -37,7 +37,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       x: col1X, y: y, w: 710, h: 80, // Much larger and wider, acts as the primary HUD button
       onInteract: () => {
         const toolPickerWidgets = [];
-        const pad = 5;
+        const pad = 0; // Removed padding to create a solid block
         const cols = 3;
         const btnW = 150;
         const btnH = 60;
@@ -56,7 +56,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
             x: startX + col * (btnW + pad) + pad,
             y: startY + row * (btnH + pad) + pad,
             w: btnW, h: btnH,
-            noBg: true,
             data: { active: activeToolIndex === opt.id },
             onInteract: () => {
               const guiGroup = main.getGui()._ctrlSculpting;

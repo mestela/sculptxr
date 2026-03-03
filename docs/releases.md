@@ -1,5 +1,26 @@
 # SculptXR Release History
 
+## v0.9.65
+- **Tooling**: **Interactive Combobox Positioning**: Injected a `window.tpDebug` override into `Scene.js`. When running in PCVR, developers can now interactively adjust the 3D X/Y/Z offsets of the Tool Picker combobox (`_vrPopup`) via the DevTools console to perfectly tune its spatial alignment relative to the controller.
+
+## v0.9.64
+- **UI**: **Continuous Tool Picker Layout**: Adjusted the Tool Picker in `GuiVRTools.js` to have 0 padding between buttons. Modified the button border rendering in `GuiXR.js` to draw clean, inset 1px borders. This eliminates the visual gaps between buttons, merging them into a single, contiguous UI panel without needing an overarching background quad.
+
+## v0.9.63
+- **Rendering**: **WebXR Alpha Cutout Fix**: Resolved a critical rendering issue where transparent parts of the UI overlay canvases (like the Tool Picker) were overwriting the WebXR Framebuffer's alpha channel to 0 during standard blending. This caused the XR compositor to show the real-world passthrough instead of the 3D scene behind the UI. Fixed by adding a `discard` check for pixels with `alpha < 0.01` in the primary Texture shader.
+
+## v0.9.62
+- **UI**: **Tool Picker Legibility**: Removed the `noBg` flag from the Tool Picker buttons. The buttons now render with their own individual solid gray backgrounds, ensuring readability against the 3D scene after the overarching background panel was removed in v0.9.61.
+
+## v0.9.61
+- **UI**: **Tool Picker Simplification**: Completely removed the dark background panel from the Tool Picker overlay. The tool buttons now float directly over the 3D scene, eliminating any overlapping alpha rendering issues while preserving the pre-v0.9.57 layout alignment.
+
+## v0.9.60
+- **UI**: **Tool Picker Alignment Fix**: Corrected the bounds of the dark background quad on the Tool Picker combobox. By calculating the exact width/height of the button grid in `GuiVRTools.js` and passing it to the overlay renderer, the dark background now tightly wraps the buttons, removing the unnecessary alpha punch-out on the right and bottom edges.
+
+## v0.9.59
+- **Internal**: **Baseline Revert**: Reverted all experimental alignment and depth changes to commit `7c85b8f` to establish a clean baseline for depth testing.
+
 ## v0.9.56
 - **UI**: **Hit-test Alignment Fix**: Resolved a coordinate misalignment issue in the Tool Picker and other overlays where the visual buttons and their hitboxes would diverge, especially at the edges of the screen. Fixed a scale mismatch where overlays were drawn at 1.13x scale but hit-tested at 1.0x scale.
 

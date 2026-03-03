@@ -2210,16 +2210,7 @@ export default class GuiXR {
 
       // Dimmer / Background blocker for Tool Picker
       if (this._overlayData.isToolPicker) {
-        ctx.fillStyle = '#202020';
-
-        // Since widgets define their own box, let's strictly draw the background to match 
-        // the provided `mw` and `mh` dimensions instead of filling the whole canvas `w`, `h`
-        ctx.fillRect(x, y, mw, mh);
-
-        // Add a subtle border to the Tool Picker background itself for definition
-        ctx.strokeStyle = this.styles.overlayMenuBorder || '#444';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, mw, mh);
+        // REMOVED: Background panel removed to prevent layout and alpha issues. Buttons float directly.
       }
 
       // Menu Box
@@ -2367,11 +2358,14 @@ export default class GuiXR {
               ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
               ctx.lineWidth = 1; // Reset
             } else if (isActive) {
+              ctx.lineWidth = 1;
               ctx.strokeStyle = '#00f040';
-              ctx.strokeRect(wx, wy, wid.w, wid.h);
+              // Inset by 0.5 for crisp 1px inner border
+              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
             } else {
-              ctx.strokeStyle = '#444';
-              ctx.strokeRect(wx, wy, wid.w, wid.h);
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = '#222'; // Darker subtle separator instead of #444
+              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
             }
           }
 

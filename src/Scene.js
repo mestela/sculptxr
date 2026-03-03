@@ -747,11 +747,22 @@ class Scene {
 
       // Render Popup slightly forward and above the MiniHUD center
       if (this._vrPopup && this._guiPopup && this._guiPopup._overlay) {
-        const popupPose = mat4.clone(hudPose);
-        const popupLift = mat4.create();
-        // Shift +Y to align with Tool select button (0.032m). Shift +Z or -Z to float over HUD. 
-        // Based on user feedback, +1.5cm put it BEHIND, so we need -1.5cm to bring it forward.
-        mat4.fromTranslation(popupLift, [0.0, 0.032, -0.015]);
+        let popupPose = mat4.clone(hudPose);
+        let popupLift = mat4.create();
+
+        // Default offsets
+        let px = 0.0;
+        let py = 0.032;
+        let pz = -0.015;
+
+        // Interactive overrides via PCVR DevTools console
+        if (window.tpDebug) {
+          if (window.tpDebug.x !== undefined) px = window.tpDebug.x;
+          if (window.tpDebug.y !== undefined) py = window.tpDebug.y;
+          if (window.tpDebug.z !== undefined) pz = window.tpDebug.z;
+        }
+
+        mat4.fromTranslation(popupLift, [px, py, pz]);
         mat4.multiply(popupPose, popupPose, popupLift);
         this._vrPopup.updateMatrices(cam, popupPose);
         this._vrPopup.render(this);

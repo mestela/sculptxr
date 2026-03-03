@@ -609,8 +609,9 @@ export default class GuiXR {
     const data = this._overlayData;
     const isToolPicker = data.isToolPicker;
 
-    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
-    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+    // Menus are scaled up by 1.13 (OVERLAY_SCALE), so we must invert the ray coordinate 
+    // to map back to the unscaled 1:1 layout space used by the widgets.
+    const invScale = 1.0 / OVERLAY_SCALE;
 
     const pivot = this._getOverlayPivot();
 
@@ -967,12 +968,14 @@ export default class GuiXR {
     } else {
       // Only execute widget clicks on a STRICT RISING EDGE to prevent double-firings
       // when holding the trigger for >250ms (unless it's a slider which needs continuous press)
-      const needsContinuous = (targetWid && targetWid.type === 'slider') || this._activeSlider;
+      // STRIKT START CHECK: To start any interaction on this layer, we MUST have a rising edge.
+      // This prevents "leakage" from overlays that close on the first frame of a press.
+      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent);
 
-      if (needsContinuous) {
-        if (!isPressed) return; // Need continuous press
+      if (isDragging) {
+        if (!isPressed) return; // Continue drag
       } else {
-        if (!isRisingEdge) return; // Normal widgets strictly need rising edge
+        if (!isRisingEdge) return; // Block fall-through!
       }
     }
 
@@ -1151,8 +1154,9 @@ export default class GuiXR {
     const data = this._overlayData;
     const isToolPicker = data && data.isToolPicker;
 
-    // Determine scale (PopupHUD draws 1:1, main menu scales overlays by 1.13)
-    const invScale = (this._isPopupHUD || isToolPicker) ? 1.0 : (1 / OVERLAY_SCALE);
+    // Menus are scaled up by 1.13 (OVERLAY_SCALE), so we must invert the ray coordinate 
+    // to map back to the unscaled 1:1 layout space used by the widgets.
+    const invScale = 1.0 / OVERLAY_SCALE;
 
     const pivot = this._getOverlayPivot();
     cx = (cx - pivot.x) * invScale + pivot.x;
@@ -2206,16 +2210,7 @@ export default class GuiXR {
 
       // Dimmer / Background blocker for Tool Picker
       if (this._overlayData.isToolPicker) {
-        ctx.fillStyle = '#202020';
-
-        // Since widgets define their own box, let's strictly draw the background to match 
-        // the provided `mw` and `mh` dimensions instead of filling the whole canvas `w`, `h`
-        ctx.fillRect(x, y, mw, mh);
-
-        // Add a subtle border to the Tool Picker background itself for definition
-        ctx.strokeStyle = this.styles.overlayMenuBorder || '#444';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, mw, mh);
+        // REMOVED: Background panel removed to prevent layout and alpha issues. Buttons float directly.
       }
 
       // Menu Box
@@ -2363,11 +2358,14 @@ export default class GuiXR {
               ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
               ctx.lineWidth = 1; // Reset
             } else if (isActive) {
+              ctx.lineWidth = 1;
               ctx.strokeStyle = '#00f040';
-              ctx.strokeRect(wx, wy, wid.w, wid.h);
+              // Inset by 0.5 for crisp 1px inner border
+              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
             } else {
-              ctx.strokeStyle = '#444';
-              ctx.strokeRect(wx, wy, wid.w, wid.h);
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = '#222'; // Darker subtle separator instead of #444
+              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
             }
           }
 
