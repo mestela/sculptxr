@@ -1,7 +1,6 @@
 
 ## Todo
 - **Functionality**:
-    - ~~move brush slowdown in standalone while just hovering. other brushes too.~~ **DONE v0.9.44**
     - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo
@@ -21,7 +20,7 @@
     - facegroups
     - pose tool
 - **UI + UX**
-    - tint sphere with current mode; red for +ve, blue for -ve
+    - some tools have a stupidly large brush radius. twist? what else?
     - mini HUD alpha issue in AR; right side clips mesh
     - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
@@ -40,7 +39,9 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~move brush slowdown in standalone while just hovering. other brushes too.~~ **DONE v0.9.44**
 - ~~option to swap secondary trigger to smooth~~ **DONE v0.9.42**
+- ~~tint sphere with current mode; red for +ve, blue for -ve~~ **DONE v0.9.48**
 - ~~popup menu - rather than being persistent, it should be a hold-to-show, release-to-hide.~~ **DONE v0.9.42**
 - ~~smaller persistent menu for key things; tool select, radius, intensity.. colour when in paint?~~ **DONE v0.9.42**
 - ~~subtract toggle as a button on the primary controller~~ **DONE v0.9.42**

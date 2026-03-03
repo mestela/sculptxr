@@ -1054,6 +1054,15 @@ class Scene {
       // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
       mat4.scale(mSphere, mSphere, [r, r, r]);
 
+      // Tint the sphere based on positive/negative mode to match the radius circle.
+      // Selection ring uses Red for negative, Blue for positive. 
+      // Base color is [0.5, 0.5, 0.5], so we tint slightly towards red/blue.
+      if (this._vrIsNegative) {
+        this._vrBrushRadiusSphere.setFlatColor([0.7, 0.3, 0.3]); // Slightly Red
+      } else {
+        this._vrBrushRadiusSphere.setFlatColor([0.3, 0.3, 0.7]); // Slightly Blue
+      }
+
       this._vrBrushRadiusSphere.updateMatrices(cam);
 
       gl2.enable(gl2.BLEND);
