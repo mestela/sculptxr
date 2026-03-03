@@ -20,6 +20,8 @@
     - facegroups
     - pose tool
 - **UI + UX**
+    - mini hud alpha issue in AR; right side clips mesh
+    - mini hud could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
     - mini hud colour chooser when in paint
     - buttons on controllers should be user configurable
