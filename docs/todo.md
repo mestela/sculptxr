@@ -1,6 +1,8 @@
 
 ## Todo
 - **Functionality**:
+    - move brush slowdown in standalone while just hovering. other brushes too.
+    - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo
     - voxel straight line mode
