@@ -20,6 +20,7 @@
     - facegroups
     - pose tool
 - **UI + UX**
+    
     - some tools have a stupidly large brush radius. twist? what else?
     - mini HUD alpha issue in AR; right side clips mesh
     - mini HUD could be a little higher, slightly uncomfortable atm
@@ -39,6 +40,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~fix latch to feel better (should react instantly, latch after 300ms)~~ **DONE v0.9.44**
 - ~~move brush slowdown in standalone while just hovering. other brushes too.~~ **DONE v0.9.44**
 - ~~option to swap secondary trigger to smooth~~ **DONE v0.9.42**
 - ~~tint sphere with current mode; red for +ve, blue for -ve~~ **DONE v0.9.48**

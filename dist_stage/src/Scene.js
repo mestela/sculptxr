@@ -1054,6 +1054,15 @@ class Scene {
       // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
       mat4.scale(mSphere, mSphere, [r, r, r]);
 
+      // Tint the sphere based on positive/negative mode to match the radius circle.
+      // Selection ring uses Red for negative, Blue for positive. 
+      // Base color is [0.5, 0.5, 0.5], so we tint slightly towards red/blue.
+      if (this._vrIsNegative) {
+        this._vrBrushRadiusSphere.setFlatColor([0.7, 0.3, 0.3]); // Slightly Red
+      } else {
+        this._vrBrushRadiusSphere.setFlatColor([0.3, 0.3, 0.7]); // Slightly Blue
+      }
+
       this._vrBrushRadiusSphere.updateMatrices(cam);
 
       gl2.enable(gl2.BLEND);
@@ -3026,19 +3035,19 @@ class Scene {
             const tracker = this._vrButtonStates[this._dominantHand].Primary;
             if (btnA && btnA.pressed !== tracker.pressed) {
               if (btnA.pressed) {
-                // Button Down
+                // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
+                this._vrSubtractActive = !this._vrSubtractActive;
               } else {
-                // Button Up: Evaluate Quick Tap vs Long Press Release
-                const delta = now - tracker.time;
+                // Button Up
                 if (tracker.longPressActive) {
-                  // It was a momentary hold that is now releasing
-                  this._vrSubtractActive = false;
-                } else if (delta < HYBRID_THRESHOLD) {
-                  // Quick Tap: Toggle State
+                  // It was a momentary hold (transient mode) that is now releasing
+                  // Revert the state back to what it was before pressing down
                   this._vrSubtractActive = !this._vrSubtractActive;
                 }
+                // If it was a quick tap (delta < HYBRID_THRESHOLD), do nothing on release
+                // because we already toggled it on button down.
                 tracker.longPressActive = false;
               }
               tracker.pressed = btnA.pressed;
@@ -3046,7 +3055,7 @@ class Scene {
               // Holding button down: Check if we crossed the threshold
               if (now - tracker.time >= HYBRID_THRESHOLD) {
                 tracker.longPressActive = true;
-                this._vrSubtractActive = true; // Engage momentary mode
+                // We don't need to change _vrSubtractActive here because we did it on press-down
               }
             }
           }
@@ -3058,25 +3067,25 @@ class Scene {
             const tracker = this._vrButtonStates[handKey].Primary;
             if (btnX && btnX.pressed !== tracker.pressed) {
               if (btnX.pressed) {
+                // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
+                if (this._guiXR) this._guiXR.toggleVisibility();
               } else {
-                const delta = now - tracker.time;
+                // Button Up
                 if (tracker.longPressActive) {
-                  // Momentary Release -> Hide Menu
-                  if (this._guiXR) this._guiXR.setVisibility(false);
-                } else if (delta < HYBRID_THRESHOLD) {
-                  // Quick Tap -> Toggle Menu
+                  // Momentary Release -> Revert menu visibility
                   if (this._guiXR) this._guiXR.toggleVisibility();
                 }
+                // If quick tap, do nothing on release
                 tracker.longPressActive = false;
               }
               tracker.pressed = btnX.pressed;
             } else if (btnX && btnX.pressed && !tracker.longPressActive) {
+              // Holding button down: Check if we crossed the threshold
               if (now - tracker.time >= HYBRID_THRESHOLD) {
                 tracker.longPressActive = true;
-                // Momentary Hold -> Show Menu
-                if (this._guiXR) this._guiXR.setVisibility(true);
+                // Menu visibility was already toggled on press-down
               }
             }
           }

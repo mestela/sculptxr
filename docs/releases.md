@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+## v0.9.49
+- **UX**: **Instant Button Latch**: The VR primary and secondary buttons (used for Negative Mode and Mini-HUD toggle) now respond instantly on press-down rather than waiting for release. If maintained as a long-press (transient hold over 300ms), the tool will seamlessly revert back to its previous state upon release.
+
+## v0.9.48
+- **UI**: **Tinted Hover Sphere**: The 3D VR brush radius sphere now dynamically tints its white x-ray material slightly red when Negative Mode is active (and slightly blue when positive), providing a much clearer visual anchor that perfectly matches the surface alignment cursor.
+
 ## v0.9.46
 - **Optimization**: **O(N) Picking Bottleneck**: Added a multi-pass inner search constraint to `Picking.js:intersectionSphereMeshes` that checks a 5cm proximity radius before defaulting to the full brush volumetric sweep. This drastically reduces CPU load when hovering with massive brush radii over dense geometry by evaluating strictly the nearest dozen triangles rather than thousands, solving the large-brush framerate drop across all tools.
 
