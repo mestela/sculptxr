@@ -1,6 +1,10 @@
 # SculptXR Release History
 
-## v0.9.41
+## v0.9.43
+- **Fix**: **Sync Wireframe Toggle**: Enabled the new 'Wireframe' checkbox on the Mini-HUD to stay visually synced with the active mesh's state, rather than just firing one-way callbacks.
+- **Cleanup**: Stripped stale debug logging (`window.screenLog`) statements from `Scene.js` and `GuiVRTools.js` in preparation for main deployment.
+
+## v0.9.42
 - **UI Tweaks**: Added 'Wireframe' toggle directly to the Mini-HUD panel, below the Negative mode toggle.
 - **UI Tweaks**: Shortened "Negative (N or -Alt)" to just "Negative" to reduce text crowding.
 - **Fix**: Removed residual debug text (`SculptXR v...`) from the Mini-HUD rendering loop.

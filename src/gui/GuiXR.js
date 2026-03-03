@@ -237,7 +237,6 @@ export default class GuiXR {
     // Toggle-to-Close Logic
     // If the active overlay corresponds to this tab, close it and return.
     if (this._overlay === 'menu' && this._overlayData && this._overlayData.tabName === tabName) {
-      // console.log(`[GuiXR] Toggling closed tab: ${tabName}`);
       this.closeOverlay();
       this._activeCombobox = null;
       return;
@@ -351,7 +350,6 @@ export default class GuiXR {
     document.body.appendChild(div);
     this._previewContainer = div;
 
-    // console.log(`[GuiXR] Desktop Preview Visible. Canvas: ${this._canvas.width}x${this._canvas.height}`);
 
     // Start Desktop Render Loop
     const loop = () => {
@@ -663,7 +661,6 @@ export default class GuiXR {
       // Debug Logging for transition
       const oldId = this._hoverOverlayWidget ? (this._hoverOverlayWidget.id || this._hoverOverlayWidget.label) : 'null';
       const newId = newHover ? (newHover.id || newHover.label) : 'null';
-      // console.log(`[GuiXR] Hover Change: ${oldId} -> ${newId}`);
 
       this._hoverOverlayWidget = newHover;
       this._needsRedraw = true;
@@ -950,7 +947,6 @@ export default class GuiXR {
     const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
 
     if (isPressed) {
-      // console.log(`[GuiXR] Interact: ${cx.toFixed(0)}, ${cy.toFixed(0)} | Target: ${targetWid ? targetWid.id : 'None'} | Scroll: ${isScrollInteraction} | Overlay: ${this._overlay}`);
     }
 
     // Dynamic Debounce
@@ -1175,7 +1171,6 @@ export default class GuiXR {
 
     if (isPressed) {
       if (cx < ox || cx > ox + ow || cy < oy || cy > oy + oh) {
-        // console.log("[GuiXR] Closing overlay (clicked outside)");
         this.closeOverlay();
         return;
       }
@@ -1184,7 +1179,6 @@ export default class GuiXR {
       const closeSize = 60;
       // Note: This logic assumes close button is always at top-right of the DEFINED overlay box
       if (cx > ox + ow - closeSize && cy < oy + closeSize) {
-        // console.log("[GuiXR] Closing overlay (close button)");
         this.closeOverlay();
         return;
       }
@@ -1210,11 +1204,9 @@ export default class GuiXR {
     if (relY < 0) return; // Clicked header area
 
     const index = Math.floor(relY / itemHeight);
-    // console.log(`[GuiXR] Combobox Click relY=${relY} index=${index}`);
 
     if (index >= 0 && index < data.options.length) {
       const opt = data.options[index];
-      // console.log(`[GuiXR] Selected option ${index}: ${opt.label}`);
       if (data.callback) data.callback(opt.id !== undefined ? opt.id : index);
       this.closeOverlay();
     }
@@ -1282,7 +1274,6 @@ export default class GuiXR {
     }
     const t1 = performance.now();
     if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
-    // console.log(`[GuiXR] Menu Click Miss: rx=${rx} ry=${ry}`);
   }
 
   _getWidgetValue(tab, id) {
@@ -1344,7 +1335,6 @@ export default class GuiXR {
       }
     }
 
-    // console.log(`[GuiXR] Opening overlay: ${type}`);
     this._overlay = type;
     this._overlayData = data;
     this._overlayOpenTime = performance.now();
@@ -1513,11 +1503,9 @@ export default class GuiXR {
     if (!main) return;
 
     const id = w.id;
-    // console.log(`[GuiXR] _executeAction: ID=${id} Type=${w.type}`);
 
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
-      // console.log(`[GuiXR] Executing onInteract for ${id}`);
       w.onInteract();
       return;
     }
@@ -2966,12 +2954,10 @@ export default class GuiXR {
       let row = Math.floor(localY / itemHeight);
 
       const index = col * rowsPerCol + row;
-      // console.log(`[GuiXR] Hit Index: ${index} (Row:${row} Col:${col}) LocalY:${localY.toFixed(1)}`);
 
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
-        // console.log(`[GuiXR] Dropdown select index=${index} optId=${opt.id} val=${val}`);
         if (w.onSelect) w.onSelect(val);
         this._activeCombobox = null;
         this._needsRedraw = true;
@@ -2990,7 +2976,6 @@ export default class GuiXR {
     }
 
     // Clicked Outside
-    // console.log("[GuiXR] Closing dropdown (clicked outside)");
     this._activeCombobox = null;
     this._needsRedraw = true;
     this.draw();
