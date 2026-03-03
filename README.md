@@ -71,7 +71,7 @@ You should now see the sculpt and your controllers on screen. Start sculpting! I
 
 If the default position feels uncomfortable (too high, too far away, too shifted left or right), use the mouse to adjust. Scrollwheel will move near/far, middle mouse will pan up/down/left/right. 
 
-My usual method is to adjust the view with the mouse so that the controllers feel comfortable in my lap, the use the grip controls to pull the sculpt into a comfortable position.
+My usual method is to adjust the view with the mouse so that the controllers feel comfortable in my lap, then use the grip controls to pull the sculpt into a comfortable position.
 
 #### Stationary mode and tracking issues
 My understanding is the Quest 3 makes a few (perfectly valid!) assumptions about tracking:
