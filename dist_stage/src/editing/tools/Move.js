@@ -40,18 +40,15 @@ class Move extends SculptBase {
       
       // VR Symmetry Init
       if (main._xrSession && main._vrControllerPos && mesh && picking._isVRHit) {
-        // Mirror 'world' pos
-          var worldPos = vec3.clone(main._vrControllerPos);
-          var mInv = mat4.create();
-          mat4.invert(mInv, mesh.getMatrix());
-          vec3.transformMat4(worldPos, worldPos, mInv); // To Local
-
-        // Use proper symmetry mathematics
+        // Use proper symmetry mathematics on the LOCAL intersection point
+        var localPos = vec3.clone(picking.getIntersectionPoint());
         var ptPlane = mesh.getSymmetryOrigin();
         var nPlane = mesh.getSymmetryNormal();
-        Geometry.mirrorPoint(worldPos, ptPlane, nPlane);
+        Geometry.mirrorPoint(localPos, ptPlane, nPlane);
 
-          vec3.transformMat4(worldPos, worldPos, mesh.getMatrix()); // Back to World
+        // Convert mirrored point back to World space for the intersection sphere test
+        var worldPos = vec3.clone(localPos);
+        vec3.transformMat4(worldPos, worldPos, mesh.getMatrix());
           
           pickingSym.intersectionSphereMeshes([mesh], worldPos, picking.getWorldRadius());
           if (pickingSym.getMesh()) {

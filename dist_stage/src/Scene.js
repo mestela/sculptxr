@@ -3816,7 +3816,9 @@ class Scene {
       if (useVolume) {
         picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], enginePos, pickingRadius);
       } else {
-        picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, engineDir);
+        const farPoint = vec3.create();
+        vec3.scaleAndAdd(farPoint, rayOrigin, engineDir, 5000.0);
+        picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, farPoint);
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;

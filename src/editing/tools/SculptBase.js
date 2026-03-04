@@ -418,6 +418,18 @@ class SculptBase {
 
     // SCULPTING STATE (Trigger Pressed)
     var dist = vec3.dist(worldPos, this._lastVRPos);
+
+    // PACING FIX: If using Aim (Raycast) mode rather than Volume intersect, the physical controller 
+    // position might barely move (e.g. wrist rotation), but the laser sweeps across the distant surface.
+    // We should compute the distance traveled on the mesh surface instead to permit continuous strokes.
+    if (!main._vrUseVolumeIntersect && picking.getMesh() && this._lastInter) {
+      var inter = picking.getIntersectionPoint();
+      if (inter) {
+        // Distance in world space across the surface of the mesh
+        dist = vec3.dist(inter, this._lastInter) * picking.getMesh().getScale();
+      }
+    }
+
     var rWorld = Math.sqrt(picking._rWorld2);
     if (rWorld < 1e-5) rWorld = main._vrLastPickingRadius || 0.05; // Fallback if previous frame missed
 
@@ -434,7 +446,7 @@ class SculptBase {
     }
 
     var mesh = this.getMesh();
-    if (mesh) {
+    if (mesh && main._vrUseVolumeIntersect) {
       picking.intersectionSphereMeshes([mesh], worldPos, rWorld);
     }
 
@@ -481,6 +493,12 @@ class SculptBase {
       if (main._vrControllerPos) {
         // Mirror World Pos
         var worldPos = vec3.clone(main._vrControllerPos);
+
+        // If using Aim Mode, the true 'position' is the intersection point, not the controller
+        if (!main._vrUseVolumeIntersect && picking.getMesh()) {
+          vec3.transformMat4(worldPos, picking.getIntersectionPoint(), mesh.getMatrix());
+        }
+
         var matInv = mat4.create();
         mat4.invert(matInv, mesh.getMatrix());
 
