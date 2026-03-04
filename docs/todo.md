@@ -22,7 +22,7 @@
     
 - **UI + UX**
     - the smooth and move brushes are unaffected by dynamic topology mode. 
-    - still getting radius slider mishits when selecting pinch tool
+    - still getting radius slider mis-hits when selecting pinch tool
     - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
     - buttons on controllers should be user configurable
@@ -37,6 +37,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~mini hud combobox occasionally sets radius slider to huge number~~ **DONE v0.9.94**
 - ~~paint tool needs colour swatch (fg/bg?)~~ **DONE v0.9.85**
 - ~~mini HUD colour chooser when in paint~~ **DONE v0.9.85**
 - ~~long distance ray intersect sculpting for Ian~~ **DONE v0.9.83**
