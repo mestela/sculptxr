@@ -12,10 +12,9 @@
 2.  **Deployment Protocol (CI/CD)**:
     *   **Rule**: EVERY CODE CHANGE (no matter how small) requires a **Beta Deployment**.
     *   **Process**:
-        1.  Increment `index.html` version (e.g., `v0.7.272`).
-        2.  Run `./deploy_beta.sh`.
-        3.  **ONLY THEN** ask the user to test.
-        4.  **ALWAYS** state the specific version number in the chat (e.g., "Deployed v0.7.280").
+        1.  Run `./deploy_beta.sh`. The script will automatically increment the `index.html` patch version if needed.
+        2.  **ONLY THEN** ask the user to test.
+        3.  **ALWAYS** state the specific version number in the chat (e.g., "Deployed v0.7.280").
     *   **Prohibited**: Asking "Can you test this?" without deploying or without stating the version.
 
 3.  **Debug Visibility**:

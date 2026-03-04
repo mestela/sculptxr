@@ -3986,11 +3986,8 @@ class Scene {
         if (session && session.inputSources) {
           for (let src of session.inputSources) {
             if (src.handedness === nonDomHand && src.gamepad) {
-              // Legacy Support: Button 1 (Squeeze)
-              if (src.gamepad.buttons[1] && src.gamepad.buttons[1].pressed) {
-                isNegative = true;
-                break;
-              }
+              // Removed Legacy Support for Button 1 (Squeeze) activating negative mode here.
+              // Negative mode is now handled solely by the UI toggle (vrSubtractActive).
             }
           }
         }

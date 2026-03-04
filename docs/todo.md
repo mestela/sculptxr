@@ -20,7 +20,10 @@
     - facegroups
     - pose tool
 - **UI + UX**
-    - update version string in lower right corner of desktop
+    - ~~move brush strength always stays at 100, no matter what it's set to.~~ **DONE v0.9.71**
+    - the smooth and move brushes are unaffected by dynamic topology mode. 
+    - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
+    - ~~update version string in lower right corner of desktop~~ **DONE v0.9.67**
     - still getting radius slider mishits when selecting pinch tool
     - grip button remapped incorrectly? investigate
     - mini HUD could be a little higher, slightly uncomfortable atm

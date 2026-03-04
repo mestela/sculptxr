@@ -497,10 +497,16 @@ class Move extends SculptBase {
 
     // 2. MOVE PHASE: Apply deltas
     
+    // Scale Rotation by Intensity
+    var qIdentity = quat.create();
+    var qScaledLocal = quat.create();
+    quat.slerp(qScaledLocal, qIdentity, qDeltaLocal, this._intensity);
+
     // Apply Primary Move
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
-      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qDeltaLocal, useSym);
+      vec3.scale(moveData.dir, moveData.dir, this._intensity);
+      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qScaledLocal, useSym);
     }
 
     // Apply Symmetry Move
@@ -517,9 +523,10 @@ class Move extends SculptBase {
             Geometry.mirrorPoint(symCurrLocal, ptPlane, nPlane);
 
             vec3.sub(moveDataSym.dir, symCurrLocal, symStartLocal);
+          vec3.scale(moveDataSym.dir, moveDataSym.dir, this._intensity);
 
             // Mirror Rotation
-            var qDeltaSym = quat.clone(qDeltaLocal);
+          var qDeltaSym = quat.clone(qScaledLocal);
             qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
             qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
 
