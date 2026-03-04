@@ -1,5 +1,15 @@
 # SculptXR Release History
 
+## v0.9.71
+- **Fix**: **VR Move Brush Intensity**: Fixed an issue where the VR Move tool ignored the intensity slider and applied 100% displacement. Both positional drag and wrist rotation are now properly scaled by the brush intensity setting in VR.
+
+## v0.9.70
+- **Fix**: **Secondary Grip Collision**: Removed legacy logic that forced negative/subtract mode when the secondary hand's grip button was pressed, decoupling it and allowing the grip to function purely for 6DOF world navigation.
+
+## v0.9.68 - v0.9.69
+- **Deployment**: **Automated Version Bumps**: The `deploy.sh` and `deploy_beta.sh` scripts now automatically increment the patch version in `index.html` and `src/Version.js` when detecting a repeat deployment.
+- **UI**: **Environment Labeling**: The version string in the bottom right of the UI now explicitly appends ` - PROD` or ` - BETA` based on the deployment hostname to prevent feedback confusion.
+
 ## v0.9.65
 - **Tooling**: **Interactive Combobox Positioning**: Injected a `window.tpDebug` override into `Scene.js`. When running in PCVR, developers can now interactively adjust the 3D X/Y/Z offsets of the Tool Picker combobox (`_vrPopup`) via the DevTools console to perfectly tune its spatial alignment relative to the controller.
 
