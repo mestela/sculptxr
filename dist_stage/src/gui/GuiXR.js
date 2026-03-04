@@ -633,7 +633,7 @@ export default class GuiXR {
     if (Math.random() < 0.05 && isToolPicker) logHit = true;
 
     if (logHit && window.screenLog) {
-      window.screenLog(`[Hvr] cy:${cy.toFixed(0)} scy:${scy.toFixed(0)} ry:${ry.toFixed(0)} invScale:${invScale.toFixed(2)}`, 'orange');
+      // window.screenLog(`[Hvr] cy:${cy.toFixed(0)} scy:${scy.toFixed(0)} ry:${ry.toFixed(0)} invScale:${invScale.toFixed(2)}`, 'orange');
     }
 
     for (const w of this._overlayData.widgets) {
@@ -643,7 +643,7 @@ export default class GuiXR {
           newHover = w;
 
           if (logHit && window.screenLog) {
-            window.screenLog(`[Hvr] HIT! ${w.id}`, 'lime');
+            // window.screenLog(`[Hvr] HIT! ${w.id}`, 'lime');
           }
 
           break;
@@ -1244,7 +1244,7 @@ export default class GuiXR {
     const ry = cy - data.y;
 
     if (data.isToolPicker && window.screenLog) {
-      window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
+      // window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
     }
 
     if (this._activeSlider) {
@@ -1273,7 +1273,7 @@ export default class GuiXR {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
         if (!w.disabled && !w.header) {
           if (data.isToolPicker && window.screenLog) {
-            window.screenLog(`[Click] HIT! ${w.id}`, 'lime');
+            // window.screenLog(`[Click] HIT! ${w.id}`, 'lime');
           }
 
           if (w.type === 'slider') {

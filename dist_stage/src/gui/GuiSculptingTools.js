@@ -11,7 +11,7 @@ var GuiTools = GuiSculptingTools.tools;
 
 GuiSculptingTools.initGuiTools = function (sculpt, menu, main) {
   // init each tools ui
-  console.log("GuiSculptingTools.initGuiTools: VOXEL Index =", Enums.Tools.VOXEL);
+  // console.log("GuiSculptingTools.initGuiTools: VOXEL Index =", Enums.Tools.VOXEL);
   for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
     if (!Tools[i]) continue;
     // Filter out Drag tool from the mapping
