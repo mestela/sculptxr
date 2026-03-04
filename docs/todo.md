@@ -37,6 +37,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~clean up noisy Hvr/Click debug logging~~ **DONE v0.9.94**
 - ~~mini hud combobox occasionally sets radius slider to huge number~~ **DONE v0.9.94**
 - ~~paint tool needs colour swatch (fg/bg?)~~ **DONE v0.9.85**
 - ~~mini HUD colour chooser when in paint~~ **DONE v0.9.85**
