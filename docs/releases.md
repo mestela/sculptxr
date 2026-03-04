@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+## v0.9.93
+- **Fix**: **Color Picker UI Stability**: Fixed the intermittent responsiveness of the Swap Colors button by replacing the hover-exit debounce with a strict time-based cooldown (300ms).
+- **Fix**: **Color Picker Drag Locks**: Fixed a bug where dragging from the Hue ring into the SV square (or vice versa) would cause the UI math to glitch and incorrectly update the wrong region. The active dragging region is now strictly locked and values are correctly clamped even if the pointer strays outside the visual boundaries of the widget.
+
 ## v0.9.85
 - **Feature**: **Paint Tool FG/BG Color Swatch**: The Paint Tool now maintains a secondary (background) color and material state. You can swap between your foreground and background colors seamlessly via the 'Swap Colors' button in both the Desktop and VR GUIs, or instantly by pressing the `V` hotkey.
 - **Feature**: **Mini-HUD Color Picker**: The Mini-HUD now explicitly supports the embedded color picker widget when the Paint Tool is active, making rapid painting adjustments in VR much more accessible.
