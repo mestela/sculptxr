@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+## v0.9.83
+- **Feature**: **Long Distance Aim Sculpting**: When Aim Mode is enabled, brushes now mathematically project their radius and displacement down the length of the laser ray. This allows for long-distance sculpting with true 1:1 physical translation and accurate brush sizes on the distant surface.
+- **Fix**: **Aim Mode Symmetry**: Fixed an issue where the symmetry brush failed to initialize in Aim Mode. Symmetry now perfectly mirrors the actual laser hit point rather than the physical controller position.
+
 ## v0.9.71
 - **Fix**: **VR Move Brush Intensity**: Fixed an issue where the VR Move tool ignored the intensity slider and applied 100% displacement. Both positional drag and wrist rotation are now properly scaled by the brush intensity setting in VR.
 

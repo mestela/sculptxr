@@ -1,7 +1,6 @@
 
 ## Todo
 - **Functionality**:
-    - long distance ray intersect sculpting for Ian
     - restore grab brush
     - closer look at dyntopo
     - voxel straight line mode
@@ -43,6 +42,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~long distance ray intersect sculpting for Ian~~ **DONE v0.9.83**
 - ~~some tools have a stupidly large brush radius. twist? what else?~~  **DONE v0.9.64**
 - ~~mini HUD alpha issue in AR; right side clips mesh~~   **DONE v0.9.65**
 - ~~more odd performance regressions in standalone, esp when the mesh is scaled small~~  **DONE v0.9.46**

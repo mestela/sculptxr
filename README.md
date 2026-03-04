@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.83: VR Input: Long distance 'Aim' mode sculpting and symmetry fully supported.
 *   v0.9.71: VR Polish: VR Move brush now correctly respects intensity slider for displacement and rotation.
 *   v0.9.70: VR Input: Secondary controller grip button no longer erroneously activates negative sculpting mode.
 *   v0.9.68: Workflow: Automated deployment version bumping and UI environment labeling (PROD/BETA).
