@@ -695,8 +695,17 @@ export default class GuiXR {
       filtered.forEach(w => {
         w.x = paddingX;        // Reset x to a small margin
         w.w = targetWidth;     // Clamp width
+
+        if (w.id === 'picker') {
+          let spaceLeft = this._canvas.height - currentY - 10;
+          w.h = Math.min(spaceLeft, targetWidth); // make it square, but responsive to remaining space
+        } else if (w.type === 'slider') {
+          w.h = 40; // Compress sliders from default 60 to save height
+        }
+
         w.y = currentY;        // Stack vertically
-        currentY += w.h + 20;  // Widget height + padding
+        let pad = (w.type === 'slider') ? 5 : 20; // tighter pad for sliders
+        currentY += w.h + pad;  // Widget height + padding
       });
 
       return filtered;
@@ -784,34 +793,32 @@ export default class GuiXR {
     this._wasPressed = isPressed;
 
     if (!this._cursor.active) return;
-    
-    // ...
-    // Note: I am not replacing onInteract, just the _getWidgets part above it.
-    // But the replace_file_content tool requires contiguous blocks.
-    // I will target the _getWidgets function ending.
-    
-    // Wait, the tool requires StartLine/EndLine.
-    // Lines 741-742 were the offset.
-    // Lines 1778 was the textAlign.
-    // I need TWO calls.
-
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
 
-    // 0.5. Active Slider Lock (High Priority)
+    // 0.5. Active continuous interactions (High Priority)
     // Must run BEFORE everything else to prevent overlays from stealing the drag event
-    if (this._activeSlider) {
-      if (!isPressed) {
+    if ((this._activeSlider || this._activeColorPicker) && !isPressed) {
+      if (this._activeSlider) {
         if (this._activeSlider.id === 'stack_size' && this._main) {
           this._main.getStateManager().setNewMaxStack(Math.round(this._activeSlider.value));
         } else if (this._activeSlider.onRelease) {
           this._activeSlider.onRelease(this._activeSlider.value);
         }
         this._activeSlider = null;
-        return;
       }
+      if (this._activeColorPicker) {
+        if (this._activeColorPicker.onRelease) {
+          this._activeColorPicker.onRelease();
+        }
+        this._activeColorPicker = null;
+        this._activeColorPickerRegion = null;
+      }
+      return;
+    }
 
+    if (this._activeSlider) {
       const targetWid = this._activeSlider;
       const sliderW = targetWid.w;
       const sliderX = targetWid.x;
@@ -970,7 +977,7 @@ export default class GuiXR {
       // when holding the trigger for >250ms (unless it's a slider which needs continuous press)
       // STRIKT START CHECK: To start any interaction on this layer, we MUST have a rising edge.
       // This prevents "leakage" from overlays that close on the first frame of a press.
-      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent);
+      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent || this._activeColorPicker);
 
       if (isDragging) {
         if (!isPressed) return; // Continue drag
@@ -1058,6 +1065,17 @@ export default class GuiXR {
           const idx = Math.floor(cx / r3W);
           if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
         }
+        return;
+      }
+    }
+
+    // Active continuous interactions outside of targetWid bounds
+    if (isPressed && this._lastScrollY === undefined) {
+      if (this._activeSlider && (!targetWid || targetWid === this._activeSlider)) {
+        this._handleWidgetClick(this._activeSlider);
+        return;
+      } else if (this._activeColorPicker && (!targetWid || targetWid === this._activeColorPicker)) {
+        this._handleWidgetClick(this._activeColorPicker);
         return;
       }
     }
@@ -1229,6 +1247,27 @@ export default class GuiXR {
       window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
     }
 
+    if (this._activeSlider) {
+      const w = this._activeSlider;
+      let t = Math.max(0, Math.min(1, (rx - w.x) / w.w));
+      let val = t;
+      if (isFinite(w.min) && isFinite(w.max)) {
+        val = w.min + t * (w.max - w.min);
+        if (w.step) {
+          const steps = Math.round((val - w.min) / w.step);
+          val = w.min + steps * w.step;
+          if (w.step % 1 === 0) val = Math.round(val);
+        }
+      }
+      w.value = val;
+      if (w.id !== 'stack_size') this._executeAction(w);
+      this._needsRedraw = true;
+      return;
+    } else if (this._activeColorPicker) {
+      this._handleEmbeddedColorPicker(this._activeColorPicker);
+      return;
+    }
+
     // Check click on menu widgets
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
@@ -1328,7 +1367,14 @@ export default class GuiXR {
     if (data && data.isToolPicker) {
       // This expands the dark background panel
       data.w = 500; // Original is 660
-      data.h = 400; // Original is ~660
+
+      let maxExt = 400;
+      if (data.widgets) {
+        data.widgets.forEach(w => {
+          if (w.y + w.h + 20 > maxExt) maxExt = w.y + w.h + 20;
+        });
+      }
+      data.h = maxExt;
 
       // Shift the entire block of buttons relative to the background
       if (data.widgets) {
@@ -1407,6 +1453,10 @@ export default class GuiXR {
         }
       }
     } else if (w.type === 'colorpicker_embedded') {
+      if (this._activeColorPicker !== w) {
+        this._activeColorPicker = w;
+        this._activeColorPickerRegion = null;
+      }
       this._handleEmbeddedColorPicker(w);
     } else if (w.type === 'combobox') {
       let opts = [];
@@ -2596,12 +2646,48 @@ export default class GuiXR {
     const mx = this._cursor.x;
     const my = this._cursor.y;
 
+    // --- 0. Check FG/BG Swatches and Swap Button (Top Left Corner) ---
+    const swatchSize = 40; // Scale up 50%
+    const pad = 10;
 
+    // BG Swatch is trailing
+    const bgX = w.x + pad + swatchSize * 0.5;
+    const bgY = w.y + pad + swatchSize * 0.5;
+
+    // FG Swatch is leading
+    const fgX = w.x + pad;
+    const fgY = w.y + pad;
+
+    // Swap Button Hitbox (Top Right of Swatches)
+    const swapBtnX = fgX + swatchSize + 5;
+    const swapBtnY = fgY - 5;
+    const swapBtnW = 30;
+    const swapBtnH = 30;
+
+    // Hitbox for the swap button or the swatch area
+    if ((mx >= fgX && mx <= bgX + swatchSize && my >= fgY && my <= bgY + swatchSize) ||
+      (mx >= swapBtnX && mx <= swapBtnX + swapBtnW && my >= swapBtnY && my <= swapBtnY + swapBtnH)) {
+      if (typeof tool.swapColors === 'function') {
+        const now = performance.now();
+        if (!this._lastSwapTime) this._lastSwapTime = 0;
+
+        // Debounce swapping by checking time instead of hover exit
+        if (now - this._lastSwapTime > 300) {
+          tool.swapColors();
+          this._lastSwapTime = now;
+          this._needsRedraw = true;
+          this.draw();
+          this._main.render();
+        }
+      }
+      return;
+    }
 
     // Config (MUST MATCH DRAW LOGIC)
     const cx = w.x + w.w * 0.5;
-    const cy = w.y + w.h * 0.5;
-    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const cy = w.y + w.h * 0.5 + 20; // Shifted DOWN to make room for big swatches at the top
+    // Calc max available radius from center to prevent overflow
+    const maxR = Math.min(w.w * 0.5, w.h * 0.5 - 20) - 10; 
     const thickness = 20; // 50% thinner
     const outerRadius = maxR;
     const innerRadius = outerRadius - thickness;
@@ -2614,15 +2700,32 @@ export default class GuiXR {
     const dy = my - cy;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // 1. Hue Ring Interaction (Annulus)
-    // Give some padding for touch/click: +/- 10px
-    if (dist >= innerRadius - 10 && dist <= outerRadius + 10) {
-      // Angle -> Hue
-      // atan2(y, x) -> -PI to PI
-      let angle = Math.atan2(dy, dx);
-      if (angle < 0) angle += Math.PI * 2;
-      // Map 0..2PI to 0..1
-      h = angle / (Math.PI * 2);
+    // 1. SV Square Interaction Check
+    let inSV = Math.abs(dx) <= sqHalf + 10 && Math.abs(dy) <= sqHalf + 10;
+
+    // 2. Hue Ring Interaction Check
+    let inHue = dist >= innerRadius - 10 && dist <= outerRadius + 10;
+
+    // Apply strict interaction lock if dragging
+    if (this._activeColorPickerRegion === 'sv') {
+      inSV = true;
+      inHue = false;
+    } else if (this._activeColorPickerRegion === 'hue') {
+      inSV = false;
+      inHue = true;
+    }
+
+    // Priority to SV if both overlap (e.g. at corners)
+    if (inSV) {
+      this._activeColorPickerRegion = 'sv';
+      const cDx = Math.max(-sqHalf, Math.min(sqHalf, dx));
+      const cDy = Math.max(-sqHalf, Math.min(sqHalf, dy));
+
+      s = (cDx + sqHalf) / sqSize;
+      v = 1.0 - (cDy + sqHalf) / sqSize;
+
+      s = Math.max(0, Math.min(1, s));
+      v = Math.max(0, Math.min(1, v));
 
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
@@ -2632,21 +2735,11 @@ export default class GuiXR {
       return;
     }
 
-    // 2. SV Square Interaction
-    if (Math.abs(dx) <= sqHalf + 10 && Math.abs(dy) <= sqHalf + 10) {
-      // Map dx, dy relative to square center to s, v
-      // Clamp to exact square bounds for value
-      const cDx = Math.max(-sqHalf, Math.min(sqHalf, dx));
-      const cDy = Math.max(-sqHalf, Math.min(sqHalf, dy));
-
-      // dx from -sqHalf to +sqHalf -> s from 0 to 1
-      // dy from -sqHalf to +sqHalf -> v from 1 to 0 (top is V=1, bottom is V=0)
-      s = (cDx + sqHalf) / sqSize;
-      v = 1.0 - (cDy + sqHalf) / sqSize;
-
-      // Clamp just in case floating point errors
-      s = Math.max(0, Math.min(1, s));
-      v = Math.max(0, Math.min(1, v));
+    if (inHue) {
+      this._activeColorPickerRegion = 'hue';
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += Math.PI * 2;
+      h = angle / (Math.PI * 2);
 
       const newRgb = Utils.hsv2rgb(h, s, v);
       vec3.copy(tool._color, newRgb);
@@ -2675,9 +2768,8 @@ export default class GuiXR {
 
     // --- 1. Geometry Setup ---
     const cx = x + w.w * 0.5;
-    const cy = y + w.h * 0.5;
-    // Fit within bounds, padding 10
-    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
+    const cy = y + w.h * 0.5 + 20; // Shift center down slightly to make room for bigger swatches
+    const maxR = Math.min(w.w * 0.5, w.h * 0.5 - 20) - 10; 
     const thickness = 20; // 50% thinner (was ~40)
     const outerRadius = maxR;
     const innerRadius = outerRadius - thickness;
@@ -2823,22 +2915,71 @@ export default class GuiXR {
     ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
     ctx.fill();
 
-    // SV Square Indicator
-    // S = x, V = y (inverted? Top is V=1, Bottom V=0)
-    // S: 0 (Left) -> 1 (Right)
-    // V: 0 (Bottom) -> 1 (Top) => y = (1-V)*size
     const svX = sqX + s * sqSize; // saturation
-    const svY = sqY + (1.0 - v) * sqSize; // value (1=top, 0=bottom)
+    const svY = sqY + (1 - v) * sqSize; // value
 
     ctx.beginPath();
     ctx.arc(svX, svY, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = (v < 0.5) ? 'white' : 'black';
+    ctx.strokeStyle = (v > 0.5 && s < 0.5) ? 'black' : 'white'; // Contrast check
     ctx.lineWidth = 2;
     ctx.stroke();
+    // Replaced solid fill with hollow
+    // ctx.fillStyle = (v > 0.5) ? 'black' : 'white';
+    // ctx.fill();
 
-    const cssFinal = `rgb(${Math.floor(rgb[0] * 255)}, ${Math.floor(rgb[1] * 255)}, ${Math.floor(rgb[2] * 255)})`;
-    ctx.fillStyle = cssFinal;
-    ctx.fill();
+    // --- Draw FG/BG Swatches & Swap Button (Top Left) ---
+    const swatchSize = 40; // Scale up 50%
+    const pad = 10;
+
+    // Background swatch (trailing/offset)
+    const bgX = x + pad + swatchSize * 0.5;
+    const bgY = y + pad + swatchSize * 0.5;
+    ctx.fillStyle = `rgb(${(tool._colorSecondary[0] * 255) | 0}, ${(tool._colorSecondary[1] * 255) | 0}, ${(tool._colorSecondary[2] * 255) | 0})`;
+    ctx.fillRect(bgX, bgY, swatchSize, swatchSize);
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bgX, bgY, swatchSize, swatchSize);
+
+    // Foreground swatch (leading/active)
+    const fgX = x + pad;
+    const fgY = y + pad;
+    ctx.fillStyle = `rgb(${(tool._color[0] * 255) | 0}, ${(tool._color[1] * 255) | 0}, ${(tool._color[2] * 255) | 0})`;
+    ctx.fillRect(fgX, fgY, swatchSize, swatchSize);
+    ctx.strokeStyle = '#0ff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(fgX, fgY, swatchSize, swatchSize);
+
+    // Swap Button (Top Right of swatches)
+    const swapBtnX = fgX + swatchSize + 5;
+    const swapBtnY = fgY - 5;
+
+    // Draw simple swap arrows (aligned)
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 2; // Thinner for precise alignment
+
+    // Up-Left Arrow
+    ctx.beginPath();
+    ctx.moveTo(swapBtnX + 11, swapBtnY + 5); // arrow top horizontal start
+    ctx.lineTo(swapBtnX + 5, swapBtnY + 5); // arrow tip
+    ctx.lineTo(swapBtnX + 5, swapBtnY + 11); // arrow left vertical end
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(swapBtnX + 5, swapBtnY + 5); // arrow tip
+    ctx.lineTo(swapBtnX + 13, swapBtnY + 13); // arrow line down-right
+    ctx.stroke();
+
+    // Down-Right Arrow
+    ctx.beginPath();
+    ctx.moveTo(swapBtnX + 14, swapBtnY + 20); // arrow bottom horizontal start
+    ctx.lineTo(swapBtnX + 20, swapBtnY + 20); // arrow tip
+    ctx.lineTo(swapBtnX + 20, swapBtnY + 14); // arrow right vertical end
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(swapBtnX + 20, swapBtnY + 20); // arrow tip
+    ctx.lineTo(swapBtnX + 12, swapBtnY + 12); // arrow line up-left
+    ctx.stroke();
   }
 
   setVisibility(val) {
@@ -3146,177 +3287,7 @@ export default class GuiXR {
     return { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy };
   }
 
-  _handleEmbeddedColorPicker(w) {
-    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-    if (!tool) return;
 
-    const rgb = tool._color;
-    const hsv = [0, 0, 0];
-    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
-    let [h, s, v] = hsv;
-
-    const mx = this._cursor.x;
-    const my = this._cursor.y;
-
-    // Config (MUST MATCH DRAW LOGIC)
-    const cx = w.x + w.w * 0.5;
-    const cy = w.y + w.h * 0.5;
-    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
-    const thickness = 20; // 50% thinner
-    const outerRadius = maxR;
-    const innerRadius = outerRadius - thickness;
-
-    // Square fits INSIDE innerRadius
-    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
-    const sqSize = sqHalf * 2;
-
-    const dx = mx - cx;
-    const dy = my - cy;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // 1. Hue Ring Interaction (Annulus)
-    if (dist >= innerRadius - 10 && dist <= outerRadius + 10) {
-      let angle = Math.atan2(dy, dx);
-      if (angle < 0) angle += Math.PI * 2;
-      h = angle / (Math.PI * 2);
-
-      const newRgb = Utils.hsv2rgb(h, s, v);
-      vec3.copy(tool._color, newRgb);
-      this._needsRedraw = true;
-      this._requestDraw();
-      this._main.render();
-      return;
-    }
-
-    // 2. SV Square Interaction
-    if (Math.abs(dx) <= sqHalf + 10 && Math.abs(dy) <= sqHalf + 10) {
-      const cDx = Math.max(-sqHalf, Math.min(sqHalf, dx));
-      const cDy = Math.max(-sqHalf, Math.min(sqHalf, dy));
-
-      s = (cDx + sqHalf) / sqSize;
-      v = 1.0 - (cDy + sqHalf) / sqSize;
-
-      s = Math.max(0, Math.min(1, s));
-      v = Math.max(0, Math.min(1, v));
-
-      const newRgb = Utils.hsv2rgb(h, s, v);
-      vec3.copy(tool._color, newRgb);
-      this._needsRedraw = true;
-      this._requestDraw();
-      this._main.render();
-      return;
-    }
-  }
-
-  _drawEmbeddedColorPicker(ctx, w) {
-    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-    if (!tool) return;
-
-    // Background
-    ctx.fillStyle = '#222';
-    ctx.fillRect(w.x, w.y, w.w, w.h);
-
-    const rgb = tool._color;
-    const hsv = [0, 0, 0];
-    Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
-    const [hue, s, v] = hsv;
-
-    const x = w.x;
-    const y = w.y;
-
-    // --- 1. Geometry Setup ---
-    const cx = x + w.w * 0.5;
-    const cy = y + w.h * 0.5;
-    const maxR = Math.min(w.w, w.h) * 0.5 - 10;
-    const thickness = 20; // 50% thinner
-    const outerRadius = maxR;
-    const innerRadius = outerRadius - thickness;
-
-    const sqHalf = (innerRadius - 10) / Math.sqrt(2);
-    const sqSize = sqHalf * 2;
-    const sqX = cx - sqHalf;
-    const sqY = cy - sqHalf;
-
-    // --- 2. Draw Hue Ring ---
-    if (ctx.createConicGradient) {
-      ctx.save();
-      ctx.beginPath();
-      // Re-defining gradient for proper HSV Clockwise (Standard)
-      const g2 = ctx.createConicGradient(0, cx, cy);
-      g2.addColorStop(0, "red");
-      g2.addColorStop(1 / 6, "yellow");
-      g2.addColorStop(2 / 6, "lime"); // Green
-      g2.addColorStop(3 / 6, "cyan");
-      g2.addColorStop(4 / 6, "blue");
-      g2.addColorStop(5 / 6, "magenta");
-      g2.addColorStop(1, "red");
-
-      ctx.fillStyle = g2;
-      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
-      ctx.arc(cx, cy, innerRadius, Math.PI * 2, 0, true);
-      ctx.fill();
-      ctx.restore();
-    } else {
-      ctx.beginPath();
-      ctx.arc(cx, cy, outerRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#888';
-      ctx.fill();
-    }
-
-    // --- 3. Sat/Val Square ---
-    ctx.fillStyle = 'white';
-    ctx.fillRect(sqX, sqY, sqSize, sqSize);
-
-    const gH = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
-    gH.addColorStop(0, 'rgba(255,255,255,1)');
-    gH.addColorStop(1, `hsl(${hue * 360}, 100%, 50%)`);
-    ctx.fillStyle = gH;
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.globalCompositeOperation = 'source-over';
-
-    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
-    ctx.fillRect(sqX, sqY, sqSize, sqSize);
-
-    const gSat = ctx.createLinearGradient(sqX, sqY, sqX + sqSize, sqY);
-    gSat.addColorStop(0, 'white');
-    gSat.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = gSat;
-    ctx.fillRect(sqX, sqY, sqSize, sqSize);
-
-    const gVal = ctx.createLinearGradient(sqX, sqY, sqX, sqY + sqSize);
-    gVal.addColorStop(0, 'rgba(0,0,0,0)');
-    gVal.addColorStop(1, 'black');
-    ctx.fillStyle = gVal;
-    ctx.fillRect(sqX, sqY, sqSize, sqSize);
-
-
-    // --- 5. Indicators ---
-    const angle = hue * Math.PI * 2;
-    const rInd = (innerRadius + outerRadius) * 0.5;
-    const indX = cx + Math.cos(angle) * rInd;
-    const indY = cy + Math.sin(angle) * rInd;
-
-    ctx.beginPath();
-    ctx.arc(indX, indY, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = 'black';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
-    ctx.fill();
-
-    const svX = sqX + s * sqSize;
-    const svY = sqY + (1.0 - v) * sqSize;
-
-    ctx.beginPath();
-    ctx.arc(svX, svY, 6, 0, Math.PI * 2);
-    ctx.strokeStyle = (v < 0.5) ? 'white' : 'black';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    const cssFinal = `rgb(${Math.floor(rgb[0] * 255)}, ${Math.floor(rgb[1] * 255)}, ${Math.floor(rgb[2] * 255)})`;
-    ctx.fillStyle = cssFinal;
-    ctx.fill();
-  }
 }
 
 
