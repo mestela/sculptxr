@@ -1,4 +1,4 @@
-# SculptXR (v0.9.93)
+# SculptXR (v0.9.102)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.102: **Mini-HUD Polish:** Tool picker combobox now features categorized color-tinting (Red, Blue, Purple, Green, Orange) to quickly identify brush families in VR. Extraneous keyboard shortcut labels have been stripped from the VR UI.
 *   v0.9.94: **Mini-HUD Polish:** Fixed AR clipping interactions, default brush radii normalization, and tool selection event bleeding. Stripped out noisy UI debug logging.
 *   v0.9.85: Color Picker: Paint Tool FG/BG Color Swatch and Mini-HUD Color Picker Support.
 *   v0.9.83: VR Input: Long distance 'Aim' mode sculpting and symmetry fully supported.
