@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.84
+- **Polish**: **Paint Brush Intensity**: The paint brush intensity slide now maps to an exponential curve (squared). This fixes an issue where the brush was too aggressive at low slider values, now allowing for very subtle "airbrush" style stroke build-up.
+
 ## v0.9.83
 - **Feature**: **Long Distance Aim Sculpting**: When Aim Mode is enabled, brushes now mathematically project their radius and displacement down the length of the laser ray. This allows for long-distance sculpting with true 1:1 physical translation and accurate brush sizes on the distant surface.
 - **Fix**: **Aim Mode Symmetry**: Fixed an issue where the symmetry brush failed to initialize in Aim Mode. Symmetry now perfectly mirrors the actual laser hit point rather than the physical controller position.

@@ -98,7 +98,9 @@ class Paint extends SculptBase {
 
   stroke(picking) {
     var iVertsInRadius = picking.getPickedVertices();
-    var intensity = this._intensity * Tablet.getPressureIntensity();
+    // Remap the 0-1 linear GUI intensity to an exponential curve (squared)
+    // This allows much finer control at low intensities (e.g. 0.1 slider = 1% opacity per frame)
+    var intensity = (this._intensity * this._intensity) * Tablet.getPressureIntensity();
 
     // undo-redo
     this._main.getStateManager().pushVertices(iVertsInRadius);

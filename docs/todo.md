@@ -9,6 +9,7 @@
     - voxel cube brush
     - voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
+    - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
     - muscle tool
     - xray material
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
@@ -18,13 +19,10 @@
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
+    
 - **UI + UX**
-    - ~~move brush strength always stays at 100, no matter what it's set to.~~ **DONE v0.9.71**
     - the smooth and move brushes are unaffected by dynamic topology mode. 
-    - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
-    - ~~update version string in lower right corner of desktop~~ **DONE v0.9.67**
     - still getting radius slider mishits when selecting pinch tool
-    - grip button remapped incorrectly? investigate
     - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
     - mini HUD colour chooser when in paint
@@ -32,7 +30,6 @@
     - display assignments on controller buttons... floating labels
     - isolate in view/scene is inverted
     - paint tool needs color swatch (fg/bg?)
-    - paint tool intensity needs remapping, low values hard to use
     - paint tool restore eyedropper
     - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
@@ -42,7 +39,11 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+
 - ~~long distance ray intersect sculpting for Ian~~ **DONE v0.9.83**
+- ~~grip button remapped incorrectly? investigate~~ **DONE v0.9.71**
+- ~~move brush strength always stays at 100, no matter what it's set to.~~ **DONE v0.9.71**
+- ~~update version string in lower right corner of desktop~~ **DONE v0.9.67**
 - ~~some tools have a stupidly large brush radius. twist? what else?~~  **DONE v0.9.64**
 - ~~mini HUD alpha issue in AR; right side clips mesh~~   **DONE v0.9.65**
 - ~~more odd performance regressions in standalone, esp when the mesh is scaled small~~  **DONE v0.9.46**
