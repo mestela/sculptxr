@@ -52,6 +52,7 @@ var readShortcuts = function (str) {
   shortcuts['X'.charCodeAt(0)] = keyAction.RADIUS;
   shortcuts['N'.charCodeAt(0)] = keyAction.NEGATIVE;
   shortcuts['S'.charCodeAt(0)] = keyAction.PICKER;
+  shortcuts['V'.charCodeAt(0)] = keyAction.SWAP_COLORS;
   shortcuts[46] = keyAction.DELETE; // DEL
 
   // camera

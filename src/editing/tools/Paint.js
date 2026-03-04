@@ -13,6 +13,12 @@ class Paint extends SculptBase {
     this._culling = false;
     this._color = vec3.fromValues(1.0, 0.766, 0.336); // albedo
     this._material = vec3.fromValues(0.5, 0.0, 0.0); // roughness/metallic/masking
+
+    this._colorSecondary = vec3.fromValues(1.0, 1.0, 1.0); // secondary albedo
+    this._materialSecondary = vec3.fromValues(0.5, 0.0, 0.0); // secondary material
+
+    this._onColorSwapped = null; // callback
+
     this._pickColor = false; // color picking
     this._pickCallback = null; // callback function after picking a color
     this._idAlpha = 0;
@@ -26,6 +32,22 @@ class Paint extends SculptBase {
   end() {
     this._pickColor = false;
     super.end();
+  }
+
+  swapColors() {
+    // swap fg/bg color
+    var tempC = vec3.clone(this._color);
+    vec3.copy(this._color, this._colorSecondary);
+    vec3.copy(this._colorSecondary, tempC);
+
+    // swap fg/bg material
+    var tempM = vec3.clone(this._material);
+    vec3.copy(this._material, this._materialSecondary);
+    vec3.copy(this._materialSecondary, tempM);
+
+    if (this._onColorSwapped) {
+      this._onColorSwapped();
+    }
   }
 
   pushState(force) {

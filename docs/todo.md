@@ -25,11 +25,9 @@
     - still getting radius slider mishits when selecting pinch tool
     - mini HUD could be a little higher, slightly uncomfortable atm
     - tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)
-    - mini HUD colour chooser when in paint
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
     - isolate in view/scene is inverted
-    - paint tool needs color swatch (fg/bg?)
     - paint tool restore eyedropper
     - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
@@ -39,6 +37,8 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~paint tool needs colour swatch (fg/bg?)~~ **DONE v0.9.85**
+- ~~mini HUD colour chooser when in paint~~ **DONE v0.9.85**
 
 - ~~long distance ray intersect sculpting for Ian~~ **DONE v0.9.83**
 - ~~grip button remapped incorrectly? investigate~~ **DONE v0.9.71**

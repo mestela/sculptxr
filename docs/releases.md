@@ -1,5 +1,9 @@
 # SculptXR Release History
 
+## v0.9.85
+- **Feature**: **Paint Tool FG/BG Color Swatch**: The Paint Tool now maintains a secondary (background) color and material state. You can swap between your foreground and background colors seamlessly via the 'Swap Colors' button in both the Desktop and VR GUIs, or instantly by pressing the `V` hotkey.
+- **Feature**: **Mini-HUD Color Picker**: The Mini-HUD now explicitly supports the embedded color picker widget when the Paint Tool is active, making rapid painting adjustments in VR much more accessible.
+
 ## v0.9.84
 - **Polish**: **Paint Brush Intensity**: The paint brush intensity slide now maps to an exponential curve (squared). This fixes an issue where the brush was too aggressive at low slider values, now allowing for very subtle "airbrush" style stroke build-up.
 

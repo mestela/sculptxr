@@ -188,9 +188,18 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
     y += 55 + gapBtn;
 
-    // Paint All Button
+    // Swap Colors / Paint All
     widgets.push({
-      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X, y: y, w: 350, h: btnH,
+      type: 'button', id: 'swap_colors', label: 'Swap FG/BG', x: col1X, y: y, w: 170, h: btnH,
+      onInteract: () => {
+        activeTool.swapColors();
+        main.render();
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
+      }
+    });
+    widgets.push({
+      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X + 180, y: y, w: 170, h: btnH,
       onInteract: () => { activeTool.paintAll(); main.render(); }
     });
     y += btnH + gapSection;
