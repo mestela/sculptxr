@@ -210,9 +210,20 @@ GuiTools[Enums.Tools.PAINT] = {
     var ctrlColor = fold.addColor(TR('sculptColor'), tool._color, cbMatChanged);
     var ctrlRoughness = fold.addSlider(TR('sculptRoughness'), tool._material[0] * 100, cbMatChanged, 0, 100, 1);
     var ctrlMetallic = fold.addSlider(TR('sculptMetallic'), tool._material[1] * 100, cbMatChanged, 0, 100, 1);
+
+    this.swapColors = () => tool.swapColors();
+    this._ctrls.push(fold.addButton('Swap Colors (V)', this.swapColors));
+
     materials.push(ctrlColor, ctrlRoughness, ctrlMetallic);
     this._ctrls.push(ctrlColor, ctrlRoughness, ctrlMetallic);
     tool.setPickCallback(this.onPickedMaterial.bind(this, materials, tool, main));
+
+    tool._onColorSwapped = () => {
+      materials[0].setValue(tool._color, true);
+      materials[1].setValue(tool._material[0] * 100, true);
+      materials[2].setValue(tool._material[1] * 100, true);
+      main.render();
+    };
 
     // mask
     this._ctrls.push(fold.addTitle('Write channel'));

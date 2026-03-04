@@ -101,7 +101,8 @@ Enums.KeyAction = Utils.extend({
   STRIFE_UP: acc++,
   STRIFE_DOWN: acc++,
   WIREFRAME: acc++,
-  REMESH: acc++
+  REMESH: acc++,
+  SWAP_COLORS: acc++
 }, Enums.Tools);
 
 export default Enums;

@@ -158,21 +158,17 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   // 2b. Tool Specific Settings
   // --- PAINT ---
   if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
-    widgets.push({ type: 'info', label: 'Paint Settings', x: col1X, y: y });
-    y += gapHeader;
-
-    // Color (RGB Sliders)
-    // Color Picker (Replacing RGB Sliders)
+    // Color Picker (Replacing RGB Sliders & Header)
     const color = activeTool._color;
     widgets.push({
       type: 'colorpicker_embedded',
       id: 'picker',
       label: 'Color',
-      x: col1X, y: y, w: 350, h: 350, // Square-ish
+      x: col1X, y: y, w: 350, h: 380, // Taller size
       // value: color, // Passed via tool ref actually
     });
-    // Height of picker (350) + gap
-    y += 350 + gapSection;
+    // Height of picker (380) + small gap
+    y += 380 + 10;
 
     // Material (Roughness, Metallic)
     widgets.push({
@@ -188,9 +184,18 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
     y += 55 + gapBtn;
 
-    // Paint All Button
+    // Swap Colors / Paint All
     widgets.push({
-      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X, y: y, w: 350, h: btnH,
+      type: 'button', id: 'swap_colors', label: 'Swap FG/BG', x: col1X, y: y, w: 170, h: btnH,
+      onInteract: () => {
+        activeTool.swapColors();
+        main.render();
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
+      }
+    });
+    widgets.push({
+      type: 'button', id: 'paint_all', label: 'Paint All', x: col1X + 180, y: y, w: 170, h: btnH,
       onInteract: () => { activeTool.paintAll(); main.render(); }
     });
     y += btnH + gapSection;

@@ -3202,14 +3202,29 @@ class Scene {
             if (hit) targetGuiXR = this._guiMini;
           }
 
+          let pressed = false;
+          if (source.gamepad && source.gamepad.buttons[0]) {
+            pressed = source.gamepad.buttons[0].pressed;
+          }
+
+          if (pressed && !this._globalGuiWasPressed) {
+            this._activePressedGui = hit ? targetGuiXR : null;
+          } else if (!pressed) {
+            if (this._activePressedGui) {
+              this._activePressedGui.onInteract(-1, -1, false);
+            }
+            this._activePressedGui = null;
+          }
+          this._globalGuiWasPressed = pressed;
+
           if (hit) {
             this._isPointingAtMenu = true;
             targetGuiXR.setCursor(hit.uv[0], hit.uv[1]);
             targetGuiXR._updateHover(); // CRITICAL: Actually trigger the hit test loop using the new cursor coordinates!
 
-            // Interact if Trigger Pressed (Button 0)
-            if (source.gamepad && source.gamepad.buttons[0]) {
-              const pressed = source.gamepad.buttons[0].pressed;
+            if (this._activePressedGui && this._activePressedGui !== targetGuiXR) {
+              targetGuiXR.onInteract(hit.uv[0], hit.uv[1], false);
+            } else {
               targetGuiXR.onInteract(hit.uv[0], hit.uv[1], pressed);
             }
 

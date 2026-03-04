@@ -39,7 +39,6 @@
 ## Done
 - ~~paint tool needs colour swatch (fg/bg?)~~ **DONE v0.9.85**
 - ~~mini HUD colour chooser when in paint~~ **DONE v0.9.85**
-
 - ~~long distance ray intersect sculpting for Ian~~ **DONE v0.9.83**
 - ~~grip button remapped incorrectly? investigate~~ **DONE v0.9.71**
 - ~~move brush strength always stays at 100, no matter what it's set to.~~ **DONE v0.9.71**

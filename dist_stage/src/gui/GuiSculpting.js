@@ -263,6 +263,9 @@ class GuiSculpting {
       var ctrlPicker = cur._ctrlPicker;
       if (ctrlPicker && !ctrlPicker.getValue()) ctrlPicker.setValue(true);
       break;
+      case Enums.KeyAction.SWAP_COLORS:
+        if (cur.swapColors) cur.swapColors();
+        break;
     default:
       event.handled = false;
     }

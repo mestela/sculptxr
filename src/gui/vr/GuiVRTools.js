@@ -158,21 +158,17 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   // 2b. Tool Specific Settings
   // --- PAINT ---
   if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
-    widgets.push({ type: 'info', label: 'Paint Settings', x: col1X, y: y });
-    y += gapHeader;
-
-    // Color (RGB Sliders)
-    // Color Picker (Replacing RGB Sliders)
+    // Color Picker (Replacing RGB Sliders & Header)
     const color = activeTool._color;
     widgets.push({
       type: 'colorpicker_embedded',
       id: 'picker',
       label: 'Color',
-      x: col1X, y: y, w: 350, h: 350, // Square-ish
+      x: col1X, y: y, w: 350, h: 380, // Taller size
       // value: color, // Passed via tool ref actually
     });
-    // Height of picker (350) + gap
-    y += 350 + gapSection;
+    // Height of picker (380) + small gap
+    y += 380 + 10;
 
     // Material (Roughness, Metallic)
     widgets.push({
