@@ -23,11 +23,72 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
   // Build Options from Tools array
   // Filter out Drag tool, LocalScale, and Transform
-  const toolOptions = Tools.map((t, i) => {
-    if (!t) return null;
-    return { label: TR(t.uiName), id: i };
-  })
-    .filter(t => t && t.label !== 'Drag' && t.id !== Enums.Tools.LOCALSCALE && t.id !== Enums.Tools.TRANSFORM); 
+  const orderedToolIds = [
+    // Red (Sculpting)
+    Enums.Tools.BRUSH,
+    Enums.Tools.INFLATE,
+    Enums.Tools.VOXEL,
+    Enums.Tools.FLATTEN,
+    Enums.Tools.PINCH,
+    Enums.Tools.CREASE,
+    Enums.Tools.TWIST,
+
+    // Blue (Smoothing)
+    Enums.Tools.SMOOTH,
+
+    // Purple (Paint)
+    Enums.Tools.PAINT,
+
+    // Green (Move/Transform)
+    Enums.Tools.MOVE,
+    Enums.Tools.GRAB,
+    Enums.Tools.TRANSFORM_VR,
+
+    // Space to center the final item
+    null,
+
+    // Orange (Masking)
+    Enums.Tools.MASKING
+  ];
+
+  const toolOptions = orderedToolIds.map(id => {
+    if (id === null) return null;
+    const t = Tools[id];
+    let label = TR(t.uiName);
+    // Strip trailing bracketed shortcuts (e.g. " (-Shift)", " (G)")
+    label = label.replace(/\s*\([^)]*\)$/, '');
+    // Specifically rename "Transform VR" -> "Transform" for the UI grid
+    if (label.includes('Transform VR')) label = 'Transform';
+
+    return { label: label, id: id };
+  });
+
+  const getToolTint = (id) => {
+    switch (id) {
+      case Enums.Tools.BRUSH:
+      case Enums.Tools.INFLATE:
+      case Enums.Tools.VOXEL:
+      case Enums.Tools.FLATTEN:
+      case Enums.Tools.PINCH:
+      case Enums.Tools.CREASE:
+      case Enums.Tools.TWIST:
+        return 'hsl(0, 50%, 85%)'; // Red (bright)
+      case Enums.Tools.SMOOTH:
+        return 'hsl(218, 50%, 85%)'; // Blue (bright)
+      case Enums.Tools.MOVE:
+      case Enums.Tools.GRAB:
+      case Enums.Tools.TRANSFORM:
+      case Enums.Tools.TRANSFORM_VR:
+      case Enums.Tools.LOCALSCALE:
+        return 'hsl(120, 50%, 85%)'; // Green (bright)
+      case Enums.Tools.PAINT:
+        return 'hsl(279, 50%, 85%)'; // Purple (bright)
+      case Enums.Tools.MASKING:
+        return 'hsl(36, 50%, 85%)'; // Orange (bright)
+      default:
+        return '#eeeeee';
+    }
+  };
 
   if (isMiniHUD) {
     widgets.push({
@@ -35,6 +96,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'tool_select',
       label: 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : ''),
       x: col1X, y: y, w: 710, h: 80, // Much larger and wider, acts as the primary HUD button
+      data: { tint: getToolTint(activeToolIndex) },
       onInteract: () => {
         const toolPickerWidgets = [];
         const pad = 0; // Removed padding to create a solid block
@@ -49,6 +111,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         const startY = 220 - (boxH / 2);
 
         toolOptions.forEach((opt, idx) => {
+          if (!opt) return;
           const col = idx % cols;
           const row = Math.floor(idx / cols);
           toolPickerWidgets.push({
@@ -56,7 +119,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
             x: startX + col * (btnW + pad) + pad,
             y: startY + row * (btnH + pad) + pad,
             w: btnW, h: btnH,
-            data: { active: activeToolIndex === opt.id },
+            data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
             onInteract: () => {
               const guiGroup = main.getGui()._ctrlSculpting;
               if (guiGroup && guiGroup._ctrlSculpt) {
@@ -97,6 +160,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     const btnW = 250;
     const btnH = 60;
     toolOptions.forEach((opt, idx) => {
+      if (!opt) return;
       const col = idx % cols;
       const row = Math.floor(idx / cols);
       widgets.push({
@@ -107,7 +171,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         y: y + row * (btnH + pad),
         w: btnW,
         h: btnH,
-        data: { active: activeToolIndex === opt.id }, // Highlight active tool
+        data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) }, // Highlight active tool
         onInteract: () => {
           const guiGroup = main.getGui()._ctrlSculpting;
           if (guiGroup && guiGroup._ctrlSculpt) {

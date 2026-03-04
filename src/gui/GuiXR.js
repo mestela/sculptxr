@@ -2149,7 +2149,11 @@ export default class GuiXR {
           if (wid.disabled) ctx.fillStyle = '#222';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-          ctx.fillStyle = wid.disabled ? '#555' : 'white';
+          let textColor = wid.disabled ? '#555' : 'white';
+          if (wid.data && wid.data.tint && !wid.disabled) {
+            textColor = wid.data.tint;
+          }
+          ctx.fillStyle = textColor;
           ctx.textAlign = 'center';
           ctx.font = '24px sans-serif';
           ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
@@ -2419,7 +2423,14 @@ export default class GuiXR {
             }
           }
 
-          ctx.fillStyle = '#eee'; // Strict white/gray text instead of cyan for active
+          let textColor = '#eee'; // Strict white/gray text instead of cyan for active
+          if (wid.data && wid.data.tint) {
+            textColor = wid.data.tint;
+          }
+          if (isActive) {
+            textColor = '#fff';
+          }
+          ctx.fillStyle = textColor; 
           ctx.textAlign = 'center';
           ctx.font = this.styles.fontOverlay;
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
