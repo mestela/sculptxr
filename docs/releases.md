@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.117 
+- **Hotfix**: **VR Mini-HUD Interaction**: Fixed an issue where the negative toggle button failed to update the controller's visual state or force a redraw of the HUD. Also lowered the required physical trigger depth from `100%` (`pressed`) to `10%` (`value > 0.1`) to make interacting with the VR UI significantly easier and more responsive.
+
 ## v0.9.112 - v0.9.116
 - **Feature**: **Slide Brush**: Added a dedicated 'Slide' tool to shift mesh topology smoothly across the existing surface without adding or removing volume.
 - **Math Upgrade**: **Closest-Point Snapping**: Replaced naïve tangential projection with an exact $O(1)$ 1-ring neighborhood raycast `Geometry.distance2PointTriangle` that snaps the translated vertex perfectly onto the unmodified local surface in real-time. 

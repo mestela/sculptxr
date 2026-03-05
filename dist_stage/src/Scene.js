@@ -3204,7 +3204,8 @@ class Scene {
 
           let pressed = false;
           if (source.gamepad && source.gamepad.buttons[0]) {
-            pressed = source.gamepad.buttons[0].pressed;
+            // FIRE EARLY: Trigger UI hits at 10% depression instead of waiting for a full physical click
+            pressed = source.gamepad.buttons[0].value > 0.1 || source.gamepad.buttons[0].pressed;
           }
 
           if (pressed && !this._globalGuiWasPressed) {
@@ -4011,6 +4012,12 @@ class Scene {
 
         // Apply Hybrid Button State
         if (this._vrSubtractActive) {
+          isNegative = true;
+        }
+
+        // Also inherit Negative state from the Tool itself (set via Mini-HUD Checkbox)
+        const currentTool = this._sculptManager.getCurrentTool();
+        if (currentTool && currentTool._negative) {
           isNegative = true;
         }
 

@@ -639,6 +639,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         activeTool._negative = !activeTool._negative;
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
       } else {
       }
     }
