@@ -1,7 +1,9 @@
 # SculptXR Release History
 
-## v0.9.117 
-- **Hotfix**: **VR Mini-HUD Interaction**: Fixed an issue where the negative toggle button failed to update the controller's visual state or force a redraw of the HUD. Also lowered the required physical trigger depth from `100%` (`pressed`) to `10%` (`value > 0.1`) to make interacting with the VR UI significantly easier and more responsive.
+## v0.9.119
+- **Refactor**: **VR UI Clean Up**: Removed the redundant "Negative" toggle button from the Mini-HUD, as the physical hardware button 'A'/'X' acts as a real-time override, freeing up UI space for future tool options.
+
+## v0.9.117 - v0.9.118
 
 ## v0.9.112 - v0.9.116
 - **Feature**: **Slide Brush**: Added a dedicated 'Slide' tool to shift mesh topology smoothly across the existing surface without adding or removing volume.
