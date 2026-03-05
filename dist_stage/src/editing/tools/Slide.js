@@ -26,6 +26,12 @@ class Slide extends SculptBase {
     }
     this._slideVProxy.set(vAr); // Capture frozen mesh state O(N) very fast
 
+    var nAr = mesh.getNormals();
+    if (!this._slideNProxy || this._slideNProxy.length !== nAr.length) {
+      this._slideNProxy = new Float32Array(nAr.length);
+    }
+    this._slideNProxy.set(nAr); // Capture frozen normals to ensure tangent projection doesn't tilt inward
+
     // Initialize anchor mappings for topological walking
     var nbVerts = vAr.length / 3;
     if (!this._slideAnchors || this._slideAnchors.length !== nbVerts) {
@@ -265,8 +271,9 @@ class Slide extends SculptBase {
     var diry = dir[1];
     var dirz = dir[2];
     var vProxy = this._slideVProxy;
+    var nProxy = this._slideNProxy;
 
-    if (!vProxy) return; // Safeguard if startSculpt didn't initialize yet
+    if (!vProxy || !nProxy) return; // Safeguard if startSculpt didn't initialize yet
 
     var vrvStartCount = mesh.getVerticesRingVertStartCount();
     var vertRingVert = mesh.getVerticesRingVert();
@@ -320,91 +327,118 @@ class Slide extends SculptBase {
 
       fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
 
-      // Tangential Projection
-      var dot = dirx * nx + diry * ny + dirz * nz;
-      var tx = dirx - dot * nx;
-      var ty = diry - dot * ny;
-      var tz = dirz - dot * nz;
+      // --- GEOMETRIC INTEGRATION (O(1) Proxy Face Snapping) ---
+      // We project once against the proxy normal, then find the true closest Euclidean position
+      // on the proxy surface, culling distant proxy faces via a fast bounding-sphere check.
 
-      // Rotational delta
+      var pnX = nx, pnY = ny, pnZ = nz;
+      if (idVert * 3 < nProxy.length) {
+        pnX = nProxy[idVert * 3];
+        pnY = nProxy[idVert * 3 + 1];
+        pnZ = nProxy[idVert * 3 + 2];
+      }
+
+      var dot = dirx * pnX + diry * pnY + dirz * pnZ;
+      var tx = dirx - dot * pnX;
+      var ty = diry - dot * pnY;
+      var tz = dirz - dot * pnZ;
+
       var rotX = 0, rotY = 0, rotZ = 0;
       if (rotQuat) {
-        vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+        vTemp[0] = vx - cx; vTemp[1] = vy - cy; vTemp[2] = vz - cz;
         vec3.transformQuat(vTemp, vTemp, rotQuat);
-        rotX = vTemp[0] - dx;
-        rotY = vTemp[1] - dy;
-        rotZ = vTemp[2] - dz;
+        rotX = vTemp[0] - (vx - cx);
+        rotY = vTemp[1] - (vy - cy);
+        rotZ = vTemp[2] - (vz - cz);
       }
 
       vTarget[0] = vx + (tx + rotX) * fallOff;
       vTarget[1] = vy + (ty + rotY) * fallOff;
       vTarget[2] = vz + (tz + rotZ) * fallOff;
 
-      // 1. MESH WALKING (Proxy Migration)
-      // Dynamic Topology Safeguard: If vertex was created mid-stroke, it won't have an anchor or vProxy.
-      // We fall back to its live ID and live coordinate.
-      var anchor = (this._slideAnchors && idVert < this._slideAnchors.length) ? this._slideAnchors[idVert] : idVert;
-
-      for (var w = 0; w < 3; w++) { // Max 3 steps per frame
-        var aInd = anchor * 3;
-        var pX = aInd < vProxy.length ? vProxy[aInd] : vAr[aInd];
-        var pY = aInd < vProxy.length ? vProxy[aInd + 1] : vAr[aInd + 1];
-        var pZ = aInd < vProxy.length ? vProxy[aInd + 2] : vAr[aInd + 2];
-
-        var minDistSq = (pX - vTarget[0]) ** 2 + (pY - vTarget[1]) ** 2 + (pZ - vTarget[2]) ** 2;
-        var bestNeighbor = anchor;
-
-        var startRing, endRing, ringArrayVerts = vertRingVert;
-        if (rVerts) {
-          ringArrayVerts = rVerts[anchor];
-          startRing = 0;
-          endRing = ringArrayVerts.length;
-        } else {
-          startRing = vrvStartCount[anchor * 2];
-          endRing = startRing + vrvStartCount[anchor * 2 + 1];
-        }
-
-        for (var j = startRing; j < endRing; ++j) {
-          var nId = ringArrayVerts[j];
-          var nInd = nId * 3;
-          var npX = nInd < vProxy.length ? vProxy[nInd] : vAr[nInd];
-          var npY = nInd < vProxy.length ? vProxy[nInd + 1] : vAr[nInd + 1];
-          var npZ = nInd < vProxy.length ? vProxy[nInd + 2] : vAr[nInd + 2];
-
-          var dSq = (npX - vTarget[0]) ** 2 + (npY - vTarget[1]) ** 2 + (npZ - vTarget[2]) ** 2;
-          if (dSq < minDistSq) {
-            minDistSq = dSq;
-            bestNeighbor = nId;
-          }
-        }
-        if (bestNeighbor === anchor) break;
-        anchor = bestNeighbor;
-      }
-      if (this._slideAnchors && idVert < this._slideAnchors.length) {
-        this._slideAnchors[idVert] = anchor;
-      }
-
-      // 2. PROJECT ONTO PROXY FACES
-      minDistSq = Infinity;
+      var minDistSq = Infinity;
       var foundHit = false;
 
-      var start, end;
-      var ringArray = vertRingFace;
-      if (ringFaces) {
-        ringArray = ringFaces[anchor]; // USE SETTLED ANCHOR
-        start = 0;
-        end = ringArray.length;
-      } else {
-        start = vrfStartCount[anchor * 2];
-        end = start + vrfStartCount[anchor * 2 + 1];
+      // Only search within proxy faces
+      var proxyFaces = mesh.getFacesFromVertices(iVerts); // The proxy neighborhood
+
+      // PRE-COMPUTE PROXY BOUNDS (Once per brush, not per-vertex)
+      // Since iVerts can be 500+ and proxyFaces can be 1000+, doing a nested V*F loop 
+      // is 500,000 checks. We need a fast cull. Let's build a mini-AABB array for proxy faces.
+      if (i === 0 && !this._proxyBounds) {
+        this._proxyBounds = new Float32Array(proxyFaces.length * 6);
+        for (var f = 0; f < proxyFaces.length; ++f) {
+          var idFace = proxyFaces[f] * 4;
+          var iv1 = fAr[idFace] * 3;
+          var iv2 = fAr[idFace + 1] * 3;
+          var iv3 = fAr[idFace + 2] * 3;
+          var iv4 = fAr[idFace + 3];
+
+          var isQuad = iv4 !== Utils.TRI_INDEX;
+
+          var px1 = iv1 < vProxy.length ? vProxy[iv1] : vAr[iv1];
+          var py1 = iv1 < vProxy.length ? vProxy[iv1 + 1] : vAr[iv1 + 1];
+          var pz1 = iv1 < vProxy.length ? vProxy[iv1 + 2] : vAr[iv1 + 2];
+
+          var px2 = iv2 < vProxy.length ? vProxy[iv2] : vAr[iv2];
+          var py2 = iv2 < vProxy.length ? vProxy[iv2 + 1] : vAr[iv2 + 1];
+          var pz2 = iv2 < vProxy.length ? vProxy[iv2 + 2] : vAr[iv2 + 2];
+
+          var px3 = iv3 < vProxy.length ? vProxy[iv3] : vAr[iv3];
+          var py3 = iv3 < vProxy.length ? vProxy[iv3 + 1] : vAr[iv3 + 1];
+          var pz3 = iv3 < vProxy.length ? vProxy[iv3 + 2] : vAr[iv3 + 2];
+
+          var minX = Math.min(px1, px2, px3);
+          var maxX = Math.max(px1, px2, px3);
+          var minY = Math.min(py1, py2, py3);
+          var maxY = Math.max(py1, py2, py3);
+          var minZ = Math.min(pz1, pz2, pz3);
+          var maxZ = Math.max(pz1, pz2, pz3);
+
+          if (isQuad) {
+            iv4 *= 3;
+            var px4 = iv4 < vProxy.length ? vProxy[iv4] : vAr[iv4];
+            var py4 = iv4 < vProxy.length ? vProxy[iv4 + 1] : vAr[iv4 + 1];
+            var pz4 = iv4 < vProxy.length ? vProxy[iv4 + 2] : vAr[iv4 + 2];
+            minX = Math.min(minX, px4); maxX = Math.max(maxX, px4);
+            minY = Math.min(minY, py4); maxY = Math.max(maxY, py4);
+            minZ = Math.min(minZ, pz4); maxZ = Math.max(maxZ, pz4);
+        }
+
+          // Expand box slightly for floating point slop
+          var slop = radius * 0.1;
+          this._proxyBounds[f * 6] = minX - slop;
+          this._proxyBounds[f * 6 + 1] = minY - slop;
+          this._proxyBounds[f * 6 + 2] = minZ - slop;
+          this._proxyBounds[f * 6 + 3] = maxX + slop;
+          this._proxyBounds[f * 6 + 4] = maxY + slop;
+          this._proxyBounds[f * 6 + 5] = maxZ + slop;
+        }
       }
 
-      for (var j = start; j < end; ++j) {
-        var idFace = ringArray[j] * 4;
+      for (var f = 0; f < proxyFaces.length; ++f) {
+        // Fast AABB Cull
+        var minX = this._proxyBounds[f * 6];
+        var minY = this._proxyBounds[f * 6 + 1];
+        var minZ = this._proxyBounds[f * 6 + 2];
+        var maxX = this._proxyBounds[f * 6 + 3];
+        var maxY = this._proxyBounds[f * 6 + 4];
+        var maxZ = this._proxyBounds[f * 6 + 5];
+
+        var expR = radius * 0.2; // 20% brush expansion for safety
+        if (vTarget[0] < minX - expR || vTarget[0] > maxX + expR ||
+          vTarget[1] < minY - expR || vTarget[1] > maxY + expR ||
+          vTarget[2] < minZ - expR || vTarget[2] > maxZ + expR) {
+          continue; // Cull!
+        }
+
+        var idFace = proxyFaces[f] * 4;
+
         var iv1 = fAr[idFace] * 3;
         var iv2 = fAr[idFace + 1] * 3;
         var iv3 = fAr[idFace + 2] * 3;
         var iv4 = fAr[idFace + 3];
+        var isQuad = iv4 !== Utils.TRI_INDEX;
 
         v1[0] = iv1 < vProxy.length ? vProxy[iv1] : vAr[iv1];
         v1[1] = iv1 < vProxy.length ? vProxy[iv1 + 1] : vAr[iv1 + 1];
@@ -418,6 +452,14 @@ class Slide extends SculptBase {
         v3[1] = iv3 < vProxy.length ? vProxy[iv3 + 1] : vAr[iv3 + 1];
         v3[2] = iv3 < vProxy.length ? vProxy[iv3 + 2] : vAr[iv3 + 2];
 
+        if (isQuad) {
+          iv4 *= 3;
+          v4[0] = iv4 < vProxy.length ? vProxy[iv4] : vAr[iv4];
+          v4[1] = iv4 < vProxy.length ? vProxy[iv4 + 1] : vAr[iv4 + 1];
+          v4[2] = iv4 < vProxy.length ? vProxy[iv4 + 2] : vAr[iv4 + 2];
+        }
+
+        // Exact distance logic
         var distSq = Geometry.distance2PointTriangle(vTarget, v1, v2, v3, closest);
         if (distSq < minDistSq) {
           minDistSq = distSq;
@@ -427,11 +469,7 @@ class Slide extends SculptBase {
           foundHit = true;
         }
 
-        if (iv4 !== Utils.TRI_INDEX) {
-          iv4 *= 3;
-          v4[0] = iv4 < vProxy.length ? vProxy[iv4] : vAr[iv4];
-          v4[1] = iv4 < vProxy.length ? vProxy[iv4 + 1] : vAr[iv4 + 1];
-          v4[2] = iv4 < vProxy.length ? vProxy[iv4 + 2] : vAr[iv4 + 2];
+        if (isQuad) {
           distSq = Geometry.distance2PointTriangle(vTarget, v1, v3, v4, closest);
           if (distSq < minDistSq) {
             minDistSq = distSq;
@@ -443,16 +481,16 @@ class Slide extends SculptBase {
         }
       }
 
-      if (foundHit) {
-        newPos[i * 3] = bestClosest[0];
-        newPos[i * 3 + 1] = bestClosest[1];
-        newPos[i * 3 + 2] = bestClosest[2];
-      } else {
-        newPos[i * 3] = vTarget[0];
-        newPos[i * 3 + 1] = vTarget[1];
-        newPos[i * 3 + 2] = vTarget[2];
-      }
+      // CRITICAL FALLBACK: If the AABB cull was too aggressive and rejected ALL faces,
+      // foundHit will be false, and bestClosest will be [0,0,0] by default.
+      // We MUST fall back to vTarget to prevent snapping to the origin!
+      var currX = foundHit ? bestClosest[0] : vTarget[0];
+      var currY = foundHit ? bestClosest[1] : vTarget[1];
+      var currZ = foundHit ? bestClosest[2] : vTarget[2];
     }
+
+    // Clean up proxy bound cache at the end of the step so it rebuilds next frame
+    this._proxyBounds = null;
 
     // Apply snapped positions
     for (var i = 0; i < nbVerts; ++i) {

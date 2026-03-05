@@ -1,19 +1,9 @@
 
 ## Todo
-- **To triage**:
-    - ski navigation is a bit harder to do, u cant easly transition from one hand to the next to move around, u need to drop the button before pressing the grip on the other hand
-    - i would expect to use the joystick to scroll over the ui is im pointing at it
-    - it would be great to have the x axis of the dominant hand joystick to control strenght like u have y axis for size
-    - it would be neat if we could hold the trigger on the non dominant hand to smoth out the step on the jump on size/strenght so it goes slower, so holding trigger and using the joystick to control brush size would go slower than non holding it
-    - i would imagine danny has been screaming for inertia movement hehe
-    - the sampling on the brush gets very slow if u are barely touching the surface with the brush
-    - it always cast the full brush size and not just the tip of the brush
-    - the performance of the brush is much better if its fully inside the mesh
-    - it feels almost like stapling if you are using just the edge of the brush
-    - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view
-    - when dynamic topo is on the perfomance drops on standalone, im sure u are aware of it
 
 - **Functionality**:
+    - i would imagine danny has been screaming for inertia movement hehe
+    - ski navigation 
     - closer look at dyntopo
     - voxel straight line mode
     - voxel smooth shading
@@ -34,6 +24,15 @@
     - pose tool
     
 - **UI + UX**
+    - when dynamic topo is on the perfomance drops on standalone, im sure u are aware of it
+    - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view
+    - it feels almost like stapling if you are using just the edge of the brush
+    - the performance of the brush is much better if its fully inside the mesh
+    - it always cast the full brush size and not just the tip of the brush
+    - the sampling on the brush gets very slow if u are barely touching the surface with the brush
+    - it would be neat if we could hold the trigger on the non dominant hand to smoth out the step on the jump on size/strenght so it goes slower, so holding trigger and using the joystick to control brush size would go slower than non holding it
+    - the x axis of the dominant hand joystick to control strenght like u have y axis for size
+    - joystick to scroll over the ui is im pointing at it
     - the smooth and move brushes are unaffected by dynamic topology mode. 
     - mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw
     - ~~tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)~~ **DONE v0.9.102**

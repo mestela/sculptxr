@@ -46,13 +46,10 @@
     *   **Beta Deployment is allowed** for testing purposes, but Production is strictly off-limits until final approval.
 
 ## Commit Protocol
-**"Working First, Clean Later"**
-1.  **Commit Working State**: When a feature is working (verified by logs/visuals), commit it **IMMEDIATELY**, even if the code contains debug logs, commented-out blocks, or "ugly" hacks.
-    *   *Message*: "WIP: [Feature] working (dirty logs)"
-2.  **Tidy Up**: Only AFTER the working state is secured in git, perform code cleanup (removing logs, refactoring).
-3.  **Commit Clean**: Commit the cleaned code.
-    *   *Message*: "Clean: Remove debug logs for [Feature]"
-*Reasoning*: LLM cleanup often inadvertently breaks working logic. This protocol ensures a known good rollback point exists.
+**"Explicit Commits Only"**
+1.  **NEVER autonomously commit to git**: Do not run `git commit` unless the user explicitly asks you to. 
+2.  **Keep the Log Clean**: The user prefers to keep the git log free of broken, WIP, or intermediate commits.
+3.  **Wait for the Prompt**: When a feature is working and deployed to Beta, wait for the user to confirm it works and explicitly request a commit before pushing it to the history.
 
 ## The "Paranoid Commit" Protocol
 **Trigger**: Before aggressive edits, after major milestones, or when explicitly requested.

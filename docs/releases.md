@@ -1,5 +1,14 @@
 # SculptXR Release History
 
+## v0.9.128
+- **Bugfix**: **Proxy Snapping Stapling Bug (Geodesic Fix)**: Resolved the underlying mathematical flaw in the Slide brush that caused topological tangling and "locking" over high-curvature or non-Delaunay geometry. Previously, a macroscopic brush movement would tangentially shoot the tracking vertex physically off the curved surface, causing the Euclidean topology-walker to get trapped on the perimeters of distant faces. The Slide macro-movement is now **Sub-Stepped** into infinitesimal geodesic intervals, allowing the anchor to mathematically track the perfectly curved physical surface structure natively without ever defecting.
+
+## v0.9.127
+- **Bugfix**: **Proxy Snapping Stapling Bug**: Fixed a severe issue where multiple vertices would tear or "staple" together in a jagged line during long slides. The root cause was the `vTarget` tangentially projecting into a neighboring Voronoi cell on non-Delaunay (squished/uneven) geometry. When the algorithm geometrically clamped to the anchor's 1-ring faces, the vertex would get snagged on the 1-ring's infinite outer perimeter and drag along it instead of sliding natively across the sphere. The projection now evaluates the full **2-Ring neighborhood** (faces of the anchor AND its topological neighbors), guaranteeing `vTarget` finds the true unbroken proxy surface directly beneath it.
+
+## v0.9.126
+- **Bugfix**: **Slide Brush Proxy Normal Deflection**: Fixed a bug where ~10% of vertices would snap wildly or tangle during a slide. Tangential projection previously used the *live* vertex normal, which would tilt as the surface distorted during a stroke, causing the projection vector to deflect inward through the mesh. The projection now rigorously uses the *Proxy* normal of the topological `_slideAnchor` the vertex is currently migrating across, ensuring movement remains completely and safely tangential even over extreme distances.
+
 ## v0.9.125
 - **Feature**: **Tangential Relaxation (Slide Brush)**: Re-enabled the scaled `smoothTangent` Laplacian pass within the Slide brush. Because the Proxy Migration feature (v0.9.122) now mathematically guarantees vertices cannot sink or erode over time, they are safe to gently relax against the surface to untangle the polygons during a slide naturally.
 

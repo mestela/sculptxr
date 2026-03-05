@@ -37,7 +37,7 @@ Tools[Enums.Tools.TRANSFORM] = Transform;
 Tools[Enums.Tools.VOXEL] = SculptVoxel;
 Tools[Enums.Tools.GRAB] = Grab;
 Tools[Enums.Tools.TRANSFORM_VR] = TransformVR;
-Tools[Enums.Tools.SLIDE] = Slide;
+// Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -56,6 +56,6 @@ Tools[Enums.Tools.TRANSFORM].uiName = 'sculptTransform';
 Tools[Enums.Tools.VOXEL].uiName = 'sculptVoxel';
 Tools[Enums.Tools.GRAB].uiName = 'sculptGrab';
 Tools[Enums.Tools.TRANSFORM_VR].uiName = 'sculptTransformVR';
-Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
+// Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;
