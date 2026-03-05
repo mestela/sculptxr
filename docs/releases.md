@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.123
+- **Hotfix**: **Proxy Migration Dynamic Topology Crash**: Fixed a critical `TypeError` crash in the Slide brush when used with Dynamic Topology enabled. The `_slideAnchors` and `_slideVProxy` arrays are fixed snapshots at the start of the stroke, but dynamic topology creates new vertices mid-stroke. Added bounds checking so newly spawned vertices gracefully fall back to live live geometry instead of accessing undefined proxy indices.
+
 ## v0.9.122
 - **Feature/Fix**: **Proxy Migration (Mesh-Walking)**: Re-wrote the Slide brush's surface projection algorithm to project sliding vertices against an immutable, frozen origin mesh state (`vProxy`) rather than the live geometry. Vertices track their current location by topological "Mesh-Walking" across the proxy face adjacency. This permanently eliminates the geometric erosion (melting) problem when sliding over sharp details like lips and creases, perfectly preserving the original curvature over long, multi-stroke movements.
 

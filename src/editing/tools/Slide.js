@@ -16,10 +16,7 @@ class Slide extends SculptBase {
     this._lastVRQuat = quat.create();
   }
 
-  // VR Support: Drag needs to calculate delta from controller movement
   startSculpt() {
-    super.startSculpt();
-
     var mesh = this.getMesh();
     if (!mesh) return;
 
@@ -37,6 +34,8 @@ class Slide extends SculptBase {
     for (var i = 0; i < nbVerts; i++) {
       this._slideAnchors[i] = i;
     }
+
+    super.startSculpt();
   }
 
   // VR Support: Drag needs to calculate delta from controller movement
@@ -268,6 +267,8 @@ class Slide extends SculptBase {
     var diry = dir[1];
     var dirz = dir[2];
     var vProxy = this._slideVProxy;
+
+    if (!vProxy) return; // Safeguard if startSculpt didn't initialize yet
 
     var vrvStartCount = mesh.getVerticesRingVertStartCount();
     var vertRingVert = mesh.getVerticesRingVert();
