@@ -1,4 +1,6 @@
-# SculptXR Release History
+## v0.9.144
+- **Feature**: **In-App Deep Profiler**: Added a robust in-app function profiler to diagnose standalone VR performance drops without remote debugging tools. The profiler wraps key classes (`SculptManager`, `Mesh`, etc.) and records millisecond execution times across a 60-frame window. It can be triggered via the "Log Deep Functions" button in the VR Settings menu and will wait for an active sculpt stroke before recording.
+- **Feature**: **VR HUD Logger**: Implemented a native WebXR text logging system (`GuiXR.printLog`) that draws `window.screenLog` messages directly onto the VR Mini-HUD. This allows standalone users to view critical debug state, matrix readouts, and performance profiles completely in-headset. The VR HUD truncates to the last 2 lines directly in your vision while the full detailed output is safely preserved in the desktop console.
 
 ## v0.9.128
 - **Bugfix**: **Proxy Snapping Stapling Bug (Geodesic Fix)**: Resolved the underlying mathematical flaw in the Slide brush that caused topological tangling and "locking" over high-curvature or non-Delaunay geometry. Previously, a macroscopic brush movement would tangentially shoot the tracking vertex physically off the curved surface, causing the Euclidean topology-walker to get trapped on the perimeters of distant faces. The Slide macro-movement is now **Sub-Stepped** into infinitesimal geodesic intervals, allowing the anchor to mathematically track the perfectly curved physical surface structure natively without ever defecting.
