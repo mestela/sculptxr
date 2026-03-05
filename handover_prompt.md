@@ -1,12 +1,12 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Finished implementing color-coding and categorization for the Mini-HUD VR Tool Picker. Resolved event bleeding issues from the overlay to the underlying radius slider, and addressed bugs regarding color picker interaction state bounding.
+**Project Status**: Finished restoring the Drag tool (Snakehook equivalent). Upgraded its symmetry blending math, stabilized its VR physical tracking, fixed a VR cursor scaling issue, resolved an initial-stroke state error, and eliminated WebGL buffer desync crashes when using dynamic topology.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
-**Checkpoint**: `v0.9.102` deployed to production.
+**Checkpoint**: `v0.9.107` deployed to production.
 
 ## Deployed Version
-- **Beta**: v0.9.101
-- **Prod**: v0.9.102
+- **Beta**: v0.9.107
+- **Prod**: v0.9.107
 
 ## Interactive Debugging
 - **Preference**: Use browser console for immediate state inspection.

@@ -1,7 +1,7 @@
 
 ## Todo
 - **Functionality**:
-    - restore grab brush
+    - ~~restore grab/drag brush~~ **DONE v0.9.107**
     - closer look at dyntopo
     - voxel straight line mode
     - voxel smooth shading
@@ -22,7 +22,7 @@
     
 - **UI + UX**
     - the smooth and move brushes are unaffected by dynamic topology mode. 
-    - mini HUD could be a little higher, slightly uncomfortable atm
+    - mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw
     - ~~tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)~~ **DONE v0.9.102**
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels

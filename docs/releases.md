@@ -1,5 +1,12 @@
 # SculptXR Release History
 
+## v0.9.103 - v0.9.107
+- **Feature**: **Drag Tool Restored**: Re-enabled the classic 'Snakehook' style Drag brush.
+- **Math Upgrade**: Ported modern `Move.js` symmetry blending to `Drag.js` to prevent crossing mesh tearing.
+- **VR Polish**: Fixed VR 1:1 physical tracking offsets, corrected cursor scaling, and normalized default brush radius.
+- **Stability**: Resolved a `TypeError` by ensuring history state is pushed on initial VR strokes.
+- **GL Fix**: Fixed a WebGL `GL_INVALID_OPERATION` crash when using Drag with Dynamic Topology by properly synchronizing geometry buffer lengths mid-stroke.
+
 ## v0.9.102
 - **Polish**: **Tool Combobox Categorization**: The Mini-HUD Tool Picker buttons are now visually categorized by color (Red for Sculpting, Blue for Smoothing, Purple for Painting, Green for Transforms, Orange for Masking). The active selected tool label is forced white for maximum legibility against its green background.
 - **Clean**: **VR Tool Labels**: Stripped extraneous desktop keyboard shortcuts (like `(-Shift)`, `(G)`) from the tool labels exclusively in the VR UI to reduce visual clutter, and renamed `Transform VR` to simply `Transform`.
