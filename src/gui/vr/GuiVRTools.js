@@ -627,25 +627,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   }
 
 
-  // Negative, Clay, Accumulate, Thin surface
-  widgets.push({
-    type: 'checkbox',
-    id: 'negative',
-    label: 'Negative',
-    x: col1X, y: y, w: 550, h: btnH,
-    value: activeTool ? activeTool._negative : false,
-    onInteract: () => {
-      if (activeTool) {
-        activeTool._negative = !activeTool._negative;
-        main.render();
-        if (main._guiXR) main._guiXR._needsRedraw = true;
-        if (main._guiMini) main._guiMini._needsRedraw = true;
-      } else {
-      }
-    }
-  });
-  y += btnH + gapBtn;
-
+  // Clay, Accumulate, Thin surface
   widgets.push({
     type: 'checkbox',
     id: 'wireframe',

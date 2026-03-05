@@ -3995,32 +3995,15 @@ class Scene {
           vec3.transformQuat(dir, dir, qInv2);
         }
 
-        // Check for NON-DOMINANT TRIGGER (Modifier) or SQUEEZE
-        let isNegative = false;
-        // Find non-dominant input source
+        // Determine Effective Negative State
         const session = frame.session;
         const nonDomHand = this._dominantHand === 'left' ? 'right' : 'left';
 
-        if (session && session.inputSources) {
-          for (let src of session.inputSources) {
-            if (src.handedness === nonDomHand && src.gamepad) {
-              // Removed Legacy Support for Button 1 (Squeeze) activating negative mode here.
-              // Negative mode is now handled solely by the UI toggle (vrSubtractActive).
-            }
-          }
-        }
-
-        // Apply Hybrid Button State
-        if (this._vrSubtractActive) {
-          isNegative = true;
-        }
-
-        // Also inherit Negative state from the Tool itself (set via Mini-HUD Checkbox)
         const currentTool = this._sculptManager.getCurrentTool();
-        if (currentTool && currentTool._negative) {
-          isNegative = true;
-        }
+        const origNegative = currentTool ? currentTool._negative : false;
 
+        // Effective state: Tool's innate state XOR Physical Button Override
+        const isNegative = this._vrSubtractActive ? !origNegative : origNegative;
         this._vrIsNegative = isNegative; // Logic for Rendering
 
         // Universal Sub Mode: Override Tool Negative State
@@ -4136,10 +4119,9 @@ class Scene {
           // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog(`TrigVal: ${triggerValue.toFixed(2)}`, "cyan");
         }
 
-        // Universal Sub Mode: Override Tool Negative State
-        const tool = this._sculptManager.getCurrentTool();
-        const origNegative = tool ? tool._negative : false;
-        if (isNegative && tool) tool._negative = !origNegative;
+        // Universal Sub Mode: Apply Effective Negative State to Tool
+        const tool = currentTool;
+        if (tool) tool._negative = isNegative;
 
         // VR Ergonomics: Temporary Smooth Modifier
         // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
@@ -4179,7 +4161,7 @@ class Scene {
         });
 
         // Restore original state immediately
-        if (isNegative && tool) tool._negative = origNegative;
+        if (tool) tool._negative = origNegative;
         if (isSmoothOverride && previousToolIndex !== -1) {
           this._sculptManager._toolIndex = previousToolIndex;
         }
