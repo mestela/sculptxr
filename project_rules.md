@@ -89,6 +89,7 @@
 ## Tool Usage & Verification
 1.  **Verify Tool Output**: When using `multi_replace_file_content` or similar tools, ALWAYS check the output message. If it says "target content not found", STOP and investigate. Do not assume success.
 2.  **No Blind Edits**: View the file context before editing to ensure `TargetContent` is exact.
+3.  **No Autonomous Browser Testing**: DO NOT use the `browser_subagent` to test the application unless explicitly requested by the user. Request manual testing instead.
 
 ## Environment & Build System
 1.  **NO NPM / NO BUILD**: This is a pure static site. Do NOT run `npm build`, `npm start`, `yarn`, or `pnpm`.

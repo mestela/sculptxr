@@ -7,6 +7,7 @@ import Flatten from './Flatten.js';
 import Pinch from './Pinch.js';
 import Crease from './Crease.js';
 import Drag from './Drag.js';
+import Slide from './Slide.js';
 import Relax from './Relax.js';
 import Paint from './Paint.js';
 import Move from './Move.js';
@@ -36,6 +37,7 @@ Tools[Enums.Tools.TRANSFORM] = Transform;
 Tools[Enums.Tools.VOXEL] = SculptVoxel;
 Tools[Enums.Tools.GRAB] = Grab;
 Tools[Enums.Tools.TRANSFORM_VR] = TransformVR;
+Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -54,5 +56,6 @@ Tools[Enums.Tools.TRANSFORM].uiName = 'sculptTransform';
 Tools[Enums.Tools.VOXEL].uiName = 'sculptVoxel';
 Tools[Enums.Tools.GRAB].uiName = 'sculptGrab';
 Tools[Enums.Tools.TRANSFORM_VR].uiName = 'sculptTransformVR';
+Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;

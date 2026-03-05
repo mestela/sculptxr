@@ -32,7 +32,8 @@ Enums.Tools = {
   TRANSFORM: 13,
   VOXEL: 14,
   GRAB: 15,
-  TRANSFORM_VR: 16
+  TRANSFORM_VR: 16,
+  SLIDE: 17
 };
 
 // display shader type

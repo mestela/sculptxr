@@ -117,6 +117,14 @@ GuiTools[Enums.Tools.DRAG] = {
   }
 };
 
+GuiTools[Enums.Tools.SLIDE] = {
+  _ctrls: [],
+  init: function (tool, fold, main) {
+    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+    addCtrlAlpha(this._ctrls, fold, tool, this);
+  }
+};
+
 GuiTools[Enums.Tools.FLATTEN] = {
   _ctrls: [],
   init: function (tool, fold, main) {

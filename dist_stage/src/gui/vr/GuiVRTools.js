@@ -43,6 +43,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     // Green (Move/Transform/Drag)
     Enums.Tools.MOVE,
     Enums.Tools.GRAB,
+    Enums.Tools.SLIDE,
     Enums.Tools.DRAG,
     Enums.Tools.TWIST,
     Enums.Tools.TRANSFORM_VR,
@@ -80,6 +81,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         return 'hsl(218, 50%, 85%)'; // Blue (bright)
       case Enums.Tools.MOVE:
       case Enums.Tools.GRAB:
+      case Enums.Tools.SLIDE:
       case Enums.Tools.DRAG:
       case Enums.Tools.TWIST:
       case Enums.Tools.TRANSFORM:
