@@ -1162,19 +1162,6 @@ class Scene {
       }
     }
 
-    this._debugHitSphere.updateMatrices(cam);
-
-    gl2.enable(gl2.BLEND);
-    gl2.blendFunc(gl2.ONE, gl2.ONE);
-    gl2.depthMask(false);
-    gl2.disable(gl2.CULL_FACE);
-    gl2.disable(gl2.DEPTH_TEST); // Always on top
-    // this._debugHitSphere.render(this);
-    gl2.enable(gl2.DEPTH_TEST);
-    gl2.disable(gl2.BLEND);
-  }
-}
-
     // [DEBUG] Gizmo Test Sphere (Render Pass 3 Copy)
     if (this._debugGizmoSphere && this._vrDominantRayMatrix) {
       const mGizmo = this._debugGizmoSphere.getMatrix();
@@ -1303,6 +1290,7 @@ if (prof && prof.logNextNumFrames > 0) {
   }
 }
   }
+
 
   // Simplified VR Render (Delegates to _renderSceneVR)
   renderVR(glLayer, pose, frame, refSpace) {
