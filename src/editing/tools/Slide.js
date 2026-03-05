@@ -342,10 +342,17 @@ class Slide extends SculptBase {
       vTarget[2] = vz + (tz + rotZ) * fallOff;
 
       // 1. MESH WALKING (Proxy Migration)
-      var anchor = this._slideAnchors[idVert];
+      // Dynamic Topology Safeguard: If vertex was created mid-stroke, it won't have an anchor or vProxy.
+      // We fall back to its live ID and live coordinate.
+      var anchor = (this._slideAnchors && idVert < this._slideAnchors.length) ? this._slideAnchors[idVert] : idVert;
+
       for (var w = 0; w < 3; w++) { // Max 3 steps per frame
         var aInd = anchor * 3;
-        var minDistSq = (vProxy[aInd] - vTarget[0]) ** 2 + (vProxy[aInd + 1] - vTarget[1]) ** 2 + (vProxy[aInd + 2] - vTarget[2]) ** 2;
+        var pX = aInd < vProxy.length ? vProxy[aInd] : vAr[aInd];
+        var pY = aInd < vProxy.length ? vProxy[aInd + 1] : vAr[aInd + 1];
+        var pZ = aInd < vProxy.length ? vProxy[aInd + 2] : vAr[aInd + 2];
+
+        var minDistSq = (pX - vTarget[0]) ** 2 + (pY - vTarget[1]) ** 2 + (pZ - vTarget[2]) ** 2;
         var bestNeighbor = anchor;
 
         var startRing, endRing, ringArrayVerts = vertRingVert;
@@ -361,7 +368,11 @@ class Slide extends SculptBase {
         for (var j = startRing; j < endRing; ++j) {
           var nId = ringArrayVerts[j];
           var nInd = nId * 3;
-          var dSq = (vProxy[nInd] - vTarget[0]) ** 2 + (vProxy[nInd + 1] - vTarget[1]) ** 2 + (vProxy[nInd + 2] - vTarget[2]) ** 2;
+          var npX = nInd < vProxy.length ? vProxy[nInd] : vAr[nInd];
+          var npY = nInd < vProxy.length ? vProxy[nInd + 1] : vAr[nInd + 1];
+          var npZ = nInd < vProxy.length ? vProxy[nInd + 2] : vAr[nInd + 2];
+
+          var dSq = (npX - vTarget[0]) ** 2 + (npY - vTarget[1]) ** 2 + (npZ - vTarget[2]) ** 2;
           if (dSq < minDistSq) {
             minDistSq = dSq;
             bestNeighbor = nId;
@@ -370,7 +381,9 @@ class Slide extends SculptBase {
         if (bestNeighbor === anchor) break;
         anchor = bestNeighbor;
       }
-      this._slideAnchors[idVert] = anchor;
+      if (this._slideAnchors && idVert < this._slideAnchors.length) {
+        this._slideAnchors[idVert] = anchor;
+      }
 
       // 2. PROJECT ONTO PROXY FACES
       minDistSq = Infinity;
@@ -394,9 +407,17 @@ class Slide extends SculptBase {
         var iv3 = fAr[idFace + 2] * 3;
         var iv4 = fAr[idFace + 3];
 
-        v1[0] = vProxy[iv1]; v1[1] = vProxy[iv1 + 1]; v1[2] = vProxy[iv1 + 2];
-        v2[0] = vProxy[iv2]; v2[1] = vProxy[iv2 + 1]; v2[2] = vProxy[iv2 + 2];
-        v3[0] = vProxy[iv3]; v3[1] = vProxy[iv3 + 1]; v3[2] = vProxy[iv3 + 2];
+        v1[0] = iv1 < vProxy.length ? vProxy[iv1] : vAr[iv1];
+        v1[1] = iv1 < vProxy.length ? vProxy[iv1 + 1] : vAr[iv1 + 1];
+        v1[2] = iv1 < vProxy.length ? vProxy[iv1 + 2] : vAr[iv1 + 2];
+
+        v2[0] = iv2 < vProxy.length ? vProxy[iv2] : vAr[iv2];
+        v2[1] = iv2 < vProxy.length ? vProxy[iv2 + 1] : vAr[iv2 + 1];
+        v2[2] = iv2 < vProxy.length ? vProxy[iv2 + 2] : vAr[iv2 + 2];
+
+        v3[0] = iv3 < vProxy.length ? vProxy[iv3] : vAr[iv3];
+        v3[1] = iv3 < vProxy.length ? vProxy[iv3 + 1] : vAr[iv3 + 1];
+        v3[2] = iv3 < vProxy.length ? vProxy[iv3 + 2] : vAr[iv3 + 2];
 
         var distSq = Geometry.distance2PointTriangle(vTarget, v1, v2, v3, closest);
         if (distSq < minDistSq) {
@@ -409,7 +430,9 @@ class Slide extends SculptBase {
 
         if (iv4 !== Utils.TRI_INDEX) {
           iv4 *= 3;
-          v4[0] = vProxy[iv4]; v4[1] = vProxy[iv4 + 1]; v4[2] = vProxy[iv4 + 2];
+          v4[0] = iv4 < vProxy.length ? vProxy[iv4] : vAr[iv4];
+          v4[1] = iv4 < vProxy.length ? vProxy[iv4 + 1] : vAr[iv4 + 1];
+          v4[2] = iv4 < vProxy.length ? vProxy[iv4 + 2] : vAr[iv4 + 2];
           distSq = Geometry.distance2PointTriangle(vTarget, v1, v3, v4, closest);
           if (distSq < minDistSq) {
             minDistSq = distSq;

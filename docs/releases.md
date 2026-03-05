@@ -1,5 +1,11 @@
 # SculptXR Release History
 
+## v0.9.122
+- **Feature/Fix**: **Proxy Migration (Mesh-Walking)**: Re-wrote the Slide brush's surface projection algorithm to project sliding vertices against an immutable, frozen origin mesh state (`vProxy`) rather than the live geometry. Vertices track their current location by topological "Mesh-Walking" across the proxy face adjacency. This permanently eliminates the geometric erosion (melting) problem when sliding over sharp details like lips and creases, perfectly preserving the original curvature over long, multi-stroke movements.
+
+## v0.9.121
+- **Experiment**: Disabled `smoothTangent` completely in the Slide brush to isolate the cause of shape erosion.
+
 ## v0.9.120
 - **Hotfix**: **Slide Brush Detail Preservation**: Fixed a major bug where holding the Slide brush over sharp details (like creases or lips) would rapidly blur them out even if the controller wasn't moving. The tangential relaxation pass (`smoothTangent`) is now strictly scaled by the physical distance the controller translates during the stroke, perfectly preserving sharp curvature when the brush is held still or wiggled gently.
 
