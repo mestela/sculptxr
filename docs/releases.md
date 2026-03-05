@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.125
+- **Feature**: **Tangential Relaxation (Slide Brush)**: Re-enabled the scaled `smoothTangent` Laplacian pass within the Slide brush. Because the Proxy Migration feature (v0.9.122) now mathematically guarantees vertices cannot sink or erode over time, they are safe to gently relax against the surface to untangle the polygons during a slide naturally.
+
 ## v0.9.124
 - **Hotfix**: **Slide Brush Initialization Crash**: Fixed a critical `TypeError` crash in the Slide brush that occurred on the very first frame of interaction. The `_slideVProxy` initialization order was corrected to execute *before* `super.startSculpt()` fires its initial stroke logic.
 

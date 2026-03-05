@@ -26,6 +26,12 @@ class Slide extends SculptBase {
     }
     this._slideVProxy.set(vAr); // Capture frozen mesh state O(N) very fast
 
+    var nAr = mesh.getNormals();
+    if (!this._slideNProxy || this._slideNProxy.length !== nAr.length) {
+      this._slideNProxy = new Float32Array(nAr.length);
+    }
+    this._slideNProxy.set(nAr); // Capture frozen normals to ensure tangent projection doesn't tilt inward
+
     // Initialize anchor mappings for topological walking
     var nbVerts = vAr.length / 3;
     if (!this._slideAnchors || this._slideAnchors.length !== nbVerts) {
@@ -265,8 +271,9 @@ class Slide extends SculptBase {
     var diry = dir[1];
     var dirz = dir[2];
     var vProxy = this._slideVProxy;
+    var nProxy = this._slideNProxy;
 
-    if (!vProxy) return; // Safeguard if startSculpt didn't initialize yet
+    if (!vProxy || !nProxy) return; // Safeguard if startSculpt didn't initialize yet
 
     var vrvStartCount = mesh.getVerticesRingVertStartCount();
     var vertRingVert = mesh.getVerticesRingVert();
@@ -320,11 +327,22 @@ class Slide extends SculptBase {
 
       fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
 
+      // Anchor Lookahead: Grab the anchor we determined LAST frame, so
+      // our current tangent matches the proxy surface we are currently sliding over.
+      var anchor = (this._slideAnchors && idVert < this._slideAnchors.length) ? this._slideAnchors[idVert] : idVert;
+
+      // Use the Anchor's original Proxy Normal for projection.
+      // If we use the live normal, the projection will deflect into the mesh as the surface crumples.
+      var aInd = anchor * 3;
+      var pnX = aInd < nProxy.length ? nProxy[aInd] : nx;
+      var pnY = aInd < nProxy.length ? nProxy[aInd + 1] : ny;
+      var pnZ = aInd < nProxy.length ? nProxy[aInd + 2] : nz;
+
       // Tangential Projection
-      var dot = dirx * nx + diry * ny + dirz * nz;
-      var tx = dirx - dot * nx;
-      var ty = diry - dot * ny;
-      var tz = dirz - dot * nz;
+      var dot = dirx * pnX + diry * pnY + dirz * pnZ;
+      var tx = dirx - dot * pnX;
+      var ty = diry - dot * pnY;
+      var tz = dirz - dot * pnZ;
 
       // Rotational delta
       var rotX = 0, rotY = 0, rotZ = 0;
@@ -343,10 +361,10 @@ class Slide extends SculptBase {
       // 1. MESH WALKING (Proxy Migration)
       // Dynamic Topology Safeguard: If vertex was created mid-stroke, it won't have an anchor or vProxy.
       // We fall back to its live ID and live coordinate.
-      var anchor = (this._slideAnchors && idVert < this._slideAnchors.length) ? this._slideAnchors[idVert] : idVert;
+      // (anchor is looked up before Tangential Projection to get the correct proxy normal)
 
       for (var w = 0; w < 3; w++) { // Max 3 steps per frame
-        var aInd = anchor * 3;
+        aInd = anchor * 3;
         var pX = aInd < vProxy.length ? vProxy[aInd] : vAr[aInd];
         var pY = aInd < vProxy.length ? vProxy[aInd + 1] : vAr[aInd + 1];
         var pZ = aInd < vProxy.length ? vProxy[aInd + 2] : vAr[aInd + 2];
