@@ -5,15 +5,15 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.9.140</title>
+    <title>SculptXR v0.9.144</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v0.9.140
+                                                              Version: v0.9.144
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v0.9.140">
+    <meta property="og:title" content="SculptXR v0.9.144">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -316,9 +316,14 @@
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
-                if (window.guiXR && window.guiXR._isPopupHUD) {
-                    // Route to VR HUD Logger
-                    window.guiXR.printLog(msg, color);
+                if (window.app) {
+                    const scene = window.app;
+                    if (scene._guiMini && scene._guiMini._isVisible) {
+                        scene._guiMini.printLog(msg, color);
+                    }
+                    if (scene._guiXR && scene._guiXR._isVisible) {
+                        scene._guiXR.printLog(msg, color);
+                    }
                 }
                 
                 if (!window._showDebugLog) return;

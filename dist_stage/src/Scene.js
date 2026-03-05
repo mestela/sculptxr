@@ -548,11 +548,12 @@ class Scene {
           const total = data.time.toFixed(2);
           const line = `${i + 1}. ${name} -> ${total}ms (Avg: ${avg}ms over ${data.hits} calls)\n`;
           console.log(line);
-          // Only show top 5-6 in VR HUD space to avoid overflow
-          if (i < 6) logStr += `${name}: ${total}ms\n`;
+          // Keep the full string for desktop log
+          logStr += `${name}: ${total}ms\n`;
         });
       }
 
+      logStr += "Profile Finished!";
       if (window.screenLog) window.screenLog(logStr, "lime");
 
       // Disarm

@@ -2273,9 +2273,9 @@ export default class GuiXR {
       if (!l.trim()) continue;
       this._logLines.push({ text: l, color: color, time: now });
     }
-    // Keep max 20 lines
-    if (this._logLines.length > 20) {
-      this._logLines = this._logLines.slice(this._logLines.length - 20);
+    // Keep max 2 lines for the VR HUD
+    if (this._logLines.length > 2) {
+      this._logLines = this._logLines.slice(this._logLines.length - 2);
     }
     this._needsRedraw = true;
     this.draw();
