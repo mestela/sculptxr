@@ -1,4 +1,4 @@
-# SculptXR (v0.9.102)
+# SculptXR (v0.9.107)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,11 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.107: **Drag Tool Dynamic Topology Fix:** Fixed a WebGL `GL_INVALID_OPERATION` crash when using Drag with Dynamic Topology. The JS arrays were expanding but the WebGL buffers were not being explicitly synchronized previously.
+*   v0.9.106: **Drag Tool Hotfix:** Corrected VR cursor radius scaling and prevented missing history TypeError on initial stroke.
+*   v0.9.105: **Drag Tool Symmetry Hotfix:** Fixed an issue where the symmetric brush wouldn't update its position in VR, preventing symmetric drag strokes from following the geometry.
+*   v0.9.104: **Drag Tool Hotfix:** Fixed a crash where the VR Drag tool would try to push a stroke state during hover tracking.
+*   v0.9.103: **Drag Tool Restored:** Re-enabled the classic 'Snakehook' style Drag brush. Upgraded its core math to utilize modern `Move.js` symmetry blending (preventing mesh tearing) and stabilized its VR 1:1 controller tracking.
 *   v0.9.102: **Mini-HUD Polish:** Tool picker combobox now features categorized color-tinting (Red, Blue, Purple, Green, Orange) to quickly identify brush families in VR. Extraneous keyboard shortcut labels have been stripped from the VR UI.
 *   v0.9.94: **Mini-HUD Polish:** Fixed AR clipping interactions, default brush radii normalization, and tool selection event bleeding. Stripped out noisy UI debug logging.
 *   v0.9.85: Color Picker: Paint Tool FG/BG Color Swatch and Mini-HUD Color Picker Support.

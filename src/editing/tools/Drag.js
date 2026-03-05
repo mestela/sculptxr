@@ -7,33 +7,47 @@ class Drag extends SculptBase {
   constructor(main) {
     super(main);
 
-    this._radius = 150;
+    this._radius = 50; // Normalize size to match Move brush
     this._dragDir = [0.0, 0.0, 0.0];
     this._dragDirSym = [0.0, 0.0, 0.0];
     this._idAlpha = 0;
   }
 
   // VR Support: Drag needs to calculate delta from controller movement
-  updateXR(picking) {
+  updateXR(picking, isPressed) {
     var main = this._main;
-    // We need valid controller position history
     if (!main._vrControllerPos) return;
 
-    if (!this._lastVRPos) {
-      this._lastVRPos = vec3.clone(main._vrControllerPos);
+    if (!isPressed) {
+      // HOVER
+      if (!this._lastVRPos) this._lastVRPos = vec3.create();
+      vec3.copy(this._lastVRPos, main._vrControllerPos);
+      var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
+      super.makeStrokeXR(picking, pickingSym, false);
+      this.updateRender();
       return;
     }
 
-    // VR DRAG LOGIC
-    // Calculate Delta in World Space
+    if (!this._lastVRPos) {
+      this._lastVRPos = vec3.clone(main._vrControllerPos);
+
+      // CRITICAL FIX: Drag overrides standard SculptManager/SculptBase initialization for its stroke logic.
+      // We MUST ensure the initial state is pushed, else Undo/Redo will throw `getCurrentState` TypeError.
+      this.pushState(); 
+      return;
+    }
+
+    // VR DRAG LOGIC (Modernized to match Move.js logic)
     var deltaWorld = vec3.create();
     vec3.sub(deltaWorld, main._vrControllerPos, this._lastVRPos);
 
     var mesh = this.getMesh();
+    if (!mesh) return;
+
     var invMat = mat4.create();
     mat4.invert(invMat, mesh.getMatrix());
 
-    // Vector transformation (ignore translation)
+    // Vector transformation (ignore translation by doing head - zero)
     var zero = vec3.create();
     var localZero = vec3.create();
     var localHead = vec3.create();
@@ -41,38 +55,39 @@ class Drag extends SculptBase {
     vec3.transformMat4(localHead, deltaWorld, invMat);
     vec3.sub(this._dragDir, localHead, localZero);
 
-    // picking is already updated by Scene.js (handleXRInput)
-    // We do NOT need to manually add delta to picking.getIntersectionPoint()
-    // because Scene.js already moved the intersection point to the new controller position.
-    // If we add delta again, we double the speed/offset.
-
-    // Repick vertices at new center (Scene.js updated intersection)
+    // repick vertices at new center (Scene.js updated intersection)
     picking._mesh = mesh;
-    picking.updateLocalAndWorldRadius2();
+    // CRITICAL FIX: Do NOT call picking.updateLocalAndWorldRadius2(). It recalculates radius based on screen-space camera FOV,
+    // which completely destroys VR physical radius scaling, causing the cursor to shrink to a dot. VR radius is set in Scene.js.
     picking.pickVerticesInSphere(picking.getLocalRadius2());
     picking.computePickedNormal();
 
-    // Apply
+    // Apply primary stroke
     this.stroke(picking, false);
 
     // Symmetry
     var pickingSym = main.getPickingSymmetry();
     if (main.getSculptManager().getSymmetry() && pickingSym) {
-      // Mirror the delta vector
+      // Mirror the delta vector for the symmetrical brush direction
       vec3.copy(this._dragDirSym, this._dragDir);
       Geometry.mirrorPoint(this._dragDirSym, [0, 0, 0], mesh.getSymmetryNormal());
 
-      // Scene.js updates pickingSym intersection too
-      if (pickingSym.getMesh()) {
-        pickingSym.setLocalRadius2(picking.getLocalRadius2());
-        pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
-        pickingSym.computePickedNormal();
-        this.stroke(pickingSym, true);
-      }
+      pickingSym._mesh = mesh;
+      vec3.copy(pickingSym.getIntersectionPoint(), picking.getIntersectionPoint());
+      Geometry.mirrorPoint(pickingSym.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+
+      pickingSym.setLocalRadius2(picking.getLocalRadius2());
+      pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
+      pickingSym.computePickedNormal();
+      this.stroke(pickingSym, true);
     }
 
     // Update history
     vec3.copy(this._lastVRPos, main._vrControllerPos);
+
+    if (mesh.isDynamic) {
+      this.updateMeshBuffers();
+    }
 
     this.updateRender();
   }
@@ -82,65 +97,6 @@ class Drag extends SculptBase {
     var mesh = this.getMesh();
     var picking = main.getPicking();
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
-
-    if (main._xrSession && main._vrControllerPos && this._lastVRPos) {
-      // VR DRAG LOGIC
-      // Calculate Delta in World Space
-      // Calculate Delta in World Space
-      var deltaWorld = vec3.create();
-      vec3.sub(deltaWorld, main._vrControllerPos, this._lastVRPos);
-
-      // Transform to Mesh Local Space
-      // LocalDelta = InverseWorldMatrix * WorldDelta?
-      // Actually, Delta is a Vector, not a Point. So only Rotation/Scale matters, not Translation.
-      // mat4.invert(invMat, mesh.getMatrix());
-      // vec3.transformMat4(localDelta, deltaWorld, invMat); -- wait, transformMat4 applies translation too if w=1.
-      // For direction vector, w=0.
-
-      var invMat = mat4.create();
-      mat4.invert(invMat, mesh.getMatrix());
-
-      // Transform as vector (ignore translation)
-      // vec3.transformMat4 with vector interpretation?
-      // Or manually 3x3 mult.
-      // gl-matrix doesn't have transformVec3?
-      // We can just use transformMat4 but set w=0 implicitly? No, function assumes point.
-
-      // Workaround: Transform (0,0,0) and (dx,dy,dz) and subtract?
-      // Or just extract rotation/scale from invMat.
-
-      // Vector transformation:
-      var zero = [0, 0, 0];
-      var localZero = [0, 0, 0];
-      var localHead = [0, 0, 0];
-      vec3.transformMat4(localZero, zero, invMat);
-      vec3.transformMat4(localHead, deltaWorld, invMat);
-      vec3.sub(this._dragDir, localHead, localZero);
-
-      // Update Picking Center (Move the brush)
-      vec3.add(picking.getIntersectionPoint(), picking.getIntersectionPoint(), this._dragDir);
-
-      // Repick vertices at new center
-      picking._mesh = mesh; // CRITICAL FIX: Ensure picking knows which mesh to use
-      picking.updateLocalAndWorldRadius2();
-      picking.pickVerticesInSphere(picking.getLocalRadius2());
-      picking.computePickedNormal();
-
-      // Apply
-      this.stroke(picking, false);
-      if (pickingSym) {
-        // Symmetry? mirror the delta?
-        // Drag.js usually calculates sym dir separately.
-        // For now, simple mirror of local dir?
-        vec3.copy(this._dragDirSym, this._dragDir);
-        Geometry.mirrorPoint(this._dragDirSym, [0, 0, 0], mesh.getSymmetryNormal()); // Reflect vector
-        this.stroke(pickingSym, true);
-      }
-
-      this.updateRender();
-      vec3.copy(this._lastVRPos, main._vrControllerPos);
-      return;
-    }
 
     var dx = main._mouseX - this._lastMouseX;
     var dy = main._mouseY - this._lastMouseY;
@@ -192,6 +148,11 @@ class Drag extends SculptBase {
 
     if (!mesh.isDynamic) this.stroke(picking, false);
     if (pickingSym) this.stroke(pickingSym, true);
+
+    if (mesh.isDynamic) {
+      this.updateMeshBuffers();
+    }
+
     return true;
   }
 
@@ -235,6 +196,24 @@ class Drag extends SculptBase {
       var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) / radius;
       var fallOff = dist * dist;
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
+
+      // Prevent "Bum Crease" crossover tearing on Symmetry Plane
+      var useSymmetry = this._main.getSculptManager().getSymmetry();
+      if (useSymmetry) {
+        var ptPlane = mesh.getSymmetryOrigin();
+        var nPlane = mesh.getSymmetryNormal();
+
+        // Linear Blend factor near the symmetry plane
+        var vDist = (vx - ptPlane[0]) * nPlane[0] + (vy - ptPlane[1]) * nPlane[1] + (vz - ptPlane[2]) * nPlane[2];
+        var cDist = (cx - ptPlane[0]) * nPlane[0] + (cy - ptPlane[1]) * nPlane[1] + (cz - ptPlane[2]) * nPlane[2];
+        var brushSide = cDist >= 0 ? 1.0 : -1.0;
+
+        var symFactor = 0.5 + 0.5 * (vDist * brushSide / radius);
+        symFactor = Math.min(Math.max(symFactor, 0.0), 1.0); // Clamp 0..1
+
+        fallOff *= symFactor;
+      }
+
       fallOff *= mAr[ind + 2] * picking.getAlpha(vx, vy, vz);
       vAr[ind] = vx + dirx * fallOff;
       vAr[ind + 1] = vy + diry * fallOff;
