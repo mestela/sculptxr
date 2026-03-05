@@ -1,5 +1,10 @@
 # SculptXR Release History
 
+## v0.9.112 - v0.9.116
+- **Feature**: **Slide Brush**: Added a dedicated 'Slide' tool to shift mesh topology smoothly across the existing surface without adding or removing volume.
+- **Math Upgrade**: **Closest-Point Snapping**: Replaced naïve tangential projection with an exact $O(1)$ 1-ring neighborhood raycast `Geometry.distance2PointTriangle` that snaps the translated vertex perfectly onto the unmodified local surface in real-time. 
+- **Immersion**: **VR 6DOF Rotation**: The Slide brush tracks the incremental rotational delta `_dragQuat` of the VR controller (`main._vrControllerQuat`), allowing the user to twist and steer the edge flow tangentially while sliding the surface skin.
+
 ## v0.9.108 - v0.9.111
 - **Feature**: **Relax Brush**: Added a dedicated 'Relax' tool to the brush palette. Unlike 'Smooth' which shrinks volume based on vertex average, 'Relax' projects vertex movement strictly onto the tangent plane, evening out density and fixing bad topology without losing surface details.
 - **UI & UX**: **VR Combobox Math**: Rewrote the VR tool picker geometry to automatically center dangling items on rows that don't fit the strict 3-column layout.

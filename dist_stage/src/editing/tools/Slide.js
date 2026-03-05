@@ -1,4 +1,4 @@
-import { vec3, mat4 } from 'gl-matrix';
+import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import Smooth from './Smooth.js';
@@ -13,6 +13,7 @@ class Slide extends SculptBase {
     this._dragDir = [0.0, 0.0, 0.0];
     this._dragDirSym = [0.0, 0.0, 0.0];
     this._idAlpha = 0;
+    this._lastVRQuat = quat.create();
   }
 
   // VR Support: Drag needs to calculate delta from controller movement
@@ -24,6 +25,11 @@ class Slide extends SculptBase {
       // HOVER
       if (!this._lastVRPos) this._lastVRPos = vec3.create();
       vec3.copy(this._lastVRPos, main._vrControllerPos);
+
+      if (main._vrControllerQuat) {
+        quat.copy(this._lastVRQuat, main._vrControllerQuat);
+      }
+
       var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
       super.makeStrokeXR(picking, pickingSym, false);
       this.updateRender();
@@ -32,8 +38,11 @@ class Slide extends SculptBase {
 
     if (!this._lastVRPos) {
       this._lastVRPos = vec3.clone(main._vrControllerPos);
+      if (main._vrControllerQuat) {
+        quat.copy(this._lastVRQuat, main._vrControllerQuat);
+      }
 
-      // CRITICAL FIX: Drag overrides standard SculptManager/SculptBase initialization for its stroke logic.
+      // CRITICAL FIX: Drag/Slide overrides standard SculptManager/SculptBase initialization for its stroke logic.
       // We MUST ensure the initial state is pushed, else Undo/Redo will throw `getCurrentState` TypeError.
       this.pushState();
       return;
@@ -57,6 +66,27 @@ class Slide extends SculptBase {
     vec3.transformMat4(localHead, deltaWorld, invMat);
     vec3.sub(this._dragDir, localHead, localZero);
 
+    // VR 6DOF ROTATION LOGIC
+    var qMesh = quat.create();
+    mat4.getRotation(qMesh, mesh.getMatrix());
+    var qMeshInv = quat.create();
+    quat.invert(qMeshInv, qMesh);
+
+    var qStartLocal = quat.create();
+    quat.multiply(qStartLocal, qMeshInv, this._lastVRQuat);
+
+    var qCurrLocal = quat.create();
+    quat.multiply(qCurrLocal, qMeshInv, main._vrControllerQuat);
+
+    var qDeltaLocal = quat.create();
+    var qStartInv = quat.create();
+    quat.invert(qStartInv, qStartLocal);
+    quat.multiply(qDeltaLocal, qCurrLocal, qStartInv);
+
+    var qScaledLocal = quat.create();
+    var qIdentity = quat.create();
+    quat.slerp(qScaledLocal, qIdentity, qDeltaLocal, 1.0); // Intensity can scale this
+
     // repick vertices at new center (Scene.js updated intersection)
     picking._mesh = mesh;
     // CRITICAL FIX: Do NOT call picking.updateLocalAndWorldRadius2(). It recalculates radius based on screen-space camera FOV,
@@ -65,7 +95,7 @@ class Slide extends SculptBase {
     picking.computePickedNormal();
 
     // Apply primary stroke
-    this.stroke(picking, false);
+    this.slide(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), false, picking, qScaledLocal);
 
     // Symmetry
     var pickingSym = main.getPickingSymmetry();
@@ -81,11 +111,17 @@ class Slide extends SculptBase {
       pickingSym.setLocalRadius2(picking.getLocalRadius2());
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
       pickingSym.computePickedNormal();
-      this.stroke(pickingSym, true);
+
+      var qDeltaSym = quat.clone(qScaledLocal);
+      qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
+      qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+
+      this.slide(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), true, pickingSym, qDeltaSym);
     }
 
     // Update history
     vec3.copy(this._lastVRPos, main._vrControllerPos);
+    if (main._vrControllerQuat) quat.copy(this._lastVRQuat, main._vrControllerQuat);
 
     if (mesh.isDynamic) {
       this.updateMeshBuffers();
@@ -178,7 +214,7 @@ class Slide extends SculptBase {
   }
 
   /** Slide deformation with Closest-Point O(1) Snapping */
-  slide(iVerts, center, radiusSquared, sym, picking) {
+  slide(iVerts, center, radiusSquared, sym, picking, rotQuat) {
     var mesh = this.getMesh();
     var vAr = mesh.getVertices();
     var mAr = mesh.getMaterials();
@@ -207,6 +243,7 @@ class Slide extends SculptBase {
     var v4 = [0.0, 0.0, 0.0];
     var closest = [0.0, 0.0, 0.0, 0];
     var bestClosest = [0.0, 0.0, 0.0];
+    var vTemp = [0.0, 0.0, 0.0];
 
     for (var i = 0; i < nbVerts; ++i) {
       var idVert = iVerts[i];
@@ -251,9 +288,19 @@ class Slide extends SculptBase {
       var ty = diry - dot * ny;
       var tz = dirz - dot * nz;
 
-      vTarget[0] = vx + tx * fallOff;
-      vTarget[1] = vy + ty * fallOff;
-      vTarget[2] = vz + tz * fallOff;
+      // Rotational delta
+      var rotX = 0, rotY = 0, rotZ = 0;
+      if (rotQuat) {
+        vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+        vec3.transformQuat(vTemp, vTemp, rotQuat);
+        rotX = vTemp[0] - dx;
+        rotY = vTemp[1] - dy;
+        rotZ = vTemp[2] - dz;
+      }
+
+      vTarget[0] = vx + (tx + rotX) * fallOff;
+      vTarget[1] = vy + (ty + rotY) * fallOff;
+      vTarget[2] = vz + (tz + rotZ) * fallOff;
 
       var minDistSq = Infinity;
       var foundHit = false;

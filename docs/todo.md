@@ -15,6 +15,7 @@
     - multiplayer
     - render options? export depth, normal etc
     - ~~smear/relax brush to even out topology~~ **DONE v0.9.111**
+    - ~~slide brush to push topology tangentially~~ **DONE v0.9.116**
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
