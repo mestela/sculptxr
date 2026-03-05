@@ -24,14 +24,15 @@ Enums.Tools = {
   PINCH: 5,
   CREASE: 6,
   DRAG: 7,
-  PAINT: 8,
-  MOVE: 9,
-  MASKING: 10,
-  LOCALSCALE: 11,
-  TRANSFORM: 12,
-  VOXEL: 13,
-  GRAB: 14,
-  TRANSFORM_VR: 15
+  RELAX: 8,
+  PAINT: 9,
+  MOVE: 10,
+  MASKING: 11,
+  LOCALSCALE: 12,
+  TRANSFORM: 13,
+  VOXEL: 14,
+  GRAB: 15,
+  TRANSFORM_VR: 16
 };
 
 // display shader type

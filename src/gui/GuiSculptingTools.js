@@ -139,6 +139,17 @@ GuiTools[Enums.Tools.INFLATE] = {
   }
 };
 
+GuiTools[Enums.Tools.RELAX] = {
+  _ctrls: [],
+  init: function (tool, fold, main) {
+    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
+    this._ctrls.push(addCtrlIntensity(tool, fold, this));
+    this._ctrls.push(addCtrlNegative(tool, fold, this));
+    this._ctrls.push(addCtrlCulling(tool, fold));
+    addCtrlAlpha(this._ctrls, fold, tool, this);
+  }
+};
+
 GuiTools[Enums.Tools.PAINT] = {
   _ctrls: [],
   onMaterialChanged: function (main, tool, materials) {

@@ -1,7 +1,7 @@
 
 ## Todo
 - **Functionality**:
-    - ~~restore grab/drag brush~~ **DONE v0.9.107**
+
     - closer look at dyntopo
     - voxel straight line mode
     - voxel smooth shading
@@ -36,6 +36,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~restore grab/drag brush~~ **DONE v0.9.107**
 - ~~still getting radius slider mis-hits when selecting pinch tool~~  **DONE v0.9.94**
 - ~~clean up noisy Hvr/Click debug logging~~ **DONE v0.9.94**
 - ~~mini hud combobox occasionally sets radius slider to huge number~~ **DONE v0.9.94**

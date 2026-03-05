@@ -35,6 +35,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
     // Blue (Smoothing)
     Enums.Tools.SMOOTH,
+    Enums.Tools.RELAX,
 
     // Purple (Paint)
     Enums.Tools.PAINT,
@@ -43,6 +44,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.MOVE,
     Enums.Tools.GRAB,
     Enums.Tools.DRAG,
+    Enums.Tools.TWIST,
     Enums.Tools.TRANSFORM_VR,
 
     // Space to center the final item
@@ -72,13 +74,14 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.FLATTEN:
       case Enums.Tools.PINCH:
       case Enums.Tools.CREASE:
-      case Enums.Tools.TWIST:
         return 'hsl(0, 50%, 85%)'; // Red (bright)
       case Enums.Tools.SMOOTH:
+      case Enums.Tools.RELAX:
         return 'hsl(218, 50%, 85%)'; // Blue (bright)
       case Enums.Tools.MOVE:
       case Enums.Tools.GRAB:
       case Enums.Tools.DRAG:
+      case Enums.Tools.TWIST:
       case Enums.Tools.TRANSFORM:
       case Enums.Tools.TRANSFORM_VR:
       case Enums.Tools.LOCALSCALE:
@@ -106,22 +109,34 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         const btnW = 150;
         const btnH = 60;
 
-        const boxW = cols * (btnW + pad) + pad;
-        const boxH = Math.ceil(toolOptions.length / cols) * (btnH + pad) + pad;
-
-        const startX = (660 - boxW) / 2;
+        // 1. Calculate how many valid items are in the list.
+        const validOptions = toolOptions.filter(opt => opt !== null);
+        const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
         const startY = 220 - (boxH / 2);
 
-        toolOptions.forEach((opt, idx) => {
-          if (!opt) return;
-          const col = idx % cols;
-          const row = Math.floor(idx / cols);
-          toolPickerWidgets.push({
-            type: 'button', id: opt.id, label: opt.label,
-            x: startX + col * (btnW + pad) + pad,
-            y: startY + row * (btnH + pad) + pad,
-            w: btnW, h: btnH,
-            data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
+        // Calculate maximum box width (used for vertical centering)
+        const maxBoxW = cols * (btnW + pad) + pad; // Total theoretical width
+
+        let currentOptionIdx = 0;
+        let numRows = Math.ceil(validOptions.length / cols);
+
+        for (let r = 0; r < numRows; r++) {
+          // How many items in *this* specific row?
+          let itemsInRow = Math.min(cols, validOptions.length - (r * cols));
+
+          // Width of just this row's items
+          let rowW = itemsInRow * (btnW + pad) - pad; // Subtract trailing pad
+          let rowStartX = (660 - rowW) / 2; // Center this specific row within the 660px Overlay
+
+          for (let c = 0; c < itemsInRow; c++) {
+            const opt = validOptions[currentOptionIdx];
+
+            toolPickerWidgets.push({
+              type: 'button', id: opt.id, label: opt.label,
+              x: rowStartX + c * (btnW + pad),
+              y: startY + r * (btnH + pad),
+              w: btnW, h: btnH,
+              data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
             onInteract: () => {
               const guiGroup = main.getGui()._ctrlSculpting;
               if (guiGroup && guiGroup._ctrlSculpt) {
@@ -146,7 +161,9 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
               }
             }
           });
-        });
+            currentOptionIdx++;
+          } // End inner column loop
+        } // End outer row loop
 
         if (main._guiPopup) {
           main._guiPopup.openOverlay('menu', { x: 0, y: 0, w: 660, h: 660, widgets: toolPickerWidgets, isToolPicker: true });
@@ -161,33 +178,43 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     const cols = 3;
     const btnW = 250;
     const btnH = 60;
-    toolOptions.forEach((opt, idx) => {
-      if (!opt) return;
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
-      widgets.push({
-        type: 'button',
-        id: opt.id,
-        label: opt.label,
-        x: col1X + col * (btnW + pad),
-        y: y + row * (btnH + pad),
-        w: btnW,
-        h: btnH,
-        data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) }, // Highlight active tool
-        onInteract: () => {
-          const guiGroup = main.getGui()._ctrlSculpting;
-          if (guiGroup && guiGroup._ctrlSculpt) {
-            guiGroup._ctrlSculpt.setValue(opt.id);
-          } else {
-            main.getSculptManager().setToolIndex(opt.id);
+
+    // 1. Calculate how many valid items are in the list.
+    const validDesktopOptions = toolOptions.filter(opt => opt !== null);
+
+    let currentDesktopOptionIdx = 0;
+    let numDesktopRows = Math.ceil(validDesktopOptions.length / cols);
+
+    for (let r = 0; r < numDesktopRows; r++) {
+      for (let c = 0; c < Math.min(cols, validDesktopOptions.length - (r * cols)); c++) {
+        const opt = validDesktopOptions[currentDesktopOptionIdx];
+
+        widgets.push({
+          type: 'button', id: opt.id, label: opt.label,
+          x: col1X + c * (btnW + pad), y: y + r * (btnH + pad), w: btnW, h: btnH,
+          data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
+          onInteract: () => {
+            const guiGroup = main.getGui()._ctrlSculpting;
+            if (guiGroup && guiGroup._ctrlSculpt) {
+              guiGroup._ctrlSculpt.setValue(opt.id);
+            } else {
+              main.getSculptManager().setToolIndex(opt.id);
+            }
+
+            if (main._guiXR) {
+              main._guiXR.refreshToolsWidget();
+              main._guiXR.syncWidgetValues(); // Force values to update instantly
+              main._guiXR._needsRedraw = true;
+            }
+            if (main._guiPopup) {
+              main._guiPopup.refreshToolsWidget();
+            }
           }
-          if (main._guiXR) main._guiXR.refreshToolsWidget();
-          if (main._guiMini) main._guiMini.refreshToolsWidget();
-        }
-      });
-    });
-    // Advance Y by the total grid height
-    y += Math.ceil(toolOptions.length / cols) * (btnH + pad) + pad;
+        });
+        currentDesktopOptionIdx++;
+      }
+    }
+    y += numDesktopRows * (btnH + pad) + gapSection;
   }
 
   y += 80 + gapSection;
