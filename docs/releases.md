@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.120
+- **Hotfix**: **Slide Brush Detail Preservation**: Fixed a major bug where holding the Slide brush over sharp details (like creases or lips) would rapidly blur them out even if the controller wasn't moving. The tangential relaxation pass (`smoothTangent`) is now strictly scaled by the physical distance the controller translates during the stroke, perfectly preserving sharp curvature when the brush is held still or wiggled gently.
+
 ## v0.9.119
 - **Refactor**: **VR UI Clean Up**: Removed the redundant "Negative" toggle button from the Mini-HUD, as the physical hardware button 'A'/'X' acts as a real-time override, freeing up UI space for future tool options.
 

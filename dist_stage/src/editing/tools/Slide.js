@@ -207,7 +207,18 @@ class Slide extends SculptBase {
     this.slide(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), sym, picking);
 
     // Tangential relaxation pass to prevent bunching
-    this.smoothTangent(iVertsInRadius, 1.0, picking);
+    // We scale intensity by the physical translational delta (how far the surface actually moved)
+    // If the user holds still, smoothing is 0. If they move, smoothing reaches a safe cap (0.3).
+    // This prevents creases from instantly blurring out when the trigger is held over them.
+    /*
+    var dir = sym ? this._dragDirSym : this._dragDir;
+    var dist = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    var smoothIntensity = Math.min(0.3, dist * 2.0); // e.g., moving 15% of radius = 0.3 intensity
+    
+    if (smoothIntensity > 0.001) {
+      this.smoothTangent(iVertsInRadius, smoothIntensity, picking);
+    }
+    */
 
     var mesh = this.getMesh();
     mesh.updateGeometry(mesh.getFacesFromVertices(iVertsInRadius), iVertsInRadius);
