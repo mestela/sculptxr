@@ -1264,31 +1264,6 @@ class Scene {
         this._gazeTooltipRight.render();
       }
     }
-
-// [PROFILE] End of Render Logging
-if (prof && prof.logNextNumFrames > 0) {
-  prof.accRenderTotal += (performance.now() - pStartTotal);
-  prof.frames++;
-
-  if (prof.frames >= prof.logNextNumFrames) {
-    // Compute Averages
-    const f = prof.frames;
-    const avgDelta = (prof.accFrameDelta / f).toFixed(2);
-    const fps = (1000 / (prof.accFrameDelta / f)).toFixed(1);
-    const avgTot = (prof.accRenderTotal / f).toFixed(2);
-    const avgOp = (prof.accMeshOpaque / f).toFixed(2);
-    const avgWire = (prof.accMeshWire / f).toFixed(2);
-    const avgUI = (prof.accUI / f).toFixed(2);
-
-    const logStr = `PROF (${f}f): FPS:${fps} Delta:${avgDelta}ms | Rndr:${avgTot}ms (Opq:${avgOp} Wire:${avgWire} UI:${avgUI})`;
-    console.log("=== SCULPTXR PERFORMANCE PROFILE ===");
-    console.log(logStr);
-    if (window.screenLog) window.screenLog(logStr, "lime");
-
-    // Disable until called again
-    prof.logNextNumFrames = 0;
-  }
-}
   }
 
 
@@ -2376,6 +2351,14 @@ if (prof && prof.logNextNumFrames > 0) {
     const session = frame.session;
     session.requestAnimationFrame(this.onXRFrame.bind(this));
 
+    // [PROFILE] Frame Start 
+    const prof = window.__sculptProfile;
+    const pStartTotal = performance.now();
+    if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
+      prof.accFrameDelta += (pStartTotal - prof.lastFrameTime);
+    }
+    if (prof) prof.lastFrameTime = pStartTotal;
+
     // Force use of Base Ref Space (Local Floor) to debug "Flying Cube"
     // The previous offset logic likely doubled up or inverted height.
     const refSpace = this._baseRefSpace;
@@ -2855,6 +2838,35 @@ if (prof && prof.logNextNumFrames > 0) {
       this._bakedWorldOffset = null;
       this._loggedTripodDebug = false;
     }
+
+    // [PROFILE] End of Frame Logging
+    if (prof && prof.logNextNumFrames > 0) {
+      prof.frames++;
+
+      if (prof.frames >= prof.logNextNumFrames) {
+        // Compute Averages (Note: we ran at Frame Rate, not Eye Rate now)
+        const f = prof.frames;
+        const avgDelta = (prof.accFrameDelta / f).toFixed(2);
+        const fps = (1000 / (prof.accFrameDelta / f)).toFixed(1);
+
+        // Render passes are still logged per eye, so we double the divisor 
+        // to average them per-eye, OR leave them raw to show total cost per frame 
+        // (Let's leave raw to show total cost per frame)
+        const avgTot = (prof.accRenderTotal / f).toFixed(2);
+        const avgOp = (prof.accMeshOpaque / f).toFixed(2);
+        const avgWire = (prof.accMeshWire / f).toFixed(2);
+        const avgUI = (prof.accUI / f).toFixed(2);
+
+        const logStr = `PROF (${f}f): FPS:${fps} Delta:${avgDelta}ms | RndrTotal:${avgTot}ms (Opq:${avgOp} Wire:${avgWire} UI:${avgUI})`;
+        console.log("=== SCULPTXR PERFORMANCE PROFILE (GLOBAL) ===");
+        console.log(logStr);
+        if (window.screenLog) window.screenLog(logStr, "lime");
+
+        // Disable until called again
+        prof.logNextNumFrames = 0;
+      }
+    }
+
   }
 
   handleXRInput(frame, refSpace) {

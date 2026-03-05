@@ -463,6 +463,89 @@ class Scene {
       return `Profiling next ${numFrames} frames...`;
     };
 
+    // [PROFILE] Deep Function Profiler
+    window.__sculptDeepProfile = {
+      active: false,
+      logNextNumFrames: 0,
+      frames: 0,
+      records: {} // { "Mesh.updateGeometryBuffers": { time: 0, hits: 0 } }
+    };
+
+    window.initDeepProfiler = (targets) => {
+      // e.g. targets = [{ name: "SculptManager", instance: this._sculptManager }, { name: "Mesh", instance: this._mesh }]
+      let wrappedCount = 0;
+      window.__sculptDeepProfile.records = {};
+
+      const wrapMethods = (instance, className) => {
+        if (!instance) return;
+        const proto = Object.getPrototypeOf(instance);
+        const methodNames = Object.getOwnPropertyNames(proto)
+          .filter(name => typeof proto[name] === 'function' && name !== 'constructor');
+
+        methodNames.forEach(methodName => {
+          const originalMethod = instance[methodName];
+          const recordKey = `${className}.${methodName}`;
+
+          window.__sculptDeepProfile.records[recordKey] = { time: 0, hits: 0 };
+
+          // Replace the instance method with a proxy-like wrapper that traces the prototype method
+          instance[methodName] = function (...args) {
+            if (window.__sculptDeepProfile.active && window.__sculptDeepProfile.frames < window.__sculptDeepProfile.logNextNumFrames) {
+              const start = performance.now();
+              const result = originalMethod.apply(this, args);
+              const end = performance.now();
+
+              const record = window.__sculptDeepProfile.records[recordKey];
+              record.time += (end - start);
+              record.hits++;
+              return result;
+            } else {
+              return originalMethod.apply(this, args);
+            }
+          };
+          wrappedCount++;
+        });
+      };
+
+      targets.forEach(t => wrapMethods(t.instance, t.name));
+
+      window.__sculptDeepProfile.frames = 0;
+      window.__sculptDeepProfile.logNextNumFrames = 60; // Run for 60 frames
+      window.__sculptDeepProfile.active = true;
+
+      const msg = `Deep Profiler Active: Wrapped ${wrappedCount} functions...`;
+      console.log(msg);
+      if (window.screenLog) window.screenLog(msg, "orange");
+
+      return msg;
+    };
+
+    window.printDeepProfile = () => {
+      const records = window.__sculptDeepProfile.records;
+      const sorted = Object.entries(records)
+        .filter(([_, data]) => data.time > 0.05) // Ignore micro traces
+        .sort((a, b) => b[1].time - a[1].time)
+        .slice(0, 15); // Top 15
+
+      console.log("=== SCULPTXR DEEP FUNCTION PROFILE (Top 15 Heaviest) ===");
+      let logStr = "DEEP PROF:\n";
+
+      if (sorted.length === 0) {
+        logStr += "No significant function spikes found.";
+      } else {
+        sorted.forEach(([name, data], i) => {
+          const avg = (data.time / data.hits).toFixed(3);
+          const total = data.time.toFixed(2);
+          const line = `${i + 1}. ${name} -> ${total}ms (Avg: ${avg}ms over ${data.hits} calls)\n`;
+          console.log(line);
+          // Only show top 5-6 in VR HUD space to avoid overflow
+          if (i < 6) logStr += `${name}: ${total}ms\n`;
+        });
+      }
+
+      if (window.screenLog) window.screenLog(logStr, "lime");
+    };
+
     window.debugTestSphere = () => {
       const cam = this._camera;
       if (!cam) return "No Camera";
