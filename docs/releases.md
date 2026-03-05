@@ -1,5 +1,8 @@
 # SculptXR Release History
 
+## v0.9.124
+- **Hotfix**: **Slide Brush Initialization Crash**: Fixed a critical `TypeError` crash in the Slide brush that occurred on the very first frame of interaction. The `_slideVProxy` initialization order was corrected to execute *before* `super.startSculpt()` fires its initial stroke logic.
+
 ## v0.9.123
 - **Hotfix**: **Proxy Migration Dynamic Topology Crash**: Fixed a critical `TypeError` crash in the Slide brush when used with Dynamic Topology enabled. The `_slideAnchors` and `_slideVProxy` arrays are fixed snapshots at the start of the stroke, but dynamic topology creates new vertices mid-stroke. Added bounds checking so newly spawned vertices gracefully fall back to live live geometry instead of accessing undefined proxy indices.
 
