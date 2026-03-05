@@ -56,8 +56,35 @@ export default function getSettingsWidgets(main) {
   widgets.push({
     type: 'button', id: 'log_perf_profile', label: 'Log Perf Profile (120f)', x: 0, y: y, w: menuW, h: ITEM_H,
     onInteract: () => {
-      if (window.debugProfile) {
-        window.debugProfile(120);
+      if (window.debugProfile) window.debugProfile(120);
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'log_deep_functions', label: 'Log Deep Functions (60f)', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      if (window.initDeepProfiler) {
+        // Build targets dynamically from the active scene
+        const targets = [];
+        if (main._sculptManager) targets.push({ name: 'SculptManager', instance: main._sculptManager });
+        if (main._mesh) targets.push({ name: 'Mesh', instance: main._mesh });
+        if (main._mesh && main._mesh.getRenderData()) targets.push({ name: 'RenderData', instance: main._mesh.getRenderData() });
+        if (main._mesh && main._mesh.getMeshData()) targets.push({ name: 'MeshData', instance: main._mesh.getMeshData() });
+        if (main._guiXR) targets.push({ name: 'GuiXR', instance: main._guiXR });
+
+        window.initDeepProfiler(targets);
+
+        // Schedule printing after 61 frames (since we profile for 60)
+        let fCount = 0;
+        const checkDone = () => {
+          if (fCount++ > 65) {
+            if (window.printDeepProfile) window.printDeepProfile();
+          } else {
+            requestAnimationFrame(checkDone);
+          }
+        };
+        requestAnimationFrame(checkDone);
       }
     }
   });

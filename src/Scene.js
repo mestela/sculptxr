@@ -490,6 +490,15 @@ class Scene {
 
           // Replace the instance method with a proxy-like wrapper that traces the prototype method
           instance[methodName] = function (...args) {
+
+            // If armed but not recording, wait for a stroke event
+            if (window.__sculptDeepProfile.armed && !window.__sculptDeepProfile.active) {
+              if (methodName === 'start' || methodName === 'makeStroke' || methodName === 'makeStrokeXR') {
+                window.__sculptDeepProfile.active = true;
+                if (window.screenLog) window.screenLog("[Deep Profiler] Stroke detected! Recording...", "orange");
+              }
+            }
+
             if (window.__sculptDeepProfile.active && window.__sculptDeepProfile.frames < window.__sculptDeepProfile.logNextNumFrames) {
               const start = performance.now();
               const result = originalMethod.apply(this, args);
@@ -511,9 +520,10 @@ class Scene {
 
       window.__sculptDeepProfile.frames = 0;
       window.__sculptDeepProfile.logNextNumFrames = 60; // Run for 60 frames
-      window.__sculptDeepProfile.active = true;
+      window.__sculptDeepProfile.armed = true; // Wait for stroke
+      window.__sculptDeepProfile.active = false; // Don't record yet
 
-      const msg = `Deep Profiler Active: Wrapped ${wrappedCount} functions...`;
+      const msg = `Deep Profiler Armed! Wrapped ${wrappedCount} functions. Make a stroke...`;
       console.log(msg);
       if (window.screenLog) window.screenLog(msg, "orange");
 
@@ -544,6 +554,10 @@ class Scene {
       }
 
       if (window.screenLog) window.screenLog(logStr, "lime");
+
+      // Disarm
+      window.__sculptDeepProfile.armed = false;
+      window.__sculptDeepProfile.active = false;
     };
 
     window.debugTestSphere = () => {
