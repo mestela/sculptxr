@@ -1162,6 +1162,19 @@ class Scene {
       }
     }
 
+    this._debugHitSphere.updateMatrices(cam);
+
+    gl2.enable(gl2.BLEND);
+    gl2.blendFunc(gl2.ONE, gl2.ONE);
+    gl2.depthMask(false);
+    gl2.disable(gl2.CULL_FACE);
+    gl2.disable(gl2.DEPTH_TEST); // Always on top
+    // this._debugHitSphere.render(this);
+    gl2.enable(gl2.DEPTH_TEST);
+    gl2.disable(gl2.BLEND);
+  }
+}
+
     // [DEBUG] Gizmo Test Sphere (Render Pass 3 Copy)
     if (this._debugGizmoSphere && this._vrDominantRayMatrix) {
       const mGizmo = this._debugGizmoSphere.getMatrix();
@@ -1265,6 +1278,30 @@ class Scene {
       }
     }
 
+// [PROFILE] End of Render Logging
+if (prof && prof.logNextNumFrames > 0) {
+  prof.accRenderTotal += (performance.now() - pStartTotal);
+  prof.frames++;
+
+  if (prof.frames >= prof.logNextNumFrames) {
+    // Compute Averages
+    const f = prof.frames;
+    const avgDelta = (prof.accFrameDelta / f).toFixed(2);
+    const fps = (1000 / (prof.accFrameDelta / f)).toFixed(1);
+    const avgTot = (prof.accRenderTotal / f).toFixed(2);
+    const avgOp = (prof.accMeshOpaque / f).toFixed(2);
+    const avgWire = (prof.accMeshWire / f).toFixed(2);
+    const avgUI = (prof.accUI / f).toFixed(2);
+
+    const logStr = `PROF (${f}f): FPS:${fps} Delta:${avgDelta}ms | Rndr:${avgTot}ms (Opq:${avgOp} Wire:${avgWire} UI:${avgUI})`;
+    console.log("=== SCULPTXR PERFORMANCE PROFILE ===");
+    console.log(logStr);
+    if (window.screenLog) window.screenLog(logStr, "lime");
+
+    // Disable until called again
+    prof.logNextNumFrames = 0;
+  }
+}
   }
 
   // Simplified VR Render (Delegates to _renderSceneVR)

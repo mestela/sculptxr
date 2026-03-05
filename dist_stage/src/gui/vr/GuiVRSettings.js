@@ -50,6 +50,22 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({ type: 'header', label: 'Profiling & Debug', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'log_perf_profile', label: 'Log Perf Profile (120f)', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      if (window.debugProfile) {
+        window.debugProfile(120);
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  // Add 150px vertical buffer to ensure it is scrollable and visible above the MiniHUD
+  y += 150; 
+
   return {
     width: menuW,
     height: y + 10,

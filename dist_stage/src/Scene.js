@@ -432,6 +432,37 @@ class Scene {
       return "Forcing Sphere to " + x + "," + y + "," + z;
     };
 
+    // [PROFILE] In-App Performance Profiler
+    window.__sculptProfile = {
+      active: true,
+      logNextNumFrames: 0,
+      frames: 0,
+      lastFrameTime: 0,
+
+      // Accumulators
+      accFrameDelta: 0,
+      accRenderTotal: 0,
+      accMeshOpaque: 0,
+      accMeshWire: 0,
+      accUI: 0
+    };
+
+    window.debugProfile = (numFrames = 120) => {
+      // Reset accumulators and set frames to capture
+      window.__sculptProfile.frames = 0;
+      window.__sculptProfile.accFrameDelta = 0;
+      window.__sculptProfile.accRenderTotal = 0;
+      window.__sculptProfile.accMeshOpaque = 0;
+      window.__sculptProfile.accMeshWire = 0;
+      window.__sculptProfile.accUI = 0;
+      window.__sculptProfile.logNextNumFrames = numFrames;
+
+      if (window.screenLog) {
+        window.screenLog(`Profiling next ${numFrames} frames...`, "orange");
+      }
+      return `Profiling next ${numFrames} frames...`;
+    };
+
     window.debugTestSphere = () => {
       const cam = this._camera;
       if (!cam) return "No Camera";
@@ -685,6 +716,13 @@ class Scene {
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
+    const pStartTotal = performance.now();
+    const prof = window.__sculptProfile;
+    if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
+      prof.accFrameDelta += (pStartTotal - prof.lastFrameTime);
+    }
+    if (prof) prof.lastFrameTime = pStartTotal;
+
     const gl2 = this._gl;
     const meshes2 = this._meshes;
 
@@ -694,6 +732,8 @@ class Scene {
 
     // --- PASS 1: REAL WORLD (Controllers/Debug) ---
     // (Rendered unscaled, purely relative to the camera lens)
+
+    const pStartUI = performance.now();
 
     // Render Controllers
     if (this._vrControllerLeft) {
@@ -820,6 +860,8 @@ class Scene {
       this._vrControllerTip.render(this);
     }
 
+    if (prof && prof.logNextNumFrames > 0) prof.accUI += (performance.now() - pStartUI);
+
     // --- PASS 2: SCALED WORLD (Meshes/Grid) ---
     if (worldViewMatrixOverride) {
       mat4.copy(cam._view, worldViewMatrixOverride);
@@ -844,13 +886,16 @@ class Scene {
       this._grid.render(this);
     }
 
+    const pStartOpaque = performance.now();
     // Meshes (Opaque)
     for (let k = 0, l = meshes2.length; k < l; ++k) {
       if (!meshes2[k].isVisible()) continue;
       meshes2[k].updateMatrices(cam);
       meshes2[k].render(this);
     }
+    if (prof && prof.logNextNumFrames > 0) prof.accMeshOpaque += (performance.now() - pStartOpaque);
 
+    const pStartWire = performance.now();
     // Meshes (Wireframe)
     gl2.enable(gl2.BLEND);
     gl2.depthFunc(gl2.LESS);
@@ -859,6 +904,7 @@ class Scene {
     }
     gl2.depthFunc(gl2.LEQUAL);
     gl2.disable(gl2.BLEND);
+    if (prof && prof.logNextNumFrames > 0) prof.accMeshWire += (performance.now() - pStartWire);
 
     // Brush Indicator (Pass 2 - World Space)
     var currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
