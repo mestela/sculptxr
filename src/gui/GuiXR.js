@@ -205,6 +205,9 @@ export default class GuiXR {
       overlayItemHeight: 40 // Not directly used yet, but good for reference
     };
 
+    // --- POPUP VR LOG SYSTEM ---
+    this._logLines = []; // { text: "msg", color: "lime", time: 0 }
+
     // Expose for Console
     window.guiXR = this;
   }
@@ -2231,6 +2234,51 @@ export default class GuiXR {
       this._drawActiveCombobox(ctx);
       ctx.restore();
     }
+
+    // --- DRAW HUD LOG ---
+    if (this._logLines && this._logLines.length > 0) {
+      ctx.save();
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 24px monospace';
+
+      // Bottom left corner
+      const startX = 20;
+      let currentY = h - 20 - (this._logLines.length * 30);
+
+      // Background dimming for readability
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(startX - 10, currentY - 30, 800, (this._logLines.length * 30) + 40);
+
+      const now = performance.now();
+      for (let i = this._logLines.length - 1; i >= 0; i--) {
+        const line = this._logLines[i];
+        if (now - line.time > 5000) {
+          this._logLines.splice(i, 1);
+          this._needsRedraw = true;
+          continue;
+        }
+
+        ctx.fillStyle = line.color || '#fff';
+        ctx.fillText(line.text, startX, currentY);
+        currentY += 30;
+      }
+      ctx.restore();
+    }
+  }
+
+  printLog(str, color = '#00ff00') {
+    const lines = String(str).split('\n');
+    const now = performance.now();
+    for (let l of lines) {
+      if (!l.trim()) continue;
+      this._logLines.push({ text: l, color: color, time: now });
+    }
+    // Keep max 20 lines
+    if (this._logLines.length > 20) {
+      this._logLines = this._logLines.slice(this._logLines.length - 20);
+    }
+    this._needsRedraw = true;
+    this.draw();
   }
 
   _drawOverlay(ctx, w, h) {
