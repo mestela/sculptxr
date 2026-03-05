@@ -1,4 +1,4 @@
-# SculptXR (v0.9.107)
+# SculptXR (v0.9.111)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.108 - v0.9.111: **Relax Brush & UI Polish:** Added a dedicated 'Relax' tool for true tangential topology smoothing without volume loss. Upgraded the VR tool picker to auto-center dangling buttons and re-categorized colors (Relax is Blue, Twist is Green).
 *   v0.9.107: **Drag Tool Dynamic Topology Fix:** Fixed a WebGL `GL_INVALID_OPERATION` crash when using Drag with Dynamic Topology. The JS arrays were expanding but the WebGL buffers were not being explicitly synchronized previously.
 *   v0.9.106: **Drag Tool Hotfix:** Corrected VR cursor radius scaling and prevented missing history TypeError on initial stroke.
 *   v0.9.105: **Drag Tool Symmetry Hotfix:** Fixed an issue where the symmetric brush wouldn't update its position in VR, preventing symmetric drag strokes from following the geometry.

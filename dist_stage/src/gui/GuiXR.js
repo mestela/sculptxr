@@ -2285,7 +2285,7 @@ export default class GuiXR {
         const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
 
         if (this._overlayData.isToolPicker && isHover && window.screenLog && Math.random() < 0.05) {
-          window.screenLog(`[Draw] Hovering: ${wid.id}`, 'cyan');
+          // window.screenLog(`[Draw] Hovering: ${wid.id}`, 'cyan'); // Debugging removed here
         }
 
         // Hover Background (Generic)

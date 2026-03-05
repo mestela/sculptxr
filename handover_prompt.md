@@ -1,11 +1,11 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Finished restoring the Drag tool (Snakehook equivalent). Upgraded its symmetry blending math, stabilized its VR physical tracking, fixed a VR cursor scaling issue, resolved an initial-stroke state error, and eliminated WebGL buffer desync crashes when using dynamic topology.
+**Project Status**: Finished implementing the new `Relax` brush (tangential smoothing) and pushed it to the combobox UI. Fixed a regression where the Move tool disappeared due to a shared enum index. Rewrote the VR popup UI to dynamically center dangling buttons in the grid.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
-**Checkpoint**: `v0.9.107` deployed to production.
+**Checkpoint**: `v0.9.111` deployed to beta. About to deploy to production.
 
 ## Deployed Version
-- **Beta**: v0.9.107
+- **Beta**: v0.9.111
 - **Prod**: v0.9.107
 
 ## Interactive Debugging

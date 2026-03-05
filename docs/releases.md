@@ -1,5 +1,10 @@
 # SculptXR Release History
 
+## v0.9.108 - v0.9.111
+- **Feature**: **Relax Brush**: Added a dedicated 'Relax' tool to the brush palette. Unlike 'Smooth' which shrinks volume based on vertex average, 'Relax' projects vertex movement strictly onto the tangent plane, evening out density and fixing bad topology without losing surface details.
+- **UI & UX**: **VR Combobox Math**: Rewrote the VR tool picker geometry to automatically center dangling items on rows that don't fit the strict 3-column layout.
+- **UI & UX**: **Tool Organization**: Restructured the layout of the VR combobox, tinted the Relax tool Blue (smoothing group), and moved the Twist tool into the Green (transform/move group).
+
 ## v0.9.103 - v0.9.107
 - **Feature**: **Drag Tool Restored**: Re-enabled the classic 'Snakehook' style Drag brush.
 - **Math Upgrade**: Ported modern `Move.js` symmetry blending to `Drag.js` to prevent crossing mesh tearing.

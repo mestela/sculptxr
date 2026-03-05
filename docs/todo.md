@@ -1,7 +1,6 @@
 
 ## Todo
 - **Functionality**:
-
     - closer look at dyntopo
     - voxel straight line mode
     - voxel smooth shading
@@ -15,7 +14,7 @@
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
     - render options? export depth, normal etc
-    - smear/relax brush to even out topology
+    - ~~smear/relax brush to even out topology~~ **DONE v0.9.111**
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
