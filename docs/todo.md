@@ -33,10 +33,8 @@
     - the sampling on the brush gets very slow if u are barely touching the surface with the brush
     - joystick to scroll over the ui is im pointing at it
     - the smooth and move brushes are unaffected by dynamic topology mode. 
-    - mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
-    - isolate in view/scene is inverted
     - paint tool restore eyedropper
     - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
@@ -46,6 +44,9 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~fix duplicate twist tool in VR combobox~~ **DONE v0.9.157**
+- ~~isolate in view/scene is inverted~~ **DONE v0.9.154**
+- ~~mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw~~ **DONE v0.9.157**
 - ~~secondary trigger fine-tuning modifier for joystick adjustments~~ **DONE v0.9.150**
 - ~~x-axis of dominant joystick controls tool intensity~~ **DONE v0.9.150**
 - ~~smear/relax brush to even out topology~~ **DONE v0.9.111**

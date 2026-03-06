@@ -3122,18 +3122,12 @@ class Scene {
                 state.lastUndoRedoTime = now;
                 state.waitingForNeutral = true;
 
-                 if (valX < -T_PRESS) {
-                   if (window.screenLog) window.screenLog(`Shortcuts: Undo (Val=${valX.toFixed(2)})`, "lime");
-                   else console.log("Shortcuts: Undo");
-
+                if (valX < -T_PRESS) {
                    if (this._stateManager) {
                      this._stateManager.undo();
                      this._main ? this._main.render() : this.render();
                    }
                  } else if (valX > T_PRESS) {
-                   if (window.screenLog) window.screenLog(`Shortcuts: Redo (Val=${valX.toFixed(2)})`, "lime");
-                   else console.log("Shortcuts: Redo");
-
                    if (this._stateManager) {
                      this._stateManager.redo();
                      this._main ? this._main.render() : this.render();
@@ -3158,7 +3152,6 @@ class Scene {
 
             if (isPressedX && !wasPressedX) {
               if (now - (state.lastUndoTime || 0) > DEBOUNCE) {
-                if (window.screenLog) window.screenLog("Shortcuts: Undo (X Button)", "lime");
                 if (this._stateManager) {
                   this._stateManager.undo();
                   this._main ? this._main.render() : this.render();
@@ -3175,7 +3168,6 @@ class Scene {
 
             if (isPressedY && !wasPressedY) {
               if (now - (state.lastRedoTime || 0) > DEBOUNCE) {
-                if (window.screenLog) window.screenLog("Shortcuts: Redo (Y Button)", "lime");
                 if (this._stateManager) {
                   this._stateManager.redo();
                   this._main ? this._main.render() : this.render();
