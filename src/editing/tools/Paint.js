@@ -18,7 +18,7 @@ class Paint extends SculptBase {
     this._colorSecondary = vec3.fromValues(1.0, 1.0, 1.0); // secondary albedo
     this._materialSecondary = vec3.fromValues(0.5, 0.0, 0.0); // secondary material
 
-    this._onColorSwapped = null; // callback
+    this._colorSwappedCallbacks = []; // callbacks after color swap
 
     this._pickColor = false; // color picking
     this._pickCallbacks = []; // callback functions after picking a color
@@ -28,6 +28,10 @@ class Paint extends SculptBase {
     this._writeAlbedo = true;
     this._writeRoughness = true;
     this._writeMetalness = true;
+  }
+
+  addColorSwappedCallback(cb) {
+    this._colorSwappedCallbacks.push(cb);
   }
 
   end() {
@@ -46,8 +50,8 @@ class Paint extends SculptBase {
     vec3.copy(this._material, this._materialSecondary);
     vec3.copy(this._materialSecondary, tempM);
 
-    if (this._onColorSwapped) {
-      this._onColorSwapped();
+    for (var i = 0, l = this._colorSwappedCallbacks.length; i < l; ++i) {
+      this._colorSwappedCallbacks[i](this._color, this._material[0], this._material[1]);
     }
   }
 

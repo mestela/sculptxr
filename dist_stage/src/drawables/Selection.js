@@ -220,9 +220,19 @@ class Selection {
     const inv = 1.0 - intensity;
 
     const isActivelySampling = currentTool && currentTool.constructor.name === 'Paint' && currentTool._pickColor && currentTool._lastPickPressed;
+    const isPaintTool = currentTool && currentTool.constructor.name === 'Paint';
 
     if (isActivelySampling) {
       vec3.copy(this._color, currentTool._color);
+    } else if (isPaintTool) {
+      // If we are painting, the cursor should ALWAYS match the current paint color
+      // so we can see what color we are about to paint, and see flips instantly.
+      // We still mix with grey based on intensity to show "brush pressure" visually.
+      vec3.set(this._color,
+        (currentTool._color[0] * intensity) + (neutral * inv),
+        (currentTool._color[1] * intensity) + (neutral * inv),
+        (currentTool._color[2] * intensity) + (neutral * inv)
+      );
     } else if (this._isNegative) {
       vec3.set(this._color,
         (0.8 * intensity) + (neutral * inv),

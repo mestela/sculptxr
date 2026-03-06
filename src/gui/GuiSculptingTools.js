@@ -224,12 +224,14 @@ GuiTools[Enums.Tools.PAINT] = {
     this._ctrls.push(ctrlColor, ctrlRoughness, ctrlMetallic);
     if (tool.addPickCallback) tool.addPickCallback(this.onPickedMaterial.bind(this, materials, tool, main));
 
-    tool._onColorSwapped = () => {
-      materials[0].setValue(tool._color, true);
-      materials[1].setValue(tool._material[0] * 100, true);
-      materials[2].setValue(tool._material[1] * 100, true);
-      main.render();
-    };
+    if (tool.addColorSwappedCallback) {
+      tool.addColorSwappedCallback(() => {
+        materials[0].setValue(tool._color, true);
+        materials[1].setValue(tool._material[0] * 100, true);
+        materials[2].setValue(tool._material[1] * 100, true);
+        main.render();
+      });
+    }
 
     // mask
     this._ctrls.push(fold.addTitle('Write channel'));

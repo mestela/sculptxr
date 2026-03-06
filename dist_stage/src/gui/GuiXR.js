@@ -189,6 +189,13 @@ export default class GuiXR {
       });
     }
 
+    if (paintTool && paintTool.addColorSwappedCallback) {
+      paintTool.addColorSwappedCallback(() => {
+        this._needsRedraw = true;
+        this.draw();
+      });
+    }
+
     // Desktop Preview Toggle (Dev Tool)
     window.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.altKey && e.code === 'KeyV') {
