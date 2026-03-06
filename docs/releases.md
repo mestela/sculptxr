@@ -1,3 +1,13 @@
+## v0.9.154 - v0.9.158
+- **Polish**: **Mini-HUD Tweaks**: Shifted the Mini-HUD slightly higher and inward for a more symmetrical and comfortable viewing angle. Exposed `MINI_HUD_TRANSFORM` and `TOOLCOMB_TRANSFORM` variables to the global scope so developers can interactively tweak the 3D offsets of the HUD and Tool Picker via the DevTools console.
+- **Fix**: **Duplicate Twist Tool**: Removed a redundant Twist tool entry from the VR Combobox. This reduces the total tool count to 15, allowing the UI to form 5 perfectly symmetrical rows without any trailing slots.
+- **Fix**: **Isolate Toggle Logic**: Fixed a desynchronization bug where toggling "Isolate" via the Mini-HUD checkbox felt inverted. The controller now explicitly forces the underlying Sculpting state to match the physical VR checkbox state perfectly.
+- **Cleanup**: **Undo Logs**: Stripped noisy debug console logs (`Shortcuts: Undo`) from the controller event listener.
+
+## v0.9.150
+- **UX**: **Intensity Mapping**: The X-axis (left/right) on the dominant controller's thumbstick now natively controls the Brush Intensity!
+- **UX**: **Fine Tuning**: The secondary controller's trigger now acts as a "Fine Tuning" modifier lock. When held, sliding the primary thumbstick will adjust settings (like Radius or Intensity) at 10% of their normal speed, allowing for high-precision micro-adjustments in VR without opening the UI.
+
 ## v0.9.144
 - **Feature**: **In-App Deep Profiler**: Added a robust in-app function profiler to diagnose standalone VR performance drops without remote debugging tools. The profiler wraps key classes (`SculptManager`, `Mesh`, etc.) and records millisecond execution times across a 60-frame window. It can be triggered via the "Log Deep Functions" button in the VR Settings menu and will wait for an active sculpt stroke before recording.
 - **Feature**: **VR HUD Logger**: Implemented a native WebXR text logging system (`GuiXR.printLog`) that draws `window.screenLog` messages directly onto the VR Mini-HUD. This allows standalone users to view critical debug state, matrix readouts, and performance profiles completely in-headset. The VR HUD truncates to the last 2 lines directly in your vision while the full detailed output is safely preserved in the desktop console.
