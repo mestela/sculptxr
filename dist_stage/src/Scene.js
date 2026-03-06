@@ -2976,6 +2976,15 @@ class Scene {
     let leftOrigin = null, rightOrigin = null;
     let leftRot = null, rightRot = null;
 
+    // Smart Source Selection: Prioritize Trigger Press
+    // Loop manually to be safe on all browsers
+    let right = null;
+    let left = null;
+    for (const s of sources) {
+      if (s.handedness === 'right') right = s;
+      if (s.handedness === 'left') left = s;
+    }
+
     // Reset Menu Pointing State (Per Frame)
     this._isPointingAtMenu = false;
 
@@ -3170,24 +3179,32 @@ class Scene {
           */
         }
 
-        // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%
+        // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%, AXIS 2 (Left/Right) - Intensity +/- 5%
         if (isDom) {
           const valY = axes[3];
+          const valX = axes[2];
           const isPressedY = Math.abs(valY) > T_PRESS;
+          const isPressedX = Math.abs(valX) > T_PRESS;
+
+          // Check Secondary Hand Trigger for slow-modifier
+          const nonDomSource = this._dominantHand === 'left' ? right : left;
+          const isSecondaryTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
+          const speedModifier = isSecondaryTriggerPressed ? 0.1 : 1.0;
 
           // Timer for Repeat/Debounce
           const now = performance.now();
-          if (!state.lastRadiusTime) state.lastRadiusTime = 0;
+          // Dynamic target rate: 30ms normally, 15ms (10x precision visually via speedModifier 0.1) when holding trigger
+          const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
 
           if (isPressedY) {
-            if (now - state.lastRadiusTime > 150) { // 150ms Repeat Rate
+            if (now - state.lastRadiusTime > targetRateY) { 
               state.lastRadiusTime = now;
 
               let change = 0.0;
               const tools = this._sculptManager.getCurrentTool();
               const maxRadius = 250.0;
-              if (valY < -T_PRESS) change = maxRadius * 0.05; // UP -> +5% of max
-              if (valY > T_PRESS) change = -maxRadius * 0.05; // DOWN -> -5% of max
+              if (valY < -T_PRESS) change = maxRadius * 0.05 * speedModifier; // UP -> +5% of max
+              if (valY > T_PRESS) change = -maxRadius * 0.05 * speedModifier; // DOWN -> -5% of max
 
               if (change !== 0 && tools) {
                 const oldVal = tools._radius;
@@ -3213,6 +3230,44 @@ class Scene {
             state.lastRadiusTime = 0;
           }
           state.axes[3] = valY;
+
+          // INTENSITY CONTROL (X-Axis)
+          if (!state.lastIntensityTime) state.lastIntensityTime = 0;
+
+          const targetRateX = isSecondaryTriggerPressed ? 15 : 30;
+
+          if (isPressedX) {
+            if (now - state.lastIntensityTime > targetRateX) {
+              state.lastIntensityTime = now;
+
+              let intChange = 0.0;
+              const tools = this._sculptManager.getCurrentTool();
+
+              if (valX < -T_PRESS) intChange = -0.05 * speedModifier; // Left -> -5%
+              if (valX > T_PRESS) intChange = 0.05 * speedModifier;   // Right -> +5%
+
+              if (intChange !== 0 && tools) {
+                const oldVal = tools._intensity;
+                const newVal = Math.max(0.0, Math.min(1.0, oldVal + intChange));
+
+                tools.setIntensity(newVal);
+
+                // Update UI Widgets if active
+                if (this._guiXR) {
+                  this._guiXR.updateWidget('intensity', newVal);
+                }
+                if (this._guiMini) {
+                  this._guiMini.updateWidget('intensity', newVal);
+                }
+
+                // Force Render
+                this._main ? this._main.render() : this.render();
+              }
+            }
+          } else {
+            state.lastIntensityTime = 0;
+          }
+          state.axes[2] = valX;
         }
 
         // --- VR ERGONOMICS: HYBRID BUTTONS ---
@@ -3462,15 +3517,6 @@ class Scene {
     // XRInputSourceArray is not a real array, so .find() fails.
     let activeSource = null;
 
-
-    // Smart Source Selection: Prioritize Trigger Press
-    // Loop manually to be safe on all browsers
-    let right = null;
-    let left = null;
-    for (const s of sources) {
-      if (s.handedness === 'right') right = s;
-      if (s.handedness === 'left') left = s;
-    }
 
     // Check Triggers & Log
     const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;

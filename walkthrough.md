@@ -1,3 +1,19 @@
+# Walkthrough: VR Joystick Refinement (v0.9.150)
+
+## Goal
+Improve usability of the VR tools by adding analog thumbstick mappings for tool radius and intensity, along with a precision modifier.
+
+## Changes
+1.  **Radius Mapping**: Mapped the dominant hand's Thumbstick Y-Axis to dynamically adjust the brush radius.
+2.  **Intensity Mapping**: Mapped the dominant hand's Thumbstick X-Axis to dynamically adjust the brush intensity.
+3.  **Repeat Rate Tuning**: Default stick adjustments step at 30ms intervals.
+4.  **Precision Modifier**: Holding the non-dominant hand's trigger drops the adjustment magnitude by 10x and increases the repeat rate to 15ms for ultra-fine sub-adjustments.
+
+## Verification
+*   **Visuals**: Brush ring size updates instantly when pushing the stick up/down.
+*   **Intensity**: Testing the brush on the mesh confirms intensity scales with left/right thumbstick.
+*   **Precision**: Holding the trigger significantly slows the slider changes for precise control.
+
 # Walkthrough: VR Brush Performance Optimization (v0.6.4)
 
 ## Goal

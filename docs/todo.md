@@ -2,9 +2,11 @@
 ## Todo
 
 - **Functionality**:
-    - i would imagine danny has been screaming for inertia movement hehe
-    - ski navigation 
-    - closer look at dyntopo
+    - still doesn't elegantly handle when the headset goes into standby
+    - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
+    - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
+    - closer look at dyntopo, noticable performance drop in standalone
+    - closer look at wireframe, notisable performance drop in standalone
     - voxel straight line mode
     - voxel smooth shading
     - voxel smooth tool
@@ -17,8 +19,7 @@
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer
     - render options? export depth, normal etc
-    - ~~smear/relax brush to even out topology~~ **DONE v0.9.111**
-    - ~~slide brush to push topology tangentially~~ **DONE v0.9.116**
+    - have another go at the slide tool
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
@@ -30,12 +31,9 @@
     - the performance of the brush is much better if its fully inside the mesh
     - it always cast the full brush size and not just the tip of the brush
     - the sampling on the brush gets very slow if u are barely touching the surface with the brush
-    - it would be neat if we could hold the trigger on the non dominant hand to smoth out the step on the jump on size/strenght so it goes slower, so holding trigger and using the joystick to control brush size would go slower than non holding it
-    - the x axis of the dominant hand joystick to control strenght like u have y axis for size
     - joystick to scroll over the ui is im pointing at it
     - the smooth and move brushes are unaffected by dynamic topology mode. 
     - mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw
-    - ~~tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)~~ **DONE v0.9.102**
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
     - isolate in view/scene is inverted
@@ -48,6 +46,11 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~secondary trigger fine-tuning modifier for joystick adjustments~~ **DONE v0.9.150**
+- ~~x-axis of dominant joystick controls tool intensity~~ **DONE v0.9.150**
+- ~~smear/relax brush to even out topology~~ **DONE v0.9.111**
+- ~~slide brush to push topology tangentially~~ **DONE v0.9.116**
+- ~~tint tool text in combobox choice by brush type (red for stroke, blue for smooth, green for move/transform etc)~~ **DONE v0.9.102**
 - ~~restore grab/drag brush~~ **DONE v0.9.107**
 - ~~still getting radius slider mis-hits when selecting pinch tool~~  **DONE v0.9.94**
 - ~~clean up noisy Hvr/Click debug logging~~ **DONE v0.9.94**
