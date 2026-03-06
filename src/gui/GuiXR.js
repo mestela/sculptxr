@@ -186,9 +186,6 @@ export default class GuiXR {
 
         this._needsRedraw = true;
         this.draw();
-
-        paintTool._pickColor = false;
-        // if (window.screenLog) window.screenLog(`Picked RGB: ${color[0].toFixed(2)}, ${color[1].toFixed(2)}, ${color[2].toFixed(2)}`, "lime");
       });
     }
 

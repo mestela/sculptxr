@@ -195,17 +195,32 @@ class Paint extends SculptBase {
 
   // WebXR Support
   updateXR(picking, isPressed) {
+    // If the user releases the trigger, they are allowed to start a new stroke next time
+    if (!isPressed) {
+      this._blockNextStroke = false;
+    }
+
     if (this._pickColor) {
-      // Keep the cursor tracking the physical mesh visually
+      // Keep the cursor tracking the physical mesh visually but DO NOT paint
       this.sculptStrokeXR(picking, false);
-      // If the trigger is pressed, sample the color
+
+      // If the trigger is pressed, sample the color continuously
       if (isPressed) {
         this.pickColor(picking);
+        this._blockNextStroke = true; // Prevent painting if we exit eyedropper mode while still holding the trigger
       } else if (this._lastPickPressed) {
+        // Trigger released: Commit the color and disable the eyedropper
         this.pickColor(picking);
         this._pickColor = false;
       }
       this._lastPickPressed = isPressed;
+      return;
+    }
+
+    // Safety: if we drop out of Eyedropper mode (e.g. releasing secondary trigger) 
+    // but the primary trigger is STILL held, DO NOT start an immediate paint stroke.
+    if (this._blockNextStroke && isPressed) {
+      this.sculptStrokeXR(picking, false);
       return;
     }
 
