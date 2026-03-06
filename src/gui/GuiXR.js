@@ -175,6 +175,23 @@ export default class GuiXR {
 
     // setTimeout(() => this.syncToolRadius(), 500);
 
+    // Register Paint Tool Callback globally
+    const sm = this._main.getSculptManager();
+    const paintTool = sm.getTool(Enums.Tools.PAINT);
+    if (paintTool) {
+      paintTool.setPickCallback((color, roughness, metallic) => {
+        vec3.copy(paintTool._color, color);
+        paintTool._material[0] = roughness;
+        paintTool._material[1] = metallic;
+
+        this._needsRedraw = true;
+        this.draw();
+
+        paintTool._pickColor = false;
+        // if (window.screenLog) window.screenLog(`Picked RGB: ${color[0].toFixed(2)}, ${color[1].toFixed(2)}, ${color[2].toFixed(2)}`, "lime");
+      });
+    }
+
     // Desktop Preview Toggle (Dev Tool)
     window.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.altKey && e.code === 'KeyV') {
@@ -1619,28 +1636,6 @@ export default class GuiXR {
       const sm = main.getSculptManager();
       sm.setToolIndex(w.id);
       this.refreshToolsWidget(); // Rebuild widgets for new tool
-
-      // Inject Pick Callback if Paint
-      if (w.id === Enums.Tools.PAINT) {
-        const tool = sm.getTool(Enums.Tools.PAINT);
-        if (tool) {
-          tool.setPickCallback((color, roughness, metallic) => {
-            // Update Tool Internal State
-            vec3.copy(tool._color, color);
-            tool._material[0] = roughness;
-            tool._material[1] = metallic;
-
-            // Update UI
-            this._needsRedraw = true;
-            this.draw();
-
-            // Auto-Exit Pick Mode? User might want multiple picks? 
-            // Standard behavior is usually one pick then switch back to paint.
-            tool._pickColor = false;
-            console.log("Pick Color: ", color, roughness, metallic);
-          });
-        }
-      }
     }
 
     // Paint Tool Toggles
