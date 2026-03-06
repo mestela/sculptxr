@@ -56,8 +56,10 @@ class Paint extends SculptBase {
   }
 
   startSculpt() {
-    if (this._pickColor)
+    if (this._pickColor) {
+      this._lastPickPressed = true;
       return this.pickColor(this._main.getPicking());
+    }
     super.startSculpt();
   }
 
@@ -87,8 +89,10 @@ class Paint extends SculptBase {
     var picking = this._main.getPicking();
     // In VR, picking is handled by Scene.js processVRSculpting
     var isVR = this._main._xrSession;
-    if (!isVR && picking.intersectionMouseMesh())
+    if (!isVR && picking.intersectionMouseMesh()) {
       this.pickColor(picking);
+      this._pickColor = false; // Desktop: Auto-exit on click
+    }
   }
 
   addPickCallback(cb) {
@@ -187,6 +191,26 @@ class Paint extends SculptBase {
         mAr[ind + 1] = mAr[ind + 1] * fallOffCompl + metallic * fallOff;
       }
     }
+  }
+
+  // WebXR Support
+  updateXR(picking, isPressed) {
+    if (this._pickColor) {
+      // Keep the cursor tracking the physical mesh visually
+      this.sculptStrokeXR(picking, false);
+      // If the trigger is pressed, sample the color
+      if (isPressed) {
+        this.pickColor(picking);
+      } else if (this._lastPickPressed) {
+        this.pickColor(picking);
+        this._pickColor = false;
+      }
+      this._lastPickPressed = isPressed;
+      return;
+    }
+
+    // Normal Paint behavior
+    this.sculptStrokeXR(picking, isPressed);
   }
 
   paintAll() {
