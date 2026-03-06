@@ -1,4 +1,4 @@
-# SculptXR (v0.9.158)
+# SculptXR (v0.9.175)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.159 - v0.9.175: **Color Painting Polish:** Added a Color Smooth/Blur brush mapped to the secondary trigger, real-time contextual cursor color feedback for the Eyedropper, and hardware A-Button foreground/background color swapping.
 *   v0.9.154 - v0.9.158: **Mini-HUD Layout Polish:** Adjusted the Mini-HUD 3D offsets for a more comfortable, symmetrical layout. Removed duplicate tools in the VR Combobox to achieve a perfect 3x5 button grid. Fixed a desynchronization bug with the Isolate Object toggle.
 *   v0.9.150: **VR Controller Shortcuts:** The X-axis of the dominant thumbstick now directly controls Brush Intensity. Holding the secondary trigger now acts as a precision modifier, slowing down radius/intensity increments to exactly 10% speed for fine-tuning.
 *   v0.9.144: **In-App Function Profiling:** Added a native VR Deep Profiler and HUD Logger to capture and display sub-millisecond execution times directly in the WebXR view, bypassing the need for remote debugging on standalone headsets.

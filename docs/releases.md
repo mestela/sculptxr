@@ -1,3 +1,8 @@
+## v0.9.159 - v0.9.175
+- **Feature**: **Color Blur / Smooth Brush**: When using the Paint tool, holding the secondary trigger now natively blends and blurs vertex colors and PBR materials (Roughness/Metallic) within the brush radius.
+- **UX**: **Contextual Eyedropper Cursor**: When actively sampling colors via the Mini-HUD Eyedropper, the brush's VR radius ring now instantly tints to the sampled color for immediate visual feedback.
+- **UX**: **A-Button Color Swap**: Pressing the physical 'A' button (or 'X' button for left-handed users) now instantly swaps the Foreground and Background selected colors, complete with real-time UI synchronization in the Mini-HUD and the VR 3D brush cursor.
+
 ## v0.9.154 - v0.9.158
 - **Polish**: **Mini-HUD Tweaks**: Shifted the Mini-HUD slightly higher and inward for a more symmetrical and comfortable viewing angle. Exposed `MINI_HUD_TRANSFORM` and `TOOLCOMB_TRANSFORM` variables to the global scope so developers can interactively tweak the 3D offsets of the HUD and Tool Picker via the DevTools console.
 - **Fix**: **Duplicate Twist Tool**: Removed a redundant Twist tool entry from the VR Combobox. This reduces the total tool count to 15, allowing the UI to form 5 perfectly symmetrical rows without any trailing slots.
