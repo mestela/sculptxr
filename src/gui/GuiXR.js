@@ -3106,14 +3106,17 @@ export default class GuiXR {
     return { u: this._cursor.x / this._canvas.width, v: this._cursor.y / this._canvas.height };
   }
   updateRadiusWidget(val) {
-    // Helper to update the radius slider visual if it exists
-    // Actually we need to search in active tools widget if it's there
-    // If not, we don't need to do anything as it will be regenerated with correct value.
-    // But if it IS visible, we should update it.
+    this.updateWidget('radius', val);
+  }
 
-    // We can try to find it in the current widgets list if we don't trust _tabWidgets
+  updateIntensityWidget(val) {
+    this.updateWidget('intensity', val);
+  }
+
+  updateWidget(id, val) {
     const widgets = this._getWidgets();
-    const w = widgets.find(w => w.id === 'radius');
+    if (!widgets) return;
+    const w = widgets.find(w => w.id === id);
     if (w) {
       w.value = val;
       this._needsRedraw = true;

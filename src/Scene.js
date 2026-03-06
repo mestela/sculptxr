@@ -1209,13 +1209,18 @@ class Scene {
       // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
       mat4.scale(mSphere, mSphere, [r, r, r]);
 
-      // Tint the sphere based on positive/negative mode to match the radius circle.
-      // Selection ring uses Red for negative, Blue for positive. 
-      // Base color is [0.5, 0.5, 0.5], so we tint slightly towards red/blue.
+      const currentTool = this._sculptManager.getCurrentTool();
+      const intensity = currentTool ? currentTool._intensity : 0.5;
+
+      // Map intensity (0.0 - 1.0) to a brightness multiplier for the additive sphere
+      // We don't want it completely invisible at 0, so min is 0.1
+      const bright = 0.1 + (intensity * 0.9);
+
+      // Tint the sphere based on positive/negative mode.
       if (this._vrIsNegative) {
-        this._vrBrushRadiusSphere.setFlatColor([0.7, 0.3, 0.3]); // Slightly Red
+        this._vrBrushRadiusSphere.setFlatColor([0.7 * bright, 0.2 * bright, 0.2 * bright]); // Slightly Red
       } else {
-        this._vrBrushRadiusSphere.setFlatColor([0.3, 0.3, 0.7]); // Slightly Blue
+        this._vrBrushRadiusSphere.setFlatColor([0.2 * bright, 0.2 * bright, 0.7 * bright]); // Slightly Blue
       }
 
       this._vrBrushRadiusSphere.updateMatrices(cam);

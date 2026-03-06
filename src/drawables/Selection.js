@@ -212,14 +212,27 @@ class Selection {
     // VR Specific Matrix Update
     this._updateMatricesMeshVR(camera, main, worldRadius, useSym);
 
+    const currentTool = main.getSculptManager().getCurrentTool();
+    const intensity = currentTool ? currentTool._intensity : 0.5;
+
+    // Map intensity to saturation (mix with grey [0.6, 0.6, 0.6])
+    const neutral = 0.6;
+    const inv = 1.0 - intensity;
+
     // Draw (Blue for VR, Red for Negative)
     if (this._isNegative) {
-      vec3.set(this._color, 0.8, 0.0, 0.0); // RED
+      vec3.set(this._color,
+        (0.8 * intensity) + (neutral * inv),
+        (0.0 * intensity) + (neutral * inv),
+        (0.0 * intensity) + (neutral * inv)
+      ); // RED mixed with grey
     } else {
-      vec3.set(this._color, 0.0, 0.0, 0.8); // BLUE
+      vec3.set(this._color,
+        (0.0 * intensity) + (neutral * inv),
+        (0.0 * intensity) + (neutral * inv),
+        (0.8 * intensity) + (neutral * inv)
+      ); // BLUE mixed with grey
     }
-
-    const currentTool = main.getSculptManager().getCurrentTool();
     const drawCircle = currentTool && currentTool.constructor.name !== 'Twist';
 
     ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, drawCircle, useSym);
