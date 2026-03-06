@@ -20,7 +20,7 @@ class Paint extends SculptBase {
     this._onColorSwapped = null; // callback
 
     this._pickColor = false; // color picking
-    this._pickCallback = null; // callback function after picking a color
+    this._pickCallbacks = []; // callback functions after picking a color
     this._idAlpha = 0;
     this._lockPosition = false;
 
@@ -91,8 +91,8 @@ class Paint extends SculptBase {
       this.pickColor(picking);
   }
 
-  setPickCallback(cb) {
-    this._pickCallback = cb;
+  addPickCallback(cb) {
+    this._pickCallbacks.push(cb);
   }
 
   pickColor(picking) {
@@ -114,8 +114,9 @@ class Paint extends SculptBase {
     picking.polyLerp(mesh.getColors(), color);
 
     // console.log("Picked:", color, roughness, metallic);
-    if (this._pickCallback)
-      this._pickCallback(color, roughness, metallic);
+    for (let i = 0; i < this._pickCallbacks.length; i++) {
+      this._pickCallbacks[i](color, roughness, metallic);
+    }
   }
 
   stroke(picking) {

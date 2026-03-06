@@ -178,8 +178,8 @@ export default class GuiXR {
     // Register Paint Tool Callback globally
     const sm = this._main.getSculptManager();
     const paintTool = sm.getTool(Enums.Tools.PAINT);
-    if (paintTool) {
-      paintTool.setPickCallback((color, roughness, metallic) => {
+    if (paintTool && paintTool.addPickCallback) {
+      paintTool.addPickCallback((color, roughness, metallic) => {
         vec3.copy(paintTool._color, color);
         paintTool._material[0] = roughness;
         paintTool._material[1] = metallic;
