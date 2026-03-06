@@ -1,4 +1,5 @@
 import { vec3 } from 'gl-matrix';
+import Utils from '../../misc/Utils.js';
 import Tablet from '../../misc/Tablet.js';
 import SculptBase from './SculptBase.js';
 
@@ -138,12 +139,68 @@ class Paint extends SculptBase {
 
     picking.updateAlpha(this._lockPosition);
     picking.setIdAlpha(this._idAlpha);
-    this.paint(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), intensity, this._hardness, picking);
+
+    if (this._isColorSmoothing) {
+      this.blurColor(iVertsInRadius, intensity, picking);
+    } else {
+      this.paint(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), intensity, this._hardness, picking);
+    }
 
     var mesh = this.getMesh();
     mesh.updateDuplicateColorsAndMaterials(iVertsInRadius);
     if (mesh.isUsingDrawArrays())
       mesh.updateDrawArrays(mesh.getFacesFromVertices(iVertsInRadius));
+  }
+
+  blurColor(iVerts, intensity, picking) {
+    var mesh = this.getMesh();
+    var cAr = mesh.getColors();
+    var mAr = mesh.getMaterials();
+    var vAr = mesh.getVertices();
+    var nbVerts = iVerts.length;
+
+    // Smooth Colors
+    if (this._writeAlbedo) {
+      var smoothColors = new Float32Array(Utils.getMemory(nbVerts * 4 * 3), 0, nbVerts * 3);
+      this.laplacianSmooth(iVerts, smoothColors, cAr);
+
+      for (var i = 0; i < nbVerts; ++i) {
+        var ind = iVerts[i] * 3;
+        var i3 = i * 3;
+        var vx = vAr[ind], vy = vAr[ind + 1], vz = vAr[ind + 2];
+
+        var mIntensity = intensity * mAr[ind + 2];
+        if (picking) mIntensity *= picking.getAlpha(vx, vy, vz);
+        var intComp = 1.0 - mIntensity;
+
+        cAr[ind] = cAr[ind] * intComp + smoothColors[i3] * mIntensity;
+        cAr[ind + 1] = cAr[ind + 1] * intComp + smoothColors[i3 + 1] * mIntensity;
+        cAr[ind + 2] = cAr[ind + 2] * intComp + smoothColors[i3 + 2] * mIntensity;
+      }
+    }
+
+    // Smooth Materials
+    if (this._writeRoughness || this._writeMetalness) {
+      var smoothMaterials = new Float32Array(Utils.getMemory(nbVerts * 4 * 3), 0, nbVerts * 3);
+      this.laplacianSmooth(iVerts, smoothMaterials, mAr);
+
+      for (var i = 0; i < nbVerts; ++i) {
+        var ind = iVerts[i] * 3;
+        var i3 = i * 3;
+        var vx = vAr[ind], vy = vAr[ind + 1], vz = vAr[ind + 2];
+
+        var mIntensity = intensity * mAr[ind + 2];
+        if (picking) mIntensity *= picking.getAlpha(vx, vy, vz);
+        var intComp = 1.0 - mIntensity;
+
+        if (this._writeRoughness) {
+          mAr[ind] = mAr[ind] * intComp + smoothMaterials[i3] * mIntensity;
+        }
+        if (this._writeMetalness) {
+          mAr[ind + 1] = mAr[ind + 1] * intComp + smoothMaterials[i3 + 1] * mIntensity;
+        }
+      }
+    }
   }
 
   paint(iVerts, center, radiusSquared, intensity, hardness, picking) {
@@ -195,14 +252,16 @@ class Paint extends SculptBase {
 
   // WebXR Support
   updateXR(picking, isPressed, enginePos, dir, options) {
-    let isOverride = options && options.isEyedropperOverride;
-    // We stay in the Eyedropper loop if the UI toggle is on, the override is held, OR if we need one final frame to clean up 'lastPickPressed'
-    let isEyedropperActive = this._pickColor || isOverride || this._lastPickPressed;
+    let isColorSmooth = options && options.isColorSmoothOverride;
+    // We stay in the Eyedropper loop if the UI toggle is on OR if we need one final frame to clean up 'lastPickPressed'
+    let isEyedropperActive = this._pickColor || this._lastPickPressed;
 
-    // UI mode samples when primary trigger is pulled. Override mode samples instantly as long as secondary trigger is held.
-    let isSampling = (this._pickColor && isPressed) || isOverride;
+    // UI mode samples when primary trigger is pulled.
+    let isSampling = (this._pickColor && isPressed);
 
-  // Reset block next stroke if primary trigger is released
+    this._isColorSmoothing = false;
+
+    // Reset block next stroke if primary trigger is released
     if (!isPressed) {
       this._blockNextStroke = false;
     }
@@ -230,14 +289,18 @@ class Paint extends SculptBase {
       return;
     }
 
-    // Safety: if we drop out of Eyedropper mode (e.g. releasing secondary trigger) 
+    // Safety: if we drop out of Eyedropper mode
     // but the primary trigger is STILL held, DO NOT start an immediate paint stroke.
     if (this._blockNextStroke && isPressed) {
       this.sculptStrokeXR(picking, false);
       return;
     }
 
-    // Normal Paint behavior
+    if (isColorSmooth) {
+      this._isColorSmoothing = true;
+    }
+
+    // Normal Paint behavior OR Color Blur
     this.sculptStrokeXR(picking, isPressed);
   }
 

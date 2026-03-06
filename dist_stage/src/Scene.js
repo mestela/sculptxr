@@ -3178,6 +3178,27 @@ class Scene {
             state.btnY = isPressedY;
           }
           */
+          // BUTTONS: A/X (4)
+          if (source.gamepad.buttons.length > 4) {
+            const btnA = source.gamepad.buttons[4];
+            const isPressedA = btnA.pressed;
+
+            if (!this._lastBtnAPressed) this._lastBtnAPressed = {};
+
+            if (isPressedA && !this._lastBtnAPressed[source.handedness]) {
+              // Swap colors on dominant hand UI button
+              if (source.handedness === this._dominantHand) {
+                const activeTool = this._sculptManager.getCurrentTool();
+                if (activeTool && activeTool.swapColors) {
+                  activeTool.swapColors();
+                  if (this._main.getGui() && this._main.getGui()._guiXR) {
+                    this._main.getGui()._guiXR._needsRedraw = true; // Refresh VR UI
+                  }
+                }
+              }
+            }
+            this._lastBtnAPressed[source.handedness] = isPressedA;
+          }
         }
 
         // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%, AXIS 2 (Left/Right) - Intensity +/- 5%
@@ -4128,7 +4149,7 @@ class Scene {
     const nonDomHand = this._dominantHand === 'left' ? 'right' : 'left';
 
     let isSmoothOverride = false;
-    let isEyedropperOverride = false;
+    let isColorSmoothOverride = false;
     let previousToolIndex = -1;
 
     if (session && session.inputSources) {
@@ -4139,7 +4160,7 @@ class Scene {
             // Apply contextual override based on the active tool
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
-              isEyedropperOverride = true;
+              isColorSmoothOverride = true;
             } else {
               isSmoothOverride = true;
             }
@@ -4396,7 +4417,7 @@ class Scene {
           triggerValue: triggerValue,
           handedness: source.handedness,
           quat: engineQuat,
-          isEyedropperOverride: isEyedropperOverride
+          isColorSmoothOverride: isColorSmoothOverride
         });
 
         // Restore original state immediately

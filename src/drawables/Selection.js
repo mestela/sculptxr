@@ -219,8 +219,11 @@ class Selection {
     const neutral = 0.6;
     const inv = 1.0 - intensity;
 
-    // Draw (Blue for VR, Red for Negative)
-    if (this._isNegative) {
+    const isActivelySampling = currentTool && currentTool.constructor.name === 'Paint' && currentTool._pickColor && currentTool._lastPickPressed;
+
+    if (isActivelySampling) {
+      vec3.copy(this._color, currentTool._color);
+    } else if (this._isNegative) {
       vec3.set(this._color,
         (0.8 * intensity) + (neutral * inv),
         (0.0 * intensity) + (neutral * inv),
