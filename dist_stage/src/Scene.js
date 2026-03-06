@@ -4121,6 +4121,37 @@ class Scene {
 
     // Log Removed
 
+    // VR Ergonomics: Temporary Smooth Modifier
+    // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
+    // FIX v0.9.160: Evaluated BEFORE stroke initialization to prevent first-frame "dot" of primary tool
+    const session = frame.session;
+    const nonDomHand = this._dominantHand === 'left' ? 'right' : 'left';
+    let isSmoothOverride = false;
+    let previousToolIndex = -1;
+
+    if (session && session.inputSources) {
+      for (let src of session.inputSources) {
+        if (src.handedness === nonDomHand && src.gamepad) {
+          // Button 0 (Index Trigger)
+          if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
+            isSmoothOverride = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (isSmoothOverride) {
+      const smoothToolIndex = this._sculptManager._tools.findIndex(t => t && t.constructor.name === 'Smooth');
+      if (smoothToolIndex !== -1 && this._sculptManager.getCurrentTool() !== this._sculptManager._tools[smoothToolIndex]) {
+        previousToolIndex = this._sculptManager._toolIndex;
+        // Sync radius from current tool to smooth tool so size feels consistent
+        const origRadius = this._sculptManager.getCurrentTool()._radius;
+        this._sculptManager._toolIndex = smoothToolIndex;
+        this._sculptManager.getCurrentTool()._radius = origRadius;
+      }
+    }
+
     // Check if tool allows air (Voxel) to prevent snapping
     const tool = this._sculptManager.getCurrentTool();
     const allowAir = (tool && tool._allowAir === true);
@@ -4348,37 +4379,8 @@ class Scene {
         }
 
         // Universal Sub Mode: Apply Effective Negative State to Tool
-        const tool = currentTool;
-        if (tool) tool._negative = isNegative;
-
-        // VR Ergonomics: Temporary Smooth Modifier
-        // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
-        let isSmoothOverride = false;
-        if (session && session.inputSources) {
-          for (let src of session.inputSources) {
-            if (src.handedness === nonDomHand && src.gamepad) {
-              // Button 0 (Index Trigger)
-              if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
-                isSmoothOverride = true;
-                break;
-              }
-            }
-          }
-        }
-
-        let previousToolIndex = -1;
-        if (isSmoothOverride) {
-          // 2 is SCULPT_SMOOTH in Enums.Tools
-          // Or we can just grab it by name if we don't know the Enum explicitly here.
-          // Let's rely on sculptManager._tools[2] or similar, but safer to find it.
-          const smoothToolIndex = this._sculptManager._tools.findIndex(t => t && t.constructor.name === 'Smooth');
-          if (smoothToolIndex !== -1 && tool !== this._sculptManager._tools[smoothToolIndex]) {
-            previousToolIndex = this._sculptManager._toolIndex;
-            this._sculptManager._toolIndex = smoothToolIndex;
-            // Sync radius from current tool to smooth tool so size feels consistent
-            this._sculptManager.getCurrentTool()._radius = tool._radius;
-          }
-        }
+        const toolParams = currentTool || tool; // handle variable changes via scope shift
+        if (toolParams) toolParams._negative = isNegative;
 
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
@@ -4389,7 +4391,7 @@ class Scene {
         });
 
         // Restore original state immediately
-        if (tool) tool._negative = origNegative;
+        if (toolParams) toolParams._negative = origNegative;
         if (isSmoothOverride && previousToolIndex !== -1) {
           this._sculptManager._toolIndex = previousToolIndex;
         }
