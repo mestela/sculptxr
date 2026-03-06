@@ -1221,7 +1221,14 @@ class Scene {
       const bright = 0.1 + (intensity * 0.9);
 
       // Tint the sphere based on positive/negative mode.
-      if (this._vrIsNegative) {
+      const isPaintTool = currentTool && currentTool.constructor.name === 'Paint';
+      if (isPaintTool) {
+        this._vrBrushRadiusSphere.setFlatColor([
+          currentTool._color[0] * bright,
+          currentTool._color[1] * bright,
+          currentTool._color[2] * bright
+        ]);
+      } else if (this._vrIsNegative) {
         this._vrBrushRadiusSphere.setFlatColor([0.7 * bright, 0.2 * bright, 0.2 * bright]); // Slightly Red
       } else {
         this._vrBrushRadiusSphere.setFlatColor([0.2 * bright, 0.2 * bright, 0.7 * bright]); // Slightly Blue
