@@ -3291,8 +3291,9 @@ class Scene {
 
                 if (isPaint) {
                   activeTool.swapColors();
-                  if (this._main.getGui() && this._main.getGui()._guiXR) {
-                    this._main.getGui()._guiXR._needsRedraw = true;
+                  const targetMain = this._main || window.main;
+                  if (targetMain && targetMain.getGui() && targetMain.getGui()._guiXR) {
+                    targetMain.getGui()._guiXR._needsRedraw = true;
                   }
                 } else {
                   this._vrSubtractActive = !this._vrSubtractActive;
