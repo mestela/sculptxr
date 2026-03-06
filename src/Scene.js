@@ -3176,29 +3176,7 @@ class Scene {
               }
             }
             state.btnY = isPressedY;
-          }
           */
-          // BUTTONS: A/X (4)
-          if (source.gamepad.buttons.length > 4) {
-            const btnA = source.gamepad.buttons[4];
-            const isPressedA = btnA.pressed;
-
-            if (!this._lastBtnAPressed) this._lastBtnAPressed = {};
-
-            if (isPressedA && !this._lastBtnAPressed[source.handedness]) {
-              // Swap colors on dominant hand UI button
-              if (source.handedness === this._dominantHand) {
-                const activeTool = this._sculptManager.getCurrentTool();
-                if (activeTool && activeTool.swapColors) {
-                  activeTool.swapColors();
-                  if (this._main.getGui() && this._main.getGui()._guiXR) {
-                    this._main.getGui()._guiXR._needsRedraw = true; // Refresh VR UI
-                  }
-                }
-              }
-            }
-            this._lastBtnAPressed[source.handedness] = isPressedA;
-          }
         }
 
         // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%, AXIS 2 (Left/Right) - Intensity +/- 5%
@@ -3302,15 +3280,26 @@ class Scene {
           if (isDom) {
             const btnA = btns[4];
             const tracker = this._vrButtonStates[this._dominantHand].Primary;
+            const activeTool = this._sculptManager.getCurrentTool();
+            const isPaint = activeTool && activeTool.constructor.name === 'Paint';
+
             if (btnA && btnA.pressed !== tracker.pressed) {
               if (btnA.pressed) {
                 // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
-                this._vrSubtractActive = !this._vrSubtractActive;
+
+                if (isPaint) {
+                  activeTool.swapColors();
+                  if (this._main.getGui() && this._main.getGui()._guiXR) {
+                    this._main.getGui()._guiXR._needsRedraw = true;
+                  }
+                } else {
+                  this._vrSubtractActive = !this._vrSubtractActive;
+                }
               } else {
                 // Button Up
-                if (tracker.longPressActive) {
+                if (tracker.longPressActive && !isPaint) {
                   // It was a momentary hold (transient mode) that is now releasing
                   // Revert the state back to what it was before pressing down
                   this._vrSubtractActive = !this._vrSubtractActive;
