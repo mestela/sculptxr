@@ -4121,12 +4121,14 @@ class Scene {
 
     // Log Removed
 
-    // VR Ergonomics: Temporary Smooth Modifier
-    // If the non-dominant index trigger is held, force the active tool to Smooth temporarily.
+    // VR Ergonomics: Temporary Modifiers
+    // Check if the non-dominant index trigger is held.
     // FIX v0.9.160: Evaluated BEFORE stroke initialization to prevent first-frame "dot" of primary tool
     const session = frame.session;
     const nonDomHand = this._dominantHand === 'left' ? 'right' : 'left';
+
     let isSmoothOverride = false;
+    let isEyedropperOverride = false;
     let previousToolIndex = -1;
 
     if (session && session.inputSources) {
@@ -4134,7 +4136,13 @@ class Scene {
         if (src.handedness === nonDomHand && src.gamepad) {
           // Button 0 (Index Trigger)
           if (src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed) {
-            isSmoothOverride = true;
+            // Apply contextual override based on the active tool
+            const activeTool = this._sculptManager.getCurrentTool();
+            if (activeTool && activeTool.constructor.name === 'Paint') {
+              isEyedropperOverride = true;
+            } else {
+              isSmoothOverride = true;
+            }
             break;
           }
         }
@@ -4382,6 +4390,9 @@ class Scene {
         const toolParams = currentTool || tool; // handle variable changes via scope shift
         if (toolParams) toolParams._negative = isNegative;
 
+        const origPickColor = toolParams ? toolParams._pickColor : false;
+        if (isEyedropperOverride && toolParams) toolParams._pickColor = true;
+
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
           controllers: xrControllers,
@@ -4391,7 +4402,11 @@ class Scene {
         });
 
         // Restore original state immediately
-        if (toolParams) toolParams._negative = origNegative;
+        if (toolParams) {
+          toolParams._negative = origNegative;
+          if (isEyedropperOverride) toolParams._pickColor = origPickColor;
+        }
+
         if (isSmoothOverride && previousToolIndex !== -1) {
           this._sculptManager._toolIndex = previousToolIndex;
         }

@@ -2723,6 +2723,26 @@ export default class GuiXR {
     const swapBtnW = 30;
     const swapBtnH = 30;
 
+    // Eyedropper Button Hitbox (Top Right of Picker)
+    const eyeBtnX = w.x + w.w - pad - swatchSize - 5;
+    const eyeBtnY = w.y + pad - 5;
+    const eyeBtnW = 30;
+    const eyeBtnH = 30;
+
+    // Hitbox for the eyedropper
+    if (mx >= eyeBtnX && mx <= eyeBtnX + eyeBtnW && my >= eyeBtnY && my <= eyeBtnY + eyeBtnH) {
+      const now = performance.now();
+      if (!this._lastEyeTime) this._lastEyeTime = 0;
+      if (now - this._lastEyeTime > 300) {
+        tool._pickColor = !tool._pickColor;
+        this._lastEyeTime = now;
+        this._needsRedraw = true;
+        this.draw();
+        this._main.render();
+      }
+      return;
+    }
+
     // Hitbox for the swap button or the swatch area
     if ((mx >= fgX && mx <= bgX + swatchSize && my >= fgY && my <= bgY + swatchSize) ||
       (mx >= swapBtnX && mx <= swapBtnX + swapBtnW && my >= swapBtnY && my <= swapBtnY + swapBtnH)) {
@@ -3038,6 +3058,36 @@ export default class GuiXR {
     ctx.beginPath();
     ctx.moveTo(swapBtnX + 20, swapBtnY + 20); // arrow tip
     ctx.lineTo(swapBtnX + 12, swapBtnY + 12); // arrow line up-left
+    ctx.stroke();
+
+    // --- Draw Eyedropper Button (Top Right) ---
+    const eyeBtnX = x + w.w - pad - swatchSize - 5;
+    const eyeBtnY = y + pad - 5;
+
+    // Draw Eyedropper Icon (a small pipette)
+    ctx.strokeStyle = tool._pickColor ? '#0ff' : '#aaa'; // Highlight if active
+    ctx.lineWidth = 2;
+
+    // Base/Bulb
+    ctx.beginPath();
+    ctx.arc(eyeBtnX + 22, eyeBtnY + 8, 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = tool._pickColor ? '#0ff' : 'transparent';
+    ctx.fill();
+
+    // Tube
+    ctx.beginPath();
+    ctx.moveTo(eyeBtnX + 19, eyeBtnY + 11);
+    ctx.lineTo(eyeBtnX + 8, eyeBtnY + 22);
+    ctx.lineTo(eyeBtnX + 11, eyeBtnY + 25);
+    ctx.lineTo(eyeBtnX + 22, eyeBtnY + 14);
+    ctx.stroke();
+
+    // Tip
+    ctx.beginPath();
+    ctx.moveTo(eyeBtnX + 8, eyeBtnY + 22);
+    ctx.lineTo(eyeBtnX + 5, eyeBtnY + 28);
+    ctx.lineTo(eyeBtnX + 11, eyeBtnY + 25);
     ctx.stroke();
   }
 
