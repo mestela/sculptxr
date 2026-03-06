@@ -4390,21 +4390,18 @@ class Scene {
         const toolParams = currentTool || tool; // handle variable changes via scope shift
         if (toolParams) toolParams._negative = isNegative;
 
-        const origPickColor = toolParams ? toolParams._pickColor : false;
-        if (isEyedropperOverride && toolParams) toolParams._pickColor = true;
-
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
           controllers: xrControllers,
           triggerValue: triggerValue,
           handedness: source.handedness,
-          quat: engineQuat
+          quat: engineQuat,
+          isEyedropperOverride: isEyedropperOverride
         });
 
         // Restore original state immediately
         if (toolParams) {
           toolParams._negative = origNegative;
-          if (isEyedropperOverride) toolParams._pickColor = origPickColor;
         }
 
         if (isSmoothOverride && previousToolIndex !== -1) {

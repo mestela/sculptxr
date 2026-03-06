@@ -194,26 +194,39 @@ class Paint extends SculptBase {
   }
 
   // WebXR Support
-  updateXR(picking, isPressed) {
-    // If the user releases the trigger, they are allowed to start a new stroke next time
+  updateXR(picking, isPressed, enginePos, dir, options) {
+    let isOverride = options && options.isEyedropperOverride;
+    // We stay in the Eyedropper loop if the UI toggle is on, the override is held, OR if we need one final frame to clean up 'lastPickPressed'
+    let isEyedropperActive = this._pickColor || isOverride || this._lastPickPressed;
+
+    // UI mode samples when primary trigger is pulled. Override mode samples instantly as long as secondary trigger is held.
+    let isSampling = (this._pickColor && isPressed) || isOverride;
+
+  // Reset block next stroke if primary trigger is released
     if (!isPressed) {
       this._blockNextStroke = false;
     }
 
-    if (this._pickColor) {
+    if (isEyedropperActive) {
       // Keep the cursor tracking the physical mesh visually but DO NOT paint
       this.sculptStrokeXR(picking, false);
 
-      // If the trigger is pressed, sample the color continuously
-      if (isPressed) {
+      // Sample continuously
+      if (isSampling) {
         this.pickColor(picking);
         this._blockNextStroke = true; // Prevent painting if we exit eyedropper mode while still holding the trigger
       } else if (this._lastPickPressed) {
-        // Trigger released: Commit the color and disable the eyedropper
+        // We just stopped sampling
         this.pickColor(picking);
-        this._pickColor = false;
+        // Turn off UI pick color ONLY if it was activated by UI
+        if (this._pickColor) {
+          this._pickColor = false;
+          if (this._main.getGui() && this._main.getGui()._guiXR) {
+            this._main.getGui()._guiXR._needsRedraw = true;
+          }
+        }
       }
-      this._lastPickPressed = isPressed;
+      this._lastPickPressed = isSampling;
       return;
     }
 
