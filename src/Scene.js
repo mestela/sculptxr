@@ -314,12 +314,22 @@ class Scene {
     // Global override for live tuning
     window.MINI_HUD_TRANSFORM = {
       x: 0,
-      y: 0.05,
-      z: 0.1,
+      y: 0.05, 
+      z: 0.09,
       rx: 90,
       ry: 0,
       rz: 0
     };
+
+    window.TOOLCOMB_TRANSFORM = {
+      x: 0.015,
+      y: 0.03,
+      z: -0.01,
+      rx: 0,
+      ry: 0,
+      rz: 0
+    };
+
 
     // Init Gaze Tooltips
     this._gazeTooltipLeft = new GazeTooltip(this._gl, "Hold X: Menu");
@@ -861,7 +871,7 @@ class Scene {
       const hudPose = mat4.clone(menuAnchor);
       const liftHUD = mat4.create();
 
-      const tform = window.MINI_HUD_TRANSFORM || { x: 0, y: 0.05, z: 0.1, rx: 90, ry: 0, rz: 0 };
+      const tform = window.MINI_HUD_TRANSFORM || { x: 0.04, y: 0.07, z: 0.1, rx: 90, ry: 0, rz: 0 };
 
       // Apply mirror logic for dominant hand if needed.
       // E.g. we want it on the inside of the controller.
@@ -888,19 +898,13 @@ class Scene {
         let popupPose = mat4.clone(hudPose);
         let popupLift = mat4.create();
 
-        // Default offsets
-        let px = 0.0;
-        let py = 0.032;
-        let pz = -0.015;
+        const tcomb = window.TOOLCOMB_TRANSFORM || { x: 0.015, y: 0.03, z: -0.01, rx: 0, ry: 0, rz: 0 };
 
-        // Interactive overrides via PCVR DevTools console
-        if (window.tpDebug) {
-          if (window.tpDebug.x !== undefined) px = window.tpDebug.x;
-          if (window.tpDebug.y !== undefined) py = window.tpDebug.y;
-          if (window.tpDebug.z !== undefined) pz = window.tpDebug.z;
-        }
+        mat4.fromTranslation(popupLift, [tcomb.x * signX, tcomb.y, tcomb.z]);
+        mat4.rotateX(popupLift, popupLift, tcomb.rx * Math.PI / 180.0);
+        mat4.rotateY(popupLift, popupLift, (tcomb.ry * signX) * Math.PI / 180.0);
+        mat4.rotateZ(popupLift, popupLift, tcomb.rz * Math.PI / 180.0);
 
-        mat4.fromTranslation(popupLift, [px, py, pz]);
         mat4.multiply(popupPose, popupPose, popupLift);
         this._vrPopup.updateMatrices(cam, popupPose);
         this._vrPopup.render(this);

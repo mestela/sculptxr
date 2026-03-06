@@ -31,7 +31,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.FLATTEN,
     Enums.Tools.PINCH,
     Enums.Tools.CREASE,
-    Enums.Tools.TWIST,
 
     // Blue (Smoothing)
     Enums.Tools.SMOOTH,
@@ -46,9 +45,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.DRAG,
     Enums.Tools.TWIST,
     Enums.Tools.TRANSFORM_VR,
-
-    // Space to center the final item
-    null,
 
     // Orange (Masking)
     Enums.Tools.MASKING
