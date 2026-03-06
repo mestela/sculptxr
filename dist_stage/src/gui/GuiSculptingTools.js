@@ -222,7 +222,7 @@ GuiTools[Enums.Tools.PAINT] = {
 
     materials.push(ctrlColor, ctrlRoughness, ctrlMetallic);
     this._ctrls.push(ctrlColor, ctrlRoughness, ctrlMetallic);
-    tool.setPickCallback(this.onPickedMaterial.bind(this, materials, tool, main));
+    if (tool.addPickCallback) tool.addPickCallback(this.onPickedMaterial.bind(this, materials, tool, main));
 
     tool._onColorSwapped = () => {
       materials[0].setValue(tool._color, true);
