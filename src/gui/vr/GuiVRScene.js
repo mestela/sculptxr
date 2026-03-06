@@ -80,9 +80,9 @@ export default function getSceneWidgets(main) {
   widgets.push({
     type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H,
     value: isIsolate,
-    onInteract: () => {
+    onInteract: (val) => {
       if (main.getGui() && main.getGui()._ctrlScene) {
-        main.getGui()._ctrlScene.toggleShowHide();
+        main.getGui()._ctrlScene._ctrlIsolate.setValue(val, false);
       }
     }
   });

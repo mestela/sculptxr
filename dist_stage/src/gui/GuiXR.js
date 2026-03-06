@@ -1563,7 +1563,7 @@ export default class GuiXR {
 
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
-      w.onInteract();
+      w.onInteract(w.value);
       return;
     }
 

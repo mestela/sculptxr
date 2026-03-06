@@ -1,13 +1,19 @@
 # Handover Prompt
 
-**Project Status**: Finished implementing and deploying an in-app WebGL deep profiler and VR HUD logger to diagnose performance issues in SculptXR.
+**Project Status**: Finished implementing VR joystick analog controls for brush radius and intensity, complete with visual hinting indicators. Codebase is deployed to the Beta channel as `v0.9.153`.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
 ## Recent Work & Context
-1. **The Profiler Task**: The user was experiencing performance hitches in a standalone headset (Meta Quest 3) specifically when "Wireframe" mode was active. Since remote Chrome DevTools can't be easily utilized during a standalone session, they requested an in-app tool.
-2. **Deep Profiling Implementation**: We created `window.initDeepProfiler` in `Scene.js`, which dynamically wraps prototype methods of classes (like `SculptManager`, `Mesh`, etc.) in Proxies to measure `performance.now()` deltas. This builds a `__sculptDeepProfile` database over 60 frames to see where the CPU is spinning during a stroke.
-3. **VR HUD Logger Implementation**: We intercepted the global `window.screenLog` to pipe messages directly to the active `GuiXR` and `GuiMini` instances. `GuiXR` was updated to render text directly onto the 1024x1024 WebGL canvas HUD. We then truncated the VR display to only show the final "Profile Finished!" string so the HUD doesn't get flooded.
-4. **Current Build**: The changes are confirmed working and deployed to `tokeru.com/sculptxr` as version `v0.9.144`.
+1. **Joystick Analog Tuning**: The dominant controller's thumbstick Y-axis was mapped to Brush Radius, and the X-axis was mapped to Brush Intensity. 
+2. **Precision Modifier**: Pressing the non-dominant controller's trigger acts as a modifier, slowing down the analog slider adjustments by 10x for ultra-fine sub-adjustments.
+3. **UI Syncing**: Fixed an issue where the `_intensity` property was being updated physically, but the Mini-HUD Slider wasn't responding. Implemented `updateIntensityWidget` in `GuiXR.js` to fix the visual desync.
+4. **Visual Hinting**: To provide physical feedback for the brush intensity without forcing the user to look at a UI panel, the intensity value was mapped to:
+    - The additive **brightness** of the 3D VR Brush Volume (Sphere).
+    - The **saturation** of the 2D VR Surface Intersect (Circle). As intensity drops to 0, the circle desaturates into a neutral white/grey.
+5. **Current Build**: Deployed to `tokeru.com/sculptxrbeta/` as version `v0.9.153`. Changes pushed to `origin/master`.
 
 ## Next Steps
-The task for the next session is completely open-ended. The codebase is stable, and the profiler might be used by a tester to gather data on the wireframe issue in the future. Wait for the user's instructions on what to build or investigate next.
+The feature is stable and approved by the user. For the next session, here are some low-hanging fruit items directly from `docs/todo.md` that the user highlighted as potential next targets:
+1. "isolate in view/scene is inverted"
+2. "mini HUD could be a little higher, slightly uncomfortable atm, and not symmetrical"
+3. "the smooth and move brushes are unaffected by dynamic topology mode"
