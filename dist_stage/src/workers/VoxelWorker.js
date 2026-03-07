@@ -256,13 +256,16 @@ function restoreState() {
 function editSphere(center, radius, color, isNegative, returnMesh) {
   if (!voxelState) return;
 
+  const t0 = performance.now();
   // Apply edit
   const changed = voxelState.editSphere(center, radius, color, isNegative);
+  const t1 = performance.now();
 
   if (!changed) {
-    // self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Radius=${radius})` });
+     self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Rad=${radius.toFixed(2)}, C=[${center[0].toFixed(1)},${center[1].toFixed(1)},${center[2].toFixed(1)}], Neg=${isNegative})` });
   } else {
     isDirty = true;
+    self.postMessage({ type: 'LOG', data: `EditSphere: SUCCESS in ${(t1-t0).toFixed(2)}ms` });
   }
 
   if (returnMesh) postMesh();
@@ -280,9 +283,15 @@ function postMesh() {
   if (!voxelState) return;
 
   // Timing
-  // const t0 = performance.now();
+  const t0 = performance.now();
   const meshData = voxelState.computeMesh();
-  // const t1 = performance.now();
+  const t1 = performance.now();
+
+  if (meshData.vertices.length === 0) {
+    self.postMessage({ type: 'LOG', data: `ComputeMesh: Returned EMPTY (V=0) in ${(t1-t0).toFixed(1)}ms. Bounds: [${voxelState._activeMin}]-[${voxelState._activeMax}]` });
+  } else {
+    self.postMessage({ type: 'LOG', data: `ComputeMesh: SUCCESS V=${meshData.vertices.length/3} in ${(t1-t0).toFixed(1)}ms` });
+  }
 
   // Determine the ID of the current state
   let currentID = snapshotCounter;

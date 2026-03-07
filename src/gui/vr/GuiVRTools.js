@@ -493,7 +493,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'voxel_wireframe',
       label: 'Show Wireframe',
       x: col1X, y: y, w: 550, h: btnH,
-      value: (activeTool._voxelMesh && activeTool._voxelMesh.getShaderType() === Enums.Shader.WIREFRAME),
+      value: (activeTool._voxelMesh && activeTool._voxelMesh.getShowWireframe()),
       onInteract: () => {
         if (activeTool && activeTool.toggleVoxelWireframe) {
           activeTool.toggleVoxelWireframe();

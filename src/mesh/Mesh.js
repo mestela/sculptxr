@@ -2088,8 +2088,15 @@ class Mesh {
   }
 
   updateWireframeBuffer() {
-    if (this.getShowWireframe())
+    if (this.getShowWireframe()) {
+      if (!this.getEdges() || this.getEdges().length === 0) {
+        if (window.screenLog) window.screenLog("[Mesh] Lazy init wireframe topology", "yellow");
+        this.allocateArrays();
+        this.initFaceRings();
+        this.initEdges();
+      }
       this.getWireframeBuffer().update(this.getWireframe(), this.getNbEdges() * 2);
+    }
   }
 
   updateGeometryBuffers() {

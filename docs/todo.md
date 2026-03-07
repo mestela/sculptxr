@@ -23,6 +23,7 @@
     - elastic tools, kelvinlets etc
     - facegroups
     - pose tool
+    - local storage for settings, alphas, whatever else
     
 - **UI + UX**
     - when dynamic topo is on the perfomance drops on standalone, im sure u are aware of it
@@ -35,7 +36,6 @@
     - the smooth and move brushes are unaffected by dynamic topology mode. 
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
-    - paint tool restore eyedropper
     - vr menu tidy up, think about user flow
     - panel tear off/pin in place?
     - show more heads up things?
@@ -44,6 +44,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~paint tool restore eyedropper~~ **DONE v0.9.159**
 - ~~fix duplicate twist tool in VR combobox~~ **DONE v0.9.157**
 - ~~isolate in view/scene is inverted~~ **DONE v0.9.154**
 - ~~mini HUD could be a little higher, slightly uncomfortable atm, and not symmetricalw~~ **DONE v0.9.157**

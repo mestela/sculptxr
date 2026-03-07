@@ -178,8 +178,7 @@ var createFace = function (edgeMask, mask, buffer, R, m, x, faces) {
     }
 
     if (i1 >= 0 && i2 >= 0 && i3 >= 0 && i4 >= 0) {
-      faces.push(i1, i2, i3, Utils.TRI_INDEX);
-      faces.push(i1, i3, i4, Utils.TRI_INDEX);
+      faces.push(i1, i2, i3, i4); // Output pure quad
     }
   }
 };

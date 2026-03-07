@@ -57,7 +57,7 @@ class VoxelState {
   get dims() { return this._dims; }
 
   clear() {
-    this._distanceField.fill(10000.0); // Safe far distance (avoid Infinity for interpolation)
+    this._distanceField.fill(10000.0, 0, this._count); // Safe far distance (avoid Infinity for interpolation)
 
     // Reset Bounds to Inverted
     this._activeMin.set([this._resolution, this._resolution, this._resolution]);
@@ -108,78 +108,7 @@ class VoxelState {
     return d0 + (d1 - d0) * fz;
   }
 
-  resample(newRes) {
-    console.log(`VoxelState: Resampling ${this._resolution} -> ${newRes}`);
 
-    // 1. Setup New Grid
-    const newCount = newRes * newRes * newRes;
-    const newDist = new Float32Array(newCount);
-    // const newCol = new Float32Array(newCount * 3);
-    // const newMat = new Float32Array(newCount * 3);
-
-    const newStep = this._size / newRes;
-    const oldStep = this._step;
-    // const ratio = newStep / oldStep; // Coordinate scaler?
-
-    // Both grids share the same Physical MIN/MAX (Centered).
-    // So WorldPos = Min + GridIndex * Step
-    // OldGridIndex = (WorldPos - Min) / OldStep 
-    //              = (Min + NewIndex * NewStep - Min) / OldStep
-    //              = NewIndex * (NewStep / OldStep)
-
-    const ratio = newStep / oldStep;
-
-    // Bounds for loop
-    // Ensure we don't go out of bounds of OLD grid?
-    // sample() handles bounds checks.
-
-    // Optimization: Multithread? Unroll?
-    // For 256^3 -> 16M voxels. Main thread might hang.
-    // We are in Worker, so it's fine.
-
-    let ptr = 0;
-    const rx = newRes;
-    const rxy = newRes * newRes;
-
-    // TODO: Only iterate Active Bounds? Not trivial because Active Bounds change with resolution.
-    // But we could project OLD active bounds to new grid and iterate only there + padding.
-    // For now, Full Sweep for correctness.
-
-    for (let k = 0; k < newRes; ++k) {
-      const oldZ = k * ratio;
-      for (let j = 0; j < newRes; ++j) {
-        const oldY = j * ratio;
-        for (let i = 0; i < newRes; ++i) {
-          const oldX = i * ratio;
-
-          newDist[ptr++] = this.sample(oldX, oldY, oldZ);
-        }
-      }
-    }
-
-    // Swap Data
-    this._resolution = newRes;
-    this._count = newCount;
-    this._distanceField = newDist;
-    this._step = newStep;
-
-    this._dims = [newRes, newRes, newRes];
-
-    // Update Voxels Wrapper
-    this._voxels.dims = this._dims;
-    this._voxels.step = this._step;
-    this._voxels.distanceField = this._distanceField;
-    // Reset Color/Mat fields (or implement resampling for them too)
-    this._voxels.colorField = new Float32Array(newCount * 3).fill(0.8);
-    this._voxels.materialField = new Float32Array(newCount * 3).fill(0.2); // Roughness default
-
-    // Recalculate Active Bounds
-    // Full scan or just clear and let tightenBounds handle it?
-    // tightenBounds needs an initial conservative box.
-    this._activeMin.set([0, 0, 0]); // Reset to full
-    this._activeMax.set([newRes, newRes, newRes]);
-    // tightenBounds(); // Will run on next computeMesh
-  }
 
   // Unified Edit Wrapper
   editSphere(center, radius, color, isNegative) {
@@ -187,6 +116,8 @@ class VoxelState {
       return this.subtractSphere(center, radius);
     } else {
       return this.addSphere(center, radius, color);
+      self.postMessage({ type: "LOG", data: "addSphere R="+radius.toFixed(2)+" Cx="+cx.toFixed(1) });
+
     }
   }
 
@@ -218,6 +149,7 @@ class VoxelState {
     var rxy = res * res;
 
     var changed = false;
+    var negCount = 0;
 
     for (var k = izMin; k < izMax; ++k) {
       for (var j = iyMin; j < iyMax; ++j) {
@@ -240,6 +172,7 @@ class VoxelState {
           if (dist < oldDist) {
             df[index] = dist;
             changed = true;
+            if (dist < 0.0) negCount++;
 
             // Simple Color splat (TODO: Mixing)
             if (color) {
@@ -431,6 +364,7 @@ class VoxelState {
 
     // Bounds Check: If min > max, the grid is effectively empty. Reset to inverted so we can detect new content.
     if (minX > maxX || minY > maxY || minZ > maxZ) {
+      // self.postMessage({ type: 'LOG', data: `TightenBounds: Empty BBox [${minX}, ${maxX}]` });
       this.clear(); // Resets activeMin/Max
       return;
     }
@@ -560,7 +494,7 @@ class VoxelState {
     // if (window.screenLog) window.screenLog(`VS.compute: Bounds [${bounds.min}] to [${bounds.max}]`, "cyan");
 
     // Use SurfaceNets (Dual Contouring style)
-    const res = SurfaceNets.computeSurface(this._voxels, bounds, this._smooth); // Pass bounds!
+    const res = SurfaceNets.computeSurface(this._voxels, bounds, true); // Pass bounds and computeNormals=true
     // const res = { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) }; // Mock result
 
     // Log Raw Stats
@@ -626,9 +560,18 @@ class VoxelState {
         }
 
         if (!degenerate && isQuad) {
-          // Quad Logic (Legacy) - SurfaceNets now outputs Triangles (padded with TRI_INDEX)
-          // So this block is rarely reached unless Quads are re-introduced.
+          // Normal of Tri 2 (i1, i3, i4)
+          v1[0] = vertices[i1 * 3]; v1[1] = vertices[i1 * 3 + 1]; v1[2] = vertices[i1 * 3 + 2];
+          v2[0] = vertices[i3 * 3]; v2[1] = vertices[i3 * 3 + 1]; v2[2] = vertices[i3 * 3 + 2];
+          v3[0] = vertices[i4 * 3]; v3[1] = vertices[i4 * 3 + 1]; v3[2] = vertices[i4 * 3 + 2];
 
+          vec3.sub(ab, v2, v1);
+          vec3.sub(ac, v3, v1);
+          vec3.cross(normal, ab, ac);
+
+          if (vec3.length(normal) < 1e-6) {
+            degenerate = true;
+          }
         }
       }
 
@@ -677,9 +620,12 @@ class VoxelState {
     newDF.fill(10000.0); // Default to Far
 
     // Helper to sample old grid
+    // Helper to sample old grid (Clamped to prevent border shrinking)
     const getVal = (x, y, z) => {
-      if (x < 0 || x >= oldRes || y < 0 || y >= oldRes || z < 0 || z >= oldRes) return 10000.0; // Empty
-      return oldDF[x + y * oldRes + z * oldRes * oldRes];
+      const cx = Math.max(0, Math.min(x, oldRes - 1));
+      const cy = Math.max(0, Math.min(y, oldRes - 1));
+      const cz = Math.max(0, Math.min(z, oldRes - 1));
+      return oldDF[cx + cy * oldRes + cz * oldRes * oldRes];
     };
 
     // Trilinear Interpolation
@@ -692,18 +638,27 @@ class VoxelState {
           const wy = oldMin[1] + j * newStep;
           const wz = oldMin[2] + k * newStep;
 
-          // Old Grid Coord
+          // Old Grid Coord (Strictly bounded to avoid NaN)
           const ox = (wx - oldMin[0]) / oldStep;
           const oy = (wy - oldMin[1]) / oldStep;
           const oz = (wz - oldMin[2]) / oldStep;
 
-          const x0 = Math.floor(ox); const x1 = x0 + 1;
-          const y0 = Math.floor(oy); const y1 = y0 + 1;
-          const z0 = Math.floor(oz); const z1 = z0 + 1;
+          let x0 = Math.floor(ox); 
+          let y0 = Math.floor(oy); 
+          let z0 = Math.floor(oz); 
 
-          const tx = ox - x0;
-          const ty = oy - y0;
-          const tz = oz - z0;
+          // Clamp to valid range so x1 doesn't exceed oldRes-1
+          x0 = Math.max(0, Math.min(x0, oldRes - 2));
+          y0 = Math.max(0, Math.min(y0, oldRes - 2));
+          z0 = Math.max(0, Math.min(z0, oldRes - 2));
+
+          const x1 = x0 + 1;
+          const y1 = y0 + 1;
+          const z1 = z0 + 1;
+
+          const tx = Math.max(0, Math.min(ox - x0, 1.0));
+          const ty = Math.max(0, Math.min(oy - y0, 1.0));
+          const tz = Math.max(0, Math.min(oz - z0, 1.0));
 
           // Sample 8 corners
           const c000 = getVal(x0, y0, z0);
@@ -733,6 +688,7 @@ class VoxelState {
 
     // Update State
     this._resolution = newRes;
+    this._count = newRes * newRes * newRes; // CRITICAL: Fix stale count
     this._step = newStep;
     this._dims[0] = newRes;
     this._dims[1] = newRes;
@@ -744,15 +700,15 @@ class VoxelState {
     this._voxels.min = this._min;
     this._voxels.max = this._max;
     // Reallocate Color/Mat fields if they exist! (They do in constructor)
-    this._voxels.colorField = new Float32Array(newRes * newRes * newRes * 3);
+    this._voxels.colorField = new Float32Array(this._count * 3);
     this._voxels.colorField.fill(0.8);
-    this._voxels.materialField = new Float32Array(newRes * newRes * newRes * 3);
+    this._voxels.materialField = new Float32Array(this._count * 3);
     this._voxels.materialField.fill(0.2);
 
 
     // Reset Active Bounds to full
-    this._activeMin.set([0, 0, 0]);
-    this._activeMax.set([newRes, newRes, newRes]);
+    this._activeMin = new Int32Array([0, 0, 0]);
+    this._activeMax = new Int32Array([newRes, newRes, newRes]);
   }
 }
 

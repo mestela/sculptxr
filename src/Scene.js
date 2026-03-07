@@ -962,6 +962,17 @@ class Scene {
       this._vrControllerTip.render(this);
     }
 
+    // Render custom Voxel cursor if active
+    const activeTool = this._sculptManager && this._sculptManager.getCurrentTool();
+    if (activeTool && activeTool._cursorMesh && activeTool._cursorMesh.isVisible()) {
+      activeTool._cursorMesh.updateMatrices(cam);
+      activeTool._cursorMesh.render(this);
+    }
+    if (activeTool && activeTool._cursorMeshSym && activeTool._cursorMeshSym.isVisible()) {
+      activeTool._cursorMeshSym.updateMatrices(cam);
+      activeTool._cursorMeshSym.render(this);
+    }
+
     if (prof && prof.logNextNumFrames > 0) prof.accUI += (performance.now() - pStartUI);
 
     // --- PASS 2: SCALED WORLD (Meshes/Grid) ---
@@ -4235,6 +4246,10 @@ class Scene {
         // window.screenLog(`Scene Logic Change: Can=${canSculpt} Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive} Sculpting=${this._vrSculpting}`, canSculpt ? "lime" : "red");
       }
       this._lastCanSculpt = canSculpt;
+    }
+
+    if (isTriggerPressed && window.screenLog && this._logThrottle % 20 === 0) {
+      window.screenLog(`[Diag] canSculpt=${canSculpt} Air=${allowAir} Tool=${currentTool ? currentTool.constructor.name : 'null'} Pick=${!!picked}`, canSculpt ? "lime" : "red");
     }
 
     if (canSculpt) {
