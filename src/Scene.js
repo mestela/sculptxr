@@ -1445,32 +1445,10 @@ class Scene {
       gl.bindFramebuffer(gl.FRAMEBUFFER, previousFBO);
     }
 
-    gl.enable(gl.DEPTH_TEST);
-
-    // grid
-    if (this._showGrid) this._grid.render(this);
-
-    // VR Controllers (Pass 1: Real World)
-    // if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    // if (this._vrControllerRight) this._vrControllerRight.render(this);
-
-    // Debug Cursor
-    // if (this._debugCursor && this._debugCursor.isVisible()) this._debugCursor.render(this);
-
-    // Meshes (Pass 2: World Scaled)
-    // HIDE SCULPT during Calibration (Focus on Controllers/World alignment)
-    if (!this._isCalibratingSpectator) {
-      var meshes = this._meshes;
-      for (var i = 0, l = meshes.length; i < l; ++i) {
-        if (!meshes[i].isVisible()) continue;
-        meshes[i].render(this);
-      }
-    }
-
     // Brush Indicator (NEW)
     // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
-      // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
-      // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
+    // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
+    // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
 
     // Update Selection Color for Negative Mode
     const selection = this._sculptManager.getSelection();
@@ -1479,30 +1457,6 @@ class Scene {
     // VR cursors are drawn via _vrBrushRadiusSphere on Pass 3.
     // Desktop cursors are drawn via SculptManager.postRender() on the null framebuffer.
     // We no longer call selection.renderVR here, avoiding duplicate cursors inside the headset.
-
-    ///////////////
-    // CONTOUR 2/2
-    ///////////////
-    if (showContour && this._rttContour) {
-      gl.disable(gl.DEPTH_TEST);
-      gl.enable(gl.BLEND);
-      // Rtt.render() draws a fullscreen quad.
-      // In VR, "fullscreen" means the current viewport (one eye).
-      // Since _rttContour texture contains the FULL screen capture from 1/2,
-      // If we render it back, it might be stretched if RTT size != Viewport size?
-      // RTT is resized to Canvas Size usually.
-      // VR Viewport is usually smaller/different.
-      // However, since we rendered the flat color using the VR Viewport (implicitly?),
-      // Wait, when we bound RTT, we didn't change viewport.
-      // If RTT is huge (Canvas Size) and VR Viewport is small, we rendered into a corner of the RTT.
-      // Then if we render the RTT quad, we need to sample that corner.
-      // Rtt.render() uses standard UVs (0..1).
-      // This might look incorrect if UVs don't match.
-      // But let's try.
-      this._rttContour.render(this);
-      gl.disable(gl.BLEND);
-      gl.enable(gl.DEPTH_TEST);
-    }
   }
 
   _drawScene() {
@@ -4246,10 +4200,6 @@ class Scene {
         // window.screenLog(`Scene Logic Change: Can=${canSculpt} Trig=${isTriggerPressed} Pick=${!!picked} Active=${!!isToolActive} Sculpting=${this._vrSculpting}`, canSculpt ? "lime" : "red");
       }
       this._lastCanSculpt = canSculpt;
-    }
-
-    if (isTriggerPressed && window.screenLog && this._logThrottle % 20 === 0) {
-      window.screenLog(`[Diag] canSculpt=${canSculpt} Air=${allowAir} Tool=${currentTool ? currentTool.constructor.name : 'null'} Pick=${!!picked}`, canSculpt ? "lime" : "red");
     }
 
     if (canSculpt) {

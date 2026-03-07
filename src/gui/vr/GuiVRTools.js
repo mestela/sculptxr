@@ -493,11 +493,14 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'voxel_wireframe',
       label: 'Show Wireframe',
       x: col1X, y: y, w: 550, h: btnH,
-      value: (activeTool._voxelMesh && activeTool._voxelMesh.getShowWireframe()),
+      value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
       onInteract: () => {
-        if (activeTool && activeTool.toggleVoxelWireframe) {
-          activeTool.toggleVoxelWireframe();
+        const mesh = main.getMesh();
+        if (mesh) {
+          mesh.setShowWireframe(!mesh.getShowWireframe());
+          main.render();
           if (main._guiXR) main._guiXR._needsRedraw = true;
+          if (main._guiMini) main._guiMini._needsRedraw = true;
         }
       }
     });

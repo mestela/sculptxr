@@ -76,6 +76,10 @@ class SculptBase {
       pickingSym.initAlpha();
     }
 
+    if (mesh && mesh.isDynamic) {
+      mesh._pauseWireframe = true;
+    }
+
     // console.log("SculptBase: pushState called via start()");
     // if (window.screenLog) window.screenLog("SculptBase: Start Stroke (Push State)", "green");
     this.pushState();
@@ -92,8 +96,14 @@ class SculptBase {
   }
 
   end() {
-    if (this.getMesh())
-      this.getMesh().balanceOctree();
+    var mesh = this.getMesh();
+    if (mesh) {
+      mesh.balanceOctree();
+      if (mesh.isDynamic) {
+        mesh._pauseWireframe = false;
+        mesh.updateWireframeBuffer();
+      }
+    }
   }
 
   pushState() {

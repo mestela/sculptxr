@@ -187,6 +187,20 @@ class Multimesh extends Mesh {
     return 0;
   }
 
+  getLowIndexWireframe() {
+    var limit = 25000; // Quest 3 performance cutoff (approx 75k lines)
+    var sel = this._sel;
+    while (sel >= 0) {
+      var mesh = this._meshes[sel];
+      if (mesh.getEvenMapping() === true)
+        return sel === this._sel ? sel : sel + 1;
+      if (mesh.getNbTriangles() < limit)
+        return sel;
+      --sel;
+    }
+    return 0;
+  }
+
   _renderLow(main) {
     var render = this.getRenderData();
     var tmpSel = this._sel;
@@ -273,8 +287,64 @@ class Multimesh extends Mesh {
     return super.render(main);
   }
 
+  updateWireframeBuffer() {
+    super.updateWireframeBuffer();
+    var lowWireIdx = this.getLowIndexWireframe();
+    if (lowWireIdx !== this._sel) {
+      if (this.getShowWireframe()) {
+        var lowWireMesh = this._meshes[lowWireIdx];
+        if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
+          lowWireMesh.allocateArrays();
+          lowWireMesh.initFaceRings();
+          lowWireMesh.initEdges();
+        }
+        if (!this._lowWireframeBuffer) {
+           this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+        }
+        this._lowWireframeBuffer.update(lowWireMesh.getWireframe(), lowWireMesh.getNbEdges() * 2);
+      }
+    }
+  }
+
+  getRenderNbEdges() {
+    if (this._renderNbEdgesOverride !== undefined) return this._renderNbEdgesOverride;
+    return super.getRenderNbEdges();
+  }
+
   renderWireframe(main) {
-    return this._canUseLowRender(main) ? this._renderWireframeLow(main) : super.renderWireframe(main);
+    if (this.isUsingTexCoords() || this.isUsingDrawArrays()) return super.renderWireframe(main);
+
+    var lowIdx = this.getLowIndexWireframe();
+    if (lowIdx === this._sel) return super.renderWireframe(main);
+
+    var lowMesh = this._meshes[lowIdx];
+
+    // Force lazy init of the low resolution wireframe arrays (if updateWireframeBuffer missed it)
+    if (!this._lowWireframeBuffer || !lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
+      if (!lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
+        if (window.screenLog) window.screenLog(`[Multimesh] Lazy init low-res wireframe topology (L${lowIdx})`, "yellow");
+        lowMesh.allocateArrays();
+        lowMesh.initFaceRings();
+        lowMesh.initEdges();
+      }
+      if (!this._lowWireframeBuffer) {
+        this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+      }
+      this._lowWireframeBuffer.update(lowMesh.getWireframe(), lowMesh.getNbEdges() * 2);
+    }
+
+    var render = this.getRenderData();
+    var tmpWire = this.getWireframeBuffer();
+    
+    // Temporarily bind the lower level wireframe buffer (isolated from the shared renderData buffer)
+    render._wireframeBuffer = this._lowWireframeBuffer;
+    
+    // Override edge count for ShaderWireframe
+    this._renderNbEdgesOverride = lowMesh.getRenderNbEdges();
+    super.renderWireframe(main);
+    this._renderNbEdgesOverride = undefined;
+    
+    render._wireframeBuffer = tmpWire;
   }
 
   getSymmetryData() {

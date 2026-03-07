@@ -26,6 +26,7 @@ class MeshDynamic extends Mesh {
     this.setTransformData(mesh.getTransformData());
 
     this._facesStateFlags = null; // state flags (<= Utils.STATE_FLAG) (Int32Array)
+    this._pauseWireframe = false;
     this._wireframe = null; // Uint32Array
 
     this.initFromMesh(mesh);
@@ -125,7 +126,7 @@ class MeshDynamic extends Mesh {
   }
 
   getWireframe() {
-    if (!this._wireframe) {
+    if (!this._wireframe || (this._wireframe.length === 0 && !this._pauseWireframe)) {
       this._wireframe = new Uint32Array(this.getTriangles().length * 2);
       this.updateWireframe();
     }
@@ -137,7 +138,15 @@ class MeshDynamic extends Mesh {
     super.setShowWireframe(showWireframe);
   }
 
+  updateWireframeBuffer() {
+    if (this.getShowWireframe() && !this._pauseWireframe) {
+      this.getWireframeBuffer().update(this.getWireframe(), this.getTriangles().length * 2);
+    }
+  }
+
   updateWireframe(iFaces) {
+    if (this._pauseWireframe) return;
+
     var wire = this._wireframe;
     var tris = this.getTriangles();
     var full = iFaces === undefined;
