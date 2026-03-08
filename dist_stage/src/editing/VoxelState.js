@@ -580,8 +580,10 @@ class VoxelState {
     // if (window.screenLog) window.screenLog(`VS.compute: Bounds [${bounds.min}] to [${bounds.max}]`, "cyan");
 
     // Use SurfaceNets (Dual Contouring style)
-    const res = SurfaceNets.computeSurface(this._voxels, bounds, true); // Pass bounds and computeNormals=true
-    // const res = { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) }; // Mock result
+    const res = SurfaceNets.computeSurface(this._voxels, bounds, false); // Pass computeNormals=false
+
+    // Compute face-area-weighted normals on the worker thread
+    this.computeGeometricNormals(res);
 
     // Log Raw Stats
     // if (window.screenLog) window.screenLog(`VS: Generated ${res.vertices.length/3} verts, ${res.faces.length/4} quads`, "grey");
@@ -598,8 +600,43 @@ class VoxelState {
   sanitizeMesh(res) {
     const faces = res.faces;
     const vertices = res.vertices;
+    const colors = res.colors;
+    const materials = res.materials;
+    const normals = res.normals;
     const newFaces = [];
     let badFaces = 0;
+
+    // 1. Sanitize Colors & Initialize Materials
+    if (colors && materials) {
+      for (let i = 0; i < colors.length; i += 3) {
+        // Fix NaN colors
+        if (isNaN(colors[i]) || isNaN(colors[i + 1]) || isNaN(colors[i + 2])) {
+          colors[i] = 0.0;
+          colors[i + 1] = 0.0;
+          colors[i + 2] = 0.0;
+        }
+        
+        // Force valid materials (Roughness=0.5, Metallic=0.0, Mask=1.0)
+        materials[i] = 0.5;
+        materials[i + 1] = 0.0;
+        materials[i + 2] = 1.0;
+      }
+    }
+
+    // 2. Sanitize Normals (Fix NaNs and Zero-Length)
+    if (normals) {
+      for (let i = 0; i < normals.length; i += 3) {
+        const x = normals[i];
+        const y = normals[i + 1];
+        const z = normals[i + 2];
+        const len2 = x * x + y * y + z * z;
+        if (isNaN(x) || isNaN(y) || isNaN(z) || len2 < 1e-6) {
+          normals[i] = 0.0;
+          normals[i + 1] = 1.0;
+          normals[i + 2] = 0.0;
+        }
+      }
+    }
 
     // Reuse temp vectors to avoid GC thrashing (for validation)
     const ab = vec3.create();
@@ -672,6 +709,61 @@ class VoxelState {
       console.warn(`Sanitized: Removed ${badFaces} degenerate faces`);
       res.faces = new Uint32Array(newFaces);
     }
+  }
+
+  computeGeometricNormals(res) {
+    const vAr = res.vertices;
+    const fAr = res.faces;
+    const nAr = new Float32Array(vAr.length);
+    const nbFaces = fAr.length / 4;
+    const ab = vec3.create();
+    const ac = vec3.create();
+    const normal = vec3.create();
+    const v1 = vec3.create();
+    const v2 = vec3.create();
+    const v3 = vec3.create();
+
+    for (let i = 0; i < nbFaces; ++i) {
+      const id = i * 4;
+      const i1 = fAr[id];
+      const i2 = fAr[id + 1];
+      const i3 = fAr[id + 2];
+      const i4 = fAr[id + 3];
+
+      // Triangle 1 (v1-v2-v3)
+      v1[0] = vAr[i1 * 3]; v1[1] = vAr[i1 * 3 + 1]; v1[2] = vAr[i1 * 3 + 2];
+      v2[0] = vAr[i2 * 3]; v2[1] = vAr[i2 * 3 + 1]; v2[2] = vAr[i2 * 3 + 2];
+      v3[0] = vAr[i3 * 3]; v3[1] = vAr[i3 * 3 + 1]; v3[2] = vAr[i3 * 3 + 2];
+
+      vec3.sub(ab, v2, v1);
+      vec3.sub(ac, v3, v1);
+      vec3.cross(normal, ab, ac); // weighted by area
+
+      if (vec3.length(normal) > 1e-6) {
+        nAr[i1 * 3] += normal[0]; nAr[i1 * 3 + 1] += normal[1]; nAr[i1 * 3 + 2] += normal[2];
+        nAr[i2 * 3] += normal[0]; nAr[i2 * 3 + 1] += normal[1]; nAr[i2 * 3 + 2] += normal[2];
+        nAr[i3 * 3] += normal[0]; nAr[i3 * 3 + 1] += normal[1]; nAr[i3 * 3 + 2] += normal[2];
+      }
+
+      // Triangle 2 (v1-v3-v4) for Quads
+      if (i4 !== Utils.TRI_INDEX) {
+        const v4 = vec3.create();
+        v4[0] = vAr[i4 * 3]; v4[1] = vAr[i4 * 3 + 1]; v4[2] = vAr[i4 * 3 + 2];
+
+        vec3.sub(ab, v3, v1);
+        vec3.sub(ac, v4, v1);
+        vec3.cross(normal, ab, ac);
+
+        if (vec3.length(normal) > 1e-6) {
+          nAr[i1 * 3] += normal[0]; nAr[i1 * 3 + 1] += normal[1]; nAr[i1 * 3 + 2] += normal[2];
+          nAr[i3 * 3] += normal[0]; nAr[i3 * 3 + 1] += normal[1]; nAr[i3 * 3 + 2] += normal[2];
+          nAr[i4 * 3] += normal[0]; nAr[i4 * 3 + 1] += normal[1]; nAr[i4 * 3 + 2] += normal[2];
+        }
+      }
+    }
+
+    Utils.normalizeArrayVec3(nAr);
+    res.normals = nAr;
   }
 
   getDistanceField() {

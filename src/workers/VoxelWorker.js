@@ -35,7 +35,7 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     // For now, simpler to just start accepting.
 
   } catch (e) {
-    console.error("VoxelWorker: CRITICAL IMPORT ERROR", e);
+    // console.error("VoxelWorker: CRITICAL IMPORT ERROR", e);
     // Report to main thread (optional, console is visible)
     self.postMessage({ type: 'ERROR', message: e.message, stack: e.stack });
   }
@@ -72,11 +72,11 @@ self.onmessage = function (e) {
         redo();
         break;
       case 'EDIT_SPHERE':
-        self.postMessage({ type: 'LOG', data: "Worker received EDIT_SPHERE with shape: " + msg.shape });
+        // self.postMessage({ type: 'LOG', data: "Worker received EDIT_SPHERE with shape: " + msg.shape });
         editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
       case 'INFLATE':
-        self.postMessage({ type: 'LOG', data: "Worker received INFLATE with shape: " + msg.shape });
+        // self.postMessage({ type: 'LOG', data: "Worker received INFLATE with shape: " + msg.shape });
         inflateSphere(msg.center, msg.radius, msg.strength, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
       case 'SMOOTH':
@@ -102,7 +102,7 @@ self.onmessage = function (e) {
         postMesh();
         break;
       default:
-        console.warn('VoxelWorker: Unknown message', msg.type);
+        // console.warn('VoxelWorker: Unknown message', msg.type);
     }
   } catch (err) {
     console.error('VoxelWorker Error:', err);
@@ -111,7 +111,7 @@ self.onmessage = function (e) {
 
 function init(res, size) {
   if (!VoxelState) {
-    console.error("VoxelWorker: Cannot Init, VoxelState class missing.");
+    // console.error("VoxelWorker: Cannot Init, VoxelState class missing.");
     return;
   }
   voxelState = new VoxelState(res, size);
@@ -245,7 +245,7 @@ function restoreState() {
   const state = history[historyPtr];
   if (state && state.df) {
     if (state.df.length !== voxelState.getDistanceField().length) {
-      console.error(`VoxelWorker: Undo/Redo Mismatch! Hist=${state.df.length} Curr=${voxelState.getDistanceField().length}`);
+      // console.error(`VoxelWorker: Undo/Redo Mismatch! Hist=${state.df.length} Curr=${voxelState.getDistanceField().length}`);
       // Try to recover? Resampling undo history is hard.
       // For now, just warn.
       return;

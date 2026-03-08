@@ -183,6 +183,7 @@ var TR = {
   renderingMatcap: 'Matcap',
   renderingCurvature: 'Curvature',
   renderingPBR: 'PBR',
+  renderingFlatMat: 'Flat',
   renderingTransparency: 'Transparency',
   renderingNormal: 'Normal shader',
   renderingUV: 'UV shader',

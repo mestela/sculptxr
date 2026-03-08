@@ -33,6 +33,7 @@ class GuiRendering {
     var optionsShaders = [];
     optionsShaders[Enums.Shader.MATCAP] = TR('renderingMatcap');
     optionsShaders[Enums.Shader.PBR] = TR('renderingPBR');
+    optionsShaders[Enums.Shader.FLAT] = TR('renderingFlatMat') || 'Flat';
     optionsShaders[Enums.Shader.NORMAL] = TR('renderingNormal');
     optionsShaders[Enums.Shader.UV] = TR('renderingUV');
     menu.addTitle(TR('renderingShader'));

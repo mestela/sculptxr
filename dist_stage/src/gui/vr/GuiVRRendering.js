@@ -27,6 +27,7 @@ export default function getRenderingWidgets(main) {
   const shaderOptions = [
     { label: TR('renderingMatcap'), id: Enums.Shader.MATCAP },
     { label: TR('renderingPBR'), id: Enums.Shader.PBR },
+    { label: TR('renderingFlatMat') || 'Flat', id: Enums.Shader.FLAT },
     { label: TR('renderingNormal'), id: Enums.Shader.NORMAL },
     { label: TR('renderingUV'), id: Enums.Shader.UV }
   ];

@@ -44,8 +44,8 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
-         if (window.screenLog) window.screenLog(`VoxelWorker: ${JSON.stringify(msg)}`, "yellow");
-         else console.log("VoxelWorker:", msg);
+         // if (window.screenLog) window.screenLog(`VoxelWorker: ${JSON.stringify(msg)}`, "yellow");
+         // else console.log("VoxelWorker:", msg);
          return;
       } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
@@ -205,7 +205,7 @@ class SculptVoxel extends SculptBase {
 
   setRadius(val) {
     super.setRadius(val);
-    // if (window.screenLog) window.screenLog(`Voxel: setRadius(${val.toFixed(1)})`, "grey");
+    //
   }
 
   toggleMatcap() {
@@ -461,9 +461,9 @@ class SculptVoxel extends SculptBase {
       // But for Voxel tool, maybe we want to allow it anyway?
       // SculptBase.start return true if we hit something OR if this._allowAir?
       // Let's check SculptBase.js later.
-      // if (window.screenLog) window.screenLog("Voxel: start() picking miss (Normal for Air)", "grey");
+      //
     } else {
-      // if (window.screenLog) window.screenLog("Voxel: start() success (Hit Surface)", "lime");
+      //
 
       // HIDE ALL OTHER MESHES
       /*
@@ -608,7 +608,7 @@ class SculptVoxel extends SculptBase {
     }
 
     // DEBUG: Mode Verification
-    // if (window.screenLog && (this._lastUpdate % 30 === 0)) {
+    // if (this._lastUpdate % 30 === 0) {
     // window.screenLog(`Strk: Mode=${mode} Neg=${isNegative}`, "cyan");
     // }
 
@@ -617,8 +617,7 @@ class SculptVoxel extends SculptBase {
       let mStr = "ADD";
       if (mode === 1) mStr = "SUB";
       if (mode === 2) mStr = isNegative ? "DEFLATE" : "INFLATE";
-      // Remove throttle for now to ensure visibility
-      // window.screenLog(`Vx: ${mStr} (M=${mode} N=${isNegative})`, "yellow");
+      //
     }
 
     var changed = false;
@@ -713,8 +712,11 @@ class SculptVoxel extends SculptBase {
       this._cursorMesh = (shapeCursor === 1) ? this._cursorMeshCube : this._cursorMeshSphere;
 
       if (this._cursorMesh) {
+        // [PHASE 7] In VR, we use _vrBrushRadiusCube and _vrBrushRadiusSphere from Scene.js.
+        // We MUST hide the desktop _cursorMeshes completely, otherwise they sit at world [0,0,0] and scale up massively.
         const isVR = this._main && this._main._xrSession;
-        this._cursorMesh.setVisible(isVR);
+        this._cursorMesh.setVisible(!isVR);
+        
         var m = this._cursorMesh.getMatrix();
         mat4.identity(m);
         // Radius Source: this._radius (0..100) set by GuiXR
@@ -754,7 +756,8 @@ class SculptVoxel extends SculptBase {
           this._cursorMeshSym = (shapeCursorSym === 1) ? this._cursorMeshSymCube : this._cursorMeshSymSphere;
 
           const isVR = this._main && this._main._xrSession;
-          this._cursorMeshSym.setVisible(isVR);
+          this._cursorMeshSym.setVisible(!isVR); 
+
           // Calculate Mirrored Position
           // 1. World -> Local (Grid)
           const symLocalPos = vec3.create();
@@ -1000,13 +1003,13 @@ class SculptVoxel extends SculptBase {
 
   setResolutionPreview(res) {
     this._pendingRes = res;
-    if (window.screenLog) window.screenLog(`Voxel Res: ${res} (Pending)`, "cyan");
+    //
   }
 
   applyResolution() {
     if (!this._pendingRes) return;
     this.setResolution(this._pendingRes);
-    if (window.screenLog) window.screenLog(`Voxel: Resampling to ${this._pendingRes}...`, "lime");
+    //
     // Reset pending? No, keep it sync.
   }
 
@@ -1058,7 +1061,7 @@ class SculptVoxel extends SculptBase {
 
   setRadiusMultiplier(val) {
     this._radiusMult = val;
-    if (window.screenLog) window.screenLog(`Voxel: Radius Mult ${val.toFixed(2)}`, "cyan");
+    //
   }
 
   updateVoxelMesh(res) {
@@ -1068,7 +1071,7 @@ class SculptVoxel extends SculptBase {
 
 
     if (res.vertices.length === 0) {
-      if (window.screenLog) window.screenLog(`Voxel: Empty Mesh (Pend=${this._pendingMeshUpdate})`, "yellow");
+      //
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);
       }
@@ -1110,10 +1113,7 @@ class SculptVoxel extends SculptBase {
 
     newMesh.initRender();
 
-    // CRITICAL: Overwrite analytical normals with computed geometric normals
-    // This fixes the "lumpy" appearance of pure quads shading which don't map cleanly to voxel gradients.
-    this._computeNormals(newMesh, res.vertices, res.faces);
-    this._fixNormals(newMesh); // Ensure no NaNs or Zero-length normals break WebGL
+    newMesh.initRender();
 
     // Copy states from old mesh before swap
     if (this._voxelMesh) {
@@ -1132,7 +1132,7 @@ class SculptVoxel extends SculptBase {
       newMesh.setMatcap(this._voxelMesh.getMatcap()); // Ensure matcap index is copied
 
       if (!this._main.getMeshes().includes(this._voxelMesh)) {
-        if (window.screenLog) window.screenLog("Voxel: Old mesh missing from scene, using addNewMesh", "orange");
+        //
         this._main.addNewMesh(newMesh);
       } else {
         this._main.replaceMesh(this._voxelMesh, newMesh);
@@ -1167,40 +1167,10 @@ class SculptVoxel extends SculptBase {
     // BOUNDS PRE-COMPUTE - Fixes mesh clipping caused by uninitialized AABB Infinity limits
     newMesh.computeAabb();
 
-    // FORCE VALID MATERIALS (Roughness, Metallic, MASK=1.0)
-    const materials = this._voxelMesh.getMaterials();
-    if (materials) {
-      const len = materials.length;
-      for (let i = 0; i < len; i += 3) {
-        materials[i] = 0.5;      // Roughness
-        materials[i + 1] = 0.0;  // Metallic
-        materials[i + 2] = 1.0;  // Mask (1.0 = Editable)
-      }
-      this._voxelMesh.updateMaterialBuffer();
-    }
-
     // CRITICAL FIX: Upload all buffers to GPU (Vertices, Normals, Colors, Indices)
     // This fixes the "Black Artifacts" (missing normals) and potentially "Insufficient buffer size" (sync).
     this._voxelMesh.updateBuffers();
-
-
-    // BAND-AID: Fix NaN Colors
-    const colors = this._voxelMesh.getColors();
-    let nanColor = 0;
-    if (colors) {
-      for (let i = 0; i < colors.length; i++) {
-        if (!Number.isFinite(colors[i])) {
-          colors[i] = 0.0; // Reset to 0 (Black)
-          nanColor++;
-        }
-      }
-      if (nanColor > 0) {
-        // if (window.screenLog) window.screenLog(`FIXED: ${nanColor} NaN/Inf Colors`, "red");
-        this._voxelMesh.updateColorBuffer();
-        this._voxelMesh.setShaderType(Enums.Shader.FLAT);
-      }
-    }
-
+    this._pendingMeshUpdate = false;
     // DISABLE FLAT SHADING DERIVATIVES (Debug: rely on vertex normals)
     this._voxelMesh.setFlatShading(false);
 
@@ -1228,11 +1198,11 @@ class SculptVoxel extends SculptBase {
   // Bake Voxel Mesh to Standard Multimesh
   bakeToMesh() {
     if (!this._voxelMesh) {
-      if (window.screenLog) window.screenLog("Voxel: No mesh to bake!", "orange");
+      //
       return;
     }
 
-    if (window.screenLog) window.screenLog("Voxel: Baking to Mesh...", "lime");
+    //
 
     const main = this._main;
 
@@ -1294,18 +1264,11 @@ class SculptVoxel extends SculptBase {
 
     staticMesh.updateGeometry(); // Force sync of all buffers
 
-    // CRITICAL: Compute Normals for Smooth Shading
-    // SurfaceNets provides vertices/faces but no normals. 
-    // MeshStatic defaults to all-zero normals, which causes invisibility with PBR/Matcap.
-    this._computeNormals(staticMesh, vAr, fAr);
-
     // Standard White Colors
     const cAr = new Float32Array(vAr.length);
     cAr.fill(1.0);
     staticMesh.setColors(cAr);
 
-    // CRITICAL FIX: Repair Normals for Degenerate Geometry
-    this._fixNormals(staticMesh);
     if (window.screenLog) window.screenLog(`Bake: V=${vAr.length / 3} F=${fAr.length / 4}`, "cyan");
 
     staticMesh.setFlatShading(false); // Smooth Shading
@@ -1337,7 +1300,6 @@ class SculptVoxel extends SculptBase {
     this._voxelMesh.setVisible(false); // NUCLEAR OPTION: Hide it first!
     main.removeMeshes([this._voxelMesh]);
     this._voxelMesh.setTexture0(null); // Prevent global texture deletion
-    this._voxelMesh.release();
     this._voxelMesh = null; // Prevent stale reference bugs
 
     // Also remove Debug Cube if present
@@ -1346,8 +1308,7 @@ class SculptVoxel extends SculptBase {
       main.removeMeshes([this._debugCube]);
     }
 
-    if (window.screenLog) window.screenLog("Voxel: Bake Complete. Mesh Nulled.", "green");
-
+    //
     // if (window.screenLog) window.screenLog("Voxel: Bake Complete! Switched to Brush.", "green");
 
     // 7. Auto-Switch to Brush (Standard Workflow)
@@ -1367,97 +1328,6 @@ class SculptVoxel extends SculptBase {
 
     // Force Render to verify visibility
     main.render();
-  }
-
-  _computeNormals(mesh, vAr, fAr) {
-    const nAr = new Float32Array(vAr.length);
-    const nbFaces = fAr.length / 4;
-    const ab = vec3.create();
-    const ac = vec3.create();
-    const normal = vec3.create();
-    const v1 = vec3.create();
-    const v2 = vec3.create();
-    const v3 = vec3.create();
-
-    for (let i = 0; i < nbFaces; ++i) {
-      const id = i * 4;
-      const i1 = fAr[id];
-      const i2 = fAr[id + 1];
-      const i3 = fAr[id + 2];
-      const i4 = fAr[id + 3];
-
-      // Triangle 1 (v1-v2-v3)
-      v1[0] = vAr[i1 * 3]; v1[1] = vAr[i1 * 3 + 1]; v1[2] = vAr[i1 * 3 + 2];
-      v2[0] = vAr[i2 * 3]; v2[1] = vAr[i2 * 3 + 1]; v2[2] = vAr[i2 * 3 + 2];
-      v3[0] = vAr[i3 * 3]; v3[1] = vAr[i3 * 3 + 1]; v3[2] = vAr[i3 * 3 + 2];
-
-      vec3.sub(ab, v2, v1);
-      vec3.sub(ac, v3, v1);
-      vec3.cross(normal, ab, ac); // weighted by area
-
-      // Explicitly check for zero-length face normal to avoid NaN propagation
-      if (vec3.length(normal) > 1e-6) {
-        // Accumulate
-        nAr[i1 * 3] += normal[0]; nAr[i1 * 3 + 1] += normal[1]; nAr[i1 * 3 + 2] += normal[2];
-        nAr[i2 * 3] += normal[0]; nAr[i2 * 3 + 1] += normal[1]; nAr[i2 * 3 + 2] += normal[2];
-        nAr[i3 * 3] += normal[0]; nAr[i3 * 3 + 1] += normal[1]; nAr[i3 * 3 + 2] += normal[2];
-      }
-
-      // Triangle 2 (v1-v3-v4) - SurfaceNets produces quads
-      if (i4 !== Utils.TRI_INDEX) {
-        // v4 vertex extraction
-        const v4 = vec3.create();
-        v4[0] = vAr[i4 * 3]; v4[1] = vAr[i4 * 3 + 1]; v4[2] = vAr[i4 * 3 + 2];
-
-        vec3.sub(ab, v3, v1);
-        vec3.sub(ac, v4, v1);
-        vec3.cross(normal, ab, ac);
-
-        // Explicitly check for zero-length face normal to avoid NaN propagation
-        if (vec3.length(normal) > 1e-6) {
-          nAr[i1 * 3] += normal[0]; nAr[i1 * 3 + 1] += normal[1]; nAr[i1 * 3 + 2] += normal[2];
-          nAr[i3 * 3] += normal[0]; nAr[i3 * 3 + 1] += normal[1]; nAr[i3 * 3 + 2] += normal[2];
-          nAr[i4 * 3] += normal[0]; nAr[i4 * 3 + 1] += normal[1]; nAr[i4 * 3 + 2] += normal[2];
-        }
-      }
-    }
-
-    // Normalize
-    Utils.normalizeArrayVec3(nAr);
-    mesh.setNormals(nAr);
-  }
-
-  _fixNormals(mesh) {
-    // Helper to fix NaNs and Zero-Length normals
-    const normals = mesh.getNormals();
-    if (!normals) return;
-
-    let nbNaNs = 0;
-    let nbZeros = 0;
-    for (let i = 0; i < normals.length; i += 3) {
-      const x = normals[i];
-      const y = normals[i + 1];
-      const z = normals[i + 2];
-      const len2 = x * x + y * y + z * z;
-      if (isNaN(x) || isNaN(y) || isNaN(z)) {
-        // Replace NaN with Up Vector
-        normals[i] = 0.0;
-        normals[i + 1] = 1.0;
-        normals[i + 2] = 0.0;
-        nbNaNs++;
-      } else if (len2 < 1e-6) {
-        // Replace Zero Length with Up Vector
-        normals[i] = 0.0;
-        normals[i + 1] = 1.0;
-        normals[i + 2] = 0.0;
-        nbZeros++;
-      }
-    }
-    if (nbNaNs > 0 || nbZeros > 0) {
-      if (window.screenLog) window.screenLog(`Fixed Normals: NaNs=${nbNaNs} Zeros=${nbZeros}`, "orange");
-      mesh.setNormals(normals); // Re-assign if needed (Reference sharing usually works)
-      mesh.updateNormalBuffer();
-    }
   }
 
   getDrawables() {

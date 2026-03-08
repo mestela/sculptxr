@@ -1,3 +1,13 @@
+## v0.9.217 - v0.9.229
+- **Feature**: **Voxel Cube Brush**: The Voxel tool now natively supports a precise 'Cube' SDF brush shape alongside the traditional 'Sphere', accessible via the new Brush Shape toggle in the VR Mini-HUD and Desktop Tool menu.
+- **Feature**: **Oriented Cube Sculpting**: When using the new Cube brush, users can toggle "Controller Alignment". When active, the voxel cube physically rotates with the user's wrist (via quaternion projection into the SDF local space), allowing for angled block carving and building.
+- **Feature**: **Visual Brush Indicators**: The VR pointer now dynamically swaps between a transparent radius sphere or a transparent radius cube to perfectly match the active voxel brush shape and orientation in real-time.
+- **Optimization**: **Voxel Worker Threading**: Completely refactored the Voxel Tool's geometry pipeline. The intensive `_computeNormals`, `_fixNormals`, and `color/material` sanitization loops were stripped from the main thread (`SculptVoxel.js`) and offloaded entirely to the Web Worker (`VoxelState.js`).
+- **Optimization**: **Voxel Wireframe Rebuild Paradox**: Prevented the WebGL renderer (`MeshStatic.js`) from repeatedly triggering an expensive `O(N)` topology rebuild every single frame whenever wireframes were enabled on Voxel meshes.
+- **Fix**: **Voxel Baking Crash**: Resolved `_computeNormals is not a function` throw when attempting to click 'Bake' on a Voxel mesh.
+- **Fix**: **Giant Orange VR Cursors**: Disabled the legacy desktop orange debug cursors from erroneously appearing in the VR view at the world origin.
+- **Polish**: Removed spamming debug logs (`VoxelWorker:`, `Voxel Res:`, etc.) from the internal worker and exposed the `Flat` shaded material option explicitly in the global VR/Desktop rendering menus.
+
 ## v0.9.209 - v0.9.216
 - **Feature**: **Voxel Wireframe Restored**: Restored the wireframe toggle button for the Voxel tool in the Mini-HUD and optimized the mesh pipeline to support drawing wireframes directly over pure quad SurfaceNets structures.
 - **Optimization**: **Wireframe Sub-Sampling (Standalone)**: Implemented a dynamic sub-sampling cap (`Wireframe.MAX_TRIANGLES = 300,000`) for the wireframe renderer. High-resolution meshes dynamically decimate the drawn lines for the overlay, instantly curing the severe CPU/GPU framerate lockups on Quest standalone headsets.
