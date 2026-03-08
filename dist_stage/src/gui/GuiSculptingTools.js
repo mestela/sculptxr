@@ -396,6 +396,14 @@ GuiTools[Enums.Tools.VOXEL] = {
     var ctrlMode = fold.addCombobox('Mode', tool, '_mode', options);
     this._ctrls.push(ctrlMode);
 
+    var shapeOptions = { 'Sphere': 0, 'Cube': 1 };
+    var ctrlShape = fold.addCombobox('Shape', tool, '_shape', shapeOptions);
+    this._ctrls.push(ctrlShape);
+
+    var alignOptions = { 'World Aligned': false, 'Controller Aligned': true };
+    var ctrlAlign = fold.addCombobox('Alignment', tool, '_alignToController', alignOptions);
+    this._ctrls.push(ctrlAlign);
+
     // Intensity/Strength (only for Inflate?)
     // Actually SculptVoxel uses it for Inflate strength (default 0.5)
     // Reuse addCtrlIntensity but map it to _strength?

@@ -33,6 +33,8 @@ class SculptVoxel extends SculptBase {
 
     // Tool State
     this._mode = 0; // 0: Add, 1: Sub, 2: Inflate
+    this._shape = 0; // 0: Sphere, 1: Cube
+    this._alignToController = false; // World vs Controller alignment
     this._strength = 0.5;
     const isDesktop = !window.navigator.xr; // heuristic or check main
     // Let's rely on xrSession check during init, but for constructor just use a default
@@ -136,21 +138,38 @@ class SculptVoxel extends SculptBase {
     this._pendingMeshUpdate = false;
 
     // Air Cursor (Visual Feedback)
-    // Air Cursor (Visual Feedback)
-    this._cursorMesh = Primitives.createSphere(main._gl);
-    this._cursorMesh.setMode(main._gl.TRIANGLES);
-    this._cursorMesh.setShaderType(Enums.Shader.FLAT);
-    this._cursorMesh.setFlatColor([1.0, 0.5, 0.0]); // Orange
-    this._cursorMesh.setOpacity(isVR ? 1.0 : 0.0); // Set to 0 to hide on desktop
-    this._cursorMesh.setVisible(false);
+    this._cursorMeshSphere = Primitives.createSphere(main._gl);
+    this._cursorMeshSphere.setMode(main._gl.TRIANGLES);
+    this._cursorMeshSphere.setShaderType(Enums.Shader.FLAT);
+    this._cursorMeshSphere.setFlatColor([1.0, 0.5, 0.0]); // Orange
+    this._cursorMeshSphere.setOpacity(isVR ? 1.0 : 0.0); // Set to 0 to hide on desktop
+    this._cursorMeshSphere.setVisible(false);
+
+    this._cursorMeshCube = Primitives.createCube(main._gl);
+    this._cursorMeshCube.setMode(main._gl.TRIANGLES);
+    this._cursorMeshCube.setShaderType(Enums.Shader.FLAT);
+    this._cursorMeshCube.setFlatColor([1.0, 0.5, 0.0]); // Orange
+    this._cursorMeshCube.setOpacity(isVR ? 1.0 : 0.0); // Set to 0 to hide on desktop
+    this._cursorMeshCube.setVisible(false);
+
+    this._cursorMesh = this._cursorMeshSphere;
 
     // Symmetry Cursor (Visual Feedback)
-    this._cursorMeshSym = Primitives.createSphere(main._gl);
-    this._cursorMeshSym.setMode(main._gl.TRIANGLES);
-    this._cursorMeshSym.setShaderType(Enums.Shader.FLAT);
-    this._cursorMeshSym.setFlatColor([1.0, 0.5, 0.0]); // Orange
-    this._cursorMeshSym.setOpacity(isVR ? 1.0 : 0.0); // Set to 0 to hide on desktop
-    this._cursorMeshSym.setVisible(false);
+    this._cursorMeshSymSphere = Primitives.createSphere(main._gl);
+    this._cursorMeshSymSphere.setMode(main._gl.TRIANGLES);
+    this._cursorMeshSymSphere.setShaderType(Enums.Shader.FLAT);
+    this._cursorMeshSymSphere.setFlatColor([1.0, 0.5, 0.0]); 
+    this._cursorMeshSymSphere.setOpacity(isVR ? 1.0 : 0.0); 
+    this._cursorMeshSymSphere.setVisible(false);
+
+    this._cursorMeshSymCube = Primitives.createCube(main._gl);
+    this._cursorMeshSymCube.setMode(main._gl.TRIANGLES);
+    this._cursorMeshSymCube.setShaderType(Enums.Shader.FLAT);
+    this._cursorMeshSymCube.setFlatColor([1.0, 0.5, 0.0]); 
+    this._cursorMeshSymCube.setOpacity(isVR ? 1.0 : 0.0); 
+    this._cursorMeshSymCube.setVisible(false);
+
+    this._cursorMeshSym = this._cursorMeshSymSphere;
 
     // Voxel Bounds Indicator (Replaces primitive cube)
     this._voxelBounds = new VoxelBounds(main._gl);
@@ -618,23 +637,29 @@ class SculptVoxel extends SculptBase {
         // Shift could invert strength to Deflate?
         var strength = (this._strength !== undefined) ? this._strength : 0.5;
         if (isNegative) strength = -strength;
+        var shape = (this._shape !== undefined) ? this._shape : 0;
+        console.log("VoxelTool INFLATE - sending shape: " + shape);
 
         this._worker.postMessage({
           type: 'INFLATE',
           center: [localPos[0], localPos[1], localPos[2]],
           radius: radius,
           strength: strength,
+          shape: shape,
           returnMesh: returnMesh
         });
       } else {
         // ADD / SUB
         var isSub = (mode === 1);
+        var shape = (this._shape !== undefined) ? this._shape : 0;
+        console.log("VoxelTool EDIT_SPHERE - sending shape: " + shape);
         this._worker.postMessage({
           type: 'EDIT_SPHERE',
           center: [localPos[0], localPos[1], localPos[2]],
           radius: radius,
           color: color,
           isNegative: isSub,
+          shape: shape,
           returnMesh: returnMesh
         });
       }
@@ -679,6 +704,14 @@ class SculptVoxel extends SculptBase {
       // this.hideOtherMeshes();
 
       // Show/Update Cursor
+      var shapeCursor = (this._shape !== undefined) ? this._shape : 0;
+      
+      // Hide the inactive cursor meshes
+      if (this._cursorMeshSphere) this._cursorMeshSphere.setVisible(false);
+      if (this._cursorMeshCube) this._cursorMeshCube.setVisible(false);
+
+      this._cursorMesh = (shapeCursor === 1) ? this._cursorMeshCube : this._cursorMeshSphere;
+
       if (this._cursorMesh) {
         const isVR = this._main && this._main._xrSession;
         this._cursorMesh.setVisible(isVR);
@@ -696,6 +729,14 @@ class SculptVoxel extends SculptBase {
 
         // Position at Controller Tip (origin)
         mat4.translate(m, m, origin);
+        
+        // Apply Orientation if required
+        if (this._alignToController && shapeCursor === 1 && options && options.quat) {
+            var qMat = mat4.create();
+            mat4.fromQuat(qMat, options.quat);
+            mat4.multiply(m, m, qMat);
+        }
+
         // User reported visual is half the size of actual edit. Scaling by 2.0.
         const rVisual = radius * 2.0;
         mat4.scale(m, m, [rVisual, rVisual, rVisual]);
@@ -706,6 +747,12 @@ class SculptVoxel extends SculptBase {
 
       if (this._cursorMeshSym) {
         if (sym) {
+          if (this._cursorMeshSymSphere) this._cursorMeshSymSphere.setVisible(false);
+          if (this._cursorMeshSymCube) this._cursorMeshSymCube.setVisible(false);
+          
+          var shapeCursorSym = (this._shape !== undefined) ? this._shape : 0;
+          this._cursorMeshSym = (shapeCursorSym === 1) ? this._cursorMeshSymCube : this._cursorMeshSymSphere;
+
           const isVR = this._main && this._main._xrSession;
           this._cursorMeshSym.setVisible(isVR);
           // Calculate Mirrored Position
@@ -725,6 +772,12 @@ class SculptVoxel extends SculptBase {
 
           // 4. Position & Scale
           mat4.translate(mSym, mSym, worldPosSym);
+
+          if (this._alignToController && shapeCursorSym === 1 && options && options.quat) {
+             var qMatSym = mat4.create();
+             mat4.fromQuat(qMatSym, options.quat);
+             mat4.multiply(mSym, mSym, qMatSym);
+          }
 
           // Use same radius as main cursor
           // Recalculate radius to be safe or reuse? Reusing logic for consistency.
@@ -874,6 +927,12 @@ class SculptVoxel extends SculptBase {
         var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
         if (isNegative && mode === 0) mode = 1; // Add + Neg -> Sub
 
+        var shapeNum = (this._shape !== undefined) ? this._shape : 0;
+        var brushRot = null;
+        if (this._alignToController && shapeNum === 1 && options && options.quat) {
+            brushRot = Array.from(options.quat);
+        }
+
         if (mode === 2) {
           // INFLATE
           this._worker.postMessage({
@@ -881,6 +940,8 @@ class SculptVoxel extends SculptBase {
             center: [localPos[0], localPos[1], localPos[2]],
             radius: gridRadius,
             strength: strength,
+            shape: shapeNum,
+            brushRotation: brushRot,
             returnMesh: returnMesh
           });
 
@@ -891,6 +952,8 @@ class SculptVoxel extends SculptBase {
               center: [-localPos[0], localPos[1], localPos[2]],
               radius: gridRadius,
               strength: strength,
+              shape: shapeNum,
+              brushRotation: brushRot,
               returnMesh: false
             });
           }
@@ -904,6 +967,8 @@ class SculptVoxel extends SculptBase {
             radius: gridRadius,
             color: color,
             isNegative: isSub,
+            shape: shapeNum,
+            brushRotation: brushRot,
             returnMesh: returnMesh
           });
 
@@ -915,6 +980,8 @@ class SculptVoxel extends SculptBase {
               radius: gridRadius,
               color: color,
               isNegative: isSub,
+              shape: shapeNum,
+              brushRotation: brushRot,
               returnMesh: false // Don't ask for mesh twice
             });
           }
@@ -1391,6 +1458,10 @@ class SculptVoxel extends SculptBase {
       mesh.setNormals(normals); // Re-assign if needed (Reference sharing usually works)
       mesh.updateNormalBuffer();
     }
+  }
+
+  getDrawables() {
+    return [this._cursorMeshSphere, this._cursorMeshCube, this._cursorMeshSymSphere, this._cursorMeshSymCube, this._voxelBounds];
   }
 
   renderVR(main, camera) {

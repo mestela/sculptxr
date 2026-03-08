@@ -1717,6 +1717,14 @@ class Mesh {
       var idb = idFace * 6;
       var idCen = idFace * 3;
       var leaf = faceLeaf[idFace];
+      if (!leaf) {
+        // Safe guard: if the leaf is missing, our octree data is corrupted (perhaps due to async mesh replacements or topology bugs)
+        // Fallback to a full rebuild
+        if (window.screenLog) window.screenLog("[MeshSafe] Corrupted Octree Leaf. Forcing Rebuild.", "red");
+        this.computeOctree();
+        return new Uint32Array(0); // Nothing to incrementally move
+      }
+
       var ab = leaf._aabbSplit;
 
       var vx = faceCenters[idCen];

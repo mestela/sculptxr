@@ -110,20 +110,34 @@ class VoxelState {
 
 
 
+  // Helper to rotate vector by quaternion
+  _rotateVecByQuat(v, q) {
+    var ix = q[3] * v[0] + q[1] * v[2] - q[2] * v[1];
+    var iy = q[3] * v[1] + q[2] * v[0] - q[0] * v[2];
+    var iz = q[3] * v[2] + q[0] * v[1] - q[1] * v[0];
+    var iw = -q[0] * v[0] - q[1] * v[1] - q[2] * v[2];
+    
+    return [
+      ix * q[3] + iw * -q[0] + iy * -q[2] - iz * -q[1],
+      iy * q[3] + iw * -q[1] + iz * -q[0] - ix * -q[2],
+      iz * q[3] + iw * -q[2] + ix * -q[1] - iy * -q[0]
+    ];
+  }
+
   // Unified Edit Wrapper
-  editSphere(center, radius, color, isNegative) {
+  editSphere(center, radius, color, isNegative, shape, brushRotation) {
     if (isNegative) {
-      return this.subtractSphere(center, radius);
+      return this.subtractSphere(center, radius, shape, brushRotation);
     } else {
-      return this.addSphere(center, radius, color);
+      return this.addSphere(center, radius, color, shape, brushRotation);
       self.postMessage({ type: "LOG", data: "addSphere R="+radius.toFixed(2)+" Cx="+cx.toFixed(1) });
 
     }
   }
 
   // Boolean Union: min(existing, new)
-  // Sphere: dist = length(p - center) - radius
-  addSphere(center, radius, color) {
+  // Distance to primitive
+  addSphere(center, radius, color, shape = 0, brushRotation) {
     var res = this._resolution;
     var step = this._step;
     var min = this._min;
@@ -134,7 +148,8 @@ class VoxelState {
     var cz = (center[2] - min[2]) / step;
 
     // Grid Bounds
-    var rGrid = Math.ceil(radius / step) + 1;
+    var boundingRadius = (shape === 1) ? radius * 1.733 : radius; // sqrt(3) max corner dist
+    var rGrid = Math.ceil(boundingRadius / step) + 1;
     var ixMin = Math.max(0, Math.floor(cx - rGrid));
     var ixMax = Math.min(res, Math.ceil(cx + rGrid));
     var iyMin = Math.max(0, Math.floor(cy - rGrid));
@@ -160,11 +175,34 @@ class VoxelState {
           var valY = min[1] + j * step;
           var valZ = min[2] + k * step;
 
-          // Distance to Sphere Center
-          var dx = valX - center[0];
-          var dy = valY - center[1];
-          var dz = valZ - center[2];
-          var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) - radius;
+          // Distance to primitive
+          var dist = 0.0;
+          if (shape === 1) {
+            // Cube
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+
+            if (brushRotation) {
+              var invQ = [-brushRotation[0], -brushRotation[1], -brushRotation[2], brushRotation[3]];
+              var rot = this._rotateVecByQuat([dx, dy, dz], invQ);
+              dx = rot[0]; dy = rot[1]; dz = rot[2];
+            }
+
+            var qx = Math.abs(dx) - radius;
+            var qy = Math.abs(dy) - radius;
+            var qz = Math.abs(dz) - radius;
+            var dlx = Math.max(qx, 0.0);
+            var dly = Math.max(qy, 0.0);
+            var dlz = Math.max(qz, 0.0);
+            dist = Math.sqrt(dlx * dlx + dly * dly + dlz * dlz) + Math.min(Math.max(qx, Math.max(qy, qz)), 0.0);
+          } else {
+            // Sphere
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+            dist = Math.sqrt(dx * dx + dy * dy + dz * dz) - radius;
+          }
 
           var index = i + j * rx + k * rxy;
           var oldDist = df[index];
@@ -201,7 +239,7 @@ class VoxelState {
   }
 
   // Boolean Difference: max(existing, -new)
-  subtractSphere(center, radius) {
+  subtractSphere(center, radius, shape = 0, brushRotation) {
     var res = this._resolution;
     var step = this._step;
     var min = this._min;
@@ -212,7 +250,8 @@ class VoxelState {
     var cz = (center[2] - min[2]) / step;
 
     // Grid Bounds
-    var rGrid = Math.ceil(radius / step) + 1;
+    var boundingRadius = (shape === 1) ? radius * 1.733 : radius; 
+    var rGrid = Math.ceil(boundingRadius / step) + 1;
     var ixMin = Math.max(0, Math.floor(cx - rGrid));
     var ixMax = Math.min(res, Math.ceil(cx + rGrid));
     var iyMin = Math.max(0, Math.floor(cy - rGrid));
@@ -236,11 +275,34 @@ class VoxelState {
           var valY = min[1] + j * step;
           var valZ = min[2] + k * step;
 
-          // Distance to Sphere Center
-          var dx = valX - center[0];
-          var dy = valY - center[1];
-          var dz = valZ - center[2];
-          var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) - radius;
+          // Distance to primitive
+          var dist = 0.0;
+          if (shape === 1) {
+            // Cube
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+
+            if (brushRotation) {
+              var invQ = [-brushRotation[0], -brushRotation[1], -brushRotation[2], brushRotation[3]];
+              var rot = this._rotateVecByQuat([dx, dy, dz], invQ);
+              dx = rot[0]; dy = rot[1]; dz = rot[2];
+            }
+
+            var qx = Math.abs(dx) - radius;
+            var qy = Math.abs(dy) - radius;
+            var qz = Math.abs(dz) - radius;
+            var dlx = Math.max(qx, 0.0);
+            var dly = Math.max(qy, 0.0);
+            var dlz = Math.max(qz, 0.0);
+            dist = Math.sqrt(dlx * dlx + dly * dly + dlz * dlz) + Math.min(Math.max(qx, Math.max(qy, qz)), 0.0);
+          } else {
+            // Sphere
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+            dist = Math.sqrt(dx * dx + dy * dy + dz * dz) - radius;
+          }
 
           var index = i + j * rx + k * rxy;
           var oldDist = df[index];
@@ -272,7 +334,7 @@ class VoxelState {
   }
 
   // Inflate/Deflate: df[i] -= strength * falloff
-  inflateSphere(center, radius, strength) {
+  inflateSphere(center, radius, strength, shape = 0, brushRotation) {
     var res = this._resolution;
     var step = this._step;
     var min = this._min;
@@ -283,7 +345,8 @@ class VoxelState {
     var cz = (center[2] - min[2]) / step;
 
     // Grid Bounds
-    var rGrid = Math.ceil(radius / step) + 1;
+    var boundingRadius = (shape === 1) ? radius * 1.733 : radius; 
+    var rGrid = Math.ceil(boundingRadius / step) + 1;
     var ixMin = Math.max(0, Math.floor(cx - rGrid));
     var ixMax = Math.min(res, Math.ceil(cx + rGrid));
     var iyMin = Math.max(0, Math.floor(cy - rGrid));
@@ -307,11 +370,34 @@ class VoxelState {
           var valY = min[1] + j * step;
           var valZ = min[2] + k * step;
 
-          // Distance to Sphere Center
-          var dx = valX - center[0];
-          var dy = valY - center[1];
-          var dz = valZ - center[2];
-          var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          // Distance to primitive
+          var dist = 0.0;
+          if (shape === 1) {
+            // Cube
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+
+            if (brushRotation) {
+              var invQ = [-brushRotation[0], -brushRotation[1], -brushRotation[2], brushRotation[3]];
+              var rot = this._rotateVecByQuat([dx, dy, dz], invQ);
+              dx = rot[0]; dy = rot[1]; dz = rot[2];
+            }
+
+            var qx = Math.abs(dx) - radius;
+            var qy = Math.abs(dy) - radius;
+            var qz = Math.abs(dz) - radius;
+            var dlx = Math.max(qx, 0.0);
+            var dly = Math.max(qy, 0.0);
+            var dlz = Math.max(qz, 0.0);
+            dist = Math.sqrt(dlx * dlx + dly * dly + dlz * dlz) + Math.min(Math.max(qx, Math.max(qy, qz)), 0.0);
+          } else {
+            // Sphere
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+            dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          }
 
           if (dist < radius) {
             // Falloff (Linear for now, 1.0 at center, 0.0 at radius)

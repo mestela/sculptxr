@@ -457,6 +457,60 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
     y += btnH + gapBtn;
 
+    // Brush Shape Buttons (Sphere, Cube)
+    const shape = activeTool._shape || 0;
+    const btnShapeW = (550 - 10) / 2;
+
+    const setVoxelShape = (s) => {
+      if (activeTool) {
+        activeTool._shape = s;
+        if (main._guiXR) {
+          main._guiXR.refreshToolsWidget();
+        }
+      }
+    };
+
+    widgets.push({
+      type: 'button', id: 'vx_shape_sphere', label: 'Sphere', x: col1X, y: y, w: btnShapeW, h: btnH,
+      data: { active: (shape === 0) },
+      onInteract: () => setVoxelShape(0)
+    });
+
+    widgets.push({
+      type: 'button', id: 'vx_shape_cube', label: 'Cube', x: col1X + btnShapeW + 10, y: y, w: btnShapeW, h: btnH,
+      data: { active: (shape === 1) },
+      onInteract: () => setVoxelShape(1)
+    });
+
+    y += btnH + gapBtn;
+
+    // Alignment Buttons (World, Local) - Only show for Cube
+    if (shape === 1) {
+      const alignToController = activeTool._alignToController || false;
+      const setVoxelAlign = (align) => {
+        if (activeTool) {
+          activeTool._alignToController = align;
+          if (main._guiXR) {
+            main._guiXR.refreshToolsWidget();
+          }
+        }
+      };
+
+      widgets.push({
+        type: 'button', id: 'vx_align_world', label: 'World', x: col1X, y: y, w: btnShapeW, h: btnH,
+        data: { active: !alignToController },
+        onInteract: () => setVoxelAlign(false)
+      });
+
+      widgets.push({
+        type: 'button', id: 'vx_align_local', label: 'Local', x: col1X + btnShapeW + 10, y: y, w: btnShapeW, h: btnH,
+        data: { active: alignToController },
+        onInteract: () => setVoxelAlign(true)
+      });
+
+      y += btnH + gapBtn;
+    }
+
     widgets.push({
       type: 'slider',
       id: 'voxel_res',

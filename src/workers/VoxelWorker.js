@@ -72,10 +72,12 @@ self.onmessage = function (e) {
         redo();
         break;
       case 'EDIT_SPHERE':
-        editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.returnMesh);
+        self.postMessage({ type: 'LOG', data: "Worker received EDIT_SPHERE with shape: " + msg.shape });
+        editSphere(msg.center, msg.radius, msg.color, msg.isNegative, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
       case 'INFLATE':
-        inflateSphere(msg.center, msg.radius, msg.strength, msg.returnMesh);
+        self.postMessage({ type: 'LOG', data: "Worker received INFLATE with shape: " + msg.shape });
+        inflateSphere(msg.center, msg.radius, msg.strength, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
       case 'SMOOTH':
         setSmooth(msg.value);
@@ -253,12 +255,12 @@ function restoreState() {
   }
 }
 
-function editSphere(center, radius, color, isNegative, returnMesh) {
+function editSphere(center, radius, color, isNegative, shape, brushRotation, returnMesh) {
   if (!voxelState) return;
 
   const t0 = performance.now();
   // Apply edit
-  const changed = voxelState.editSphere(center, radius, color, isNegative);
+  const changed = voxelState.editSphere(center, radius, color, isNegative, shape, brushRotation);
   const t1 = performance.now();
 
   if (!changed) {
@@ -271,9 +273,9 @@ function editSphere(center, radius, color, isNegative, returnMesh) {
   if (returnMesh) postMesh();
 }
 
-function inflateSphere(center, radius, strength, returnMesh) {
+function inflateSphere(center, radius, strength, shape, brushRotation, returnMesh) {
   if (!voxelState) return;
-  if (voxelState.inflateSphere(center, radius, strength)) {
+  if (voxelState.inflateSphere(center, radius, strength, shape, brushRotation)) {
     isDirty = true;
   }
   if (returnMesh) postMesh();

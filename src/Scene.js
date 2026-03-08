@@ -1201,59 +1201,80 @@ class Scene {
 
     // Proj is same.
 
-    // Render VR Brush Radius Sphere (Pass 3)
-    if (this._vrBrushRadiusSphere && this._vrDominantRayMatrix && this._vrControllerTip) {
-      const mSphere = this._vrBrushRadiusSphere.getMatrix();
-      mat4.copy(mSphere, this._vrDominantRayMatrix);
+    // Render VR Brush Radius Sphere/Cube (Pass 3)
+    currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
+    const isVoxelTool = currentTool && currentTool.constructor.name === 'SculptVoxel';
+    const isCubeShape = isVoxelTool && currentTool._shape === 1;
+
+    let activeIndicator = this._vrBrushRadiusSphere;
+    if (isCubeShape && this._vrBrushRadiusCube) {
+      activeIndicator = this._vrBrushRadiusCube;
+    }
+
+    if (activeIndicator && this._vrDominantRayMatrix && this._vrControllerTip) {
+      const mIndicator = activeIndicator.getMatrix();
+      mat4.copy(mIndicator, this._vrDominantRayMatrix);
       const offY = this._isQuestStandalone ? 0.10 : 0.05;
-      mat4.rotateX(mSphere, mSphere, -Math.PI / 2);
-      mat4.translate(mSphere, mSphere, [0, offY, 0]);
+      mat4.rotateX(mIndicator, mIndicator, -Math.PI / 2);
+      mat4.translate(mIndicator, mIndicator, [0, offY, 0]);
+
+      // If Cube and World Aligned, zero out the rotational component
+      if (isCubeShape && currentTool._alignToController === false) {
+        // We want to keep the position but make it world-aligned (identity rotation)
+        const posX = mIndicator[12], posY = mIndicator[13], posZ = mIndicator[14];
+        mat4.identity(mIndicator);
+        mat4.translate(mIndicator, mIndicator, [posX, posY, posZ]);
+      }
 
       // Normalize Scale logic...
-      // Simply Reset Scale to 1, then apply radius
-      // Extract translation/rotation?
-      // Or just normalize columns as before
-      const sx = Math.hypot(mSphere[0], mSphere[1], mSphere[2]);
-      const sy = Math.hypot(mSphere[4], mSphere[5], mSphere[6]);
-      const sz = Math.hypot(mSphere[8], mSphere[9], mSphere[10]);
-      if (sx > 1e-6) { mSphere[0] /= sx; mSphere[1] /= sx; mSphere[2] /= sx; }
-      if (sy > 1e-6) { mSphere[4] /= sy; mSphere[5] /= sy; mSphere[6] /= sy; }
-      if (sz > 1e-6) { mSphere[8] /= sz; mSphere[9] /= sz; mSphere[10] /= sz; }
+      const sx = Math.hypot(mIndicator[0], mIndicator[1], mIndicator[2]);
+      const sy = Math.hypot(mIndicator[4], mIndicator[5], mIndicator[6]);
+      const sz = Math.hypot(mIndicator[8], mIndicator[9], mIndicator[10]);
+      if (sx > 1e-6) { mIndicator[0] /= sx; mIndicator[1] /= sx; mIndicator[2] /= sx; }
+      if (sy > 1e-6) { mIndicator[4] /= sy; mIndicator[5] /= sy; mIndicator[6] /= sy; }
+      if (sz > 1e-6) { mIndicator[8] /= sz; mIndicator[9] /= sz; mIndicator[10] /= sz; }
 
-      const r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
+      let r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
+      
+      // The cursor needs visual adjustment. Sphere radius conceptually bounds differently than Cube.
+      // But we will use the same physical radius so it maps to the sdf size.
+      // However, SDF cube formula uses radius as half-extent. 
+      // Primitives.createCube(gl, size) where size is 1.0 creates a cube from -0.5 to 0.5.
+      // To match radius we might need to scale by 2.0 (since radius of 1.0 means extent -1..1).
+      if (isCubeShape) r *= 2.0;
+
       // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
-      mat4.scale(mSphere, mSphere, [r, r, r]);
+      mat4.scale(mIndicator, mIndicator, [r, r, r]);
 
-      const currentTool = this._sculptManager.getCurrentTool();
       const intensity = currentTool ? currentTool._intensity : 0.5;
 
-      // Map intensity (0.0 - 1.0) to a brightness multiplier for the additive sphere
-      // We don't want it completely invisible at 0, so min is 0.1
+      // Map intensity (0.0 - 1.0) to a brightness multiplier for the additive indicator
       const bright = 0.1 + (intensity * 0.9);
 
-      // Tint the sphere based on positive/negative mode.
+      // Tint the indicator based on positive/negative mode.
       const isPaintTool = currentTool && currentTool.constructor.name === 'Paint';
       if (isPaintTool) {
-        this._vrBrushRadiusSphere.setFlatColor([
+        activeIndicator.setFlatColor([
           currentTool._color[0] * bright,
           currentTool._color[1] * bright,
           currentTool._color[2] * bright
         ]);
       } else if (this._vrIsNegative) {
-        this._vrBrushRadiusSphere.setFlatColor([0.7 * bright, 0.2 * bright, 0.2 * bright]); // Slightly Red
+        activeIndicator.setFlatColor([0.7 * bright, 0.2 * bright, 0.2 * bright]); // Slightly Red
       } else {
-        this._vrBrushRadiusSphere.setFlatColor([0.2 * bright, 0.2 * bright, 0.7 * bright]); // Slightly Blue
+        activeIndicator.setFlatColor([0.2 * bright, 0.2 * bright, 0.7 * bright]); // Slightly Blue
       }
 
-      this._vrBrushRadiusSphere.updateMatrices(cam);
+      activeIndicator.updateMatrices(cam);
 
+      const gl2 = this._gl;
       gl2.enable(gl2.BLEND);
       gl2.blendFunc(gl2.ONE, gl2.ONE);
       gl2.depthMask(false);
       gl2.disable(gl2.CULL_FACE);
       gl2.enable(gl2.DEPTH_TEST);
 
-      this._vrBrushRadiusSphere.render(this);
+      activeIndicator.render(this);
 
       gl2.enable(gl2.DEPTH_TEST);
       gl2.enable(gl2.CULL_FACE);
@@ -2208,6 +2229,18 @@ class Scene {
       meshS.init();
       meshS.initRender();
       this._vrBrushRadiusSphere = meshS;
+    }
+
+    if (!this._vrBrushRadiusCube) {
+      // Create a Cube with radius 1.0
+      var meshCube = Primitives.createCube(this._gl, 1.0);
+
+      meshCube.setShaderType(Enums.Shader.FRESNEL);
+      meshCube.setFlatColor([0.5, 0.5, 0.5]);
+      meshCube.setOpacity(1.0);
+      meshCube.init();
+      meshCube.initRender();
+      this._vrBrushRadiusCube = meshCube;
     }
 
     // [DEBUG] Raycaster Sphere (Origin)
@@ -4123,7 +4156,8 @@ class Scene {
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
               isColorSmoothOverride = true;
-            } else {
+            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel') {
+              // Disable Smooth toggle for Voxel tool as it does not fully support it yet
               isSmoothOverride = true;
             }
             break;
