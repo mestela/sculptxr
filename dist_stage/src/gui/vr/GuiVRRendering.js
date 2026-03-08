@@ -185,25 +185,9 @@ export default function getRenderingWidgets(main) {
   });
   y += 50 + gapBtn;
 
-  widgets.push({
-    type: 'checkbox',
-    id: 'flat',
-    label: TR('renderingFlat'),
-    x: col1X, y: y, w: 400, h: btnH,
-    value: mesh.getFlatShading(),
-    onInteract: () => { mesh.setFlatShading(!mesh.getFlatShading()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
-  });
-  y += btnH + gapBtn;
+  // Duplicate removed
 
-  widgets.push({
-    type: 'checkbox',
-    id: 'flat',
-    label: TR('renderingFlat'),
-    x: col1X, y: y, w: 400, h: btnH,
-    value: mesh.getFlatShading(),
-    onInteract: () => { mesh.setFlatShading(!mesh.getFlatShading()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
-  });
-  y += btnH + gapBtn;
+
 
   widgets.push({
     type: 'checkbox',

@@ -6,11 +6,9 @@
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
     - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
     - closer look at dyntopo, noticable performance drop in standalone
-    - ~~closer look at wireframe, notisable performance drop in standalone~~ **DONE v0.9.216**
     - voxel straight line mode
     - voxel smooth shading
     - voxel smooth tool
-    - ~~voxel cube brush~~ **DONE v0.9.229**
     - voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
     - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
@@ -26,7 +24,8 @@
     - local storage for settings, alphas, whatever else
     
 - **UI + UX**
-    - when dynamic topo is on the perfomance drops on standalone, im sure u are aware of it
+    - 'kaospad' style UI element, XY or even XYZ to quickly set 2 or 3 values at once in a more tactile way for VR. eg voxel brush nonlinear scale for the sphere/cube, or setting radius and intensity at the same time
+    - when dynamic topo is on the perfomance drops on standalone
     - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view
     - it feels almost like stapling if you are using just the edge of the brush
     - the performance of the brush is much better if its fully inside the mesh
@@ -44,6 +43,8 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~voxel cube brush~~ **DONE v0.9.229**
+- ~~closer look at wireframe, notisable performance drop in standalone~~ **DONE v0.9.216**
 - ~~Fix massive performance drop when enabling wireframe in Standalone VR~~ **DONE v0.9.216**
 - ~~Fix Tool Picker overlay combat boxes jumping out of alignment~~ **DONE v0.9.216**
 - ~~Restore Voxel Tool wireframe rendering + fix Bake bugs~~ **DONE v0.9.216**
