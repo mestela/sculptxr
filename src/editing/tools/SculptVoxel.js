@@ -778,7 +778,8 @@ class SculptVoxel extends SculptBase {
 
           if (this._alignToController && shapeCursorSym === 1 && options && options.quat) {
              var qMatSym = mat4.create();
-             mat4.fromQuat(qMatSym, options.quat);
+             var mirroredQuat = [options.quat[0], -options.quat[1], -options.quat[2], options.quat[3]];
+             mat4.fromQuat(qMatSym, mirroredQuat);
              mat4.multiply(mSym, mSym, qMatSym);
           }
 
@@ -932,8 +933,10 @@ class SculptVoxel extends SculptBase {
 
         var shapeNum = (this._shape !== undefined) ? this._shape : 0;
         var brushRot = null;
+        var brushRotSym = null;
         if (this._alignToController && shapeNum === 1 && options && options.quat) {
             brushRot = Array.from(options.quat);
+            brushRotSym = [brushRot[0], -brushRot[1], -brushRot[2], brushRot[3]];
         }
 
         if (mode === 2) {
@@ -956,7 +959,7 @@ class SculptVoxel extends SculptBase {
               radius: gridRadius,
               strength: strength,
               shape: shapeNum,
-              brushRotation: brushRot,
+              brushRotation: brushRotSym,
               returnMesh: false
             });
           }
@@ -984,7 +987,7 @@ class SculptVoxel extends SculptBase {
               color: color,
               isNegative: isSub,
               shape: shapeNum,
-              brushRotation: brushRot,
+              brushRotation: brushRotSym,
               returnMesh: false // Don't ask for mesh twice
             });
           }

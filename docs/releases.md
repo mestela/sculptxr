@@ -1,4 +1,4 @@
-## v0.9.217 - v0.9.229
+## v0.9.217 - v0.9.230
 - **Feature**: **Voxel Cube Brush**: The Voxel tool now natively supports a precise 'Cube' SDF brush shape alongside the traditional 'Sphere', accessible via the new Brush Shape toggle in the VR Mini-HUD and Desktop Tool menu.
 - **Feature**: **Oriented Cube Sculpting**: When using the new Cube brush, users can toggle "Controller Alignment". When active, the voxel cube physically rotates with the user's wrist (via quaternion projection into the SDF local space), allowing for angled block carving and building.
 - **Feature**: **Visual Brush Indicators**: The VR pointer now dynamically swaps between a transparent radius sphere or a transparent radius cube to perfectly match the active voxel brush shape and orientation in real-time.
@@ -6,6 +6,7 @@
 - **Optimization**: **Voxel Wireframe Rebuild Paradox**: Prevented the WebGL renderer (`MeshStatic.js`) from repeatedly triggering an expensive `O(N)` topology rebuild every single frame whenever wireframes were enabled on Voxel meshes.
 - **Fix**: **Voxel Baking Crash**: Resolved `_computeNormals is not a function` throw when attempting to click 'Bake' on a Voxel mesh.
 - **Fix**: **Giant Orange VR Cursors**: Disabled the legacy desktop orange debug cursors from erroneously appearing in the VR view at the world origin.
+- **Fix**: **Voxel Cube Symmetry**: Corrected the quaternion math in the VR Sculpting payload so that the Cube brush rotation perfectly mirrors across the X-axis symmetry plane.
 - **Polish**: Removed spamming debug logs (`VoxelWorker:`, `Voxel Res:`, etc.) from the internal worker and exposed the `Flat` shaded material option explicitly in the global VR/Desktop rendering menus.
 
 ## v0.9.209 - v0.9.216
