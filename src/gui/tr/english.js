@@ -197,6 +197,9 @@ var TR = {
   renderingEnvironment: 'Environment',
   renderingIsolate: 'Isolate/Show (I)',
   renderingFilmic: 'Filmic tonemapping',
+  renderingWireframeTypeFast: 'Wireframe Level 0 Fast',
+  renderingWireframeTypeSmooth: 'Wireframe Level 0 Smooth',
+  renderingWireframeTypeFull: 'Wireframe Full',
 
   // contour
   contour: 'Contour',

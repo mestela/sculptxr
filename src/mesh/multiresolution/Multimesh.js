@@ -287,21 +287,105 @@ class Multimesh extends Mesh {
     return super.render(main);
   }
 
+  getTessellatedWireframe(lowIdx) {
+    if (this._tessellatedWireframeCache && this._tessellatedWireframeCache.lowIdx === lowIdx && this._tessellatedWireframeCache.selIdx === this._sel) {
+      return this._tessellatedWireframeCache.data;
+    }
+
+    var lowMesh = this._meshes[lowIdx];
+    if (!lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
+      lowMesh.allocateArrays();
+      lowMesh.initFaceRings();
+      lowMesh.initEdges();
+    }
+
+    // Start with the base wireframe
+    var edges = Array.from(lowMesh.getWireframe());
+
+    // Recursively split edges for each subdivision level
+    for (var L = lowIdx; L < this._sel; ++L) {
+      var nextMesh = this._meshes[L + 1];
+      
+      // We need to find the new midpoint vertex for each edge (v1, v2)
+      // The new midpoint vertex in nextMesh will be a neighbor to both v1 and v2.
+      // NOTE: During subdivision, base vertices are kept at the START of the new array.
+      // So v1 and v2 have the exact same index in nextMesh!
+      
+      var nextVrvSC = nextMesh.getVerticesRingVertStartCount();
+      var nextVrv = nextMesh.getVerticesRingVert();
+      
+      var nextEdges = [];
+      var nbEdges = edges.length / 2;
+      
+      for (var e = 0; e < nbEdges; ++e) {
+        var v1 = edges[e * 2];
+        var v2 = edges[e * 2 + 1];
+        
+        // Find the shared neighbor between v1 and v2 in nextMesh
+        var start1 = nextVrvSC[v1 * 2];
+        var end1 = start1 + nextVrvSC[v1 * 2 + 1];
+        var start2 = nextVrvSC[v2 * 2];
+        var end2 = start2 + nextVrvSC[v2 * 2 + 1];
+        
+        var mid = -1;
+        for (var i = start1; i < end1; ++i) {
+          var n1 = nextVrv[i];
+          for (var j = start2; j < end2; ++j) {
+            if (n1 === nextVrv[j]) {
+              mid = n1;
+              break;
+            }
+          }
+          if (mid !== -1) break;
+        }
+        
+        if (mid !== -1) {
+          nextEdges.push(v1, mid, mid, v2);
+        } else {
+          // Fallback if topology is non-manifold or broken (shouldn't happen on standard meshes)
+          nextEdges.push(v1, v2); 
+        }
+      }
+      edges = nextEdges;
+    }
+
+    var result = new Uint32Array(edges);
+    this._tessellatedWireframeCache = {
+      lowIdx: lowIdx,
+      selIdx: this._sel,
+      data: result
+    };
+    
+    if (window.screenLog) window.screenLog(`[Multimesh] Tessellated Wireframe Cached! L${lowIdx}->L${this._sel} (${result.length / 2} edges)`, "yellow");
+
+    return result;
+  }
+
   updateWireframeBuffer() {
     super.updateWireframeBuffer();
     var lowWireIdx = this.getLowIndexWireframe();
+
+    if (this.getWireframeType() === 2) return; // Full wireframe handles itself via super
+
     if (lowWireIdx !== this._sel) {
       if (this.getShowWireframe()) {
-        var lowWireMesh = this._meshes[lowWireIdx];
-        if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
-          lowWireMesh.allocateArrays();
-          lowWireMesh.initFaceRings();
-          lowWireMesh.initEdges();
-        }
+        var type = this.getWireframeType();
         if (!this._lowWireframeBuffer) {
            this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
         }
-        this._lowWireframeBuffer.update(lowWireMesh.getWireframe(), lowWireMesh.getNbEdges() * 2);
+
+        if (type === 1) { // Smooth L0
+          var tessWire = this.getTessellatedWireframe(lowWireIdx);
+          this._lowWireframeBuffer.update(tessWire, tessWire.length);
+        } else if (type === 0) { // Fast L0
+          var lowWireMesh = this._meshes[lowWireIdx];
+          if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
+            lowWireMesh.allocateArrays();
+            lowWireMesh.initFaceRings();
+            lowWireMesh.initEdges();
+          }
+          this._lowWireframeBuffer.update(lowWireMesh.getWireframe(), lowWireMesh.getNbEdges() * 2);
+        }
       }
     }
   }
@@ -313,24 +397,38 @@ class Multimesh extends Mesh {
 
   renderWireframe(main) {
     if (this.isUsingTexCoords() || this.isUsingDrawArrays()) return super.renderWireframe(main);
+    if (this.getWireframeType() === 2) return super.renderWireframe(main); // Full Wireframe
 
     var lowIdx = this.getLowIndexWireframe();
     if (lowIdx === this._sel) return super.renderWireframe(main);
-
+    
+    var type = this.getWireframeType();
     var lowMesh = this._meshes[lowIdx];
 
-    // Force lazy init of the low resolution wireframe arrays (if updateWireframeBuffer missed it)
-    if (!this._lowWireframeBuffer || !lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
-      if (!lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
-        if (window.screenLog) window.screenLog(`[Multimesh] Lazy init low-res wireframe topology (L${lowIdx})`, "yellow");
-        lowMesh.allocateArrays();
-        lowMesh.initFaceRings();
-        lowMesh.initEdges();
+    // Force lazy init of the low-res wireframe arrays (if updateWireframeBuffer missed it)
+    if (type === 1) { // Smooth L0
+      if (!this._lowWireframeBuffer || !this._tessellatedWireframeCache || this._tessellatedWireframeCache.lowIdx !== lowIdx || this._tessellatedWireframeCache.selIdx !== this._sel) {
+        if (!this._lowWireframeBuffer) {
+          this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+        }
+        var tessWire = this.getTessellatedWireframe(lowIdx);
+        this._lowWireframeBuffer.update(tessWire, tessWire.length);
       }
-      if (!this._lowWireframeBuffer) {
-        this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+      this._renderNbEdgesOverride = this._tessellatedWireframeCache.data.length / 2;
+    } else if (type === 0) { // Fast L0
+      if (!this._lowWireframeBuffer || !lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
+        if (!lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
+          if (window.screenLog) window.screenLog(`[Multimesh] Lazy init low-res wireframe topology (L${lowIdx})`, "yellow");
+          lowMesh.allocateArrays();
+          lowMesh.initFaceRings();
+          lowMesh.initEdges();
+        }
+        if (!this._lowWireframeBuffer) {
+          this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+        }
+        this._lowWireframeBuffer.update(lowMesh.getWireframe(), lowMesh.getNbEdges() * 2);
       }
-      this._lowWireframeBuffer.update(lowMesh.getWireframe(), lowMesh.getNbEdges() * 2);
+      this._renderNbEdgesOverride = lowMesh.getRenderNbEdges();
     }
 
     var render = this.getRenderData();
@@ -339,8 +437,6 @@ class Multimesh extends Mesh {
     // Temporarily bind the lower level wireframe buffer (isolated from the shared renderData buffer)
     render._wireframeBuffer = this._lowWireframeBuffer;
     
-    // Override edge count for ShaderWireframe
-    this._renderNbEdgesOverride = lowMesh.getRenderNbEdges();
     super.renderWireframe(main);
     this._renderNbEdgesOverride = undefined;
     

@@ -168,6 +168,9 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         }
       }
     });
+
+    y += 80 + gapSection;
+
   } else {
     widgets.push({ type: 'info', label: 'Select Tool', x: col1X, y: y, w: 200, h: 40 });
     y += 40;
@@ -213,8 +216,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     }
     y += numDesktopRows * (btnH + pad) + gapSection;
   }
-
-  y += 80 + gapSection;
 
 
   // 2. Brush Settings

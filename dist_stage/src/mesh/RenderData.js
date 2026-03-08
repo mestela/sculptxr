@@ -11,6 +11,7 @@ var RenderData = function (gl) {
     _shaderType: opts.shader,
     _flatShading: opts.flatshading,
     _showWireframe: opts.wireframe,
+    _wireframeType: (typeof navigator !== 'undefined' && /OculusBrowser/.test(navigator.userAgent)) ? 0 : 1, // 0: Fast L0, 1: Smooth L0, 2: Full
     _matcap: Math.min(opts.matcap, ShaderMatcap.matcaps.length - 1), // matcap id
     _curvature: Math.min(opts.curvature, 5.0),
     _texture0: null,

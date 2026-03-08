@@ -1,4 +1,5 @@
 import Enums from '../../misc/Enums.js';
+import TR from '../GuiTR.js';
 
 export default function getSettingsWidgets(main) {
   const widgets = [];
@@ -90,12 +91,37 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({ type: 'header', label: 'Rendering Quality', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  const wireframeOptions = [
+    { label: TR('renderingWireframeTypeSmooth') || 'Wireframe Level 0 Smooth', id: 1 },
+    { label: TR('renderingWireframeTypeFast') || 'Wireframe Level 0 Fast', id: 0 },
+    { label: TR('renderingWireframeTypeFull') || 'Wireframe Full', id: 2 }
+  ];
+
+  widgets.push({
+    type: 'combobox',
+    id: 'wireframe_type',
+    label: '',
+    x: 0, y: y, w: menuW, h: ITEM_H,
+    value: main.getMesh() ? main.getMesh().getWireframeType() : 1,
+    options: wireframeOptions,
+    onSelect: (id) => {
+      if (main.getMesh()) {
+        main.getMesh().setWireframeType(id);
+        main.render();
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
   // Add 150px vertical buffer to ensure it is scrollable and visible above the MiniHUD
   y += 150; 
 
   return {
-    width: menuW,
-    height: y + 10,
+    w: menuW, width: menuW,
+    h: y + 10, height: y + 10,
     widgets: widgets
   };
 }

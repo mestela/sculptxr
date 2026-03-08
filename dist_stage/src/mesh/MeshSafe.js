@@ -1944,6 +1944,15 @@ class Mesh {
     return this._renderData._showWireframe;
   }
 
+  getWireframeType() {
+    return this._renderData._wireframeType;
+  }
+
+  setWireframeType(type) {
+    this._renderData._wireframeType = type;
+    this.updateWireframeBuffer();
+  }
+
   isUsingDrawArrays() {
     return this._renderData._useDrawArrays || RenderData.ONLY_DRAW_ARRAYS;
   }

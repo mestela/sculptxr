@@ -662,7 +662,7 @@ export default class GuiXR {
 
     for (const w of this._overlayData.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
-        if (!w.disabled && !w.header) {
+        if (!w.disabled && !w.header && w.type !== 'info') {
           hitWidget = w;
           newHover = w;
 
@@ -1330,7 +1330,7 @@ export default class GuiXR {
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'combobox') {
-            this._executeAction(w); // Use active combobox system
+            this._handleWidgetClick(w);
             return;
           }
         }
@@ -3208,6 +3208,7 @@ export default class GuiXR {
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
+        w.value = val; // Force local UI update
         if (w.onSelect) w.onSelect(val);
         this._activeCombobox = null;
         this._needsRedraw = true;
@@ -3237,39 +3238,6 @@ export default class GuiXR {
     if (!layout) return;
 
     const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
-
-    // Check if we need to flip (draw above)
-    // w.y is in Local Overlay Space (after Pivot Scale).
-    // _drawActiveCombobox is called AFTER restore(), so it's in Global Canvas Space?
-    // WAIT. draw() calls save(), transform(), drawOverlay(), restore().
-    // Then checks _activeCombobox and calls _drawActiveCombobox().
-    // So _drawActiveCombobox runs in GLOBAL IDENTITY SPACE (0,0 is top-left, unscaled).
-    // BUT w.x / w.y are stored in widget-local coords usually relative to Overlay?
-    // No, w.x/w.y are computed during layout. They are local to the overlay content.
-    // If _drawActiveCombobox runs in Identity Space, we need to apply the SAME Transform!
-    // OR we should call it INSIDE the transform block in draw().
-
-    // Let's check draw().
-    // If it's outside, w.x/w.y are meaningless without transform.
-    // I bet draw() calls it OUTSIDE.
-    // If so, we must manually transform w.x/w.y or move the call.
-    // Moving the call is safer. I will check draw() in next tool call.
-    // FIRST, I will assume it's OUTSIDE and apply transform here?
-    // Applying transform manually is annoying (pivot logic).
-    // Better to move the call inside draw().
-
-    // For now, I will assume the user has the transform applied or I handle it.
-    // Actually, looking at `_drawCombobox` (legacy), it didn't apply transform?
-    // Wait, `_drawOverlay` is called INSIDE transform.
-    // `_drawCombobox` was called from `_drawOverlay`.
-
-    // `_drawActiveCombobox` is called at the end of `draw()`.
-    // Let's check `draw()` again.
-
-
-    // Shadow
-
-    // Shadow removed
 
     // Background
     ctx.fillStyle = '#222';
@@ -3301,11 +3269,6 @@ export default class GuiXR {
         cy = (cy - pivot.y) * invScale + pivot.y;
       }
 
-      if (!this._logComboHover) this._logComboHover = 0;
-      if (this._logComboHover++ % 60 === 0) {
-        console.log(`[GuiXR] Combobox Hover - Cursor: ${cx.toFixed(1)},${cy.toFixed(1)} Box: X(${startX}..${startX + totalW}) Y(${startY}..${startY + listH}) overlay: ${!!this._overlay}`);
-      }
-
       // Check bounds
       if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
         // Find Col / Row
@@ -3316,7 +3279,6 @@ export default class GuiXR {
         if (row >= rowsPerCol) row = rowsPerCol - 1;
 
         // Draw rect for that slot
-        // Verify index valid?
         const idx = col * rowsPerCol + row;
         if (idx < w.options.length) {
           ctx.fillStyle = '#444';
@@ -3335,7 +3297,7 @@ export default class GuiXR {
       let row = i;
       if (numCols > 1) {
         col = (i >= rowsPerCol) ? 1 : 0;
-        row = i % rowsPerCol; // Should be modulo rowsPerCol
+        row = i % rowsPerCol;
       }
 
       const y = startY + row * itemHeight;
