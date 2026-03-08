@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.209 - v0.9.216: **Wireframe Performance & UI Polish:** Restored the Voxel wireframe toggle with full quad support. Implemented dynamic line sub-sampling to instantly cure the severe standalone VR framerate drop caused by dense wireframes. Fixed overlay combobox translation math and eliminated UI rendering duplication.
 *   v0.9.159 - v0.9.175: **Color Painting Polish:** Added a Color Smooth/Blur brush mapped to the secondary trigger, real-time contextual cursor color feedback for the Eyedropper, and hardware A-Button foreground/background color swapping.
 *   v0.9.154 - v0.9.158: **Mini-HUD Layout Polish:** Adjusted the Mini-HUD 3D offsets for a more comfortable, symmetrical layout. Removed duplicate tools in the VR Combobox to achieve a perfect 3x5 button grid. Fixed a desynchronization bug with the Isolate Object toggle.
 *   v0.9.150: **VR Controller Shortcuts:** The X-axis of the dominant thumbstick now directly controls Brush Intensity. Holding the secondary trigger now acts as a precision modifier, slowing down radius/intensity increments to exactly 10% speed for fine-tuning.

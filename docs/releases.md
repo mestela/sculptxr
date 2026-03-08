@@ -1,3 +1,12 @@
+## v0.9.209 - v0.9.216
+- **Feature**: **Voxel Wireframe Restored**: Restored the wireframe toggle button for the Voxel tool in the Mini-HUD and optimized the mesh pipeline to support drawing wireframes directly over pure quad SurfaceNets structures.
+- **Optimization**: **Wireframe Sub-Sampling (Standalone)**: Implemented a dynamic sub-sampling cap (`Wireframe.MAX_TRIANGLES = 300,000`) for the wireframe renderer. High-resolution meshes dynamically decimate the drawn lines for the overlay, instantly curing the severe CPU/GPU framerate lockups on Quest standalone headsets.
+- **Optimization**: **Standalone Wireframe Default**: Standalone headsets (Quest) now automatically default to `Fast L0` wireframes to guarantee performance headroom on launch, while PCVR falls back to the denser `Smooth L0` tessellation.
+- **Fix**: **Combobox UI Array Coordinates**: Fixed a critical coordinate offset bug that pushed newly opened comboboxes (like Wireframe/Shader selectors) off the right edge of their virtual canvas buffers when inside scaled 3D overlays.
+- **Fix**: **Combobox Duplication**: Purged an overlapping phantom render pass that caused dropdown menus to draw twice simultaneously on the canvas.
+- **Fix**: **Voxel Bake & Resample Integrity**: Traced and fixed a `ReferenceError: fArTri...` crash deep in `SculptVoxel.bakeToMesh`. Also resolved an issue where standard voxel stroke drawing would fail to register immediately after a bake operation.
+- **UI Polish**: **HUD Tool Layout**: Stripped an unnecessary 100px padding margin from the Desktop-version logic that was bleeding into VR, instantly closing the giant gap between the Tool Picker grid and the Radius sliders.
+
 ## v0.9.159 - v0.9.175
 - **Feature**: **Color Blur / Smooth Brush**: When using the Paint tool, holding the secondary trigger now natively blends and blurs vertex colors and PBR materials (Roughness/Metallic) within the brush radius.
 - **UX**: **Contextual Eyedropper Cursor**: When actively sampling colors via the Mini-HUD Eyedropper, the brush's VR radius ring now instantly tints to the sampled color for immediate visual feedback.

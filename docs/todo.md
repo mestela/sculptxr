@@ -6,7 +6,7 @@
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
     - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
     - closer look at dyntopo, noticable performance drop in standalone
-    - closer look at wireframe, notisable performance drop in standalone
+    - ~~closer look at wireframe, notisable performance drop in standalone~~ **DONE v0.9.216**
     - voxel straight line mode
     - voxel smooth shading
     - voxel smooth tool
@@ -44,6 +44,9 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Done
+- ~~Fix massive performance drop when enabling wireframe in Standalone VR~~ **DONE v0.9.216**
+- ~~Fix Tool Picker overlay combat boxes jumping out of alignment~~ **DONE v0.9.216**
+- ~~Restore Voxel Tool wireframe rendering + fix Bake bugs~~ **DONE v0.9.216**
 - ~~paint tool restore eyedropper~~ **DONE v0.9.159**
 - ~~fix duplicate twist tool in VR combobox~~ **DONE v0.9.157**
 - ~~isolate in view/scene is inverted~~ **DONE v0.9.154**
