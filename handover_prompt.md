@@ -1,17 +1,16 @@
 # Handover Prompt
 
-**Project Status**: Implemented pure quad topology output for Voxel Remesh, fixing Voxel wireframe toggles, and restored Smooth Shading algorithms. Currently waiting on user feedback for the local Beta deployment of `v0.9.187`.
+**Project Status**: Finished the `feature/performance-wireframe` branch, deploying v0.9.216 to both Beta and Production environments. We've successfully fully restored and optimized rendering for Voxel pure quad meshes, cured severe wireframe performance constraints on standalone headsets, fixed coordinate offsets and duplicates in the VR overlay comboboxes, and polished up the UI spacing.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
 ## Recent Work & Context
-1. **Quad Voxel Topology**: Reverted `SurfaceNets.js` to output pure quads instead of implicitly triangulating them early. This allows standard quad-wireframe rendering and clean export.
-2. **Mesh Topology Initialization**: Re-routed `updateVoxelMesh` and `bakeToMesh` in `SculptVoxel.js` to directly map Int32Array quads into `MeshStatic`, and force-run `allocateArrays()`, `initFaceRings()`, `initEdges()`, and `initRenderTriangles()` so quad topology and render elements correctly sync.
-3. **Smooth Voxel Normals**: Fixed `_computeNormals` which was producing `NaN` normal vectors on zero-area quad calculations, which was implicitly blowing out `gl.bufferData` and sending vertices to the horizon. Added `vec3.length > 1e-6` guarding.
-4. **Current Build**: Deployed to `tokeru.com/sculptxrbeta/` as version `v0.9.187`. Changes are pending user verification.
+1. **Wireframe Performance & Quads**: `SurfaceNets.js` successfully creates and exports pure quads now. Voxel meshes draw properly in `Wireframe` mode without crashing. Implemented `MAX_TRIANGLES` limits within `ShaderWireframe.js` to intelligently sub-sample lines and preserve framerates when drawing incredibly dense geometries in standalone VR.
+2. **Platform Specific Defaults**: Modifed the startup `_wireframeType` inside `RenderData.js` to automatically default to `Fast L0` (barycentric) wireframes if `navigator.userAgent` detects an `OculusBrowser`. This ensures users entering VR with wireframe toggled on do not immediately tank their performance.
+3. **VR Combobox Bug Fixes**: Purged a phantom secondary loop drawing comboboxes twice in `GuiXR.js`. We also removed an erroneous `drawX = startX - ox` spatial transform that was inexplicably throwing newly-opened comboboxes off the right side of the active HUD texture (which itself is mapped to a dynamic physical overlay plane).
+4. **Current Build**: Deployed to `tokeru.com/sculptxr/` main production as version `v0.9.216`. Documentation (`todo.md`, `README.md`, `releases.md`) is completely updated.
 
 ## Next Steps
-The user is testing v0.9.187. For the next session, here are the expected outcomes:
-1. **Verify Wireframe Functionality**: Confirm that the wireframe toggle now correctly renders a pure quad grid without crashing the VR renderer.
-2. **Re-evaluate Normal Quality**: Assess if the Voxel normal quality has improved (using Matcap shader) and the facets are smoothed out gracefully.
-3. **Test Bake to Mesh**: Ensure the "bake to mesh" functionality correctly transfers the quad surface into a standard sculptable object without exploding the geometry.
-4. **Deploy to Production**: If the user confirms the beta is stable and functional, merge the branch and push changes to `tokeru.com/sculptxr/`.
+The environment is clean and stable. You can proceed to test the site, or immediately start tackling the next major `todo.md` items:
+1. **VR Movement Tracking / Ski Navigation**: Look into making world scaling and translation more robust. The user notes an issue with accidental double-grips stopping the flow.
+2. **Dynamic Topology Performance**: Dyntopo still struggles severely on standalone hardware. Now that wireframe is fixed, look into deep profiling Dyntopo vertex splitting on Quest.
+3. **Advanced Voxel Tools**: Port more standard tools (Smooth, Move) over to the Voxel brush palette, or begin investigating "straight line" or "曲线/Tubes" voxel modes.
