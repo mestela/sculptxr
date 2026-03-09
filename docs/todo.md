@@ -46,7 +46,7 @@
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
 ## Triage (Beta Tester Feedback)
-- [ ] **Bug** (_Input_): Pinch gesture with right hand sculpts accidentally. Investigate Quest 3 hand tracking interference.
+- [ ] **Bug** (_Input_): Pinch gesture with right hand sculpts accidentally. Use more of this, refine?
 - [ ] **Bug** (_Gizmo_): Scaling a cylinder works, but rotating causes the gizmo to become a "twisted abomination".
 - [ ] **Bug** (_History_): Undo stopped working after using "Duplicate" on a cylinder.
 - [ ] **UX** (_Selection_): Active object switches unintentionally when brushing close to another object.
@@ -57,7 +57,7 @@
 - [ ] **Feature** (_Workflow_): Quick tool switch by clicking the left thumbstick (FPS weapon swap style), with a floating text indicator near the right hand.
 - [ ] **Feature** (_Gizmo_): Add angle snapping options (e.g., 90, 180 degrees) for rotations.
 - [ ] **Feature** (_File Saving_): Option to name a file when saving it in VR.
-- [ ] **Praise** (_Brushes_): Crease and flatten brushes feel excellent. (Crease is better than Shapelab!)
+
     
 ## Can't fix/too hard
     - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 
