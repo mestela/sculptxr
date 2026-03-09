@@ -2,6 +2,7 @@ import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from 'editing/tools/SculptBase';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
+import Enums from '../../misc/Enums.js';
 
 class Move extends SculptBase {
   // v0.7.491: Clean Import & Null Check
@@ -170,6 +171,43 @@ class Move extends SculptBase {
     }
   }
 
+  end() {
+    super.end();
+    
+    var main = this._main;
+    var mesh = this.getMesh();
+    if (!mesh) return;
+
+    var voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+    if (voxelTool && voxelTool._voxelMesh === mesh && voxelTool._worker) {
+      
+      if (this._moveData.dir && (vec3.sqrLen(this._moveData.dir) > 0 || (this._moveData.quat && !quat.equals(this._moveData.quat, quat.create())))) {
+        voxelTool._worker.postMessage({
+          type: 'WARP_SPHERE',
+          center: this._moveData.center,
+          radius: Math.sqrt(this._moveData.radius2),
+          translation: this._moveData.dir,
+          rotation: this._moveData.quat
+        });
+      }
+
+      var useSym = main.getSculptManager().getSymmetry() && this._moveDataSym && this._moveDataSym.center;
+      if (useSym) {
+        if (this._moveDataSym.dir && (vec3.sqrLen(this._moveDataSym.dir) > 0 || (this._moveDataSym.quat && !quat.equals(this._moveDataSym.quat, quat.create())))) {
+          voxelTool._worker.postMessage({
+            type: 'WARP_SPHERE',
+            center: this._moveDataSym.center,
+            radius: Math.sqrt(this._moveDataSym.radius2),
+            translation: this._moveDataSym.dir,
+            rotation: this._moveDataSym.quat
+          });
+        }
+      }
+      
+      voxelTool._worker.postMessage({ type: 'GET_MESH' });
+    }
+  }
+
   initMoveData(picking, moveData) {
     if (this._topoCheck)
       picking.pickVerticesInSphereTopological(picking.getLocalRadius2());
@@ -236,11 +274,13 @@ class Move extends SculptBase {
 
     // CRITICAL BUG FIX (Desktop Hard Edges): Use strictly the starting vertices and center, identical to VR
     var r2 = this._moveData.radius2 || picking.getLocalRadius2();
+    if (this._moveData.quat) quat.identity(this._moveData.quat); // Clear VR Twist
     this.move(this._moveData.iVerts, this._moveData.center, r2, this._moveData, picking, null, useSym);
 
     if (useSym) {
       this.updateMoveDir(pickingSym, mouseX, mouseY, true);
       var r2Sym = this._moveDataSym.radius2 || pickingSym.getLocalRadius2();
+      if (this._moveDataSym.quat) quat.identity(this._moveDataSym.quat); // Clear VR Twist
       this.move(this._moveDataSym.iVerts, this._moveDataSym.center, r2Sym, this._moveDataSym, pickingSym, null, useSym);
     }
 
@@ -503,6 +543,11 @@ class Move extends SculptBase {
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
       vec3.scale(moveData.dir, moveData.dir, this._intensity);
+      
+      // Store final quat for Voxel Worker
+      if (!moveData.quat) moveData.quat = quat.create();
+      quat.copy(moveData.quat, qScaledLocal);
+      
       this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qScaledLocal, useSym);
     }
 
@@ -526,6 +571,10 @@ class Move extends SculptBase {
           var qDeltaSym = quat.clone(qScaledLocal);
             qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
             qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+
+          // Store final quat for Voxel Worker
+          if (!moveDataSym.quat) moveDataSym.quat = quat.create();
+          quat.copy(moveDataSym.quat, qDeltaSym);
 
           this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
         }

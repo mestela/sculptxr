@@ -82,6 +82,9 @@ self.onmessage = function (e) {
       case 'SMOOTH_SPHERE':
         smoothSphere(msg.center, msg.radius, msg.strength, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
+      case 'WARP_SPHERE':
+        warpSphere(msg.center, msg.radius, msg.translation, msg.rotation, msg.steps, msg.stepRotation, msg.returnMesh);
+        break;
       case 'SMOOTH':
         setSmooth(msg.value);
         break;
@@ -287,6 +290,14 @@ function inflateSphere(center, radius, strength, shape, brushRotation, returnMes
 function smoothSphere(center, radius, strength, shape, brushRotation, returnMesh) {
   if (!voxelState) return;
   if (voxelState.smoothSphere(center, radius, strength, shape, brushRotation)) {
+    isDirty = true;
+  }
+  if (returnMesh) postMesh();
+}
+
+function warpSphere(center, radius, translation, rotation, steps, stepRotation, returnMesh) {
+  if (!voxelState) return;
+  if (voxelState.warpSphere(center, radius, translation, rotation, steps, stepRotation)) {
     isDirty = true;
   }
   if (returnMesh) postMesh();

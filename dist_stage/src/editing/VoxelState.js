@@ -553,6 +553,225 @@ class VoxelState {
     return changed;
   }
 
+  warpSphere(center, radius, translation, rotation, steps, stepRotation) {
+    if (!this._distanceField) return false;
+
+    var step = this._step;
+    var invStep = 1.0 / step;
+    var rx = this._resolution;
+    var ry = this._resolution; // cubic
+    var rxy = rx * ry;
+
+    var hasQuat = rotation && (rotation[0]!==0 || rotation[1]!==0 || rotation[2]!==0 || rotation[3]!==1);
+    var vTemp = [0,0,0];
+
+    // Union Bound box:
+    // Need to cover the original sphere AND the displaced sphere.
+    // Plus maximum rotational/translation bound.
+    var mnx = Math.min(center[0], center[0] + translation[0]) - radius - step * 2;
+    var mny = Math.min(center[1], center[1] + translation[1]) - radius - step * 2;
+    var mnz = Math.min(center[2], center[2] + translation[2]) - radius - step * 2;
+
+    var mxx = Math.max(center[0], center[0] + translation[0]) + radius + step * 2;
+    var mxy = Math.max(center[1], center[1] + translation[1]) + radius + step * 2;
+    var mxz = Math.max(center[2], center[2] + translation[2]) + radius + step * 2;
+
+    var snapMinx = Math.max(0, Math.floor((mnx - this._min[0]) * invStep));
+    var snapMiny = Math.max(0, Math.floor((mny - this._min[1]) * invStep));
+    var snapMinz = Math.max(0, Math.floor((mnz - this._min[2]) * invStep));
+
+    var snapMaxx = Math.min(rx - 1, Math.ceil((mxx - this._min[0]) * invStep));
+    var snapMaxy = Math.min(ry - 1, Math.ceil((mxy - this._min[1]) * invStep));
+    var snapMaxz = Math.min(this._resolution - 1, Math.ceil((mxz - this._min[2]) * invStep));
+
+    var sizeX = snapMaxx - snapMinx + 1;
+    var sizeY = snapMaxy - snapMiny + 1;
+    var sizeZ = snapMaxz - snapMinz + 1;
+    if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return false;
+    
+    var tempBuffer = new Float32Array(sizeX * sizeY * sizeZ);
+    var tempM = new Float32Array(sizeX * sizeY * sizeZ * 3);
+    var tempC = new Float32Array(sizeX * sizeY * sizeZ * 3);
+    
+    var idTemp = 0;
+    for (var k = snapMinz; k <= snapMaxz; ++k) {
+      for (var j = snapMiny; j <= snapMaxy; ++j) {
+        for (var i = snapMinx; i <= snapMaxx; ++i) {
+          var n = i + j * rx + k * rxy;
+          tempBuffer[idTemp] = this._distanceField[n];
+          tempM[idTemp * 3]     = this._voxels.materialField[n * 3];
+          tempM[idTemp * 3 + 1] = this._voxels.materialField[n * 3 + 1];
+          tempM[idTemp * 3 + 2] = this._voxels.materialField[n * 3 + 2];
+          tempC[idTemp * 3]     = this._voxels.colorField[n * 3];
+          tempC[idTemp * 3 + 1] = this._voxels.colorField[n * 3 + 1];
+          tempC[idTemp * 3 + 2] = this._voxels.colorField[n * 3 + 2];
+          idTemp++;
+        }
+      }
+    }
+
+    var cx = center[0];
+    var cy = center[1];
+    var cz = center[2];
+
+    var tx = translation[0];
+    var ty = translation[1];
+    var tz = translation[2];
+    
+    // We expect 'steps' to be passed in from SculptVoxel, defaults to 1 for safety
+    var stepsCount = steps || 1;
+    var step_tx = tx / stepsCount;
+    var step_ty = ty / stepsCount;
+    var step_tz = tz / stepsCount;
+
+    // Inverse the passed fractional rotation
+    var hasQuat = rotation && (rotation[0]!==0 || rotation[1]!==0 || rotation[2]!==0 || rotation[3]!==1);
+    var rx2 = 0, ry2 = 0, rz2 = 0, rw2 = 1;
+    if (hasQuat && stepRotation) {
+      rx2 = -stepRotation[0];
+      ry2 = -stepRotation[1];
+      rz2 = -stepRotation[2];
+      rw2 = stepRotation[3];
+    }
+
+    // Advection Loop (Reverse ODE map each voxel P back to P_source)
+    idTemp = 0;
+    var changed = false;
+    for (var k = snapMinz; k <= snapMaxz; ++k) {
+      var z = this._min[2] + k * step;
+      for (var j = snapMiny; j <= snapMaxy; ++j) {
+        var y = this._min[1] + j * step;
+        for (var i = snapMinx; i <= snapMaxx; ++i) {
+          var x = this._min[0] + i * step;
+          
+          var px = x, py = y, pz = z;
+          
+          // Tracing backwards from the final brush center
+          // The brush arrived at cx + tx. We trace back to cx.
+          var cx_step = cx + tx;
+          var cy_step = cy + ty;
+          var cz_step = cz + tz;
+
+          for (var s = 0; s < stepsCount; s++) {
+            
+            var px_guess = px;
+            var py_guess = py;
+            var pz_guess = pz;
+            
+            var prev_cx = cx_step - step_tx;
+            var prev_cy = cy_step - step_ty;
+            var prev_cz = cz_step - step_tz;
+            
+            for (var iter = 0; iter < 5; iter++) {
+              var dx = px_guess - prev_cx;
+              var dy = py_guess - prev_cy;
+              var dz = pz_guess - prev_cz;
+              var dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / radius;
+              
+              if (dist >= 1.0) {
+                 px_guess = px;
+                 py_guess = py;
+                 pz_guess = pz;
+              } else {
+                var fallOff = dist * dist;
+                fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
+                
+                var offX = 0, offY = 0, offZ = 0;
+                
+                if (hasQuat && stepRotation) {
+                  vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+                  var ix = rw2 * vTemp[0] + ry2 * vTemp[2] - rz2 * vTemp[1];
+                  var iy = rw2 * vTemp[1] + rz2 * vTemp[0] - rx2 * vTemp[2];
+                  var iz = rw2 * vTemp[2] + rx2 * vTemp[1] - ry2 * vTemp[0];
+                  var iw = -rx2 * vTemp[0] - ry2 * vTemp[1] - rz2 * vTemp[2];
+                  vTemp[0] = ix * rw2 + iw * -rx2 + iy * -rz2 - iz * -ry2;
+                  vTemp[1] = iy * rw2 + iw * -ry2 + iz * -rx2 - ix * -rz2;
+                  vTemp[2] = iz * rw2 + iw * -rz2 + ix * -ry2 - iy * -rx2;
+                  
+                  offX += (dx - vTemp[0]) * fallOff;
+                  offY += (dy - vTemp[1]) * fallOff;
+                  offZ += (dz - vTemp[2]) * fallOff;
+                }
+                
+                offX += step_tx * fallOff;
+                offY += step_ty * fallOff;
+                offZ += step_tz * fallOff;
+                
+                px_guess = px - offX;
+                py_guess = py - offY;
+                pz_guess = pz - offZ;
+              }
+            } // end iter
+            
+            px = px_guess;
+            py = py_guess;
+            pz = pz_guess;
+            
+            cx_step -= step_tx;
+            cy_step -= step_ty;
+            cz_step -= step_tz;
+          } // end steps
+          
+          if (Math.abs(px - x) > 1e-4 || Math.abs(py - y) > 1e-4 || Math.abs(pz - z) > 1e-4) {
+            // Convert world source back to grid space!
+            var gridX = (px - this._min[0]) * invStep;
+            var gridY = (py - this._min[1]) * invStep;
+            var gridZ = (pz - this._min[2]) * invStep;
+            
+            tempBuffer[idTemp] = this.sample(gridX, gridY, gridZ);
+            changed = true;
+            
+            // Nearest Neighbor for Material/Color
+            var nnx = Math.round(gridX);
+            var nny = Math.round(gridY);
+            var nnz = Math.round(gridZ);
+            if (nnx >= 0 && nny >= 0 && nnz >= 0 && nnx < rx && nny < ry && nnz < rx) {
+              var nn_idx = nnx + nny * rx + nnz * rxy;
+              tempM[idTemp * 3]     = this._voxels.materialField[nn_idx * 3];
+              tempM[idTemp * 3 + 1] = this._voxels.materialField[nn_idx * 3 + 1];
+              tempM[idTemp * 3 + 2] = this._voxels.materialField[nn_idx * 3 + 2];
+              tempC[idTemp * 3]     = this._voxels.colorField[nn_idx * 3];
+              tempC[idTemp * 3 + 1] = this._voxels.colorField[nn_idx * 3 + 1];
+              tempC[idTemp * 3 + 2] = this._voxels.colorField[nn_idx * 3 + 2];
+            }
+          }
+          
+          idTemp++;
+        }
+      }
+    }
+
+    if (!changed) return false;
+
+    // Write back
+    idTemp = 0;
+    for (var k = snapMinz; k <= snapMaxz; ++k) {
+      for (var j = snapMiny; j <= snapMaxy; ++j) {
+        for (var i = snapMinx; i <= snapMaxx; ++i) {
+          var n = i + j * rx + k * rxy;
+          this._distanceField[n] = tempBuffer[idTemp];
+          this._voxels.materialField[n * 3]     = tempM[idTemp * 3];
+          this._voxels.materialField[n * 3 + 1] = tempM[idTemp * 3 + 1];
+          this._voxels.materialField[n * 3 + 2] = tempM[idTemp * 3 + 2];
+          this._voxels.colorField[n * 3]     = tempC[idTemp * 3];
+          this._voxels.colorField[n * 3 + 1] = tempC[idTemp * 3 + 1];
+          this._voxels.colorField[n * 3 + 2] = tempC[idTemp * 3 + 2];
+          idTemp++;
+        }
+      }
+    }
+
+    this._activeMin[0] = Math.min(this._activeMin[0], snapMinx);
+    this._activeMin[1] = Math.min(this._activeMin[1], snapMiny);
+    this._activeMin[2] = Math.min(this._activeMin[2], snapMinz);
+
+    this._activeMax[0] = Math.max(this._activeMax[0], snapMaxx);
+    this._activeMax[1] = Math.max(this._activeMax[1], snapMaxy);
+    this._activeMax[2] = Math.max(this._activeMax[2], snapMaxz);
+
+    return true;
+  }
+
   tightenBounds() {
     // Scan inwards to find tighter Active Bounds
     // We only care about Negative Values (Solid) because Surface is around < 0.0

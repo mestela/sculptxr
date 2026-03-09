@@ -2,7 +2,7 @@ import SculptBase from './SculptBase.js';
 // import VoxelState from '../VoxelState.js'; // Worker only now
 import MeshStatic from '../../mesh/meshStatic/MeshStatic.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
-import { vec3, mat4 } from 'gl-matrix';
+import { vec3, mat4, quat } from 'gl-matrix';
 import Utils from '../../misc/Utils.js';
 import Primitives from '../../drawables/Primitives.js';
 import Enums from '../../misc/Enums.js';
@@ -818,6 +818,36 @@ class SculptVoxel extends SculptBase {
       }
 
       if (!isPressed) {
+        if (this._mode === 4 && this._moveProxyActive) {
+          if (window.screenLog) window.screenLog(`Voxel Move: WARP Dispatched (${this._moveProxyIVerts.length} verts)`, "lime");
+          if (this._worker) {
+            
+            var mRawRadius = (this._radius !== undefined) ? this._radius : 25.0;
+            var mWorldRadius = Math.max(1.0, mRawRadius * 0.15); 
+            if (this._radiusMult) mWorldRadius *= this._radiusMult;
+            var pr = mWorldRadius;
+            
+            var tx = this._moveProxyLastTranslation[0];
+            var ty = this._moveProxyLastTranslation[1];
+            var tz = this._moveProxyLastTranslation[2];
+            
+            var steps = Math.ceil(Math.sqrt(tx*tx + ty*ty + tz*tz) / (pr * 0.15));
+            if (steps < 1) steps = 1;
+            if (steps > 20) steps = 20;
+
+            this._worker.postMessage({
+              type: 'WARP_SPHERE',
+              center: Array.from(this._moveProxyCenter),
+              radius: this._moveProxyRadius,
+              translation: Array.from(this._moveProxyLastTranslation),
+              rotation: Array.from(this._moveProxyLastQuat),
+              steps: steps,
+              returnMesh: true
+            });
+          }
+          this._moveProxyActive = false;
+        }
+
         this._lastXRPos = null; // Reset stroke
         this._xrStrokeActive = false;
         return;
@@ -833,6 +863,51 @@ class SculptVoxel extends SculptBase {
           // if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
           // else console.log("Voxel: VR Start (Snapshot)");
           this._worker.postMessage({ type: 'SNAPSHOT' });
+        }
+
+        // Initialize Move Proxy Start State
+        if (this._mode === 4) {
+          var startPos = vec3.create();
+          vec3.transformMat4(startPos, origin, this._invGridMatrix);
+          
+          this._moveProxyActive = true;
+          this._moveProxyCenter = vec3.clone(startPos);
+          this._moveStartXRPos = vec3.clone(startPos);
+          this._moveStartXRQuat = (options && options.quat) ? quat.clone(options.quat) : quat.create();
+          
+          this._moveProxyLastTranslation = vec3.create();
+          this._moveProxyLastQuat = quat.create();
+
+          // Radius setup
+          var mRawRadius = (this._radius !== undefined) ? this._radius : 25.0;
+          var mWorldRadius = Math.max(1.0, mRawRadius * 0.15); 
+          if (this._radiusMult) mWorldRadius *= this._radiusMult;
+          this._moveProxyRadius = mWorldRadius;
+          
+          this._moveProxyIVerts = [];
+          if (this._voxelMesh) {
+             var vAr = this._voxelMesh.getVertices();
+             this._moveProxyVAr = new Float32Array(vAr); // Cache original
+             
+             // Convert to Grid Index Space for comparison with vAr
+             var step = this._step;
+             var min = this._min;
+             var cx = (startPos[0] - min[0]) / step;
+             var cy = (startPos[1] - min[1]) / step;
+             var cz = (startPos[2] - min[2]) / step;
+             var rGrid = mWorldRadius / step;
+             var r2 = rGrid * rGrid;
+             
+             for (var i = 0; i < vAr.length; i += 3) {
+               var dx = vAr[i] - cx;
+               var dy = vAr[i+1] - cy;
+               var dz = vAr[i+2] - cz;
+               if (dx*dx + dy*dy + dz*dz < r2) {
+                 this._moveProxyIVerts.push(i);
+               }
+             }
+             if (window.screenLog) window.screenLog(`Proxy Init: ${this._moveProxyIVerts.length} verts`, "grey");
+          }
         }
       }
 
@@ -1010,7 +1085,7 @@ class SculptVoxel extends SculptBase {
               returnMesh: false
             });
           }
-        } else {
+        } else if (mode === 0 || mode === 1) {
           // EDIT_SPHERE
           var isSub = (mode === 1);
 
@@ -1038,6 +1113,106 @@ class SculptVoxel extends SculptBase {
               returnMesh: false // Don't ask for mesh twice
             });
           }
+        } else if (mode === 4 && this._moveProxyActive && this._voxelMesh) {
+          // MOVE PROXY UPDATE (Visual Only)
+          var translation = vec3.create();
+          vec3.sub(translation, localPos, this._moveStartXRPos);
+          vec3.copy(this._moveProxyLastTranslation, translation);
+
+          var rotation = quat.create();
+          var hasQuat = false;
+          if (options && options.quat && this._moveStartXRQuat) {
+             var invStart = quat.create();
+             quat.invert(invStart, this._moveStartXRQuat);
+             // current * invert(start)
+             quat.multiply(rotation, options.quat, invStart); 
+             vec3.copy(this._moveProxyLastQuat, rotation);
+             hasQuat = true;
+          }
+
+          var vAr = this._voxelMesh.getVertices();
+          var origVAr = this._moveProxyVAr;
+          var step = this._step;
+          var min = this._min;
+          
+          var cx_start = (this._moveStartXRPos[0] - min[0]) / step;
+          var cy_start = (this._moveStartXRPos[1] - min[1]) / step;
+          var cz_start = (this._moveStartXRPos[2] - min[2]) / step;
+          var pr = this._moveProxyRadius / step;
+          
+          var tx = translation[0] / step;
+          var ty = translation[1] / step;
+          var tz = translation[2] / step;
+          
+          // Determine iterative steps to prevent spatial folding
+          var trLen = Math.sqrt(tx*tx + ty*ty + tz*tz);
+          var steps = Math.ceil(trLen / (pr * 0.15));
+          if (steps < 1) steps = 1;
+          if (steps > 20) steps = 20;
+          
+          var step_tx = tx / steps;
+          var step_ty = ty / steps;
+          var step_tz = tz / steps;
+          
+          var stepRot = null;
+          if (hasQuat) {
+            stepRot = quat.create();
+            quat.slerp(stepRot, quat.create(), rotation, 1.0 / steps);
+          }
+
+          var vTemp = vec3.create();
+
+          for (var i = 0; i < this._moveProxyIVerts.length; i++) {
+             var idx = this._moveProxyIVerts[i];
+             var px = origVAr[idx];
+             var py = origVAr[idx+1];
+             var pz = origVAr[idx+2];
+             
+             var cx_step = cx_start;
+             var cy_step = cy_start;
+             var cz_step = cz_start;
+             
+             for (var s = 0; s < steps; s++) {
+               var dx = px - cx_step;
+               var dy = py - cy_step;
+               var dz = pz - cz_step;
+               
+               var dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / pr;
+               if (dist < 1.0) {
+                 var fallOff = dist * dist;
+                 fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
+                 
+                 var offX = step_tx * fallOff;
+                 var offY = step_ty * fallOff;
+                 var offZ = step_tz * fallOff;
+
+                 if (hasQuat) {
+                   vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+                   vec3.transformQuat(vTemp, vTemp, stepRot);
+                   offX += (vTemp[0] - dx) * fallOff;
+                   offY += (vTemp[1] - dy) * fallOff;
+                   offZ += (vTemp[2] - dz) * fallOff;
+                 }
+                 
+                 px += offX;
+                 py += offY;
+                 pz += offZ;
+               }
+               cx_step += step_tx;
+               cy_step += step_ty;
+               cz_step += step_tz;
+             }
+             
+             vAr[idx] = px;
+             vAr[idx+1] = py;
+             vAr[idx+2] = pz;
+          }
+          
+          // Throttled normal update to keep FPS high during drag
+          const proxyNow = performance.now();
+          // Update positions cheaply (avoiding normal recalculation which breaks voxel meshes)
+          this._voxelMesh.updateBuffers();
+          this._main.render();
         }
       } else {
         // Worker not ready

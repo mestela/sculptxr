@@ -392,7 +392,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += gapSection;
   }
   if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
-    widgets.push({ type: 'info', label: 'Voxel Settings', x: col1X, y: y });
+    widgets.push({ type: 'info', label: 'Voxel Tools', x: col1X, y: y });
     y += gapHeader;
 
     // Radius already handled above? Yes.
@@ -446,6 +446,13 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       type: 'button', id: 'vx_smooth', label: 'Smooth', x: col1X + 2 * (btnW + 10), y: y, w: btnW, h: btnH,
       data: { active: (mode === 3) },
       onInteract: () => setVoxelMode(3, false)
+    });
+
+    // Move
+    widgets.push({
+      type: 'button', id: 'vx_move', label: 'Move', x: col1X + 3 * (btnW + 10), y: y, w: btnW, h: btnH,
+      data: { active: (mode === 4) },
+      onInteract: () => setVoxelMode(4, false)
     });
 
     y += btnH + gapBtn;
