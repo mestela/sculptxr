@@ -1,3 +1,7 @@
+## v0.9.267
+- **Feature**: **Voxel Smooth Tool**: Implemented a localized 3D Soft-Blur (averaging filter) over the SDF volume for Voxels. It evaluates a 3D bounding box natively within the worker thread, producing mathematically perfect bevels and organic transitions without physically moving geometry.
+- **UX**: Exposed the Voxel Smooth tool in the VR Mini-HUD, and mapped it to the secondary trigger so you can rapidly smooth geometry on-the-fly while using the Add/Sub Voxel brush.
+
 ## v0.9.251 - v0.9.266
 - **Feature**: **VR Trigger Sensitivity Calibration**: Added a new "Trigger Sensitivity" slider to the VR Settings menu. Rather than acting as a simple analog multiplier (which makes brushes feel weak), this slider mathematically defines the **binary physical activation threshold** of the VR controller's trigger.
 - **UX**: **Index Controller Ergonomics**: Users with deep-throw analog triggers (like the Valve Index) no longer have to bottom-out the trigger at 100% force to start a stroke. Setting the slider to "Light" drops the physical bite-point to just 10% depression, while "Hard" requires a full 90% squeeze, allowing total ergonomic personalization.

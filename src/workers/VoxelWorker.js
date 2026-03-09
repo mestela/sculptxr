@@ -79,6 +79,9 @@ self.onmessage = function (e) {
         // self.postMessage({ type: 'LOG', data: "Worker received INFLATE with shape: " + msg.shape });
         inflateSphere(msg.center, msg.radius, msg.strength, msg.shape, msg.brushRotation, msg.returnMesh);
         break;
+      case 'SMOOTH_SPHERE':
+        smoothSphere(msg.center, msg.radius, msg.strength, msg.shape, msg.brushRotation, msg.returnMesh);
+        break;
       case 'SMOOTH':
         setSmooth(msg.value);
         break;
@@ -276,6 +279,14 @@ function editSphere(center, radius, color, isNegative, shape, brushRotation, ret
 function inflateSphere(center, radius, strength, shape, brushRotation, returnMesh) {
   if (!voxelState) return;
   if (voxelState.inflateSphere(center, radius, strength, shape, brushRotation)) {
+    isDirty = true;
+  }
+  if (returnMesh) postMesh();
+}
+
+function smoothSphere(center, radius, strength, shape, brushRotation, returnMesh) {
+  if (!voxelState) return;
+  if (voxelState.smoothSphere(center, radius, strength, shape, brushRotation)) {
     isDirty = true;
   }
   if (returnMesh) postMesh();

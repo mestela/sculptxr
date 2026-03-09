@@ -589,8 +589,8 @@ class SculptVoxel extends SculptBase {
     // Default to Add (0). If shift, force Sub (1).
     // If Inflate (2), then ignore shift? Or Shift=Deflate?
 
-    var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
-    if (isNegative && mode === 0) mode = 1; // Shift override for Brush
+    var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate, 3=Smooth
+    if (isNegative && mode !== 3) mode = 3; // Shift/Secondary overrides to Smooth
 
     // INTENSITY MODULATION
     // Base Strength (0..1)
@@ -647,6 +647,20 @@ class SculptVoxel extends SculptBase {
 
         this._worker.postMessage({
           type: 'INFLATE',
+          center: [localPos[0], localPos[1], localPos[2]],
+          radius: radius,
+          strength: strength,
+          shape: shape,
+          returnMesh: returnMesh
+        });
+      } else if (mode === 3) {
+        // SMOOTH
+        var strength = (this._strength !== undefined) ? this._strength : 0.5;
+        var shape = (this._shape !== undefined) ? this._shape : 0;
+        console.log("VoxelTool SMOOTH - sending shape: " + shape);
+
+        this._worker.postMessage({
+          type: 'SMOOTH_SPHERE',
           center: [localPos[0], localPos[1], localPos[2]],
           radius: radius,
           strength: strength,
@@ -934,8 +948,11 @@ class SculptVoxel extends SculptBase {
 
       if (this._worker) {
         // Check mode
-        var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate
-        if (isNegative && mode === 0) mode = 1; // Add + Neg -> Sub
+        var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate, 3=Smooth
+        
+        // Expose Smooth via Secondary Trigger
+        // If holding secondary trigger (isNegative), temporarily switch to Smooth mode.
+        if (isNegative && mode !== 3) mode = 3; 
 
         var shapeNum = (this._shape !== undefined) ? this._shape : 0;
         var brushRot = null;
@@ -961,6 +978,30 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'INFLATE',
+              center: [-localPos[0], localPos[1], localPos[2]],
+              radius: gridRadius,
+              strength: strength,
+              shape: shapeNum,
+              brushRotation: brushRotSym,
+              returnMesh: false
+            });
+          }
+        } else if (mode === 3) {
+          // SMOOTH
+          this._worker.postMessage({
+            type: 'SMOOTH_SPHERE',
+            center: [localPos[0], localPos[1], localPos[2]],
+            radius: gridRadius,
+            strength: strength,
+            shape: shapeNum,
+            brushRotation: brushRot,
+            returnMesh: returnMesh
+          });
+
+          // Symmetry Stroke
+          if (sym) {
+            this._worker.postMessage({
+              type: 'SMOOTH_SPHERE',
               center: [-localPos[0], localPos[1], localPos[2]],
               radius: gridRadius,
               strength: strength,

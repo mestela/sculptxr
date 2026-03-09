@@ -4496,10 +4496,6 @@ class Scene {
         let triggerValue = 1.0;
         if (source && source.gamepad && source.gamepad.buttons[0]) {
           triggerValue = source.gamepad.buttons[0].value;
-          
-          if (triggerValue > 0.05 && window.screenLog && Math.random() < 0.1) {
-             console.log(`[TRIGGER] UI:${(this._guiXR?._uiSettings?.triggerCurve || 0.5).toFixed(2)} Thresh:${triggerThreshold.toFixed(2)} Raw:${triggerValue.toFixed(3)}`);
-          }
         }
 
         // Universal Sub Mode: Apply Effective Negative State to Tool

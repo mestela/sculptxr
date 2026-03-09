@@ -441,16 +441,25 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => setVoxelMode(1, false)
     });
 
+    // Smooth
+    widgets.push({
+      type: 'button', id: 'vx_smooth', label: 'Smooth', x: col1X + 2 * (btnW + 10), y: y, w: btnW, h: btnH,
+      data: { active: (mode === 3) },
+      onInteract: () => setVoxelMode(3, false)
+    });
+
+    y += btnH + gapBtn;
+
     // Inflate
     widgets.push({
-      type: 'button', id: 'vx_inf', label: 'Inflate', x: col1X + 2 * (btnW + 10), y: y, w: btnW, h: btnH,
+      type: 'button', id: 'vx_inf', label: 'Inflate', x: col1X, y: y, w: btnW, h: btnH,
       data: { active: (mode === 2 && !isNeg) },
       onInteract: () => setVoxelMode(2, false)
     });
 
     // Deflate
     widgets.push({
-      type: 'button', id: 'vx_def', label: 'Deflate', x: col1X + 3 * (btnW + 10), y: y, w: btnW, h: btnH,
+      type: 'button', id: 'vx_def', label: 'Deflate', x: col1X + btnW + 10, y: y, w: btnW, h: btnH,
       data: { active: (mode === 2 && isNeg) },
       onInteract: () => setVoxelMode(2, true)
     });

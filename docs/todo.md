@@ -6,10 +6,9 @@
     - still doesn't elegantly handle when the headset goes into standby
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
     - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
-    - closer look at dyntopo, noticable performance drop in standalone
     - voxel straight line mode
     - voxel smooth shading
-    - voxel smooth tool
+    - ~~voxel smooth tool~~ **DONE**
     - voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
     - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
@@ -26,9 +25,7 @@
     
 - **UI + UX**
     - ability to adjust tool position relative to controller (like a temporary constraint offset)
-    - ~~falloff controls for alt controllers (eg index, they need better control over the trigger curve response)~~ **DONE (Trigger Sensitivity Threshold)**
     - 'kaospad' style UI element, XY or even XYZ to quickly set 2 or 3 values at once in a more tactile way for VR. eg voxel brush nonlinear scale for the sphere/cube, or setting radius and intensity at the same time
-    - when dynamic topo is on the perfomance drops on standalone
     - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view
     - it feels almost like stapling if you are using just the edge of the brush
     - the performance of the brush is much better if its fully inside the mesh
@@ -45,7 +42,12 @@
     - outliner
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
+## Can't fix/too hard
+    - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 
+
 ## Done
+- ~~warning when new version available~~ **DONE v0.9.266**
+- ~~falloff controls for alt controllers (eg index, they need better control over the trigger curve response)~~ **DONE v0.9.266**
 - ~~voxel cube brush~~ **DONE v0.9.229**
 - ~~closer look at wireframe, notisable performance drop in standalone~~ **DONE v0.9.216**
 - ~~Fix massive performance drop when enabling wireframe in Standalone VR~~ **DONE v0.9.216**

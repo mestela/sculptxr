@@ -431,6 +431,128 @@ class VoxelState {
     return changed;
   }
 
+  // Localized 3D Blur (Averaging SDF values)
+  smoothSphere(center, radius, strength, shape = 0, brushRotation) {
+    var res = this._resolution;
+    var step = this._step;
+    var min = this._min;
+    
+    // Center in Grid Coords (0 to res)
+    var cx = (center[0] - min[0]) / step;
+    var cy = (center[1] - min[1]) / step;
+    var cz = (center[2] - min[2]) / step;
+    
+    // Grid Bounds
+    var boundingRadius = (shape === 1) ? radius * 1.733 : radius; 
+    var rGrid = Math.ceil(boundingRadius / step) + 1;
+    // Don't smooth the absolute boundary voxels (keep 1 voxel padding)
+    var ixMin = Math.max(1, Math.floor(cx - rGrid));
+    var ixMax = Math.min(res - 1, Math.ceil(cx + rGrid));
+    var iyMin = Math.max(1, Math.floor(cy - rGrid));
+    var iyMax = Math.min(res - 1, Math.ceil(cy + rGrid));
+    var izMin = Math.max(1, Math.floor(cz - rGrid));
+    var izMax = Math.min(res - 1, Math.ceil(cz + rGrid));
+
+    var df = this._distanceField;
+    var rx = res;
+    var rxy = res * res;
+    
+    var changed = false;
+    
+    // We MUST write to a temporary array so we don't smear values mid-loop
+    // To save allocation, we just create a temp array for the bounding box
+    var sizeX = ixMax - ixMin;
+    var sizeY = iyMax - iyMin;
+    var sizeZ = izMax - izMin;
+    
+    // Skip if box is empty
+    if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return false;
+    
+    var tempField = new Float32Array(sizeX * sizeY * sizeZ);
+    // Initialize temporary buffer with current values
+    for (var k = 0; k < sizeZ; ++k) {
+      var gk = izMin + k;
+      for (var j = 0; j < sizeY; ++j) {
+        var gj = iyMin + j;
+        for (var i = 0; i < sizeX; ++i) {
+          var gi = ixMin + i;
+          tempField[i + j*sizeX + k*sizeX*sizeY] = df[gi + gj * rx + gk * rxy];
+        }
+      }
+    }
+    
+    // Apply Smoothing
+    for (var k = 0; k < sizeZ; ++k) {
+      var gk = izMin + k;
+      for (var j = 0; j < sizeY; ++j) {
+        var gj = iyMin + j;
+        for (var i = 0; i < sizeX; ++i) {
+          var gi = ixMin + i;
+          
+          // Voxel Position in World
+          var valX = min[0] + gi * step;
+          var valY = min[1] + gj * step;
+          var valZ = min[2] + gk * step;
+          
+          var dist = 0.0;
+          if (shape === 1) { // Cube
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+            if (brushRotation) {
+              var invQ = [-brushRotation[0], -brushRotation[1], -brushRotation[2], brushRotation[3]];
+              var rot = this._rotateVecByQuat([dx, dy, dz], invQ);
+              dx = rot[0]; dy = rot[1]; dz = rot[2];
+            }
+            var qx = Math.abs(dx) - radius;
+            var qy = Math.abs(dy) - radius;
+            var qz = Math.abs(dz) - radius;
+            dist = Math.sqrt(Math.max(qx, 0) * Math.max(qx, 0) + Math.max(qy, 0) * Math.max(qy, 0) + Math.max(qz, 0) * Math.max(qz, 0)) + Math.min(Math.max(qx, Math.max(qy, qz)), 0.0);
+          } else { // Sphere
+            var dx = valX - center[0];
+            var dy = valY - center[1];
+            var dz = valZ - center[2];
+            dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          }
+          
+          if (dist < radius) {
+            var index = gi + gj * rx + gk * rxy;
+            
+            // Average 6 neighbors
+            var sum = df[index - 1] + df[index + 1] + 
+                      df[index - rx] + df[index + rx] + 
+                      df[index - rxy] + df[index + rxy];
+            var avg = sum / 6.0;
+            
+            var falloff = 1.0 - (dist / radius); // Linear falloff
+            // Falloff smoothing (Smoothstep) for nicer blending at edges
+            falloff = falloff * falloff * (3 - 2 * falloff);
+            
+            // Lerp towards average based on strength & falloff
+            var mix = strength * falloff;
+            tempField[i + j*sizeX + k*sizeX*sizeY] = df[index] * (1.0 - mix) + avg * mix;
+            changed = true;
+          }
+        }
+      }
+    }
+    
+    // Copy Back
+    if (changed) {
+      for (var k = 0; k < sizeZ; ++k) {
+        var gk = izMin + k;
+        for (var j = 0; j < sizeY; ++j) {
+          var gj = iyMin + j;
+          for (var i = 0; i < sizeX; ++i) {
+            var gi = ixMin + i;
+            df[gi + gj * rx + gk * rxy] = tempField[i + j*sizeX + k*sizeX*sizeY];
+          }
+        }
+      }
+    }
+    return changed;
+  }
+
   tightenBounds() {
     // Scan inwards to find tighter Active Bounds
     // We only care about Negative Values (Solid) because Surface is around < 0.0
