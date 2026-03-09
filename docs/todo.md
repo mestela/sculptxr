@@ -1,13 +1,6 @@
 
 ## Todo
 
-## Triage:
-accidentally found you can sculpt with your right hand without using the controller (with the ‚pinch’ gesture), felt super cool, not sure how many different gestures Quest 3 picks up but that might be worth looking into (also worked with voxel, albeit a bit worse)
-it would be nice to just use one button for ‚negative’ effect of brush, now it’s button + trigger, maybe just the button would be enough?
-crease and flatten brushes feel so good and work so well, they’re awesome (crease is way better than one in Shapelab)
-would love a ‚bake mesh’ option for voxels in quick menu
-this might be stupid but I was thinking about like a quick tool switch which would work sort of like changing guns in a FPS game. Let’s say you click left thumb stick and you „click through” tools, but get an indicator of tool change near your brush in your right hand (like a short text?). Thinking it’d be cool to switch tools without stopping to look at the other hand’s menu, but maybe that’s too much
-overall: LOVE all the new features and the progress, gonna try to make some actual finished work in this and hopefully have more feedback then
 
 
 - **Functionality**:
@@ -30,6 +23,10 @@ overall: LOVE all the new features and the progress, gonna try to make some actu
     - local storage for settings, alphas, whatever else
     
 - **UI + UX**
+    - voxel smooth needs to be bound to secondary trigger
+    - voxel smooth respect intensity
+    - voxel move respect intensity
+    - does voxel move algo imply all other mesh tools can be used?
     - ability to adjust tool position relative to controller (like a temporary constraint offset)
     - 'kaospad' style UI element, XY or even XYZ to quickly set 2 or 3 values at once in a more tactile way for VR. eg voxel brush nonlinear scale for the sphere/cube, or setting radius and intensity at the same time
     - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view
@@ -47,6 +44,20 @@ overall: LOVE all the new features and the progress, gonna try to make some actu
     - toolbar/shortcut bar
     - outliner
     - Really need to make 100% VR native dialog, filebrowser for import/export
+    
+## Triage (Beta Tester Feedback)
+- [ ] **Bug** (_Input_): Pinch gesture with right hand sculpts accidentally. Investigate Quest 3 hand tracking interference.
+- [ ] **Bug** (_Gizmo_): Scaling a cylinder works, but rotating causes the gizmo to become a "twisted abomination".
+- [ ] **Bug** (_History_): Undo stopped working after using "Duplicate" on a cylinder.
+- [ ] **UX** (_Selection_): Active object switches unintentionally when brushing close to another object.
+- [ ] **UX** (_Input_): Request to use a single dedicated button for the 'negative' brush effect instead of holding button + trigger.
+- [ ] **UX** (_Object Mgt_): Duplicating and grabbing objects feels a little clunky and needs refinement.
+- [ ] **Feature** (_UI_): Add "Bake Mesh" option for Voxels to the VR quick tool menu.
+- [ ] **Feature** (_UI_): Add "Symmetry On/Off" toggle to the VR quick tool menu.
+- [ ] **Feature** (_Workflow_): Quick tool switch by clicking the left thumbstick (FPS weapon swap style), with a floating text indicator near the right hand.
+- [ ] **Feature** (_Gizmo_): Add angle snapping options (e.g., 90, 180 degrees) for rotations.
+- [ ] **Feature** (_File Saving_): Option to name a file when saving it in VR.
+- [ ] **Praise** (_Brushes_): Crease and flatten brushes feel excellent. (Crease is better than Shapelab!)
     
 ## Can't fix/too hard
     - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 
