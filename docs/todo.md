@@ -1,9 +1,18 @@
 
 ## Todo
 
+- **Bug**:
+    - (_Input_): Pinch gesture with right hand sculpts accidentally. Use more of this, refine?
+    - (_Gizmo_): Scaling a cylinder works, but rotating causes the gizmo to become a "twisted abomination".
+    - (_History_): Undo stopped working after using "Duplicate" on a cylinder.
 
-
-- **Functionality**:
+- **Feature**:
+    - local storage for settings, alphas, whatever else
+    - (_UI_): Add "Bake Mesh" option for Voxels to the VR quick tool menu.
+    - (_UI_): Add "Symmetry On/Off" toggle to the VR quick tool menu.
+    - (_Workflow_): Quick tool switch by clicking the left thumbstick (FPS weapon swap style), with a floating text indicator near the right hand.
+    - (_Gizmo_): Add angle snapping options (e.g., 90, 180 degrees) for rotations.
+    - (_File Saving_): Option to name a file when saving it in VR.
     - square falloff for standard brushes.. square alpha works, but top of move is still round, rotation doesn't follow controller, should be an indication of the alpha orientation
     - still doesn't elegantly handle when the headset goes into standby
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
@@ -13,16 +22,13 @@
     - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
     - muscle tool
     - xray material
-    - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
-    - multiplayer
     - render options? export depth, normal etc
-    - have another go at the slide tool
-    - elastic tools, kelvinlets etc
-    - facegroups
-    - pose tool
-    - local storage for settings, alphas, whatever else
+    - camera (a plane with one of the view render textures on it)
     
-- **UI + UX**
+- **UX**
+    - (_Selection_): Active object switches unintentionally when brushing close to another object.
+    - (_Input_): Request to use a single dedicated button for the 'negative' brush effect instead of holding button + trigger.
+    - (_Object Mgt_): Duplicating and grabbing objects feels a little clunky and needs refinement.
     - voxel smooth needs to be bound to secondary trigger
     - voxel smooth respect intensity
     - voxel move respect intensity
@@ -45,20 +51,14 @@
     - outliner
     - Really need to make 100% VR native dialog, filebrowser for import/export
     
-## Triage (Beta Tester Feedback)
-- [ ] **Bug** (_Input_): Pinch gesture with right hand sculpts accidentally. Use more of this, refine?
-- [ ] **Bug** (_Gizmo_): Scaling a cylinder works, but rotating causes the gizmo to become a "twisted abomination".
-- [ ] **Bug** (_History_): Undo stopped working after using "Duplicate" on a cylinder.
-- [ ] **UX** (_Selection_): Active object switches unintentionally when brushing close to another object.
-- [ ] **UX** (_Input_): Request to use a single dedicated button for the 'negative' brush effect instead of holding button + trigger.
-- [ ] **UX** (_Object Mgt_): Duplicating and grabbing objects feels a little clunky and needs refinement.
-- [ ] **Feature** (_UI_): Add "Bake Mesh" option for Voxels to the VR quick tool menu.
-- [ ] **Feature** (_UI_): Add "Symmetry On/Off" toggle to the VR quick tool menu.
-- [ ] **Feature** (_Workflow_): Quick tool switch by clicking the left thumbstick (FPS weapon swap style), with a floating text indicator near the right hand.
-- [ ] **Feature** (_Gizmo_): Add angle snapping options (e.g., 90, 180 degrees) for rotations.
-- [ ] **Feature** (_File Saving_): Option to name a file when saving it in VR.
+## Later
+    - have another go at the slide tool
+    - elastic tools, kelvinlets etc
+    - facegroups
+    - pose tool
+    - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
+    - multiplayer  
 
-    
 ## Can't fix/too hard
     - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 
 
@@ -150,6 +150,6 @@
 - ~~Menus currently need a click to close, then a click to open the next one. A click on another menu should hide the current, show the next straight away.~~ - **DONE**
 - ~~Double handed grip needs work, gets hard to control when the world has been scaled too large~~ - **Improved v0.7.118**
 - ~~Controllers are represented with cubes, replace with something better~~ - **DONE v0.6.51**    
-- ~~**Input/Shortcuts**: Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
+- ~~Move Undo/Redo to Left Stick (User feedback: Right stick interferes with resizing)~~ - **DONE v0.6.50**
 - ~~idea! calibrate/adjust with grip controls. press C, go into 'move me' mode. normally grips move the world, controllers stay static in the view. in this mode, the world stays still, you move the controllers. tap C to exit out, now you're good to go.~~ **DONE v0.7.6**
 - ~~Desktop mode is proof-of-concept; needs adjusting to feel comfortable (simulated seated view).~~ **DONE v0.7.0**
