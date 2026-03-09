@@ -90,7 +90,8 @@ export default class GuiXR {
 
     this._uiSettings = {
       resolution: 256, // Voxel Resolution
-      radius: 1.0 // Voxel Radius
+      radius: 1.0, // Voxel Radius
+      triggerCurve: 0.5,
     };
 
     // Preload Dropper Icon
@@ -797,16 +798,26 @@ export default class GuiXR {
     if (gens[this._viewMode]) {
       this._tabWidgets[this._viewMode] = gens[this._viewMode](main);
     }
-    const widgets = this._tabWidgets[this._viewMode] || [];
+    let tabData = this._tabWidgets[this._viewMode];
+    let widgets = [];
+    if (tabData) {
+      if (Array.isArray(tabData)) widgets = tabData;
+      else if (tabData.widgets) widgets = tabData.widgets;
+    }
     const currentY = HEADER_HEIGHT - this._scrollOffset;
 
     // Normalize generic view if needed, but usually they are absolute.
     // Let's assume absolute for now but apply scroll.
-    // Let's assume absolute for now but apply scroll.
-    const offsetWidgets = widgets.map(w => ({
-      ...w,
-      y: w.y + currentY // Start at Header Bottom
-    }));
+    let offsetWidgets = [];
+    try {
+      console.log('GuiXR _getWidgets | viewMode:', this._viewMode, '| widgets type:', typeof widgets, '| isArray:', Array.isArray(widgets));
+      offsetWidgets = widgets.map(w => ({
+        ...w,
+        y: w.y + currentY // Start at Header Bottom
+      }));
+    } catch (e) {
+      console.error('CRASH in _getWidgets mapping!', e);
+    }
 
     return offsetWidgets;
   }
@@ -873,6 +884,8 @@ export default class GuiXR {
           if (targetWid.step % 1 === 0) val = Math.round(val);
         }
       }
+      
+      if (targetWid.id === 'trigger_curve') console.log(`[SLIDER DRAG] cx:${cx.toFixed(1)} t:${t.toFixed(3)} val:${val.toFixed(3)} w.val:${targetWid.value}`);
 
       // Update
       if (targetWid.value !== val) {
@@ -1123,8 +1136,11 @@ export default class GuiXR {
           if (targetWid.step) {
             const steps = Math.round((val - targetWid.min) / targetWid.step);
             val = targetWid.min + steps * targetWid.step;
+            if (targetWid.step % 1 === 0) val = Math.round(val);
           }
         }
+
+        if (targetWid.id === 'trigger_curve') console.log(`[SLIDER CLICK] cx:${cx.toFixed(1)} t:${t.toFixed(3)} val:${val.toFixed(3)}`);
 
         if (targetWid.value !== val) {
           targetWid.value = val;
@@ -1847,6 +1863,12 @@ export default class GuiXR {
 
       // Also force-update `lastValue` to trigger handle re-renders if the underlying value was reset by a new tool
       if (w.type === 'slider') {
+        // If this is the currently dragging slider, STOP it from resetting to its external source
+        if (this._activeSlider && this._activeSlider.id === w.id) {
+            w.value = this._activeSlider.value;
+            this._activeSlider = w; // Refresh reference to the new widget clone
+        }
+
         // Flame styling needs to manually catch up
         if (w.value !== undefined && w._lastDrawValue !== w.value) {
           w._lastDrawValue = w.value;

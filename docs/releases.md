@@ -1,3 +1,8 @@
+## v0.9.251 - v0.9.266
+- **Feature**: **VR Trigger Sensitivity Calibration**: Added a new "Trigger Sensitivity" slider to the VR Settings menu. Rather than acting as a simple analog multiplier (which makes brushes feel weak), this slider mathematically defines the **binary physical activation threshold** of the VR controller's trigger.
+- **UX**: **Index Controller Ergonomics**: Users with deep-throw analog triggers (like the Valve Index) no longer have to bottom-out the trigger at 100% force to start a stroke. Setting the slider to "Light" drops the physical bite-point to just 10% depression, while "Hard" requires a full 90% squeeze, allowing total ergonomic personalization.
+- **Fix**: **100% Force Splat**: Diagnosed and fixed a high-level API flaw in `SculptBase.js` where the very first frame of every VR stroke was being instantiated with an undefined `options` payload. This caused brushes to drop a massive 1.0 (100% intensity) "splatter" frame onto the mesh before the analog curve could catch up. The initial stroke hit is now mathematically deferred into the native `updateXR` loop, ensuring total force consistency from the first millisecond of contact.
+
 ## v0.9.232 - v0.9.250
 - **Feature**: **Version Update Prompt**: Added a cache-busting polling system that detects when a new version of SculptXR is deployed to the server.
 - **UX**: **Desktop Warning**: When an update is detected on Desktop, a top-banner appears instructing the user to clear their browser cache and refresh.

@@ -3461,6 +3461,73 @@ class Scene {
             pressed = source.gamepad.buttons[0].value > 0.1 || source.gamepad.buttons[0].pressed;
           }
 
+          // DRAG CAPTURE LOCK
+          // If we are currently holding down the trigger on a specific GUI, we MUST lock all input to that GUI.
+          // This prevents the raycast from slipping off the MiniHUD and hitting the Main Menu behind it, which
+          // causes sliders to violently teleport because `targetGuiXR` suddenly changes mid-drag.
+          if (this._activePressedGui && pressed) {
+            targetGuiXR = this._activePressedGui;
+            
+            // Re-verify the hit actually belongs to the locked GUI mesh.
+            // If the raycast slipped off the edge and hit a DIFFERENT menu in the background,
+            // we must invalidate the hit so we don't send the wrong UV coordinates to the locked GUI.
+            let lockedMesh = null;
+            if (targetGuiXR === this._guiXR) lockedMesh = this._vrMenu;
+            if (targetGuiXR === this._guiMini) lockedMesh = this._vrMiniHUD;
+            if (targetGuiXR === this._guiPopup) lockedMesh = this._vrPopup;
+            
+            if (hit && hit.object !== lockedMesh && hit.object !== lockedMesh._mesh) {
+                // Slipped onto another menu, or into empty space
+                hit = null;
+            }
+
+            // INFINITE PLANE INTERSECTION FOR SMOOTH DRAGGING
+            // If the user's hand slipped off the mesh entirely, we manually calculate where the laser 
+            // intersects the infinite mathematical plane of the menu so the slider keeps moving smoothly!
+            if (!hit && lockedMesh && lockedMesh.getMatrix) {
+              const mat = lockedMesh.getMatrix();
+              
+              // Plane Origin and Normal from World Matrix
+              const pO = vec3.fromValues(mat[12], mat[13], mat[14]);
+              const pN = vec3.fromValues(mat[8], mat[9], mat[10]); // Z-axis is normal
+              vec3.normalize(pN, pN);
+
+              const denom = vec3.dot(pN, dir);
+              if (Math.abs(denom) > 0.0001) {
+                const diff = vec3.create();
+                vec3.sub(diff, pO, origin);
+                
+                const t = vec3.dot(pN, diff) / denom;
+                if (t > 0) { // Intersects in front of controller
+                  const pHit = vec3.create();
+                  vec3.scaleAndAdd(pHit, origin, dir, t);
+
+                  // Convert world hit point inverse to local space
+                  const invMat = mat4.create();
+                  mat4.invert(invMat, mat);
+                  const localHit = vec3.create();
+                  vec3.transformMat4(localHit, pHit, invMat);
+
+                  // The Menus are simple centered quads (X: -scale to +scale, Y: -scale to +scale)
+                  // UVs map X from [-scale, scale] -> [0, 1], and Y from [+scale, -scale] -> [0, 1]
+                  // Assuming scale = 1 for the primitive and it's physically scaled via getScale() or matrix.
+                  // Since we inverted the whole matrix (including scale), the local boundary is simply [-0.5, 0.5] if primitive is 1x1.
+                  // Wait, looking at Three/Babylon planes, they are usually [-0.5, 0.5] or [-1, 1].
+                  // Let's assume standard width 1 primitive: UV_u = localX + 0.5, UV_v = 0.5 - localY.
+                  let uvU = localHit[0] + 0.5;
+                  let uvV = 0.5 - localHit[1];
+
+                  // Fabricate a hit object so GuiXR can read the UVs
+                  hit = {
+                    distance: t,
+                    uv: [uvU, uvV],
+                    mesh: lockedMesh
+                  };
+                }
+              }
+            }
+          }
+
           if (pressed && !this._globalGuiWasPressed) {
             this._activePressedGui = hit ? targetGuiXR : null;
           } else if (!pressed) {
@@ -3471,19 +3538,28 @@ class Scene {
           }
           this._globalGuiWasPressed = pressed;
 
-          if (hit) {
+          // Dispatch Interaction
+          if (hit || (this._activePressedGui && targetGuiXR === this._activePressedGui)) {
             this._isPointingAtMenu = true;
-            targetGuiXR.setCursor(hit.uv[0], hit.uv[1]);
-            targetGuiXR._updateHover(); // CRITICAL: Actually trigger the hit test loop using the new cursor coordinates!
+            
+            // If dragging outside bounds (hit is null), we pass -1, -1 and GuiXR will use its cached cursor coords!
+            const currU = hit ? hit.uv[0] : -1;
+            const currV = hit ? hit.uv[1] : -1;
+            
+            if (hit) {
+              targetGuiXR.setCursor(currU, currV);
+            }
+            
+            targetGuiXR._updateHover(); // Trigger UI loop (uses GuiXR's internal this._cursor)
 
             if (this._activePressedGui && this._activePressedGui !== targetGuiXR) {
-              targetGuiXR.onInteract(hit.uv[0], hit.uv[1], false);
+              targetGuiXR.onInteract(currU, currV, false);
             } else {
-              targetGuiXR.onInteract(hit.uv[0], hit.uv[1], pressed);
+              targetGuiXR.onInteract(currU, currV, pressed);
             }
 
             // Calc Laser Distance (plus overshoot)
-            if (this._vrLaser) {
+            if (this._vrLaser && hit) {
               this._vrLaserDistance = hit.distance + 0.05; // +5cm
             }
 
@@ -4133,9 +4209,29 @@ class Scene {
     // PHASE 11 Fix: If we are already sculpting/dragging with this hand, it IS the trigger state that matters
     // regardless of global dominance.
     const isDominant = (source.handedness === this._dominantHand);
-    const isTriggerPressed = (this._vrLockedHand === source.handedness) ? buttons[0].pressed : (isDominant && buttons[0].pressed);
-
-    // Log Removed
+    
+    // Evaluate custom trigger sensitivity threshold
+    let triggerThreshold = 0.5; // Default middle
+    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.triggerCurve !== undefined) {
+      // slider is 0.0 (Hard) to 1.0 (Light)
+      // We map this to a threshold of 0.9 (Hard) to 0.1 (Light)
+      const uiVal = this._guiXR._uiSettings.triggerCurve;
+      triggerThreshold = 0.9 - (uiVal * 0.8);
+    }
+    
+    // Safe extract analog value
+    let analogValue = 0.0;
+    if (buttons && buttons[0]) {
+      analogValue = buttons[0].value;
+    }
+    
+    // Evaluate if the trigger has crossed the user's defined physical threshold
+    let isTriggerPressed = false;
+    if (this._vrLockedHand === source.handedness) {
+       isTriggerPressed = analogValue >= triggerThreshold;
+    } else {
+       isTriggerPressed = (isDominant && analogValue >= triggerThreshold);
+    }
 
     // VR Ergonomics: Temporary Modifiers
     // Check if the non-dominant index trigger is held.
@@ -4400,7 +4496,6 @@ class Scene {
         let triggerValue = 1.0;
         if (source && source.gamepad && source.gamepad.buttons[0]) {
           triggerValue = source.gamepad.buttons[0].value;
-          // if (window.screenLog && this._logThrottle % 60 === 0) window.screenLog(`TrigVal: ${triggerValue.toFixed(2)}`, "cyan");
         }
 
         // Universal Sub Mode: Apply Effective Negative State to Tool

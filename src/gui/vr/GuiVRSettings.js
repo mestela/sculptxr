@@ -33,6 +33,19 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'trigger_curve', label: 'Trigger Sensitivity', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 1.0, step: 0.05,
+    value: main._guiXR && main._guiXR._uiSettings.triggerCurve !== undefined ? main._guiXR._uiSettings.triggerCurve : 0.5,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.triggerCurve = val;
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+
   widgets.push({ type: 'header', label: 'Calibration', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 

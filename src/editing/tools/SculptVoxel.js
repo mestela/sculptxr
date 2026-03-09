@@ -36,6 +36,12 @@ class SculptVoxel extends SculptBase {
     this._shape = 0; // 0: Sphere, 1: Cube
     this._alignToController = false; // World vs Controller alignment
     this._strength = 0.5;
+    
+    // Trigger Profile / Modulation Support
+    this._modulateRadius = true;
+    this._modulateIntensity = true;
+    this._pressureBias = 0.0;
+    
     const isDesktop = !window.navigator.xr; // heuristic or check main
     // Let's rely on xrSession check during init, but for constructor just use a default
     this._res = 64; 

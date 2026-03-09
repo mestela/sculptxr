@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   v0.9.251 - v0.9.266: **VR Trigger Sensitivity:** Added a new "Trigger Sensitivity" slider to the VR Settings menu. This allows users to physically calibrate the exact depth the hardware trigger needs to be pulled before a stroke begins recording. This perfectly resolves ergonomic issues for Valve Index users who previously had to bottom-out their triggers at 100% force just to activate the brushes.
 *   v0.9.232 - v0.9.250: **Version Update Prompt & VR Text Polish:** Implemented a new polling system that detects server deployments and visually warns users (via a Desktop Banner and VR HUD Logger) when a new version is available, complete with font-size adjustments to prevent in-headset text clipping.
 *   v0.9.217 - v0.9.231: **Voxel Cube Brush & Performance Optimization:** Added a new 'Cube' brush shape to the Voxel tool that can be oriented 1:1 with the physical VR controller. Offloaded all heavy Voxel normal calculations to the Web Worker and fixed a critical "Wireframe Rebuild Paradox" to permanently eliminate standalone CPU stuttering during rapid sculpting.
 *   v0.9.209 - v0.9.216: **Wireframe Performance & UI Polish:** Restored the Voxel wireframe toggle with full quad support. Implemented dynamic line sub-sampling to instantly cure the severe standalone VR framerate drop caused by dense wireframes. Fixed overlay combobox translation math and eliminated UI rendering duplication.

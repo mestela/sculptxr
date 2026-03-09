@@ -2,6 +2,7 @@
 ## Todo
 
 - **Functionality**:
+    - square falloff for standard brushes.. square alpha works, but top of move is still round, rotation doesn't follow controller, should be an indication of the alpha orientation
     - still doesn't elegantly handle when the headset goes into standby
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
     - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
@@ -24,6 +25,8 @@
     - local storage for settings, alphas, whatever else
     
 - **UI + UX**
+    - ability to adjust tool position relative to controller (like a temporary constraint offset)
+    - ~~falloff controls for alt controllers (eg index, they need better control over the trigger curve response)~~ **DONE (Trigger Sensitivity Threshold)**
     - 'kaospad' style UI element, XY or even XYZ to quickly set 2 or 3 values at once in a more tactile way for VR. eg voxel brush nonlinear scale for the sphere/cube, or setting radius and intensity at the same time
     - when dynamic topo is on the perfomance drops on standalone
     - it would be nice if you could get the edge of the mini menu to freely orient it, so it better fits the user angle of view

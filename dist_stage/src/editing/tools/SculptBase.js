@@ -121,8 +121,8 @@ class SculptBase {
       if (this.makeStrokeXR) {
         var picking = this._main.getPicking();
         var pickingSym = this._main.getSculptManager().getSymmetry() ? this._main.getPickingSymmetry() : null;
-
-        this.makeStrokeXR(picking, pickingSym);
+        // We defer the first stroke to updateXR so it receives proper trigger payload
+        this._forceNextStroke = true;
 
         // Init lastInter for continuous update
         var inter = picking.getIntersectionPoint();
@@ -397,13 +397,13 @@ class SculptBase {
   }
 
   // WebXR Support
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir, options) {
     // FIX: Continuous Picking Update (Hover)
     // We always want to update the cursor position, even if not sculpting.
-    this.sculptStrokeXR(picking, isPressed);
+    this.sculptStrokeXR(picking, isPressed, origin, dir, options);
   }
 
-  sculptStrokeXR(picking, isPressed) {
+  sculptStrokeXR(picking, isPressed, origin, dir, options) {
     var main = this._main;
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
 
@@ -420,7 +420,7 @@ class SculptBase {
     // HOVER STATE (Trigger Released)
     if (!isPressed) {
       // Just update picking/cursor, no sculpting
-      this.makeStrokeXR(picking, pickingSym, false);
+      this.makeStrokeXR(picking, pickingSym, false, origin, dir, options);
       this._lastVRPos = vec3.clone(worldPos); // Keep sync
       this.updateRender();
       return;
@@ -450,17 +450,18 @@ class SculptBase {
     var minSpacing = 0.07 * rWorld;
     if (minSpacing < 0.001) minSpacing = 0.001; // Safety minimum
 
-    if (dist <= minSpacing) {
+    if (dist <= minSpacing && !this._forceNextStroke) {
       // if (window.screenLog && this._main._logThrottle % 60 === 0) window.screenLog(`SB: Skip dist=${dist.toFixed(4)}`, "grey");
       return;
     }
+    this._forceNextStroke = false;
 
     var mesh = this.getMesh();
     if (mesh && main._vrUseVolumeIntersect) {
       picking.intersectionSphereMeshes([mesh], worldPos, rWorld);
     }
 
-    this.makeStrokeXR(picking, pickingSym, true);
+    this.makeStrokeXR(picking, pickingSym, true, origin, dir, options);
 
     // Restore actual controller pos
     vec3.copy(this._lastVRPos, worldPos);
@@ -478,7 +479,16 @@ class SculptBase {
     this.updateRender();
   }
 
-  makeStrokeXR(picking, pickingSym, isSculpting = true) {
+  makeStrokeXR(picking, pickingSym, isSculpting, origin, dir, options) {
+    var pick1 = null;
+    var pick2 = null;
+
+    // Store the precise trigger float provided by Scene.js so tools can optionally modulate their strength
+    if (options && options.triggerValue !== undefined) {
+      this._lastTriggerValue = options.triggerValue;
+    } else {
+      this._lastTriggerValue = isSculpting ? 1.0 : 0.0;
+    }
 
     var mesh = this.getMesh();
     if (!mesh) return;
