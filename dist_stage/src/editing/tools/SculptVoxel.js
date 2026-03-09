@@ -835,6 +835,32 @@ class SculptVoxel extends SculptBase {
             if (steps < 1) steps = 1;
             if (steps > 20) steps = 20;
 
+            if (sym) {
+               // Mirrored Target Rotation Quarterion
+               // If start was S, and move is T,  rot = T * inv(S).
+               // Mirrored rot: mirror(T * inv(S)) = mirror(T) * mirror(inv(S))
+               var startMR = [-this._moveStartXRQuat[0], this._moveStartXRQuat[1], this._moveStartXRQuat[2], -this._moveStartXRQuat[3]];
+               var startRotSym = [-startMR[0], -startMR[1], -startMR[2], startMR[3]]; 
+               // Above: Equivalent to manual flip of x. A mirror Quat in X is (qx, -qy, -qz, qw).
+               var sRotSym = [this._moveStartXRQuat[0], -this._moveStartXRQuat[1], -this._moveStartXRQuat[2], this._moveStartXRQuat[3]];
+               var invStartSym = quat.create();
+               quat.invert(invStartSym, sRotSym);
+               
+               var cRot = this._moveProxyLastQuat; 
+               // cRot is the total rotation. We can just mirror the total rotation!
+               var rotSym = [this._moveProxyLastQuat[0], -this._moveProxyLastQuat[1], -this._moveProxyLastQuat[2], this._moveProxyLastQuat[3]];
+               
+               this._worker.postMessage({
+                 type: 'WARP_SPHERE',
+                 center: [-this._moveProxyCenter[0], this._moveProxyCenter[1], this._moveProxyCenter[2]],
+                 radius: this._moveProxyRadius,
+                 translation: [-tx, ty, tz],
+                 rotation: rotSym,
+                 steps: steps,
+                 returnMesh: false // We only want one returned mesh!
+               });
+            }
+            
             this._worker.postMessage({
               type: 'WARP_SPHERE',
               center: Array.from(this._moveProxyCenter),
@@ -842,7 +868,7 @@ class SculptVoxel extends SculptBase {
               translation: Array.from(this._moveProxyLastTranslation),
               rotation: Array.from(this._moveProxyLastQuat),
               steps: steps,
-              returnMesh: true
+              returnMesh: true // Bake it all in at the end
             });
           }
           this._moveProxyActive = false;
@@ -885,6 +911,8 @@ class SculptVoxel extends SculptBase {
           this._moveProxyRadius = mWorldRadius;
           
           this._moveProxyIVerts = [];
+          this._moveProxyIVertsSym = [];
+          
           if (this._voxelMesh) {
              var vAr = this._voxelMesh.getVertices();
              this._moveProxyVAr = new Float32Array(vAr); // Cache original
@@ -898,15 +926,27 @@ class SculptVoxel extends SculptBase {
              var rGrid = mWorldRadius / step;
              var r2 = rGrid * rGrid;
              
+             // Symmetry coordinates
+             var isSymProxy = sym;
+             var cxSym = (-startPos[0] - min[0]) / step; // Mirror X
+             
              for (var i = 0; i < vAr.length; i += 3) {
-               var dx = vAr[i] - cx;
                var dy = vAr[i+1] - cy;
                var dz = vAr[i+2] - cz;
-               if (dx*dx + dy*dy + dz*dz < r2) {
+               var dSq = dy*dy + dz*dz;
+               if (dSq > r2) continue; // Early exit on YZ
+               
+               var dx = vAr[i] - cx;
+               if (dx*dx + dSq < r2) {
                  this._moveProxyIVerts.push(i);
+               } else if (isSymProxy) {
+                 var dxSym = vAr[i] - cxSym;
+                 if (dxSym*dxSym + dSq < r2) {
+                   this._moveProxyIVertsSym.push(i);
+                 }
                }
              }
-             if (window.screenLog) window.screenLog(`Proxy Init: ${this._moveProxyIVerts.length} verts`, "grey");
+             if (window.screenLog) window.screenLog(`Proxy Init: ${this._moveProxyIVerts.length} / Sym: ${this._moveProxyIVertsSym.length} verts`, "grey");
           }
         }
       }
@@ -1208,6 +1248,73 @@ class SculptVoxel extends SculptBase {
              vAr[idx+2] = pz;
           }
           
+          // Apply Symmetry Proxy
+          if (sym && this._moveProxyIVertsSym.length > 0) {
+            var stepRotSym = null;
+            if (hasQuat && options && options.quat && this._moveStartXRQuat) {
+              // Calculate mirrored rotation
+              var curRotSym = [options.quat[0], -options.quat[1], -options.quat[2], options.quat[3]];
+              var startRotSym = [this._moveStartXRQuat[0], -this._moveStartXRQuat[1], -this._moveStartXRQuat[2], this._moveStartXRQuat[3]];
+              
+              var invStartSym = quat.create();
+              quat.invert(invStartSym, startRotSym);
+              var rotationSym = quat.create();
+              quat.multiply(rotationSym, curRotSym, invStartSym); 
+              
+              stepRotSym = quat.create();
+              quat.slerp(stepRotSym, quat.create(), rotationSym, 1.0 / steps);
+            }
+            
+            var cx_start_sym = (-this._moveStartXRPos[0] - min[0]) / step;
+            var step_tx_sym = -step_tx;
+            
+            for (var i = 0; i < this._moveProxyIVertsSym.length; i++) {
+               var idx = this._moveProxyIVertsSym[i];
+               var px = origVAr[idx];
+               var py = origVAr[idx+1];
+               var pz = origVAr[idx+2];
+               
+               var cx_step_sym = cx_start_sym;
+               var cy_step = cy_start;
+               var cz_step = cz_start;
+               
+               for (var s = 0; s < steps; s++) {
+                 var dx = px - cx_step_sym;
+                 var dy = py - cy_step;
+                 var dz = pz - cz_step;
+                 
+                 var dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / pr;
+                 if (dist < 1.0) {
+                   var fallOff = dist * dist;
+                   fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
+                   
+                   var offX = step_tx_sym * fallOff;
+                   var offY = step_ty * fallOff;
+                   var offZ = step_tz * fallOff;
+
+                   if (stepRotSym) {
+                     vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+                     vec3.transformQuat(vTemp, vTemp, stepRotSym);
+                     offX += (vTemp[0] - dx) * fallOff;
+                     offY += (vTemp[1] - dy) * fallOff;
+                     offZ += (vTemp[2] - dz) * fallOff;
+                   }
+                   
+                   px += offX;
+                   py += offY;
+                   pz += offZ;
+                 }
+                 cx_step_sym += step_tx_sym;
+                 cy_step += step_ty;
+                 cz_step += step_tz;
+               }
+               
+               vAr[idx] = px;
+               vAr[idx+1] = py;
+               vAr[idx+2] = pz;
+            }
+          }
+
           // Throttled normal update to keep FPS high during drag
           const proxyNow = performance.now();
           // Update positions cheaply (avoiding normal recalculation which breaks voxel meshes)
