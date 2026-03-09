@@ -1,6 +1,15 @@
 
 ## Todo
 
+## Triage:
+accidentally found you can sculpt with your right hand without using the controller (with the ‚pinch’ gesture), felt super cool, not sure how many different gestures Quest 3 picks up but that might be worth looking into (also worked with voxel, albeit a bit worse)
+it would be nice to just use one button for ‚negative’ effect of brush, now it’s button + trigger, maybe just the button would be enough?
+crease and flatten brushes feel so good and work so well, they’re awesome (crease is way better than one in Shapelab)
+would love a ‚bake mesh’ option for voxels in quick menu
+this might be stupid but I was thinking about like a quick tool switch which would work sort of like changing guns in a FPS game. Let’s say you click left thumb stick and you „click through” tools, but get an indicator of tool change near your brush in your right hand (like a short text?). Thinking it’d be cool to switch tools without stopping to look at the other hand’s menu, but maybe that’s too much
+overall: LOVE all the new features and the progress, gonna try to make some actual finished work in this and hopefully have more feedback then
+
+
 - **Functionality**:
     - square falloff for standard brushes.. square alpha works, but top of move is still round, rotation doesn't follow controller, should be an indication of the alpha orientation
     - still doesn't elegantly handle when the headset goes into standby
