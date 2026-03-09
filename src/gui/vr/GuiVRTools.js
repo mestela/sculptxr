@@ -936,5 +936,37 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     // For now just placeholder or nothing.
   }
 
+  // --- VERSION UPDATE WARNING ---
+  if (window._updateAvailable) {
+    y += gapHeader;
+    
+    // Line 1: Main Warning
+    widgets.push({
+      type: 'button',
+      id: 'update_warning_1',
+      label: 'new build ready!',
+      x: col1X, y: y, w: 710, h: 50,
+      data: { tint: 'hsl(30, 90%, 50%)', fontSize: '18px' }, // Orange warning color, small font
+      onInteract: () => window.location.reload(true)
+    });
+    
+    y += 50 + 5; // Small gap between lines
+    
+    const currentVersion = Object.values({VERSION})[0];
+    const newVersion = window._availableVersion || '???';
+    
+    // Line 2: Version Details
+    widgets.push({
+      type: 'button',
+      id: 'update_warning_2',
+      label: `${currentVersion} -> ${newVersion}`,
+      x: col1X, y: y, w: 710, h: 50,
+      data: { tint: 'hsl(30, 90%, 50%)', fontSize: '18px' }, // Orange warning color, small font
+      onInteract: () => window.location.reload(true)
+    });
+    
+    y += 50 + gapSection;
+  }
+
   return widgets;
 }

@@ -2150,14 +2150,18 @@ export default class GuiXR {
           ctx.fillStyle = isActive ? '#00A040' : '#333';
           if (wid.disabled) ctx.fillStyle = '#222';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-
           let textColor = wid.disabled ? '#555' : 'white';
           if (wid.data && wid.data.tint && !wid.disabled) {
             textColor = wid.data.tint;
           }
           ctx.fillStyle = textColor;
           ctx.textAlign = 'center';
-          ctx.font = '24px sans-serif';
+          
+          let fontSize = '24px';
+          if (wid.data && wid.data.fontSize) {
+            fontSize = wid.data.fontSize;
+          }
+          ctx.font = `${fontSize} sans-serif`;
           ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
         }
       } // END ELSE (Generic Widgets)
@@ -2238,7 +2242,7 @@ export default class GuiXR {
     if (this._logLines && this._logLines.length > 0) {
       ctx.save();
       ctx.textAlign = 'left';
-      ctx.font = 'bold 24px monospace';
+      ctx.font = 'bold 20px monospace';
 
       // Bottom left corner
       const startX = 20;
@@ -2479,7 +2483,13 @@ export default class GuiXR {
           }
           ctx.fillStyle = textColor; 
           ctx.textAlign = 'center';
-          ctx.font = this.styles.fontOverlay;
+          
+          let fontSize = this.styles.fontOverlay; // Default '20px sans-serif'
+          if (wid.data && wid.data.fontSize) {
+            fontSize = `${wid.data.fontSize} sans-serif`;
+          }
+          ctx.font = fontSize;
+          
           ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
 
         } else if (wid.type === 'combobox') {

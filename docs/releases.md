@@ -1,3 +1,9 @@
+## v0.9.232 - v0.9.250
+- **Feature**: **Version Update Prompt**: Added a cache-busting polling system that detects when a new version of SculptXR is deployed to the server.
+- **UX**: **Desktop Warning**: When an update is detected on Desktop, a top-banner appears instructing the user to clear their browser cache and refresh.
+- **UX**: **VR Mini-HUD Warning**: When an update is detected, standalone VR users will see a "new build ready!" warning string appended to the bottom of their Mini-HUD, alerting them without requiring them to remove their headset.
+- **Fix**: **VR Text Clipping**: Shrunk the `window.screenLog` monospace font from 24px to 20px so that version strings (e.g., `v0.9.247 -> v0.9.248`) no longer overflow and clip out of the floating VR debug console.
+
 ## v0.9.217 - v0.9.231
 - **Feature**: **Voxel Cube Brush**: The Voxel tool now natively supports a precise 'Cube' SDF brush shape alongside the traditional 'Sphere', accessible via the new Brush Shape toggle in the VR Mini-HUD and Desktop Tool menu.
 - **Feature**: **Oriented Cube Sculpting**: When using the new Cube brush, users can toggle "Controller Alignment". When active, the voxel cube physically rotates with the user's wrist (via quaternion projection into the SDF local space), allowing for angled block carving and building.
