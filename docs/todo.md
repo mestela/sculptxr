@@ -7,9 +7,6 @@
     - inertia movement, ie if i single had grip, move, let go, the inertia should continue to move the view
     - ski navigation, ie should be able to use left grip, right grip to move thorugh the scene, not have issues with a accidental double grip stopping the flow
     - voxel straight line mode
-    - voxel smooth shading
-    - ~~voxel smooth tool~~ **DONE**
-    [x] Add basic voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
     - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
     - muscle tool
@@ -31,7 +28,7 @@
     - the performance of the brush is much better if its fully inside the mesh
     - it always cast the full brush size and not just the tip of the brush
     - the sampling on the brush gets very slow if u are barely touching the surface with the brush
-    - joystick to scroll over the ui is im pointing at it
+    - joystick to scroll over the UI i'm pointing at it
     - the smooth and move brushes are unaffected by dynamic topology mode. 
     - buttons on controllers should be user configurable
     - display assignments on controller buttons... floating labels
@@ -46,6 +43,9 @@
     - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 
 
 ## Done
+- ~~voxel smooth shading~~ **DONE v0.9.278**
+- ~~voxel smooth tool~~ **DONE v0.9.278**
+- ~~Add basic voxel move brush (see how many of the current poly tools can be ported over)~~ **DONE v0.9.278**
 - ~~warning when new version available~~ **DONE v0.9.266**
 - ~~falloff controls for alt controllers (eg index, they need better control over the trigger curve response)~~ **DONE v0.9.266**
 - ~~voxel cube brush~~ **DONE v0.9.229**
