@@ -819,7 +819,6 @@ class SculptVoxel extends SculptBase {
 
       if (!isPressed) {
         if (this._mode === 4 && this._moveProxyActive) {
-          if (window.screenLog) window.screenLog(`Voxel Move: WARP Dispatched (${this._moveProxyIVerts.length} verts)`, "lime");
           if (this._worker) {
             
             var mRawRadius = (this._radius !== undefined) ? this._radius : 25.0;
@@ -882,8 +881,6 @@ class SculptVoxel extends SculptBase {
       // Detect Start of Stroke (VR)
       if (!this._xrStrokeActive) {
         this._xrStrokeActive = true;
-        
-        if (window.screenLog) window.screenLog(`Voxel VR Start. Mesh:${!!this._voxelMesh} Pend:${this._pendingMeshUpdate}`, "orange");
 
         if (this._worker) {
           // if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
@@ -946,7 +943,6 @@ class SculptVoxel extends SculptBase {
                  }
                }
              }
-             if (window.screenLog) window.screenLog(`Proxy Init: ${this._moveProxyIVerts.length} / Sym: ${this._moveProxyIVertsSym.length} verts`, "grey");
           }
         }
       }

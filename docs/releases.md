@@ -2,6 +2,12 @@
 - **Feature**: **Voxel Smooth Tool**: Implemented a localized 3D Soft-Blur (averaging filter) over the SDF volume for Voxels. It evaluates a 3D bounding box natively within the worker thread, producing mathematically perfect bevels and organic transitions without physically moving geometry.
 - **UX**: Exposed the Voxel Smooth tool in the VR Mini-HUD, and mapped it to the secondary trigger so you can rapidly smooth geometry on-the-fly while using the Add/Sub Voxel brush.
 
+## v0.9.267 - 0.9.278 (2026-03-09)
+*   **Voxel Move Tool:** Implemented a new 'Move' tool for Voxel sculpting.
+    *   **Visual Proxy:** When the stroke begins, the tool captures the affected vertices and detaches them as a lightweight, real-time proxy that seamlessly translates and rotates 1:1 with the VR controller, preventing heavy `SurfaceNets` rebake stutters while dragging.
+    *   **ODE SDF Advection:** Upon releasing the trigger, the tool dispatches a `WARP_SPHERE` command. The Web Worker utilizes a multi-step Reverse-Euler integration solver across the spatial distance field to perfectly recreate the proxy deformation within the voxel grid, effectively eliminating the common "spatial folding/tearing" artifacts seen in naive advection implementations.
+    *   **Dual-Stroke Symmetry:** Fully supported symmetrical displacement mapping.
+
 ## v0.9.251 - v0.9.266
 - **Feature**: **VR Trigger Sensitivity Calibration**: Added a new "Trigger Sensitivity" slider to the VR Settings menu. Rather than acting as a simple analog multiplier (which makes brushes feel weak), this slider mathematically defines the **binary physical activation threshold** of the VR controller's trigger.
 - **UX**: **Index Controller Ergonomics**: Users with deep-throw analog triggers (like the Valve Index) no longer have to bottom-out the trigger at 100% force to start a stroke. Setting the slider to "Light" drops the physical bite-point to just 10% depression, while "Hard" requires a full 90% squeeze, allowing total ergonomic personalization.

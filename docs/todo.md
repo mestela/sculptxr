@@ -9,7 +9,7 @@
     - voxel straight line mode
     - voxel smooth shading
     - ~~voxel smooth tool~~ **DONE**
-    - voxel move brush (see how many of the current poly tools can be ported over)
+    [x] Add basic voxel move brush (see how many of the current poly tools can be ported over)
     - voxel curves/tubes
     - voxel remeshing is fixed to the mesh scale/bounding box, so as the bounding box increases you have to keep upping the resolution to compensate. 
     - muscle tool
