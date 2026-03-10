@@ -1,16 +1,14 @@
 # Handover Prompt
 
-**Project Status**: Finished the `feature/performance-wireframe` branch and the Trigger Sensitivity cycle, deploying v0.9.266 to both Beta and Production environments. We successfully implemented a binary physical threshold for VR controllers, allowing users with deep-throw triggers (like the Valve Index) to customize exactly when their brush activates. We also fixed a massive "100% Force Splat" bug that was dropping unmodulated brush frames on the first millisecond of contact.
+**Project Status**: Finished the `feature/performance-wireframe` branch, safely merged into `master`, and deployed `v0.9.279` to both Beta and Production environments. The focal point of the recent work was the implementation of the **Voxel Move Tool**, which includes real-time proxy meshing and a bespoke multi-step ODE (Reverse-Euler) solver for smooth, artifact-free Signed Distance Field (SDF) advection. We also successfully triaged an extensive batch of beta tester feedback and updated our tracking documentation.
+
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
 ## Recent Work & Context
-1. **VR Trigger Sensitivity Calibration**: Added a new "Trigger Sensitivity" slider to the VR Settings menu (`GuiVRSettings.js`). This maps to a physical depth threshold (0.1 to 0.9) rather than acting as a simple analog multiplier.
-2. **Binary Activation Threshold**: `Scene.js` now evaluates `isTriggerPressed` strictly against `analogValue >= triggerThreshold` instead of relying on the WebXR API's default `pressed` boolean, giving Index users perfect ergonomic control over the brush's "bite point."
-3. **100% Force Splat Fix**: Diagnosed a high-level API flaw in `SculptBase.js` where `startSculpt()` fired a `makeStrokeXR` without a trigger payload. The initial stroke hit is now mathematically deferred (`this._forceNextStroke = true`) into the native `updateXR` loop, ensuring total force consistency from the first frame.
-4. **Current Build**: Deployed to `tokeru.com/sculptxr/` main production as version `v0.9.266`. Documentation (`todo.md`, `README.md`, `releases.md`) is completely updated.
+1. **Voxel Move Tool (ODE Advection)**: Added a "Move" brush to the Voxel palette. Implemented a dual-thread architecture: the Main Thread dynamically detaches a lightweight polygonal "Visual Proxy" that tracks the user's VR controller perfectly at 90FPS.
+2. **Web Worker Integrations**: On trigger release, the UI dispatches a `WARP_SPHERE` command. `VoxelState.js` handles the heavy lifting by processing a sliced reverse-Euler integration backwards through the SDF coordinate space, avoiding "spatial folding/tearing." X-Axis Symmetry was added to this workflow via dual-Warp dispatches.
+3. **Beta Feedback Triage**: A data-dump of beta tester notes was reformatted into the top of `docs/todo.md` as "Bug", "UX", and "Feature" items. Notable additions include requests for "Symmetry On/Off in quick menu", "Bake Voxel Mesh button", and isolating a right-hand pinch tracking interference bug on Quest 3.
+4. **Architectural Blueprints**: Two new exploratory documents were written based on user requests: `docs/elastic_brush_concepts.md` (identifying cheap pseudo-Kelvinlet methods like topological grabs and Laplacian smoothing) and `docs/voxel_move_advection.md` (documenting the math behind the Move tool). Added a "Later" task to investigate porting the WebGL 1.0 engine to WebGL 2.0 (for 3D uniform textures and VAOs) or WebGPU.
 
 ## Next Steps
-The environment is clean, stable, and committed to GitHub. You are starting from a fresh chat context. You can proceed to test the site, or immediately start tackling the next major `todo.md` items:
-1. **Dynamic Topology Performance**: Dyntopo still struggles severely on standalone hardware. Look into deep profiling Dyntopo vertex splitting on Quest.
-2. **Advanced Voxel Tools**: Port more standard tools (Smooth, Move) over to the Voxel brush palette, or begin investigating "straight line" or "曲线/Tubes" voxel modes.
-3. **VR Movement Tracking / Ski Navigation**: Look into making world scaling and translation more robust. The user notes an issue with accidental double-grips stopping the workflow.
+The environment is completely stable, documented, and fully pushed to `origin/master`. You are starting from a fresh chat context with no fixed agenda. The user may want to begin tackling the triaged items in `todo.md` (e.g., investigating that Quest 3 pinch bug, setting up elastic brushes, or optimizing WebXR interactions). Wait for the user's direction on which thread to pull next.
