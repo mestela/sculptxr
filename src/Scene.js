@@ -285,7 +285,7 @@ class Scene {
 
     if (!this._guiMini) {
       // Create a much taller, narrower canvas for the Mini-HUD (e.g. 300x500)
-      this._guiMini = new GuiXR(this, null, 300, 500);
+      this._guiMini = new GuiXR(this, null, 300, 500, true);
       this._guiMini._isMiniHUD = true;
       this._guiMini._isVisible = true; // Always visible
     }
@@ -315,9 +315,9 @@ class Scene {
     // Global override for live tuning
     window.MINI_HUD_TRANSFORM = {
       x: 0,
-      y: 0.05, 
-      z: 0.09,
-      rx: 90,
+      y: 0.08, 
+      z: 0.12,
+      rx: 80,
       ry: 0,
       rz: 0
     };
@@ -824,7 +824,7 @@ class Scene {
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
-  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
+  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, frame = null, refSpace = null) {
     const pStartTotal = performance.now();
     const prof = window.__sculptProfile;
     if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
@@ -845,23 +845,39 @@ class Scene {
     const pStartUI = performance.now();
 
     // Render Controllers
-    if (this._vrControllerLeft) {
-      this._vrControllerLeft.updateMatrices(cam);
-      this._vrControllerLeft.render(this);
-    }
+    if (!this._isHandTrackingActive) {
+      if (this._vrControllerLeft) {
+        this._vrControllerLeft.updateMatrices(cam);
+        this._vrControllerLeft.render(this);
+      }
 
-    if (this._vrControllerRight) {
-      this._vrControllerRight.updateMatrices(cam);
-      this._vrControllerRight.render(this);
+      if (this._vrControllerRight) {
+        this._vrControllerRight.updateMatrices(cam);
+        this._vrControllerRight.render(this);
+      }
     }
 
     // VR Main Menu (Full Size)
-    const menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
+    let menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
+    let isHandMenu = false;
+
+    if (this._isHandTrackingActive && this._nonDomWristMatrix) {
+       menuAnchor = this._nonDomWristMatrix;
+       isHandMenu = true;
+    }
+
     if (this._vrMenu && menuAnchor) {
       const menuPose = mat4.clone(menuAnchor);
       const lift = mat4.create();
-      const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
-      mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
+
+      if (isHandMenu) {
+        mat4.fromTranslation(lift, [0.0, -0.1, -0.15]); 
+        mat4.rotateX(lift, lift, 90 * Math.PI / 180.0);
+        mat4.rotateY(lift, lift, 180 * Math.PI / 180.0);
+      } else {
+        const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
+        mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
+      }
       mat4.multiply(menuPose, menuPose, lift);
       this._vrMenu.updateMatrices(cam, menuPose);
       this._vrMenu.render(this);
@@ -872,7 +888,9 @@ class Scene {
       const hudPose = mat4.clone(menuAnchor);
       const liftHUD = mat4.create();
 
-      const tform = window.MINI_HUD_TRANSFORM || { x: 0.04, y: 0.07, z: 0.1, rx: 90, ry: 0, rz: 0 };
+      const tform = isHandMenu ? 
+          { x: 0.0, y: -0.04, z: -0.04, rx: 90, ry: 180, rz: 0 } :
+          (window.MINI_HUD_TRANSFORM || { x: 0.04, y: 0.07, z: 0.1, rx: 90, ry: 0, rz: 0 });
 
       // Apply mirror logic for dominant hand if needed.
       // E.g. we want it on the inside of the controller.
@@ -913,10 +931,60 @@ class Scene {
     }
 
     // VRLaser (Pass 1)
-    if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
+    if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu && !this._isHandTrackingActive) {
       const dist = this._vrLaserDistance || 1.0;
       this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
       this._vrLaser.render(this);
+    }
+
+    // --- HAND TRACKING SKELETON VISUALIZATION ---
+    if (this._isHandTrackingActive && frame && frame.session && refSpace) {
+      // Init Sphere Pool if missing
+      if (!this._handJointSpheres) {
+        const sg = Primitives;
+        this._handJointSpheres = [];
+        for (let i = 0; i < 50; i++) { // 25 joints per hand roughly
+          const sph = sg.createSphere(this._gl, 1.0);
+          sph.setShaderType(Enums.Shader.FLAT);
+          sph.setFlatColor([0.5, 0.8, 1.0]);
+          this._handJointSpheres.push(sph);
+        }
+      }
+
+      const gl2 = this._gl;
+      gl2.enable(gl2.BLEND);
+      gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
+      gl2.depthMask(false);
+      gl2.enable(gl2.DEPTH_TEST);
+      gl2.disable(gl2.CULL_FACE);
+
+      let sphereIdx = 0;
+
+      for (let src of frame.session.inputSources) {
+        if (!src.hand) continue;
+        const jointIter = src.hand.values();
+        for (let joint of jointIter) {
+          const pose = frame.getJointPose(joint, refSpace);
+          if (pose && sphereIdx < this._handJointSpheres.length) {
+            const sph = this._handJointSpheres[sphereIdx++];
+            const mat = sph.getMatrix();
+            // Copy WebXR transform directly (we are in Pass 1, 1:1 Room Space)
+            for (let i=0; i<16; i++) mat[i] = pose.transform.matrix[i];
+
+            // Scale the sphere itself to fit the joint. `createSphere` default creates diameter=2.0 
+            // So if radius=0.005, diameter=0.01 (1cm)
+            const r = pose.radius ? (pose.radius * 0.5) : 0.005;
+            mat4.scale(mat, mat, [r, r, r]);
+
+            sph.updateMatrices(cam);
+            sph.render(this);
+          }
+        }
+      }
+
+      gl2.enable(gl2.CULL_FACE);
+      gl2.depthMask(true);
+      gl2.disable(gl2.BLEND);
     }
 
     // Debug Pivot
@@ -1411,86 +1479,6 @@ class Scene {
         this._gazeTooltipRight.render();
       }
     }
-
-    // --- HAND TRACKING SKELETON VISUALIZATION ---
-    if (frame && frame.session) {
-      let isHandActive = false;
-      for (let src of frame.session.inputSources) {
-         if (src.hand) {
-            isHandActive = true;
-            break;
-         }
-      }
-
-      if (isHandActive) {
-        // Init Sphere Pool if missing
-        if (!this._handJointSpheres) {
-          const sg = require('./mesh/Primitives.js').default;
-          this._handJointSpheres = [];
-          for (let i = 0; i < 50; i++) { // 25 joints per hand roughly
-            const sph = sg.createSphere(this._gl, 1.0);
-            sph.setShaderType(Enums.Shader.FLAT);
-            sph.setFlatColor([0.5, 0.8, 1.0]);
-            this._handJointSpheres.push(sph);
-          }
-        }
-
-        const gl2 = this._gl;
-        gl2.enable(gl2.BLEND);
-        gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
-        gl2.depthMask(false);
-        gl2.enable(gl2.DEPTH_TEST);
-        gl2.disable(gl2.CULL_FACE);
-
-        let sphereIdx = 0;
-        const refSpace = window.sculptglRefSpace; // We need the ref space for joint poses
-
-        if (refSpace) {
-          for (let src of frame.session.inputSources) {
-            if (!src.hand) continue;
-
-            const jointIter = src.hand.values();
-            for (let joint of jointIter) {
-              const pose = frame.getJointPose(joint, refSpace);
-              if (pose && sphereIdx < this._handJointSpheres.length) {
-                const sph = this._handJointSpheres[sphereIdx++];
-                const mat = sph.getMatrix();
-                
-                // Copy WebXR transform
-                for (let i=0; i<16; i++) mat[i] = pose.transform.matrix[i];
-
-                // Apply World Transform Offset if in Stationary Mode
-                if (this._xrWorldOffset) {
-                  const tWorld = mat4.create();
-                  const r = this._xrWorldOffset.orientation;
-                  const t = this._xrWorldOffset.position;
-                  mat4.fromRotationTranslation(tWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-                  
-                  const invTWorld = mat4.create();
-                  mat4.invert(invTWorld, tWorld);
-                  mat4.multiply(mat, invTWorld, mat);
-                }
-
-                // Apply Scale
-                const vrScaleInv = 1.0 / (this._vrScale || 1.0);
-                mat4.scale(mat, mat, [vrScaleInv, vrScaleInv, vrScaleInv]);
-
-                // Scale the sphere itself to 1.5cm
-                const r = 0.015;
-                mat4.scale(mat, mat, [r, r, r]);
-
-                sph.updateMatrices(cam);
-                sph.render(this);
-              }
-            }
-          }
-        }
-
-        gl2.enable(gl2.CULL_FACE);
-        gl2.depthMask(true);
-        gl2.disable(gl2.BLEND);
-      }
-    }
   }
 
 
@@ -1514,7 +1502,7 @@ class Scene {
       var viewport = glLayer.getViewport(view);
       gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
 
-      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix);
+      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix, null, frame, refSpace);
     }
   }
 
@@ -1592,8 +1580,10 @@ class Scene {
     if (this._showGrid && this._grid) this._grid.render(this);
 
     // VR Controllers
-    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    if (this._vrControllerRight) this._vrControllerRight.render(this);
+    if (!this._isHandTrackingActive) {
+      if (this._vrControllerLeft) this._vrControllerLeft.render(this);
+      if (this._vrControllerRight) this._vrControllerRight.render(this);
+    }
 
     // (post opaque pass)
     for (i = 0; i < nbMeshes; ++i) {
@@ -2263,7 +2253,7 @@ class Scene {
 
     // Init VR Mini-HUD System
     if (!this._guiMini) {
-      this._guiMini = new GuiXR(this);
+      this._guiMini = new GuiXR(this, null, 300, 500, true);
       this._guiMini._isMiniHUD = true;
       this._guiMini._isVisible = true;
     }
@@ -3082,6 +3072,7 @@ class Scene {
 
     // Reset Menu Pointing State (Per Frame)
     this._isPointingAtMenu = false;
+    let isMiniHUDActiveThisFrame = false;
 
     // VR Fuzzer Mode (Overrides input for stress testing)
     if (window.vrFuzzMode) {
@@ -3440,6 +3431,8 @@ class Scene {
       // --- NATIVE HAND TRACKING IMPLEMENTATION ---
       let mockGamepad = null;
       if (source.hand) {
+        this._isHandTrackingActive = true;
+        
         if (source.handedness === 'left') this._isHandTrackingLeft = true;
         if (source.handedness === 'right') this._isHandTrackingRight = true;
 
@@ -3476,14 +3469,16 @@ class Scene {
              const dist = vec3.distance([pI.x, pI.y, pI.z], [wristPos.x, wristPos.y, wristPos.z]);
              
              // Update the active state for the GUI to render the glowing border
-             this._isMiniHUDActive = (dist < 0.25);
-
-             if (this._isMiniHUDActive) {
+             if (dist < 0.25) {
+               isMiniHUDActiveThisFrame = true;
+             }
+             
+             if (isMiniHUDActiveThisFrame) {
                 isPinching = false;
                 isFist = false;
 
                 // INDEX FINGER Z-DEPTH PUSH-TO-CLICK
-                if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible) {
+                if (this._vrMiniHUD && (!this._guiXR || !this._guiXR._isVisible)) {
                   const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
                   if (hit && hit.distance <= 0.0) {
                     isPinching = true; // Emulate Trigger pull!
@@ -3741,7 +3736,7 @@ class Scene {
 
           // Grip Button (Button 1 or Trigger/Squeeze?)
           // Usually Button 1 is Squeeze. Button 0 is Trigger.
-          const isGrip = source.gamepad && source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed;
+          const isGrip = activeGamepad && activeGamepad.buttons[1] && activeGamepad.buttons[1].pressed;
 
           const rot = basePose.transform.orientation; // Quaternion {x,y,z,w}
           const rotQuat = quat.fromValues(rot.x, rot.y, rot.z, rot.w);
@@ -3912,6 +3907,14 @@ class Scene {
 
     // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
     this._wasPointingAtMenu = this._isPointingAtMenu;
+    
+    // Check if Proximity Glow Border changed state this frame
+    if (this._isMiniHUDActive !== isMiniHUDActiveThisFrame) {
+      this._isMiniHUDActive = isMiniHUDActiveThisFrame;
+      if (this._guiMini) {
+        this._guiMini._needsRedraw = true;
+      }
+    }
   }
 
   processVRGripState(handedness, origin, rotation) {

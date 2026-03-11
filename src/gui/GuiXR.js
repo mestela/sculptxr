@@ -132,7 +132,10 @@ export default class GuiXR {
       'History': getHistoryWidgets,
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
-      'Sculpting & Painting': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
+      'Sculpting & Painting': (main, isMiniHUD) => {
+         if (main && typeof main.addVrLog === 'function') main.addVrLog(`getToolsWidgets called. isMiniHUD: ${isMiniHUD}`, "yellow");
+         return getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD);
+      },
       'Reference': getReferenceWidgets,
       'Settings': getCameraWidgets, // Wait, Camera Widgets ARE the settings? User said "hid the settings menu".
       // Actually, GuiVRCamera.js exports getCameraWidgets but the tab was likely named 'Camera'.
@@ -758,7 +761,10 @@ export default class GuiXR {
         if (isOpen) {
           // Generate Fresh Widgets
           if (gens[secTitle]) {
-            this._tabWidgets[secTitle] = gens[secTitle](main);
+            if (this._main && typeof this._main.addVrLog === 'function' && secTitle === 'Sculpting & Painting') {
+                this._main.addVrLog(`Generating SIDEBAR secTitle: ${secTitle} isMiniHUD: ${this._isMiniHUD}`);
+            }
+            this._tabWidgets[secTitle] = gens[secTitle](main, this._isMiniHUD);
           }
           const secWidgets = this._tabWidgets[secTitle];
 
@@ -796,7 +802,7 @@ export default class GuiXR {
     // Regular View (Generic Scroll support)
     // Generate Fresh Widgets
     if (gens[this._viewMode]) {
-      this._tabWidgets[this._viewMode] = gens[this._viewMode](main);
+      this._tabWidgets[this._viewMode] = gens[this._viewMode](main, this._isMiniHUD);
     }
     let tabData = this._tabWidgets[this._viewMode];
     let widgets = [];
@@ -819,11 +825,12 @@ export default class GuiXR {
       console.error('CRASH in _getWidgets mapping!', e);
     }
     // Inject Global Close Button
+    // (Hitbox logic only, visually rendered in _drawHeader so it escapes the scroll clip)
     offsetWidgets.push({
-      type: 'button',
+      type: 'internal_close', // custom type so the standard widget loop ignores drawing it again
       id: 'global_close',
       label: 'X',
-      x: CANVAS_SIZE - 60,
+      x: this._canvas.width - 60,
       y: 10,
       w: 50,
       h: 50,
@@ -993,6 +1000,16 @@ export default class GuiXR {
     // Find Target Widget for Debounce Logic
     let targetWid = null;
     const widgets = this._getWidgets();
+
+    // EARLY OVERRIDE: Global Close Button
+    const closeWid = widgets.find(w => w.id === 'global_close');
+    if (closeWid && cx >= closeWid.x && cx <= closeWid.x + closeWid.w && cy >= closeWid.y && cy <= closeWid.y + closeWid.h) {
+      if (isPressed && isRisingEdge) {
+        closeWid.onInteract();
+      }
+      return; 
+    }
+
     for (let wid of widgets) {
       if (cx >= wid.x && cx <= wid.x + wid.w && cy >= wid.y && cy <= wid.y + wid.h) {
         targetWid = wid;
