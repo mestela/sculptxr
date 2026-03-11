@@ -256,6 +256,46 @@ class VRMenu {
     };
   }
 
+  intersectPoint(point) {
+    if (!this._cacheWorld) return null;
+
+    // Invert World Matrix to transform Point to Local Space
+    const invWorld = mat4.create();
+    mat4.invert(invWorld, this._cacheWorld);
+
+    // Transform Point
+    const localPoint = vec3.create();
+    vec3.transformMat4(localPoint, point, invWorld);
+
+    // Check Z distance (How close is the point to the physical plane of the menu?)
+    // Allow a generous 3cm hover in front, and 5cm push-through behind the menu
+    if (localPoint[2] > 0.03 || localPoint[2] < -0.05) return null; 
+
+    const lx = localPoint[0];
+    const ly = localPoint[1];
+
+    // Check bounds using exact generated dimensions
+    const w = this._w;
+    const h = this._h;
+    
+    // Add a tiny bit of padding to the bounds to make edge buttons easier to hit
+    const pad = 0.01; 
+    if (lx < -(w + pad) || lx > (w + pad) || ly < -(h + pad) || ly > (h + pad)) return null;
+
+    // Map to UV [0,1]
+    // Clamp lx, ly to actual bounds so UV doesn't go out of [0,1] range if hit in padding
+    const clx = Math.max(-w, Math.min(w, lx));
+    const cly = Math.max(-h, Math.min(h, ly));
+
+    const u = (clx + w) / (2 * w);
+    const v = (cly + h) / (2 * h);
+
+    return {
+      uv: [u, v],
+      distance: localPoint[2]
+    };
+  }
+
 
   render(main) {
     if (!this._guiXR || !this._guiXR._isVisible) return;

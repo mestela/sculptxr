@@ -7,6 +7,7 @@
     - (_History_): Undo stopped working after using "Duplicate" on a cylinder.
 
 - **Feature**:
+    - change environment/background
     - local storage for settings, alphas, whatever else
     - (_UI_): Add "Bake Mesh" option for Voxels to the VR quick tool menu.
     - (_UI_): Add "Symmetry On/Off" toggle to the VR quick tool menu.
@@ -58,6 +59,8 @@
     - pose tool
     - look at tricks from old Dreams demos (eg the potters wheel for painting and sculpting)
     - multiplayer  
+    - Architecture Upgrade: Port core rendering engine from WebGL 1.0 to WebGL 2.0 / WebGPU (Compute Shaders, 3D Uniforms, VAOs)
+    - port core inner JS functions (eg voxelworker.js, surfacenets.js) to wasm/webassembly via rust/c++
 
 ## Can't fix/too hard
     - closer look at dyntopo, noticable performance drop in standalone -- already at limits of quest 3 performance with current implementation 

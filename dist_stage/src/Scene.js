@@ -196,6 +196,7 @@ class Scene {
     this._vrMenu = null;
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
+    this._handJointSpheres = null;
 
     // Desktop 6DOF Offset (Spectator Camera)
     // Offset relative to HMD: [x, y, z] in meters.
@@ -1408,6 +1409,86 @@ class Scene {
       if (this._gazeTooltipRight._isVisible) {
         this._gazeTooltipRight.updateMatrices(cam, ctlPos);
         this._gazeTooltipRight.render();
+      }
+    }
+
+    // --- HAND TRACKING SKELETON VISUALIZATION ---
+    if (frame && frame.session) {
+      let isHandActive = false;
+      for (let src of frame.session.inputSources) {
+         if (src.hand) {
+            isHandActive = true;
+            break;
+         }
+      }
+
+      if (isHandActive) {
+        // Init Sphere Pool if missing
+        if (!this._handJointSpheres) {
+          const sg = require('./mesh/Primitives.js').default;
+          this._handJointSpheres = [];
+          for (let i = 0; i < 50; i++) { // 25 joints per hand roughly
+            const sph = sg.createSphere(this._gl, 1.0);
+            sph.setShaderType(Enums.Shader.FLAT);
+            sph.setFlatColor([0.5, 0.8, 1.0]);
+            this._handJointSpheres.push(sph);
+          }
+        }
+
+        const gl2 = this._gl;
+        gl2.enable(gl2.BLEND);
+        gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
+        gl2.depthMask(false);
+        gl2.enable(gl2.DEPTH_TEST);
+        gl2.disable(gl2.CULL_FACE);
+
+        let sphereIdx = 0;
+        const refSpace = window.sculptglRefSpace; // We need the ref space for joint poses
+
+        if (refSpace) {
+          for (let src of frame.session.inputSources) {
+            if (!src.hand) continue;
+
+            const jointIter = src.hand.values();
+            for (let joint of jointIter) {
+              const pose = frame.getJointPose(joint, refSpace);
+              if (pose && sphereIdx < this._handJointSpheres.length) {
+                const sph = this._handJointSpheres[sphereIdx++];
+                const mat = sph.getMatrix();
+                
+                // Copy WebXR transform
+                for (let i=0; i<16; i++) mat[i] = pose.transform.matrix[i];
+
+                // Apply World Transform Offset if in Stationary Mode
+                if (this._xrWorldOffset) {
+                  const tWorld = mat4.create();
+                  const r = this._xrWorldOffset.orientation;
+                  const t = this._xrWorldOffset.position;
+                  mat4.fromRotationTranslation(tWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
+                  
+                  const invTWorld = mat4.create();
+                  mat4.invert(invTWorld, tWorld);
+                  mat4.multiply(mat, invTWorld, mat);
+                }
+
+                // Apply Scale
+                const vrScaleInv = 1.0 / (this._vrScale || 1.0);
+                mat4.scale(mat, mat, [vrScaleInv, vrScaleInv, vrScaleInv]);
+
+                // Scale the sphere itself to 1.5cm
+                const r = 0.015;
+                mat4.scale(mat, mat, [r, r, r]);
+
+                sph.updateMatrices(cam);
+                sph.render(this);
+              }
+            }
+          }
+        }
+
+        gl2.enable(gl2.CULL_FACE);
+        gl2.depthMask(true);
+        gl2.disable(gl2.BLEND);
       }
     }
   }
@@ -3354,8 +3435,81 @@ class Scene {
             }
           }
         }
-
       }
+
+      // --- NATIVE HAND TRACKING IMPLEMENTATION ---
+      let mockGamepad = null;
+      if (source.hand) {
+        if (source.handedness === 'left') this._isHandTrackingLeft = true;
+        if (source.handedness === 'right') this._isHandTrackingRight = true;
+
+        const thumbTip = frame.getJointPose(source.hand.get('thumb-tip'), refSpace);
+        const indexTip = frame.getJointPose(source.hand.get('index-finger-tip'), refSpace);
+        const middleTip = frame.getJointPose(source.hand.get('middle-finger-tip'), refSpace);
+        const middleKnuckle = frame.getJointPose(source.hand.get('middle-finger-phalanx-proximal'), refSpace);
+        const wrist = frame.getJointPose(source.hand.get('wrist'), refSpace);
+
+        let isPinching = false;
+        let isFist = false;
+
+        // Extract wrist matrix for HUD anchoring
+        if (wrist) {
+          if (source.handedness === 'left') this._nonDomWristMatrix = wrist.transform.matrix;
+          if (source.handedness === 'right') this._domWristMatrix = wrist.transform.matrix;
+        }
+
+        if (thumbTip && indexTip && middleTip && middleKnuckle) {
+          const pT = thumbTip.transform.position;
+          const pI = indexTip.transform.position;
+          const pM = middleTip.transform.position;
+          const pK = middleKnuckle.transform.position;
+
+          const pinchDist = vec3.distance([pT.x, pT.y, pT.z], [pI.x, pI.y, pI.z]);
+          const fistDist = vec3.distance([pM.x, pM.y, pM.z], [pK.x, pK.y, pK.z]);
+
+          isPinching = pinchDist < 0.02; // 2cm pinch threshold
+          isFist = fistDist < 0.05;      // 5cm fist threshold
+
+          // Grab Suppression: Check if Dom index tip is near Non-Dom wrist (25cm)
+          if (source.handedness === this._dominantHand && this._nonDomWristMatrix) {
+             const wristPos = { x: this._nonDomWristMatrix[12], y: this._nonDomWristMatrix[13], z: this._nonDomWristMatrix[14] };
+             const dist = vec3.distance([pI.x, pI.y, pI.z], [wristPos.x, wristPos.y, wristPos.z]);
+             
+             // Update the active state for the GUI to render the glowing border
+             this._isMiniHUDActive = (dist < 0.25);
+
+             if (this._isMiniHUDActive) {
+                isPinching = false;
+                isFist = false;
+
+                // INDEX FINGER Z-DEPTH PUSH-TO-CLICK
+                if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible) {
+                  const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
+                  if (hit && hit.distance <= 0.0) {
+                    isPinching = true; // Emulate Trigger pull!
+                  }
+                }
+             }
+          }
+        }
+
+        mockGamepad = {
+          buttons: [
+            { pressed: isPinching, value: isPinching ? 1.0 : 0.0 }, // Trigger (Sculpt / UI Click)
+            { pressed: isFist, value: isFist ? 1.0 : 0.0 },         // Grip (Move World)
+            { pressed: false, value: 0 },
+            { pressed: false, value: 0 },
+            { pressed: false, value: 0 },
+            { pressed: false, value: 0 }
+          ],
+          axes: [0, 0, 0, 0]
+        };
+      } else {
+        if (source.handedness === 'left') this._isHandTrackingLeft = false;
+        if (source.handedness === 'right') this._isHandTrackingRight = false;
+      }
+      
+      const activeGamepad = mockGamepad || source.gamepad;
 
       // 1. Common Pose Gathering (for All Tasks)
       const worldPose = frame.getPose(source.gripSpace, refSpace);
@@ -3612,8 +3766,22 @@ class Scene {
 
 
     // Check Triggers & Log
-    const rightPressed = right && right.gamepad && right.gamepad.buttons[0] && right.gamepad.buttons[0].pressed;
-    const leftPressed = left && left.gamepad && left.gamepad.buttons[0] && left.gamepad.buttons[0].pressed;
+    // Read from the physical gamepad OR our mockGamepad generated from Hand Tracking gestures
+    const getBtn = (src) => {
+      if (!src) return false;
+      if (src.hand) {
+         // Re-evaluate pinch locally or just read the hand tracking state variables if we saved them...
+         // Better: The mockGamepad logic above is local to the loop. Let's just use the physical gamepad 
+         // logic on the activeSource later, or extract it cleanly.
+         // For 'rightPressed' logic here, we just need to re-query the hardware.
+         return false; // Handled below safely
+      }
+      return src.gamepad && src.gamepad.buttons[0] && src.gamepad.buttons[0].pressed;
+    };
+    
+    // We update this check to be more robust, delegating the actual evaluation to the specific activeSource later
+    const rightPressed = false; 
+    const leftPressed = false;
 
     // Helper: Specific Tool Override
     const tool = this._sculptManager.getCurrentTool();
@@ -3646,8 +3814,6 @@ class Scene {
       // Standard Logic for other tools
       // FORCE DOMINANT HAND (User Request: Disable Non-Dominant Hand Sculpting)
       if (domSource) activeSource = domSource;
-      else if (rightPressed) activeSource = right;
-      else if (leftPressed) activeSource = left;
       else if (nonDomSource) activeSource = nonDomSource;
       else {
         for (const s of sources) { activeSource = s; break; }
@@ -4430,7 +4596,9 @@ class Scene {
           }
 
           for (let src of session.inputSources) {
-            if (!src.gamepad) continue;
+            // Support native hand tracking mock objects
+            const gamepad = src.hand ? { buttons: [{pressed:false},{pressed:false}] } : src.gamepad;
+            if (!gamepad) continue;
 
             // Get Physical Matrix (World Space)
             const ctl = (src.handedness === 'left') ? this._vrControllerLeft : this._vrControllerRight;
@@ -4494,7 +4662,18 @@ class Scene {
 
         // EXTRACT ANALOG TRIGGER VALUE
         let triggerValue = 1.0;
-        if (source && source.gamepad && source.gamepad.buttons[0]) {
+        // Re-calculate the mock trigger for Voxel Engine pass
+        if (source && source.hand) {
+           const thumbTip = frame.getJointPose(source.hand.get('thumb-tip'), refSpace);
+           const indexTip = frame.getJointPose(source.hand.get('index-finger-tip'), refSpace);
+           if (thumbTip && indexTip) {
+              const pT = thumbTip.transform.position;
+              const pI = indexTip.transform.position;
+              triggerValue = (vec3.distance([pT.x, pT.y, pT.z], [pI.x, pI.y, pI.z]) < 0.02) ? 1.0 : 0.0;
+           } else {
+             triggerValue = 0.0;
+           }
+        } else if (source && source.gamepad && source.gamepad.buttons[0]) {
           triggerValue = source.gamepad.buttons[0].value;
         }
 

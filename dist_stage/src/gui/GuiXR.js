@@ -818,6 +818,19 @@ export default class GuiXR {
     } catch (e) {
       console.error('CRASH in _getWidgets mapping!', e);
     }
+    // Inject Global Close Button
+    offsetWidgets.push({
+      type: 'button',
+      id: 'global_close',
+      label: 'X',
+      x: CANVAS_SIZE - 60,
+      y: 10,
+      w: 50,
+      h: 50,
+      onInteract: () => {
+         this.toggleVisibility();
+      }
+    });
 
     return offsetWidgets;
   }
@@ -1903,8 +1916,23 @@ export default class GuiXR {
     if (!this._isPopupHUD) {
       // BG
       ctx.fillStyle = '#202020';
-      if (this._isMiniHUD) ctx.fillStyle = 'rgba(32,32,32,0.95)';
-      ctx.fillRect(0, 0, w, h);
+      if (this._isMiniHUD) {
+        ctx.fillStyle = 'rgba(32,32,32,0.95)';
+        ctx.fillRect(0, 0, w, h);
+        
+        // Draw Active Context Border
+        if (this._main && this._main._isMiniHUDActive) {
+           ctx.strokeStyle = '#00D0FF';
+           ctx.lineWidth = 4;
+           ctx.strokeRect(2, 2, w-4, h-4);
+        } else {
+           ctx.strokeStyle = '#444';
+           ctx.lineWidth = 4;
+           ctx.strokeRect(2, 2, w-4, h-4);
+        }
+      } else {
+        ctx.fillRect(0, 0, w, h);
+      }
 
       // Draw Version Info (Debug)
       if (!this._isMiniHUD) {

@@ -93,6 +93,22 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   };
 
   if (isMiniHUD) {
+    // Add Main Menu Button
+    widgets.push({
+      type: 'button',
+      id: 'main_menu',
+      label: '[ Main Menu ]',
+      x: col1X, y: y, w: 710, h: 50,
+      data: { tint: '#444' },
+      onInteract: () => {
+        if (main._guiXR) {
+          main._guiXR.toggleVisibility();
+        }
+      }
+    });
+    
+    y += 60; // Space for the next button
+
     widgets.push({
       type: 'button',
       id: 'tool_select',

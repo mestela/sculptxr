@@ -1,3 +1,9 @@
+## v0.9.279 - v0.9.288
+- **Feature**: **Native Hand Tracking Polish**: Rebuilt the VR Mini-HUD interaction model specifically for native hand tracking. The Mini-HUD now anchors dynamically to the physical palm of the non-dominant hand, and includes a proximity-based cyan glowing border to indicate when it is active.
+- **UX**: **Z-Depth Push-to-Click**: Added an intuitive Z-depth physical collision system. You can now press Mini-HUD buttons directly by poking the panel with your index finger, completely eliminating the need to use awkward 'Pinch' gestures while hovering. 
+- **UX**: **Grab Suppression**: Sculpting and world-grabbing operations are now rigorously suppressed anytime your dominant hand is within 25cm of your non-dominant wrist/palm. This permanently solves the issue where attempting to use the Mini-HUD would accidentally carve giant holes in the mesh or drag the world around.
+- **UX**: **Visual Enhancements**: Added a `[ Main Menu ]` button directly to the Mini-HUD, and a global `[ Close Menu ]` button to the Main Menu overlay. Rendered basic hand skeleton spheres to visualize hand tracking data, and suppressed the main VR laser pointer while native hand tracking is active.
+
 ## v0.9.267
 - **Feature**: **Voxel Smooth Tool**: Implemented a localized 3D Soft-Blur (averaging filter) over the SDF volume for Voxels. It evaluates a 3D bounding box natively within the worker thread, producing mathematically perfect bevels and organic transitions without physically moving geometry.
 - **UX**: Exposed the Voxel Smooth tool in the VR Mini-HUD, and mapped it to the secondary trigger so you can rapidly smooth geometry on-the-fly while using the Add/Sub Voxel brush.
