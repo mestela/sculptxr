@@ -1,4 +1,9 @@
 
+## Done
+- [x] (_Bug_): GalaxyXR single-eye rendering fixed via rigorous `gl.scissor` clipping and FBO binding. 
+- [x] (_Performance_): `window.screenLog` layout thrashing fixed via `.textContent` usage.
+- [x] (_Docs_): Documented GalaxyXR WebXR quirks in `docs/galaxyxr.md`.
+
 ## Todo
 
 - **Bug**:

@@ -114,6 +114,7 @@ Despite not being designed to track the back of the controllers, the Quest 3 doe
 The quest 3 will go into standby mode if it thinks you're not using it. Covering the light sensor helps trick it, but if the headset hasn't moved for 2 minutes, it assumes it's not on your head and goes into standby. Currently I just tap or nudge the headset every 30 seconds. There are developer options to better control this, but I haven't tested them.
 
 
+
 ## Clear Browser Cache
 The browser on the Quest 3 and Chrome desktop love to aggresively cache javascript files. This plays havok with SculptXR where I'm frequently updating files.
 
@@ -146,6 +147,7 @@ Here's what I do to clear the cache.
 ## Original Project Resources
 - Live Demo: [stephaneginier.com/sculptgl](http://stephaneginier.com/sculptgl)
 - Website: [stephaneginier.com](http://stephaneginier.com/)
+- Galaxy XR Troubleshooting: [docs/galaxyxr.md](docs/galaxyxr.md)
 
 ## Credits
 - Original SculptGL by [Stéphane Ginier](http://stephaneginier.com/).
