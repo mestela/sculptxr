@@ -824,7 +824,7 @@ class Scene {
 
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
-  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null) {
+  _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, frame = null) {
     const pStartTotal = performance.now();
     const prof = window.__sculptProfile;
     if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
@@ -1425,10 +1425,9 @@ class Scene {
       if (isHandActive) {
         // Init Sphere Pool if missing
         if (!this._handJointSpheres) {
-          const sg = require('./mesh/Primitives.js').default;
           this._handJointSpheres = [];
           for (let i = 0; i < 50; i++) { // 25 joints per hand roughly
-            const sph = sg.createSphere(this._gl, 1.0);
+            const sph = Primitives.createSphere(this._gl, 1.0);
             sph.setShaderType(Enums.Shader.FLAT);
             sph.setFlatColor([0.5, 0.8, 1.0]);
             this._handJointSpheres.push(sph);
@@ -1505,17 +1504,40 @@ class Scene {
       this.initVRControllers();
     }
 
-    // FBO is already bound by callee (usually glLayer.framebuffer)
-    // Clear once for the whole VR buffer (Left+Right)
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (this._guiXR) this._guiXR.updateTexture(); // Pre-upload texture to avoid mid-pass FBO corruption on mobile drivers
 
+    // Enable scissor test to prevent eyes from bleeding into each other on some platforms
+    gl.enable(gl.SCISSOR_TEST);
+
+    if (this._guiXR) this._guiXR.updateTexture(); // Pre-upload texture to avoid mid-pass FBO corruption on mobile drivers
+
+    // Normal forward loop for stereo rendering (Left then Right)
     for (var i = 0; i < views.length; ++i) {
       var view = views[i];
       var viewport = glLayer.getViewport(view);
-      gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+      
+      // Galaxy XR Hotfix: Explicitly re-bind FBO and reset base GL states per pass
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+      gl.enable(gl.CULL_FACE);
+      gl.enable(gl.DEPTH_TEST);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
 
-      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix);
+      gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+      gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
+
+      // Per-Eye Clear: Transparent black for AR passthrough support
+      gl.clearColor(0.0, 0.0, 0.0, 0.0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix, null, frame);
+
+      // Android/Adreno Driver Bug Workaround: Force execution of tile commands 
+      // before changing viewport/scissor for the next eye. Avoids second FBO half being dropped.
+      gl.flush();
     }
+
+    gl.disable(gl.SCISSOR_TEST);
   }
 
 
@@ -2032,7 +2054,12 @@ class Scene {
     gl.makeXRCompatible().then(() => {
       // By default, XRWebGLLayer creates an opaque buffer even if the canvas has alpha: true.
       // We MUST explicitly request an alpha channel here or immersive-ar passthrough will be solid black.
-      const baseLayer = new XRWebGLLayer(session, gl, { alpha: true });
+      // HOTFIX: Set antialias: false to prevent right-eye black screen on Samsung Galaxy XR due to Qualcomm MSAA FBO bug.
+      const baseLayer = new XRWebGLLayer(session, gl, { 
+        alpha: true, 
+        antialias: false,
+        framebufferScaleFactor: 1.0
+      });
       session.updateRenderState({ baseLayer, depthNear: 0.01, depthFar: 10000.0 });
 
       // Try 'local-floor' -> 'local' -> 'viewer'
@@ -2574,8 +2601,11 @@ class Scene {
       const gl = this._gl;
       const glLayer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
-      // BUGFIX: Desktop spectator pass overrides gl.clearColor. We MUST reset it to transparent here for AR Passthrough!
-      gl.clearColor(0.0, 0.0, 0.0, 0.0);
+      // BUGFIX: Desktop spectator pass overrides gl.clearColor.
+      // Set to DARK GREEN (0, 0.1, 0, 1) rather than transparent to diagnose Galaxy XR right eye blackout issue.
+      gl.colorMask(true, true, true, true);
+      gl.depthMask(true);
+      gl.clearColor(0.0, 0.1, 0.0, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
       // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)

@@ -5,15 +5,15 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.9.293</title>
+    <title>SculptXR v0.9.305</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v0.9.293
+                                                              Version: v0.9.305
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v0.9.293">
+    <meta property="og:title" content="SculptXR v0.9.305">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -336,6 +336,9 @@
                 if (!window._showDebugLog) return;
                 const logEl = document.getElementById('log');
                 if (logEl) {
+                    if (logEl.children.length > 50) {
+                        logEl.removeChild(logEl.firstChild);
+                    }
                     const line = document.createElement('div');
                     line.textContent = msg;
                     if (color) line.style.color = color;
@@ -373,6 +376,9 @@
                 if (logEl) {
                     const msg = args.join(' ');
                     if (!msg.includes('XRRequestFrame')) {
+                        if (logEl.children.length > 50) {
+                            logEl.removeChild(logEl.firstChild);
+                        }
                         const line = document.createElement('div');
                         line.textContent = msg;
                         logEl.appendChild(line);
@@ -400,8 +406,9 @@
                 btnCopy.style.opacity = "0.7";
                 btnCopy.style.zIndex = "1001"; // High z-index
 
+                // Use textContent to avoid innerText forced reflow layout cost
                 btnCopy.onclick = () => {
-                    const text = logContainer.innerText;
+                    const text = logContainer.textContent;
                     if (navigator.clipboard) {
                         navigator.clipboard.writeText(text).then(() => {
                             const oldText = btnCopy.textContent;
@@ -423,10 +430,7 @@
                 logContainer.prepend(btnCopy);
             }
 
-            // console.log("Initializing SculptGL for WebXR...");
-
-
-            if (window.screenLog) window.screenLog(`SculptXR ${VERSION}`, "lime");
+            if (window._showDebugLog && window.screenLog) window.screenLog(`SculptXR ${VERSION}`, "lime");
 
             // Check HTTPS
             if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
