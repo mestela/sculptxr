@@ -1,3 +1,10 @@
+## v0.9.289 - v0.9.304
+- **Performance**: **DOM Layout Thrashing Fix**: Discovered and fixed a major 60% CPU bottleneck caused by `window.screenLog` triggering synchronous `.innerText` layout recalculations every frame. Replaced with non-blocking `.textContent` and capped DOM element insertion length for an instant framerate boost on Standalone devices.
+- **Fix**: **Samsung Galaxy XR Render Bug**: Implemented a WebGL `gl.scissor` hardware clipping hotfix and explicit per-eye Framebuffer re-binding (`gl.bindFramebuffer`) inside `renderVR` to bypass a Qualcomm Adreno/Chrome driver bug that was causing WebXR to only render the scene strictly in the left eye.
+- **Fix**: **Mobile VR Fast Wireframes**: Changed the default Wireframe rendering mode to `Fast L0` not just for Oculus Browser, but for any detected `Android/Mobile VR` user agent (such as Chrome on Galaxy XR). PCVR safely retains `Smooth L0` defaults.
+- **Fix**: **Hand Tracking Crash**: Resolved a `ReferenceError: require is not defined` crash that prevented native hand skeleton lines from rendering in the latest module build.
+- **Fix**: **Frame Setup**: Resolved `ReferenceError: frame is not defined` from the XR Render Loop.
+
 ## v0.9.279 - v0.9.288
 - **Feature**: **Native Hand Tracking Polish**: Rebuilt the VR Mini-HUD interaction model specifically for native hand tracking. The Mini-HUD now anchors dynamically to the physical palm of the non-dominant hand, and includes a proximity-based cyan glowing border to indicate when it is active.
 - **UX**: **Z-Depth Push-to-Click**: Added an intuitive Z-depth physical collision system. You can now press Mini-HUD buttons directly by poking the panel with your index finger, completely eliminating the need to use awkward 'Pinch' gestures while hovering. 

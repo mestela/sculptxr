@@ -118,7 +118,7 @@ export default function getSettingsWidgets(main) {
     id: 'wireframe_type',
     label: '',
     x: 0, y: y, w: menuW, h: ITEM_H,
-    value: main.getMesh() ? main.getMesh().getWireframeType() : 1,
+    value: main.getMesh() ? main.getMesh().getWireframeType() : ((typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent)) ? 0 : 1),
     options: wireframeOptions,
     onSelect: (id) => {
       if (main.getMesh()) {
