@@ -65,7 +65,6 @@ cp -r app/resources/* dist_stage/resources/
 mkdir -p dist_stage/app/css
 cp -r app/css/* dist_stage/app/css/
 
-echo "{\"version\": \"$FULL_VERSION_STR\"}" > dist_stage/version.json
 
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 
