@@ -45,7 +45,7 @@ ShaderWireframe.draw = function (mesh /*, main*/ ) {
   gl.enable(gl.BLEND);
   gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE);
 
-  gl.drawElements(gl.LINES, mesh.getRenderNbEdges() * 2, gl.UNSIGNED_INT, 0);
+  // gl.drawElements(gl.LINES, mesh.getRenderNbEdges() * 2, gl.UNSIGNED_INT, 0);
   gl.disable(gl.POLYGON_OFFSET_FILL);
 
   gl.disable(gl.BLEND);

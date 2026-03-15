@@ -7,5 +7,27 @@
     "file-saver": "./lib/file-saver-wrapper.js",
     "zip": "./lib/zip-wrapper.js",
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"
-  }
+  },
+  "name": "sculptxr",
+  "version": "1.0.0",
+  "description": "WebXR Sculpting",
+  "main": "main.js",
+  "directories": {
+    "doc": "docs",
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mestela/sculptxr.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mestela/sculptxr/issues"
+  },
+  "homepage": "https://github.com/mestela/sculptxr#readme"
 }

@@ -3,6 +3,7 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
 import Geometry from './Geometry.js';
+import * as THREE from 'three';
 
 var easeOutQuart = function (r) {
   r = Math.min(1.0, r) - 1.0;
@@ -63,6 +64,9 @@ class Camera {
     this._view = mat4.create(); // view matrix
     this._proj = mat4.create(); // projection matrix
     this._viewport = mat4.create(); // viewport matrix
+
+    this._threeCamera = new THREE.PerspectiveCamera(this._fov, 1.0, 0.01, 5000.0);
+    this._threeCamera.matrixAutoUpdate = false;
 
     // Async thread-safe unprojection (Desktop Picking during VR renders)
     this._unprojectDiverted = false;
@@ -129,6 +133,10 @@ class Camera {
 
   getView() {
     return this._view;
+  }
+
+  getThreeCamera() {
+    return this._threeCamera;
   }
 
   getProjection() {
@@ -275,6 +283,19 @@ class Camera {
         vec3.copy(this._main._desktopCameraCache.offset, this._offset);
       }
     }
+
+    if (this._threeCamera) {
+      // Three.js computes view matrix via matrixWorldInverse.
+      // We already compute a perfect 4x4 View matrix here in SculptXR.
+      // Easiest sync is to just set matrixWorldInverse to our _view matrix.
+      this._threeCamera.matrixAutoUpdate = false;
+      
+      // Our _view is the view matrix. Three.js matrixWorldInverse is exactly the view matrix. 
+      // The matrixWorld is the inverse of the view matrix.
+      this._threeCamera.matrixWorldInverse.fromArray(this._view);
+      this._threeCamera.matrixWorld.copy(this._threeCamera.matrixWorldInverse).invert();
+      this._threeCamera.matrix.copy(this._threeCamera.matrixWorld);
+    }
   }
 
   optimizeNearFar(bb) {
@@ -289,10 +310,14 @@ class Camera {
     if (window.debugForceNearClip !== undefined) {
       this._near = window.debugForceNearClip;
       this._far = 5000.0;
+    } else if (!Number.isFinite(bb[0])) {
+      // Fallback for uninitialized/empty mesh bounding boxes
+      this._near = 0.01;
+      this._far = 5000.0;
     } else {
       var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
       this._near = Math.max(0.001, distToBoxCenter - boxRadius);
-      this._far = boxRadius + distToBoxCenter;
+      this._far = Math.max(this._near + 0.1, boxRadius + distToBoxCenter); // Ensure far > near
     }
     this.updateProjection();
   }
@@ -310,6 +335,20 @@ class Camera {
     if (this._main && this._main._xrSession && this._main._desktopCameraCache) {
       if (!this._unprojectDiverted) {
         mat4.copy(this._main._desktopCameraCache.proj, this._proj);
+      }
+    }
+
+    if (this._threeCamera) {
+      if (this._projectionType === Enums.Projection.PERSPECTIVE) {
+        this._threeCamera.fov = this._fov;
+        this._threeCamera.aspect = this._width / this._height;
+        this._threeCamera.near = this._near;
+        this._threeCamera.far = this._far;
+        this._threeCamera.updateProjectionMatrix();
+      } else {
+        // Ortho not fully supported in Three.js branch yet, fallback
+        this._threeCamera.projectionMatrix.fromArray(this._proj);
+        this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
       }
     }
   }

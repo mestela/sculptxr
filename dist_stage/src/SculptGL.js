@@ -81,47 +81,13 @@ class SculptGL extends Scene {
     // this._gui.initGui(); // REMOVED: Called in Scene.start(), premature call caused crash
 
     // --- Version Checker ---
+    /*
     window._updateAvailable = false;
     window._availableVersion = "";
-    this._checkVersion = async () => {
-      try {
-        const response = await fetch('./version.json?t=' + Date.now());
-        if (response.ok) {
-          const data = await response.json();
-          const currentVersion = Object.values({VERSION})[0];
-          if (data && data.version && data.version !== currentVersion) {
-            // Version Mismatch Detected!
-            window._updateAvailable = true;
-            window._availableVersion = data.version;
-            
-            // Show Desktop Banner
-            const banner = document.getElementById('xr-update');
-            if (banner) {
-               banner.innerHTML = `new build available! current version ${currentVersion}, new version ${data.version},<br>please clear browser cache and refresh`;
-               banner.style.display = 'block';
-            }
-
-            // Let Mini-HUD know if it's currently open
-            if (this._guiXR && this._guiXR._showMenu) {
-               this._guiXR.refreshToolsWidget();
-               this._guiXR._needsRedraw = true;
-            }
-
-            // Log warning into VR HUD if active
-            if (window.screenLog) {
-              window.screenLog(`new build ready!`, "orange");
-              window.screenLog(`${currentVersion} -> ${data.version}`, "orange");
-            }
-          }
-        }
-      } catch (e) {
-        // Silently fail if version.json is missing or offline
-      }
-    };
-    
-    // Check almost immediately (1s) to catch stale caches on initial load, then every 5 minutes
+    this._checkVersion = async () => { ... }
     setTimeout(() => this._checkVersion(), 1000);
     setInterval(() => this._checkVersion(), 5 * 60 * 1000);
+    */
 
     // Debug Helpers for Desktop Testing
     window.debug = {

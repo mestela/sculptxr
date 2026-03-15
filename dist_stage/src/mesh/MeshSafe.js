@@ -1,4 +1,5 @@
 import { vec3, mat3, mat4 } from 'gl-matrix';
+import * as THREE from 'three';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
 import OctreeCell from '../math3d/OctreeCell.js';
@@ -266,23 +267,27 @@ class Mesh {
   }
 
   getVerticesDrawArrays() {
-    if (!this._meshData._DAverticesXYZ) this.updateDrawArrays();
+    if (!this._meshData._DAverticesXYZ || this._meshData._DAverticesXYZ.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAverticesXYZ;
   }
 
   getNormalsDrawArrays() {
+    if (!this._meshData._DAnormalsXYZ || this._meshData._DAnormalsXYZ.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAnormalsXYZ;
   }
 
   getColorsDrawArrays() {
+    if (!this._meshData._DAcolorsRGB || this._meshData._DAcolorsRGB.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAcolorsRGB;
   }
 
   getMaterialsDrawArrays() {
+    if (!this._meshData._DAmaterialsPBR || this._meshData._DAmaterialsPBR.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAmaterialsPBR;
   }
 
   getTexCoordsDrawArrays() {
+    if (!this._meshData._DAtexCoordsST || this._meshData._DAtexCoordsST.length < this.getNbTriangles() * 6) this.updateDrawArrays();
     return this._meshData._DAtexCoordsST;
   }
 
@@ -378,6 +383,30 @@ class Mesh {
     if (this._renderData)
       this.updateDuplicateColorsAndMaterials();
     this.updateCenter();
+    this.initThreeMesh();
+  }
+
+  getThreeMesh() {
+    return this._renderData ? this._renderData._threeMesh : null;
+  }
+
+  initThreeMesh() {
+    if(!this._renderData._geometry) {
+      this._renderData._geometry = new THREE.BufferGeometry();
+      
+      this._renderData._material = new THREE.MeshStandardMaterial({ 
+        color: 0xcccccc, 
+        roughness: 0.5,
+        metalness: 0.1,
+        wireframe: false,
+        side: THREE.DoubleSide
+      });
+      if (this.isUsingColors && this.isUsingColors()) {
+          this._renderData._material.vertexColors = true;
+      }
+      
+      this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, this._renderData._material);
+    }
   }
 
   initTopology() {
@@ -1372,10 +1401,22 @@ class Mesh {
     var cdm = this._meshData._DAmaterialsPBR;
 
     if (!cdv || cdv.length < nbTriangles * 9) {
-      cdv = this._meshData._DAverticesXYZ = new Float32Array(nbTriangles * 9);
-      cdn = this._meshData._DAnormalsXYZ = new Float32Array(nbTriangles * 9);
-      cdc = this._meshData._DAcolorsRGB = new Float32Array(nbTriangles * 9);
-      cdm = this._meshData._DAmaterialsPBR = new Float32Array(nbTriangles * 9);
+      this._meshData._DAverticesXYZ = new Float32Array(nbTriangles * 9);
+      this._meshData._DAnormalsXYZ = new Float32Array(nbTriangles * 9);
+      this._meshData._DAcolorsRGB = new Float32Array(nbTriangles * 9);
+      this._meshData._DAmaterialsPBR = new Float32Array(nbTriangles * 9);
+      
+      if (!full && cdv) {
+        this._meshData._DAverticesXYZ.set(cdv);
+        this._meshData._DAnormalsXYZ.set(cdn);
+        this._meshData._DAcolorsRGB.set(cdc);
+        this._meshData._DAmaterialsPBR.set(cdm);
+      }
+      
+      cdv = this._meshData._DAverticesXYZ;
+      cdn = this._meshData._DAnormalsXYZ;
+      cdc = this._meshData._DAcolorsRGB;
+      cdm = this._meshData._DAmaterialsPBR;
     }
     console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
@@ -1857,7 +1898,10 @@ class Mesh {
   }
 
   setFlatShading(flatShading) {
-    this._renderData._flatShading = flatShading;
+    if (this._renderData._flatShading !== flatShading) {
+      this._renderData._flatShading = flatShading;
+      this.updateBuffers();
+    }
   }
 
   setShowWireframe(showWireframe) {
@@ -1866,7 +1910,13 @@ class Mesh {
   }
 
   setUseDrawArrays(bool) {
-    this._renderData._useDrawArrays = bool;
+    if (this._renderData._useDrawArrays !== bool) {
+      this._renderData._useDrawArrays = bool;
+      if (bool) {
+        this.updateDrawArrays();
+      }
+      this.updateBuffers();
+    }
   }
 
   getGL() {
@@ -2027,63 +2077,174 @@ class Mesh {
 
   updateVertexBuffer() {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
-
-    this.getVertexBuffer().update(vertices, this.getRenderNbVertices() * 3);
+    
+    if (vertices.length === 6) {
+        console.warn("🛑 MeshSafe: CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+    }
+    
+    var geom = this._renderData._geometry;
+    if(!geom) return;
+    var attr = geom.getAttribute('position');
+    if (!attr || attr.array !== vertices || attr.array.length !== vertices.length) {
+      geom.dispose();
+      
+      var newGeom = new THREE.BufferGeometry();
+      newGeom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      
+      if (this._renderData._threeMesh) {
+          this._renderData._threeMesh.geometry = newGeom;
+      }
+      this._renderData._geometry = newGeom;
+      
+      this.updateNormalBuffer();
+      this.updateColorBuffer();
+      this.updateMaterialBuffer();
+      this.updateTexCoordBuffer();
+      this.updateIndexBuffer();
+      this.updateWireframeBuffer();
+      
+      if (this.isUsingDrawArrays()) {
+          newGeom.setDrawRange(0, this.getRenderNbVertices());
+      }
+    } else {
+      attr.array.set(vertices);
+      attr.needsUpdate = true;
+    }
   }
 
   updateNormalBuffer() {
     var normals = this.isUsingDrawArrays() ? this.getNormalsDrawArrays() : this.getNormals();
-    this.getNormalBuffer().update(normals, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    if(!geom) return;
+    var attr = geom.getAttribute('normal');
+    if (!attr || attr.array !== normals || attr.array.length !== normals.length) {
+      if (attr) {
+          geom.deleteAttribute('normal');
+          geom.dispose();
+      }
+      geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    } else {
+      attr.array.set(normals);
+      attr.needsUpdate = true;
+    }
   }
 
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
-    this.getColorBuffer().update(colors, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    if(!geom) return;
+    var attr = geom.getAttribute('color');
+    if (!attr || attr.array !== colors || attr.array.length !== colors.length) {
+      if (attr) {
+          geom.deleteAttribute('color');
+          geom.dispose();
+      }
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    } else {
+      attr.array.set(colors);
+      attr.needsUpdate = true;
+    }
   }
 
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
-    this.getMaterialBuffer().update(materials, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    if(!geom) return;
+    var attr = geom.getAttribute('sculptMaterial');
+    if (!attr || attr.array !== materials || attr.array.length !== materials.length) {
+      if (attr) {
+          geom.deleteAttribute('sculptMaterial');
+          geom.dispose();
+      }
+      geom.setAttribute('sculptMaterial', new THREE.BufferAttribute(materials, 3));
+    } else {
+      attr.array.set(materials);
+      attr.needsUpdate = true;
+    }
   }
 
   updateTexCoordBuffer() {
+    var geom = this._renderData._geometry;
+    if(!geom) return;
     if (this.isUsingTexCoords()) {
       var texCoords = this.isUsingDrawArrays() ? this.getTexCoordsDrawArrays() : this.getTexCoords();
-      this.getTexCoordBuffer().update(texCoords, this.getRenderNbVertices() * 2);
+      var attr = geom.getAttribute('uv');
+      if (!attr || attr.array !== texCoords || attr.array.length !== texCoords.length) {
+        if (attr) {
+            geom.deleteAttribute('uv');
+            geom.dispose();
+        }
+        geom.setAttribute('uv', new THREE.BufferAttribute(texCoords, 2));
+      } else {
+        attr.array.set(texCoords);
+        attr.needsUpdate = true;
+      }
+    } else {
+      if (geom.getAttribute('uv')) {
+          geom.deleteAttribute('uv');
+          geom.dispose();
+      }
     }
   }
 
   updateIndexBuffer() {
-    if (!this.isUsingDrawArrays()) {
-      var triangles = this.isUsingTexCoords() ? this.getTrianglesTexCoord() : this.getTriangles();
-      this.getIndexBuffer().update(triangles, this.getNbTriangles() * 3);
+    var geom = this._renderData._geometry;
+    
+    if(!geom) return;
+
+    if (this._meshData.isUsingDrawArrays() || this.isUsingDrawArrays()) {
+        if (geom.index) {
+            geom.setIndex(null);
+            geom.dispose();
+        }
+        return;
+    }
+
+    var useTex = this.isUsingTexCoords();
+    var triangles = useTex ? this.getTrianglesTexCoord() : this.getTriangles();
+    
+    if(!geom) return;
+
+    if (!geom.index || geom.index.array.length !== triangles.length) {
+      if (geom.index) {
+          geom.setIndex(null);
+          geom.dispose();
+      }
+      geom.setIndex(new THREE.BufferAttribute(triangles, 1));
+    } else {
+      geom.index.array.set(triangles);
+      geom.index.needsUpdate = true;
+    }
+    
+    // Setup draw bounds for fixed capacity arrays
+    if (geom.index) {
+        geom.setDrawRange(0, this.getNbTriangles() * 3);
     }
   }
 
   updateWireframeBuffer() {
-    if (this.getShowWireframe()) {
-      if (!this.getEdges() || this.getEdges().length === 0) {
-        if (window.screenLog) window.screenLog("[MeshSafe] Lazy init wireframe topology", "yellow");
-        this.allocateArrays();
-        this.initFaceRings();
-        this.initEdges();
-      }
-      this.getWireframeBuffer().update(this.getWireframe(), this.getNbEdges() * 2);
-    }
+    // Unsupported in Three.js native port directly yet via the old raw format
   }
 
   updateGeometryBuffers() {
     this.updateVertexBuffer();
-    this.updateNormalBuffer();
+    if (!this._renderData._geometry.getAttribute('normal')) {
+        this.updateNormalBuffer();
+    }
   }
 
   updateBuffers() {
     this.updateGeometryBuffers();
-    this.updateColorBuffer();
-    this.updateMaterialBuffer();
+    if (!this._renderData._geometry.getAttribute('color')) this.updateColorBuffer();
+    if (!this._renderData._geometry.getAttribute('sculptMaterial')) this.updateMaterialBuffer();
     this.updateTexCoordBuffer();
     this.updateIndexBuffer();
-    this.updateWireframeBuffer();
+    // this.updateWireframeBuffer();
+    
+    if (this.isUsingDrawArrays() && this._renderData._geometry) {
+      var geom = this._renderData._geometry;
+      geom.setDrawRange(0, this.getRenderNbVertices());
+    }
   }
 
   release() {

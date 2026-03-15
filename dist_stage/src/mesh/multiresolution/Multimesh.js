@@ -112,8 +112,10 @@ class Multimesh extends Mesh {
     this.updateBuffers();
 
     var mesh = this._meshes[this.getLowIndexRender()];
-    this._indexBuffer.update(mesh.getTriangles());
-    this._wireframeBuffer.update(mesh.getWireframe());
+    
+    // Instead of raw webgl buffer update, call the new Three.js geometry update
+    mesh.updateIndexBuffer();
+    mesh.updateWireframeBuffer();
   }
 
   selectResolution(sel) {

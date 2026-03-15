@@ -5,6 +5,7 @@ import OctreeCell from '../math3d/OctreeCell.js';
 import Shader from '../render/ShaderLib.js';
 import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
+import * as THREE from 'three';
 
 /*
 Basic usage:
@@ -278,23 +279,27 @@ class Mesh {
   }
 
   getVerticesDrawArrays() {
-    if (!this._meshData._DAverticesXYZ) this.updateDrawArrays();
+    if (!this._meshData._DAverticesXYZ || this._meshData._DAverticesXYZ.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAverticesXYZ;
   }
 
   getNormalsDrawArrays() {
+    if (!this._meshData._DAnormalsXYZ || this._meshData._DAnormalsXYZ.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAnormalsXYZ;
   }
 
   getColorsDrawArrays() {
+    if (!this._meshData._DAcolorsRGB || this._meshData._DAcolorsRGB.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAcolorsRGB;
   }
 
   getMaterialsDrawArrays() {
+    if (!this._meshData._DAmaterialsPBR || this._meshData._DAmaterialsPBR.length < this.getNbTriangles() * 9) this.updateDrawArrays();
     return this._meshData._DAmaterialsPBR;
   }
 
   getTexCoordsDrawArrays() {
+    if (!this._meshData._DAtexCoordsST || this._meshData._DAtexCoordsST.length < this.getNbTriangles() * 6) this.updateDrawArrays();
     return this._meshData._DAtexCoordsST;
   }
 
@@ -413,6 +418,32 @@ class Mesh {
     if (this._renderData)
       this.updateDuplicateColorsAndMaterials();
     this.updateCenter();
+    this.initThreeMesh();
+  }
+
+  initThreeMesh() {
+    if (!this._renderData) return;
+    if (!this._renderData._threeMesh) {
+      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh StandardMaterial", "green");
+      var material = new THREE.MeshStandardMaterial({
+        color: 0xcccccc,
+        roughness: 0.5,
+        metalness: 0.1,
+        wireframe: false,
+        side: THREE.DoubleSide
+      });
+      // Ensure vertex colors are enabled if the mesh supports them
+      if (this.isUsingColors && this.isUsingColors()) {
+          material.vertexColors = true;
+      }
+      this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
+      this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
+      this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
+    }
+  }
+
+  getThreeMesh() {
+    return this._renderData ? this._renderData._threeMesh : null;
   }
 
   initTopology() {
@@ -1412,10 +1443,23 @@ class Mesh {
     var cdm = this._meshData._DAmaterialsPBR;
 
     if (!cdv || cdv.length < nbTriangles * 9) {
-      cdv = this._meshData._DAverticesXYZ = new Float32Array(nbTriangles * 9);
-      cdn = this._meshData._DAnormalsXYZ = new Float32Array(nbTriangles * 9);
-      cdc = this._meshData._DAcolorsRGB = new Float32Array(nbTriangles * 9);
-      cdm = this._meshData._DAmaterialsPBR = new Float32Array(nbTriangles * 9);
+      this._meshData._DAverticesXYZ = new Float32Array(nbTriangles * 9);
+      this._meshData._DAnormalsXYZ = new Float32Array(nbTriangles * 9);
+      this._meshData._DAcolorsRGB = new Float32Array(nbTriangles * 9);
+      this._meshData._DAmaterialsPBR = new Float32Array(nbTriangles * 9);
+
+      // We MUST copy the old data over if this is a PARTIAL update (iFaces !== undefined)!
+      if (!full && cdv) {
+        this._meshData._DAverticesXYZ.set(cdv);
+        this._meshData._DAnormalsXYZ.set(cdn);
+        this._meshData._DAcolorsRGB.set(cdc);
+        this._meshData._DAmaterialsPBR.set(cdm);
+      }
+      
+      cdv = this._meshData._DAverticesXYZ;
+      cdn = this._meshData._DAnormalsXYZ;
+      cdc = this._meshData._DAcolorsRGB;
+      cdm = this._meshData._DAmaterialsPBR;
     }
     console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
@@ -1592,6 +1636,13 @@ class Mesh {
     var cen = this._transformData._center;
     var m = this._transformData._lastComputedMVP;
     this._transformData._lastComputedDepth = m[2] * cen[0] + m[6] * cen[1] + m[10] * cen[2] + m[14];
+    
+    // Sync to Three.js Mesh
+    if (this._renderData && this._renderData._threeMesh) {
+      this._renderData._threeMesh.matrixAutoUpdate = false;
+      this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
+      this._renderData._threeMesh.matrixWorld.copy(this._renderData._threeMesh.matrix);
+    }
   }
 
   computeLocalRadius() {
@@ -1893,7 +1944,10 @@ class Mesh {
   }
 
   setFlatShading(flatShading) {
-    this._renderData._flatShading = flatShading;
+    if (this._renderData._flatShading !== flatShading) {
+      this._renderData._flatShading = flatShading;
+      this.updateBuffers();
+    }
   }
 
   setShowWireframe(showWireframe) {
@@ -1902,7 +1956,13 @@ class Mesh {
   }
 
   setUseDrawArrays(bool) {
-    this._renderData._useDrawArrays = bool;
+    if (this._renderData._useDrawArrays !== bool) {
+      this._renderData._useDrawArrays = bool;
+      if (bool) {
+        this.updateDrawArrays();
+      }
+      this.updateBuffers();
+    }
   }
 
   getGL() {
@@ -2040,17 +2100,23 @@ class Mesh {
   /////////
   render(main) {
     if (!this.isVisible()) return;
-    Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
+    try {
+      Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
+    } catch (e) { } // Ignore WebGL1 shader errors during Three.js transition
   }
 
   renderWireframe(main) {
     if (!this.isVisible()) return;
-    Shader[Enums.Shader.WIREFRAME].getOrCreate(this.getGL()).draw(this, main);
+    try {
+      Shader[Enums.Shader.WIREFRAME].getOrCreate(this.getGL()).draw(this, main);
+    } catch (e) { }
   }
 
   renderFlatColor(main) {
     if (!this.isVisible()) return;
-    Shader[Enums.Shader.FLAT].getOrCreate(this.getGL()).draw(this, main);
+    try {
+      Shader[Enums.Shader.FLAT].getOrCreate(this.getGL()).draw(this, main);
+    } catch (e) { }
   }
 
   /////////////////
@@ -2063,37 +2129,165 @@ class Mesh {
 
   updateVertexBuffer() {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
-    this.getVertexBuffer().update(vertices, this.getRenderNbVertices() * 3);
+    
+    if (vertices.length === 6) {
+        console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+    }
+    
+    var geom = this._renderData._geometry;
+    var attr = geom.getAttribute('position');
+    
+    // In Three.js >r130, changing attribute array sizes dynamically is strictly forbidden.
+    // Sometimes even deleteAttribute/dispose fails to force WebGL to rebuild Attribute 0 (Position).
+    // If the size changes, we must completely rebuild the BufferGeometry object and hot-swap it.
+    if (!attr || attr.array !== vertices || attr.array.length !== vertices.length) {
+      if (geom) {
+          geom.dispose();
+      }
+      
+      var newGeom = new THREE.BufferGeometry();
+      newGeom.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      
+      if (this._renderData._threeMesh) {
+          this._renderData._threeMesh.geometry = newGeom;
+      }
+      this._renderData._geometry = newGeom;
+      
+      // Force all other attributes to re-bind to the NEW geometry
+      this.updateNormalBuffer();
+      this.updateColorBuffer();
+      this.updateMaterialBuffer();
+      this.updateTexCoordBuffer();
+      this.updateIndexBuffer();
+      this.updateWireframeBuffer();
+      
+      if (this.isUsingDrawArrays()) {
+          newGeom.setDrawRange(0, this.getRenderNbVertices());
+      }
+    } else {
+      attr.array.set(vertices);
+      attr.needsUpdate = true;
+    }
   }
 
   updateNormalBuffer() {
     var normals = this.isUsingDrawArrays() ? this.getNormalsDrawArrays() : this.getNormals();
-    this.getNormalBuffer().update(normals, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    var attr = geom.getAttribute('normal');
+    if (!attr || attr.array !== normals || attr.array.length !== normals.length) {
+      if (attr) {
+          geom.deleteAttribute('normal');
+          geom.dispose();
+      }
+      geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    } else {
+      attr.array.set(normals);
+      attr.needsUpdate = true;
+    }
   }
 
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
-    this.getColorBuffer().update(colors, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    var attr = geom.getAttribute('color');
+    if (!attr || attr.array !== colors || attr.array.length !== colors.length) {
+      if (attr) {
+          geom.deleteAttribute('color');
+          geom.dispose();
+      }
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    } else {
+      attr.array.set(colors);
+      attr.needsUpdate = true;
+    }
   }
 
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
-    this.getMaterialBuffer().update(materials, this.getRenderNbVertices() * 3);
+    var geom = this._renderData._geometry;
+    var attr = geom.getAttribute('sculptMaterial');
+    if (!attr || attr.array !== materials || attr.array.length !== materials.length) {
+      if (attr) {
+          geom.deleteAttribute('sculptMaterial');
+          geom.dispose();
+      }
+      geom.setAttribute('sculptMaterial', new THREE.BufferAttribute(materials, 3));
+    } else {
+      attr.array.set(materials);
+      attr.needsUpdate = true;
+    }
   }
 
   updateTexCoordBuffer() {
+    var geom = this._renderData._geometry;
     if (this.isUsingTexCoords()) {
       var texCoords = this.isUsingDrawArrays() ? this.getTexCoordsDrawArrays() : this.getTexCoords();
-      this.getTexCoordBuffer().update(texCoords, this.getRenderNbVertices() * 2);
+      var attr = geom.getAttribute('uv');
+      if (!attr || attr.array !== texCoords || attr.array.length !== texCoords.length) {
+        if (attr) {
+            geom.deleteAttribute('uv');
+            geom.dispose();
+        }
+        geom.setAttribute('uv', new THREE.BufferAttribute(texCoords, 2));
+      } else {
+        attr.array.set(texCoords);
+        attr.needsUpdate = true;
+      }
+    } else {
+      if (geom.getAttribute('uv')) {
+          geom.deleteAttribute('uv');
+          geom.dispose();
+      }
     }
   }
 
   updateIndexBuffer() {
-    if (this.isUsingDrawArrays()) return;
+    var geom = this._renderData._geometry;
+    if (this.isUsingDrawArrays()) {
+        if (geom.index) {
+            geom.setIndex(null);
+            geom.dispose();
+        }
+        return;
+    }
     var useTex = this.isUsingTexCoords();
     var triangles = useTex ? this.getTrianglesTexCoord() : this.getTriangles();
-    var triangles = useTex ? this.getTrianglesTexCoord() : this.getTriangles();
-    this.getIndexBuffer().update(triangles, this.getNbTriangles() * 3);
+    
+    if (!geom.index || geom.index.array.length !== triangles.length) {
+      if (geom.index) {
+          geom.setIndex(null); // safely detach
+          geom.dispose(); // tell WebGL to dump it
+      }
+      geom.setIndex(new THREE.BufferAttribute(triangles, 1));
+    } else {
+      geom.index.array.set(triangles);
+      geom.index.needsUpdate = true;
+    }
+    
+    // TRICKY: SculptXR uses large pre-allocated capacity arrays for performance.
+    // Three.js by default renders the FULL capacity array, which contains garbage/out-of-bound indices
+    // at the end of the array. We MUST cap the draw range to the actually used faces.
+    if (geom.index) {
+        let drawRangeCount = this.getNbTriangles() * 3;
+        let posAttrCount = geom.attributes.position.count;
+        let maxIndex = 0;
+        let indexArray = geom.index.array;
+        for(let i=0; i<drawRangeCount; i++) {
+            if(indexArray[i] > maxIndex) maxIndex = indexArray[i];
+        }
+        
+        if (maxIndex >= posAttrCount) {
+             console.error("[SCULPTXR BUG IDENTIFIED] Index buffer contains a vertex ID (" + maxIndex + ") larger than or equal to position buffer count (" + posAttrCount + ")! Triangles: " + this.getNbTriangles() + " ArrayLen: " + indexArray.length);
+        }
+        geom.setDrawRange(0, drawRangeCount);
+    }
+    
+    // Force Three.js to recalculate internally caching bounds because SculptXR topology is dynamic
+    geom.computeBoundingSphere();
+    geom.computeBoundingBox();
+    
+    // Sometimes SculptXR raw normals aren't sufficient or correctly mapped, force recompute to be safe
+    geom.computeVertexNormals();
   }
 
   updateWireframeBuffer() {
@@ -2110,16 +2304,23 @@ class Mesh {
 
   updateGeometryBuffers() {
     this.updateVertexBuffer();
-    this.updateNormalBuffer();
+    if (!this._renderData._geometry.getAttribute('normal')) {
+        this.updateNormalBuffer();
+    }
   }
 
   updateBuffers() {
     this.updateGeometryBuffers();
-    this.updateColorBuffer();
-    this.updateMaterialBuffer();
+    if (!this._renderData._geometry.getAttribute('color')) this.updateColorBuffer();
+    if (!this._renderData._geometry.getAttribute('sculptMaterial')) this.updateMaterialBuffer();
     this.updateTexCoordBuffer();
     this.updateIndexBuffer();
     this.updateWireframeBuffer();
+    
+    if (this.isUsingDrawArrays()) {
+      var geom = this._renderData._geometry;
+      geom.setDrawRange(0, this.getRenderNbVertices());
+    }
   }
 
   release() {

@@ -1,5 +1,5 @@
 import getOptionsURL from '../misc/getOptionsURL.js';
-import Buffer from '../render/Buffer.js';
+import * as THREE from 'three';
 import ShaderMatcap from '../render/shaders/ShaderMatcap.js';
 
 var RenderData = function (gl) {
@@ -16,14 +16,16 @@ var RenderData = function (gl) {
     _curvature: Math.min(opts.curvature, 5.0),
     _texture0: null,
 
-    _useDrawArrays: false,
-    _vertexBuffer: new Buffer(gl, gl.ARRAY_BUFFER, gl.DYNAMIC_DRAW),
-    _normalBuffer: new Buffer(gl, gl.ARRAY_BUFFER, gl.DYNAMIC_DRAW),
-    _colorBuffer: new Buffer(gl, gl.ARRAY_BUFFER, gl.DYNAMIC_DRAW),
-    _materialBuffer: new Buffer(gl, gl.ARRAY_BUFFER, gl.DYNAMIC_DRAW),
-    _texCoordBuffer: new Buffer(gl, gl.ARRAY_BUFFER, gl.STATIC_DRAW),
-    _indexBuffer: new Buffer(gl, gl.ELEMENT_ARRAY_BUFFER, gl.STATIC_DRAW),
-    _wireframeBuffer: new Buffer(gl, gl.ELEMENT_ARRAY_BUFFER, gl.STATIC_DRAW),
+    // Three.js Integration
+    _geometry: new THREE.BufferGeometry(),
+    // Keep reference keys for legacy getters in Mesh.js until completely phased out
+    _vertexBuffer: { release: () => {}, update: () => {} },
+    _normalBuffer: { release: () => {}, update: () => {} },
+    _colorBuffer: { release: () => {}, update: () => {} },
+    _materialBuffer: { release: () => {}, update: () => {} },
+    _texCoordBuffer: { release: () => {}, update: () => {} },
+    _indexBuffer: { release: () => {}, update: () => {} },
+    _wireframeBuffer: { release: () => {}, update: () => {} },
 
     // these material values overrides the vertex attributes
     // it's here for debug or preview

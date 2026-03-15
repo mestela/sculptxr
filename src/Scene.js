@@ -1,4 +1,5 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
+import * as THREE from 'three';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -611,11 +612,43 @@ class Scene {
       if (this._mesh) {
         console.log("Mesh Center (Local):", this._mesh.getCenter());
         console.log("Mesh Matrix:", this._mesh.getMatrix());
-      } else {
-        console.log("No Mesh Selected");
       }
       return { pos, scale };
     };
+
+    window.debugThreeState = () => {
+      let logStr = "=== THREE.JS STATE ===\n";
+      logStr += `Scene Children: ${this._scene ? this._scene.children.length : 'No Scene'}\n`;
+      if (this._scene) {
+        this._scene.children.forEach(c => {
+          logStr += `- ${c.type} (Pos: ${c.position.x.toFixed(2)}, ${c.position.y.toFixed(2)}, ${c.position.z.toFixed(2)})\n`;
+          if (c.geometry) {
+             const posAttr = c.geometry.getAttribute('position');
+             logStr += `  verts: ${posAttr ? posAttr.count : 0}\n`;
+          }
+        });
+      }
+      if (this._camera && this._camera.getThreeCamera()) {
+         const tCam = this._camera.getThreeCamera();
+         logStr += `Camera Pos: ${tCam.position.x.toFixed(2)}, ${tCam.position.y.toFixed(2)}, ${tCam.position.z.toFixed(2)}\n`;
+         logStr += `Camera Near: ${tCam.near.toFixed(3)}, Far: ${tCam.far.toFixed(1)}, FOV: ${tCam.fov}\n`;
+         logStr += `Camera Proj[0]: ${tCam.projectionMatrix.elements[0].toFixed(3)}\n`;
+      }
+      console.log(logStr);
+      if (window.screenLog) window.screenLog(logStr, "cyan");
+      return logStr;
+    };
+    
+    // Auto-dump after 2 seconds
+    setTimeout(window.debugThreeState, 2000);
+
+    // Start Three.js continuous render loop
+    // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
+    if (this._renderer) {
+      this._renderer.setAnimationLoop((time, frame) => {
+        this.applyRender(null, frame); 
+      });
+    }
   }
 
   addModelURL(url) {
@@ -754,25 +787,20 @@ class Scene {
   }
 
   renderSelectOverRtt() {
-    if (this._requestRender())
-      this._drawFullScene = false;
+    this._drawFullScene = false;
   }
 
   _requestRender() {
-    if (this._preventRender === true)
-      return false; // render already requested for the next frame
-
-    window.requestAnimationFrame(this.applyRender.bind(this));
-    this._preventRender = true;
+    // Redundant now that Three.js runs internally via setAnimationLoop 
+    // We keep the method signature for backwards compatibility across UI files
     return true;
   }
 
   render() {
     this._drawFullScene = true;
-    this._requestRender();
   }
 
-  applyRender(arg) {
+  applyRender(arg, xrFrame = null) {
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
     this._preventRender = false;
     this.updateMatricesAndSort();
@@ -791,6 +819,8 @@ class Scene {
 
     gl.disable(gl.DEPTH_TEST);
 
+    // --- LEGACY POST-PROCESSING (DISABLED FOR THREE.JS MIGRATION) ---
+    /*
     if (this._rttMerge) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttMerge.getFramebuffer());
       this._rttMerge.render(this); // merge + decode
@@ -802,6 +832,10 @@ class Scene {
     if (this._rttOpaque) {
       this._rttOpaque.render(this); // fxaa
     }
+    */
+    
+    // Explicitly bind the target FBO for the remaining legacy renders (like Gizmo)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
 
     gl.enable(gl.DEPTH_TEST);
 
@@ -825,671 +859,11 @@ class Scene {
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, frame = null) {
-    const pStartTotal = performance.now();
-    const prof = window.__sculptProfile;
-    if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
-      prof.accFrameDelta += (pStartTotal - prof.lastFrameTime);
-    }
-    if (prof) prof.lastFrameTime = pStartTotal;
-
-    const gl2 = this._gl;
-    const meshes2 = this._meshes;
-
-    // --- SETUP VIEW ---
-    mat4.copy(cam._view, viewMatrix);
-    mat4.copy(cam._proj, projMatrix);
-
-    // --- PASS 1: REAL WORLD (Controllers/Debug) ---
-    // (Rendered unscaled, purely relative to the camera lens)
-
-    const pStartUI = performance.now();
-
-    // Render Controllers
-    if (this._vrControllerLeft) {
-      this._vrControllerLeft.updateMatrices(cam);
-      this._vrControllerLeft.render(this);
-    }
-
-    if (this._vrControllerRight) {
-      this._vrControllerRight.updateMatrices(cam);
-      this._vrControllerRight.render(this);
-    }
-
-    // VR Main Menu (Full Size)
-    const menuAnchor = this._dominantHand === 'left' ? this._vrPoseRight : this._vrPoseLeft;
-    if (this._vrMenu && menuAnchor) {
-      const menuPose = mat4.clone(menuAnchor);
-      const lift = mat4.create();
-      const sideOffset = this._dominantHand === 'left' ? -0.35 : 0.0;
-      mat4.fromTranslation(lift, [sideOffset, 0.03, 0.0]);
-      mat4.multiply(menuPose, menuPose, lift);
-      this._vrMenu.updateMatrices(cam, menuPose);
-      this._vrMenu.render(this);
-    }
-
-    // VR Mini-HUD (Wrist Mounted)
-    if (this._vrMiniHUD && menuAnchor && (!this._guiXR || !this._guiXR._isVisible)) {
-      const hudPose = mat4.clone(menuAnchor);
-      const liftHUD = mat4.create();
-
-      const tform = window.MINI_HUD_TRANSFORM || { x: 0.04, y: 0.07, z: 0.1, rx: 90, ry: 0, rz: 0 };
-
-      // Apply mirror logic for dominant hand if needed.
-      // E.g. we want it on the inside of the controller.
-      // A default of x:0 means perfectly centered on the handle.
-      const signX = this._dominantHand === 'left' ? -1 : 1;
-
-      mat4.fromTranslation(liftHUD, [tform.x * signX, tform.y, tform.z]);
-
-      mat4.rotateX(liftHUD, liftHUD, tform.rx * Math.PI / 180.0);
-      mat4.rotateY(liftHUD, liftHUD, (tform.ry * signX) * Math.PI / 180.0);
-      mat4.rotateZ(liftHUD, liftHUD, tform.rz * Math.PI / 180.0);
-
-      mat4.multiply(hudPose, hudPose, liftHUD);
-
-      // Scale up slightly just for legibility if needed, but 1.0 is physically accurate
-      const miniScale = 1.0;
-      mat4.scale(hudPose, hudPose, [miniScale, miniScale, miniScale]);
-
-      this._vrMiniHUD.updateMatrices(cam, hudPose);
-      this._vrMiniHUD.render(this);
-
-      // Render Popup slightly forward and above the MiniHUD center
-      if (this._vrPopup && this._guiPopup && this._guiPopup._overlay) {
-        let popupPose = mat4.clone(hudPose);
-        let popupLift = mat4.create();
-
-        const tcomb = window.TOOLCOMB_TRANSFORM || { x: 0.015, y: 0.03, z: -0.01, rx: 0, ry: 0, rz: 0 };
-
-        mat4.fromTranslation(popupLift, [tcomb.x * signX, tcomb.y, tcomb.z]);
-        mat4.rotateX(popupLift, popupLift, tcomb.rx * Math.PI / 180.0);
-        mat4.rotateY(popupLift, popupLift, (tcomb.ry * signX) * Math.PI / 180.0);
-        mat4.rotateZ(popupLift, popupLift, tcomb.rz * Math.PI / 180.0);
-
-        mat4.multiply(popupPose, popupPose, popupLift);
-        this._vrPopup.updateMatrices(cam, popupPose);
-        this._vrPopup.render(this);
-      }
-    }
-
-    // VRLaser (Pass 1)
-    if (this._vrLaser && this._vrLaserMatrix && this._isPointingAtMenu) {
-      const dist = this._vrLaserDistance || 1.0;
-      this._vrLaser.updateMatrices(cam, this._vrLaserMatrix, dist, 0.01);
-      this._vrLaser.render(this);
-    }
-
-    // Debug Pivot
-    if (this._debugPivotMesh && this._debugPivotMesh.isVisible()) {
-      gl2.disable(gl2.DEPTH_TEST);
-      this._debugPivotMesh.updateMatrices(cam);
-      this._debugPivotMesh.render(this);
-      gl2.enable(gl2.DEPTH_TEST);
-    }
-
-    // VR Brush Tip (Pass 1)
-    // [Step 2] Hand Swap: Use Dominant Hand for Brush Tip
-    const domHand = this._dominantHand === 'left' ? this._vrControllerLeft : this._vrControllerRight;
-    // We need the Matrix of the "Pointer" (Ray or Grip).
-    // Currently _vrRightRayMatrix is hardcoded to Right Hand.
-    // We should rename _vrRightRayMatrix to _vrDominantRayMatrix in Step 3,
-    // For now, let's just grab the matrix from the dominant controller mesh?
-    // No, controller mesh is Grip Space. Brush Tip needs Ray Space if possible.
-    // Let's use _vrDominantRayMatrix if available (we will add it in Step 3),
-    // Or fallback to _vrRightRayMatrix for now if we haven't renamed it?
-    // Actually, Step 2 is Visuals. Step 3 is Input.
-    // If I change Visuals to use "Dominant Hand", I need the Matrix for the Dominant Hand.
-    // Scene.js updateVRControllerPose updates the Mesh Matrix.
-    // Let's use the Mesh Matrix for now?
-    // Wait, Brush Tip attaches to "TargetRay" usually.
-    // Let's look at `updateXR` or `onXRFrame`.
-    // We need `_vrDominantRayMatrix`.
-    // Let's stick to modifying `handleXRInput` in Step 3 to provide `_vrDominantRayMatrix`.
-    // BUT Step 2 is supposed to be Visuals.
-    // I can't render the visual at the right place if I don't have the matrix.
-    // So Step 2 might need a tiny bit of Input Logic (capturing the matrix).
-
-    // Let's patch `handleXRInput` locally here to capture `_vrDominantRayMatrix`.
-    // See `handleXRInput` changes below.
-
-    if (this._vrControllerTip && this._vrDominantRayMatrix) {
-      const mTip = this._vrControllerTip.getMatrix();
-      mat4.copy(mTip, this._vrDominantRayMatrix);
-      const offY = this._isQuestStandalone ? 0.075 : 0.025;
-      mat4.rotateX(mTip, mTip, -Math.PI / 2);
-      mat4.translate(mTip, mTip, [0, offY, 0]);
-
-      this._vrControllerTip.updateMatrices(cam);
-      this._vrControllerTip.render(this);
-    }
-
-    // Render custom Voxel cursor if active
-    const activeTool = this._sculptManager && this._sculptManager.getCurrentTool();
-    if (activeTool && activeTool._cursorMesh && activeTool._cursorMesh.isVisible()) {
-      activeTool._cursorMesh.updateMatrices(cam);
-      activeTool._cursorMesh.render(this);
-    }
-    if (activeTool && activeTool._cursorMeshSym && activeTool._cursorMeshSym.isVisible()) {
-      activeTool._cursorMeshSym.updateMatrices(cam);
-      activeTool._cursorMeshSym.render(this);
-    }
-
-    if (prof && prof.logNextNumFrames > 0) prof.accUI += (performance.now() - pStartUI);
-
-    // --- PASS 2: SCALED WORLD (Meshes/Grid) ---
-    if (worldViewMatrixOverride) {
-      mat4.copy(cam._view, worldViewMatrixOverride);
-    } else {
-      // Apply standard physical VR Headset/Controller World Transforms
-      if (this._xrWorldOffset) {
-        const t = this._xrWorldOffset.position;
-        const r = this._xrWorldOffset.orientation;
-        const worldMat = mat4.create();
-        mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-        mat4.multiply(cam._view, cam._view, worldMat);
-      }
-
-      if (this._vrScale !== 1.0) {
-        mat4.scale(cam._view, cam._view, [this._vrScale, this._vrScale, this._vrScale]);
-      }
-    }
-
-    // Grid
-    if (this._showGrid && this._grid) {
-      this._grid.updateMatrices(cam);
-      this._grid.render(this);
-    }
-
-    const pStartOpaque = performance.now();
-    // Meshes (Opaque)
-    for (let k = 0, l = meshes2.length; k < l; ++k) {
-      if (!meshes2[k].isVisible()) continue;
-      meshes2[k].updateMatrices(cam);
-      meshes2[k].render(this);
-    }
-    if (prof && prof.logNextNumFrames > 0) prof.accMeshOpaque += (performance.now() - pStartOpaque);
-
-    const pStartWire = performance.now();
-    // Meshes (Wireframe)
-    gl2.enable(gl2.BLEND);
-    gl2.depthFunc(gl2.LESS);
-    for (let k = 0, l = meshes2.length; k < l; ++k) {
-      if (meshes2[k].getShowWireframe()) meshes2[k].renderWireframe(this);
-    }
-    gl2.depthFunc(gl2.LEQUAL);
-    gl2.disable(gl2.BLEND);
-    if (prof && prof.logNextNumFrames > 0) prof.accMeshWire += (performance.now() - pStartWire);
-
-    // Brush Indicator (Pass 2 - World Space)
-    var currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
-    var isVoxel = currentTool && currentTool.constructor.name === 'SculptVoxel';
-
-    if (this._sculptManager && this._picking.getMesh() && !isVoxel) {
-      let radius = this._picking._rWorld2 ? Math.sqrt(this._picking._rWorld2) : 0.05;
-
-      // Force radius to 0.5 for Gizmo interactions
-      const currentTool = this._sculptManager.getCurrentTool();
-      if (currentTool && currentTool.constructor.name === 'TransformVR') {
-        if (currentTool._gizmo && currentTool._gizmo._selected) {
-          radius = 0.5;
-        }
-      }
-
-      // Update Selection Color for Negative Mode
-      const selection = this._sculptManager.getSelection();
-      if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
-
-      gl2.disable(gl2.DEPTH_TEST);
-      gl2.enable(gl2.BLEND);
-      gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
-      selection.renderVR(this, cam, radius);
-      gl2.disable(gl2.BLEND);
-      gl2.enable(gl2.DEPTH_TEST);
-    }
-
-    // [DEBUG] Pivot Sphere (World Space / Mesh Mode) - DISABLED (User: "hangover")
-    if (false && this._debugPivotSphere && !window.debugPivotAttach && this._mesh) {
-      const mPivot = this._debugPivotSphere.getMatrix();
-      mat4.identity(mPivot);
-
-      const center = vec3.create();
-      vec3.transformMat4(center, this._mesh.getCenter(), this._mesh.getMatrix());
-      mat4.translate(mPivot, mPivot, center);
-
-      // Compensate for VR Scale so it remains "Physically 2cm"
-      // If World has scale S, we need radius R/S.
-      let r = window.debugPivotScale || 0.02;
-      if (this._vrScale && this._vrScale > 0.0001) r /= this._vrScale;
-      mat4.scale(mPivot, mPivot, [r, r, r]);
-
-      this._debugPivotSphere.updateMatrices(cam);
-
-      gl2.enable(gl2.BLEND);
-      gl2.blendFunc(gl2.ONE, gl2.ONE);
-      gl2.depthMask(false);
-      gl2.disable(gl2.CULL_FACE);
-      gl2.disable(gl2.DEPTH_TEST);
-      this._debugPivotSphere.render(this);
-      gl2.enable(gl2.DEPTH_TEST);
-    }
-
-    // Render Current Tool VR (Gizmo, etc.)
-    if (this._sculptManager) {
-      const tool = this._sculptManager.getCurrentTool();
-      if (tool && tool.renderVR) {
-        tool.renderVR(this, cam);
-      }
-    }
-
-    // [DEBUG] Hit Sphere (Pass 2 - World Space)
-    if (this._debugHitSphere) {
-      // INTERACTIVE DEBUGGER: VR Raycaster Visuals (Rendered in Engine Space)
-      if (window.debugRaycaster) {
-        gl2.disable(gl2.DEPTH_TEST);
-
-        if (this._debugRayOrigin) {
-          this._debugRayOrigin.updateMatrices(cam);
-          this._debugRayOrigin.render(this);
-        }
-        if (this._debugRayTarget) {
-          this._debugRayTarget.updateMatrices(cam);
-          this._debugRayTarget.render(this);
-        }
-
-        gl2.enable(gl2.DEPTH_TEST);
-      }
-
-      if (this._forceDebugXYZ) {
-        const mHit = this._debugHitSphere.getMatrix();
-        mat4.identity(mHit);
-        mat4.translate(mHit, mHit, this._forceDebugXYZ);
-
-        let s = this._forceDebugRadius;
-        // Convert Meters to World Units (unless forced raw)
-        if (!this._forceDebugRawScale && this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
-
-        mat4.scale(mHit, mHit, [s, s, s]);
-        console.log(`[ForceDebug] Pos: ${this._forceDebugXYZ} Scale: ${s}`);
-        // this._debugHitSphere.render(this);
-
-      } else if (window.debugHitAttach !== 'controller') {
-        const mode = window.debugHitAttach || 'hit';
-        const mHit = this._debugHitSphere.getMatrix();
-
-        // If mode is 'hit', Picking.js/GizmoVR.js updates the matrix.
-        // If mode is 'mesh' or 'origin', we update it here.
-        if (mode === 'origin') {
-          mat4.identity(mHit);
-          let s = window.debugHitScale || 0.02;
-          if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
-          mat4.scale(mHit, mHit, [s, s, s]);
-          this._debugHitSphere.setVisible(true);
-
-        } else if (mode === 'mesh' && this._mesh) {
-          mat4.identity(mHit);
-          const center = vec3.create();
-          vec3.transformMat4(center, this._mesh.getCenter(), this._mesh.getMatrix());
-          mat4.translate(mHit, mHit, center);
-          let s = window.debugHitScale || 0.02;
-          if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
-          mat4.scale(mHit, mHit, [s, s, s]);
-          this._debugHitSphere.setVisible(true);
-        }
-
-        if (this._debugHitSphere.isVisible()) {
-          // Backup Matrix (because updateMatrices might reset it if it thinks it's dirty from pos/rot/scale)
-          const mBackup = mat4.clone(this._debugHitSphere.getMatrix());
-
-          this._debugHitSphere.updateMatrices(cam);
-
-          // RESTORE Matrix
-          const m = this._debugHitSphere.getMatrix();
-          mat4.copy(m, mBackup);
-
-          // Debug Log
-          if (window.debugGizmoIntersection && !this._logSphereThrottle) this._logSphereThrottle = 0;
-          if (window.debugGizmoIntersection && this._logSphereThrottle++ % 120 === 0) {
-            const pos = [m[12], m[13], m[14]];
-            const s = Math.hypot(m[0], m[1], m[2]);
-            const vrScale = this._vrScale || 50.0;
-            console.log(`[Scene Pass 2] Sphere Pos: [${pos[0].toFixed(2)}, ${pos[1].toFixed(2)}, ${pos[2].toFixed(2)}] Scale: ${s.toFixed(4)} (Meters: ${(s * vrScale).toFixed(4)})`);
-          }
-
-          gl2.enable(gl2.BLEND);
-          gl2.blendFunc(gl2.ONE, gl2.ONE);
-          gl2.depthMask(false);
-          gl2.disable(gl2.CULL_FACE);
-          gl2.disable(gl2.DEPTH_TEST);
-          // this._debugHitSphere.render(this);
-          gl2.enable(gl2.DEPTH_TEST);
-          gl2.disable(gl2.BLEND);
-        }
-      }
-    }
-
-    // --- PASS 3: OVERLAY (Reset View) ---
-    // Reset View Matrix to Base
-    mat4.copy(cam._view, viewMatrix);
-
-    // [DEBUG] Pivot Sphere (Physical Space / Controller Mode)
-    if (this._debugPivotSphere && window.debugPivotAttach) {
-      const mPivot = this._debugPivotSphere.getMatrix();
-      mat4.identity(mPivot);
-
-      if (window.debugPivotAttach === true && this._vrDominantRayMatrix) {
-        mat4.copy(mPivot, this._vrDominantRayMatrix);
-        const offY = this._isQuestStandalone ? 0.10 : 0.05;
-        mat4.rotateX(mPivot, mPivot, -Math.PI / 2);
-        mat4.translate(mPivot, mPivot, [0, offY, 0]);
-        mat4.translate(mPivot, mPivot, [0, 0.20, 0]); // 20cm
-      } else if (window.debugPivotAttach === "origin") {
-        // Origin 0,0,0
-      }
-
-      const r = window.debugPivotScale || 0.02;
-      mat4.scale(mPivot, mPivot, [r, r, r]);
-
-      this._debugPivotSphere.updateMatrices(cam);
-
-      gl2.enable(gl2.BLEND);
-      gl2.blendFunc(gl2.ONE, gl2.ONE);
-      gl2.depthMask(false);
-      gl2.disable(gl2.CULL_FACE);
-      gl2.disable(gl2.DEPTH_TEST);
-      this._debugPivotSphere.render(this);
-      gl2.enable(gl2.DEPTH_TEST);
-    }
-
-    // Proj is same.
-
-    // Render VR Brush Radius Sphere/Cube (Pass 3)
-    currentTool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
-    const isVoxelTool = currentTool && currentTool.constructor.name === 'SculptVoxel';
-    const isCubeShape = isVoxelTool && currentTool._shape === 1;
-
-    let activeIndicator = this._vrBrushRadiusSphere;
-    if (isCubeShape && this._vrBrushRadiusCube) {
-      activeIndicator = this._vrBrushRadiusCube;
-    }
-
-    if (activeIndicator && this._vrDominantRayMatrix && this._vrControllerTip) {
-      const mIndicator = activeIndicator.getMatrix();
-      mat4.copy(mIndicator, this._vrDominantRayMatrix);
-      const offY = this._isQuestStandalone ? 0.10 : 0.05;
-      mat4.rotateX(mIndicator, mIndicator, -Math.PI / 2);
-      mat4.translate(mIndicator, mIndicator, [0, offY, 0]);
-
-      // If Cube and World Aligned, zero out the rotational component
-      if (isCubeShape && currentTool._alignToController === false) {
-        // We want to keep the position but make it world-aligned (identity rotation)
-        const posX = mIndicator[12], posY = mIndicator[13], posZ = mIndicator[14];
-        mat4.identity(mIndicator);
-        mat4.translate(mIndicator, mIndicator, [posX, posY, posZ]);
-      }
-
-      // Normalize Scale logic...
-      const sx = Math.hypot(mIndicator[0], mIndicator[1], mIndicator[2]);
-      const sy = Math.hypot(mIndicator[4], mIndicator[5], mIndicator[6]);
-      const sz = Math.hypot(mIndicator[8], mIndicator[9], mIndicator[10]);
-      if (sx > 1e-6) { mIndicator[0] /= sx; mIndicator[1] /= sx; mIndicator[2] /= sx; }
-      if (sy > 1e-6) { mIndicator[4] /= sy; mIndicator[5] /= sy; mIndicator[6] /= sy; }
-      if (sz > 1e-6) { mIndicator[8] /= sz; mIndicator[9] /= sz; mIndicator[10] /= sz; }
-
-      let r = (this._vrLastPhysicalRadius !== undefined) ? this._vrLastPhysicalRadius : 0.01;
-      
-      // The cursor needs visual adjustment. Sphere radius conceptually bounds differently than Cube.
-      // But we will use the same physical radius so it maps to the sdf size.
-      // However, SDF cube formula uses radius as half-extent. 
-      // Primitives.createCube(gl, size) where size is 1.0 creates a cube from -0.5 to 0.5.
-      // To match radius we might need to scale by 2.0 (since radius of 1.0 means extent -1..1).
-      if (isCubeShape) r *= 2.0;
-
-      // We explicitly DO NOT multiply by any UI comp scale. This is a native 3D physical object.
-      mat4.scale(mIndicator, mIndicator, [r, r, r]);
-
-      const intensity = currentTool ? currentTool._intensity : 0.5;
-
-      // Map intensity (0.0 - 1.0) to a brightness multiplier for the additive indicator
-      const bright = 0.1 + (intensity * 0.9);
-
-      // Tint the indicator based on positive/negative mode.
-      const isPaintTool = currentTool && currentTool.constructor.name === 'Paint';
-      if (isPaintTool) {
-        activeIndicator.setFlatColor([
-          currentTool._color[0] * bright,
-          currentTool._color[1] * bright,
-          currentTool._color[2] * bright
-        ]);
-      } else if (this._vrIsNegative) {
-        activeIndicator.setFlatColor([0.7 * bright, 0.2 * bright, 0.2 * bright]); // Slightly Red
-      } else {
-        activeIndicator.setFlatColor([0.2 * bright, 0.2 * bright, 0.7 * bright]); // Slightly Blue
-      }
-
-      activeIndicator.updateMatrices(cam);
-
-      const gl2 = this._gl;
-      gl2.enable(gl2.BLEND);
-      gl2.blendFunc(gl2.ONE, gl2.ONE);
-      gl2.depthMask(false);
-      gl2.disable(gl2.CULL_FACE);
-      gl2.enable(gl2.DEPTH_TEST);
-
-      activeIndicator.render(this);
-
-      gl2.enable(gl2.DEPTH_TEST);
-      gl2.enable(gl2.CULL_FACE);
-      gl2.depthMask(true);
-      gl2.disable(gl2.BLEND);
-    }
-
-    // [DEBUG] Hit Sphere (Render Pass 3 - Physical/Overlay Space)
-    if (this._debugHitSphere && window.debugHitAttach === 'controller') {
-      const mHit = this._debugHitSphere.getMatrix();
-      if (this._vrDominantRayMatrix) {
-        mat4.copy(mHit, this._vrDominantRayMatrix);
-        const offY = this._isQuestStandalone ? 0.075 : 0.025;
-        mat4.rotateX(mHit, mHit, -Math.PI / 2);
-        mat4.translate(mHit, mHit, [0, offY + 0.05, 0]); // 5cm past tip
-
-        const s = window.debugHitScale || 0.02;
-        mat4.scale(mHit, mHit, [s, s, s]);
-        this._debugHitSphere.setVisible(true);
-
-        this._debugHitSphere.updateMatrices(cam);
-
-        gl2.enable(gl2.BLEND);
-        gl2.blendFunc(gl2.ONE, gl2.ONE);
-        gl2.depthMask(false);
-        gl2.disable(gl2.CULL_FACE);
-        gl2.disable(gl2.DEPTH_TEST); // Always on top
-        // this._debugHitSphere.render(this);
-        gl2.enable(gl2.DEPTH_TEST);
-        gl2.disable(gl2.BLEND);
-      }
-    }
-
-    // [DEBUG] Gizmo Test Sphere (Render Pass 3 Copy)
-    if (this._debugGizmoSphere && this._vrDominantRayMatrix) {
-      const mGizmo = this._debugGizmoSphere.getMatrix();
-      mat4.copy(mGizmo, this._vrDominantRayMatrix);
-      const offY = this._isQuestStandalone ? 0.10 : 0.05;
-
-      // Rotate basic alignment (same as radius sphere)
-      mat4.rotateX(mGizmo, mGizmo, -Math.PI / 2);
-      mat4.translate(mGizmo, mGizmo, [0, offY, 0]);
-
-      // OFFSET 10cm along -Z (Ray Direction)
-      // Since we rotated -90 X, Local Z became World Y? 
-      // Let's look at tip alignment: rotateX(-90). 
-      // Original: Y=Up, Z=Forward.
-      // Rotated: Y->Z (Forward), Z->-Y (Down).
-      // Wait. Standard GL: Y=Up, -Z=Forward.
-      // Controller Grip: -Z is usually "Forward" (pointing away from user).
-      // If we rotate X -90...
-      // Y axis becomes -Z axis.
-      // So translating Y moves along -Z.
-
-      // Let's ADD 0.10 to the Y translation to move it FURTHER out.
-      mat4.translate(mGizmo, mGizmo, [0, 0.10, 0]); // Add 10cm offset
-
-      // Normalize Scale (same logic)
-      const sx = Math.hypot(mGizmo[0], mGizmo[1], mGizmo[2]);
-      const sy = Math.hypot(mGizmo[4], mGizmo[5], mGizmo[6]);
-      const sz = Math.hypot(mGizmo[8], mGizmo[9], mGizmo[10]);
-      if (sx > 1e-6) { mGizmo[0] /= sx; mGizmo[1] /= sx; mGizmo[2] /= sx; }
-      if (sy > 1e-6) { mGizmo[4] /= sy; mGizmo[5] /= sy; mGizmo[6] /= sy; }
-      if (sz > 1e-6) { mGizmo[8] /= sz; mGizmo[9] /= sz; mGizmo[10] /= sz; }
-
-      // Fixed tiny size for debug
-      const r = 0.02; // 2cm radius
-      mat4.scale(mGizmo, mGizmo, [r, r, r]);
-
-      this._debugGizmoSphere.updateMatrices(cam);
-
-      gl2.enable(gl2.BLEND);
-      gl2.blendFunc(gl2.ONE, gl2.ONE);
-      gl2.depthMask(false);
-      gl2.disable(gl2.CULL_FACE);
-      gl2.enable(gl2.DEPTH_TEST);
-
-      // this._debugGizmoSphere.render(this);
-
-      gl2.enable(gl2.DEPTH_TEST);
-      gl2.enable(gl2.CULL_FACE);
-      gl2.depthMask(true);
-      gl2.disable(gl2.BLEND);
-    }
-
-    // --- GAZE TOOLTIPS (Pass 3) ---
-    // Calculate Headset Forward Vector
-    const headsetPos = cam.computePosition();
-    const headsetFwd = vec3.transformQuat(vec3.create(), [0, 0, -1], cam._quatRot);
-
-    // Helper for Ray-Point Distance calculation
-    const distToRay = (rayOrigin, rayDir, point) => {
-      const w = vec3.subtract(vec3.create(), point, rayOrigin);
-      const projAngle = vec3.dot(w, rayDir);
-
-      // If the point is behind the ray origin, it's not a match
-      if (projAngle <= 0) return Infinity;
-
-      const projVec = vec3.scale(vec3.create(), rayDir, projAngle);
-      const closestPoint = vec3.add(vec3.create(), rayOrigin, projVec);
-      return vec3.distance(point, closestPoint);
-    };
-
-    const GAZE_THRESHOLD = 0.20; // 20cm radius around controller
-
-    // Left Controller Tooltip
-    if (this._vrControllerLeft && this._gazeTooltipLeft && this._vrPoseLeft) {
-      const ctlPos = [this._vrPoseLeft[12], this._vrPoseLeft[13], this._vrPoseLeft[14]];
-      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
-
-      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
-      // Fade over time based on delta (assuming ~60fps, 0.1 delta = 6 frames to fade)
-      this._gazeTooltipLeft._opacity += (targetOpacity - this._gazeTooltipLeft._opacity) * 0.15;
-      this._gazeTooltipLeft.setOpacity(this._gazeTooltipLeft._opacity);
-
-      if (this._gazeTooltipLeft._isVisible) {
-        this._gazeTooltipLeft.updateMatrices(cam, ctlPos);
-        this._gazeTooltipLeft.render();
-      }
-    }
-
-    // Right Controller Tooltip
-    if (this._vrControllerRight && this._gazeTooltipRight && this._vrPoseRight) {
-      const ctlPos = [this._vrPoseRight[12], this._vrPoseRight[13], this._vrPoseRight[14]];
-      const dist = distToRay(headsetPos, headsetFwd, ctlPos);
-
-      const targetOpacity = (dist < GAZE_THRESHOLD) ? 1.0 : 0.0;
-      this._gazeTooltipRight._opacity += (targetOpacity - this._gazeTooltipRight._opacity) * 0.15;
-      this._gazeTooltipRight.setOpacity(this._gazeTooltipRight._opacity);
-
-      if (this._gazeTooltipRight._isVisible) {
-        this._gazeTooltipRight.updateMatrices(cam, ctlPos);
-        this._gazeTooltipRight.render();
-      }
-    }
-
-    // --- HAND TRACKING SKELETON VISUALIZATION ---
-    if (frame && frame.session) {
-      let isHandActive = false;
-      for (let src of frame.session.inputSources) {
-         if (src.hand) {
-            isHandActive = true;
-            break;
-         }
-      }
-
-      if (isHandActive) {
-        // Init Sphere Pool if missing
-        if (!this._handJointSpheres) {
-          this._handJointSpheres = [];
-          for (let i = 0; i < 50; i++) { // 25 joints per hand roughly
-            const sph = Primitives.createSphere(this._gl, 1.0);
-            sph.setShaderType(Enums.Shader.FLAT);
-            sph.setFlatColor([0.5, 0.8, 1.0]);
-            this._handJointSpheres.push(sph);
-          }
-        }
-
-        const gl2 = this._gl;
-        gl2.enable(gl2.BLEND);
-        gl2.blendFunc(gl2.SRC_ALPHA, gl2.ONE_MINUS_SRC_ALPHA);
-        gl2.depthMask(false);
-        gl2.enable(gl2.DEPTH_TEST);
-        gl2.disable(gl2.CULL_FACE);
-
-        let sphereIdx = 0;
-        const refSpace = window.sculptglRefSpace; // We need the ref space for joint poses
-
-        if (refSpace) {
-          for (let src of frame.session.inputSources) {
-            if (!src.hand) continue;
-
-            const jointIter = src.hand.values();
-            for (let joint of jointIter) {
-              const pose = frame.getJointPose(joint, refSpace);
-              if (pose && sphereIdx < this._handJointSpheres.length) {
-                const sph = this._handJointSpheres[sphereIdx++];
-                const mat = sph.getMatrix();
-                
-                // Copy WebXR transform
-                for (let i=0; i<16; i++) mat[i] = pose.transform.matrix[i];
-
-                // Apply World Transform Offset if in Stationary Mode
-                if (this._xrWorldOffset) {
-                  const tWorld = mat4.create();
-                  const r = this._xrWorldOffset.orientation;
-                  const t = this._xrWorldOffset.position;
-                  mat4.fromRotationTranslation(tWorld, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-                  
-                  const invTWorld = mat4.create();
-                  mat4.invert(invTWorld, tWorld);
-                  mat4.multiply(mat, invTWorld, mat);
-                }
-
-                // Apply Scale
-                const vrScaleInv = 1.0 / (this._vrScale || 1.0);
-                mat4.scale(mat, mat, [vrScaleInv, vrScaleInv, vrScaleInv]);
-
-                // Scale the sphere itself to 1.5cm
-                const r = 0.015;
-                mat4.scale(mat, mat, [r, r, r]);
-
-                sph.updateMatrices(cam);
-                sph.render(this);
-              }
-            }
-          }
-        }
-
-        gl2.enable(gl2.CULL_FACE);
-        gl2.depthMask(true);
-        gl2.disable(gl2.BLEND);
-      }
-    }
+    // --- THREE.JS HANDLES VR RENDERING NATIVELY ---
+    // The WebXRManager in renderer.xr automatically intercepts the render loop,
+    // applies the headset poses to the camera, and renders the scene.
+    // We no longer need this custom multi-pass manual implementation.
+    return;
   }
 
 
@@ -1555,19 +929,20 @@ class Scene {
     // However, WebXR framebuffer is NOT exposed easily here unless we pass it down or query it.
     // gl.getParameter(gl.FRAMEBUFFER_BINDING) works in Chrome for WebXR usually.
 
-    let previousFBO = null;
-    if (showContour && this._rttContour) {
-      previousFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
-
-      gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s) {
-        sel[s].renderFlatColor(this);
-      }
-
-      // RESTORE VR FBO
-      gl.bindFramebuffer(gl.FRAMEBUFFER, previousFBO);
-    }
+    // --- LEGACY WEBGL PASSES (DISABLED FOR THREE.JS MIGRATION) ---
+    // let previousFBO = null;
+    // if (showContour && this._rttContour) {
+    //   previousFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    //
+    //   gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
+    //   gl.clear(gl.COLOR_BUFFER_BIT);
+    //   for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s) {
+    //     sel[s].renderFlatColor(this);
+    //   }
+    //
+    //   // RESTORE VR FBO
+    //   gl.bindFramebuffer(gl.FRAMEBUFFER, previousFBO);
+    // }
 
     // Brush Indicator (NEW)
     // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
@@ -1589,6 +964,35 @@ class Scene {
     var meshes = this._meshes;
     var nbMeshes = meshes.length;
 
+    // --- THREE.JS MAIN RENDER ---
+    // Instead of looping through custom meshes, we tell Three.js to render the scene
+    if (this._renderer && this._scene && this._camera.getThreeCamera()) {
+      // Force Three.js to forget its cached WebGL state. This prevents 'uniformMatrix4fv: location is not from the associated program'
+      // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
+      this._renderer.resetState();
+      
+      // Three.js clears depth on its own, so we render over the top
+      this._renderer.render(this._scene, this._camera.getThreeCamera());
+      
+      // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
+      // Three.js leaves the sculpt mesh's VAO bound after rendering. 
+      // The legacy raw WebGL passes (Gizmo, Cursors) that run during postRender() do NOT use VAOs.
+      // If we don't unbind here, the legacy passes will accidentally mutate the sculpt mesh's VAO,
+      // permanently hijacking its Attribute 0 buffer to point to a tiny 24-byte Gizmo line buffer,
+      // crashing WebGL on the next frame when Three.js tries to draw millions of vertices.
+      var ext = gl.getExtension('OES_vertex_array_object');
+      if (ext && ext.bindVertexArrayOES) {
+          ext.bindVertexArrayOES(null);
+      } else if (gl.bindVertexArray) {
+          gl.bindVertexArray(null);
+      }
+      
+      // Also reset Three.js state tracker so it knows we messed with WebGL underneath it
+      this._renderer.resetState();
+    }
+
+    /* 
+    // --- LEGACY WEBGL PASSES (DISABLED FOR THREE.JS MIGRATION) ---
     ///////////////
     // CONTOUR 1/2
     ///////////////
@@ -1611,22 +1015,17 @@ class Scene {
     }
 
     // grid
-    if (this._showGrid && this._grid) this._grid.render(this);
+    // if (this._showGrid && this._grid) this._grid.render(this);
 
     // VR Controllers
-    if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    if (this._vrControllerRight) this._vrControllerRight.render(this);
+    // if (this._vrControllerLeft) this._vrControllerLeft.render(this);
+    // if (this._vrControllerRight) this._vrControllerRight.render(this);
 
-    // (post opaque pass)
-    for (i = 0; i < nbMeshes; ++i) {
-      if (meshes[i].isTransparent()) break;
-      meshes[i].render(this);
-    }
-    var startTransparent = i;
-    if (this._meshPreview) this._meshPreview.render(this);
+    // var startTransparent = nbMeshes;
+    // if (this._meshPreview) this._meshPreview.render(this);
 
     // background
-    if (this._background) this._background.render();
+    // if (this._background) this._background.render();
 
     ///////////////
     // TRANSPARENT PASS
@@ -1641,20 +1040,14 @@ class Scene {
     // wireframe for dynamic mesh has duplicate edges
     gl.depthFunc(gl.LESS);
     for (i = 0; i < nbMeshes; ++i) {
-      if (meshes[i].getShowWireframe())
-        meshes[i].renderWireframe(this);
+      if (meshes[i].getShowWireframe()) {
+         // meshes[i].renderWireframe(this); 
+      }
     }
     gl.depthFunc(gl.LEQUAL);
 
     gl.depthMask(false);
     gl.enable(gl.CULL_FACE);
-
-    for (i = startTransparent; i < nbMeshes; ++i) {
-      gl.cullFace(gl.FRONT); // draw back first
-      meshes[i].render(this);
-      gl.cullFace(gl.BACK); // ... and then front
-      meshes[i].render(this);
-    }
 
     gl.disable(gl.CULL_FACE);
 
@@ -1667,6 +1060,7 @@ class Scene {
 
     gl.depthMask(true);
     gl.disable(gl.BLEND);
+    */
   }
 
   /** Pre compute matrices and sort meshes */
@@ -1688,41 +1082,115 @@ class Scene {
   }
 
   initWebGL() {
-    var attributes = {
+    var canvas = document.getElementById('canvas');
+    
+    // Initialize Three.js Renderer
+    this._renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
       antialias: true,
       stencil: true,
-      alpha: true, // Enable alpha for AR Passthrough
-      xrCompatible: true // Enable WebXR compatibility
-    };
+      alpha: true,
+      powerPreference: "high-performance"
+    });
+    this._renderer.setPixelRatio(window.devicePixelRatio);
+    this._renderer.setSize(window.innerWidth, window.innerHeight);
+    this._renderer.xr.enabled = true; // WebXR support is native in Three.js
 
-    var canvas = document.getElementById('canvas');
-    var gl = this._gl = canvas.getContext('webgl', attributes) || canvas.getContext('experimental-webgl', attributes);
-    if (!gl) {
+    // Initialize underlying GL context for legacy code compatibility (temporarily)
+    this._gl = this._renderer.getContext();
+    if (!this._gl) {
       window.alert('Values: WebGL context could not be retrieved.');
       return;
     }
 
-    WebGLCaps.initWebGLExtensions(gl);
+    // Initialize Three.js Scene Components
+    this._scene = new THREE.Scene();
+    
+    // Add basic lighting since we are using MeshStandardMaterial
+    this._scene.add(new THREE.AmbientLight(0x404040, 2.0)); // soft white light
+    var dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    dirLight.position.set(1, 1, 1);
+    this._scene.add(dirLight);
+
+    // Fallback/Legacy Caps init
+    WebGLCaps.initWebGLExtensions(this._gl);
     if (!WebGLCaps.getWebGLExtension('OES_element_index_uint'))
       RenderData.ONLY_DRAW_ARRAYS = true;
 
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    // DEBUG: Inject Three.js objects into global scope for console debugging
+    this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)
+    
+    window.threeScene = this._scene;
+    window.threeCamera = this._camera.getThreeCamera();
 
-    gl.disable(gl.CULL_FACE);
-    gl.frontFace(gl.CCW);
-    gl.cullFace(gl.BACK);
+    // Intensive Diagnostic Script
+    window.diagnoseGridMesh = () => {
+        if (!this._meshes || this._meshes.length === 0) return "No meshes found.";
+        const m = this._meshes[0].getThreeMesh();
+        const scm = this._meshes[0];
+        if (!m) return "No Three.js mesh found on main mesh";
+        let out = `\n=== DIAGNOSE MESH ===\n`;
+        out += `Three.js UserData: ${!!m.userData.sculptMesh}\n`;
+        out += `Matrix AutoUpdate: ${m.matrixAutoUpdate}\n`;
+        
+        let mArr = m.matrixWorld.elements;
+        out += `MatrixWorld Scale: (${Math.hypot(mArr[0], mArr[1], mArr[2]).toFixed(4)}, ${Math.hypot(mArr[4], mArr[5], mArr[6]).toFixed(4)}, ${Math.hypot(mArr[8], mArr[9], mArr[10]).toFixed(4)})\n`;
+        out += `MatrixWorld Pos: (${mArr[12].toFixed(4)}, ${mArr[13].toFixed(4)}, ${mArr[14].toFixed(4)})\n`;
+        
+        const g = m.geometry;
+        if (!g) { out += "NO GEOMETRY\n"; return out; }
+        
+        out += `\n--- GEOMETRY ---\n`;
+        out += `DrawRange: ${g.drawRange.start} to ${g.drawRange.count}\n`;
+        g.computeBoundingBox();
+        out += `BoundingBox: [${g.boundingBox.min.x.toFixed(4)}, ${g.boundingBox.min.y.toFixed(4)}, ${g.boundingBox.min.z.toFixed(4)}] to [${g.boundingBox.max.x.toFixed(4)}, ${g.boundingBox.max.y.toFixed(4)}, ${g.boundingBox.max.z.toFixed(4)}]\n`;
+        
+        if (g.attributes.position) {
+            let p = g.attributes.position.array;
+            out += `Position Attr Count: ${g.attributes.position.count}\n`;
+            out += `First 3 Verts: (${p[0]}, ${p[1]}, ${p[2]}), (${p[3]}, ${p[4]}, ${p[5]}), (${p[6]}, ${p[7]}, ${p[8]})\n`;
+        } else {
+            out += `NO POSITION ATTRIBUTE\n`;
+        }
+        
+        if (g.attributes.normal) {
+            let n = g.attributes.normal.array;
+            out += `Normal Attr Count: ${g.attributes.normal.count}\n`;
+            out += `First 3 Normals: (${n[0]}, ${n[1]}, ${n[2]}), (${n[3]}, ${n[4]}, ${n[5]}), (${n[6]}, ${n[7]}, ${n[8]})\n`;
+        } else {
+            out += `NO NORMAL ATTRIBUTE\n`;
+        }
+        
+        if (g.index) {
+            let i = g.index.array;
+            out += `Index Attr Count: ${g.index.count}\n`;
+            out += `First 9 Indices: ${i[0]}, ${i[1]}, ${i[2]}, ${i[3]}, ${i[4]}, ${i[5]}, ${i[6]}, ${i[7]}, ${i[8]}\n`;
+        } else {
+             out += `NO INDEX ATTRIBUTE (Using DrawArrays Triangle Soup)\n`;
+        }
+        
+        out += `\n--- PARENT ---\n`;
+        out += `Parent: ${m.parent ? m.parent.type : 'NONE'}\n`;
+        out += `Visible: ${m.visible}\n`;
+        
+        out += `\n--- MATERIAL ---\n`;
+        let mat = m.material;
+        if (!mat) { out += "NO MATERIAL\n"; return out; }
+        out += `Type: ${mat.type}\n`;
+        out += `Color: #${mat.color.getHexString()}\n`;
+        out += `VertexColors: ${mat.vertexColors}\n`;
+        out += `Transparent: ${mat.transparent}\n`;
+        out += `Opacity: ${mat.opacity}\n`;
+        out += `DepthTest: ${mat.depthTest}\n`;
+        out += `DepthWrite: ${mat.depthWrite}\n`;
+        
+        console.log(out);
+        return "Check console for output!";
+    };
 
-    gl.disable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    setTimeout(() => { if(window.diagnoseGridMesh) window.diagnoseGridMesh(); }, 2000);
 
-    gl.disable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LEQUAL);
-    gl.depthMask(true);
 
-    gl.clearColor(0.0, 0.0, 0.0, 0.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
 
   /** Load textures (preload) */
@@ -1787,7 +1255,12 @@ class Scene {
     var dx = box[3] - box[0];
     var dy = box[4] - box[1];
     var dz = box[5] - box[2];
-    return 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var rad = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (isNaN(rad)) {
+        console.error("🛑 computeRadiusFromBoundingBox produced NaN! Box:", box);
+        if (window.screenLog) window.screenLog("NaN Radius From BB", "red");
+    }
+    return rad;
   }
 
   computeBoundingBoxMeshes(meshes) {
@@ -1802,6 +1275,16 @@ class Scene {
       if (bi[4] > bound[4]) bound[4] = bi[4];
       if (bi[5] > bound[5]) bound[5] = bi[5];
     }
+    
+    // DEBUG: NaN Bounding Box Detector
+    for(var j=0; j<6; j++) {
+       if(isNaN(bound[j])) {
+           console.error("🛑 computeBoundingBoxMeshes produced NaN array! Meshes count:", meshes.length);
+           console.error("- Corrupted Bounds:", bound);
+           if (window.screenLog) window.screenLog("NaN BoundingBoxMeshes", "red");
+           break;
+       }
+    }
     return bound;
   }
 
@@ -1814,11 +1297,22 @@ class Scene {
 
   normalizeAndCenterMeshes(meshes) {
     var box = this.computeBoundingBoxMeshes(meshes);
-    var scale = Utils.SCALE / vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+    
+    // If the scene has no valid bounding box (e.g. all empty meshes), prevent NaN scale
+    var scale = 1.0;
+    var tx = 0.0, ty = 0.0, tz = 0.0;
+    if (Number.isFinite(box[0]) && Number.isFinite(box[3])) {
+        scale = Utils.SCALE / vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+        if(isNaN(scale) || scale === Infinity || scale === 0) scale = 1.0;
+        
+        tx = -(box[0] + box[3]) * 0.5;
+        ty = -(box[1] + box[4]) * 0.5;
+        tz = -(box[2] + box[5]) * 0.5;
+    }
 
     var mCen = mat4.create();
     mat4.scale(mCen, mCen, [scale, scale, scale]);
-    mat4.translate(mCen, mCen, [-(box[0] + box[3]) * 0.5, -(box[1] + box[4]) * 0.5, -(box[2] + box[5]) * 0.5]);
+    mat4.translate(mCen, mCen, [tx, ty, tz]);
 
     for (var i = 0, l = meshes.length; i < l; ++i) {
       var mat = meshes[i].getMatrix();
@@ -1830,10 +1324,10 @@ class Scene {
     // make a cube and subdivide it
     var mesh = new Multimesh(Primitives.createCube(this._gl));
     mesh.normalizeSize();
-    this.subdivideClamp(mesh);
+    // this.subdivideClamp(mesh); 
 
-    // Use Matcap (Better Performance on Mobile VR)
-    mesh.setShaderType(Enums.Shader.MATCAP);
+    // Use PBR for debugging renderer
+    mesh.setShaderType(Enums.Shader.PBR);
 
     this.addNewMesh(mesh);
     return mesh;
@@ -1881,6 +1375,9 @@ class Scene {
 
   addNewMesh(mesh) {
     this._meshes.push(mesh);
+    if (this._scene && mesh.getThreeMesh()) {
+      this._scene.add(mesh.getThreeMesh());
+    }
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
     return mesh;
@@ -1909,6 +1406,9 @@ class Scene {
       mesh.init();
       mesh.initRender();
       meshes.push(mesh);
+      if (this._scene && mesh.getThreeMesh()) {
+        this._scene.add(mesh.getThreeMesh());
+      }
     }
 
     if (this._autoMatrix) {
@@ -1923,6 +1423,14 @@ class Scene {
 
   clearScene() {
     this.getStateManager().reset();
+    
+    // Remove all Three.js meshes from the scene
+    for (var i = 0; i < this._meshes.length; ++i) {
+      if (this._scene && this._meshes[i].getThreeMesh()) {
+        this._scene.remove(this._meshes[i].getThreeMesh());
+      }
+    }
+    
     this.getMeshes().length = 0;
     this.getCamera().resetView();
     this.setMesh(null);
@@ -1943,7 +1451,12 @@ class Scene {
     var meshes = this._meshes;
     for (var i = 0; i < rm.length; ++i) {
       var idx = this.getIndexMesh(rm[i]);
-      if (idx >= 0) meshes.splice(idx, 1);
+      if (idx >= 0) {
+        if (this._scene && meshes[idx].getThreeMesh()) {
+          this._scene.remove(meshes[idx].getThreeMesh());
+        }
+        meshes.splice(idx, 1);
+      }
     }
   }
 
@@ -2071,7 +1584,9 @@ class Scene {
           this.updateVROffsets();
 
           this._logThrottle = 0;
-          session.requestAnimationFrame(this.onXRFrame.bind(this));
+          
+          // XR requestAnimationFrame is automatically handled by Three.js setAnimationLoop!
+          // We no longer manually call: session.requestAnimationFrame(this.onXRFrame.bind(this));
         })
         .catch((e) => {
           console.error("enterXR Critical Error: Failed to get reference space", e);
@@ -2082,8 +1597,6 @@ class Scene {
       console.error("enterXR: makeXRCompatible failed!", err);
       if (window.screenLog) window.screenLog(`XR Error: makeXRCompatible ${err}`, "red");
     });
-
-    this._preventRender = true;
     this._vrIsNegative = false;
     this._headHeightCalibrated = false;
   }

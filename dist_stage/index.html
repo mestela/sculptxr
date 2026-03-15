@@ -5,15 +5,15 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v0.9.305</title>
+    <title>SculptXR v0.9.312</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v0.9.305
+                                                              Version: v0.9.312
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v0.9.305">
+    <meta property="og:title" content="SculptXR v0.9.312">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -88,6 +88,8 @@
     <script type="importmap">
   {
     "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
       "gl-matrix": "./lib/gl-matrix-wrapper.js",
       "hammerjs": "./lib/hammer-wrapper.js",
       "yagui": "./lib/yagui.js",
@@ -193,7 +195,6 @@
       
       "mesh/Mesh": "./src/mesh/Mesh.js",
       "mesh/MeshReference": "./src/mesh/MeshReference.js",
-      "./src/mesh/Mesh.js": "./src/mesh/MeshSafe.js",
       "mesh/MeshData": "./src/mesh/MeshData.js",
       "mesh/RenderData": "./src/mesh/RenderData.js",
       "mesh/TransformData": "./src/mesh/TransformData.js",

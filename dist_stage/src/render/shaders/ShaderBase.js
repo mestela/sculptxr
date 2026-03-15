@@ -207,11 +207,12 @@ ShaderBase.drawBuffer = function (mesh) {
   } else {
     mesh.getIndexBuffer().bind();
     var idxType = mesh.getIndexType ? mesh.getIndexType() : gl.UNSIGNED_INT;
-    try {
-        gl.drawElements(mesh.getMode(), mesh.getCount(), idxType, 0);
-      } catch (e) {
-        console.error(`[ShaderBase] Exception Mesh ${mesh.getID()}: ${e}`);
-      }
+    // try {
+    //     console.warn(`[ShaderBase] ROGUE drawElements caller found for mesh ${mesh.getID()}:`, new Error().stack);
+    //     gl.drawElements(mesh.getMode(), mesh.getCount(), idxType, 0);
+    //   } catch (e) {
+    //     console.error(`[ShaderBase] Exception Mesh ${mesh.getID()}: ${e}`);
+    //   }
   }
   gl.bindBuffer(gl.ARRAY_BUFFER, null);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);

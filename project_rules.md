@@ -89,9 +89,11 @@
 3.  **No Autonomous Browser Testing**: DO NOT use the `browser_subagent` to test the application unless explicitly requested by the user. Request manual testing instead.
 
 ## Environment & Build System
-1.  **NO NPM / NO BUILD**: This is a pure static site. Do NOT run `npm build`, `npm start`, `yarn`, or `pnpm`.
-2.  **Raw Loading**: The browser loads `src/` files directly (via `importmap` in `index.html` or standard ES modules).
-3.  **Deploy Script Only**: The only valid "build" action is `./deploy.sh` or `./deploy_beta.sh`, which merely rsyncs files.
+1.  **NO BUILD FOR PROD**: The core project is a pure static site natively loaded by the browser via `importmap` or standard ES modules.
+2.  **Local Testing (Vite)**: For fast, live local testing and remote debugging (e.g., with GalaxyXR), the project uses a Vite wrapper located in `../sculptxr-vr/`.
+    -   *Workflow*: The user runs `npm run dev` (or `vite`) from `/Users/mattestela/.gemini/jetski/scratch/sculptxr-vr/`. It serves the app locally over HTTPS.
+    -   *Agent Rule*: Rely on this Vite server being active for immediate local testing. DO NOT fall back to the beta deploy scripts when fast local iteration is possible.
+3.  **Deploy Scripts (Beta/Prod)**: For publishing to the outside world, use `./deploy.sh` or `./deploy_beta.sh` from the main `sculptxr` directory.
 4.  **Environment First**: Any change required to *run* the app (e.g., `importmap` updates, library patches, build configs) MUST be committed **immediately** upon verification.
 5.  **No "Floating" Configs**: Never leave environment fixes in an uncommitted state while working on features.
 6.  **Revert Safety**: Before reverting (`git checkout .`), ALWAYS check `git status` for uncommitted config files.

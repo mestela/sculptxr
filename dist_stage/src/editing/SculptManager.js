@@ -130,7 +130,8 @@ class SculptManager {
   }
 
   postRender() {
-    this.getCurrentTool().postRender(this._selection);
+    // Legacy Selection Cursor rendering DISABLED for Three.js migration
+    // this.getCurrentTool().postRender(this._selection);
   }
 
   addSculptToScene(scene) {

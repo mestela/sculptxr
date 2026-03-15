@@ -1,14 +1,25 @@
 # Handover Prompt
 
-**Project Status**: Finished the `feature/performance-wireframe` branch, safely merged into `master`, and deployed `v0.9.279` to both Beta and Production environments. The focal point of the recent work was the implementation of the **Voxel Move Tool**, which includes real-time proxy meshing and a bespoke multi-step ODE (Reverse-Euler) solver for smooth, artifact-free Signed Distance Field (SDF) advection. We also successfully triaged an extensive batch of beta tester feedback and updated our tracking documentation.
+**Project Status**: Mid-migration from custom raw WebGL rendering (SculptGL) to **Three.js v160**. Phase 1 (Engine Initialization) is complete. Phase 2 (Mesh Data Bridge) is currently in progress, focusing on stabilizing the dynamic BufferGeometry updates.
 
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
+## Critical Developer Instructions
+[WARNING: DO NOT USE DEPLOY SCRIPTS. WE ARE EXCLUSIVELY USING A LOCAL PYTHON SERVER FOR DEVELOPMENT.]
+* Read the codebase using `view_file` instead of grep where possible. 
+* Do not attempt to run `npm run build` or `npm run deploy`. 
+* **Local Server**: The user runs `python3 serve.py` to host the site locally with HTTPS (required for WebXR). It serves on `https://10.0.0.19:4433/` (or `localhost:4433`). There is NO hot-reloading; changes require a manual browser refresh.
+* The user prefers small, incremental tests. When making geometry or rendering changes, ensure the base case (a simple 6-sided primitive cube) works before testing subdivided spheres.
+
 ## Recent Work & Context
-1. **Voxel Move Tool (ODE Advection)**: Added a "Move" brush to the Voxel palette. Implemented a dual-thread architecture: the Main Thread dynamically detaches a lightweight polygonal "Visual Proxy" that tracks the user's VR controller perfectly at 90FPS.
-2. **Web Worker Integrations**: On trigger release, the UI dispatches a `WARP_SPHERE` command. `VoxelState.js` handles the heavy lifting by processing a sliced reverse-Euler integration backwards through the SDF coordinate space, avoiding "spatial folding/tearing." X-Axis Symmetry was added to this workflow via dual-Warp dispatches.
-3. **Beta Feedback Triage**: A data-dump of beta tester notes was reformatted into the top of `docs/todo.md` as "Bug", "UX", and "Feature" items. Notable additions include requests for "Symmetry On/Off in quick menu", "Bake Voxel Mesh button", and isolating a right-hand pinch tracking interference bug on Quest 3.
-4. **Architectural Blueprints**: Two new exploratory documents were written based on user requests: `docs/elastic_brush_concepts.md` (identifying cheap pseudo-Kelvinlet methods like topological grabs and Laplacian smoothing) and `docs/voxel_move_advection.md` (documenting the math behind the Move tool). Added a "Later" task to investigate porting the WebGL 1.0 engine to WebGL 2.0 (for 3D uniform textures and VAOs) or WebGPU.
+1. **Three.js Migration**: Successfully replaced the custom VBO/VAO (`Buffer.js`/`Attribute.js`) implementation with `THREE.BufferGeometry`. The core render loop in `Scene.js` now uses `THREE.WebGLRenderer.setAnimationLoop()`.
+2. **glDrawArrays Out-of-Bounds Error**: We are currently battling a `GL_INVALID_OPERATION : glDrawArrays: attempt to access out of range vertices in attribute 0` error.
+3. **VAO State Corruption & Gizmo**: We discovered that legacy WebGL UI elements (like the Gizmo Tool) run in `postRender()` immediately after Three.js renders. The Gizmo creates a 24-byte (6-vertex) Line array (`Primitives.createLine2D`). Because Three.js leaves the sculpt mesh's VAO bound, the raw WebGL `gl.bindBuffer` calls from the Gizmo permanently hijack the sculpt mesh's Attribute 0, replacing the 1.7 million vertex buffer with a 24-byte buffer.
+4. **Current Status**: We attempted to fix this by adding `gl.bindVertexArray(null)` inside `_drawScene` after Three.js renders, but the error persists even on a simple 6-sided cube.
+5. **Latest Code Changes:**
+   - Disabled subdivision in `Scene.js` `addSphere()` and `addCube()` so it boots with a clean primitive.
+   - Added stack traces to `Mesh.js` to catch 6-vertex array allocations.
+   - Intercepted `gl.drawArrays` in `Scene.js` to print out exhaustive buffer diagnostics (which proves the 24-byte buffer is bound during the Three.js render pass).
 
 ## Next Steps
-The environment is completely stable, documented, and fully pushed to `origin/master`. You are starting from a fresh chat context with no fixed agenda. The user may want to begin tackling the triaged items in `todo.md` (e.g., investigating that Quest 3 pinch bug, setting up elastic brushes, or optimizing WebXR interactions). Wait for the user's direction on which thread to pull next.
+Investigate why the VAO unbind in `_drawScene` and `_drawSceneVR` failed to prevent the 24-byte Gizmo buffer from corrupting Three.js's next frame. Check if `Gizmo`'s `MeshStatic` initialization is inadvertently registering a Three.js `BufferGeometry` that gets synced or cached globally, or if `Three.js`'s internal caching (`renderer.state`) is eagerly restoring a bad buffer.
