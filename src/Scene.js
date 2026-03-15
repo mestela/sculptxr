@@ -1328,7 +1328,7 @@ class Scene {
     // make a cube and subdivide it
     var mesh = new Multimesh(Primitives.createCube(this._gl));
     mesh.normalizeSize();
-    // this.subdivideClamp(mesh); 
+    this.subdivideClamp(mesh); 
 
     // Use PBR for debugging renderer
     mesh.setShaderType(Enums.Shader.PBR);
