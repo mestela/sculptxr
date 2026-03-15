@@ -787,7 +787,11 @@ class Scene {
   }
 
   renderSelectOverRtt() {
-    this._drawFullScene = false;
+    // Legacy RTT passes are disabled in Three.js migration.
+    // Setting _drawFullScene = false here was causing the main render loop
+    // to drop 100% of frames during mouse drag (camera tumbling), 
+    // resulting in massive perceived lag.
+    // this._drawFullScene = false; 
   }
 
   _requestRender() {

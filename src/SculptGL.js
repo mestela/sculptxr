@@ -361,6 +361,10 @@ class SculptGL extends Scene {
     canvas.addEventListener('mouseout', this.onMouseOut.bind(this), false);
     canvas.addEventListener('mouseover', this.onMouseOver.bind(this), false);
     canvas.addEventListener('mousemove', Utils.throttle(this.onMouseMove.bind(this), 16.66), false);
+
+    // [HOTFIX] Prevent Three.js WebXRManager from running heavy raycasts on hover
+    canvas.addEventListener('pointerover', (e) => { e.stopPropagation(); }, true);
+
     canvas.addEventListener('mousewheel', cbMouseWheel, false);
     canvas.addEventListener('DOMMouseScroll', cbMouseWheel, false);
     // Add native double-click as fallback to Hammer.js
