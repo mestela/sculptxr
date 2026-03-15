@@ -2338,15 +2338,13 @@ class Mesh {
 
   updateGeometryBuffers() {
     this.updateVertexBuffer();
-    if (!this._renderData._geometry.getAttribute('normal')) {
-        this.updateNormalBuffer();
-    }
+    this.updateNormalBuffer();
   }
 
   updateBuffers() {
     this.updateGeometryBuffers();
-    if (!this._renderData._geometry.getAttribute('aColor')) this.updateColorBuffer();
-    if (!this._renderData._geometry.getAttribute('aMaterial')) this.updateMaterialBuffer();
+    this.updateColorBuffer();
+    this.updateMaterialBuffer();
     this.updateTexCoordBuffer();
     this.updateIndexBuffer();
     this.updateWireframeBuffer();
