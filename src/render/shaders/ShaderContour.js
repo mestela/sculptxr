@@ -22,7 +22,6 @@ ShaderContour.vertex = [
 ].join('\n');
 
 ShaderContour.fragment = [
-  '#extension GL_OES_standard_derivatives : enable',
   'uniform sampler2D uTexture0;',
   'uniform vec4 uColor;',
   'varying vec2 vTexCoord;',

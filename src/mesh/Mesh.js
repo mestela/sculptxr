@@ -6,6 +6,7 @@ import Shader from '../render/ShaderLib.js';
 import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
 import * as THREE from 'three';
+import ShaderManager from '../render/ShaderManager.js';
 
 /*
 Basic usage:
@@ -424,18 +425,20 @@ class Mesh {
   initThreeMesh() {
     if (!this._renderData) return;
     if (!this._renderData._threeMesh) {
-      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh StandardMaterial", "green");
-      var material = new THREE.MeshStandardMaterial({
-        color: 0xcccccc,
-        roughness: 0.5,
-        metalness: 0.1,
-        wireframe: false,
-        side: THREE.DoubleSide
-      });
-      // Ensure vertex colors are enabled if the mesh supports them
-      if (this.isUsingColors && this.isUsingColors()) {
-          material.vertexColors = true;
+      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+      
+      var material = ShaderManager.getMaterial(this.getShaderType());
+      if (!material) {
+        material = new THREE.MeshStandardMaterial({
+          color: 0xcccccc,
+          roughness: 0.5,
+          metalness: 0.1,
+          wireframe: false,
+          side: THREE.DoubleSide
+        });
+        if (this.isUsingColors && this.isUsingColors()) material.vertexColors = true;
       }
+
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
@@ -2217,13 +2220,13 @@ class Mesh {
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
     var geom = this._renderData._geometry;
-    var attr = geom.getAttribute('color');
+    var attr = geom.getAttribute('aColor');
     if (!attr || attr.array !== colors || attr.array.length !== colors.length) {
       if (attr) {
-          geom.deleteAttribute('color');
+          geom.deleteAttribute('aColor');
           geom.dispose();
       }
-      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geom.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
     } else {
       attr.array.set(colors);
       attr.needsUpdate = true;
@@ -2233,13 +2236,13 @@ class Mesh {
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
     var geom = this._renderData._geometry;
-    var attr = geom.getAttribute('sculptMaterial');
+    var attr = geom.getAttribute('aMaterial');
     if (!attr || attr.array !== materials || attr.array.length !== materials.length) {
       if (attr) {
-          geom.deleteAttribute('sculptMaterial');
+          geom.deleteAttribute('aMaterial');
           geom.dispose();
       }
-      geom.setAttribute('sculptMaterial', new THREE.BufferAttribute(materials, 3));
+      geom.setAttribute('aMaterial', new THREE.BufferAttribute(materials, 3));
     } else {
       attr.array.set(materials);
       attr.needsUpdate = true;
@@ -2342,8 +2345,8 @@ class Mesh {
 
   updateBuffers() {
     this.updateGeometryBuffers();
-    if (!this._renderData._geometry.getAttribute('color')) this.updateColorBuffer();
-    if (!this._renderData._geometry.getAttribute('sculptMaterial')) this.updateMaterialBuffer();
+    if (!this._renderData._geometry.getAttribute('aColor')) this.updateColorBuffer();
+    if (!this._renderData._geometry.getAttribute('aMaterial')) this.updateMaterialBuffer();
     this.updateTexCoordBuffer();
     this.updateIndexBuffer();
     this.updateWireframeBuffer();

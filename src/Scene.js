@@ -18,6 +18,7 @@ import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
 import Rtt from './drawables/Rtt.js';
 import ShaderLib from './render/ShaderLib.js';
+import ShaderManager from './render/ShaderManager.js';
 import MeshStatic from './mesh/meshStatic/MeshStatic.js';
 import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
@@ -975,6 +976,13 @@ class Scene {
       // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
       this._renderer.resetState();
       
+      // Update custom shader uniforms before rendering
+      for (var j = 0; j < nbMeshes; ++j) {
+        if (meshes[j].getThreeMesh()) {
+           ShaderManager.updateUniforms(meshes[j], this);
+        }
+      }
+
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, this._camera.getThreeCamera());
       
@@ -1181,7 +1189,7 @@ class Scene {
         let mat = m.material;
         if (!mat) { out += "NO MATERIAL\n"; return out; }
         out += `Type: ${mat.type}\n`;
-        out += `Color: #${mat.color.getHexString()}\n`;
+        out += `Color: ${mat.color ? '#' + mat.color.getHexString() : 'N/A (ShaderMaterial)'}\n`;
         out += `VertexColors: ${mat.vertexColors}\n`;
         out += `Transparent: ${mat.transparent}\n`;
         out += `Opacity: ${mat.opacity}\n`;
