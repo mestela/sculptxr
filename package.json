@@ -17,7 +17,14 @@
     "lib": "lib"
   },
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.0.1",
+    "vite": "^5.0.10"
   },
   "repository": {
     "type": "git",

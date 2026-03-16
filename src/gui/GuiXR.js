@@ -232,10 +232,26 @@ export default class GuiXR {
 
     // Expose for Console
     window.guiXR = this;
+    
+    // Texture Update Callbacks (for Three.js integration)
+    this._onTextureUpdatedCallbacks = [];
+  }
+
+  onTextureUpdated(cb) {
+    this._onTextureUpdatedCallbacks.push(cb);
   }
 
   _requestDraw() {
     this._needsRedraw = true;
+    if (!this._pendingDraw) {
+      this._pendingDraw = true;
+      requestAnimationFrame(() => {
+        this._pendingDraw = false;
+        if (this._needsRedraw) {
+          this.draw();
+        }
+      });
+    }
   }
 
 
@@ -667,13 +683,18 @@ export default class GuiXR {
           hitWidget = w;
           newHover = w;
 
-          if (logHit && window.screenLog) {
-            // window.screenLog(`[Hvr] HIT! ${w.id}`, 'lime');
+          if (window.screenLog && data.isToolPicker) {
+            window.screenLog(`[Overlay Hover] Hit: ${w.id || w.label}`, 'lime');
+            this._needsRedraw = true; // FORCE DRAW TO SEE LOGS
           }
-
           break;
         }
       }
+    }
+
+    if (window.screenLog && data.isToolPicker && !newHover) {
+       window.screenLog(`[Overlay Hover] rx:${Math.round(rx)} ry:${Math.round(ry)}`, 'orange');
+       this._needsRedraw = true; // FORCE DRAW TO SEE LOGS
     }
 
 
@@ -1292,9 +1313,17 @@ export default class GuiXR {
     const data = this._overlayData;
     if (!data || !data.widgets) return;
 
+    // Normalize coordinates to counter OVERLAY_SCALE rendering
+    const invScale = 1.0 / OVERLAY_SCALE;
+    const pivot = this._getOverlayPivot();
+    
+    // Transform Cursor to Local Overlay Space (Pivot Scale)
+    const scx = (cx - pivot.x) * invScale + pivot.x;
+    const scy = (cy - pivot.y) * invScale + pivot.y;
+
     // Relativize coords
-    const rx = cx - data.x;
-    const ry = cy - data.y;
+    const rx = scx - data.x;
+    const ry = scy - data.y;
 
     if (data.isToolPicker && window.screenLog) {
       // window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
@@ -1896,6 +1925,15 @@ export default class GuiXR {
   }
 
   draw() {
+    try {
+      this._drawInternal();
+    } catch (e) {
+      console.error("[GuiXR] Draw Error:", e);
+      if (window.screenLog) window.screenLog("[GuiXR] Draw Error: " + e.message, "red");
+    }
+  }
+
+  _drawInternal() {
     this.syncWidgetValues();
     // OPTIMIZATION: Early exit if no redraw needed
     if (!this._needsRedraw) return;
@@ -2079,7 +2117,7 @@ export default class GuiXR {
           }
         }
 
-        const isHovered = (this._hoverWidget === wid);
+        const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
 
         // Base Styles
         ctx.textAlign = 'center';
@@ -2317,6 +2355,21 @@ export default class GuiXR {
       }
       ctx.restore();
     }
+
+    // --- DRAW DEBUG CURSOR (Verify Raycast Hits) ---
+    if (this._cursor && this._cursor.active) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(this._cursor.x, this._cursor.y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff00ff'; // Hot pink!
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    this._needsUpload = true;
   }
 
   printLog(str, color = '#00ff00') {
@@ -3176,14 +3229,15 @@ export default class GuiXR {
   }
 
   updateTexture() {
-    if (!this._needsUpload || !this._texture) return;
+    try {
+      if (!this._needsUpload || !this._texture) return;
 
-    // Force draw if pending (happens right before the throttled upload)
-    if (this._pendingDraw) {
-      this._needsRedraw = true; // Tell draw() it's allowed
-      this.draw();             // This blocks for ~20-50ms max, but only 30 times a sec
-      this._pendingDraw = false;
-    }
+      // Force draw if pending (happens right before the throttled upload)
+      if (this._pendingDraw) {
+        this._needsRedraw = true; // Tell draw() it's allowed
+        this.draw();             // This blocks for ~20-50ms max, but only 30 times a sec
+        this._pendingDraw = false;
+      }
 
     const t0 = performance.now();
     const gl = this._gl;
@@ -3198,10 +3252,20 @@ export default class GuiXR {
     }
     // if (prevTex) gl.bindTexture(gl.TEXTURE_2D, prevTex);
     this._needsUpload = false;
+    
+    // Notify external listeners (like Three.js CanvasTexture wrappers)
+    for (let i = 0; i < this._onTextureUpdatedCallbacks.length; i++) {
+        this._onTextureUpdatedCallbacks[i]();
+    }
 
     const t1 = performance.now();
     if (t1 - t0 > 5) {
       console.log(`GuiXR Upload: ${(t1 - t0).toFixed(2)}ms`);
+    }
+
+    } catch (e) {
+      console.error("[GuiXR] TexUpload Error:", e);
+      if (window.screenLog) window.screenLog("[GuiXR] TexUpload Error: " + e.message, "red");
     }
   }
 

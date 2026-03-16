@@ -6,6 +6,7 @@ import Shader from '../render/ShaderLib.js';
 import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
 import * as THREE from 'three';
+import ShaderManager from '../render/ShaderManager.js';
 
 /*
 Basic usage:
@@ -424,18 +425,20 @@ class Mesh {
   initThreeMesh() {
     if (!this._renderData) return;
     if (!this._renderData._threeMesh) {
-      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh StandardMaterial", "green");
-      var material = new THREE.MeshStandardMaterial({
-        color: 0xcccccc,
-        roughness: 0.5,
-        metalness: 0.1,
-        wireframe: false,
-        side: THREE.DoubleSide
-      });
-      // Ensure vertex colors are enabled if the mesh supports them
-      if (this.isUsingColors && this.isUsingColors()) {
-          material.vertexColors = true;
+      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+      
+      var material = ShaderManager.getMaterial(this.getShaderType());
+      if (!material) {
+        material = new THREE.MeshStandardMaterial({
+          color: 0xcccccc,
+          roughness: 0.5,
+          metalness: 0.1,
+          wireframe: false,
+          side: THREE.DoubleSide
+        });
+        if (this.isUsingColors && this.isUsingColors()) material.vertexColors = true;
       }
+
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
@@ -457,7 +460,13 @@ class Mesh {
   updateGeometry(iFaces, iVerts) {
     this.updateFacesAabbAndNormal(iFaces);
     this.updateVerticesNormal(iVerts);
-    this.updateOctree(iFaces);
+    
+    if (iFaces === undefined) {
+      this.computeOctree(); 
+    } else {
+      this.updateOctree(iFaces);
+    }
+    
     if (this._renderData) {
       this.updateDuplicateGeometry(iVerts);
       this.updateDrawArrays(iFaces);
@@ -1639,9 +1648,15 @@ class Mesh {
     
     // Sync to Three.js Mesh
     if (this._renderData && this._renderData._threeMesh) {
+      // Set the local matrix from the sculptor's math
       this._renderData._threeMesh.matrixAutoUpdate = false;
       this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
-      this._renderData._threeMesh.matrixWorld.copy(this._renderData._threeMesh.matrix);
+      
+      // CRITICAL FIX: Do NOT blindly copy 'matrix' to 'matrixWorld'
+      // WebXR requires objects to inherit transforms from their parents (like 'worldGroup' or the Scene itself).
+      // By calling updateMatrixWorld(true), Three.js correctly calculates the final world position
+      // including any VR specific scaling or scene offsets!
+      this._renderData._threeMesh.updateMatrixWorld(true);
     }
   }
 
@@ -1651,7 +1666,13 @@ class Mesh {
   }
 
   normalizeSize() {
-    var scale = Utils.SCALE / (2.0 * this.computeLocalRadius());
+    var radius = this.computeLocalRadius();
+    if (isNaN(radius) || radius === 0) {
+        console.error("🛑 normalizeSize computed invalid radius! Radius:", radius);
+        if(window.screenLog) window.screenLog("NaN Radius detected", "red");
+        return;
+    }
+    var scale = Utils.SCALE / (2.0 * radius);
     mat4.scale(this._transformData._matrix, this._transformData._matrix, [scale, scale, scale]);
   }
 
@@ -1664,6 +1685,14 @@ class Mesh {
     worldb[0] = worldb[3] = mat[12];
     worldb[1] = worldb[4] = mat[13];
     worldb[2] = worldb[5] = mat[14];
+    
+    // If the mesh is empty or uninitialized, localb is Infinity.
+    // Skip rotation math to prevent NaN cascades.
+    if (!Number.isFinite(localb[0])) {
+        worldb[0] = localb[0]; worldb[1] = localb[1]; worldb[2] = localb[2];
+        worldb[3] = localb[3]; worldb[4] = localb[4]; worldb[5] = localb[5];
+        return worldb;
+    }
 
     // rotate per component
     for (var i = 0; i < 3; ++i) {
@@ -1682,6 +1711,14 @@ class Mesh {
           worldb[j + 3] += a;
         }
       }
+    }
+    
+    for(var k=0; k<6; k++) {
+        if(isNaN(worldb[k])) {
+            console.error("🛑 computeWorldBound produced NaN! LocalBounds:", localb, "Matrix:", mat);
+            if(window.screenLog) window.screenLog("NaN WorldBound", "red");
+            break;
+        }
     }
 
     return worldb;
@@ -2189,13 +2226,13 @@ class Mesh {
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
     var geom = this._renderData._geometry;
-    var attr = geom.getAttribute('color');
+    var attr = geom.getAttribute('aColor');
     if (!attr || attr.array !== colors || attr.array.length !== colors.length) {
       if (attr) {
-          geom.deleteAttribute('color');
+          geom.deleteAttribute('aColor');
           geom.dispose();
       }
-      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geom.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
     } else {
       attr.array.set(colors);
       attr.needsUpdate = true;
@@ -2205,13 +2242,13 @@ class Mesh {
   updateMaterialBuffer() {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
     var geom = this._renderData._geometry;
-    var attr = geom.getAttribute('sculptMaterial');
+    var attr = geom.getAttribute('aMaterial');
     if (!attr || attr.array !== materials || attr.array.length !== materials.length) {
       if (attr) {
-          geom.deleteAttribute('sculptMaterial');
+          geom.deleteAttribute('aMaterial');
           geom.dispose();
       }
-      geom.setAttribute('sculptMaterial', new THREE.BufferAttribute(materials, 3));
+      geom.setAttribute('aMaterial', new THREE.BufferAttribute(materials, 3));
     } else {
       attr.array.set(materials);
       attr.needsUpdate = true;
@@ -2247,6 +2284,9 @@ class Mesh {
         if (geom.index) {
             geom.setIndex(null);
             geom.dispose();
+        }
+        if (geom.attributes.position) {
+            geom.setDrawRange(0, geom.attributes.position.count);
         }
         return;
     }
@@ -2304,15 +2344,13 @@ class Mesh {
 
   updateGeometryBuffers() {
     this.updateVertexBuffer();
-    if (!this._renderData._geometry.getAttribute('normal')) {
-        this.updateNormalBuffer();
-    }
+    this.updateNormalBuffer();
   }
 
   updateBuffers() {
     this.updateGeometryBuffers();
-    if (!this._renderData._geometry.getAttribute('color')) this.updateColorBuffer();
-    if (!this._renderData._geometry.getAttribute('sculptMaterial')) this.updateMaterialBuffer();
+    this.updateColorBuffer();
+    this.updateMaterialBuffer();
     this.updateTexCoordBuffer();
     this.updateIndexBuffer();
     this.updateWireframeBuffer();

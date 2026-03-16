@@ -40,9 +40,6 @@ class SculptGL extends Scene {
     this._maskY = 0;
     this._hammer = new HammerManager(this._canvas);
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
-    this.onXRFrame = this.onXRFrame.bind(this);
-
-
 
     this._eventProxy = {};
 
@@ -70,6 +67,47 @@ class SculptGL extends Scene {
     });
     this.toggleMenu = () => { if (this._guiXR) this._guiXR.togglePreview(); };
     this.nextTab = () => { if (this._guiXR) this._guiXR.nextTab(); };
+
+    window.debugVRPose = () => {
+        console.log("=== VR TRACKING DUMP ===");
+        if (!this._renderer || !this._renderer.xr || !this._renderer.xr.isPresenting) {
+            console.warn("NOT IN VR.");
+            return;
+        }
+
+        const lGrip = this._vrControllerLeftGrip;
+        const lTarget = this._vrControllerLeft;
+        
+        console.log("--- Left Target Ray Space ---");
+        if (lTarget) {
+            lTarget.updateMatrixWorld(true);
+            console.log("MatrixWorld Elements:", lTarget.matrixWorld.elements.slice(8, 15)); // Log mostly translation + -Z dir
+            console.log(`Children (${lTarget.children.length}):`, lTarget.children.map(c => c.name || c.type));
+        }
+
+        console.log("--- Left Grip Space ---");
+        if (lGrip) {
+            lGrip.updateMatrixWorld(true);
+            console.log("MatrixWorld Elements:", lGrip.matrixWorld.elements.slice(12, 15));
+            console.log(`Children (${lGrip.children.length}):`, lGrip.children.map(c => c.name || c.type));
+        }
+
+        if (this._vrMenu && this._vrMenu.mesh) {
+            console.log("--- Main Menu ---");
+            console.log("Is Child of Grip:", lGrip.children.includes(this._vrMenu.mesh));
+            console.log("Local Rotation:", this._vrMenu.mesh.rotation.x, this._vrMenu.mesh.rotation.y, this._vrMenu.mesh.rotation.z);
+            console.log("Internal Rotation Arr:", this._vrMenu._rotation);
+        }
+        
+        if (this._debugRayMesh) {
+            console.log("--- Debug Green Ray ---");
+            const pos = this._debugRayMesh.geometry.attributes.position.array;
+            console.log(`Origin: ${pos[0].toFixed(3)}, ${pos[1].toFixed(3)}, ${pos[2].toFixed(3)}`);
+            console.log(`End:    ${pos[3].toFixed(3)}, ${pos[4].toFixed(3)}, ${pos[5].toFixed(3)}`);
+        } else {
+            console.warn("--- Debug Green Ray MISSING (rayPose logic failed) ---");
+        }
+    };
 
     this.initHammer();
 
@@ -361,6 +399,10 @@ class SculptGL extends Scene {
     canvas.addEventListener('mouseout', this.onMouseOut.bind(this), false);
     canvas.addEventListener('mouseover', this.onMouseOver.bind(this), false);
     canvas.addEventListener('mousemove', Utils.throttle(this.onMouseMove.bind(this), 16.66), false);
+
+    // [HOTFIX] Prevent Three.js WebXRManager from running heavy raycasts on hover
+    canvas.addEventListener('pointerover', (e) => { e.stopPropagation(); }, true);
+
     canvas.addEventListener('mousewheel', cbMouseWheel, false);
     canvas.addEventListener('DOMMouseScroll', cbMouseWheel, false);
     // Add native double-click as fallback to Hammer.js
@@ -898,7 +940,7 @@ class SculptGL extends Scene {
 
     try {
       const session = await navigator.xr.requestSession(mode, {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
       });
 
       // TRUSTED EVENT LISTENER for File I/O
@@ -919,7 +961,7 @@ class SculptGL extends Scene {
         }
       });
 
-      this.enterXR(session);
+      await this.enterXR(session);
       this._currentXRMode = mode;
       // console.log(`Started XR Session: ${mode}`);
     } catch (e) {

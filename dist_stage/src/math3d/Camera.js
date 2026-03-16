@@ -285,17 +285,35 @@ class Camera {
     }
 
     if (this._threeCamera) {
-      // Three.js computes view matrix via matrixWorldInverse.
-      // Instead of forcing the inverse array (which might have scale or handedness issues),
-      // we can set the camera's spatial transform directly.
-      var p = this.computePosition();
-      this._threeCamera.position.set(p[0], p[1], p[2]);
-      this._threeCamera.quaternion.set(this._quatRot[0], this._quatRot[1], this._quatRot[2], this._quatRot[3]);
-      this._threeCamera.updateMatrixWorld(true);
+      if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+          // WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!
+          // Three.js WebXRManager owns it and is dynamically applying the headset poses to it.
+          this._threeCamera.matrixAutoUpdate = true;
+      } else {
+          // Desktop Mode: Sync Three.js camera to SculptGL's orbit camera for flat-screen rendering
+          this._threeCamera.matrixAutoUpdate = false;
+          this._threeCamera.matrixWorldInverse.fromArray(this._view);
+          this._threeCamera.matrixWorld.copy(this._threeCamera.matrixWorldInverse).invert();
+          this._threeCamera.matrix.copy(this._threeCamera.matrixWorld);
+      }
     }
   }
 
   optimizeNearFar(bb) {
+    if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+        // VR MODE: Do not dynamically adjust the camera frustum based on the SculptMesh bounds.
+        // WebXR inherently recalculates the projection matrices, but it pulls the near/far planes
+        // from the root Scene Camera. If we squash the near clip plane to be past the controller,
+        // the controllers will be completely clipped out of existence.
+        this._near = 0.01;
+        this._far = 50.0;
+        if (this._threeCamera) {
+             this._threeCamera.near = this._near;
+             this._threeCamera.far = this._far;
+        }
+        return;
+    }
+
     if (!bb) bb = this._lastBBox;
     if (!bb) return;
     this._lastBBox = bb;
@@ -307,10 +325,14 @@ class Camera {
     if (window.debugForceNearClip !== undefined) {
       this._near = window.debugForceNearClip;
       this._far = 5000.0;
+    } else if (!Number.isFinite(bb[0])) {
+      // Fallback for uninitialized/empty mesh bounding boxes
+      this._near = 0.01;
+      this._far = 5000.0;
     } else {
       var boxRadius = 0.5 * vec3.dist(bb, vec3.set(_TMP_VEC3, bb[3], bb[4], bb[5]));
       this._near = Math.max(0.001, distToBoxCenter - boxRadius);
-      this._far = boxRadius + distToBoxCenter;
+      this._far = Math.max(this._near + 0.1, boxRadius + distToBoxCenter); // Ensure far > near
     }
     this.updateProjection();
   }
@@ -332,16 +354,21 @@ class Camera {
     }
 
     if (this._threeCamera) {
-      if (this._projectionType === Enums.Projection.PERSPECTIVE) {
-        this._threeCamera.fov = this._fov;
-        this._threeCamera.aspect = this._width / this._height;
-        this._threeCamera.near = this._near;
-        this._threeCamera.far = this._far;
-        this._threeCamera.updateProjectionMatrix();
+      if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+        // VR MODE: Do nothing. Three.js WebXRManager dynamically calculates
+        // the stereoscopic projection matrices for each eye per frame.
       } else {
-        // Ortho not fully supported in Three.js branch yet, fallback
-        this._threeCamera.projectionMatrix.fromArray(this._proj);
-        this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
+        if (this._projectionType === Enums.Projection.PERSPECTIVE) {
+          this._threeCamera.fov = this._fov;
+          this._threeCamera.aspect = this._width / this._height;
+          this._threeCamera.near = this._near;
+          this._threeCamera.far = this._far;
+          this._threeCamera.updateProjectionMatrix();
+        } else {
+          // Ortho not fully supported in Three.js branch yet, fallback
+          this._threeCamera.projectionMatrix.fromArray(this._proj);
+          this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
+        }
       }
     }
   }

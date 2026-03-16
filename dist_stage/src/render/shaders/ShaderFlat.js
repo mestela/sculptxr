@@ -30,7 +30,6 @@ ShaderFlat.vertex = [
 ].join('\n');
 
 ShaderFlat.fragment = [
-  '#extension GL_OES_standard_derivatives : enable',
   'precision highp float;',
   'uniform vec3 uColor;',
   'uniform float uAlpha;',

@@ -285,20 +285,35 @@ class Camera {
     }
 
     if (this._threeCamera) {
-      // Three.js computes view matrix via matrixWorldInverse.
-      // We already compute a perfect 4x4 View matrix here in SculptXR.
-      // Easiest sync is to just set matrixWorldInverse to our _view matrix.
-      this._threeCamera.matrixAutoUpdate = false;
-      
-      // Our _view is the view matrix. Three.js matrixWorldInverse is exactly the view matrix. 
-      // The matrixWorld is the inverse of the view matrix.
-      this._threeCamera.matrixWorldInverse.fromArray(this._view);
-      this._threeCamera.matrixWorld.copy(this._threeCamera.matrixWorldInverse).invert();
-      this._threeCamera.matrix.copy(this._threeCamera.matrixWorld);
+      if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+          // WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!
+          // Three.js WebXRManager owns it and is dynamically applying the headset poses to it.
+          this._threeCamera.matrixAutoUpdate = true;
+      } else {
+          // Desktop Mode: Sync Three.js camera to SculptGL's orbit camera for flat-screen rendering
+          this._threeCamera.matrixAutoUpdate = false;
+          this._threeCamera.matrixWorldInverse.fromArray(this._view);
+          this._threeCamera.matrixWorld.copy(this._threeCamera.matrixWorldInverse).invert();
+          this._threeCamera.matrix.copy(this._threeCamera.matrixWorld);
+      }
     }
   }
 
   optimizeNearFar(bb) {
+    if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+        // VR MODE: Do not dynamically adjust the camera frustum based on the SculptMesh bounds.
+        // WebXR inherently recalculates the projection matrices, but it pulls the near/far planes
+        // from the root Scene Camera. If we squash the near clip plane to be past the controller,
+        // the controllers will be completely clipped out of existence.
+        this._near = 0.01;
+        this._far = 50.0;
+        if (this._threeCamera) {
+             this._threeCamera.near = this._near;
+             this._threeCamera.far = this._far;
+        }
+        return;
+    }
+
     if (!bb) bb = this._lastBBox;
     if (!bb) return;
     this._lastBBox = bb;
@@ -339,16 +354,21 @@ class Camera {
     }
 
     if (this._threeCamera) {
-      if (this._projectionType === Enums.Projection.PERSPECTIVE) {
-        this._threeCamera.fov = this._fov;
-        this._threeCamera.aspect = this._width / this._height;
-        this._threeCamera.near = this._near;
-        this._threeCamera.far = this._far;
-        this._threeCamera.updateProjectionMatrix();
+      if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
+        // VR MODE: Do nothing. Three.js WebXRManager dynamically calculates
+        // the stereoscopic projection matrices for each eye per frame.
       } else {
-        // Ortho not fully supported in Three.js branch yet, fallback
-        this._threeCamera.projectionMatrix.fromArray(this._proj);
-        this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
+        if (this._projectionType === Enums.Projection.PERSPECTIVE) {
+          this._threeCamera.fov = this._fov;
+          this._threeCamera.aspect = this._width / this._height;
+          this._threeCamera.near = this._near;
+          this._threeCamera.far = this._far;
+          this._threeCamera.updateProjectionMatrix();
+        } else {
+          // Ortho not fully supported in Three.js branch yet, fallback
+          this._threeCamera.projectionMatrix.fromArray(this._proj);
+          this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
+        }
       }
     }
   }

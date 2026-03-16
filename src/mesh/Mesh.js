@@ -1648,9 +1648,15 @@ class Mesh {
     
     // Sync to Three.js Mesh
     if (this._renderData && this._renderData._threeMesh) {
+      // Set the local matrix from the sculptor's math
       this._renderData._threeMesh.matrixAutoUpdate = false;
       this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
-      this._renderData._threeMesh.matrixWorld.copy(this._renderData._threeMesh.matrix);
+      
+      // CRITICAL FIX: Do NOT blindly copy 'matrix' to 'matrixWorld'
+      // WebXR requires objects to inherit transforms from their parents (like 'worldGroup' or the Scene itself).
+      // By calling updateMatrixWorld(true), Three.js correctly calculates the final world position
+      // including any VR specific scaling or scene offsets!
+      this._renderData._threeMesh.updateMatrixWorld(true);
     }
   }
 

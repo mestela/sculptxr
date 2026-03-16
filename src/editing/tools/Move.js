@@ -1,6 +1,6 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
-import SculptBase from 'editing/tools/SculptBase';
+import SculptBase from './SculptBase.js';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
 import Enums from '../../misc/Enums.js';
 

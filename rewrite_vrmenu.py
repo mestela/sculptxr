@@ -1,4 +1,10 @@
-import { mat4, vec3, mat3 } from 'gl-matrix';
+import re
+
+with open('src/drawables/VRMenu.js', 'r') as f:
+    orig = f.read()
+
+# I want to rewrite VRMenu so it returns a Three mesh but keeps the exact same intersect(origin, direction) math
+new_content = """import { mat4, vec3, mat3 } from 'gl-matrix';
 import * as THREE from 'three';
 
 class VRMenu {
@@ -33,9 +39,9 @@ class VRMenu {
 
     this._cacheWorld = mat4.create();
 
-    // Default configuration (Main Menu)
-    this._rotation = vec3.fromValues(-Math.PI / 2, 0, 0);
-    this._offset = vec3.fromValues(0.1, 0.1, -0.05);
+    // Default configuration
+    this._rotation = vec3.fromValues(Math.PI / 2, 0, 0);
+    this._offset = vec3.fromValues(0.15, 0.0, 0.0);
 
     this.rebuildMatrix();
   }
@@ -77,48 +83,63 @@ class VRMenu {
   }
 
   intersect(origin, direction) {
-    if (!this.mesh) return null;
+    if (!this._cacheWorld) return null;
+
+    // Invert World Matrix to transform Ray to Local Space
+    const invWorld = mat4.create();
+    mat4.invert(invWorld, this._cacheWorld);
+
+    // Transform Origin
+    const localOrigin = vec3.create();
+    vec3.transformMat4(localOrigin, origin, invWorld);
+
+    // Transform Direction
+    const p1 = vec3.create();
+    vec3.add(p1, origin, direction);
+    const localP1 = vec3.create();
+    vec3.transformMat4(localP1, p1, invWorld);
     
-    // Explicitly update matrix world for safety before raycasting
-    this.mesh.updateMatrixWorld(true);
+    const localDir = vec3.create();
+    vec3.sub(localDir, localP1, localOrigin);
+    vec3.normalize(localDir, localDir);
 
-    const raycaster = new THREE.Raycaster(
-        new THREE.Vector3(origin[0], origin[1], origin[2]),
-        new THREE.Vector3(direction[0], direction[1], direction[2])
-    );
+    // Intersect with Plane Z=0
+    if (Math.abs(localDir[2]) < 1e-6) return null; // Parallel
 
-    // Only raycast against this menu's mesh, no children (unless we added some)
-    const intersects = raycaster.intersectObject(this.mesh, false);
+    const t = -localOrigin[2] / localDir[2];
+    if (t < 0) return null; // Behind ray
 
-    if (intersects.length > 0) {
-        const hit = intersects[0];
-        // Ensure UVs exist (PlaneGeometry provides them by default)
-        if (hit.uv) {
-            return { 
-                uv: [hit.uv.x, hit.uv.y], 
-                distance: hit.distance,
-                object: this.mesh 
-            };
-        }
-    }
-    
-    return null;
+    // Intersection Point
+    const lx = localOrigin[0] + localDir[0] * t;
+    const ly = localOrigin[1] + localDir[1] * t;
+
+    // Check bounds
+    const w = this._w;
+    const h = this._h;
+    if (lx < -w || lx > w || ly < -h || ly > h) return null;
+
+    // Map to UV [0,1]
+    const u = (lx + w) / (2 * w);
+    const v = (ly + h) / (2 * h);
+
+    return { uv: [u, v], distance: t };
   }
 
   intersectPoint(point) {
-    if (!this.mesh) return null;
-    this.mesh.updateMatrixWorld(true);
+    if (!this._cacheWorld) return null;
 
-    // Convert world point to local space of the mesh
-    const localPoint = new THREE.Vector3(point[0], point[1], point[2]);
-    this.mesh.worldToLocal(localPoint);
+    const invWorld = mat4.create();
+    mat4.invert(invWorld, this._cacheWorld);
 
-    // Check Z distance (Generous 3cm in front, 5cm behind Menu plane)
-    if (localPoint.z > 0.03 || localPoint.z < -0.05) return null; 
+    const localPoint = vec3.create();
+    vec3.transformMat4(localPoint, point, invWorld);
+
+    // Check Z distance (Generous 3cm in front, 5cm behind)
+    if (localPoint[2] > 0.03 || localPoint[2] < -0.05) return null; 
 
     // Add padding to hit area
-    const lx = localPoint.x;
-    const ly = localPoint.y;
+    const lx = localPoint[0];
+    const ly = localPoint[1];
     const w = this._w;
     const h = this._h;
     const pad = 0.01; 
@@ -132,7 +153,7 @@ class VRMenu {
     const u = (clx + w) / (2 * w);
     const v = (cly + h) / (2 * h);
 
-    return { uv: [u, v], distance: localPoint.z };
+    return { uv: [u, v], distance: localPoint[2] };
   }
 
   update() {
@@ -151,3 +172,9 @@ class VRMenu {
 }
 
 export default VRMenu;
+"""
+
+with open('src/drawables/VRMenu.js', 'w') as f:
+    f.write(new_content)
+
+print("Replacement complete.")

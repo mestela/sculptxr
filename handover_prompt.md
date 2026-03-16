@@ -5,21 +5,22 @@
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
 ## Critical Developer Instructions
-[WARNING: DO NOT USE DEPLOY SCRIPTS. WE ARE EXCLUSIVELY USING A LOCAL PYTHON SERVER FOR DEVELOPMENT.]
+[WARNING: THE PROJECT NOW USES VITE FOR LOCAL DEVELOPMENT.]
 * Read the codebase using `view_file` instead of grep where possible. 
-* Do not attempt to run `npm run build` or `npm run deploy`. 
-* **Local Server**: The user runs `python3 serve.py` to host the site locally with HTTPS (required for WebXR). It serves on `https://10.0.0.19:4433/` (or `localhost:4433`). There is NO hot-reloading; changes require a manual browser refresh.
-* The user prefers small, incremental tests. When making geometry or rendering changes, ensure the base case (a simple 6-sided primitive cube) works before testing subdivided spheres.
+* Do not attempt to run `npm run build` or `npm run deploy` unless publishing. 
+* **Local Server**: The project uses Vite. Run `npm run dev` to start the local development server. It serves under `https://localhost:8084/`. WebXR requires HTTPS or localhost. Vite provides Hot Module Replacement (HMR) for faster iteration, though WebXR sessions may still require a manual refresh depending on the headset.
+
 
 ## Recent Work & Context
-1. **Three.js Migration**: Successfully replaced the custom VBO/VAO (`Buffer.js`/`Attribute.js`) implementation with `THREE.BufferGeometry`. The core render loop in `Scene.js` now uses `THREE.WebGLRenderer.setAnimationLoop()`.
-2. **glDrawArrays Out-of-Bounds Error**: We are currently battling a `GL_INVALID_OPERATION : glDrawArrays: attempt to access out of range vertices in attribute 0` error.
-3. **VAO State Corruption & Gizmo**: We discovered that legacy WebGL UI elements (like the Gizmo Tool) run in `postRender()` immediately after Three.js renders. The Gizmo creates a 24-byte (6-vertex) Line array (`Primitives.createLine2D`). Because Three.js leaves the sculpt mesh's VAO bound, the raw WebGL `gl.bindBuffer` calls from the Gizmo permanently hijack the sculpt mesh's Attribute 0, replacing the 1.7 million vertex buffer with a 24-byte buffer.
-4. **Current Status**: We attempted to fix this by adding `gl.bindVertexArray(null)` inside `_drawScene` after Three.js renders, but the error persists even on a simple 6-sided cube.
-5. **Latest Code Changes:**
-   - Disabled subdivision in `Scene.js` `addSphere()` and `addCube()` so it boots with a clean primitive.
-   - Added stack traces to `Mesh.js` to catch 6-vertex array allocations.
-   - Intercepted `gl.drawArrays` in `Scene.js` to print out exhaustive buffer diagnostics (which proves the 24-byte buffer is bound during the Three.js render pass).
+1. **Three.js WebXR Migration**: Successfully migrated `Scene.js` to use `renderer.xr` for session management and controller rendering. Controller poses and origin matrices are driving the existing sculpt logic.
+2. **VR UI Render Chain**: We have successfully attached the custom `VRMenu` meshes (`_vrMenu` for the Main Menu, `_vrMiniHUD` for your left-hand tools, and `_vrPopup` for the Tool Picker) directly to the Three.js controller grip spaces.
+3. **UI Laser Pointer Fixes**: Added visual laser pointers (Three.js Cylinders). The lines are clipped by mathematical intersections against the Three.js mesh surfaces. 
+4. **Current Status & Fixes**: 
+   - Fixed a bug where clicking "Tool" on the MiniHUD made the UI vanish entirely (the Tool Picker's `_vrPopup` mesh wasn't attached to the Scene).
+   - Corrected the `_vrPopup` orientation to match the MiniHUD.
+   - Disabled the noisy interactive `window.debugRaycaster` axis lines.
 
-## Next Steps
-Investigate why the VAO unbind in `_drawScene` and `_drawSceneVR` failed to prevent the 24-byte Gizmo buffer from corrupting Three.js's next frame. Check if `Gizmo`'s `MeshStatic` initialization is inadvertently registering a Three.js `BufferGeometry` that gets synced or cached globally, or if `Three.js`'s internal caching (`renderer.state`) is eagerly restoring a bad buffer.
+## Next Steps / Current Issues
+1. **UI Interaction Failed**: The user reports they still cannot click or interact with any menu elements other than the 'tool' button (which appears to open the combobox). Nothing is detecting hover events or highlights.
+2. **Mesh Intersection Failed**: The lasers still do not detect or intersect the actual Sculpt Mesh, preventing sculpting or geometry-based interactions.
+3. **Debugging Need**: Investigate the Raycast origin/direction in `Scene.js`. `GuiXR._handleMenuInteract` might not be receiving the correct `currU` and `currV` coordinates, or `this._picking.intersectionRayMesh` might be failing due to coordinate space mismatches between the raw WebXR frame tracking and Three.js world matrices.

@@ -1,5 +1,6 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import * as THREE from 'three';
+import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -18,6 +19,7 @@ import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
 import Rtt from './drawables/Rtt.js';
 import ShaderLib from './render/ShaderLib.js';
+import ShaderManager from './render/ShaderManager.js';
 import MeshStatic from './mesh/meshStatic/MeshStatic.js';
 import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
@@ -303,14 +305,14 @@ class Scene {
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
     if (!this._vrMiniHUD) {
       this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
-      // Strip the baked-in Main Menu 15cm offset so we can control position precisely relative to grip
-      this._vrMiniHUD.setOffset(0, 0, 0);
-      this._vrMiniHUD.setRotation(0, 0, 0);
+      // MiniHUD bounds relative to Left Grip
+      this._vrMiniHUD.setOffset(0.0, 0.05, -0.05);
+      this._vrMiniHUD.setRotation(-Math.PI / 2, Math.PI / 8, 0);
     }
     if (!this._vrPopup) {
       this._vrPopup = new VRMenu(this._gl, this._guiPopup);
-      this._vrPopup.setOffset(0, 0, 0);
-      this._vrPopup.setRotation(0, 0, 0);
+      this._vrPopup.setOffset(0.0, 0.05, -0.05);
+      this._vrPopup.setRotation(-Math.PI / 2, Math.PI / 8, 0);
     }
 
     // Global override for live tuning
@@ -787,7 +789,11 @@ class Scene {
   }
 
   renderSelectOverRtt() {
-    this._drawFullScene = false;
+    // Legacy RTT passes are disabled in Three.js migration.
+    // Setting _drawFullScene = false here was causing the main render loop
+    // to drop 100% of frames during mouse drag (camera tumbling), 
+    // resulting in massive perceived lag.
+    // this._drawFullScene = false; 
   }
 
   _requestRender() {
@@ -808,16 +814,45 @@ class Scene {
     var gl = this._gl;
     if (!gl) return;
 
-    // During XR, the canvas is rendered by onXRFrame (Spectator Camera)
-    // We only want to update the DOM GUI, not WebGL canvas here.
-    if (this._xrSession) {
-      if (this._sculptManager) this._sculptManager.postRender();
-      return;
+    if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) {
+      const frame = this._renderer.xr.getFrame();
+      const refSpace = this._renderer.xr.getReferenceSpace();
+
+      // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
+      if (this._guiXR) this._guiXR.update();
+      if (this._guiMini) this._guiMini.update();
+      if (this._guiPopup) this._guiPopup.update();
+
+      if (frame && refSpace && typeof this.handleXRInput === 'function') {
+        try {
+          this.handleXRInput(frame, refSpace);
+        } catch (e) {
+          console.error("XR Input Error:", e);
+        }
+      }
     }
 
-    if (this._drawFullScene) this._drawScene();
+    if (this._renderer && this._renderer.xr) {
+      if (this._renderer.xr.isPresenting && !window._loggedXRRender) {
+         console.log("WebXR isPresenting - forcing _drawScene()");
+         window._loggedXRRender = true;
+         if (window.screenLog) window.screenLog("WebXR Render Loop Started", "lime");
+      }
+    }
 
-    gl.disable(gl.DEPTH_TEST);
+    if (this._drawFullScene || (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+      this._drawScene();
+    } else {
+       if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) {
+           console.log("WARNING: isPresenting is true but not rendering!");
+           if (window.screenLog) window.screenLog("WARNING: isPresenting true, draw stalled", "red");
+       }
+    }
+    
+    // Only alter global GL state if not in WebXR
+    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+        gl.disable(gl.DEPTH_TEST);
+    }
 
     // --- LEGACY POST-PROCESSING (DISABLED FOR THREE.JS MIGRATION) ---
     /*
@@ -835,11 +870,12 @@ class Scene {
     */
     
     // Explicitly bind the target FBO for the remaining legacy renders (like Gizmo)
-    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
-
-    gl.enable(gl.DEPTH_TEST);
-
-    if (this._sculptManager) this._sculptManager.postRender(); // draw sculpting gizmo stuffs
+    // However, if we are in WebXR, do NOT bind it to null, because Three.js has already bound the XRWebGLLayer framebuffer.
+    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+        gl.enable(gl.DEPTH_TEST);
+        if (this._sculptManager) this._sculptManager.postRender(); // draw sculpting gizmo stuffs
+    }
   }
 
   getExposure() {
@@ -867,96 +903,7 @@ class Scene {
   }
 
 
-  // Simplified VR Render (Delegates to _renderSceneVR)
-  renderVR(glLayer, pose, frame, refSpace) {
-    var gl = this._gl;
-    var cam = this._camera;
-    var views = pose.views;
-
-    // Lazy init controllers if missing (and GL is ready)
-    if (!this._vrControllerLeft || !this._vrControllerRight) {
-      this.initVRControllers();
-    }
-
-    if (this._guiXR) this._guiXR.updateTexture(); // Pre-upload texture to avoid mid-pass FBO corruption on mobile drivers
-
-    // Enable scissor test to prevent eyes from bleeding into each other on some platforms
-    gl.enable(gl.SCISSOR_TEST);
-
-    if (this._guiXR) this._guiXR.updateTexture(); // Pre-upload texture to avoid mid-pass FBO corruption on mobile drivers
-
-    // Normal forward loop for stereo rendering (Left then Right)
-    for (var i = 0; i < views.length; ++i) {
-      var view = views[i];
-      var viewport = glLayer.getViewport(view);
-      
-      // Galaxy XR Hotfix: Explicitly re-bind FBO and reset base GL states per pass
-      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
-      gl.enable(gl.CULL_FACE);
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
-
-      gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-      gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
-
-      // Per-Eye Clear: Transparent black for AR passthrough support
-      gl.clearColor(0.0, 0.0, 0.0, 0.0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      this._renderSceneVR(cam, view.transform.inverse.matrix, view.projectionMatrix, null, frame);
-
-      // Android/Adreno Driver Bug Workaround: Force execution of tile commands 
-      // before changing viewport/scissor for the next eye. Avoids second FBO half being dropped.
-      gl.flush();
-    }
-
-    gl.disable(gl.SCISSOR_TEST);
-  }
-
-
-  _drawSceneVR() {
-    var gl = this._gl;
-
-    ///////////////
-    // CONTOUR 1/2
-    ///////////////
-    gl.disable(gl.DEPTH_TEST);
-    var showContour = this._selectMeshes.length > 0 && this._showContour && ShaderLib[Enums.Shader.CONTOUR].color[3] > 0.0;
-
-    // VR RTT Handling (Hack)
-    // We bind the Contour RTT, render flat color, then MUST restore the WebXR framebuffer.
-    // However, WebXR framebuffer is NOT exposed easily here unless we pass it down or query it.
-    // gl.getParameter(gl.FRAMEBUFFER_BINDING) works in Chrome for WebXR usually.
-
-    // --- LEGACY WEBGL PASSES (DISABLED FOR THREE.JS MIGRATION) ---
-    // let previousFBO = null;
-    // if (showContour && this._rttContour) {
-    //   previousFBO = gl.getParameter(gl.FRAMEBUFFER_BINDING);
-    //
-    //   gl.bindFramebuffer(gl.FRAMEBUFFER, this._rttContour.getFramebuffer());
-    //   gl.clear(gl.COLOR_BUFFER_BIT);
-    //   for (var s = 0, sel = this._selectMeshes, nbSel = sel.length; s < nbSel; ++s) {
-    //     sel[s].renderFlatColor(this);
-    //   }
-    //
-    //   // RESTORE VR FBO
-    //   gl.bindFramebuffer(gl.FRAMEBUFFER, previousFBO);
-    // }
-
-    // Brush Indicator (NEW)
-    // Rendered in Pass 2 (World Scaled) to match Mesh Coordinates
-    // Use 'this._camera' which is the active camera during _drawSceneVR (Pass 2)
-    // Note: renderVR() calls _drawSceneVR() AFTER setting up the World Scaled Matrix on the camera.
-
-    // Update Selection Color for Negative Mode
-    const selection = this._sculptManager.getSelection();
-    if (selection.setIsNegative) selection.setIsNegative(this._vrIsNegative);
-
-    // VR cursors are drawn via _vrBrushRadiusSphere on Pass 3.
-    // Desktop cursors are drawn via SculptManager.postRender() on the null framebuffer.
-    // We no longer call selection.renderVR here, avoiding duplicate cursors inside the headset.
-  }
+  // `renderVR` and `_drawSceneVR` have been removed in the Three.js WebXR Migration.
 
   _drawScene() {
     var gl = this._gl;
@@ -967,28 +914,59 @@ class Scene {
     // --- THREE.JS MAIN RENDER ---
     // Instead of looping through custom meshes, we tell Three.js to render the scene
     if (this._renderer && this._scene && this._camera.getThreeCamera()) {
-      // Force Three.js to forget its cached WebGL state. This prevents 'uniformMatrix4fv: location is not from the associated program'
-      // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
-      this._renderer.resetState();
+      const isVR = this._renderer.xr && this._renderer.xr.isPresenting;
       
+      let currentTarget = null;
+      if (!isVR) {
+        // Force Three.js to forget its cached WebGL state. This prevents 'uniformMatrix4fv: location is not from the associated program'
+        // errors caused by legacy raw WebGL passes binding their own shaders just before Three.js renders.
+        // CRITICAL FIX: We must save and restore the current Render Target, otherwise resetState() unbinds the WebXR baseLayer!
+        currentTarget = this._renderer.getRenderTarget();
+        this._renderer.resetState();
+        this._renderer.setRenderTarget(currentTarget);
+      }
+      
+      // Update custom shader uniforms before rendering
+      for (var j = 0; j < nbMeshes; ++j) {
+        if (meshes[j].getThreeMesh()) {
+           ShaderManager.updateUniforms(meshes[j], this);
+        }
+      }
+
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, this._camera.getThreeCamera());
       
-      // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
-      // Three.js leaves the sculpt mesh's VAO bound after rendering. 
-      // The legacy raw WebGL passes (Gizmo, Cursors) that run during postRender() do NOT use VAOs.
-      // If we don't unbind here, the legacy passes will accidentally mutate the sculpt mesh's VAO,
-      // permanently hijacking its Attribute 0 buffer to point to a tiny 24-byte Gizmo line buffer,
-      // crashing WebGL on the next frame when Three.js tries to draw millions of vertices.
-      var ext = gl.getExtension('OES_vertex_array_object');
-      if (ext && ext.bindVertexArrayOES) {
-          ext.bindVertexArrayOES(null);
-      } else if (gl.bindVertexArray) {
-          gl.bindVertexArray(null);
+      if (!isVR) {
+        // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
+        // Three.js leaves the sculpt mesh's VAO bound after rendering. 
+        // The legacy raw WebGL passes (Gizmo, Cursors) that run during postRender() do NOT use VAOs.
+        // If we don't unbind here, the legacy passes will accidentally mutate the sculpt mesh's VAO,
+        // permanently hijacking its Attribute 0 buffer to point to a tiny 24-byte Gizmo line buffer,
+        // crashing WebGL on the next frame when Three.js tries to draw millions of vertices.
+        var ext = gl.getExtension('OES_vertex_array_object');
+        if (ext && ext.bindVertexArrayOES) {
+            ext.bindVertexArrayOES(null);
+        } else if (gl.bindVertexArray) {
+            gl.bindVertexArray(null);
+        }
+        
+        // Also reset Three.js state tracker so it knows we messed with WebGL underneath it
+        const currentTargetPost = this._renderer.getRenderTarget();
+        this._renderer.resetState();
+        this._renderer.setRenderTarget(currentTargetPost);
       }
       
-      // Also reset Three.js state tracker so it knows we messed with WebGL underneath it
-      this._renderer.resetState();
+      if (isVR) {
+          if (!window._xrFrameCount) window._xrFrameCount = 0;
+          window._xrFrameCount++;
+          if (window._xrFrameCount % 60 === 0 && window.screenLog) {
+              window.screenLog("XR Frame Drawn: " + window._xrFrameCount, "cyan");
+          }
+          // --- CRITICAL ISOLATION FOR WEBXR ---
+          // Do NOT execute ANY further legacy WebGL commands (like postRender, or depth disabling)
+          // The XR Compositor requires the baseLayer framebuffer to remain bound and pristine.
+          return;
+      }
     }
 
     /* 
@@ -1087,10 +1065,7 @@ class Scene {
     // Initialize Three.js Renderer
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: true,
-      stencil: true,
-      alpha: true,
-      powerPreference: "high-performance"
+      antialias: true
     });
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1106,101 +1081,106 @@ class Scene {
     // Initialize Three.js Scene Components
     this._scene = new THREE.Scene();
     
+    // WebXR offset tracking container: WebXR forces physical poses relative to the `Scene` root.
+    // If we want the mesh to be down in front of the user (like on a desk), we put meshes in a _worldGroup
+    // and move/scale the _worldGroup, while the headset roams the root scene freely.
+    this._worldGroup = new THREE.Group();
+    // Default Startup Transform (from User A-Button query)
+    this._worldGroup.position.set(0.250, 0.921, -0.800);
+    this._worldGroup.quaternion.set(0.212, -0.222, 0.085, 0.948);
+    this._worldGroup.scale.set(0.701, 0.701, 0.701);
+    this._scene.add(this._worldGroup);
+    
     // Add basic lighting since we are using MeshStandardMaterial
     this._scene.add(new THREE.AmbientLight(0x404040, 2.0)); // soft white light
     var dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
     dirLight.position.set(1, 1, 1);
     this._scene.add(dirLight);
 
-    // DEBUG: Add Three.js primitives to verify rendering and camera
-    this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)
-    var debugCube = new THREE.Mesh(
-        new THREE.BoxGeometry(10, 10, 10),
-        new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
-    );
-    this._scene.add(debugCube);
-
-
     // Fallback/Legacy Caps init
     WebGLCaps.initWebGLExtensions(this._gl);
     if (!WebGLCaps.getWebGLExtension('OES_element_index_uint'))
       RenderData.ONLY_DRAW_ARRAYS = true;
 
-    // --- WEBGL MONKEY PATCH DEBUGGER ---
-    if (!this._gl._patchedDrawElements) {
-        this._gl._patchedDrawElements = true;
-        const originalDrawElements = this._gl.drawElements;
-        const glCtx = this._gl;
-        this._gl.drawElements = function(mode, count, type, offset) {
-            // Check if there's ALREADY a lingering error before we draw
-            let err = glCtx.getError();
-            if (err !== glCtx.NO_ERROR) console.warn("GL Error BEFORE drawElements:", err);
-            
-            // Do the actual draw
-            originalDrawElements.call(glCtx, mode, count, type, offset);
-            
-            // Check if THIS draw caused an error
-            err = glCtx.getError();
-            if (err === glCtx.INVALID_OPERATION) {
-                console.error('%c[WEBGL DRAW ERROR] glDrawElements: GL_INVALID_OPERATION!', 'color: red; font-weight: bold; font-size: 14px');
-                console.error(`- Mode: ${mode}`);
-                console.error(`- Count: ${count} (triangles: ${count/3})`);
-                console.error(`- Type: ${type === glCtx.UNSIGNED_INT ? 'UNSIGNED_INT' : 'UNSIGNED_SHORT'}`);
-                console.error(`- Offset: ${offset}`);
-                console.groupCollapsed('Stack Trace');
-                console.error(new Error().stack);
-                console.groupEnd();
-            } else if (err !== glCtx.NO_ERROR) {
-                console.error("[WEBGL DRAW ERROR] Other GL Error:", err);
-            }
-        };
+    // DEBUG: Inject Three.js objects into global scope for console debugging
+    this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)
+    
+    window.threeScene = this._scene;
+    window.threeCamera = this._camera.getThreeCamera();
+    
+    // Provide a default physical standing camera position so desktop preview isn't
+    // locked inside the mesh origin. WebXR will override this locally when a headset connects.
+    this._camera.getThreeCamera().position.set(0, 1.6, 3);
+    this._scene.add(this._camera.getThreeCamera());
 
-        const originalDrawArrays = this._gl.drawArrays;
-        this._gl.drawArrays = function(mode, first, count) {
-            let err = glCtx.getError();
-            if (err !== glCtx.NO_ERROR) console.warn("GL Error BEFORE drawArrays:", err);
-            
-            originalDrawArrays.call(glCtx, mode, first, count);
-            
-            err = glCtx.getError();
-            if (err === glCtx.INVALID_OPERATION) {
-                console.error('%c[WEBGL DRAW ERROR] glDrawArrays: GL_INVALID_OPERATION!', 'color: red; font-weight: bold; font-size: 14px');
-                console.error(`- Mode: ${mode}`);
-                console.error(`- First: ${first}`);
-                console.error(`- Count: ${count} (triangles: ${count/3})`);
-                
-                // Advanced Buffer Interrogation
-                console.log('%c--- Bound Array Buffer Diagnostics ---', 'color: orange');
-                const maxAttribs = glCtx.getParameter(glCtx.MAX_VERTEX_ATTRIBS);
-                for (let i = 0; i < maxAttribs; i++) {
-                    const enabled = glCtx.getVertexAttrib(i, glCtx.VERTEX_ATTRIB_ARRAY_ENABLED);
-                    if (!enabled) continue;
-                    
-                    const buffer = glCtx.getVertexAttrib(i, glCtx.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING);
-                    if (buffer) {
-                        glCtx.bindBuffer(glCtx.ARRAY_BUFFER, buffer);
-                        const size = glCtx.getBufferParameter(glCtx.ARRAY_BUFFER, glCtx.BUFFER_SIZE);
-                        const type = glCtx.getVertexAttrib(i, glCtx.VERTEX_ATTRIB_ARRAY_TYPE);
-                        const typeSize = type === glCtx.FLOAT ? 4 : (type === glCtx.UNSIGNED_SHORT ? 2 : 1);
-                        const stride = glCtx.getVertexAttrib(i, glCtx.VERTEX_ATTRIB_ARRAY_STRIDE);
-                        const effectiveStride = stride === 0 ? typeSize : stride;
-                        const elements = size / effectiveStride;
-                        const sizeColor = size < (count * typeSize) ? 'color: red; font-weight: bold' : 'color: green';
-                        console.log(`Attrib ${i}: Enabled=YES, BufferSize=${size} bytes, Elements=${elements}. %c(Requires at least ${count * typeSize} bytes)`, sizeColor);
-                    } else {
-                        console.error(`Attrib ${i}: Enabled=YES, but NO BUFFER BOUND!`);
-                    }
-                }
-                
-                console.groupCollapsed('Stack Trace');
-                console.error(new Error().stack);
-                console.groupEnd();
-            } else if (err !== glCtx.NO_ERROR) {
-                console.error("[WEBGL DRAW ERROR] Other GL Error (drawArrays):", err);
-            }
-        };
-    }
-    // -----------------------------------
+    // Intensive Diagnostic Script
+    window.diagnoseGridMesh = () => {
+        if (!this._meshes || this._meshes.length === 0) return "No meshes found.";
+        const m = this._meshes[0].getThreeMesh();
+        const scm = this._meshes[0];
+        if (!m) return "No Three.js mesh found on main mesh";
+        let out = `\n=== DIAGNOSE MESH ===\n`;
+        out += `Three.js UserData: ${!!m.userData.sculptMesh}\n`;
+        out += `Matrix AutoUpdate: ${m.matrixAutoUpdate}\n`;
+        
+        let mArr = m.matrixWorld.elements;
+        out += `MatrixWorld Scale: (${Math.hypot(mArr[0], mArr[1], mArr[2]).toFixed(4)}, ${Math.hypot(mArr[4], mArr[5], mArr[6]).toFixed(4)}, ${Math.hypot(mArr[8], mArr[9], mArr[10]).toFixed(4)})\n`;
+        out += `MatrixWorld Pos: (${mArr[12].toFixed(4)}, ${mArr[13].toFixed(4)}, ${mArr[14].toFixed(4)})\n`;
+        
+        const g = m.geometry;
+        if (!g) { out += "NO GEOMETRY\n"; return out; }
+        
+        out += `\n--- GEOMETRY ---\n`;
+        out += `DrawRange: ${g.drawRange.start} to ${g.drawRange.count}\n`;
+        g.computeBoundingBox();
+        out += `BoundingBox: [${g.boundingBox.min.x.toFixed(4)}, ${g.boundingBox.min.y.toFixed(4)}, ${g.boundingBox.min.z.toFixed(4)}] to [${g.boundingBox.max.x.toFixed(4)}, ${g.boundingBox.max.y.toFixed(4)}, ${g.boundingBox.max.z.toFixed(4)}]\n`;
+        
+        if (g.attributes.position) {
+            let p = g.attributes.position.array;
+            out += `Position Attr Count: ${g.attributes.position.count}\n`;
+            out += `First 3 Verts: (${p[0]}, ${p[1]}, ${p[2]}), (${p[3]}, ${p[4]}, ${p[5]}), (${p[6]}, ${p[7]}, ${p[8]})\n`;
+        } else {
+            out += `NO POSITION ATTRIBUTE\n`;
+        }
+        
+        if (g.attributes.normal) {
+            let n = g.attributes.normal.array;
+            out += `Normal Attr Count: ${g.attributes.normal.count}\n`;
+            out += `First 3 Normals: (${n[0]}, ${n[1]}, ${n[2]}), (${n[3]}, ${n[4]}, ${n[5]}), (${n[6]}, ${n[7]}, ${n[8]})\n`;
+        } else {
+            out += `NO NORMAL ATTRIBUTE\n`;
+        }
+        
+        if (g.index) {
+            let i = g.index.array;
+            out += `Index Attr Count: ${g.index.count}\n`;
+            out += `First 9 Indices: ${i[0]}, ${i[1]}, ${i[2]}, ${i[3]}, ${i[4]}, ${i[5]}, ${i[6]}, ${i[7]}, ${i[8]}\n`;
+        } else {
+             out += `NO INDEX ATTRIBUTE (Using DrawArrays Triangle Soup)\n`;
+        }
+        
+        out += `\n--- PARENT ---\n`;
+        out += `Parent: ${m.parent ? m.parent.type : 'NONE'}\n`;
+        out += `Visible: ${m.visible}\n`;
+        
+        out += `\n--- MATERIAL ---\n`;
+        let mat = m.material;
+        if (!mat) { out += "NO MATERIAL\n"; return out; }
+        out += `Type: ${mat.type}\n`;
+        out += `Color: ${mat.color ? '#' + mat.color.getHexString() : 'N/A (ShaderMaterial)'}\n`;
+        out += `VertexColors: ${mat.vertexColors}\n`;
+        out += `Transparent: ${mat.transparent}\n`;
+        out += `Opacity: ${mat.opacity}\n`;
+        out += `DepthTest: ${mat.depthTest}\n`;
+        out += `DepthWrite: ${mat.depthWrite}\n`;
+        
+        console.log(out);
+        return "Check console for output!";
+    };
+
+    setTimeout(() => { if(window.diagnoseGridMesh) window.diagnoseGridMesh(); }, 2000);
+
+
   }
 
   /** Load textures (preload) */
@@ -1265,7 +1245,12 @@ class Scene {
     var dx = box[3] - box[0];
     var dy = box[4] - box[1];
     var dz = box[5] - box[2];
-    return 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var rad = 0.5 * Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (isNaN(rad)) {
+        console.error("🛑 computeRadiusFromBoundingBox produced NaN! Box:", box);
+        if (window.screenLog) window.screenLog("NaN Radius From BB", "red");
+    }
+    return rad;
   }
 
   computeBoundingBoxMeshes(meshes) {
@@ -1280,6 +1265,16 @@ class Scene {
       if (bi[4] > bound[4]) bound[4] = bi[4];
       if (bi[5] > bound[5]) bound[5] = bi[5];
     }
+    
+    // DEBUG: NaN Bounding Box Detector
+    for(var j=0; j<6; j++) {
+       if(isNaN(bound[j])) {
+           console.error("🛑 computeBoundingBoxMeshes produced NaN array! Meshes count:", meshes.length);
+           console.error("- Corrupted Bounds:", bound);
+           if (window.screenLog) window.screenLog("NaN BoundingBoxMeshes", "red");
+           break;
+       }
+    }
     return bound;
   }
 
@@ -1292,11 +1287,22 @@ class Scene {
 
   normalizeAndCenterMeshes(meshes) {
     var box = this.computeBoundingBoxMeshes(meshes);
-    var scale = Utils.SCALE / vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+    
+    // If the scene has no valid bounding box (e.g. all empty meshes), prevent NaN scale
+    var scale = 1.0;
+    var tx = 0.0, ty = 0.0, tz = 0.0;
+    if (Number.isFinite(box[0]) && Number.isFinite(box[3])) {
+        scale = Utils.SCALE / vec3.dist([box[0], box[1], box[2]], [box[3], box[4], box[5]]);
+        if(isNaN(scale) || scale === Infinity || scale === 0) scale = 1.0;
+        
+        tx = -(box[0] + box[3]) * 0.5;
+        ty = -(box[1] + box[4]) * 0.5;
+        tz = -(box[2] + box[5]) * 0.5;
+    }
 
     var mCen = mat4.create();
     mat4.scale(mCen, mCen, [scale, scale, scale]);
-    mat4.translate(mCen, mCen, [-(box[0] + box[3]) * 0.5, -(box[1] + box[4]) * 0.5, -(box[2] + box[5]) * 0.5]);
+    mat4.translate(mCen, mCen, [tx, ty, tz]);
 
     for (var i = 0, l = meshes.length; i < l; ++i) {
       var mat = meshes[i].getMatrix();
@@ -1310,8 +1316,8 @@ class Scene {
     mesh.normalizeSize();
     this.subdivideClamp(mesh); 
 
-    // Use Matcap (Better Performance on Mobile VR)
-    mesh.setShaderType(Enums.Shader.MATCAP);
+    // Use PBR for debugging renderer
+    mesh.setShaderType(Enums.Shader.PBR);
 
     this.addNewMesh(mesh);
     return mesh;
@@ -1359,8 +1365,8 @@ class Scene {
 
   addNewMesh(mesh) {
     this._meshes.push(mesh);
-    if (this._scene && mesh.getThreeMesh()) {
-      this._scene.add(mesh.getThreeMesh());
+    if (this._worldGroup && mesh.getThreeMesh()) {
+      this._worldGroup.add(mesh.getThreeMesh());
     }
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
@@ -1390,8 +1396,8 @@ class Scene {
       mesh.init();
       mesh.initRender();
       meshes.push(mesh);
-      if (this._scene && mesh.getThreeMesh()) {
-        this._scene.add(mesh.getThreeMesh());
+      if (this._worldGroup && mesh.getThreeMesh()) {
+        this._worldGroup.add(mesh.getThreeMesh());
       }
     }
 
@@ -1410,8 +1416,8 @@ class Scene {
     
     // Remove all Three.js meshes from the scene
     for (var i = 0; i < this._meshes.length; ++i) {
-      if (this._scene && this._meshes[i].getThreeMesh()) {
-        this._scene.remove(this._meshes[i].getThreeMesh());
+      if (this._worldGroup && this._meshes[i].getThreeMesh()) {
+        this._worldGroup.remove(this._meshes[i].getThreeMesh());
       }
     }
     
@@ -1512,7 +1518,7 @@ class Scene {
         break;
     }
   }
-  enterXR(session) {
+  async enterXR(session) {
     this._xrSession = session;
     session.addEventListener('end', this.onXREnd.bind(this));
 
@@ -1530,56 +1536,20 @@ class Scene {
     // Force Init Controllers & Menu IMMEDIATELY
     this.initVRControllers();
 
-    const gl = this._gl;
+    // Enable Three.js WebXR
+    this._renderer.xr.enabled = true;
+    this._renderer.xr.setReferenceSpaceType('local-floor');
+    await this._renderer.xr.setSession(session);
+    
+    // Force first frame render to prevent WebXR Session Timeout
+    this.render();
 
-    // Helper to try spaces in order
-    const requestRefSpace = (spaces) => {
-      if (spaces.length === 0) return Promise.reject("No supported reference space found");
-      const space = spaces[0];
-      return session.requestReferenceSpace(space)
-        .then(refSpace => {
-          console.log(`XR: using reference space '${space}'`);
-          return refSpace;
-        })
-        .catch(e => {
-          console.warn(`XR: '${space}' failed, trying next...`);
-          return requestRefSpace(spaces.slice(1));
-        });
-    };
-
-    // Ensure context is compatible
-    gl.makeXRCompatible().then(() => {
-      // By default, XRWebGLLayer creates an opaque buffer even if the canvas has alpha: true.
-      // We MUST explicitly request an alpha channel here or immersive-ar passthrough will be solid black.
-      // HOTFIX: Set antialias: false to prevent right-eye black screen on Samsung Galaxy XR due to Qualcomm MSAA FBO bug.
-      const baseLayer = new XRWebGLLayer(session, gl, { 
-        alpha: true, 
-        antialias: false,
-        framebufferScaleFactor: 1.0
-      });
-      session.updateRenderState({ baseLayer, depthNear: 0.01, depthFar: 10000.0 });
-
-      // Try 'local-floor' -> 'local' -> 'viewer'
-      requestRefSpace(['local-floor', 'local', 'viewer'])
-        .then((refSpace) => {
-          this._baseRefSpace = refSpace;
-
-          // If the slider has a value, apply it
-          this.updateVROffsets();
-
-          this._logThrottle = 0;
-          
-          // XR requestAnimationFrame is automatically handled by Three.js setAnimationLoop!
-          // We no longer manually call: session.requestAnimationFrame(this.onXRFrame.bind(this));
-        })
-        .catch((e) => {
-          console.error("enterXR Critical Error: Failed to get reference space", e);
-          if (window.screenLog) window.screenLog(`XR Error: ${e}`, "red");
-          session.end(); // Exit session if we can't get a space
-        });
-    }).catch((err) => {
-      console.error("enterXR: makeXRCompatible failed!", err);
-      if (window.screenLog) window.screenLog(`XR Error: makeXRCompatible ${err}`, "red");
+    // Try to get the reference space for our own internal tracking (like UI offsets)
+    session.requestReferenceSpace('local-floor').then((refSpace) => {
+      this._baseRefSpace = refSpace;
+      this.updateVROffsets();
+    }).catch(e => {
+      console.warn("Failed to get local-floor for internal offset tracking", e);
     });
     this._vrIsNegative = false;
     this._headHeightCalibrated = false;
@@ -1635,6 +1605,19 @@ class Scene {
     }
 
     this._prevOffsetY = heightOffset;
+
+    // SYNC THREE.JS GRAPH TO MATH OFFSETS
+    // This ensures the visual rendering of the WebGL mesh via Three.js
+    // perfectly matches the mathematical offsets expected by SculptGL tools.
+    if (this._worldGroup && this._xrWorldOffset) {
+      const p = this._xrWorldOffset.position;
+      const q = this._xrWorldOffset.orientation;
+      this._worldGroup.position.set(p.x, p.y, p.z);
+      this._worldGroup.quaternion.set(q.x, q.y, q.z, q.w);
+      if (this._vrScale) {
+        this._worldGroup.scale.set(this._vrScale, this._vrScale, this._vrScale);
+      }
+    }
 
     // We intentionally DO NOT create `this._xrRefSpace` anymore because 
     // 6DoF mode requires raw headset poses from `_baseRefSpace`.
@@ -1770,20 +1753,63 @@ class Scene {
     };
 
     if (Primitives) {
-      if (!this._vrControllerLeft) {
-        this._vrControllerLeft = makeCtrl([0.0, 1.0, 0.0]); // GREEN
-        this.loadVRController('left');
+      if (!this._vrControllerLeftGrip) {
+        if (this._renderer && this._scene) {
+          // Native Three.js XR Controllers (Target Ray Space)
+          this._vrControllerLeft = this._renderer.xr.getController(0);
+          this._vrControllerRight = this._renderer.xr.getController(1);
+          this._scene.add(this._vrControllerLeft);
+          this._scene.add(this._vrControllerRight);
+
+          // Native Three.js XR Controller Models (Grip Space)
+          const controllerModelFactory = new XRControllerModelFactory();
+
+          this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(0);
+          const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
+          this._vrControllerLeftGrip.add(modelLeft);
+          this._scene.add(this._vrControllerLeftGrip);
+
+          this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(1);
+          const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
+          this._vrControllerRightGrip.add(modelRight);
+          this._scene.add(this._vrControllerRightGrip);
+          
+          // Controller ray lines (attached to Target Ray Space)
+          const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8); // 1.5mm thick, 1 meter long Native
+          lineGeometry.rotateX(-Math.PI / 2); // Point forward along -Z
+          lineGeometry.translate(0, 0, -0.5); // Shift origin so Z=0 is the base, and it extends exactly 1m in -Z direction
+          
+          const lineMaterial = new THREE.MeshBasicMaterial({ 
+              color: 0xff0000, 
+              transparent: true, 
+              opacity: 0.8, 
+              depthTest: true,
+              blending: THREE.NormalBlending 
+          });
+
+          // Wrap in a group so we scale the group. The translated geometry ensures scaling stretches from the tip.
+          const rayRootLeft = new THREE.Group();
+          rayRootLeft.name = 'pointer_ray_root';
+          const ray1 = new THREE.Mesh(lineGeometry, lineMaterial);
+          rayRootLeft.add(ray1);
+          
+          const rayRootRight = new THREE.Group();
+          rayRootRight.name = 'pointer_ray_root';
+          const ray2 = new THREE.Mesh(lineGeometry, lineMaterial);
+          rayRootRight.add(ray2);
+
+          this._vrControllerLeft.add(rayRootLeft);
+          this._vrControllerRight.add(rayRootRight);
+        }
       }
-      if (!this._vrControllerRight) {
-        this._vrControllerRight = makeCtrl([0.0, 0.0, 1.0]); // BLUE
-        this.loadVRController('right');
-      }
-    }
 
     // Init VR Menu System
     if (!this._guiXR) this._guiXR = new GuiXR(this);
     this._guiXR.init(this._gl);
-    if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
+    if (!this._vrMenu) {
+      this._vrMenu = new VRMenu(this._gl, this._guiXR);
+      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrMenu.mesh);
+    }
 
     // Init VR Mini-HUD System
     if (!this._guiMini) {
@@ -1792,7 +1818,44 @@ class Scene {
       this._guiMini._isVisible = true;
     }
     this._guiMini.init(this._gl);
-    if (!this._vrMiniHUD) this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
+    if (!this._vrMiniHUD) {
+      this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
+      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrMiniHUD.mesh);
+    }
+
+    // Init VR Popup System
+    if (!this._guiPopup) {
+      this._guiPopup = new GuiXR(this, null, 660, 660);
+      this._guiPopup._isPopupHUD = true;
+      this._guiPopup._isVisible = true;
+    }
+    this._guiPopup.init(this._gl);
+    if (!this._vrPopup) {
+      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
+      this._vrPopup.setOffset(0, 0, 0);
+      this._vrPopup.setRotation(0, 0, 0);
+      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrPopup.mesh);
+    }
+
+    // CRITICAL FIX: The Three.js WebXRManager forcefully clears standard group attachments 
+    // when the hardware 'connected' event fires on session initialization. We must forcefully 
+    // restore the Custom UI elements to the controller hierarchy AFTER the hardware binds.
+    if (this._vrControllerLeft && !this._vrControllerLeft._hasAddedConnectListener) {
+        this._vrControllerLeft.addEventListener('connected', () => {
+            if (this._vrControllerLeftGrip && this._vrMenu) {
+                this._vrControllerLeftGrip.add(this._vrMenu.mesh);
+            }
+            if (this._vrControllerLeftGrip && this._vrMiniHUD) {
+                this._vrControllerLeftGrip.add(this._vrMiniHUD.mesh);
+                // Ensure MiniHUD always defaults to visible
+                this._vrMiniHUD.mesh.visible = true; 
+            }
+            if (this._vrControllerLeftGrip && this._vrPopup) {
+                this._vrControllerLeftGrip.add(this._vrPopup.mesh);
+            }
+        });
+        this._vrControllerLeft._hasAddedConnectListener = true;
+    }
 
     if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
 
@@ -1905,6 +1968,8 @@ class Scene {
     }
   }
 
+  }
+
   loadVRController(handedness) {
     // URL must be relative to the page (root)
     // Files are in src/resources/controllers/
@@ -1972,33 +2037,7 @@ class Scene {
     xhr.send(null);
   }
 
-  updateVRControllerPose(handedness, position, orientation) {
-    var mesh = handedness === 'left' ? this._vrControllerLeft : this._vrControllerRight;
-    if (!mesh) return;
-
-    if (window.screenLog && !this._hasLoggedCtrl) {
-      // window.screenLog(`First Controller Update: ${handedness}`, 'lime');
-      this._hasLoggedCtrl = true;
-    }
-
-    // Fix: gl-matrix expects Arrays, but WebXR gives DOMPoints.
-    // We must convert them manually.
-    const pos = [position.x, position.y, position.z];
-    const rot = [orientation.x, orientation.y, orientation.z, orientation.w];
-
-    var mat = mesh.getMatrix();
-    mat4.fromRotationTranslation(mat, rot, pos);
-
-    // Apply Scale (Controllers are 1.0 size cubes, we want 0.02m = 2cm)
-    // Real Models (OBJ) are in Meters (~0.15), so we scale by 1.0 (no change) or adjustment
-    const scale = mesh.isPlaceholder ? 0.02 : 1.0;
-    mat4.scale(mat, mat, [scale, scale, scale]);
-
-    // DEBUG: Verify Right Controller Position (Fixed)
-    // if (handedness === 'right' && window.screenLog && this._logThrottle % 200 === 0) {
-    //    window.screenLog("Right Pos: " + vec3.str(pos), "cyan");
-    // }
-  }
+  
 
   initDebugCursor() {
     var gl = this._gl;
@@ -2064,532 +2103,23 @@ class Scene {
     }
   }
 
-  onXRFrame(time, frame) {
-    const session = frame.session;
-    session.requestAnimationFrame(this.onXRFrame.bind(this));
-
-    // [PROFILE] Frame Start 
-    const prof = window.__sculptProfile;
-    const pStartTotal = performance.now();
-    if (prof && prof.logNextNumFrames > 0 && prof.lastFrameTime > 0) {
-      prof.accFrameDelta += (pStartTotal - prof.lastFrameTime);
-    }
-    if (prof) prof.lastFrameTime = pStartTotal;
-
-    // Force use of Base Ref Space (Local Floor) to debug "Flying Cube"
-    // The previous offset logic likely doubled up or inverted height.
-    const refSpace = this._baseRefSpace;
-
-    const pose = frame.getViewerPose(refSpace);
-    if (pose) {
-      if (!this._headHeightCalibrated) {
-        this._headHeightCalibrated = true;
-        const headY = pose.transform.position.y;
-        if (!this._xrWorldOffset) {
-          this._xrWorldOffset = new XRRigidTransform({ x: 0, y: headY, z: -0.4 });
-        } else {
-          const p = this._xrWorldOffset.position;
-          const o = this._xrWorldOffset.orientation;
-          this._xrWorldOffset = new XRRigidTransform({ x: p.x, y: headY, z: p.z }, o);
-        }
-        // Removed `this._prevOffsetY = headY;` to prevent UI slider from jumping on world grab
-      }
-
-      const gl = this._gl;
-      const glLayer = session.renderState.baseLayer;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
-      // BUGFIX: Desktop spectator pass overrides gl.clearColor.
-      // Set to DARK GREEN (0, 0.1, 0, 1) rather than transparent to diagnose Galaxy XR right eye blackout issue.
-      gl.colorMask(true, true, true, true);
-      gl.depthMask(true);
-      gl.clearColor(0.0, 0.1, 0.0, 1.0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
-      if (this._guiXR) this._guiXR.update();
-      if (this._guiMini) this._guiMini.update();
-      if (this._guiPopup) this._guiPopup.update();
-
-      // Handle Input (PoC placeholder)
-      if (typeof this.handleXRInput === 'function') {
-        try {
-          this.handleXRInput(frame, refSpace);
-        } catch (e) {
-          console.error("XR Input Error:", e);
-        }
-      }
-
-      // [DESKTOP CAMERA PRESERVATION]
-      // We rebuild the pure desktop camera from its internal trans/rot state.
-      // This allows mouse controls to work, while preventing the 'exponential tumbling'
-      // that would occur if we read last frame's mutated _camera._view.
-      this._camera.updateView();
-      this._camera.updateProjection();
-      const liveDesktopView = mat4.clone(this._camera._view);
-      const liveDesktopProj = mat4.clone(this._camera._proj);
-
-      // NOTE: We don't set _divertedView here yet, because the Spectator mode dictates the exact matrix the Desktop will see.
-      // We will set _camera._divertedView down inside the Spectator blocks so picking aligns perfectly with the rendered frame.
-
-      // Render to WebXR framebuffer
-      this.renderVR(glLayer, pose, frame, refSpace);
-
-      // Now that the Headset render is fully complete, we can enable diverted view unprojection
-      // so that any asynchronous desktop mouse clicks process correctly using the spectator matrix.
-      this._camera._unprojectDiverted = true;
-
-      // [SPECTATOR MATRIX RENDERING]
-      const specMode = this._spectatorMode;
-
-      if (specMode === Enums.SpectatorMode.GOPRO && pose.views.length > 0) {
-        const viewMat = mat4.create();
-        const prob = mat4.create();
-
-        // Track VR Headset (Perfect Mirror)
-        const view = pose.views[0];
-        const aspect = this._canvasWidth / this._canvasHeight;
-        mat4.perspective(prob, 45 * Math.PI / 180, aspect, 0.1, 1000.0);
-        mat4.copy(viewMat, view.transform.inverse.matrix);
-
-        mat4.copy(this._camera._divertedView, viewMat);
-        mat4.copy(this._camera._divertedProj, prob);
-
-        // Draw directly to canvas here, because window RAF may be throttled/paused
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
-        gl.clearColor(0.2, 0.2, 0.2, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        // Render Shared Logic directly to canvas
-        // We must call updateMatricesAndSort before rendering to apply tool positions
-        this.updateMatricesAndSort();
-        this._renderSceneVR(this._camera, viewMat, prob);
-
-        // Force SculptManager post-render (gizmos/UI) to canvas
-        if (this._sculptManager) {
-          gl.disable(gl.DEPTH_TEST);
-          this._sculptManager.postRender();
-          gl.enable(gl.DEPTH_TEST);
-        }
-      } else {
-        // Independent Desktop Camera Passes
-        const cacheScale = this._vrScale;
-        const cacheOffset = this._xrWorldOffset;
-
-        // DECOUPLED blocks all VR transforms, freezing the world to the desktop screen context
-        if (specMode === Enums.SpectatorMode.DECOUPLED) {
-          this._vrScale = 1.0;
-          this._xrWorldOffset = null;
-        }
-
-        // TRACKED and STATIONARY inherit the active _vrScale and _xrWorldOffset, mapping Grip pans/zooms to the UI
-        // We calculate precisely what the view should be here.
-        const specView = mat4.clone(liveDesktopView);
-        const specProj = mat4.clone(liveDesktopProj);
-        let bypassVRScale = false;
-
-        const specViewPhys = mat4.create(); // MUST START OUTSIDE
-        mat4.copy(specViewPhys, specView);
-
-        if (specMode === Enums.SpectatorMode.TRACKED || specMode === Enums.SpectatorMode.STATIONARY) {
-          bypassVRScale = true;
-
-          // Wait until we have a valid _xrWorldOffset from WebXR before baking the initial state.
-          // This prevents a race condition where the first frame captures a null offset (0,0,0),
-          // permanently breaking the 'panPos' delta subtraction for the rest of the session.
-          if (!this._bakedDesktopView && this._xrWorldOffset) {
-            this._bakedDesktopView = mat4.create();
-
-            // Check if the user has requested a custom ergonomic trackball initialization
-            let targetState = window.defaultCameraState;
-
-            // If the user hasn't overridden it, use the verified ergonomic trackball preset
-            if (specMode === Enums.SpectatorMode.STATIONARY && !targetState) {
-              targetState = {
-                trans: [-4.03660, -35.40236, 145.00469],
-                quatRot: [0.00000, 0.00000, 0.00000, 1.00000],
-                center: [0.00000, 0.00000, 0.00000]
-              };
-            }
-
-            if (specMode === Enums.SpectatorMode.STATIONARY && targetState) {
-              vec3.copy(this._camera._trans, targetState.trans);
-              quat.copy(this._camera._quatRot, targetState.quatRot);
-              vec3.copy(this._camera._center, targetState.center);
-              this._camera.updateView();
-              mat4.copy(liveDesktopView, this._camera.getView());
-              console.log("Applied custom ergonomic trackball offset for Stationary Mode.");
-            }
-
-            mat4.copy(this._bakedDesktopView, liveDesktopView);
-
-            this._bakedWorldOffset = vec3.fromValues(
-              this._xrWorldOffset.position.x,
-              this._xrWorldOffset.position.y,
-              this._xrWorldOffset.position.z
-            );
-
-            this._bakedVRScale = this._vrScale;
-
-            // Console Command Helper to grab the perfect view state (Replaces previous 4x4 array output)
-            window.getDesktopState = () => {
-              const t = Array.from(this._camera._trans).map(n => n.toFixed(5)).join(', ');
-              const q = Array.from(this._camera._quatRot).map(n => n.toFixed(5)).join(', ');
-              const c = Array.from(this._camera._center).map(n => n.toFixed(5)).join(', ');
-              console.log(`Copy this into your console to set your default view:`);
-              console.log(`window.defaultCameraState = { trans: [${t}], quatRot: [${q}], center: [${c}] };`);
-            };
-          }
-
-          if (!this._bakedDesktopView) {
-            // Fallback: If WebXR hasn't provided the offset yet, just render using the live view
-            // and skip matrix construction until the next frame.
-            mat4.copy(this._camera._view, liveDesktopView);
-            mat4.copy(this._camera._proj, liveDesktopProj);
-            return;
-          }
-
-          const bakedDesktopView = this._bakedDesktopView;
-
-          const invScaleMat = mat4.create();
-          const scaleMat = mat4.create();
-          if (this._vrScale !== 1.0 && this._vrScale > 0.0001) {
-            const invS = 1.0 / this._vrScale;
-            mat4.scale(invScaleMat, invScaleMat, [invS, invS, invS]);
-            mat4.scale(scaleMat, scaleMat, [this._vrScale, this._vrScale, this._vrScale]);
-          }
-
-          const bakedInvScaleMat = mat4.create();
-          const bakedScale = this._bakedVRScale || 0.008;
-          if (bakedScale !== 1.0 && bakedScale > 0.0001) {
-            const invS = 1.0 / bakedScale;
-            mat4.scale(bakedInvScaleMat, bakedInvScaleMat, [invS, invS, invS]);
-          }
-
-          const relativeScaleMat = mat4.create();
-          if (this._vrScale !== undefined && bakedScale > 0.0001) {
-            const relScale = this._vrScale / bakedScale;
-            mat4.scale(relativeScaleMat, relativeScaleMat, [relScale, relScale, relScale]);
-          }
-
-          const worldMat = mat4.create();
-          const invWorldMat = mat4.create();
-
-          const mSpawn = mat4.create();
-          mat4.fromRotationTranslation(mSpawn, [0, 0, 0, 1], [0, 1.2, -0.55]);
-          const mSpawnInv = mat4.create();
-          mat4.invert(mSpawnInv, mSpawn);
-
-          // Extract just the translation of the bakedDesktopView to understand the trackball "boom arm" distance
-          const cameraOffset = mat4.create();
-          const invCameraOffset = mat4.create();
-          if (this._bakedDesktopView) {
-            mat4.fromTranslation(cameraOffset, [this._bakedDesktopView[12], this._bakedDesktopView[13], this._bakedDesktopView[14]]);
-            mat4.invert(invCameraOffset, cameraOffset);
-          }
-
-          const mPan = mat4.create();
-          const invPan = mat4.create();
-
-          const panPos = mat4.create();
-          const invPanPos = mat4.create();
-
-          const panRot = mat4.create();
-          const invPanRot = mat4.create();
-
-          const scaledPanPos = mat4.create();
-          const invScaledPanPos = mat4.create();
-
-          const bakedOffset = mat4.create();
-          const invBakedOffset = mat4.create();
-
-          if (this._xrWorldOffset) {
-            const t = this._xrWorldOffset.position;
-            const r = this._xrWorldOffset.orientation;
-
-            // Full offset (Translation + Rotation)
-            mat4.fromRotationTranslation(worldMat, [r.x, r.y, r.z, r.w], [t.x, t.y, t.z]);
-            mat4.invert(invWorldMat, worldMat);
-
-            // Pure Translation Delta (Subtracts dynamically captured physical room start position)
-            const sx = this._bakedWorldOffset ? this._bakedWorldOffset[0] : 0;
-            const sy = this._bakedWorldOffset ? this._bakedWorldOffset[1] : 0;
-            const sz = this._bakedWorldOffset ? this._bakedWorldOffset[2] : 0;
-
-            mat4.fromTranslation(bakedOffset, [sx, sy, sz]);
-            mat4.invert(invBakedOffset, bakedOffset);
-
-            mat4.fromTranslation(panPos, [t.x - sx, t.y - sy, t.z - sz]);
-            mat4.invert(invPanPos, panPos);
-
-            // Pure Rotation (No translation/offset)
-            mat4.fromQuat(panRot, [r.x, r.y, r.z, r.w]);
-            mat4.invert(invPanRot, panRot);
-
-            // Scaled Translation Delta (Virtual Scale)
-            const vs = this._vrScale || 1.0;
-            let invS;
-            if (specMode === Enums.SpectatorMode.STATIONARY && bakedScale > 0.0001) {
-              // Stationary mode: Always map the physical hand movement to the trackball's fixed 
-              // distance focal point (which is tied to the baked scale). This perfectly offsets
-              // the translation, restoring 1:1 camera panning regardless of the current relScale zooming.
-              invS = 1.0 / bakedScale;
-
-              // We do calculate relScale for the *virtual* pipeling later.
-              const relScale = vs / bakedScale;
-            } else {
-              // Tracked mode uses raw absolute physical scaling (e.g. 0.008 -> 0.004)
-              invS = 1.0 / vs;
-            }
-
-            mat4.fromTranslation(scaledPanPos, [(t.x - sx) * invS, (t.y - sy) * invS, (t.z - sz) * invS]);
-            mat4.invert(invScaledPanPos, scaledPanPos);
-          }
-          mat4.multiply(mPan, mSpawnInv, worldMat);
-          mat4.invert(invPan, mPan);
-
-          if (specMode === Enums.SpectatorMode.TRACKED) {
-            // TRACKED MODE
-            // 1. Pass 1 (Controllers): Panning to track the world
-
-            mat4.copy(specViewPhys, liveDesktopView);
-            mat4.multiply(specViewPhys, specViewPhys, invScaleMat); // Scale to meters using LIVE physical tracking
-            mat4.multiply(specViewPhys, specViewPhys, mPan); // Track user movement
-
-            // 2. Pass 2 (World): Perfectly tracks mPan and dynamically frames sculpt
-            mat4.copy(specView, liveDesktopView);
-            mat4.multiply(specView, specView, mPan);
-            mat4.multiply(specView, specView, worldMat);
-
-          } else if (specMode === Enums.SpectatorMode.STATIONARY) {
-            // STATIONARY MODE (INTERACTIVE DEBUGGER)
-            // Goal: Controllers locked to physical hands. Sculpt moves relative to user.
-            window.debugForceNearClip = 0.001; // Force near clip to allow grab tools right in front of the camera using Desktop.
-
-            // Build the catalog of available matrix components
-            const invBakedDesktopView = mat4.create();
-            if (this._bakedDesktopView) mat4.invert(invBakedDesktopView, this._bakedDesktopView);
-
-            // This captures purely the manual panning/orbiting the user does with the mouse
-            // since the trackball was first "baked".
-            const liveOffset = mat4.create();
-            if (this._bakedDesktopView) {
-              mat4.multiply(liveOffset, liveDesktopView, invBakedDesktopView);
-            } else {
-              mat4.identity(liveOffset);
-            }
-
-            const invLiveOffset = mat4.create();
-            mat4.invert(invLiveOffset, liveOffset);
-
-            // Manual user tuning variables
-            const manualOffset = mat4.create();
-            // User calibrated values (v0.8.209)
-            const manualT = window.debugStationaryOffset || [0, -30, 0];
-            const manualS = window.debugStationaryScale !== undefined ? window.debugStationaryScale : 1.66949;
-            mat4.fromTranslation(manualOffset, manualT);
-            if (manualS !== 1.0) {
-              mat4.scale(manualOffset, manualOffset, [manualS, manualS, manualS]);
-            }
-
-            const matrices = {
-              liveDesktopView,
-              bakedDesktopView,
-              scaleMat,
-              invScaleMat,
-              worldMat,
-              invWorldMat,
-              panPos,
-              invPanPos,
-              panRot,
-              invPanRot,
-              scaledPanPos,
-              invScaledPanPos,
-              mPan,
-              invPan,
-              mSpawn,
-              mSpawnInv,
-              cameraOffset,
-              invCameraOffset,
-              bakedOffset,
-              invBakedOffset,
-              liveOffset,
-              invLiveOffset,
-              bakedInvScaleMat,
-              relativeScaleMat,
-              manualOffset
-            };
-
-            // Expose the global array pipelines for Chrome Console debugging
-            // The user noted that 'liveDesktopView' is a trackball stuck looking at the origin. 
-            // We must construct a completely clean, unconstrained VR-like initial state:
-            // "bakedDesktopView" captures the trackball precisely once when VR starts, freezing it.
-            if (!window.debugTripodPhys) window.debugTripodPhys = ['liveDesktopView', 'bakedInvScaleMat', 'invBakedOffset'];
-            if (!window.debugTripodVirt) window.debugTripodVirt = ['liveDesktopView', 'scaledPanPos', 'panRot', 'relativeScaleMat', 'manualOffset'];
-
-            window.captureStationaryCalibration = () => {
-              console.log("=== SCULPTXR STATIONARY CALIBRATION ===");
-              console.log("Your chosen grip offsets mapped into manual variables:");
-
-              if (!this._xrWorldOffset || !this._bakedDesktopView) {
-                console.log("Error: World offset or baked state not found.");
-                return;
-              }
-
-              const invB = mat4.create();
-              mat4.invert(invB, this._bakedDesktopView);
-              const sx = invB[12];
-              const sy = invB[13];
-              const sz = invB[14];
-              const t = this._xrWorldOffset.position;
-
-              const vs = this._vrScale || 1.0;
-              const bakedScale = this._bakedDesktopVRScale || 0.008;
-
-              const tx = (t.x - sx).toFixed(5);
-              const ty = (t.y - sy).toFixed(5);
-              const tz = (t.z - sz).toFixed(5);
-              const s = (vs / bakedScale).toFixed(5);
-              console.log(`window.debugStationaryOffset = [${tx}, ${ty}, ${tz}];`);
-              console.log(`window.debugStationaryScale = ${s};`);
-            };
-
-            if (!this._loggedTripodDebug) {
-              // ... logs disabled for production clarity ...
-              this._loggedTripodDebug = true;
-            }
-
-            const buildMatrix = (mat, instructions) => {
-              mat4.identity(mat);
-              if (Array.isArray(instructions)) {
-                instructions.forEach(inst => {
-                  if (matrices[inst]) {
-                    mat4.multiply(mat, mat, matrices[inst]);
-                  }
-                });
-              }
-            };
-
-            // 2. Pass 2 (World)
-            buildMatrix(specView, window.debugTripodVirt);
-
-            // 1. Pass 1 (Controllers)
-            // GOLDEN RULE: For controllers (Pass 1) to perfectly align visually on the monitor
-            buildMatrix(specViewPhys, window.debugTripodPhys);
-          }
-
-          // --- TELEMETRY / ANTI-NAN EXPLOSION CHECK ---
-          const hasNaN = (mat) => Array.from(mat).some(Number.isNaN);
-          if (hasNaN(specViewPhys) || hasNaN(specView)) {
-            if (window.screenLog && !this._loggedNaN) {
-              window.screenLog("CRITICAL: STATIONARY MATRICES EXPLODED", "red");
-              this._loggedNaN = true;
-            }
-            mat4.identity(specViewPhys);
-            mat4.identity(specView);
-          }
-
-          if (window.dumpSpectatorState) {
-            console.log("=== Decoupled STATE DUMP (v0.8.91) ===");
-            console.log("liveDesktopView:", Array.from(liveDesktopView));
-            console.log("vrScale:", this._vrScale);
-            console.log("specViewPhys:", Array.from(specViewPhys));
-            console.log("specView:", Array.from(specView));
-            if (this._xrWorldOffset) {
-              console.log("World Offset Pos:", [this._xrWorldOffset.position.x, this._xrWorldOffset.position.y, this._xrWorldOffset.position.z]);
-            }
-            window.dumpSpectatorState = false;
-          }
-        }
-
-        // Apply chosen matrix
-        mat4.copy(this._camera._view, specView);
-        mat4.copy(this._camera._proj, specProj);
-
-        // Store active Spectator rendering matrices for cross-checking in Interaction (processVRSculpting)
-        // These are required for optical alignment of raycasting when the virtual and physical matrices diverge.
-        if (!this._camera._specView) this._camera._specView = mat4.create();
-        if (!this._camera._specViewPhys) this._camera._specViewPhys = mat4.create();
-        mat4.copy(this._camera._specView, specView);
-        mat4.copy(this._camera._specViewPhys, specViewPhys);
-
-        // To make Desktop mouse clicks (Picking) accurate, the _diverted matrix must match EXACTLY what _renderSceneVR produces!
-        mat4.copy(this._camera._divertedView, specView);
-        mat4.copy(this._camera._divertedProj, specProj);
-
-        // Force update of all mesh matrices FIRST (so UI/Controllers build matrices with real VR scale)
-        this.updateMatricesAndSort();
-
-        // Render to Canvas Buffer directly using standard desktop pipeline
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, this._canvasWidth, this._canvasHeight);
-        gl.clearColor(0.2, 0.2, 0.2, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-        // Feed the physical camera to the VR pipeline. 
-        // Pass 2 will still multiply the Virtual Camera by World/Scale matrices as needed.
-        this._renderSceneVR(this._camera, specViewPhys, specProj, bypassVRScale ? specView : null);
-
-        // Restore _camera._view just in case any postRender logic relies on the pure un-mutated Virtual camera
-        mat4.copy(this._camera._view, specView);
-
-        // Force SculptManager post-render (gizmos/UI) to canvas
-        if (this._sculptManager) {
-          gl.disable(gl.DEPTH_TEST);
-          this._sculptManager.postRender();
-          gl.enable(gl.DEPTH_TEST);
-        }
-
-        // Restore VR Environment for the next frame
-        this._vrScale = cacheScale;
-        this._xrWorldOffset = cacheOffset;
-      }
-
-      // [DESKTOP CAMERA RESTORATION]
-      // Globally restore the pristine Desktop Camera state so the next frame begins clean
-      // and async desktop UI/Mouse interactions act geometrically on the unscaled real-world camera.
-      mat4.copy(this._camera._view, liveDesktopView);
-      mat4.copy(this._camera._proj, liveDesktopProj);
-    } else if (frame && this._camera._unprojectDiverted) {
-      // If we are NOT in TRACKED or STATIONARY, and unproject is true:
-      // We must have exited mode.
-      this._camera._unprojectDiverted = false;
-      this._bakedDesktopView = null;
-      this._bakedWorldOffset = null;
-      this._loggedTripodDebug = false;
-    }
-
-    // [PROFILE] End of Frame Logging
-    if (prof && prof.logNextNumFrames > 0) {
-      prof.frames++;
-
-      if (prof.frames >= prof.logNextNumFrames) {
-        // Compute Averages (Note: we ran at Frame Rate, not Eye Rate now)
-        const f = prof.frames;
-        const avgDelta = (prof.accFrameDelta / f).toFixed(2);
-        const fps = (1000 / (prof.accFrameDelta / f)).toFixed(1);
-
-        // Render passes are still logged per eye, so we double the divisor 
-        // to average them per-eye, OR leave them raw to show total cost per frame 
-        // (Let's leave raw to show total cost per frame)
-        const avgTot = (prof.accRenderTotal / f).toFixed(2);
-        const avgOp = (prof.accMeshOpaque / f).toFixed(2);
-        const avgWire = (prof.accMeshWire / f).toFixed(2);
-        const avgUI = (prof.accUI / f).toFixed(2);
-
-        const logStr = `PROF (${f}f): FPS:${fps} Delta:${avgDelta}ms | RndrTotal:${avgTot}ms (Opq:${avgOp} Wire:${avgWire} UI:${avgUI})`;
-        console.log("=== SCULPTXR PERFORMANCE PROFILE (GLOBAL) ===");
-        console.log(logStr);
-        if (window.screenLog) window.screenLog(logStr, "lime");
-
-        // Disable until called again
-        prof.logNextNumFrames = 0;
-      }
-    }
-
-  }
+  // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
 
   handleXRInput(frame, refSpace) {
+    // 1. Synchronize UI Mesh Visibility with Application State
+    if (this._vrMenu && this._guiXR) {
+        this._vrMenu.mesh.visible = !!this._guiXR._isVisible;
+    }
+    if (this._vrPopup && this._guiPopup) {
+        this._vrPopup.mesh.visible = !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
+    }
+    if (this._vrMiniHUD && this._guiMini) {
+        // Hide MiniHUD if Main Menu or Popup is visible to prevent physical overlap
+        const isMainMenuVisible = this._guiXR && this._guiXR._isVisible;
+        const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
+        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isMainMenuVisible && !isPopupVisible;
+    }
+
     this._isPointingAtMenu = false;
 
     const session = frame.session;
@@ -2658,43 +2188,8 @@ class Scene {
       if (!source.gripSpace) continue;
 
       // VR Fuzzer Overrides
-      if (window.vrFuzzMode && this._fuzzState) {
-        // Clone source so we don't mutate the frozen WebXR object
-        source = {
-          handedness: source.handedness,
-          targetRaySpace: source.targetRaySpace, // Keep original references for real polling if needed
-          gripSpace: source.gripSpace,
-          gamepad: {
-            buttons: [
-              { pressed: this._fuzzState.isTriggerPressed }, // Trigger
-              { pressed: this._fuzzState.isGripPressed }     // Grip
-            ],
-            axes: [
-              0, 0,
-              source.handedness === 'left' ? (this._fuzzState.undoPressed ? -1 : (this._fuzzState.redoPressed ? 1 : 0)) : 0,
-              source.handedness === 'right' ? this._fuzzState.radiusAxis : 0
-            ]
-          }
-        };
+      // (Fuzzer has been suspended during migration since it relied on manual pose injection)
 
-        // Mock getPose on frame just for this iteration
-        if (!frame._originalGetPose) frame._originalGetPose = frame.getPose;
-        frame.getPose = (space, ref) => {
-          const originalPose = frame._originalGetPose.call(frame, space, ref);
-          const fpos = source.handedness === 'left' ? this._fuzzState.posLeft : this._fuzzState.posRight;
-          return {
-            transform: {
-              position: { x: fpos[0], y: fpos[1], z: fpos[2] },
-              orientation: { x: 0, y: 0, z: 0, w: 1 },
-              matrix: mat4.fromTranslation(mat4.create(), fpos)
-            }
-          };
-        };
-      } else if (frame._originalGetPose) {
-        // Restore original getPose if fuzz mode gets disabled mid-run
-        frame.getPose = frame._originalGetPose;
-        frame._originalGetPose = null;
-      }
 
       // VR SHORTCUTS
       if (source.gamepad) {
@@ -3041,8 +2536,6 @@ class Scene {
       // 1. Common Pose Gathering (for All Tasks)
       const worldPose = frame.getPose(source.gripSpace, refSpace);
       if (worldPose) {
-        this.updateVRControllerPose(source.handedness, worldPose.transform.position, worldPose.transform.orientation);
-
         // Capture Unscaled Poses for Menu Attachment
         const p = worldPose.transform.position;
         const o = worldPose.transform.orientation;
@@ -3052,6 +2545,7 @@ class Scene {
         if (source.handedness === 'left') this._vrPoseLeft = mat;
         if (source.handedness === 'right') this._vrPoseRight = mat;
       }
+
 
       // RELIABLE POINTER MATRIX (TargetRay) for Visuals
       // [Step 2 Fix] Capture Dominant Ray Matrix
@@ -3087,34 +2581,43 @@ class Scene {
 
       // 2. Menu Raycasting (Dominant Hand Only)
       if (source.handedness === this._dominantHand) {
-        let rayPose = null;
+        let origin, dir;
         let isFallback = false;
 
-        // Try Target Ray Space (Standard)
-        if (source.targetRaySpace) {
-          rayPose = frame.getPose(source.targetRaySpace, refSpace);
-        }
+        // CRITICAL FIX: To ensure the mathematical picking ray perfectly aligns with the
+        // visual Three.js CylinderGeometry pointer, we MUST read the final computed
+        // `matrixWorld` from the Three.js XRController Object3D, rather than the raw 
+        // WebXR pose matrix, as Three.js may apply camera rig offsets or structural hierarchy.
+        let ctrl3D = null;
+        if (source.handedness === 'left') ctrl3D = this._vrControllerLeft;
+        if (source.handedness === 'right') ctrl3D = this._vrControllerRight;
 
-        // Fallback to Grip Space (if Ray failed)
-        if (!rayPose && source.gripSpace) {
-          rayPose = frame.getPose(source.gripSpace, refSpace);
-          isFallback = true;
-        }
+        if (ctrl3D) {
+          ctrl3D.updateMatrixWorld(true);
+          const rayOrigin = new THREE.Vector3();
+          const rayDir = new THREE.Vector3(0, 0, -1);
+          
+          rayOrigin.setFromMatrixPosition(ctrl3D.matrixWorld);
+          rayDir.transformDirection(ctrl3D.matrixWorld).normalize();
 
-        if (rayPose) {
-          const mat = rayPose.transform.matrix;
-
-          let origin, dir;
-
-          if (isFallback) {
-            origin = vec3.fromValues(mat[12], mat[13], mat[14]);
-            dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
-          } else {
-            origin = vec3.fromValues(mat[12], mat[13], mat[14]);
-            dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+          origin = vec3.fromValues(rayOrigin.x, rayOrigin.y, rayOrigin.z);
+          dir = vec3.fromValues(rayDir.x, rayDir.y, rayDir.z);
+        } else {
+          // Fallback to raw Frame Pos if Three.js objects are somehow missing
+          let rayPose = source.targetRaySpace ? frame.getPose(source.targetRaySpace, refSpace) : null;
+          if (!rayPose && source.gripSpace) {
+             rayPose = frame.getPose(source.gripSpace, refSpace);
+             isFallback = true;
           }
-          vec3.normalize(dir, dir);
-
+          if (rayPose) {
+             const mat = rayPose.transform.matrix;
+             origin = vec3.fromValues(mat[12], mat[13], mat[14]);
+             dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+             vec3.normalize(dir, dir);
+          }
+        }
+        
+        if (origin && dir) {
           let hit = null;
           let targetGuiXR = null;
 
@@ -3165,8 +2668,8 @@ class Scene {
             // INFINITE PLANE INTERSECTION FOR SMOOTH DRAGGING
             // If the user's hand slipped off the mesh entirely, we manually calculate where the laser 
             // intersects the infinite mathematical plane of the menu so the slider keeps moving smoothly!
-            if (!hit && lockedMesh && lockedMesh.getMatrix) {
-              const mat = lockedMesh.getMatrix();
+            if (!hit && lockedMesh) {
+              const mat = lockedMesh.getMatrix ? lockedMesh.getMatrix() : lockedMesh.mesh.matrixWorld.elements;
               
               // Plane Origin and Normal from World Matrix
               const pO = vec3.fromValues(mat[12], mat[13], mat[14]);
@@ -3223,11 +2726,14 @@ class Scene {
           if (hit || (this._activePressedGui && targetGuiXR === this._activePressedGui)) {
             this._isPointingAtMenu = true;
             
-            // If dragging outside bounds (hit is null), we pass -1, -1 and GuiXR will use its cached cursor coords!
+            // FIX REVERTED: The CanvasTexture already handles Y-flipping internally! Inverting V here breaks hitboxes.
             const currU = hit ? hit.uv[0] : -1;
             const currV = hit ? hit.uv[1] : -1;
             
             if (hit) {
+              if (window.screenLog && this._logThrottle % 20 === 0) {
+                 window.screenLog(`[UI Hit] U:${currU.toFixed(2)} V:${currV.toFixed(2)}`, 'cyan');
+              }
               targetGuiXR.setCursor(currU, currV);
             }
             
@@ -3239,15 +2745,15 @@ class Scene {
               targetGuiXR.onInteract(currU, currV, pressed);
             }
 
-            // Calc Laser Distance (plus overshoot)
+            // Calc Laser Distance (visual clamping)
             if (this._vrLaser && hit) {
-              this._vrLaserDistance = hit.distance + 0.05; // +5cm
+              this._vrUIHitDist = hit.distance; 
             }
 
           } else {
             if (this._guiXR) this._guiXR.setCursor(-1, -1);
             if (this._guiMini) this._guiMini.setCursor(-1, -1);
-            this._vrLaserDistance = 1.0; // Reset length (though invisible)
+            this._vrUIHitDist = Infinity; // Assume infinite miss length initially
           }
         } else {
           // Log Failure
@@ -3437,6 +2943,26 @@ class Scene {
       }
     }
 
+
+
+    // Update Three.js Laser Pointer Visual Lengths
+    if (this._vrControllerLeft) {
+        const lRay = this._vrControllerLeft.getObjectByName('pointer_ray_root');
+        if (lRay) {
+            const uiDist = (this._vrUIHitDist !== undefined) ? this._vrUIHitDist : 5.0;
+            const meshDist = (this._dominantHand === 'left' && this._vrLaserDistance) ? this._vrLaserDistance : 5.0;
+            lRay.scale.set(1, 1, Math.min(uiDist, meshDist));
+        }
+    }
+    if (this._vrControllerRight) {
+        const rRay = this._vrControllerRight.getObjectByName('pointer_ray_root');
+        if (rRay) {
+            const uiDist = (this._vrUIHitDist !== undefined) ? this._vrUIHitDist : 5.0;
+            const meshDist = (this._dominantHand === 'right' && this._vrLaserDistance) ? this._vrLaserDistance : 5.0;
+            rRay.scale.set(1, 1, Math.min(uiDist, meshDist));
+        }
+    }
+
     // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
     this._wasPointingAtMenu = this._isPointingAtMenu;
   }
@@ -3536,7 +3062,10 @@ class Scene {
     this._vrScale *= ratio;
 
     // Pivot Lock: If scaling around the origin (0,0,0), skip position math
-    if (vec3.length(pivot) < 0.0001) return;
+    if (vec3.length(pivot) < 0.0001) {
+      this.updateVROffsets();
+      return;
+    }
 
     if (!this._xrWorldOffset) this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
 
@@ -3606,25 +3135,27 @@ class Scene {
       }
     }
 
-    // Offset Logic: Move 'Physical Origin' to the Visual Tip
-    // Matches initVRControllers geometry: Center = -offY, Tip = -(offY + 0.025)
-    // PCVR: -0.05 | Standalone: -0.10
-    const offY = this._isQuestStandalone ? 0.075 : 0.025;
-    const tipOffsetZ = -(offY + 0.025);
+    let ctrl3D = null;
+    if (source.handedness === 'left') ctrl3D = this._vrControllerLeft;
+    if (source.handedness === 'right') ctrl3D = this._vrControllerRight;
 
-    // Offset Vector (0, 0, tipOffsetZ) rotated by Q
-    const offset = vec3.fromValues(0, 0, tipOffsetZ);
-    vec3.transformQuat(offset, offset, [q.x, q.y, q.z, q.w]);
-
-    // physicalOrigin = p + offset
-    const physicalOrigin = [
-      p.x + offset[0],
-      p.y + offset[1],
-      p.z + offset[2]
-    ];
-    this._vrControllerPosPhys = physicalOrigin;
-    const rayDirPhys = vec3.fromValues(0, 0, -1);
+    let physicalOrigin = [p.x, p.y, p.z];
+    let rayDirPhys = vec3.fromValues(0, 0, -1);
     vec3.transformQuat(rayDirPhys, rayDirPhys, [q.x, q.y, q.z, q.w]);
+
+    if (ctrl3D) {
+      ctrl3D.updateMatrixWorld(true);
+      const vOrigin = new THREE.Vector3();
+      const vDir = new THREE.Vector3(0, 0, -1);
+      
+      vOrigin.setFromMatrixPosition(ctrl3D.matrixWorld);
+      vDir.transformDirection(ctrl3D.matrixWorld).normalize();
+
+      physicalOrigin = [vOrigin.x, vOrigin.y, vOrigin.z];
+      rayDirPhys = vec3.fromValues(vDir.x, vDir.y, vDir.z);
+    }
+    
+    this._vrControllerPosPhys = physicalOrigin;
     this._vrControllerDirPhys = rayDirPhys;
 
     // const physicalOrigin = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
@@ -3751,12 +3282,7 @@ class Scene {
     // Use Ray Casting for perfect alignment with Laser Pointer
 
     // A. Compute Ray Direction (Model Space)
-    const engineDir = vec3.fromValues(0, 0, -1); // Standard Forward
-    if (pose && pose.transform && pose.transform.orientation) {
-      const q = pose.transform.orientation;
-      const qRot = quat.fromValues(q.x, q.y, q.z, q.w);
-      vec3.transformQuat(engineDir, engineDir, qRot);
-    }
+    const engineDir = vec3.clone(rayDirPhys);
 
     if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
       // OPTICAL UI MAPPING: Direction
@@ -3862,39 +3388,25 @@ class Scene {
       }
     }
 
+    // Capture Mesh Intersection Distance for Laser Visuals
+    if (picked) {
+      const hitPoint = this._picking.getIntersectionPoint(); // engine space
+      // Convert engine distance back to physical distance (meters)
+      const dist = vec3.distance(enginePos, hitPoint) * (this._vrScale || 1.0);
+      this._vrLaserDistance = dist;
+    } else {
+      this._vrLaserDistance = 5.0; // Reset to infinity line if we slipped off the mesh
+    }
+
     // DEBUG: Picking Trace
-    // if (window.screenLog && this._logThrottle % 60 === 0) {
-    //   const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm`;
-    //   window.screenLog(msg, picked ? "lime" : "red");
-    // }
+    if (window.screenLog && this._logThrottle % 60 === 0) {
+      const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm Dist:${this._vrLaserDistance.toFixed(2)} Vol:${this._vrUseVolumeIntersect}`;
+      window.screenLog(msg, picked ? "lime" : "red");
+    }
 
-    // [DEBUG] Interactive Raycaster Debugger
+    // [DEBUG] Interactive Raycaster Debugger (DISABLED)
     if (window.debugRaycaster) {
-      if (this._debugRayOrigin) {
-        const mOrigin = this._debugRayOrigin.getMatrix();
-        mat4.identity(mOrigin);
-        mat4.translate(mOrigin, mOrigin, rayOrigin);
-
-        let s = window.debugRayScale || 0.05;
-        if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
-        mat4.scale(mOrigin, mOrigin, [s, s, s]);
-      }
-      if (this._debugRayTarget) {
-        const mTarget = this._debugRayTarget.getMatrix();
-        mat4.identity(mTarget);
-        const targetPos = vec3.create();
-        vec3.scaleAndAdd(targetPos, rayOrigin, engineDir, 50.0);
-        mat4.translate(mTarget, mTarget, targetPos);
-
-        let s = window.debugRayScale || 0.05;
-        if (this._vrScale && this._vrScale > 0.0001) s /= this._vrScale;
-        mat4.scale(mTarget, mTarget, [s, s, s]);
-      }
-
-      if (window.screenLog && this._logThrottle % 60 === 0 && source.handedness === this._dominantHand) {
-        window.screenLog(`VRScale: ${this._vrScale.toFixed(3)} | RayOrigin(E): ${rayOrigin[0].toFixed(2)}, ${rayOrigin[1].toFixed(2)}, ${rayOrigin[2].toFixed(2)}`, 'cyan');
-        window.screenLog(`Pick: ${picked ? 'YES' : 'NO'} | PhysRad: ${(physicalRadius * 100).toFixed(2)}cm`, picked ? "lime" : "red");
-      }
+       // ... disabled by default to avoid clutter ...
     }
 
     // 5. Stroke Lifecycle (Corrected API)
@@ -4130,7 +3642,7 @@ class Scene {
             // Get Physical Matrix (World Space)
             const ctl = (src.handedness === 'left') ? this._vrControllerLeft : this._vrControllerRight;
             if (ctl) {
-              const physMat = ctl.getMatrix(); // This is Physical World Matrix (set (Pass 1))
+              const physMat = ctl.matrixWorld.elements; // Native Three.js World Matrix
               const sceneMat = mat4.create();
               mat4.copy(sceneMat, physMat);
 

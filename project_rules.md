@@ -9,13 +9,10 @@
     *   **Check**: Look at the user's last message `Step Id`. Increment it. Put it at the very start.
     *   **NO EXCEPTIONS**.
 
-2.  **Deployment Protocol (CI/CD)**:
-    *   **Rule**: EVERY CODE CHANGE (no matter how small) requires a **Beta Deployment**.
-    *   **Process**:
-        1.  Run `./deploy_beta.sh`. The script will automatically increment the `index.html` patch version if needed.
-        2.  **ONLY THEN** ask the user to test.
-        3.  **ALWAYS** state the specific version number in the chat (e.g., "Deployed v0.7.280").
-    *   **Prohibited**: Asking "Can you test this?" without deploying or without stating the version.
+2.  **Deployment Protocol (CI/CD) [DISABLED FOR VITE PHASE]**:
+    *   **Rule**: Do NOT use `./deploy_beta.sh` or `./deploy.sh`.
+    *   **Process**: Rely entirely on the local Vite server (`npm run dev`) for all testing.
+    *   **Reasoning**: Local Vite provides HMR and faster iteration.
 
 3.  **Debug Visibility**:
     *   **Rule**: `VERSION` and `Build Description` MUST be visible in VR/Screen Log.
@@ -36,14 +33,14 @@
 
 ## Workflow Rules (STRICT ADHERENCE)
 1. **PLANNING MODE IS SACRED**: When in "Planning Mode" or asked to "Plan", **NO CODE EDITS** are permitted. Analysis and reading only.
-2. **BETA FIRST**: ALL code changes must be deployed to `sculptvrbeta` (`./deploy_beta.sh`) first.
-3. **PRODUCTION LOCK**: Production deployment (`sculptvr`) is **FORBIDDEN** without explicit user approval following a successful Beta test.
-4. **VR VERIFICATION**: Do not request VR testing until a Beta deployment is confirmed successful.
+2. **VITE FIRST**: ALL code testing must be done locally via Vite.
+3. **PRODUCTION LOCK**: Production deployment (`sculptvr`) is **FORBIDDEN**.
+4. **VR VERIFICATION**: You may request VR testing locally.
 5. **ROLLBACK CAUTION**: Do not perform blind rollbacks. Stop and Plan.
-6. **MANUAL COMMIT & DEPLOY**:
+6. **MANUAL COMMIT**:
     *   **NEVER automatically commit changes.** Wait for explicit user request/approval.
-    *   **NEVER automatically deploy to PRODUCTION.** Wait for explicit user request/approval.
-    *   **Beta Deployment is allowed** for testing purposes, but Production is strictly off-limits until final approval.
+    *   **NEVER automatically deploy to PRODUCTION.**
+    *   **Beta Deployment is currently disabled.**
 
 ## Commit Protocol
 **"Explicit Commits Only"**

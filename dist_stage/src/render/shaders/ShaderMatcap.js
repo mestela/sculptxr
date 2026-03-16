@@ -81,7 +81,6 @@ ShaderMatcap.vertex = [
 ].join('\n');
 
 ShaderMatcap.fragment = [
-  '#extension GL_OES_standard_derivatives : enable',
   'precision highp float;', // Fix for solarization/overflow artifacts
   'uniform sampler2D uTexture0;',
   'varying highp vec3 vVertex;',
