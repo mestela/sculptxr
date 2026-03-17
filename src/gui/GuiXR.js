@@ -684,7 +684,7 @@ export default class GuiXR {
           newHover = w;
 
           if (window.screenLog && data.isToolPicker) {
-            window.screenLog(`[Overlay Hover] Hit: ${w.id || w.label}`, 'lime');
+            // window.screenLog(`[Overlay Hover] Hit: ${w.id || w.label}`, 'lime');
             this._needsRedraw = true; // FORCE DRAW TO SEE LOGS
           }
           break;
@@ -1501,8 +1501,6 @@ export default class GuiXR {
   }
 
   _handleWidgetClick(w) {
-    console.log(`[GUI DIAGNOSTIC] Clicked: ${w.label || w.id || w.type} (Type: ${w.type})`);
-
     if (w.type === 'slider') {
       let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
@@ -1658,8 +1656,6 @@ export default class GuiXR {
   _executeAction(w) {
     const main = this._main;
     if (!main) return;
-    
-    console.log(`[GUI DIAGNOSTIC] Executing: ${w.label || w.id || w.type} (Type: ${w.type})`);
 
     const id = w.id;
 

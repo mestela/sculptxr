@@ -39,6 +39,7 @@ class Scene {
 
     // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
     this._vrUseVolumeIntersect = false; // By default, use Laser Pointer Raycasting (false) instead of Contact Picking (true)
+    this._vrAmbidextrousCursors = false; // Disable offhand sculpting cursors by default to reduce visual clutter
     window.debugPickRay = true;
 
     this._cameraSpeed = 0.25;
@@ -1800,6 +1801,94 @@ class Scene {
 
           this._vrControllerLeft.add(rayRootLeft);
           this._vrControllerRight.add(rayRootRight);
+
+          // Controller Stylus Spike (Shows exact physical tip position)
+          const spikeGeo = new THREE.CylinderGeometry(0, 0.005, 0.10, 16);
+          spikeGeo.rotateX(-Math.PI / 2); // Point forward along -Z
+          // Move so Base is at 0, Tip is at -0.10
+          spikeGeo.translate(0, 0, -0.05);
+          // Shift for Quest Standalone to match the sphere volume offset
+          const spikeOffsetZ = this._isQuestStandalone ? -0.05 : 0.0;
+          spikeGeo.translate(0, 0, spikeOffsetZ);
+          const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
+          
+          const spikeLeft = new THREE.Mesh(spikeGeo, spikeMat);
+          this._vrControllerLeft.add(spikeLeft);
+
+          const spikeRight = new THREE.Mesh(spikeGeo, spikeMat);
+          this._vrControllerRight.add(spikeRight);
+
+          // Tool Cursors (Ring + Dot attached to World Space / Scene)
+          const createVRCursor = () => {
+            const group = new THREE.Group();
+            
+            // 1. Center Dot (Volume Sphere Indicator)
+            const sphereGeo = new THREE.SphereGeometry(1.0, 32, 32); 
+            const fresnelVertexShader = `
+                varying vec3 vNormal;
+                varying vec3 vPositionNormal;
+                void main() {
+                    vNormal = normalize(normalMatrix * normal);
+                    vPositionNormal = normalize((modelViewMatrix * vec4(position, 1.0)).xyz);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `;
+
+            const fresnelFragmentShader = `
+                uniform vec3 color;
+                varying vec3 vNormal;
+                varying vec3 vPositionNormal;
+                void main() {
+                    float dotProduct = dot(vNormal, vPositionNormal);
+                    float fresnel = 1.0 - abs(dotProduct);
+                    fresnel = pow(fresnel, 3.0); // Adjust for edge sharpness
+                    gl_FragColor = vec4(color * fresnel, fresnel);
+                }
+            `;
+
+            const volMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    color: { value: new THREE.Color(0x4488ff) }
+                },
+                vertexShader: fresnelVertexShader,
+                fragmentShader: fresnelFragmentShader,
+                transparent: true,
+                depthTest: true,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+                blending: THREE.CustomBlending,
+                blendEquation: THREE.AddEquation,
+                blendSrc: THREE.OneFactor,
+                blendDst: THREE.OneFactor
+            });
+            const volumeSphere = new THREE.Mesh(sphereGeo, volMat);
+            volumeSphere.name = "volume_sphere";
+            group.add(volumeSphere);
+
+            // 1b. Volume Cube Indicator (For Voxel Box tools)
+            const cubeGeo = new THREE.BoxGeometry(2.0, 2.0, 2.0); // 2.0 extent matches 1.0 radius logically
+            const volumeCube = new THREE.Mesh(cubeGeo, volMat);
+            volumeCube.name = "volume_cube";
+            volumeCube.visible = false;
+            group.add(volumeCube);
+
+            // 2. Outer Ring (Surface Cursor)
+            const circleGeo = new THREE.CircleGeometry(1.0, 32);
+            circleGeo.computeBoundingSphere();
+            const edgeGeo = new THREE.EdgesGeometry(circleGeo);
+            const edgeMat = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const ringLine = new THREE.LineSegments(edgeGeo, edgeMat);
+            ringLine.name = "cursor_ring";
+            group.add(ringLine);
+
+            group.visible = false;
+            return group;
+          };
+
+          this._vrCursorLeft = createVRCursor();
+          this._vrCursorRight = createVRCursor();
+          this._scene.add(this._vrCursorLeft);
+          this._scene.add(this._vrCursorRight);
         }
       }
 
@@ -2661,18 +2750,6 @@ class Scene {
             const depth = source.gamepad.buttons[0].value;
             pressed = depth > 0.1 || source.gamepad.buttons[0].pressed;
             bottomedOut = depth >= 0.99 || source.gamepad.buttons[0].pressed;
-
-            // [DIAGNOSTIC] Provide physical hardware feedback logs to user
-            if (this._lastLoggedTriggerPress !== pressed) {
-                console.log(`[HW DIAGNOSTIC] Trigger: ${pressed ? 'DOWN' : 'UP'} (Depth: ${depth.toFixed(2)})`);
-                this._lastLoggedTriggerPress = pressed;
-            }
-            if (this._lastLoggedBottomOut !== bottomedOut && bottomedOut) {
-                console.log(`[HW DIAGNOSTIC] Trigger: BOTTOMED OUT (Felt Physical Click)`);
-                this._lastLoggedBottomOut = bottomedOut;
-            } else if (!bottomedOut) {
-                this._lastLoggedBottomOut = false;
-            }
           }
 
           // DRAG CAPTURE LOCK
@@ -2733,13 +2810,15 @@ class Scene {
 
             // Calc Laser Distance (visual clamping)
             if (this._vrLaser && hit) {
-              this._vrUIHitDist = hit.distance; 
+              if (source.handedness === 'left') this._vrUIHitDistLeft = hit.distance; 
+              else this._vrUIHitDistRight = hit.distance; 
             }
 
           } else {
             if (this._guiXR) this._guiXR.setCursor(-1, -1);
             if (this._guiMini) this._guiMini.setCursor(-1, -1);
-            this._vrUIHitDist = Infinity; // Assume infinite miss length initially
+            if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
+            else this._vrUIHitDistRight = Infinity;
           }
         } else {
           // Log Failure
@@ -2772,7 +2851,9 @@ class Scene {
 
       // 4. Stylus / Trigger Dominance
       if (source.gamepad && source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed) {
-        this._activeHandedness = source.handedness;
+        if (this._vrAmbidextrousCursors || source.handedness === this._dominantHand) {
+          this._activeHandedness = source.handedness;
+        }
       }
     }
 
@@ -2931,23 +3012,8 @@ class Scene {
 
 
 
-    // Update Three.js Laser Pointer Visual Lengths
-    if (this._vrControllerLeft) {
-        const lRay = this._vrControllerLeft.getObjectByName('pointer_ray_root');
-        if (lRay) {
-            const uiDist = (this._vrUIHitDist !== undefined) ? this._vrUIHitDist : 5.0;
-            const meshDist = (this._dominantHand === 'left' && this._vrLaserDistance) ? this._vrLaserDistance : 5.0;
-            lRay.scale.set(1, 1, Math.min(uiDist, meshDist));
-        }
-    }
-    if (this._vrControllerRight) {
-        const rRay = this._vrControllerRight.getObjectByName('pointer_ray_root');
-        if (rRay) {
-            const uiDist = (this._vrUIHitDist !== undefined) ? this._vrUIHitDist : 5.0;
-            const meshDist = (this._dominantHand === 'right' && this._vrLaserDistance) ? this._vrLaserDistance : 5.0;
-            rRay.scale.set(1, 1, Math.min(uiDist, meshDist));
-        }
-    }
+    // Update Three.js Laser Pointer Visual Lengths and Cursors
+    this._updateVRCursors(frame, refSpace, sources);
 
     // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
     this._wasPointingAtMenu = this._isPointingAtMenu;
@@ -3735,56 +3801,7 @@ class Scene {
 
 
 
-    // 5. Debug Cursor (Visual Feedback)
-    if (this.updateDebugCursor) {
-      // Use pickingRadius (Model Space) for size
-      // Default to 1cm (0.01) if undefined
-      const cursorSize = (typeof pickingRadius !== 'undefined') ? pickingRadius : 0.01;
-
-      if (picked && !allowAir) {
-        const mesh = this._picking.getMesh();
-        if (mesh) {
-          const localInter = this._picking.getIntersectionPoint();
-          const worldInter = vec3.create();
-          vec3.transformMat4(worldInter, localInter, mesh.getMatrix());
-          this.updateDebugCursor(worldInter, true, cursorSize);
-          // Yellow for Hit
-          if (this._debugCursor) this._debugCursor.setFlatColor([1.0, 1.0, 0.0]);
-        }
-      } else {
-        // Show at Controller Tip (Red)
-        this.updateDebugCursor(this._vrControllerPos, true, cursorSize);
-        if (this._debugCursor) this._debugCursor.setFlatColor(picked ? [1.0, 1.0, 0.0] : [1.0, 0.0, 0.0]);
-      }
-    }
-  }
-
-  updateDebugCursor(pos, active, radius = 0.01) {
-    if (!this._debugCursor) this.initDebugCursor();
-    if (!this._debugCursor) return;
-
-    if (active && pos && !window.isUIHiddenForVR) {
-      if (!this._debugCursor.isVisible()) {
-        this._debugCursor.setVisible(true);
-      }
-      var mat = this._debugCursor.getMatrix();
-      mat4.identity(mat);
-      mat4.translate(mat, mat, pos);
-      // Scale based on radius (radius is half-width, so *2 for Diameter? Or just use radius if Cube is 1.0?)
-      // Let's assume we want Diameter to represent the Brush Size.
-      // Brush Radius 5cm -> Diameter 10cm.
-      // If Cube is 1.0 unit. We scale by 0.1.
-      // So scale = radius * 2.0?
-      // Let's try direct radius first, if it's too small/big we adjust.
-      // The user complained it was "stuck" (maybe small?).
-      // Let's use radius * 2.0 to show DIAMETER.
-      const s = radius * 2.0;
-      mat4.scale(mat, mat, [s, s, s]);
-    } else {
-      if (this._debugCursor.isVisible()) {
-        this._debugCursor.setVisible(false);
-      }
-    }
+    // (Visual Cursor Update moved to _updateVRCursors at end of frame to support both hands)
   }
 
   _preventDefault(event) {
@@ -3853,10 +3870,261 @@ class Scene {
       }
     }
   }
+
+  _updateVRCursors(frame, refSpace, sources) {
+    try {
+        if (!sources || !this._camera || !this._picking) return;
+
+        if (!window._logCursorThrottle) window._logCursorThrottle = 0;
+        const doLog = (window._logCursorThrottle++ % 120 === 0);
+        if (doLog) {
+            console.log('-- Cursor VR Debug v1.0.6 --');
+        }
+
+        const tool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
+        let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;
+        if (tool && tool._radius !== undefined) {
+          sliderVal = tool._radius / 100.0;
+        }
+        const physicalRadius = sliderVal * 0.1; // 0-10cm range
+
+        const invScale = 1.0 / (this._vrScale || 1.0);
+
+        for (let source of sources) {
+            if (!source.targetRaySpace) continue;
+            const isLeft = source.handedness === 'left';
+            
+            const pose = frame.getPose(source.targetRaySpace, refSpace);
+            if (!pose) continue;
+
+            const m = pose.transform.matrix;
+            const origin = [m[12], m[13], m[14]];
+            const dir = [-m[8], -m[9], -m[10]];
+            vec3.normalize(dir, dir);
+
+            // Calculate Physical Tip explicitly for volume sphere visual positioning
+            const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+            const tipPhys = vec3.create();
+            vec3.scaleAndAdd(tipPhys, origin, dir, offZ);
+
+            // Ray Engine Raycast MUST originate from the Controller Root, 
+            // otherwise the origin begins INSIDE the 3D mesh when the physical tip penetrates the clay, causing Raycast to hit erratic backfaces!
+            const originEngine = vec3.clone(origin);
+            const dirEngine = vec3.clone(dir);
+
+            if (this._xrWorldOffset) {
+                vec3.transformMat4(originEngine, originEngine, this._xrWorldOffset.inverse.matrix);
+                
+                const r = this._xrWorldOffset.orientation;
+                const qInv = quat.create();
+                quat.invert(qInv, quat.fromValues(r.x, r.y, r.z, r.w));
+                vec3.transformQuat(dirEngine, dirEngine, qInv);
+            }
+            vec3.scale(originEngine, originEngine, invScale);
+            vec3.normalize(dirEngine, dirEngine);
+
+            const uiHitDist = isLeft ? this._vrUIHitDistLeft : this._vrUIHitDistRight;
+            const cursorGroup = isLeft ? this._vrCursorLeft : this._vrCursorRight;
+            const pointerLine = (isLeft ? this._vrControllerLeft : this._vrControllerRight).getObjectByName('pointer_ray_root');
+
+            let hitDist = 5.0;
+            let pickedMesh = null;
+            let pNormal = null;
+            let wInter = null;
+            let sceneNormal = null;
+
+            if (uiHitDist === undefined || uiHitDist === Infinity) {
+                let didHit = false;
+                
+                // Backup picking states
+                const oldMesh = this._picking._mesh;
+                const oldFace = this._picking._pickedFace;
+                const oldRLocal2 = this._picking._rLocal2;
+                const oldRWorld2 = this._picking._rWorld2;
+                const oldPickedVertices = this._picking._pickedVertices;
+
+                // ALWAYS use RayMeshes for visual cursors. 
+                // Thick Raycasts (intersectionRayMeshesVR) iteration without octree optimization causes extreme CPU stalls on dense meshes (DynTopo).
+                // SphereMeshes returns the nearest vertex which causes the surface ring to jitter wildly.
+                // The thin raycast avoids jitter and maintains 90hz performance. 
+                didHit = this._picking.intersectionRayMeshes(this._meshes, originEngine, dirEngine);
+
+                // If the ray origin (controller root) penetrates the mesh, the ray will travel through the interior volume and hit the back wall ("opposite side").
+                // To prevent the cursor from jumping to the opposite side, we hide the surface ring if the ray hits a backface.
+                if (didHit) {
+                    this._picking.computePickedNormal();
+                    const nFace = this._picking.getPickedNormal();
+                    
+                    const pickedMesh = this._picking.getMesh();
+                    if (pickedMesh) {
+                        const nEngine = vec3.create();
+                        const matMesh = pickedMesh.getMatrix();
+                        const mat3Mesh = mat3.create();
+                        mat3.fromMat4(mat3Mesh, matMesh);
+                        vec3.transformMat3(nEngine, nFace, mat3Mesh);
+                        vec3.normalize(nEngine, nEngine);
+
+                        // If the normal is facing the same direction as the ray, it's a backface.
+                        if (vec3.dot(nEngine, dirEngine) > 0.0) {
+                            didHit = false; // Gracefully hide cursor instead of snapping to far side
+                        }
+                    }
+                }
+
+                if (doLog) console.log(`[${isLeft?'L':'R'}] didHit: ${didHit} uiH: ${uiHitDist} | origin: ${originEngine.map(x=>x.toFixed(2))} | dir: ${dirEngine.map(x=>x.toFixed(2))}`);
+
+                if (didHit) {
+                    pickedMesh = this._picking.getMesh() || this._meshes[0];
+                    
+                    // distance in engine space
+                    const localHit = this._picking.getIntersectionPoint();
+                    const engineHit = vec3.create();
+                    vec3.transformMat4(engineHit, localHit, pickedMesh.getMatrix());
+                    hitDist = vec3.distance(originEngine, engineHit) * (this._vrScale || 1.0);
+
+                    // wInter in Scene Space is just origin + dir * hitDist
+                    wInter = vec3.create();
+                    vec3.scaleAndAdd(wInter, origin, dir, hitDist);
+
+                    if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
+
+                    pNormal = this._picking.computePickedNormal();
+                    sceneNormal = vec3.create();
+                    
+                    if (pNormal && pNormal.length >= 3) {
+                        const nMat = mat3.create();
+                        mat3.normalFromMat4(nMat, pickedMesh.getMatrix());
+                        vec3.transformMat3(sceneNormal, pNormal, nMat); // Now in Engine Space
+                        
+                        if (this._xrWorldOffset) {
+                            const r = this._xrWorldOffset.orientation;
+                            const qRot = quat.fromValues(r.x, r.y, r.z, r.w);
+                            vec3.transformQuat(sceneNormal, sceneNormal, qRot); // Now in Scene Space
+                        }
+                        vec3.normalize(sceneNormal, sceneNormal);
+                    } else {
+                        vec3.set(sceneNormal, 0, 1, 0);
+                    }
+                }
+
+                // Restore picking states so active hand sculpt isn't polluted by non-dom hand raycast
+                this._picking._mesh = oldMesh;
+                this._picking._pickedFace = oldFace;
+                this._picking._rLocal2 = oldRLocal2;
+                this._picking._rWorld2 = oldRWorld2;
+                this._picking._pickedVertices = oldPickedVertices;
+            } else {
+                hitDist = uiHitDist;
+            }
+
+            if (pointerLine) {
+                if (uiHitDist !== undefined && uiHitDist !== Infinity) {
+                    pointerLine.visible = true;
+                    pointerLine.scale.set(1, 1, hitDist);
+                    if (doLog) console.log(`  laser scale_z: ${hitDist.toFixed(2)} [UI VISIBLE]`);
+                } else {
+                    pointerLine.visible = false;
+                }
+            }
+
+            if (cursorGroup) {
+                // Determine if this is the active sculpting hand
+                let isActiveHand = true;
+                if (this._activeHandedness) {
+                    isActiveHand = (source.handedness === this._activeHandedness);
+                } else {
+                    // Fallback to right hand if user hasn't squeezed trigger yet
+                    isActiveHand = (source.handedness === 'right');
+                }
+
+                if (!isActiveHand && !this._vrAmbidextrousCursors) {
+                    cursorGroup.visible = false;
+                    continue; // Bypass cursor rendering entirely for the offhand, but continue loop!
+                }
+
+                const ringLine = cursorGroup.getObjectByName("cursor_ring");
+                const volumeSphere = cursorGroup.getObjectByName("volume_sphere");
+                const volumeCube = cursorGroup.getObjectByName("volume_cube");
+
+                const isVoxelTool = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
+                const isCubeShape = isVoxelTool && tool._shape === 1;
+
+                if (volumeSphere) volumeSphere.visible = !isCubeShape;
+                if (volumeCube) volumeCube.visible = isCubeShape;
+                const activeVol = isCubeShape ? volumeCube : volumeSphere;
+
+                cursorGroup.visible = true;
+                cursorGroup.position.set(0, 0, 0);
+                cursorGroup.quaternion.identity();
+                cursorGroup.scale.set(1, 1, 1);
+
+                // 1. Position Surface Ring (if hitting mesh)
+                if (hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                    if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
+                    
+                    if (ringLine) {
+                        ringLine.visible = true;
+                        ringLine.position.set(wInter[0], wInter[1], wInter[2]);
+                        ringLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(sceneNormal[0], sceneNormal[1], sceneNormal[2]));
+                        ringLine.scale.set(physicalRadius, physicalRadius, physicalRadius);
+                    }
+                } else {
+                    if (doLog) console.log(`  Mode: AIR/UI, hiding surface ring`);
+                    if (ringLine) ringLine.visible = false;
+                }
+
+                // 2. Position Volume Indicator (Fixed at controller tip)
+                if (activeVol && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                    activeVol.position.set(tipPhys[0], tipPhys[1], tipPhys[2]);
+                    
+                    if (isCubeShape && tool._alignToController === false) {
+                        activeVol.quaternion.identity(); // World aligned
+                    } else {
+                        // Inherit Controller Rotation natively (approximating from direction if needed, or simply copy VR controller orientation)
+                        const ctrl3D = isLeft ? this._vrControllerLeft : this._vrControllerRight;
+                        if (ctrl3D) activeVol.quaternion.copy(ctrl3D.quaternion);
+                    }
+
+                    activeVol.scale.set(physicalRadius, physicalRadius, physicalRadius);
+                } else if (activeVol) {
+                    // Hide volume if pointing at UI menu
+                    activeVol.visible = false;
+                }
+
+                const toolName = tool ? tool.constructor.name : 'Unknown';
+                const isPaint = toolName === 'Paint';
+                const intensity = tool && tool._intensity !== undefined ? tool._intensity : 0.5;
+                
+                // Interpolate from 0.5 (Additive White/Grey) to 1.0 (Pure Color/Saturated) based on intensity
+                const base = 0.5;
+                const cMax = base + (intensity * (1.0 - base)); // 0.5 -> 1.0
+                const cMin = base - (intensity * base);         // 0.5 -> 0.0
+                
+                const color = new THREE.Color();
+                if (this._vrIsNegative) {
+                    color.setRGB(cMax, cMin, cMin); // Red
+                } else if (isPaint && tool._color) {
+                    const r = base + intensity * (tool._color[0] - base);
+                    const g = base + intensity * (tool._color[1] - base);
+                    const b = base + intensity * (tool._color[2] - base);
+                    color.setRGB(r, g, b);
+                } else {
+                    color.setRGB(cMin, cMin, cMax); // Blue
+                }
+
+                if (volumeSphere) volumeSphere.material.uniforms.color.value.copy(color);
+                if (volumeCube) volumeCube.material.uniforms.color.value.copy(color);
+                if (ringLine) ringLine.material.color.copy(color);
+            } else if (cursorGroup) {
+                cursorGroup.visible = false;
+                if (doLog) console.log(`  cursorGroup HIDDEN! cursorGroup missing?`);
+            }
+        }
+    } catch (e) {
+        console.log(`[CurErr] ${e.message}`);
+        console.error('[SculptXR] Cursor Update Error', e);
+    }
+  }
 }
-
-
-
-
 
 export default Scene;
