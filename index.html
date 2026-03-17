@@ -152,7 +152,13 @@
                 const logEl = document.getElementById('log');
                 if (logEl) {
                     if (logEl.children.length > 50) {
-                        logEl.removeChild(logEl.firstChild);
+                        if (logEl.firstChild && logEl.firstChild.tagName === 'BUTTON') {
+                            if (logEl.children.length > 1) {
+                                logEl.removeChild(logEl.children[1]);
+                            }
+                        } else {
+                            logEl.removeChild(logEl.firstChild);
+                        }
                     }
                     const line = document.createElement('div');
                     line.textContent = msg;
@@ -192,7 +198,13 @@
                     const msg = args.join(' ');
                     if (!msg.includes('XRRequestFrame')) {
                         if (logEl.children.length > 50) {
-                            logEl.removeChild(logEl.firstChild);
+                            if (logEl.firstChild && logEl.firstChild.tagName === 'BUTTON') {
+                                if (logEl.children.length > 1) {
+                                    logEl.removeChild(logEl.children[1]);
+                                }
+                            } else {
+                                logEl.removeChild(logEl.firstChild);
+                            }
                         }
                         const line = document.createElement('div');
                         line.textContent = msg;

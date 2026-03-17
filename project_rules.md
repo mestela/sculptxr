@@ -86,14 +86,14 @@
 3.  **No Autonomous Browser Testing**: DO NOT use the `browser_subagent` to test the application unless explicitly requested by the user. Request manual testing instead.
 
 ## Environment & Build System
-1.  **NO BUILD FOR PROD**: The core project is a pure static site natively loaded by the browser via `importmap` or standard ES modules.
-2.  **Local Testing (Vite)**: For fast, live local testing and remote debugging (e.g., with GalaxyXR), the project uses a Vite wrapper located in `../sculptxr-vr/`.
-    -   *Workflow*: The user runs `npm run dev` (or `vite`) from `/Users/mattestela/.gemini/jetski/scratch/sculptxr-vr/`. It serves the app locally over HTTPS.
-    -   *Agent Rule*: Rely on this Vite server being active for immediate local testing. DO NOT fall back to the beta deploy scripts when fast local iteration is possible.
-3.  **Deploy Scripts (Beta/Prod)**: For publishing to the outside world, use `./deploy.sh` or `./deploy_beta.sh` from the main `sculptxr` directory.
-4.  **Environment First**: Any change required to *run* the app (e.g., `importmap` updates, library patches, build configs) MUST be committed **immediately** upon verification.
-5.  **No "Floating" Configs**: Never leave environment fixes in an uncommitted state while working on features.
-6.  **Revert Safety**: Before reverting (`git checkout .`), ALWAYS check `git status` for uncommitted config files.
+1.  **Local Testing (Vite)**: For fast, live local testing and remote debugging (e.g., with GalaxyXR), the project directly uses Vite in the root directory.
+    -   *Workflow*: Run `npm run dev` from the main `sculptxr` directory (`/Users/mattestela/.gemini/jetski/scratch/sculptxr/`). It serves the app locally via HTTPS (e.g., `https://localhost:8084/`) which is required for WebXR.
+    -   *Hot Module Replacement*: Vite provides HMR, making iteration much faster. WebXR sessions may still require manual headset refreshes.
+    -   *Agent Rule*: Rely on this Vite server being active for immediate local testing. Do NOT attempt to run `npm run build` or use deploy scripts for local testing.
+2.  **Deploy Scripts (Beta/Prod - Future Use)**: For publishing to an external website, the legacy `./deploy.sh` or `./deploy_beta.sh` scripts are available in the main `sculptxr` directory. These are currently only for future external public deployments.
+3.  **Environment First**: Any change required to *run* the app MUST be committed **immediately** upon verification.
+4.  **No "Floating" Configs**: Never leave environment fixes in an uncommitted state while working on features.
+5.  **Revert Safety**: Before reverting (`git checkout .`), ALWAYS check `git status` for uncommitted config files.
 
 ## Deployment Details
 **Script**: `./deploy.sh [USER] [HOST] [DEST_PATH]`

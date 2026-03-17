@@ -36,5 +36,9 @@
   "bugs": {
     "url": "https://github.com/mestela/sculptxr/issues"
   },
-  "homepage": "https://github.com/mestela/sculptxr#readme"
+  "homepage": "https://github.com/mestela/sculptxr#readme",
+  "dependencies": {
+    "gl-matrix": "^3.4.4",
+    "three": "^0.183.2"
+  }
 }

@@ -69,7 +69,7 @@ const OVERLAY_H = 720;
 const OVERLAY_X = (CANVAS_SIZE - OVERLAY_W) / 2;
 const OVERLAY_Y = (CANVAS_SIZE - OVERLAY_H) / 2;
 
-const OVERLAY_SCALE = 1.13; // 13% Larger Menus (User Request)
+const OVERLAY_SCALE = 1.0; // Math now correctly handled via physical mesh in VRMenu.js
 
 export default class GuiXR {
 
@@ -860,6 +860,11 @@ export default class GuiXR {
     if (this._wasPressed === undefined) this._wasPressed = false;
     const isRisingEdge = (isPressed && !this._wasPressed);
     this._wasPressed = isPressed;
+    if (isRisingEdge) this._hasClickedWidgetThisPress = false;
+    if (!isPressed) {
+      this._hasClickedWidgetThisPress = false;
+      this._dragStartY = undefined;
+    }
 
     if (!this._cursor.active) return;
 
@@ -1053,12 +1058,12 @@ export default class GuiXR {
       if (isDragging) {
         if (!isPressed) return; // Continue drag
       } else {
-        if (!isRisingEdge) return; // Block fall-through!
+        // if (!isRisingEdge) return; // REMOVED: Replaced with _hasClickedWidgetThisPress below to allow sweeps
       }
     }
 
     if (now - this._inputDebounce < debounceTime) return;
-    this._inputDebounce = now;
+    // DO NOT SET DEBOUNCE GLOBALLY HERE. ONLY ON SUCCESSFUL ACTIONS.
 
     const w = this._canvas.width;
 
@@ -1128,13 +1133,13 @@ export default class GuiXR {
 
         if (cy < TAB_HEIGHT) {
           const idx = Math.floor(cx / r1W);
-          if (idx >= 0 && idx < row1.length) this.switchTab(row1[idx]);
+          if (idx >= 0 && idx < row1.length) { this._inputDebounce = now; this.switchTab(row1[idx]); }
         } else if (cy < TAB_HEIGHT * 2) {
           const idx = Math.floor(cx / r2W);
-          if (idx >= 0 && idx < row2.length) this.switchTab(row2[idx]);
+          if (idx >= 0 && idx < row2.length) { this._inputDebounce = now; this.switchTab(row2[idx]); }
         } else if (cy < TAB_HEIGHT * 3) {
           const idx = Math.floor(cx / r3W);
-          if (idx >= 0 && idx < row3.length) this.switchTab(row3[idx]);
+          if (idx >= 0 && idx < row3.length) { this._inputDebounce = now; this.switchTab(row3[idx]); }
         }
         return;
       }
@@ -1153,6 +1158,9 @@ export default class GuiXR {
 
     // 4. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
+      if (this._hasClickedWidgetThisPress && targetWid.type !== "slider") return; // Prevent sweep-clicking multiple toggle buttons
+      this._inputDebounce = now; // SUCCESSFUL WIDGET HIT - APPLY DEBOUNCE
+      if (targetWid.type !== "slider") this._hasClickedWidgetThisPress = true;
       if (targetWid.disabled) return;
 
       if (targetWid.type === 'slider') {
@@ -1201,13 +1209,23 @@ export default class GuiXR {
 
     // 4. Background Drag (Content Scrolling)
     // We allow drag if we started below header, OR if we are already dragging (even if we drifted up)
-    if (this._isDraggingContent || (cy > HEADER_HEIGHT && !targetWid)) {
+    // Only lock into a scroll drag if we havent clicked a widget this press!
+    if (this._isDraggingContent || (cy > HEADER_HEIGHT && !targetWid && !this._hasClickedWidgetThisPress)) {
       if (isPressed) {
         if (!this._isDraggingContent) {
-          // Start Drag
-          this._isDraggingContent = true;
-          this._lastScrollY = cy;
-          return;
+          if (this._dragStartY === undefined) {
+            // Note the start, but don't lock into scroll drag until we've moved 15px.
+            // This prevents a twitchy trigger squeeze from permanently locking the UI out 
+            // of button interactions if it happens to hit the background for a fraction of a second.
+            this._dragStartY = cy;
+            return;
+          } else if (Math.abs(cy - this._dragStartY) > 15) {
+            // Start Drag
+            this._isDraggingContent = true;
+            this._lastScrollY = cy;
+          } else {
+            return; // Still in deadzone
+          }
         }
 
         // Continue Drag
@@ -1232,6 +1250,7 @@ export default class GuiXR {
         // Stop Drag
         this._isDraggingContent = false;
         this._lastScrollY = undefined;
+        this._dragStartY = undefined;
       }
     }
 
@@ -1482,6 +1501,8 @@ export default class GuiXR {
   }
 
   _handleWidgetClick(w) {
+    console.log(`[GUI DIAGNOSTIC] Clicked: ${w.label || w.id || w.type} (Type: ${w.type})`);
+
     if (w.type === 'slider') {
       let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
@@ -1626,9 +1647,9 @@ export default class GuiXR {
       });
 
     } else {
+      this._executeAction(w);
       this._needsRedraw = true;
       this.draw();
-      this._executeAction(w);
     }
   }
 
@@ -1637,6 +1658,8 @@ export default class GuiXR {
   _executeAction(w) {
     const main = this._main;
     if (!main) return;
+    
+    console.log(`[GUI DIAGNOSTIC] Executing: ${w.label || w.id || w.type} (Type: ${w.type})`);
 
     const id = w.id;
 
@@ -1658,6 +1681,7 @@ export default class GuiXR {
 
     // Generic Checkbox Handling (Restored)
     if (w.type === 'checkbox') {
+      w.value = !w.value;
       const val = w.value;
       const id = w.id;
       if (window.screenLog) window.screenLog(`Chk: ${id} = ${val}`, "white");
@@ -2357,17 +2381,11 @@ export default class GuiXR {
     }
 
     // --- DRAW DEBUG CURSOR (Verify Raycast Hits) ---
-    if (this._cursor && this._cursor.active) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(this._cursor.x, this._cursor.y, 8, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff00ff'; // Hot pink!
-      ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#fff';
-      ctx.stroke();
-      ctx.restore();
-    }
+    // The cursor logic is disabled because it "sticks" to UI element edges.
+    // The canvas is optimized to only redraw when hover states cross boundaries.
+    // Drawing a visual cursor inside the 1024x1024 canvas forces a heavy redraw 
+    // down every single frame the laser moves, causing extreme lag.
+    // The laser beam correctly shows intersection outside of the canvas.
 
     this._needsUpload = true;
   }
@@ -3239,29 +3257,12 @@ export default class GuiXR {
         this._pendingDraw = false;
       }
 
-    const t0 = performance.now();
-    const gl = this._gl;
-    // OPTIMIZATION: Removed gl.getParameter(TEXTURE_BINDING_2D)
-    // Just bind and leave it. The next draw call will bind what it needs.
-    gl.bindTexture(gl.TEXTURE_2D, this._texture);
-    if (this._textureAllocated) {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this._canvas);
-    } else {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this._canvas);
-      this._textureAllocated = true;
-    }
-    // if (prevTex) gl.bindTexture(gl.TEXTURE_2D, prevTex);
-    this._needsUpload = false;
+      this._needsUpload = false;
     
-    // Notify external listeners (like Three.js CanvasTexture wrappers)
-    for (let i = 0; i < this._onTextureUpdatedCallbacks.length; i++) {
-        this._onTextureUpdatedCallbacks[i]();
-    }
-
-    const t1 = performance.now();
-    if (t1 - t0 > 5) {
-      console.log(`GuiXR Upload: ${(t1 - t0).toFixed(2)}ms`);
-    }
+      // Notify external listeners (like Three.js CanvasTexture wrappers)
+      for (let i = 0; i < this._onTextureUpdatedCallbacks.length; i++) {
+          this._onTextureUpdatedCallbacks[i]();
+      }
 
     } catch (e) {
       console.error("[GuiXR] TexUpload Error:", e);

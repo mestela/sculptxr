@@ -238,8 +238,18 @@ ShaderManager.updateUniforms = function(mesh, main) {
   mockGL.createTexture = function() { return {}; };
   mockGL.bindTexture = function(target, tex) { 
     var name = 'uTexture' + activeTexUnit;
-    if (unifs[name] && tex && tex.isTexture !== undefined) {
-        unifs[name].value = tex;
+    if (unifs[name]) {
+        if (tex && tex.isTexture !== undefined) {
+            unifs[name].value = tex;
+        } else {
+            // Prevent WebGL texture leaks (like the desktop GUI rendering into the sculpt meshes) 
+            // by forcing Three.js to bind a plain white texture instead of a raw WebGLTexture
+            if (!ShaderManager._dummyTex) {
+                ShaderManager._dummyTex = new THREE.DataTexture(new Uint8Array([255,255,255,255]), 1, 1, THREE.RGBAFormat);
+                ShaderManager._dummyTex.needsUpdate = true;
+            }
+            unifs[name].value = ShaderManager._dummyTex;
+        }
     }
   };
   

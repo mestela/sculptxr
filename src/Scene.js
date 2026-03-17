@@ -959,9 +959,9 @@ class Scene {
       if (isVR) {
           if (!window._xrFrameCount) window._xrFrameCount = 0;
           window._xrFrameCount++;
-          if (window._xrFrameCount % 60 === 0 && window.screenLog) {
-              window.screenLog("XR Frame Drawn: " + window._xrFrameCount, "cyan");
-          }
+        //   if (window._xrFrameCount % 60 === 0 && window.screenLog) {
+        //       window.screenLog("XR Frame Drawn: " + window._xrFrameCount, "cyan");
+        //   }
           // --- CRITICAL ISOLATION FOR WEBXR ---
           // Do NOT execute ANY further legacy WebGL commands (like postRender, or depth disabling)
           // The XR Compositor requires the baseLayer framebuffer to remain bound and pristine.
@@ -1103,7 +1103,7 @@ class Scene {
       RenderData.ONLY_DRAW_ARRAYS = true;
 
     // DEBUG: Inject Three.js objects into global scope for console debugging
-    this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)
+    // this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)
     
     window.threeScene = this._scene;
     window.threeCamera = this._camera.getThreeCamera();
@@ -2582,7 +2582,7 @@ class Scene {
 
       // 2. Menu Raycasting (Dominant Hand Only)
       if (source.handedness === this._dominantHand) {
-        if (Math.random() < 0.02) console.log(`[Raycast] Dominant:${this._dominantHand} Src:${source.handedness}`);
+        // if (Math.random() < 0.02) console.log(`[Raycast] Dominant:${this._dominantHand} Src:${source.handedness}`);
         let origin, dir;
         let isFallback = false;
 
@@ -2620,7 +2620,7 @@ class Scene {
         }
         
         if (origin && dir) {
-          if (Math.random() < 0.02) console.log(`[Raycast] Origin/Dir Valid - Menu:${!!this._vrMenu} GuiXR:${!!this._guiXR} Vis:${this._guiXR ? this._guiXR._isVisible : false}`);
+          // if (Math.random() < 0.02) console.log(`[Raycast] Origin/Dir Valid - Menu:${!!this._vrMenu} GuiXR:${!!this._guiXR} Vis:${this._guiXR ? this._guiXR._isVisible : false}`);
           let hit = null;
           let targetGuiXR = null;
 
@@ -2655,9 +2655,24 @@ class Scene {
           }
 
           let pressed = false;
+          let bottomedOut = false;
           if (source.gamepad && source.gamepad.buttons[0]) {
             // FIRE EARLY: Trigger UI hits at 10% depression instead of waiting for a full physical click
-            pressed = source.gamepad.buttons[0].value > 0.1 || source.gamepad.buttons[0].pressed;
+            const depth = source.gamepad.buttons[0].value;
+            pressed = depth > 0.1 || source.gamepad.buttons[0].pressed;
+            bottomedOut = depth >= 0.99 || source.gamepad.buttons[0].pressed;
+
+            // [DIAGNOSTIC] Provide physical hardware feedback logs to user
+            if (this._lastLoggedTriggerPress !== pressed) {
+                console.log(`[HW DIAGNOSTIC] Trigger: ${pressed ? 'DOWN' : 'UP'} (Depth: ${depth.toFixed(2)})`);
+                this._lastLoggedTriggerPress = pressed;
+            }
+            if (this._lastLoggedBottomOut !== bottomedOut && bottomedOut) {
+                console.log(`[HW DIAGNOSTIC] Trigger: BOTTOMED OUT (Felt Physical Click)`);
+                this._lastLoggedBottomOut = bottomedOut;
+            } else if (!bottomedOut) {
+                this._lastLoggedBottomOut = false;
+            }
           }
 
           // DRAG CAPTURE LOCK
@@ -3362,10 +3377,10 @@ class Scene {
     }
 
     // DEBUG: Picking Trace
-    if (window.screenLog && Math.random() < 0.05) {
-      const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm Dist:${this._vrLaserDistance.toFixed(2)} Vol:${this._vrUseVolumeIntersect}`;
-      window.screenLog(msg, picked ? "lime" : "red");
-    }
+    // if (window.screenLog && Math.random() < 0.05) {
+    //   const msg = `Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm Dist:${this._vrLaserDistance.toFixed(2)} Vol:${this._vrUseVolumeIntersect}`;
+    //   window.screenLog(msg, picked ? "lime" : "red");
+    // }
 
     // [DEBUG] Interactive Raycaster Debugger (DISABLED)
     if (window.debugRaycaster) {

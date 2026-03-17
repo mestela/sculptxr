@@ -1470,7 +1470,7 @@ class Mesh {
       cdc = this._meshData._DAcolorsRGB;
       cdm = this._meshData._DAmaterialsPBR;
     }
-    console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
+    // console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
     var nbFaces = full ? this.getNbFaces() : iFaces.length;
     for (var i = 0; i < nbFaces; ++i) {

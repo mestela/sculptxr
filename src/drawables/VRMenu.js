@@ -37,6 +37,11 @@ class VRMenu {
     });
 
     this.mesh = new THREE.Mesh(geometry, material);
+    
+    // OVERLAY_SCALE: The UI canvas is drawn dense (1024x1024) but scaled up physically 13% for VR legibility.
+    // We scale the Three.js mesh so the visual size matches the _cacheWorld collision math.
+    const OVERLAY_SCALE = 1.13;
+    this.mesh.scale.set(OVERLAY_SCALE, OVERLAY_SCALE, OVERLAY_SCALE);
 
     this._cacheWorld = mat4.create();
 
@@ -74,28 +79,22 @@ class VRMenu {
 
   updateMatrices(camera, controllerMatrix) {
     if (controllerMatrix) {
-        // Build Local Transform Matrix from basic Offset & Rotation
+        // Build Local Transform Matrix
         const localMat = mat4.create();
         
-        // 1. Position Translation
-        mat4.translate(localMat, localMat, this._offset);
-
-        // 2. Rotation (Euler to Quat)
-        const q = quat.create();
-        quat.fromEuler(q, 
-            this._rotation[0] * (180/Math.PI), 
-            this._rotation[1] * (180/Math.PI), 
-            this._rotation[2] * (180/Math.PI)
+        // Use Three.js quaternion to guarantee identical rotation order
+        // this.mesh.quaternion is automatically updated by rebuildMatrix() when this._rotation changes
+        const q = quat.fromValues(
+            this.mesh.quaternion.x, 
+            this.mesh.quaternion.y, 
+            this.mesh.quaternion.z, 
+            this.mesh.quaternion.w
         );
-        const rotMat = mat4.create();
-        mat4.fromQuat(rotMat, q);
-        mat4.multiply(localMat, localMat, rotMat);
 
-        // 3. VR Overlay Scale (Magic constant 1.13 from GuiXR)
-        const OVERLAY_SCALE = 1.13;
-        mat4.scale(localMat, localMat, [OVERLAY_SCALE, OVERLAY_SCALE, OVERLAY_SCALE]);
+        // Build TRS matrix (Translation, Rotation, Scale=1 so raycast uses math base coords)
+        mat4.fromRotationTranslationScale(localMat, q, this._offset, [1, 1, 1]);
 
-        // 4. Multiply into final _cacheWorld
+        // Multiply into final _cacheWorld
         mat4.multiply(this._cacheWorld, controllerMatrix, localMat);
     } else {
         // Fallback to Three.js graph if standalone
@@ -151,19 +150,24 @@ class VRMenu {
     const ly = localHit[1];
     const pad = 0.01;
     
-    if (lx < -(this._w + pad) || lx > (this._w + pad) || ly < -(this._h + pad) || ly > (this._h + pad)) {
+    // OVERLAY_SCALE multiplier matching visual scale in constructor
+    const OVERLAY_SCALE = 1.13;
+    const scaledW = this._w * OVERLAY_SCALE;
+    const scaledH = this._h * OVERLAY_SCALE;
+    
+    if (lx < -(scaledW + pad) || lx > (scaledW + pad) || ly < -(scaledH + pad) || ly > (scaledH + pad)) {
         return null; // Hit the infinite plane, but missed the physical menu quad
     }
 
     // 7. Calculate UVs (Clamp to strict 0-1 bounds so padding doesn't stretch UI clicks)
-    const clx = Math.max(-this._w, Math.min(this._w, lx));
-    const cly = Math.max(-this._h, Math.min(this._h, ly));
+    const clx = Math.max(-scaledW, Math.min(scaledW, lx));
+    const cly = Math.max(-scaledH, Math.min(scaledH, ly));
 
-    const u = (clx + this._w) / (2 * this._w);
-    const v = (cly + this._h) / (2 * this._h);
+    const u = (clx + scaledW) / (2 * scaledW);
+    const v = (cly + scaledH) / (2 * scaledH);
 
     if (Math.random() < 0.02) {
-       console.log(`[VRMenu] MATH HIT! U:${u.toFixed(2)} V:${v.toFixed(2)} Dist:${t.toFixed(2)}`);
+       // console.log(`[VRMenu] MATH HIT! U:${u.toFixed(2)} V:${v.toFixed(2)} Dist:${t.toFixed(2)}`);
     }
 
     return { 
