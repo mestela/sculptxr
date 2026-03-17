@@ -1,5 +1,6 @@
 
 ## Done
+- [x] (_Bug_): Deep GUI Interaction race conditions resolved (sweep clicks, double click reliability, visual lag).
 - [x] (_Bug_): GalaxyXR single-eye rendering fixed via rigorous `gl.scissor` clipping and FBO binding. 
 - [x] (_Performance_): `window.screenLog` layout thrashing fixed via `.textContent` usage.
 - [x] (_Docs_): Documented GalaxyXR WebXR quirks in `docs/galaxyxr.md`.

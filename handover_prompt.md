@@ -15,12 +15,13 @@
 2. **VR UI Render Chain**: Attached the custom `VRMenu` meshes (`_vrMenu` for the Main Menu, `_vrMiniHUD` for left-hand tools, and `_vrPopup` for the Tool Picker) directly to the Three.js controller grip spaces. Most tools are working.
 3. **UI Laser Pointer Fixes**: Added visual laser pointers (Three.js Cylinders). The lines are clipped by mathematical intersections against the Three.js mesh surfaces. 
 4. **Current Status & Fixes**: 
-   - Fixed a bug where clicking "Tool" on the MiniHUD made the UI vanish entirely (the Tool Picker's `_vrPopup` mesh wasn't attached to the Scene).
+   - Fixed a bug where clicking "Tool" on the MiniHUD made the UI vanish entirely.
    - Corrected the `_vrPopup` orientation to match the MiniHUD.
    - Disabled the noisy interactive `window.debugRaycaster` axis lines.
+   - **(v1.0.1)** Completely rewrote the `GuiXR` debounce architecture. Solved deep race conditions where 1-frame WebXR pose prediction jerks (during trigger pulls) would cause the UI to register a "miss", which then unfairly started the 250ms debounce lockout. Now, users can perform rapid sweep-clicks and tap accordions instantly without misfires.
 
 ## Next Steps: Phase 3 (Fit and Finish Priorities)
-* **Controller Visuals & Logic**: Implement missing sphere and circle radius indicators on the tools. Investigate volume select logic (suspect it isn't fully ported).
+* **Controller Visuals**: Implement missing sphere and circle radius indicators on the tools. Investigate volume select logic (suspect it isn't fully ported).
 * **Symmetry**: Currently broken, especially for the Move Tool. Needs debugging.
 * **Rendering Modes**: Restore wireframe overlays, matcaps, normals, and other missing rendering modes.
 * **VR Menu Completion**: "Tools" section works, but "Wireframe/Materials" are broken. Need to audit and test the rest of the VR menu.

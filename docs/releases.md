@@ -1,3 +1,11 @@
+## v1.0.1
+- **Feature**: **GUI Interaction Fixes**: Resolved deep VR interaction race conditions caused by high-speed controller jerks. Fixed double-clicks, sweep-clicks, and drag deadzones, allowing the UI to instantly and flawlessly respond to physical controller input.
+- **Fix**: **Draw Order Sync**: Fixed a visual desynchronization issue where toggling a checkbox would execute the software action but wait a full frame before visually updating the UI.
+
+## v1.0.0
+- **Milestone Release**: **Three.js Architecture Overhaul**. Completely stripped out raw WebGL matrix rendering (`Render.js`, `Camera.js`, `Shader.js`) in favor of native Three.js v160 objects, meshes, and materials.
+- **Feature**: **Three.js WebXR Management**: Relied on native `renderer.xr` session and camera management, establishing widespread hardware compatibility (Quest, GalaxyXR, Index, PCVR, Apple Vision Pro).
+
 ## v0.9.289 - v0.9.304
 - **Performance**: **DOM Layout Thrashing Fix**: Discovered and fixed a major 60% CPU bottleneck caused by `window.screenLog` triggering synchronous `.innerText` layout recalculations every frame. Replaced with non-blocking `.textContent` and capped DOM element insertion length for an instant framerate boost on Standalone devices.
 - **Fix**: **Samsung Galaxy XR Render Bug**: Implemented a WebGL `gl.scissor` hardware clipping hotfix and explicit per-eye Framebuffer re-binding (`gl.bindFramebuffer`) inside `renderVR` to bypass a Qualcomm Adreno/Chrome driver bug that was causing WebXR to only render the scene strictly in the left eye.

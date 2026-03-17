@@ -9,7 +9,7 @@
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"
   },
   "name": "sculptxr",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "WebXR Sculpting",
   "main": "main.js",
   "directories": {
