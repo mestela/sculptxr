@@ -25,3 +25,5 @@ project_rules.md
 walkthrough.md
 ngrok*
 *.sublime-project
+cert.pem
+key.pem
