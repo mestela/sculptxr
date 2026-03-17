@@ -7,9 +7,6 @@
 ---
 
 ## 1. Fit & Finish Priorities (Current Focus)
-* **Controller Visuals & Logic**: 
-  * Missing the sphere and circle radius indicators on the tools.
-  * The volume select logic needs investigation as it might not be fully ported yet.
 * **Symmetry**: 
   * Currently very broken, specifically for the Move Tool. Needs debugging.
 * **Rendering Modes**:

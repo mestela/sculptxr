@@ -19,10 +19,10 @@
    - Corrected the `_vrPopup` orientation to match the MiniHUD.
    - Disabled the noisy interactive `window.debugRaycaster` axis lines.
    - **(v1.0.1)** Completely rewrote the `GuiXR` debounce architecture. Solved deep race conditions where 1-frame WebXR pose prediction jerks (during trigger pulls) would cause the UI to register a "miss", which then unfairly started the 250ms debounce lockout. Now, users can perform rapid sweep-clicks and tap accordions instantly without misfires.
+   - **(v1.0.20)** Restored 1:1 parity for VR cursor visuals (volume sphere blending, intensity color saturation, stylus spike). Fixed the critical "cursor jumping to opposite side of mesh" bug by reverting to ultra-fast thin octree raycasts combined with mathematical backface-culling, allowing cursors to gracefully hide when the controller dips inside the mesh instead of choking the CPU with thick cylinder casts.
 
 ## Next Steps: Phase 3 (Fit and Finish Priorities)
-* **Controller Visuals**: Implement missing sphere and circle radius indicators on the tools. Investigate volume select logic (suspect it isn't fully ported).
-* **Symmetry**: Currently broken, especially for the Move Tool. Needs debugging.
+* **Symmetry**: Currently broken, specifically for the Move Tool. Needs debugging.
 * **Rendering Modes**: Restore wireframe overlays, matcaps, normals, and other missing rendering modes.
 * **VR Menu Completion**: "Tools" section works, but "Wireframe/Materials" are broken. Need to audit and test the rest of the VR menu.
 * **Sculpting "Feel"**: Tune the sculpting feel to match the tactile feel of the original WebGL version.

@@ -4,6 +4,8 @@
 - [x] (_Bug_): GalaxyXR single-eye rendering fixed via rigorous `gl.scissor` clipping and FBO binding. 
 - [x] (_Performance_): `window.screenLog` layout thrashing fixed via `.textContent` usage.
 - [x] (_Docs_): Documented GalaxyXR WebXR quirks in `docs/galaxyxr.md`.
+- [x] (_Bug_): Fixed VR cursor jumping to the opposite side of the mesh on deep penetration via backface culling.
+- [x] (_Visuals_): Restored VR tool volume sphere visuals, intensity saturation, and stylus spike scale.
 
 ## Todo
 

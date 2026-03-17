@@ -1,3 +1,8 @@
+## v1.0.2 - v1.0.20
+- **Feature**: **VR Cursor Visuals**: Restored 1:1 parity with the master branch for VR cursors. The volume indicator sphere now utilizes proper additive blending, desaturates to white based on tool intensity, and accurately tints red when negative mode is engaged. The stylus spike length was doubled to better represent the physical interaction point.
+- **Fix**: **Raycast Optimization**: Discovered and fixed a major performance penalty caused by running thick volumetric cylinders (`intersectionRayMeshesVR`) against dense DynTopo meshes every frame. Reverted to ultra-fast thin octree raycasts (`intersectionRayMeshes`) to restore 90hz performance.
+- **Fix**: **Raycast Penetration Bug**: Fixed the "jumping to the opposite side of the mesh" bug. When the user pushes the physical controller inside the solid clay volume, the thin raycast evaluates the inside of the back geometry. Added mathematical dot-product backface-culling, so the cursor gracefully hides itself when inside a mesh rather than snapping to the opposite wall.
+
 ## v1.0.1
 - **Feature**: **GUI Interaction Fixes**: Resolved deep VR interaction race conditions caused by high-speed controller jerks. Fixed double-clicks, sweep-clicks, and drag deadzones, allowing the UI to instantly and flawlessly respond to physical controller input.
 - **Fix**: **Draw Order Sync**: Fixed a visual desynchronization issue where toggling a checkbox would execute the software action but wait a full frame before visually updating the UI.
