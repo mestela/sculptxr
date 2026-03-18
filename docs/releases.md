@@ -1,3 +1,9 @@
+## v1.0.33
+- **Fix**: **VR Move Tool Symmetry & Stability**: Resolved a critical issue where the Move tool would fail to apply symmetry if the symmetric tip was in thin air (missed face). It now forces a fallback to the main mesh, preventing the primary move from "winning" and throwing the chin off-center.
+- **Fix**: **Broken Brushes after Large Moves**: The Move tool now rebuilds the Octree (`mesh.computeOctree()`) at the end of a stroke. This ensures subsequent tools (Crease, Smooth) map correctly to heavily deformed geometry and don't miss or go crazy.
+- **Fix**: **Ghost Grabs**: Prevented the Move tool from initiating a drag if the *current frame* did not hit a mesh, and reset intersection points to zero on failure to prevent leaking old state.
+- **Fix**: **Console Spam**: Silenced verbose `[Pick Miss]` diagnostics during idle hover.
+
 ## v1.0.22
 - **Fix**: **VR Picking Instability**: Resolved a severe picking instantiation bug where users frequently 'missed' the sculpt entirely when pulling the VR trigger. This occurred because the performant `intersectionRayMesh` pipeline was erroneously receiving World Space ray vectors instead of Local Space vectors when a mesh was actively locked for a stroke. Reverting to `intersectionRayMeshes([mesh], ...)` automatically handles the coordinate inversions, restoring flawlessly responsive picking even heavily translated/scaled assets.
 - **Fix**: **Debug Spam**: Silenced the `Cursor VR Debug` verbose console output, dropping unnecessary internal frame overheads during continuous raycasting.

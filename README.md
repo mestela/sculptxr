@@ -1,4 +1,4 @@
-# SculptXR (v1.0.1)
+# SculptXR (v1.0.33)
 WebXR Sculpting
 
 ![SculptGL VR Screenshot](assets/sculptxr_ar.jpg)
@@ -11,6 +11,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.33**: **Move Tool Symmetry & Stability**: Resolved centerline symmetry anomalies by forcing fallbacks when the symmetric tip is in thin air. Rebuilt the Octree (`computeOctree()`) at the end of Move strokes to ensure subsequent tools (Crease/Smooth) map correctly to heavily deformed geometry. Silenced console noise.
 *   **v1.0.22**: **Severe Picking Fixes**: Fixed a severe picking instability where pulling the controller trigger would instantly abort strokes (missing the mesh) due to Local Space vs World Space coordinate mismatches inside the VR raycaster. Silenced excessive internal VR Cursor logs to prevent console polling overhead.
 *   **v1.0.0 - v1.0.21**: **Three.js Architecture Overhaul & Interaction Fixes:** Completed a massive migration from raw WebGL to Three.js v160, enabling robust headset compatibility (Quest, GalaxyXR, PCVR). Rewrote the VR GUI interaction system to solve deep race conditions with controller raycasts, implementing physics-aware trigger debouncing for flawless 90hz high-speed button taps and sweep-clicks. Reinstated 1:1 master branch visual parity for VR cursors, including intensity-linked color saturation and robust backface-culling to prevent raycast penetration bugs. Restored Move Tool VR symmetry math via raycast boolean fixes.
 *   v0.9.289 - v0.9.304: **Galaxy XR Render & Performance Fix:** Resolved a major Samsung Adreno/Chrome driver bug that prevented WebXR from rendering in the right eye by rigorously enforcing `gl.scissor` hardware clipping and per-eye FBO re-bindings. Fixed a massive 60% CPU bottleneck caused by synchronous DOM layout thrashing within the VR debug logger.

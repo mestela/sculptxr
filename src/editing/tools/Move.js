@@ -34,7 +34,6 @@ class Move extends SculptBase {
     
     // VR Safety: If the current frame did not hit a mesh, do NOT fall back to a previous stroke's mesh!
     if (main._xrSession && !picking.getMesh()) {
-      console.log(`[Move] Aborting startSculpt because no mesh was hit in current frame.`);
       return;
     }
 

@@ -3609,13 +3609,6 @@ class Scene {
 
     if (canSculpt) {
       if (!this._vrSculpting) {
-        console.log(`[XR Stroke] Start Request (${source.handedness}). PickedMeshes=${!!picked}, ToolIdx=${this._sculptManager ? this._sculptManager._toolIndex : 'N/A'}, VRScale=${this._vrScale}`);
-        console.log(`[XR Trace] Mesh=${this._picking.getMesh() ? 'Yes' : 'No'}, Radius=${pickingRadius.toFixed(5)}`);
-        if (this._picking.getMesh()) {
-           const c = this._picking.getIntersectionPoint();
-           console.log(`[XR Trace] Intersection Center: ${c[0].toFixed(3)}, ${c[1].toFixed(3)}, ${c[2].toFixed(3)}`);
-        }
-
         this._vrSculpting = true;
         this._vrLockedHand = source.handedness; // LOCK HAND
         this._vrTriggerReleaseTime = 0; // Reset Timer
