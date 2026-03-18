@@ -31,7 +31,18 @@ class Move extends SculptBase {
   startSculpt() {
     var main = this._main;
     var picking = main.getPicking();
+    
+    // VR Safety: If the current frame did not hit a mesh, do NOT fall back to a previous stroke's mesh!
+    if (main._xrSession && !picking.getMesh()) {
+      console.log(`[Move] Aborting startSculpt because no mesh was hit in current frame.`);
+      return;
+    }
+
+    var mesh = this.getMesh();
+    if (!mesh) return;
+    console.log(`[Move] startSculpt called. TopoCheck=${this._topoCheck}`);
     this.initMoveData(picking, this._moveData);
+    console.log(`[Move] Primary Vertices Picked: ${picking.getPickedVertices() ? picking.getPickedVertices().length : 0}`);
 
 
 
@@ -540,6 +551,10 @@ class Move extends SculptBase {
     quat.slerp(qScaledLocal, qIdentity, qDeltaLocal, this._intensity);
 
     // Apply Primary Move
+    if (!moveData.iVerts || !moveData.vProxy || moveData.vProxy.length === 0) {
+      console.error("[Move Tool] Aborting move stroke. Missing iVerts or vProxy in primary moveData.");
+      return;
+    }
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
       vec3.scale(moveData.dir, moveData.dir, this._intensity);

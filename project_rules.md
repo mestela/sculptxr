@@ -79,6 +79,7 @@
 2.  **Array Strictness**: Always explicitly convert WebXR `DOMPoint`/`Float32Array` data to standard Arrays or TypedArrays when passing to `gl-matrix` functions.
 3.  **Traceability**: New features must have a "Deep Trace" logging mode available (controlled by a flag) to prove execution.
 4.  **Count Braces**: Before running deep debugging, verify brace counts and syntax. Use browser subagent to verify syntax errors quickly.
+5.  **Logging Preference**: Always default to `console.log` for debugging output, rather than `window.screenLog` or custom HUD overlays. The user uses an ADB remote Chrome console, making standard console logs necessary for copy-pasting and review.
 
 ## Tool Usage & Verification
 1.  **Verify Tool Output**: When using `multi_replace_file_content` or similar tools, ALWAYS check the output message. If it says "target content not found", STOP and investigate. Do not assume success.

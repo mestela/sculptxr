@@ -54,7 +54,10 @@ class SculptBase {
         return false;
     } else {
       // VR: Evaluating using the VR Ray (already computed in handleXRInput)
-      if (!picking.getMesh() && !this._allowAir) return false;
+      if (!picking.getMesh() && !this._allowAir) {
+        console.log(`[SculptBase] ABORT: VR start but no picking mesh and !allowAir`);
+        return false;
+      }
     }
 
     // [VR] Multi-select Check
@@ -66,8 +69,10 @@ class SculptBase {
     if (main._vrMultiSelect) return false;
 
     // If allowAir, we might proceed without a mesh selection
-    if (!mesh && !this._allowAir)
+    if (!mesh && !this._allowAir) {
+      console.log(`[SculptBase] ABORT: setOrUnsetMesh returned null and !allowAir`);
       return false;
+    }
 
     picking.initAlpha();
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;

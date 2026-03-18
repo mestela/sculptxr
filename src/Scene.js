@@ -40,7 +40,6 @@ class Scene {
     // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
     this._vrUseVolumeIntersect = false; // By default, use Laser Pointer Raycasting (false) instead of Contact Picking (true)
     this._vrAmbidextrousCursors = false; // Disable offhand sculpting cursors by default to reduce visual clutter
-    window.debugPickRay = true;
 
     this._cameraSpeed = 0.25;
 
@@ -3408,24 +3407,51 @@ class Scene {
 
       // Feature Toggle: Transform uses Ray/Aim intersect instead of volume
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
+      if (toolIndex === Enums.Tools.MOVE) {
+        useVolume = true;
+      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL) {
         useVolume = false;
       }
 
       if (useVolume) {
-        picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], enginePos, pickingRadius);
+        const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+        const volumePhys = vec3.create();
+        vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
+        const volumeEnginePos = vec3.clone(volumePhys);
+        if (this._xrWorldOffset) {
+          vec3.transformMat4(volumeEnginePos, volumeEnginePos, this._xrWorldOffset.inverse.matrix);
+        }
+        vec3.scale(volumeEnginePos, volumeEnginePos, invScale);
+
+        const paddedRadius = pickingRadius * (toolIndex === Enums.Tools.MOVE ? 1.25 : 1.0);
+        picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], volumeEnginePos, paddedRadius);
       } else {
         picked = this._picking.intersectionRayMeshes([this._picking.getMesh()], rayOrigin, engineDir);
         this._picking._isVRHit = picked;
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
-      if (currentTool && (currentTool.constructor.name === 'TransformVR' || currentTool.constructor.name === 'SculptVoxel')) {
+      const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
+      if (toolIndex === Enums.Tools.MOVE) {
+        useVolume = true;
+      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL) {
         useVolume = false;
       }
 
       if (useVolume) {
-        picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, pickingRadius);
+        // Calculate physical tip origin identically to _updateVRCursors (Visual Sphere Location)
+        const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+        const volumePhys = vec3.create();
+        vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
+        const volumeEnginePos = vec3.clone(volumePhys);
+        if (this._xrWorldOffset) {
+          vec3.transformMat4(volumeEnginePos, volumeEnginePos, this._xrWorldOffset.inverse.matrix);
+        }
+        vec3.scale(volumeEnginePos, volumeEnginePos, invScale);
+
+        const paddedRadius = pickingRadius * (toolIndex === Enums.Tools.MOVE ? 1.25 : 1.0);
+        picked = this._picking.intersectionSphereMeshes(this._meshes, volumeEnginePos, paddedRadius);
       } else {
         picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
         this._picking._isVRHit = picked;
@@ -3583,11 +3609,16 @@ class Scene {
 
     if (canSculpt) {
       if (!this._vrSculpting) {
+        console.log(`[XR Stroke] Start Request (${source.handedness}). PickedMeshes=${!!picked}, ToolIdx=${this._sculptManager ? this._sculptManager._toolIndex : 'N/A'}, VRScale=${this._vrScale}`);
+        console.log(`[XR Trace] Mesh=${this._picking.getMesh() ? 'Yes' : 'No'}, Radius=${pickingRadius.toFixed(5)}`);
+        if (this._picking.getMesh()) {
+           const c = this._picking.getIntersectionPoint();
+           console.log(`[XR Trace] Intersection Center: ${c[0].toFixed(3)}, ${c[1].toFixed(3)}, ${c[2].toFixed(3)}`);
+        }
+
         this._vrSculpting = true;
         this._vrLockedHand = source.handedness; // LOCK HAND
         this._vrTriggerReleaseTime = 0; // Reset Timer
-
-        // Deep Trace: Start Stroke
 
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;

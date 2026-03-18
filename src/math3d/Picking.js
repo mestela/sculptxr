@@ -272,46 +272,10 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // OPTIMIZATION: Multi-pass inner search (Iterative)
-      // When the world is scaled down significantly in VR (to work on fine details), 
-      // a "small" physical radius (e.g. 5cm) can encompass the entire dense mesh, 
-      // pulling in thousands of faces for distance checks and causing massive frame drops.
-      // We iteratively expand a search sphere to guarantee the first intersection is a "grazing" hit,
-      // minimizing the faces returned from the octree to strictly the closest surface details.
-
-      var maxLocalRadiusSq = localRadiusSq;
-      var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
-      var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
-
-      var bound = mesh.getLocalBound();
-      var dx = bound[3] - bound[0];
-      var dy = bound[4] - bound[1];
-      var dz = bound[5] - bound[2];
-      var meshLocalSize = Math.hypot(dx, dy, dz); // Using hypot for safety
-
-      // Step size is physically 5cm OR 5% of the mesh's bounding size, whichever is smaller.
-      var physicalStepLocal = (0.05 / vrScale) / scale;
-      var meshStepLocal = Math.max(0.0001, meshLocalSize * 0.05);
-      var stepLocal = Math.min(physicalStepLocal, meshStepLocal);
-
-      // Protect against insanely huge volumetric brushes triggering too many steps (cap at 60 lookups)
-      if (maxLocalRadius / stepLocal > 60) {
-        stepLocal = maxLocalRadius / 60;
-      }
-
-      var iFaces = [];
-      var currentSearchR = stepLocal;
-
-      while (currentSearchR <= maxLocalRadius) {
-        iFaces = mesh.intersectSphere(localCenter, currentSearchR * currentSearchR);
-        if (iFaces.length > 0) break;
-        currentSearchR += stepLocal;
-      }
-
-      // If we didn't hit anything and didn't reach the exact max radius, do final check
-      if (iFaces.length === 0 && currentSearchR - stepLocal < maxLocalRadius) {
-        iFaces = mesh.intersectSphere(localCenter, maxLocalRadiusSq);
-      }
+      // SIMPLE VOLUMETRIC INTERSECTION
+      // We removed the 'Iterative Search' optimization because it exited early on empty
+      // AABB hits, causing high-curvature geometry (horns/fins) to often drop strokes intermittently.
+      var iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
 
       if (iFaces.length === 0) continue;
 
@@ -348,8 +312,6 @@ class Picking {
         }
 
         if (distSq < localRadiusSq) { // Found a potential hit within radius
-
-
           // Convert dist to world for comparison
           var worldDist = Math.sqrt(distSq) * scale;
           if (worldDist < nearDistance) {
@@ -360,6 +322,19 @@ class Picking {
           }
         }
       }
+    }
+
+    if (!nearMesh && meshes.length > 0 && meshes[0] && !!meshes[0].isVisible()) {
+      // Detailed diagnostic of failure
+      const m = meshes[0];
+      const scale = m.getScale();
+      const logRad = worldRadiusSq / (scale * scale);
+      const testPos = vec3.create();
+      mat4.invert(_TMP_INV, m.getMatrix());
+      vec3.transformMat4(testPos, worldCenter, _TMP_INV);
+      const allCells = m.intersectSphere(testPos, logRad);
+      console.log(`[Pick Miss] worldRad=${Math.sqrt(worldRadiusSq).toFixed(2)} localRadSq=${logRad.toFixed(2)} center(local)=${testPos[0].toFixed(2)},${testPos[1].toFixed(2)},${testPos[2].toFixed(2)}`);
+      console.log(`[Pick Miss] intersectSphere returned ${allCells.length} faces!`);
     }
 
     if (nearMesh) {
@@ -376,6 +351,7 @@ class Picking {
     this._mesh = null;
     this._pickedFace = -1;
     this._rLocal2 = 0.0;
+    vec3.set(this._interPoint, 0.0, 0.0, 0.0);
     return false;
   }
 
