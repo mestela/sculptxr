@@ -324,6 +324,7 @@ class Picking {
       }
     }
 
+/*
     if (!nearMesh && meshes.length > 0 && meshes[0] && !!meshes[0].isVisible()) {
       // Detailed diagnostic of failure
       const m = meshes[0];
@@ -336,6 +337,7 @@ class Picking {
       console.log(`[Pick Miss] worldRad=${Math.sqrt(worldRadiusSq).toFixed(2)} localRadSq=${logRad.toFixed(2)} center(local)=${testPos[0].toFixed(2)},${testPos[1].toFixed(2)},${testPos[2].toFixed(2)}`);
       console.log(`[Pick Miss] intersectSphere returned ${allCells.length} faces!`);
     }
+*/
 
     if (nearMesh) {
       this._mesh = nearMesh;

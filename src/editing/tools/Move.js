@@ -163,9 +163,28 @@ class Move extends SculptBase {
               this._moveDataSym.radius2 = pickingSym.getLocalRadius2();
 
             } else {
-              if (!snapped) {
-                pickingSym.intersectionMouseMesh(mesh);
+              if (main._xrSession) {
+                // VR: Use Geometric Sphere Pick using symPos
+                const symPos = [0.0, 0.0, 0.0];
+                const ptPlane = mesh.getSymmetryOrigin();
+                const nPlane = mesh.getSymmetryNormal();
+                vec3.copy(symPos, picking.getIntersectionPoint());
+                Geometry.mirrorPoint(symPos, ptPlane, nPlane);
+
+                pickingSym.setIntersectionPoint(symPos);
+                pickingSym.intersectionSphereMeshes([mesh], symPos, picking.getWorldRadius());
+                
+                // FORCE fallback if geometric check misses (tip in thin air)
+                if (!pickingSym.getMesh()) {
+                  pickingSym._mesh = mesh;
+                  // console.log("[Move.js] Forced symmetric fallback on failure");
+                }
+              } else {
+                if (!snapped) {
+                  pickingSym.intersectionMouseMesh(mesh);
+                }
               }
+              
               pickingSym.setLocalRadius2(picking.getLocalRadius2());
               this.initMoveData(pickingSym, this._moveDataSym);
             }
@@ -188,6 +207,13 @@ class Move extends SculptBase {
     var main = this._main;
     var mesh = this.getMesh();
     if (!mesh) return;
+
+    // FIX: Rebuild Octree completely after Move stroke. 
+    // balanceOctree only splits dense cells, but doesn't move faces if they were dragged far away.
+    // computeOctree rebuilds everything from scratch, which takes a few milliseconds but fixes raycasting!
+    if (typeof mesh.computeOctree === 'function') {
+      mesh.computeOctree();
+    }
 
     var voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
     if (voxelTool && voxelTool._voxelMesh === mesh && voxelTool._worker) {
