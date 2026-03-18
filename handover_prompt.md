@@ -20,9 +20,9 @@
    - Disabled the noisy interactive `window.debugRaycaster` axis lines.
    - **(v1.0.1)** Completely rewrote the `GuiXR` debounce architecture. Solved deep race conditions where 1-frame WebXR pose prediction jerks (during trigger pulls) would cause the UI to register a "miss", which then unfairly started the 250ms debounce lockout. Now, users can perform rapid sweep-clicks and tap accordions instantly without misfires.
    - **(v1.0.20)** Restored 1:1 parity for VR cursor visuals (volume sphere blending, intensity color saturation, stylus spike). Fixed the critical "cursor jumping to opposite side of mesh" bug by reverting to ultra-fast thin octree raycasts combined with mathematical backface-culling, allowing cursors to gracefully hide when the controller dips inside the mesh instead of choking the CPU with thick cylinder casts.
-
+   - **(v1.0.21)** Fixed broken symmetry for the Move Tool. Resolved an underlying issue where the new raycast picking engine (introduced in v1.0.20) failed to set the `_isVRHit` flag, causing the VR Move tool to silently fall back to Desktop mouse symmetry coordinates.
+   - **(v1.0.22)** Fixed major VR picking instability. Discovered that the raycaster was mistakenly receiving World Space coordinates instead of Local Space coordinates whenever a mesh was actively locked during a stroke. Reverting the direct method call to `intersectionRayMeshes([mesh], ...)` correctly processes the matrix inversion, restoring flawless sculptural responsiveness on translated/scaled meshes.
 ## Next Steps: Phase 3 (Fit and Finish Priorities)
-* **Symmetry**: Currently broken, specifically for the Move Tool. Needs debugging.
 * **Rendering Modes**: Restore wireframe overlays, matcaps, normals, and other missing rendering modes.
 * **VR Menu Completion**: "Tools" section works, but "Wireframe/Materials" are broken. Need to audit and test the rest of the VR menu.
 * **Sculpting "Feel"**: Tune the sculpting feel to match the tactile feel of the original WebGL version.

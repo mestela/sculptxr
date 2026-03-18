@@ -1,3 +1,10 @@
+## v1.0.22
+- **Fix**: **VR Picking Instability**: Resolved a severe picking instantiation bug where users frequently 'missed' the sculpt entirely when pulling the VR trigger. This occurred because the performant `intersectionRayMesh` pipeline was erroneously receiving World Space ray vectors instead of Local Space vectors when a mesh was actively locked for a stroke. Reverting to `intersectionRayMeshes([mesh], ...)` automatically handles the coordinate inversions, restoring flawlessly responsive picking even heavily translated/scaled assets.
+- **Fix**: **Debug Spam**: Silenced the `Cursor VR Debug` verbose console output, dropping unnecessary internal frame overheads during continuous raycasting.
+
+## v1.0.21
+- **Fix**: **VR Move Tool Symmetry**: Resolved a critical issue where the VR Move tool would silently fall back to Desktop mouse coordinates for its symmetry origin. This was caused by the new ultra-fast thin raycast engine (introduced in v1.0.20) failing to set the `_isVRHit` flag. The Move tool now correctly utilizes proper VR mathematical plane mirroring.
+
 ## v1.0.2 - v1.0.20
 - **Feature**: **VR Cursor Visuals**: Restored 1:1 parity with the master branch for VR cursors. The volume indicator sphere now utilizes proper additive blending, desaturates to white based on tool intensity, and accurately tints red when negative mode is engaged. The stylus spike length was doubled to better represent the physical interaction point.
 - **Fix**: **Raycast Optimization**: Discovered and fixed a major performance penalty caused by running thick volumetric cylinders (`intersectionRayMeshesVR`) against dense DynTopo meshes every frame. Reverted to ultra-fast thin octree raycasts (`intersectionRayMeshes`) to restore 90hz performance.

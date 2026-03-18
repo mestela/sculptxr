@@ -3415,9 +3415,8 @@ class Scene {
       if (useVolume) {
         picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], enginePos, pickingRadius);
       } else {
-        const farPoint = vec3.create();
-        vec3.scaleAndAdd(farPoint, rayOrigin, engineDir, 5000.0);
-        picked = this._picking.intersectionRayMesh(this._picking.getMesh(), rayOrigin, farPoint);
+        picked = this._picking.intersectionRayMeshes([this._picking.getMesh()], rayOrigin, engineDir);
+        this._picking._isVRHit = picked;
       }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
@@ -3429,6 +3428,7 @@ class Scene {
         picked = this._picking.intersectionSphereMeshes(this._meshes, enginePos, pickingRadius);
       } else {
         picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+        this._picking._isVRHit = picked;
       }
     }
 
@@ -3875,8 +3875,8 @@ class Scene {
     try {
         if (!sources || !this._camera || !this._picking) return;
 
-        if (!window._logCursorThrottle) window._logCursorThrottle = 0;
-        const doLog = (window._logCursorThrottle++ % 120 === 0);
+        // if (!window._logCursorThrottle) window._logCursorThrottle = 0;
+        const doLog = false; // (window._logCursorThrottle++ % 120 === 0);
         if (doLog) {
             console.log('-- Cursor VR Debug v1.0.6 --');
         }

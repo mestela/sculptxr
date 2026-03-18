@@ -1,3 +1,38 @@
+# Walkthrough: VR Picking Instability Fix (v1.0.22)
+
+## Goal
+Resolve the severe picking instability in VR where "most clicks miss" the mesh when trying to sculpt.
+
+## Problem Analysis
+*   **Symptom**: Hovering the VR cursor displays correctly on the mesh surface, but pulling the controller trigger to initiate a stroke frequently causes the tool to instantly "miss" the mesh and do nothing.
+*   **Root Cause**: In `Scene.js:processVRSculpting`, when a user is actively sculpting (`_selectionLocked = true`), the code used a performance optimization for dense meshes that called `intersectionRayMesh` directly. However, it mistakenly passed *Engine Space* (World) ray coordinates into `intersectionRayMesh`, which strictly expects *Local Space* coordinates (relative to the mesh's current transform). When the given mesh had any translation, rotation, or scale applied, the World Space ray would mathematically miss the Local Space geometry, instantly aborting the stroke.
+*   **Secondary Issue**: The `Cursor VR Debug` log was spamming the console every 120 frames with unneeded raycast outputs.
+
+## Solution
+1.  **Coordinate Space Fix**: Replaced the direct, erroneous call to `intersectionRayMesh(mesh, rayOrigin, farPoint)` with `intersectionRayMeshes([mesh], rayOrigin, engineDir)`. The `intersectionRayMeshes` function inherently handles the matrix inversion, properly transforming the `rayOrigin` and `engineDir` from Engine Space to Local Space before performing the ray-triangle intersection.
+2.  **Log Cleanup**: Disabled the verbose `doLog` flag for the VR cursor visualizer in `_updateVRCursors`.
+
+## Verification
+*   **Code Review**: The stroke initialization phase now guarantees that Local Space transformed vectors are passed to the intersection tester.
+*   **Testing**: Users can now reliably sculpt on translated, rotated, and scaled meshes in VR without their strokes dropping.
+
+# Walkthrough: Move Tool VR Symmetry Fix (v1.0.21)
+
+## Goal
+Fix the broken symmetry behavior for the Move tool when used in VR mode.
+
+## Problem Analysis
+*   **Symptom**: The Move tool's symmetry worked perfectly on Desktop but failed to apply symmetrical mirror deformation when used in VR headsets.
+*   **Root Cause**: The VR `processVRSculpting` loop was completely refactored in `v1.0.20` to use thin octree raycasts (`intersectionRayMeshes`) instead of volumetric spheres to save CPU. However, the legacy `_isVRHit` boolean flag (which the `Move.js` symmetry initialization depends on to choose between VR plane math and Desktop mouse math) was never set by the new raycaster. Thus, in VR, `Move.js` falsely assumed a desktop interaction and pulled stale `(0, 0)` mouse DOM coordinates, permanently breaking the symmetrical mirror calculation.
+
+## Solution
+1.  **Raycast Flag**: explicitly set `this._picking._isVRHit = picked;` inside the VR `intersectionRayMeshes` and `intersectionRayMesh` selection branches in `Scene.js`. 
+2.  **Move Initialization**: The `Move.js:startSculpt` routine now correctly evaluates `_isVRHit = true`, successfully branching into the proper World Space 3D plane projection math rather than the invalid Desktop Screen Space logic.
+
+## Verification
+*   **Code Review**: `Scene.js` now strictly maintains the `_isVRHit` state contract inherited from the old volumetric picker.
+*   **Visuals**: The Move tool's symmetrical proxy mesh will now correctly tether and mirror across the selected mesh axis without tearing or dropping vertices in VR.
+
 # Walkthrough: VR Joystick Refinement (v0.9.150)
 
 ## Goal
