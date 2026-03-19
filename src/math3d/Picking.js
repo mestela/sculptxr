@@ -281,10 +281,25 @@ class Picking {
 
       vAr = mesh.getVertices();
       fAr = mesh.getFaces();
+      var faceBoxes = mesh.getFaceBoxes();
+      var lRadius = Math.sqrt(localRadiusSq);
 
       // Find closest face
       for (var j = 0; j < iFaces.length; ++j) {
-        var indFace = iFaces[j] * 4;
+        var faceId = iFaces[j];
+        var boxId = faceId * 6;
+
+        // Fast AABB Check
+        if (localCenter[0] < faceBoxes[boxId] - lRadius ||
+            localCenter[0] > faceBoxes[boxId + 3] + lRadius ||
+            localCenter[1] < faceBoxes[boxId + 1] - lRadius ||
+            localCenter[1] > faceBoxes[boxId + 4] + lRadius ||
+            localCenter[2] < faceBoxes[boxId + 2] - lRadius ||
+            localCenter[2] > faceBoxes[boxId + 5] + lRadius) {
+            continue;
+        }
+
+        var indFace = faceId * 4;
 
         // Get vertices
         var iv1 = fAr[indFace] * 3;
