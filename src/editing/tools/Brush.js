@@ -93,8 +93,9 @@ class Brush extends SculptBase {
       vAr[ind + 2] = vz + anz * fallOff;
 
       if (i === 0 && window.screenLog) {
-        console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
+        // console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
         // window.screenLog(`Brush: dV ${anx * fallOff} FO:${fallOff}`, "magenta");
+
       }
     }
   }
