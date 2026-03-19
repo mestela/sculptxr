@@ -6,6 +6,9 @@
 - [x] (_Docs_): Documented GalaxyXR WebXR quirks in `docs/galaxyxr.md`.
 - [x] (_Bug_): Fixed VR cursor jumping to the opposite side of the mesh on deep penetration via backface culling.
 - [x] (_Visuals_): Restored VR tool volume sphere visuals, intensity saturation, and stylus spike scale.
+- [x] (_Performance_): Optimized Move tool with fast AABB face rejection (`faceBoxes`), skipping 90% of distance checks on dense meshes.
+- [x] (_Visuals_): Fixed MatCap brightness and rotation tracking (stability when mesh is offset).
+
 
 ## Todo
 

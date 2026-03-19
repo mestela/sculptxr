@@ -1,4 +1,9 @@
+## v1.0.38
+- **Performance**: Optimized Move tool with fast AABB face rejection (`faceBoxes`), skipping 90% of distance checks on dense meshes.
+- **Visuals**: Fixed MatCap brightness and rotation tracking (stability when mesh is offset).
+
 ## v1.0.33
+
 - **Fix**: **VR Move Tool Symmetry & Stability**: Resolved a critical issue where the Move tool would fail to apply symmetry if the symmetric tip was in thin air (missed face). It now forces a fallback to the main mesh, preventing the primary move from "winning" and throwing the chin off-center.
 - **Fix**: **Broken Brushes after Large Moves**: The Move tool now rebuilds the Octree (`mesh.computeOctree()`) at the end of a stroke. This ensures subsequent tools (Crease, Smooth) map correctly to heavily deformed geometry and don't miss or go crazy.
 - **Fix**: **Ghost Grabs**: Prevented the Move tool from initiating a drag if the *current frame* did not hit a mesh, and reset intersection points to zero on failure to prevent leaking old state.
