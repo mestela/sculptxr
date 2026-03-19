@@ -106,8 +106,9 @@ ShaderMatcap.updateUniforms = function (mesh, main) {
   var tex = ShaderMatcap.textures[matIndex];
 
   if (!window.loggedTextureState) {
-    console.log("MatCap Debug - Index: " + matIndex + " Texture:", tex);
-    if (window.screenLog) window.screenLog("MatCap Debug: idx=" + matIndex, "cyan");
+    // console.log("MatCap Debug - Index: " + matIndex + " Texture:", tex);
+    // if (window.screenLog) window.screenLog("MatCap Debug: idx=" + matIndex, "cyan");
+
     window.loggedTextureState = true;
   }
 

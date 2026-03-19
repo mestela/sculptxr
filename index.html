@@ -196,8 +196,9 @@
                 const logEl = document.getElementById('log');
                 if (logEl) {
                     const msg = args.join(' ');
-                    if (!msg.includes('XRRequestFrame')) {
+                    if (!msg.includes('XRRequestFrame') && !msg.includes('Could not find xr_standard_trigger_pressed_min')) {
                         if (logEl.children.length > 50) {
+
                             if (logEl.firstChild && logEl.firstChild.tagName === 'BUTTON') {
                                 if (logEl.children.length > 1) {
                                     logEl.removeChild(logEl.children[1]);
