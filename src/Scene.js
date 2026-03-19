@@ -38,7 +38,7 @@ class Scene {
     this._vrDeviceRadius = 0.05;
 
     // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
-    this._vrUseVolumeIntersect = false; // By default, use Laser Pointer Raycasting (false) instead of Contact Picking (true)
+    this._vrUseVolumeIntersect = true; // By default, use Contact Picking (true) instead of Laser Pointer Raycasting (false)
     this._vrAmbidextrousCursors = false; // Disable offhand sculpting cursors by default to reduce visual clutter
 
     this._cameraSpeed = 0.25;
@@ -3972,11 +3972,19 @@ class Scene {
                 const oldRWorld2 = this._picking._rWorld2;
                 const oldPickedVertices = this._picking._pickedVertices;
 
-                // ALWAYS use RayMeshes for visual cursors. 
-                // Thick Raycasts (intersectionRayMeshesVR) iteration without octree optimization causes extreme CPU stalls on dense meshes (DynTopo).
-                // SphereMeshes returns the nearest vertex which causes the surface ring to jitter wildly.
-                // The thin raycast avoids jitter and maintains 90hz performance. 
-                didHit = this._picking.intersectionRayMeshes(this._meshes, originEngine, dirEngine);
+                // Option A: Use fast iterative search while hovering (not sculpting)
+                const pickingRadius = physicalRadius * invScale;
+                const originTipEngine = vec3.clone(tipPhys);
+                if (this._xrWorldOffset) {
+                    vec3.transformMat4(originTipEngine, originTipEngine, this._xrWorldOffset.inverse.matrix);
+                }
+                vec3.scale(originTipEngine, originTipEngine, invScale);
+
+                if (this._vrUseVolumeIntersect) {
+                    didHit = this._picking.intersectionSphereMeshes(this._meshes, originTipEngine, pickingRadius);
+                } else {
+                    didHit = this._picking.intersectionRayMeshes(this._meshes, originEngine, dirEngine);
+                }
 
                 // If the ray origin (controller root) penetrates the mesh, the ray will travel through the interior volume and hit the back wall ("opposite side").
                 // To prevent the cursor from jumping to the opposite side, we hide the surface ring if the ray hits a backface.
