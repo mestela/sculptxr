@@ -313,6 +313,10 @@ class Picking {
         iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
       }
 
+      if (window.screenLog && this._main && this._main._logThrottle % 20 === 0) {
+        window.screenLog(`P-Search: ${isSculpting ? 'FULL' : 'ITER'} Faces=${iFaces.length}`, "yellow");
+      }
+
 
       if (iFaces.length === 0) continue;
 
