@@ -642,7 +642,8 @@ class Scene {
     };
     
     // Auto-dump after 2 seconds
-    setTimeout(window.debugThreeState, 2000);
+    // setTimeout(window.debugThreeState, 2000);
+
 
     // Start Three.js continuous render loop
     // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
@@ -834,9 +835,10 @@ class Scene {
 
     if (this._renderer && this._renderer.xr) {
       if (this._renderer.xr.isPresenting && !window._loggedXRRender) {
-         console.log("WebXR isPresenting - forcing _drawScene()");
+         // console.log("WebXR isPresenting - forcing _drawScene()");
          window._loggedXRRender = true;
-         if (window.screenLog) window.screenLog("WebXR Render Loop Started", "lime");
+         // if (window.screenLog) window.screenLog("WebXR Render Loop Started", "lime");
+
       }
     }
 
@@ -1689,7 +1691,8 @@ class Scene {
 
     this._action = Enums.Action.NOTHING;
     this.render();
-    console.log("VR Exit: Desktop camera & UI sync fully restored");
+    // console.log("VR Exit: Desktop camera & UI sync fully restored");
+
   }
 
   // Used by Desktop raycasting tools to synchronize the pivot with the spectator render pass

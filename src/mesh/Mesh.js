@@ -425,7 +425,8 @@ class Mesh {
   initThreeMesh() {
     if (!this._renderData) return;
     if (!this._renderData._threeMesh) {
-      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+      // if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+
       
       var material = ShaderManager.getMaterial(this.getShaderType());
       if (!material) {

@@ -693,7 +693,8 @@ export default class GuiXR {
     }
 
     if (window.screenLog && data.isToolPicker && !newHover) {
-       window.screenLog(`[Overlay Hover] rx:${Math.round(rx)} ry:${Math.round(ry)}`, 'orange');
+       // window.screenLog(`[Overlay Hover] rx:${Math.round(rx)} ry:${Math.round(ry)}`, 'orange');
+
        this._needsRedraw = true; // FORCE DRAW TO SEE LOGS
     }
 
