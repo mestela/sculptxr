@@ -1316,8 +1316,10 @@ class Scene {
     mesh.normalizeSize();
     this.subdivideClamp(mesh); 
 
-    // Use PBR for debugging renderer
-    mesh.setShaderType(Enums.Shader.PBR);
+    // Default to MATCAP with Skin Hazardousarts2 (idMat 3)
+    mesh.setShaderType(Enums.Shader.MATCAP);
+    mesh.setMatcap(3);
+
 
     this.addNewMesh(mesh);
     return mesh;
