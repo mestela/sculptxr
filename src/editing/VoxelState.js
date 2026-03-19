@@ -5,7 +5,7 @@ import SurfaceNets from './SurfaceNets.js';
 class VoxelState {
 
   constructor(res = 128, size = 200.0) {
-    console.log(`VoxelState: Constructor Start (Res=${res}, Size=${size})`);
+    // console.log(`VoxelState: Constructor Start (Res=${res}, Size=${size})`);
     try {
       this._resolution = res;
       this._size = size; // Physical size of the box (200.0 meters)

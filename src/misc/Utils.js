@@ -1,7 +1,8 @@
 import { vec3 } from '../../lib/gl-matrix-wrapper.js';
 
 var Utils = {};
-console.log("Utils evaluating...");
+// console.log("Utils evaluating...");
+
 
 Utils.SCALE = 100.0; // scale factor
 Utils.TAG_FLAG = 1; // flag value for comparison (always >= tags values)

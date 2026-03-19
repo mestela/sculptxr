@@ -2182,7 +2182,8 @@ class Mesh {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
     
     if (vertices.length === 6) {
-        console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+        // console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+
     }
     
     var geom = this._renderData._geometry;

@@ -1178,7 +1178,8 @@ class Scene {
         return "Check console for output!";
     };
 
-    setTimeout(() => { if(window.diagnoseGridMesh) window.diagnoseGridMesh(); }, 2000);
+    // setTimeout(() => { if(window.diagnoseGridMesh) window.diagnoseGridMesh(); }, 2000);
+
 
 
   }
