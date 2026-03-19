@@ -39,9 +39,9 @@ class Move extends SculptBase {
 
     var mesh = this.getMesh();
     if (!mesh) return;
-    console.log(`[Move] startSculpt called. TopoCheck=${this._topoCheck}`);
+    // console.log(`[Move] startSculpt called. TopoCheck=${this._topoCheck}`);
     this.initMoveData(picking, this._moveData);
-    console.log(`[Move] Primary Vertices Picked: ${picking.getPickedVertices() ? picking.getPickedVertices().length : 0}`);
+    // console.log(`[Move] Primary Vertices Picked: ${picking.getPickedVertices() ? picking.getPickedVertices().length : 0}`);
 
 
 
