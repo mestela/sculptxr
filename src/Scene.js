@@ -1675,9 +1675,10 @@ class Scene {
       if (this._sculptManager) this._sculptManager.end();
     }
 
-    this._vrControllerLeft = null;
-    this._vrControllerRight = null;
+    // this._vrControllerLeft = null;
+    // this._vrControllerRight = null;
     this.initVRControllers();
+
 
     // 1. [v0.8.62 Fix] Force Mesh MVPs to flush the microscopic VR scale immediately.
     // If we don't do this, the very first desktop mouse clicks will raycast into tiny invisible VR bounds and fail to select anything.
