@@ -2791,8 +2791,9 @@ class Scene {
             
             if (hit) {
               if (window.screenLog && Math.random() < 0.05) {
-                 window.screenLog(`[UI Hit] U:${currU.toFixed(2)} V:${currV.toFixed(2)}`, 'cyan');
+                // window.screenLog(`[UI Hit] U:${currU.toFixed(2)} V:${currV.toFixed(2)}`, 'cyan');
               }
+
               targetGuiXR.setCursor(currU, currV);
             }
             
