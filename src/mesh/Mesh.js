@@ -442,6 +442,16 @@ class Mesh {
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
+      
+      this._renderData._threeMesh.onBeforeRender = function(renderer, scene, camera) {
+         var mat = this.material;
+         if (mat && mat.isShaderMaterial && mat.userData.sculptShaderId === 5) { // Enums.Shader.MATCAP
+             // Import on standard js module scope may not be visible inside this closure, check global or handle in ShaderManager
+             if (window.ShaderManager && window.ShaderManager.onBeforeRenderMatCap) {
+                  window.ShaderManager.onBeforeRenderMatCap(this.userData.sculptMesh, camera);
+             }
+         }
+      };
     }
   }
 
@@ -2141,8 +2151,9 @@ class Mesh {
   render(main) {
     if (!this.isVisible()) return;
     try {
-      Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
-    } catch (e) { } // Ignore WebGL1 shader errors during Three.js transition
+      // Commented out legacy WebGL1 draw loop, letting Three.js handle it
+      // Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
+    } catch (e) { } 
   }
 
   renderWireframe(main) {
