@@ -504,9 +504,9 @@ class SculptBase {
       if (isSculpting) {
         picking.pickVerticesInSphere(picking.getLocalRadius2());
         
-        if (window.screenLog && this._main && this._main._logThrottle % 20 === 0) {
+        if (this._main && this._main._logThrottle % 20 === 0) {
           const iVerts = picking.getPickedVertices();
-          window.screenLog(`SB-Stroke: Verts=${iVerts.length} rLoc2=${picking.getLocalRadius2().toFixed(4)}`, "white");
+          console.log(`SB-Stroke: Verts=${iVerts.length} rLoc2=${picking.getLocalRadius2().toFixed(4)}`);
         }
       }
       picking.computePickedNormal();
