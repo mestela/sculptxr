@@ -77,8 +77,10 @@ ShaderManager.processShader = function(str) {
   // Replace references to SculptXR aVertex and aNormal to match Three.js naming conventions.
   str = str.replace(/attribute vec3 aVertex;?/g, '');
   str = str.replace(/attribute vec3 aNormal;?/g, '');
+  str = str.replace(/attribute vec2 aTexCoord;?/g, '');
   str = str.replace(/\baVertex\b/g, 'position');
   str = str.replace(/\baNormal\b/g, 'normal');
+  str = str.replace(/\baTexCoord\b/g, 'uv');
 
   // Also map custom attributes to the actual Three.js BufferGeometry names we used in Mesh.js
   str = str.replace(/attribute vec3 aColor;?/g, ''); // Three.js injects `attribute vec3 color;` natively
@@ -224,7 +226,10 @@ ShaderManager.updateUniforms = function(mesh, main) {
       }
     },
     uniform1f: function(loc, val) { unifs[loc].value = val; },
-    uniform1i: function(loc, val) { unifs[loc].value = val; },
+    uniform1i: function(loc, val) { 
+      if (loc && loc.indexOf('uTexture') === 0) return; // Prevent overwriting THREE.Texture with 0
+      unifs[loc].value = val; 
+    },
     texImage2D: function() {},
     texParameteri: function() {},
     generateMipmap: function() {},

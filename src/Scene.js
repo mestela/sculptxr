@@ -1190,13 +1190,10 @@ class Scene {
     var ShaderMatcap = ShaderLib[Enums.Shader.MATCAP];
 
     var loadTex = function (path, idMaterial) {
-      var mat = new Image();
-      mat.src = path;
-
-      mat.onload = function () {
-        ShaderMatcap.createTexture(gl, mat, idMaterial);
+      new THREE.TextureLoader().load(path, function(tex) {
+        ShaderMatcap.textures[idMaterial] = tex;
         self.render();
-      };
+      });
     };
 
     for (var i = 0, mats = ShaderMatcap.matcaps, l = mats.length; i < l; ++i)

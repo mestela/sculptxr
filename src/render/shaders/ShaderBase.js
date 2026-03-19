@@ -4,6 +4,7 @@ import Utils from '../../misc/Utils.js';
 import Attribute from '../Attribute.js';
 import colorSpaceGLSL from './glsl/colorSpace.glsl.js';
 import curvatureGLSL from './glsl/curvature.glsl.js';
+import * as THREE from 'three';
 
 var ShaderBase = {};
 ShaderBase.vertexName = 'VertexName';
@@ -215,48 +216,14 @@ ShaderBase.drawBuffer = function (mesh) {
   this.unbindAttributes();
 };
 
-ShaderBase.setTextureParameters = function (gl, tex) {
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  if (Utils.isPowerOfTwo(tex.width) && Utils.isPowerOfTwo(tex.height)) {
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    gl.generateMipmap(gl.TEXTURE_2D);
-  } else {
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  }
-};
-
-ShaderBase.onLoadTexture0 = function (gl, tex, main) {
-  this.texture0 = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, this.texture0);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tex);
-  ShaderBase.setTextureParameters(gl, tex);
-  gl.bindTexture(gl.TEXTURE_2D, null);
-  if (main)
-    main.render();
-};
-
-ShaderBase.getDummyTexture = function (gl) {
-  if (this._dummyTex)
-    return this._dummyTex;
-  this._dummyTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, this._dummyTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
-  gl.bindTexture(gl.TEXTURE_2D, null);
-  return this._dummyTex;
-};
-
 ShaderBase.getOrCreateTexture0 = function (gl, texPath, main) {
   if (this.texture0 !== undefined)
     return this.texture0;
-  this.texture0 = null; // trigger loading
-  var tex = new Image();
-  tex.src = texPath;
-  tex.onload = this.onLoadTexture0.bind(this, gl, tex, main);
-  return false;
+  
+  this.texture0 = new THREE.TextureLoader().load(texPath, function() {
+    if (main) main.render();
+  });
+  return this.texture0;
 };
 
 ShaderBase.initAttributes = function (gl) {

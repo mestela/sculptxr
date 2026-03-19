@@ -2120,6 +2120,9 @@ class Mesh {
     }
 
     this._renderData._shaderType = shaderName;
+    if (this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterial(shaderName);
+    }
     if (hasUV) {
       this.updateDuplicateGeometry();
       this.updateDrawArrays();

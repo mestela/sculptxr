@@ -4,7 +4,7 @@ import Attribute from '../Attribute.js';
 var ShaderUV = ShaderBase.getCopy();
 ShaderUV.vertexName = ShaderUV.fragmentName = 'ShowUV';
 
-ShaderUV.texPath = 'resources/uv.png';
+ShaderUV.texPath = 'app/resources/uv.png';
 
 ShaderUV.uniforms = {};
 ShaderUV.attributes = {};
@@ -70,7 +70,7 @@ ShaderUV.updateUniforms = function (mesh, main) {
   var uniforms = this.uniforms;
 
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, this.getOrCreateTexture0(gl, ShaderUV.texPath, main) || this.getDummyTexture(gl));
+  gl.bindTexture(gl.TEXTURE_2D, this.getOrCreateTexture0(gl, ShaderUV.texPath, main));
   gl.uniform1i(uniforms.uTexture0, 0);
 
   gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
