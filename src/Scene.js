@@ -3971,6 +3971,7 @@ class Scene {
                 const oldRLocal2 = this._picking._rLocal2;
                 const oldRWorld2 = this._picking._rWorld2;
                 const oldPickedVertices = this._picking._pickedVertices;
+                const oldPickedNormal = vec3.clone(this._picking._pickedNormal);
 
                 // Option A: Use fast iterative search while hovering (not sculpting)
                 const pickingRadius = physicalRadius * invScale;
@@ -4050,6 +4051,7 @@ class Scene {
                 this._picking._rLocal2 = oldRLocal2;
                 this._picking._rWorld2 = oldRWorld2;
                 this._picking._pickedVertices = oldPickedVertices;
+                vec3.copy(this._picking._pickedNormal, oldPickedNormal);
             } else {
                 hitDist = uiHitDist;
             }
