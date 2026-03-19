@@ -272,47 +272,43 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // [Option A] Use fast iterative search while hovering (not sculpting)
+      // [Option A] Use fast iterative search ALWAYS (both hovering and sculpting)
+      // Searching outward from the center is faster and more stable against a stale Octree.
       var iFaces = [];
-      const isSculpting = this._main && this._main._vrSculpting;
 
-      if (!isSculpting) {
-        var maxLocalRadiusSq = localRadiusSq;
-        var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
-        var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
+      var maxLocalRadiusSq = localRadiusSq;
+      var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
+      var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
 
-        var bound = mesh.getLocalBound();
-        var dx = bound[3] - bound[0];
-        var dy = bound[4] - bound[1];
-        var dz = bound[5] - bound[2];
-        var meshLocalSize = Math.hypot(dx, dy, dz);
+      var bound = mesh.getLocalBound();
+      var dx = bound[3] - bound[0];
+      var dy = bound[4] - bound[1];
+      var dz = bound[5] - bound[2];
+      var meshLocalSize = Math.hypot(dx, dy, dz);
 
-        // Step size is physically 5cm OR 5% of the mesh's bounding size, whichever is smaller.
-        var physicalStepLocal = (0.05 / vrScale) / scale;
-        var meshStepLocal = Math.max(0.0001, meshLocalSize * 0.05);
-        var stepLocal = Math.min(physicalStepLocal, meshStepLocal);
+      // Step size is physically 5cm OR 5% of the mesh's bounding size, whichever is smaller.
+      var physicalStepLocal = (0.05 / vrScale) / scale;
+      var meshStepLocal = Math.max(0.0001, meshLocalSize * 0.05);
+      var stepLocal = Math.min(physicalStepLocal, meshStepLocal);
 
-        // Protect against ridiculously large volumetric brushes triggering too many steps (cap at 60 lookups)
-        if (maxLocalRadius / stepLocal > 60) {
-          stepLocal = maxLocalRadius / 60;
-        }
-
-        var currentSearchR = stepLocal;
-
-        while (currentSearchR <= maxLocalRadius) {
-          iFaces = mesh.intersectSphere(localCenter, currentSearchR * currentSearchR);
-          if (iFaces.length > 0) break;
-          currentSearchR += stepLocal;
-        }
-
-        if (iFaces.length === 0 && currentSearchR - stepLocal < maxLocalRadius) {
-          iFaces = mesh.intersectSphere(localCenter, maxLocalRadiusSq);
-        }
-      } else {
-        // Full check for sculpting accuracy to prevent dropped strokes on high-curvature geometry
-        iFaces = mesh.intersectSphere(localCenter, localRadiusSq);
+      // Protect against ridiculously large volumetric brushes triggering too many steps (cap at 60 lookups)
+      if (maxLocalRadius / stepLocal > 60) {
+        stepLocal = maxLocalRadius / 60;
       }
 
+      var currentSearchR = stepLocal;
+
+      while (currentSearchR <= maxLocalRadius) {
+        iFaces = mesh.intersectSphere(localCenter, currentSearchR * currentSearchR);
+        if (iFaces.length > 0) break;
+        currentSearchR += stepLocal;
+      }
+
+      if (iFaces.length === 0 && currentSearchR - stepLocal < maxLocalRadius) {
+        iFaces = mesh.intersectSphere(localCenter, maxLocalRadiusSq);
+      }
+
+      const isSculpting = this._main && this._main._vrSculpting;
       if (this._main && this._main._logThrottle % 20 === 0) {
         console.log(`P-Search: ${isSculpting ? 'FULL' : 'ITER'} Faces=${iFaces.length}`);
       }
