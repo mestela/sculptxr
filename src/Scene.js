@@ -819,6 +819,8 @@ class Scene {
       const frame = this._renderer.xr.getFrame();
       const refSpace = this._renderer.xr.getReferenceSpace();
 
+      this._logThrottle = (this._logThrottle || 0) + 1; // Increment!
+
       // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
       if (this._guiXR) this._guiXR.update();
       if (this._guiMini) this._guiMini.update();
