@@ -34,6 +34,16 @@ export default function getSettingsWidgets(main) {
   y += ITEM_H + GAP;
 
   widgets.push({
+    type: 'checkbox', id: 'ambidextrous_cursors', label: 'Ambidextrous Cursors', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: !!main._vrAmbidextrousCursors,
+    onInteract: () => {
+      main._vrAmbidextrousCursors = !main._vrAmbidextrousCursors;
+      if (main.guiXR) main.guiXR._needsRedraw = true;
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
     type: 'slider', id: 'trigger_curve', label: 'Trigger Sensitivity', x: 0, y: y, w: menuW, h: ITEM_H,
     min: 0.0, max: 1.0, step: 0.05,
     value: main._guiXR && main._guiXR._uiSettings.triggerCurve !== undefined ? main._guiXR._uiSettings.triggerCurve : 0.5,

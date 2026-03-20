@@ -54,10 +54,7 @@ class SculptBase {
         return false;
     } else {
       // VR: Evaluating using the VR Ray (already computed in handleXRInput)
-      if (!picking.getMesh() && !this._allowAir) {
-        console.log(`[SculptBase] ABORT: VR start but no picking mesh and !allowAir`);
-        return false;
-      }
+      if (!picking.getMesh() && !this._allowAir) return false;
     }
 
     // [VR] Multi-select Check
@@ -69,10 +66,8 @@ class SculptBase {
     if (main._vrMultiSelect) return false;
 
     // If allowAir, we might proceed without a mesh selection
-    if (!mesh && !this._allowAir) {
-      console.log(`[SculptBase] ABORT: setOrUnsetMesh returned null and !allowAir`);
+    if (!mesh && !this._allowAir)
       return false;
-    }
 
     picking.initAlpha();
     var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
@@ -448,22 +443,23 @@ class SculptBase {
     var rWorld = Math.sqrt(picking._rWorld2);
     if (rWorld < 1e-5) rWorld = main._vrLastPickingRadius || 0.05; // Fallback if previous frame missed
 
-    var minSpacing = 0.02 * rWorld;
+    // FIX v0.8.161: Continuous VR Stroke Spacing Tuning
+    // VR physically tracks true path at 90hz without requiring linear interpolation like a mouse.
+    // 15% distance limit created a visually chunky step rate. 2.5% caused over-accumulation.
+    // Tuned to 7% to balance smoothness with proper brush strength build-up.
+    var minSpacing = 0.07 * rWorld;
     if (minSpacing < 0.001) minSpacing = 0.001; // Safety minimum
 
-    // Commenting out minSpacing threshold for testing smooth slow movement
-    /*
     if (dist <= minSpacing && !this._forceNextStroke) {
-
+      // if (window.screenLog && this._main._logThrottle % 60 === 0) window.screenLog(`SB: Skip dist=${dist.toFixed(4)}`, "grey");
       return;
     }
-    */
-
     this._forceNextStroke = false;
 
-
-    // Using the picking state already found in processVRSculpting
-
+    var mesh = this.getMesh();
+    if (mesh && main._vrUseVolumeIntersect) {
+      picking.intersectionSphereMeshes([mesh], worldPos, rWorld);
+    }
 
     this.makeStrokeXR(picking, pickingSym, true, origin, dir, options);
 
@@ -503,13 +499,14 @@ class SculptBase {
       if (isSculpting) {
         picking.pickVerticesInSphere(picking.getLocalRadius2());
       }
-
       picking.computePickedNormal();
     }
 
+    var dynTopo = mesh.isDynamic && !this._lockPosition;
+    if (isSculpting && dynTopo && pick1)
+      this.stroke(picking, false);
 
     var pick2;
-
     // Symmetry Logic for Generic Tools
     if (pickingSym && this._main.getSculptManager().getSymmetry()) {
       const main = this._main;
@@ -537,26 +534,6 @@ class SculptBase {
         // Local -> World
         var symWorldPos = vec3.create();
         vec3.transformMat4(symWorldPos, localPos, mesh.getMatrix());
-
-        // LOGGING FOR DIRECTION SKEW AND LAG
-        if (!this._lastWorldPos_Dbg) this._lastWorldPos_Dbg = vec3.clone(worldPos);
-        if (!this._lastSymWorldPos_Dbg) this._lastSymWorldPos_Dbg = vec3.clone(symWorldPos);
-
-        var deltaMain = vec3.sub(vec3.create(), worldPos, this._lastWorldPos_Dbg);
-        var deltaSym = vec3.sub(vec3.create(), symWorldPos, this._lastSymWorldPos_Dbg);
-
-        if (this._main._logThrottle % 15 === 0) {
-          // Removed SymmetryAngle logging
-          var lenM = vec3.len(deltaMain);
-          var lenS = vec3.len(deltaSym);
-          var meshScale = mesh.getScale();
-          if (lenM > 0.0001) {
-            // Logs removed
-          }
-        }
-
-        vec3.copy(this._lastWorldPos_Dbg, worldPos);
-        vec3.copy(this._lastSymWorldPos_Dbg, symWorldPos);
 
         // LOGGING
         // if (window.screenLog && Math.random() < 0.05) {
@@ -642,28 +619,14 @@ class SculptBase {
           console.error("Topo Sym Error:", e);
         }
 
-        let symData = null;
-        if (typeof mesh.getSymmetryData === 'function') {
-          symData = mesh.getSymmetryData();
-        } else {
-          if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
-          symData = mesh._symmetryData;
-        }
-
         if (!snapped) {
-          // PURE SPATIAL MIRRORING!
-          const perfectB = vec3.create();
-          vec3.copy(perfectB, picking.getIntersectionPoint());
-          Geometry.mirrorPoint(perfectB, ptPlane, nPlane);
-          
-          pickingSym.setIntersectionPoint(perfectB);
-          pickingSym._mesh = mesh; // Force hit
-          pickingSym.setLocalRadius2(picking.getLocalRadius2());
+        pickingSym.intersectionSphereMeshes([mesh], symWorldPos, searchRadius);
         }
 
         if (pickingSym.getMesh()) {
           pickingSym.setLocalRadius2(picking.getLocalRadius2());
 
+          // TOPOLOGICAL VERTEX SELECTION
           var symMapUsed = false;
           if (isSculpting && pick1) {
             // Robust Fallback
@@ -675,26 +638,18 @@ class SculptBase {
               symData = mesh._symmetryData;
             }
             const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
-
             if (symMap) {
               const mainVerts = picking.getPickedVertices();
               const newVerts = new Uint32Array(mainVerts.length);
               let acc = 0;
-              const sculptFlag = Utils.SCULPT_FLAG;
-              const vscf = mesh.getVerticesSculptFlags();
-
               for (let i = 0; i < mainVerts.length; ++i) {
                 const id = mainVerts[i];
                 const mid = symMap[id];
-                if (mid !== -1) {
-                  newVerts[acc++] = mid;
-                  vscf[mid] = sculptFlag; // Mark it!
-                }
+                if (mid !== -1) newVerts[acc++] = mid;
               }
               pickingSym._pickedVertices = newVerts.subarray(0, acc);
               symMapUsed = true;
             }
-
           }
 
           if (isSculpting && !symMapUsed) {
@@ -733,63 +688,18 @@ class SculptBase {
     // everything "behind" the tangent plane of the stroke.
     // This prevents backface drift for BOTH Main and Symmetry brushes.
 
-    var dynTopo = mesh.isDynamic && !this._lockPosition;
-
-    if (isSculpting && pick1) {
-      if (dynTopo) {
-        this.stroke(picking, false);
-      } else {
-        // Main Brush: Use NEGATIVE Normal (pointing INTO surface) to keep front faces
-        var nMain = picking.getPickedNormal();
-        vec3.negate(picking.getEyeDirection(), nMain); 
-        
-        // Map iVertsFront for perfect symmetry
-        var mainVerts = picking.getPickedVertices();
-        var mainFront = this.getFrontVertices(mainVerts, picking.getEyeDirection());
-        picking._pickedVerticesFront = mainFront;
-
-        // Compute main aNormal and store it
-        picking._aNormal = this.areaNormal(mainFront);
-
-        this.stroke(picking, false);
-      }
+    if (isSculpting && !dynTopo && pick1) {
+      // Main Brush: Use NEGATIVE Normal (pointing INTO surface) to keep front faces
+      var nMain = picking.getPickedNormal();
+      vec3.negate(picking.getEyeDirection(), nMain); 
+      this.stroke(picking, false);
     }
     if (isSculpting && pick2) {
-      // Symmetry Brush: Use NEGATIVE Normal (pointing INTO surface)
+      // Symmetry Brush: Use NEGATIVE Normal
       var nSym = pickingSym.getPickedNormal();
       vec3.negate(pickingSym.getEyeDirection(), nSym);
-
-      // Map mainFront to symFront!
-      let symData = null;
-      if (typeof mesh.getSymmetryData === 'function') {
-        symData = mesh.getSymmetryData();
-      } else {
-        if (!mesh._symmetryData) mesh._symmetryData = new MeshSymmetry(mesh);
-        symData = mesh._symmetryData;
-      }
-      const symMap = (symData && typeof symData.isTopo === 'function' && symData.isTopo()) ? symData.getMap() : null;
-
-      if (picking._pickedVerticesFront && symMap) {
-        const mainFront = picking._pickedVerticesFront;
-        const symFront = new Uint32Array(mainFront.length);
-        let acc = 0;
-        for (let i = 0; i < mainFront.length; ++i) {
-          const mid = symMap[mainFront[i]];
-          if (mid !== -1) symFront[acc++] = mid;
-        }
-        pickingSym._pickedVerticesFront = symFront.subarray(0, acc);
-      }
-
-      // MIRROR aNormal DIRECTLY (Like Drag.js)
-      if (picking._aNormal) {
-        const symANormal = vec3.clone(picking._aNormal);
-        Geometry.mirrorPoint(symANormal, [0, 0, 0], mesh.getSymmetryNormal());
-        pickingSym._aNormal = symANormal;
-      }
-
       this.stroke(pickingSym, true);
     }
-
 
     return pick1 || pick2;
   }

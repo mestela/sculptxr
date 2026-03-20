@@ -1,22 +1,14 @@
 import TR from '../../gui/GuiTR.js';
 import ShaderBase from './ShaderBase.js';
 import { mat3, mat4 } from 'gl-matrix';
+import * as THREE from 'three';
 
 var ShaderMatcap = ShaderBase.getCopy();
 ShaderMatcap.vertexName = ShaderMatcap.fragmentName = 'Matcap';
 
-ShaderMatcap.textures = {};
+ShaderMatcap.textures = [];
 
-ShaderMatcap.createTexture = function (gl, img, idMaterial) {
-  var idTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, idTex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-  ShaderMatcap.setTextureParameters(gl, img);
-  gl.bindTexture(gl.TEXTURE_2D, null);
-  ShaderMatcap.textures[idMaterial] = idTex;
-};
-
-var texPath = 'resources/matcaps/';
+var texPath = 'app/resources/matcaps/';
 ShaderMatcap.matcaps = [{
   path: texPath + 'matcapFV.jpg',
   name: 'matcap FV' // too lazy to tr
@@ -67,11 +59,8 @@ ShaderMatcap.vertex = [
   'void main() {',
   '  vColor = uAlbedo.x >= 0.0 ? uAlbedo : aColor;',
   '  vMasking = aMaterial.z;',
-  // Fix for High Scale Lighting Precision: Use MV rotation instead of Normal Matrix (InvTrans)
-  // This assumes Uniform Scale (VR World Scale is uniform).
-  // Prevents uN becoming tiny when Scale is huge.
-  '  vNormal = mix(aNormal, (mat3(uMV) * aNormal), vMasking);',
-  '  vNormal = normalize(vNormal);', // removed uN
+  '  vNormal = mix(aNormal, uEN * aNormal, vMasking);',
+  '  vNormal = normalize(mat3(uMV) * vNormal);',
   '  vec4 vertex4 = vec4(aVertex, 1.0);',
   '  vertex4 = mix(vertex4, uEM * vertex4, vMasking);',
   '  vVertex = vec3(uMV * vertex4);',
@@ -100,10 +89,12 @@ ShaderMatcap.fragment = [
   '  // Stabilize Normal: Transform View Space Normal -> Billboard Space Normal',
   '  normal = normalize(uRotCorrection * normal);',
   '  ',
+  '  // Reverted to standard XY after fixing world offset',
   '  vec2 texCoord = normal.xy * 0.5 + 0.5;',
-  '  // texCoord.y = 1.0 - texCoord.y; // Flip Y removed to fix orientation',
-  '  vec3 color = sRGBToLinear(texture2D(uTexture0, texCoord).rgb) * sRGBToLinear(vColor);',
-  '  gl_FragColor = encodeFragColor(color, uAlpha);',
+  '  // texCoord.y = 1.0 - texCoord.y; // Keep Y upright',
+  '  vec3 color = texture2D(uTexture0, texCoord).rgb * sRGBToLinear(vColor); // Double gamma removed',
+  '  // Bypass encodeFragColor (which does sRGB conversion) to prevent double-sRGB washing out',
+  '  gl_FragColor = vec4(color, uAlpha);',
   '}'
 ].join('\n');
 
@@ -111,11 +102,20 @@ ShaderMatcap.updateUniforms = function (mesh, main) {
   var gl = mesh.getGL();
   var uniforms = this.uniforms;
 
+  var matIndex = mesh.getMatcap();
+  var tex = ShaderMatcap.textures[matIndex];
+
+  if (!window.loggedTextureState) {
+    // console.log("MatCap Debug - Index: " + matIndex + " Texture:", tex);
+    // if (window.screenLog) window.screenLog("MatCap Debug: idx=" + matIndex, "cyan");
+
+    window.loggedTextureState = true;
+  }
+
   gl.uniform1i(uniforms.uFlat, mesh.getFlatShading()); // Pass Flat Flag
 
   gl.activeTexture(gl.TEXTURE0);
-  mesh.setTexture0(ShaderMatcap.textures[mesh.getMatcap()]);
-  gl.bindTexture(gl.TEXTURE_2D, mesh.getTexture0() || this.getDummyTexture(gl));
+  gl.bindTexture(gl.TEXTURE_2D, tex || this.getOrCreateTexture0(gl, 'app/resources/matcaps/matcapFV.jpg', main));
   gl.uniform1i(uniforms.uTexture0, 0);
 
   // --- Compute Billboard Stabilization Matrix ---
@@ -210,7 +210,8 @@ ShaderMatcap.updateUniforms = function (mesh, main) {
 
   gl.uniform3fv(uniforms.uAlbedo, mesh.getAlbedo());
   ShaderBase.updateUniforms.call(this, mesh, main);
-
 };
+
+window.ShaderMatcap = ShaderMatcap;
 
 export default ShaderMatcap;

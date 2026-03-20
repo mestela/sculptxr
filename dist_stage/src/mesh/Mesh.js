@@ -425,7 +425,8 @@ class Mesh {
   initThreeMesh() {
     if (!this._renderData) return;
     if (!this._renderData._threeMesh) {
-      if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+      // if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
+
       
       var material = ShaderManager.getMaterial(this.getShaderType());
       if (!material) {
@@ -442,6 +443,16 @@ class Mesh {
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
+      
+      this._renderData._threeMesh.onBeforeRender = function(renderer, scene, camera) {
+         var mat = this.material;
+         if (mat && mat.isShaderMaterial && mat.userData.sculptShaderId === 5) { // Enums.Shader.MATCAP
+             // Import on standard js module scope may not be visible inside this closure, check global or handle in ShaderManager
+             if (window.ShaderManager && window.ShaderManager.onBeforeRenderMatCap) {
+                  window.ShaderManager.onBeforeRenderMatCap(this.userData.sculptMesh, camera);
+             }
+         }
+      };
     }
   }
 
@@ -1470,7 +1481,7 @@ class Mesh {
       cdc = this._meshData._DAcolorsRGB;
       cdm = this._meshData._DAmaterialsPBR;
     }
-    console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
+    // console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
     var nbFaces = full ? this.getNbFaces() : iFaces.length;
     for (var i = 0; i < nbFaces; ++i) {
@@ -2120,6 +2131,9 @@ class Mesh {
     }
 
     this._renderData._shaderType = shaderName;
+    if (this._renderData._threeMesh) {
+      this._renderData._threeMesh.material = ShaderManager.getMaterial(shaderName);
+    }
     if (hasUV) {
       this.updateDuplicateGeometry();
       this.updateDrawArrays();
@@ -2138,8 +2152,9 @@ class Mesh {
   render(main) {
     if (!this.isVisible()) return;
     try {
-      Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
-    } catch (e) { } // Ignore WebGL1 shader errors during Three.js transition
+      // Commented out legacy WebGL1 draw loop, letting Three.js handle it
+      // Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
+    } catch (e) { } 
   }
 
   renderWireframe(main) {
@@ -2168,7 +2183,8 @@ class Mesh {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
     
     if (vertices.length === 6) {
-        console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+        // console.warn("🛑 CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+
     }
     
     var geom = this._renderData._geometry;

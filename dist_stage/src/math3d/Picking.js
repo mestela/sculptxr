@@ -272,15 +272,13 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // OPTIMIZATION: Multi-pass inner search (Iterative)
-      // When the world is scaled down significantly in VR (to work on fine details), 
-      // a "small" physical radius (e.g. 5cm) can encompass the entire dense mesh, 
-      // pulling in thousands of faces for distance checks and causing massive frame drops.
-      // We iteratively expand a search sphere to guarantee the first intersection is a "grazing" hit,
-      // minimizing the faces returned from the octree to strictly the closest surface details.
+      // [Option A] Use fast iterative search ALWAYS (both hovering and sculpting)
+      // Searching outward from the center is faster and more stable against a stale Octree.
+      var iFaces = [];
 
       var maxLocalRadiusSq = localRadiusSq;
       var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
+
       var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
 
       var bound = mesh.getLocalBound();
@@ -299,7 +297,6 @@ class Picking {
         stepLocal = maxLocalRadius / 60;
       }
 
-      var iFaces = [];
       var currentSearchR = stepLocal;
 
       while (currentSearchR <= maxLocalRadius) {
@@ -308,19 +305,37 @@ class Picking {
         currentSearchR += stepLocal;
       }
 
-      // If we didn't hit anything and didn't reach the exact max radius, do final check
-      if (iFaces.length === 0 && currentSearchR - stepLocal < maxLocalRadius) {
+      if (iFaces.length === 0) {
         iFaces = mesh.intersectSphere(localCenter, maxLocalRadiusSq);
       }
+
+      const isSculpting = this._main && this._main._vrSculpting;
+
 
       if (iFaces.length === 0) continue;
 
       vAr = mesh.getVertices();
       fAr = mesh.getFaces();
 
+      var faceBoxes = mesh.getFaceBoxes();
+      var lRadius = Math.sqrt(localRadiusSq);
+
       // Find closest face
       for (var j = 0; j < iFaces.length; ++j) {
-        var indFace = iFaces[j] * 4;
+        var faceId = iFaces[j];
+        var boxId = faceId * 6;
+
+        // Fast AABB Check
+        if (localCenter[0] < faceBoxes[boxId] - lRadius ||
+            localCenter[0] > faceBoxes[boxId + 3] + lRadius ||
+            localCenter[1] < faceBoxes[boxId + 1] - lRadius ||
+            localCenter[1] > faceBoxes[boxId + 4] + lRadius ||
+            localCenter[2] < faceBoxes[boxId + 2] - lRadius ||
+            localCenter[2] > faceBoxes[boxId + 5] + lRadius) {
+            continue;
+        }
+
+        var indFace = faceId * 4;
 
         // Get vertices
         var iv1 = fAr[indFace] * 3;
@@ -348,8 +363,6 @@ class Picking {
         }
 
         if (distSq < localRadiusSq) { // Found a potential hit within radius
-
-
           // Convert dist to world for comparison
           var worldDist = Math.sqrt(distSq) * scale;
           if (worldDist < nearDistance) {
@@ -361,6 +374,8 @@ class Picking {
         }
       }
     }
+
+
 
     if (nearMesh) {
       this._mesh = nearMesh;
@@ -376,6 +391,7 @@ class Picking {
     this._mesh = null;
     this._pickedFace = -1;
     this._rLocal2 = 0.0;
+    vec3.set(this._interPoint, 0.0, 0.0, 0.0);
     return false;
   }
 
@@ -461,7 +477,20 @@ class Picking {
     var vertSculptFlags = mesh.getVerticesSculptFlags();
     var inter = this.getIntersectionPoint();
 
-    var iFacesInCells = mesh.intersectSphere(inter, rLocal2, true);
+    // Compute a safe minimum search radius to bridge stale Octree gaps.
+    // If rLocal is tiny (due to matrix scaling), use a fraction of mesh size instead.
+    var bound = mesh.getLocalBound();
+    var dx = Math.max(0.001, bound[3] - bound[0]);
+    var dy = Math.max(0.001, bound[4] - bound[1]);
+    var dz = Math.max(0.001, bound[5] - bound[2]);
+    var meshSize = Math.max(dx, dy, dz);
+    
+    // 2.5% of the mesh size is a safe, responsive bubble that doesn't over-fetch too many candidates
+    var safeMinRadius = meshSize * 0.025; 
+    var safeMinRadiusSq = safeMinRadius * safeMinRadius;
+    var searchRadiusSq = Math.max(rLocal2, safeMinRadiusSq);
+
+    var iFacesInCells = mesh.intersectSphere(inter, searchRadiusSq, true);
     var iVerts = mesh.getVerticesFromFaces(iFacesInCells);
     var nbVerts = iVerts.length;
 
@@ -475,10 +504,10 @@ class Picking {
     for (var i = 0; i < nbVerts; ++i) {
       var ind = iVerts[i];
       var j = ind * 3;
-      var dx = itx - vAr[j];
-      var dy = ity - vAr[j + 1];
-      var dz = itz - vAr[j + 2];
-      if ((dx * dx + dy * dy + dz * dz) < rLocal2) {
+      var ddx = itx - vAr[j];
+      var ddy = ity - vAr[j + 1];
+      var ddz = itz - vAr[j + 2];
+      if ((ddx * ddx + ddy * ddy + ddz * ddz) < rLocal2) { // Filter precisely using actual tiny radius
         vertSculptFlags[ind] = sculptFlag;
         pickedVertices[acc++] = ind;
       }
@@ -487,6 +516,7 @@ class Picking {
     this._pickedVertices = new Uint32Array(pickedVertices.subarray(0, acc));
     return this._pickedVertices;
   }
+
 
   _isInsideSphere(id, inter, rLocal2) {
     if (id === Utils.TRI_INDEX) return false;

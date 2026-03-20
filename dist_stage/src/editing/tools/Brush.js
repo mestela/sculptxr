@@ -21,7 +21,12 @@ class Brush extends SculptBase {
   stroke(picking) {
     var iVertsInRadius = picking.getPickedVertices();
     var intensity = this._intensity * Tablet.getPressureIntensity();
-    var intensity = this._intensity * Tablet.getPressureIntensity();
+
+    if (this._main && this._main._logThrottle % 20 === 0) {
+      const isSym = picking === this._main._pickingSym;
+      console.log(`[Brush] stroke isSym=${isSym} Verts=${iVertsInRadius.length} Int=${intensity.toFixed(4)}`);
+    }
+
 
     if (!this._accumulate && !this._lockPosition)
       this.updateProxy(iVertsInRadius);
@@ -93,8 +98,9 @@ class Brush extends SculptBase {
       vAr[ind + 2] = vz + anz * fallOff;
 
       if (i === 0 && window.screenLog) {
-        console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
+        // console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
         // window.screenLog(`Brush: dV ${anx * fallOff} FO:${fallOff}`, "magenta");
+
       }
     }
   }

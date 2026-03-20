@@ -1418,7 +1418,7 @@ class Mesh {
       cdc = this._meshData._DAcolorsRGB;
       cdm = this._meshData._DAmaterialsPBR;
     }
-    console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
+    // console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
     var nbFaces = full ? this.getNbFaces() : iFaces.length;
     for (var i = 0; i < nbFaces; ++i) {
@@ -2079,7 +2079,8 @@ class Mesh {
     var vertices = this.isUsingDrawArrays() ? this.getVerticesDrawArrays() : this.getVertices();
     
     if (vertices.length === 6) {
-        console.warn("🛑 MeshSafe: CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+        // console.warn("🛑 MeshSafe: CAUGHT LENGTH 6 ARRAY! 🛑", new Error().stack);
+
     }
     
     var geom = this._renderData._geometry;

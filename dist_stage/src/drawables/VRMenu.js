@@ -1,4 +1,4 @@
-import { mat4, vec3, mat3 } from 'gl-matrix';
+import { mat4, vec3, mat3, quat } from 'gl-matrix';
 import * as THREE from 'three';
 
 class VRMenu {
@@ -21,6 +21,13 @@ class VRMenu {
     this.texture.generateMipmaps = false;
     this.texture.minFilter = THREE.LinearFilter;
     
+    // Automatically trigger Three.js texture upload when the raw canvas changes!
+    if (this._guiXR.onTextureUpdated) {
+        this._guiXR.onTextureUpdated(() => {
+            this.texture.needsUpdate = true;
+        });
+    }
+    
     const material = new THREE.MeshBasicMaterial({
       map: this.texture,
       transparent: true,
@@ -30,6 +37,11 @@ class VRMenu {
     });
 
     this.mesh = new THREE.Mesh(geometry, material);
+    
+    // OVERLAY_SCALE: The UI canvas is drawn dense (1024x1024) but scaled up physically 13% for VR legibility.
+    // We scale the Three.js mesh so the visual size matches the _cacheWorld collision math.
+    const OVERLAY_SCALE = 1.13;
+    this.mesh.scale.set(OVERLAY_SCALE, OVERLAY_SCALE, OVERLAY_SCALE);
 
     this._cacheWorld = mat4.create();
 
@@ -66,13 +78,30 @@ class VRMenu {
   }
 
   updateMatrices(camera, controllerMatrix) {
-    // This function used to be called to manually push the physical controller matrix.
-    // NATIVELY IN THREE.JS: The scene graph handles the transform hierarchy automatically.
-    // However, our old tool logic (handleXRInput) uses `this._cacheWorld` to do raw Math.
-    // We just read what Three.js calculated!
-    this.mesh.updateMatrixWorld(true);
-    for (let i = 0; i < 16; i++) {
-        this._cacheWorld[i] = this.mesh.matrixWorld.elements[i];
+    if (controllerMatrix) {
+        // Build Local Transform Matrix
+        const localMat = mat4.create();
+        
+        // Use Three.js quaternion to guarantee identical rotation order
+        // this.mesh.quaternion is automatically updated by rebuildMatrix() when this._rotation changes
+        const q = quat.fromValues(
+            this.mesh.quaternion.x, 
+            this.mesh.quaternion.y, 
+            this.mesh.quaternion.z, 
+            this.mesh.quaternion.w
+        );
+
+        // Build TRS matrix (Translation, Rotation, Scale=1 so raycast uses math base coords)
+        mat4.fromRotationTranslationScale(localMat, q, this._offset, [1, 1, 1]);
+
+        // Multiply into final _cacheWorld
+        mat4.multiply(this._cacheWorld, controllerMatrix, localMat);
+    } else {
+        // Fallback to Three.js graph if standalone
+        this.mesh.updateMatrixWorld(true);
+        for (let i = 0; i < 16; i++) {
+            this._cacheWorld[i] = this.mesh.matrixWorld.elements[i];
+        }
     }
   }
 
@@ -82,27 +111,70 @@ class VRMenu {
     // Explicitly update matrix world for safety before raycasting
     this.mesh.updateMatrixWorld(true);
 
-    const raycaster = new THREE.Raycaster(
-        new THREE.Vector3(origin[0], origin[1], origin[2]),
-        new THREE.Vector3(direction[0], direction[1], direction[2])
-    );
+    // We MUST use `_cacheWorld` because in `Scene.js`, the VR physical controller scale/matrix 
+    // is manually pushed into _cacheWorld, but the Three.js scene graph might not inherit it correctly 
+    // depending on where `main.add(vrMenu.mesh)` happened.
+    const mat = this._cacheWorld;
 
-    // Only raycast against this menu's mesh, no children (unless we added some)
-    const intersects = raycaster.intersectObject(this.mesh, false);
+    // 1. Extract Plane Origin and Normal from World Matrix
+    const pO = vec3.fromValues(mat[12], mat[13], mat[14]);
+    const pN = vec3.fromValues(mat[8], mat[9], mat[10]); // Z-axis is normal
+    vec3.normalize(pN, pN);
 
-    if (intersects.length > 0) {
-        const hit = intersects[0];
-        // Ensure UVs exist (PlaneGeometry provides them by default)
-        if (hit.uv) {
-            return { 
-                uv: [hit.uv.x, hit.uv.y], 
-                distance: hit.distance,
-                object: this.mesh 
-            };
-        }
-    }
+    // 2. Validate Origin and Direction inputs
+    const o = vec3.fromValues(origin[0], origin[1], origin[2]);
+    const d = vec3.fromValues(direction[0], direction[1], direction[2]);
+
+    // 3. Ray-Plane Intersection Math
+    const denom = vec3.dot(pN, d);
+    if (Math.abs(denom) < 0.0001) return null; // Ray is parallel to plane
+
+    const diff = vec3.create();
+    vec3.sub(diff, pO, o);
+    const t = vec3.dot(pN, diff) / denom;
     
-    return null;
+    if (t < 0) return null; // Intersects behind the controller
+
+    // 4. Calculate World Hit Point
+    const pHit = vec3.create();
+    vec3.scaleAndAdd(pHit, o, d, t);
+
+    // 5. Convert World Hit to Local Plane Space (using inverse cacheWorld)
+    const invMat = mat4.create();
+    mat4.invert(invMat, mat);
+    const localHit = vec3.create();
+    vec3.transformMat4(localHit, pHit, invMat);
+
+    // 6. Check Bounds (with generous padding for VR fingers/lasers)
+    const lx = localHit[0];
+    const ly = localHit[1];
+    const pad = 0.01;
+    
+    // OVERLAY_SCALE multiplier matching visual scale in constructor
+    const OVERLAY_SCALE = 1.13;
+    const scaledW = this._w * OVERLAY_SCALE;
+    const scaledH = this._h * OVERLAY_SCALE;
+    
+    if (lx < -(scaledW + pad) || lx > (scaledW + pad) || ly < -(scaledH + pad) || ly > (scaledH + pad)) {
+        return null; // Hit the infinite plane, but missed the physical menu quad
+    }
+
+    // 7. Calculate UVs (Clamp to strict 0-1 bounds so padding doesn't stretch UI clicks)
+    const clx = Math.max(-scaledW, Math.min(scaledW, lx));
+    const cly = Math.max(-scaledH, Math.min(scaledH, ly));
+
+    const u = (clx + scaledW) / (2 * scaledW);
+    const v = (cly + scaledH) / (2 * scaledH);
+
+    if (Math.random() < 0.02) {
+       // console.log(`[VRMenu] MATH HIT! U:${u.toFixed(2)} V:${v.toFixed(2)} Dist:${t.toFixed(2)}`);
+    }
+
+    return { 
+        uv: [u, v], 
+        distance: t,
+        object: this.mesh 
+    };
   }
 
   intersectPoint(point) {

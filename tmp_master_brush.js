@@ -21,9 +21,7 @@ class Brush extends SculptBase {
   stroke(picking) {
     var iVertsInRadius = picking.getPickedVertices();
     var intensity = this._intensity * Tablet.getPressureIntensity();
-
-    // Removed [Brush] stroke logging
-
+    var intensity = this._intensity * Tablet.getPressureIntensity();
 
     if (!this._accumulate && !this._lockPosition)
       this.updateProxy(iVertsInRadius);
@@ -32,7 +30,7 @@ class Brush extends SculptBase {
     if (!this._lockPosition)
       iVertsInRadius = this.dynamicTopology(picking);
 
-    var iVertsFront = (picking._pickedVerticesFront && picking._pickedVerticesFront.length > 0) ? picking._pickedVerticesFront : this.getFrontVertices(iVertsInRadius, picking.getEyeDirection());
+    var iVertsFront = this.getFrontVertices(iVertsInRadius, picking.getEyeDirection());
     if (this._culling)
       iVertsInRadius = iVertsFront;
 
@@ -43,7 +41,7 @@ class Brush extends SculptBase {
     if (!this._clay) {
       this.brush(iVertsInRadius, picking.getPickedNormal(), picking.getIntersectionPoint(), r2, intensity, picking);
     } else {
-      var aNormal = picking._aNormal || this.areaNormal(iVertsFront);
+      var aNormal = this.areaNormal(iVertsFront);
       if (!aNormal)
         return;
       var aCenter = this._lockPosition ? picking.getIntersectionPoint() : this.areaCenter(iVertsFront);
@@ -95,9 +93,8 @@ class Brush extends SculptBase {
       vAr[ind + 2] = vz + anz * fallOff;
 
       if (i === 0 && window.screenLog) {
-        // console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
+        console.log(`Brush: Modifying ID ${iVertsInRadius[i]}. Diff: ${anx * fallOff}, ${any * fallOff}, ${anz * fallOff}`);
         // window.screenLog(`Brush: dV ${anx * fallOff} FO:${fallOff}`, "magenta");
-
       }
     }
   }

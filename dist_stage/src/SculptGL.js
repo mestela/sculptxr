@@ -185,7 +185,7 @@ class SculptGL extends Scene {
       checkMesh: () => {
         const mesh = this.getMesh();
         if (!mesh) return console.log("No Mesh");
-        console.log("Mesh:", mesh);
+        // console.log("Mesh:", mesh);
         console.log("Verts:", mesh.getNbVertices());
         console.log("Faces:", mesh.getNbFaces());
         console.log("Opacity:", mesh.getOpacity());

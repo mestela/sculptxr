@@ -3475,11 +3475,7 @@ class Scene {
       this._vrLaserDistance = 5.0; // Reset to infinity line if we slipped off the mesh
     }
 
-    // DEBUG: Picking Trace
-    if (this._logThrottle % 30 === 0) {
-      const msg = `P-Pick:${picked ? 'YES' : 'NO'} Rad:${(pickingRadius * 100).toFixed(2)}cm Dist:${this._vrLaserDistance.toFixed(2)} Vol:${this._vrUseVolumeIntersect}`;
-      console.log(msg);
-    }
+    // Logs removed
 
     // [DEBUG] Interactive Raycaster Debugger (DISABLED)
     if (window.debugRaycaster) {
@@ -3597,10 +3593,7 @@ class Scene {
     // (currentTool and isToolActive defined above at Menu Block)
 
     let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive);
-
-    if (this._logThrottle % 30 === 0) {
-       console.log(`S-Sculpt: Can=${canSculpt} Trig=${isTriggerPressed} Pick=${picked} ScActive=${this._vrSculpting}`);
-    }
+    // Logs removed
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");

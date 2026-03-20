@@ -31,7 +31,17 @@ class Move extends SculptBase {
   startSculpt() {
     var main = this._main;
     var picking = main.getPicking();
+    
+    // VR Safety: If the current frame did not hit a mesh, do NOT fall back to a previous stroke's mesh!
+    if (main._xrSession && !picking.getMesh()) {
+      return;
+    }
+
+    var mesh = this.getMesh();
+    if (!mesh) return;
+    // console.log(`[Move] startSculpt called. TopoCheck=${this._topoCheck}`);
     this.initMoveData(picking, this._moveData);
+    // console.log(`[Move] Primary Vertices Picked: ${picking.getPickedVertices() ? picking.getPickedVertices().length : 0}`);
 
 
 
@@ -152,9 +162,28 @@ class Move extends SculptBase {
               this._moveDataSym.radius2 = pickingSym.getLocalRadius2();
 
             } else {
-              if (!snapped) {
-                pickingSym.intersectionMouseMesh(mesh);
+              if (main._xrSession) {
+                // VR: Use Geometric Sphere Pick using symPos
+                const symPos = [0.0, 0.0, 0.0];
+                const ptPlane = mesh.getSymmetryOrigin();
+                const nPlane = mesh.getSymmetryNormal();
+                vec3.copy(symPos, picking.getIntersectionPoint());
+                Geometry.mirrorPoint(symPos, ptPlane, nPlane);
+
+                pickingSym.setIntersectionPoint(symPos);
+                pickingSym.intersectionSphereMeshes([mesh], symPos, picking.getWorldRadius());
+                
+                // FORCE fallback if geometric check misses (tip in thin air)
+                if (!pickingSym.getMesh()) {
+                  pickingSym._mesh = mesh;
+                  // console.log("[Move.js] Forced symmetric fallback on failure");
+                }
+              } else {
+                if (!snapped) {
+                  pickingSym.intersectionMouseMesh(mesh);
+                }
               }
+              
               pickingSym.setLocalRadius2(picking.getLocalRadius2());
               this.initMoveData(pickingSym, this._moveDataSym);
             }
@@ -177,6 +206,13 @@ class Move extends SculptBase {
     var main = this._main;
     var mesh = this.getMesh();
     if (!mesh) return;
+
+    // FIX: Rebuild Octree completely after Move stroke. 
+    // balanceOctree only splits dense cells, but doesn't move faces if they were dragged far away.
+    // computeOctree rebuilds everything from scratch, which takes a few milliseconds but fixes raycasting!
+    if (typeof mesh.computeOctree === 'function') {
+      mesh.computeOctree();
+    }
 
     var voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
     if (voxelTool && voxelTool._voxelMesh === mesh && voxelTool._worker) {
@@ -540,6 +576,10 @@ class Move extends SculptBase {
     quat.slerp(qScaledLocal, qIdentity, qDeltaLocal, this._intensity);
 
     // Apply Primary Move
+    if (!moveData.iVerts || !moveData.vProxy || moveData.vProxy.length === 0) {
+      console.error("[Move Tool] Aborting move stroke. Missing iVerts or vProxy in primary moveData.");
+      return;
+    }
     if (moveData.iVerts) {
        vec3.sub(moveData.dir, vCurrLocal, vStartLocal); 
       vec3.scale(moveData.dir, moveData.dir, this._intensity);

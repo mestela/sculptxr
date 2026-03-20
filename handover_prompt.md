@@ -1,46 +1,48 @@
-# Handover Prompt
+# Handover Prompt - Sculpt Stroke and Symmetry Fixes
 
-**Project Status**: Successfully completed the core migration from custom raw WebGL rendering (SculptGL) to **Three.js v160** over the weekend. The project is currently on a branch and functioning in the GalaxyXR headset. The focus has now shifted to "fit and finish" - refining the implementation, restoring parity with the WebGL version, and preparing to merge back to `master`.
+**Project Status**: Fine-tuning sculpting responsiveness and symmetry in VR (Volume Intersect mode). We resolved the critical "No strokes" bug and the "Symmetry stuck in place" bug. The current focus is a 50% motion lag on the symmetry stroke.
 
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
 
-## Critical Developer Instructions
-[WARNING: THE PROJECT NOW USES VITE FOR LOCAL DEVELOPMENT.]
-* Read the codebase using `view_file` instead of grep where possible. 
-* Do not attempt to run `npm run build` or `npm run deploy` unless publishing. 
-* **Local Server**: The project uses Vite. Run `npm run dev` to start the local development server. It serves under `https://localhost:8084/`. WebXR requires HTTPS or localhost. Vite provides Hot Module Replacement (HMR) for faster iteration, though WebXR sessions may still require a manual refresh depending on the headset.
+## Recent Work & Achievements (This Chat)
 
-## Recent Work & Context
-1. **Three.js WebXR Migration**: Successfully migrated `Scene.js` to use `renderer.xr` for session management and controller rendering. Controller poses and origin matrices are driving the existing sculpt logic.
-2. **VR UI Render Chain**: Attached the custom `VRMenu` meshes (`_vrMenu` for the Main Menu, `_vrMiniHUD` for left-hand tools, and `_vrPopup` for the Tool Picker) directly to the Three.js controller grip spaces. Most tools are working.
-3. **UI Laser Pointer Fixes**: Added visual laser pointers (Three.js Cylinders). The lines are clipped by mathematical intersections against the Three.js mesh surfaces. 
-4. **Current Status & Fixes**: 
-   - Fixed a bug where clicking "Tool" on the MiniHUD made the UI vanish entirely.
-   - Corrected the `_vrPopup` orientation to match the MiniHUD.
-   - Disabled the noisy interactive `window.debugRaycaster` axis lines.
-   - **(v1.0.1)** Completely rewrote the `GuiXR` debounce architecture. Solved deep race conditions where 1-frame WebXR pose prediction jerks (during trigger pulls) would cause the UI to register a "miss", which then unfairly started the 250ms debounce lockout. Now, users can perform rapid sweep-clicks and tap accordions instantly without misfires.
-   - **(v1.0.20)** Restored 1:1 parity for VR cursor visuals (volume sphere blending, intensity color saturation, stylus spike). Fixed the critical "cursor jumping to opposite side of mesh" bug by reverting to ultra-fast thin octree raycasts combined with mathematical backface-culling, allowing cursors to gracefully hide when the controller dips inside the mesh instead of choking the CPU with thick cylinder casts.
-   - **(v1.0.21)** Fixed broken symmetry for the Move Tool. Resolved an underlying issue where the new raycast picking engine (introduced in v1.0.20) failed to set the `_isVRHit` flag, causing the VR Move tool to silently fall back to Desktop mouse symmetry coordinates.
-   - **(v1.0.22)** Fixed major VR picking instability. Discovered that the raycaster was mistakenly receiving World Space coordinates instead of Local Space coordinates whenever a mesh was actively locked during a stroke. Reverting the direct method call to `intersectionRayMeshes([mesh], ...)` correctly processes the matrix inversion, restoring flawless sculptural responsiveness on translated/scaled meshes.
-## Recent Work & Context (Updated)
-1. **Material Swapping Fixed**: Resolved the blocker where clicking UI materials wouldn't update the Three.js mesh. Now `mesh.setShaderType(newType)` correctly sets the Three.js material instance.
-2. **MatCap Texture Paths Fixed**: Prependied `app/` to Vite paths to ensure assets load (Status 200).
-3. **Refactored Loader to Native TextureLoader (v1.0.36)**: Switched from manual `HTMLImageElement` load + `new THREE.Texture()` to Three.js's standard async `THREE.TextureLoader().load()`.
-4. **Matched View Space Normal Bug (v1.0.38)**: Found the vertex shader was passing Object Space normal for static vertices instead of View Space (which MatCap expects). Fixed it to use View Space always.
+### 1. Fixed Critical "No Strokes" in VR Volume Intersect
+Discovered that `sculptStrokeXR` was running a second, tighter `intersectionSphereMeshes` search inside the stroke loop. If this search missed (due to tiny radii or stale Octrees), it overwrote the valid picking with `null`, dropping the stroke.
+-   **Fix**: Removed the redundant call. We now trust the successful picking state from `processVRSculpting` for that frame.
+-   **Status**: Strokes register reliably! 🎉
 
-## Current Working Blocker: MatCap Shaders Render Black
-Despite valid images (Status 200 in Network tab), valid `THREE.Texture` objects in memory (accessible via `window.ShaderMatcap.textures`), and verified `vNormal` calculations, the MatCap sphere remains pitch black in the headset.
+### 2. Robust Fast Octree Over-Fetching
+Tapping a tiny brush on a dense mesh would fail because the search radius was ~1cm and fell between stale Octree cell voids.
+-   **Fix**: Modified `pickVerticesInSphere` to query candidates using a safe adaptive minimum radius (fraction of mesh size), then filter precisely using the actual brush size. 
 
-### Hypotheses to Test in Morning:
-*   **Three.js State Leak in VR**: In `Scene.js` `_drawScene()`, `resetState()` is skipped if `isVR` is true (to prevent unbinding WebXR baseLayer). Could some other WebGL call be clobbering the texture unit 0 without Three.js knowing?
-*   **NaN Normals**: Are the normals `NaN` for some other reason (divide-by-zero)?
-*   **Fallback to Standard Material**: If custom WebGL hacks continue to choke, should we bite the bullet and use native `THREE.MeshMatcapMaterial` (which works perfectly with Three.js state trackers), even if it means losing the custom camera-horizon stabilization for a bit?
+### 3. Fixed Symmetry "Stuck in Place & Accumulating" Bug
+When using the topological map (`symMap`) to set symmetrical vertices, we were not marking them with the active `Utils.SCULPT_FLAG`. 
+-   **Fix**: Marked mapped symmetrical vertices with `Utils.SCULPT_FLAG` so `dynamicTopology` recognizes them instead of filtering them out as inactive!
+-   **Status**: Symmetry sweeps along! 🎉
 
-### Handy Debug Commands (Run in Console):
-*   `window.app.getMesh().getMatcap()` -> Check active matcap index.
-*   `window.app.getMesh().setAlbedo([1,1,1]); window.app.render();` -> Force Albedo to white to rule out black vertex painting.
-*   `window.ShaderMatcap.textures` -> Inspect loaded `THREE.Texture` objects.
+### 4. Pre-Compute Symmetry Before Main Stroke (Lag Reduction)
+Previously, Dyntopo modified the mesh (creating new unmapped vertices) *before* symmetry was computed. This broke `symMap` and forced symmetry to fall back to the stale Octree.
+-   **Fix**: Reordered `makeStrokeXR` so symmetry is computed on the *unmodified* mesh first.
 
-## Device Testing Strategy
-*   **Current (Fast Iteration)**: Using GalaxyXR headset connected via ADB to Macbook. Debugging with Remote Chrome Console. Vite provides HMR, making the debug cycle ~1/3 the time.
-*   **Future Validations**: Quest 3 (Standalone & PCVR), Quest 2. Beta testers on Valve Index, Pico VR, Apple Vision Pro. Relying on Three.js WebXR support to handle per-platform customizations automatically.
+---
+
+## Current Working Blocker: Symmetry Skew and Skipping on Default Sphere
+
+The symmetry stroke is skewed in direction (e.g., NE movements mirror to North instead of NW) and drops strokes during slow movements.
+
+### Key Insights (For Next Session):
+-   **Default Multi-res Sphere**: Tested on a standard sphere with scale 1.0 (no Dyntopo, no crazy mesh).
+-   **Geometric Math is Correct in deltas**: Logs show `MainDelta` and `SymDelta` are perfect mirror flips in world space.
+-   **Topological Symmetry is Brittle**: Disabling it didn't fix the skew, but it stabilized the vertex count. The issue seems to be in the hidden mesh transformation matrix or how the picking finds tilted faces if the mesh is slightly asymmetric.
+-   **Master Branch Comparison**: Need to carefully compare `makeStrokeXR` in `SculptBase.js` with `tmp_master_sculptbase.js` to find the exact delta in the lifecycle for standard strokes.
+
+-   **Porting Existing Logic**: The user emphasizes that we should **not reinvent the wheel**. The original WebGL codebase worked perfectly for standard multires symmetry. We need to find why the port is behaving differently (hidden rotations, scale double-transformations, or different lifecycle order).
+
+### Next Steps:
+-   **Direct Comparison**: Line-by-line comparison of `makeStrokeXR` in `SculptBase.js` vs `tmp_master_sculptbase.js` for standard multires (non-dyntopo).
+-   Check if `eyeDir` or normal consistency checks are overriding normal directions inconsistently for standard multires meshes vs Dyntopo.
+
+---
+## Device & Server
+-   **Server**: `npm run dev` (Vite)
+-   **Testing**: Chrome Remote DevTools over USB on GalaxyXR.
