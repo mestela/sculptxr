@@ -2348,7 +2348,7 @@ export default class GuiXR {
     }
 
     // --- DRAW HUD LOG ---
-    if (this._logLines && this._logLines.length > 0) {
+    if (this._isMiniHUD && this._logLines && this._logLines.length > 0) {
       ctx.save();
       ctx.textAlign = 'left';
       ctx.font = 'bold 20px monospace';

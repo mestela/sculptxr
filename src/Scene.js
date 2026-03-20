@@ -1886,6 +1886,14 @@ class Scene {
             ringLine.name = "cursor_ring";
             group.add(ringLine);
 
+            // 2b. Fixed-size Center Dot (Crosshair)
+            const dotGeo = new THREE.BufferGeometry();
+            dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+            const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.8 });
+            const centerDot = new THREE.Points(dotGeo, dotMat);
+            centerDot.name = "cursor_dot";
+            ringLine.add(centerDot); // Attach to ring so it follows position and rotation!
+
             group.visible = false;
             return group;
           };

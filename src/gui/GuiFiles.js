@@ -176,28 +176,41 @@ class GuiFiles {
   saveFileAsSGL() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportSGL(meshes, this._main), 'yourMesh.sgl');
+    this._save(Export.exportSGL(meshes, this._main), this._getTimestampedFileName('yourMesh', 'sgl'));
   }
 
   saveFileAsOBJ() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportOBJ(meshes, this._objColorZbrush, this._objColorAppended), 'yourMesh.obj');
+    this._save(Export.exportOBJ(meshes, this._objColorZbrush, this._objColorAppended), this._getTimestampedFileName('yourMesh', 'obj'));
   }
 
   saveFileAsPLY() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportBinaryPLY(meshes), 'yourMesh.ply');
+    this._save(Export.exportBinaryPLY(meshes), this._getTimestampedFileName('yourMesh', 'ply'));
   }
 
   saveFileAsSTL() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportBinarySTL(meshes), 'yourMesh.stl');
+    this._save(Export.exportBinarySTL(meshes), this._getTimestampedFileName('yourMesh', 'stl'));
+  }
+
+  _getTimestampedFileName(baseName, ext) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const mins = String(now.getMinutes()).padStart(2, '0');
+    return `${baseName}_${year}${month}${day}_${hours}${mins}.${ext}`;
   }
 
   _save(data, fileName, useZip) {
+    if (window.screenLog) {
+      window.screenLog('Saved: ' + fileName, 'cyan');
+    }
     if (!useZip) return saveAs(data, fileName);
 
     zip.useWebWorkers = true;

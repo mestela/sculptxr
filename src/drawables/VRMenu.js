@@ -38,9 +38,9 @@ class VRMenu {
 
     this.mesh = new THREE.Mesh(geometry, material);
     
-    // OVERLAY_SCALE: The UI canvas is drawn dense (1024x1024) but scaled up physically 13% for VR legibility.
-    // We scale the Three.js mesh so the visual size matches the _cacheWorld collision math.
-    const OVERLAY_SCALE = 1.13;
+    // OVERLAY_SCALE: The UI canvas is drawn dense (1024x1024) but scaled up physically for VR legibility.
+    // We make it 10% bigger than before (0.904 * 1.1 = 0.9944)
+    const OVERLAY_SCALE = 0.9944;
     this.mesh.scale.set(OVERLAY_SCALE, OVERLAY_SCALE, OVERLAY_SCALE);
 
     this._cacheWorld = mat4.create();
@@ -150,8 +150,8 @@ class VRMenu {
     const ly = localHit[1];
     const pad = 0.01;
     
-    // OVERLAY_SCALE multiplier matching visual scale in constructor
-    const OVERLAY_SCALE = 1.13;
+    // OVERLAY_SCALE multiplier matching visual scale in constructor (10% bigger than 0.904)
+    const OVERLAY_SCALE = 0.9944;
     const scaledW = this._w * OVERLAY_SCALE;
     const scaledH = this._h * OVERLAY_SCALE;
     
