@@ -1,4 +1,4 @@
-# SculptXR (v1.0.38)
+# SculptXR (v1.0.39)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.39**: **Pure Spatial Mirroring for Symmetry**: Resolved persistent skewing and offsets in standard brush tools by adopting a "Pure Spatial Volume" approach (matching `Drag` and `Move`). The symmetry brush now bypasses surface raycasting and uses the mathematically perfect mirror of the main brush in local space. No more jumping or $3.58cm$ offsets!
 *   **v1.0.38**: **MatCap & Move Performance Fixes**: Optimized Move tool with fast AABB face rejection (`faceBoxes`), skipping 90% of distance checks on dense meshes. Fixed MatCap brightness and view-space normal tracking.
 *   **v1.0.33**: **Move Tool Symmetry & Stability**: Resolved centerline symmetry anomalies by forcing fallbacks when the symmetric tip is in thin air. Rebuilt the Octree (`computeOctree()`) at the end of Move strokes to ensure subsequent tools (Crease/Smooth) map correctly to heavily deformed geometry. Silenced console noise.
 

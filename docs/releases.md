@@ -1,3 +1,7 @@
+## v1.0.39
+- **Feature**: **Pure Spatial Mirroring for Symmetry**: Resolved persistent skewing and offsets in standard brush tools by adopting a "Pure Spatial Volume" approach (matching `Drag` and `Move`). The symmetry brush now bypasses surface raycasting and uses the mathematically perfect mirror of the main brush in local space. No more jumping or $3.58cm$ offsets!
+- **Cleanup**: Purged redundant console logs (`[SymDebug]`, `P-Pick`, `S-Sculpt`) to restore a silent, performant developer console.
+
 ## v1.0.38
 - **Performance**: Optimized Move tool with fast AABB face rejection (`faceBoxes`), skipping 90% of distance checks on dense meshes.
 - **Visuals**: Fixed MatCap brightness and rotation tracking (stability when mesh is offset).
