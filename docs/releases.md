@@ -1,3 +1,9 @@
+## v1.0.40
+- **Feature**: **Timestamps on Save**: Saves are now dated (`yourMesh_YYYYMMDD_HHMM.ext`) to bypass the GalaxyXR overwrite prompt and avoid accidental loss!
+- **UI**: Scale-agnostic **Precision Center Dot** added to the brush circle for fine ray-alignment.
+- **UI**: Silenced HUD logs inside the main `VRMenu` to prevent obstructing long panels.
+- **Visuals**: Menus scaled down to optimal proportions for better field of view.
+
 ## v1.0.39
 - **Feature**: **Pure Spatial Mirroring for Symmetry**: Resolved persistent skewing and offsets in standard brush tools by adopting a "Pure Spatial Volume" approach (matching `Drag` and `Move`). The symmetry brush now bypasses surface raycasting and uses the mathematically perfect mirror of the main brush in local space. No more jumping or $3.58cm$ offsets!
 - **Cleanup**: Purged redundant console logs (`[SymDebug]`, `P-Pick`, `S-Sculpt`) to restore a silent, performant developer console.
