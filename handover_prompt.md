@@ -1,43 +1,36 @@
-# Handover Prompt - Fit and Finish (v1.0.40) & Symmetry (v1.0.39)
+# Handover Prompt - Wireframe Bias & Opacity Sliders (v1.0.41)
 
-**Project Status**: **Success!** We solved the persistent symmetry offset/skew for standard brush tools. We also polished the UX with timestamps, scale-agnostic cursor dots, and quieter menus!
+**Project Status**: **Success!** We implemented fine-grain controls for the wireframe overlay in VR, including direct bias adjustments and opacity sliders. We also cleaned up noisy logs to restore developer console performance!
 
-**Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr/`
+---
 
 ## Recent Work & Achievements (This Chat)
 
-### 1. Timestamps on Save (v1.0.40)
-Files now download as `yourMesh_YYYYMMDD_HHMM.ext`. This bypasses the GalaxyXR overwrite prompt and prevents accidental data loss! The file name is also printed to the VR HUD log as confirmation.
+### 1. Wireframe Opacity Slider (v1.0.41)
+Users can now live-adjust the transparency (alpha) of the wireframe overlay in VR, defaulting to `0.2` (20%).
+-   **Range**: `0.0 - 1.0` (Step `0.05`)
+-   **Implementation**: Plugs directly into the `uOpacity` uniform of the wireframe shader.
 
-### 2. Precision Center Cursor Dot (v1.0.40)
-Added a fixed-pixel scale-agnostic dot to the center of the brush circle (using `THREE.Points` with `sizeAttenuation: false`). This acts as a needle-point for precision alignment of rays!
+### 2. Wireframe Bias Slider (v1.0.41)
+Resolved standard slider-track scaling bugs and range limits! The bias slider now allows users to offset the wireframe overlay to prevent Z-fighting artifacts.
+-   **Range**: `0.0 - 0.005` (Step `0.0001`)
+-   **Implementation**: Bypasses normalized defaults and tracks absolute state variables.
 
-### 3. Silenced Main Menu HUD Logs (v1.0.40)
-Toggled drawing of `_logLines` to only happen when `isMiniHUD` is true. Now the main menu is clean and doesn't obscure long panels or menus!
-
-### 4. Optimal Menu Proportions (v1.0.40)
-Menus scaled down to a more comfortable size `0.9944` in `VRMenu.js`. Aiming math remains perfectly in sync and accurate!
-
-### 5. Pure Spatial Mirroring for Symmetry (v1.0.39)
-Discovered that standard brushes were jumping and skewing because they used raycasting to re-find the surface at every frame of a stroke. If the mesh was slightly asymmetric, it would find a face at a different angle, causing jumps (up to $3.58cm$ offset!).
--   **Solution**: Adopted the **Pure Spatial Volume** approach of `Drag` and `Move`.
--   **Implementation**: In `SculptBase.js:makeStrokeXR`, we skip surface raycasts for symmetry. Instead, we take the main brush position and mathematically mirror it in space. 
--   **Status**: Symmetry is rock solid! 🎉
+### 3. Log Cleanup (v1.0.41)
+Purged verbose `console.log` statements with these prefixes to clear console noise during development:
+-   `[Mesh]`
+-   `[GuiVRTools]`
+-   `[Multimesh]`
 
 ---
 
 ## Next Steps:
 
-The user has approved these pushes to `beta` (deployed to the live site!). The app should be stable for production testing!
-Future work can focus on new brush modes, scene management, or UI polish as needed!
+The features were verified to work functionally and are now live on the `threejs` branch. 
+Future chats can focus on further UI refinements or next-generation tools!
 
 ---
-## Device & Server
--   **Server**: `npm run dev` (Vite)
--   **Testing**: Chrome Remote DevTools over USB on GalaxyXR.
 
-
----
 ## Device & Server
 -   **Server**: `npm run dev` (Vite)
 -   **Testing**: Chrome Remote DevTools over USB on GalaxyXR.

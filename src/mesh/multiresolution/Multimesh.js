@@ -373,6 +373,8 @@ class Multimesh extends Mesh {
           }
         }
 
+        var indices;
+        var type = this.getWireframeType();
         if (type === 1) { // Smooth L0
           indices = this.getTessellatedWireframe(lowWireIdx);
         } else if (type === 0) { // Fast L0
@@ -383,6 +385,7 @@ class Multimesh extends Mesh {
             lowWireMesh.initEdges();
           }
           indices = lowWireMesh.getWireframe();
+        }
 
         if (this._renderData._wireframeMesh && indices) {
           var wireGeom = this._renderData._wireframeMesh.geometry;
