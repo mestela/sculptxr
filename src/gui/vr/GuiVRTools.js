@@ -720,9 +720,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     x: col1X, y: y, w: 550, h: btnH,
     value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
     onInteract: () => {
-      console.log("[GuiVRTools] Wireframe Button Pressed!");
       const mesh = main.getMesh();
-      console.log("[GuiVRTools] Mesh exists: " + !!mesh);
       if (mesh) {
         mesh.setShowWireframe(!mesh.getShowWireframe());
         main.render();

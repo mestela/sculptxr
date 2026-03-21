@@ -1,3 +1,8 @@
+## v1.0.41
+- **Feature**: **Wireframe Bias & Opacity Sliders**: Added fine-tune controls for the mesh wireframe overlay in VR. Adjust depth bias offset and transparency live! Defaults to `0.001` bias (1mm) and `0.2` opacity (20%).
+- **UX**: Expanded sliders to support arbitrary ranges (`0.0 - 1.0` and `0.0 - 0.005`) without UI track scaling quirks.
+- **Cleanup**: Purged redundant console logs (`[Mesh]`, `[GuiVRTools]`, `[Multimesh]`) to restore a silent, performant developer console.
+
 ## v1.0.40
 - **Feature**: **Timestamps on Save**: Saves are now dated (`yourMesh_YYYYMMDD_HHMM.ext`) to bypass the GalaxyXR overwrite prompt and avoid accidental loss!
 - **UI**: Scale-agnostic **Precision Center Dot** added to the brush circle for fine ray-alignment.

@@ -425,7 +425,6 @@ class Mesh {
   initThreeMesh() {
     if (!this._renderData) return;
     if (!this._renderData._threeMesh) {
-      // if (window.screenLog) window.screenLog("[Mesh] initThreeMesh ShaderManager: " + this.getShaderType(), "green");
 
       
       var material = ShaderManager.getMaterial(this.getShaderType());
@@ -2039,7 +2038,6 @@ class Mesh {
   }
 
   setShowWireframe(showWireframe) {
-    console.log(`[Mesh] setShowWireframe called with: ${showWireframe}`);
     this._renderData._showWireframe = RenderData.ONLY_DRAW_ARRAYS ? false : showWireframe;
     if (this._renderData._wireframeMesh) {
         this._renderData._wireframeMesh.visible = this.getShowWireframe();
@@ -2391,10 +2389,8 @@ class Mesh {
   }
 
   updateWireframeBuffer() {
-    console.log(`[Mesh] updateWireframeBuffer called, showWireframe: ${this.getShowWireframe()}`);
     if (this.getShowWireframe()) {
       if (!this.getEdges() || this.getEdges().length === 0) {
-        if (window.screenLog) window.screenLog("[Mesh] Lazy init wireframe topology", "yellow");
         this.allocateArrays();
         this.initFaceRings();
         this.initEdges();
@@ -2403,7 +2399,6 @@ class Mesh {
 
       // Lazy Init Three.js Wireframe Mesh
       if (!this._renderData._wireframeMesh) {
-        if (window.screenLog) window.screenLog("[Mesh] Lazily creating wireframe mesh", "yellow");
         var wireGeometry = new THREE.BufferGeometry();
         var wireMaterial = new THREE.LineBasicMaterial({ 
           color: 0x000000, 
@@ -2429,8 +2424,6 @@ class Mesh {
         }
         
         var indices = this.getWireframe();
-        if (window.screenLog) window.screenLog(`[Mesh] Index count: ${indices.length / 2} edges`, "cyan");
-        console.log(`[Mesh] Index count: ${indices.length / 2} edges`);
         var attr = wireGeom.getIndex();
         if (!attr || attr.array.length !== indices.length) {
             wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
