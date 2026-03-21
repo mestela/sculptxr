@@ -387,7 +387,7 @@ class Multimesh extends Mesh {
           indices = lowWireMesh.getWireframe();
         }
 
-        if (this._renderData._wireframeMesh && indices) {
+        if (this._renderData._wireframeMesh && this._renderData._threeMesh && indices) {
           var wireGeom = this._renderData._wireframeMesh.geometry;
           var mainGeom = this._renderData._threeMesh.geometry;
 

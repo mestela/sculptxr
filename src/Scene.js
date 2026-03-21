@@ -1773,13 +1773,13 @@ class Scene {
           const controllerModelFactory = new XRControllerModelFactory();
 
           this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(0);
-          const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
-          this._vrControllerLeftGrip.add(modelLeft);
+          // const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
+          // this._vrControllerLeftGrip.add(modelLeft);
           this._scene.add(this._vrControllerLeftGrip);
 
           this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(1);
-          const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
-          this._vrControllerRightGrip.add(modelRight);
+          // const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
+          // this._vrControllerRightGrip.add(modelRight);
           this._scene.add(this._vrControllerRightGrip);
           
           // Controller ray lines (attached to Target Ray Space)
