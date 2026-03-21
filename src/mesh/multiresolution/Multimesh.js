@@ -1,5 +1,6 @@
 import MeshResolution from './MeshResolution.js';
 import Mesh from '../Mesh.js';
+import * as THREE from 'three';
 import Buffer from '../../render/Buffer.js';
 import Subdivision from '../../editing/Subdivision.js';
 import Reversion from '../../editing/Reversion.js';
@@ -115,7 +116,7 @@ class Multimesh extends Mesh {
     
     // Instead of raw webgl buffer update, call the new Three.js geometry update
     mesh.updateIndexBuffer();
-    mesh.updateWireframeBuffer();
+    this.updateWireframeBuffer();
   }
 
   selectResolution(sel) {
@@ -190,16 +191,6 @@ class Multimesh extends Mesh {
   }
 
   getLowIndexWireframe() {
-    var limit = 25000; // Quest 3 performance cutoff (approx 75k lines)
-    var sel = this._sel;
-    while (sel >= 0) {
-      var mesh = this._meshes[sel];
-      if (mesh.getEvenMapping() === true)
-        return sel === this._sel ? sel : sel + 1;
-      if (mesh.getNbTriangles() < limit)
-        return sel;
-      --sel;
-    }
     return 0;
   }
 
@@ -364,21 +355,47 @@ class Multimesh extends Mesh {
   }
 
   updateWireframeBuffer() {
-    super.updateWireframeBuffer();
+    console.log(`[Multimesh] updateWireframeBuffer called, type: ${this.getWireframeType()}, sel: ${this._sel}`);
+    
+    if (this.getWireframeType() === 2) {
+      super.updateWireframeBuffer();
+      return;
+    }
+
     var lowWireIdx = this.getLowIndexWireframe();
 
-    if (this.getWireframeType() === 2) return; // Full wireframe handles itself via super
+    if (lowWireIdx === this._sel) {
+      console.log(`[Multimesh] At Level 0 (sel ${this._sel}), using super wireframe`);
+      super.updateWireframeBuffer();
+      return;
+    }
 
     if (lowWireIdx !== this._sel) {
       if (this.getShowWireframe()) {
-        var type = this.getWireframeType();
-        if (!this._lowWireframeBuffer) {
-           this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
+        
+        // Lazy Init Three.js Wireframe Mesh (Duplicate from Mesh.js for isolation)
+        if (!this._renderData._wireframeMesh) {
+          console.log("[Multimesh] Lazily creating wireframe mesh");
+          var wireGeometry = new THREE.BufferGeometry();
+          var wireMaterial = new THREE.LineBasicMaterial({ 
+            color: 0x000000, 
+            transparent: true, 
+            opacity: 0.4 
+          });
+          this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
+          this._renderData._wireframeMesh.frustumCulled = false;
+          this._renderData._wireframeMesh.renderOrder = 1;
+          if (this._renderData._threeMesh) {
+              this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+          }
         }
 
+        var type = this.getWireframeType();
+        var indices;
+
         if (type === 1) { // Smooth L0
-          var tessWire = this.getTessellatedWireframe(lowWireIdx);
-          this._lowWireframeBuffer.update(tessWire, tessWire.length);
+          indices = this.getTessellatedWireframe(lowWireIdx);
+          console.log(`[Multimesh] Smooth L0 calculated, indices: ${indices ? indices.length : 0}`);
         } else if (type === 0) { // Fast L0
           var lowWireMesh = this._meshes[lowWireIdx];
           if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
@@ -386,7 +403,36 @@ class Multimesh extends Mesh {
             lowWireMesh.initFaceRings();
             lowWireMesh.initEdges();
           }
-          this._lowWireframeBuffer.update(lowWireMesh.getWireframe(), lowWireMesh.getNbEdges() * 2);
+          indices = lowWireMesh.getWireframe();
+          console.log(`[Multimesh] Fast L0 indices count: ${indices ? indices.length : 0}`);
+        }
+
+        if (this._renderData._wireframeMesh && indices) {
+          var wireGeom = this._renderData._wireframeMesh.geometry;
+          var mainGeom = this._renderData._threeMesh.geometry;
+
+          // Share position! MUST sync if mainGeom replaces position!
+          if (wireGeom.getAttribute('position') !== mainGeom.getAttribute('position')) {
+              console.log("[Multimesh] Syncing position attribute pointer to wireframe geometry");
+              wireGeom.setAttribute('position', mainGeom.getAttribute('position'));
+          }
+
+          // Share normal! REQUIRED for vertex shader inflation!
+          if (!wireGeom.getAttribute('normal') || wireGeom.getAttribute('normal') !== mainGeom.getAttribute('normal')) {
+              console.log("[Multimesh] Syncing normal attribute pointer to wireframe geometry");
+              wireGeom.setAttribute('normal', mainGeom.getAttribute('normal'));
+          }
+
+          var attr = wireGeom.getIndex();
+          
+          console.log(`[Multimesh] Setting override indices on Geometry, count: ${indices.length}`);
+          if (!attr || attr.array.length !== indices.length) {
+              wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
+          } else {
+              attr.array.set(indices);
+              attr.needsUpdate = true;
+          }
+          wireGeom.setDrawRange(0, indices.length);
         }
       }
     }

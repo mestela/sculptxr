@@ -56,16 +56,13 @@ echo "🔄 Syncing src/Version.js -> $FULL_VERSION_STR"
 echo "export const VERSION = '$FULL_VERSION_STR';" > src/Version.js
 # ----------------------------
 
-echo "🚧 Preparing distribution package..."
-rm -rf dist_stage && mkdir -p dist_stage
-cp index.html dist_stage/index.html
-cp -r src lib dist_stage/
-mkdir -p dist_stage/resources
-cp -r app/resources/* dist_stage/resources/
-mkdir -p dist_stage/app/css
-cp -r app/css/* dist_stage/app/css/
+echo "🚧 Running Vite build..."
+npm run build
 
-echo "{\"version\": \"$FULL_VERSION_STR\"}" > dist_stage/version.json
+echo "{\"version\": \"$FULL_VERSION_STR\"}" > dist/version.json
+
+# Copy static assets that Vite doesn't bundle automatically
+cp -r app dist/
 
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 
@@ -77,7 +74,7 @@ ssh ${SSH_OPTS} ${USER}@${HOST} "mkdir -p ${DEST}"
 
 
 # 2. Rsync files
-rsync -avz -e "ssh ${SSH_OPTS}" dist_stage/ ${USER}@${HOST}:${DEST}/
+rsync -avz -e "ssh ${SSH_OPTS}" dist/ ${USER}@${HOST}:${DEST}/
 
 echo "✨ Deployment Complete! ($CURRENT_VERSION)"
 echo "$CURRENT_VERSION" > "$LAST_VERSION_FILE"

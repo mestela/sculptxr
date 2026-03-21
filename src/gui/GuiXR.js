@@ -2527,11 +2527,11 @@ export default class GuiXR {
           let nVal = wid.value;
           let disp = nVal;
           // IMPORTANT: If w.value is ALREADY absolute (e.g. > 1.0), do NOT remap it!
-          // We check if value looks un-normalized or if min/max exist
-          if (wid.min !== undefined && wid.max !== undefined && nVal <= 1.0 && nVal >= 0.0) {
-            disp = wid.min + nVal * (wid.max - wid.min);
+          // Determine display value (always absolute)
+          if (wid.min !== undefined && wid.max !== undefined) {
+            disp = wid.value;
           } else {
-            disp = nVal;
+            disp = nVal; // Fallback
           }
 
           ctx.textAlign = 'right';
@@ -2546,13 +2546,12 @@ export default class GuiXR {
           ctx.fillRect(wx + 2, barY, wid.w - 4, barH); // Full Width Background
 
           // 3. Slider Fill
-          // Calculate normalized ratio for the visual track
+          // Compute track percentage (always computed mathematically if min/max exist!)
           let tRatio = wid.value;
-          if (wid.min !== undefined && wid.max !== undefined && wid.value > 1.0) {
-            tRatio = (wid.value - wid.min) / (wid.max - wid.min);
+          if (wid.min !== undefined && wid.max !== undefined) {
+             tRatio = (wid.value - wid.min) / (wid.max - wid.min);
           }
           const knobX = (wid.w - 4) * Math.max(0, Math.min(1, tRatio)); 
-
           ctx.fillStyle = '#888';
           ctx.fillRect(wx + 2, barY, knobX, barH);
 

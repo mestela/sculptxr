@@ -1103,8 +1103,10 @@ class Scene {
 
     // Fallback/Legacy Caps init
     WebGLCaps.initWebGLExtensions(this._gl);
-    if (!WebGLCaps.getWebGLExtension('OES_element_index_uint'))
+    const isWebGL2 = (typeof WebGL2RenderingContext !== 'undefined' && this._gl instanceof WebGL2RenderingContext);
+    if (!isWebGL2 && !WebGLCaps.getWebGLExtension('OES_element_index_uint')) {
       RenderData.ONLY_DRAW_ARRAYS = true;
+    }
 
     // DEBUG: Inject Three.js objects into global scope for console debugging
     // this._scene.add(new THREE.AxesHelper(100)); // Large axes (100 units)

@@ -440,10 +440,50 @@ class Mesh {
         if (this.isUsingColors && this.isUsingColors()) material.vertexColors = true;
       }
 
+      // Apply polygonOffset to push solid mesh back and make wireframe crisp
+      material.polygonOffset = true;
+      material.polygonOffsetFactor = 1.0;
+      material.polygonOffsetUnits = 1.0;
+
       this._renderData._threeMesh = new THREE.Mesh(this._renderData._geometry, material);
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
       
+       // Three.js Wireframe Overlay (Custom Shader with Fragment Depth Bias)
+       // [x] Update wireframe `ShaderMaterial` in `Mesh.js` to use `gl_FragDepth` in fragment shader.
+       // [x] Remove normal displacement from vertex shader.
+       var wireGeometry = new THREE.BufferGeometry();
+       var wireMaterial = new THREE.ShaderMaterial({
+         vertexShader: `
+           void main() {
+             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+           }
+         `,
+         fragmentShader: `
+           uniform vec3 uColor;
+           uniform float uOpacity;
+           uniform float uBias;
+           void main() {
+             gl_FragColor = vec4(uColor, uOpacity);
+             // WebGL 2.0 depth bias (cheat depth test to win against curved surfaces)
+             gl_FragDepth = clamp(gl_FragCoord.z - uBias, 0.0, 1.0);
+           }
+         `,
+         uniforms: {
+           uBias: { value: 0.001 }, // Default 1mm (works best on Quest/Pro)
+           uColor: { value: new THREE.Color(0x000000) },
+           uOpacity: { value: 0.2 }
+         },
+         transparent: true,
+         depthTest: true,
+         depthWrite: false
+       });
+       this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
+       this._renderData._wireframeMesh.frustumCulled = false;
+       this._renderData._wireframeMesh.renderOrder = 2; // Render after main to help overlay
+      this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+      this._renderData._wireframeMesh.visible = this.getShowWireframe();
+
       this._renderData._threeMesh.onBeforeRender = function(renderer, scene, camera) {
          var mat = this.material;
          if (mat && mat.isShaderMaterial && mat.userData.sculptShaderId === 5) { // Enums.Shader.MATCAP
@@ -1999,7 +2039,11 @@ class Mesh {
   }
 
   setShowWireframe(showWireframe) {
+    console.log(`[Mesh] setShowWireframe called with: ${showWireframe}`);
     this._renderData._showWireframe = RenderData.ONLY_DRAW_ARRAYS ? false : showWireframe;
+    if (this._renderData._wireframeMesh) {
+        this._renderData._wireframeMesh.visible = this.getShowWireframe();
+    }
     this.updateWireframeBuffer();
   }
 
@@ -2347,6 +2391,7 @@ class Mesh {
   }
 
   updateWireframeBuffer() {
+    console.log(`[Mesh] updateWireframeBuffer called, showWireframe: ${this.getShowWireframe()}`);
     if (this.getShowWireframe()) {
       if (!this.getEdges() || this.getEdges().length === 0) {
         if (window.screenLog) window.screenLog("[Mesh] Lazy init wireframe topology", "yellow");
@@ -2355,6 +2400,51 @@ class Mesh {
         this.initEdges();
       }
       this.getWireframeBuffer().update(this.getWireframe(), this.getNbEdges() * 2);
+
+      // Lazy Init Three.js Wireframe Mesh
+      if (!this._renderData._wireframeMesh) {
+        if (window.screenLog) window.screenLog("[Mesh] Lazily creating wireframe mesh", "yellow");
+        var wireGeometry = new THREE.BufferGeometry();
+        var wireMaterial = new THREE.LineBasicMaterial({ 
+          color: 0x000000, 
+          transparent: true, 
+          opacity: 0.4 
+        });
+        this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
+        this._renderData._wireframeMesh.frustumCulled = false;
+        this._renderData._wireframeMesh.renderOrder = 1;
+        if (this._renderData._threeMesh) {
+            this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+        }
+      }
+
+      // Three.js Wireframe Update
+      if (this._renderData._wireframeMesh) {
+        var wireGeom = this._renderData._wireframeMesh.geometry;
+        var mainGeom = this._renderData._geometry;
+        
+        // Share position!
+        if (wireGeom.getAttribute('position') !== mainGeom.getAttribute('position')) {
+            wireGeom.setAttribute('position', mainGeom.getAttribute('position'));
+        }
+        
+        var indices = this.getWireframe();
+        if (window.screenLog) window.screenLog(`[Mesh] Index count: ${indices.length / 2} edges`, "cyan");
+        console.log(`[Mesh] Index count: ${indices.length / 2} edges`);
+        var attr = wireGeom.getIndex();
+        if (!attr || attr.array.length !== indices.length) {
+            wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
+        } else {
+            attr.array.set(indices);
+            attr.needsUpdate = true;
+        }
+        wireGeom.setDrawRange(0, indices.length);
+        this._renderData._wireframeMesh.visible = true;
+      }
+    } else {
+      if (this._renderData._wireframeMesh) {
+        this._renderData._wireframeMesh.visible = false;
+      }
     }
   }
 

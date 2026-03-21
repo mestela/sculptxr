@@ -55,6 +55,45 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'wireframe_bias', label: 'Wireframe Bias', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 0.005, step: 0.0001,
+    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.wireframeBias !== undefined ? main.getGui()._uiXR._uiSettings.wireframeBias : 0.001,
+    precision: 4, // Allow viewing full 0.0001 increments
+    onInput: (val) => {
+      // GuiXR now passes absolute values!
+      if (main.getGui()._uiXR) {
+        main.getGui()._uiXR._uiSettings.wireframeBias = val;
+      }
+      if (window.app && window.app.getMesh()) {
+        const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
+        if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
+          wireMesh.material.uniforms.uBias.value = val;
+        }
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'slider', id: 'wireframe_alpha', label: 'Wireframe Opacity', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 1.0, step: 0.05,
+    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.wireframeAlpha !== undefined ? main.getGui()._uiXR._uiSettings.wireframeAlpha : 0.2, // Default 0.2
+    precision: 2, // Percentage (0.00 to 1.00)
+    onInput: (val) => {
+      if (main.getGui()._uiXR) {
+        main.getGui()._uiXR._uiSettings.wireframeAlpha = val;
+      }
+      if (window.app && window.app.getMesh()) {
+        const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
+        if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
+          wireMesh.material.uniforms.uOpacity.value = val;
+        }
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
 
   widgets.push({ type: 'header', label: 'Calibration', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;

@@ -3,6 +3,7 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import { resolve } from 'path';
 
 export default defineConfig({
+  base: './',
   resolve: {
     alias: {
       'gl-matrix': resolve(__dirname, 'lib/gl-matrix-wrapper.js'),
