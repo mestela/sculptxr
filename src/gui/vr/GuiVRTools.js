@@ -70,10 +70,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.FLATTEN:
       case Enums.Tools.PINCH:
       case Enums.Tools.CREASE:
-        return 'hsl(0, 50%, 85%)'; // Red (bright)
+        return '#ebc5c5'; // Red (bright)
       case Enums.Tools.SMOOTH:
       case Enums.Tools.RELAX:
-        return 'hsl(218, 50%, 85%)'; // Blue (bright)
+        return '#c5d3eb'; // Blue (bright)
       case Enums.Tools.MOVE:
       case Enums.Tools.GRAB:
       case Enums.Tools.SLIDE:
@@ -82,11 +82,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.TRANSFORM:
       case Enums.Tools.TRANSFORM_VR:
       case Enums.Tools.LOCALSCALE:
-        return 'hsl(120, 50%, 85%)'; // Green (bright)
+        return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
-        return 'hsl(279, 50%, 85%)'; // Purple (bright)
+        return '#dec5eb'; // Purple (bright)
       case Enums.Tools.MASKING:
-        return 'hsl(36, 50%, 85%)'; // Orange (bright)
+        return '#ebdcc5'; // Orange (bright)
       default:
         return '#eeeeee';
     }
