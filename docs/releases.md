@@ -1,4 +1,9 @@
-# v1.0.43
+# v1.0.44
+- **Refactoring**: **Button Rendering Consolidation**: Unified the button rendering paths for the Main Menu, MiniHUD, and Tool Picker overlay into a single shared function (`_drawButton`).
+- **Visuals**: Replaced the hardcoded intense green highlights with a subtle light gray selection border to reduce distractions.
+- **VR Anti-Aliasing**: Applied hardware `shadowBlur` (radius 2) to the selection border, significantly reducing pixel crawl and aliasing in both GalaxyXR and Quest 3 headsets.
+
+## v1.0.43
 - **Feature**: **Menu Brightness and Saturation Sliders**: Added fine-tune controls for the visual appearance of the VR menus. Adjust brightness (0 to 1, mapping to darker tones) and saturation (0 to 1, piecewise mapping up to 500% boost).
 - **UX**: Unified application of these settings across the Main Menu, MiniHUD, and the context-sensitive Tool Picker popup.
 - **Visuals**: Reduced the active tool button highlight from intense green to a subtle light gray to avoid visual distraction.

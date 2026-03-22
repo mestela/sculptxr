@@ -1,4 +1,4 @@
-# SculptXR (v1.0.43)
+# SculptXR (v1.0.44)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.44**: **Button Rendering Consolidation**: Unified the button rendering paths for the Main Menu, MiniHUD, and Tool Picker overlay into a single shared function (`_drawButton`). Added hardware `shadowBlur` (radius 2) to the selection border, significantly reducing pixel crawl and aliasing in both GalaxyXR and Quest 3 headsets.
 *   **v1.0.43**: **Menu Brightness and Saturation Sliders**: Added fine-tune controls for the visual appearance of the VR menus. Adjust brightness (0 to 1, mapping to darker tones) and saturation (0 to 1, piecewise mapping up to 500% boost).
 *   **v1.0.42**: **Poly Move Tool Rotation Fix**: Resolved the "drift" issue where vertices did not follow the ray's sweep during rotation. Updated the tool to utilize the controller's origin (and its mirrored counterpart for symmetry) as the rotation pivot, keeping vertices perfectly locked to the brush cursor dot.
-*   **v1.0.41**: **Wireframe Bias & Opacity Sliders**: Added fine-tune controls for the mesh wireframe overlay in VR. Adjust depth bias offset and transparency live! Defaults to `0.001` bias (1mm) and `0.2` opacity (20%).
 
 *   **v1.0.22**: **Severe Picking Fixes**: Fixed a severe picking instability where pulling the controller trigger would instantly abort strokes (missing the mesh) due to Local Space vs World Space coordinate mismatches inside the VR raycaster. Silenced excessive internal VR Cursor logs to prevent console polling overhead.
 *   **v1.0.0 - v1.0.21**: **Three.js Architecture Overhaul & Interaction Fixes:** Completed a massive migration from raw WebGL to Three.js v160, enabling robust headset compatibility (Quest, GalaxyXR, PCVR). Rewrote the VR GUI interaction system to solve deep race conditions with controller raycasts, implementing physics-aware trigger debouncing for flawless 90hz high-speed button taps and sweep-clicks. Reinstated 1:1 master branch visual parity for VR cursors, including intensity-linked color saturation and robust backface-culling to prevent raycast penetration bugs. Restored Move Tool VR symmetry math via raycast boolean fixes.
