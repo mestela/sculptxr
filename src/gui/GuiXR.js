@@ -475,6 +475,25 @@ export default class GuiXR {
     this.draw();
   }
 
+  refreshSceneWidget() {
+    if (this._tabWidgets) delete this._tabWidgets['Scene'];
+    this._needsRedraw = true;
+
+    // If the Scene overlay is currently open, reload its widgets to reflect changes (e.g., in the outliner)
+    if (this._overlay === 'menu' && this._overlayData && this._overlayData.tabName === 'Scene') {
+      const gen = this._widgetGenerators['Scene'];
+      if (gen) {
+        const data = gen(this._main);
+        if (data) {
+          this._overlayData.widgets = data.widgets;
+          this._overlayData.h = data.height; // UI scale might rely on this
+        }
+      }
+    }
+
+    this.draw();
+  }
+
   init(gl) {
     if (this._texture) return;
     this._texture = gl.createTexture();
@@ -515,8 +534,7 @@ export default class GuiXR {
     if (this._activeCombobox || this._overlay === 'combobox') {
       this._hoverWidget = null;
       this._hoverTab = null;
-      this._needsRedraw = true;
-      this._requestDraw();
+      this._updateComboboxHover();
       return;
     }
 
@@ -635,12 +653,35 @@ export default class GuiXR {
   }
 
   _updateComboboxHover() {
-    // Basic hit test for dropdown options to support highlighting?
-    // Not critical but nice-to-have if user asked for it. 
-    // "menu elements don't highlight" -> refers to Overlay Menu or Combobox? 
-    // User said "combobox for tool ... elements behind ... highlight", then "open a menu ... don't highlight".
-    // "Menu" likely means the top tabs ("Files", "Scene" etc) causing an Overlay.
-    // So _updateOverlayHover is priority.
+    const data = this._overlayData;
+    if (!data || !data.options) return;
+
+    const cx = this._cursor.x;
+    const cy = this._cursor.y;
+
+    const pivot = this._getOverlayPivot();
+    const invScale = 1.0 / OVERLAY_SCALE;
+
+    const localCursorX = (cx - pivot.x) * invScale + pivot.x;
+    const localCursorY = (cy - pivot.y) * invScale + pivot.y;
+
+    const itemHeight = 80;
+    const startX = (this._canvas.width - 400) / 2;
+    const startY = OVERLAY_Y + 100;
+
+    const listH = data.options.length * itemHeight;
+
+    let hoveredOptionIndex = -1;
+
+    if (localCursorX >= startX && localCursorX <= startX + 400 && localCursorY >= startY && localCursorY <= startY + listH) {
+      hoveredOptionIndex = Math.floor((localCursorY - startY) / itemHeight);
+    }
+
+    if (this._hoverComboboxIndex !== hoveredOptionIndex) {
+      this._hoverComboboxIndex = hoveredOptionIndex;
+      this._needsRedraw = true;
+      this._requestDraw();
+    }
   }
 
   _updateOverlayHover() {
@@ -708,13 +749,19 @@ export default class GuiXR {
 
     // New Property for Overlay Hover
     if ((this._hoverOverlayWidget ? this._hoverOverlayWidget.id : null) !== (newHover ? newHover.id : null)) {
-      // Debug Logging for transition
-      const oldId = this._hoverOverlayWidget ? (this._hoverOverlayWidget.id || this._hoverOverlayWidget.label) : 'null';
-      const newId = newHover ? (newHover.id || newHover.label) : 'null';
-
+      const oldHover = this._hoverOverlayWidget;
       this._hoverOverlayWidget = newHover;
-      this._needsRedraw = true;
-      this._requestDraw();
+
+      // Partial Redraw for Overlays (fixes performance hit when moving pointers across outliner)
+      if (this._overlayData) {
+        const ox = this._overlayData.x;
+        const oy = this._overlayData.y;
+        
+        if (oldHover) this._drawOverlayWidget(oldHover, this._ctx, ox, oy, false);
+        if (newHover) this._drawOverlayWidget(newHover, this._ctx, ox, oy, true);
+        
+        this._needsUpload = true; // Request throttled upload
+      }
     } else {
       // Even if same, if we moved significantly or just to be safe?
       // No, if same, no need to redraw.
@@ -1405,8 +1452,9 @@ export default class GuiXR {
             this._executeAction(w);
             // Close menu on action? 
             // Keep open for specific actions like Undo/Redo or Tools
-            // ALSO keep open for Voxel Mode buttons (vx_add, vx_sub, etc)
-            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def'].includes(w.id);
+            // ALSO keep open for Outliner buttons (select, delete) to allow batch ops
+            const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
+            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def'].includes(w.id) || isOutliner;
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'combobox') {
@@ -2217,15 +2265,35 @@ export default class GuiXR {
           ctx.fillStyle = '#111';
           ctx.fillRect(checkX, checkY, checkW, checkW);
 
-          if (wid.value) {
-            ctx.strokeStyle = '#00D0FF';
-            ctx.lineWidth = 4;
+          if (wid.icon === 'eye') {
+            const eyeColor = wid.value ? '#00D0FF' : '#444';
+            ctx.strokeStyle = eyeColor;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            const pad = 8;
-            ctx.moveTo(checkX + pad, checkY + checkW * 0.5);
-            ctx.lineTo(checkX + checkW * 0.4, checkY + checkW - pad);
-            ctx.lineTo(checkX + checkW - pad, checkY + pad);
+            // Upper lid
+            ctx.moveTo(checkX + 4, checkY + checkW * 0.5);
+            ctx.quadraticCurveTo(checkX + checkW * 0.5, checkY + 8, checkX + checkW - 4, checkY + checkW * 0.5);
+            // Lower lid
+            ctx.moveTo(checkX + 4, checkY + checkW * 0.5);
+            ctx.quadraticCurveTo(checkX + checkW * 0.5, checkY + checkW - 8, checkX + checkW - 4, checkY + checkW * 0.5);
             ctx.stroke();
+
+            // Pupil
+            ctx.fillStyle = eyeColor;
+            ctx.beginPath();
+            ctx.arc(checkX + checkW * 0.5, checkY + checkW * 0.5, 6, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            if (wid.value) {
+              ctx.strokeStyle = '#00D0FF';
+              ctx.lineWidth = 4;
+              ctx.beginPath();
+              const pad = 8;
+              ctx.moveTo(checkX + pad, checkY + checkW * 0.5);
+              ctx.lineTo(checkX + checkW * 0.4, checkY + checkW - pad);
+              ctx.lineTo(checkX + checkW - pad, checkY + pad);
+              ctx.stroke();
+            }
           }
         }
           // --- COMBOBOX ---
@@ -2447,155 +2515,8 @@ export default class GuiXR {
 
       // Draw Menu Widgets
       widgets.forEach(wid => {
-        const wx = x + wid.x;
-        const wy = y + wid.y;
-
         const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
-
-        if (this._overlayData.isToolPicker && isHover && window.screenLog && Math.random() < 0.05) {
-          // window.screenLog(`[Draw] Hovering: ${wid.id}`, 'cyan'); // Debugging removed here
-        }
-
-        // Hover Background (Generic)
-        if (isHover) {
-          ctx.fillStyle = this.styles.colorWidgetHover;
-          ctx.fillRect(wx, wy, wid.w, wid.h);
-        }
-
-        ctx.textAlign = 'left';
-
-        // NOTE: Widgets in overlay come from GuiVRXXX files which hardcode size?
-        // NO, GuiFiles.js returns { w: 800, h: ..., widgets: [...] }
-        // If we scaled OVERLAY_W, we might need to rely on the *generators* or scale contexts.
-        // But here we are drawing them.
-        // Wait, the WIDGETS inside `data.widgets` have `x, y, w, h`.
-        // If those are hardcoded 800-based, scaling the box won't scale the buttons!
-        // We MUST scale the widgets on the fly OR update the generators.
-        // Scaling on the fly during draw is easier for now to satisfy "Scale by 20%".
-        // But `_updateHover` also uses these coordinates for hit testing.
-        if (wid.header) {
-          ctx.font = this.styles.fontOverlayHeader;
-          ctx.fillStyle = '#aaa';
-          ctx.fillText(wid.label, wx + 5, wy + wid.h - 10);
-          // Separator line
-          ctx.strokeStyle = this.styles.overlayMenuBorder;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(wx, wy + wid.h - 5);
-          ctx.lineTo(wx + wid.w, wy + wid.h - 5);
-          ctx.stroke();
-        } else if (wid.type === 'info') {
-          ctx.fillStyle = '#bbb';
-          ctx.font = this.styles.fontOverlay;
-          ctx.textAlign = wid.textAlign || 'left';
-          ctx.fillText(wid.label, wx + (wid.textAlign === 'center' ? 0 : 5), wy + wid.h / 2 + 6);
-        } else if (wid.type === 'checkbox') {
-          // Checkbox logic - Solid BG
-          ctx.fillStyle = isHover ? '#444' : '#333';
-          ctx.fillRect(wx, wy, wid.w, wid.h);
-
-          const boxSize = 24;
-          const boxX = wx + wid.w - boxSize - 5;
-          const boxY = wy + (wid.h - boxSize) / 2;
-
-          ctx.fillStyle = '#111';
-          ctx.fillRect(boxX, boxY, boxSize, boxSize);
-
-          if (wid.value) {
-            ctx.fillStyle = '#0f0'; // Checkmark
-            ctx.fillRect(boxX + 4, boxY + 4, boxSize - 8, boxSize - 8);
-          }
-
-          ctx.font = this.styles.fontOverlay;
-          ctx.fillStyle = '#ddd';
-          ctx.textAlign = 'left';
-          ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
-
-        } else if (wid.type === 'slider') {
-          // Flame Style Overlay Slider Polish
-
-          // 1. Text Info (Larger)
-          // 1. Text Info (Larger)
-          // 1. Text Info (Larger)
-          ctx.font = this.styles.fontOverlay;
-          ctx.textAlign = 'left';
-          ctx.fillStyle = '#ddd';
-          ctx.fillText(wid.label, wx + 2, wy + 28);
-
-          // Value
-          let nVal = wid.value;
-          let disp = nVal;
-          // IMPORTANT: If w.value is ALREADY absolute (e.g. > 1.0), do NOT remap it!
-          // Determine display value (always absolute)
-          if (wid.min !== undefined && wid.max !== undefined) {
-            disp = wid.value;
-          } else {
-            disp = nVal; // Fallback
-          }
-
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#aaa';
-          const precision = wid.precision !== undefined ? wid.precision : 2;
-          ctx.fillText(disp.toFixed(precision), wx + wid.w - 2, wy + 28);
-
-          // 2. Slider Track (Thin, Bottom)
-          const barH = 6;
-          const barY = wy + wid.h - barH - 4;
-          ctx.fillStyle = '#111';
-          ctx.fillRect(wx + 2, barY, wid.w - 4, barH); // Full Width Background
-
-          // 3. Slider Fill
-          // Compute track percentage (always computed mathematically if min/max exist!)
-          let tRatio = wid.value;
-          if (wid.min !== undefined && wid.max !== undefined) {
-             tRatio = (wid.value - wid.min) / (wid.max - wid.min);
-          }
-          const knobX = (wid.w - 4) * Math.max(0, Math.min(1, tRatio)); 
-          ctx.fillStyle = '#888';
-          ctx.fillRect(wx + 2, barY, knobX, barH);
-
-          // Marker
-          ctx.fillStyle = '#ccc';
-          ctx.fillRect(wx + 2 + knobX - 2, barY - 2, 4, barH + 4);
-
-        } else if (wid.type === 'button') {
-          const isActive = wid.data && wid.data.active;
-          this._drawButton(ctx, wx, wy, wid, isActive, isHover);
-        } else if (wid.type === 'combobox') {
-          ctx.fillStyle = isHover ? '#444' : '#333';
-          ctx.fillRect(wx, wy, wid.w, wid.h);
-
-          ctx.font = this.styles.fontOverlay;
-          ctx.fillStyle = '#ddd';
-          ctx.textAlign = 'left';
-          ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
-
-          let valLabel = wid.value;
-          if (wid.options) {
-            const opt = wid.options.find(o => o.id === wid.value);
-            if (opt) valLabel = opt.label;
-          }
-
-          ctx.textAlign = 'right';
-          ctx.fillStyle = '#fff';
-          ctx.fillText(valLabel, wx + wid.w - 30, wy + wid.h / 2 + 6);
-
-          // Triangle
-          ctx.beginPath();
-          ctx.moveTo(wx + wid.w - 20, wy + wid.h / 2 - 5);
-          ctx.lineTo(wx + wid.w - 10, wy + wid.h / 2 - 5);
-          ctx.lineTo(wx + wid.w - 15, wy + wid.h / 2 + 5);
-          ctx.fill();
-
-          // Combobox hover border
-          if (isHover) {
-            const INSET = 2;
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
-            ctx.lineWidth = 1;
-          }
-        }
+        this._drawOverlayWidget(wid, ctx, x, y, isHover);
       });
 
       // No restore needed (caller handles it)
@@ -3486,6 +3407,148 @@ export default class GuiXR {
     return { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy };
   }
 
+
+  _drawOverlayWidget(wid, ctx, x, y, isHover) {
+    const wx = x + wid.x;
+    const wy = y + wid.y;
+
+    // Hover Background (Generic)
+    if (isHover) {
+      ctx.fillStyle = this.styles.colorWidgetHover;
+      ctx.fillRect(wx, wy, wid.w, wid.h);
+    } else {
+      // Clear with Menu Bg
+      ctx.fillStyle = this.styles.overlayMenuBg;
+      ctx.fillRect(wx, wy, wid.w, wid.h);
+    }
+
+    ctx.textAlign = 'left';
+
+    if (wid.header) {
+      ctx.font = this.styles.fontOverlayHeader;
+      ctx.fillStyle = '#aaa';
+      ctx.fillText(wid.label, wx + 5, wy + wid.h - 10);
+      ctx.strokeStyle = this.styles.overlayMenuBorder;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(wx, wy + wid.h - 5);
+      ctx.lineTo(wx + wid.w, wy + wid.h - 5);
+      ctx.stroke();
+    } else if (wid.type === 'info') {
+      ctx.fillStyle = '#bbb';
+      ctx.font = this.styles.fontOverlay;
+      ctx.textAlign = wid.textAlign || 'left';
+      ctx.fillText(wid.label, wx + (wid.textAlign === 'center' ? 0 : 5), wy + wid.h / 2 + 6);
+    } else if (wid.type === 'checkbox') {
+      ctx.fillStyle = isHover ? '#444' : '#333';
+      ctx.fillRect(wx, wy, wid.w, wid.h);
+
+      const boxSize = 24;
+      const boxX = wx + wid.w - boxSize - 5;
+      const boxY = wy + (wid.h - boxSize) / 2;
+
+      if (wid.icon === 'eye') {
+        const eyeColor = wid.value ? '#00D0FF' : '#444';
+        ctx.strokeStyle = eyeColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(boxX + 2, boxY + boxSize * 0.5);
+        ctx.quadraticCurveTo(boxX + boxSize * 0.5, boxY + 4, boxX + boxSize - 2, boxY + boxSize * 0.5);
+        ctx.moveTo(boxX + 2, boxY + boxSize * 0.5);
+        ctx.quadraticCurveTo(boxX + boxSize * 0.5, boxY + boxSize - 4, boxX + boxSize - 2, boxY + boxSize * 0.5);
+        ctx.stroke();
+
+        ctx.fillStyle = eyeColor;
+        ctx.beginPath();
+        ctx.arc(boxX + boxSize * 0.5, boxY + boxSize * 0.5, 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        if (wid.value) {
+          ctx.strokeStyle = '#00D0FF';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(boxX + 4, boxY + boxSize * 0.5);
+          ctx.lineTo(boxX + boxSize * 0.4, boxY + boxSize - 4);
+          ctx.lineTo(boxX + boxSize - 4, boxY + 4);
+          ctx.stroke();
+        }
+      }
+
+      ctx.font = this.styles.fontOverlay;
+      ctx.fillStyle = '#ddd';
+      ctx.textAlign = 'left';
+      ctx.fillText(wid.label, wx + 5, wy + wid.h / 2 + 6);
+
+    } else if (wid.type === 'slider') {
+      ctx.font = this.styles.fontOverlay;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ddd';
+      ctx.fillText(wid.label, wx + 2, wy + 28);
+
+      let nVal = wid.value;
+      let disp = nVal;
+      if (wid.min !== undefined && wid.max !== undefined) {
+        disp = wid.value;
+      }
+
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#aaa';
+      const precision = wid.precision !== undefined ? wid.precision : 2;
+      ctx.fillText(disp.toFixed(precision), wx + wid.w - 2, wy + 28);
+
+      const barH = 6;
+      const barY = wy + wid.h - barH - 4;
+      ctx.fillStyle = '#111';
+      ctx.fillRect(wx + 2, barY, wid.w - 4, barH);
+
+      let tRatio = wid.value;
+      if (wid.min !== undefined && wid.max !== undefined) {
+         tRatio = (wid.value - wid.min) / (wid.max - wid.min);
+      }
+      const knobX = (wid.w - 4) * Math.max(0, Math.min(1, tRatio)); 
+      ctx.fillStyle = '#888';
+      ctx.fillRect(wx + 2, barY, knobX, barH);
+
+      ctx.fillStyle = '#ccc';
+      ctx.fillRect(wx + 2 + knobX - 2, barY - 2, 4, barH + 4);
+
+    } else if (wid.type === 'button') {
+      const isActive = wid.data && wid.data.active;
+      this._drawButton(ctx, wx, wy, wid, isActive, isHover);
+    } else if (wid.type === 'combobox') {
+      ctx.fillStyle = isHover ? '#444' : '#333';
+      ctx.fillRect(wx, wy, wid.w, wid.h);
+
+      ctx.font = this.styles.fontOverlay;
+      ctx.fillStyle = '#ddd';
+      ctx.textAlign = 'left';
+      ctx.fillText(wid.label, wx + 10, wy + wid.h / 2 + 6);
+
+      let valLabel = wid.value;
+      if (wid.options) {
+        const opt = wid.options.find(o => o.id === wid.value);
+        if (opt) valLabel = opt.label;
+      }
+
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(valLabel, wx + wid.w - 30, wy + wid.h / 2 + 6);
+
+      ctx.beginPath();
+      ctx.moveTo(wx + wid.w - 20, wy + wid.h / 2 - 5);
+      ctx.lineTo(wx + wid.w - 10, wy + wid.h / 2 - 5);
+      ctx.lineTo(wx + wid.w - 15, wy + wid.h / 2 + 5);
+      ctx.fill();
+
+      if (isHover) {
+        const INSET = 2;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
+        ctx.lineWidth = 1;
+      }
+    }
+  }
 
 }
 

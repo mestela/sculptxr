@@ -152,15 +152,7 @@ class GuiScene {
   }
 
   merge() {
-    var main = this._main;
-    var selMeshes = main.getSelectedMeshes();
-    if (selMeshes.length < 2) return;
-
-    var newMesh = Remesh.mergeMeshes(selMeshes, main.getMesh() || selMeshes[0]);
-    main.removeMeshes(selMeshes);
-    main.getStateManager().pushStateAddRemove(newMesh, selMeshes.slice());
-    main.getMeshes().push(newMesh);
-    main.setMesh(newMesh);
+    this._main.mergeSelection();
   }
 
   toggleShowHide(ignoreCB) {

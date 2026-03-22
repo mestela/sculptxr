@@ -23,6 +23,7 @@ import ShaderManager from './render/ShaderManager.js';
 import MeshStatic from './mesh/meshStatic/MeshStatic.js';
 import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
+import Remesh from './editing/Remesh.js';
 import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
@@ -999,9 +1000,7 @@ class Scene {
     // grid
     // if (this._showGrid && this._grid) this._grid.render(this);
 
-    // VR Controllers
-    // if (this._vrControllerLeft) this._vrControllerLeft.render(this);
-    // if (this._vrControllerRight) this._vrControllerRight.render(this);
+    // VR Controllers are handled by Three.js Scene graph now. No custom WebGL rendering needed.
 
     // var startTransparent = nbMeshes;
     // if (this._meshPreview) this._meshPreview.render(this);
@@ -1318,13 +1317,13 @@ class Scene {
     // make a cube and subdivide it
     var mesh = new Multimesh(Primitives.createCube(this._gl));
     mesh.normalizeSize();
-    this.subdivideClamp(mesh); 
+    this.subdivideClamp(mesh);
 
     // Default to MATCAP with Skin Hazardousarts2 (idMat 3)
     mesh.setShaderType(Enums.Shader.MATCAP);
     mesh.setMatcap(3);
 
-
+    mesh._typeName = "Sphere";
     this.addNewMesh(mesh);
     return mesh;
   }
@@ -1334,6 +1333,7 @@ class Scene {
     mesh.normalizeSize();
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     this.subdivideClamp(mesh, true);
+    mesh._typeName = "Cube";
     return this.addNewMesh(mesh);
   }
 
@@ -1342,11 +1342,13 @@ class Scene {
     mesh.normalizeSize();
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     this.subdivideClamp(mesh);
+    mesh._typeName = "Cylinder";
     return this.addNewMesh(mesh);
   }
 
   addTorus(preview) {
     var mesh = new Multimesh(Primitives.createTorus(this._gl, this._torusLength, this._torusWidth, this._torusRadius, this._torusRadial, this._torusTubular));
+    mesh._typeName = "Torus";
     if (preview) {
       mesh.setShowWireframe(true);
       var scale = 0.3 * Utils.SCALE;
@@ -1376,7 +1378,36 @@ class Scene {
     }
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
+
+    if (this._guiXR && this._guiXR.refreshSceneWidget) {
+      this._guiXR.refreshSceneWidget();
+    }
+
     return mesh;
+  }
+
+  mergeSelection() {
+    var selMeshes = this.getSelectedMeshes().slice();
+    if (selMeshes.length < 2) return;
+
+    var baseMesh = this.getMesh() || selMeshes[0];
+    var newMesh = Remesh.mergeMeshes(selMeshes, baseMesh);
+
+    this.removeMeshes(selMeshes);
+
+    this._meshes.push(newMesh);
+    if (this._worldGroup && newMesh.getThreeMesh()) {
+      this._worldGroup.add(newMesh.getThreeMesh());
+    }
+
+    this._stateManager.pushStateAddRemove(newMesh, selMeshes);
+    this.setMesh(newMesh);
+
+    if (this._guiXR && this._guiXR.refreshSceneWidget) {
+      this._guiXR.refreshSceneWidget();
+    }
+
+    return newMesh;
   }
 
   loadScene(fileData, fileType) {
@@ -1431,6 +1462,10 @@ class Scene {
     this.getCamera().resetView();
     this.setMesh(null);
     this._action = Enums.Action.NOTHING;
+
+    if (this._guiXR && this._guiXR.refreshSceneWidget) {
+      this._guiXR.refreshSceneWidget();
+    }
   }
 
   deleteCurrentSelection() {
@@ -1448,11 +1483,16 @@ class Scene {
     for (var i = 0; i < rm.length; ++i) {
       var idx = this.getIndexMesh(rm[i]);
       if (idx >= 0) {
-        if (this._scene && meshes[idx].getThreeMesh()) {
-          this._scene.remove(meshes[idx].getThreeMesh());
+        var target = this._worldGroup || this._scene;
+        if (target && meshes[idx].getThreeMesh()) {
+          target.remove(meshes[idx].getThreeMesh());
         }
         meshes.splice(idx, 1);
       }
+    }
+
+    if (this._guiXR && this._guiXR.refreshSceneWidget) {
+      this._guiXR.refreshSceneWidget();
     }
   }
 
@@ -1773,14 +1813,16 @@ class Scene {
           const controllerModelFactory = new XRControllerModelFactory();
 
           this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(0);
-          // const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
-          // this._vrControllerLeftGrip.add(modelLeft);
+          const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
+          this._vrControllerLeftGrip.add(modelLeft);
           this._scene.add(this._vrControllerLeftGrip);
+          console.log("[SculptGL] Left controller model created:", modelLeft);
 
           this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(1);
-          // const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
-          // this._vrControllerRightGrip.add(modelRight);
+          const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
+          this._vrControllerRightGrip.add(modelRight);
           this._scene.add(this._vrControllerRightGrip);
+          console.log("[SculptGL] Right controller model created:", modelRight);
           
           // Controller ray lines (attached to Target Ray Space)
           const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8); // 1.5mm thick, 1 meter long Native
@@ -2095,27 +2137,35 @@ class Scene {
         try {
           // Log header for debug
           var headerPreview = xhr.response ? xhr.response.substring(0, 50).replace(/\n/g, '\\n') : "null";
+          console.log("[SculptGL] PLY Response received for " + handedness + ". Header preview: " + headerPreview);
 
           var meshes = Import.importPLY(xhr.response, this._gl);
+          console.log("[SculptGL] PLY Parsed meshes for " + handedness + ": " + (meshes ? meshes.length : 0));
+
           if (meshes && meshes.length > 0) {
-            // Validate mesh has vertices
             if (meshes[0].getNbVertices() > 0) {
               var mesh = meshes[0];
 
-              mesh.init(); // Compute normals/topology first
+              mesh.init(); 
 
-              // [USER REQUEST] Matte/Lambert shading (PBR)
               mesh.setShaderType(Enums.Shader.PBR);
-              mesh.setAlbedo([0.5, 0.5, 0.5]); // Lighter Gray
-              mesh.setRoughness(0.8); // Matte
-              mesh.setMetallic(0.0);  // Plastic/Rubber
+              mesh.setAlbedo([0.5, 0.5, 0.5]); 
+              mesh.setRoughness(0.8); 
+              mesh.setMetallic(0.0);  
 
               mesh.initRender();
               mesh.isPlaceholder = false;
 
               // Replace Reference
-              if (handedness === 'left') this._vrControllerLeft = mesh;
-              else this._vrControllerRight = mesh;
+              if (handedness === 'left') {
+                this._vrControllerLeftMesh = mesh;
+                window.debugLeftControllerMesh = mesh;
+                console.log("[SculptGL] _vrControllerLeftMesh assigned!");
+              } else {
+                this._vrControllerRightMesh = mesh;
+                window.debugRightControllerMesh = mesh;
+                console.log("[SculptGL] _vrControllerRightMesh assigned!");
+              }
 
             } else {
               if (window.screenLog) window.screenLog(`Empty mesh for ${handedness}`, "orange");

@@ -88,7 +88,49 @@ export default function getSceneWidgets(main) {
   });
   y += ITEM_H + GAP;
 
-  // Separator?
+  // --- OUTLINER ---
+  widgets.push({ type: 'header', label: 'Outliner', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  const meshes = main.getMeshes();
+  for (let i = 0; i < meshes.length; i++) {
+    const mesh = meshes[i];
+    const typeName = (mesh._typeName || "Mesh") + " " + (i + 1);
+
+    // Visibility Checkbox
+    widgets.push({
+      type: 'checkbox', id: 'vis_' + i, label: '', x: 0, y: y, w: 40, h: ITEM_H,
+      icon: 'eye',
+      value: mesh.isVisible(),
+      onInteract: (val) => { 
+        mesh.setVisible(val); 
+        if (mesh.getThreeMesh()) mesh.getThreeMesh().visible = val; 
+        main.render(); 
+      }
+    });
+
+    // Multi-select Checkbox
+    widgets.push({
+      type: 'checkbox', id: 'multi_' + i, label: '', x: 50, y: y, w: 40, h: ITEM_H,
+      value: main.getSelectedMeshes().includes(mesh),
+      onInteract: () => { main.setOrUnsetMesh(mesh, true); } // Always treat as multi-select toggling
+    });
+
+    // Name Button (Sets active mesh single-select style)
+    widgets.push({
+      type: 'button', id: 'select_' + i, label: typeName, x: 100, y: y, w: menuW - 150, h: ITEM_H,
+      onInteract: () => { main.setOrUnsetMesh(mesh, false); } // Clicking name sets it as single active mesh
+    });
+
+    // Delete Button
+    widgets.push({
+      type: 'button', id: 'del_' + i, label: 'X', x: menuW - 40, y: y, w: 40, h: ITEM_H,
+      onInteract: () => { main.removeMeshes([mesh]); }
+    });
+
+    y += ITEM_H + GAP;
+  }
+
   y += 10;
 
   // --- EXTRA ---
