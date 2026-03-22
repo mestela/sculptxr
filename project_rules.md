@@ -41,6 +41,10 @@
     *   **NEVER automatically commit changes.** Wait for explicit user request/approval.
     *   **NEVER automatically deploy to PRODUCTION.**
     *   **Beta Deployment is currently disabled.**
+7. **ATOMIC EDITS FOR LOGS**:
+    *   **Rule**: Never use wide multi-line replacements to delete a single `console.log`. Use surgical replacements targeting *only* the log line.
+8. **VISUAL DIFF VERIFICATION**:
+    *   **Rule**: Run `git diff` before pushing to verify only the intended lines changed. Catch accidental brace clips!
 
 ## Commit Protocol
 **"Explicit Commits Only"**

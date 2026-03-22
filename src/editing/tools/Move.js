@@ -336,7 +336,7 @@ class Move extends SculptBase {
     main.setCanvasCursor('default');
   }
 
-  move(iVerts, center, radiusSquared, moveData, picking, rotQuat, useSym) {
+  move(iVerts, center, radiusSquared, moveData, picking, rotQuat, useSym, rotCenter) {
     var mesh = this.getMesh();
     var vAr = mesh.getVertices();
     var mAr = mesh.getMaterials();
@@ -399,11 +399,16 @@ class Move extends SculptBase {
       // Apply Rotation if present
       var rotX = 0, rotY = 0, rotZ = 0;
       if (rotQuat) {
-        vTemp[0] = dx; vTemp[1] = dy; vTemp[2] = dz;
+        var rCenter = rotCenter || center;
+        var rdx = vx - rCenter[0];
+        var rdy = vy - rCenter[1];
+        var rdz = vz - rCenter[2];
+
+        vTemp[0] = rdx; vTemp[1] = rdy; vTemp[2] = rdz;
         vec3.transformQuat(vTemp, vTemp, rotQuat);
-        rotX = vTemp[0] - dx;
-        rotY = vTemp[1] - dy;
-        rotZ = vTemp[2] - dz;
+        rotX = vTemp[0] - rdx;
+        rotY = vTemp[1] - rdy;
+        rotZ = vTemp[2] - rdz;
       }
 
       vAr[ind] += (dirx + rotX) * fallOff;
@@ -588,7 +593,7 @@ class Move extends SculptBase {
       if (!moveData.quat) moveData.quat = quat.create();
       quat.copy(moveData.quat, qScaledLocal);
       
-      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qScaledLocal, useSym);
+      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qScaledLocal, useSym, vStartLocal);
     }
 
     // Apply Symmetry Move
@@ -616,7 +621,7 @@ class Move extends SculptBase {
           if (!moveDataSym.quat) moveDataSym.quat = quat.create();
           quat.copy(moveDataSym.quat, qDeltaSym);
 
-          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym);
+          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym, symStartLocal);
         }
     }
 
