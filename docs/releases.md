@@ -1,3 +1,7 @@
+# v1.0.45
+- **Performance**: **Canvas Context Proxy for Menus**: Removed heavy `ctx.filter` from the main drawing loop and replaced it with a fast Javascript Proxy layer that intercepts and shifts colors on-the-fly. Instant framerate recovery for all menu draw passes!
+- **Fix**: **Hue/Saturation Edge Cases**: Converted HSL tool definitions to Hex strings so that the Proxy correctly parses and intercepts them without heavy string regex evaluations inside the render loop. Fixed `parseFloat` type coercion errors that defaults to unshifted outputs.
+
 # v1.0.44
 - **Refactoring**: **Button Rendering Consolidation**: Unified the button rendering paths for the Main Menu, MiniHUD, and Tool Picker overlay into a single shared function (`_drawButton`).
 - **Visuals**: Replaced the hardcoded intense green highlights with a subtle light gray selection border to reduce distractions.
