@@ -405,6 +405,7 @@ class Multimesh extends Mesh {
               attr.needsUpdate = true;
           }
           wireGeom.setDrawRange(0, indices.length);
+          this._renderData._wireframeMesh.visible = true;
         }
       }
     }
@@ -413,6 +414,14 @@ class Multimesh extends Mesh {
   getRenderNbEdges() {
     if (this._renderNbEdgesOverride !== undefined) return this._renderNbEdgesOverride;
     return super.getRenderNbEdges();
+  }
+
+  getWireframe() {
+    return this.getCurrentMesh().getWireframe();
+  }
+
+  getNbEdges() {
+    return this.getCurrentMesh().getNbEdges();
   }
 
   renderWireframe(main) {
