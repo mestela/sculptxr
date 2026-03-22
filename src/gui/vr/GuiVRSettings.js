@@ -94,6 +94,50 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'menu_brightness', label: 'Menu Brightness', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 1.0, step: 0.05,
+    value: main._guiXR && main._guiXR._uiSettings.menuBrightness !== undefined ? main._guiXR._uiSettings.menuBrightness : 0.5,
+    precision: 2,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.menuBrightness = val;
+        main._guiXR._needsRedraw = true;
+      }
+      if (main._guiMini) {
+        main._guiMini._uiSettings.menuBrightness = val;
+        main._guiMini._needsRedraw = true;
+      }
+      if (main._guiPopup) {
+        main._guiPopup._uiSettings.menuBrightness = val;
+        main._guiPopup._needsRedraw = true;
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'slider', id: 'menu_saturation', label: 'Menu Saturation', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 1.0, step: 0.05,
+    value: main._guiXR && main._guiXR._uiSettings.menuSaturation !== undefined ? main._guiXR._uiSettings.menuSaturation : 0.5,
+    precision: 2,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.menuSaturation = val;
+        main._guiXR._needsRedraw = true;
+      }
+      if (main._guiMini) {
+        main._guiMini._uiSettings.menuSaturation = val;
+        main._guiMini._needsRedraw = true;
+      }
+      if (main._guiPopup) {
+        main._guiPopup._uiSettings.menuSaturation = val;
+        main._guiPopup._needsRedraw = true;
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
 
   widgets.push({ type: 'header', label: 'Calibration', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;

@@ -92,6 +92,8 @@ export default class GuiXR {
       resolution: 256, // Voxel Resolution
       radius: 1.0, // Voxel Radius
       triggerCurve: 0.5,
+      menuBrightness: 0.3,
+      menuSaturation: 1.0,
     };
 
     // Preload Dropper Icon
@@ -1972,6 +1974,18 @@ export default class GuiXR {
 
     ctx.clearRect(0, 0, w, h);
 
+    // Apply User Settings for Brightness/Saturation (CSS mapping: slider 0.5 = 1.0 css)
+    const brightness = (this._uiSettings.menuBrightness !== undefined ? this._uiSettings.menuBrightness : 0.5) * 2.0;
+    
+    const userSat = this._uiSettings.menuSaturation !== undefined ? this._uiSettings.menuSaturation : 0.5;
+    let saturation;
+    if (userSat <= 0.5) {
+      saturation = userSat * 2.0; // 0.0 to 1.0 (Linear from grayscale to neutral)
+    } else {
+      saturation = (userSat - 0.5) * 8.0 + 1.0; // 1.0 to 5.0 (Steep ramp to boost up to 500%)
+    }
+    ctx.filter = `brightness(${brightness}) saturate(${saturation})`;
+
     if (!this._isPopupHUD) {
       // BG
       ctx.fillStyle = '#202020';
@@ -2256,7 +2270,7 @@ export default class GuiXR {
         }
           // --- GENERIC BUTTON ---
         else if (wid.type === 'button') {
-          ctx.fillStyle = isActive ? '#00A040' : '#333';
+          ctx.fillStyle = isActive ? '#555' : '#333';
           if (wid.disabled) ctx.fillStyle = '#222';
           ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
           let textColor = wid.disabled ? '#555' : 'white';

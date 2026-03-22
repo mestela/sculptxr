@@ -1,33 +1,31 @@
-# Handover Prompt - Wireframe Bias & Opacity Sliders (v1.0.41)
+# Handover Prompt - Poly Move Tool Rotation Fix (v1.0.42)
 
-**Project Status**: **Success!** We implemented fine-grain controls for the wireframe overlay in VR, including direct bias adjustments and opacity sliders. We also cleaned up noisy logs to restore developer console performance!
+**Project Status**: **Success!** We fixed the rotation "drift" in the Poly Move tool for VR. The vertices now stay locked to the cursor center during rotation.
 
 ---
 
 ## Recent Work & Achievements (This Chat)
 
-### 1. Wireframe Opacity Slider (v1.0.41)
-Users can now live-adjust the transparency (alpha) of the wireframe overlay in VR, defaulting to `0.2` (20%).
--   **Range**: `0.0 - 1.0` (Step `0.05`)
--   **Implementation**: Plugs directly into the `uOpacity` uniform of the wireframe shader.
+### 1. Fixed Rotation Origin (v1.0.42)
+Changed the rotation origin from the pick point (`center`) to the controller's starting position (`vStartLocal`). This provides a "grab and swing" feel where the mesh rotates around the controller rather than sliding.
+-   **File**: `src/editing/tools/Move.js`
 
-### 2. Wireframe Bias Slider (v1.0.41)
-Resolved standard slider-track scaling bugs and range limits! The bias slider now allows users to offset the wireframe overlay to prevent Z-fighting artifacts.
--   **Range**: `0.0 - 0.005` (Step `0.0001`)
--   **Implementation**: Bypasses normalized defaults and tracks absolute state variables.
+### 2. Symmetrical Rotation (v1.0.42)
+Symmetry is now handled correctly by passing the mirrored controller origin (`symStartLocal`) as the pivot for symmetric strokes.
+-   **File**: `src/editing/tools/Move.js`
 
-### 3. Log Cleanup (v1.0.41)
-Purged verbose `console.log` statements with these prefixes to clear console noise during development:
--   `[Mesh]`
--   `[GuiVRTools]`
--   `[Multimesh]`
+### 3. Documentation & Versioning
+Bumped version to `v1.0.42` in `src/Version.js` and updated `README.md` (latest 3 releases) and `docs/releases.md`.
 
 ---
 
 ## Next Steps:
 
-The features were verified to work functionally and are now live on the `threejs` branch. 
-Future chats can focus on further UI refinements or next-generation tools!
+The fix is live on the `threejs` branch. 
+Possible next directions:
+1.  **Strange Falloff**: The user mentioned the falloff felt "strange" earlier. This could be investigated.
+2.  **Voxel Move Tool**: Porting the voxel move tool to Three.js (currently it's considered legacy/missing).
+3.  **Other Fit & Finish**: Continue with standard mesh fit and finish items.
 
 ---
 
