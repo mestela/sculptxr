@@ -2270,22 +2270,7 @@ export default class GuiXR {
         }
           // --- GENERIC BUTTON ---
         else if (wid.type === 'button') {
-          ctx.fillStyle = isActive ? '#555' : '#333';
-          if (wid.disabled) ctx.fillStyle = '#222';
-          ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
-          let textColor = wid.disabled ? '#555' : 'white';
-          if (wid.data && wid.data.tint && !wid.disabled) {
-            textColor = wid.data.tint;
-          }
-          ctx.fillStyle = textColor;
-          ctx.textAlign = 'center';
-          
-          let fontSize = '24px';
-          if (wid.data && wid.data.fontSize) {
-            fontSize = wid.data.fontSize;
-          }
-          ctx.font = `${fontSize} sans-serif`;
-          ctx.fillText(wid.label || '', wid.x + wid.w / 2, wid.y + wid.h / 2 + 10);
+          this._drawButton(ctx, wid.x, wid.y, wid, isActive, isHovered);
         }
       } // END ELSE (Generic Widgets)
 
@@ -2575,54 +2560,7 @@ export default class GuiXR {
 
         } else if (wid.type === 'button') {
           const isActive = wid.data && wid.data.active;
-
-          ctx.fillStyle = isActive ? '#00A030' : (isHover ? '#555' : '#333');
-
-          if (wid.noBg && !isHover && !isActive) {
-            // Main menu default transparent button
-            ctx.strokeStyle = '#444';
-            ctx.strokeRect(wx, wy, wid.w, wid.h);
-          } else {
-            // Fill background
-            ctx.fillRect(wx, wy, wid.w, wid.h);
-
-            // Draw hover border
-            if (isHover) {
-              const INSET = 2;
-              ctx.strokeStyle = '#fff';
-              ctx.lineWidth = 4;
-              ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
-              ctx.lineWidth = 1; // Reset
-            } else if (isActive) {
-              ctx.lineWidth = 1;
-              ctx.strokeStyle = '#00f040';
-              // Inset by 0.5 for crisp 1px inner border
-              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
-            } else {
-              ctx.lineWidth = 1;
-              ctx.strokeStyle = '#222'; // Darker subtle separator instead of #444
-              ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
-            }
-          }
-
-          let textColor = '#eee'; // Strict white/gray text instead of cyan for active
-          if (wid.data && wid.data.tint) {
-            textColor = wid.data.tint;
-          }
-          if (isActive) {
-            textColor = '#fff';
-          }
-          ctx.fillStyle = textColor; 
-          ctx.textAlign = 'center';
-          
-          let fontSize = this.styles.fontOverlay; // Default '20px sans-serif'
-          if (wid.data && wid.data.fontSize) {
-            fontSize = `${wid.data.fontSize} sans-serif`;
-          }
-          ctx.font = fontSize;
-          
-          ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 6);
-
+          this._drawButton(ctx, wx, wy, wid, isActive, isHover);
         } else if (wid.type === 'combobox') {
           ctx.fillStyle = isHover ? '#444' : '#333';
           ctx.fillRect(wx, wy, wid.w, wid.h);
@@ -2967,6 +2905,59 @@ export default class GuiXR {
       this._main.render();
       return;
     }
+  }
+
+  _drawButton(ctx, wx, wy, wid, isActive, isHover) {
+    ctx.fillStyle = isActive ? '#555' : '#333';
+    if (wid.disabled) ctx.fillStyle = '#222';
+
+    if (wid.noBg && !isHover && !isActive) {
+      ctx.strokeStyle = '#444';
+      ctx.strokeRect(wx, wy, wid.w, wid.h);
+    } else {
+      ctx.fillRect(wx, wy, wid.w, wid.h);
+
+      if (isHover) {
+        const INSET = 2;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(wx + INSET, wy + INSET, wid.w - INSET * 2, wid.h - INSET * 2);
+        ctx.lineWidth = 1; // Reset
+      } else if (isActive) {
+        ctx.shadowBlur = 2;
+        ctx.shadowColor = '#dfdfdf';
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#dfdfdf'; // Subtle selection border
+        ctx.strokeRect(wx + 1, wy + 1, wid.w - 2, wid.h - 2);
+        ctx.shadowBlur = 0; // Reset
+      } else {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#222'; // Darker subtle separator
+        ctx.strokeRect(wx + 0.5, wy + 0.5, wid.w - 1, wid.h - 1);
+      }
+    }
+
+    let textColor = '#eee';
+    if (wid.disabled) {
+      textColor = '#555';
+    } else if (wid.data && wid.data.tint) {
+      textColor = wid.data.tint;
+    } else if (isActive) {
+      textColor = '#fff';
+    }
+    
+    ctx.fillStyle = textColor;
+    ctx.textAlign = 'center';
+
+    let fontSize = '24px sans-serif';
+    if (wid.data && wid.data.fontSize) {
+      fontSize = `${wid.data.fontSize} sans-serif`;
+    } else if (this.styles && this.styles.fontOverlay) {
+      fontSize = this.styles.fontOverlay;
+    }
+    ctx.font = fontSize;
+
+    ctx.fillText(wid.label || '', wx + wid.w / 2, wy + wid.h / 2 + 8);
   }
 
   _drawEmbeddedColorPicker(ctx, w) {
