@@ -1,4 +1,9 @@
-# v1.0.42
+# v1.0.43
+- **Feature**: **Menu Brightness and Saturation Sliders**: Added fine-tune controls for the visual appearance of the VR menus. Adjust brightness (0 to 1, mapping to darker tones) and saturation (0 to 1, piecewise mapping up to 500% boost).
+- **UX**: Unified application of these settings across the Main Menu, MiniHUD, and the context-sensitive Tool Picker popup.
+- **Visuals**: Reduced the active tool button highlight from intense green to a subtle light gray to avoid visual distraction.
+
+## v1.0.42
 - **Feature**: **VR Poly Move Tool Rotation Fix**: Resolved the "drift" issue where vertices did not follow the ray's sweep during rotation. Updated the tool to utilize the controller's origin (and its mirrored counterpart for symmetry) as the rotation pivot, keeping drawn vertices perfectly locked to the brush cursor dot.
 
 ## v1.0.41
