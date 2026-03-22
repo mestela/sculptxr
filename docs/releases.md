@@ -1,3 +1,6 @@
+# v1.0.42
+- **Feature**: **VR Poly Move Tool Rotation Fix**: Resolved the "drift" issue where vertices did not follow the ray's sweep during rotation. Updated the tool to utilize the controller's origin (and its mirrored counterpart for symmetry) as the rotation pivot, keeping drawn vertices perfectly locked to the brush cursor dot.
+
 ## v1.0.41
 - **Feature**: **Wireframe Bias & Opacity Sliders**: Added fine-tune controls for the mesh wireframe overlay in VR. Adjust depth bias offset and transparency live! Defaults to `0.001` bias (1mm) and `0.2` opacity (20%).
 - **UX**: Expanded sliders to support arbitrary ranges (`0.0 - 1.0` and `0.0 - 0.005`) without UI track scaling quirks.
