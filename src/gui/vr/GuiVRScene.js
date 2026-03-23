@@ -95,6 +95,7 @@ export default function getSceneWidgets(main) {
   const meshes = main.getMeshes();
   for (let i = 0; i < meshes.length; i++) {
     const mesh = meshes[i];
+    if (mesh._isVoxelChunk) continue; // Skip voxel chunks in UI
     const typeName = (mesh._typeName || "Mesh") + " " + (i + 1);
 
     // Visibility Checkbox

@@ -134,7 +134,7 @@
         window.onload = async () => {
             // Environment checks
             const isProd = window.location.hostname === 'tokeru.com' && !window.location.pathname.includes('beta');
-            window._showDebugLog = !isProd; // Default true on localhost/beta
+            window._showDebugLog = false; // Set to false to maximize performance (silences DOM logs)
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
@@ -192,6 +192,10 @@
             const cerr = console.error;
 
             console.log = function (...args) {
+                if (!window._showDebugLog) {
+                    cls.apply(console, args);
+                    return;
+                }
                 // Update on-screen log if available
                 const logEl = document.getElementById('log');
                 if (logEl) {

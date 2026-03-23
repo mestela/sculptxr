@@ -5,6 +5,7 @@
 
 let VoxelState = null;
 let TestModule = null;
+let wasmModule = null;
 let isReady = false;
 let voxelState = null;
 
@@ -28,6 +29,16 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     const vs = await import('../editing/VoxelState.js');
     VoxelState = vs.default;
     // console.log("VoxelWorker: VoxelState Loaded");
+
+    // Load Rust WASM
+    try {
+      const wasmInit = await import('./voxel_wasm.wasm?init');
+      const wasmInst = await wasmInit.default();
+      wasmModule = wasmInst.exports || wasmInst.instance?.exports;
+      console.log("VoxelWorker: Rust WASM Loaded!");
+    } catch (wasmErr) {
+      console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
+    }
 
     isReady = true;
 
@@ -273,7 +284,7 @@ function editSphere(center, radius, color, isNegative, shape, brushRotation, ret
      self.postMessage({ type: 'LOG', data: `EditSphere: No Change (Rad=${radius.toFixed(2)}, C=[${center[0].toFixed(1)},${center[1].toFixed(1)},${center[2].toFixed(1)}], Neg=${isNegative})` });
   } else {
     isDirty = true;
-    self.postMessage({ type: 'LOG', data: `EditSphere: SUCCESS in ${(t1-t0).toFixed(2)}ms` });
+    // self.postMessage({ type: 'LOG', data: `EditSphere: SUCCESS in ${(t1-t0).toFixed(2)}ms` });
   }
 
   if (returnMesh) postMesh();
@@ -306,32 +317,121 @@ function warpSphere(center, radius, translation, rotation, steps, stepRotation, 
 function postMesh() {
   if (!voxelState) return;
 
-  // Timing
+  voxelState.tightenBounds(); // Fix: Tighten once before chunk loop to get real active bounds!
+
   const t0 = performance.now();
-  const meshData = voxelState.computeMesh();
+  const chunkSize = 24;
+  const res = voxelState._dims[0]; // Fix: use _dims[0] instead of .resolution
+  const chunks = [];
+
+  // self.postMessage({ type: 'LOG', data: `VoxelWorker: postMesh running. Res=${res} ActiveMin=${voxelState._activeMin} ActiveMax=${voxelState._activeMax}` });
+
+  // Pre-allocate inputs for WASM once per frame to save overhead
+  let dimsPtr = 0, boundsPtr = 0, distancePtr = 0, colorPtr = 0, materialPtr = 0;
+  let wasmMemory = null;
+
+  if (wasmModule) {
+    try {
+      const totalCells = res * res * res;
+      dimsPtr = wasmModule.alloc(3 * 4);
+      boundsPtr = wasmModule.alloc(6 * 4);
+      distancePtr = wasmModule.alloc(totalCells * 4);
+      colorPtr = wasmModule.alloc(totalCells * 3 * 4);
+      materialPtr = wasmModule.alloc(totalCells * 3 * 4);
+
+      const mem = wasmModule.memory.buffer;
+      new Int32Array(mem, dimsPtr, 3).set([res, res, res]);
+      new Float32Array(mem, distancePtr, totalCells).set(voxelState.getDistanceField());
+      new Float32Array(mem, colorPtr, totalCells * 3).set(voxelState._voxels.colorField);
+      new Float32Array(mem, materialPtr, totalCells * 3).set(voxelState._voxels.materialField);
+    } catch (allocErr) {
+      console.error("VoxelWorker WASM Alloc Error, falling back to JS", allocErr);
+      dimsPtr = 0; // Mark as failed
+    }
+  }
+
+  try {
+    for (let x = 0; x < res; x += chunkSize) {
+      for (let y = 0; y < res; y += chunkSize) {
+        for (let z = 0; z < res; z += chunkSize) {
+
+          if (x >= voxelState._activeMin[0] - chunkSize && x <= voxelState._activeMax[0] &&
+              y >= voxelState._activeMin[1] - chunkSize && y <= voxelState._activeMax[1] &&
+              z >= voxelState._activeMin[2] - chunkSize && z <= voxelState._activeMax[2]) {
+
+            const bounds = {
+              min: [x, y, z],
+              max: [Math.min(res, x + chunkSize + 1), Math.min(res, y + chunkSize + 1), Math.min(res, z + chunkSize + 1)]
+            };
+
+            let meshData;
+            if (wasmModule && dimsPtr !== 0) {
+              const mem1 = wasmModule.memory.buffer; // Fresh read
+              new Int32Array(mem1, boundsPtr, 6).set([bounds.min[0], bounds.min[1], bounds.min[2], bounds.max[0], bounds.max[1], bounds.max[2]]);
+
+              const resultPtr = wasmModule.compute_surface_wasm(dimsPtr, boundsPtr, distancePtr, colorPtr, materialPtr);
+
+              if (resultPtr !== 0) {
+                const mem2 = wasmModule.memory.buffer; // Fresh read after allocation!
+                const resultView = new Int32Array(mem2, resultPtr, 10);
+                const vPtr = resultView[0], vLen = resultView[1];
+                const fPtr = resultView[2], fLen = resultView[3];
+                const cPtr = resultView[4], cLen = resultView[5];
+                const mPtr = resultView[6], mLen = resultView[7];
+                const nPtr = resultView[8], nLen = resultView[9];
+
+                meshData = {
+                  vertices: new Float32Array(mem2, vPtr, vLen).slice(), // Clone out of wasm heap!
+                  faces: new Uint32Array(mem2, fPtr, fLen).slice(),
+                  colors: new Float32Array(mem2, cPtr, cLen).slice(),
+                  materials: new Float32Array(mem2, mPtr, mLen).slice(),
+                  normals: (nPtr !== 0 && nLen > 0) ? new Float32Array(mem2, nPtr, nLen).slice() : null
+                };
+
+                wasmModule.free_mesh_result(resultPtr);
+              } else {
+                meshData = { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) };
+              }
+            } else {
+              meshData = voxelState.computeMesh(bounds);
+            }
+
+            chunks.push({
+              id: `chunk_${x}_${y}_${z}`,
+              vertices: meshData.vertices,
+              faces: meshData.faces,
+              colors: meshData.colors,
+              materials: meshData.materials,
+              normals: meshData.normals
+            });
+          }
+        }
+      }
+    }
+  } finally {
+    if (wasmModule && dimsPtr !== 0) {
+      const totalCells = res * res * res;
+      wasmModule.dealloc(dimsPtr, 3 * 4);
+      wasmModule.dealloc(boundsPtr, 6 * 4);
+      wasmModule.dealloc(distancePtr, totalCells * 4);
+      wasmModule.dealloc(colorPtr, totalCells * 3 * 4);
+      wasmModule.dealloc(materialPtr, totalCells * 3 * 4);
+    }
+  }
+
   const t1 = performance.now();
 
-  if (meshData.vertices.length === 0) {
-    self.postMessage({ type: 'LOG', data: `ComputeMesh: Returned EMPTY (V=0) in ${(t1-t0).toFixed(1)}ms. Bounds: [${voxelState._activeMin}]-[${voxelState._activeMax}]` });
-  } else {
-    self.postMessage({ type: 'LOG', data: `ComputeMesh: SUCCESS V=${meshData.vertices.length/3} in ${(t1-t0).toFixed(1)}ms` });
+  self.postMessage({ type: 'LOG', data: `VoxelWorker: postMesh generated ${chunks.length} chunks in ${(t1-t0).toFixed(1)}ms` });
+
+  const transferList = [];
+  for (const chunk of chunks) {
+    if (chunk.vertices) transferList.push(chunk.vertices.buffer);
+    if (chunk.faces) transferList.push(chunk.faces.buffer);
+    if (chunk.colors) transferList.push(chunk.colors.buffer);
+    if (chunk.materials) transferList.push(chunk.materials.buffer);
+    if (chunk.normals) transferList.push(chunk.normals.buffer);
   }
 
-  // Determine the ID of the current state
-  let currentID = snapshotCounter;
-  if (historyPtr >= 0 && historyPtr < history.length) {
-    currentID = history[historyPtr].id;
-  }
-
-  const transferList = [meshData.vertices.buffer, meshData.colors.buffer, meshData.materials.buffer, meshData.faces.buffer];
-  if (meshData.normals) {
-    transferList.push(meshData.normals.buffer);
-  }
-
-  self.postMessage({
-    type: 'MESH_UPDATE',
-    data: meshData,
-    id: currentID // Tag with ACTUAL ID of the state we just computed
-    // computeTime: t1 - t0
-  }, transferList);
+  self.postMessage({ type: 'CHUNK_UPDATE', chunks: chunks, computeTime: (t1 - t0) }, transferList);
 }
+

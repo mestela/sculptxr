@@ -6,21 +6,33 @@
 
 ---
 
-## 1. Fit & Finish Priorities (Current Focus)
+## 1. Todo
+### Fit & Finish Priorities (Current Focus)
 * **Symmetry**: 
-  * Currently very broken, specifically for the Move Tool. Needs debugging.
+  * [x] Currently very broken, specifically for the Move Tool. Needs debugging.
 * **Rendering Modes**:
-  * Missing wireframe overlays.
-  * Missing other rendering modes like matcaps, normals, etc.
+  * [x] Missing wireframe overlays.
+  * [x] Missing other rendering modes like matcaps, normals, etc.
 * **VR Menu Completion**:
-  * "Tools" section is working, but "Wireframe/Materials" are currently broken.
-  * Need to audit and test the rest of the full VR menu to ensure all sections function correctly.
+  * [x] "Tools" section is working, but "Wireframe/Materials" are currently broken.
+  * [ ] Need to audit and test the rest of the full VR menu to ensure all sections function correctly.
 * **Sculpting "Feel"**:
-  * The current Three.js sculpting feel isn't bad, but requires tuning to match the exact tactile feel of the original WebGL version.
+  * [x] The current Three.js sculpting feel isn't bad, but requires tuning to match the exact tactile feel of the original WebGL version.
 
-## 2. Legacy / Missing Features
-* **Voxel Mode**: Needs a complete review and testing to see what broke during the port. Has not been tested yet.
-* **Other Features**: TBD (Will emerge as the menu and tools are fully audited).
+### Todo misc
+* [ ] **Voxel Mode**: Needs a complete review and testing to see what broke during the port. Has not been tested yet.
+* [ ] **Paint Mode**: Disabled atm
+* [ ] **Transform gizmo**: Should be easy right?
+* [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
+* [ ] **Keyboard Entry**: Implied making a VR keyboard is trivial, should have a go (surprised there's no built in option)
+* [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Maybe grab the quest 2 for this
+* [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
+* [x] **Outliner**: Now that we're in a proper scene graph, seeing a list of meshes, multiselect, vis etc much easier to maintian
+* [x] **Proper controllers**: Can leverage threejs's native VR controller support that are rigged, animated, automatically downloaded per device
+* [ ] **Box modelling**: Integrate functions from https://github.com/sengchor/kokraf?tab=readme-ov-file and put VR front end on it
+* [ ] **three-mesh-ui**: move menu system to this
+* [ ] **materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
+
 
 ## 3. Device Testing Strategy
 * **Phase 1: Fast Iteration (Current)**

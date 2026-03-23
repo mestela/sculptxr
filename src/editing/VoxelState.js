@@ -889,13 +889,13 @@ class VoxelState {
     this._activeMax[0] = maxX; this._activeMax[1] = maxY; this._activeMax[2] = maxZ;
   }
 
-  computeMesh() {
-    // 1. Attempt to tighten bounds (Cheap scan if object is small)
-    this.tightenBounds();
-
-    // Check if empty
-    if (this._activeMin[0] > this._activeMax[0]) {
-      return { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) };
+  computeMesh(chunkBounds) {
+    if (!chunkBounds) {
+      this.tightenBounds();
+      // Check if empty
+      if (this._activeMin[0] > this._activeMax[0]) {
+        return { vertices: new Float32Array(0), faces: new Uint32Array(0), colors: new Float32Array(0), materials: new Float32Array(0) };
+      }
     }
 
     // Clamp Bounds (Ensure padding of 1 for correct gradients/iso-surface)
@@ -906,7 +906,7 @@ class VoxelState {
     // We should clamp the Active Bounds to [0, dims].
 
     // Pass bounds to SurfaceNets
-    const bounds = {
+    const bounds = chunkBounds || {
       min: [
         Math.max(0, this._activeMin[0] - 2),
         Math.max(0, this._activeMin[1] - 2),

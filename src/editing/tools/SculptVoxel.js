@@ -8,6 +8,7 @@ import Primitives from '../../drawables/Primitives.js';
 import Enums from '../../misc/Enums.js';
 import Geometry from '../../math3d/Geometry.js';
 import VoxelBounds from '../../drawables/VoxelBounds.js';
+import * as THREE from 'three';
 
 class SculptVoxel extends SculptBase {
 
@@ -50,9 +51,24 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
-         // if (window.screenLog) window.screenLog(`VoxelWorker: ${JSON.stringify(msg)}`, "yellow");
-         // else console.log("VoxelWorker:", msg);
+         console.log("[VoxelWorker]", msg.data);
          return;
+      }
+ else if (msg.type === 'CHUNK_UPDATE') {
+        this._pendingMeshUpdate = false;
+        
+        if (this.updateVoxelChunks) {
+            this.updateVoxelChunks(msg.chunks);
+        } else {
+            console.error("SculptVoxel: updateVoxelChunks method not implemented yet!");
+        }
+
+        // If an update was requested while we were busy, request it now
+        if (this._meshRequested) {
+          this._meshRequested = false;
+          this._pendingMeshUpdate = true;
+          this._worker.postMessage({ type: 'GET_MESH' });
+        }
       } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
@@ -111,7 +127,7 @@ class SculptVoxel extends SculptBase {
     this._res = res;
     this._pendingRes = res;
     
-    const size = 100.0;
+    const size = 150.0; // Scaled Up Workspace (150 meters) to encompass user movement
     this._worker.postMessage({
       type: 'INIT',
       res: res,
@@ -136,7 +152,13 @@ class SculptVoxel extends SculptBase {
 
     // "Canvas" location - Fixed in front of user
     this._gridMatrix = mat4.create();
-    mat4.translate(this._gridMatrix, this._gridMatrix, [0.0, 1.3, -1.5]);
+    const displayScale = 1.0 / this._size;
+    mat4.scale(this._gridMatrix, this._gridMatrix, [displayScale, displayScale, displayScale]);
+    
+    // Shift grid by half its size to center it at [0, 0, 0] in workspace space
+    const shift = -0.5; // -this._size * 0.5 * displayScale = -50 * 0.01 = -0.5
+    mat4.translate(this._gridMatrix, this._gridMatrix, [shift, shift, shift]);
+
     this._invGridMatrix = mat4.create();
     mat4.invert(this._invGridMatrix, this._gridMatrix);
 
@@ -177,8 +199,7 @@ class SculptVoxel extends SculptBase {
 
     this._cursorMeshSym = this._cursorMeshSymSphere;
 
-    // Voxel Bounds Indicator (Replaces primitive cube)
-    this._voxelBounds = new VoxelBounds(main._gl);
+    this._voxelBounds = new VoxelBounds(main);
 
     // [USER REQUEST] Show by default to debug boundaries
     // We use addNewMesh to ensure it is in the render loop.
@@ -628,11 +649,15 @@ class SculptVoxel extends SculptBase {
 
     var changed = false;
     if (this._worker) {
-      // Throttling: Only request mesh if not currently pending
-      const returnMesh = !this._pendingMeshUpdate;
-      if (returnMesh) {
+      const now = Date.now();
+      const throttleMs = 50; // 20 FPS for mesh updates
+      let returnMesh = !this._pendingMeshUpdate;
+      
+      if (returnMesh && (!this._lastMeshRequestTime || (now - this._lastMeshRequestTime > throttleMs))) {
         this._pendingMeshUpdate = true;
+        this._lastMeshRequestTime = now;
       } else {
+        returnMesh = false; // Override to false if throttled or pending
         this._meshRequested = true; // Mark that we want an update as soon as possible
       }
 
@@ -717,6 +742,9 @@ class SculptVoxel extends SculptBase {
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
+    if (this._voxelBounds) {
+      this._voxelBounds.render(this._main, this._size, this._gridMatrix);
+    }
     try {
       // VoxelXR Update
       // Ensure we hide distracting meshes
@@ -949,8 +977,43 @@ class SculptVoxel extends SculptBase {
 
       // 1. Transform EnginePos (World) to Grid Local Space
       // (Reverted v0.7.164 fix as it broke creation. Trusting user that alignment is correct)
+      // Convert Absolute World Origin to Workspace Space before Simulation Mapping
+      // Hardcoded Workspace Scale: Assuming standard workspace scale of 0.77 absolute Workspace Units Workspace units Workspace units Workplace
+      // To convert absolute meters to workspace units: Absolute / 0.77 = Absolute * 1.3
+      const workspacePos = vec3.create();
+      if (options && options.rayOrigin) {
+        // Shift forward along laser direction by 14.0 units (14cm) to reach tip of stylus
+        workspacePos[0] = options.rayOrigin[0] + dir[0] * 14.0;
+        workspacePos[1] = options.rayOrigin[1] + dir[1] * 14.0;
+        workspacePos[2] = options.rayOrigin[2] + dir[2] * 14.0;
+      } else {
+        workspacePos[0] = origin[0];
+        workspacePos[1] = origin[1];
+        workspacePos[2] = origin[2];
+      }
+
+      // Visual Debugger: Add a red sphere at workspacePos
+      if (!this._debugPoint && THREE) {
+        const geo = new THREE.SphereGeometry(0.5, 8, 8);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false, transparent: true, opacity: 0.5 });
+        this._debugPoint = new THREE.Mesh(geo, mat);
+        if (this._main && this._main._scene) {
+          this._main._scene.add(this._debugPoint);
+        }
+      }
+      if (this._debugPoint) {
+        this._debugPoint.position.set(workspacePos[0], workspacePos[1], workspacePos[2]);
+      }
+
       var localPos = vec3.create();
-      vec3.transformMat4(localPos, origin, this._invGridMatrix);
+      // Map Workspace Meters (WorkspacePos) to Simulation Index Space using step and min boundaries
+      localPos[0] = (workspacePos[0] - this._min[0]) / this._step;
+      localPos[1] = (workspacePos[1] - this._min[1]) / this._step;
+      localPos[2] = (workspacePos[2] - this._min[2]) / this._step;
+
+      // console.log(`[Voxel Tool] Drawing at Absolute: [${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}, ${origin[2].toFixed(2)}] -> Workspace: [${workspacePos[0].toFixed(2)}, ${workspacePos[1].toFixed(2)}, ${workspacePos[2].toFixed(2)}] -> Simulation: [${localPos[0].toFixed(2)}, ${localPos[1].toFixed(2)}, ${localPos[2].toFixed(2)}]`);
+
+      this._lastIsPressed = isPressed;
 
       // Guard: Check for NaN/Infinity
       if (isNaN(localPos[0]) || isNaN(localPos[1]) || isNaN(localPos[2])) {
@@ -998,17 +1061,13 @@ class SculptVoxel extends SculptBase {
         // t_adj = pow(t, k)
         const S = (this._pressureBias !== undefined) ? this._pressureBias : 0.0;
         let k = 1.0;
-        if (S > 0) k = 1.0 - (S * 0.8);       // Concave (Fast start)
-        else if (S < 0) k = 1.0 + (-S * 3.0); // Convex (Slow start)
+        if (isNaN(worldRadius)) worldRadius = 3.0; // Fallback
         const t_adj = Math.pow(triggerValue, k);
-
         const minPct = (this._minRadiusPct !== undefined) ? this._minRadiusPct : 10;
         const minRadius = worldRadius * (minPct / 100.0);
         worldRadius = minRadius + (worldRadius - minRadius) * t_adj;
-
-        // DEBUG: Radius Modulation
-        // if (window.screenLog && Math.random() < 0.05) window.screenLog(`RadMod: ${(worldRadius).toFixed(2)} (t=${triggerValue.toFixed(2)})`, "cyan");
       }
+      if (isNaN(worldRadius)) worldRadius = 3.0; // Fallback again
 
       var gridRadius = worldRadius;
       // Throttling for mesh updates?
@@ -1019,15 +1078,18 @@ class SculptVoxel extends SculptBase {
       // If we flood it, it lags.
       // Let's rely on standard logic (maybe throttle `returnMesh`?)
       // The desktop `stroke` logic throttles `returnMesh`.
-
       const now = performance.now();
-      const returnMesh = (!this._lastMeshTime || now - this._lastMeshTime > 32); // Max 30fps mesh updates?
+      const returnMesh = (!this._lastMeshTime || now - this._lastMeshTime > 100); // 10fps mesh updates for voxel sculpting perf
       if (returnMesh) this._lastMeshTime = now;
 
       var color = [0.8, 0.8, 0.8]; // Valid default
       if (picking && picking.color) color = picking.color;
       const sm = this._main.getSculptManager();
       if (sm && sm._activeColor) color = sm._activeColor;
+
+      if (isNaN(color[0]) || isNaN(color[1]) || isNaN(color[2])) {
+        color = [0.8, 0.8, 0.8]; // Fallback
+      }
 
       // Use options.isNegative OR this._negative (UI Toggle)
       var isNegative = (options && options.isNegative) || this._negative;
@@ -1052,6 +1114,7 @@ class SculptVoxel extends SculptBase {
         const minStrength = strength * (minPct / 100.0);
         strength = minStrength + (strength - minStrength) * t_adj;
       }
+      if (isNaN(strength)) strength = 0.5; // Fallback
 
       // Apply Negative Sign if needed (for Inflate/Deflate)
       if (isNegative) strength = -strength;
@@ -1061,9 +1124,8 @@ class SculptVoxel extends SculptBase {
         // Check mode
         var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate, 3=Smooth
         
-        // Expose Smooth via Secondary Trigger
-        // If holding secondary trigger (isNegative), temporarily switch to Smooth mode.
-        if (isNegative && mode !== 3) mode = 3; 
+        // Expose Smooth via Secondary Trigger (Disabled for Voxel Tool Subtract)
+        // if (isNegative && mode !== 3) mode = 3; 
 
         var shapeNum = (this._shape !== undefined) ? this._shape : 0;
         var brushRot = null;
@@ -1077,7 +1139,7 @@ class SculptVoxel extends SculptBase {
           // INFLATE
           this._worker.postMessage({
             type: 'INFLATE',
-            center: [localPos[0], localPos[1], localPos[2]],
+            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
             radius: gridRadius,
             strength: strength,
             shape: shapeNum,
@@ -1089,7 +1151,7 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'INFLATE',
-              center: [-localPos[0], localPos[1], localPos[2]],
+              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
               radius: gridRadius,
               strength: strength,
               shape: shapeNum,
@@ -1101,7 +1163,7 @@ class SculptVoxel extends SculptBase {
           // SMOOTH
           this._worker.postMessage({
             type: 'SMOOTH_SPHERE',
-            center: [localPos[0], localPos[1], localPos[2]],
+            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
             radius: gridRadius,
             strength: strength,
             shape: shapeNum,
@@ -1113,7 +1175,7 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'SMOOTH_SPHERE',
-              center: [-localPos[0], localPos[1], localPos[2]],
+              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
               radius: gridRadius,
               strength: strength,
               shape: shapeNum,
@@ -1123,11 +1185,11 @@ class SculptVoxel extends SculptBase {
           }
         } else if (mode === 0 || mode === 1) {
           // EDIT_SPHERE
-          var isSub = (mode === 1);
+          var isSub = (mode === 1) || isNegative;
 
           this._worker.postMessage({
             type: 'EDIT_SPHERE',
-            center: [localPos[0], localPos[1], localPos[2]],
+            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
             radius: gridRadius,
             color: color,
             isNegative: isSub,
@@ -1140,7 +1202,7 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'EDIT_SPHERE',
-              center: [-localPos[0], localPos[1], localPos[2]],
+              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
               radius: gridRadius,
               color: color,
               isNegative: isSub,
@@ -1371,6 +1433,8 @@ class SculptVoxel extends SculptBase {
 
     const type = (this._voxelMesh) ? 'RESAMPLE' : 'INIT';
 
+    console.log("Voxel Tool: postMessage " + type + " resolution=" + res + " size=" + size);
+    if (window.screenLog) window.screenLog("Voxel Tool: Sending " + type, "cyan");
     this._worker.postMessage({
       type: type,
       res: res,
@@ -1393,13 +1457,14 @@ class SculptVoxel extends SculptBase {
   }
 
   updateVoxelMesh(res) {
+    if (window.screenLog) window.screenLog("Voxel Tool: updateVoxelMesh received " + res.vertices.length / 3 + " vertices", "cyan");
+    // console.log("Voxel Tool: updateVoxelMesh received data from worker. Vertices: " + res.vertices.length / 3);
     // res has { vertices, faces, colors, materials } (Float32Arrays)
     // console.time('VoxelMeshUpdate');
     // console.log(`Voxel Update: ${res.vertices.length} vertices, ${res.faces.length} faces`);
 
 
     if (res.vertices.length === 0) {
-      //
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);
       }
@@ -1407,17 +1472,51 @@ class SculptVoxel extends SculptBase {
       return;
     }
 
+    // Diagnostic: Check for NaN in vertices
+    let hasNaN = false;
+    for (let i = 0; i < res.vertices.length; i++) {
+      if (isNaN(res.vertices[i])) {
+        hasNaN = true;
+        break;
+      }
+    }
+    if (hasNaN) {
+      // Use fallback
+      this._meshReplaceFallbackCount = (this._meshReplaceFallbackCount || 0) + 1;
+    }
+
     if (window.screenLog && this._lastUpdate % 20 === 0) {
        // window.screenLog(`VoxelUpdate: V=${res.vertices.length/3}`, "grey");
     }
 
-    // ALWAYS create a fresh mesh to prevent WebGL layout desyncs / array bounds errors
-    var newMesh = new MeshStatic(this._main._gl);
-    newMesh._isVoxel = true;
-    newMesh.setID(this._voxelMesh ? this._voxelMesh.getID() : MeshStatic.ID++);
+    var newMesh = this._voxelMesh;
+    if (!newMesh) {
+      newMesh = new MeshStatic(this._main._gl);
+      newMesh._isVoxel = true;
+      newMesh.setID(MeshStatic.ID++);
+      newMesh._typeName = "VoxelMesh"; // Name in UI Outliner
+      this._voxelMesh = newMesh;
+      
+      const self = this;
+      const originalSetVisible = newMesh.setVisible;
+      newMesh.setVisible = function(val) {
+        if (originalSetVisible) originalSetVisible.call(this, val);
+        else newMesh._isVisible = val; // Direct fallback if base doesn't have it
+        self.toggleChunksVisibility(val);
+      };
+
+      // Add to main scene once so it appears in outliner
+      this._main.addNewMesh(newMesh);
+
+      // Pre-allocate capacity to force ThreeJS into a large WebGL pool upfront
+      const capacity = 1000000;
+      newMesh.setVertices(new Float32Array(capacity * 3));
+      newMesh.setFaces(new Uint32Array(capacity * 4));
+      newMesh.updateBuffers(); // Force WebGl allocation
+    }
     
-    // Set baseline arrays
-    newMesh.setVertices(res.vertices);
+    mat4.copy(newMesh.getMatrix(), this._gridMatrix);
+    newMesh.setVertices(res.vertices); // Restore missing vertices
     newMesh.setFaces(res.faces); // Pure Quads from SurfaceNets
     newMesh.setColors(res.colors);
     newMesh.setMaterials(res.materials);
@@ -1440,8 +1539,7 @@ class SculptVoxel extends SculptBase {
     newMesh.updateOctree();
 
     newMesh.initRender();
-
-    newMesh.initRender();
+    newMesh.initThreeMesh();
 
     // Copy states from old mesh before swap
     if (this._voxelMesh) {
@@ -1473,7 +1571,7 @@ class SculptVoxel extends SculptBase {
       this._voxelMesh = null;
     } else {
       // Even with smoothed normals, we want MATCAP if the original volume had gradient data, or just default to MATCAP
-      newMesh.setShaderType(Enums.Shader.MATCAP);
+      newMesh.setShaderType(Enums.Shader.PBR);
       newMesh.setFlatShading(false);
       this._main.addNewMesh(newMesh);
     }
@@ -1482,11 +1580,8 @@ class SculptVoxel extends SculptBase {
 
     // Apply Transformations
     var step = this._step;
-    mat4.identity(this._voxelMesh.getMatrix());
-    mat4.scale(this._voxelMesh.getMatrix(), this._voxelMesh.getMatrix(), [step, step, step]);
-    
     var worldMat = this._voxelMesh.getMatrix();
-    mat4.copy(worldMat, this._gridMatrix);
+    mat4.identity(worldMat);
     mat4.translate(worldMat, worldMat, this._min);
     mat4.scale(worldMat, worldMat, [step, step, step]);
 
@@ -1521,6 +1616,101 @@ class SculptVoxel extends SculptBase {
     this._voxelMesh.updateBuffers();
 
     // if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
+  }
+
+  toggleChunksVisibility(val) {
+    if (!this._chunkMap) return;
+    
+    // Convert Map values or object properties to an array if needed
+    // In updateVoxelChunks we use `if (!this._chunkMap) this._chunkMap = new Map();`
+    // Wait, let's verify if _chunkMap is a Map or a plain object!
+    // At line 1618: `if (!this._chunkMap) this._chunkMap = new Map();`
+    // So it is a Map!
+    this._chunkMap.forEach((mesh) => {
+      mesh.setVisible(val);
+      if (mesh.getThreeMesh()) {
+        mesh.getThreeMesh().visible = val;
+      }
+    });
+  }
+
+  updateVoxelChunks(chunks) {
+    if (!this._chunkMap) this._chunkMap = new Map();
+
+    console.log(`[SculptVoxel] updateVoxelChunks received ${chunks.length} chunks.`);
+
+    for (const chunk of chunks) {
+      let mesh = this._chunkMap.get(chunk.id);
+      
+      if (chunk.vertices.length === 0) {
+         if (mesh) mesh.setVisible(false);
+         continue;
+      }
+
+      if (!mesh) {
+        mesh = new MeshStatic(this._main._gl);
+        mesh._isVoxel = true;
+        mesh.setID(MeshStatic.ID++);
+        this._chunkMap.set(chunk.id, mesh);
+
+        // Pre-allocate 5k vertex capacity (Fast!)
+        const capacity = 5000;
+        mesh.setVertices(new Float32Array(capacity * 3)); // Tiny pool
+        mesh.setFaces(new Uint32Array(capacity * 4));
+        mesh.setColors(new Float32Array(capacity * 3));
+        mesh.setMaterials(new Float32Array(capacity * 3));
+        
+        // World matrix sync
+        var tmp = mat4.create();
+        mat4.identity(tmp);
+        mat4.translate(tmp, tmp, this._min);
+        var step = this._step;
+        mat4.scale(tmp, tmp, [step, step, step]);
+        mat4.copy(mesh.getMatrix(), tmp);
+
+        mesh.initColorsAndMaterials();
+        mesh.allocateArrays();
+        mesh.initRenderTriangles();
+        mesh.updateFacesAabb();
+        mesh.updateOctree();
+        mesh.initRender();
+
+        mesh.initThreeMesh(); // Create ThreeJS mesh handle BEFORE adding to scene!
+        mesh._isVoxelChunk = true; // Use flag to hide from UI while keeping in scene
+        this._main.getMeshes().push(mesh); // Add to main list for picking/uniforms
+        
+        if (this._main._worldGroup) {
+          this._main._worldGroup.add(mesh.getThreeMesh());
+        } else {
+          this._main.addNewMesh(mesh); // Fallback if _worldGroup is missing
+        }
+
+        if (this._voxelMesh) {
+           mesh.setShaderType(this._voxelMesh.getShaderType());
+           mesh.setMatcap(this._voxelMesh.getMatcap());
+           mesh.setFlatShading(this._voxelMesh.getFlatShading());
+        }
+      }
+
+      mesh.setVertices(chunk.vertices);
+      mesh.setFaces(chunk.faces);
+      if (chunk.colors) mesh.setColors(chunk.colors);
+      if (chunk.materials) mesh.setMaterials(chunk.materials);
+      if (chunk.normals) mesh.setNormals(chunk.normals);
+
+      if (this._voxelMesh && mesh.getShaderType() !== this._voxelMesh.getShaderType()) {
+         mesh.setShaderType(this._voxelMesh.getShaderType());
+         mesh.setMatcap(this._voxelMesh.getMatcap());
+         mesh.setFlatShading(this._voxelMesh.getFlatShading());
+      }
+
+      mesh.setVisible(true);
+      
+      if (mesh.getVertexBuffer()) mesh.getVertexBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
+      if (mesh.getIndexBuffer()) mesh.getIndexBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
+      
+      mesh.updateBuffers(); // Sync to GPU
+    }
   }
 
   // Bake Voxel Mesh to Standard Multimesh
@@ -1659,7 +1849,7 @@ class SculptVoxel extends SculptBase {
   }
 
   getDrawables() {
-    return [this._cursorMeshSphere, this._cursorMeshCube, this._cursorMeshSymSphere, this._cursorMeshSymCube, this._voxelBounds];
+    return [this._cursorMeshSphere, this._cursorMeshCube, this._cursorMeshSymSphere, this._cursorMeshSymCube]; // Removed _voxelBounds
   }
 
   renderVR(main, camera) {

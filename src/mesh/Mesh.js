@@ -2232,11 +2232,10 @@ class Mesh {
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('position');
     
-    // In Three.js >r130, changing attribute array sizes dynamically is strictly forbidden.
-    // Sometimes even deleteAttribute/dispose fails to force WebGL to rebuild Attribute 0 (Position).
-    // If the size changes, we must completely rebuild the BufferGeometry object and hot-swap it.
-    if (!attr || attr.array !== vertices || attr.array.length !== vertices.length) {
-      if (geom) {
+    // If the attribute doesn't exist, or is too small, recreate it.
+    if (!attr || attr.array.length < vertices.length) {
+      if (geom && geom.getAttribute('position')) {
+          geom.deleteAttribute('position');
           geom.dispose();
       }
       
@@ -2261,6 +2260,9 @@ class Mesh {
       }
     } else {
       attr.array.set(vertices);
+      if (this._isVoxel) {
+          attr.updateRange = { offset: 0, count: vertices.length };
+      }
       attr.needsUpdate = true;
     }
   }
@@ -2269,14 +2271,19 @@ class Mesh {
     var normals = this.isUsingDrawArrays() ? this.getNormalsDrawArrays() : this.getNormals();
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('normal');
-    if (!attr || attr.array !== normals || attr.array.length !== normals.length) {
+    if (!normals) return; // Skip if no normals provided
+    
+    if (!attr || attr.array.length < normals.length) {
       if (attr) {
           geom.deleteAttribute('normal');
-          geom.dispose();
+          geom.dispose(); // force WebGL context to drop old buffer
       }
       geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     } else {
       attr.array.set(normals);
+      if (this._isVoxel) {
+          attr.updateRange = { offset: 0, count: normals.length };
+      }
       attr.needsUpdate = true;
     }
   }
@@ -2285,7 +2292,7 @@ class Mesh {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('aColor');
-    if (!attr || attr.array !== colors || attr.array.length !== colors.length) {
+    if (!attr || attr.array.length < colors.length) {
       if (attr) {
           geom.deleteAttribute('aColor');
           geom.dispose();
@@ -2293,6 +2300,9 @@ class Mesh {
       geom.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
     } else {
       attr.array.set(colors);
+      if (this._isVoxel) {
+          attr.updateRange = { offset: 0, count: colors.length };
+      }
       attr.needsUpdate = true;
     }
   }
@@ -2301,7 +2311,7 @@ class Mesh {
     var materials = this.isUsingDrawArrays() ? this.getMaterialsDrawArrays() : this.getMaterials();
     var geom = this._renderData._geometry;
     var attr = geom.getAttribute('aMaterial');
-    if (!attr || attr.array !== materials || attr.array.length !== materials.length) {
+    if (!attr || attr.array.length < materials.length) {
       if (attr) {
           geom.deleteAttribute('aMaterial');
           geom.dispose();
@@ -2309,6 +2319,9 @@ class Mesh {
       geom.setAttribute('aMaterial', new THREE.BufferAttribute(materials, 3));
     } else {
       attr.array.set(materials);
+      if (this._isVoxel) {
+          attr.updateRange = { offset: 0, count: materials.length };
+      }
       attr.needsUpdate = true;
     }
   }
@@ -2351,14 +2364,34 @@ class Mesh {
     var useTex = this.isUsingTexCoords();
     var triangles = useTex ? this.getTrianglesTexCoord() : this.getTriangles();
     
-    if (!geom.index || geom.index.array.length !== triangles.length) {
+    if (this._isVoxel) {
+        var faces = this.getFaces();
+        if (faces) {
+            triangles = new Uint32Array(faces.length / 4 * 6);
+            for(let i=0, j=0; i<faces.length; i+=4, j+=6) {
+                 triangles[j] = faces[i];
+                 triangles[j+1] = faces[i+1];
+                 triangles[j+2] = faces[i+2];
+                 triangles[j+3] = faces[i+2];
+                 triangles[j+4] = faces[i+3];
+                 triangles[j+5] = faces[i];
+            }
+        }
+    }
+
+    if (!triangles) return; // Skip if no valid index data
+    
+    // Relax check for index length
+    if (!geom.index || geom.index.array.length < triangles.length) {
       if (geom.index) {
-          geom.setIndex(null); // safely detach
-          geom.dispose(); // tell WebGL to dump it
+        geom.deleteAttribute('index'); 
       }
       geom.setIndex(new THREE.BufferAttribute(triangles, 1));
     } else {
       geom.index.array.set(triangles);
+      if (this._isVoxel) {
+          geom.index.updateRange = { offset: 0, count: triangles.length };
+      }
       geom.index.needsUpdate = true;
     }
     
@@ -2381,11 +2414,20 @@ class Mesh {
     }
     
     // Force Three.js to recalculate internally caching bounds because SculptXR topology is dynamic
-    geom.computeBoundingSphere();
-    geom.computeBoundingBox();
+    if (!this._isVoxel) {
+        geom.computeBoundingSphere();
+        geom.computeBoundingBox();
+    } else {
+        if (!geom.boundingSphere) {
+            geom.boundingSphere = new THREE.Sphere(new THREE.Vector3(0,0,0), 1000); // Giant dummy sphere to bypass culling
+            geom.boundingBox = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(0,0,0), new THREE.Vector3(1000,1000,1000));
+        }
+    }
     
-    // Sometimes SculptXR raw normals aren't sufficient or correctly mapped, force recompute to be safe
-    geom.computeVertexNormals();
+    // Sometimes SculptXR raw normals aren't sufficient or correctly mapped, force recompute only if missing
+    if (!this.getNormals() || this.getNormals().length === 0) {
+        geom.computeVertexNormals();
+    }
   }
 
   updateWireframeBuffer() {

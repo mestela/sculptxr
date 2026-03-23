@@ -129,9 +129,11 @@ var interpolateVertices = function (edgeMask, cubeEdges, grid, x, vertices) {
     var e1 = cubeEdges[(i << 1) + 1];
     var g0 = grid[e0]; //Unpack grid values
     var t = g0 - grid[e1]; //Compute point of intersection
-    if (Math.abs(t) < 1e-7)
-      continue;
-    t = g0 / t;
+    if (Math.abs(t) < 1e-7 || isNaN(t)) {
+      t = 0.5; // Fallback for NaN or zero-crossing
+    } else {
+      t = g0 / t;
+    }
 
     //Interpolate vertices and add up intersections (this can be done without multiplying)
     for (var j = 0, k = 1; j < 3; ++j, k <<= 1) {

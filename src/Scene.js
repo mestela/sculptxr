@@ -1516,6 +1516,13 @@ class Scene {
     var index = this.getIndexMesh(mesh);
     if (index >= 0) this._meshes[index] = newMesh;
     if (this._mesh === mesh) this.setMesh(newMesh);
+
+    if (this._worldGroup && newMesh.getThreeMesh()) {
+      if (mesh.getThreeMesh()) {
+        this._worldGroup.remove(mesh.getThreeMesh());
+      }
+      this._worldGroup.add(newMesh.getThreeMesh());
+    }
   }
 
   duplicateSelection() {
@@ -3854,6 +3861,7 @@ class Scene {
           triggerValue: triggerValue,
           handedness: source.handedness,
           quat: engineQuat,
+          rayOrigin: rayOrigin, // Pass laser tip
           isColorSmoothOverride: isColorSmoothOverride
         });
 
