@@ -21,7 +21,7 @@ class VoxelState {
 
     // Data
     // We only need distance field for now. Colors/Materials can be added later.
-    this._distanceField = new Float32Array(this._count);
+    this._distanceField = new Float32Array(this._count).fill(1.17); // Initialize as empty space
 
     // Active Bounds (Inclusive)
     this._activeMin = new Int32Array([res, res, res]);

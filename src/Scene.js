@@ -1572,7 +1572,9 @@ class Scene {
     }
   }
   async enterXR(session) {
+    if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
+
     session.addEventListener('end', this.onXREnd.bind(this));
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
@@ -1586,13 +1588,16 @@ class Scene {
     vec3.copy(this._desktopCameraCache.center, this._camera._center);
     vec3.copy(this._desktopCameraCache.offset, this._camera._offset);
 
-    // Force Init Controllers & Menu IMMEDIATELY
-    this.initVRControllers();
-
     // Enable Three.js WebXR
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
     await this._renderer.xr.setSession(session);
+
+    // Force Init Controllers & Menu IMMEDIATELY (After Session Set!)
+    if (window.screenLog) window.screenLog("[XR] Calling initVRControllers", "yellow");
+    this.initVRControllers();
+
+
     
     // Force first frame render to prevent WebXR Session Timeout
     this.render();
@@ -1808,8 +1813,11 @@ class Scene {
     };
 
     if (Primitives) {
+      if (window.screenLog) window.screenLog(`[XR] initVRControllers check: GripExisting=${!!this._vrControllerLeftGrip}`, "cyan");
       if (!this._vrControllerLeftGrip) {
+        if (window.screenLog) window.screenLog("[XR] Creating Controller Groups", "cyan");
         if (this._renderer && this._scene) {
+
           // Native Three.js XR Controllers (Target Ray Space)
           this._vrControllerLeft = this._renderer.xr.getController(0);
           this._vrControllerRight = this._renderer.xr.getController(1);
@@ -3311,6 +3319,27 @@ class Scene {
       vec3.scale(enginePos, enginePos, invScale);
     }
 
+    // [STYLUS PROP] Tip Position Calculation (Parity with live laser visual)
+    const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+    const tipPhys = vec3.create();
+    vec3.scaleAndAdd(tipPhys, physicalOrigin, rayDirPhys, offZ);
+
+    const tipModel = vec3.create();
+    if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
+      vec3.copy(tipModel, tipPhys);
+      vec3.transformMat4(tipModel, tipModel, this._camera._specViewPhys);
+      const invHackedView = mat4.create();
+      mat4.invert(invHackedView, this._camera._specView);
+      vec3.transformMat4(tipModel, tipModel, invHackedView);
+    } else {
+      vec3.copy(tipModel, tipPhys);
+      if (this._xrWorldOffset) {
+        vec3.transformMat4(tipModel, tipModel, this._xrWorldOffset.inverse.matrix);
+      }
+      vec3.scale(tipModel, tipModel, invScale);
+    }
+
+
     // Rotation Logic (World -> Engine)
     // EngineRot = Inv(WorldRot) * PhysRot
     const qPhys = quat.fromValues(q.x, q.y, q.z, q.w);
@@ -3390,8 +3419,10 @@ class Scene {
         controllers: [],
         triggerValue: 0.0,
         handedness: source.handedness,
-        quat: engineQuat
+        quat: engineQuat,
+        tipOrigin: tipModel // Fix: pass exact tip
       });
+
       return;
     }
 
@@ -3862,8 +3893,10 @@ class Scene {
           handedness: source.handedness,
           quat: engineQuat,
           rayOrigin: rayOrigin, // Pass laser tip
+          tipOrigin: tipModel, // Fix: pass exact tip
           isColorSmoothOverride: isColorSmoothOverride
         });
+
 
         // Restore original state immediately
         if (toolParams) {
@@ -3967,11 +4000,12 @@ class Scene {
     try {
         if (!sources || !this._camera || !this._picking) return;
 
-        // if (!window._logCursorThrottle) window._logCursorThrottle = 0;
-        const doLog = false; // (window._logCursorThrottle++ % 120 === 0);
-        if (doLog) {
-            console.log('-- Cursor VR Debug v1.0.6 --');
+        if (!window._logCursorThrottle) window._logCursorThrottle = 0;
+        const doLog = (window._logCursorThrottle++ % 120 === 0);
+        if (doLog && window.screenLog) {
+            window.screenLog(`[XR] Input Sources found: ${sources.length}`, "cyan");
         }
+
 
         const tool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
         let sliderVal = (this._guiXR) ? this._guiXR._radius : 0.15;

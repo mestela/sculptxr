@@ -45,8 +45,21 @@ class SculptVoxel extends SculptBase {
     
     const isDesktop = !window.navigator.xr; // heuristic or check main
     // Let's rely on xrSession check during init, but for constructor just use a default
-    this._res = 64; 
-    this._pendingRes = 64;
+    this._res = 128; 
+    this._pendingRes = 128;
+
+    this._size = 100.0; // Revert to 100 to avoid clipping!
+    this._min = [-50, -50, -50];
+    this._max = [50, 50,  50];
+
+    console.log("DIAGNOSTIC: SculptVoxel.js Constructor Executed! Resolution=" + this._res);
+
+    this._size = 100.0; // Keep simulation large
+    this._min = [-50, -50, -50];
+    this._max = [50, 50,  50];
+
+    console.log("DIAGNOSTIC: SculptVoxel.js Constructor Executed! Resolution=" + this._res);
+
 
     this._worker.onmessage = (e) => {
       const msg = e.data;
@@ -127,7 +140,7 @@ class SculptVoxel extends SculptBase {
     this._res = res;
     this._pendingRes = res;
     
-    const size = 150.0; // Scaled Up Workspace (150 meters) to encompass user movement
+    const size = 150.0; // Restore to 150m to fit huge world height!
     this._worker.postMessage({
       type: 'INIT',
       res: res,
@@ -745,6 +758,7 @@ class SculptVoxel extends SculptBase {
     if (this._voxelBounds) {
       this._voxelBounds.render(this._main, this._size, this._gridMatrix);
     }
+
     try {
       // VoxelXR Update
       // Ensure we hide distracting meshes
@@ -981,29 +995,34 @@ class SculptVoxel extends SculptBase {
       // Hardcoded Workspace Scale: Assuming standard workspace scale of 0.77 absolute Workspace Units Workspace units Workspace units Workplace
       // To convert absolute meters to workspace units: Absolute / 0.77 = Absolute * 1.3
       const workspacePos = vec3.create();
-      if (options && options.rayOrigin) {
-        // Shift forward along laser direction by 14.0 units (14cm) to reach tip of stylus
-        workspacePos[0] = options.rayOrigin[0] + dir[0] * 14.0;
-        workspacePos[1] = options.rayOrigin[1] + dir[1] * 14.0;
-        workspacePos[2] = options.rayOrigin[2] + dir[2] * 14.0;
+      if (options && options.tipOrigin) {
+        workspacePos[0] = options.tipOrigin[0];
+        workspacePos[1] = options.tipOrigin[1];
+        workspacePos[2] = options.tipOrigin[2];
+      } else if (options && options.rayOrigin) {
+        // Fallback: Hardcoded shift if Scene.js did not pass computed tip position
+        const gripDir = vec3.fromValues(0, 0, -1);
+        if (options.quat) {
+          vec3.transformQuat(gripDir, gripDir, options.quat);
+        } else {
+          vec3.copy(gripDir, dir); 
+        }
+
+        const offsetDist = 0.20; // fallback in case of missing tip
+        workspacePos[0] = options.rayOrigin[0] + gripDir[0] * offsetDist;
+        workspacePos[1] = options.rayOrigin[1] + gripDir[1] * offsetDist;
+        workspacePos[2] = options.rayOrigin[2] + gripDir[2] * offsetDist;
       } else {
+
         workspacePos[0] = origin[0];
         workspacePos[1] = origin[1];
         workspacePos[2] = origin[2];
       }
 
-      // Visual Debugger: Add a red sphere at workspacePos
-      if (!this._debugPoint && THREE) {
-        const geo = new THREE.SphereGeometry(0.5, 8, 8);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false, transparent: true, opacity: 0.5 });
-        this._debugPoint = new THREE.Mesh(geo, mat);
-        if (this._main && this._main._scene) {
-          this._main._scene.add(this._debugPoint);
-        }
-      }
-      if (this._debugPoint) {
-        this._debugPoint.position.set(workspacePos[0], workspacePos[1], workspacePos[2]);
-      }
+
+      // removed debug point logic
+
+      // removed scaling hacks
 
       var localPos = vec3.create();
       // Map Workspace Meters (WorkspacePos) to Simulation Index Space using step and min boundaries
@@ -1079,8 +1098,12 @@ class SculptVoxel extends SculptBase {
       // Let's rely on standard logic (maybe throttle `returnMesh`?)
       // The desktop `stroke` logic throttles `returnMesh`.
       const now = performance.now();
-      const returnMesh = (!this._lastMeshTime || now - this._lastMeshTime > 100); // 10fps mesh updates for voxel sculpting perf
-      if (returnMesh) this._lastMeshTime = now;
+      const returnMesh = !this._pendingMeshUpdate; // Adaptive Throttling!
+      if (returnMesh) {
+          this._pendingMeshUpdate = true; // Lock it!
+          this._lastMeshTime = now;
+      }
+
 
       var color = [0.8, 0.8, 0.8]; // Valid default
       if (picking && picking.color) color = picking.color;
@@ -1448,6 +1471,8 @@ class SculptVoxel extends SculptBase {
     // }
     this._lastUpdate = 0; // Allow forceInit to run
     this.forceInit();
+
+
     if (this._main) this._main.render();
   }
 
@@ -1512,7 +1537,10 @@ class SculptVoxel extends SculptBase {
       const capacity = 1000000;
       newMesh.setVertices(new Float32Array(capacity * 3));
       newMesh.setFaces(new Uint32Array(capacity * 4));
+      newMesh.setColors(new Float32Array(capacity * 3)); // Fix: Pre-allocate colors
+      newMesh.setMaterials(new Float32Array(capacity * 3)); // Fix: Pre-allocate materials
       newMesh.updateBuffers(); // Force WebGl allocation
+
     }
     
     mat4.copy(newMesh.getMatrix(), this._gridMatrix);
@@ -1520,6 +1548,8 @@ class SculptVoxel extends SculptBase {
     newMesh.setFaces(res.faces); // Pure Quads from SurfaceNets
     newMesh.setColors(res.colors);
     newMesh.setMaterials(res.materials);
+    newMesh.setNormals(res.normals); // Fix: Use pre-computed normals from worker!
+
 
     if (res.normals && res.normals.length > 0) {
       newMesh.setNormals(res.normals);
@@ -1563,11 +1593,12 @@ class SculptVoxel extends SculptBase {
       } else {
         this._main.replaceMesh(this._voxelMesh, newMesh);
       }
-      // BUG FIX: ShaderMatcap binds the global texture to _texture0. 
-      // Mesh.release() deletes _texture0, destroying the global texture!
-      // Must unset before release.
-      this._voxelMesh.setTexture0(null);
-      this._voxelMesh.release();
+      // Only release the OLD mesh if we actually created a NEW one!
+      if (this._voxelMesh && this._voxelMesh !== newMesh) {
+          this._voxelMesh.setTexture0(null);
+          this._voxelMesh.release();
+      }
+
       this._voxelMesh = null;
     } else {
       // Even with smoothed normals, we want MATCAP if the original volume had gradient data, or just default to MATCAP

@@ -1,4 +1,32 @@
+# Walkthrough: Voxel Stabilization & Performance [PARANOID]
+
+## Goal
+Stabilize voxel brush alignment, fix race conditions on refresh, and optimize sculpting performance (eliminating 1s lag and worker spam).
+
+## Plain English Reconstruction Guide
+
+### 1. Stylus Tip Alignment (`Scene.js` & `SculptVoxel.js`)
+-   In `Scene.js` `processVRSculpting`, calculate the physical tip of the stylus by offsetting $15\text{cm}$ (Quest) or $10\text{cm}$ (PCVR) forward along the controller ray.
+-   Pass this `tipOrigin` coordinate in the `options` object to `updateXR`.
+-   In `SculptVoxel.js` `updateXR`, read `options.tipOrigin` to define `workspacePos` instead of hardcoding a shift.
+
+### 2. WebXR Race Condition Fix (`Scene.js`)
+-   Move the call to `this.initVRControllers()` out of the start of `enterXR` and place it **after** `await this._renderer.xr.setSession(session)`. This ensures controllers bind to an active session on refresh.
+
+### 3. Adaptive Throttling (`SculptVoxel.js`)
+-   In `SculptVoxel.js` `updateXR` (around line 1100), replace the temporal $100\text{ms}$ throttle with `const returnMesh = !this._pendingMeshUpdate;`.
+-   Immediately set `this._pendingMeshUpdate = true;` if `returnMesh` is true. This prevents spamming worker edits faster than the worker triggers `postMesh`.
+
+### 4. GPU Buffer Release Protection (`SculptVoxel.js`)
+-   In `updateVoxelMesh`, wrap the call to `this._voxelMesh.release()` in a check: `if (this._voxelMesh && this._voxelMesh !== newMesh)`. This prevents destroying the GPU pool when reusing the same mesh.
+
+### 5. Clear Empty Voxel State (`VoxelState.js`)
+-   In `VoxelState` constructor, fill the `_distanceField` with `1.17` (empty space constant) instead of default $0$.
+
+---
+
 # Walkthrough: VR Picking Instability Fix (v1.0.22)
+
 
 ## Goal
 Resolve the severe picking instability in VR where "most clicks miss" the mesh when trying to sculpt.
