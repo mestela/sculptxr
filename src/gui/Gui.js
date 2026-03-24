@@ -86,6 +86,13 @@ class Gui {
     extra.addSlider('Rad Mult', 50.0, this.onVoxelRad.bind(this), 1.0, 100.0, 1.0);
 
     extra.addTitle('Advanced');
+    extra.addCombobox('Controller Model', window._xrControllerOverride || 'Auto', (val) => {
+      window._xrControllerOverride = val;
+      if (window._scene) window._scene.render(); // Just trigger render to be safe
+    }, ['Auto', 'meta-quest-touch-plus', 'meta-quest-touch-pro', 'oculus-touch-v3', 'valve-index-touch', 'htc-vive-wand', 'galaxy-xr', 'samsung-odyssey']);
+    extra.addCheckbox('Force Grey Controllers', window._forceGreyControllers === true, (val) => {
+      window._forceGreyControllers = val;
+    });
     extra.addCheckbox('Show Debug Log', window._showDebugLog !== false, (val) => {
       window._showDebugLog = val;
       const log = document.getElementById('log');

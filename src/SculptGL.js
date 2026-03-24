@@ -940,7 +940,7 @@ class SculptGL extends Scene {
 
     try {
       const session = await navigator.xr.requestSession(mode, {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+        optionalFeatures: ['local-floor', 'bounded-floor', 'layers']
       });
 
       // TRUSTED EVENT LISTENER for File I/O

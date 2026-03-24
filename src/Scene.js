@@ -1572,6 +1572,7 @@ class Scene {
     }
   }
   async enterXR(session) {
+    console.log("[USER EVENT] Scene.enterXR executing with session:", session);
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
@@ -1591,14 +1592,20 @@ class Scene {
     // Enable Three.js WebXR
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
-    await this._renderer.xr.setSession(session);
 
-    // Force Init Controllers & Menu IMMEDIATELY (After Session Set!)
+    // Force Init Controllers & Menu IMMEDIATELY (Before Session Set!)
+    console.log("[USER EVENT] Calling this.initVRControllers()...");
     if (window.screenLog) window.screenLog("[XR] Calling initVRControllers", "yellow");
     this.initVRControllers();
 
+    console.log(`[USER EVENT] Input Sources pre-boot count: ${session.inputSources ? session.inputSources.length : 'undefined'}`);
+    if (window.screenLog) window.screenLog(`[XR] Pre-boot InputSources: ${session.inputSources?.length}`, "yellow");
 
-    
+    console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
+    await this._renderer.xr.setSession(session);
+    console.log("[USER EVENT] setSession completely resolved!");
+    if (window.screenLog) window.screenLog("[XR] setSession Resolved", "lime");
+
     // Force first frame render to prevent WebXR Session Timeout
     this.render();
 
@@ -1606,8 +1613,10 @@ class Scene {
     session.requestReferenceSpace('local-floor').then((refSpace) => {
       this._baseRefSpace = refSpace;
       this.updateVROffsets();
+      console.log("[USER EVENT] local-floor RefSpace Established!");
     }).catch(e => {
       console.warn("Failed to get local-floor for internal offset tracking", e);
+      if (window.screenLog) window.screenLog("Failed RefSpace: " + e.message, "red");
     });
     this._vrIsNegative = false;
     this._headHeightCalibrated = false;
@@ -1813,74 +1822,133 @@ class Scene {
     };
 
     if (Primitives) {
-      if (window.screenLog) window.screenLog(`[XR] initVRControllers check: GripExisting=${!!this._vrControllerLeftGrip}`, "cyan");
-      if (!this._vrControllerLeftGrip) {
-        if (window.screenLog) window.screenLog("[XR] Creating Controller Groups", "cyan");
+    // Init VR Menu System (Global)
+    if (!this._guiXR) this._guiXR = new GuiXR(this);
+    this._guiXR.init(this._gl);
+    if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
+
+    // Init VR Mini-HUD System
+    if (!this._guiMini) {
+      this._guiMini = new GuiXR(this);
+      this._guiMini._isMiniHUD = true;
+      this._guiMini._isVisible = true;
+    }
+    this._guiMini.init(this._gl);
+    if (!this._vrMiniHUD) this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
+
+    // Init VR Popup System
+    if (!this._guiPopup) {
+      this._guiPopup = new GuiXR(this, null, 660, 660);
+      this._guiPopup._isPopupHUD = true;
+      this._guiPopup._isVisible = true;
+    }
+    this._guiPopup.init(this._gl);
+    if (!this._vrPopup) {
+      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
+      this._vrPopup.setOffset(0, 0, 0);
+      this._vrPopup.setRotation(0, 0, 0);
+    }
+
+
+      if (window.screenLog) window.screenLog(`[XR] initVRControllers check: Initialized=${!!this._controllersInitialized}`, "cyan");
+      if (!this._controllersInitialized) {
+        this._controllersInitialized = true;
+        if (window.screenLog) window.screenLog("[XR] Creating Dynamic Controller Groups", "cyan");
         if (this._renderer && this._scene) {
 
-          // Native Three.js XR Controllers (Target Ray Space)
-          this._vrControllerLeft = this._renderer.xr.getController(0);
-          this._vrControllerRight = this._renderer.xr.getController(1);
-          this._scene.add(this._vrControllerLeft);
-          this._scene.add(this._vrControllerRight);
+          this._vrControllerLeft = null;
+          this._vrControllerRight = null;
+          this._vrControllerLeftGrip = null;
+          this._vrControllerRightGrip = null;
 
-          // Native Three.js XR Controller Models (Grip Space)
           const controllerModelFactory = new XRControllerModelFactory();
 
-          this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(0);
-          const modelLeft = controllerModelFactory.createControllerModel(this._vrControllerLeftGrip);
-          this._vrControllerLeftGrip.add(modelLeft);
-          this._scene.add(this._vrControllerLeftGrip);
-          console.log("[SculptGL] Left controller model created:", modelLeft);
+          for (let i = 0; i < 2; i++) {
+            const controller = this._renderer.xr.getController(i);
+            this._scene.add(controller);
 
-          this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(1);
-          const modelRight = controllerModelFactory.createControllerModel(this._vrControllerRightGrip);
-          this._vrControllerRightGrip.add(modelRight);
-          this._scene.add(this._vrControllerRightGrip);
-          console.log("[SculptGL] Right controller model created:", modelRight);
-          
-          // Controller ray lines (attached to Target Ray Space)
-          const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8); // 1.5mm thick, 1 meter long Native
-          lineGeometry.rotateX(-Math.PI / 2); // Point forward along -Z
-          lineGeometry.translate(0, 0, -0.5); // Shift origin so Z=0 is the base, and it extends exactly 1m in -Z direction
-          
-          const lineMaterial = new THREE.MeshBasicMaterial({ 
-              color: 0xff0000, 
-              transparent: true, 
-              opacity: 0.8, 
-              depthTest: true,
-              blending: THREE.NormalBlending 
-          });
+            const grip = this._renderer.xr.getControllerGrip(i);
 
-          // Wrap in a group so we scale the group. The translated geometry ensures scaling stretches from the tip.
-          const rayRootLeft = new THREE.Group();
-          rayRootLeft.name = 'pointer_ray_root';
-          const ray1 = new THREE.Mesh(lineGeometry, lineMaterial);
-          rayRootLeft.add(ray1);
-          
-          const rayRootRight = new THREE.Group();
-          rayRootRight.name = 'pointer_ray_root';
-          const ray2 = new THREE.Mesh(lineGeometry, lineMaterial);
-          rayRootRight.add(ray2);
+            // Intercept addEventListener to force custom profiles for the 3D models before Factory sees it
+            const originalAddEventListener = grip.addEventListener;
+            grip.addEventListener = function(type, listener) {
+                if (type === 'connected') {
+                    const wrappedListener = function(event) {
+                        const override = window._xrControllerOverride;
+                        if (override && override !== 'Auto' && event.data) {
+                            try {
+                                const proxySource = new Proxy(event.data, {
+                                    get: function(target, prop) {
+                                        if (prop === 'profiles') return [override];
+                                        const value = target[prop];
+                                        return typeof value === 'function' ? value.bind(target) : value;
+                                    }
+                                });
+                                const proxyEvent = Object.create(event);
+                                Object.defineProperty(proxyEvent, 'data', { value: proxySource });
+                                listener.call(this, proxyEvent);
+                            } catch (e) {
+                                listener.call(this, event);
+                            }
+                        } else {
+                            listener.call(this, event);
+                        }
+                    };
+                    originalAddEventListener.call(this, type, wrappedListener);
+                } else {
+                    originalAddEventListener.call(this, type, listener);
+                }
+            };
 
-          this._vrControllerLeft.add(rayRootLeft);
-          this._vrControllerRight.add(rayRootRight);
+            const model = controllerModelFactory.createControllerModel(grip);
+            grip.add(model);
+            this._scene.add(grip);
 
-          // Controller Stylus Spike (Shows exact physical tip position)
-          const spikeGeo = new THREE.CylinderGeometry(0, 0.005, 0.10, 16);
-          spikeGeo.rotateX(-Math.PI / 2); // Point forward along -Z
-          // Move so Base is at 0, Tip is at -0.10
-          spikeGeo.translate(0, 0, -0.05);
-          // Shift for Quest Standalone to match the sphere volume offset
-          const spikeOffsetZ = this._isQuestStandalone ? -0.05 : 0.0;
-          spikeGeo.translate(0, 0, spikeOffsetZ);
-          const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
-          
-          const spikeLeft = new THREE.Mesh(spikeGeo, spikeMat);
-          this._vrControllerLeft.add(spikeLeft);
+            // Controller ray lines (attached to Target Ray Space)
+            const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8);
+            lineGeometry.rotateX(-Math.PI / 2);
+            lineGeometry.translate(0, 0, -0.5);
+            const lineMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xff0000, transparent: true, opacity: 0.8, depthTest: true, blending: THREE.NormalBlending 
+            });
+            const rayRoot = new THREE.Group();
+            rayRoot.name = 'pointer_ray_root';
+            rayRoot.add(new THREE.Mesh(lineGeometry, lineMaterial));
+            controller.add(rayRoot);
 
-          const spikeRight = new THREE.Mesh(spikeGeo, spikeMat);
-          this._vrControllerRight.add(spikeRight);
+            // Controller Stylus Spike
+            const spikeGeo = new THREE.CylinderGeometry(0, 0.005, 0.10, 16);
+            spikeGeo.rotateX(-Math.PI / 2);
+            spikeGeo.translate(0, 0, -0.05);
+            const spikeOffsetZ = this._isQuestStandalone ? -0.05 : 0.0;
+            spikeGeo.translate(0, 0, spikeOffsetZ);
+            const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
+            controller.add(new THREE.Mesh(spikeGeo, spikeMat));
+
+            // Keep the 'connected' listener purely for diagnostic logging, 
+            // the robust mapping happens locally in handleXRInput!
+            controller.addEventListener('connected', (event) => {
+                if (event.data && event.data.handedness) {
+                    const hand = event.data.handedness;
+                    console.log(`[SculptGL] Controller [${i}] Connected as ${hand}`);
+                    if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Connected as ${hand}`, "cyan");
+                }
+            });
+
+            controller.addEventListener('disconnected', (event) => {
+                const hand = event.data?.handedness;
+                console.log(`[SculptGL] Controller [${i}] Disconnected (${hand})`);
+                if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Disconnected (${hand})`, "red");
+
+                if (hand === 'left' && this._vrControllerLeft === controller) {
+                    this._vrControllerLeft = null;
+                    this._vrControllerLeftGrip = null;
+                } else if (hand === 'right' && this._vrControllerRight === controller) {
+                    this._vrControllerRight = null;
+                    this._vrControllerRightGrip = null;
+                }
+            });
+          }
 
           // Tool Cursors (Ring + Dot attached to World Space / Scene)
           const createVRCursor = () => {
@@ -1905,32 +1973,25 @@ class Scene {
                 void main() {
                     float dotProduct = dot(vNormal, vPositionNormal);
                     float fresnel = 1.0 - abs(dotProduct);
-                    fresnel = pow(fresnel, 3.0); // Adjust for edge sharpness
+                    fresnel = pow(fresnel, 3.0);
                     gl_FragColor = vec4(color * fresnel, fresnel);
                 }
             `;
 
             const volMat = new THREE.ShaderMaterial({
-                uniforms: {
-                    color: { value: new THREE.Color(0x4488ff) }
-                },
+                uniforms: { color: { value: new THREE.Color(0x4488ff) } },
                 vertexShader: fresnelVertexShader,
                 fragmentShader: fresnelFragmentShader,
-                transparent: true,
-                depthTest: true,
-                depthWrite: false,
-                side: THREE.DoubleSide,
-                blending: THREE.CustomBlending,
-                blendEquation: THREE.AddEquation,
-                blendSrc: THREE.OneFactor,
-                blendDst: THREE.OneFactor
+                transparent: true, depthTest: true, depthWrite: false, side: THREE.DoubleSide,
+                blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+                blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor
             });
             const volumeSphere = new THREE.Mesh(sphereGeo, volMat);
             volumeSphere.name = "volume_sphere";
             group.add(volumeSphere);
 
             // 1b. Volume Cube Indicator (For Voxel Box tools)
-            const cubeGeo = new THREE.BoxGeometry(2.0, 2.0, 2.0); // 2.0 extent matches 1.0 radius logically
+            const cubeGeo = new THREE.BoxGeometry(2.0, 2.0, 2.0);
             const volumeCube = new THREE.Mesh(cubeGeo, volMat);
             volumeCube.name = "volume_cube";
             volumeCube.visible = false;
@@ -1945,13 +2006,12 @@ class Scene {
             ringLine.name = "cursor_ring";
             group.add(ringLine);
 
-            // 2b. Fixed-size Center Dot (Crosshair)
             const dotGeo = new THREE.BufferGeometry();
             dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
             const dotMat = new THREE.PointsMaterial({ color: 0x4488ff, size: 2, sizeAttenuation: false, depthTest: false, transparent: true, opacity: 0.8 });
             const centerDot = new THREE.Points(dotGeo, dotMat);
             centerDot.name = "cursor_dot";
-            ringLine.add(centerDot); // Attach to ring so it follows position and rotation!
+            ringLine.add(centerDot);
 
             group.visible = false;
             return group;
@@ -1964,59 +2024,8 @@ class Scene {
         }
       }
 
-    // Init VR Menu System
-    if (!this._guiXR) this._guiXR = new GuiXR(this);
-    this._guiXR.init(this._gl);
-    if (!this._vrMenu) {
-      this._vrMenu = new VRMenu(this._gl, this._guiXR);
-      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrMenu.mesh);
-    }
 
-    // Init VR Mini-HUD System
-    if (!this._guiMini) {
-      this._guiMini = new GuiXR(this);
-      this._guiMini._isMiniHUD = true;
-      this._guiMini._isVisible = true;
-    }
-    this._guiMini.init(this._gl);
-    if (!this._vrMiniHUD) {
-      this._vrMiniHUD = new VRMenu(this._gl, this._guiMini);
-      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrMiniHUD.mesh);
-    }
-
-    // Init VR Popup System
-    if (!this._guiPopup) {
-      this._guiPopup = new GuiXR(this, null, 660, 660);
-      this._guiPopup._isPopupHUD = true;
-      this._guiPopup._isVisible = true;
-    }
-    this._guiPopup.init(this._gl);
-    if (!this._vrPopup) {
-      this._vrPopup = new VRMenu(this._gl, this._guiPopup);
-      this._vrPopup.setOffset(0, 0, 0);
-      this._vrPopup.setRotation(0, 0, 0);
-      if (this._vrControllerLeftGrip) this._vrControllerLeftGrip.add(this._vrPopup.mesh);
-    }
-
-    // CRITICAL FIX: The Three.js WebXRManager forcefully clears standard group attachments 
-    // when the hardware 'connected' event fires on session initialization. We must forcefully 
-    // restore the Custom UI elements to the controller hierarchy AFTER the hardware binds.
-    if (this._vrControllerLeft && !this._vrControllerLeft._hasAddedConnectListener) {
-        this._vrControllerLeft.addEventListener('connected', () => {
-            if (this._vrControllerLeftGrip && this._vrMenu) {
-                this._vrControllerLeftGrip.add(this._vrMenu.mesh);
-            }
-            if (this._vrControllerLeftGrip && this._vrMiniHUD) {
-                this._vrControllerLeftGrip.add(this._vrMiniHUD.mesh);
-                // Ensure MiniHUD always defaults to visible
-                this._vrMiniHUD.mesh.visible = true; 
-            }
-            if (this._vrControllerLeftGrip && this._vrPopup) {
-                this._vrControllerLeftGrip.add(this._vrPopup.mesh);
-            }
-        });
-        this._vrControllerLeft._hasAddedConnectListener = true;
-    }
+    // (Legacy static connection listener removed; handled generically in dynamic array loop)
 
     if (!this._vrLaser) this._vrLaser = new VRLaser(this._gl);
 
@@ -2127,8 +2136,7 @@ class Scene {
       meshH.setVisible(false); // FORCED OFF
       this._debugHitSphere = meshH;
     }
-  }
-
+    }
   }
 
   loadVRController(handedness) {
@@ -2276,6 +2284,37 @@ class Scene {
 
   handleXRInput(frame, refSpace) {
     try {
+
+    // Dynamic Material Override for Virtual Desktop (One-way)
+    const forceGrey = !!window._forceGreyControllers;
+    if (forceGrey) {
+      [this._vrControllerLeftGrip, this._vrControllerRightGrip].forEach(grip => {
+        if (!grip) return;
+        grip.traverse((child) => {
+          if (child.isMesh && child.material && !child.userData.isGreyOverridden) {
+            const isArray = Array.isArray(child.material);
+            const mats = isArray ? child.material : [child.material];
+            
+            // Create a completely new grey material list to avoid mutating shared GLTF materials
+            const greyMats = mats.map(m => {
+              const grey = new THREE.MeshStandardMaterial({ 
+                color: 0x888888, 
+                roughness: 0.5,
+                depthWrite: true,
+                depthTest: true
+              });
+              return grey;
+            });
+
+            child.material = isArray ? greyMats : greyMats[0];
+            child.userData.isGreyOverridden = true;
+          }
+        });
+      });
+    }
+
+
+
     // 1. Synchronize UI Mesh Visibility with Application State
     if (this._vrMenu && this._guiXR) {
         this._vrMenu.mesh.visible = !!this._guiXR._isVisible;
@@ -2294,6 +2333,62 @@ class Scene {
 
     const session = frame.session;
     const sources = session.inputSources;
+
+    // Tick Diagnostic Log
+    if (!this._tickLog) this._tickLog = 0;
+    this._tickLog++;
+    if (this._tickLog % 270 === 0) {
+        if (!sources || sources.length === 0) {
+            console.log(`[XR TICK] Missing! SrcLen: 0`);
+            // if (window.screenLog) window.screenLog(`[XR TICK] Missing! SrcLen: 0`, "orange");
+        }
+    }
+
+    // --- BULLETPROOF HANDEDNESS MAPPING ---
+    // Instead of relying on fragile 'connected' setup events that can drop during cache-clears, 
+    // we iterate Three.js's chronological inputSources array every frame and strictly map 
+    // the local variables to whichever physical index currently holds the correct hand.
+    if (sources && sources.length > 0) {
+        let leftIdx = -1;
+        let rightIdx = -1;
+        
+        // Find current indices
+        for (let i = 0; i < sources.length; i++) {
+            if (sources[i].handedness === 'left') leftIdx = i;
+            if (sources[i].handedness === 'right') rightIdx = i;
+        }
+
+        // Map Left
+        if (leftIdx !== -1) {
+            this._vrControllerLeft = this._renderer.xr.getController(leftIdx);
+            this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(leftIdx);
+            
+            // Auto-mount UI
+            const grip = this._vrControllerLeftGrip;
+            if (this._vrMenu && this._vrMenu.mesh.parent !== grip) grip.add(this._vrMenu.mesh);
+            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== grip) grip.add(this._vrMiniHUD.mesh);
+            if (this._vrPopup && this._vrPopup.mesh.parent !== grip) grip.add(this._vrPopup.mesh);
+        } else {
+            this._vrControllerLeft = null;
+            this._vrControllerLeftGrip = null;
+        }
+
+        // Map Right
+        if (rightIdx !== -1) {
+            this._vrControllerRight = this._renderer.xr.getController(rightIdx);
+            this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(rightIdx);
+        } else {
+            this._vrControllerRight = null;
+            this._vrControllerRightGrip = null;
+        }
+    } else {
+        // Fallback or wiped state
+        this._vrControllerLeft = null;
+        this._vrControllerLeftGrip = null;
+        this._vrControllerRight = null;
+        this._vrControllerRightGrip = null;
+    }
+
     let leftGrip = false, rightGrip = false;
     let leftOrigin = null, rightOrigin = null;
     let leftRot = null, rightRot = null;
@@ -2351,9 +2446,12 @@ class Scene {
 
     for (let source of sources) {
       // DEBUG: Scan Sources
-      // if (window.screenLog && this._logThrottle % 120 === 0) {
-      //   window.screenLog(`Src: ${source.handedness} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`, "yellow");
-      // }
+      if (this._logThrottle % 60 === 0) {
+        console.log(`[XR Tracking] Src: ${source.handedness} Profile: ${source.profiles[0]} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`);
+      }
+
+
+
 
       if (!source.gripSpace) continue;
 
@@ -4051,7 +4149,9 @@ class Scene {
 
             const uiHitDist = isLeft ? this._vrUIHitDistLeft : this._vrUIHitDistRight;
             const cursorGroup = isLeft ? this._vrCursorLeft : this._vrCursorRight;
-            const pointerLine = (isLeft ? this._vrControllerLeft : this._vrControllerRight).getObjectByName('pointer_ray_root');
+            const controllerGroup = isLeft ? this._vrControllerLeft : this._vrControllerRight;
+            if (!controllerGroup) continue; // Safe guard for unmapped handedness
+            const pointerLine = controllerGroup.getObjectByName('pointer_ray_root');
 
             let hitDist = 5.0;
             let pickedMesh = null;

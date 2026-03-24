@@ -5,7 +5,7 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v1.0.45</title>
+    <title>SculptXR v1.0.46</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
@@ -13,7 +13,7 @@
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v1.0.45">
+    <meta property="og:title" content="SculptXR v1.0.46">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -337,10 +337,14 @@
 
 
             async function onEnterVR(sessionType) {
+                console.log(`[USER EVENT] 'Enter VR' button literally clicked by user. Type: ${sessionType}`);
+                if (window.screenLog) window.screenLog(`[USER EVENT] Enter VR clicked: ${sessionType}`, "magenta");
                 if (app && app.startXRSession) {
+                    console.log("[USER EVENT] Invoking app.startXRSession...");
                     app.startXRSession(sessionType);
                 } else {
-                    console.error("App not ready or startXRSession missing");
+                    console.error("[USER EVENT] App not ready or startXRSession missing", app);
+                    if (window.screenLog) window.screenLog("[USER EVENT ERR] App not ready!", "red");
                 }
             }
         };
