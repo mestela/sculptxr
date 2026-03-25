@@ -2,12 +2,12 @@ import Enums from '../../misc/Enums.js';
 import TR from '../GuiTR.js';
 
 export default function getSettingsWidgets(main) {
-  // console.log(`[SculptGL] getSettingsWidgets: main is ${main ? main.constructor.name : 'undefined'}`);
+  // // console.log(`[SculptGL] getSettingsWidgets: main is ${main ? main.constructor.name : 'undefined'}`);
   if (main) {
-    // console.log(`[SculptGL] getSettingsWidgets: main._scene is ${main._scene ? main._scene.constructor.name : 'undefined'}`);
+    // // console.log(`[SculptGL] getSettingsWidgets: main._scene is ${main._scene ? main._scene.constructor.name : 'undefined'}`);
     if (main._scene) {
-    //   console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on instance is ${main._scene.reloadControllerModels ? 'present' : 'missing'}`);
-    //   console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on prototype is ${main._scene.constructor.prototype.reloadControllerModels ? 'present' : 'missing'}`);
+    //   // console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on instance is ${main._scene.reloadControllerModels ? 'present' : 'missing'}`);
+    //   // console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on prototype is ${main._scene.constructor.prototype.reloadControllerModels ? 'present' : 'missing'}`);
     }
   }
 
@@ -92,22 +92,22 @@ export default function getSettingsWidgets(main) {
     value: currentControllerIndex,
     options: controllerOptions,
     onSelect: (id) => {
-      console.log(`[SculptGL] onSelect called with id: ${id}`);
+      // console.log(`[SculptGL] onSelect called with id: ${id}`);
       const selectedOption = controllerOptions.find(o => o.id === id);
-      console.log(`[SculptGL] selectedOption resolved to: ${selectedOption ? selectedOption.label : 'not found'}`);
+      // console.log(`[SculptGL] selectedOption resolved to: ${selectedOption ? selectedOption.label : 'not found'}`);
       if (selectedOption) {
         window._xrControllerOverride = selectedOption.label;
-        console.log(`[SculptGL] _xrControllerOverride updated to: ${window._xrControllerOverride}`);
+        // console.log(`[SculptGL] _xrControllerOverride updated to: ${window._xrControllerOverride}`);
         
         const scene = main || window.app;
         if (window._reloadControllerModels) {
-            console.log(`[SculptGL] Invoking reloadControllerModels via global!`);
+            // console.log(`[SculptGL] Invoking reloadControllerModels via global!`);
             window._reloadControllerModels.call(scene);
         } else if (scene && scene.reloadControllerModels) {
-            console.log(`[SculptGL] Invoking reloadControllerModels via instance!`);
+            // console.log(`[SculptGL] Invoking reloadControllerModels via instance!`);
             scene.reloadControllerModels();
         } else {
-            console.log(`[SculptGL] reloadControllerModels not found! (main._scene: ${!!main._scene}, window.app._scene: ${!!(window.app && window.app._scene)}, window._reloadControllerModels: ${!!window._reloadControllerModels})`);
+            // console.log(`[SculptGL] reloadControllerModels not found! (main._scene: ${!!main._scene}, window.app._scene: ${!!(window.app && window.app._scene)}, window._reloadControllerModels: ${!!window._reloadControllerModels})`);
         }
         if (main.render) main.render();
       }
@@ -285,7 +285,7 @@ export default function getSettingsWidgets(main) {
   // Add 150px vertical buffer to ensure it is scrollable and visible above the MiniHUD
   y += 150; 
 
-  // console.log(`[SculptGL] getSettingsWidgets returning ${widgets.length} widgets:`);
+  // // console.log(`[SculptGL] getSettingsWidgets returning ${widgets.length} widgets:`);
   // widgets.forEach(w => console.log(`  - ${w.type} (${w.label || w.id || 'none'})`));
   return {
     w: menuW, width: menuW,

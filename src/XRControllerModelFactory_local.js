@@ -327,24 +327,24 @@ class XRControllerModelFactory {
 		let scene = null;
 
 		controller.addEventListener( 'connected', ( event ) => {
-			console.log(`[XRControllerModelFactory] Connected event received data present: ${!!event.data}`);
+			// console.log(`[XRControllerModelFactory] Connected event received data present: ${!!event.data}`);
 			const xrInputSource = event.data;
 			if (!xrInputSource) {
-				console.log(`[XRControllerModelFactory] No input source in event data!`);
+				// console.log(`[XRControllerModelFactory] No input source in event data!`);
 				return;
 			}
-			console.log(`[XRControllerModelFactory] Profiles: ${xrInputSource.profiles}`);
-			console.log(`[XRControllerModelFactory] targetRayMode: ${xrInputSource.targetRayMode}`);
-			console.log(`[XRControllerModelFactory] gamepad present: ${!!xrInputSource.gamepad}`);
-			console.log(`[XRControllerModelFactory] hand present: ${!!xrInputSource.hand}`);
+			// console.log(`[XRControllerModelFactory] Profiles: ${xrInputSource.profiles}`);
+			// console.log(`[XRControllerModelFactory] targetRayMode: ${xrInputSource.targetRayMode}`);
+			// console.log(`[XRControllerModelFactory] gamepad present: ${!!xrInputSource.gamepad}`);
+			// console.log(`[XRControllerModelFactory] hand present: ${!!xrInputSource.hand}`);
 
 			if ( xrInputSource.targetRayMode !== 'tracked-pointer' || ! xrInputSource.gamepad || xrInputSource.hand ) {
-				console.log(`[XRControllerModelFactory] Ignored due to validation checks failed!`);
+				// console.log(`[XRControllerModelFactory] Ignored due to validation checks failed!`);
 				return;
 			}
 
 			fetchProfile( xrInputSource, this.path, DEFAULT_PROFILE ).then( ( { profile, assetPath } ) => {
-				console.log(`[SculptGL] Resolved profile for ${xrInputSource.handedness}: ${profile.profileId}, Asset: ${assetPath}`);
+				// console.log(`[SculptGL] Resolved profile for ${xrInputSource.handedness}: ${profile.profileId}, Asset: ${assetPath}`);
 				if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
 
 				controllerModel.motionController = new MotionController(
@@ -371,10 +371,10 @@ class XRControllerModelFactory {
 					}
 
 					this.gltfLoader.setPath( '' );
-					console.log(`[SculptGL] Loading Asset: ${controllerModel.motionController.assetUrl}`);
+					// console.log(`[SculptGL] Loading Asset: ${controllerModel.motionController.assetUrl}`);
 					if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
 					this.gltfLoader.load( controllerModel.motionController.assetUrl, ( asset ) => {
-						console.log(`[SculptGL] GLTF Loaded: ${controllerModel.motionController.assetUrl}`);
+						// console.log(`[SculptGL] GLTF Loaded: ${controllerModel.motionController.assetUrl}`);
 						if (window.screenLog) window.screenLog(`[GLTF] Loaded: ${controllerModel.motionController.assetUrl}`, "lime");
 
 						this._assetCache[ controllerModel.motionController.assetUrl ] = asset;

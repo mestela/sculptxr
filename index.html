@@ -337,13 +337,13 @@
 
 
             async function onEnterVR(sessionType) {
-                console.log(`[USER EVENT] 'Enter VR' button literally clicked by user. Type: ${sessionType}`);
+                // console.log(`[USER EVENT] 'Enter VR' button literally clicked by user. Type: ${sessionType}`);
                 if (window.screenLog) window.screenLog(`[USER EVENT] Enter VR clicked: ${sessionType}`, "magenta");
                 if (app && app.startXRSession) {
-                    console.log("[USER EVENT] Invoking app.startXRSession...");
+                    // console.log("[USER EVENT] Invoking app.startXRSession...");
                     app.startXRSession(sessionType);
                 } else {
-                    console.error("[USER EVENT] App not ready or startXRSession missing", app);
+                    // console.error("[USER EVENT] App not ready or startXRSession missing", app);
                     if (window.screenLog) window.screenLog("[USER EVENT ERR] App not ready!", "red");
                 }
             }

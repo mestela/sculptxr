@@ -1380,7 +1380,7 @@ export default class GuiXR {
 
   _handleMenuInteract(cx, cy) {
     if (this._activeCombobox) {
-      console.log(`[SculptGL] _activeCombobox is active, delegating to _handleDropdownInteract with cx:${cx}, cy:${cy}`);
+      // console.log(`[SculptGL] _activeCombobox is active, delegating to _handleDropdownInteract with cx:${cx}, cy:${cy}`);
       this._handleDropdownInteract(cx, cy);
       return;
     }
@@ -3300,25 +3300,25 @@ export default class GuiXR {
     }
   }
   _handleDropdownInteract(cx, cy) {
-    console.log(`[SculptGL] _handleDropdownInteract called with cx:${cx}, cy:${cy}`);
+    // console.log(`[SculptGL] _handleDropdownInteract called with cx:${cx}, cy:${cy}`);
     // Input Transform for Scale (Only if Overlay is active)
     if (this._overlay) {
       const pivot = this._getOverlayPivot();
       const invScale = 1 / OVERLAY_SCALE;
       cx = (cx - pivot.x) * invScale + pivot.x;
       cy = (cy - pivot.y) * invScale + pivot.y;
-      console.log(`[SculptGL] _handleDropdownInteract after inverse scale: cx:${cx}, cy:${cy}`);
+      // console.log(`[SculptGL] _handleDropdownInteract after inverse scale: cx:${cx}, cy:${cy}`);
     }
 
     const w = this._activeCombobox;
     const layout = this._getDropdownLayout(w);
     if (!layout) {
-      console.log(`[SculptGL] _handleDropdownInteract: No layout found for active dropdown!`);
+      // console.log(`[SculptGL] _handleDropdownInteract: No layout found for active dropdown!`);
       return;
     }
 
     const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
-    console.log(`[SculptGL] _handleDropdownInteract boundaries: startX:${startX}, totalW:${totalW}, startY:${startY}, listH:${listH}`);
+    // console.log(`[SculptGL] _handleDropdownInteract boundaries: startX:${startX}, totalW:${totalW}, startY:${startY}, listH:${listH}`);
 
     // Check bounds with totalW
     if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
@@ -3331,18 +3331,18 @@ export default class GuiXR {
       let row = Math.floor(localY / itemHeight);
       const index = col * rowsPerCol + row;
       
-      console.log(`[SculptGL] _handleDropdownInteract clicked inside list! Col:${col}, Row:${row}, Index:${index}`);
+      // console.log(`[SculptGL] _handleDropdownInteract clicked inside list! Col:${col}, Row:${row}, Index:${index}`);
 
       if (w.options && w.options[index]) {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
-        console.log(`[SculptGL] _handleDropdownInteract option resolved: ${opt.label} (val:${val})`);
+        // console.log(`[SculptGL] _handleDropdownInteract option resolved: ${opt.label} (val:${val})`);
         w.value = val; 
         if (w.onSelect) {
-            console.log(`[SculptGL] _handleDropdownInteract invoking onSelect!`);
+            // console.log(`[SculptGL] _handleDropdownInteract invoking onSelect!`);
             w.onSelect(val);
         } else {
-            console.log(`[SculptGL] _handleDropdownInteract: No onSelect callback found!`);
+            // console.log(`[SculptGL] _handleDropdownInteract: No onSelect callback found!`);
         }
         this._activeCombobox = null;
         this._needsRedraw = true;
