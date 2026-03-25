@@ -2,12 +2,12 @@ import Enums from '../../misc/Enums.js';
 import TR from '../GuiTR.js';
 
 export default function getSettingsWidgets(main) {
-  console.log(`[SculptGL] getSettingsWidgets: main is ${main ? main.constructor.name : 'undefined'}`);
+  // console.log(`[SculptGL] getSettingsWidgets: main is ${main ? main.constructor.name : 'undefined'}`);
   if (main) {
-    console.log(`[SculptGL] getSettingsWidgets: main._scene is ${main._scene ? main._scene.constructor.name : 'undefined'}`);
+    // console.log(`[SculptGL] getSettingsWidgets: main._scene is ${main._scene ? main._scene.constructor.name : 'undefined'}`);
     if (main._scene) {
-      console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on instance is ${main._scene.reloadControllerModels ? 'present' : 'missing'}`);
-      console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on prototype is ${main._scene.constructor.prototype.reloadControllerModels ? 'present' : 'missing'}`);
+    //   console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on instance is ${main._scene.reloadControllerModels ? 'present' : 'missing'}`);
+    //   console.log(`[SculptGL] getSettingsWidgets: reloadControllerModels on prototype is ${main._scene.constructor.prototype.reloadControllerModels ? 'present' : 'missing'}`);
     }
   }
 
@@ -285,8 +285,8 @@ export default function getSettingsWidgets(main) {
   // Add 150px vertical buffer to ensure it is scrollable and visible above the MiniHUD
   y += 150; 
 
-  console.log(`[SculptGL] getSettingsWidgets returning ${widgets.length} widgets:`);
-  widgets.forEach(w => console.log(`  - ${w.type} (${w.label || w.id || 'none'})`));
+  // console.log(`[SculptGL] getSettingsWidgets returning ${widgets.length} widgets:`);
+  // widgets.forEach(w => console.log(`  - ${w.type} (${w.label || w.id || 'none'})`));
   return {
     w: menuW, width: menuW,
     h: y + 10, height: y + 10,

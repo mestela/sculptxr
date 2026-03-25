@@ -2472,7 +2472,7 @@ class Scene {
     for (let source of sources) {
       // DEBUG: Scan Sources
       if (this._logThrottle % 60 === 0) {
-        console.log(`[XR Tracking] Src: ${source.handedness} Profile: ${source.profiles[0]} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`);
+        // console.log(`[XR Tracking] Src: ${source.handedness} Profile: ${source.profiles[0]} Grip:${!!source.gripSpace} Ray:${!!source.targetRaySpace}`);
       }
 
 
@@ -4125,9 +4125,9 @@ class Scene {
 
         if (!window._logCursorThrottle) window._logCursorThrottle = 0;
         const doLog = (window._logCursorThrottle++ % 120 === 0);
-        if (doLog && window.screenLog) {
-            window.screenLog(`[XR] Input Sources found: ${sources.length}`, "cyan");
-        }
+        // if (doLog && window.screenLog) {
+        //     window.screenLog(`[XR] Input Sources found: ${sources.length}`, "cyan");
+        // }
 
 
         const tool = this._sculptManager ? this._sculptManager.getCurrentTool() : null;
@@ -4246,7 +4246,7 @@ class Scene {
                     wInter = vec3.create();
                     vec3.scaleAndAdd(wInter, origin, dir, hitDist);
 
-                    if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
+                    // if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
 
                     pNormal = this._picking.computePickedNormal();
                     sceneNormal = vec3.create();
@@ -4282,7 +4282,7 @@ class Scene {
                 if (uiHitDist !== undefined && uiHitDist !== Infinity) {
                     pointerLine.visible = true;
                     pointerLine.scale.set(1, 1, hitDist);
-                    if (doLog) console.log(`  laser scale_z: ${hitDist.toFixed(2)} [UI VISIBLE]`);
+                    // if (doLog) console.log(`  laser scale_z: ${hitDist.toFixed(2)} [UI VISIBLE]`);
                 } else {
                     pointerLine.visible = false;
                 }
@@ -4321,7 +4321,7 @@ class Scene {
 
                 // 1. Position Surface Ring (if hitting mesh)
                 if (hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
-                    if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
+                    // if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
                     
                     if (ringLine) {
                         ringLine.visible = true;
@@ -4330,7 +4330,7 @@ class Scene {
                         ringLine.scale.set(physicalRadius, physicalRadius, physicalRadius);
                     }
                 } else {
-                    if (doLog) console.log(`  Mode: AIR/UI, hiding surface ring`);
+                    // if (doLog) console.log(`  Mode: AIR/UI, hiding surface ring`);
                     if (ringLine) ringLine.visible = false;
                 }
 
