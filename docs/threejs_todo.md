@@ -21,9 +21,9 @@
 
 ### Todo misc
 * [x] **Voxel Mode**: Needs a complete review and testing to see what broke during the port. Has not been tested yet.
-* [ ] **voxel refine**: bake, move, smooth normals, support different materials... paint?
+* [ ] **voxel refine**: bake, move, smooth normals, support different materials... paint? [PARTIAL]
 * [ ] **desktop glitch**: virtual desktop buggy, test on quest 2
-* [ ] **Paint Mode**: Disabled atm
+* [x] **Paint Mode**: Disabled atm (Restored!)
 * [ ] **Transform gizmo**: Should be easy right?
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Keyboard Entry**: Implied making a VR keyboard is trivial, should have a go (surprised there's no built in option)

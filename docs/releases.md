@@ -1,3 +1,7 @@
+# v1.0.48
+- **Fix**: **Paint Tool Restored**: Fixed a variable mapping regression between the legacy `BufferGeometry` name (`aColor`) and modern Three.js's native vertex extraction buffer (`color`). Custom attributes are now routed to `BufferGeometry` perfectly!
+- **Chore**: **Noise Reduction**: Heavily stripped debug telemetry including `[XR Tracking]`, `[L]`/`[R]` didHit, and `Mode: AIR/UI` to provide a clean development workflow. Use profiling tools manually when needed.
+
 # v1.0.47
 - **Feature**: **Controller Model Override & Dynamic Reloading**: Added a "Controller Model Override" combobox to the VR Settings menu. Users can now manually segment the WebXR controller profile reported by the runtime, bypassing hardcoded limitations (like Virtual Desktop's transmission of hardcoded strings). The override applies instantly to runtime models without session restarts!
 - **Architecture**: Created a local variant of `XRControllerModelFactory` (`src/XRControllerModelFactory_local.js`) to bypass optimization caching of module modules and securely extract internal Threejs profile variables.
