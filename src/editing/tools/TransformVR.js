@@ -108,9 +108,15 @@ class TransformVR extends SculptBase {
             const rayOrigin = origin || main._vrControllerPos;
             const rayDir = dir || [0, 0, -1];
             if (rayOrigin && rayDir) {
-              const vrScale = main._vrScale || 50.0;
-              const radius = 0.02 * vrScale;
-              var vrHitType = this._gizmo.intersectPhysical(rayOrigin, rayDir, radius, false);
+              let worldScale = 1.0;
+              const sceneApp = main.getScene ? main.getScene() : main._scene;
+              if (sceneApp && sceneApp._worldGroup) {
+                worldScale = sceneApp._worldGroup.scale.x;
+              } else if (main._worldGroup) {
+                worldScale = main._worldGroup.scale.x;
+              }
+              const radiusMeters = 0.02 * 31.25; // radius * scaleFactor (31.25)
+              var vrHitType = this._gizmo.intersectPhysical(rayOrigin, rayDir, radiusMeters, false);
               if (vrHitType !== -1) {
                 this._updateStateFromGizmo(vrHitType);
               }

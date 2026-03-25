@@ -1,6 +1,8 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
+import * as THREE from 'three';
+
 
 // Configuration constants
 const COLOR_X = vec3.fromValues(1.0, 0.2, 0.2);
@@ -56,8 +58,22 @@ const createGizmoPart = function (type, nbAxis = -1) {
     _nbAxis: nbAxis,
     _lastInter: [0.0, 0.0, 0.0],
     updateMatrix() {
-      if (this._drawGeo) mat4.copy(this._drawGeo.getMatrix(), this._finalMatrix);
-      if (this._pickGeo) mat4.copy(this._pickGeo.getMatrix(), this._finalMatrix);
+      if (this._drawGeo) {
+        mat4.copy(this._drawGeo.getMatrix(), this._finalMatrix);
+        const tm = this._drawGeo.getThreeMesh();
+        if (tm) {
+          tm.matrix.fromArray(this._finalMatrix);
+          tm.matrixWorldNeedsUpdate = true;
+        }
+      }
+      if (this._pickGeo) {
+        mat4.copy(this._pickGeo.getMatrix(), this._finalMatrix);
+        const tm = this._pickGeo.getThreeMesh();
+        if (tm) {
+          tm.matrix.fromArray(this._finalMatrix);
+          tm.matrixWorldNeedsUpdate = true;
+        }
+      }
     },
     updateFinalMatrix(mat) {
       mat4.mul(this._finalMatrix, mat, this._baseMatrix);
@@ -70,6 +86,57 @@ class GizmoVR {
   constructor(main) {
     this._main = main;
     this._gl = main._gl;
+
+    this._group = new THREE.Group();
+    this._group.name = "Transform Gizmo Group";
+    this._group.visible = false; // Hide by default
+
+    let worldGroup = null;
+    if (this._main._worldGroup) {
+      worldGroup = this._main._worldGroup;
+    } else if (this._main._scene && this._main._scene._worldGroup) {
+      worldGroup = this._main._scene._worldGroup;
+    } else if (this._main.getScene && this._main.getScene()._worldGroup) {
+      worldGroup = this._main.getScene()._worldGroup;
+    }
+
+    if (worldGroup) {
+      worldGroup.add(this._group);
+    } else if (this._main._scene && this._main._scene._scene) {
+      this._main._scene._scene.add(this._group);
+    } else {
+      console.error("GizmoVR: Could not find scene to add to!");
+      if (this._main._scene && this._main._scene.add) {
+         this._main._scene.add(this._group);
+      }
+    }
+
+    // Attach debug tools to window
+    window.debugGizmo = {
+      show: () => { if (this._group) this._group.visible = true; },
+      hide: () => { if (this._group) this._group.visible = false; },
+      log: () => {
+         console.log("Gizmo Group:", this._group);
+         console.log("Gizmo Group Position:", this._group ? this._group.position : "N/A");
+         console.log("Gizmo Group Scale:", this._group ? this._group.scale : "N/A");
+         console.log("Gizmo Group Visible:", this._group ? this._group.visible : "N/A");
+         console.log("vrScale:", (this._main._scene && this._main._scene._vrScale) || 1.0);
+         const mesh = this._main.getMesh();
+         console.log("Current Mesh:", mesh);
+         if (mesh) {
+            console.log("Mesh Center:", mesh.getCenter());
+            const tm = mesh.getThreeMesh();
+            if (tm) {
+               console.log("Mesh Three Position:", tm.position);
+               console.log("Mesh Three Scale:", tm.scale);
+               console.log("Mesh Three MatrixWorld:", tm.matrixWorld);
+            }
+         }
+      },
+      testScale: (scale) => {
+         this._resize(scale);
+      }
+    };
 
     // Default active types
     this._activatedType = TRANS_XYZ | ROT_XYZ | PLANE_XYZ | SCALE_XYZW | GIZMO_TYPE.ROT_W;
@@ -135,6 +202,7 @@ class GizmoVR {
   }
 
   _resize(scale) {
+    if (this._group) this._group.clear();
     // Re-create geometry with new scale
     // In VR we might want to just scale the matrix, but baking scale into geometry 
     // helps keep line thickness constant or controllable.
@@ -171,7 +239,10 @@ class GizmoVR {
 
   update(camera) {
     // 1. Calculate Center
-    const meshes = this._main.getSelectedMeshes();
+    let meshes = this._main.getSelectedMeshes();
+    if (meshes.length === 0 && this._main.getMesh()) {
+      meshes = [this._main.getMesh()];
+    }
     const center = [0.0, 0.0, 0.0];
 
     if (meshes.length > 0) {
@@ -200,17 +271,17 @@ class GizmoVR {
     // typically around 25cm (0.25m) feels good for hand interaction.
     // However, the internal coordinate system might be scaled (vrScale).
 
-    const vrScale = this._main._vrScale || 50.0; // World Units per Meter
     const baseSize = 0.25; // 25cm target size
+    
+    let worldScale = 1.0;
+    const sceneApp = this._main.getScene ? this._main.getScene() : this._main._scene;
+    if (sceneApp && sceneApp._worldGroup) {
+      worldScale = sceneApp._worldGroup.scale.x;
+    } else if (this._main._worldGroup) {
+      worldScale = this._main._worldGroup.scale.x; // fallback for Scene
+    }
 
-    // Fallback scale logic
-    let scaleFactor = baseSize * vrScale;
-
-    // Enforce reasonable minimum (User confirmed 10.0 worked)
-    // FORCE minimum to at least 15 units if vrScale is active
-    if (this._main._vrScale && scaleFactor < 15.0) scaleFactor = 15.0;
-    else if (scaleFactor < 5.0) scaleFactor = 5.0;
-
+    let scaleFactor = 31.25; // Constant base size in sculpt space
     if (window.debugGizmoScale) {
       scaleFactor = window.debugGizmoScale;
     }
@@ -268,13 +339,36 @@ class GizmoVR {
 
     for (let i = 0; i < components.length; ++i) {
       components[i].updateFinalMatrix(baseMat);
-      components[i].updateMatrix();
+      
+      const threeMesh = components[i]._drawGeo.getThreeMesh();
+      if (threeMesh) {
+        mat4.copy(threeMesh.matrix.elements, components[i]._finalMatrix);
+      }
+      
+      if (components[i]._pickGeo) {
+        mat4.copy(components[i]._pickGeo.getMatrix(), components[i]._finalMatrix);
+      }
+      
+      const elt = components[i];
+      if (elt._drawGeo) {
+        const tm = elt._drawGeo.getThreeMesh();
+        if (tm && tm.material) {
+          const color = elt._isSelected ? COLOR_SELECT : elt._color;
+          tm.material.color.setRGB(color[0], color[1], color[2]);
+        }
+      }
     }
   }
 
   intersect(origin, direction) {
-    // Legacy support (Virtual Space)
-    return this.intersectPhysical(origin, direction, (0.05 * (this._main._vrScale || 50.0)), false);
+    let worldScale = 1.0;
+    const sceneApp = this._main.getScene ? this._main.getScene() : this._main._scene;
+    if (sceneApp && sceneApp._worldGroup) {
+      worldScale = sceneApp._worldGroup.scale.x;
+    } else if (this._main._worldGroup) {
+      worldScale = this._main._worldGroup.scale.x;
+    }
+    return this.intersectPhysical(origin, direction, (0.05 / worldScale), false);
   }
 
   intersectPhysical(origin, direction, radius, isPhysical = true) {
@@ -369,43 +463,7 @@ class GizmoVR {
   }
 
   render(camera) {
-    const gl = this._gl;
-
-    // Clear depth for Gizmo pass so it always overdraws meshes
-    // but maintain internal depth consistency (no internal overdraw)
-    gl.clear(gl.DEPTH_BUFFER_BIT);
-    gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.CULL_FACE);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    const components = [
-      this._transX, this._transY, this._transZ,
-      this._planeX, this._planeY, this._planeZ,
-      this._rotX, this._rotY, this._rotZ, 
-      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
-    ]; for (let i = 0; i < components.length; ++i) {
-      const elt = components[i];
-      if (elt._drawGeo) {
-        elt.updateMatrix(); 
-        const drawGeo = elt._drawGeo;
-
-        // SELECTIVE CULLING: Disable for planar handles so they are double-sided
-        const isPlane = (elt === this._planeX || elt === this._planeY || elt === this._planeZ);
-        if (isPlane) gl.disable(gl.CULL_FACE);
-        else gl.enable(gl.CULL_FACE);
-
-        drawGeo.setFlatColor(elt._isSelected ? COLOR_SELECT : elt._color);
-        drawGeo.setOpacity(0.8);
-        drawGeo.updateMatrices(camera);
-        drawGeo.render(this._main);
-      }
-    }
-
-    // Deep culling restored in Pass 2 wrap-up
-    gl.disable(gl.BLEND);
-    gl.enable(gl.DEPTH_TEST);
-    gl.enable(gl.CULL_FACE);
+    // Three.js handles rendering via the scene graph.
   }
 
   // --- Geometry Creation Helpers ---
@@ -436,6 +494,21 @@ class GizmoVR {
       ARROW_CONE_LENGTH
     );
     tra._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = tra._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      mat4.copy(threeMesh.matrix.elements, tra._baseMatrix);
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
   }
 
   _createPlane(pla, color, wx, wy, wz, hx, hy, hz, scale) {
@@ -447,6 +520,21 @@ class GizmoVR {
 
     pla._drawGeo = Primitives.createPlane(this._gl, 0, 0, 0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = pla._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      threeMesh.matrixAutoUpdate = false;
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
   }
 
   _createCircle(rot, rad, axis, color, radius, mthick, scale) {
@@ -486,6 +574,21 @@ class GizmoVR {
 
     rot._drawGeo = Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = rot._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      mat4.copy(threeMesh.matrix.elements, rot._baseMatrix);
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
   }
 
   _createCube(sca, axis, color, scale) {
@@ -503,6 +606,21 @@ class GizmoVR {
 
     sca._drawGeo = Primitives.createCube(this._gl, CUBE_SIDE * scale);
     sca._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = sca._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      mat4.copy(threeMesh.matrix.elements, sca._baseMatrix);
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
   }
 
   _initTranslate(scale) {

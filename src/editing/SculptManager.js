@@ -127,6 +127,14 @@ class SculptManager {
     } else {
       // Log Removed
     }
+
+    // Toggle Transform Gizmo visibility based on active tool AND being in VR
+    const gizmoGroup = this._main._scene ? this._main._scene.getObjectByName("Transform Gizmo Group") : null;
+    if (gizmoGroup) {
+      const isVR = this._main._xrSession && this._main._xrSession.visibilityState === "visible";
+      const isActive = (this._toolIndex === Enums.Tools.TRANSFORM_VR);
+      gizmoGroup.visible = isVR && isActive;
+    }
   }
 
   postRender() {
