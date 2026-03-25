@@ -54,6 +54,10 @@ class Mesh {
     return this._isVisible;
   }
 
+  isUsingColors() {
+    return this._meshData._colorsRGB !== null && this._meshData._colorsRGB.length > 0;
+  }
+
   setVisible(bool) {
     this._isVisible = bool;
   }
@@ -2291,13 +2295,13 @@ class Mesh {
   updateColorBuffer() {
     var colors = this.isUsingDrawArrays() ? this.getColorsDrawArrays() : this.getColors();
     var geom = this._renderData._geometry;
-    var attr = geom.getAttribute('aColor');
+    var attr = geom.getAttribute('color');
     if (!attr || attr.array.length < colors.length) {
       if (attr) {
-          geom.deleteAttribute('aColor');
+          geom.deleteAttribute('color');
           geom.dispose();
       }
-      geom.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     } else {
       attr.array.set(colors);
       if (this._isVoxel) {

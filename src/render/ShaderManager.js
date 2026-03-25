@@ -87,8 +87,6 @@ ShaderManager.processShader = function(str) {
   // Also map custom attributes to the actual Three.js BufferGeometry names we used in Mesh.js
   str = str.replace(/attribute vec3 aColor;?/g, ''); // Three.js injects `attribute vec3 color;` natively
   str = str.replace(/\baColor\b/g, 'color');
-  str = str.replace(/attribute vec3 aMaterial;?/g, 'attribute vec3 sculptMaterial;');
-  str = str.replace(/\baMaterial\b/g, 'sculptMaterial');
   
   // --- CRITICAL WEBXR SHADER MIGRATION ---
   // Legacy SculptXR manually calculates `uMVP` and `uMV` from the desktop camera
