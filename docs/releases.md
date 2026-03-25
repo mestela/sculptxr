@@ -1,3 +1,8 @@
+# v1.0.49
+- **Feature**: **Three.js Port for Transform Gizmo**: Ported the legacy WebGL Transform Gizmo to the Three.js scene graph. It now renders correctly and follows the world transformations.
+- **Fix**: **Gizmo Scale & Selection**: Resolved issues with the gizmo disappearing or being misaligned by ensuring proper matrix updates and picking radius calculations.
+- **Fix**: **Gizmo Interaction**: Restored full translation, rotation, and scaling functionality for the gizmo in VR.
+
 # v1.0.48
 - **Fix**: **Paint Tool Restored**: Fixed a variable mapping regression between the legacy `BufferGeometry` name (`aColor`) and modern Three.js's native vertex extraction buffer (`color`). Custom attributes are now routed to `BufferGeometry` perfectly!
 - **Chore**: **Noise Reduction**: Heavily stripped debug telemetry including `[XR Tracking]`, `[L]`/`[R]` didHit, and `Mode: AIR/UI` to provide a clean development workflow. Use profiling tools manually when needed.

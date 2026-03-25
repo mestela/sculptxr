@@ -1,4 +1,4 @@
-# SculptXR (v1.0.45)
+# SculptXR (v1.0.49)
 
 WebXR Sculpting
 
@@ -12,12 +12,11 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.49**: **Three.js Port for Transform Gizmo**: Ported the legacy WebGL Transform Gizmo to the Three.js scene graph. It now renders correctly and follows the world transformations. Resolved issues with gizmo disappearing or being misaligned.
+*   **v1.0.48**: **Paint Tool Restored**: Fixed a variable mapping regression between the legacy `BufferGeometry` name (`aColor`) and modern Three.js's native vertex extraction buffer (`color`). Custom attributes are now routed to `BufferGeometry` perfectly!
 *   **v1.0.45**: **Canvas Context Proxy for Menus**: Removed heavy `ctx.filter` from the main drawing loop and replaced it with a fast Javascript Proxy layer that intercepts and shifts colors on-the-fly. Instant framerate recovery for all menu draw passes!
-*   **v1.0.44**: **Button Rendering Consolidation**: Unified the button rendering paths for the Main Menu, MiniHUD, and Tool Picker overlay into a single shared function (`_drawButton`). Added hardware `shadowBlur` (radius 2) to the selection border, significantly reducing pixel crawl and aliasing in both GalaxyXR and Quest 3 headsets.
-*   **v1.0.43**: **Menu Brightness and Saturation Sliders**: Added fine-tune controls for the visual appearance of the VR menus. Adjust brightness (0 to 1, mapping to darker tones) and saturation (0 to 1, piecewise mapping up to 500% boost).
 
-*   **v1.0.22**: **Severe Picking Fixes**: Fixed a severe picking instability where pulling the controller trigger would instantly abort strokes (missing the mesh) due to Local Space vs World Space coordinate mismatches inside the VR raycaster. Silenced excessive internal VR Cursor logs to prevent console polling overhead.
-*   **v1.0.0 - v1.0.21**: **Three.js Architecture Overhaul & Interaction Fixes:** Completed a massive migration from raw WebGL to Three.js v160, enabling robust headset compatibility (Quest, GalaxyXR, PCVR). Rewrote the VR GUI interaction system to solve deep race conditions with controller raycasts, implementing physics-aware trigger debouncing for flawless 90hz high-speed button taps and sweep-clicks. Reinstated 1:1 master branch visual parity for VR cursors, including intensity-linked color saturation and robust backface-culling to prevent raycast penetration bugs. Restored Move Tool VR symmetry math via raycast boolean fixes.
+[View Full Release History](docs/releases.md)
 *   v0.9.289 - v0.9.304: **Galaxy XR Render & Performance Fix:** Resolved a major Samsung Adreno/Chrome driver bug that prevented WebXR from rendering in the right eye by rigorously enforcing `gl.scissor` hardware clipping and per-eye FBO re-bindings. Fixed a massive 60% CPU bottleneck caused by synchronous DOM layout thrashing within the VR debug logger.
 *   v0.9.279 - v0.9.288: **Native Hand Tracking Refinement:** Rebuilt the VR Mini-HUD interaction model specifically for native hand tracking. The Mini-HUD now anchors dynamically to the physical palm of the non-dominant hand. Added an intuitive Z-depth 'push-to-click' physical collision system allowing users to press buttons directly with their index finger instead of relying on pinch gestures. The UI now features a proximity-based cyan glowing border, and sculpting operations are safely suppressed when hands are within 25cm to prevent accidental geometry grabs.
 *   v0.9.267 - v0.9.278: **Voxel Move Tool:** Implemented a new 'Move' deformation brush for Voxels. Relies on a lightweight real-time visual proxy mesh that smoothly translates with the VR controller, followed by a multi-step Reverse ODE integration pass in the Web Worker to perfectly reconstruct the SDF without tearing or spatial folding. Fully supports symmetry dual-strokes.
