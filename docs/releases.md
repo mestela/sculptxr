@@ -1,3 +1,7 @@
+# v1.0.47
+- **Feature**: **Controller Model Override & Dynamic Reloading**: Added a "Controller Model Override" combobox to the VR Settings menu. Users can now manually segment the WebXR controller profile reported by the runtime, bypassing hardcoded limitations (like Virtual Desktop's transmission of hardcoded strings). The override applies instantly to runtime models without session restarts!
+- **Architecture**: Created a local variant of `XRControllerModelFactory` (`src/XRControllerModelFactory_local.js`) to bypass optimization caching of module modules and securely extract internal Threejs profile variables.
+
 # v1.0.45
 - **Performance**: **Canvas Context Proxy for Menus**: Removed heavy `ctx.filter` from the main drawing loop and replaced it with a fast Javascript Proxy layer that intercepts and shifts colors on-the-fly. Instant framerate recovery for all menu draw passes!
 - **Fix**: **Hue/Saturation Edge Cases**: Converted HSL tool definitions to Hex strings so that the Proxy correctly parses and intercepts them without heavy string regex evaluations inside the render loop. Fixed `parseFloat` type coercion errors that defaults to unshifted outputs.

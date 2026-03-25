@@ -20,7 +20,9 @@
   * [x] The current Three.js sculpting feel isn't bad, but requires tuning to match the exact tactile feel of the original WebGL version.
 
 ### Todo misc
-* [ ] **Voxel Mode**: Needs a complete review and testing to see what broke during the port. Has not been tested yet.
+* [x] **Voxel Mode**: Needs a complete review and testing to see what broke during the port. Has not been tested yet.
+* [ ] **voxel refine**: bake, move, smooth normals, support different materials... paint?
+* [ ] **desktop glitch**: virtual desktop buggy, test on quest 2
 * [ ] **Paint Mode**: Disabled atm
 * [ ] **Transform gizmo**: Should be easy right?
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
