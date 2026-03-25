@@ -86,10 +86,14 @@ class Gui {
     extra.addSlider('Rad Mult', 50.0, this.onVoxelRad.bind(this), 1.0, 100.0, 1.0);
 
     extra.addTitle('Advanced');
-    extra.addCombobox('Controller Model', window._xrControllerOverride || 'Auto', (val) => {
-      window._xrControllerOverride = val;
+    const controllerOptions = ['Auto', 'meta-quest-touch-plus', 'meta-quest-touch-plus-v2', 'meta-quest-touch-pro', 'oculus-touch-v3', 'oculus-touch-v2', 'valve-index', 'htc-vive', 'samsung-galaxyxr', 'samsung-odyssey'];
+    let currentIndex = controllerOptions.indexOf(window._xrControllerOverride);
+    if (currentIndex === -1) currentIndex = 0;
+    
+    extra.addCombobox('Controller Model', currentIndex, (val) => {
+      window._xrControllerOverride = controllerOptions[parseInt(val, 10)];
       if (window._scene) window._scene.render(); // Just trigger render to be safe
-    }, ['Auto', 'meta-quest-touch-plus', 'meta-quest-touch-pro', 'oculus-touch-v3', 'valve-index-touch', 'htc-vive-wand', 'galaxy-xr', 'samsung-odyssey']);
+    }, controllerOptions);
     extra.addCheckbox('Force Grey Controllers', window._forceGreyControllers === true, (val) => {
       window._forceGreyControllers = val;
     });

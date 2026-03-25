@@ -1,6 +1,6 @@
 import { vec3, mat3, mat4, quat } from 'gl-matrix';
 import * as THREE from 'three';
-import { XRControllerModelFactory } from 'three/examples/jsm/webxr/XRControllerModelFactory.js';
+import { XRControllerModelFactory } from './XRControllerModelFactory_local.js';
 import getOptionsURL from './misc/getOptionsURL.js';
 import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
@@ -1801,6 +1801,19 @@ class Scene {
   }
 
   initVRControllers() {
+    // Intercept fetch to debug controller asset loads
+    if (!window._fetchIntercepted) {
+      window._fetchIntercepted = true;
+      const nativeFetch = window.fetch;
+      window.fetch = function (...args) {
+        if (typeof args[0] === 'string' && (args[0].includes('webxr-input-profiles') || args[0].endsWith('.glb') || args[0].endsWith('.gltf'))) {
+          console.log(`[SculptGL] Fetching: ${args[0]}`);
+          if (window.screenLog) window.screenLog(`[Fetch] ${args[0]}`, "gray");
+        }
+        return nativeFetch.apply(this, args);
+      };
+    }
+
     // Simple 5cm cube for controllers (Placeholder)
     var gl = this._gl;
     if (!gl) return; // Wait for GL
@@ -1862,6 +1875,7 @@ class Scene {
           this._vrControllerRightGrip = null;
 
           const controllerModelFactory = new XRControllerModelFactory();
+          this._controllerModelFactory = controllerModelFactory;
 
           for (let i = 0; i < 2; i++) {
             const controller = this._renderer.xr.getController(i);
@@ -1874,23 +1888,33 @@ class Scene {
             grip.addEventListener = function(type, listener) {
                 if (type === 'connected') {
                     const wrappedListener = function(event) {
+                        grip._originalInputSource = event.data; // SAVE ORIGINAL INPUT SOURCE
                         const override = window._xrControllerOverride;
+                        
+                        let baseSource = event.data;
                         if (override && override !== 'Auto' && event.data) {
                             try {
-                                const proxySource = new Proxy(event.data, {
+                                const proxySource = new Proxy(baseSource, {
                                     get: function(target, prop) {
-                                        if (prop === 'profiles') return [override];
+                                        if (prop === 'profiles') {
+                                            console.log(`[SculptGL] Proxy: Overriding profiles to [${override}]`);
+                                            if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                                            return [override];
+                                        }
                                         const value = target[prop];
                                         return typeof value === 'function' ? value.bind(target) : value;
                                     }
                                 });
+                                grip._inputSource = proxySource;
                                 const proxyEvent = Object.create(event);
                                 Object.defineProperty(proxyEvent, 'data', { value: proxySource });
                                 listener.call(this, proxyEvent);
                             } catch (e) {
+                                grip._inputSource = baseSource;
                                 listener.call(this, event);
                             }
                         } else {
+                            grip._inputSource = baseSource;
                             listener.call(this, event);
                         }
                     };
@@ -1930,8 +1954,9 @@ class Scene {
             controller.addEventListener('connected', (event) => {
                 if (event.data && event.data.handedness) {
                     const hand = event.data.handedness;
-                    console.log(`[SculptGL] Controller [${i}] Connected as ${hand}`);
-                    if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Connected as ${hand}`, "cyan");
+                    const profiles = event.data.profiles ? event.data.profiles.join(', ') : 'none';
+                    console.log(`[SculptGL] Controller [${i}] Connected as ${hand}. Profiles: [${profiles}]`);
+                    if (window.screenLog) window.screenLog(`[XR] ${hand} profiles: [${profiles}]`, "cyan");
                 }
             });
 
@@ -4361,6 +4386,173 @@ class Scene {
         console.error('[SculptXR] Cursor Update Error', e);
     }
   }
+
+  reloadControllerModels() {
+    console.log(`[SculptGL] reloadControllerModels executing!`);
+    if (!this._renderer || !this._renderer.xr) {
+        console.log(`[SculptGL] reloadControllerModels: No renderer/xr context!`);
+        return;
+    }
+    for (let i = 0; i < 2; i++) {
+      const grip = this._renderer.xr.getControllerGrip(i);
+      const baseSource = grip._originalInputSource || grip._inputSource;
+      console.log(`[SculptGL] Reloading controller [${i}], baseSource present: ${!!baseSource}`);
+      if (grip && baseSource) {
+        if (window.screenLog) window.screenLog(`[XR] Reloading controller [${i}]`, "orange");
+
+        const override = window._xrControllerOverride;
+        console.log(`[SculptGL] Current override: ${override}`);
+        if (override && override !== 'Auto') {
+            const proxySource = new Proxy(baseSource, {
+                get: function(target, prop) {
+                    if (prop === 'profiles') {
+                        console.log(`[SculptGL] Proxy (reload): Overriding to [${override}]`);
+                        if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                        return [override];
+                    }
+                    const value = target[prop];
+                    return typeof value === 'function' ? value.bind(target) : value;
+                }
+            });
+            grip._inputSource = proxySource;
+        } else {
+            grip._inputSource = baseSource;
+        }
+
+        // Remove old models
+        let removedCount = 0;
+        grip.children.forEach(child => {
+          if (child.isGroup && (child.name.includes('controller') || child.motionController)) {
+            grip.remove(child);
+            removedCount++;
+          }
+        });
+        console.log(`[SculptGL] Removed ${removedCount} old models/groups for controller [${i}]`);
+        
+        // Remove generic placeholders
+        let placeholderCount = 0;
+        grip.children.forEach(child => {
+            if (child.isPlaceholder) {
+                grip.remove(child);
+                placeholderCount++;
+            }
+        });
+        console.log(`[SculptGL] Removed ${placeholderCount} generic placeholders for controller [${i}]`);
+
+        // Re-create model
+        console.log(`[SculptGL] Re-creating model for controller [${i}]`);
+        const model = this._controllerModelFactory.createControllerModel(grip);
+        grip.add(model);
+
+        // Re-fire connected event
+        console.log(`[SculptGL] Re-firing 'connected' event for controller [${i}]`);
+        const event = new Event('connected');
+        Object.defineProperty(event, 'data', { value: grip._inputSource });
+        grip.dispatchEvent(event);
+      } else {
+        console.log(`[SculptGL] Controller [${i}] or baseSource missing. Skipping reload.`);
+      }
+    }
+  }
 }
+window._reloadControllerModels = function() {
+    console.log(`[SculptGL] reloadControllerModels executing (global via utils)!`);
+    if (!this._renderer || !this._renderer.xr) {
+        console.log(`[SculptGL] reloadControllerModels: No renderer/xr context!`);
+        return;
+    }
+    for (let i = 0; i < 2; i++) {
+      const grip = this._renderer.xr.getControllerGrip(i);
+      const baseSource = grip._originalInputSource || grip._inputSource;
+      console.log(`[SculptGL] Reloading controller [${i}], baseSource present: ${!!baseSource}`);
+      if (grip && baseSource) {
+        if (window.screenLog) window.screenLog(`[XR] Reloading controller [${i}]`, "orange");
+
+        const override = window._xrControllerOverride;
+        console.log(`[SculptGL] Current override: ${override}`);
+        
+        // Always generate a fresh proxy if override is active!
+        if (override && override !== 'Auto') {
+            const proxySource = new Proxy(baseSource, {
+                get: function(target, prop) {
+                    if (prop === 'profiles') {
+                        console.log(`[SculptGL] Proxy (reload): Overriding to [${override}]`);
+                        if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                        return [override];
+                    }
+                    const value = target[prop];
+                    return typeof value === 'function' ? value.bind(target) : value;
+                }
+            });
+            grip._inputSource = proxySource;
+        } else {
+            grip._inputSource = baseSource; // Reset to original!
+        }
+
+        const activeSource = grip._inputSource; // This is the proxy or original!
+
+        // Clear Grip children
+        let removedCount = 0;
+        while (grip.children.length > 0) {
+            const child = grip.children[0];
+            console.log(`[SculptGL] Removing child: name=${child.name}, type=${child.type}`);
+            grip.remove(child);
+            removedCount++;
+        }
+        console.log(`[SculptGL] Removed ${removedCount} children from controller [${i}]`);
+
+        // Manual reload logic avoiding EventDispatcher
+        const factory = this._controllerModelFactory;
+        const utils = window._XRControllerModelFactory_utils;
+
+        if (utils && utils.fetchProfile) {
+            console.log(`[SculptGL] Invoking fetchProfile directly for profile overwrite...`);
+            utils.fetchProfile(activeSource, factory.path, 'generic-trigger').then( ({ profile, assetPath }) => {
+                console.log(`[SculptGL] fetchProfile resolved: ${profile.profileId}, Asset: ${assetPath}`);
+                if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
+
+                const controllerModel = new utils.XRControllerModel();
+                controllerModel.motionController = new utils.MotionController(activeSource, profile, assetPath);
+
+                const cachedAsset = factory._assetCache[ controllerModel.motionController.assetUrl ];
+                if (cachedAsset) {
+                    console.log(`[SculptGL] Asset found in cache: ${controllerModel.motionController.assetUrl}`);
+                    const scene = cachedAsset.scene.clone();
+                    utils.addAssetSceneToControllerModel( controllerModel, scene );
+                    grip.add(controllerModel);
+                    if (factory.onLoad) factory.onLoad( scene );
+                    if (this._main && this._main.render) this._main.render();
+                } else {
+                    if (!factory.gltfLoader) throw new Error('GLTFLoader missing.');
+                    factory.gltfLoader.setPath('');
+                    console.log(`[SculptGL] Fetching network asset: ${controllerModel.motionController.assetUrl}`);
+                    if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
+                    factory.gltfLoader.load(controllerModel.motionController.assetUrl, (asset) => {
+                        console.log(`[SculptGL] GLTF Loaded: ${controllerModel.motionController.assetUrl}`);
+                        factory._assetCache[ controllerModel.motionController.assetUrl ] = asset;
+                        const scene = asset.scene.clone();
+                        utils.addAssetSceneToControllerModel( controllerModel, scene );
+                        grip.add(controllerModel);
+                        if (factory.onLoad) factory.onLoad( scene );
+                        if (this._main && this._main.render) this._main.render();
+                    }, null, (err) => {
+                        console.error(`[SculptGL] Reload Asset Load Failed: ${err.message}`);
+                    });
+                }
+            }).catch( (err) => {
+                console.error(`[SculptGL] Error in direct fetchProfile: ${err.message}`);
+            });
+        } else {
+            console.error(`[SculptGL] _XRControllerModelFactory_utils missing!`);
+        }
+      } else {
+        console.log(`[SculptGL] Controller [${i}] or baseSource missing. Skipping reload.`);
+      }
+    }
+  };
+
+Scene.prototype.reloadControllerModels = window._reloadControllerModels;
+
+console.log(`[SculptGL] Scene.prototype.reloadControllerModels attached: true`);
 
 export default Scene;

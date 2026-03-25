@@ -19,9 +19,7 @@ tools/dist
 deploy*.sh
 
 # Internal / Local
-handover_prompt*.md
 mac_proxy.py
-project_rules.md
 walkthrough.md
 ngrok*
 *.sublime-project

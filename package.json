@@ -20,7 +20,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test_glb": "node scratch/test_glb.js"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.0.1",
