@@ -937,7 +937,6 @@ class SculptVoxel extends SculptBase {
             });
           }
           this._moveProxyActive = false;
-          console.warn(`[Voxel Move] Sent WARP_SPHERE to worker.`);
         }
 
         this._lastXRPos = null; // Reset stroke
@@ -957,8 +956,6 @@ class SculptVoxel extends SculptBase {
 
         // Initialize Move Proxy Start State
         if (this._mode === 4) {
-          console.warn(`[Voxel Move] INIT proxy start for stroke`);
-          
           this._moveProxyActive = true;
           this._moveProxyCenter = vec3.clone(workspacePos);
           this._moveStartXRPos = vec3.clone(workspacePos);
@@ -988,7 +985,6 @@ class SculptVoxel extends SculptBase {
              
              var rGrid = mWorldRadius / this._step;
              var r2 = rGrid * rGrid;
-             console.warn(`[Voxel Move] Found grid center at ${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)} with radius ${rGrid.toFixed(1)}`);
              
              // Symmetry coordinates
              var isSymProxy = sym;
@@ -1010,13 +1006,6 @@ class SculptVoxel extends SculptBase {
                  }
                }
              }
-             if (this._moveProxyIVerts.length > 0 || this._moveProxyIVertsSym.length > 0) {
-                 console.warn(`[Voxel Move] SUCCESS: Captured ${this._moveProxyIVerts.length} primary and ${this._moveProxyIVertsSym.length} mirrored vertices!`);
-             } else {
-                 console.warn(`[Voxel Move] FAIL: Captured 0 vertices! localPos was [${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)}], gridRadius=${rGrid.toFixed(1)}`);
-             }
-          } else {
-             console.warn(`[Voxel Move] _voxelMesh is null!`);
           }
         }
       }
@@ -1226,7 +1215,6 @@ class SculptVoxel extends SculptBase {
           }
         } else if (mode === 4 && this._moveProxyActive && this._voxelMesh) {
           // MOVE PROXY UPDATE (Visual Only)
-          if (Math.random() < 0.05) console.warn(`[Voxel Move] Extruding proxy mesh visually by ${vec3.distance(workspacePos, this._moveStartXRPos).toFixed(2)} units.`);
           var translation = vec3.create();
           vec3.sub(translation, workspacePos, this._moveStartXRPos);
           vec3.copy(this._moveProxyLastTranslation, translation);

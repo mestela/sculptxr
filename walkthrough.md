@@ -309,4 +309,43 @@ Validate the new VR Scene Menu (Multi-select, Merge, Isolate) and debug the "Des
 ## Next Steps
 *   **Torus**: Parameters are currently missing in VR.
 
+# Walkthrough: Voxel Move & Bake Tool Reconstruction (v1.0.50)
+
+## 1. Voxel Bake Feature
+The Voxel Bake tool extracts the current distance-field generated voxel mesh and bakes it down to a standard `MeshStatic` component in the scene, effectively "freezing" the sculpt.
+
+### The Fix
+The bake feature previously crashed internally in `Mesh.js` during attribute updates (specifically, `length` errors on `MeshStatic.updateColorBuffer`) due to mismatching assumptions between the DrawArrays unrolling logic and the natively baked Quads from `SurfaceNets`.
+*   **Logical Override**: We enforced `staticMesh.setUseDrawArrays(false)` immediately after generating the mesh within `SculptVoxel.bakeToMesh`.
+*   **Result**: By falling back to indexed elements, the mesh successfully uploads standard vertices and indices without forcing Three.js to expect flattened topologies that were absent during the bake extraction.
+
+## 2. Voxel Move Tool (Pre-bake rubberbanding)
+The Voxel Move tool lets users drag a localized region of the voxel surface. The change occurs visually on the CPU, and when the trigger is released, a `WARP_SPHERE` command translates those offsets to the distance field in the background worker.
+
+### The Coordinate Space Paradigm
+*   **World Space**: Raw values coming from the XR controller (`workspacePos` in meters).
+*   **Grid/Simulation Space**: Indices ranging from `0` to `128` matching the underlying volume boundaries.
+*   **The Mismatch**: `_voxelMesh` stores vertices inside `_voxelMesh.getVertices()` in purely local grid indices, because the mesh is placed via a Matrix transform mapping `this._min` and `this._step`.
+
+### The proxy selection routine
+When triggering the move proxy, the tool identifies the vertices within the grabbing radius.
+1.  **Map World Center to Grid Center**: We calculate the Grid Space collision using `localPos` rather than raw world points: `var cx = localPos[0];`
+2.  **Scale Radius**: The grabbing radius `mWorldRadius` must also be scaled to match Grid indices: `var rGrid = mWorldRadius / this._step;`
+3.  **Iteration**: We iterate over the `vAr` (voxel array) searching for vertices within `rGrid`.
+
+### Applying Live Translation
+Whilst dragging, we capture `translation = workspacePos - _moveStartXRPos`.
+1.  We convert this world translation to grid-space: `var tx = translation[0] / step;`
+2.  We iteravely unroll offsets along the proxy radius and linearly apply them to `vAr[i]`.
+3.  **Critical Renderer Sync**: Standard updates don't trigger DrawArrays topological refreshes in the Three.js port. To show the visual bounding effect, we must map native indexed arrays to flattened attributes:
+    ```javascript
+    if (this._voxelMesh.isUsingDrawArrays()) {
+        this._voxelMesh.updateDrawArrays();
+    }
+    this._voxelMesh.updateGeometryBuffers();
+    ```
+
+## 3. Communication pipeline
+When the XR controllers are released, the final stroke commits to the `VoxelWorker.js` thread via `WARP_SPHERE`. Because `VoxelState.js` handles its displacement mathematically against the true SDF, we *must* send it World Coordinate translations (`workspacePos`) rather than Grid Coordinate translations. This preserves spatial fidelity during the advection kernel processing.
+
 
