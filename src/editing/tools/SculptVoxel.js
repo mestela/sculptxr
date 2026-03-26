@@ -859,6 +859,30 @@ class SculptVoxel extends SculptBase {
         }
       }
 
+      // Convert Absolute World Origin to Workspace Space
+      const workspacePos = vec3.create();
+      if (options && options.tipOrigin) {
+        workspacePos[0] = options.tipOrigin[0];
+        workspacePos[1] = options.tipOrigin[1];
+        workspacePos[2] = options.tipOrigin[2];
+      } else if (options && options.rayOrigin) {
+        const gripDir = vec3.fromValues(0, 0, -1);
+        if (options.quat) vec3.transformQuat(gripDir, gripDir, options.quat);
+        const offsetDist = 0.20;
+        workspacePos[0] = options.rayOrigin[0] + gripDir[0] * offsetDist;
+        workspacePos[1] = options.rayOrigin[1] + gripDir[1] * offsetDist;
+        workspacePos[2] = options.rayOrigin[2] + gripDir[2] * offsetDist;
+      } else {
+        workspacePos[0] = origin[0];
+        workspacePos[1] = origin[1];
+        workspacePos[2] = origin[2];
+      }
+
+      var localPos = vec3.create();
+      localPos[0] = (workspacePos[0] - this._min[0]) / this._step;
+      localPos[1] = (workspacePos[1] - this._min[1]) / this._step;
+      localPos[2] = (workspacePos[2] - this._min[2]) / this._step;
+
       if (!isPressed) {
         if (this._mode === 4 && this._moveProxyActive) {
           if (this._worker) {
@@ -913,6 +937,7 @@ class SculptVoxel extends SculptBase {
             });
           }
           this._moveProxyActive = false;
+          console.warn(`[Voxel Move] Sent WARP_SPHERE to worker.`);
         }
 
         this._lastXRPos = null; // Reset stroke
@@ -932,12 +957,11 @@ class SculptVoxel extends SculptBase {
 
         // Initialize Move Proxy Start State
         if (this._mode === 4) {
-          var startPos = vec3.create();
-          vec3.transformMat4(startPos, origin, this._invGridMatrix);
+          console.warn(`[Voxel Move] INIT proxy start for stroke`);
           
           this._moveProxyActive = true;
-          this._moveProxyCenter = vec3.clone(startPos);
-          this._moveStartXRPos = vec3.clone(startPos);
+          this._moveProxyCenter = vec3.clone(workspacePos);
+          this._moveStartXRPos = vec3.clone(workspacePos);
           this._moveStartXRQuat = (options && options.quat) ? quat.clone(options.quat) : quat.create();
           
           this._moveProxyLastTranslation = vec3.create();
@@ -956,18 +980,19 @@ class SculptVoxel extends SculptBase {
              var vAr = this._voxelMesh.getVertices();
              this._moveProxyVAr = new Float32Array(vAr); // Cache original
              
-             // Convert to Grid Index Space for comparison with vAr
-             var step = this._step;
-             var min = this._min;
-             var cx = (startPos[0] - min[0]) / step;
-             var cy = (startPos[1] - min[1]) / step;
-             var cz = (startPos[2] - min[2]) / step;
-             var rGrid = mWorldRadius / step;
+             // vAr coordinates are in Simulation Grid Space!
+             // localPos is already the World Position mapped to Simulation Space.
+             var cx = localPos[0];
+             var cy = localPos[1];
+             var cz = localPos[2];
+             
+             var rGrid = mWorldRadius / this._step;
              var r2 = rGrid * rGrid;
+             console.warn(`[Voxel Move] Found grid center at ${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)} with radius ${rGrid.toFixed(1)}`);
              
              // Symmetry coordinates
              var isSymProxy = sym;
-             var cxSym = (-startPos[0] - min[0]) / step; // Mirror X
+             var cxSym = (-workspacePos[0] - this._min[0]) / this._step; // Mirror X World Pos to Grid Space
              
              for (var i = 0; i < vAr.length; i += 3) {
                var dy = vAr[i+1] - cy;
@@ -985,52 +1010,17 @@ class SculptVoxel extends SculptBase {
                  }
                }
              }
+             if (this._moveProxyIVerts.length > 0 || this._moveProxyIVertsSym.length > 0) {
+                 console.warn(`[Voxel Move] SUCCESS: Captured ${this._moveProxyIVerts.length} primary and ${this._moveProxyIVertsSym.length} mirrored vertices!`);
+             } else {
+                 console.warn(`[Voxel Move] FAIL: Captured 0 vertices! localPos was [${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)}], gridRadius=${rGrid.toFixed(1)}`);
+             }
+          } else {
+             console.warn(`[Voxel Move] _voxelMesh is null!`);
           }
         }
       }
 
-      // 1. Transform EnginePos (World) to Grid Local Space
-      // (Reverted v0.7.164 fix as it broke creation. Trusting user that alignment is correct)
-      // Convert Absolute World Origin to Workspace Space before Simulation Mapping
-      // Hardcoded Workspace Scale: Assuming standard workspace scale of 0.77 absolute Workspace Units Workspace units Workspace units Workplace
-      // To convert absolute meters to workspace units: Absolute / 0.77 = Absolute * 1.3
-      const workspacePos = vec3.create();
-      if (options && options.tipOrigin) {
-        workspacePos[0] = options.tipOrigin[0];
-        workspacePos[1] = options.tipOrigin[1];
-        workspacePos[2] = options.tipOrigin[2];
-      } else if (options && options.rayOrigin) {
-        // Fallback: Hardcoded shift if Scene.js did not pass computed tip position
-        const gripDir = vec3.fromValues(0, 0, -1);
-        if (options.quat) {
-          vec3.transformQuat(gripDir, gripDir, options.quat);
-        } else {
-          vec3.copy(gripDir, dir); 
-        }
-
-        const offsetDist = 0.20; // fallback in case of missing tip
-        workspacePos[0] = options.rayOrigin[0] + gripDir[0] * offsetDist;
-        workspacePos[1] = options.rayOrigin[1] + gripDir[1] * offsetDist;
-        workspacePos[2] = options.rayOrigin[2] + gripDir[2] * offsetDist;
-      } else {
-
-        workspacePos[0] = origin[0];
-        workspacePos[1] = origin[1];
-        workspacePos[2] = origin[2];
-      }
-
-
-      // removed debug point logic
-
-      // removed scaling hacks
-
-      var localPos = vec3.create();
-      // Map Workspace Meters (WorkspacePos) to Simulation Index Space using step and min boundaries
-      localPos[0] = (workspacePos[0] - this._min[0]) / this._step;
-      localPos[1] = (workspacePos[1] - this._min[1]) / this._step;
-      localPos[2] = (workspacePos[2] - this._min[2]) / this._step;
-
-      // console.log(`[Voxel Tool] Drawing at Absolute: [${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}, ${origin[2].toFixed(2)}] -> Workspace: [${workspacePos[0].toFixed(2)}, ${workspacePos[1].toFixed(2)}, ${workspacePos[2].toFixed(2)}] -> Simulation: [${localPos[0].toFixed(2)}, ${localPos[1].toFixed(2)}, ${localPos[2].toFixed(2)}]`);
 
       this._lastIsPressed = isPressed;
 
@@ -1236,8 +1226,9 @@ class SculptVoxel extends SculptBase {
           }
         } else if (mode === 4 && this._moveProxyActive && this._voxelMesh) {
           // MOVE PROXY UPDATE (Visual Only)
+          if (Math.random() < 0.05) console.warn(`[Voxel Move] Extruding proxy mesh visually by ${vec3.distance(workspacePos, this._moveStartXRPos).toFixed(2)} units.`);
           var translation = vec3.create();
-          vec3.sub(translation, localPos, this._moveStartXRPos);
+          vec3.sub(translation, workspacePos, this._moveStartXRPos);
           vec3.copy(this._moveProxyLastTranslation, translation);
 
           var rotation = quat.create();
@@ -1245,7 +1236,6 @@ class SculptVoxel extends SculptBase {
           if (options && options.quat && this._moveStartXRQuat) {
              var invStart = quat.create();
              quat.invert(invStart, this._moveStartXRQuat);
-             // current * invert(start)
              quat.multiply(rotation, options.quat, invStart); 
              vec3.copy(this._moveProxyLastQuat, rotation);
              hasQuat = true;
@@ -1256,14 +1246,15 @@ class SculptVoxel extends SculptBase {
           var step = this._step;
           var min = this._min;
           
+          // Translation in Grid Space
+          var tx = translation[0] / step;
+          var ty = translation[1] / step;
+          var tz = translation[2] / step;
+          
           var cx_start = (this._moveStartXRPos[0] - min[0]) / step;
           var cy_start = (this._moveStartXRPos[1] - min[1]) / step;
           var cz_start = (this._moveStartXRPos[2] - min[2]) / step;
           var pr = this._moveProxyRadius / step;
-          
-          var tx = translation[0] / step;
-          var ty = translation[1] / step;
-          var tz = translation[2] / step;
           
           // Determine iterative steps to prevent spatial folding
           var trLen = Math.sqrt(tx*tx + ty*ty + tz*tz);
@@ -1333,7 +1324,6 @@ class SculptVoxel extends SculptBase {
           if (sym && this._moveProxyIVertsSym.length > 0) {
             var stepRotSym = null;
             if (hasQuat && options && options.quat && this._moveStartXRQuat) {
-              // Calculate mirrored rotation
               var curRotSym = [options.quat[0], -options.quat[1], -options.quat[2], options.quat[3]];
               var startRotSym = [this._moveStartXRQuat[0], -this._moveStartXRQuat[1], -this._moveStartXRQuat[2], this._moveStartXRQuat[3]];
               
@@ -1347,7 +1337,7 @@ class SculptVoxel extends SculptBase {
             }
             
             var cx_start_sym = (-this._moveStartXRPos[0] - min[0]) / step;
-            var step_tx_sym = -step_tx;
+            var step_tx_sym = -tx / steps;
             
             for (var i = 0; i < this._moveProxyIVertsSym.length; i++) {
                var idx = this._moveProxyIVertsSym[i];
@@ -1398,8 +1388,12 @@ class SculptVoxel extends SculptBase {
 
           // Throttled normal update to keep FPS high during drag
           const proxyNow = performance.now();
-          // Update positions cheaply (avoiding normal recalculation which breaks voxel meshes)
-          this._voxelMesh.updateBuffers();
+          // Update positions accurately based on DrawArrays topology
+          if (this._voxelMesh.isUsingDrawArrays()) {
+            this._voxelMesh.updateDrawArrays(); // Let the Mesh class map the mutated vAr to vArDA
+          }
+          
+          this._voxelMesh.updateGeometryBuffers();
           this._main.render();
         }
       } else {
