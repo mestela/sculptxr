@@ -618,8 +618,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       label: 'Bake to Mesh',
       x: col1X, y: y, w: 550, h: btnH,
       onInteract: () => {
+        console.error("VR BAKE BUTTON RAW ONINTERACT FIRED! activeTool is: ", !!activeTool ? activeTool.constructor.name : "null");
         if (activeTool && activeTool.bakeToMesh) {
           activeTool.bakeToMesh();
+        } else {
+          console.error("But activeTool.bakeToMesh evaluates to falsy!");
         }
       }
     });

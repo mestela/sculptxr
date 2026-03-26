@@ -416,6 +416,11 @@ GuiTools[Enums.Tools.VOXEL] = {
 
     this._ctrls.push(fold.addButton('Flip Winding', tool, 'flipWinding'));
     this._ctrls.push(fold.addButton('Clear', tool, 'clear'));
+    this._ctrls.push(fold.addButton('Bake to Mesh', function() {
+      if (tool && tool.bakeToMesh) {
+         tool.bakeToMesh();
+      }
+    }));
   }
 };
 

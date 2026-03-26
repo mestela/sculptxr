@@ -1747,132 +1747,123 @@ class SculptVoxel extends SculptBase {
   // Bake Voxel Mesh to Standard Multimesh
   bakeToMesh() {
     if (!this._voxelMesh) {
-      //
+      if (window.screenLog) window.screenLog("Bake Error: No Voxel Mesh to Bake", "red");
       return;
     }
 
-    //
-
     const main = this._main;
-
-
-
     const gl = main._gl;
 
-    // 1. Extract Geometry
-    const vAr = new Float32Array(this._voxelMesh.getVertices()); // Clone
+    try {
+      const vAr = new Float32Array(this._voxelMesh.getVertices());
+      const mat = this._voxelMesh.getMatrix();
+      const temp = vec3.create();
+      for (let i = 0; i < vAr.length; i += 3) {
+        temp[0] = vAr[i];
+        temp[1] = vAr[i + 1];
+        temp[2] = vAr[i + 2];
+        vec3.transformMat4(temp, temp, mat);
+        vAr[i] = temp[0];
+        vAr[i + 1] = temp[1];
+        vAr[i + 2] = temp[2];
+      }
 
-    // 1b. Apply Transform to Vertices (Freeze Transform)
-    const mat = this._voxelMesh.getMatrix();
-    const temp = vec3.create();
-    for (let i = 0; i < vAr.length; i += 3) {
-      temp[0] = vAr[i];
-      temp[1] = vAr[i + 1];
-      temp[2] = vAr[i + 2];
-      vec3.transformMat4(temp, temp, mat);
-      vAr[i] = temp[0];
-      vAr[i + 1] = temp[1];
-      vAr[i + 2] = temp[2];
-    }
+      const quadFaces = this._voxelMesh.getFaces();
+      const fAr = new Uint32Array(quadFaces);
 
-    // 2. Extract Faces (Pure Quads)
-    const quadFaces = this._voxelMesh.getFaces();
-    const fAr = new Uint32Array(quadFaces); // Direct Clone
+      const staticMesh = new MeshStatic(gl);
+      staticMesh.setVertices(vAr);
+      staticMesh.setFaces(fAr);
 
-    // 3. Create Standard Mesh (Multimesh)
-    const staticMesh = new MeshStatic(gl);
-    staticMesh.setVertices(vAr);
-    staticMesh.setFaces(fAr);
+      // Fully initialize arrays and topology BEFORE setting render state variables
+      // which trigger Buffer updates internally.
+      staticMesh.init();
+      staticMesh.allocateArrays();
+      staticMesh.initFaceRings();
+      staticMesh.initEdges();
+      staticMesh.initRenderTriangles();
+      staticMesh.updateFacesAabb();
+      staticMesh.updateOctree();
+      staticMesh.initRender();
 
-    // Init Topology & Arrays FIRST
-    staticMesh.setUseDrawArrays(false); // Ensure indexed
-    staticMesh.setMode(this._main._gl.TRIANGLES);
+      // Ensure colors exist immediately to prevent updateBuffers crash
+      const cAr = new Float32Array(vAr.length);
+      cAr.fill(1.0);
+      staticMesh.setColors(cAr);
 
-    // Completely initialize the mesh manually for Quads
-    staticMesh.init();
-    staticMesh.allocateArrays();
-    staticMesh.initFaceRings();
-    staticMesh.initEdges();
-    staticMesh.initRenderTriangles();
-    staticMesh.updateFacesAabb();
-    staticMesh.updateOctree();
-    staticMesh.initRender();
+      // NOW safe to change render states
+      staticMesh.setUseDrawArrays(false);
+      staticMesh.setMode(this._main._gl.TRIANGLES);
+      
+      staticMesh.setShaderType(Enums.Shader.MATCAP);
+      staticMesh.setMatcap(0);
+      staticMesh.setFlatColor([0.6, 0.6, 0.6]);
+      const materials = staticMesh.getMaterials();
+      for (let k = 0; k < materials.length; k += 3) {
+        materials[k] = 0.18;
+        materials[k + 1] = 0.08;
+        materials[k + 2] = 1.0;
+      }
 
-    // THEN Set Shader/Colors
-    staticMesh.setShaderType(Enums.Shader.MATCAP);
-    staticMesh.setMatcap(0); // Pearl/Clay
-    staticMesh.setFlatColor([0.6, 0.6, 0.6]);
+      staticMesh.updateGeometry();
+      staticMesh.setFlatShading(false);
+      staticMesh.setShowWireframe(false);
+      staticMesh.updateBuffers();
 
-    // Force PBR Material Defaults (in case user switches shader)
-    const materials = staticMesh.getMaterials();
-    for (let k = 0; k < materials.length; k += 3) {
-      materials[k] = 0.18;      // Roughness
-      materials[k + 1] = 0.08;  // Metallic
-      materials[k + 2] = 1.0;   // Masking (1.0 = Editable)
-    }
+      const multiMesh = new Multimesh(staticMesh);
+      multiMesh.init();
+      multiMesh.updateResolution();
 
-    staticMesh.updateGeometry(); // Force sync of all buffers
+      if (multiMesh.getThreeMesh()) {
+        multiMesh.getThreeMesh().userData.sculptMesh = multiMesh;
+      }
 
-    // Standard White Colors
-    const cAr = new Float32Array(vAr.length);
-    cAr.fill(1.0);
-    staticMesh.setColors(cAr);
+      if (window.screenLog) window.screenLog(`MultiMesh: Tris=${multiMesh.getNbTriangles()}`, "cyan");
 
-    if (window.screenLog) window.screenLog(`Bake: V=${vAr.length / 3} F=${fAr.length / 4}`, "cyan");
+      // 5. Add to Scene
+      main.addNewMesh(multiMesh);
 
-    staticMesh.setFlatShading(false); // Smooth Shading
-    staticMesh.setShowWireframe(false); // Default Wireframe OFF
-    staticMesh.updateBuffers(); // Upload to GPU
+      // 6. Reset Voxel State (Clear Grid)
+      this._worker.postMessage({ type: 'CLEAR' });
 
-    // Copy Transform (Min + Scale)
-    // DISABLED: Vertices are already transformed (frozen) to World Space.
-    // mat4.copy(staticMesh.getMatrix(), this._voxelMesh.getMatrix());
+      // CRITICAL: REMOVE the Voxel Mesh to prevent occlusion
+      this._voxelMesh.setVisible(false); // NUCLEAR OPTION: Hide it first!
+      main.removeMeshes([this._voxelMesh]);
+      this._voxelMesh.setTexture0(null); // Prevent global texture deletion
+      this._voxelMesh = null; // Prevent stale reference bugs
 
-    // 4. Wrap in Multimesh (Standard Sculptable)
-    const multiMesh = new Multimesh(staticMesh);
+      // Also remove Debug Cube if present
+      if (this._debugCube) {
+        this._debugCube.setVisible(false);
+        main.removeMeshes([this._debugCube]);
+      }
 
-    // CRITICAL: Ensure Multimesh buffers are synced
-    // CRITICAL: Ensure Multimesh buffers are synced and initialized (matches Scene.js logic)
-    multiMesh.init();
-    multiMesh.updateResolution(); // Updates internal buffers (Index/Wireframe) NOT computed by init()
+      // 7. Auto-Switch to Brush (Standard Workflow)
+      main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
 
-    if (window.screenLog) window.screenLog(`MultiMesh: Tris=${multiMesh.getNbTriangles()}`, "cyan");
+      // Sync UI to Brush
+      if (main.getGui() && main.getGui()._ctrlSculpt) {
+        main.getGui()._ctrlSculpt.setValue(Enums.Tools.BRUSH);
+      }
+      const guiXR = main.getScene() ? main.getScene()._guiXR : null;
+      if (guiXR && guiXR.refreshToolsWidget) {
+        guiXR.refreshToolsWidget();
+      }
 
-    // 5. Add to Scene
-    main.addNewMesh(multiMesh);
+      // 8. Select the New Mesh
+      main.setMesh(multiMesh);
 
-    // 6. Reset Voxel State (Clear Grid)
-    // this._voxelState.clear(); // VoxelState is in Worker now
-    this._worker.postMessage({ type: 'CLEAR' });
-
-    // CRITICAL: REMOVE the Voxel Mesh to prevent occlusion
-    this._voxelMesh.setVisible(false); // NUCLEAR OPTION: Hide it first!
-    main.removeMeshes([this._voxelMesh]);
-    this._voxelMesh.setTexture0(null); // Prevent global texture deletion
-    this._voxelMesh = null; // Prevent stale reference bugs
-
-    // Also remove Debug Cube if present
-    if (this._debugCube) {
-      this._debugCube.setVisible(false);
-      main.removeMeshes([this._debugCube]);
-    }
-
-    //
-    // if (window.screenLog) window.screenLog("Voxel: Bake Complete! Switched to Brush.", "green");
-
-    // 7. Auto-Switch to Brush (Standard Workflow)
-    main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
-
-    // 8. Select the New Mesh
-    main.setMesh(multiMesh);
-
-    // VERIFICATION: Check if selection stuck
-    if (main.getMesh() !== multiMesh) {
-      console.error("Voxel Bake: Failed to set active mesh!");
-      if (window.screenLog) window.screenLog("Bake Error: Mesh Selection Failed", "red");
-    } else {
-      console.log("Voxel Bake: Active Mesh Set to", multiMesh.getID());
-      if (window.screenLog) window.screenLog("Bake Success: Mesh Selected", "lime");
+      // VERIFICATION: Check if selection stuck
+      if (main.getMesh() !== multiMesh) {
+        console.error("Voxel Bake: Failed to set active mesh!");
+        if (window.screenLog) window.screenLog("Bake Error: Mesh Selection Failed", "red");
+      } else {
+        console.log("Voxel Bake: Active Mesh Set to", multiMesh.getID());
+        if (window.screenLog) window.screenLog("Bake Success: Mesh Selected", "lime");
+      }
+    } catch (e) {
+      console.error("BAKESH ERROR!", e);
+      if (window.screenLog) window.screenLog(`Bake Exception: ${e.message}`, "red");
     }
 
     // Force Render to verify visibility
