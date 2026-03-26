@@ -335,6 +335,7 @@ function postMesh() {
   if (res.faces && res.faces.buffer) transfer.push(res.faces.buffer);
   if (res.colors && res.colors.buffer) transfer.push(res.colors.buffer);
   if (res.materials && res.materials.buffer) transfer.push(res.materials.buffer);
+  if (res.normals && res.normals.buffer) transfer.push(res.normals.buffer);
 
   self.postMessage({ 
     type: 'MESH_UPDATE', 

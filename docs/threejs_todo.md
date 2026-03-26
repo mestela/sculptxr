@@ -16,7 +16,7 @@
 * [x] **Sculpting "Feel"**: match to webgl build
 
 ### Todo misc
-* [ ] **Voxel refine**: smooth normals, support different materials... paint? wasm? webgpu? (Bake & Move complete)
+* [x] **Voxel refine**: smooth normals, support different materials... paint? wasm? webgpu? (Bake & Move complete)
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this

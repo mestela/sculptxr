@@ -348,4 +348,32 @@ Whilst dragging, we capture `translation = workspacePos - _moveStartXRPos`.
 ## 3. Communication pipeline
 When the XR controllers are released, the final stroke commits to the `VoxelWorker.js` thread via `WARP_SPHERE`. Because `VoxelState.js` handles its displacement mathematically against the true SDF, we *must* send it World Coordinate translations (`workspacePos`) rather than Grid Coordinate translations. This preserves spatial fidelity during the advection kernel processing.
 
+# Walkthrough: Voxel Rendering & Shading Sync (v1.0.51)
 
+## Goal
+To properly support advanced VR menu Shading adjustments (PBR, Matcap, Normal) inside the dynamically generated Voxel proxy Mesh, and fix "Smooth Normals" generation for correct PBR reflections.
+
+## Context
+When entering Voxel Mode, the system generates a surrogate mesh (`_voxelMesh`) that represents the `SurfaceNets` marching cubes geometry. 
+Previously, entering Voxel mode forced the `_voxelMesh` into a default `PBR` shading state, completely resetting whatever custom Matcap or shader the active mesh was using, resulting in a matte grey "plastic" aesthetic. 
+
+## The Fix
+
+### 1. Shader Inheritance (`SculptVoxel.js`)
+When `updateVoxelMesh` receives its *first* worker payload, we now explicitly read the original source mesh (`this._mesh`) via `getShaderType()`, `getMatcap()`, and `getFlatShading()` instead of forcing `Enums.Shader.PBR` unconditionally.
+This correctly bootstraps the proxy volume to match the active scene aesthetic. 
+Subsequent live strokes correctly propagate these shader pointers back to themselves.
+
+### 2. Smooth Normal Deserialization (`VoxelWorker.js`)
+The worker successfully computed Face-Area-Weighted smooth normals via gradient sampling when toggled `SET_SMOOTH: true`.
+However, `postMesh()` omitted `res.normals.buffer` from the `transfer` array. The normals float buffer was stripped out during WebWorker serialization, leaving Three.js to default to `setFlatShading(false)` on a flat geometry missing its normal attributes—resulting in faceted default shader fallback.
+We added:
+```javascript
+if (res.normals && res.normals.buffer) transfer.push(res.normals.buffer);
+```
+
+### 3. De-hardcoding Flat Shading Force
+We removed the hardcoded `this._voxelMesh.setFlatShading(false)` override loop that fired on *every live frame* inside `updateVoxelMesh()`. Native Mesh property states tracked by the GUI and Main renderer should dictate flat shading mode without interference.
+
+### 4. VR User Interface
+Uncommented the `voxel_smooth` checkbox in `GuiVRTools.js`. Toggling it triggers `activeTool.toggleSmooth()`, sending the `SET_SMOOTH` bit to the worker thread, causing real-time vertex normal generation to engage (smooth shading) or disengage (flat shaded poly-art).

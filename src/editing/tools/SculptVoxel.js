@@ -1583,9 +1583,14 @@ class SculptVoxel extends SculptBase {
 
       this._voxelMesh = null;
     } else {
-      // Even with smoothed normals, we want MATCAP if the original volume had gradient data, or just default to MATCAP
-      newMesh.setShaderType(Enums.Shader.PBR);
-      newMesh.setFlatShading(false);
+      if (this._mesh) {
+        newMesh.setShaderType(this._mesh.getShaderType());
+        newMesh.setMatcap(this._mesh.getMatcap());
+        newMesh.setFlatShading(this._mesh.getFlatShading());
+      } else {
+        newMesh.setShaderType(Enums.Shader.MATCAP);
+        newMesh.setFlatShading(false);
+      }
       this._main.addNewMesh(newMesh);
     }
     
@@ -1607,8 +1612,6 @@ class SculptVoxel extends SculptBase {
     // This fixes the "Black Artifacts" (missing normals) and potentially "Insufficient buffer size" (sync).
     this._voxelMesh.updateBuffers();
     this._pendingMeshUpdate = false;
-    // DISABLE FLAT SHADING DERIVATIVES (Debug: rely on vertex normals)
-    this._voxelMesh.setFlatShading(false);
 
     // Set a nice Color (base color for matcap modulation if supported)
     this._voxelMesh.setFlatColor([0.6, 0.6, 0.6]); // Grey

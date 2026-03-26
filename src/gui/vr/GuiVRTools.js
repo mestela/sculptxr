@@ -594,7 +594,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += btnH + gapBtn;
 
     // Smooth Shading Toggle
-    /*
     widgets.push({
       type: 'checkbox',
       id: 'voxel_smooth',
@@ -609,7 +608,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       }
     });
     y += btnH + gapBtn;
-    */
 
     // Bake Button
     widgets.push({
