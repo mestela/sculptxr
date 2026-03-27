@@ -1511,13 +1511,14 @@ class SculptVoxel extends SculptBase {
        // window.screenLog(`VoxelUpdate: V=${res.vertices.length/3}`, "grey");
     }
 
+    const isFirstRun = !this._voxelMesh;
     var newMesh = this._voxelMesh;
-    if (!newMesh) {
+
+    if (isFirstRun) {
       newMesh = new MeshStatic(this._main._gl);
       newMesh._isVoxel = true;
       newMesh.setID(MeshStatic.ID++);
       newMesh._typeName = "VoxelMesh"; // Name in UI Outliner
-      this._voxelMesh = newMesh;
       
       const self = this;
       const originalSetVisible = newMesh.setVisible;
@@ -1526,9 +1527,6 @@ class SculptVoxel extends SculptBase {
         else newMesh._isVisible = val; // Direct fallback if base doesn't have it
         self.toggleChunksVisibility(val);
       };
-
-      // Add to main scene once so it appears in outliner
-      this._main.addNewMesh(newMesh);
     }
     
     mat4.copy(newMesh.getMatrix(), this._gridMatrix);
@@ -1558,7 +1556,7 @@ class SculptVoxel extends SculptBase {
     newMesh.initRender();
 
     // Copy states from old mesh before swap
-    if (this._voxelMesh) {
+    if (!isFirstRun) {
       newMesh.setShaderType(this._voxelMesh.getShaderType());
       newMesh.setFlatShading(this._voxelMesh.getFlatShading());
       
