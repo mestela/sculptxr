@@ -1,3 +1,10 @@
+# v1.0.50 - v1.0.53
+- **Performance**: **Voxel WASM Integration**: Fully integrated the Rust WebAssembly module for Voxel mesh generation (`SurfaceNets`), dropping mesh extraction compute times from ~20ms (JS) down to ~8-12ms, enabling buttery smooth voxel sculpting at high resolutions.
+- **Performance**: **First-Stroke Voxel Stutter Fix**: Resolved a massive ~1-second framerate lockup (`1,074ms computeVertexNormals`) caused by a legacy hack that attempted to allocate 1,000,000 dummy polygons on the main thread during initialization.
+- **Performance**: **Dynamic Reallocation Bypass**: Removed an unconditionally called `initThreeMesh()` loop that was unnecessarily destroying and rebuilding the entire WebGL `BufferGeometry` on every single stroke. The voxel engine now seamlessly utilizes native Three.js 0.5ms `gl.bufferSubData` patching instead.
+- **Fix**: **Invisible Voxels**: Corrected the mesh instantiation flow to guarantee Three.js `BufferGeometry` compiles correctly on the exact frame the Voxel is placed, rather than requiring a second stroke to appear.
+- **Fix**: **WASM Stability & Bridge**: Implemented a persistent WebAssembly memory bridge to eliminate heap thrashing and aggressive garbage collection spikes, ensuring `SurfaceNets` stays memory-safe throughout infinite sculpting duration.
+
 # v1.0.49
 - **Feature**: **Three.js Port for Transform Gizmo**: Ported the legacy WebGL Transform Gizmo to the Three.js scene graph. It now renders correctly and follows the world transformations.
 - **Fix**: **Gizmo Scale & Selection**: Resolved issues with the gizmo disappearing or being misaligned by ensuring proper matrix updates and picking radius calculations.

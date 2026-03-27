@@ -17,6 +17,8 @@
 
 ### Todo misc
 * [x] **Voxel refine**: smooth normals, support different materials... paint? wasm? webgpu? (Bake & Move complete)
+* [ ] **Mesh to Voxel**
+* [ ] **Resample changes colour**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
@@ -35,7 +37,7 @@
 ### Bugs during testing
 * [ ] undo in voxel doesn't undo paint
 * [ ] color picker doesn't latch properly; drag too far in the square, it affects the hue circle, vice versa
-
+ 
 
 ## 3. Device Testing Strategy
 * **Phase 1: Fast Iteration (Current)**

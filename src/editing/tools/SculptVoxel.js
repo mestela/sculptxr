@@ -93,10 +93,10 @@ class SculptVoxel extends SculptBase {
       } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
-          const prefix = msg.isWASM ? "[WASM]" : "[JS]";
+          const prefix = data.isWASM ? "[WASM]" : "[JS]";
           const logMsg = `${prefix} SurfaceNets Compute: ${msg.computeTime.toFixed(1)}ms`;
-          console.log(logMsg);
-          if (window.screenLog) window.screenLog(logMsg, "yellow");
+          // console.log(logMsg);
+          // if (window.screenLog) window.screenLog(logMsg, "yellow");
         }
         
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
