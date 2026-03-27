@@ -1529,15 +1529,6 @@ class SculptVoxel extends SculptBase {
 
       // Add to main scene once so it appears in outliner
       this._main.addNewMesh(newMesh);
-
-      // Pre-allocate capacity to force ThreeJS into a large WebGL pool upfront
-      const capacity = 1000000;
-      newMesh.setVertices(new Float32Array(capacity * 3));
-      newMesh.setFaces(new Uint32Array(capacity * 4));
-      newMesh.setColors(new Float32Array(capacity * 3)); // Fix: Pre-allocate colors
-      newMesh.setMaterials(new Float32Array(capacity * 3)); // Fix: Pre-allocate materials
-      newMesh.updateBuffers(); // Force WebGl allocation
-
     }
     
     mat4.copy(newMesh.getMatrix(), this._gridMatrix);
@@ -1564,9 +1555,7 @@ class SculptVoxel extends SculptBase {
     newMesh.initRenderTriangles(); // Needed for picking
     newMesh.updateFacesAabb(); 
     newMesh.updateOctree();
-
     newMesh.initRender();
-    newMesh.initThreeMesh();
 
     // Copy states from old mesh before swap
     if (this._voxelMesh) {
@@ -1586,7 +1575,6 @@ class SculptVoxel extends SculptBase {
       newMesh.setFlatColor(this._voxelMesh.getFlatColor());
 
       if (!this._main.getMeshes().includes(this._voxelMesh)) {
-        //
         this._main.addNewMesh(newMesh);
       } else {
         this._main.replaceMesh(this._voxelMesh, newMesh);
@@ -1609,6 +1597,11 @@ class SculptVoxel extends SculptBase {
         newMesh.setFlatShading(false);
       }
       this._main.addNewMesh(newMesh);
+      
+      // CRITICAL: We ONLY execute this heavy operation on the strictly first instantiation.
+      // Subsequent generic mesh update strokes will natively trigger `newMesh.updateBuffers()` below
+      // which gracefully uses subData array patching.
+      newMesh.initThreeMesh();
     }
     
     this._voxelMesh = newMesh;
