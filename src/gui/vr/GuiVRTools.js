@@ -543,6 +543,15 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       y += btnH + gapBtn;
     }
 
+    // Embedded Color Picker for Voxel Mode (Inherits tool._color)
+    widgets.push({
+      type: 'colorpicker_embedded',
+      id: 'vx_color_picker',
+      label: 'Voxel Primitive Color',
+      x: col1X, y: y, w: 550, h: 380, // Full width for alignment
+    });
+    y += 380 + gapBtn;
+
     widgets.push({
       type: 'slider',
       id: 'voxel_res',
@@ -558,6 +567,24 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
 
     y += 40 + gapBtn;
+
+    widgets.push({
+      type: 'checkbox',
+      id: 'voxel_flat',
+      label: 'Flat Shading',
+      x: col1X, y: y, w: 550, h: btnH,
+      value: main.getMesh() ? main.getMesh().getFlatShading() : false,
+      onInteract: () => {
+        const mesh = main.getMesh();
+        if (mesh) {
+          mesh.setFlatShading(!mesh.getFlatShading());
+          main.render();
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+          if (main._guiMini) main._guiMini._needsRedraw = true;
+        }
+      }
+    });
+    y += btnH + gapBtn;
 
     // Resample Button
     widgets.push({

@@ -43,6 +43,11 @@ class SculptVoxel extends SculptBase {
     this._modulateIntensity = true;
     this._pressureBias = 0.0;
     
+    // Color Picker Support
+    this._color = [1.0, 1.0, 1.0];
+    this._colorSecondary = [0.0, 0.0, 0.0];
+    this._pickColor = false;
+    
     const isDesktop = !window.navigator.xr; // heuristic or check main
     // Let's rely on xrSession check during init, but for constructor just use a default
     this._res = 128; 
@@ -237,6 +242,12 @@ class SculptVoxel extends SculptBase {
     // Ensure we have a default radius for distance check
     this._radius = 20.0; // Brush Size ~20% of world (User Request)
     this._negative = false; // Negative Mode Toggle
+  }
+
+  swapColors() {
+    var tmp = this._color;
+    this._color = this._colorSecondary;
+    this._colorSecondary = tmp;
   }
 
   getMesh() {
@@ -1084,13 +1095,13 @@ class SculptVoxel extends SculptBase {
       }
 
 
-      var color = [0.8, 0.8, 0.8]; // Valid default
+      var color = this._color || [1.0, 1.0, 1.0]; // Follow selected Color Picker
       if (picking && picking.color) color = picking.color;
       const sm = this._main.getSculptManager();
       if (sm && sm._activeColor) color = sm._activeColor;
 
       if (isNaN(color[0]) || isNaN(color[1]) || isNaN(color[2])) {
-        color = [0.8, 0.8, 0.8]; // Fallback
+        color = [1.0, 1.0, 1.0]; // Fallback
       }
 
       // Use options.isNegative OR this._negative (UI Toggle)
@@ -1568,6 +1579,7 @@ class SculptVoxel extends SculptBase {
 
       newMesh.setShowWireframe(this._voxelMesh.getShowWireframe());
       newMesh.setMatcap(this._voxelMesh.getMatcap()); // Ensure matcap index is copied
+      newMesh.setFlatColor(this._voxelMesh.getFlatColor());
 
       if (!this._main.getMeshes().includes(this._voxelMesh)) {
         //
@@ -1587,6 +1599,7 @@ class SculptVoxel extends SculptBase {
         newMesh.setShaderType(this._mesh.getShaderType());
         newMesh.setMatcap(this._mesh.getMatcap());
         newMesh.setFlatShading(this._mesh.getFlatShading());
+        newMesh.setFlatColor(this._mesh.getFlatColor());
       } else {
         newMesh.setShaderType(Enums.Shader.MATCAP);
         newMesh.setFlatShading(false);
@@ -1613,8 +1626,10 @@ class SculptVoxel extends SculptBase {
     this._voxelMesh.updateBuffers();
     this._pendingMeshUpdate = false;
 
-    // Set a nice Color (base color for matcap modulation if supported)
-    this._voxelMesh.setFlatColor([0.6, 0.6, 0.6]); // Grey
+    // Ensure Proxy is visually active and selected
+    if (this._main.getMesh() !== this._voxelMesh) {
+      this._main.setMesh(this._voxelMesh);
+    }
 
     // Enable picking on the voxel mesh to allow Surface Lock
     this._voxelMesh.isPickable = true;

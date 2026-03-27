@@ -1950,13 +1950,20 @@ class Scene {
             controller.add(new THREE.Mesh(spikeGeo, spikeMat));
 
             // Keep the 'connected' listener purely for diagnostic logging, 
-            // the robust mapping happens locally in handleXRInput!
+            // AND robust static mapping!
             controller.addEventListener('connected', (event) => {
                 if (event.data && event.data.handedness) {
                     const hand = event.data.handedness;
                     const profiles = event.data.profiles ? event.data.profiles.join(', ') : 'none';
-                    // console.log(`[SculptGL] Controller [${i}] Connected as ${hand}. Profiles: [${profiles}]`);
                     if (window.screenLog) window.screenLog(`[XR] ${hand} profiles: [${profiles}]`, "cyan");
+
+                    if (hand === 'left') {
+                        this._vrControllerLeft = controller;
+                        this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(i);
+                    } else if (hand === 'right') {
+                        this._vrControllerRight = controller;
+                        this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(i);
+                    }
                 }
             });
 
@@ -2369,42 +2376,25 @@ class Scene {
         }
     }
 
-    // --- BULLETPROOF HANDEDNESS MAPPING ---
-    // Instead of relying on fragile 'connected' setup events that can drop during cache-clears, 
-    // we iterate Three.js's chronological inputSources array every frame and strictly map 
-    // the local variables to whichever physical index currently holds the correct hand.
+    // --- DOMINANT HAND UI MOUNT LOGIC ---
+    // UI is dynamically mounted to the Non-Dominant hand GRIP. 
+    // We use the static references cached during the 'connected' events.
     if (sources && sources.length > 0) {
-        let leftIdx = -1;
-        let rightIdx = -1;
-        
-        // Find current indices
-        for (let i = 0; i < sources.length; i++) {
-            if (sources[i].handedness === 'left') leftIdx = i;
-            if (sources[i].handedness === 'right') rightIdx = i;
+        let uiGrip = null;
+        if (this._dominantHand === 'right' && this._vrControllerLeftGrip) {
+            uiGrip = this._vrControllerLeftGrip;
+        } else if (this._dominantHand === 'left' && this._vrControllerRightGrip) {
+            uiGrip = this._vrControllerRightGrip;
         }
 
-        // Map Left
-        if (leftIdx !== -1) {
-            this._vrControllerLeft = this._renderer.xr.getController(leftIdx);
-            this._vrControllerLeftGrip = this._renderer.xr.getControllerGrip(leftIdx);
-            
-            // Auto-mount UI
-            const grip = this._vrControllerLeftGrip;
-            if (this._vrMenu && this._vrMenu.mesh.parent !== grip) grip.add(this._vrMenu.mesh);
-            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== grip) grip.add(this._vrMiniHUD.mesh);
-            if (this._vrPopup && this._vrPopup.mesh.parent !== grip) grip.add(this._vrPopup.mesh);
+        if (uiGrip) {
+            if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
+            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
+            if (this._vrPopup && this._vrPopup.mesh.parent !== uiGrip) uiGrip.add(this._vrPopup.mesh);
         } else {
-            this._vrControllerLeft = null;
-            this._vrControllerLeftGrip = null;
-        }
-
-        // Map Right
-        if (rightIdx !== -1) {
-            this._vrControllerRight = this._renderer.xr.getController(rightIdx);
-            this._vrControllerRightGrip = this._renderer.xr.getControllerGrip(rightIdx);
-        } else {
-            this._vrControllerRight = null;
-            this._vrControllerRightGrip = null;
+            if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
+            if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent) this._vrMiniHUD.mesh.removeFromParent();
+            if (this._vrPopup && this._vrPopup.mesh.parent) this._vrPopup.mesh.removeFromParent();
         }
     } else {
         // Fallback or wiped state

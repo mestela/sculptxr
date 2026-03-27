@@ -1198,10 +1198,10 @@ export default class GuiXR {
 
     // Active continuous interactions outside of targetWid bounds
     if (isPressed && this._lastScrollY === undefined) {
-      if (this._activeSlider && (!targetWid || targetWid === this._activeSlider)) {
+      if (this._activeSlider && (!targetWid || targetWid.type !== 'slider' || targetWid.id !== this._activeSlider.id)) {
         this._handleWidgetClick(this._activeSlider);
         return;
-      } else if (this._activeColorPicker && (!targetWid || targetWid === this._activeColorPicker)) {
+      } else if (this._activeColorPicker && (!targetWid || targetWid.type !== 'colorpicker_embedded' || targetWid.id !== this._activeColorPicker.id)) {
         this._handleWidgetClick(this._activeColorPicker);
         return;
       }
@@ -1209,9 +1209,10 @@ export default class GuiXR {
 
     // 4. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
-      if (this._hasClickedWidgetThisPress && targetWid.type !== "slider") return; // Prevent sweep-clicking multiple toggle buttons
+      const isContinuousWid = targetWid.type === "slider" || targetWid.type === "colorpicker_embedded";
+      if (this._hasClickedWidgetThisPress && !isContinuousWid) return; // Prevent sweep-clicking multiple toggle buttons
       this._inputDebounce = now; // SUCCESSFUL WIDGET HIT - APPLY DEBOUNCE
-      if (targetWid.type !== "slider") this._hasClickedWidgetThisPress = true;
+      if (!isContinuousWid) this._hasClickedWidgetThisPress = true;
       if (targetWid.disabled) return;
 
       if (targetWid.type === 'slider') {
@@ -1421,7 +1422,7 @@ export default class GuiXR {
       this._needsRedraw = true;
       return;
     } else if (this._activeColorPicker) {
-      this._handleEmbeddedColorPicker(this._activeColorPicker);
+      this._handleEmbeddedColorPicker(this._activeColorPicker, rx, ry);
       return;
     }
 
@@ -1463,10 +1464,18 @@ export default class GuiXR {
             const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def'].includes(w.id) || isOutliner;
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
-          } else if (w.type === 'combobox') {
+          } else if (w.type === 'colorpicker_embedded') {
+            if (this._activeColorPicker && this._activeColorPicker.id === w.id) {
+              this._activeColorPicker = w; // Refresh pointer
+            } else if (this._activeColorPicker !== w) {
+              this._activeColorPicker = w;
+              this._activeColorPickerRegion = null;
+            }
+            this._handleEmbeddedColorPicker(w, rx, ry);
+          } else {
             this._handleWidgetClick(w);
-            return;
           }
+          return;
         }
         const t1 = performance.now();
         // if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
@@ -1611,7 +1620,9 @@ export default class GuiXR {
         }
       }
     } else if (w.type === 'colorpicker_embedded') {
-      if (this._activeColorPicker !== w) {
+      if (this._activeColorPicker && this._activeColorPicker.id === w.id) {
+        this._activeColorPicker = w; // Refresh pointer
+      } else if (this._activeColorPicker !== w) {
         this._activeColorPicker = w;
         this._activeColorPickerRegion = null;
       }
@@ -2479,17 +2490,20 @@ export default class GuiXR {
     ctx.fillText("OK", startX + btnW / 2, btnY + btnH / 2 + 10);
   }
 
-  _handleEmbeddedColorPicker(w) {
-    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-    if (!tool) return;
+  _handleEmbeddedColorPicker(w, overrideX, overrideY) {
+    let tool = this._main.getSculptManager().getCurrentTool();
+    if (!tool || !tool._color) {
+      tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    }
+    if (!tool || !tool._color) return;
 
     const rgb = tool._color;
     const hsv = [0, 0, 0];
     Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
     let [h, s, v] = hsv;
 
-    const mx = this._cursor.x;
-    const my = this._cursor.y;
+    const mx = overrideX !== undefined ? overrideX : this._cursor.x;
+    const my = overrideY !== undefined ? overrideY : this._cursor.y;
 
     // --- 0. Check FG/BG Swatches and Swap Button (Top Left Corner) ---
     const swatchSize = 40; // Scale up 50%
@@ -2885,8 +2899,11 @@ export default class GuiXR {
   }
 
   _drawEmbeddedColorPicker(ctx, w) {
-    const tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
-    if (!tool) return;
+    let tool = this._main.getSculptManager().getCurrentTool();
+    if (!tool || !tool._color) {
+      tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT);
+    }
+    if (!tool || !tool._color) return;
 
     // Background
     ctx.fillStyle = '#222';

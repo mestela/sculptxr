@@ -32,6 +32,9 @@
 * [x] **Outliner**:
 * [x] **Proper controllers per headset** - selectable for pcvr
 
+### Bugs during testing
+* [ ] undo in voxel doesn't undo paint
+* [ ] color picker doesn't latch properly; drag too far in the square, it affects the hue circle, vice versa
 
 
 ## 3. Device Testing Strategy
