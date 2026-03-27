@@ -921,7 +921,76 @@ class VoxelState {
     // if (window.screenLog) window.screenLog(`VS.compute: Bounds [${bounds.min}] to [${bounds.max}]`, "cyan");
 
     // Use SurfaceNets (Dual Contouring style)
-    const res = SurfaceNets.computeSurface(this._voxels, bounds, false); // Pass computeNormals=false
+    let res = null;
+
+    if (globalThis.wasmModule) {
+      try {
+        const wasm = globalThis.wasmModule;
+        const totalElems = this._dims[0] * this._dims[1] * this._dims[2];
+
+        // 1. Persistent WASM Memory
+        if (!this._wasmBuf || this._wasmBuf.totalElems !== totalElems) {
+            if (this._wasmBuf) {
+                wasm.dealloc(this._wasmBuf.dimsPtr, 3 * 4);
+                wasm.dealloc(this._wasmBuf.boundsPtr, 6 * 4);
+                wasm.dealloc(this._wasmBuf.distPtr, this._wasmBuf.totalElems * 4);
+                wasm.dealloc(this._wasmBuf.colPtr, this._wasmBuf.totalElems * 3 * 4);
+                wasm.dealloc(this._wasmBuf.matPtr, this._wasmBuf.totalElems * 3 * 4);
+            }
+            this._wasmBuf = {
+                dimsPtr: wasm.alloc(3 * 4),
+                boundsPtr: wasm.alloc(6 * 4),
+                distPtr: wasm.alloc(totalElems * 4),
+                colPtr: wasm.alloc(totalElems * 3 * 4),
+                matPtr: wasm.alloc(totalElems * 3 * 4),
+                totalElems: totalElems
+            };
+        }
+        const wb = this._wasmBuf;
+
+        // 2. Copy JS Buffers over to WASM Memory (Heavy .set(), but avoids detach risks)
+        new Uint32Array(wasm.memory.buffer, wb.dimsPtr, 3).set(this._dims);
+        new Uint32Array(wasm.memory.buffer, wb.boundsPtr, 6).set([...bounds.min, ...bounds.max]);
+        new Float32Array(wasm.memory.buffer, wb.distPtr, totalElems).set(this._voxels.distanceField);
+        new Float32Array(wasm.memory.buffer, wb.colPtr, totalElems * 3).set(this._voxels.colorField);
+        new Float32Array(wasm.memory.buffer, wb.matPtr, totalElems * 3).set(this._voxels.materialField);
+
+        // 3. Compute
+        const meshPtr = wasm.compute_surface_wasm(wb.dimsPtr, wb.boundsPtr, wb.distPtr, wb.colPtr, wb.matPtr);
+
+        if (meshPtr === 0) throw new Error("WASM returned null pointer");
+
+        // 4. Extract
+        const meta = new Uint32Array(wasm.memory.buffer, meshPtr, 10);
+        const vPtr = meta[0], vLen = meta[1];
+        const fPtr = meta[2], fLen = meta[3];
+        const cPtr = meta[4], cLen = meta[5];
+        const mPtr = meta[6], mLen = meta[7];
+
+        const vertices = new Float32Array(wasm.memory.buffer, vPtr, vLen).slice();
+        const faces = new Uint32Array(wasm.memory.buffer, fPtr, fLen).slice();
+        const colors = new Float32Array(wasm.memory.buffer, cPtr, cLen).slice();
+        const materials = new Float32Array(wasm.memory.buffer, mPtr, mLen).slice();
+
+        // 5. Cleanup dynamic struct (leave input buffers alive)
+        wasm.free_mesh_result(meshPtr);
+
+        res = { vertices, faces, colors, materials, isWASM: true };
+
+      } catch (err) {
+        console.error("VoxelState: WASM Execution Failed, falling back to JS. Error:", err);
+        // Expose error to worker console
+        if (globalThis.postMessage) {
+            globalThis.postMessage({ type: 'LOG', data: `WASM ERROR: ${err.message}` });
+        }
+      }
+    }
+
+    // Fallback if WASM failed or isn't loaded
+    if (!res) {
+      res = SurfaceNets.computeSurface(this._voxels, bounds, false); 
+      res.isWASM = false;
+    }
 
     // Compute face-area-weighted normals on the worker thread
     this.computeGeometricNormals(res);

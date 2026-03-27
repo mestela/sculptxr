@@ -69,10 +69,13 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
-         console.log("[VoxelWorker]", msg.data);
+         // Re-enabled ONLY for critical WASM boundary errors
+         if (msg.data && msg.data.startsWith && msg.data.startsWith("WASM ERROR")) {
+             console.log("[VoxelWorker CRITICAL]", msg.data);
+             if (window.screenLog) window.screenLog(`[VoxelWorker] ${msg.data}`, "red");
+         }
          return;
-      }
- else if (msg.type === 'CHUNK_UPDATE') {
+      } else if (msg.type === 'CHUNK_UPDATE') {
         this._pendingMeshUpdate = false;
         
         if (this.updateVoxelChunks) {
@@ -90,9 +93,10 @@ class SculptVoxel extends SculptBase {
       } else if (msg.type === 'MESH_UPDATE') {
         const data = msg.data;
         if (msg.computeTime) {
-          // const logMsg = `Voxel: Worker=${msg.computeTime.toFixed(1)}ms V=${msg.data.vertices.length/3}`;
-          // console.log(logMsg);
-          // if (window.screenLog) window.screenLog(logMsg, "grey");
+          const prefix = msg.isWASM ? "[WASM]" : "[JS]";
+          const logMsg = `${prefix} SurfaceNets Compute: ${msg.computeTime.toFixed(1)}ms`;
+          console.log(logMsg);
+          if (window.screenLog) window.screenLog(logMsg, "yellow");
         }
         
         // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);

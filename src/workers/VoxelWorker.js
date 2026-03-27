@@ -32,10 +32,17 @@ let isDirty = false; // Tracks if the current snapshot has been modified
 
     // Load Rust WASM
     try {
-      const wasmInit = await import('./voxel_wasm.wasm?init');
-      const wasmInst = await wasmInit.default();
-      wasmModule = wasmInst.exports || wasmInst.instance?.exports;
-      console.log("VoxelWorker: Rust WASM Loaded!");
+      // Use robust fetch approach for Vite Web Workers
+      const wasmUrl = new URL('./voxel_wasm.wasm', import.meta.url).href;
+      const response = await fetch(wasmUrl);
+      const { instance } = await WebAssembly.instantiateStreaming(response, {
+        env: {
+          // Provide basic math env if Rust standard library requires panic handlers (shouldn't for no_std/basic std)
+        }
+      });
+      globalThis.wasmModule = instance.exports;
+      wasmModule = instance.exports;
+      console.log("VoxelWorker: Rust WASM Loaded Successfully!");
     } catch (wasmErr) {
       console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
     }
@@ -340,7 +347,8 @@ function postMesh() {
   self.postMessage({ 
     type: 'MESH_UPDATE', 
     data: res, 
-    computeTime: (t1 - t0) 
+    computeTime: (t1 - t0),
+    isWASM: res.isWASM
   }, transfer);
 }
 
