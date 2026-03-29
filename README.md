@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.60**: **Voxel Worker Production Fix**: Migrated to Vite's `?worker` query to bundle dependencies directly into the worker, resolving 404 runtime errors on the server. Added `worker.format: "es"` to support code splitting.
 *   **v1.0.56**: **VR Sidebar Tabs & UI Refactor**: Overhauled the vertical accordion UI into a 3-tab layout with fixed headers (eliminating scrolling). Applied curved folder-tab aesthetics with dynamic margin indents. Throttled MiniHUD clipping bugs.
 *   **v1.0.55**: **Voxel Build-Up and Shader Tweak**: Implemented dynamic tapered sculpting using a time-based ramp for radius. Inverted time curves for negative modes (carve) to taper down to a point. Fixed WebGL `ShaderFlat` to correctly render vertex colors (faceted shading) instead of a solid red override.
-*   **v1.0.54**: **Voxel Color Fidelity**: Resolved a persistent color channel shift (Red to Purple, Yellow to White) during mesh-to-voxel conversion by correctly assigning the Blue channel in the SDF writing loop.
 
 [View Full Release History](docs/releases.md)
 
