@@ -1,3 +1,8 @@
+# v1.0.56
+- **UI**: **VR Sidebar UI Refactor from Accordions to 3-Tab View**: Overhauled the VR Sidebar menu to utilize a fixed-header 3-tab layout ("Rendering", "Topology", "Sculpting"). This eliminates vertical scrolling through headers.
+- **UI**: **Folder Tab Aesthetic**: Applied a beveled trapezoid shape to the sub-tabs with dark-gutter background contrast to replicate unified UI file folders. Shifted left/right slopes inwards to prevent overlap with the cyan panel border.
+- **UI**: **Responsive Scroll Windows & MiniHUD Overdraw Fix**: Fixed a viewport bounds leak where scrolling context elements would overdraw the tab headers or bleed into the MiniHUD. 
+
 # v1.0.55
 - **Feature**: **Voxel Build-Up (Tapered) Scaling**: Modulated brush radius using a time-based interpolation to enable tapered sculpting strokes.
 - **Fix**: **Inverted Time Ramp for Negative Sculpting**: Negative modes now shrink from Max to 0 (tapering down to a point) for better organic carving tail finishes.

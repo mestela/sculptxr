@@ -12,32 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.56**: **VR Sidebar Tabs & UI Refactor**: Overhauled the vertical accordion UI into a 3-tab layout with fixed headers (eliminating scrolling). Applied curved folder-tab aesthetics with dynamic margin indents. Throttled MiniHUD clipping bugs.
 *   **v1.0.55**: **Voxel Build-Up and Shader Tweak**: Implemented dynamic tapered sculpting using a time-based ramp for radius. Inverted time curves for negative modes (carve) to taper down to a point. Fixed WebGL `ShaderFlat` to correctly render vertex colors (faceted shading) instead of a solid red override.
 *   **v1.0.54**: **Voxel Color Fidelity**: Resolved a persistent color channel shift (Red to Purple, Yellow to White) during mesh-to-voxel conversion by correctly assigning the Blue channel in the SDF writing loop.
-*   **v1.0.53**: **Voxel WASM & Stutter Fix**: Integrated the high-performance Rust WebAssembly module for Voxel mesh generation (`SurfaceNets`), cutting compute times in half. Completely eliminated the 1+ second freeze on initial voxel strokes by removing a massive legacy `1,000,000` polygon Javascript iteration hack and bypassing unnecessary Three.js layout reconstructions.
-
-[View Full Release History](docs/releases.md)
-*   v0.9.289 - v0.9.304: **Galaxy XR Render & Performance Fix:** Resolved a major Samsung Adreno/Chrome driver bug that prevented WebXR from rendering in the right eye by rigorously enforcing `gl.scissor` hardware clipping and per-eye FBO re-bindings. Fixed a massive 60% CPU bottleneck caused by synchronous DOM layout thrashing within the VR debug logger.
-*   v0.9.279 - v0.9.288: **Native Hand Tracking Refinement:** Rebuilt the VR Mini-HUD interaction model specifically for native hand tracking. The Mini-HUD now anchors dynamically to the physical palm of the non-dominant hand. Added an intuitive Z-depth 'push-to-click' physical collision system allowing users to press buttons directly with their index finger instead of relying on pinch gestures. The UI now features a proximity-based cyan glowing border, and sculpting operations are safely suppressed when hands are within 25cm to prevent accidental geometry grabs.
-*   v0.9.267 - v0.9.278: **Voxel Move Tool:** Implemented a new 'Move' deformation brush for Voxels. Relies on a lightweight real-time visual proxy mesh that smoothly translates with the VR controller, followed by a multi-step Reverse ODE integration pass in the Web Worker to perfectly reconstruct the SDF without tearing or spatial folding. Fully supports symmetry dual-strokes.
-*   v0.9.251 - v0.9.266: **VR Trigger Sensitivity:** Added a new "Trigger Sensitivity" slider to the VR Settings menu. This allows users to physically calibrate the exact depth the hardware trigger needs to be pulled before a stroke begins recording. This perfectly resolves ergonomic issues for Valve Index users who previously had to bottom-out their triggers at 100% force just to activate the brushes.
-*   v0.9.232 - v0.9.250: **Version Update Prompt & VR Text Polish:** Implemented a new polling system that detects server deployments and visually warns users (via a Desktop Banner and VR HUD Logger) when a new version is available, complete with font-size adjustments to prevent in-headset text clipping.
-*   v0.9.217 - v0.9.231: **Voxel Cube Brush & Performance Optimization:** Added a new 'Cube' brush shape to the Voxel tool that can be oriented 1:1 with the physical VR controller. Offloaded all heavy Voxel normal calculations to the Web Worker and fixed a critical "Wireframe Rebuild Paradox" to permanently eliminate standalone CPU stuttering during rapid sculpting.
-*   v0.9.209 - v0.9.216: **Wireframe Performance & UI Polish:** Restored the Voxel wireframe toggle with full quad support. Implemented dynamic line sub-sampling to instantly cure the severe standalone VR framerate drop caused by dense wireframes. Fixed overlay combobox translation math and eliminated UI rendering duplication.
-*   v0.9.159 - v0.9.175: **Color Painting Polish:** Added a Color Smooth/Blur brush mapped to the secondary trigger, real-time contextual cursor color feedback for the Eyedropper, and hardware A-Button foreground/background color swapping.
-*   v0.9.154 - v0.9.158: **Mini-HUD Layout Polish:** Adjusted the Mini-HUD 3D offsets for a more comfortable, symmetrical layout. Removed duplicate tools in the VR Combobox to achieve a perfect 3x5 button grid. Fixed a desynchronization bug with the Isolate Object toggle.
-*   v0.9.150: **VR Controller Shortcuts:** The X-axis of the dominant thumbstick now directly controls Brush Intensity. Holding the secondary trigger now acts as a precision modifier, slowing down radius/intensity increments to exactly 10% speed for fine-tuning.
-*   v0.9.144: **In-App Function Profiling:** Added a native VR Deep Profiler and HUD Logger to capture and display sub-millisecond execution times directly in the WebXR view, bypassing the need for remote debugging on standalone headsets.
-*   v0.9.106: **Drag Tool Hotfix:** Corrected VR cursor radius scaling and prevented missing history TypeError on initial stroke.
-*   v0.9.105: **Drag Tool Symmetry Hotfix:** Fixed an issue where the symmetric brush wouldn't update its position in VR, preventing symmetric drag strokes from following the geometry.
-*   v0.9.104: **Drag Tool Hotfix:** Fixed a crash where the VR Drag tool would try to push a stroke state during hover tracking.
-*   v0.9.103: **Drag Tool Restored:** Re-enabled the classic 'Snakehook' style Drag brush. Upgraded its core math to utilize modern `Move.js` symmetry blending (preventing mesh tearing) and stabilized its VR 1:1 controller tracking.
-*   v0.9.102: **Mini-HUD Polish:** Tool picker combobox now features categorized color-tinting (Red, Blue, Purple, Green, Orange) to quickly identify brush families in VR. Extraneous keyboard shortcut labels have been stripped from the VR UI.
-*   v0.9.94: **Mini-HUD Polish:** Fixed AR clipping interactions, default brush radii normalization, and tool selection event bleeding. Stripped out noisy UI debug logging.
-*   v0.9.85: Color Picker: Paint Tool FG/BG Color Swatch and Mini-HUD Color Picker Support.
-*   v0.9.83: VR Input: Long distance 'Aim' mode sculpting and symmetry fully supported.
-*   v0.9.71: VR Polish: VR Move brush now correctly respects intensity slider for displacement and rotation.
-
 
 [View Full Release History](docs/releases.md)
 
