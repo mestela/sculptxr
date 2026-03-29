@@ -1,3 +1,30 @@
+# Walkthrough: Voxel Color Fidelity Fix (v1.0.54)
+
+## Goal
+Resolve the persistent color channel shift (Red ➡️ Purple, Yellow ➡️ White) when converting meshes to voxels.
+
+## Problem Analysis
+-   **Symptom**: Converting a colored mesh to voxels resulted in shifting colors (e.g. Red became Purple).
+-   **Root Cause**: In `VoxelState.js#addMeshSDF`, when assigning colors from the mesh to the global voxel grid, only the `0` (Red) and `1` (Green) channels were assigned, leaving the `2` (Blue) channel uninitialized (defaulting to 1.0).
+-   **Secondary Issue**: In `SculptManager.js#meshToVoxel`, the `nbVertices` variable was being hoisted and read before it was defined when processing Three.js BufferAttribute colors if `itemSize === 4`.
+
+## Solution
+1.  **Write Blue Channel**: Explicitly copy the third color channel.
+    ```javascript
+    if (cAr) {
+      this._voxels.colorField[globalId * 3] = colors[n * 3];
+      this._voxels.colorField[globalId * 3 + 1] = colors[n * 3 + 1];
+      this._voxels.colorField[globalId * 3 + 2] = colors[n * 3 + 2]; // Fixed
+    }
+    ```
+2.  **Move Hoisted Definition**: Move `var nbVertices = mesh.getNbVertices();` to the top of `meshToVoxel` so it can be safely used to allocate `Float32Array`. Avoid duplicate declarations later in the function.
+
+## Verification
+-   **Visuals**: Verified that a pure Red mesh retains its color when converted to voxels.
+-   **Telemetry**: Using `window.debugVoxelColors()` confirms that colors are within expected ranges without artificial Blue inflation.
+
+---
+
 # Walkthrough: Voxel Stabilization & Performance [PARANOID]
 
 ## Goal

@@ -1,3 +1,7 @@
+# v1.0.54
+- **Fix**: **Voxel Color Fidelity**: Resolved a persistent color channel shift (Red to Purple, Yellow to White) during mesh-to-voxel conversion by correctly assigning the Blue channel in the SDF writing loop.
+- **Fix**: **Variable Hoisting**: Fixed a hoisting issue where `nbVertices` was used before being defined in `meshToVoxel`.
+
 # v1.0.50 - v1.0.53
 - **Performance**: **Voxel WASM Integration**: Fully integrated the Rust WebAssembly module for Voxel mesh generation (`SurfaceNets`), dropping mesh extraction compute times from ~20ms (JS) down to ~8-12ms, enabling buttery smooth voxel sculpting at high resolutions.
 - **Performance**: **First-Stroke Voxel Stutter Fix**: Resolved a massive ~1-second framerate lockup (`1,074ms computeVertexNormals`) caused by a legacy hack that attempted to allocate 1,000,000 dummy polygons on the main thread during initialization.

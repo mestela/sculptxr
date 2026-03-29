@@ -1,4 +1,4 @@
-# SculptXR (v1.0.53)
+# SculptXR (v1.0.54)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.54**: **Voxel Color Fidelity**: Resolved a persistent color channel shift (Red to Purple, Yellow to White) during mesh-to-voxel conversion by correctly assigning the Blue channel in the SDF writing loop.
 *   **v1.0.53**: **Voxel WASM & Stutter Fix**: Integrated the high-performance Rust WebAssembly module for Voxel mesh generation (`SurfaceNets`), cutting compute times in half. Completely eliminated the 1+ second freeze on initial voxel strokes by removing a massive legacy `1,000,000` polygon Javascript iteration hack and bypassing unnecessary Three.js layout reconstructions.
 *   **v1.0.49**: **Three.js Port for Transform Gizmo**: Ported the legacy WebGL Transform Gizmo to the Three.js scene graph. It now renders correctly and follows the world transformations. Resolved issues with gizmo disappearing or being misaligned.
-*   **v1.0.48**: **Paint Tool Restored**: Fixed a variable mapping regression between the legacy `BufferGeometry` name (`aColor`) and modern Three.js's native vertex extraction buffer (`color`). Custom attributes are now routed to `BufferGeometry` perfectly!
 
 [View Full Release History](docs/releases.md)
 *   v0.9.289 - v0.9.304: **Galaxy XR Render & Performance Fix:** Resolved a major Samsung Adreno/Chrome driver bug that prevented WebXR from rendering in the right eye by rigorously enforcing `gl.scissor` hardware clipping and per-eye FBO re-bindings. Fixed a massive 60% CPU bottleneck caused by synchronous DOM layout thrashing within the VR debug logger.
