@@ -47,17 +47,13 @@ var computeEdgeTable = function (cubeEdges) {
 var cubeEdges = computeCubeEdges();
 var edgeTable = computeEdgeTable(cubeEdges);
 
-var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
-  var colors = voxels.colorField;
-  var materials = voxels.materialField;
+var computeMask = function (voxels, grid, dims, n) {
   var data = voxels.distanceField;
-
   var mask = 0;
-  var g = 0;
   var rx = dims[0];
   var rxy = dims[0] * dims[1];
+  var g = 0;
 
-  // 1st Pass: Compute Mask (Fast - only checks signs)
   for (var k = 0; k < 2; ++k) {
     for (var j = 0; j < 2; ++j) {
       for (var i = 0; i < 2; ++i) {
@@ -69,18 +65,20 @@ var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
       }
     }
   }
+  return mask;
+};
 
-  // Early Out: No surface crossing here
-  if (mask === 0 || mask === 0xff) {
-    return mask;
-  }
+var readColorsAndMaterials = function (voxels, grid, dims, n, cols, mats) {
+  var colors = voxels.colorField;
+  var materials = voxels.materialField;
+  var g = 0;
+  var rx = dims[0];
+  var rxy = dims[0] * dims[1];
 
-  // 2nd Pass: Accumulate Attributes (Slow - reads large arrays)
   var c1 = 0, c2 = 0, c3 = 0;
   var m1 = 0, m2 = 0, m3 = 0;
   var invSum = 0;
 
-  g = 0; // Reset Grid Index
   for (var k = 0; k < 2; ++k) {
     for (var j = 0; j < 2; ++j) {
       for (var i = 0; i < 2; ++i) {
@@ -91,13 +89,12 @@ var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
           p = Math.min(1.0 / Math.abs(p), 1e15);
           invSum += p;
 
-          var id3 = id * 3;
+          const id3 = id * 3;
           c1 += colors[id3] * p;
           c2 += colors[id3 + 1] * p;
           c3 += colors[id3 + 2] * p;
           m1 += materials[id3] * p;
           m2 += materials[id3 + 1] * p;
-          m3 += materials[id3 + 2] * p;
         }
       }
     }
@@ -108,9 +105,9 @@ var readScalarValues = function (voxels, grid, dims, n, cols, mats) {
   }
   cols.push(c1 * invSum, c2 * invSum, c3 * invSum);
   mats.push(m1 * invSum, m2 * invSum, m3 * invSum);
-
-  return mask;
 };
+
+
 
 var vTemp = [0.0, 0.0, 0.0];
 var interpolateVertices = function (edgeMask, cubeEdges, grid, x, vertices) {
@@ -306,9 +303,11 @@ SurfaceNets.computeSurface = function (voxels, bounds, computeNormals = false) {
 
       for (x[0] = minX; x[0] < maxX; ++x[0], ++n, ++m) {
 
-        var mask = readScalarValues(voxels, grid, dims, n, cols, mats);
+        var mask = computeMask(voxels, grid, dims, n);
         if (mask === 0 || mask === 0xff)
           continue;
+
+        readColorsAndMaterials(voxels, grid, dims, n, cols, mats);
 
         var edgeMask = edgeTable[mask];
         buffer[m] = vertices.length / 3;

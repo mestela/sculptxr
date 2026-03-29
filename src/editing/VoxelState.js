@@ -1717,7 +1717,6 @@ class VoxelState {
               if (cAr) {
                 this._voxels.colorField[globalId * 3] = colors[n * 3];
                 this._voxels.colorField[globalId * 3 + 1] = colors[n * 3 + 1];
-                this._voxels.colorField[globalId * 3 + 2] = colors[n * 3 + 2];
               }
             }
           }

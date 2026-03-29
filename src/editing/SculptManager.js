@@ -199,6 +199,14 @@ class SculptManager {
     const cy = (yMin + yMax) / 2;
     const cz = (zMin + zMax) / 2;
 
+    // Shift vertices to center around [0,0,0] for the worker
+    for (let i = 0; i < nbVertices; i++) {
+        let id = i * 3;
+        vArWorld[id]   -= cx;
+        vArWorld[id+1] -= cy;
+        vArWorld[id+2] -= cz;
+    }
+
     // Preserve cell detail (roughly 1.17 meters per cell in standard 150m bounds)
     // Scale resolution down proportional to size to reduce total cell count and speed up SurfaceNets!
     let newRes = Math.ceil(maxExtent / (150 / 128));

@@ -1807,8 +1807,11 @@ class SculptVoxel extends SculptBase {
       staticMesh.setVertices(vAr);
       staticMesh.setFaces(fAr);
 
-      // Fully initialize arrays and topology BEFORE setting render state variables
-      // which trigger Buffer updates internally.
+      const voxelColors = this._voxelMesh.getColors();
+      const cAr = voxelColors ? new Float32Array(voxelColors) : new Float32Array(vAr.length).fill(1.0);
+      staticMesh.setColors(cAr);
+
+      // Fully initialize arrays and topology AFTER setting colors
       staticMesh.init();
       staticMesh.allocateArrays();
       staticMesh.initFaceRings();
@@ -1816,12 +1819,8 @@ class SculptVoxel extends SculptBase {
       staticMesh.initRenderTriangles();
       staticMesh.updateFacesAabb();
       staticMesh.updateOctree();
-      staticMesh.initRender();
 
-      // Ensure colors exist immediately to prevent updateBuffers crash
-      const cAr = new Float32Array(vAr.length);
-      cAr.fill(1.0);
-      staticMesh.setColors(cAr);
+      staticMesh.initRender();
 
       // NOW safe to change render states
       staticMesh.setUseDrawArrays(false);
