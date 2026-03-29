@@ -489,6 +489,24 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
     y += btnH + gapBtn;
 
+    if (!isMiniHUD) {
+      // Build Up (Tapered) Toggle
+      widgets.push({
+        type: 'checkbox',
+        id: 'voxel_buildup',
+        label: 'Build Up (Tapered)',
+        x: col1X, y: y, w: 550, h: btnH,
+        value: (activeTool._buildUp === true),
+        onInteract: () => {
+          if (activeTool) {
+            activeTool._buildUp = !activeTool._buildUp;
+            if (main._guiXR) main._guiXR._needsRedraw = true;
+          }
+        }
+      });
+      y += btnH + gapBtn;
+    }
+
     // Brush Shape Buttons (Sphere, Cube)
     const shape = activeTool._shape || 0;
     const btnShapeW = (550 - 10) / 2;
@@ -620,21 +638,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
     y += btnH + gapBtn;
 
-    // Smooth Shading Toggle
-    widgets.push({
-      type: 'checkbox',
-      id: 'voxel_smooth',
-      label: 'Smooth Shading',
-      x: col1X, y: y, w: 550, h: btnH,
-      value: (activeTool._smooth === true),
-      onInteract: () => {
-        if (activeTool && activeTool.toggleSmooth) {
-          activeTool.toggleSmooth();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-        }
-      }
-    });
-    y += btnH + gapBtn;
+
 
     // Bake Button
     widgets.push({

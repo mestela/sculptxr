@@ -3100,17 +3100,7 @@ export default class GuiXR {
     ctx.lineWidth = 2;
     ctx.strokeRect(fgX, fgY, swatchSize, swatchSize);
 
-    // [Diagnostic] Raw RGB Visualizer
-    ctx.textAlign = 'left';
-    ctx.font = 'bold 24px monospace';
-    ctx.fillStyle = '#fff';
-    ctx.fillText(`${rgb[0].toFixed(3)}, ${rgb[1].toFixed(3)}, ${rgb[2].toFixed(3)}`, fgX + swatchSize + 80, fgY + 20);
 
-    ctx.fillStyle = `rgb(${Math.floor(rgb[0] * 255)}, ${Math.floor(rgb[1] * 255)}, ${Math.floor(rgb[2] * 255)})`;
-    ctx.fillRect(fgX + swatchSize + 80, fgY + 30, swatchSize, swatchSize);
-    ctx.strokeStyle = '#dfdfdf';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(fgX + swatchSize + 80, fgY + 30, swatchSize, swatchSize);
 
     // Swap Button (Top Right of swatches)
     const swapBtnX = fgX + swatchSize + 5;

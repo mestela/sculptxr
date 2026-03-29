@@ -44,6 +44,8 @@ class SculptVoxel extends SculptBase {
     this._modulateRadius = true;
     this._modulateIntensity = true;
     this._pressureBias = 0.0;
+    this._buildUp = false; // Voxel build-up toggle
+    this._strokeDistance = 0.0; // Distance traveled in meters during current stroke
     
     // Color Picker Support
     this._color = [1.0, 1.0, 1.0];
@@ -981,10 +983,12 @@ class SculptVoxel extends SculptBase {
       // Detect Start of Stroke (VR)
       if (!this._xrStrokeActive) {
         this._xrStrokeActive = true;
-
+        this._strokeDistance = 0.0; 
+        this._strokeStartTime = performance.now(); // Reset for temporal build-up
+        this._lastFrameTime = null; // Reset for speed tracking
+        this._lastWorkspacePos = null; // Reset for speed tracking
+        
         if (this._worker) {
-          // if (window.screenLog) window.screenLog("Voxel: VR Start (Snapshot)", "grey");
-          // else console.log("Voxel: VR Start (Snapshot)");
           this._worker.postMessage({ type: 'SNAPSHOT' });
         }
 
@@ -1060,7 +1064,17 @@ class SculptVoxel extends SculptBase {
         var dy = localPos[1] - this._lastXRPos[1];
         var dz = localPos[2] - this._lastXRPos[2];
         var distSq = dx * dx + dy * dy + dz * dz;
-        if (distSq < 0.0625) return; // (0.25^2)
+        
+        const returnMeshReady = !this._pendingMeshUpdate;
+        if (!this._buildUp) {
+          if (distSq < 0.0625) return; // Standard distance throttle
+        } else {
+          // In Build Up mode, allow stationary falling through, but ONLY if we are ready to ask for a mesh!
+          // This prevents worker flood while still allowing growth.
+          if (distSq < 0.0625 && !returnMeshReady) return;
+        }
+        
+        this._strokeDistance += Math.sqrt(distSq) * this._step; 
       }
 
       // Update Last Pos
@@ -1101,7 +1115,22 @@ class SculptVoxel extends SculptBase {
       }
       if (isNaN(worldRadius)) worldRadius = 3.0; // Fallback again
 
+      var isNegative = (options && options.isNegative) || this._negative;
       var gridRadius = worldRadius;
+      if (this._buildUp) {
+        let t = 1.0;
+        const rampTime = 0.8; // Time in seconds to reach full brush size
+        const elapsed = (performance.now() - this._strokeStartTime) / 1000.0;
+        
+        if (isNegative) {
+          t = 1.0 - (elapsed / rampTime); // Shrink from max to 0!
+          if (t < 0.0) t = 0.0;
+        } else {
+          t = elapsed / rampTime; // Grow from 0 to max!
+          if (t > 1.0) t = 1.0;
+        }
+        gridRadius = worldRadius * t;
+      }
       // Throttling for mesh updates?
       // VR runs at 72/90/120Hz. We can post edits every frame.
       // But invalidating mesh every frame might be expensive if we ask for `returnMesh: true`.
@@ -1224,6 +1253,29 @@ class SculptVoxel extends SculptBase {
               center: [-sX, sY, sZ],
               radius: gridRadius,
               strength: strength,
+              shape: shapeNum,
+              brushRotation: brushRotSym,
+              returnMesh: false
+            });
+          }
+        } else if (this._buildUp && mode === 0 && isNegative) {
+          // Hijack Add-Negative to become Deflate when Build Up is active!
+          this._worker.postMessage({
+            type: 'INFLATE',
+            center: [sX, sY, sZ],
+            radius: gridRadius,
+            strength: -Math.abs(strength), // Ensure negative for deflate
+            shape: shapeNum,
+            brushRotation: brushRot,
+            returnMesh: returnMesh
+          });
+
+          if (sym) {
+            this._worker.postMessage({
+              type: 'INFLATE',
+              center: [-sX, sY, sZ],
+              radius: gridRadius,
+              strength: -Math.abs(strength),
               shape: shapeNum,
               brushRotation: brushRotSym,
               returnMesh: false
