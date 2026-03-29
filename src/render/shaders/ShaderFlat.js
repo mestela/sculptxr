@@ -7,7 +7,8 @@ ShaderFlat.uniforms = {};
 ShaderFlat.attributes = {};
 ShaderFlat.activeAttributes = {
   vertex: true,
-  material: true
+  material: true,
+  color: true
 };
 
 ShaderFlat.uniformNames = ['uColor', 'uAlpha', 'uLightDir'];
@@ -15,12 +16,15 @@ Array.prototype.push.apply(ShaderFlat.uniformNames, ShaderBase.uniformNames.comm
 
 ShaderFlat.vertex = [
   'attribute vec3 aVertex;',
+  'attribute vec3 aColor;',
   'attribute vec3 aMaterial;',
   ShaderBase.strings.vertUniforms,
   'varying vec3 vVertex;',
+  'varying vec3 vColor;',
   'varying float vMasking;',
   'void main() {',
   '  vMasking = aMaterial.z;',
+  '  vColor = aColor;',
   '  vec4 vertex4 = vec4(aVertex, 1.0);',
   '  // DISABLE MASKING MIXING (Suspect uEM is bad)',
   '  // vertex4 = mix(vertex4, uEM * vertex4, vMasking);',
@@ -31,15 +35,15 @@ ShaderFlat.vertex = [
 
 ShaderFlat.fragment = [
   'precision highp float;',
-  'uniform vec3 uColor;',
   'uniform float uAlpha;',
   'varying vec3 vVertex;',
+  'varying vec3 vColor;',
   'void main() {',
   '  vec3 n = normalize(cross(dFdx(vVertex), dFdy(vVertex)));',
   '  vec3 lDir = normalize(vec3(0.0, 0.0, 1.0));',
   '  float diffuse = max(0.0, dot(n, lDir));',
   '  diffuse = diffuse * 0.5 + 0.5; // Ambient + Diffuse',
-  '  gl_FragColor = vec4(uColor * diffuse, uAlpha);',
+  '  gl_FragColor = vec4(vColor * diffuse, uAlpha);',
   '}'
 ].join('\n');
 
