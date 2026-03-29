@@ -254,6 +254,7 @@ class VoxelState {
   // Boolean Union: min(existing, new)
   // Distance to primitive
   addSphere(center, radius, color, shape = 0, brushRotation) {
+    const t0 = performance.now();
     var res = this._resolution;
     var step = this._step;
     var min = this._min;
@@ -351,6 +352,10 @@ class VoxelState {
       if (izMax > this._activeMax[2]) this._activeMax[2] = izMax;
     }
 
+    const t1 = performance.now();
+    if (t1 - t0 > 5) {
+      console.log("[Performance] addSphere took:", t1 - t0, "ms, changed:", changed);
+    }
     return changed;
   }
 
@@ -947,9 +952,9 @@ class VoxelState {
 
     // Bounds Check: If min > max, the grid is effectively empty. Reset to inverted so we can detect new content.
     if (minX > maxX || minY > maxY || minZ > maxZ) {
-      // self.postMessage({ type: 'LOG', data: `TightenBounds: Empty BBox [${minX}, ${maxX}]` });
-      this.clear(); // Resets activeMin/Max
-      return;
+      // Inverted bounds! Scan the entire volume to find content.
+      minX = 0; minY = 0; minZ = 0;
+      maxX = this._resolution - 1; maxY = this._resolution - 1; maxZ = this._resolution - 1;
     }
 
     // 1. Scan Z Min (Upwards)

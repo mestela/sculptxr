@@ -2265,7 +2265,8 @@ class Mesh {
     } else {
       attr.array.set(vertices);
       if (this._isVoxel) {
-          attr.updateRange = { offset: 0, count: vertices.length };
+          // Only upload active vertices!
+          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
       }
       attr.needsUpdate = true;
     }
@@ -2286,7 +2287,8 @@ class Mesh {
     } else {
       attr.array.set(normals);
       if (this._isVoxel) {
-          attr.updateRange = { offset: 0, count: normals.length };
+          // Only upload active normals!
+          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
       }
       attr.needsUpdate = true;
     }
@@ -2305,7 +2307,8 @@ class Mesh {
     } else {
       attr.array.set(colors);
       if (this._isVoxel) {
-          attr.updateRange = { offset: 0, count: colors.length };
+          // Only upload active colors!
+          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
       }
       attr.needsUpdate = true;
     }
@@ -2324,7 +2327,8 @@ class Mesh {
     } else {
       attr.array.set(materials);
       if (this._isVoxel) {
-          attr.updateRange = { offset: 0, count: materials.length };
+          // Only upload active materials!
+          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
       }
       attr.needsUpdate = true;
     }
@@ -2394,7 +2398,8 @@ class Mesh {
     } else {
       geom.index.array.set(triangles);
       if (this._isVoxel) {
-          geom.index.updateRange = { offset: 0, count: triangles.length };
+          // Only upload active indices!
+          geom.index.updateRange = { offset: 0, count: this.getNbTriangles() * 3 };
       }
       geom.index.needsUpdate = true;
     }

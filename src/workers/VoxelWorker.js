@@ -365,10 +365,7 @@ function postMesh() {
 
   // Call VoxelState to compute the SurfaceNets mesh
   // Pass full bounds to bypass tight-bounding-box bugs in JS fallback / WASM when Res != 128
-  const res = voxelState.computeMesh({
-    min: [0, 0, 0],
-    max: [voxelState._resolution - 1, voxelState._resolution - 1, voxelState._resolution - 1]
-  }); 
+  const res = voxelState.computeMesh(); 
 
   const t1 = performance.now();
 

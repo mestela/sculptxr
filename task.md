@@ -11,3 +11,11 @@
 - [x] Port inner loops of SurfaceNets to Rust <!-- id: 2 -->
 - [x] Compile Rust to WASM <!-- id: 3 -->
 - [x] Integrate WASM into VoxelWorker.js <!-- id: 4 -->
+- [x] Modify `src/editing/VoxelState.js` to fix `tightenBounds` for inverted bounds.
+- [x] Modify `src/workers/VoxelWorker.js` to restore tight bounds extraction.
+- `[x]` Revert `src/editing/SculptManager.js` to use `cx - maxExtent/2` (bottom-left-rear).
+- `[x]` Revert `src/editing/tools/SculptVoxel.js` `updateXR` to use standard shift.
+- `[x]` Fix `this._res` staleness in `updateVoxelMesh` to make standard shift work for tight meshes.
+- `[x]` Revert `src/editing/tools/SculptVoxel.js` `renderVR` to use `_gridMatrix` for voxel bounds.
+- `[ ]` Verify local build performance (HMR automatically updates).
+- `[ ]` Create walkthrough artifact.

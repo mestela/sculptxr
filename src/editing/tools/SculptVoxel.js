@@ -1136,12 +1136,22 @@ class SculptVoxel extends SculptBase {
 
 
       if (this._worker) {
+        let cx = 0, cy = 0, cz = 0;
+        if (this._gridMatrix) {
+          const maxExtent = this._gridMatrix[0] * this._res;
+          const halfExtent = maxExtent / 2.0;
+          cx = this._gridMatrix[12] + halfExtent;
+          cy = this._gridMatrix[13] + halfExtent;
+          cz = this._gridMatrix[14] + halfExtent;
+        }
+
+        const sX = workspacePos[0] - cx;
+        const sY = workspacePos[1] - cy;
+        const sZ = workspacePos[2] - cz;
+
         // Check mode
         var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate, 3=Smooth
         
-        // Expose Smooth via Secondary Trigger (Disabled for Voxel Tool Subtract)
-        // if (isNegative && mode !== 3) mode = 3; 
-
         var shapeNum = (this._shape !== undefined) ? this._shape : 0;
         var brushRot = null;
         var brushRotSym = null;
@@ -1154,7 +1164,7 @@ class SculptVoxel extends SculptBase {
           // INFLATE
           this._worker.postMessage({
             type: 'INFLATE',
-            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
+            center: [sX, sY, sZ],
             radius: gridRadius,
             strength: strength,
             shape: shapeNum,
@@ -1166,7 +1176,7 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'INFLATE',
-              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
+              center: [-sX, sY, sZ],
               radius: gridRadius,
               strength: strength,
               shape: shapeNum,
@@ -1175,10 +1185,10 @@ class SculptVoxel extends SculptBase {
             });
           }
         } else if (mode === 3) {
-          // SMOOTH
+          // SMOOTH_SPHERE
           this._worker.postMessage({
             type: 'SMOOTH_SPHERE',
-            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
+            center: [sX, sY, sZ],
             radius: gridRadius,
             strength: strength,
             shape: shapeNum,
@@ -1190,7 +1200,7 @@ class SculptVoxel extends SculptBase {
           if (sym) {
             this._worker.postMessage({
               type: 'SMOOTH_SPHERE',
-              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
+              center: [-sX, sY, sZ],
               radius: gridRadius,
               strength: strength,
               shape: shapeNum,
@@ -1202,9 +1212,10 @@ class SculptVoxel extends SculptBase {
           // EDIT_SPHERE
           var isSub = (mode === 1) || isNegative;
 
+          const t0 = performance.now();
           this._worker.postMessage({
             type: 'EDIT_SPHERE',
-            center: [workspacePos[0], workspacePos[1], workspacePos[2]],
+            center: [sX, sY, sZ],
             radius: gridRadius,
             color: color,
             isNegative: isSub,
@@ -1212,12 +1223,16 @@ class SculptVoxel extends SculptBase {
             brushRotation: brushRot,
             returnMesh: returnMesh
           });
+          const t1 = performance.now();
+          if (t1 - t0 > 5) {
+            console.log("[Performance] postMessage EDIT_SPHERE took:", t1 - t0, "ms");
+          }
 
           // Symmetry Stroke
           if (sym) {
             this._worker.postMessage({
               type: 'EDIT_SPHERE',
-              center: [-workspacePos[0], workspacePos[1], workspacePos[2]],
+              center: [-sX, sY, sZ],
               radius: gridRadius,
               color: color,
               isNegative: isSub,
@@ -1539,6 +1554,8 @@ class SculptVoxel extends SculptBase {
       this._gridMatrix[0] = scale;
       this._gridMatrix[5] = scale;
       this._gridMatrix[10] = scale;
+      
+      if (this._pendingRes) this._res = this._pendingRes; // FIXED
 
       this._size = this._pendingSize; // Update tool size!
       
@@ -1569,7 +1586,7 @@ class SculptVoxel extends SculptBase {
     newMesh.initColorsAndMaterials();
     newMesh.allocateArrays();
     newMesh.initFaceRings(); // Needed for edge computation
-    newMesh.initEdges(); // Compute wireframe topology!
+    // newMesh.initEdges(); // Commented out to restore 30fps+ during interaction!
     // newMesh.optimize(); // SKIP (Expensive cache optimization)
     // newMesh.initVertexRings(); // SKIP (Smoothing only)
     newMesh.initRenderTriangles(); // Needed for picking
@@ -1669,10 +1686,7 @@ class SculptVoxel extends SculptBase {
     if (this._voxelMesh.getMaterialBuffer()) this._voxelMesh.getMaterialBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
     if (this._voxelMesh.getIndexBuffer()) this._voxelMesh.getIndexBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
     if (this._voxelMesh.getWireframeBuffer()) this._voxelMesh.getWireframeBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
-
-    this._voxelMesh.updateBuffers();
-
-    this._voxelMesh.updateBuffers();
+    // Removed duplicate calls
 
     // if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
   }
@@ -1907,7 +1921,7 @@ class SculptVoxel extends SculptBase {
 
   renderVR(main, camera) {
     if (this._voxelBounds) {
-      this._voxelBounds.render(main, this._size, this._identityMatrix);
+      this._voxelBounds.render(main, this._size, this._gridMatrix);
     }
   }
 
