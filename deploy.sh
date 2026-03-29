@@ -64,6 +64,10 @@ echo "{\"version\": \"$FULL_VERSION_STR\"}" > dist/version.json
 # Copy static assets that Vite doesn't bundle automatically
 cp -r app dist/
 
+# Copy Voxel Workers and wasm to dist in the correct relative path
+mkdir -p dist/src/workers
+cp -r src/workers/* dist/src/workers/
+
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 
 # Reuse SSH connection to avoid multiple key prompts

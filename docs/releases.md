@@ -1,3 +1,7 @@
+# v1.0.60
+- **Build & Optimization**: **Voxel Worker Production Fix**: Migrated `SculptVoxel.js` to use Vite’s native `?worker` query for Worker bundling. This forces Vite to bundle `VoxelState.js` code directly into the Worker during build, eliminating 404 runtime errors.
+- **Build & Optimization**: **Vite Worker Output `es`**: Configured `vite.config.js` to use `worker { format: "es" }` to support code splitting without breaking production builds with rollup `iife` errors.
+
 # v1.0.56
 - **UI**: **VR Sidebar UI Refactor from Accordions to 3-Tab View**: Overhauled the VR Sidebar menu to utilize a fixed-header 3-tab layout ("Rendering", "Topology", "Sculpting"). This eliminates vertical scrolling through headers.
 - **UI**: **Folder Tab Aesthetic**: Applied a beveled trapezoid shape to the sub-tabs with dark-gutter background contrast to replicate unified UI file folders. Shifted left/right slopes inwards to prevent overlap with the cyan panel border.
