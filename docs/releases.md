@@ -1,3 +1,9 @@
+# v1.0.55
+- **Feature**: **Voxel Build-Up (Tapered) Scaling**: Modulated brush radius using a time-based interpolation to enable tapered sculpting strokes.
+- **Fix**: **Inverted Time Ramp for Negative Sculpting**: Negative modes now shrink from Max to 0 (tapering down to a point) for better organic carving tail finishes.
+- **Fix**: **Flat Mesh Shader Reads Color**: Transformed standard WebGl `ShaderFlat` to correctly bind and read vertex colors instead of a solid red override. Now you can visualize faceted facet normals while keeping your paint!
+- **UI**: **Menu and Widget Clean-Up**: Removed unused smooth shading button from voxel panel and removed diagnostic color swatch from the shared color picker UI without layout shifts.
+
 # v1.0.54
 - **Fix**: **Voxel Color Fidelity**: Resolved a persistent color channel shift (Red to Purple, Yellow to White) during mesh-to-voxel conversion by correctly assigning the Blue channel in the SDF writing loop.
 - **Fix**: **Variable Hoisting**: Fixed a hoisting issue where `nbVertices` was used before being defined in `meshToVoxel`.
