@@ -54,7 +54,26 @@ class GuiMultiresolution {
     this._ctrlDynSubd = menu.addSlider(TR('dynamicSubdivision'), MeshDynamic, 'SUBDIVISION_FACTOR', 0, 100, 1);
     this._ctrlDynDec = menu.addSlider(TR('dynamicDecimation'), MeshDynamic, 'DECIMATION_FACTOR', 0, 100, 1);
     this._ctrlDynLin = menu.addCheckbox(TR('dynamicLinear'), MeshDynamic, 'LINEAR');
+    // voxel conversion
+    menu.addTitle('Voxel Conversion');
+    menu.addButton('Convert Mesh to Voxels', this, 'meshToVoxel');
+
     this.updateDynamicVisibility(false);
+  }
+
+  meshToVoxel() {
+    var main = this._main;
+    var mesh = main.getMesh();
+    if (!mesh)
+      return;
+
+    main.getSculptManager().meshToVoxel();
+    
+    // Switch to Voxel tool
+    if (main.getGui() && main.getGui()._ctrlSculpting) {
+      const vTool = Enums.Tools.VOXEL;
+      main.getGui()._ctrlSculpting._ctrlSculpt.setValue(String(vTool)); // Ensure string for dat.gui keys
+    }
   }
 
   onKeyUp(event) {

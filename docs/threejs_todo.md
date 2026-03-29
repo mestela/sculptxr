@@ -16,7 +16,7 @@
 * [x] **Sculpting "Feel"**: match to webgl build
 
 ### Todo misc
-* [x] **Voxel refine**: smooth normals, support different materials... paint? wasm? webgpu? (Bake & Move complete)
+* [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm
 * [ ] **Mesh to Voxel**
 * [ ] **Resample changes colour**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc

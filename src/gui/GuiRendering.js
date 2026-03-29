@@ -204,6 +204,10 @@ class GuiRendering {
   updateVisibility() {
     var mesh = this._main.getMesh();
     if (!mesh) return;
+
+    var isVoxelTool = this._main.getSculptManager().getToolIndex() === Enums.Tools.VOXEL;
+    this._ctrlShowWireframe.setVisibility(!isVoxelTool && !RenderData.ONLY_DRAW_ARRAYS);
+
     var val = mesh.getShaderType();
     this._ctrlMatcapTitle.setVisibility(val === Enums.Shader.MATCAP);
     this._ctrlMatcap.setVisibility(val === Enums.Shader.MATCAP);

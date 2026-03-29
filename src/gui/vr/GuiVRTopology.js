@@ -110,6 +110,28 @@ export default function getTopologyWidgets(main) {
   y += btnH + gapSection;
 
 
+  // --- VOXEL CONVERSION ---
+  widgets.push({ type: 'info', label: 'Voxel Conversion', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({
+    type: 'button', id: 'mesh_to_voxel', label: 'Convert Mesh to Voxels', x: col1X, y: y, w: 350, h: btnH,
+    disabled: !mesh || mesh.isVoxel,
+    onInteract: () => {
+      if (!mesh || mesh.isVoxel) return;
+      if (main.getSculptManager().meshToVoxel) {
+        main.getSculptManager().meshToVoxel();
+        
+        main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
+        if (main.getGui()._uiXR) {
+          main.getGui()._uiXR.refreshToolsWidget(); // Refresh VR tools UI
+        }
+      }
+    }
+  });
+  y += btnH + gapSection;
+
+
   // --- REMESH ---
   widgets.push({ type: 'info', label: 'Remesh', x: col1X, y: y });
   y += gapHeader;

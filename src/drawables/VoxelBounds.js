@@ -69,7 +69,7 @@ class VoxelBounds {
     const finalPosZ = this._matrix[14];
 
     this._threeMesh.matrixAutoUpdate = true;
-    this._threeMesh.scale.set(100.0, 100.0, 100.0);
+    this._threeMesh.scale.set(size, size, size); // Dynamic scale based on workspace size!
     this._threeMesh.position.set(finalPosX, finalPosY, finalPosZ);
   }
 

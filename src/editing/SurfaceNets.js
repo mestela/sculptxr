@@ -124,15 +124,25 @@ var interpolateVertices = function (edgeMask, cubeEdges, grid, x, vertices) {
     ++edgeCount; //If it did, increment number of edge crossings
     if (SurfaceNets.BLOCK)
       continue;
-    //Now find the point of intersection
     var e0 = cubeEdges[i << 1]; //Unpack vertices
     var e1 = cubeEdges[(i << 1) + 1];
     var g0 = grid[e0]; //Unpack grid values
-    var t = g0 - grid[e1]; //Compute point of intersection
-    if (Math.abs(t) < 1e-7 || isNaN(t)) {
-      t = 0.5; // Fallback for NaN or zero-crossing
+    var t;
+    
+    // Fallback if one of the endpoints is infinite or NaN
+    if (!isFinite(g0) || !isFinite(grid[e1]) || isNaN(g0) || isNaN(grid[e1])) {
+      t = 0.5;
     } else {
-      t = g0 / t;
+      var t_diff = g0 - grid[e1]; //Compute point of intersection
+      if (Math.abs(t_diff) < 1e-7) {
+        t = 0.5; // Fallback for zero-thickness or zero-crossing
+      } else {
+        t = g0 / t_diff;
+      }
+    }
+
+    if (isNaN(t)) {
+      console.error(`[SurfaceNets NaN Edge] Edge=${i} Cell=[${x[0]},${x[1]},${x[2]}] g0=${g0} g1=${grid[e1]} t=${t}`);
     }
 
     //Interpolate vertices and add up intersections (this can be done without multiplying)
@@ -144,10 +154,28 @@ var interpolateVertices = function (edgeMask, cubeEdges, grid, x, vertices) {
         vTemp[j] += a ? 1.0 : 0.0;
     }
   }
+
+  if (isNaN(vTemp[0]) || isNaN(vTemp[1]) || isNaN(vTemp[2])) {
+    // Collect extra debug info inside the failing scope
+    console.error(`[SurfaceNets NaN] Cell=[${x[0]},${x[1]},${x[2]}] g0=${g0} g1=${grid[e1]} t=${t} edgeMask=${edgeMask}`);
+  }
+
   //Now we just average the edge intersections and add them to coordinate
   var s = 1.0 / edgeCount;
   for (var l = 0; l < 3; ++l)
     vTemp[l] = x[l] + s * vTemp[l];
+
+  if (isNaN(vTemp[0]) || isNaN(vTemp[1]) || isNaN(vTemp[2])) {
+    console.error(`[SurfaceNets NaN Final] vTemp before push Cell=[${x[0]},${x[1]},${x[2]}] edgeCount=${edgeCount} v0=${vTemp[0]} v1=${vTemp[1]} v2=${vTemp[2]}`);
+  }
+
+  // Live alive probe!
+  if (!globalThis._vCount) globalThis._vCount = 0;
+  if (globalThis._vCount < 5) {
+    globalThis._vCount++;
+    console.log(`[SurfaceNets Live] Pushing Vertex #${globalThis._vCount} for Cell=[${x[0]},${x[1]},${x[2]}] Pos=[${vTemp[0]}, ${vTemp[1]}, ${vTemp[2]}]`);
+  }
+
   vertices.push(vTemp[0], vTemp[1], vTemp[2]);
 };
 

@@ -2,22 +2,20 @@
 
 ## 🚨 ZERO TOLERANCE PROTOCOLS
 > [!IMPORTANT]
-> **VIOLATION OF THESE 3 RULES WILL RESULT IN SESSION TERMINATION.**
+> **VIOLATION OF THESE RULES WILL RESULT IN SESSION TERMINATION.**
 
 1.  **Step ID Prefix**:
-    *   **Rule**: EVERY SINGLE RESPONSE must start with `Step Id: {id}`.
-    *   **Check**: Look at the user's last message `Step Id`. Increment it. Put it at the very start.
-    *   **NO EXCEPTIONS**.
-
-2.  **Deployment Protocol (CI/CD) [DISABLED FOR VITE PHASE]**:
-    *   **Rule**: Do NOT use `./deploy_beta.sh` or `./deploy.sh`.
-    *   **Process**: Rely entirely on the local Vite server (`npm run dev`) for all testing.
-    *   **Reasoning**: Local Vite provides HMR and faster iteration.
-
-3.  **Debug Visibility**:
-    *   **Rule**: `VERSION` and `Build Description` MUST be visible in VR/Screen Log.
-    *   **Implementation**: Verify `GuiXR.draw` renders the version string.
-    *   **Console**: Log the version immediately on startup.
+    *   EVERY SINGLE RESPONSE must start with `Step Id: {id}`. Look at the user's last message `Step Id` and increment it. NO EXCEPTIONS.
+2.  **Browser Subagent**:
+    *   **Rule**: Do NOT use the browser subagent in this build of jetski. It is broken and will not work.
+3.  **VR Menu First**:
+    *   **Rule**: Do NOT add features to the desktop UI unless explicitly requested. If there is ANY ambiguity, ALWAYS assume the target is the VR side (e.g. `GuiVRTools.js` / VR menu).
+4.  **No Unprompted Git Commits/Pushes**:
+    *   **Rule**: NEVER `git commit` or `git push` to github unless explicitly asked to do so by the user. Do not assume a task list check-off means it's ready to push.
+5.  **Deployment Protocol [DISABLED]**:
+    *   Do NOT use `./deploy_beta.sh` or `./deploy.sh`. Rely entirely on local Vite server (`npm run dev`).
+6.  **Debug Visibility**:
+    *   `VERSION` MUST be visible in VR/Screen Log on startup.
 
 ## 🚀 Release Workflow
 **Goal:** Maintain a clean history and simple README while keeping full records.

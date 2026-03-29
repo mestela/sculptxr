@@ -740,24 +740,26 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   }
 
 
-  // Clay, Accumulate, Thin surface
-  widgets.push({
-    type: 'checkbox',
-    id: 'wireframe',
-    label: 'Wireframe',
-    x: col1X, y: y, w: 550, h: btnH,
-    value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
-    onInteract: () => {
-      const mesh = main.getMesh();
-      if (mesh) {
-        mesh.setShowWireframe(!mesh.getShowWireframe());
-        main.render();
-        if (main._guiXR) main._guiXR._needsRedraw = true;
-        if (main._guiMini) main._guiMini._needsRedraw = true;
+  // Only show wireframe toggle if we aren't using voxels
+  if (main.getSculptManager().getToolIndex() !== Enums.Tools.VOXEL) {
+    widgets.push({
+      type: 'checkbox',
+      id: 'wireframe',
+      label: 'Wireframe',
+      x: col1X, y: y, w: 550, h: btnH,
+      value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
+      onInteract: () => {
+        const mesh = main.getMesh();
+        if (mesh) {
+          mesh.setShowWireframe(!mesh.getShowWireframe());
+          main.render();
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+          if (main._guiMini) main._guiMini._needsRedraw = true;
+        }
       }
-    }
-  });
-  y += btnH + gapBtn;
+    });
+    y += btnH + gapBtn;
+  }
 
   widgets.push({
     type: 'checkbox',

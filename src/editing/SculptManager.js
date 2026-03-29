@@ -1,6 +1,7 @@
 import Selection from '../drawables/Selection.js';
 import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
+import Utils from '../misc/Utils.js';
 
 class SculptManager {
 
@@ -137,11 +138,104 @@ class SculptManager {
     }
   }
 
-  postRender() {
-    // Legacy Selection Cursor rendering DISABLED for Three.js migration
-    // this.getCurrentTool().postRender(this._selection);
+  meshToVoxel() {
+    var mesh = this._main.getMesh();
+    if (!mesh || !mesh.getVertices) return; // Need a valid mesh
+
+    var voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (mesh._isVoxel || mesh.constructor.name === 'MeshProxy') {
+      if (window.screenLog) window.screenLog("Cannot merge voxels into voxels", "yellow");
+      return;
+    }
+
+    var vAr = mesh.getVertices();
+    var cAr = mesh.getColors();
+    var mAr = mesh.getMaterials();
+    
+    var threeMesh = mesh.getThreeMesh();
+    var fAr = threeMesh && threeMesh.geometry.index ? threeMesh.geometry.index.array : null;
+
+    if (!fAr || fAr.length === 0) {
+        fAr = mesh.getTriangles(); // Fallback
+    }
+
+    var matrix = mesh.getMatrix();
+    var nbVertices = mesh.getNbVertices();
+    var vArWorld = new Float32Array(nbVertices * 3);
+    
+    var xMin = Infinity, yMin = Infinity, zMin = Infinity;
+    var xMax = -Infinity, yMax = -Infinity, zMax = -Infinity;
+
+    // Inline transform
+    for (let i = 0; i < nbVertices; i++) {
+        let id = i * 3;
+        let x = vAr[id], y = vAr[id+1], z = vAr[id+2];
+        let wx = matrix[0] * x + matrix[4] * y + matrix[8]  * z + matrix[12];
+        let wy = matrix[1] * x + matrix[5] * y + matrix[9]  * z + matrix[13];
+        let wz = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+
+        vArWorld[id]   = wx;
+        vArWorld[id+1] = wy;
+        vArWorld[id+2] = wz;
+
+        if (wx < xMin) xMin = wx;
+        if (wy < yMin) yMin = wy;
+        if (wz < zMin) zMin = wz;
+        if (wx > xMax) xMax = wx;
+        if (wy > yMax) yMax = wy;
+        if (wz > zMax) zMax = wz;
+    }
+
+    const width = xMax - xMin;
+    const height = yMax - yMin;
+    const depth = zMax - zMin;
+    let maxExtent = Math.max(width, height, depth);
+
+    // Apply 30% extra padding for sculpting room!
+    maxExtent *= 1.30; 
+
+    // Find the mesh center
+    const cx = (xMin + xMax) / 2;
+    const cy = (yMin + yMax) / 2;
+    const cz = (zMin + zMax) / 2;
+
+    // Preserve cell detail (roughly 1.17 meters per cell in standard 150m bounds)
+    // Scale resolution down proportional to size to reduce total cell count and speed up SurfaceNets!
+    let newRes = Math.ceil(maxExtent / (150 / 128));
+    newRes = Math.min(128, Math.max(32, newRes)); // Clamp [32, 128]
+
+    // Save these for when the worker returns the mesh!
+    voxelTool._pendingSize = maxExtent;
+    voxelTool._pendingOffset = [cx - maxExtent / 2, cy - maxExtent / 2, cz - maxExtent / 2];
+    voxelTool._pendingRes = newRes;
+
+    voxelTool._worker.postMessage({
+        type: 'MESH_TO_VOXEL',
+        v: vArWorld,
+        c: cAr,
+        m: mAr,
+        f: fAr,
+        res: newRes,
+        size: maxExtent,
+        center: [cx, cy, cz]
+    });
+
+    // Hold the old mesh visible until the voxel mesh is ready to swap seamlessly!
+    voxelTool._pendingSourceMesh = mesh; 
+
+    this.setToolIndex(Enums.Tools.VOXEL);
+    
+    // Force a start to register the VoxelMesh if it's the first time
+    voxelTool.start(null);
+
+    // Sync GUI
+    if (this._main.getGui() && this._main.getGui()._ctrlSculpt) {
+        this._main.getGui()._ctrlSculpt.setValue(Enums.Tools.VOXEL);
+    }
   }
 
+  postRender() {
+  }
   addSculptToScene(scene) {
     return this.getCurrentTool().addSculptToScene(scene);
   }

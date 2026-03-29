@@ -2,6 +2,122 @@ import { vec3 } from '../../lib/gl-matrix-wrapper.js';
 import Utils from '../misc/Utils.js';
 import SurfaceNets from './SurfaceNets.js';
 
+const intersectionRayTriangleEdges = (function () {
+  var EPSILON = 1E-15;
+  var ONE_PLUS_EPSILON = 1.0 + EPSILON;
+  var ZERO_MINUS_EPSILON = 0.0 - EPSILON;
+  var pvec = [0.0, 0.0, 0.0];
+  var tvec = [0.0, 0.0, 0.0];
+  var qvec = [0.0, 0.0, 0.0];
+  return function (orig, dir, edge1, edge2, v1, vertInter) {
+    vec3.cross(pvec, dir, edge2);
+    var det = vec3.dot(edge1, pvec);
+    if (det > -EPSILON && det < EPSILON) return -1.0;
+    var invDet = 1.0 / det;
+    vec3.sub(tvec, orig, v1);
+    var u = vec3.dot(tvec, pvec) * invDet;
+    if (u < ZERO_MINUS_EPSILON || u > ONE_PLUS_EPSILON) return -1.0;
+    vec3.cross(qvec, tvec, edge1);
+    var v = vec3.dot(dir, qvec) * invDet;
+    if (v < ZERO_MINUS_EPSILON || u + v > ONE_PLUS_EPSILON) return -1.0;
+    var t = vec3.dot(edge2, qvec) * invDet;
+    if (t < ZERO_MINUS_EPSILON) return -1.0;
+    if (vertInter) vec3.scaleAndAdd(vertInter, orig, dir, t);
+    return t;
+  };
+})();
+
+const distance2PointTriangleEdges = (function () {
+  var diff = [0.0, 0.0, 0.0];
+  return function (point, edge1, edge2, v1, a00, a01, a11, closest) {
+    vec3.sub(diff, v1, point);
+    var b0 = vec3.dot(diff, edge1);
+    var b1 = vec3.dot(diff, edge2);
+    var c = vec3.sqrLen(diff);
+    var det = Math.abs(a00 * a11 - a01 * a01);
+    var s = a01 * b1 - a11 * b0;
+    var t = a01 * b0 - a00 * b1;
+    var sqrDistance;
+    var zone = 4;
+
+    if (s + t <= det) {
+      if (s < 0.0) {
+        if (t < 0.0) {
+          zone = 4;
+          if (b0 < 0.0) {
+            t = 0.0;
+            if (-b0 >= a00) { s = 1.0; sqrDistance = a00 + 2.0 * b0 + c; }
+            else { s = -b0 / a00; sqrDistance = b0 * s + c; }
+          } else {
+            s = 0.0;
+            if (b1 >= 0.0) { t = 0.0; sqrDistance = c; }
+            else if (-b1 >= a11) { t = 1.0; sqrDistance = a11 + 2.0 * b1 + c; }
+            else { t = -b1 / a11; sqrDistance = b1 * t + c; }
+          }
+        } else {
+          zone = 3; s = 0.0;
+          if (b1 >= 0.0) { t = 0.0; sqrDistance = c; }
+          else if (-b1 >= a11) { t = 1.0; sqrDistance = a11 + 2.0 * b1 + c; }
+          else { t = -b1 / a11; sqrDistance = b1 * t + c; }
+        }
+      } else if (t < 0.0) {
+        zone = 5; t = 0.0;
+        if (b0 >= 0.0) { s = 0.0; sqrDistance = c; }
+        else if (-b0 >= a00) { s = 1.0; sqrDistance = a00 + 2.0 * b0 + c; }
+        else { s = -b0 / a00; sqrDistance = b0 * s + c; }
+      } else {
+        zone = 0;
+        var invDet = 1.0 / det;
+        s *= invDet; t *= invDet;
+        sqrDistance = s * (a00 * s + a01 * t + 2.0 * b0) + t * (a01 * s + a11 * t + 2.0 * b1) + c;
+      }
+    } else {
+      var tmp0, tmp1, numer, denom;
+      if (s < 0.0) {
+        zone = 2; tmp0 = a01 + b0; tmp1 = a11 + b1;
+        if (tmp1 > tmp0) {
+          numer = tmp1 - tmp0; denom = a00 - 2.0 * a01 + a11;
+          if (numer >= denom) { s = 1.0; t = 0.0; sqrDistance = a00 + 2.0 * b0 + c; }
+          else { s = numer / denom; t = 1.0 - s; sqrDistance = s * (a00 * s + a01 * t + 2.0 * b0) + t * (a01 * s + a11 * t + 2.0 * b1) + c; }
+        } else {
+          s = 0.0;
+          if (tmp1 <= 0.0) { t = 1.0; sqrDistance = a11 + 2.0 * b1 + c; }
+          else if (b1 >= 0.0) { t = 0.0; sqrDistance = c; }
+          else { t = -b1 / a11; sqrDistance = b1 * t + c; }
+        }
+      } else if (t < 0.0) {
+        zone = 6; tmp0 = a01 + b1; tmp1 = a00 + b0;
+        if (tmp1 > tmp0) {
+          numer = tmp1 - tmp0; denom = a00 - 2.0 * a01 + a11;
+          if (numer >= denom) { t = 1.0; s = 0.0; sqrDistance = a11 + 2.0 * b1 + c; }
+          else { t = numer / denom; s = 1.0 - t; sqrDistance = s * (a00 * s + a01 * t + 2.0 * b0) + t * (a01 * s + a11 * t + 2.0 * b1) + c; }
+        } else {
+          t = 0.0;
+          if (tmp1 <= 0.0) { s = 1.0; sqrDistance = a00 + 2.0 * b0 + c; }
+          else if (b0 >= 0.0) { s = 0.0; sqrDistance = c; }
+          else { s = -b0 / a00; sqrDistance = b0 * s + c; }
+        }
+      } else {
+        zone = 1; numer = a11 + b1 - a01 - b0;
+        if (numer <= 0.0) { s = 0.0; t = 1.0; sqrDistance = a11 + 2.0 * b1 + c; }
+        else {
+          denom = a00 - 2.0 * a01 + a11;
+          if (numer >= denom) { s = 1.0; t = 0.0; sqrDistance = a00 + 2.0 * b0 + c; }
+          else { s = numer / denom; t = 1.0 - s; sqrDistance = s * (a00 * s + a01 * t + 2.0 * b0) + t * (a01 * s + a11 * t + 2.0 * b1) + c; }
+        }
+      }
+    }
+    if (sqrDistance < 0.0) sqrDistance = 0.0;
+    if (closest) {
+      closest[0] = v1[0] + s * edge1[0] + t * edge2[0];
+      closest[1] = v1[1] + s * edge1[1] + t * edge2[1];
+      closest[2] = v1[2] + s * edge1[2] + t * edge2[2];
+      closest[3] = zone;
+    }
+    return sqrDistance;
+  };
+})();
+
 class VoxelState {
 
   constructor(res = 128, size = 200.0) {
@@ -518,20 +634,60 @@ class VoxelState {
           if (dist < radius) {
             var index = gi + gj * rx + gk * rxy;
             
-            // Average 6 neighbors
-            var sum = df[index - 1] + df[index + 1] + 
-                      df[index - rx] + df[index + rx] + 
-                      df[index - rxy] + df[index + rxy];
-            var avg = sum / 6.0;
+            // SKIP UNINITIALIZED CELLS (far exterior Infinity or deep interior -Infinity)
+            if (df[index] === Infinity || df[index] === -Infinity || isNaN(df[index])) {
+              continue;
+            }
+
+            // Average valid neighbors (skip Infinity/NaN from uninitialized far-exterior zone)
+            var sum = 0;
+            var neighborsCount = 0;
             
-            var falloff = 1.0 - (dist / radius); // Linear falloff
-            // Falloff smoothing (Smoothstep) for nicer blending at edges
-            falloff = falloff * falloff * (3 - 2 * falloff);
+            const checkAndAdd = (idx) => {
+              const v = df[idx];
+              if (v !== Infinity && v !== -Infinity && !isNaN(v)) {
+                sum += v;
+                neighborsCount++;
+              }
+            };
+
+            checkAndAdd(index - 1);
+            checkAndAdd(index + 1);
+            checkAndAdd(index - rx);
+            checkAndAdd(index + rx);
+            checkAndAdd(index - rxy);
+            checkAndAdd(index + rxy);
             
-            // Lerp towards average based on strength & falloff
-            var mix = strength * falloff;
-            tempField[i + j*sizeX + k*sizeX*sizeY] = df[index] * (1.0 - mix) + avg * mix;
-            changed = true;
+            if (neighborsCount > 0) {
+              var avg = sum / neighborsCount;
+              
+              var falloff = 1.0 - (dist / radius); // Linear falloff
+              // Falloff smoothing (Smoothstep) for nicer blending at edges
+              falloff = falloff * falloff * (3 - 2 * falloff);
+              
+              // Lerp towards average based on strength & falloff
+              var mix = strength * falloff;
+              
+              // CLAMP displacement to prevent "topology skipping" (tearing holes)
+              const delta = (avg - df[index]) * mix;
+              const maxDelta = step * 0.5; // Max shift is 50% of a grid cell per frame
+              const clampedDelta = Math.max(-maxDelta, Math.min(maxDelta, delta));
+              
+              let result = df[index] + clampedDelta;
+
+              // NARROW-BAND SYSTEM (Clamp output distances to prevent runaway large numbers)
+              const maxDistanceLimit = step * 5.0; // Standard 5-voxel band
+              result = Math.max(-maxDistanceLimit, Math.min(maxDistanceLimit, result));
+
+              if (isNaN(result) || result === Infinity || result === -Infinity) {
+                console.error(`[Smooth Error] NaN/Inf! Result=${result} df[index]=${df[index]} avg=${avg} mix=${mix.toFixed(2)} count=${neighborsCount}`);
+              } else if (Math.abs(result) > 1000) {
+                console.warn(`[Smooth Large] Large Result=${result.toFixed(2)} df[index]=${df[index].toFixed(2)} avg=${avg.toFixed(2)}`);
+              }
+
+              tempField[i + j*sizeX + k*sizeX*sizeY] = result;
+              changed = true;
+            }
           }
         }
       }
@@ -923,7 +1079,8 @@ class VoxelState {
     // Use SurfaceNets (Dual Contouring style)
     let res = null;
 
-    if (globalThis.wasmModule) {
+    // TEMPORARILY DISABLE WASM TO TEST JS FALLBACK & DIAGNOSTICS
+    if (false && globalThis.wasmModule) {
       try {
         const wasm = globalThis.wasmModule;
         const totalElems = this._dims[0] * this._dims[1] * this._dims[2];
@@ -1297,6 +1454,287 @@ class VoxelState {
     // Reset Active Bounds to full
     this._activeMin = new Int32Array([0, 0, 0]);
     this._activeMax = new Int32Array([newRes, newRes, newRes]);
+  }
+
+  _floodFill(voxels) {
+    var step = voxels.step;
+    var rx = voxels.dims[0];
+    var ry = voxels.dims[1];
+    var rxy = rx * ry;
+
+    var crossedEdges = voxels.crossedEdges;
+    var distField = voxels.distanceField;
+    var datalen = distField.length;
+    var tagCell = new Uint8Array(datalen); // 0 interior, 1 exterior
+    var stack = new Int32Array(datalen);
+
+    stack[0] = 0;
+    var curStack = 1;
+
+    var dirs = [-1, 1, -rx, rx, -rxy, rxy];
+    var dirsEdge = [0, 0, 1, 1, 2, 2];
+    var nbDir = dirs.length;
+    var i = 0;
+    var idNext = 0;
+
+    while (curStack > 0) {
+      var cell = stack[--curStack];
+      var cellDist = distField[cell];
+      if (cellDist < step) {
+        // border hit
+        for (i = 0; i < nbDir; ++i) {
+          var off = dirs[i];
+          idNext = cell + off;
+          if (idNext >= datalen || idNext < 0) continue; // range check
+          if (tagCell[idNext] === 1) continue; // check if already tagged as exterior
+          if (distField[idNext] === Infinity) continue; // check if we are in the far exterior zone
+          if (crossedEdges[(off >= 0 ? cell : idNext) * 3 + dirsEdge[i]] === 0) {
+            tagCell[idNext] = 1;
+            stack[curStack++] = idNext;
+          }
+        }
+      } else {
+        // exterior
+        for (i = 0; i < nbDir; ++i) {
+          idNext = cell + dirs[i];
+          if (idNext >= datalen || idNext < 0) continue; // range check
+          if (tagCell[idNext] === 1) continue; // check if already tagged as exterior
+          tagCell[idNext] = 1;
+          stack[curStack++] = idNext;
+        }
+      }
+    }
+
+    for (var id = 0; id < datalen; ++id) {
+      if (tagCell[id] === 0)
+        distField[id] = -distField[id];
+    }
+  }
+
+  addMeshSDF(vAr, cAr, mAr, fArSrc) {
+    if (!vAr || vAr.length === 0) return false;
+
+    // 1. Calculate Bounds of the incoming mesh
+    var box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    var nbVertices = vAr.length / 3;
+    for (var j = 0; j < nbVertices; ++j) {
+      var id = j * 3;
+      var x = vAr[id];
+      var y = vAr[id + 1];
+      var z = vAr[id + 2];
+      if (x < box[0]) box[0] = x;
+      if (y < box[1]) box[1] = y;
+      if (z < box[2]) box[2] = z;
+      if (x > box[3]) box[3] = x;
+      if (y > box[4]) box[4] = y;
+      if (z > box[5]) box[5] = z;
+    }
+
+    var iAr = fArSrc; 
+    var nbTriangles = iAr ? iAr.length / 3 : 0;
+
+    if (nbTriangles === 0) {
+      console.warn(`[addMeshSDF] NO TRIANGLES PROVIDED! Aborting.`);
+      return false;
+    }
+
+    var step = this._step;
+    var stepBorder = step * 1.51; // Add padding to bounding box
+    var min = [box[0] - stepBorder, box[1] - stepBorder, box[2] - stepBorder];
+    var max = [box[3] + stepBorder, box[4] + stepBorder, box[5] + stepBorder];
+
+    var rx = Math.ceil((max[0] - min[0]) / step);
+    var ry = Math.ceil((max[1] - min[1]) / step);
+    var rz = Math.ceil((max[2] - min[2]) / step);
+
+    var datalen = rx * ry * rz;
+    var distField = new Float32Array(datalen);
+    var crossedEdges = new Uint8Array(datalen * 3);
+    var colors = new Float32Array(datalen * 3);
+    var materials = new Float32Array(datalen * 3);
+
+    for (var idf = 0; idf < datalen; ++idf)
+      distField[idf] = Infinity;
+    
+    for (var idc = 0, datalenc = datalen * 3; idc < datalenc; ++idc) {
+      colors[idc] = 0.8;
+      materials[idc] = 0.2;
+    }
+
+    var v1 = [0.0, 0.0, 0.0];
+    var v2 = [0.0, 0.0, 0.0];
+    var v3 = [0.0, 0.0, 0.0];
+    var triEdge1 = [0.0, 0.0, 0.0];
+    var triEdge2 = [0.0, 0.0, 0.0];
+    var point = [0.0, 0.0, 0.0];
+    var closest = [0.0, 0.0, 0.0, 0];
+    var dirUnit = [
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 1.0]
+    ];
+
+    var inv3 = 1 / 3;
+    var vminx = min[0]; var vminy = min[1]; var vminz = min[2];
+    var invStep = 1.0 / step;
+    var rxy = rx * ry;
+
+    for (var iTri = 0; iTri < nbTriangles; ++iTri) {
+      var idTri = iTri * 3;
+      var iv1 = iAr[idTri] * 3;
+      var iv2 = iAr[idTri + 1] * 3;
+      var iv3 = iAr[idTri + 2] * 3;
+
+      var v1x = v1[0] = vAr[iv1];
+      var v1y = v1[1] = vAr[iv1 + 1];
+      var v1z = v1[2] = vAr[iv1 + 2];
+      var v2x = v2[0] = vAr[iv2];
+      var v2y = v2[1] = vAr[iv2 + 1];
+      var v2z = v2[2] = vAr[iv2 + 2];
+      var v3x = v3[0] = vAr[iv3];
+      var v3y = v3[1] = vAr[iv3 + 1];
+      var v3z = v3[2] = vAr[iv3 + 2];
+
+      var c1x, c1y, c1z, m1x, m1y, m1z;
+      if (cAr) {
+        c1x = (cAr[iv1] + cAr[iv2] + cAr[iv3]) * inv3;
+        c1y = (cAr[iv1 + 1] + cAr[iv2 + 1] + cAr[iv3 + 1]) * inv3;
+        c1z = (cAr[iv1 + 2] + cAr[iv2 + 2] + cAr[iv3 + 2]) * inv3;
+      }
+      if (mAr) {
+        m1x = (mAr[iv1] + mAr[iv2] + mAr[iv3]) * inv3;
+        m1y = (mAr[iv1 + 1] + mAr[iv2 + 1] + mAr[iv3 + 1]) * inv3;
+        m1z = (mAr[iv1 + 2] + mAr[iv2 + 2] + mAr[iv3 + 2]) * inv3;
+      }
+
+      var xmin = v1x < v2x ? v1x < v3x ? v1x : v3x : v2x < v3x ? v2x : v3x;
+      var xmax = v1x > v2x ? v1x > v3x ? v1x : v3x : v2x > v3x ? v2x : v3x;
+      var ymin = v1y < v2y ? v1y < v3y ? v1y : v3y : v2y < v3y ? v2y : v3y;
+      var ymax = v1y > v2y ? v1y > v3y ? v1y : v3y : v2y > v3y ? v2y : v3y;
+      var zmin = v1z < v2z ? v1z < v3z ? v1z : v3z : v2z < v3z ? v2z : v3z;
+      var zmax = v1z > v2z ? v1z > v3z ? v1z : v3z : v2z > v3z ? v2z : v3z;
+
+      var e1x = triEdge1[0] = v2x - v1x;
+      var e1y = triEdge1[1] = v2y - v1y;
+      var e1z = triEdge1[2] = v2z - v1z;
+      var e2x = triEdge2[0] = v3x - v1x;
+      var e2y = triEdge2[1] = v3y - v1y;
+      var e2z = triEdge2[2] = v3z - v1z;
+      var a00 = e1x * e1x + e1y * e1y + e1z * e1z;
+      var a01 = e1x * e2x + e1y * e2y + e1z * e2z;
+      var a11 = e2x * e2x + e2y * e2y + e2z * e2z;
+
+      var snapMinx = Math.floor((xmin - vminx) * invStep);
+      var snapMiny = Math.floor((ymin - vminy) * invStep);
+      var snapMinz = Math.floor((zmin - vminz) * invStep);
+      var snapMaxx = Math.ceil((xmax - vminx) * invStep);
+      var snapMaxy = Math.ceil((ymax - vminy) * invStep);
+      var snapMaxz = Math.ceil((zmax - vminz) * invStep);
+
+      for (var k = snapMinz; k <= snapMaxz; ++k) {
+        for (var j = snapMiny; j <= snapMaxy; ++j) {
+          for (var i = snapMinx; i <= snapMaxx; ++i) {
+            var x = vminx + i * step;
+            var y = vminy + j * step;
+            var z = vminz + k * step;
+            var n = i + j * rx + k * rxy;
+
+            point[0] = x; point[1] = y; point[2] = z;
+            var newDist = distance2PointTriangleEdges(point, triEdge1, triEdge2, v1, a00, a01, a11, closest);
+            newDist = Math.sqrt(newDist);
+            if (newDist < distField[n]) {
+              distField[n] = newDist;
+              var n3 = n * 3;
+              if (cAr) { colors[n3] = c1x; colors[n3 + 1] = c1y; colors[n3 + 2] = c1z; }
+              if (mAr) { materials[n3] = m1x; materials[n3 + 1] = m1y; materials[n3 + 2] = m1z; }
+            }
+
+            if (newDist > step) continue;
+
+            for (var it = 0; it < 3; ++it) {
+              var val = closest[it] - point[it];
+              if (val < 0.0 || val > step) continue;
+              var idEdge = n * 3 + it;
+              if (crossedEdges[idEdge] === 1) continue;
+              var dist = intersectionRayTriangleEdges(point, dirUnit[it], triEdge1, triEdge2, v1);
+              if (dist < 0.0 || dist > step) continue;
+              crossedEdges[idEdge] = 1;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Flood Fill
+    var localVoxels = {
+      dims: [rx, ry, rz],
+      step: step,
+      distanceField: distField,
+      crossedEdges: crossedEdges
+    };
+    this._floodFill(localVoxels);
+
+    // 3. Write generated SDF to Absolute Workspace
+    var minX = localVoxels.min = min;
+    var changed = false;
+    
+    // Global bounds expansion trackers
+    var gMin_x = this._resolution, gMin_y = this._resolution, gMin_z = this._resolution;
+    var gMax_x = 0, gMax_y = 0, gMax_z = 0;
+
+    for (var k = 0; k < rz; ++k) {
+      for (var j = 0; j < ry; ++j) {
+        for (var i = 0; i < rx; ++i) {
+          var n = i + j * rx + k * rxy;
+          var localDist = distField[n];
+
+          // Compute global grid coordinate
+          var wX = minX[0] + i * step;
+          var wY = minX[1] + j * step;
+          var wZ = minX[2] + k * step;
+          
+          var gI = Math.round((wX - this._min[0]) / step);
+          var gJ = Math.round((wY - this._min[1]) / step);
+          var gK = Math.round((wZ - this._min[2]) / step);
+
+          if (gI >= 0 && gI < this._resolution && 
+              gJ >= 0 && gJ < this._resolution && 
+              gK >= 0 && gK < this._resolution) {
+            
+            var globalId = gI + gJ * this._resolution + gK * (this._resolution * this._resolution);
+            
+            if (localDist < this._distanceField[globalId]) {
+              this._distanceField[globalId] = localDist;
+              changed = true;
+              
+              if (gI < gMin_x) gMin_x = gI;
+              if (gJ < gMin_y) gMin_y = gJ;
+              if (gK < gMin_z) gMin_z = gK;
+              if (gI > gMax_x) gMax_x = gI;
+              if (gJ > gMax_y) gMax_y = gJ;
+              if (gK > gMax_z) gMax_z = gK;
+
+              if (cAr) {
+                this._voxels.colorField[globalId * 3] = colors[n * 3];
+                this._voxels.colorField[globalId * 3 + 1] = colors[n * 3 + 1];
+                this._voxels.colorField[globalId * 3 + 2] = colors[n * 3 + 2];
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      this._activeMin[0] = Math.min(this._activeMin[0], gMin_x);
+      this._activeMin[1] = Math.min(this._activeMin[1], gMin_y);
+      this._activeMin[2] = Math.min(this._activeMin[2], gMin_z);
+      this._activeMax[0] = Math.max(this._activeMax[0], gMax_x);
+      this._activeMax[1] = Math.max(this._activeMax[1], gMax_y);
+      this._activeMax[2] = Math.max(this._activeMax[2], gMax_z);
+    }
+
+    return changed;
   }
 }
 

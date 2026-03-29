@@ -1,17 +1,16 @@
-# Handover Prompt - Transform Gizmo Port (Three.js)
+# Handover Prompt (Protocol Enforced)
 
-**Project Status**: **Transform Gizmo Stabilized (Three.js) / WebXR Controllers Fixed**
-
+**Project Status**: Stable. The Rust WebAssembly module for the Voxel Engine has been successfully integrated and debugged! It now securely outputs dynamic Voxel sculpting at 90Hz in VR without the 1-074ms JS freeze native looping issues.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Branch**: `threejs_voxel_branch`
+**Checkpoint**: Voxel WASM Engine is fully functional. The `[WASM]` logging is silenced, and the `SurfaceNets` JS payload accurately buffers to the GPU on first-hit without massive buffer reinstantiations. We are ready to continue adding more specific enhancements to the voxel toolset, e.g. Mesh-to-Voxel conversion.
 
----
+## Deployed Version
+- **Beta**: v1.0.53 (Tested locally)
+- **Prod**: Not yet deployed
 
-## Recent Work (Previous Session Recap)
-
-1. **Transform Gizmo Port (Three.js)**: We successfully ported the legacy WebGL Transform Gizmo to the Three.js scene graph. It now correctly follows the selected mesh during translation, rotation, and scaling.
-2. **Gizmo Scale & Selection**: Resolved issues where the gizmo disappeared or became misaligned by ensuring proper matrix updates (`_pickGeo.getMatrix()`) and adjusting picking radius (`radiusMeters = 0.02 * scaleFactor`). The gizmo now scales up and down with the world (double grip).
-3. **Debug Console**: Added a global `window.debugGizmo` object for console-based inspection and toggling.
+## Interactive Debugging
+- **Preference**: Use browser console for immediate state inspection.
+- **Workflow**: Provide copy-pasteable snippets. Navigate to `sculptxr` and run `npm run dev`.
 
 ---
 

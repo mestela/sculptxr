@@ -125,6 +125,9 @@ self.onmessage = function (e) {
         }
         postMesh();
         break;
+      case 'MESH_TO_VOXEL':
+        meshToVoxel(msg);
+        break;
       default:
         // console.warn('VoxelWorker: Unknown message', msg.type);
     }
@@ -132,6 +135,22 @@ self.onmessage = function (e) {
     console.error('VoxelWorker Error:', err);
   }
 };
+
+function meshToVoxel(msg) {
+  if (msg.res && msg.size && msg.center) {
+    console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
+    voxelState = new VoxelState(msg.res, msg.size); // Dynamic re-init!
+  }
+
+  if (!voxelState) return;
+  
+  if (voxelState.addMeshSDF(msg.v, msg.c, msg.m, msg.f)) {
+    isDirty = true;
+  } else {
+    console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
+  }
+  postMesh();
+}
 
 function init(res, size) {
   if (!VoxelState) {
@@ -331,11 +350,41 @@ function postMesh() {
 
   const t0 = performance.now();
   
+  // PRE-MESH VALIDATION: Check if Distance Field itself is corrupted
+  const df = voxelState.getDistanceField();
+  let hasBadDF = false;
+  for (let i = 0; i < df.length; i++) {
+    if (isNaN(df[i])) {
+      hasBadDF = true;
+      break;
+    }
+  }
+  if (hasBadDF) {
+    console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
+  }
+
   // Call VoxelState to compute the SurfaceNets mesh
-  const res = voxelState.computeMesh(); 
+  // Pass full bounds to bypass tight-bounding-box bugs in JS fallback / WASM when Res != 128
+  const res = voxelState.computeMesh({
+    min: [0, 0, 0],
+    max: [voxelState._resolution - 1, voxelState._resolution - 1, voxelState._resolution - 1]
+  }); 
 
   const t1 = performance.now();
-  // console.log(`[VoxelWorker] Mesh generated in ${(t1-t0).toFixed(1)}ms`);
+
+  // Validate Mesh Vertices for NaN/Infinity
+  if (res.vertices) {
+    let hasBad = false;
+    for (let i = 0; i < res.vertices.length; i++) {
+      if (isNaN(res.vertices[i]) || res.vertices[i] === Infinity || res.vertices[i] === -Infinity) {
+        hasBad = true;
+        break;
+      }
+    }
+    if (hasBad) {
+      console.error("[Mesh Error] VoxelWorker postMesh: Generated Mesh contains NaN or Infinity vertices!");
+    }
+  }
 
   const transfer = [];
   if (res.vertices && res.vertices.buffer) transfer.push(res.vertices.buffer);

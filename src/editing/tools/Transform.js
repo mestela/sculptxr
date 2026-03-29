@@ -99,6 +99,11 @@ class Transform extends SculptBase {
 
   update() {}
 
+  updateXR(picking, isPressed, origin, dir, options) {
+    // If the desktop tool is accidentally active in VR, don't crash the input loop!
+    // Ideally the UI should switch them to TransformVR, but we need to survive this frame.
+  }
+
   postRender() {
     if (this.getMesh())
       this._gizmo.render();

@@ -15,6 +15,8 @@ class SculptVoxel extends SculptBase {
   constructor(main) {
     super(main);
 
+    this._identityMatrix = mat4.create(); // For un-shifted bounding boxes
+
     // Initialize Voxel Grid
     // Box size 100.0 (matches Utils.SCALE / Desktop Scale)
     // Resolution 64 (Better quality for larger space)
@@ -174,12 +176,8 @@ class SculptVoxel extends SculptBase {
 
     // "Canvas" location - Fixed in front of user
     this._gridMatrix = mat4.create();
-    const displayScale = 1.0 / this._size;
-    mat4.scale(this._gridMatrix, this._gridMatrix, [displayScale, displayScale, displayScale]);
-    
-    // Shift grid by half its size to center it at [0, 0, 0] in workspace space
-    const shift = -0.5; // -this._size * 0.5 * displayScale = -50 * 0.01 = -0.5
-    mat4.translate(this._gridMatrix, this._gridMatrix, [shift, shift, shift]);
+    mat4.translate(this._gridMatrix, this._gridMatrix, this._min);
+    mat4.scale(this._gridMatrix, this._gridMatrix, [this._step, this._step, this._step]);
 
     this._invGridMatrix = mat4.create();
     mat4.invert(this._invGridMatrix, this._gridMatrix);
@@ -539,7 +537,7 @@ class SculptVoxel extends SculptBase {
     if (this._voxelBounds) {
       // Only render voxel bounds if in VR to avoid the big green sphere on desktop
       if (this._main._xrSession) {
-        this._voxelBounds.render(this._main, this._size, this._gridMatrix);
+        this._voxelBounds.render(this._main, this._size, this._identityMatrix);
       }
     }
   }
@@ -771,7 +769,7 @@ class SculptVoxel extends SculptBase {
 
   updateXR(picking, isPressed, origin, dir, options) {
     if (this._voxelBounds) {
-      this._voxelBounds.render(this._main, this._size, this._gridMatrix);
+      this._voxelBounds.render(this._main, this._size, this._identityMatrix);
     }
 
     try {
@@ -1438,6 +1436,13 @@ class SculptVoxel extends SculptBase {
     this._min = vec3.fromValues(-half, -half, -half);
     this._max = vec3.fromValues(half, half, half);
 
+    // Update Transform Matrices
+    mat4.identity(this._gridMatrix);
+    mat4.translate(this._gridMatrix, this._gridMatrix, this._min);
+    mat4.scale(this._gridMatrix, this._gridMatrix, [this._step, this._step, this._step]);
+    mat4.invert(this._invGridMatrix, this._gridMatrix);
+
+
     // Send Re-Init or Resample
     // If we already had a resolution, we are Resampling (preserving data)
     // If this._res was undefined/null before this call, it is an INIT.
@@ -1479,13 +1484,7 @@ class SculptVoxel extends SculptBase {
   }
 
   updateVoxelMesh(res) {
-    if (window.screenLog) window.screenLog("Voxel Tool: updateVoxelMesh received " + res.vertices.length / 3 + " vertices", "cyan");
-    // console.log("Voxel Tool: updateVoxelMesh received data from worker. Vertices: " + res.vertices.length / 3);
-    // res has { vertices, faces, colors, materials } (Float32Arrays)
-    // console.time('VoxelMeshUpdate');
-    // console.log(`Voxel Update: ${res.vertices.length} vertices, ${res.faces.length} faces`);
-
-
+    if (window.screenLog) window.screenLog("Voxel Tool: updateVoxelMesh", "cyan");
     if (res.vertices.length === 0) {
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);
@@ -1493,6 +1492,7 @@ class SculptVoxel extends SculptBase {
       this._pendingMeshUpdate = false;
       return;
     }
+
 
     // Diagnostic: Check for NaN in vertices
     let hasNaN = false;
@@ -1529,6 +1529,28 @@ class SculptVoxel extends SculptBase {
       };
     }
     
+    if (this._pendingOffset && this._pendingSize) {
+      // Update gridMatrix to center the tight simulation box around the mesh
+      this._gridMatrix[12] = this._pendingOffset[0];
+      this._gridMatrix[13] = this._pendingOffset[1];
+      this._gridMatrix[14] = this._pendingOffset[2];
+      
+      const scale = this._pendingSize / (this._pendingRes || 128);
+      this._gridMatrix[0] = scale;
+      this._gridMatrix[5] = scale;
+      this._gridMatrix[10] = scale;
+
+      this._size = this._pendingSize; // Update tool size!
+      
+      const half = this._size / 2;
+      this._min = vec3.fromValues(-half, -half, -half);
+      this._max = vec3.fromValues(half, half, half);
+
+      this._pendingOffset = null; // Consume
+      this._pendingSize = null; // Consume
+      this._pendingRes = null; // Consume
+    }
+
     mat4.copy(newMesh.getMatrix(), this._gridMatrix);
     newMesh.setVertices(res.vertices); // Restore missing vertices
     newMesh.setFaces(res.faces); // Pure Quads from SurfaceNets
@@ -1546,13 +1568,19 @@ class SculptVoxel extends SculptBase {
     // OPTIMIZATION: Manually init necessary components to avoid heavy compute
     newMesh.initColorsAndMaterials();
     newMesh.allocateArrays();
-    // newMesh.initFaceRings(); // SKIP: Only needed for vertex normals (smooth shading)
+    newMesh.initFaceRings(); // Needed for edge computation
+    newMesh.initEdges(); // Compute wireframe topology!
     // newMesh.optimize(); // SKIP (Expensive cache optimization)
-    // newMesh.initEdges(); // SKIP (Wireframe only)
     // newMesh.initVertexRings(); // SKIP (Smoothing only)
     newMesh.initRenderTriangles(); // Needed for picking
     newMesh.updateFacesAabb(); 
     newMesh.updateOctree();
+
+    if (isFirstRun) {
+      newMesh.initThreeMesh();
+    }
+
+    newMesh.updateBuffers(); // PUSH TO GPU!
     newMesh.initRender();
 
     // Copy states from old mesh before swap
@@ -1594,7 +1622,12 @@ class SculptVoxel extends SculptBase {
         newMesh.setShaderType(Enums.Shader.MATCAP);
         newMesh.setFlatShading(false);
       }
-      this._main.addNewMesh(newMesh);
+      if (this._pendingSourceMesh) {
+        this._main.replaceMesh(this._pendingSourceMesh, newMesh);
+        this._pendingSourceMesh = null;
+      } else {
+        this._main.addNewMesh(newMesh);
+      }
       
       // CRITICAL: We ONLY execute this heavy operation on the strictly first instantiation.
       // Subsequent generic mesh update strokes will natively trigger `newMesh.updateBuffers()` below
@@ -1603,13 +1636,13 @@ class SculptVoxel extends SculptBase {
     }
     
     this._voxelMesh = newMesh;
-
-    // Apply Transformations
-    var step = this._step;
-    var worldMat = this._voxelMesh.getMatrix();
-    mat4.identity(worldMat);
-    mat4.translate(worldMat, worldMat, this._min);
-    mat4.scale(worldMat, worldMat, [step, step, step]);
+// COMMENTED OUT TO PREVENT SCALE OVERWRITE
+//     // Apply Transformations
+//     var step = this._step;
+//     var worldMat = this._voxelMesh.getMatrix();
+//     mat4.identity(worldMat);
+//     mat4.translate(worldMat, worldMat, this._min);
+//     mat4.scale(worldMat, worldMat, [step, step, step]);
 
     this._voxelMesh.setVisible(true);
 
@@ -1749,6 +1782,10 @@ class SculptVoxel extends SculptBase {
     const main = this._main;
     const gl = main._gl;
 
+    if (this._voxelBounds) {
+      this._voxelBounds.setVisible(false);
+    }
+
     try {
       const vAr = new Float32Array(this._voxelMesh.getVertices());
       const mat = this._voxelMesh.getMatrix();
@@ -1823,33 +1860,33 @@ class SculptVoxel extends SculptBase {
 
       // CRITICAL: REMOVE the Voxel Mesh to prevent occlusion
       this._voxelMesh.setVisible(false); // NUCLEAR OPTION: Hide it first!
-      main.removeMeshes([this._voxelMesh]);
+      this._main.removeMeshes([this._voxelMesh]);
       this._voxelMesh.setTexture0(null); // Prevent global texture deletion
       this._voxelMesh = null; // Prevent stale reference bugs
 
       // Also remove Debug Cube if present
       if (this._debugCube) {
         this._debugCube.setVisible(false);
-        main.removeMeshes([this._debugCube]);
+        this._main.removeMeshes([this._debugCube]);
       }
 
       // 7. Auto-Switch to Brush (Standard Workflow)
-      main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
+      this._main.getSculptManager().setToolIndex(Enums.Tools.BRUSH);
 
       // Sync UI to Brush
-      if (main.getGui() && main.getGui()._ctrlSculpt) {
-        main.getGui()._ctrlSculpt.setValue(Enums.Tools.BRUSH);
+      if (this._main.getGui() && this._main.getGui()._ctrlSculpt) {
+        this._main.getGui()._ctrlSculpt.setValue(Enums.Tools.BRUSH);
       }
-      const guiXR = main.getScene() ? main.getScene()._guiXR : null;
+      const guiXR = this._main.getGuiXR();
       if (guiXR && guiXR.refreshToolsWidget) {
         guiXR.refreshToolsWidget();
       }
 
       // 8. Select the New Mesh
-      main.setMesh(multiMesh);
+      this._main.setMesh(multiMesh);
 
       // VERIFICATION: Check if selection stuck
-      if (main.getMesh() !== multiMesh) {
+      if (this._main.getMesh() !== multiMesh) {
         console.error("Voxel Bake: Failed to set active mesh!");
         if (window.screenLog) window.screenLog("Bake Error: Mesh Selection Failed", "red");
       } else {
@@ -1862,7 +1899,7 @@ class SculptVoxel extends SculptBase {
     }
 
     // Force Render to verify visibility
-    main.render();
+    this._main.render();
   }
 
   getDrawables() {
@@ -1871,7 +1908,7 @@ class SculptVoxel extends SculptBase {
 
   renderVR(main, camera) {
     if (this._voxelBounds) {
-      this._voxelBounds.render(main, this._size, this._gridMatrix);
+      this._voxelBounds.render(main, this._size, this._identityMatrix);
     }
   }
 
