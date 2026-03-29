@@ -32,26 +32,17 @@ import ShaderBase from '../render/shaders/ShaderBase.js';
 import StateManager from '../states/StateManager.js';
 
 const TAB_HEIGHT = 68; // Increased from 52 (+30%)
-const TAB_ROWS = 3; // Rows of tabs
-const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; // Reserved for Tabs
 const CANVAS_SIZE = 1024;
-// Desktop Order: Topbar (Files, Scene, History/States, Settings/Config) -> Sidebar (Rendering, Topology, Tools/Sculpting)
-// Top Row: Files, Scene, History, Settings
-// Bottom/Sidebar: View (Rendering), Topology, Tools (Sculpting)
-// Actually, user wants "Half horizontal space" mockup.
-// Let's assume the user wants the VR panel to LOOK like the desktop sidebar.
-// The mockup shows Tabs at the top, and then collapsible sections below.
-// We will group widgets into "Sections" instead of just "Tabs".
 
-// Group 1: Global Tabs (Top)
-// Group 1: Global Tabs (Top)
 const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Settings', 'About & Help'];
+const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
+
+const TAB_ROWS = Math.ceil(GLOBAL_TABS.length / 3); // Dynamic rows
+const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; 
 // Group 2: Layout Sections (Sidebar style) - these are displayed effectively as one long scrollable page?
 // Or does clicking one hide others?
 // User said: "panel has collapsible sections like the desktop"
 // This implies they are all stacked vertically.
-
-const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
 
 // Map old Tabs to new Layout Logic
 // Files, Scene, History, Settings -> Top Bar (Tabs)
@@ -112,6 +103,7 @@ export default class GuiXR {
       'Topology': false,
       'Sculpting & Painting': true
     };
+    this._activeSection = 'Sculpting & Painting'; // Default active section
 
     this._scrollOffset = 0; // Vertical scroll
     this._maxScroll = 0;
@@ -812,54 +804,55 @@ export default class GuiXR {
       let allWidgets = [];
       let currentY = HEADER_HEIGHT - this._scrollOffset;
 
-      SECTIONS.forEach(secTitle => {
-        const isOpen = this._sectionStates[secTitle];
-
-        // Section Header Widget
+      // Sub-Tabs Header
+      const activeSec = this._activeSection || 'Sculpting & Painting';
+      const tabMargin = 6; // Indent slightly so bevel doesn't overlap the blue panel border
+      const tabWidth = (CANVAS_SIZE - tabMargin * 2) / 3;
+      
+      SECTIONS.forEach((sec, idx) => {
         allWidgets.push({
-          type: 'section_header',
-          label: secTitle,
-          x: 0,
-          y: currentY,
-          w: CANVAS_SIZE,
+          type: 'sub_tab',
+          label: sec,
+          x: tabMargin + idx * tabWidth,
+          y: HEADER_HEIGHT,
+          w: tabWidth,
           h: 60,
-          id: 'section_' + secTitle
+          id: 'sub_tab_' + sec,
+          isActive: sec === activeSec
         });
-        currentY += 60;
-
-        if (isOpen) {
-          // Generate Fresh Widgets
-          if (gens[secTitle]) {
-            this._tabWidgets[secTitle] = gens[secTitle](main);
-          }
-          const secWidgets = this._tabWidgets[secTitle];
-
-          if (secWidgets) {
-            // Determine vertical range of this section's widgets to normalize them
-            let minY = Infinity;
-            let maxY = -Infinity;
-            secWidgets.forEach(w => {
-              if (w.y < minY) minY = w.y;
-              if (w.y + w.h > maxY) maxY = w.y + w.h;
-            });
-
-            if (minY === Infinity) minY = 0;
-            if (maxY === -Infinity) maxY = 0;
-
-            const sectionHeight = maxY - minY + 20; // + padding
-
-            // Clone and re-position widgets
-            secWidgets.forEach(w => {
-              allWidgets.push({
-                ...w,
-                y: w.y - minY + currentY + 10 // +10 padding top
-              });
-            });
-
-            currentY += sectionHeight;
-          }
-        }
       });
+
+      currentY = HEADER_HEIGHT + 60 - this._scrollOffset; // Applied Scroll Offset to content
+
+      // Render only the active section's content
+      const secTitle = activeSec;
+      if (gens[secTitle]) {
+        this._tabWidgets[secTitle] = gens[secTitle](main);
+      }
+      const secWidgets = this._tabWidgets[secTitle];
+
+      if (secWidgets) {
+        let minY = Infinity;
+        let maxY = -Infinity;
+        secWidgets.forEach(w => {
+          if (w.y < minY) minY = w.y;
+          if (w.y + w.h > maxY) maxY = w.y + w.h;
+        });
+
+        if (minY === Infinity) minY = 0;
+        if (maxY === -Infinity) maxY = 0;
+
+        const sectionHeight = maxY - minY + 20;
+
+        secWidgets.forEach(w => {
+          allWidgets.push({
+            ...w,
+            y: w.y - minY + currentY + 10 // Apply scroll offset if needed, but here we don't apply it to the sub-tabs!
+          });
+        });
+
+        currentY += sectionHeight;
+      }
 
       this._maxScroll = Math.max(0, currentY + this._scrollOffset - CANVAS_SIZE);
       return allWidgets;
@@ -1245,9 +1238,8 @@ export default class GuiXR {
         return;
       }
 
-      if (targetWid.type === 'section_header') {
-        const sec = targetWid.label;
-        this._sectionStates[sec] = !this._sectionStates[sec];
+      if (targetWid.type === 'sub_tab') {
+        this._activeSection = targetWid.label;
         this._needsRedraw = true;
         this.draw();
         return;
@@ -2090,7 +2082,7 @@ export default class GuiXR {
       const row3 = GLOBAL_TABS.slice(6);
 
       ctx.textAlign = 'center';
-      ctx.font = '32px sans-serif';
+      ctx.font = 'bold 24px sans-serif'; // Match sub-tab font weight and size!
 
       const drawRow = (row, rowIndex) => {
         const rW = w / row.length;
@@ -2138,19 +2130,39 @@ export default class GuiXR {
     if (!this._isMiniHUD) {
       ctx.save();
       ctx.beginPath();
-      // FIX: Allow slight overlap for Section Header highlight (startY - 4)
-      ctx.rect(0, HEADER_HEIGHT - 4, w, h - HEADER_HEIGHT + 4);
+      
+      if (this._viewMode === 'SIDEBAR') {
+        // If sidebar, clip below the sub-tabs so content slides underneath!
+        ctx.rect(0, HEADER_HEIGHT + 60 - 4, w, h - (HEADER_HEIGHT + 60) + 4);
+      } else {
+        ctx.rect(0, HEADER_HEIGHT - 4, w, h - HEADER_HEIGHT + 4);
+      }
       ctx.clip();
     } else {
       ctx.save();
     }
 
+    // 1. Draw Body Scrolling Content (Clipped area)
     for (let wid of widgets) {
+      if (wid.type === 'sub_tab') continue;
       const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
       this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
     }
 
-    ctx.restore(); // End Clipping
+    ctx.restore(); // End Clipping content
+
+    // 2. Clear out sub tab section background if needed (ONLY for Sidebar mode, NOT MiniHUD and NOT when an overlay is open!)
+    if (this._viewMode === 'SIDEBAR' && !this._isMiniHUD && !this._overlay) {
+      ctx.fillStyle = '#0a0a0a'; // Even darker gutter to contrast with #1a1a1a inactive tabs
+      ctx.fillRect(0, HEADER_HEIGHT, w, 60);
+    }
+
+    // 3. Draw Sub-Tabs (Overlays scrolling content so it slides UNDERneath!)
+    for (let wid of widgets) {
+      if (wid.type !== 'sub_tab') continue;
+      const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
+      this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
+    }
 
 
 
@@ -2163,10 +2175,10 @@ export default class GuiXR {
       // --- DRAW SCROLLBAR if needed ---
       if (this._viewMode === 'SIDEBAR' && this._maxScroll > 0) {
         // Draw Scroll Track
-        const trackW = 40; // Increased width
+        const trackW = 40;
         const trackX = w - trackW;
-        const trackY = HEADER_HEIGHT;
-        const trackH = h - HEADER_HEIGHT;
+        const trackY = HEADER_HEIGHT + 60; // Start BELOW sub-tabs
+        const trackH = h - (HEADER_HEIGHT + 60); // Subtract sub-tabs height
 
         ctx.fillStyle = '#111';
         ctx.fillRect(trackX, trackY, trackW, trackH);
@@ -2715,6 +2727,41 @@ export default class GuiXR {
       ctx.fillStyle = '#444';
       ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
     }
+    else if (wid.type === 'sub_tab') {
+      const isSelected = wid.isActive;
+
+      // Beveled Trapezoid Tab Aesthetic
+      ctx.beginPath();
+      ctx.moveTo(wid.x, wid.y + wid.h); // Bottom Left
+      ctx.lineTo(wid.x + 15, wid.y); // Top Left
+      ctx.lineTo(wid.x + wid.w - 15, wid.y); // Top Right
+      ctx.lineTo(wid.x + wid.w, wid.y + wid.h); // Bottom Right
+      ctx.closePath();
+
+      ctx.fillStyle = isSelected ? '#202020' : '#111'; // Match body if selected, darken if inactive
+      ctx.fill();
+
+      if (isHovered) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)'; // Subtle brighten
+        ctx.fill();
+      }
+
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      
+      // Vibrant accent for selected
+      ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa'; // Lighten inactive text for contrast
+      ctx.fillText(wid.label, wid.x + wid.w / 2, wid.y + wid.h / 2 + 8);
+
+      // Underline/Indicator for active
+      if (isSelected) {
+        ctx.fillStyle = '#00D0FF';
+        ctx.fillRect(wid.x, wid.y + wid.h - 4, wid.w, 4);
+      } else {
+        ctx.fillStyle = '#444';
+        ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
+      }
+    }
     // 2. INFO / LABELS
     else if (wid.type === 'info') {
       ctx.fillStyle = '#888';
@@ -2850,8 +2897,10 @@ export default class GuiXR {
     if (wid.disabled) ctx.fillStyle = '#222';
 
     if (wid.noBg && !isHover && !isActive) {
-      ctx.strokeStyle = '#444';
+      ctx.strokeStyle = '#555'; // Slightly lighter grey for visibility
+      ctx.lineWidth = 3; // Thicker to prevent alias shimmering in VR
       ctx.strokeRect(wx, wy, wid.w, wid.h);
+      ctx.lineWidth = 1; // Reset
     } else {
       ctx.fillRect(wx, wy, wid.w, wid.h);
 

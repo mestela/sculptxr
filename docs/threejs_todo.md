@@ -16,9 +16,7 @@
 * [x] **Sculpting "Feel"**: match to webgl build
 
 ### Todo misc
-* [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm
-* [ ] **Mesh to Voxel**
-* [ ] **Resample changes colour**
+* [ ] **GUI Swap accordian layout to tabs**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
@@ -28,6 +26,9 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm
+* [x] **Mesh to Voxel**
+* [x] **Resample changes colour**
 * [x] **Voxel Mode**: get core working, make it fast
 * [x] **Paint Mode**
 * [x] **Transform gizmo**
