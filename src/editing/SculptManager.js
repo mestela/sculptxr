@@ -231,6 +231,11 @@ class SculptManager {
     voxelTool._pendingOffset = [cx - maxExtent / 2, cy - maxExtent / 2, cz - maxExtent / 2];
     voxelTool._pendingRes = newRes;
 
+    if (window.screenLog) {
+      window.screenLog(`[SculptManager] meshToVoxel cx=${cx.toFixed(3)} cy=${cy.toFixed(3)} cz=${cz.toFixed(3)} mExtent=${maxExtent.toFixed(3)}`, "cyan");
+      window.screenLog(`[SculptManager] pendOffset [${voxelTool._pendingOffset[0].toFixed(3)}, ${voxelTool._pendingOffset[1].toFixed(3)}, ${voxelTool._pendingOffset[2].toFixed(3)}]`, "cyan");
+    }
+
     voxelTool._worker.postMessage({
         type: 'MESH_TO_VOXEL',
         v: vArWorld,

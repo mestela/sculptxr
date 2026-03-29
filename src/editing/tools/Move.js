@@ -593,7 +593,7 @@ class Move extends SculptBase {
       if (!moveData.quat) moveData.quat = quat.create();
       quat.copy(moveData.quat, qScaledLocal);
       
-      this.move(moveData.iVerts, moveData.center, picking.getLocalRadius2(), moveData, picking, qScaledLocal, useSym, vStartLocal);
+      this.move(moveData.iVerts, moveData.center, moveData.radius2, moveData, picking, qScaledLocal, useSym, vStartLocal);
     }
 
     // Apply Symmetry Move
@@ -621,7 +621,7 @@ class Move extends SculptBase {
           if (!moveDataSym.quat) moveDataSym.quat = quat.create();
           quat.copy(moveDataSym.quat, qDeltaSym);
 
-          this.move(moveDataSym.iVerts, moveDataSym.center, pickingSym.getLocalRadius2(), moveDataSym, pickingSym, qDeltaSym, useSym, symStartLocal);
+          this.move(moveDataSym.iVerts, moveDataSym.center, moveDataSym.radius2, moveDataSym, pickingSym, qDeltaSym, useSym, symStartLocal);
         }
     }
 

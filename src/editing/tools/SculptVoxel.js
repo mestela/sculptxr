@@ -1613,10 +1613,18 @@ class SculptVoxel extends SculptBase {
     }
     
     if (this._pendingOffset && this._pendingSize) {
+      if (window.screenLog) {
+        window.screenLog(`[SculptVoxel] consumeOffset [${this._pendingOffset[0].toFixed(3)}, ${this._pendingOffset[1].toFixed(3)}, ${this._pendingOffset[2].toFixed(3)}] size=${this._pendingSize.toFixed(3)}`, "cyan");
+      }
+
       // Update gridMatrix to center the tight simulation box around the mesh
       this._gridMatrix[12] = this._pendingOffset[0];
       this._gridMatrix[13] = this._pendingOffset[1];
       this._gridMatrix[14] = this._pendingOffset[2];
+      
+      if (window.screenLog) {
+        window.screenLog(`[SculptVoxel] gridMatrix Translate [${this._gridMatrix[12].toFixed(3)}, ${this._gridMatrix[13].toFixed(3)}, ${this._gridMatrix[14].toFixed(3)}]`, "cyan");
+      }
       
       const scale = this._pendingSize / (this._pendingRes || 128);
       this._gridMatrix[0] = scale;
