@@ -148,11 +148,26 @@ class SculptManager {
       return;
     }
 
+    var nbVertices = mesh.getNbVertices();
     var vAr = mesh.getVertices();
-    var cAr = mesh.getColors();
-    var mAr = mesh.getMaterials();
     
     var threeMesh = mesh.getThreeMesh();
+    var colorAttr = threeMesh && threeMesh.geometry.attributes.color;
+    var cAr = null;
+    if (colorAttr) {
+        if (colorAttr.itemSize === 4) {
+            cAr = new Float32Array(nbVertices * 3);
+            const raw = colorAttr.array;
+            for (let i = 0; i < nbVertices; i++) {
+                cAr[i * 3]     = raw[i * 4];
+                cAr[i * 3 + 1] = raw[i * 4 + 1];
+                cAr[i * 3 + 2] = raw[i * 4 + 2];
+            }
+        } else {
+            cAr = colorAttr.array;
+        }
+    }
+    var mAr = mesh.getMaterials();
     var fAr = threeMesh && threeMesh.geometry.index ? threeMesh.geometry.index.array : null;
 
     if (!fAr || fAr.length === 0) {
@@ -160,7 +175,6 @@ class SculptManager {
     }
 
     var matrix = mesh.getMatrix();
-    var nbVertices = mesh.getNbVertices();
     var vArWorld = new Float32Array(nbVertices * 3);
     
     var xMin = Infinity, yMin = Infinity, zMin = Infinity;

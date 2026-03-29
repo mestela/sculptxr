@@ -216,9 +216,9 @@ class Paint extends SculptBase {
     var roughness = this._material[0];
     var metallic = this._material[1];
     var radius = Math.sqrt(radiusSquared);
-    var cr = color[0];
-    var cg = color[1];
-    var cb = color[2];
+    var cr = Math.pow(color[0], 1.0 / 2.2);
+    var cg = Math.pow(color[1], 1.0 / 2.2);
+    var cb = Math.pow(color[2], 1.0 / 2.2);
     var cx = center[0];
     var cy = center[1];
     var cz = center[2];
@@ -322,9 +322,9 @@ class Paint extends SculptBase {
     var color = this._color;
     var roughness = this._material[0];
     var metallic = this._material[1];
-    var cr = color[0];
-    var cg = color[1];
-    var cb = color[2];
+    var cr = Math.pow(color[0], 1.0 / 2.2);
+    var cg = Math.pow(color[1], 1.0 / 2.2);
+    var cb = Math.pow(color[2], 1.0 / 2.2);
     for (var i = 0, nb = iVerts.length; i < nb; ++i) {
       var ind = iVerts[i] * 3;
       var fallOff = mAr[ind + 2];

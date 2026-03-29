@@ -157,8 +157,8 @@ class VoxelState {
     };
 
     // Init colors/mats to default
-    this._voxels.colorField.fill(0.8); // Grey
-    this._voxels.materialField.fill(0.2); // Rougness?
+    this._voxels.colorField.fill(1.0); // Pure White default
+    this._voxels.materialField.fill(0.0); // Pure Matte default
 
       console.log("VoxelState: Constructor End");
     } catch (e) {
@@ -1451,9 +1451,9 @@ class VoxelState {
     this._voxels.max = this._max;
     // Reallocate Color/Mat fields if they exist! (They do in constructor)
     this._voxels.colorField = new Float32Array(this._count * 3);
-    this._voxels.colorField.fill(0.8);
+    this._voxels.colorField.fill(1.0); // Reset to Pure White default
     this._voxels.materialField = new Float32Array(this._count * 3);
-    this._voxels.materialField.fill(0.2);
+    this._voxels.materialField.fill(0.0); // Reset to Pure Matte default
 
 
     // Reset Active Bounds to full
@@ -1518,6 +1518,10 @@ class VoxelState {
 
   addMeshSDF(vAr, cAr, mAr, fArSrc) {
     if (!vAr || vAr.length === 0) return false;
+
+    if (globalThis.postMessage) {
+      globalThis.postMessage({ type: 'LOG', data: `[VoxelWorker] addMeshSDF: cAr is ${cAr ? 'not null' : 'null'} len=${cAr ? cAr.length : 0}` });
+    }
 
     // 1. Calculate Bounds of the incoming mesh
     var box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -1722,6 +1726,7 @@ class VoxelState {
               if (cAr) {
                 this._voxels.colorField[globalId * 3] = colors[n * 3];
                 this._voxels.colorField[globalId * 3 + 1] = colors[n * 3 + 1];
+                this._voxels.colorField[globalId * 3 + 2] = colors[n * 3 + 2];
               }
             }
           }

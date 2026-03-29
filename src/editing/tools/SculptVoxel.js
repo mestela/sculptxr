@@ -71,10 +71,8 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
-         // Re-enabled ONLY for critical WASM boundary errors
          if (msg.data && msg.data.startsWith && msg.data.startsWith("WASM ERROR")) {
              console.log("[VoxelWorker CRITICAL]", msg.data);
-             if (window.screenLog) window.screenLog(`[VoxelWorker] ${msg.data}`, "red");
          }
          return;
       } else if (msg.type === 'CHUNK_UPDATE') {
@@ -97,26 +95,8 @@ class SculptVoxel extends SculptBase {
         if (msg.computeTime) {
           const prefix = data.isWASM ? "[WASM]" : "[JS]";
           const logMsg = `${prefix} SurfaceNets Compute: ${msg.computeTime.toFixed(1)}ms`;
-          // console.log(logMsg);
-          // if (window.screenLog) window.screenLog(logMsg, "yellow");
         }
         
-        // console.log(`Voxel: MESH_UPDATE received. V=${data.vertices.length} F=${data.faces.length}`);
-
-        if (msg.id !== undefined) {
-          // console.log(`[Worker] Mesh Update ID: ${msg.id}`);
-        }
-
-        if (msg.type === 'LOG') {
-          // Parse ID from Log
-          // "Snapshot Created: 8 (Ptr=8)"
-          // "Undo -> Snapshot: 7 (Ptr=7)"
-          const match = msg.data.match(/Snapshot: (\d+)/);
-          if (match) {
-            this._workerSnapshotID = parseInt(match[1]);
-          }
-        }
-
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
 
@@ -134,13 +114,54 @@ class SculptVoxel extends SculptBase {
           this._pendingMeshUpdate = true;
           this._worker.postMessage({ type: 'GET_MESH' });
         }
-      } else if (msg.type === 'LOG') {
-        // Worker can send logs back
-        console.log("[Worker]", msg.data);
-        if (window.screenLog) window.screenLog(msg.data, "lime");
-        else console.warn("screenLog missing for:", msg.data);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
+      }
+    };
+
+    window.debugVoxelColors = () => {
+      if (!this._voxelMesh) {
+        console.log("No Voxel Mesh found!");
+        return;
+      }
+      const cAr = this._voxelMesh.getColors();
+      if (cAr) {
+        let min = [1,1,1], max = [0,0,0], hasNaN = false;
+        for (let i = 0; i < cAr.length; i++) {
+          if (isNaN(cAr[i])) { hasNaN = true; continue; }
+          const comp = i % 3;
+          min[comp] = Math.min(min[comp], cAr[i]);
+          max[comp] = Math.max(max[comp], cAr[i]);
+        }
+        console.log(`[Diagnostic] Colors Length: ${cAr.length}, hasNaN: ${hasNaN}`);
+        console.log(`[Diagnostic] Min: R=${min[0].toFixed(2)}, G=${min[1].toFixed(2)}, B=${min[2].toFixed(2)}`);
+        console.log(`[Diagnostic] Max: R=${max[0].toFixed(2)}, G=${max[1].toFixed(2)}, B=${max[2].toFixed(2)}`);
+        console.log(`[Diagnostic] First 3 Vertices Colors: [${cAr[0].toFixed(2)}, ${cAr[1].toFixed(2)}, ${cAr[2].toFixed(2)}]`);
+      } else {
+        console.log("[Diagnostic] No vertex colors on voxel mesh!");
+      }
+    };
+
+    window.debugColorMismatch = () => {
+      const toolColor = this._color;
+      console.log("[Diagnostic] Tool Internal Color:", toolColor);
+
+      if (this._voxelMesh) {
+        const cAr = this._voxelMesh.getColors();
+        if (cAr) {
+          for (let i = 0; i < cAr.length; i += 3) {
+            const r = cAr[i], g = cAr[i + 1], b = cAr[i + 2];
+            if (r < 0.99 || g < 0.99 || b < 0.99) { // Non-white
+              console.log(`[Diagnostic] First Non-White Vertex Color at index ${i/3}: [${r.toFixed(3)}, ${g.toFixed(3)}, ${b.toFixed(3)}]`);
+              return;
+            }
+          }
+          console.log("[Diagnostic] No non-white vertices found!");
+        } else {
+          console.log("[Diagnostic] No vertex colors on voxel mesh!");
+        }
+      } else {
+        console.log("[Diagnostic] No Voxel Mesh active!");
       }
     };
     
@@ -1212,21 +1233,16 @@ class SculptVoxel extends SculptBase {
           // EDIT_SPHERE
           var isSub = (mode === 1) || isNegative;
 
-          const t0 = performance.now();
           this._worker.postMessage({
             type: 'EDIT_SPHERE',
             center: [sX, sY, sZ],
             radius: gridRadius,
-            color: color,
+            color: [Math.pow(color[0], 1/2.2), Math.pow(color[1], 1/2.2), Math.pow(color[2], 1/2.2)],
             isNegative: isSub,
             shape: shapeNum,
             brushRotation: brushRot,
             returnMesh: returnMesh
           });
-          const t1 = performance.now();
-          if (t1 - t0 > 5) {
-            console.log("[Performance] postMessage EDIT_SPHERE took:", t1 - t0, "ms");
-          }
 
           // Symmetry Stroke
           if (sym) {
@@ -1234,7 +1250,7 @@ class SculptVoxel extends SculptBase {
               type: 'EDIT_SPHERE',
               center: [-sX, sY, sZ],
               radius: gridRadius,
-              color: color,
+              color: [Math.pow(color[0], 1/2.2), Math.pow(color[1], 1/2.2), Math.pow(color[2], 1/2.2)],
               isNegative: isSub,
               shape: shapeNum,
               brushRotation: brushRotSym,
@@ -1572,6 +1588,10 @@ class SculptVoxel extends SculptBase {
     newMesh.setVertices(res.vertices); // Restore missing vertices
     newMesh.setFaces(res.faces); // Pure Quads from SurfaceNets
     newMesh.setColors(res.colors);
+    const threeMesh = newMesh.getThreeMesh();
+    if (threeMesh && threeMesh.geometry && threeMesh.geometry.attributes.color) {
+        threeMesh.geometry.attributes.color.itemSize = 3; // Force size 3
+    }
     newMesh.setMaterials(res.materials);
     newMesh.setNormals(res.normals); // Fix: Use pre-computed normals from worker!
 

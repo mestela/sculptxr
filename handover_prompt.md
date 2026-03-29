@@ -21,24 +21,28 @@
 
 ## Current Situation / Obstacles
 
-A performance regression has dropped the voxel tools from fluid 30fps+ to around 8fps. 
+We are debugging a persistent **color channel shift (Red ➡️ Purple, Yellow ➡️ White)** when converting a painted standard mesh to voxels. 
 
-We added performance metrics to both the main thread (`SculptVoxel.js`) and the worker (`VoxelState.js`). 
-- **Worker thread** (e.g. `addSphere` and `editSphere`) remains fast (few ms).
-- **Main thread** message passing (`postMessage`) is also fast.
-- The bottleneck is in the **UI rendering thread** (`WebGLRenderer.render` taking 500-900ms).
+The diagnostic command `window.debugVoxelColors()` revealed a crucial clue:
+- `Min: R=0.34, G=0.00, B=1.00`
+- `Max: R=1.00, G=1.00, B=1.00`
 
-We hypothesis that either:
-1. `initEdges()` was unconditionally rebuilding wireframes on every frame (we commented this out but it didn't solve it completely if wireframe was somehow enabled).
-2. `updateOctree()` and `updateFacesAabb()` are being called on every frame during dragging inside `updateVoxelMesh`, which rebuilds the hierarchy for a massive single mesh (which is a heavy CPU operation).
+The **Blue channel is fixed at 1.0 everywhere**! This explains why Red (1,0,0) looks Purple (1,0,1) and Green (0,1,0) looks Cyan (0,1,1). We are reading from a field that is `1.0` everywhere. 
+
+### Hypothesis
+The shifting is occurs inside `VoxelState.js` `addMeshSDF` during mesh-to-voxel writing:
+1. Three.js `color` attribute array might have elements we are misaligning (e.g., length `nbVertices * 4` instead of `nbVertices * 3`, or using an implicit Alpha channel).
+2. The index `iv1 = index * 3` is assuming regular size 3 but reading from a size 4 or misaligned `getTriangles()` index.
+
+At runtime `cAr` (color array sent to worker) is length size 3 output by `debugVoxelColors()`, but it could be generated size 3 output from a size 4 source. 
 
 ---
 
 ## Next Steps for the New Agent
 
-1. **Verify if `updateOctree()` is the culprit**:
-   - Comment out `newMesh.updateOctree()` and `newMesh.updateFacesAabb()` in `updateVoxelMesh` in `SculptVoxel.js` (around line 1592) to see if frame rate jumps back up.
-2. **Consult `docs/threejs_todo.md`** once performance is restored. 
+1. **Verify if `cAr` length inside `addMeshSDF` matches `vAr` length** (i.e. length is `/3` or `/4`). 
+2. **Log `cAr` values exactly** when reading `iv1` to see if it is reading Alpha values as Blue!
+3. Check `SculptManager.js` `meshToVoxel` to see if the `THREE.BufferAttribute` length fits the `itemSize`.
 
 ---
 

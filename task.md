@@ -16,6 +16,6 @@
 - `[x]` Revert `src/editing/SculptManager.js` to use `cx - maxExtent/2` (bottom-left-rear).
 - `[x]` Revert `src/editing/tools/SculptVoxel.js` `updateXR` to use standard shift.
 - `[x]` Fix `this._res` staleness in `updateVoxelMesh` to make standard shift work for tight meshes.
-- `[x]` Revert `src/editing/tools/SculptVoxel.js` `renderVR` to use `_gridMatrix` for voxel bounds.
+- `[x]` Fix color channel shift in `SculptManager.js` `meshToVoxel`.
 - `[ ]` Verify local build performance (HMR automatically updates).
 - `[ ]` Create walkthrough artifact.
