@@ -4,6 +4,8 @@ import TR from './GuiTR.js';
 import Picking from '../math3d/Picking.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
+import VoxelDensityOverlay from '../render/VoxelDensityOverlay.js';
+
 
 var GuiSculptingTools = {};
 GuiSculptingTools.tools = [];
@@ -385,6 +387,11 @@ GuiTools[Enums.Tools.VOXEL] = {
     var ctrlRes = fold.addSlider("Res", tool._res, function (val) {
       if (tool.setResolutionPreview) tool.setResolutionPreview(val);
       else tool.setResolution(val);
+
+      const mesh = main.getMesh();
+      if (mesh) {
+        VoxelDensityOverlay.poke(mesh, val); // Falls back to object-space bounding box
+      }
     }, 16, 400, 1);
     this._ctrls.push(ctrlRes);
 

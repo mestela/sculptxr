@@ -1357,24 +1357,32 @@ class VoxelState {
     this._activeMax.set([this._resolution, this._resolution, this._resolution]);
   }
 
-  resample(newRes) {
-    if (newRes === this._resolution) return;
+  resample(newRes, newSize, newMin) {
+    // If no changes, do nothing.
+    if (newRes === this._resolution && !newSize && !newMin) return;
 
     const oldRes = this._resolution;
     const oldStep = this._step;
     const oldMin = this._min;
     const oldDF = this._distanceField;
+    const oldSize = this._size; // Define oldSize for scaling!
 
-    const newStep = (oldStep * oldRes) / newRes; // Assuming same physical size
+    const useSize = (newSize !== undefined) ? newSize : this._size;
+    const useMin = (newMin !== undefined) ? newMin : this._min;
+
+    if (self.postMessage) {
+      self.postMessage({ type: 'LOG', data: `VoxelState.resample: oldRes=${oldRes} newRes=${newRes} useSize=${useSize} useMin=${useMin}` });
+    }
+
+    const newStep = useSize / newRes;
     const newDF = new Float32Array(newRes * newRes * newRes);
     newDF.fill(10000.0); // Default to Far
 
-    // Helper to sample old grid
     // Helper to sample old grid (Clamped to prevent border shrinking)
     const getVal = (x, y, z) => {
-      const cx = Math.max(0, Math.min(x, oldRes - 1));
-      const cy = Math.max(0, Math.min(y, oldRes - 1));
-      const cz = Math.max(0, Math.min(z, oldRes - 1));
+      const cx = isNaN(x) ? 0 : Math.max(0, Math.min(Math.floor(x), oldRes - 1));
+      const cy = isNaN(y) ? 0 : Math.max(0, Math.min(Math.floor(y), oldRes - 1));
+      const cz = isNaN(z) ? 0 : Math.max(0, Math.min(Math.floor(z), oldRes - 1));
       return oldDF[cx + cy * oldRes + cz * oldRes * oldRes];
     };
 
@@ -1383,10 +1391,14 @@ class VoxelState {
       for (let j = 0; j < newRes; j++) {
         for (let i = 0; i < newRes; i++) {
 
-          // World Pos
-          const wx = oldMin[0] + i * newStep;
-          const wy = oldMin[1] + j * newStep;
-          const wz = oldMin[2] + k * newStep;
+          if (self.postMessage && (i + j * newRes + k * newRes * newRes) % 1000000 === 0) {
+            self.postMessage({ type: 'LOG', data: `Resample Loop Progress: ${(i + j * newRes + k * newRes * newRes) / 1000000}M / ${(newRes * newRes * newRes) / 1000000}M` });
+          }
+
+          // World Pos of New Grid Cell
+          const wx = useMin[0] + i * newStep;
+          const wy = useMin[1] + j * newStep;
+          const wz = useMin[2] + k * newStep;
 
           // Old Grid Coord (Strictly bounded to avoid NaN)
           const ox = (wx - oldMin[0]) / oldStep;
@@ -1431,7 +1443,9 @@ class VoxelState {
 
           const val = ny0 * (1 - tz) + ny1 * tz;
 
-          newDF[i + j * newRes + k * newRes * newRes] = val;
+          // Scale distances proportionally to the sandbox size ratio!
+          const scaleFactor = useSize / oldSize; 
+          newDF[i + j * newRes + k * newRes * newRes] = isNaN(val) ? 10000.0 : val * scaleFactor;
         }
       }
     }
@@ -1439,10 +1453,17 @@ class VoxelState {
     // Update State
     this._resolution = newRes;
     this._count = newRes * newRes * newRes; // CRITICAL: Fix stale count
+    this._size = useSize;
     this._step = newStep;
+    this._min = useMin;
+    this._max = [useMin[0] + useSize, useMin[1] + useSize, useMin[2] + useSize];
+
     this._dims[0] = newRes;
     this._dims[1] = newRes;
     this._dims[2] = newRes;
+    this._activeMin[0] = 0; this._activeMin[1] = 0; this._activeMin[2] = 0;
+    this._activeMax[0] = newRes; this._activeMax[1] = newRes; this._activeMax[2] = newRes;
+
     this._distanceField = newDF;
     this._voxels.distanceField = newDF;
     this._voxels.dims = this._dims;

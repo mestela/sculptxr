@@ -78,7 +78,7 @@ self.onmessage = function (e) {
         init(msg.res, msg.size);
         break;
       case 'RESAMPLE':
-        resample(msg.res, msg.size, msg.min);
+        resample(msg.res);
         break;
       case 'SNAPSHOT':
         snapshot();
@@ -172,16 +172,11 @@ function init(res, size) {
   postMesh();
 }
 
-function resample(res, size, min) {
-  if (!voxelState) {
-    self.postMessage({ type: 'LOG', data: "VoxelWorker.resample Error: voxelState is null!" });
-    return;
-  }
-
-  self.postMessage({ type: 'LOG', data: `VoxelWorker.resample Start: res=${res} size=${size} min=${min}` });
+function resample(res) {
+  if (!voxelState) return;
 
   // Resample
-  voxelState.resample(res, size, min);
+  voxelState.resample(res);
 
   // Clear History (Complex to resample history, so just reset for now?)
   // Ideally we should try to resample history too, but memory usage explodes.
@@ -353,8 +348,6 @@ function warpSphere(center, radius, translation, rotation, steps, stepRotation, 
 function postMesh() {
   if (!voxelState) return;
 
-  self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Start: extracting surface...` });
-
   const t0 = performance.now();
   
   // PRE-MESH VALIDATION: Check if Distance Field itself is corrupted
@@ -370,13 +363,9 @@ function postMesh() {
     console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
   }
 
-  let res = null;
-  try {
-    res = voxelState.computeMesh(); 
-  } catch (err) {
-    self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Error: computeMesh threw: ${err.message}` });
-    return;
-  }
+  // Call VoxelState to compute the SurfaceNets mesh
+  // Pass full bounds to bypass tight-bounding-box bugs in JS fallback / WASM when Res != 128
+  const res = voxelState.computeMesh(); 
 
   const t1 = performance.now();
 

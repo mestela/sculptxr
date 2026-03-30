@@ -2,6 +2,8 @@ import Selection from '../drawables/Selection.js';
 import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
+import Remesh from './Remesh.js';
+
 
 class SculptManager {
 
@@ -221,9 +223,8 @@ class SculptManager {
         vArWorld[id+2] -= cz;
     }
 
-    // Preserve cell detail (roughly 1.17 meters per cell in standard 150m bounds)
-    // Scale resolution down proportional to size to reduce total cell count and speed up SurfaceNets!
-    let newRes = Math.ceil(maxExtent / (150 / 128));
+    // Use manual resolution from Remesh slider
+    let newRes = Remesh.RESOLUTION;
     newRes = Math.min(128, Math.max(32, newRes)); // Clamp [32, 128]
 
     // Save these for when the worker returns the mesh!

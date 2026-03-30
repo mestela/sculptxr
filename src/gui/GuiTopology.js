@@ -7,6 +7,8 @@ import MeshDynamic from '../mesh/dynamic/MeshDynamic.js';
 import StateMultiresolution from '../states/StateMultiresolution.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import Enums from '../misc/Enums.js';
+import VoxelDensityOverlay from '../render/VoxelDensityOverlay.js';
+
 
 class GuiMultiresolution {
 
@@ -109,8 +111,13 @@ class GuiMultiresolution {
 
   remeshResolution(val) {
     Remesh.RESOLUTION = val;
-    this._ctrlRes1.setValue(val, true);
-    this._ctrlRes2.setValue(val, true);
+    if (this._ctrlRes1) this._ctrlRes1.setValue(val, true);
+    if (this._ctrlRes2) this._ctrlRes2.setValue(val, true);
+
+    var mesh = this._main.getMesh();
+    if (mesh) {
+      VoxelDensityOverlay.poke(mesh, val);
+    }
   }
 
   remesh(manifold) {

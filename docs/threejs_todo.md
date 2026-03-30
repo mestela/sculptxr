@@ -8,24 +8,30 @@
 
 ## 1. Todo
 ### Fit & Finish Priorities (Current Focus)
-* [ ] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
+* [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
 * [x] **Symmetry**: get working in all modes
 * [x] **wireframe overlays**
 * [x] **other rendering modes** like matcaps, normals, etc.
 * [x] **Wireframe/Materials**
 * [x] **Sculpting "Feel"**: match to webgl build
+* [ ] transform still behaves a bit wacky when used on cylinder / other objects besides the sphere, especially during rotation
+* [ ] when exporting obj files it actually saves them as obj.txt for some reason
 
 ### Todo misc
-* [ ] **GUI Swap accordian layout to tabs**
+* [ ] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view
+* [ ] **control mesh to voxel res**: should happen from the resolution slider nearby
+* [ ] **fix paint issues in default matcap image**
+* [ ] **thumbstick should scroll menu**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
-* [ ] **Keyboard Entry**: there is a builtin one (part of three-mesh-ui?)
+* [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
 * [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
 * [ ] **Box modelling**: Integrate functions from https://github.com/sengchor/kokraf?tab=readme-ov-file and put VR front end on it
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **GUI Swap accordian layout to tabs**
 * [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm
 * [x] **Mesh to Voxel**
 * [x] **Resample changes colour**

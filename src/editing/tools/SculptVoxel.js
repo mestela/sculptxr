@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import SculptBase from './SculptBase.js';
 import VoxelWorker from '../../workers/VoxelWorker.js?worker';
 import MeshStatic from '../../mesh/meshStatic/MeshStatic.js';
@@ -8,7 +9,6 @@ import Primitives from '../../drawables/Primitives.js';
 import Enums from '../../misc/Enums.js';
 import Geometry from '../../math3d/Geometry.js';
 import VoxelBounds from '../../drawables/VoxelBounds.js';
-import * as THREE from 'three';
 
 class SculptVoxel extends SculptBase {
 
@@ -73,10 +73,12 @@ class SculptVoxel extends SculptBase {
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
-         if (msg.data && msg.data.startsWith && msg.data.startsWith("WASM ERROR")) {
-             console.log("[VoxelWorker CRITICAL]", msg.data);
-         }
-         return;
+        const logData = msg.data || '';
+        console.log("[VoxelWorker Telemetry]", logData);
+        if (window.screenLog) {
+          window.screenLog("VoxelWorker: " + logData, "cyan");
+        }
+        return;
       } else if (msg.type === 'CHUNK_UPDATE') {
         this._pendingMeshUpdate = false;
         
@@ -1498,26 +1500,99 @@ class SculptVoxel extends SculptBase {
   }
 
   applyResolution() {
-    if (!this._pendingRes) return;
+    console.log("[Voxel Debug] applyResolution called. _pendingRes =", this._pendingRes);
+    if (!this._pendingRes) {
+      console.log("[Voxel Debug] applyResolution: No pending resolution! Returning.");
+      return;
+    }
     this.setResolution(this._pendingRes);
-    //
-    // Reset pending? No, keep it sync.
   }
 
   setResolution(res) {
+    console.log("[Voxel Debug] setResolution called with res =", res, "Current this._res =", this._res);
     this._pendingRes = res; // Sync pending
-    if (res === this._res) return;
+    if (res === this._res) {
+      console.log("[Voxel Debug] setResolution: No change in resolution! Returning.");
+      return;
+    }
 
     // Update local cache AFTER check
     this._res = res;
-    // Keep same size for now, or reset?
-    // Let's assume size stays 100.0 or we can make it dynamic later.
-    const size = this._size || 100.0;
+    
+    let size = 1.0; // Fallback for empty scene
+    const mesh = this._main.getMesh();
+    
+    if (mesh) {
+      let w = 1.0, h = 1.0, d = 1.0;
+      const threeMesh = mesh.getThreeMesh ? mesh.getThreeMesh() : null;
 
-    this._step = size / res;
-    const half = size * 0.5;
-    this._min = vec3.fromValues(-half, -half, -half);
-    this._max = vec3.fromValues(half, half, half);
+      if (threeMesh && threeMesh.geometry) {
+        // Use LOCAL Geometry Bounding Box to ignore parent transforms and get true Simulation Size!
+        threeMesh.geometry.computeBoundingBox();
+        const box = threeMesh.geometry.boundingBox;
+        
+        w = box.max.x - box.min.x;
+        h = box.max.y - box.min.y;
+        d = box.max.z - box.min.z;
+        
+        console.log("[Voxel Debug] Local Geometry Bounding Box Size:", w.toFixed(2), h.toFixed(2), d.toFixed(2));
+      } else if (threeMesh) {
+        // Fallback to visual size
+        const box = new THREE.Box3().setFromObject(threeMesh);
+        const sizeVec = new THREE.Vector3();
+        box.getSize(sizeVec);
+        w = sizeVec.x;
+        h = sizeVec.y;
+        d = sizeVec.z;
+        console.log("[Voxel Debug] Visual Bounding Box Size:", w.toFixed(2), h.toFixed(2), d.toFixed(2));
+      } else {
+        // Fallback to SculptGL bounding box (if available)
+        const bound = mesh.getLocalBound ? mesh.getLocalBound() : null;
+        if (bound && bound._max && bound._min) {
+          w = bound._max[0] - bound._min[0];
+          h = bound._max[1] - bound._min[1];
+          d = bound._max[2] - bound._min[2];
+          console.log("[Voxel Debug] SculptGL Local Bound Size:", w.toFixed(2), h.toFixed(2), d.toFixed(2));
+        } else {
+          console.log("[Voxel Debug] Using constant size fallback (1.0)");
+        }
+      }
+
+      const scale = (mesh.getScale) ? mesh.getScale() : 1.0; // getScale returns a scalar number!
+      size = Math.max(w, h, d) * scale * 1.3; // Unify padding!
+      
+      if (size === 0 || isNaN(size)) {
+        size = 1.0; // Default Unit Box
+      }
+
+      // Calculate the true world-space center of the mesh to center the box around it!
+      const localCenter = mesh.getCenter ? mesh.getCenter() : [0.0, 0.0, 0.0];
+      const worldCenter = vec3.create(); // Define OUTSIDE try block scope!
+      try {
+        const threeMesh = mesh.getThreeMesh ? mesh.getThreeMesh() : null;
+        const mat = threeMesh ? threeMesh.matrixWorld.elements : (mesh.getMatrix ? mesh.getMatrix() : mat4.create()); // Fallback to identity
+        
+        console.log("[Voxel Debug] Computing worldCenter. threeMesh =", !!threeMesh);
+        vec3.transformMat4(worldCenter, localCenter, mat); // Apply true world transform!
+      } catch (err) {
+        console.error("[Voxel Debug] Error inside worldCenter calculation!", err);
+        // Fallback to local
+        vec3.copy(worldCenter, localCenter);
+      }
+
+      this._size = size; // Cache it for reuse
+      this._step = size / res;
+      const half = size * 0.5;
+      this._min = vec3.fromValues(worldCenter[0] - half, worldCenter[1] - half, worldCenter[2] - half);
+      this._max = vec3.fromValues(worldCenter[0] + half, worldCenter[1] + half, worldCenter[2] + half);
+    } else {
+      size = 1.0; // Default Unit Box
+      this._size = size;
+      this._step = size / res;
+      const half = size * 0.5;
+      this._min = vec3.fromValues(-half, -half, -half);
+      this._max = vec3.fromValues(half, half, half);
+    }
 
     // Update Transform Matrices
     mat4.identity(this._gridMatrix);
@@ -1541,12 +1616,13 @@ class SculptVoxel extends SculptBase {
 
     const type = (this._voxelMesh) ? 'RESAMPLE' : 'INIT';
 
-    console.log("Voxel Tool: postMessage " + type + " resolution=" + res + " size=" + size);
+    console.log("Voxel Tool: postMessage " + type + " resolution=" + res + " size=" + size + " min=[" + this._min[0].toFixed(2) + ", " + this._min[1].toFixed(2) + ", " + this._min[2].toFixed(2) + "]");
     if (window.screenLog) window.screenLog("Voxel Tool: Sending " + type, "cyan");
     this._worker.postMessage({
       type: type,
       res: res,
-      size: size
+      size: size,
+      min: [this._min[0], this._min[1], this._min[2]] // Send world min to worker!
     });
 
     // if (this._voxelMesh) {
@@ -1567,7 +1643,11 @@ class SculptVoxel extends SculptBase {
   }
 
   updateVoxelMesh(res) {
-    if (window.screenLog) window.screenLog("Voxel Tool: updateVoxelMesh", "cyan");
+    if (window.screenLog) {
+      window.screenLog(`Voxel Tool: updateVoxelMesh (Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4})`, "cyan");
+    }
+    console.log(`[SculptVoxel] updateVoxelMesh called with Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4}`);
+
     if (res.vertices.length === 0) {
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);

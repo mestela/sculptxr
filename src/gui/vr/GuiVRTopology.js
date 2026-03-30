@@ -1,5 +1,7 @@
 import Enums from '../../misc/Enums.js';
 import Remesh from '../../editing/Remesh.js';
+import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
+
 
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import MeshDynamic from '../../mesh/dynamic/MeshDynamic.js';
@@ -142,6 +144,10 @@ export default function getTopologyWidgets(main) {
     value: Remesh.RESOLUTION, min: 8, max: 400, step: 1,
     onInput: (val) => {
       Remesh.RESOLUTION = val;
+      const mesh = main.getMesh();
+      if (mesh) {
+        VoxelDensityOverlay.poke(mesh, val);
+      }
     }
   });
   y += 40 + gapBtn;

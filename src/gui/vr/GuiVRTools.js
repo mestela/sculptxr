@@ -3,6 +3,8 @@ import TR from '../GuiTR.js';
 import Tools from '../../editing/tools/Tools.js';
 import Picking from '../../math3d/Picking.js';
 import { vec3 } from 'gl-matrix';
+import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
+
 
 export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
@@ -581,10 +583,52 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (activeTool && activeTool.setResolutionPreview) {
           activeTool.setResolutionPreview(val);
         }
+        const mesh = main.getMesh ? main.getMesh() : (main._sculptManager ? main._sculptManager.getMesh() : null); // Fallback if main.getMesh() isn't standard
+        if (mesh) {
+          VoxelDensityOverlay.enable(mesh, val); // Persistent enable while tracking
+        }
+      },
+      onRelease: () => {
+        VoxelDensityOverlay.disable(); // Explicit drop
       }
     });
 
     y += 40 + gapBtn;
+
+    // Resample Button
+    widgets.push({
+      type: 'button',
+      id: 'voxel_resample',
+      label: 'Resample (No Undo)',
+      x: col1X, y: y, w: 550, h: 40,
+      onInteract: () => {
+        console.log("[Voxel Debug] Resample Button Clicked!");
+        if (activeTool && activeTool.applyResolution) {
+          activeTool.applyResolution();
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+        } else {
+          console.log("[Voxel Debug] Resample Clicked but activeTool lacks applyResolution!", activeTool ? activeTool.constructor.name : "null");
+        }
+      }
+    });
+    y += 40 + gapBtn;
+
+    // Bake Button
+    widgets.push({
+      type: 'button',
+      id: 'voxel_bake',
+      label: 'Bake to Mesh',
+      x: col1X, y: y, w: 550, h: btnH,
+      onInteract: () => {
+        console.error("VR BAKE BUTTON RAW ONINTERACT FIRED! activeTool is: ", !!activeTool ? activeTool.constructor.name : "null");
+        if (activeTool && activeTool.bakeToMesh) {
+          activeTool.bakeToMesh();
+        } else {
+          console.error("But activeTool.bakeToMesh evaluates to falsy!");
+        }
+      }
+    });
+    y += btnH + gapSection;
 
     widgets.push({
       type: 'checkbox',
@@ -604,21 +648,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
     y += btnH + gapBtn;
 
-    // Resample Button
-    widgets.push({
-      type: 'button',
-      id: 'voxel_resample',
-      label: 'Resample (No Undo)',
-      x: col1X, y: y, w: 550, h: 40,
-      onInteract: () => {
-        if (activeTool && activeTool.applyResolution) {
-          activeTool.applyResolution();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-        }
-      }
-    });
-    y += 40 + gapBtn;
-
     // Wireframe Toggle
     widgets.push({
       type: 'checkbox',
@@ -637,25 +666,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       }
     });
     y += btnH + gapBtn;
-
-
-
-    // Bake Button
-    widgets.push({
-      type: 'button',
-      id: 'voxel_bake',
-      label: 'Bake to Mesh',
-      x: col1X, y: y, w: 550, h: btnH,
-      onInteract: () => {
-        console.error("VR BAKE BUTTON RAW ONINTERACT FIRED! activeTool is: ", !!activeTool ? activeTool.constructor.name : "null");
-        if (activeTool && activeTool.bakeToMesh) {
-          activeTool.bakeToMesh();
-        } else {
-          console.error("But activeTool.bakeToMesh evaluates to falsy!");
-        }
-      }
-    });
-    y += btnH + gapSection;
 
     // --- TRIGGER MODULATION ---
     widgets.push({ type: 'info', label: 'Trigger Modulation', x: col1X, y: y });
