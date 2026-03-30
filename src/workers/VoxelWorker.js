@@ -138,7 +138,7 @@ self.onmessage = function (e) {
 
 function meshToVoxel(msg) {
   if (msg.res && msg.size && msg.center) {
-    console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
+    // console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
     voxelState = new VoxelState(msg.res, msg.size); // Dynamic re-init!
   }
 
@@ -147,7 +147,7 @@ function meshToVoxel(msg) {
   if (voxelState.addMeshSDF(msg.v, msg.c, msg.m, msg.f)) {
     isDirty = true;
   } else {
-    console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
+    // console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
   }
   postMesh();
 }
@@ -178,7 +178,7 @@ function resample(res, size, min) {
     return;
   }
 
-  self.postMessage({ type: 'LOG', data: `VoxelWorker.resample Start: res=${res} size=${size} min=${min}` });
+  // self.postMessage({ type: 'LOG', data: `VoxelWorker.resample Start: res=${res} size=${size} min=${min}` });
 
   // Resample
   voxelState.resample(res, size, min);
@@ -309,7 +309,7 @@ function editSphere(center, radius, color, isNegative, shape, brushRotation, ret
   const t0 = performance.now();
   
   if (center && center[0] > 1000.0) {
-     console.log("DIAGNOSTIC WORKER: Received huge center[0]: " + center[0] + " (meters?). Main thread divide by 1000 failed?");
+    // console.log("DIAGNOSTIC WORKER: Received huge center[0]: " + center[0] + " (meters?). Main thread divide by 1000 failed?");
   }
 
   // Apply edit
@@ -353,7 +353,7 @@ function warpSphere(center, radius, translation, rotation, steps, stepRotation, 
 function postMesh() {
   if (!voxelState) return;
 
-  self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Start: extracting surface...` });
+  // self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Start: extracting surface...` });
 
   const t0 = performance.now();
   
@@ -374,7 +374,7 @@ function postMesh() {
   try {
     res = voxelState.computeMesh(); 
   } catch (err) {
-    self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Error: computeMesh threw: ${err.message}` });
+    // self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Error: computeMesh threw: ${err.message}` });
     return;
   }
 

@@ -61,20 +61,20 @@ class SculptVoxel extends SculptBase {
     this._min = [-50, -50, -50];
     this._max = [50, 50,  50];
 
-    console.log("DIAGNOSTIC: SculptVoxel.js Constructor Executed! Resolution=" + this._res);
+    // constructor
 
     this._size = 100.0; // Keep simulation large
     this._min = [-50, -50, -50];
     this._max = [50, 50,  50];
 
-    console.log("DIAGNOSTIC: SculptVoxel.js Constructor Executed! Resolution=" + this._res);
+    // constructor
 
 
     this._worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'LOG') {
         const logData = msg.data || '';
-        console.log("[VoxelWorker Telemetry]", logData);
+        // console.log("[VoxelWorker Telemetry]", logData);
         if (window.screenLog) {
           window.screenLog("VoxelWorker: " + logData, "cyan");
         }
@@ -1500,19 +1500,19 @@ class SculptVoxel extends SculptBase {
   }
 
   applyResolution() {
-    console.log("[Voxel Debug] applyResolution called. _pendingRes =", this._pendingRes);
+    // console.log("[Voxel Debug] applyResolution called. _pendingRes =", this._pendingRes);
     if (!this._pendingRes) {
-      console.log("[Voxel Debug] applyResolution: No pending resolution! Returning.");
+      // console.log("[Voxel Debug] applyResolution: No pending resolution! Returning.");
       return;
     }
     this.setResolution(this._pendingRes);
   }
 
   setResolution(res) {
-    console.log("[Voxel Debug] setResolution called with res =", res, "Current this._res =", this._res);
+    // console.log("[Voxel Debug] setResolution called with res =", res, "Current this._res =", this._res);
     this._pendingRes = res; // Sync pending
     if (res === this._res) {
-      console.log("[Voxel Debug] setResolution: No change in resolution! Returning.");
+      // console.log("[Voxel Debug] setResolution: No change in resolution! Returning.");
       return;
     }
 
@@ -1535,7 +1535,7 @@ class SculptVoxel extends SculptBase {
         h = box.max.y - box.min.y;
         d = box.max.z - box.min.z;
         
-        console.log("[Voxel Debug] Local Geometry Bounding Box Size:", w.toFixed(2), h.toFixed(2), d.toFixed(2));
+        // console.log("[Voxel Debug] Local Geometry Bounding Box Size:", w.toFixed(2), h.toFixed(2), d.toFixed(2));
       } else if (threeMesh) {
         // Fallback to visual size
         const box = new THREE.Box3().setFromObject(threeMesh);

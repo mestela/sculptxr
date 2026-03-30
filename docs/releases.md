@@ -1,3 +1,9 @@
+# v1.0.61
+- **Fix**: **Voxel Remesh Stabilization**: Switched from World Space Box3 to Local Geometry Bounding Box for simulation sizing, decoupling the voxel engine from parent transforms and scaling.
+- **Fix**: **Voxel Resample Math**: Implemented proportional distance field scaling `(newSize / oldSize)` when changing voxel resolution to prevent the volume from collapsing into a solid interior.
+- **Fix**: **Voxel Bounds Reset**: Active voxel bounds are now hard-reset during resampling to prevent out-of-bounds scanning and empty mesh extraction (`Verts=0`).
+- **UI**: **Checkerboard Preview Scale**: Synchronized the density overlay with the visual mesh's true scale, ensuring the preview accurately represents the resolution the user will get.
+
 # v1.0.60
 - **Build & Optimization**: **Voxel Worker Production Fix**: Migrated `SculptVoxel.js` to use Vite’s native `?worker` query for Worker bundling. This forces Vite to bundle `VoxelState.js` code directly into the Worker during build, eliminating 404 runtime errors.
 - **Build & Optimization**: **Vite Worker Output `es`**: Configured `vite.config.js` to use `worker { format: "es" }` to support code splitting without breaking production builds with rollup `iife` errors.

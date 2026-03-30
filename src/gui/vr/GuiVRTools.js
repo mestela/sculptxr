@@ -602,12 +602,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       label: 'Resample (No Undo)',
       x: col1X, y: y, w: 550, h: 40,
       onInteract: () => {
-        console.log("[Voxel Debug] Resample Button Clicked!");
         if (activeTool && activeTool.applyResolution) {
           activeTool.applyResolution();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-        } else {
-          console.log("[Voxel Debug] Resample Clicked but activeTool lacks applyResolution!", activeTool ? activeTool.constructor.name : "null");
         }
       }
     });

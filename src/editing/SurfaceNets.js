@@ -170,7 +170,7 @@ var interpolateVertices = function (edgeMask, cubeEdges, grid, x, vertices) {
   if (!globalThis._vCount) globalThis._vCount = 0;
   if (globalThis._vCount < 5) {
     globalThis._vCount++;
-    console.log(`[SurfaceNets Live] Pushing Vertex #${globalThis._vCount} for Cell=[${x[0]},${x[1]},${x[2]}] Pos=[${vTemp[0]}, ${vTemp[1]}, ${vTemp[2]}]`);
+    // console.log(`[SurfaceNets Live] Pushing Vertex #${globalThis._vCount} for Cell=[${x[0]},${x[1]},${x[2]}] Pos=[${vTemp[0]}, ${vTemp[1]}, ${vTemp[2]}]`);
   }
 
   vertices.push(vTemp[0], vTemp[1], vTemp[2]);
