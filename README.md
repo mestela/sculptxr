@@ -1,4 +1,4 @@
-# SculptXR (v1.0.61)
+# SculptXR (v1.0.62)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.62**: **OBJ Export Extensions**: Explicitly specified `application/octet-stream` for OBJ exports, forcing the browser to treat it as generic binary data and preventing the `.txt` suffix appending.
 *   **v1.0.61**: **Voxel Remesh Stabilization**: Switched to Local Geometry Bounding Box for simulation sizing, decoupling from parent transforms. Implemented proportional distance field scaling when changing resolution to prevent volume collapse. Reset active voxel bounds during resample.
 *   **v1.0.60**: **Voxel Worker Production Fix**: Migrated to Vite's `?worker` query to bundle dependencies directly into the worker, resolving 404 runtime errors on the server. Added `worker.format: "es"` to support code splitting.
-*   **v1.0.56**: **VR Sidebar Tabs & UI Refactor**: Overhauled the vertical accordion UI into a 3-tab layout with fixed headers (eliminating scrolling). Applied curved folder-tab aesthetics with dynamic margin indents. Throttled MiniHUD clipping bugs.
 
 [View Full Release History](docs/releases.md)
 

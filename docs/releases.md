@@ -1,3 +1,6 @@
+# v1.0.62
+- **Fix**: **OBJ Export Extensions**: Explicitly specified `application/octet-stream` for OBJ exports, forcing the browser to treat it as generic binary data and preventing the `.txt` suffix appending.
+
 # v1.0.61
 - **Fix**: **Voxel Remesh Stabilization**: Switched from World Space Box3 to Local Geometry Bounding Box for simulation sizing, decoupling the voxel engine from parent transforms and scaling.
 - **Fix**: **Voxel Resample Math**: Implemented proportional distance field scaling `(newSize / oldSize)` when changing voxel resolution to prevent the volume from collapsing into a solid interior.
