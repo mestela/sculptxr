@@ -78,7 +78,7 @@ self.onmessage = function (e) {
         init(msg.res, msg.size);
         break;
       case 'RESAMPLE':
-        resample(msg.res);
+        resample(msg.res, msg.size, msg.min);
         break;
       case 'SNAPSHOT':
         snapshot();
@@ -138,7 +138,7 @@ self.onmessage = function (e) {
 
 function meshToVoxel(msg) {
   if (msg.res && msg.size && msg.center) {
-    console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
+    // console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
     voxelState = new VoxelState(msg.res, msg.size); // Dynamic re-init!
   }
 
@@ -147,7 +147,7 @@ function meshToVoxel(msg) {
   if (voxelState.addMeshSDF(msg.v, msg.c, msg.m, msg.f)) {
     isDirty = true;
   } else {
-    console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
+    // console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
   }
   postMesh();
 }
@@ -172,11 +172,16 @@ function init(res, size) {
   postMesh();
 }
 
-function resample(res) {
-  if (!voxelState) return;
+function resample(res, size, min) {
+  if (!voxelState) {
+    self.postMessage({ type: 'LOG', data: "VoxelWorker.resample Error: voxelState is null!" });
+    return;
+  }
+
+  // self.postMessage({ type: 'LOG', data: `VoxelWorker.resample Start: res=${res} size=${size} min=${min}` });
 
   // Resample
-  voxelState.resample(res);
+  voxelState.resample(res, size, min);
 
   // Clear History (Complex to resample history, so just reset for now?)
   // Ideally we should try to resample history too, but memory usage explodes.
@@ -304,7 +309,7 @@ function editSphere(center, radius, color, isNegative, shape, brushRotation, ret
   const t0 = performance.now();
   
   if (center && center[0] > 1000.0) {
-     console.log("DIAGNOSTIC WORKER: Received huge center[0]: " + center[0] + " (meters?). Main thread divide by 1000 failed?");
+    // console.log("DIAGNOSTIC WORKER: Received huge center[0]: " + center[0] + " (meters?). Main thread divide by 1000 failed?");
   }
 
   // Apply edit
@@ -348,6 +353,8 @@ function warpSphere(center, radius, translation, rotation, steps, stepRotation, 
 function postMesh() {
   if (!voxelState) return;
 
+  // self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Start: extracting surface...` });
+
   const t0 = performance.now();
   
   // PRE-MESH VALIDATION: Check if Distance Field itself is corrupted
@@ -360,12 +367,16 @@ function postMesh() {
     }
   }
   if (hasBadDF) {
-    console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
+    // console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
   }
 
-  // Call VoxelState to compute the SurfaceNets mesh
-  // Pass full bounds to bypass tight-bounding-box bugs in JS fallback / WASM when Res != 128
-  const res = voxelState.computeMesh(); 
+  let res = null;
+  try {
+    res = voxelState.computeMesh(); 
+  } catch (err) {
+    // self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Error: computeMesh threw: ${err.message}` });
+    return;
+  }
 
   const t1 = performance.now();
 
@@ -379,7 +390,7 @@ function postMesh() {
       }
     }
     if (hasBad) {
-      console.error("[Mesh Error] VoxelWorker postMesh: Generated Mesh contains NaN or Infinity vertices!");
+      // console.error("[Mesh Error] VoxelWorker postMesh: Generated Mesh contains NaN or Infinity vertices!");
     }
   }
 

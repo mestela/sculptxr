@@ -11,7 +11,7 @@ Export.exportOBJ = function (meshes, colorZbrush = true, colorAppend = false) {
     data += 'o mesh_' + i + '\n';
     data = Export.addMesh(meshes[i], data, offsets, colorZbrush, colorAppend);
   }
-  return new Blob([data]);
+  return new Blob([data], { type: 'application/octet-stream' });
 };
 
 var appendString = function (buffer, str, it) {
