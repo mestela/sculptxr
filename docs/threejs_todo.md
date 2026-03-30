@@ -30,6 +30,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **quadriflow** very basic quadremesher
 * [x] **control mesh to voxel res**: should happen from the resolution slider nearby
 * [x] **GUI Swap accordian layout to tabs**
 * [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm

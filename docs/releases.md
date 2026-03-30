@@ -1,3 +1,10 @@
+# v1.0.63
+- **Feature**: **Quad Remeshing**: Integrated `quadrs` Rust library via WebAssembly for automatic quad remeshing.
+- **UI**: Added UI toggles for Target Faces in both Desktop and VR Topology menus.
+- **Feedback**: Added processing states, duplicate click protection, and a 30s safety timeout.
+- **Visuals**: Automatically hides the old mesh and wireframe while inheriting materials and transforms for a seamless transition.
+- **Attribution**: Powered by [quadrs](https://crates.io/crates/quadrs), an experimental Rust port of Instant Meshes.
+
 # v1.0.62
 - **Fix**: **OBJ Export Extensions**: Explicitly specified `application/octet-stream` for OBJ exports, forcing the browser to treat it as generic binary data and preventing the `.txt` suffix appending.
 
