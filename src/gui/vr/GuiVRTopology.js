@@ -134,6 +134,36 @@ export default function getTopologyWidgets(main) {
   y += btnH + gapSection;
 
 
+  // --- QUAD REMESHING ---
+  widgets.push({ type: 'info', label: 'Quad Remeshing', x: col1X, y: y });
+  y += gapHeader;
+
+  if (Remesh.TARGET_QUADS === undefined) {
+    Remesh.TARGET_QUADS = 1000;
+  }
+
+  widgets.push({
+    type: 'slider', id: 'quadTargetFaces', label: 'Target Faces', x: col1X, y: y, w: 350, h: 40,
+    value: Remesh.TARGET_QUADS, min: 100, max: 10000, step: 100,
+    onInput: (val) => {
+      Remesh.TARGET_QUADS = val;
+    }
+  });
+  y += 40 + gapBtn;
+
+  const isRemeshProcessing = main.getSculptManager().isProcessingQuads ? main.getSculptManager().isProcessingQuads() : false;
+
+  widgets.push({
+    type: 'button', id: 'remesh_quads', label: isRemeshProcessing ? 'Processing...' : 'Remesh to Quads', disabled: isRemeshProcessing, x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      if (main.getSculptManager().remeshQuads) {
+        main.getSculptManager().remeshQuads(Remesh.TARGET_QUADS);
+      }
+    }
+  });
+  y += btnH + gapSection;
+
+
   // --- REMESH ---
   widgets.push({ type: 'info', label: 'Remesh', x: col1X, y: y });
   y += gapHeader;

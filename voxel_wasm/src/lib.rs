@@ -413,3 +413,91 @@ pub extern "C" fn free_mesh_result(ptr: *mut MeshResult) {
         }
     }
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn remesh_quads_wasm(
+    vertices_ptr: *const f32,
+    vertices_len: usize,
+    faces_ptr: *const u32,
+    faces_len: usize,
+    target_faces: u32,
+) -> *mut MeshResult {
+    if vertices_ptr.is_null() || faces_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let vertices_slice = unsafe { std::slice::from_raw_parts(vertices_ptr, vertices_len) };
+    let faces_slice = unsafe { std::slice::from_raw_parts(faces_ptr, faces_len) };
+
+    let mut quadrs_vertices = Vec::with_capacity(vertices_len / 3);
+    for i in (0..vertices_len).step_by(3) {
+        quadrs_vertices.push(quadrs::Vec3::new(
+            vertices_slice[i] as f64,
+            vertices_slice[i + 1] as f64,
+            vertices_slice[i + 2] as f64,
+        ));
+    }
+
+    let mut quadrs_faces = Vec::with_capacity(faces_len / 4);
+    for i in (0..faces_len).step_by(4) {
+        quadrs_faces.push(vec![
+            faces_slice[i] as usize,
+            faces_slice[i + 1] as usize,
+            faces_slice[i + 2] as usize,
+            faces_slice[i + 3] as usize,
+        ]);
+    }
+
+    let input_mesh = quadrs::Mesh {
+        vertices: quadrs_vertices,
+        faces: quadrs_faces,
+    };
+
+    let mut options = quadrs::RemeshOptions::new(quadrs::RemeshTarget::FaceCount(target_faces as usize));
+    options.seed = Some(1337);
+
+    let remesh_result = match quadrs::remesh(&input_mesh, &options) {
+        Ok(r) => r,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    let out_mesh = remesh_result.mesh;
+
+    let mut out_vertices_flat = Vec::with_capacity(out_mesh.vertices.len() * 3);
+    for v in out_mesh.vertices {
+        out_vertices_flat.push(v.x as f32);
+        out_vertices_flat.push(v.y as f32);
+        out_vertices_flat.push(v.z as f32);
+    }
+
+    let mut out_faces_flat = Vec::with_capacity(out_mesh.faces.len() * 4);
+    for f in out_mesh.faces {
+        if f.len() == 4 {
+            out_faces_flat.push(f[0] as u32);
+            out_faces_flat.push(f[1] as u32);
+            out_faces_flat.push(f[2] as u32);
+            out_faces_flat.push(f[3] as u32);
+        }
+    }
+
+    out_vertices_flat.shrink_to_fit();
+    out_faces_flat.shrink_to_fit();
+
+    let result = Box::new(MeshResult {
+        vertices_ptr: out_vertices_flat.as_mut_ptr(),
+        vertices_len: out_vertices_flat.len(),
+        faces_ptr: out_faces_flat.as_mut_ptr(),
+        faces_len: out_faces_flat.len(),
+        colors_ptr: std::ptr::null_mut(),
+        colors_len: 0,
+        materials_ptr: std::ptr::null_mut(),
+        materials_len: 0,
+        normals_ptr: std::ptr::null_mut(),
+        normals_len: 0,
+    });
+
+    std::mem::forget(out_vertices_flat);
+    std::mem::forget(out_faces_flat);
+
+    Box::into_raw(result)
+}

@@ -18,6 +18,7 @@ class GuiMultiresolution {
     this._menu = null; // ui menu
     this._ctrlResolution = null; // multiresolution controller
     this._ctrlDynamic = null; // dynamic topology controller
+    this._targetFaces = 1000; // Target faces for quad remeshing
     this.init(guiParent);
   }
 
@@ -60,6 +61,11 @@ class GuiMultiresolution {
     menu.addTitle('Voxel Conversion');
     menu.addButton('Convert Mesh to Voxels', this, 'meshToVoxel');
 
+    // quad remeshing
+    menu.addTitle('Quad Remeshing');
+    menu.addSlider('Target Faces', this, '_targetFaces', 100, 10000, 100);
+    menu.addButton('Remesh to Quads', this, 'remeshQuads');
+
     this.updateDynamicVisibility(false);
   }
 
@@ -76,6 +82,18 @@ class GuiMultiresolution {
       const vTool = Enums.Tools.VOXEL;
       main.getGui()._ctrlSculpting._ctrlSculpt.setValue(String(vTool)); // Ensure string for dat.gui keys
     }
+  }
+
+  remeshQuads() {
+    var main = this._main;
+    var mesh = main.getMesh();
+    if (!mesh)
+      return;
+
+    const sculptMgr = main.getSculptManager();
+    if (sculptMgr.isProcessingQuads && sculptMgr.isProcessingQuads()) return; // Prevent duplicate clicks!
+
+    sculptMgr.remeshQuads(this._targetFaces);
   }
 
   onKeyUp(event) {

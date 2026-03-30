@@ -3,6 +3,7 @@ import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
 import Remesh from './Remesh.js';
+import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 
 
 class SculptManager {
@@ -21,6 +22,9 @@ class SculptManager {
     this._sculptTimer = -1; // continuous interval timer
 
     this._selection = new Selection(main._gl); // the selection geometry (red hover circle)
+    
+    this._isProcessingQuads = false;
+    this._quadRemeshTimeout = null;
 
     this.init();
   }
@@ -259,6 +263,95 @@ class SculptManager {
     // Sync GUI
     if (this._main.getGui() && this._main.getGui()._ctrlSculpt) {
         this._main.getGui()._ctrlSculpt.setValue(Enums.Tools.VOXEL);
+    }
+  }
+
+  isProcessingQuads() {
+    return this._isProcessingQuads;
+  }
+
+  remeshQuads(targetFaces) {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    if (this._isProcessingQuads) return; // Prevent duplicate clicks!
+
+    this._isProcessingQuads = true;
+
+    if (window.screenLog) {
+      window.screenLog(`[SculptManager] Quad Remesh processing...`, "orange");
+    }
+
+    // 30s Safety Timeout to reset UI if worker hangs
+    if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
+    this._quadRemeshTimeout = setTimeout(() => {
+      if (this._isProcessingQuads) {
+        this._isProcessingQuads = false;
+        if (window.screenLog) {
+          window.screenLog(`[SculptManager] Quad Remesh timed out!`, "red");
+        }
+      }
+    }, 30000);
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not initialized!");
+      return;
+    }
+
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+
+    voxelTool._worker.postMessage({
+      type: 'REMESH_QUADRS',
+      v: vAr,
+      f: fAr,
+      targetFaces: targetFaces,
+      id: mesh.getID()
+    });
+  }
+
+  onQuadRemeshResult(data) {
+    if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
+    this._isProcessingQuads = false;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+
+    const main = this._main;
+    const newMesh = new MeshStatic(main._gl);
+
+    newMesh.setVertices(data.vertices);
+    newMesh.setFaces(data.faces);
+    
+    newMesh.init(); // Automatically allocates arrays, computes topology, geometry, and center!
+
+    // Transfer transform from the active mesh
+    newMesh.setMatrix(activeMesh.getMatrix());
+
+    // Inherit material and wireframe
+    newMesh.setShaderType(activeMesh.getShaderType());
+    if (activeMesh.getShowWireframe && newMesh.setShowWireframe) {
+      newMesh.setShowWireframe(activeMesh.getShowWireframe());
+    }
+
+    // Hide old mesh and its wireframe
+    activeMesh.setVisible(false);
+    if (activeMesh.setShowWireframe) {
+      activeMesh.setShowWireframe(false);
+    }
+    if (activeMesh.getThreeMesh) {
+      const threeMesh = activeMesh.getThreeMesh();
+      if (threeMesh) {
+        threeMesh.visible = false;
+      }
+    }
+
+    main.addNewMesh(newMesh);
+    main.setMesh(newMesh);
+
+    if (window.screenLog) {
+      window.screenLog(`[SculptManager] Quad Mesh Created! ${data.vertices.length/3} vertices`, "lime");
     }
   }
 

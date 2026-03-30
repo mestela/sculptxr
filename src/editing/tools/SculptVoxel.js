@@ -118,6 +118,8 @@ class SculptVoxel extends SculptBase {
           this._pendingMeshUpdate = true;
           this._worker.postMessage({ type: 'GET_MESH' });
         }
+      } else if (msg.type === 'MESH_UPDATE_QUAD') {
+        this._main.getSculptManager().onQuadRemeshResult(msg.data);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
       }

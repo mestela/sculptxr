@@ -8,27 +8,36 @@
 ---
 
 ## Deployed Version
-- **Beta**: v1.0.60+ (Automatically deployed via `./deploy_beta.sh`)
-- **Prod**: Not yet updated to this version
+- **Beta**: v1.0.62 (Successfully deployed via `./deploy_beta.sh`)
+- **Prod**: Not yet updated to this version (v1.0.60 legacy)
 
 ---
 
 ## Current Situation / Obstacles
 
-We just fixed the Voxel Web Worker production 404 errors by migrating to standard Vite bundling. The app is running smoothly without worker crashes!
+We have successfully stabilized the **Voxel Remeshing Pipeline** and cleaned up the codebase for production!
 
-Now we need to tackle two new voxel features:
-1.  **Voxel Undo/Redo Queue Issues**: The voxel system has its own history queue (snapshots of voxel grids) inside the worker, but it might not be syncing perfectly with the main UI's undo/redo history or causing leaks.
-2.  **Dynamic Mesh-to-Voxel Resolution Slider**: Currently, the grid resolution is hardcoded or set in parameters. The user wants a way to set the resolution (e.g. 64, 128) *before* clicking the Convert Mesh to Voxel button in the UI.
+### Key Achievements Today:
+1.  **Voxel Remesh Stabilization**: Switched to Local Geometry Bounding Box for simulation sizing, decoupling from parent visual transforms.
+2.  **Proportional Distance Field Scaling**: Fixed the "volume collapse" bug during resolution changes.
+3.  **Active Bounds Reset**: Prevented `Verts=0` empty mesh extraction during resampling.
+4.  **Log Stripping**: Systematically purged `[Voxel Debug]`, `DIAGNOSTIC`, `[SurfaceNets Live]`, `[VoxelWorker]`, `[Mesh Error]`, and `[SculptVoxel]` logs.
+5.  **OBJ Export Fix**: Solved the `.obj.txt` suffix bug by setting the Blob type to `application/octet-stream`.
+
+All fixes are pushed to `threejs_voxel_branch` and deployed to Beta (`v1.0.62`).
 
 ---
 
-## Next Steps for the New Agent
+## Next Steps / Backlog
 
-1.  **Audit Voxel Undo Queue**: Look at `VoxelWorker.js` undo/redo snapshots and how they are triggered/stored. Check if the `SculptVoxel.js` tool's history states are correctly communicating with it.
-2.  **Add Voxel Resolution Preference to UI**:
-    - Locate the "Convert Mesh to Voxel" button in `GuiXR.js` (or related panels).
-    - Add a Slider/Numeric input for "Target Resolution" next to it.
-    - Pass this resolution value down when calling the conversion function.
+### Fit & Finish (Immediate Priorities)
+1.  **Transform Gizmo Wobble**: Fix eccentric rotation/translation behavior on non-spherical objects (cylinders, etc.).
+2.  **Voxel Undo Visualization**: Investigate why voxel undo sometimes reverts data but doesn't redraw the view.
+3.  **Default Matcap Paint Tweak**: Resolve painting artifacts on the default matcap.
+
+### Future Roadmap
+1.  **Thumbstick Scrolling**: Map thumbstick to menu scrolling in VR.
+2.  **Local Storage (IndexedDB)**: Persist user options and local projects.
+3.  **Three-mesh-ui Migration**: Move UI panels to native Three.js geometry.
 
 Good luck! 🛠️

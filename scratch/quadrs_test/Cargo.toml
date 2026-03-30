@@ -1,0 +1,7 @@
+[package]
+name = "quadrs_test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quadrs = "1.0.0"

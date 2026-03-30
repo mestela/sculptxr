@@ -19,7 +19,6 @@
 
 ### Todo misc
 * [ ] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view
-* [ ] **control mesh to voxel res**: should happen from the resolution slider nearby
 * [ ] **fix paint issues in default matcap image**
 * [ ] **thumbstick should scroll menu**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
@@ -31,6 +30,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **control mesh to voxel res**: should happen from the resolution slider nearby
 * [x] **GUI Swap accordian layout to tabs**
 * [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm
 * [x] **Mesh to Voxel**
