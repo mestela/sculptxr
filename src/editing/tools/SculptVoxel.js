@@ -1646,7 +1646,7 @@ class SculptVoxel extends SculptBase {
     if (window.screenLog) {
       window.screenLog(`Voxel Tool: updateVoxelMesh (Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4})`, "cyan");
     }
-    console.log(`[SculptVoxel] updateVoxelMesh called with Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4}`);
+    // console.log(`[SculptVoxel] updateVoxelMesh called with Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4}`);
 
     if (res.vertices.length === 0) {
       if (this._voxelMesh) {
@@ -1694,7 +1694,7 @@ class SculptVoxel extends SculptBase {
     
     if (this._pendingOffset && this._pendingSize) {
       if (window.screenLog) {
-        window.screenLog(`[SculptVoxel] consumeOffset [${this._pendingOffset[0].toFixed(3)}, ${this._pendingOffset[1].toFixed(3)}, ${this._pendingOffset[2].toFixed(3)}] size=${this._pendingSize.toFixed(3)}`, "cyan");
+        // window.screenLog(`[SculptVoxel] consumeOffset [${this._pendingOffset[0].toFixed(3)}, ${this._pendingOffset[1].toFixed(3)}, ${this._pendingOffset[2].toFixed(3)}] size=${this._pendingSize.toFixed(3)}`, "cyan");
       }
 
       // Update gridMatrix to center the tight simulation box around the mesh
@@ -1703,7 +1703,7 @@ class SculptVoxel extends SculptBase {
       this._gridMatrix[14] = this._pendingOffset[2];
       
       if (window.screenLog) {
-        window.screenLog(`[SculptVoxel] gridMatrix Translate [${this._gridMatrix[12].toFixed(3)}, ${this._gridMatrix[13].toFixed(3)}, ${this._gridMatrix[14].toFixed(3)}]`, "cyan");
+        // window.screenLog(`[SculptVoxel] gridMatrix Translate [${this._gridMatrix[12].toFixed(3)}, ${this._gridMatrix[13].toFixed(3)}, ${this._gridMatrix[14].toFixed(3)}]`, "cyan");
       }
       
       const scale = this._pendingSize / (this._pendingRes || 128);
@@ -1870,7 +1870,7 @@ class SculptVoxel extends SculptBase {
   updateVoxelChunks(chunks) {
     if (!this._chunkMap) this._chunkMap = new Map();
 
-    console.log(`[SculptVoxel] updateVoxelChunks received ${chunks.length} chunks.`);
+    // console.log(`[SculptVoxel] updateVoxelChunks received ${chunks.length} chunks.`);
 
     for (const chunk of chunks) {
       let mesh = this._chunkMap.get(chunk.id);

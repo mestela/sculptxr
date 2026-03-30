@@ -367,7 +367,7 @@ function postMesh() {
     }
   }
   if (hasBadDF) {
-    console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
+    // console.error("[Mesh Error] VoxelWorker postMesh: Distance Field contains NaN BEFORE mesh extraction!");
   }
 
   let res = null;
@@ -390,7 +390,7 @@ function postMesh() {
       }
     }
     if (hasBad) {
-      console.error("[Mesh Error] VoxelWorker postMesh: Generated Mesh contains NaN or Infinity vertices!");
+      // console.error("[Mesh Error] VoxelWorker postMesh: Generated Mesh contains NaN or Infinity vertices!");
     }
   }
 
