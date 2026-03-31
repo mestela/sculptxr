@@ -346,7 +346,8 @@ class SculptManager {
         nPlane: nPlane,
         isTriangles: !mesh.isQuad,
         side: side || 1, // Default to 1
-        id: mesh.getID()
+        id: mesh.getID(),
+        quadrangulate: Remesh.QUADRANGULATE
       });
       console.log(`[SculptManager] SYMMETRY_MIRROR message sent!`);
     } catch (e) {
@@ -434,6 +435,11 @@ class SculptManager {
 
   onSymmetryMirrorResult(data) {
     this._isProcessingSlice = false; // Reset lock
+
+    if (data.stats) {
+      const s = data.stats;
+      console.log(`[SculptManager] Quadrangulation Stats: tris=${s.tris} leftovers=${s.leftoverTris} candidates=${s.candidates} merged=${s.merged} rejectedDot=${s.rejectedDot}`);
+    }
 
     const mesh = this._main.getMesh();
     if (!mesh) return;

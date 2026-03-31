@@ -207,6 +207,16 @@ export default function getTopologyWidgets(main) {
   y += btnH + gapBtn;
 
   widgets.push({
+    type: 'checkbox', id: 'quadSymmetry', label: 'Quadrangulate Merge', x: col1X, y: y, w: 350, h: btnH,
+    value: Remesh.QUADRANGULATE,
+    onInteract: () => {
+      Remesh.QUADRANGULATE = !Remesh.QUADRANGULATE;
+      if (main.guiXR) main.guiXR._needsRedraw = true;
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
     type: 'button', id: 'voxel_mirror_lr', label: 'Mirror L \u2192 R', x: col1X, y: y, w: 170, h: btnH,
     onInteract: () => {
       if (main.getMesh()) {

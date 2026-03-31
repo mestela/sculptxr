@@ -549,7 +549,7 @@ function weldVertices(vertices, faces) {
     const y = vertices[oldIdx * 3 + 1];
     const z = vertices[oldIdx * 3 + 2];
     
-    const key = `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+    const key = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
     
     if (!vertexMap.has(key)) {
       vertexMap.set(key, nextIndex);
@@ -801,18 +801,41 @@ function symmetryMirror(msg) {
     // Weld vertices after Manifold union to remove duplicate seam vertices!
     const weldedAfter = weldVertices(resultMesh.vertProperties, resultMesh.triVerts);
 
-    // 1. Run custom priority quadrangulation to merge coplanar triangles into quads.
-    const paddedFaces = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces);
+    // 1. Run custom priority quadrangulation to merge coplanar triangles into quads if enabled.
+    let paddedFaces;
+    let topologyStats;
+    if (msg.quadrangulate !== false) {
+      console.log(`[VoxelWorker] Running custom Priority Quadrangulation...`);
+      const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces);
+      paddedFaces = result.paddedFaces;
+      topologyStats = result.stats;
+    } else {
+      console.log(`[VoxelWorker] Skipping Quadrangulation. Padding triangles to quad stride.`);
+      paddedFaces = padTrianglesToQuads(weldedAfter.faces);
+    }
+ 
+     self.postMessage({
+       type: 'SYMMETRY_MIRROR_RESULT',
+       v: weldedAfter.vertices, // Use clean welded vertices
+       f: paddedFaces,
+       stats: topologyStats   
+     }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
+ 
+   } catch (err) {
+     console.error("symmetryMirror Error:", err);
+   }
+}
 
-    self.postMessage({
-      type: 'SYMMETRY_MIRROR_RESULT',
-      v: weldedAfter.vertices, // Use clean welded vertices
-      f: paddedFaces   
-    }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
-
-  } catch (err) {
-    console.error("symmetryMirror Error:", err);
+function padTrianglesToQuads(faces) {
+  const triCount = faces.length / 3;
+  const padded = new Uint32Array(triCount * 4);
+  for (let i = 0; i < triCount; i++) {
+    padded[i * 4] = faces[i * 3];
+    padded[i * 4 + 1] = faces[i * 3 + 1];
+    padded[i * 4 + 2] = faces[i * 3 + 2];
+    padded[i * 4 + 3] = 4294967295; // TRI_INDEX (-1)
   }
+  return padded;
 }
 
 function unpadTriangles(faces) {
@@ -910,6 +933,18 @@ function quadrangulateGreedy(vertices, triIndices) {
   const numTris = triIndices.length / 3;
   const edgeMap = new Map(); // key -> { tris: [triIdx], v0, v1 }
 
+  const stats = {
+    tris: numTris,
+    edges: 0,
+    boundary: 0,
+    manifold: 0,
+    nonManifold: 0,
+    rejectedDot: 0,
+    candidates: 0,
+    merged: 0,
+    leftoverTris: 0
+  };
+
   // Build Edge Map
   for (let i = 0; i < numTris; i++) {
     const v0 = triIndices[i * 3];
@@ -986,7 +1021,14 @@ function quadrangulateGreedy(vertices, triIndices) {
                 normals[triA * 3 + 1] * normals[triB * 3 + 1] +
                 normals[triA * 3 + 2] * normals[triB * 3 + 2];
 
-    if (dot < 0.2) continue; // Loosen candidate threshold (allow up to ~78 degrees tilt)
+    const v1x = vertices[edgeData.v0 * 3];
+    const v2x = vertices[edgeData.v1 * 3];
+    const isOnSeam = Math.abs(v1x) < 0.5 && Math.abs(v2x) < 0.5;
+
+    if (!isOnSeam && Math.abs(dot) < 0.2) {
+      stats.rejectedDot++;
+      continue; 
+    }
 
     const av0 = triIndices[triA * 3];
     const av1 = triIndices[triA * 3 + 1];
@@ -1020,21 +1062,26 @@ function quadrangulateGreedy(vertices, triIndices) {
     const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
     const cz = (pts[0].z + pts[1].z + pts[2].z + pts[3].z) / 4;
 
-    const nx = normals[triA * 3];
-    const ny = normals[triA * 3 + 1];
-    const nz = normals[triA * 3 + 2];
+    const nx = (normals[triA * 3] + normals[triB * 3]) / 2;
+    const ny = (normals[triA * 3 + 1] + normals[triB * 3 + 1]) / 2;
+    const nz = (normals[triA * 3 + 2] + normals[triB * 3 + 2]) / 2;
+
+    const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    const snx = nx / nLen;
+    const sny = ny / nLen;
+    const snz = nz / nLen;
 
     let tx = 1, ty = 0, tz = 0;
-    if (Math.abs(nx) > 0.9) { tx = 0; ty = 1; }
-    let ux = ty * nz - tz * ny;
-    let uy = tz * nx - tx * nz;
-    let uz = tx * ny - ty * nx;
+    if (Math.abs(snx) > 0.9) { tx = 0; ty = 1; }
+    let ux = ty * snz - tz * sny;
+    let uy = tz * snx - tx * snz;
+    let uz = tx * sny - ty * snx;
     const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz);
     ux /= uLen; uy /= uLen; uz /= uLen;
 
-    let vx = ny * uz - nz * uy;
-    let vy = nz * ux - nx * uz;
-    let vz = nx * uy - ny * ux;
+    let vx = sny * uz - snz * uy;
+    let vy = snz * ux - snx * uz;
+    let vz = snx * uy - sny * ux;
     const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
     vx /= vLen; vy /= vLen; vz /= vLen;
 
@@ -1085,9 +1132,10 @@ function quadrangulateGreedy(vertices, triIndices) {
     const p4 = [vertices[angles[3].idx * 3], vertices[angles[3].idx * 3 + 1], vertices[angles[3].idx * 3 + 2]];
 
     let error = quadCalcError(p1, p2, p3, p4);
-    if (!isConvex) {
-      error += 5.0; // Soft penalty instead of hard rejection!
-    }
+    // Disabling strict 2D convexity penalty for curved meshes!
+    // if (!isConvex) {
+    //   error += 5.0; 
+    // }
 
     candidates.push({
       triA,
@@ -1095,10 +1143,21 @@ function quadrangulateGreedy(vertices, triIndices) {
       error,
       quad: [angles[0].idx, angles[1].idx, angles[2].idx, angles[3].idx]
     });
+    stats.candidates++;
   }
 
-  // Sort candidates by error (minimize error)
-  candidates.sort((a, b) => a.error - b.error);
+  // Sort candidates by error (minimize error), rounding to 4 decimals to ignore float noise!
+  candidates.sort((a, b) => {
+    const errA = Math.round(a.error * 10000) / 10000;
+    const errB = Math.round(b.error * 10000) / 10000;
+    
+    if (errA !== errB) {
+      return errA - errB;
+    }
+    
+    // Tie-breaker: Prefer lower face IDs to keep it consistent
+    return Math.min(a.triA, a.triB) - Math.min(b.triA, b.triB);
+  });
 
   // Merge candidates (Best first)
   for (const cand of candidates) {
@@ -1106,12 +1165,14 @@ function quadrangulateGreedy(vertices, triIndices) {
     outQuads.push(cand.quad);
     merged[cand.triA] = 1;
     merged[cand.triB] = 1;
+    stats.merged++;
   }
 
   // Set rest of Triangles
   for (let i = 0; i < numTris; i++) {
     if (!merged[i]) {
       outTris.push([triIndices[i * 3], triIndices[i * 3 + 1], triIndices[i * 3 + 2]]);
+      stats.leftoverTris++;
     }
   }
 
@@ -1129,7 +1190,8 @@ function quadrangulateGreedy(vertices, triIndices) {
     finalFaces[outPtr++] = tri[2];
     finalFaces[outPtr++] = -1;
   }
-  return finalFaces;
+
+  return { paddedFaces: finalFaces, stats };
 }
 
 function remeshQuads(msg) {

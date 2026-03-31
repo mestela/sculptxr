@@ -21,7 +21,7 @@ All fixes are pushed to `manifold_branch` on GitHub.
 
 ### Immediate Priorities (Fit & Finish)
 1.  **Quad Remesh (`quadrs`) Garbage Output**:
-    -   *Problem*: When using the automated Rust `quadrs` WebAssembly remesher (Instant Meshes port), it occasionally outputs noisy, spaghetti-like geometry. Need to run `console.log` and verify being passed.
+    -   *Problem*: When using the automated Rust `quadrs` WebAssembly remesher (Instant Meshes port), it occasionally outputs bad non manifold geo, a handful of polys floating in space. Need to run `console.log` and verify being passed.
 2.  **Selective Edge/Face Dissolve (Manual Topology)**:
     -   *Approach*: Allow the user to selectively delete an edge between two triangles (or combine them) to form a quad manually.
 3.  **Quadrangulation Completeness**: Investigate why the priority queue still misses a few obvious edges. Check if sorting locks out candidates.
