@@ -421,6 +421,7 @@ pub extern "C" fn remesh_quads_wasm(
     faces_ptr: *const u32,
     faces_len: usize,
     target_faces: u32,
+    stride: u32,
 ) -> *mut MeshResult {
     if vertices_ptr.is_null() || faces_ptr.is_null() {
         return std::ptr::null_mut();
@@ -438,14 +439,22 @@ pub extern "C" fn remesh_quads_wasm(
         ));
     }
 
-    let mut quadrs_faces = Vec::with_capacity(faces_len / 4);
-    for i in (0..faces_len).step_by(4) {
-        quadrs_faces.push(vec![
-            faces_slice[i] as usize,
-            faces_slice[i + 1] as usize,
-            faces_slice[i + 2] as usize,
-            faces_slice[i + 3] as usize,
-        ]);
+    let mut quadrs_faces = Vec::with_capacity(faces_len / stride as usize);
+    for i in (0..faces_len).step_by(stride as usize) {
+        if stride == 3 {
+             quadrs_faces.push(vec![
+                faces_slice[i] as usize,
+                faces_slice[i + 1] as usize,
+                faces_slice[i + 2] as usize,
+            ]);
+        } else {
+             quadrs_faces.push(vec![
+                faces_slice[i] as usize,
+                faces_slice[i + 1] as usize,
+                faces_slice[i + 2] as usize,
+                faces_slice[i + 3] as usize,
+            ]);
+        }
     }
 
     let input_mesh = quadrs::Mesh {
@@ -477,6 +486,11 @@ pub extern "C" fn remesh_quads_wasm(
             out_faces_flat.push(f[1] as u32);
             out_faces_flat.push(f[2] as u32);
             out_faces_flat.push(f[3] as u32);
+        } else if f.len() == 3 {
+            out_faces_flat.push(f[0] as u32);
+            out_faces_flat.push(f[1] as u32);
+            out_faces_flat.push(f[2] as u32);
+            out_faces_flat.push(4294967295); // TRI_INDEX (-1)
         }
     }
 

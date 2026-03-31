@@ -128,6 +128,9 @@ self.onmessage = function (e) {
       case 'MESH_TO_VOXEL':
         meshToVoxel(msg);
         break;
+      case 'REMESH_QUADRS':
+        remeshQuads(msg);
+        break;
       default:
         // console.warn('VoxelWorker: Unknown message', msg.type);
     }
@@ -406,6 +409,60 @@ function postMesh() {
     data: res, 
     computeTime: (t1 - t0),
     isWASM: res.isWASM
+  }, transfer);
+}
+
+function remeshQuads(msg) {
+  if (!globalThis.wasmModule) {
+    console.error("remeshQuads: wasmModule not loaded");
+    return;
+  }
+
+  const wasm = globalThis.wasmModule;
+  const vertices = msg.v;
+  const faces = msg.f;
+  const targetFaces = msg.targetFaces;
+
+  const vLen = vertices.length;
+  const fLen = faces.length;
+
+  const vPtr = wasm.alloc(vLen * 4);
+  const fPtr = wasm.alloc(fLen * 4);
+
+  new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(faces);
+
+  const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces);
+
+  if (resPtr === 0) {
+    console.error("remesh_quads_wasm FAILED");
+    wasm.dealloc(vPtr, vLen * 4);
+    wasm.dealloc(fPtr, fLen * 4);
+    return;
+  }
+
+  const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
+  const outVPtr = meta[0], outVLen = meta[1];
+  const outFPtr = meta[2], outFLen = meta[3];
+
+  const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
+  const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+
+  wasm.free_mesh_result(resPtr);
+  wasm.dealloc(vPtr, vLen * 4);
+  wasm.dealloc(fPtr, fLen * 4);
+
+  const transfer = [];
+  if (outVertices.buffer) transfer.push(outVertices.buffer);
+  if (outFaces.buffer) transfer.push(outFaces.buffer);
+
+  self.postMessage({
+    type: 'MESH_UPDATE_QUAD',
+    data: {
+      vertices: outVertices,
+      faces: outFaces,
+      id: msg.id
+    }
   }, transfer);
 }
 

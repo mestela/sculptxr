@@ -31,7 +31,9 @@ All fixes are pushed to `threejs_voxel_branch` and deployed to Beta (`v1.0.62`).
 ## Next Steps / Backlog
 
 ### Fit & Finish (Immediate Priorities)
-1.  **Transform Gizmo Wobble**: Fix eccentric rotation/translation behavior on non-spherical objects (cylinders, etc.).
+1.  **Transform Gizmo Rethink (Fix Skewing/Wobble)**:
+    -   *Problem*: Direct $4 \times 4$ Matrix accumulation (`mat4` multiplication) is introducing shear/skew when combining non-uniform scale and rotation.
+    -   *Fix Approach*: Switch to standard Three.js **TRS Component Tracking** (`position`, `quaternion`, `scale`) instead of direct matrix multiplication. Let Three.js handle the standard $T \cdot R \cdot S$ multiplication order automatically.
 2.  **Voxel Undo Visualization**: Investigate why voxel undo sometimes reverts data but doesn't redraw the view.
 3.  **Default Matcap Paint Tweak**: Resolve painting artifacts on the default matcap.
 

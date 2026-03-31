@@ -74,6 +74,20 @@ class MeshStatic extends Mesh {
     super.updateWireframeBuffer();
   }
 
+  getLocalBound() {
+    const rd = this.getRenderData();
+    if (!rd) {
+      if (this._meshData && this._meshData._aabbLoose && this._meshData._aabbLoose.length === 6) {
+        return this._meshData._aabbLoose; // Fallback to mesh data if ready
+      }
+      return [0, 0, 0, 0, 0, 0]; // Default fall-back to avoid index zero-reading crashes
+    }
+    if (!rd._aabbLoose) {
+      return [0, 0, 0, 0, 0, 0]; // Catch inside render data if uninitialized
+    }
+    return rd._aabbLoose;
+  }
+
 }
 
 export default MeshStatic;

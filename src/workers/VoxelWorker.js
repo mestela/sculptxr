@@ -30,6 +30,24 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     VoxelState = vs.default;
     // console.log("VoxelWorker: VoxelState Loaded");
 
+    // Load Manifold-3D WASM
+    try {
+      const manifoldModule = await import('manifold-3d');
+      const manifoldInstance = await manifoldModule.default({
+        locateFile: (path) => {
+          if (path.endsWith('.wasm')) {
+            return '/manifold.wasm';
+          }
+          return path;
+        }
+      });
+      manifoldInstance.setup();
+      globalThis.manifold = manifoldInstance;
+      console.log("VoxelWorker: Manifold-3D Loaded Successfully!");
+    } catch (manifoldErr) {
+      console.warn("VoxelWorker: Manifold-3D Load Failed", manifoldErr);
+    }
+
     // Load Rust WASM
     try {
       // Use robust fetch approach for Vite Web Workers
@@ -130,6 +148,12 @@ self.onmessage = function (e) {
         break;
       case 'REMESH_QUADRS':
         remeshQuads(msg);
+        break;
+      case 'SLICE_AND_CAP':
+        sliceAndCap(msg);
+        break;
+      case 'SYMMETRY_MIRROR':
+        symmetryMirror(msg);
         break;
       default:
         // console.warn('VoxelWorker: Unknown message', msg.type);
@@ -412,6 +436,407 @@ function postMesh() {
   }, transfer);
 }
 
+function triangulateQuads(faces) {
+  let triCount = 0;
+  for (let i = 0; i < faces.length; i += 4) {
+    triCount++;
+    if (faces[i + 3] !== 4294967295) triCount++;
+  }
+  
+  const triFaces = new Uint32Array(triCount * 3);
+  let triIdx = 0;
+  for (let i = 0; i < faces.length; i += 4) {
+    triFaces[triIdx++] = faces[i];
+    triFaces[triIdx++] = faces[i + 1];
+    triFaces[triIdx++] = faces[i + 2];
+    
+    if (faces[i + 3] !== 4294967295) {
+      triFaces[triIdx++] = faces[i];
+      triFaces[triIdx++] = faces[i + 2];
+      triFaces[triIdx++] = faces[i + 3];
+    }
+  }
+  return triFaces;
+}
+
+function filterCollinearTriangles(vertices, faces) {
+  const out = [];
+  let count = 0;
+  for (let i = 0; i < faces.length; i += 3) {
+    const i0 = faces[i] * 3;
+    const i1 = faces[i+1] * 3;
+    const i2 = faces[i+2] * 3;
+
+    const ax = vertices[i1] - vertices[i0];
+    const ay = vertices[i1+1] - vertices[i0+1];
+    const az = vertices[i1+2] - vertices[i0+2];
+
+    const bx = vertices[i2] - vertices[i0];
+    const by = vertices[i2+1] - vertices[i0+1];
+    const bz = vertices[i2+2] - vertices[i0+2];
+
+    // Cross product
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
+    const lenSq = nx*nx + ny*ny + nz*nz;
+
+    if (lenSq > 1e-12) { // 1e-12 epsilon
+      out.push(faces[i], faces[i+1], faces[i+2]);
+    } else {
+      count++;
+    }
+  }
+  if (count > 0) {
+    console.log(`[VoxelWorker] filterCollinearTriangles: dropped ${count} collinear faces.`);
+  }
+  return out;
+}
+
+function filterDegenerateTriangles(vertices, faces) {
+  const cleanFaces = [];
+  const seen = new Set();
+
+  for (let i = 0; i < faces.length; i += 3) {
+    const a = faces[i];
+    const b = faces[i + 1];
+    const c = faces[i + 2];
+    
+    if (a === b || b === c || c === a) continue;
+
+    // Check Duplicate Triangle
+    const sorted = [a, b, c].sort((x, y) => x - y);
+    const key = `${sorted[0]},${sorted[1]},${sorted[2]}`;
+    if (seen.has(key)) {
+      continue; // Duplicate triangle
+    }
+    seen.add(key);
+
+    const ax = vertices[a * 3], ay = vertices[a * 3 + 1], az = vertices[a * 3 + 2];
+    const bx = vertices[b * 3], by = vertices[b * 3 + 1], bz = vertices[b * 3 + 2];
+    const cx = vertices[c * 3], cy = vertices[c * 3 + 1], cz = vertices[c * 3 + 2];
+
+    const v1x = bx - ax, v1y = by - ay, v1z = bz - az;
+    const v2x = cx - ax, v2y = cy - ay, v2z = cz - az;
+
+    const cpx = v1y * v2z - v1z * v2y;
+    const cpy = v1z * v2x - v1x * v2z;
+    const cpz = v1x * v2y - v1y * v2x;
+
+    const areaSq = cpx * cpx + cpy * cpy + cpz * cpz;
+    if (areaSq < 1e-12) {
+      continue; // Skip zero-area triangle
+    }
+
+    cleanFaces.push(a, b, c);
+  }
+  return new Uint32Array(cleanFaces);
+}
+
+function weldVertices(vertices, faces) {
+  const uniqueVerts = [];
+  const vertexMap = new Map(); // "x,y,z" -> newIndex
+  const newFaces = new Uint32Array(faces.length);
+
+  let nextIndex = 0;
+  for (let i = 0; i < faces.length; i++) {
+    const oldIdx = faces[i];
+    if (oldIdx * 3 >= vertices.length) {
+      // Out of bounds safety
+      continue;
+    }
+    const x = vertices[oldIdx * 3];
+    const y = vertices[oldIdx * 3 + 1];
+    const z = vertices[oldIdx * 3 + 2];
+    
+    const key = `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+    
+    if (!vertexMap.has(key)) {
+      vertexMap.set(key, nextIndex);
+      uniqueVerts.push(x, y, z);
+      nextIndex++;
+    }
+    
+    newFaces[i] = vertexMap.get(key);
+  }
+
+  return {
+    vertices: new Float32Array(uniqueVerts),
+    faces: newFaces
+  };
+}
+
+function sliceAndCap(msg) {
+  if (!globalThis.manifold) {
+    console.error("sliceAndCap: Manifold not loaded");
+    return;
+  }
+
+  const manifold = globalThis.manifold;
+  const vertices = msg.v;
+  const faces = msg.f;
+  const isQuad = msg.isQuad;
+
+  console.log(`VoxelWorker sliceAndCap: isQuad=${isQuad}, vLen=${vertices.length}, fLen=${faces.length}`);
+
+  let triFaces = faces;
+  if (isQuad) {
+    triFaces = triangulateQuads(faces);
+    console.log(`Triangulated Quads: fLen=${triFaces.length}`);
+  } else {
+    triFaces = filterDegenerateTriangles(vertices, faces);
+  }
+
+  const welded = weldVertices(vertices, triFaces);
+  console.log(`Welded Vertices: vLen=${welded.vertices.length}, fLen=${welded.faces.length}`);
+  
+  const cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
+  console.log(`Cleaned Faces: fLen=${cleanFaces.length}`);
+
+  // Winding Check: Count directed edges
+  const edgeCount = new Map();
+  let duplicateDirectedEdges = 0;
+  for (let i = 0; i < cleanFaces.length; i += 3) {
+    const a = cleanFaces[i];
+    const b = cleanFaces[i + 1];
+    const c = cleanFaces[i + 2];
+    
+    const edges = [[a, b], [b, c], [c, a]];
+    for (const [u, v] of edges) {
+      const key = `${u}_${v}`;
+      const count = (edgeCount.get(key) || 0) + 1;
+      edgeCount.set(key, count);
+      if (count > 1) {
+        duplicateDirectedEdges++;
+      }
+    }
+  }
+  console.log(`Inconsistent Winding (Shared directed edges): ${duplicateDirectedEdges}`);
+
+  // Watertight Check: Measure undirected edges
+  const undirectedCount = new Map();
+  for (let i = 0; i < cleanFaces.length; i += 3) {
+    const a = cleanFaces[i];
+    const b = cleanFaces[i + 1];
+    const c = cleanFaces[i + 2];
+    
+    const edges = [[a, b], [b, c], [c, a]];
+    for (const [u, v] of edges) {
+      const min = Math.min(u, v);
+      const max = Math.max(u, v);
+      const key = `${min}_${max}`;
+      undirectedCount.set(key, (undirectedCount.get(key) || 0) + 1);
+    }
+  }
+
+  let boundaryEdges = 0;
+  let oversharedEdges = 0;
+  for (const [key, count] of undirectedCount.entries()) {
+    if (count === 1) boundaryEdges++;
+    if (count > 2) oversharedEdges++;
+  }
+  console.log(`Watertight Check: Open Boundaries (Holes)=${boundaryEdges}, Overshared Edges (Branching)=${oversharedEdges}`);
+
+  console.log(`Manifold Module Keys: ${Object.keys(manifold).join(", ")}`);
+  console.log(`Type of manifold.Mesh: ${typeof manifold.Mesh}`);
+  if (manifold.Mesh) {
+    try {
+      const dummy = new manifold.Mesh({
+        numVert: 0,
+        numTri: 0,
+        vertPos: new Float32Array(0),
+        triVerts: new Uint32Array(0)
+      });
+      console.log(`Keys of manifold.Mesh instance: ${Object.keys(dummy).join(", ")}`);
+    } catch (e) {
+      console.log(`Failed to create dummy Mesh instance: ${e.message}`);
+    }
+  }
+
+  try {
+    // Create Mesh
+    const mesh = new manifold.Mesh({
+      numProp: 3, // XYZ
+      vertProperties: welded.vertices,
+      triVerts: cleanFaces
+    });
+
+    // Create Manifold
+    const m = new manifold.Manifold(mesh);
+    console.log(`Manifold Instance Prototypes: ${Object.keys(Object.getPrototypeOf(m)).join(", ")}`);
+    console.log(`Manifold Class Statics: ${Object.keys(manifold.Manifold).join(", ")}`);
+    
+    // Create giant cube for slicing
+    const size = 10000;
+    let cube = manifold.Manifold.cube([size, size, size], false); // Use static method, false=origin corner
+    
+    const side = msg.side || 1; // 1 for +X, -1 for -X
+    if (side === 1) {
+      cube = cube.translate([0, -size / 2, -size / 2]);
+    } else {
+      cube = cube.translate([-size, -size / 2, -size / 2]);
+    }
+
+    // Subtract
+    const resultManifold = m.subtract(cube);
+
+    // Get Mesh back
+    const resultMesh = resultManifold.getMesh();
+
+    console.log(`Resulting Mesh: vLen=${resultMesh.vertProperties.length}, fLen=${resultMesh.triVerts.length}`);
+
+    // Send back to main thread
+    self.postMessage({
+      type: 'SLICE_AND_CAP_RESULT',
+      v: resultMesh.vertProperties, // XYZ
+      f: resultMesh.triVerts
+    }, [resultMesh.vertProperties.buffer, resultMesh.triVerts.buffer]);
+
+  } catch (err) {
+    console.error("sliceAndCap Error:", err);
+  }
+}
+
+function symmetryMirror(msg) {
+  try {
+    const manifold = globalThis.manifold;
+    if (!manifold) {
+      console.error("symmetryMirror: manifold not loaded");
+      return;
+    }
+
+    console.log(`[VoxelWorker] symmetryMirror started! isTriangles=${msg.isTriangles}`);
+
+    const vertices = msg.v;
+    const faces = msg.f;
+    const isTriangles = msg.isTriangles;
+
+    let triFaces = faces;
+    if (!isTriangles) {
+      console.log(`[VoxelWorker] triangulateQuads starting... for ${faces.length} faces`);
+      triFaces = triangulateQuads(faces);
+      console.log(`[VoxelWorker] triangulateQuads done!`);
+    } else {
+      if (faces.length % 4 === 0 && faces.length % 3 !== 0) {
+        console.log(`[VoxelWorker] unpadTriangles starting... for 4-padded array of length ${faces.length}`);
+        triFaces = unpadTriangles(faces);
+        console.log(`[VoxelWorker] unpadTriangles done!`);
+      } else {
+        console.log(`[VoxelWorker] faces already unpadded (length % 3 === 0, length=${faces.length}). Using as-is.`);
+        triFaces = faces;
+      }
+    }
+
+    // 1. Clean up unscaled quad face indices + weld duplicate vertices (watertight)
+    console.log(`[VoxelWorker] weldVertices starting... for ${triFaces.length} faces`);
+    const welded = weldVertices(vertices, triFaces);
+    console.log(`[VoxelWorker] weldVertices done! unique vertices=${welded.vertices.length}, faces=${welded.faces.length}`);
+
+    // 2. Clean up degenerate triangles that were formed by welding!
+    console.log(`[VoxelWorker] filterDegenerateTriangles starting...`);
+    let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
+    console.log(`[VoxelWorker] filterDegenerateTriangles done! faces length=${cleanFaces.length}`);
+
+    // 3. Filter collinear triangles (zero area via cross product)
+    console.log(`[VoxelWorker] filterCollinearTriangles starting...`);
+    cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
+    console.log(`[VoxelWorker] filterCollinearTriangles done! faces length=${cleanFaces.length}`);
+
+    // Scale up by 1000 to avoid precision issues in WASM
+    console.log(`[VoxelWorker] Scaling up by 1000 for precision...`);
+    const scaledVertices = new Float32Array(welded.vertices.length);
+    for (let i = 0; i < welded.vertices.length; i++) {
+        scaledVertices[i] = welded.vertices[i] * 1000.0;
+    }
+
+    // Convert cleanFaces to Uint32Array for manifold.Mesh!
+    const triVertsTyped = new Uint32Array(cleanFaces);
+
+    const mMesh = new manifold.Mesh({
+      numProp: 3, // XYZ
+      vertProperties: scaledVertices,
+      triVerts: triVertsTyped
+    });
+
+    console.log(`[VoxelWorker] Creating Manifold constructor...`);
+    const m = new manifold.Manifold(mMesh);
+    
+    // Normal and Origin
+    const normal = msg.nPlane; // [x, y, z]
+    const pt = msg.ptPlane; // [x, y, z]
+    
+    // Scale pt by 1000 as well since we scaled the mesh!
+    const scaledPt = [pt[0] * 1000.0, pt[1] * 1000.0, pt[2] * 1000.0];
+    const offset = scaledPt[0]*normal[0] + scaledPt[1]*normal[1] + scaledPt[2]*normal[2];
+
+    console.log(`[VoxelWorker] splitByPlane: normal=[${normal}], offset=${offset}`);
+    const [pos, neg] = m.splitByPlane(normal, offset);
+    console.log(`[VoxelWorker] splitByPlane done! pos valid=${pos.getMesh().triVerts.length > 0}, neg valid=${neg.getMesh().triVerts.length > 0}`);
+    
+    const sideToKeep = msg.side || 1; // 1 for +L, -1 for +R
+    const source = (sideToKeep === 1) ? pos : neg;
+    
+    console.log(`[VoxelWorker] Mirroring side... sideToKeep=${sideToKeep}`);
+    const moved = source.translate([-scaledPt[0], -scaledPt[1], -scaledPt[2]]);
+    const mirrored = moved.mirror(normal);
+    const restored = mirrored.translate(scaledPt);
+    console.log(`[VoxelWorker] Mirroring done!`);
+    
+    console.log(`[VoxelWorker] Composing sides...`);
+    let combined;
+    try {
+        if (typeof source.add === 'function') {
+            combined = source.add(restored);
+        } else {
+            combined = manifold.Manifold.compose([source, restored]);
+        }
+    } catch (e) {
+        console.error("Compose/Add failed, trying fallback compose", e);
+        combined = manifold.Manifold.compose([source, restored]);
+    }
+    console.log(`[VoxelWorker] Union/Compose done!`);
+    const resultMesh = combined.getMesh();
+
+    // Scale back down by 1000
+    const finalVertices = new Float32Array(resultMesh.vertProperties.length);
+    for (let i = 0; i < resultMesh.vertProperties.length; i++) {
+        finalVertices[i] = resultMesh.vertProperties[i] / 1000.0;
+    }
+
+    // 1. Pad the unpadded resultMesh.triVerts to standard 4-padded array per SculptGL contracts.
+    const numTriangles = resultMesh.triVerts.length / 3;
+    const paddedFaces = new Uint32Array(numTriangles * 4); // Standard unsigned array for WebGL indices
+    let outPtr = 0;
+    for (let i = 0; i < resultMesh.triVerts.length; i += 3) {
+        paddedFaces[outPtr++] = resultMesh.triVerts[i];
+        paddedFaces[outPtr++] = resultMesh.triVerts[i + 1];
+        paddedFaces[outPtr++] = resultMesh.triVerts[i + 2];
+        paddedFaces[outPtr++] = -1; // Standard pad for pure triangles in SculptGL
+    }
+
+    self.postMessage({
+      type: 'SYMMETRY_MIRROR_RESULT',
+      v: finalVertices, // XYZ (scaled back down)
+      f: paddedFaces   // padded Int32Array (multiples of 4)
+    }, [finalVertices.buffer, paddedFaces.buffer]);
+
+  } catch (err) {
+    console.error("symmetryMirror Error:", err);
+  }
+}
+
+function unpadTriangles(faces) {
+  const triCount = faces.length / 4;
+  const triFaces = new Uint32Array(triCount * 3);
+  let acc = 0;
+  for (let i = 0; i < faces.length; i += 4) {
+    triFaces[acc++] = faces[i];
+    triFaces[acc++] = faces[i + 1];
+    triFaces[acc++] = faces[i + 2];
+  }
+  return triFaces;
+}
+
 function remeshQuads(msg) {
   if (!globalThis.wasmModule) {
     console.error("remeshQuads: wasmModule not loaded");
@@ -420,24 +845,37 @@ function remeshQuads(msg) {
 
   const wasm = globalThis.wasmModule;
   const vertices = msg.v;
-  const faces = msg.f;
+  
+  let finalFaces = msg.f;
+  let stride = 4;
+  
+  if (msg.isTriangles) {
+    stride = 3;
+    finalFaces = unpadTriangles(msg.f);
+  }
+
   const targetFaces = msg.targetFaces;
 
   const vLen = vertices.length;
-  const fLen = faces.length;
+  const fLen = finalFaces.length;
 
   const vPtr = wasm.alloc(vLen * 4);
   const fPtr = wasm.alloc(fLen * 4);
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
-  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(faces);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
 
-  const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces);
+  const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces, stride);
 
   if (resPtr === 0) {
     console.error("remesh_quads_wasm FAILED");
     wasm.dealloc(vPtr, vLen * 4);
     wasm.dealloc(fPtr, fLen * 4);
+    
+    self.postMessage({
+      type: 'MESH_UPDATE_QUAD_ERROR',
+      message: "Rust remesh_quads_wasm returned 0 (failed to remesh)"
+    });
     return;
   }
 
@@ -447,6 +885,8 @@ function remeshQuads(msg) {
 
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+
+  console.log(`[VoxelWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
   wasm.free_mesh_result(resPtr);
   wasm.dealloc(vPtr, vLen * 4);

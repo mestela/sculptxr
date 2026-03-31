@@ -163,6 +163,19 @@ export default function getTopologyWidgets(main) {
   });
   y += btnH + gapSection;
 
+  // --- MANIFOLD SLICING ---
+  widgets.push({ type: 'info', label: 'Manifold Slicing', x: col1X, y: y });
+  y += gapHeader;
+
+  widgets.push({
+    type: 'button', id: 'slice_and_cap', label: 'Slice + Cap Symmetry', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      if (main.getSculptManager().sliceAndCap) {
+        main.getSculptManager().sliceAndCap();
+      }
+    }
+  });
+  y += btnH + gapSection;
 
   // --- REMESH ---
   widgets.push({ type: 'info', label: 'Remesh', x: col1X, y: y });
@@ -199,6 +212,17 @@ export default function getTopologyWidgets(main) {
       if (main.getMesh()) {
         const mesh = main.getMesh();
         const wasDynamic = mesh.isDynamic;
+        
+        if (!mesh.isDynamic && mesh.isQuad) { // Check if it's our remeshed static quad mesh!
+            main.getSculptManager().symmetryMirror(1); // Keep positive (Right side if normal is [1,0,0], wait, L->R means Keep Left (Negative side), so we want side = -1)
+            // Wait, our previous logic was Keep Positive if side=1, Negative if side=-1.
+            // L->R means Keep Left (Negative) and Mirror to Right (Positive).
+            // So side = -1!
+            main.getSculptManager().symmetryMirror(-1);
+            if (main.guiXR) main.guiXR._needsRedraw = true;
+            return;
+        }
+
         let nmesh = Remesh.voxelMirror(mesh, 0);
         if (wasDynamic) nmesh = new MeshDynamic(nmesh);
         main.getStateManager().pushStateAddRemove(nmesh, [mesh]);
@@ -216,6 +240,13 @@ export default function getTopologyWidgets(main) {
       if (main.getMesh()) {
         const mesh = main.getMesh();
         const wasDynamic = mesh.isDynamic;
+
+        if (!mesh.isDynamic && mesh.isQuad) { // Check if it's our remeshed static quad mesh!
+            main.getSculptManager().symmetryMirror(1); // Keep positive (Right side), so side = 1!
+            if (main.guiXR) main.guiXR._needsRedraw = true;
+            return;
+        }
+
         let nmesh = Remesh.voxelMirror(mesh, 1);
         if (wasDynamic) nmesh = new MeshDynamic(nmesh);
         main.getStateManager().pushStateAddRemove(nmesh, [mesh]);

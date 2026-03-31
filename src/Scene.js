@@ -1324,6 +1324,7 @@ class Scene {
     mesh.setMatcap(3);
 
     mesh._typeName = "Sphere";
+    mesh.isQuad = true; // Sphere is quads (subdivided cube)
     this.addNewMesh(mesh);
     return mesh;
   }
@@ -1334,6 +1335,7 @@ class Scene {
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     this.subdivideClamp(mesh, true);
     mesh._typeName = "Cube";
+    mesh.isQuad = true; // Cube is quads
     return this.addNewMesh(mesh);
   }
 
@@ -1883,17 +1885,27 @@ class Scene {
 
             const grip = this._renderer.xr.getControllerGrip(i);
 
-            // Intercept addEventListener to force custom profiles for the 3D models before Factory sees it
-            const originalAddEventListener = grip.addEventListener;
-            grip.addEventListener = function(type, listener) {
-                if (type === 'connected') {
-                    const wrappedListener = function(event) {
-                        grip._originalInputSource = event.data; // SAVE ORIGINAL INPUT SOURCE
-                        const override = window._xrControllerOverride;
+              // Intercept addEventListener to force custom profiles for the 3D models before Factory sees it
+              const originalAddEventListener = grip.addEventListener;
+              grip.addEventListener = function(type, listener) {
+                  if (type === 'connected') {
+                      const wrappedListener = function(event) {
+                          grip._originalInputSource = event.data; // SAVE ORIGINAL INPUT SOURCE
+                          
+                          // Hide if it's hands (creepy hands)
+                          const baseSource = event.data;
+                          console.log(`[WebXR] Connected inputSource: ${baseSource ? Object.keys(baseSource).join(", ") : "null"}, isHand=${baseSource && baseSource.hand ? "YES" : "NO"}`);
+                          
+                          if (baseSource && baseSource.hand) {
+                              model.visible = false;
+                          } else {
+                              model.visible = true;
+                          }
+
+                          const override = window._xrControllerOverride;
                         
-                        let baseSource = event.data;
-                        if (override && override !== 'Auto' && event.data) {
-                            try {
+                         if (override && override !== 'Auto' && event.data) {
+                             try {
                                 const proxySource = new Proxy(baseSource, {
                                     get: function(target, prop) {
                                         if (prop === 'profiles') {

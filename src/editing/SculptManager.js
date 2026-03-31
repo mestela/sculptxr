@@ -236,10 +236,8 @@ class SculptManager {
     voxelTool._pendingOffset = [cx - maxExtent / 2, cy - maxExtent / 2, cz - maxExtent / 2];
     voxelTool._pendingRes = newRes;
 
-    if (window.screenLog) {
-      window.screenLog(`[SculptManager] meshToVoxel cx=${cx.toFixed(3)} cy=${cy.toFixed(3)} cz=${cz.toFixed(3)} mExtent=${maxExtent.toFixed(3)}`, "cyan");
-      window.screenLog(`[SculptManager] pendOffset [${voxelTool._pendingOffset[0].toFixed(3)}, ${voxelTool._pendingOffset[1].toFixed(3)}, ${voxelTool._pendingOffset[2].toFixed(3)}]`, "cyan");
-    }
+    console.log(`[SculptManager] meshToVoxel cx=${cx.toFixed(3)} cy=${cy.toFixed(3)} cz=${cz.toFixed(3)} mExtent=${maxExtent.toFixed(3)}`);
+    console.log(`[SculptManager] pendOffset [${voxelTool._pendingOffset[0].toFixed(3)}, ${voxelTool._pendingOffset[1].toFixed(3)}, ${voxelTool._pendingOffset[2].toFixed(3)}]`);
 
     voxelTool._worker.postMessage({
         type: 'MESH_TO_VOXEL',
@@ -278,18 +276,14 @@ class SculptManager {
 
     this._isProcessingQuads = true;
 
-    if (window.screenLog) {
-      window.screenLog(`[SculptManager] Quad Remesh processing...`, "orange");
-    }
+    console.log(`[SculptManager] Quad Remesh processing...`);
 
     // 30s Safety Timeout to reset UI if worker hangs
     if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
     this._quadRemeshTimeout = setTimeout(() => {
       if (this._isProcessingQuads) {
         this._isProcessingQuads = false;
-        if (window.screenLog) {
-          window.screenLog(`[SculptManager] Quad Remesh timed out!`, "red");
-        }
+        console.log(`[SculptManager] Quad Remesh timed out!`);
       }
     }, 30000);
 
@@ -307,8 +301,165 @@ class SculptManager {
       v: vAr,
       f: fAr,
       targetFaces: targetFaces,
-      id: mesh.getID()
+      id: mesh.getID(),
+      isTriangles: !mesh.isQuad // True for our sliced mesh (triangles)!
     });
+  }
+
+  symmetryMirror(side) {
+    if (this._isProcessingSlice) return; // Share the lock
+    this._isProcessingSlice = true;
+
+    console.log(`[SculptManager] Symmetry Mirror processing... side=${side}`);
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not available for Symmetry Mirror");
+      this._isProcessingSlice = false;
+      return;
+    }
+
+    const mesh = this._main.getMesh();
+    if (!mesh) {
+      this._isProcessingSlice = false;
+      return;
+    }
+
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+
+    const ptPlane = mesh.getSymmetryOrigin ? mesh.getSymmetryOrigin() : [0, 0, 0];
+    let nPlane = mesh.getSymmetryNormal ? mesh.getSymmetryNormal() : [1, 0, 0];
+    
+    // Fallback if normal is zero vector
+    if (nPlane[0] === 0 && nPlane[1] === 0 && nPlane[2] === 0) {
+      nPlane = [1, 0, 0];
+    }
+
+    try {
+      console.log(`[SculptManager] Sending SYMMETRY_MIRROR message...`);
+      voxelTool._worker.postMessage({
+        type: 'SYMMETRY_MIRROR',
+        v: vAr,
+        f: fAr,
+        ptPlane: ptPlane,
+        nPlane: nPlane,
+        isTriangles: !mesh.isQuad,
+        side: side || 1, // Default to 1
+        id: mesh.getID()
+      });
+      console.log(`[SculptManager] SYMMETRY_MIRROR message sent!`);
+    } catch (e) {
+      console.error("[SculptManager] postMessage failed for Symmetry Mirror:", e);
+      this._isProcessingSlice = false;
+    }
+  }
+
+  sliceAndCap() {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    if (this._isProcessingSlice) return; // Prevent duplicate clicks
+    this._isProcessingSlice = true;
+
+    console.log(`[SculptManager] Slice + Cap processing...`);
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not initialized!");
+      return;
+    }
+
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+    
+    // Explicit flag instead of guess
+    const isQuad = mesh.isQuad === true;
+
+    voxelTool._worker.postMessage({
+      type: 'SLICE_AND_CAP',
+      v: vAr,
+      f: fAr,
+      isQuad: isQuad,
+      side: 1 // 1 for +X, -1 for -X
+    });
+  }
+
+  onSliceAndCapResult(msg) {
+    this._isProcessingSlice = false;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+
+    const main = this._main;
+    const newMesh = new MeshStatic(main._gl);
+
+    newMesh.setVertices(msg.v);
+    
+    // Pad triangles with TRI_INDEX to conform to SculptGL's quad-stride faces array
+    const nbTri = msg.f.length / 3;
+    const padded = new Uint32Array(nbTri * 4);
+    for (let i = 0; i < nbTri; i++) {
+      padded[i * 4] = msg.f[i * 3];
+      padded[i * 4 + 1] = msg.f[i * 3 + 1];
+      padded[i * 4 + 2] = msg.f[i * 3 + 2];
+      padded[i * 4 + 3] = 4294967295; // TRI_INDEX (-1)
+    }
+    newMesh.setFaces(padded);
+    newMesh.setNbFaces(nbTri); // Face count is number of triangles
+    newMesh.setNbVertices(msg.v.length / 3);
+    
+    newMesh.init();
+
+    newMesh.setMatrix(activeMesh.getMatrix());
+    newMesh.setShaderType(activeMesh.getShaderType());
+    if (activeMesh.getShowWireframe && newMesh.setShowWireframe) {
+      newMesh.setShowWireframe(activeMesh.getShowWireframe());
+    }
+
+    activeMesh.setVisible(false);
+    
+    if (activeMesh.getThreeMesh) {
+      const threeMesh = activeMesh.getThreeMesh();
+      if (threeMesh) {
+        threeMesh.visible = false;
+      }
+    }
+
+    main.addNewMesh(newMesh);
+    main.setMesh(newMesh);
+
+    console.log(`[SculptManager] Slice + Cap Completed!`);
+  }
+
+  onSymmetryMirrorResult(data) {
+    this._isProcessingSlice = false; // Reset lock
+
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    // Same replacement logic as Slice result
+    const newMesh = new MeshStatic(this._main._gl); // Pass WebGL context!
+    newMesh.setVertices(data.v);
+    newMesh.setNbVertices(data.v.length / 3);
+    newMesh.setFaces(data.f);
+    newMesh.setNbFaces(data.f.length / 4);
+
+    newMesh.init();
+    newMesh.initRender();
+
+    if (mesh.getMaterial) newMesh.setMaterial(mesh.getMaterial());
+    if (mesh.getTransformData && newMesh.setTransformData) {
+      newMesh.setTransformData(mesh.getTransformData()); // Use setter!
+    }
+    newMesh.visible = mesh.visible;
+    newMesh.isQuad = true;
+
+    this._main.replaceMesh(mesh, newMesh);
+    this._main.addNewMesh(newMesh);
+    this._main.setMesh(newMesh);
+
+    console.log(`[SculptManager] Symmetry Mirror Completed!`);
   }
 
   onQuadRemeshResult(data) {
@@ -325,17 +476,15 @@ class SculptManager {
     newMesh.setFaces(data.faces);
     
     newMesh.init(); // Automatically allocates arrays, computes topology, geometry, and center!
+    newMesh.isQuad = true; // Remeshed output is quads!
 
     // Transfer transform from the active mesh
     newMesh.setMatrix(activeMesh.getMatrix());
-
-    // Inherit material and wireframe
     newMesh.setShaderType(activeMesh.getShaderType());
     if (activeMesh.getShowWireframe && newMesh.setShowWireframe) {
       newMesh.setShowWireframe(activeMesh.getShowWireframe());
     }
 
-    // Hide old mesh and its wireframe
     activeMesh.setVisible(false);
     if (activeMesh.setShowWireframe) {
       activeMesh.setShowWireframe(false);
@@ -350,9 +499,7 @@ class SculptManager {
     main.addNewMesh(newMesh);
     main.setMesh(newMesh);
 
-    if (window.screenLog) {
-      window.screenLog(`[SculptManager] Quad Mesh Created! ${data.vertices.length/3} vertices`, "lime");
-    }
+    console.log(`[SculptManager] Quad Mesh Created! ${data.vertices.length/3} vertices`);
   }
 
   postRender() {
