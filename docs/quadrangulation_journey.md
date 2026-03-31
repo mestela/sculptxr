@@ -50,10 +50,12 @@ Slicing through triangle *faces* creates thin slivers. Slicing through a vertex 
 
 ---
 
-## 🚦 Current Status
-The mesh is now **90%+ Quad Dominant** on default spheres, with Blender’s error metrics ensuring visually clean topology. 
-Remaining challenges:
--   **Centerline Slivering**: Some CSG slicing artifacts remain at the exact cutting plane (a side-effect of using boolean cuts). 
--   **Flat Face Preservation**: Without an axial/grid bias, flat faces can still wobble if they aren't guided by feature lines.
+## 🏗️ Step 5: Manual Topology Swaps & In-Place Modification
+To give users more control, we shifted away from automatic quadrangulation during Symmetry Mirrors and moved to a **Manual Toggle** system:
+1.  **Context-Aware Triggers**: Explicit buttons for **[Quadrangulate]** and **[Triangulate]** were added to the VR Topology menu, overriding active tool contexts by pulling the VoxelWorker directly.
+2.  **In-Place Updates**: Swapped out mesh creation for in-place array setters (`setVertices`, `setFaces`), keeping the scene outliner clean and preserving entity IDs.
+3.  **Topology Rebuilds & TypedArray Bypasses**: Forcing a `mesh.init()` was necessary to rebuild octrees and vertex-face list rings, but this momentarily triggered a crash due to fixed-size `fArUV` typed array capacities. Toggling the static `Mesh.OPTIMIZE = false` allows the system to bypass optimization copies safely during swaps.
+4.  **Custom History Integration**: Used `StateManager.pushStateCustom` to push closure-based state restores to the undo stack, ensuring standard history works on manual swaps.
 
-The system is now "Almost Usable" and a massive leap forward from the early heuristic sweeps!
+## 🚦 Current Status
+The manual topology toggle pipeline is stable, undoable, and visually updates instantly in the 3D scene without WebGL capacity crashes. A massive leap in mesh outliner cleanliness and user control over topology density!

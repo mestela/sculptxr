@@ -1,4 +1,10 @@
-# v1.0.64 (Work in Progress)
+# v1.0.65 (Work in Progress)
+- **Feature**: **Manual Topology Swaps (Triangulate & Quadrangulate)**: Added explicit buttons to the VR Topology menu to toggle between triangle and quad dominant meshes in-place.
+- **Architecture**: **In-Place Modification & State Management**: Overhauled sculptor message handlers to perform updates on the existing mesh reference, avoiding scene clutter and duplicates.
+- **Architecture**: **Custom Undo/Redo Tracking**: Registered custom state snapshots for manual topology changes, tying them seamlessly into the global undo history.
+- **Fix**: **TypedArray Capacity Bounds Safe Rebuilds**: Dynamically throttles `MeshStatic.OPTIMIZE` during `mesh.init()` to bypass out-of-bounds capacity crashes on non-UV secondary face index typed arrays.
+
+# v1.0.64
 - **Feature**: **Symmetry Mirror & Quad Merge Optimization**: Ported Blender's BMesh `quad_calc_error` metric (Planarity, Squareness, Area Symmetry) to JavaScript for clean, visually high-grade quad merging.
 - **Topology**: Loosened candidates threshold to `0.2` (approx 78° tilt) to force the Priority Queue to sweep curved surfaces cleanly, turning spheres into quad-dominant meshes!
 - **Symmetry**: Removed legacy `x1000` scaling up and down during Manifold-3D CSG boolean union to prevent double-surfaces hanging on the seam. Added a `weldVertices` pass *after* union so quads can gracefully merge across the mirror plane.
