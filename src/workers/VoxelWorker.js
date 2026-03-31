@@ -727,6 +727,9 @@ function symmetryMirror(msg) {
       }
     }
 
+    const normal = msg.nPlane; 
+    const pt = msg.ptPlane;
+
     // 1. Clean up unscaled quad face indices + weld duplicate vertices (watertight)
     console.log(`[VoxelWorker] weldVertices starting... for ${triFaces.length} faces`);
     const welded = weldVertices(vertices, triFaces);
@@ -742,6 +745,21 @@ function symmetryMirror(msg) {
     cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
     console.log(`[VoxelWorker] filterCollinearTriangles done! faces length=${cleanFaces.length}`);
 
+    // 4. Snap vertices to the symmetry plane before slicing!
+    const snapEpsilon = 1e-3; 
+    for (let i = 0; i < welded.vertices.length; i += 3) {
+        const dx = welded.vertices[i] - pt[0];
+        const dy = welded.vertices[i + 1] - pt[1];
+        const dz = welded.vertices[i + 2] - pt[2];
+        const dist = dx * normal[0] + dy * normal[1] + dz * normal[2];
+        
+        if (Math.abs(dist) < snapEpsilon) {
+            welded.vertices[i] -= dist * normal[0];
+            welded.vertices[i + 1] -= dist * normal[1];
+            welded.vertices[i + 2] -= dist * normal[2];
+        }
+    }
+
     const triVertsTyped = new Uint32Array(cleanFaces);
 
     const mMesh = new manifold.Mesh({
@@ -752,10 +770,6 @@ function symmetryMirror(msg) {
 
     console.log(`[VoxelWorker] Creating Manifold constructor...`);
     const m = new manifold.Manifold(mMesh);
-    
-    // Normal and Origin
-    const normal = msg.nPlane; 
-    const pt = msg.ptPlane; 
     
     const offset = pt[0]*normal[0] + pt[1]*normal[1] + pt[2]*normal[2];
 

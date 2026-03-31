@@ -2,6 +2,7 @@
 - **Feature**: **Symmetry Mirror & Quad Merge Optimization**: Ported Blender's BMesh `quad_calc_error` metric (Planarity, Squareness, Area Symmetry) to JavaScript for clean, visually high-grade quad merging.
 - **Topology**: Loosened candidates threshold to `0.2` (approx 78° tilt) to force the Priority Queue to sweep curved surfaces cleanly, turning spheres into quad-dominant meshes!
 - **Symmetry**: Removed legacy `x1000` scaling up and down during Manifold-3D CSG boolean union to prevent double-surfaces hanging on the seam. Added a `weldVertices` pass *after* union so quads can gracefully merge across the mirror plane.
+- **Symmetry**: Pre-snapping vertices to the symmetry plane (threshold 1mm) before slicing with `splitByPlane` to prevent slicing through face interiors and causing slivers!
 - **UI**: New meshes now inherit the wireframe toggle status of their parents during Mirror operations!
 
 # v1.0.63

@@ -44,6 +44,10 @@ To avoid WASM numerical precision errors, the pipeline used to **scale the mesh 
 Even with unscaled vertices, `Manifold-3D` union can leave duplicates at the seam. 
 *   **The Fix**: We added a `weldVertices` pass **immediately after the Manifold Union** before quadrangulating. By collapsing the seam vertices, the Priority Queue could finally see valid shared edges bridging left and right. 
 
+### Artifact 3: Pre-Snapping Vertices to Plane
+Slicing through triangle *faces* creates thin slivers. Slicing through a vertex creates *zero* new geometry!
+*   **The Fix**: We added a loop **before** `splitByPlane` to find vertices within a `1e-3` (1mm) threshold of the symmetry plane and snap them exactly onto it. This ensures that when the CSG slicer runs, it only hits existing vertices and edges, leaving the centerline perfectly clean and watertight!
+
 ---
 
 ## 🚦 Current Status
