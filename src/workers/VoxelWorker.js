@@ -803,21 +803,13 @@ function symmetryMirror(msg) {
         finalVertices[i] = resultMesh.vertProperties[i] / 1000.0;
     }
 
-    // 1. Pad the unpadded resultMesh.triVerts to standard 4-padded array per SculptGL contracts.
-    const numTriangles = resultMesh.triVerts.length / 3;
-    const paddedFaces = new Uint32Array(numTriangles * 4); // Standard unsigned array for WebGL indices
-    let outPtr = 0;
-    for (let i = 0; i < resultMesh.triVerts.length; i += 3) {
-        paddedFaces[outPtr++] = resultMesh.triVerts[i];
-        paddedFaces[outPtr++] = resultMesh.triVerts[i + 1];
-        paddedFaces[outPtr++] = resultMesh.triVerts[i + 2];
-        paddedFaces[outPtr++] = -1; // Standard pad for pure triangles in SculptGL
-    }
+    // 1. Run custom greedy quadrangulation to merge coplanar triangles back into quads.
+    const paddedFaces = quadrangulateGreedy(finalVertices, resultMesh.triVerts);
 
     self.postMessage({
       type: 'SYMMETRY_MIRROR_RESULT',
       v: finalVertices, // XYZ (scaled back down)
-      f: paddedFaces   // padded Int32Array (multiples of 4)
+      f: paddedFaces   // padded Int32Array (multiples of 4, quads and triangles)
     }, [finalVertices.buffer, paddedFaces.buffer]);
 
   } catch (err) {
@@ -835,6 +827,311 @@ function unpadTriangles(faces) {
     triFaces[acc++] = faces[i + 2];
   }
   return triFaces;
+}
+
+// Greedy Coplanar Triangle Merging (Quadrangulation)
+// Blender's EXACT Error metric for quads (ported from bmo_join_triangles.cc)
+function quadCalcError(v1, v2, v3, v4) {
+  let error = 0.0;
+
+  // 1. Normal difference
+  const normalTri = (p1, p2, p3) => {
+    const ax = p2[0] - p1[0], ay = p2[1] - p1[1], az = p2[2] - p1[2];
+    const bx = p3[0] - p1[0], by = p3[1] - p1[1], bz = p3[2] - p1[2];
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len > 0) return [nx / len, ny / len, nz / len];
+    return [0, 0, 1];
+  };
+
+  const angleNorm = (n1, n2) => {
+    let dot = n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2];
+    if (dot > 1.0) dot = 1.0;
+    if (dot < -1.0) dot = -1.0;
+    return Math.acos(dot);
+  };
+
+  const n1A = normalTri(v1, v2, v3);
+  const n2A = normalTri(v1, v3, v4);
+  const angleA = angleNorm(n1A, n2A);
+
+  const n1B = normalTri(v2, v3, v4);
+  const n2B = normalTri(v4, v1, v2);
+  const angleB = angleNorm(n1B, n2B);
+
+  error += (angleA + angleB) / (Math.PI * 2);
+
+  // 2. Co-linearity (Angle distortion)
+  const edgeVecs = [
+    [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]],
+    [v3[0] - v2[0], v3[1] - v2[1], v3[2] - v2[2]],
+    [v4[0] - v3[0], v4[1] - v3[1], v4[2] - v3[2]],
+    [v1[0] - v4[0], v1[1] - v4[1], v1[2] - v4[2]]
+  ];
+
+  for (let i = 0; i < 4; i++) {
+    const len = Math.sqrt(edgeVecs[i][0] * edgeVecs[i][0] + edgeVecs[i][1] * edgeVecs[i][1] + edgeVecs[i][2] * edgeVecs[i][2]);
+    if (len > 0) { edgeVecs[i][0] /= len; edgeVecs[i][1] /= len; edgeVecs[i][2] /= len; }
+  }
+
+  const pi_2 = Math.PI / 2;
+  const dev1 = Math.abs(angleNorm(edgeVecs[0], edgeVecs[1]) - pi_2);
+  const dev2 = Math.abs(angleNorm(edgeVecs[1], edgeVecs[2]) - pi_2);
+  const dev3 = Math.abs(angleNorm(edgeVecs[2], edgeVecs[3]) - pi_2);
+  const dev4 = Math.abs(angleNorm(edgeVecs[3], edgeVecs[0]) - pi_2);
+
+  error += (dev1 + dev2 + dev3 + dev4) / (Math.PI * 2);
+
+  // 3. Concavity (Area difference)
+  const areaTri = (p1, p2, p3) => {
+    const ax = p2[0] - p1[0], ay = p2[1] - p1[1], az = p2[2] - p1[2];
+    const bx = p3[0] - p1[0], by = p3[1] - p1[1], bz = p3[2] - p1[2];
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
+    return 0.5 * Math.sqrt(nx * nx + ny * ny + nz * nz);
+  };
+
+  const areaTriA = areaTri(v1, v2, v3) + areaTri(v1, v3, v4);
+  const areaTriB = areaTri(v2, v3, v4) + areaTri(v4, v1, v2);
+
+  const minArea = Math.min(areaTriA, areaTriB);
+  const maxArea = Math.max(areaTriA, areaTriB);
+
+  error += maxArea > 0 ? (1.0 - minArea / maxArea) : 1.0;
+
+  return error;
+}
+
+// Coplanar Triangle Merging (Quadrangulation)
+function quadrangulateGreedy(vertices, triIndices) {
+  if (!triIndices || triIndices.length === 0) return new Uint32Array(0);
+
+  const numTris = triIndices.length / 3;
+  const edgeMap = new Map(); // key -> { tris: [triIdx], v0, v1 }
+
+  // Build Edge Map
+  for (let i = 0; i < numTris; i++) {
+    const v0 = triIndices[i * 3];
+    const v1 = triIndices[i * 3 + 1];
+    const v2 = triIndices[i * 3 + 2];
+
+    const edges = [
+      [v0, v1],
+      [v1, v2],
+      [v2, v0]
+    ];
+
+    for (const [a, b] of edges) {
+      const minV = Math.min(a, b);
+      const maxV = Math.max(a, b);
+      const key = `${minV}_${maxV}`;
+
+      let edgeData = edgeMap.get(key);
+      if (!edgeData) {
+        edgeData = { tris: [], v0: minV, v1: maxV };
+        edgeMap.set(key, edgeData);
+      }
+      edgeData.tris.push(i);
+    }
+  }
+
+  // Pre-calculate triangle normals
+  const normals = new Float32Array(numTris * 3);
+  for (let i = 0; i < numTris; i++) {
+    const v0 = triIndices[i * 3] * 3;
+    const v1 = triIndices[i * 3 + 1] * 3;
+    const v2 = triIndices[i * 3 + 2] * 3;
+
+    const ax = vertices[v1] - vertices[v0];
+    const ay = vertices[v1 + 1] - vertices[v0 + 1];
+    const az = vertices[v1 + 2] - vertices[v0 + 2];
+
+    const bx = vertices[v2] - vertices[v0];
+    const by = vertices[v2 + 1] - vertices[v0 + 1];
+    const bz = vertices[v2 + 2] - vertices[v0 + 2];
+
+    let nx = ay * bz - az * by;
+    let ny = az * ax - ax * bz;
+    let nz = ax * by - ay * bx;
+
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len > 0.0001) {
+      nx /= len;
+      ny /= len;
+      nz /= len;
+    }
+
+    normals[i * 3] = nx;
+    normals[i * 3 + 1] = ny;
+    normals[i * 3 + 2] = nz;
+  }
+
+  const merged = new Uint8Array(numTris);
+  const outQuads = [];
+  const outTris = [];
+
+  // Candidate collection
+  const candidates = [];
+
+  for (const [key, edgeData] of edgeMap.entries()) {
+    if (edgeData.tris.length !== 2) continue;
+
+    const triA = edgeData.tris[0];
+    const triB = edgeData.tris[1];
+
+    if (merged[triA] || merged[triB]) continue;
+
+    const dot = normals[triA * 3] * normals[triB * 3] +
+                normals[triA * 3 + 1] * normals[triB * 3 + 1] +
+                normals[triA * 3 + 2] * normals[triB * 3 + 2];
+
+    if (dot < 0.2) continue; // Loosen candidate threshold (allow up to ~78 degrees tilt)
+
+    const av0 = triIndices[triA * 3];
+    const av1 = triIndices[triA * 3 + 1];
+    const av2 = triIndices[triA * 3 + 2];
+
+    const bv0 = triIndices[triB * 3];
+    const bv1 = triIndices[triB * 3 + 1];
+    const bv2 = triIndices[triB * 3 + 2];
+
+    let unsharedA = -1;
+    if (av0 !== edgeData.v0 && av0 !== edgeData.v1) unsharedA = av0;
+    if (av1 !== edgeData.v0 && av1 !== edgeData.v1) unsharedA = av1;
+    if (av2 !== edgeData.v0 && av2 !== edgeData.v1) unsharedA = av2;
+
+    let unsharedB = -1;
+    if (bv0 !== edgeData.v0 && bv0 !== edgeData.v1) unsharedB = bv0;
+    if (bv1 !== edgeData.v0 && bv1 !== edgeData.v1) unsharedB = bv1;
+    if (bv2 !== edgeData.v0 && bv2 !== edgeData.v1) unsharedB = bv2;
+
+    if (unsharedA === -1 || unsharedB === -1) continue;
+
+    // 2D Projection & Angle Sort
+    const pts = [unsharedA, edgeData.v0, unsharedB, edgeData.v1].map(idx => ({
+      idx,
+      x: vertices[idx * 3],
+      y: vertices[idx * 3 + 1],
+      z: vertices[idx * 3 + 2]
+    }));
+
+    const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+    const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+    const cz = (pts[0].z + pts[1].z + pts[2].z + pts[3].z) / 4;
+
+    const nx = normals[triA * 3];
+    const ny = normals[triA * 3 + 1];
+    const nz = normals[triA * 3 + 2];
+
+    let tx = 1, ty = 0, tz = 0;
+    if (Math.abs(nx) > 0.9) { tx = 0; ty = 1; }
+    let ux = ty * nz - tz * ny;
+    let uy = tz * nx - tx * nz;
+    let uz = tx * ny - ty * nx;
+    const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz);
+    ux /= uLen; uy /= uLen; uz /= uLen;
+
+    let vx = ny * uz - nz * uy;
+    let vy = nz * ux - nx * uz;
+    let vz = nx * uy - ny * ux;
+    const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
+    vx /= vLen; vy /= vLen; vz /= vLen;
+
+    const angles = pts.map(p => {
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      const dz = p.z - cz;
+      const x = dx * ux + dy * uy + dz * uz;
+      const y = dx * vx + dy * vy + dz * vz;
+      return { idx: p.idx, x, y, theta: Math.atan2(y, x) };
+    });
+
+    angles.sort((a, b) => a.theta - b.theta);
+
+    // Convexity and Squareness check
+    let isConvex = true;
+    let squarenessError = 0;
+
+    for (let i = 0; i < 4; i++) {
+      const p0 = angles[i];
+      const p1 = angles[(i + 1) % 4];
+      const p2 = angles[(i + 2) % 4];
+
+      const dx1 = p1.x - p0.x;
+      const dy1 = p1.y - p0.y;
+      const dx2 = p2.x - p1.x;
+      const dy2 = p2.y - p1.y;
+
+      const cross = dx1 * dy2 - dy1 * dx2;
+      if (cross < 0) {
+        isConvex = false; // Sign flipped (concave quad)
+        break;
+      }
+
+      const l1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+      const l2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+
+      if (l1 > 1e-6 && l2 > 1e-6) {
+        const dotProduct = (dx1 * dx2 + dy1 * dy2) / (l1 * l2);
+        squarenessError += Math.abs(dotProduct);
+      }
+    }
+
+    // Combine Blender's exact error metric + soft concavity penalty
+    const p1 = [vertices[angles[0].idx * 3], vertices[angles[0].idx * 3 + 1], vertices[angles[0].idx * 3 + 2]];
+    const p2 = [vertices[angles[1].idx * 3], vertices[angles[1].idx * 3 + 1], vertices[angles[1].idx * 3 + 2]];
+    const p3 = [vertices[angles[2].idx * 3], vertices[angles[2].idx * 3 + 1], vertices[angles[2].idx * 3 + 2]];
+    const p4 = [vertices[angles[3].idx * 3], vertices[angles[3].idx * 3 + 1], vertices[angles[3].idx * 3 + 2]];
+
+    let error = quadCalcError(p1, p2, p3, p4);
+    if (!isConvex) {
+      error += 5.0; // Soft penalty instead of hard rejection!
+    }
+
+    candidates.push({
+      triA,
+      triB,
+      error,
+      quad: [angles[0].idx, angles[1].idx, angles[2].idx, angles[3].idx]
+    });
+  }
+
+  // Sort candidates by error (minimize error)
+  candidates.sort((a, b) => a.error - b.error);
+
+  // Merge candidates (Best first)
+  for (const cand of candidates) {
+    if (merged[cand.triA] || merged[cand.triB]) continue;
+    outQuads.push(cand.quad);
+    merged[cand.triA] = 1;
+    merged[cand.triB] = 1;
+  }
+
+  // Set rest of Triangles
+  for (let i = 0; i < numTris; i++) {
+    if (!merged[i]) {
+      outTris.push([triIndices[i * 3], triIndices[i * 3 + 1], triIndices[i * 3 + 2]]);
+    }
+  }
+
+  const finalFaces = new Uint32Array((outQuads.length + outTris.length) * 4);
+  let outPtr = 0;
+  for (const quad of outQuads) {
+    finalFaces[outPtr++] = quad[0];
+    finalFaces[outPtr++] = quad[1];
+    finalFaces[outPtr++] = quad[2];
+    finalFaces[outPtr++] = quad[3];
+  }
+  for (const tri of outTris) {
+    finalFaces[outPtr++] = tri[0];
+    finalFaces[outPtr++] = tri[1];
+    finalFaces[outPtr++] = tri[2];
+    finalFaces[outPtr++] = -1;
+  }
+  return finalFaces;
 }
 
 function remeshQuads(msg) {

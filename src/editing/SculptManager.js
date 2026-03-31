@@ -449,6 +449,9 @@ class SculptManager {
     newMesh.initRender();
 
     if (mesh.getMaterial) newMesh.setMaterial(mesh.getMaterial());
+    if (mesh.getShowWireframe && newMesh.setShowWireframe) {
+      newMesh.setShowWireframe(mesh.getShowWireframe());
+    }
     if (mesh.getTransformData && newMesh.setTransformData) {
       newMesh.setTransformData(mesh.getTransformData()); // Use setter!
     }
