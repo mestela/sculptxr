@@ -742,19 +742,11 @@ function symmetryMirror(msg) {
     cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
     console.log(`[VoxelWorker] filterCollinearTriangles done! faces length=${cleanFaces.length}`);
 
-    // Scale up by 1000 to avoid precision issues in WASM
-    console.log(`[VoxelWorker] Scaling up by 1000 for precision...`);
-    const scaledVertices = new Float32Array(welded.vertices.length);
-    for (let i = 0; i < welded.vertices.length; i++) {
-        scaledVertices[i] = welded.vertices[i] * 1000.0;
-    }
-
-    // Convert cleanFaces to Uint32Array for manifold.Mesh!
     const triVertsTyped = new Uint32Array(cleanFaces);
 
     const mMesh = new manifold.Mesh({
       numProp: 3, // XYZ
-      vertProperties: scaledVertices,
+      vertProperties: welded.vertices, // Unscaled!
       triVerts: triVertsTyped
     });
 
@@ -762,24 +754,19 @@ function symmetryMirror(msg) {
     const m = new manifold.Manifold(mMesh);
     
     // Normal and Origin
-    const normal = msg.nPlane; // [x, y, z]
-    const pt = msg.ptPlane; // [x, y, z]
+    const normal = msg.nPlane; 
+    const pt = msg.ptPlane; 
     
-    // Scale pt by 1000 as well since we scaled the mesh!
-    const scaledPt = [pt[0] * 1000.0, pt[1] * 1000.0, pt[2] * 1000.0];
-    const offset = scaledPt[0]*normal[0] + scaledPt[1]*normal[1] + scaledPt[2]*normal[2];
+    const offset = pt[0]*normal[0] + pt[1]*normal[1] + pt[2]*normal[2];
 
     console.log(`[VoxelWorker] splitByPlane: normal=[${normal}], offset=${offset}`);
-    const [pos, neg] = m.splitByPlane(normal, offset);
-    console.log(`[VoxelWorker] splitByPlane done! pos valid=${pos.getMesh().triVerts.length > 0}, neg valid=${neg.getMesh().triVerts.length > 0}`);
-    
-    const sideToKeep = msg.side || 1; // 1 for +L, -1 for +R
-    const source = (sideToKeep === 1) ? pos : neg;
-    
-    console.log(`[VoxelWorker] Mirroring side... sideToKeep=${sideToKeep}`);
-    const moved = source.translate([-scaledPt[0], -scaledPt[1], -scaledPt[2]]);
-    const mirrored = moved.mirror(normal);
-    const restored = mirrored.translate(scaledPt);
+    const parts = m.splitByPlane(normal, offset);
+
+    // splitByPlane returns an array of [pos, neg]!
+    const source = msg.sideToKeep === 1 ? parts[0] : parts[1];
+    const moved = source.translate({ x: -pt[0], y: -pt[1], z: -pt[2] });
+    const mirrored = moved.mirror({ x: normal[0], y: normal[1], z: normal[2] });
+    const restored = mirrored.translate({ x: pt[0], y: pt[1], z: pt[2] });
     console.log(`[VoxelWorker] Mirroring done!`);
     
     console.log(`[VoxelWorker] Composing sides...`);
@@ -797,20 +784,17 @@ function symmetryMirror(msg) {
     console.log(`[VoxelWorker] Union/Compose done!`);
     const resultMesh = combined.getMesh();
 
-    // Scale back down by 1000
-    const finalVertices = new Float32Array(resultMesh.vertProperties.length);
-    for (let i = 0; i < resultMesh.vertProperties.length; i++) {
-        finalVertices[i] = resultMesh.vertProperties[i] / 1000.0;
-    }
+    // Weld vertices after Manifold union to remove duplicate seam vertices!
+    const weldedAfter = weldVertices(resultMesh.vertProperties, resultMesh.triVerts);
 
-    // 1. Run custom greedy quadrangulation to merge coplanar triangles back into quads.
-    const paddedFaces = quadrangulateGreedy(finalVertices, resultMesh.triVerts);
+    // 1. Run custom priority quadrangulation to merge coplanar triangles into quads.
+    const paddedFaces = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces);
 
     self.postMessage({
       type: 'SYMMETRY_MIRROR_RESULT',
-      v: finalVertices, // XYZ (scaled back down)
-      f: paddedFaces   // padded Int32Array (multiples of 4, quads and triangles)
-    }, [finalVertices.buffer, paddedFaces.buffer]);
+      v: weldedAfter.vertices, // Use clean welded vertices
+      f: paddedFaces   
+    }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
 
   } catch (err) {
     console.error("symmetryMirror Error:", err);
