@@ -124,6 +124,10 @@ class SculptVoxel extends SculptBase {
         this._main.getSculptManager().onSliceAndCapResult(msg);
       } else if (msg.type === 'SYMMETRY_MIRROR_RESULT') {
         this._main.getSculptManager().onSymmetryMirrorResult(msg);
+      } else if (msg.type === 'TRIANGULATE_RESULT') {
+        this._main.getSculptManager().onTriangulateResult(msg);
+      } else if (msg.type === 'QUADRANGULATE_RESULT') {
+        this._main.getSculptManager().onQuadrangulateResult(msg);
       } else {
         console.log("Voxel: Unknown Worker Message", msg);
       }

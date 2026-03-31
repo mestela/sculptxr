@@ -12,7 +12,7 @@ var Remesh = {};
 Remesh.RESOLUTION = 150;
 Remesh.BLOCK = false;
 Remesh.SMOOTHING = true;
-Remesh.QUADRANGULATE = true;
+Remesh.QUADRANGULATE = false;
 
 var floodFill = function (voxels) {
   var step = voxels.step;

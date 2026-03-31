@@ -152,6 +152,12 @@ self.onmessage = function (e) {
       case 'SLICE_AND_CAP':
         sliceAndCap(msg);
         break;
+      case 'TRIANGULATE_ONLY':
+        triangulateOnly(msg);
+        break;
+      case 'QUADRANGULATE_ONLY':
+        quadrangulateOnly(msg);
+        break;
       case 'SYMMETRY_MIRROR':
         symmetryMirror(msg);
         break;
@@ -1192,6 +1198,48 @@ function quadrangulateGreedy(vertices, triIndices) {
   }
 
   return { paddedFaces: finalFaces, stats };
+}
+
+function triangulateOnly(msg) {
+  // First get raw 3-strided triangles
+  const rawTris = triangulateQuads(msg.f);
+  
+  // Calculate how many triangles we have
+  const nbTris = rawTris.length / 3;
+  
+  // Create 4-stride array with -1 padding
+  const padded = new Uint32Array(nbTris * 4);
+  let pIdx = 0;
+  for (let i = 0; i < rawTris.length; i += 3) {
+    padded[pIdx++] = rawTris[i];
+    padded[pIdx++] = rawTris[i+1];
+    padded[pIdx++] = rawTris[i+2];
+    padded[pIdx++] = 4294967295; // -1
+  }
+
+  self.postMessage({
+    type: 'TRIANGULATE_RESULT',
+    v: msg.v,
+    f: padded
+  }, [msg.v.buffer, padded.buffer]);
+}
+
+function quadrangulateOnly(msg) {
+  // First triangulate if it has quads!
+  const tris = triangulateQuads(msg.f);
+  
+  // Weld vertices to ensure clean connectivity for sorting
+  const welded = weldVertices(msg.v, tris);
+  
+  // Run our perfect quadrangulation!
+  const result = quadrangulateGreedy(welded.vertices, welded.faces);
+  
+  self.postMessage({
+    type: 'QUADRANGULATE_RESULT',
+    v: welded.vertices,
+    f: result.paddedFaces,
+    stats: result.stats
+  }, [welded.vertices.buffer, result.paddedFaces.buffer]);
 }
 
 function remeshQuads(msg) {

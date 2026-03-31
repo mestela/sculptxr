@@ -3,6 +3,7 @@ import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
 import Remesh from './Remesh.js';
+import Mesh from '../mesh/Mesh.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 
 
@@ -469,6 +470,105 @@ class SculptManager {
     this._main.setMesh(newMesh);
 
     console.log(`[SculptManager] Symmetry Mirror Completed!`);
+  }
+
+  onTriangulateResult(data) {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    console.log(`[SculptManager] Manual Triangulation Completed!`);
+
+    // 1. Capture OLD state for UNDO
+    const oldFaces = new Uint32Array(mesh.getFaces());
+    const oldVerts = new Float32Array(mesh.getVertices());
+    const wasQuad = mesh.isQuad;
+
+    // 2. Capture NEW state for REDO
+    const newFaces = new Uint32Array(data.f);
+    const newVerts = new Float32Array(data.v);
+
+    // 3. Define Undo/Redo callbacks
+    const undoTris = () => {
+      mesh.setVertices(oldVerts);
+      mesh.setNbVertices(oldVerts.length / 3);
+      mesh.setFaces(oldFaces);
+      mesh.setNbFaces(oldFaces.length / 4);
+      mesh.isQuad = wasQuad;
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
+      mesh.init(); 
+      Mesh.OPTIMIZE = wasOptim;
+      mesh.initRender();
+      if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+    };
+
+    const redoTris = () => {
+      mesh.setVertices(newVerts);
+      mesh.setNbVertices(newVerts.length / 3);
+      mesh.setFaces(newFaces);
+      mesh.setNbFaces(newFaces.length / 4);
+      mesh.isQuad = false;
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false; // Bypass the fArUV capacity crash!
+      mesh.init(); 
+      Mesh.OPTIMIZE = wasOptim;
+      mesh.initRender();
+      if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+    };
+
+    // 4. Push to StateManager
+    this._main.getStateManager().pushStateCustom(undoTris, redoTris);
+
+    // 5. Apply NOW
+    redoTris();
+  }
+
+  onQuadrangulateResult(data) {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    console.log(`[SculptManager] Manual Quadrangulation Completed!`);
+
+    // 1. Capture OLD state for UNDO
+    const oldFaces = new Uint32Array(mesh.getFaces());
+    const oldVerts = new Float32Array(mesh.getVertices());
+    const wasQuad = mesh.isQuad;
+
+    // 2. Capture NEW state for REDO
+    const newFaces = new Uint32Array(data.f);
+    const newVerts = new Float32Array(data.v);
+
+    const undoQuads = () => {
+      mesh.setVertices(oldVerts);
+      mesh.setNbVertices(oldVerts.length / 3);
+      mesh.setFaces(oldFaces);
+      mesh.setNbFaces(oldFaces.length / 4);
+      mesh.isQuad = wasQuad;
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
+      mesh.init(); 
+      Mesh.OPTIMIZE = wasOptim;
+      mesh.initRender();
+      if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+    };
+
+    const redoQuads = () => {
+      mesh.setVertices(newVerts);
+      mesh.setNbVertices(newVerts.length / 3);
+      mesh.setFaces(newFaces);
+      mesh.setNbFaces(newFaces.length / 4);
+      mesh.isQuad = true;
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false; // Bypass the fArUV capacity crash!
+      mesh.init(); 
+      Mesh.OPTIMIZE = wasOptim;
+      mesh.initRender();
+      if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+    };
+
+    this._main.getStateManager().pushStateCustom(undoQuads, redoQuads);
+
+    redoQuads();
   }
 
   onQuadRemeshResult(data) {

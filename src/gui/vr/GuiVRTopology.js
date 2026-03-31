@@ -207,11 +207,42 @@ export default function getTopologyWidgets(main) {
   y += btnH + gapBtn;
 
   widgets.push({
-    type: 'checkbox', id: 'quadSymmetry', label: 'Quadrangulate Merge', x: col1X, y: y, w: 350, h: btnH,
-    value: Remesh.QUADRANGULATE,
+    type: 'button', id: 'quad_manual', label: 'Quadrangulate', x: col1X, y: y, w: 170, h: btnH,
     onInteract: () => {
-      Remesh.QUADRANGULATE = !Remesh.QUADRANGULATE;
-      if (main.guiXR) main.guiXR._needsRedraw = true;
+      console.log(`[GuiVRTopology] Manual Quadrangulate Button clicked!`);
+      const mesh = main.getMesh();
+      if (!mesh) { console.log(`[GuiVRTopology] No active mesh found!`); return; }
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool._worker) {
+        console.log(`[GuiVRTopology] Sending QUADRANGULATE_ONLY to worker...`);
+        tool._worker.postMessage({
+          type: 'QUADRANGULATE_ONLY',
+          v: mesh.getVertices(),
+          f: mesh.getFaces()
+        });
+      } else {
+        console.log(`[GuiVRTopology] No Voxel tool or worker found!`);
+      }
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'tri_manual', label: 'Triangulate', x: col1X + 180, y: y, w: 170, h: btnH,
+    onInteract: () => {
+      console.log(`[GuiVRTopology] Manual Triangulate Button clicked!`);
+      const mesh = main.getMesh();
+      if (!mesh) { console.log(`[GuiVRTopology] No active mesh found!`); return; }
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool._worker) {
+        console.log(`[GuiVRTopology] Sending TRIANGULATE_ONLY to worker...`);
+        tool._worker.postMessage({
+          type: 'TRIANGULATE_ONLY',
+          v: mesh.getVertices(),
+          f: mesh.getFaces()
+        });
+      } else {
+        console.log(`[GuiVRTopology] No Voxel tool or worker found!`);
+      }
     }
   });
   y += btnH + gapBtn;
