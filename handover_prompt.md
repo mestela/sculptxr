@@ -1,45 +1,33 @@
-# Handover Prompt (Protocol Enforced)
-
-**Project Status**: Stable. The VR Sidebar has been overhauled into a modern 3-tab system ("Rendering", "Topology", "Sculpting"). The production build is fixed (Web Worker dependencies are now bundled correctly using Vite's `?worker` and configure output format `es`). 
-
-**Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Current Branch**: `threejs_voxel_branch`
-
----
-
-## Deployed Version
-- **Beta**: v1.0.62 (Successfully deployed via `./deploy_beta.sh`)
-- **Prod**: Not yet updated to this version (v1.0.60 legacy)
+# SculptXR Handover Prompt
 
 ---
 
 ## Current Situation / Obstacles
 
-We have successfully stabilized the **Voxel Remeshing Pipeline** and cleaned up the codebase for production!
+We have successfully overhauled the **Symmetry Mirror and Triangle-to-Quad Merging** pipeline!
 
 ### Key Achievements Today:
-1.  **Voxel Remesh Stabilization**: Switched to Local Geometry Bounding Box for simulation sizing, decoupling from parent visual transforms.
-2.  **Proportional Distance Field Scaling**: Fixed the "volume collapse" bug during resolution changes.
-3.  **Active Bounds Reset**: Prevented `Verts=0` empty mesh extraction during resampling.
-4.  **Log Stripping**: Systematically purged `[Voxel Debug]`, `DIAGNOSTIC`, `[SurfaceNets Live]`, `[VoxelWorker]`, `[Mesh Error]`, and `[SculptVoxel]` logs.
-5.  **OBJ Export Fix**: Solved the `.obj.txt` suffix bug by setting the Blob type to `application/octet-stream`.
+1.  **Blender Error Metric Port**: Replaced crude heuristics with Blender's `quad_calc_error` (Planarity, Squareness, Area Concavity).
+2.  **Triangle Candidate Priority Queue**: We collect all adjacent candidates and sort by error value, merging the best (flattest) quads first.
+3.  **No Scale Multipliers**: Removed legacy `x1000` scaling loops from the Manifold-3D WASM pipeline.
+4.  **Weld Pass after Compose**: Added `weldVertices` immediately *after* boolean union so quads can merge across the centerline seam.
+5.  **Pre-Snapping vertices to Plane**: Pushed vertices within 1mm onto the symmetry plane *before* `splitByPlane` runs to eliminate slivers. Centerline is now watertight and perfect!
 
-All fixes are pushed to `threejs_voxel_branch` and deployed to Beta (`v1.0.62`).
+All fixes are pushed to `manifold_branch` on GitHub.
 
 ---
 
 ## Next Steps / Backlog
 
-### Fit & Finish (Immediate Priorities)
-1.  **Transform Gizmo Rethink (Fix Skewing/Wobble)**:
-    -   *Problem*: Direct $4 \times 4$ Matrix accumulation (`mat4` multiplication) is introducing shear/skew when combining non-uniform scale and rotation.
-    -   *Fix Approach*: Switch to standard Three.js **TRS Component Tracking** (`position`, `quaternion`, `scale`) instead of direct matrix multiplication. Let Three.js handle the standard $T \cdot R \cdot S$ multiplication order automatically.
-2.  **Voxel Undo Visualization**: Investigate why voxel undo sometimes reverts data but doesn't redraw the view.
-3.  **Default Matcap Paint Tweak**: Resolve painting artifacts on the default matcap.
+### Immediate Priorities (Fit & Finish)
+1.  **Quad Remesh (`quadrs`) Garbage Output**:
+    -   *Problem*: When using the automated Rust `quadrs` WebAssembly remesher (Instant Meshes port), it occasionally outputs noisy, spaghetti-like geometry. Need to run `console.log` and verify being passed.
+2.  **Selective Edge/Face Dissolve (Manual Topology)**:
+    -   *Approach*: Allow the user to selectively delete an edge between two triangles (or combine them) to form a quad manually.
+3.  **Quadrangulation Completeness**: Investigate why the priority queue still misses a few obvious edges. Check if sorting locks out candidates.
 
 ### Future Roadmap
-1.  **Thumbstick Scrolling**: Map thumbstick to menu scrolling in VR.
+1.  **Transform Gizmo Rethink (Fix Skewing/Wobble)**: Switch to standard Three.js **TRS Component Tracking** (`position`, `quaternion`, `scale`) instead of direct matrix multiplication.
 2.  **Local Storage (IndexedDB)**: Persist user options and local projects.
-3.  **Three-mesh-ui Migration**: Move UI panels to native Three.js geometry.
 
 Good luck! 🛠️
