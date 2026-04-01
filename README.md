@@ -1,4 +1,4 @@
-# SculptXR (v1.0.66)
+# SculptXR (v1.0.67)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.66**: **Edge Dissolve Tool Stabilization**: Resolved face normal inversion bugs using dynamic counter-clockwise vertex evaluation. Handled in-place topology edits to prevent frustrating black/flickering render flips. Removed harmless `Radius: 0` startup error.
-*   **v1.0.65**: **Manual Topology Swaps (Triangulate & Quadrangulate)**: Added explicit buttons to the VR Topology menu to toggle between triangle and quad dominant meshes in-place.
-*   **v1.0.64**: **Symmetry Mirror & Quad Merge Optimization**: Ported Blender's BMesh `quad_calc_error` metric (Planarity, Squareness, Area Symmetry) to JavaScript for clean, visually high-grade quad merging.
+*   **v1.0.67**: **Weld / Target Weld Tool**: Created a new synchronous two-click sequential tool for zipping together separated vertices or merging loose geometry. It is safely integrated into the VR Tool Wheel.
+*   **v1.0.66**: **Edge Dissolve Tool Stabilization**: Resolved face normal inversion bugs using dynamic counter-clockwise vertex evaluation. Handled in-place topology edits to prevent frustrating black/flickering render flips. 
+*   **v1.0.65**: **Manual Topology Swaps**: Added explicit buttons to the VR Topology menu to toggle between triangle and quad dominant meshes in-place.
 
 [View Full Release History](docs/releases.md)
 

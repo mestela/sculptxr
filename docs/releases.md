@@ -1,3 +1,9 @@
+# v1.0.67
+- **Feature**: **Weld / Target Weld Tool**: Created a new synchronous two-click sequential tool for zipping together separated vertices or merging loose geometry. It is safely integrated into the VR Tool Wheel.
+- **Fix**: **VR HUD Scale Fix**: Clapped the `startY` of the mini-HUD tool selections to `Math.max(20, ...)` to ensure that adding more tools does not push the top entries off the top of the viewport.
+- **Fix**: **Silenced HUD Log Floods**: Added translations for `sculptCollapseEdge` and `sculptDissolveVertex` to `english.js` to silence auto-HUD localization warning floods.
+- **Cleanup**: Restored focus to Low Poly tools by removing the unfinished `Global Dissolve` button on standard topology.
+
 # v1.0.66
 - **Fix**: **Edge Dissolve Tool Stabilization**: Resolved a major issue where face normals would flip inward or tilt when reconstructing quads. Implemented dynamic counter-clockwise vertex ordering based on outward-pointing normal dot products.
 - **Performance**: **In-Place Edge Dissolution**: Replaced complete mesh object replacement with in-place index buffer updates. This eliminates the black flashing/disappearing mesh during edit and undo/redo cycles.
