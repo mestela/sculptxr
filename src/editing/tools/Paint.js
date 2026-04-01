@@ -122,6 +122,11 @@ class Paint extends SculptBase {
     var metallic = color[1];
     picking.polyLerp(mesh.getColors(), color);
 
+    // Un-correct Gamma space back to Linear space
+    color[0] = Math.pow(color[0], 2.2);
+    color[1] = Math.pow(color[1], 2.2);
+    color[2] = Math.pow(color[2], 2.2);
+
     // console.log("Picked:", color, roughness, metallic);
     for (let i = 0; i < this._pickCallbacks.length; i++) {
       this._pickCallbacks[i](color, roughness, metallic);
@@ -275,8 +280,9 @@ class Paint extends SculptBase {
       this.sculptStrokeXR(picking, false);
 
       // Sample continuously
+      this.pickColor(picking); // Live update during hover or press
+
       if (isSampling) {
-        this.pickColor(picking);
         this._blockNextStroke = true; // Prevent painting if we exit eyedropper mode while still holding the trigger
       } else if (this._lastPickPressed) {
         // We just stopped sampling

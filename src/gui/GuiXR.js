@@ -1112,7 +1112,7 @@ export default class GuiXR {
     const w = this._canvas.width;
 
     // 1. Scrollbar Interaction
-    if (isScrollInteraction) {
+    if (isScrollInteraction && (this._isDraggingScrollbar || !this._activeColorPickerRegion)) {
       const trackW = 40;
       const trackX = w - trackW;
 
@@ -2541,37 +2541,42 @@ export default class GuiXR {
     const eyeBtnW = 30;
     const eyeBtnH = 30;
 
-    // Hitbox for the eyedropper
-    if (mx >= eyeBtnX && mx <= eyeBtnX + eyeBtnW && my >= eyeBtnY && my <= eyeBtnY + eyeBtnH) {
-      const now = performance.now();
-      if (!this._lastEyeTime) this._lastEyeTime = 0;
-      if (now - this._lastEyeTime > 300) {
-        tool._pickColor = !tool._pickColor;
-        this._lastEyeTime = now;
-        this._needsRedraw = true;
-        this.draw();
-        this._main.render();
-      }
-      return;
-    }
-
-    // Hitbox for the swap button or the swatch area
-    if ((mx >= fgX && mx <= bgX + swatchSize && my >= fgY && my <= bgY + swatchSize) ||
-      (mx >= swapBtnX && mx <= swapBtnX + swapBtnW && my >= swapBtnY && my <= swapBtnY + swapBtnH)) {
-      if (typeof tool.swapColors === 'function') {
+    if (!this._activeColorPickerRegion) {
+      // Hitbox for the eyedropper
+      if (mx >= eyeBtnX && mx <= eyeBtnX + eyeBtnW && my >= eyeBtnY && my <= eyeBtnY + eyeBtnH) {
         const now = performance.now();
-        if (!this._lastSwapTime) this._lastSwapTime = 0;
-
-        // Debounce swapping by checking time instead of hover exit
-        if (now - this._lastSwapTime > 300) {
-          tool.swapColors();
-          this._lastSwapTime = now;
+        if (!this._lastEyeTime) this._lastEyeTime = 0;
+        if (now - this._lastEyeTime > 300) {
+          tool._pickColor = !tool._pickColor;
+          if (tool._pickColor) {
+            tool._oldColor = [tool._color[0], tool._color[1], tool._color[2]]; // Cache for ring swatch
+          }
+          this._lastEyeTime = now;
           this._needsRedraw = true;
           this.draw();
           this._main.render();
         }
+        return;
       }
-      return;
+
+      // Hitbox for the swap button or the swatch area
+      if ((mx >= fgX && mx <= bgX + swatchSize && my >= fgY && my <= bgY + swatchSize) ||
+        (mx >= swapBtnX && mx <= swapBtnX + swapBtnW && my >= swapBtnY && my <= swapBtnY + swapBtnH)) {
+        if (typeof tool.swapColors === 'function') {
+          const now = performance.now();
+          if (!this._lastSwapTime) this._lastSwapTime = 0;
+
+          // Debounce swapping by checking time instead of hover exit
+          if (now - this._lastSwapTime > 300) {
+            tool.swapColors();
+            this._lastSwapTime = now;
+            this._needsRedraw = true;
+            this.draw();
+            this._main.render();
+          }
+        }
+        return;
+      }
     }
 
     // Config (MUST MATCH DRAW LOGIC)
@@ -2601,9 +2606,21 @@ export default class GuiXR {
     if (this._activeColorPickerRegion === 'sv') {
       inSV = true;
       inHue = false;
+      if (this._cachedHue === undefined || this._cachedHue === null) {
+          this._cachedHue = h; // Cache hue so it doesn't reset to 0 (Red) at S=0
+      }
     } else if (this._activeColorPickerRegion === 'hue') {
       inSV = false;
       inHue = true;
+      this._cachedHue = null;
+    } else {
+      this._cachedHue = null;
+      // Resolve initial-click overlap
+      const exactInSV = Math.abs(dx) <= sqHalf && Math.abs(dy) <= sqHalf;
+      if (inHue && inSV) {
+        if (exactInSV) inHue = false;
+        else inSV = false;
+      }
     }
 
     // Priority to SV if both overlap (e.g. at corners)
@@ -2618,7 +2635,8 @@ export default class GuiXR {
       s = Math.max(0, Math.min(1, s));
       v = Math.max(0, Math.min(1, v));
 
-      const newRgb = Utils.hsv2rgb(h, s, v);
+      const activeHue = this._cachedHue !== undefined && this._cachedHue !== null ? this._cachedHue : h;
+      const newRgb = Utils.hsv2rgb(activeHue, s, v);
       vec3.copy(tool._color, newRgb);
       this._needsRedraw = true;
       this.draw();
@@ -2954,6 +2972,10 @@ export default class GuiXR {
     }
     if (!tool || !tool._color) return;
 
+    if (tool._pickColor) {
+      this._cachedHue = null; // Clear SV drag lock while using eyedropper
+    }
+
     // Background
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, w.h);
@@ -2962,6 +2984,7 @@ export default class GuiXR {
     const hsv = [0, 0, 0];
     Utils.rgb2hsv(rgb[0], rgb[1], rgb[2], hsv);
     const [hue, s, v] = hsv;
+    const activeHue = this._cachedHue !== undefined && this._cachedHue !== null ? this._cachedHue : hue;
 
     const x = w.x;
     const y = w.y;
@@ -3067,7 +3090,7 @@ export default class GuiXR {
     ctx.globalCompositeOperation = 'source-over';
 
     // Draw Hue Base
-    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fillStyle = `hsl(${activeHue * 360}, 100%, 50%)`;
     ctx.fillRect(sqX, sqY, sqSize, sqSize);
 
     // Draw Saturation (White to Transparent) - Actually S goes Left(0) to Right(1).
@@ -3101,7 +3124,7 @@ export default class GuiXR {
     // --- 5. Indicators ---
     // Hue Ring Indicator
     // The hue value `h` is 0 at 3 o'clock and increases clockwise.
-    const angle = hue * Math.PI * 2;
+    const angle = activeHue * Math.PI * 2;
     // 0 is Right (Red).
     const rInd = (innerRadius + outerRadius) * 0.5;
     const indX = cx + Math.cos(angle) * rInd;
@@ -3112,7 +3135,7 @@ export default class GuiXR {
     ctx.strokeStyle = 'black';
     ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.fillStyle = `hsl(${hue * 360}, 100%, 50%)`;
+    ctx.fillStyle = `hsl(${activeHue * 360}, 100%, 50%)`;
     ctx.fill();
 
     const svX = sqX + s * sqSize; // saturation

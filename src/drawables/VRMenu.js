@@ -105,9 +105,11 @@ class VRMenu {
     }
   }
 
-  intersect(origin, direction) {
+  intersect(origin, direction, options) {
     if (!this.mesh) return null;
     
+    const allowOutside = options && options.allowOutside;
+
     // Explicitly update matrix world for safety before raycasting
     this.mesh.updateMatrixWorld(true);
 
@@ -155,13 +157,13 @@ class VRMenu {
     const scaledW = this._w * OVERLAY_SCALE;
     const scaledH = this._h * OVERLAY_SCALE;
     
-    if (lx < -(scaledW + pad) || lx > (scaledW + pad) || ly < -(scaledH + pad) || ly > (scaledH + pad)) {
+    if (!allowOutside && (lx < -(scaledW + pad) || lx > (scaledW + pad) || ly < -(scaledH + pad) || ly > (scaledH + pad))) {
         return null; // Hit the infinite plane, but missed the physical menu quad
     }
 
-    // 7. Calculate UVs (Clamp to strict 0-1 bounds so padding doesn't stretch UI clicks)
-    const clx = Math.max(-scaledW, Math.min(scaledW, lx));
-    const cly = Math.max(-scaledH, Math.min(scaledH, ly));
+    // 7. Calculate UVs (Clamp to strict 0-1 bounds so padding doesn't stretch UI clicks, unless outside is allowed)
+    const clx = allowOutside ? lx : Math.max(-scaledW, Math.min(scaledW, lx));
+    const cly = allowOutside ? ly : Math.max(-scaledH, Math.min(scaledH, ly));
 
     const u = (clx + scaledW) / (2 * scaledW);
     const v = (cly + scaledH) / (2 * scaledH);

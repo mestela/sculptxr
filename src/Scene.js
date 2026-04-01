@@ -2043,31 +2043,44 @@ class Scene {
 
             // 2. Outer Ring (Surface Cursor) - Split into Top/Bottom arcs for color comparison
             const pointsTop = [];
-            const pointsBottom = [];
+            const pointsBottomLeft = [];
+            const pointsBottomRight = [];
             const segments = 32;
+            const qSegs = segments / 2;
+
             for (let i = 0; i <= segments; i++) {
                 const thetaTop = (i / segments) * Math.PI; // 0 to PI
                 pointsTop.push(new THREE.Vector3(Math.cos(thetaTop), Math.sin(thetaTop), 0));
 
-                const thetaBottom = Math.PI + (i / segments) * Math.PI; // PI to 2PI
-                pointsBottom.push(new THREE.Vector3(Math.cos(thetaBottom), Math.sin(thetaBottom), 0));
+                if (i <= qSegs) {
+                    const thetaBL = Math.PI + (i / qSegs) * (Math.PI / 2); // PI to 1.5PI
+                    pointsBottomLeft.push(new THREE.Vector3(Math.cos(thetaBL), Math.sin(thetaBL), 0));
+
+                    const thetaBR = 1.5 * Math.PI + (i / qSegs) * (Math.PI / 2); // 1.5PI to 2PI
+                    pointsBottomRight.push(new THREE.Vector3(Math.cos(thetaBR), Math.sin(thetaBR), 0));
+                }
             }
 
             const geoTop = new THREE.BufferGeometry().setFromPoints(pointsTop);
-            const geoBottom = new THREE.BufferGeometry().setFromPoints(pointsBottom);
+            const geoBottomLeft = new THREE.BufferGeometry().setFromPoints(pointsBottomLeft);
+            const geoBottomRight = new THREE.BufferGeometry().setFromPoints(pointsBottomRight);
 
             const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
-            const matBottom = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const matBottomLeft = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const matBottomRight = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
 
             const lineTop = new THREE.Line(geoTop, matTop);
             lineTop.name = "top";
-            const lineBottom = new THREE.Line(geoBottom, matBottom);
-            lineBottom.name = "bottom";
+            const lineBottomLeft = new THREE.Line(geoBottomLeft, matBottomLeft);
+            lineBottomLeft.name = "bottom_left";
+            const lineBottomRight = new THREE.Line(geoBottomRight, matBottomRight);
+            lineBottomRight.name = "bottom_right";
 
             const ringLine = new THREE.Group();
             ringLine.name = "cursor_ring";
             ringLine.add(lineTop);
-            ringLine.add(lineBottom);
+            ringLine.add(lineBottomLeft);
+            ringLine.add(lineBottomRight);
             group.add(ringLine);
 
             const dotGeo = new THREE.BufferGeometry();
@@ -2985,15 +2998,12 @@ class Scene {
             targetGuiXR = this._activePressedGui;
             
             // Re-verify the hit actually belongs to the locked GUI mesh.
-            let lockedMesh = null;
-            if (targetGuiXR === this._guiXR) lockedMesh = this._vrMenu;
-            if (targetGuiXR === this._guiMini) lockedMesh = this._vrMiniHUD;
-            if (targetGuiXR === this._guiPopup) lockedMesh = this._vrPopup;
-            
-            if (hit && hit.object !== lockedMesh && hit.object !== lockedMesh.mesh) {
-                // Slipped onto another menu, or into empty space. 
-                // We keep `hit = null` here to tell the UI we've dragged off the edge.
-                hit = null;
+            const lockedMenuObj = (targetGuiXR === this._guiXR) ? this._vrMenu : (targetGuiXR === this._guiMini ? this._vrMiniHUD : this._vrPopup);
+            if (!hit || (lockedMenuObj && hit.object !== lockedMenuObj && hit.object !== lockedMenuObj.mesh)) {
+                if (lockedMenuObj) {
+                    const planeHit = lockedMenuObj.intersect(origin, dir, { allowOutside: true });
+                    if (planeHit) hit = planeHit;
+                }
             }
           }
 
@@ -3856,6 +3866,13 @@ class Scene {
         this._vrLockedHand = source.handedness; // LOCK HAND
         this._vrTriggerReleaseTime = 0; // Reset Timer
 
+        const cTool = this._sculptManager.getCurrentTool();
+        if (cTool && cTool._pickColor) {
+            this._eyedropperStartColor = [cTool._color[0], cTool._color[1], cTool._color[2]];
+        } else {
+            this._eyedropperStartColor = null;
+        }
+
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
       }
@@ -3869,6 +3886,7 @@ class Scene {
         this._vrSculpting = false;
         this._vrLockedHand = null; // UNLOCK HAND
         this._vrTriggerReleaseTime = 0;
+        this._eyedropperStartColor = null;
 
         this._sculptManager.end();
         this._action = Enums.Action.NOTHING;
@@ -4391,6 +4409,12 @@ class Scene {
                 if (isPicking && pickedMesh && pickedMesh.getColors()) {
                     const tempColor = vec3.create();
                     this._picking.polyLerp(pickedMesh.getColors(), tempColor);
+                    
+                    // Un-correct Gamma space back to Linear space for Three.js rendering
+                    tempColor[0] = Math.pow(tempColor[0], 2.2);
+                    tempColor[1] = Math.pow(tempColor[1], 2.2);
+                    tempColor[2] = Math.pow(tempColor[2], 2.2);
+
                     sampledColor.setRGB(tempColor[0], tempColor[1], tempColor[2]);
                     hasSampled = true;
                 }
@@ -4398,10 +4422,8 @@ class Scene {
                 if (this._vrIsNegative) {
                     color.setRGB(cMax, cMin, cMin); // Red
                 } else if (isPaint && tool._color) {
-                    const r = base + intensity * (tool._color[0] - base);
-                    const g = base + intensity * (tool._color[1] - base);
-                    const b = base + intensity * (tool._color[2] - base);
-                    color.setRGB(r, g, b);
+                    const activeLowerColor = this._eyedropperStartColor ? this._eyedropperStartColor : tool._color;
+                    color.setRGB(activeLowerColor[0], activeLowerColor[1], activeLowerColor[2]);
                 } else {
                     color.setRGB(cMin, cMin, cMax); // Blue
                 }
@@ -4412,14 +4434,21 @@ class Scene {
                 if (ringLine) {
                     if (ringLine.isGroup) {
                         const topArc = ringLine.getObjectByName("top");
-                        const bottomArc = ringLine.getObjectByName("bottom");
+                        const bottomLArc = ringLine.getObjectByName("bottom_left");
+                        const bottomRArc = ringLine.getObjectByName("bottom_right");
+                        
+                        // Active FG color (uses tool._oldColor captured when eyedropper was enabled)
+                        const activeLowerLeftColor = tool._oldColor ? tool._oldColor : tool._color;
+                        const activeLowerRightColor = tool._colorSecondary; // Always BG color
                         
                         if (hasSampled) {
                             if (topArc && topArc.material) topArc.material.color.copy(sampledColor);
-                            if (bottomArc && bottomArc.material) bottomArc.material.color.copy(color); // Current tool color
+                            if (bottomLArc && bottomLArc.material) bottomLArc.material.color.setRGB(activeLowerLeftColor[0], activeLowerLeftColor[1], activeLowerLeftColor[2]);
+                            if (bottomRArc && bottomRArc.material) bottomRArc.material.color.setRGB(activeLowerRightColor[0], activeLowerRightColor[1], activeLowerRightColor[2]);
                         } else {
                             if (topArc && topArc.material) topArc.material.color.copy(color);
-                            if (bottomArc && bottomArc.material) bottomArc.material.color.copy(color);
+                            if (bottomLArc && bottomLArc.material) bottomLArc.material.color.copy(color);
+                            if (bottomRArc && bottomRArc.material) bottomRArc.material.color.setRGB(activeLowerRightColor[0], activeLowerRightColor[1], activeLowerRightColor[2]);
                         }
                     } else if (ringLine.material) {
                         ringLine.material.color.copy(hasSampled ? sampledColor : color);
