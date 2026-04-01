@@ -3187,31 +3187,19 @@ export default class GuiXR {
     const eyeBtnX = x + w.w - pad - swatchSize - 5;
     const eyeBtnY = y + pad - 5;
 
-    // Draw Eyedropper Icon (a small pipette)
-    ctx.strokeStyle = tool._pickColor ? '#0ff' : '#aaa'; // Highlight if active
-    ctx.lineWidth = 2;
-
-    // Base/Bulb
-    ctx.beginPath();
-    ctx.arc(eyeBtnX + 22, eyeBtnY + 8, 4, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = tool._pickColor ? '#0ff' : 'transparent';
-    ctx.fill();
-
-    // Tube
-    ctx.beginPath();
-    ctx.moveTo(eyeBtnX + 19, eyeBtnY + 11);
-    ctx.lineTo(eyeBtnX + 8, eyeBtnY + 22);
-    ctx.lineTo(eyeBtnX + 11, eyeBtnY + 25);
-    ctx.lineTo(eyeBtnX + 22, eyeBtnY + 14);
-    ctx.stroke();
-
-    // Tip
-    ctx.beginPath();
-    ctx.moveTo(eyeBtnX + 8, eyeBtnY + 22);
-    ctx.lineTo(eyeBtnX + 5, eyeBtnY + 28);
-    ctx.lineTo(eyeBtnX + 11, eyeBtnY + 25);
-    ctx.stroke();
+    // Draw Standard Outline Eyedropper Icon (Lucide/MIT) via Path2D without scaling (Full paths)
+    const eyePath1 = new Path2D('m12 9-8.414 8.414A2 2 0 0 0 3 18.828v1.344a2 2 0 0 1-.586 1.414A2 2 0 0 1 3.828 21h1.344a2 2 0 0 0 1.414-.586L15 12');
+    const eyePath2 = new Path2D('m18 9 .4.4a1 1 0 1 1-3 3l-3.8-3.8a1 1 0 1 1 3-3l.4.4 3.4-3.4a1 1 0 1 1 3 3z');
+    const eyePath3 = new Path2D('m2 22 .414-.414');
+    
+    ctx.save();
+    ctx.translate(eyeBtnX + 3, eyeBtnY + 3); // Center 24x24 inside 30x30 without scaling
+    ctx.strokeStyle = tool._pickColor ? '#0ff' : '#aaa';
+    ctx.lineWidth = 2; // Fixed line weight to ensure crisp output
+    ctx.stroke(eyePath1);
+    ctx.stroke(eyePath2);
+    ctx.stroke(eyePath3);
+    ctx.restore();
   }
 
   _createFilteredContextProxy(realCtx) {

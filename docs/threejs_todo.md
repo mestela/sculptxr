@@ -7,18 +7,6 @@
 ---
 
 ## 1. Todo
-### Fit & Finish Priorities (Current Focus)
-* [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
-* [x] **Symmetry**: get working in all modes
-* [x] **wireframe overlays**
-* [x] **other rendering modes** like matcaps, normals, etc.
-* [x] **Wireframe/Materials**
-* [x] **Sculpting "Feel"**: match to webgl build
-* [x] transform still behaves a bit wacky when used on cylinder / other objects besides the sphere, especially during rotation
-* [x] when exporting obj files it actually saves them as obj.txt for some reason
-
-### Todo misc
-* [ ] **fix paint issues in default matcap image**
 * [ ] **thumbstick should scroll menu**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
@@ -29,7 +17,16 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
-* [?] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view
+* [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
+* [x] **Symmetry**: get working in all modes
+* [x] **wireframe overlays**
+* [x] **other rendering modes** like matcaps, normals, etc.
+* [x] **Wireframe/Materials**
+* [x] **Sculpting "Feel"**: match to webgl build
+* [x] transform still behaves a bit wacky when used on cylinder / other objects besides the sphere, especially during rotation
+* [x] when exporting obj files it actually saves them as obj.txt for some reason
+* [?] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view - cant repro
+* [x] **fix paint issues in default matcap image**
 * [x] **instant meshes rust** very basic quadremesher
 * [x] **control mesh to voxel res**: should happen from the resolution slider nearby
 * [x] **GUI Swap accordian layout to tabs**
@@ -43,8 +40,8 @@
 * [x] **Proper controllers per headset** - selectable for pcvr
 
 ### Bugs during testing
-* [ ] undo in voxel doesn't undo paint
-* [ ] color picker doesn't latch properly; drag too far in the square, it affects the hue circle, vice versa
+* [x] undo in voxel doesn't undo paint
+* [x] color picker doesn't latch properly; drag too far in the square, it affects the hue circle, vice versa
  
 
 ## 3. Device Testing Strategy

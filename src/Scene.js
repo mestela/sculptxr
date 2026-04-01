@@ -2041,13 +2041,33 @@ class Scene {
             volumeCube.visible = false;
             group.add(volumeCube);
 
-            // 2. Outer Ring (Surface Cursor)
-            const circleGeo = new THREE.CircleGeometry(1.0, 32);
-            circleGeo.computeBoundingSphere();
-            const edgeGeo = new THREE.EdgesGeometry(circleGeo);
-            const edgeMat = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
-            const ringLine = new THREE.LineSegments(edgeGeo, edgeMat);
+            // 2. Outer Ring (Surface Cursor) - Split into Top/Bottom arcs for color comparison
+            const pointsTop = [];
+            const pointsBottom = [];
+            const segments = 32;
+            for (let i = 0; i <= segments; i++) {
+                const thetaTop = (i / segments) * Math.PI; // 0 to PI
+                pointsTop.push(new THREE.Vector3(Math.cos(thetaTop), Math.sin(thetaTop), 0));
+
+                const thetaBottom = Math.PI + (i / segments) * Math.PI; // PI to 2PI
+                pointsBottom.push(new THREE.Vector3(Math.cos(thetaBottom), Math.sin(thetaBottom), 0));
+            }
+
+            const geoTop = new THREE.BufferGeometry().setFromPoints(pointsTop);
+            const geoBottom = new THREE.BufferGeometry().setFromPoints(pointsBottom);
+
+            const matTop = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+            const matBottom = new THREE.LineBasicMaterial({ color: 0x4488ff, depthTest: false, transparent: true, opacity: 0.8, linewidth: 2 });
+
+            const lineTop = new THREE.Line(geoTop, matTop);
+            lineTop.name = "top";
+            const lineBottom = new THREE.Line(geoBottom, matBottom);
+            lineBottom.name = "bottom";
+
+            const ringLine = new THREE.Group();
             ringLine.name = "cursor_ring";
+            ringLine.add(lineTop);
+            ringLine.add(lineBottom);
             group.add(ringLine);
 
             const dotGeo = new THREE.BufferGeometry();
@@ -4311,9 +4331,10 @@ class Scene {
 
                 const isVoxelTool = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
                 const isCubeShape = isVoxelTool && tool._shape === 1;
+                const isPicking = tool && tool._pickColor;
 
-                if (volumeSphere) volumeSphere.visible = !isCubeShape;
-                if (volumeCube) volumeCube.visible = isCubeShape;
+                if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
+                if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
 
                 cursorGroup.visible = true;
@@ -4364,6 +4385,16 @@ class Scene {
                 const cMin = base - (intensity * base);         // 0.5 -> 0.0
                 
                 const color = new THREE.Color();
+                const sampledColor = new THREE.Color();
+                let hasSampled = false;
+
+                if (isPicking && pickedMesh && pickedMesh.getColors()) {
+                    const tempColor = vec3.create();
+                    this._picking.polyLerp(pickedMesh.getColors(), tempColor);
+                    sampledColor.setRGB(tempColor[0], tempColor[1], tempColor[2]);
+                    hasSampled = true;
+                }
+
                 if (this._vrIsNegative) {
                     color.setRGB(cMax, cMin, cMin); // Red
                 } else if (isPaint && tool._color) {
@@ -4377,7 +4408,23 @@ class Scene {
 
                 if (volumeSphere) volumeSphere.material.uniforms.color.value.copy(color);
                 if (volumeCube) volumeCube.material.uniforms.color.value.copy(color);
-                if (ringLine) ringLine.material.color.copy(color);
+                
+                if (ringLine) {
+                    if (ringLine.isGroup) {
+                        const topArc = ringLine.getObjectByName("top");
+                        const bottomArc = ringLine.getObjectByName("bottom");
+                        
+                        if (hasSampled) {
+                            if (topArc && topArc.material) topArc.material.color.copy(sampledColor);
+                            if (bottomArc && bottomArc.material) bottomArc.material.color.copy(color); // Current tool color
+                        } else {
+                            if (topArc && topArc.material) topArc.material.color.copy(color);
+                            if (bottomArc && bottomArc.material) bottomArc.material.color.copy(color);
+                        }
+                    } else if (ringLine.material) {
+                        ringLine.material.color.copy(hasSampled ? sampledColor : color);
+                    }
+                }
             } else if (cursorGroup) {
                 cursorGroup.visible = false;
                 // if (doLog) console.log(`  cursorGroup HIDDEN! cursorGroup missing?`);
