@@ -474,16 +474,32 @@ class SculptManager {
       newMesh.setFaces(data.f);
       newMesh.setNbFaces(data.f.length / 4);
       
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
       newMesh.init();
+      Mesh.OPTIMIZE = wasOptim;
       newMesh.initRender();
       
       newMesh.setMatrix(mesh.getMatrix());
       newMesh.setShaderType(mesh.getShaderType());
       if (mesh.getShowWireframe) newMesh.setShowWireframe(mesh.getShowWireframe());
-      newMesh.isQuad = mesh.isQuad; // Preserve quad flag across repairs!
+      newMesh.isQuad = mesh.isQuad; 
 
-      this._main.replaceMesh(mesh, newMesh);
-      return; // Do not also color it red if we replace it!
+      const undoFaults = () => {
+        console.log(`[SculptManager] undoFaults EXECUTE`);
+        this._main.replaceMesh(newMesh, mesh);
+        if (this._main.guiXR && this._main.guiXR.refreshSceneWidget) this._main.guiXR.refreshSceneWidget();
+      };
+      
+      const redoFaults = () => {
+        console.log(`[SculptManager] redoFaults EXECUTE`);
+        this._main.replaceMesh(mesh, newMesh);
+        if (this._main.guiXR && this._main.guiXR.refreshSceneWidget) this._main.guiXR.refreshSceneWidget();
+      };
+
+      redoFaults();
+      this._main.getStateManager().pushStateCustom(undoFaults, redoFaults);
+      return; 
     }
 
     const indices = data.holesIndices;

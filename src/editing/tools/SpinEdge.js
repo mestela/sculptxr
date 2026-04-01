@@ -1,4 +1,5 @@
 import Utils from '../../misc/Utils.js';
+import Mesh from '../../mesh/Mesh.js';
 import SculptBase from './SculptBase.js';
 import Geometry from '../../math3d/Geometry.js';
 
@@ -131,8 +132,12 @@ class SpinEdge extends SculptBase {
     const redoFaces = newFaces;
 
     const undoSpin = () => {
+      console.log(`[SpinEdge] undoSpin EXECUTE`);
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
       activeMesh.setFaces(undoFaces);
       activeMesh.init();
+      Mesh.OPTIMIZE = wasOptim;
       activeMesh.initRender();
       if (activeMesh._meshData) {
         activeMesh._meshData._drawElementsWireframe = null;
@@ -142,8 +147,12 @@ class SpinEdge extends SculptBase {
     };
 
     const redoSpin = () => {
+      console.log(`[SpinEdge] redoSpin EXECUTE`);
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
       activeMesh.setFaces(redoFaces);
       activeMesh.init();
+      Mesh.OPTIMIZE = wasOptim;
       activeMesh.initRender();
       if (activeMesh._meshData) {
         activeMesh._meshData._drawElementsWireframe = null;

@@ -1,4 +1,5 @@
 import Utils from '../../misc/Utils.js';
+import Mesh from '../../mesh/Mesh.js';
 import SculptBase from './SculptBase.js';
 
 class SplitFace extends SculptBase {
@@ -69,22 +70,28 @@ class SplitFace extends SculptBase {
     activeMesh.init();
     activeMesh.initRender();
 
-    this._main.getStateManager().pushState(mesh);
-
     const undoFaces = faces;
     const redoFaces = newFaces;
 
     const undoSplit = () => {
+      console.log(`[SplitFace] undoSplit EXECUTE: setting f=${undoFaces.length/4}`);
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
       activeMesh.setFaces(undoFaces);
       activeMesh.setNbFaces(undoFaces.length / 4);
       activeMesh.init();
+      Mesh.OPTIMIZE = wasOptim;
       activeMesh.initRender();
     };
 
     const redoSplit = () => {
+      console.log(`[SplitFace] redoSplit EXECUTE: setting f=${redoFaces.length/4}`);
+      const wasOptim = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false;
       activeMesh.setFaces(redoFaces);
       activeMesh.setNbFaces(redoFaces.length / 4);
       activeMesh.init();
+      Mesh.OPTIMIZE = wasOptim;
       activeMesh.initRender();
     };
 

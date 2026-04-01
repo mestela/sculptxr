@@ -56,7 +56,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.FILL_HOLE,
     Enums.Tools.DISSOLVE_EDGE,
     Enums.Tools.SPLIT_FACE,
-    Enums.Tools.SPIN_EDGE
+    Enums.Tools.SPIN_EDGE,
+    Enums.Tools.COLLAPSE_EDGE,
+    Enums.Tools.DISSOLVE_VERTEX,
+    Enums.Tools.WELD
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -96,6 +99,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.DISSOLVE_EDGE:
       case Enums.Tools.SPLIT_FACE:
       case Enums.Tools.SPIN_EDGE:
+      case Enums.Tools.WELD:
         return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)
@@ -139,7 +143,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         // 1. Calculate how many valid items are in the list.
         const validOptions = toolOptions.filter(opt => opt !== null);
         const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
-        const startY = 220 - (boxH / 2);
+        const startY = Math.max(20, 220 - (boxH / 2));
 
         // Calculate maximum box width (used for vertical centering)
         const maxBoxW = cols * (btnW + pad) + pad; // Total theoretical width

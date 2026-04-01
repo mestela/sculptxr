@@ -644,4 +644,113 @@ Remesh.voxelMirror = function (mesh, direction) {
   }
 };
 
+Remesh.dissolveGlobalValence2 = function (mesh) {
+  const faces = mesh.getFaces();
+  const vertices = mesh.getVertices();
+  const nbVertices = mesh.getNbVertices();
+  const vrvStartCount = mesh.getVerticesRingVertStartCount();
+  const vertRingVert = mesh.getVerticesRingVert();
+
+  const toRemove = new Set();
+
+  for (let i = 0; i < nbVertices; ++i) {
+    const count = vrvStartCount[i * 2 + 1];
+    if (count === 2) {
+      const start = vrvStartCount[i * 2];
+      const vA = vertRingVert[start];
+      const vB = vertRingVert[start + 1];
+
+      const dAx = vertices[vA * 3] - vertices[i * 3];
+      const dAy = vertices[vA * 3 + 1] - vertices[i * 3 + 1];
+      const dAz = vertices[vA * 3 + 2] - vertices[i * 3 + 2];
+      
+      const dBx = vertices[vB * 3] - vertices[i * 3];
+      const dBy = vertices[vB * 3 + 1] - vertices[i * 3 + 1];
+      const dBz = vertices[vB * 3 + 2] - vertices[i * 3 + 2];
+
+      const lA = Math.sqrt(dAx*dAx + dAy*dAy + dAz*dAz);
+      const lB = Math.sqrt(dBx*dBx + dBy*dBy + dBz*dBz);
+
+      if (lA > 0 && lB > 0) {
+        const dot = (dAx*dBx + dAy*dBy + dAz*dBz) / (lA * lB);
+        if (dot < -0.9) { // Relax threshold to catch real world messy seams
+          toRemove.add(i);
+        }
+      }
+    }
+  }
+
+  console.log(`[Remesh] dissolveGlobalValence2 found ${toRemove.size} candidates to remove.`);
+
+  const newFaces = [];
+  let modifiedFaces = 0;
+  let deletedFaces = 0;
+
+  for (let i = 0; i < faces.length; i += 4) {
+    const v1 = faces[i];
+    const v2 = faces[i+1];
+    const v3 = faces[i+2];
+    const v4 = faces[i+3];
+
+    let activeCount = 0;
+    if (v1 !== Utils.TRI_INDEX) activeCount++;
+    if (v2 !== Utils.TRI_INDEX) activeCount++;
+    if (v3 !== Utils.TRI_INDEX) activeCount++;
+    if (v4 !== Utils.TRI_INDEX) activeCount++;
+
+    const remV1 = toRemove.has(v1);
+    const remV2 = toRemove.has(v2);
+    const remV3 = toRemove.has(v3);
+    const remV4 = toRemove.has(v4);
+
+    const remCount = (remV1?1:0) + (remV2?1:0) + (remV3?1:0) + (remV4?1:0);
+
+    if (remCount === 0) {
+      newFaces.push(v1, v2, v3, v4);
+      continue;
+    }
+
+    if (activeCount - remCount <= 2) {
+      deletedFaces++;
+      continue; // Delete degenerate face
+    }
+
+    if (activeCount === 4 && remCount === 1) {
+      modifiedFaces++;
+      let nextV = [];
+      if (!remV1) nextV.push(v1);
+      if (!remV2) nextV.push(v2);
+      if (!remV3) nextV.push(v3);
+      if (!remV4) nextV.push(v4);
+      newFaces.push(nextV[0], nextV[1], nextV[2], Utils.TRI_INDEX);
+      continue;
+    }
+    
+    newFaces.push(v1, v2, v3, v4);
+  }
+
+  console.log(`[Remesh] dissolveGlobalValence2 modified ${modifiedFaces} quads into triangles, deleted ${deletedFaces} degenerate faces.`);
+
+  const typedFaces = new Uint32Array(newFaces);
+  const nmesh = new MeshStatic(mesh.getGL());
+  
+  nmesh.setVertices(vertices);
+  nmesh.setNbVertices(nbVertices);
+  nmesh.setFaces(typedFaces);
+  nmesh.setNbFaces(typedFaces.length / 4);
+  
+  const wasOptim = Mesh.OPTIMIZE;
+  Mesh.OPTIMIZE = false;
+  nmesh.init();
+  Mesh.OPTIMIZE = wasOptim;
+  nmesh.initRender();
+  
+  nmesh.setMatrix(mesh.getMatrix());
+  nmesh.setShaderType(mesh.getShaderType());
+  if (mesh.getShowWireframe) nmesh.setShowWireframe(mesh.getShowWireframe());
+  nmesh.isQuad = mesh.isQuad;
+
+  return nmesh;
+};
+
 export default Remesh;
