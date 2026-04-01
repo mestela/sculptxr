@@ -173,6 +173,26 @@ class TransformVR extends SculptBase {
       quat.copy(this._startControllerQuat, main._vrControllerQuat);
       mat4.copy(this._startMeshMatrix, mesh.getMatrix());
 
+      // Robust TRS extraction for non-uniform scale (Cached for all modes)
+      this._startMeshPos = vec3.create();
+      this._startMeshRot = quat.create();
+      this._startMeshScale = vec3.create();
+
+      const m = this._startMeshMatrix;
+      mat4.getTranslation(this._startMeshPos, m);
+
+      const sx = Math.hypot(m[0], m[1], m[2]);
+      const sy = Math.hypot(m[4], m[5], m[6]);
+      const sz = Math.hypot(m[8], m[9], m[10]);
+      vec3.set(this._startMeshScale, sx, sy, sz);
+
+      const unscaledMat = mat4.clone(m);
+      if (sx > 0.0001) { unscaledMat[0] /= sx; unscaledMat[1] /= sx; unscaledMat[2] /= sx; }
+      if (sy > 0.0001) { unscaledMat[4] /= sy; unscaledMat[5] /= sy; unscaledMat[6] /= sy; }
+      if (sz > 0.0001) { unscaledMat[8] /= sz; unscaledMat[9] /= sz; unscaledMat[10] /= sz; }
+
+      mat4.getRotation(this._startMeshRot, unscaledMat);
+
       const q = main._vrControllerQuat;
       this._controllerRight = vec3.fromValues(1, 0, 0);
       vec3.transformQuat(this._controllerRight, this._controllerRight, q);
@@ -216,8 +236,7 @@ class TransformVR extends SculptBase {
       } else {
         // CONSTRAINED AXIS MOVEMENT (Mesh Local Axes)
 
-        const qRot = quat.create();
-        mat4.getRotation(qRot, this._startMeshMatrix);
+        const qRot = this._startMeshRot;
 
         const vX = vec3.fromValues(1, 0, 0);
         const vY = vec3.fromValues(0, 1, 0);
@@ -255,72 +274,89 @@ class TransformVR extends SculptBase {
       }
     }
 
-    // MODE: ROTATE (Generalized Arcball / Lever)
+    // MODE: ROTATE (Stable Plane Projection for Single Axis)
     if (this._mode === 1) {
       const mask = this._axisMask;
 
-      // Pivot is Mesh Center
-      const pos = vec3.create();
-      const rot = quat.create();
-      const scale = vec3.create();
-      mat4.getTranslation(pos, this._startMeshMatrix);
-      mat4.getRotation(rot, this._startMeshMatrix);
-      mat4.getScaling(scale, this._startMeshMatrix);
+      const pos = this._startMeshPos;
+      const rot = this._startMeshRot;
+      const scale = this._startMeshScale;
 
-      // Vectors from Pivot to Controller (Start vs Current)
       const vStart = vec3.create();
       const vCurr = vec3.create();
       vec3.sub(vStart, this._startControllerPos, pos);
       vec3.sub(vCurr, controllerPos, pos);
 
-      // Normalize
-      vec3.normalize(vStart, vStart);
-      vec3.normalize(vCurr, vCurr);
-
-      // Compute Axis of Rotation (Cross Product)
-      const axis = vec3.create();
-      vec3.cross(axis, vStart, vCurr);
-
-      const len = vec3.length(axis);
-      if (len < 0.0001) return; // No rotation
-
-      vec3.scale(axis, axis, 1.0 / len); // Normalize Axis
-
-      // Compute Angle
-      let dot = vec3.dot(vStart, vCurr);
-      dot = Math.min(1.0, Math.max(-1.0, dot)); // Clamp
-      const angle = Math.acos(dot);
-
-      if (Math.abs(angle) < 0.0001) return;
-
-      // CONSTRAIN AXIS
       const qInv = quat.create();
       quat.conjugate(qInv, rot);
 
-      const axisLocal = vec3.create();
-      vec3.transformQuat(axisLocal, axis, qInv);
+      const vStartLocal = vec3.create();
+      const vCurrLocal = vec3.create();
+      vec3.transformQuat(vStartLocal, vStart, qInv);
+      vec3.transformQuat(vCurrLocal, vCurr, qInv);
 
-      // 2. Apply Mask
-      if (!mask[0]) axisLocal[0] = 0.0;
-      if (!mask[1]) axisLocal[1] = 0.0;
-      if (!mask[2]) axisLocal[2] = 0.0;
+      const axis = vec3.create();
+      let deltaAngle = 0;
 
-      if (vec3.length(axisLocal) < 0.0001) return; // No allowed rotation
-      vec3.normalize(axisLocal, axisLocal);
+      // Single Axis Constraints via Plane Projection
+      if (mask[0] && !mask[1] && !mask[2]) { // Local X Only (YZ Plane)
+        const angleStart = Math.atan2(vStartLocal[2], vStartLocal[1]);
+        const angleCurr = Math.atan2(vCurrLocal[2], vCurrLocal[1]);
+        deltaAngle = angleCurr - angleStart; // Restored to standard subtraction
+        vec3.set(axis, 1.0, 0.0, 0.0);
+        vec3.transformQuat(axis, axis, rot); // To World!
+      } else if (!mask[0] && mask[1] && !mask[2]) { // Local Y Only (XZ Plane)
+        const angleStart = Math.atan2(vStartLocal[2], vStartLocal[0]); // Z, X
+        const angleCurr = Math.atan2(vCurrLocal[2], vCurrLocal[0]);
+        deltaAngle = angleStart - angleCurr; // Flipped to match gesture intuition
+        vec3.set(axis, 0.0, 1.0, 0.0);
+        vec3.transformQuat(axis, axis, rot); // To World!
+      } else if (!mask[0] && !mask[1] && mask[2]) { // Local Z Only (XY Plane)
+        const angleStart = Math.atan2(vStartLocal[1], vStartLocal[0]);
+        const angleCurr = Math.atan2(vCurrLocal[1], vCurrLocal[0]);
+        deltaAngle = angleCurr - angleStart; // Restored to standard subtraction
+        vec3.set(axis, 0.0, 0.0, 1.0);
+        vec3.transformQuat(axis, axis, rot); // To World!
+      } else {
+        // Free Rotation (Arcball)
+        vec3.normalize(vStart, vStart);
+        vec3.normalize(vCurr, vCurr);
 
-      // 3. Transform Back to World
-      vec3.transformQuat(axis, axisLocal, rot);
-      vec3.normalize(axis, axis);
+        vec3.cross(axis, vStart, vCurr);
+        const len = vec3.length(axis);
+        if (len > 0.0001) {
+          vec3.scale(axis, axis, 1.0 / len);
 
-      // 4. Apply Rotation Delta
+          let dot = vec3.dot(vStart, vCurr);
+          dot = Math.min(1.0, Math.max(-1.0, dot));
+          deltaAngle = Math.acos(dot);
+
+          // Project to unmasked local space
+          const axisLocal = vec3.create();
+          vec3.transformQuat(axisLocal, axis, qInv);
+          if (!mask[0]) axisLocal[0] = 0.0;
+          if (!mask[1]) axisLocal[1] = 0.0;
+          if (!mask[2]) axisLocal[2] = 0.0;
+          if (vec3.length(axisLocal) > 0.0001) {
+            vec3.normalize(axisLocal, axisLocal);
+            vec3.transformQuat(axis, axisLocal, rot);
+          } else {
+            return; // No allowed axis
+          }
+        } else {
+          return;
+        }
+      }
+
+      if (Math.abs(deltaAngle) < 0.0001) return;
+
+      // Apply Rotation Delta in World Space
       const qDelta = quat.create();
-      quat.setAxisAngle(qDelta, axis, angle);
+      quat.setAxisAngle(qDelta, axis, deltaAngle);
 
-      // Global Rotation
       const newRot = quat.create();
       quat.multiply(newRot, qDelta, rot);
 
-      // Recompose
       const newMat = mat4.create();
       mat4.fromRotationTranslationScale(newMat, newRot, pos, scale);
 
@@ -332,12 +368,9 @@ class TransformVR extends SculptBase {
     if (this._mode === 2) {
       const mask = this._axisMask;
 
-      const pos = vec3.create();
-      const rot = quat.create();
-      const scale = vec3.create();
-      mat4.getTranslation(pos, this._startMeshMatrix);
-      mat4.getRotation(rot, this._startMeshMatrix);
-      mat4.getScaling(scale, this._startMeshMatrix);
+      const pos = this._startMeshPos;
+      const rot = this._startMeshRot;
+      const scale = vec3.clone(this._startMeshScale); // Clone because we mutate scale in this mode!
 
       const vStart = vec3.create();
       const vCurr = vec3.create();

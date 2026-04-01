@@ -322,8 +322,19 @@ class GizmoVR {
 
     // Sync Rotation with Mesh
     if (meshes.length > 0) {
+      const m = meshes[0].getMatrix();
+      const sx = Math.hypot(m[0], m[1], m[2]);
+      const sy = Math.hypot(m[4], m[5], m[6]);
+      const sz = Math.hypot(m[8], m[9], m[10]);
+
+      const unscaledMat = mat4.clone(m);
+      if (sx > 0.0001) { unscaledMat[0] /= sx; unscaledMat[1] /= sx; unscaledMat[2] /= sx; }
+      if (sy > 0.0001) { unscaledMat[4] /= sy; unscaledMat[5] /= sy; unscaledMat[6] /= sy; }
+      if (sz > 0.0001) { unscaledMat[8] /= sz; unscaledMat[9] /= sz; unscaledMat[10] /= sz; }
+
       const qRot = quat.create();
-      mat4.getRotation(qRot, meshes[0].getMatrix());
+      mat4.getRotation(qRot, unscaledMat);
+      
       const mRot = mat4.create();
       mat4.fromQuat(mRot, qRot);
       mat4.multiply(baseMat, baseMat, mRot);
