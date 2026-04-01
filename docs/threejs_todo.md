@@ -14,11 +14,10 @@
 * [x] **other rendering modes** like matcaps, normals, etc.
 * [x] **Wireframe/Materials**
 * [x] **Sculpting "Feel"**: match to webgl build
-* [ ] transform still behaves a bit wacky when used on cylinder / other objects besides the sphere, especially during rotation
-* [ ] when exporting obj files it actually saves them as obj.txt for some reason
+* [x] transform still behaves a bit wacky when used on cylinder / other objects besides the sphere, especially during rotation
+* [x] when exporting obj files it actually saves them as obj.txt for some reason
 
 ### Todo misc
-* [ ] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view
 * [ ] **fix paint issues in default matcap image**
 * [ ] **thumbstick should scroll menu**
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
@@ -30,7 +29,8 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
-* [x] **quadriflow** very basic quadremesher
+* [?] **voxel undo** sometimes seems to undo the data structure, but doesn't push those changes do the view
+* [x] **instant meshes rust** very basic quadremesher
 * [x] **control mesh to voxel res**: should happen from the resolution slider nearby
 * [x] **GUI Swap accordian layout to tabs**
 * [x] **Voxel refine**: bake, move, smooth normals, support different materials, paint, wasm

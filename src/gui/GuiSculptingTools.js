@@ -461,4 +461,19 @@ GuiTools[Enums.Tools.SPIN_EDGE] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.COLLAPSE_EDGE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.DISSOLVE_VERTEX] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.WELD] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 export default GuiSculptingTools;
