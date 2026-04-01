@@ -27,7 +27,6 @@
     -   **Increment** version in `index.html` (e.g., `<title>SculptXR v0.7.121</title>`).
 3.  **Deploy**:
     -   Run `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
-    -   Script will auto-check git tags and refuse overwrite (unless `FORCE=1`).
 
 ## Workflow Rules (STRICT ADHERENCE)
 1. **PLANNING MODE IS SACRED**: When in "Planning Mode" or asked to "Plan", **NO CODE EDITS** are permitted. Analysis and reading only.

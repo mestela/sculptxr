@@ -1,4 +1,4 @@
-# SculptXR (v1.0.68)
+# SculptXR (v1.0.69)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.68**: **Stabilizing VR Transform Gizmo**: Resolved erratic behavior under non-uniform scale by implementing robust TRS decomposition and fixing local-to-world axis mismatches.
+*   **v1.0.69**: **Live Eyedropper Ring Comparison**: Split the brush surface ring into Top/Bottom arcs to compare sampled color vs current paint color in real-time.
+*   **v1.0.68**: **Stabilizing VR Transform Gizmo**: Resolved erratic behavior under non-uniform scale operations by implementing robust TRS decomposition and fixing local-to-world axis mismatches.
 *   **v1.0.67**: **Weld / Target Weld Tool**: Created a new synchronous two-click sequential tool for zipping together separated vertices or merging loose geometry. It is safely integrated into the VR Tool Wheel.
-*   **v1.0.66**: **Edge Dissolve Tool Stabilization**: Resolved face normal inversion bugs using dynamic counter-clockwise vertex evaluation. Handled in-place topology edits to prevent frustrating black/flickering render flips.
 
 [View Full Release History](docs/releases.md)
 

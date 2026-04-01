@@ -1,3 +1,8 @@
+# v1.0.69
+- **UX**: **Live Eyedropper Ring Comparison**: Split the brush surface ring into Top/Bottom arcs. The Top arc previews the live-sampled color of the mesh, while the Bottom arc displays the current active paint color for direct visual comparison.
+- **UX**: **Hide Sculpt Visuals While Sampling**: The volume brush sphere and cube indicators are now hidden while the eyedropper is active to clearly signal selection mode vs painting mode.
+- **UI**: **Crisp Vector Eyedropper Icon**: Replaced manual canvas strokes with the full Lucide standard vector path drawn at native 1:1 scale (no sub-pixel scaling) to achieve high-fidelity rendering in VR.
+
 # v1.0.68
 - **Fix**: **Stabilizing VR Transform Gizmo**: Resolved erratic behavior under non-uniform scale operations by implementing a robust TRS decomposition mechanism.
 - **Fix**: **Coordinate Space Synchronization**: Fixed a bug where local constrained axes were used directly as world axes, causing gimbal tumbling when rotating offset objects. The axis is now correctly transformed to world coordinates.
