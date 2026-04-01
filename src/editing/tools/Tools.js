@@ -20,6 +20,8 @@ import Grab from './Grab.js';
 import DeleteFace from './DeleteFace.js';
 import FillHole from './FillHole.js';
 import DissolveEdge from './DissolveEdge.js';
+import SplitFace from './SplitFace.js';
+import SpinEdge from './SpinEdge.js';
 
 var Tools = [];
 
@@ -43,6 +45,8 @@ Tools[Enums.Tools.TRANSFORM_VR] = TransformVR;
 Tools[Enums.Tools.DELETE_FACE] = DeleteFace;
 Tools[Enums.Tools.FILL_HOLE] = FillHole;
 Tools[Enums.Tools.DISSOLVE_EDGE] = DissolveEdge;
+Tools[Enums.Tools.SPLIT_FACE] = SplitFace;
+Tools[Enums.Tools.SPIN_EDGE] = SpinEdge;
 // Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
@@ -65,6 +69,8 @@ Tools[Enums.Tools.TRANSFORM_VR].uiName = 'sculptTransformVR';
 Tools[Enums.Tools.DELETE_FACE].uiName = 'sculptDeleteFace';
 Tools[Enums.Tools.FILL_HOLE].uiName = 'sculptFillHole';
 Tools[Enums.Tools.DISSOLVE_EDGE].uiName = 'sculptDissolveEdge';
+Tools[Enums.Tools.SPLIT_FACE].uiName = 'sculptSplitFace';
+Tools[Enums.Tools.SPIN_EDGE].uiName = 'sculptSpinEdge';
 // Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;

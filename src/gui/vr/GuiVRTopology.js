@@ -6,6 +6,8 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import MeshDynamic from '../../mesh/dynamic/MeshDynamic.js';
 
+let healState = false; // Persistent toggle across UI redraws
+
 export default function getTopologyWidgets(main) {
   const widgets = [];
 
@@ -228,7 +230,9 @@ export default function getTopologyWidgets(main) {
         tool._worker.postMessage({
           type: 'QUADRANGULATE_ONLY',
           v: mesh.getVertices(),
-          f: mesh.getFaces()
+          f: mesh.getFaces(),
+          rejectSeams: true,
+          symmetryX: mesh.getSymmetryOrigin ? mesh.getSymmetryOrigin()[0] : 0
         });
       } else {
         console.log(`[GuiVRTopology] No Voxel tool or worker found!`);
@@ -277,12 +281,8 @@ export default function getTopologyWidgets(main) {
         const mesh = main.getMesh();
         const wasDynamic = mesh.isDynamic;
         
-        if (!mesh.isDynamic && mesh.isQuad) { // Check if it's our remeshed static quad mesh!
-            main.getSculptManager().symmetryMirror(1); // Keep positive (Right side if normal is [1,0,0], wait, L->R means Keep Left (Negative side), so we want side = -1)
-            // Wait, our previous logic was Keep Positive if side=1, Negative if side=-1.
-            // L->R means Keep Left (Negative) and Mirror to Right (Positive).
-            // So side = -1!
-            main.getSculptManager().symmetryMirror(-1);
+        if (!mesh.isDynamic) {
+            main.getSculptManager().symmetryMirror(-1); // Keep Negative side (Left), mirror to Positive (Right)
             if (main.guiXR) main.guiXR._needsRedraw = true;
             return;
         }
@@ -303,15 +303,14 @@ export default function getTopologyWidgets(main) {
     onInteract: () => {
       if (main.getMesh()) {
         const mesh = main.getMesh();
-        const wasDynamic = mesh.isDynamic;
-
-        if (!mesh.isDynamic && mesh.isQuad) { // Check if it's our remeshed static quad mesh!
-            main.getSculptManager().symmetryMirror(1); // Keep positive (Right side), so side = 1!
+        if (!mesh.isDynamic) {
+            main.getSculptManager().symmetryMirror(1); // Keep positive (Right), mirror to Left
             if (main.guiXR) main.guiXR._needsRedraw = true;
             return;
         }
 
         let nmesh = Remesh.voxelMirror(mesh, 1);
+        const wasDynamic = mesh.isDynamic;
         if (wasDynamic) nmesh = new MeshDynamic(nmesh);
         main.getStateManager().pushStateAddRemove(nmesh, [mesh]);
         main.getMeshes().splice(main.getIndexMesh(mesh), 1);
@@ -321,8 +320,37 @@ export default function getTopologyWidgets(main) {
       }
     }
   });
-  y += btnH + gapSection;
+  y += btnH + gapBtn;
+  
+  widgets.push({
+    type: 'checkbox', id: 'auto_heals_manifold', label: 'Heal and Weld (Fix Holes)', x: col1X, y: y, w: 350, h: btnH,
+    value: healState,
+    onInteract: () => {
+      healState = !healState;
+      if (main.guiXR) main.guiXR._needsRedraw = true;
+    }
+  });
+  y += btnH + gapBtn;
 
+  widgets.push({
+    type: 'button', id: 'validate_manifold', label: 'Validate Manifold (Color Holes)', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      const mesh = main.getMesh();
+      if (!mesh) return;
+      
+      const tool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (tool && tool._worker) {
+        tool._worker.postMessage({
+          type: 'VALIDATE_MANIFOLD',
+          v: mesh.getVertices(),
+          f: mesh.getFaces(),
+          isTriangles: !mesh.isQuad,
+          heal: healState
+        });
+      }
+    }
+  });
+  y += btnH + gapBtn;
 
   // --- DYNAMIC TOPOLOGY ---
   widgets.push({ type: 'info', label: 'Dynamic Topology', x: col1X, y: y });

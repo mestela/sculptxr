@@ -134,6 +134,8 @@ var TR = {
   sculptDeleteFace: 'Delete Face',
   sculptFillHole: 'Fill Hole',
   sculptDissolveEdge: 'Dissolve Edge',
+  sculptSplitFace: 'Split Face',
+  sculptSpinEdge: 'Spin Edge',
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',

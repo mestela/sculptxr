@@ -161,6 +161,9 @@ self.onmessage = function (e) {
       case 'SYMMETRY_MIRROR':
         symmetryMirror(msg);
         break;
+      case 'VALIDATE_MANIFOLD':
+        validateManifold(msg);
+        break;
       default:
         // console.warn('VoxelWorker: Unknown message', msg.type);
     }
@@ -487,7 +490,7 @@ function filterCollinearTriangles(vertices, faces) {
     const nz = ax * by - ay * bx;
     const lenSq = nx*nx + ny*ny + nz*nz;
 
-    if (lenSq > 1e-12) { // 1e-12 epsilon
+    if (lenSq > 1e-24) {
       out.push(faces[i], faces[i+1], faces[i+2]);
     } else {
       count++;
@@ -530,8 +533,8 @@ function filterDegenerateTriangles(vertices, faces) {
     const cpz = v1x * v2y - v1y * v2x;
 
     const areaSq = cpx * cpx + cpy * cpy + cpz * cpz;
-    if (areaSq < 1e-12) {
-      continue; // Skip zero-area triangle
+    if (areaSq < 1e-24) { // Soften epsilon to prevent dropping valid tiny triangles
+      continue; 
     }
 
     cleanFaces.push(a, b, c);
@@ -543,32 +546,38 @@ function weldVertices(vertices, faces) {
   const uniqueVerts = [];
   const vertexMap = new Map(); // "x,y,z" -> newIndex
   const newFaces = new Uint32Array(faces.length);
+  const newToOldMap = []; // New index -> First seen old index
 
   let nextIndex = 0;
   for (let i = 0; i < faces.length; i++) {
     const oldIdx = faces[i];
     if (oldIdx * 3 >= vertices.length) {
-      // Out of bounds safety
       continue;
     }
     const x = vertices[oldIdx * 3];
     const y = vertices[oldIdx * 3 + 1];
     const z = vertices[oldIdx * 3 + 2];
-    
-    const key = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
-    
+
+    const bucketScale = 50.0; // 0.02 units tolerance
+    const bx = Math.round(x * bucketScale);
+    const by = Math.round(y * bucketScale);
+    const bz = Math.round(z * bucketScale);
+    const key = `${bx}_${by}_${bz}`;
+
     if (!vertexMap.has(key)) {
       vertexMap.set(key, nextIndex);
       uniqueVerts.push(x, y, z);
+      newToOldMap.push(oldIdx); // Save the original index!
       nextIndex++;
     }
-    
+
     newFaces[i] = vertexMap.get(key);
   }
 
   return {
     vertices: new Float32Array(uniqueVerts),
-    faces: newFaces
+    faces: newFaces,
+    newToOldMap: newToOldMap
   };
 }
 
@@ -723,12 +732,16 @@ function symmetryMirror(msg) {
       triFaces = triangulateQuads(faces);
       console.log(`[VoxelWorker] triangulateQuads done!`);
     } else {
-      if (faces.length % 4 === 0 && faces.length % 3 !== 0) {
-        console.log(`[VoxelWorker] unpadTriangles starting... for 4-padded array of length ${faces.length}`);
-        triFaces = unpadTriangles(faces);
-        console.log(`[VoxelWorker] unpadTriangles done!`);
+      if (faces.length % 4 === 0) {
+        if (faces[3] === 4294967295 || faces[3] === 0xFFFFFFFF) {
+          console.log(`[VoxelWorker] unpadTriangles starting... for 4-padded array of length ${faces.length}`);
+          triFaces = unpadTriangles(faces);
+        } else {
+          console.log(`[VoxelWorker] quad mesh detected in triangles path! Triangulating before validation...`);
+          triFaces = triangulateQuads(faces); // Triangulate quads properly!
+        }
       } else {
-        console.log(`[VoxelWorker] faces already unpadded (length % 3 === 0, length=${faces.length}). Using as-is.`);
+        console.log(`[VoxelWorker] faces already unpadded or not 4-padded (length=${faces.length}). Using as-is.`);
         triFaces = faces;
       }
     }
@@ -741,8 +754,6 @@ function symmetryMirror(msg) {
     const welded = weldVertices(vertices, triFaces);
     console.log(`[VoxelWorker] weldVertices done! unique vertices=${welded.vertices.length}, faces=${welded.faces.length}`);
 
-    // 2. Clean up degenerate triangles that were formed by welding!
-    console.log(`[VoxelWorker] filterDegenerateTriangles starting...`);
     let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
     console.log(`[VoxelWorker] filterDegenerateTriangles done! faces length=${cleanFaces.length}`);
 
@@ -766,6 +777,49 @@ function symmetryMirror(msg) {
         }
     }
 
+    // Watertight Check: Measure undirected edges
+    const undirectedCount = new Map();
+    for (let k = 0; k < cleanFaces.length; k += 3) {
+      const a = cleanFaces[k];
+      const b = cleanFaces[k + 1];
+      const c = cleanFaces[k + 2];
+      
+      const edges = [[a, b], [b, c], [c, a]];
+      for (const [u, v] of edges) {
+        const min = Math.min(u, v);
+        const max = Math.max(u, v);
+        const key = `${min}_${max}`;
+        undirectedCount.set(key, (undirectedCount.get(key) || 0) + 1);
+      }
+    }
+
+    let boundaryEdges = 0;
+    let oversharedEdges = 0;
+    for (const [key, count] of undirectedCount.entries()) {
+      if (count === 1) boundaryEdges++;
+      if (count > 2) oversharedEdges++;
+    }
+    console.log(`[VoxelWorker] symmetryMirror Watertight Check: Open Boundaries (Holes)=${boundaryEdges}, Overshared Edges (Branching)=${oversharedEdges}`);
+
+    if (boundaryEdges > 0 || oversharedEdges > 0) {
+      const faultIndices = [];
+      for (const [key, count] of undirectedCount.entries()) {
+        if (count === 1 || count > 2) {
+          const parts = key.split("_");
+          const u = parseInt(parts[0]);
+          const v = parseInt(parts[1]);
+          const oldU = welded.newToOldMap[u];
+          const oldV = welded.newToOldMap[v];
+          faultIndices.push(oldU, oldV);
+        }
+      }
+      self.postMessage({
+        type: 'SYMMETRY_MIRROR_FAULTS',
+        holesIndices: faultIndices
+      });
+      return; // Halt execution early to prevent the known Manifold crash!
+    }
+
     const triVertsTyped = new Uint32Array(cleanFaces);
 
     const mMesh = new manifold.Mesh({
@@ -783,7 +837,7 @@ function symmetryMirror(msg) {
     const parts = m.splitByPlane(normal, offset);
 
     // splitByPlane returns an array of [pos, neg]!
-    const source = msg.sideToKeep === 1 ? parts[0] : parts[1];
+    const source = msg.side === 1 ? parts[0] : parts[1];
     const moved = source.translate({ x: -pt[0], y: -pt[1], z: -pt[2] });
     const mirrored = moved.mirror({ x: normal[0], y: normal[1], z: normal[2] });
     const restored = mirrored.translate({ x: pt[0], y: pt[1], z: pt[2] });
@@ -812,7 +866,8 @@ function symmetryMirror(msg) {
     let topologyStats;
     if (msg.quadrangulate !== false) {
       console.log(`[VoxelWorker] Running custom Priority Quadrangulation...`);
-      const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces);
+      const symmetryX = pt ? pt[0] : 0; // Use symmetry plane center
+      const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces, true, symmetryX); // Reject seam merges
       paddedFaces = result.paddedFaces;
       topologyStats = result.stats;
     } else {
@@ -933,7 +988,7 @@ function quadCalcError(v1, v2, v3, v4) {
 }
 
 // Coplanar Triangle Merging (Quadrangulation)
-function quadrangulateGreedy(vertices, triIndices) {
+function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetryX = 0) {
   if (!triIndices || triIndices.length === 0) return new Uint32Array(0);
 
   const numTris = triIndices.length / 3;
@@ -1029,7 +1084,13 @@ function quadrangulateGreedy(vertices, triIndices) {
 
     const v1x = vertices[edgeData.v0 * 3];
     const v2x = vertices[edgeData.v1 * 3];
-    const isOnSeam = Math.abs(v1x) < 0.5 && Math.abs(v2x) < 0.5;
+    // Check against symmetryX (with tolerance for welding bucket spacing) OR fallback to standard center line (X=0)
+    const isOnSeam = (Math.abs(v1x - symmetryX) < 0.05 && Math.abs(v2x - symmetryX) < 0.05) ||
+                     (Math.abs(v1x) < 0.02 && Math.abs(v2x) < 0.02);
+
+    if (rejectSeams && isOnSeam) {
+      continue; // Skip merging edges that lie on the symmetry plane!
+    }
 
     if (!isOnSeam && Math.abs(dot) < 0.2) {
       stats.rejectedDot++;
@@ -1232,7 +1293,7 @@ function quadrangulateOnly(msg) {
   const welded = weldVertices(msg.v, tris);
   
   // Run our perfect quadrangulation!
-  const result = quadrangulateGreedy(welded.vertices, welded.faces);
+  const result = quadrangulateGreedy(welded.vertices, welded.faces, msg.rejectSeams, msg.symmetryX);
   
   self.postMessage({
     type: 'QUADRANGULATE_RESULT',
@@ -1309,7 +1370,81 @@ function remeshQuads(msg) {
       id: msg.id
     }
   }, transfer);
+}function validateManifold(msg) {
+  const vertices = msg.v;
+  const faces = msg.f;
+  const isTriangles = msg.isTriangles;
+
+  let triFaces = faces;
+  if (!isTriangles) {
+    triFaces = triangulateQuads(faces); // Already available in worker
+  } else {
+    if (faces.length % 4 === 0 && (faces[3] === 4294967295 || faces[3] === 0xFFFFFFFF)) {
+      triFaces = unpadTriangles(faces);
+    } else if (faces.length % 4 === 0) {
+      triFaces = triangulateQuads(faces); // Fallback for quad array in triangles path
+    }
+  }
+
+  const welded = weldVertices(vertices, triFaces);
+  let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
+  cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
+
+  const undirectedCount = new Map();
+  for (let k = 0; k < cleanFaces.length; k += 3) {
+    const a = cleanFaces[k];
+    const b = cleanFaces[k + 1];
+    const c = cleanFaces[k + 2];
+    
+    const edges = [[a, b], [b, c], [c, a]];
+    for (const [u, v] of edges) {
+      const min = Math.min(u, v);
+      const max = Math.max(u, v);
+      const key = `${min}_${max}`;
+      undirectedCount.set(key, (undirectedCount.get(key) || 0) + 1);
+    }
+  }
+
+  let boundaryEdges = 0;
+  let oversharedEdges = 0;
+  const faultIndices = [];
+
+  for (const [key, count] of undirectedCount.entries()) {
+    if (count === 1) boundaryEdges++;
+    if (count > 2) oversharedEdges++;
+
+    if (count === 1 || count > 2) {
+      const parts = key.split("_");
+      const u = parseInt(parts[0]);
+      const v = parseInt(parts[1]);
+      const oldU = welded.newToOldMap[u];
+      const oldV = welded.newToOldMap[v];
+      faultIndices.push(oldU, oldV);
+    }
+  }
+
+  if (msg.heal) {
+    const healWelded = weldVertices(vertices, faces); // Preserves quads or padding by using original faces array
+    
+    const transfer = [];
+    if (healWelded.vertices && healWelded.vertices.buffer) transfer.push(healWelded.vertices.buffer);
+    if (healWelded.faces && healWelded.faces.buffer) transfer.push(healWelded.faces.buffer);
+
+    self.postMessage({
+      type: 'VALIDATE_MANIFOLD_RESULT',
+      holesIndices: faultIndices,
+      holes: boundaryEdges,
+      branching: oversharedEdges,
+      v: healWelded.vertices,
+      f: healWelded.faces
+    }, transfer);
+  } else {
+    self.postMessage({
+      type: 'VALIDATE_MANIFOLD_RESULT',
+      holesIndices: faultIndices,
+      holes: boundaryEdges,
+      branching: oversharedEdges
+    });
+  }
 }
-
-
 

@@ -54,7 +54,9 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     // Delete Face
     Enums.Tools.DELETE_FACE,
     Enums.Tools.FILL_HOLE,
-    Enums.Tools.DISSOLVE_EDGE
+    Enums.Tools.DISSOLVE_EDGE,
+    Enums.Tools.SPLIT_FACE,
+    Enums.Tools.SPIN_EDGE
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -90,6 +92,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.TRANSFORM_VR:
       case Enums.Tools.LOCALSCALE:
       case Enums.Tools.DELETE_FACE:
+      case Enums.Tools.FILL_HOLE:
+      case Enums.Tools.DISSOLVE_EDGE:
+      case Enums.Tools.SPLIT_FACE:
+      case Enums.Tools.SPIN_EDGE:
         return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)

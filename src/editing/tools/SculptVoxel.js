@@ -124,6 +124,10 @@ class SculptVoxel extends SculptBase {
         this._main.getSculptManager().onSliceAndCapResult(msg);
       } else if (msg.type === 'SYMMETRY_MIRROR_RESULT') {
         this._main.getSculptManager().onSymmetryMirrorResult(msg);
+      } else if (msg.type === 'SYMMETRY_MIRROR_FAULTS') {
+        this._main.getSculptManager().onSymmetryMirrorFaults(msg);
+      } else if (msg.type === 'VALIDATE_MANIFOLD_RESULT') {
+        this._main.getSculptManager().onSymmetryMirrorFaults(msg); // Just reuse the faults painter for simplicity!
       } else if (msg.type === 'TRIANGULATE_RESULT') {
         this._main.getSculptManager().onTriangulateResult(msg);
       } else if (msg.type === 'QUADRANGULATE_RESULT') {

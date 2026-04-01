@@ -459,8 +459,52 @@ class SculptManager {
 
     main.addNewMesh(newMesh);
     main.setMesh(newMesh);
+  }
 
-    
+  onSymmetryMirrorFaults(data) {
+    this._isProcessingSlice = false; // Reset lock
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    if (data.v && data.f) {
+      console.log(`[SculptManager] Validated repair received. Shaving and adopting welded mesh!`);
+      const newMesh = new MeshStatic(this._main._gl);
+      newMesh.setVertices(data.v);
+      newMesh.setNbVertices(data.v.length / 3);
+      newMesh.setFaces(data.f);
+      newMesh.setNbFaces(data.f.length / 4);
+      
+      newMesh.init();
+      newMesh.initRender();
+      
+      newMesh.setMatrix(mesh.getMatrix());
+      newMesh.setShaderType(mesh.getShaderType());
+      if (mesh.getShowWireframe) newMesh.setShowWireframe(mesh.getShowWireframe());
+      newMesh.isQuad = mesh.isQuad; // Preserve quad flag across repairs!
+
+      this._main.replaceMesh(mesh, newMesh);
+      return; // Do not also color it red if we replace it!
+    }
+
+    const indices = data.holesIndices;
+    if (!indices || indices.length === 0) return;
+
+    const colors = mesh.getColors();
+    if (colors) {
+      console.log(`[SculptManager] Coloring ${indices.length} fault vertices red.`);
+      
+      for (const idx of indices) {
+        if (idx * 3 >= colors.length) continue;
+        colors[idx * 3] = 1.0;     // Red
+        colors[idx * 3 + 1] = 0.0; // Green
+        colors[idx * 3 + 2] = 0.0; // Blue
+      }
+      
+      mesh.updateColorBuffer(); // Push updated colors to WebGL
+      this._main.render(); // Re-render viewport
+    } else {
+      console.warn("[SculptManager] Cannot color faults - mesh lacks colors array.");
+    }
   }
 
   onSymmetryMirrorResult(data) {
@@ -474,29 +518,50 @@ class SculptManager {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    // Same replacement logic as Slice result
-    const newMesh = new MeshStatic(this._main._gl); // Pass WebGL context!
+    console.log(`[SculptManager] onSymmetryMirrorResult START: current mesh v=${mesh.getNbVertices()} f=${mesh.getNbFaces()} incoming v=${data.v.length/3} f=${data.f.length/4}`);
+
+    // Create NEW mesh object for REDO
+    const newMesh = new MeshStatic(this._main._gl);
     newMesh.setVertices(data.v);
     newMesh.setNbVertices(data.v.length / 3);
     newMesh.setFaces(data.f);
     newMesh.setNbFaces(data.f.length / 4);
+    newMesh.isQuad = true;
 
     newMesh.init();
     newMesh.initRender();
 
+    // Inherit visible and style properties
     if (mesh.getMaterial) newMesh.setMaterial(mesh.getMaterial());
     if (mesh.getShowWireframe && newMesh.setShowWireframe) {
       newMesh.setShowWireframe(mesh.getShowWireframe());
     }
     if (mesh.getTransformData && newMesh.setTransformData) {
-      newMesh.setTransformData(mesh.getTransformData()); // Use setter!
+      newMesh.setTransformData(mesh.getTransformData());
     }
     newMesh.visible = mesh.visible;
-    newMesh.isQuad = true;
 
-    this._main.replaceMesh(mesh, newMesh);
-    this._main.addNewMesh(newMesh);
-    this._main.setMesh(newMesh);
+    const undoMirror = () => {
+      console.log(`[SculptManager] undoMirror EXECUTE: swapping back to old mesh object`);
+      this._main.replaceMesh(newMesh, mesh);
+      if (this._main.guiXR && this._main.guiXR.refreshSceneWidget) {
+        this._main.guiXR.refreshSceneWidget();
+      }
+    };
+
+    const redoMirror = () => {
+      console.log(`[SculptManager] redoMirror EXECUTE: swapping to new mirrored mesh object`);
+      this._main.replaceMesh(mesh, newMesh);
+      if (this._main.guiXR && this._main.guiXR.refreshSceneWidget) {
+        this._main.guiXR.refreshSceneWidget();
+      }
+    };
+
+    // Apply Redo (Execute)
+    redoMirror();
+
+    // Push state
+    this._main.getStateManager().pushStateCustom(undoMirror, redoMirror);
 
     }
 

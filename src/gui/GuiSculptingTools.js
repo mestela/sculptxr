@@ -451,4 +451,14 @@ GuiTools[Enums.Tools.DISSOLVE_EDGE] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.SPLIT_FACE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.SPIN_EDGE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 export default GuiSculptingTools;
