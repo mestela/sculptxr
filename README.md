@@ -1,4 +1,4 @@
-# SculptXR (v1.0.69)
+# SculptXR (v1.0.71)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.71**: **Thumbstick Menu Scrolling and Trigger Dampening**: Scroll the VR Menu using either thumbstick. Snappy 24px default velocity, slows to 4px when secondary trigger held.
+*   **v1.0.70**: **Calibrated Color Picker Infinite UI Drag & Tri-Arc Comparison**: Resolved hue wheel latching reset, prevented lasers dropping when flying off quads, solved double-gamma washouts, and added a 3-way visual color split ring.
 *   **v1.0.69**: **Live Eyedropper Ring Comparison**: Split the brush surface ring into Top/Bottom arcs to compare sampled color vs current paint color in real-time.
-*   **v1.0.68**: **Stabilizing VR Transform Gizmo**: Resolved erratic behavior under non-uniform scale operations by implementing robust TRS decomposition and fixing local-to-world axis mismatches.
-*   **v1.0.67**: **Weld / Target Weld Tool**: Created a new synchronous two-click sequential tool for zipping together separated vertices or merging loose geometry. It is safely integrated into the VR Tool Wheel.
 
 [View Full Release History](docs/releases.md)
 

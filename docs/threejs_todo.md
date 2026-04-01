@@ -7,7 +7,7 @@
 ---
 
 ## 1. Todo
-* [ ] **thumbstick should scroll menu**
+
 * [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
@@ -17,6 +17,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **thumbstick should scroll menu**
 * [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
 * [x] **Symmetry**: get working in all modes
 * [x] **wireframe overlays**
@@ -38,10 +39,9 @@
 * [x] **Transform gizmo**
 * [x] **Outliner**:
 * [x] **Proper controllers per headset** - selectable for pcvr
-
-### Bugs during testing
 * [x] undo in voxel doesn't undo paint
 * [x] color picker doesn't latch properly; drag too far in the square, it affects the hue circle, vice versa
+
  
 
 ## 3. Device Testing Strategy

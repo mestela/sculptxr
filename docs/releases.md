@@ -1,3 +1,13 @@
+# v1.0.71
+- **Feature**: **Thumbstick Menu Scrolling**: Either thumbstick (dominant or non-dominant) can be used to scroll the VR main menu viewport when pointing the laser at it.
+- **UX**: **Variable Scroll Speed Limits**: Default thumbstick scrolling set to a high-tempo `24px` per tick. Holding the secondary trigger drops it to `4px` for fine precision.
+- **Fix**: **Stray Scene.js Comment Glitch**: Reconnected an orphaned `*/` tag that had accidentally broken module parsing.
+
+# v1.0.70
+- **Fix**: **Calibrated Color Space (Gamma Un-correction)**: Solved double-gamma scale washouts when eyedropping from mesh vertex colors. Calibrates raw Linear output correctly to three.js pipeline specs.
+- **Fix**: **Hue Wheel Infinite Drag persistence**: Prevented lasers dropping or focus dropping when flying off the edge of quads by employing infinite-plane intersection math. Resolved hue resetting to Red (H=0) when Saturation reaches 0.
+- **UX**: **Three-Arc Comparison Swatch Ring**: The VR Surface ring is now split into 3 independent arcs: Top 50% (Live Sample), Lower-Left 25% (Previous FG Color at start), Lower-Right 25% (Secondary BG Color) for a total visual side-by-side comparison system.
+
 # v1.0.69
 - **UX**: **Live Eyedropper Ring Comparison**: Split the brush surface ring into Top/Bottom arcs. The Top arc previews the live-sampled color of the mesh, while the Bottom arc displays the current active paint color for direct visual comparison.
 - **UX**: **Hide Sculpt Visuals While Sampling**: The volume brush sphere and cube indicators are now hidden while the eyedropper is active to clearly signal selection mode vs painting mode.

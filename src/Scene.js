@@ -2613,6 +2613,17 @@ class Scene {
             }
             state.btnY = isPressedY;
           */
+          // THUMBSTICK SCROLLING WHEN POINTING AT MENU
+          const valY_NonDom = axes[3];
+          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && Math.abs(valY_NonDom) > T_PRESS && this._guiXR) {
+            const domSource = this._dominantHand === 'left' ? left : right;
+            const isScrollTriggerPressed = domSource && domSource.gamepad && domSource.gamepad.buttons[0] && domSource.gamepad.buttons[0].pressed;
+            const scrollSpeed = isScrollTriggerPressed ? 4 : 24; // Default 24, slow-mo 4
+
+            this._guiXR._scrollOffset += (valY_NonDom > 0 ? 1 : -1) * scrollSpeed;
+            this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+            this._guiXR._needsRedraw = true;
+          }
         }
 
         // DOMINANT HAND: AXIS 3 (Up/Down) - Radius +/- 5%, AXIS 2 (Left/Right) - Intensity +/- 5%
@@ -2632,7 +2643,14 @@ class Scene {
           // Dynamic target rate: 30ms normally, 15ms (10x precision visually via speedModifier 0.1) when holding trigger
           const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
 
-          if (isPressedY) {
+          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY && this._guiXR) {
+            const isScrollTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
+            const scrollSpeed = isScrollTriggerPressed ? 4 : 24; // Default 24, slow-mo 4
+
+            this._guiXR._scrollOffset += (valY > 0 ? 1 : -1) * scrollSpeed;
+            this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+            this._guiXR._needsRedraw = true;
+          } else if (isPressedY) {
             if (now - state.lastRadiusTime > targetRateY) { 
               state.lastRadiusTime = now;
 
