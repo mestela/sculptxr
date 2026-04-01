@@ -1,4 +1,4 @@
-# Task: Shift Voxel Engine to Rust/WASM
+# Task: Stabilize Edge Dissolve Tool
 
 > [!IMPORTANT]
 > **CRITICAL SESSION RULES**:
@@ -6,16 +6,8 @@
 > 2.  **No Caching Blame**: Browser caching is NEVER the valid cause of bugs here. Do not suggest clearing cache.
 > 3.  **Local Vite Testing**: Rely ENTIRELY on local Vite (`npm run dev`) for testing. Do NOT deploy to Beta or Prod.
 
-- [x] Plan Rust Workspace and WASM compilation strategy <!-- id: 0 -->
-- [x] Initialize Rust crate for voxel computation <!-- id: 1 -->
-- [x] Port inner loops of SurfaceNets to Rust <!-- id: 2 -->
-- [x] Compile Rust to WASM <!-- id: 3 -->
-- [x] Integrate WASM into VoxelWorker.js <!-- id: 4 -->
-- [x] Modify `src/editing/VoxelState.js` to fix `tightenBounds` for inverted bounds.
-- [x] Modify `src/workers/VoxelWorker.js` to restore tight bounds extraction.
-- `[x]` Revert `src/editing/SculptManager.js` to use `cx - maxExtent/2` (bottom-left-rear).
-- `[x]` Revert `src/editing/tools/SculptVoxel.js` `updateXR` to use standard shift.
-- `[x]` Fix `this._res` staleness in `updateVoxelMesh` to make standard shift work for tight meshes.
-- `[x]` Fix color channel shift in `SculptManager.js` `meshToVoxel`.
-- `[ ]` Verify local build performance (HMR automatically updates).
-- `[ ]` Create walkthrough artifact.
+- [x] Analyze Edge Dissolve Tool implementation and find sources of mesh corruption during undo/redo <!-- id: 0 -->
+- [x] Refactor undo/redo to use pre-instantiated mesh swapping instead of repeated dynamic allocations <!-- id: 1 -->
+- [x] Verify if colors/materials also need to be copied during mesh replacement <!-- id: 2 -->
+- [ ] Test locally using Vite <!-- id: 3 -->
+- [x] Create walkthrough artifact <!-- id: 4 -->

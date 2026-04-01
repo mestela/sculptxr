@@ -258,6 +258,19 @@ export default function getTopologyWidgets(main) {
   y += btnH + gapBtn;
 
   widgets.push({
+    type: 'button', id: 'recalc_normals', label: 'Recalculate Normals', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      console.log(`[GuiVRTopology] Manual Recalculate Normals Button clicked!`);
+      const mesh = main.getMesh();
+      if (!mesh) { console.log(`[GuiVRTopology] No active mesh found!`); return; }
+      mesh.updateGeometry();
+      mesh.updateGeometryBuffers();
+      if (main.guiXR) main.guiXR._needsRedraw = true;
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
     type: 'button', id: 'voxel_mirror_lr', label: 'Mirror L \u2192 R', x: col1X, y: y, w: 170, h: btnH,
     onInteract: () => {
       if (main.getMesh()) {

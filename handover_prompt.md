@@ -24,13 +24,11 @@ All fixes are pushed to `manifold_branch` on GitHub.
 ## Next Steps / Backlog
 
 ### Immediate Priorities (Fit & Finish)
-1.  **Quad Remesh (`quadrs`) Garbage Output**:
-    -   *Problem*: When using the automated Rust `quadrs` WebAssembly remesher (Instant Meshes port), it occasionally outputs bad non manifold geo, a handful of polys floating in space. Need to run `console.log` and verify being passed.
 2.  **Selective Edge/Face Dissolve (Manual Topology)**:
     -   *Status*: Prototype implemented in `DissolveEdge.js`. Occasionally works, but often corrupts the mesh upon undo/redo (likely unhandled boundary conditions). Needs stabilization.
 3.  **Spin Edge (Manual Topology)**:
     -   *Status*: Not yet implemented. Need to let user click an edge and rotate its orientation between two adjacent quads.
-4.  **Quadrangulation Completeness**: Investigate why the priority queue still misses a few obvious edges. Check if sorting locks out candidates.
+
 
 ### Future Roadmap
 1.  **Transform Gizmo Rethink (Fix Skewing/Wobble)**: Switch to standard Three.js **TRS Component Tracking** (`position`, `quaternion`, `scale`) instead of direct matrix multiplication.

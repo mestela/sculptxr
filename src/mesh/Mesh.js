@@ -1722,8 +1722,6 @@ class Mesh {
   normalizeSize() {
     var radius = this.computeLocalRadius();
     if (isNaN(radius) || radius === 0) {
-        console.error("🛑 normalizeSize computed invalid radius! Radius:", radius);
-        if(window.screenLog) window.screenLog("NaN Radius detected", "red");
         return;
     }
     var scale = Utils.SCALE / (2.0 * radius);

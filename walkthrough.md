@@ -1,3 +1,23 @@
+# Walkthrough: Edge Dissolve Tool Stabilization
+
+## Goal
+Resolve mesh corruption and visual loss (colors) during Undo/Redo operations in the Edge Dissolve Tool.
+
+## Problem Analysis
+- **Symptom**: Undoing/Redoing `DissolveEdge` would frequently corrupt the mesh state or drop colors.
+- **Root Cause**: The tool used dynamic `MeshStatic` recreations on every Undo and Redo invocation, which broke memory stability and object reference tracking in Three.js when swapping indices back and forth.
+- **Secondary Issue**: Colors were unmaintained during tool mesh state swaps.
+
+## Solution
+1. **Pre-instantiated Swapping**: Ported `DissolveEdge.js` to initialize the `nextMesh` exactly once during run.
+2. **Standard Swapping**: The `undoDissolve` and `redoDissolve` closures now use `replaceMesh(prevMesh, nextMesh)` and `replaceMesh(nextMesh, prevMesh)` respectively, without re-allocating new objects and keeping memory constant.
+3. **Color Maintenance**: Propagated if `prevMesh.getColors()` exists.
+
+## Verification
+- Pending manual XR testing on headset.
+
+---
+
 # Walkthrough: Voxel Color Fidelity Fix (v1.0.54)
 
 ## Goal
