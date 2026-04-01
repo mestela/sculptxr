@@ -15,7 +15,6 @@ class FillHole extends SculptBase {
     const picking = this._main.getPicking();
     const pickedFaceIdx = picking.getPickedFace();
     if (pickedFaceIdx === undefined || pickedFaceIdx < 0) {
-      console.log("[FillHole] No face picked!");
       return false;
     }
 
@@ -52,11 +51,9 @@ class FillHole extends SculptBase {
     }
 
     if (startV1 === -1) {
-      console.log("[FillHole] No open edge found on the picked face!");
       return;
     }
 
-    console.log(`[FillHole] Scanning all faces once (O(N)) to build deterministic open-edge map...`);
     const nbFaces = mesh.getNbFaces();
     const openEdgeMap = new Map(); // v1 -> v2 (or set of neighbors)
 
@@ -86,7 +83,7 @@ class FillHole extends SculptBase {
       }
     }
 
-    console.log(`[FillHole] Found ${openEdgeMap.size} boundary vertices in total.`);
+    
 
     const loop = [];
     let curr = startV2;
@@ -101,7 +98,6 @@ class FillHole extends SculptBase {
     while (maxIters-- > 0) {
       const neighbors = openEdgeMap.get(curr);
       if (!neighbors) {
-        console.log(`[FillHole] Search dead-ended at vertex ${curr}!`);
         break;
       }
 
@@ -120,7 +116,6 @@ class FillHole extends SculptBase {
       if (!foundNext) {
         for (const nextV of neighbors) {
           if (nextV === startV1 && loop.length > 2) {
-            console.log("[FillHole] Loop closed!");
             foundNext = true;
             maxIters = -1; // Force break while
             break;
@@ -131,18 +126,14 @@ class FillHole extends SculptBase {
       if (maxIters === -1) break; // Closed loop
 
       if (!foundNext) {
-        console.log("[FillHole] No unvisited neighbor! Searched dead-ended.");
         break;
       }
     }
 
     if (loop.length < 3) {
-      console.log("[FillHole] Loop too short to fill!");
       return false;
     }
 
-    console.log(`[FillHole] Resolved loop of ${loop.length} vertices!`);
-    
     const vertices = mesh.getVertices();
     let newVertices = vertices;
     const newFaces = [];
@@ -218,7 +209,7 @@ class FillHole extends SculptBase {
       const angles = [];
       for (let i = 0; i < 8; ++i) {
         const a = getAngle(i);
-        console.log(`[FillHole] Angle at loop[${i}] (vertex ${loop[i]}) = ${a.toFixed(2)}`);
+        
         angles.push(a);
       }
 
@@ -232,7 +223,7 @@ class FillHole extends SculptBase {
 
       if (firstCornerIdx === -1) firstCornerIdx = 0; // Fallback
 
-      console.log(`[FillHole] Starting 4-quad weave from corner index ${firstCornerIdx} (Angle = ${angles[firstCornerIdx].toFixed(2)})`);
+      
 
       // 4-quad weave. A quad is (MidA, Corner, MidB, Center)
       // If firstCornerIdx is a corner, then firstCornerIdx+1 is a mid, firstCornerIdx+2 is a corner, etc.
@@ -335,7 +326,7 @@ class FillHole extends SculptBase {
       const wU = maxU - minU;
       const wV = maxV - minV;
 
-      console.log(`[FillHole] Projected hole bbox: wU = ${wU.toFixed(3)}, wV = ${wV.toFixed(3)}`);
+      
 
       // Determine dimensions (MxN). Perimeter P = loop.length. 
       const P = loop.length;
@@ -438,7 +429,6 @@ class FillHole extends SculptBase {
           newFaces.push(v00, v10, v11, v01);
         }
       } else {
-        console.log(`[FillHole] Grid detected (${M}x${N}), executing parametric reconstruct...`);
         const addVerticesCount = (M - 1) * (N - 1);
         newVertices = new Float32Array(vertices.length + addVerticesCount * 3);
         newVertices.set(vertices);
@@ -505,9 +495,6 @@ class FillHole extends SculptBase {
         if (bestIdx === -1) bestIdx = 0;
 
         const b = [];
-        for (let i = 0; i < P; ++i) b.push(loop[(bestIdx + i) % P]);
-
-        console.log(`[FillHole] Geometric bottom-left found at loop index ${bestIdx}`);
 
         const getVIdxAt = (i, j) => {
           if (i > 0 && i < M && j > 0 && j < N) return getIntVIdx(i, j); // Interior
@@ -581,12 +568,10 @@ class FillHole extends SculptBase {
     if (prevMesh.getShowWireframe) nextMesh.setShowWireframe(prevMesh.getShowWireframe());
 
     const undoHole = () => {
-      console.log("[FillHole] Undoing hole fill - restoring prevMesh");
       this._main.replaceMesh(nextMesh, prevMesh);
     };
 
     const redoHole = () => {
-      console.log("[FillHole] Redoing hole fill - applying nextMesh");
       this._main.replaceMesh(prevMesh, nextMesh);
     };
 

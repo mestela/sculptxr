@@ -86,9 +86,7 @@ class SculptManager {
 
   start(ctrl) {
     var tool = this.getCurrentTool();
-    console.log(`[SculptManager] Invoking tool.start() for ${tool.constructor.name || ""}`);
     var canEdit = tool.start(ctrl);
-    console.log(`[SculptManager] tool.start() returned canEdit=${canEdit}`);
 
     // Push State for Undo/Redo
     if (this._main.getStateManager()) {
@@ -240,8 +238,7 @@ class SculptManager {
     voxelTool._pendingOffset = [cx - maxExtent / 2, cy - maxExtent / 2, cz - maxExtent / 2];
     voxelTool._pendingRes = newRes;
 
-    console.log(`[SculptManager] meshToVoxel cx=${cx.toFixed(3)} cy=${cy.toFixed(3)} cz=${cz.toFixed(3)} mExtent=${maxExtent.toFixed(3)}`);
-    console.log(`[SculptManager] pendOffset [${voxelTool._pendingOffset[0].toFixed(3)}, ${voxelTool._pendingOffset[1].toFixed(3)}, ${voxelTool._pendingOffset[2].toFixed(3)}]`);
+    
 
     voxelTool._worker.postMessage({
         type: 'MESH_TO_VOXEL',
@@ -273,23 +270,15 @@ class SculptManager {
   }
 
   fillHoles() {
-    console.log("[SculptManager] fillHoles() method called!");
     const mesh = this.getCurrentMesh();
     if (!mesh) {
-      console.log("[SculptManager] fillHoles rejected: No active mesh!");
       return;
     }
 
-    console.log("[SculptManager] Invoking HoleFilling module...");
     const result = HoleFilling(mesh);
-    console.log("[SculptManager] HoleFilling module finished computed result!");
     if (!result) {
-      console.log("[SculptManager] No holes found or couldn't fill.");
       return;
     }
-
-    console.log(`[SculptManager] Holes filled! New vLen=${result.vertices.length/3}, fLen=${result.faces.length/4}`);
-    console.log("[SculptManager] Importing MeshStatic for recreation...");
 
     // We need to create a real MeshStatic object!
     import('../mesh/meshStatic/MeshStatic.js').then((MeshStaticMod) => {
@@ -320,14 +309,11 @@ class SculptManager {
 
     this._isProcessingQuads = true;
 
-    console.log(`[SculptManager] Quad Remesh processing...`);
-
     // 30s Safety Timeout to reset UI if worker hangs
     if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
     this._quadRemeshTimeout = setTimeout(() => {
       if (this._isProcessingQuads) {
         this._isProcessingQuads = false;
-        console.log(`[SculptManager] Quad Remesh timed out!`);
       }
     }, 30000);
 
@@ -339,8 +325,6 @@ class SculptManager {
 
     const vAr = mesh.getVertices();
     const fAr = mesh.getFaces();
-
-    console.log(`[SculptManager] Quad Remesh inputs: vLen=${vAr.length/3} vertices, fLen=${fAr.length/4} faces (isQuad=${mesh.isQuad})`);
 
     const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
 
@@ -358,7 +342,7 @@ class SculptManager {
     if (this._isProcessingSlice) return; // Share the lock
     this._isProcessingSlice = true;
 
-    console.log(`[SculptManager] Symmetry Mirror processing... side=${side}`);
+    
 
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (!voxelTool || !voxelTool._worker) {
@@ -385,7 +369,6 @@ class SculptManager {
     }
 
     try {
-      console.log(`[SculptManager] Sending SYMMETRY_MIRROR message...`);
       voxelTool._worker.postMessage({
         type: 'SYMMETRY_MIRROR',
         v: vAr,
@@ -397,7 +380,6 @@ class SculptManager {
         id: mesh.getID(),
         quadrangulate: Remesh.QUADRANGULATE
       });
-      console.log(`[SculptManager] SYMMETRY_MIRROR message sent!`);
     } catch (e) {
       console.error("[SculptManager] postMessage failed for Symmetry Mirror:", e);
       this._isProcessingSlice = false;
@@ -411,7 +393,7 @@ class SculptManager {
     if (this._isProcessingSlice) return; // Prevent duplicate clicks
     this._isProcessingSlice = true;
 
-    console.log(`[SculptManager] Slice + Cap processing...`);
+    
 
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (!voxelTool || !voxelTool._worker) {
@@ -478,7 +460,7 @@ class SculptManager {
     main.addNewMesh(newMesh);
     main.setMesh(newMesh);
 
-    console.log(`[SculptManager] Slice + Cap Completed!`);
+    
   }
 
   onSymmetryMirrorResult(data) {
@@ -516,14 +498,11 @@ class SculptManager {
     this._main.addNewMesh(newMesh);
     this._main.setMesh(newMesh);
 
-    console.log(`[SculptManager] Symmetry Mirror Completed!`);
-  }
+    }
 
   onTriangulateResult(data) {
     const mesh = this._main.getMesh();
     if (!mesh) return;
-
-    console.log(`[SculptManager] Manual Triangulation Completed!`);
 
     // 1. Capture OLD state for UNDO
     const oldFaces = new Uint32Array(mesh.getFaces());
@@ -574,7 +553,7 @@ class SculptManager {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    console.log(`[SculptManager] Manual Quadrangulation Completed!`);
+    
 
     // 1. Capture OLD state for UNDO
     const oldFaces = new Uint32Array(mesh.getFaces());
@@ -656,7 +635,7 @@ class SculptManager {
     main.addNewMesh(newMesh);
     main.setMesh(newMesh);
 
-    console.log(`[SculptManager] Quad Mesh Created! ${data.vertices.length/3} vertices`);
+    
   }
 
   postRender() {

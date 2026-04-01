@@ -13,7 +13,6 @@ class DeleteFace extends SculptBase {
     const faceIdx = picking.getPickedFace();
 
     if (faceIdx < 0) {
-      console.log("[DeleteFace] No face picked!");
       return false;
     }
 
@@ -23,10 +22,7 @@ class DeleteFace extends SculptBase {
     const faces = mesh.getFaces();
     if (!faces || faces.length === 0) return false;
 
-    console.log(`[DeleteFace] Executing: faceIdx=${faceIdx}, totalFacesBefore=${faces.length / 4}`);
     if (!faces || faces.length === 0) return false;
-
-    console.log(`[DeleteFace] Deleting face group index: ${faceIdx}`);
 
     const newFaces = new Uint32Array(faces.length - 4);
     let head = 0;
