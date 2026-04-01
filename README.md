@@ -1,4 +1,4 @@
-# SculptXR (v1.0.63)
+# SculptXR (v1.0.66)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.63**: **Quad Remeshing**: Integrated `quadrs` Rust library via WebAssembly for automatic quad remeshing. Added UI toggles (Target Faces) and visual feedback (processing states, seamless mesh hiding and material inheritance).
-*   **v1.0.62**: **OBJ Export Extensions**: Explicitly specified `application/octet-stream` for OBJ exports, forcing the browser to treat it as generic binary data and preventing the `.txt` suffix appending.
-*   **v1.0.61**: **Voxel Remesh Stabilization**: Switched to Local Geometry Bounding Box for simulation sizing, decoupling from parent transforms. Implemented proportional distance field scaling when changing resolution to prevent volume collapse. Reset active voxel bounds during resample.
+*   **v1.0.66**: **Edge Dissolve Tool Stabilization**: Resolved face normal inversion bugs using dynamic counter-clockwise vertex evaluation. Handled in-place topology edits to prevent frustrating black/flickering render flips. Removed harmless `Radius: 0` startup error.
+*   **v1.0.65**: **Manual Topology Swaps (Triangulate & Quadrangulate)**: Added explicit buttons to the VR Topology menu to toggle between triangle and quad dominant meshes in-place.
+*   **v1.0.64**: **Symmetry Mirror & Quad Merge Optimization**: Ported Blender's BMesh `quad_calc_error` metric (Planarity, Squareness, Area Symmetry) to JavaScript for clean, visually high-grade quad merging.
 
 [View Full Release History](docs/releases.md)
 

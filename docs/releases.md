@@ -1,3 +1,8 @@
+# v1.0.66
+- **Fix**: **Edge Dissolve Tool Stabilization**: Resolved a major issue where face normals would flip inward or tilt when reconstructing quads. Implemented dynamic counter-clockwise vertex ordering based on outward-pointing normal dot products.
+- **Performance**: **In-Place Edge Dissolution**: Replaced complete mesh object replacement with in-place index buffer updates. This eliminates the black flashing/disappearing mesh during edit and undo/redo cycles.
+- **Fix**: **Silenced Startup Error**: Removed the harmless `Radius: 0` error popup during initial bounding box calculation before scene load.
+
 # v1.0.65 (Work in Progress)
 - **Feature**: **Manual Topology Swaps (Triangulate & Quadrangulate)**: Added explicit buttons to the VR Topology menu to toggle between triangle and quad dominant meshes in-place.
 - **Architecture**: **In-Place Modification & State Management**: Overhauled sculptor message handlers to perform updates on the existing mesh reference, avoiding scene clutter and duplicates.
