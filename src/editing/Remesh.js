@@ -1,5 +1,4 @@
 import { vec3, mat4 } from 'gl-matrix';
-import HoleFilling from './HoleFilling.js';
 import SurfaceNets from './SurfaceNets.js';
 import MarchingCubes from './MarchingCubes.js';
 import Geometry from '../math3d/Geometry.js';

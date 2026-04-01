@@ -64,7 +64,7 @@ class GuiMultiresolution {
     // quad remeshing
     menu.addTitle('Quad Remeshing');
     menu.addSlider('Target Faces', this, '_targetFaces', 100, 10000, 100);
-    menu.addButton('Remesh to Quads', this, 'remeshQuads');
+    menu.addButton('Quadremesh', this, 'remeshQuads');
 
     this.updateDynamicVisibility(false);
   }

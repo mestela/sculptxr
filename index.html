@@ -192,6 +192,9 @@
             const cerr = console.error;
 
             console.log = function (...args) {
+                const msg = args.join(' ');
+                if (msg.includes('Resolved profile for') || msg.includes('Connected inputSource:')) return;
+
                 if (!window._showDebugLog) {
                     cls.apply(console, args);
                     return;

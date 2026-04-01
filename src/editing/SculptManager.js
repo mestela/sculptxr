@@ -1,6 +1,7 @@
 import Selection from '../drawables/Selection.js';
 import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
+import HoleFilling from './HoleFilling.js';
 import Utils from '../misc/Utils.js';
 import Remesh from './Remesh.js';
 import Mesh from '../mesh/Mesh.js';
@@ -85,7 +86,9 @@ class SculptManager {
 
   start(ctrl) {
     var tool = this.getCurrentTool();
+    console.log(`[SculptManager] Invoking tool.start() for ${tool.constructor.name || ""}`);
     var canEdit = tool.start(ctrl);
+    console.log(`[SculptManager] tool.start() returned canEdit=${canEdit}`);
 
     // Push State for Undo/Redo
     if (this._main.getStateManager()) {
@@ -269,6 +272,46 @@ class SculptManager {
     return this._isProcessingQuads;
   }
 
+  fillHoles() {
+    console.log("[SculptManager] fillHoles() method called!");
+    const mesh = this.getCurrentMesh();
+    if (!mesh) {
+      console.log("[SculptManager] fillHoles rejected: No active mesh!");
+      return;
+    }
+
+    console.log("[SculptManager] Invoking HoleFilling module...");
+    const result = HoleFilling(mesh);
+    console.log("[SculptManager] HoleFilling module finished computed result!");
+    if (!result) {
+      console.log("[SculptManager] No holes found or couldn't fill.");
+      return;
+    }
+
+    console.log(`[SculptManager] Holes filled! New vLen=${result.vertices.length/3}, fLen=${result.faces.length/4}`);
+    console.log("[SculptManager] Importing MeshStatic for recreation...");
+
+    // We need to create a real MeshStatic object!
+    import('../mesh/meshStatic/MeshStatic.js').then((MeshStaticMod) => {
+      const MeshStatic = MeshStaticMod.default;
+      const newMesh = new MeshStatic(this._main._gl);
+      
+      newMesh.setVertices(result.vertices);
+      newMesh.setNbVertices(result.vertices.length / 3);
+      newMesh.setFaces(result.faces);
+      newMesh.setNbFaces(result.faces.length / 4);
+      
+      newMesh.init();
+      newMesh.initRender();
+      
+      newMesh.setMatrix(mesh.getMatrix());
+      newMesh.setShaderType(mesh.getShaderType());
+      if (mesh.getShowWireframe) newMesh.setShowWireframe(mesh.getShowWireframe());
+
+      this._main.replaceMesh(mesh, newMesh);
+    });
+  }
+
   remeshQuads(targetFaces) {
     const mesh = this._main.getMesh();
     if (!mesh) return;
@@ -297,13 +340,17 @@ class SculptManager {
     const vAr = mesh.getVertices();
     const fAr = mesh.getFaces();
 
+    console.log(`[SculptManager] Quad Remesh inputs: vLen=${vAr.length/3} vertices, fLen=${fAr.length/4} faces (isQuad=${mesh.isQuad})`);
+
+    const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
+
     voxelTool._worker.postMessage({
       type: 'REMESH_QUADRS',
       v: vAr,
       f: fAr,
       targetFaces: targetFaces,
       id: mesh.getID(),
-      isTriangles: !mesh.isQuad // True for our sliced mesh (triangles)!
+      isTriangles: isTriangles
     });
   }
 
@@ -585,6 +632,7 @@ class SculptManager {
     newMesh.setFaces(data.faces);
     
     newMesh.init(); // Automatically allocates arrays, computes topology, geometry, and center!
+    newMesh.initRender(); // <-- Generate Three.js geometry!
     newMesh.isQuad = true; // Remeshed output is quads!
 
     // Transfer transform from the active mesh

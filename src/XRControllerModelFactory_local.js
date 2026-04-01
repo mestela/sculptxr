@@ -345,7 +345,7 @@ class XRControllerModelFactory {
 
 			fetchProfile( xrInputSource, this.path, DEFAULT_PROFILE ).then( ( { profile, assetPath } ) => {
 				if (profile.profileId.includes("-hand") || profile.profileId === "generic-fixed-hand") {
-					console.log(`[SculptGL] Blocking hand profile loading: ${profile.profileId}`);
+					// console.log(`[SculptGL] Blocking hand profile loading: ${profile.profileId}`);
 					return; // DO NOT LOAD MODEL
 				}
 

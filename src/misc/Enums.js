@@ -33,7 +33,10 @@ Enums.Tools = {
   VOXEL: 14,
   GRAB: 15,
   TRANSFORM_VR: 16,
-  SLIDE: 17
+  SLIDE: 17,
+  DELETE_FACE: 18,
+  FILL_HOLE: 19,
+  DISSOLVE_EDGE: 20
 };
 
 // display shader type

@@ -49,7 +49,12 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.TRANSFORM_VR,
 
     // Orange (Masking)
-    Enums.Tools.MASKING
+    Enums.Tools.MASKING,
+
+    // Delete Face
+    Enums.Tools.DELETE_FACE,
+    Enums.Tools.FILL_HOLE,
+    Enums.Tools.DISSOLVE_EDGE
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -84,6 +89,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.TRANSFORM:
       case Enums.Tools.TRANSFORM_VR:
       case Enums.Tools.LOCALSCALE:
+      case Enums.Tools.DELETE_FACE:
         return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)

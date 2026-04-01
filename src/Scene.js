@@ -1894,7 +1894,7 @@ class Scene {
                           
                           // Hide if it's hands (creepy hands)
                           const baseSource = event.data;
-                          console.log(`[WebXR] Connected inputSource: ${baseSource ? Object.keys(baseSource).join(", ") : "null"}, isHand=${baseSource && baseSource.hand ? "YES" : "NO"}`);
+                          // console.log(`[WebXR] Connected inputSource: ${baseSource ? Object.keys(baseSource).join(", ") : "null"}, isHand=${baseSource && baseSource.hand ? "YES" : "NO"}`);
                           
                           if (baseSource && baseSource.hand) {
                               model.visible = false;

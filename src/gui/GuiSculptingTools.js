@@ -436,4 +436,19 @@ GuiTools[Enums.Tools.GRAB] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.DELETE_FACE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.FILL_HOLE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
+GuiTools[Enums.Tools.DISSOLVE_EDGE] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 export default GuiSculptingTools;

@@ -2,8 +2,8 @@
 
 
 async function main() {
-    const targetIp = "10.0.0.141";
-    const targetPort = "9222";
+    const targetIp = "localhost";
+    const targetPort = "9223";
 
     while (true) {
         console.log(`[Jetski Logger] Fetching active tabs from http://${targetIp}:${targetPort}/json...`);
@@ -12,11 +12,11 @@ async function main() {
             const response = await fetch(`http://${targetIp}:${targetPort}/json`);
             const tabs = await response.json();
             
-            // Find SculptXR page or any relevant page
-            const sculptTab = tabs.find(t => t.title && t.title.includes("SculptXR"));
+            // Find check any valid tab (not-devtools)
+            const sculptTab = tabs.find(t => t.url && !t.url.startsWith("devtools://") && !t.url.startsWith("chrome-extension://"));
             
             if (!sculptTab) {
-                console.log("[Jetski Logger] Could not find a tab with 'SculptXR' in the title! Retrying in 2 seconds...");
+                console.log("[Jetski Logger] Could not find any valid web tab! Retrying in 2 seconds...");
                 await new Promise(r => setTimeout(r, 2000));
                 continue;
             }

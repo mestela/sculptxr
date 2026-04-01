@@ -131,6 +131,9 @@ var TR = {
   sculptVoxel: 'Voxel',
   sculptGrab: 'Grab (G)',
   sculptTransformVR: 'Transform VR',
+  sculptDeleteFace: 'Delete Face',
+  sculptFillHole: 'Fill Hole',
+  sculptDissolveEdge: 'Dissolve Edge',
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',

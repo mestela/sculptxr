@@ -439,9 +439,9 @@ pub extern "C" fn remesh_quads_wasm(
         ));
     }
 
-    let mut quadrs_faces = Vec::with_capacity(faces_len / stride as usize);
-    for i in (0..faces_len).step_by(stride as usize) {
-        if stride == 3 {
+    let mut quadrs_faces = Vec::with_capacity(faces_len / 4);
+    for i in (0..faces_len).step_by(4) {
+        if faces_slice[i + 3] == 4294967295 {
              quadrs_faces.push(vec![
                 faces_slice[i] as usize,
                 faces_slice[i + 1] as usize,

@@ -154,10 +154,20 @@ export default function getTopologyWidgets(main) {
   const isRemeshProcessing = main.getSculptManager().isProcessingQuads ? main.getSculptManager().isProcessingQuads() : false;
 
   widgets.push({
-    type: 'button', id: 'remesh_quads', label: isRemeshProcessing ? 'Processing...' : 'Remesh to Quads', disabled: isRemeshProcessing, x: col1X, y: y, w: 350, h: btnH,
+    type: 'button', id: 'remesh_quads', label: isRemeshProcessing ? 'Processing...' : 'Quadremesh', disabled: isRemeshProcessing, x: col1X, y: y, w: 350, h: btnH,
     onInteract: () => {
       if (main.getSculptManager().remeshQuads) {
         main.getSculptManager().remeshQuads(Remesh.TARGET_QUADS);
+      }
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
+    type: 'button', id: 'fill_holes', label: 'Fill Holes', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      if (main.getSculptManager().fillHoles) {
+        main.getSculptManager().fillHoles();
       }
     }
   });

@@ -17,6 +17,9 @@ import Transform from './Transform.js';
 import TransformVR from './TransformVR.js';
 import SculptVoxel from './SculptVoxel.js';
 import Grab from './Grab.js';
+import DeleteFace from './DeleteFace.js';
+import FillHole from './FillHole.js';
+import DissolveEdge from './DissolveEdge.js';
 
 var Tools = [];
 
@@ -37,6 +40,9 @@ Tools[Enums.Tools.TRANSFORM] = Transform;
 Tools[Enums.Tools.VOXEL] = SculptVoxel;
 Tools[Enums.Tools.GRAB] = Grab;
 Tools[Enums.Tools.TRANSFORM_VR] = TransformVR;
+Tools[Enums.Tools.DELETE_FACE] = DeleteFace;
+Tools[Enums.Tools.FILL_HOLE] = FillHole;
+Tools[Enums.Tools.DISSOLVE_EDGE] = DissolveEdge;
 // Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
@@ -56,6 +62,9 @@ Tools[Enums.Tools.TRANSFORM].uiName = 'sculptTransform';
 Tools[Enums.Tools.VOXEL].uiName = 'sculptVoxel';
 Tools[Enums.Tools.GRAB].uiName = 'sculptGrab';
 Tools[Enums.Tools.TRANSFORM_VR].uiName = 'sculptTransformVR';
+Tools[Enums.Tools.DELETE_FACE].uiName = 'sculptDeleteFace';
+Tools[Enums.Tools.FILL_HOLE].uiName = 'sculptFillHole';
+Tools[Enums.Tools.DISSOLVE_EDGE].uiName = 'sculptDissolveEdge';
 // Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;
