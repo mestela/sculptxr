@@ -1,3 +1,10 @@
+# v1.0.68
+- **Fix**: **Stabilizing VR Transform Gizmo**: Resolved erratic behavior under non-uniform scale operations by implementing a robust TRS decomposition mechanism.
+- **Fix**: **Coordinate Space Synchronization**: Fixed a bug where local constrained axes were used directly as world axes, causing gimbal tumbling when rotating offset objects. The axis is now correctly transformed to world coordinates.
+- **UX**: **Intuitive Gesture Interaction**: Standardized single-axis rotation swipes to follow visual intuition – X and Z use standard counter-clockwise subtraction, whilst Y is inverted to track the "front" of the object during an intuitive hand pull.
+- **Performance**: Resolved a critical zerovector clone glitch that tanked frame-rate performance when scale handles were engaged.
+- **UI**: Added missing translations for `sculptWeld` in `src/gui/tr/english.js` to silence auto-HUD localization warning floods.
+
 # v1.0.67
 - **Feature**: **Weld / Target Weld Tool**: Created a new synchronous two-click sequential tool for zipping together separated vertices or merging loose geometry. It is safely integrated into the VR Tool Wheel.
 - **Fix**: **VR HUD Scale Fix**: Clapped the `startY` of the mini-HUD tool selections to `Math.max(20, ...)` to ensure that adding more tools does not push the top entries off the top of the viewport.
