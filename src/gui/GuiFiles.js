@@ -2,6 +2,8 @@ import TR from './GuiTR.js';
 import { saveAs } from 'file-saver';
 import { zip } from 'zip';
 import Export from '../files/Export.js';
+import StorageDB from '../misc/StorageDB.js';
+import * as THREE from 'three';
 
 import Rtt from '../drawables/Rtt.js';
 import ShaderPaintUV from '../render/shaders/ShaderPaintUV.js';
@@ -19,7 +21,30 @@ class GuiFiles {
 
     this._objColorZbrush = true;
     this._objColorAppended = false;
+    this._browserSaves = []; // Cache for gallery
     this.init(guiParent);
+    this.refreshBrowserSaves();
+  }
+
+  refreshBrowserSaves() {
+    StorageDB.getAll().then(saves => {
+      // Sort by timestamp desc (newest first)
+      this._browserSaves = saves.sort((a, b) => b.value.timestamp - a.value.timestamp);
+      
+      // Pre-load images for thumbnails
+      this._browserSaves.forEach(save => {
+        if (save.value.thumb && !save.value.thumbImage) {
+          const img = new Image();
+          img.src = save.value.thumb;
+          save.value.thumbImage = img; // Cache the Image object
+          img.onload = () => {
+            if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
+          };
+        }
+      });
+
+      if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
+    }).catch(err => console.error("Failed to load browser saves:", err));
   }
 
   init(guiParent) {
@@ -177,6 +202,155 @@ class GuiFiles {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
     this._save(Export.exportSGL(meshes, this._main), this._getTimestampedFileName('yourMesh', 'sgl'));
+  }
+
+  saveToBrowserStorage() {
+    var meshes = this._getExportMeshes();
+    if (!meshes) return;
+    
+    const blob = Export.exportSGL(meshes, this._main);
+    const timestamp = Date.now();
+    const key = `sculpt_${timestamp}`;
+
+    // Grab thumbnail from canvas
+    let thumb = '';
+    const canvas = document.getElementById('canvas');
+    if (canvas && this._main._renderer) {
+      if (!this._main._renderer.xr.isPresenting) {
+        this._main._renderer.render(this._main._scene, this._main._camera._threeCamera);
+        thumb = canvas.toDataURL('image/jpeg', 0.3); 
+      } else {
+        // VR Real Screenshot: Temporarily disable XR to render a flat pass to the DOM canvas!
+        const renderer = this._main._renderer;
+        const wasXREnabled = renderer.xr.enabled;
+        
+        let camToUse = this._main._camera._threeCamera;
+        if (renderer.xr.isPresenting) {
+          const vrCam = renderer.xr.getCamera(this._main._camera._threeCamera);
+          if (vrCam && vrCam.cameras && vrCam.cameras.length > 0) {
+            camToUse = vrCam.cameras[0]; // Use left eye perspective!
+          }
+        }
+        
+        try {
+          renderer.xr.enabled = false; // Bypass VR layer for one draw
+          renderer.setRenderTarget(null); // Force bind to DOM canvas
+          camToUse.updateMatrixWorld(true); // Ensure matrix is accurate!
+          
+          // 1. Calculate bounding box of the world group (where the sculpt lives)
+          const box = new THREE.Box3().setFromObject(this._main._worldGroup);
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+
+          // 2. Hide ALL scene children except the worldGroup and lights (Ultra clean!)
+          const activeChildren = [];
+          this._main._scene.children.forEach(child => {
+            if (child.visible) {
+              activeChildren.push(child);
+              if (child !== this._main._worldGroup && !child.isLight) {
+                child.visible = false;
+              }
+            }
+          });
+
+          // 3. Create transient camera at user's head, looking at the sculpture
+          const midCam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+          midCam.position.copy(renderer.xr.getCamera(this._main._camera._threeCamera).position);
+          midCam.lookAt(center); // Lock on!
+
+          // 4. Auto-FOV to fill the screen
+          const distanceToCenter = midCam.position.distanceTo(center);
+          if (distanceToCenter > 0.01 && maxDim > 0.01) {
+            const requiredFov = 2 * Math.atan(maxDim / (2 * distanceToCenter)) * (180 / Math.PI);
+            midCam.fov = Math.min(70, Math.max(5, requiredFov * 1.3)); // Soft padding clip
+            midCam.updateProjectionMatrix();
+          }
+          midCam.updateMatrixWorld(true);
+
+          renderer.render(this._main._scene, midCam);
+          
+          // Capture to offscreen 2D canvas to apply color correction synchronously!
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = canvas.width;
+          tempCanvas.height = canvas.height;
+          const tempCtx = tempCanvas.getContext('2d');
+          
+          tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
+          tempCtx.drawImage(canvas, 0, 0);
+          
+          thumb = tempCanvas.toDataURL('image/jpeg', 0.2); // Compressed
+          
+          // 5. Restore UI
+          activeChildren.forEach(child => {
+            child.visible = true;
+          });
+          
+        } catch (e) {
+          console.error("Screenshot failed:", e);
+        } finally {
+          renderer.xr.enabled = wasXREnabled; // Restore VR loop immediately
+        }
+      }
+    }
+
+    StorageDB.set(key, { 
+      blob: blob, 
+      thumb: thumb, 
+      name: this._getTimestampedFileName('browser', '').replace('.', ''), // Clean name without extension
+      timestamp: timestamp 
+    }).then(() => {
+      if (window.screenLog) window.screenLog(`SUCCESS: Stashed sculpt ${key}`, 'lime');
+      console.log(`[IndexedDB] Stashed ${key}. Thumb size: ${thumb.length}`);
+      
+      this.refreshBrowserSaves(); // Refresh internal list
+    }).catch(err => {
+      if (window.screenLog) window.screenLog(`ERROR: Stash failed: ${err}`, 'red');
+      console.error("[IndexedDB] Stash error:", err);
+    });
+  }
+
+  loadFromBrowserStorage() {
+    this.loadSpecificBrowserSave('active_mesh'); // Legacy fallback
+  }
+
+  loadSpecificBrowserSave(key) {
+    if (window.screenLog) window.screenLog(`Loading ${key}...`, 'cyan');
+    StorageDB.get(key).then(data => {
+      if (!data) {
+        if (window.screenLog) window.screenLog('No saved model found!', 'yellow');
+        return;
+      }
+      
+      const blob = data.blob || data; // Handle legacy unboxed blobs vs new structured values
+      if (typeof blob.arrayBuffer === 'function') {
+        return blob.arrayBuffer();
+      } else {
+        // Fallback or binary typed array
+        return blob;
+      }
+    }).then(buf => {
+      if (buf) {
+        this._main.loadScene(buf, 'sgl');
+        if (window.screenLog) window.screenLog('Loaded from browser storage!', 'lime');
+      }
+    }).catch(err => {
+      if (window.screenLog) window.screenLog('Failed to load: ' + err, 'red');
+    });
+  }
+
+  deleteBrowserSave(key) {
+    if (window.screenLog) window.screenLog(`Deleting ${key} from storage...`, 'orange');
+    console.log(`[IndexedDB] Deleting ${key}...`);
+    
+    StorageDB.delete(key).then(() => {
+      if (window.screenLog) window.screenLog(`SUCCESS: Deleted ${key}`, 'lime');
+      console.log(`[IndexedDB] Deleted ${key}`);
+      this.refreshBrowserSaves(); // Refresh list
+    }).catch(err => {
+      if (window.screenLog) window.screenLog(`ERROR: Delete failed: ${err}`, 'red');
+      console.error("[IndexedDB] Delete error:", err);
+    });
   }
 
   saveFileAsOBJ() {

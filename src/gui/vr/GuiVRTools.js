@@ -1,4 +1,5 @@
 import Enums from '../../misc/Enums.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 import TR from '../GuiTR.js';
 import Tools from '../../editing/tools/Tools.js';
 import Picking from '../../math3d/Picking.js';
@@ -263,7 +264,13 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     x: col1X, y: y, w: 710, h: 60, // Stacked and widened for easier hitting
     value: activeTool ? activeTool._radius : 50,
     min: 5, max: 250, precision: 0,
-    onInput: (val) => { if (activeTool) { activeTool._radius = val; main.render(); } }
+    onInput: (val) => { 
+      if (activeTool) { 
+        activeTool._radius = val; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_radius`, val, 500);
+        main.render(); 
+      } 
+    }
   });
 
   y += 60 + gapBtn;
@@ -276,7 +283,13 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     x: col1X, y: y, w: 710, h: 60, // Stacked below Radius
     value: activeTool ? activeTool._intensity : 0.5,
     min: 0, max: 1, precision: 2,
-    onInput: (val) => { if (activeTool) { activeTool._intensity = val; main.render(); } }
+    onInput: (val) => { 
+      if (activeTool) { 
+        activeTool._intensity = val; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_intensity`, val, 500);
+        main.render(); 
+      } 
+    }
   });
   y += 60 + gapSection;
 
@@ -299,13 +312,21 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     widgets.push({
       type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 50,
       value: activeTool._material[0], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { activeTool._material[0] = val; main.render(); }
+      onInput: (val) => { 
+        activeTool._material[0] = val; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_roughness`, val, 500);
+        main.render(); 
+      }
     });
     y += 55;
     widgets.push({
       type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 50,
       value: activeTool._material[1], min: 0, max: 1, step: 0.01, precision: 2,
-      onInput: (val) => { activeTool._material[1] = val; main.render(); }
+      onInput: (val) => { 
+        activeTool._material[1] = val; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_metallic`, val, 500);
+        main.render(); 
+      }
     });
     y += 55 + gapBtn;
 
@@ -359,7 +380,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     widgets.push({
       type: 'checkbox', id: 'topo_check', label: 'Topological Check', x: col1X, y: y, w: 350, h: btnH,
       value: activeTool._topoCheck,
-      onInteract: () => { activeTool._topoCheck = !activeTool._topoCheck; }
+      onInteract: () => { 
+        activeTool._topoCheck = !activeTool._topoCheck; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_topoCheck`, activeTool._topoCheck);
+      }
     });
     y += btnH + gapSection;
   }
@@ -518,6 +542,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         onInteract: () => {
           if (activeTool) {
             activeTool._buildUp = !activeTool._buildUp;
+            getOptionsURL.saveOption(`tool_${activeToolIndex}_buildUp`, activeTool._buildUp);
             if (main._guiXR) main._guiXR._needsRedraw = true;
           }
         }
@@ -603,6 +628,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (mesh) {
           VoxelDensityOverlay.enable(mesh, val); // Persistent enable while tracking
         }
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_resolution`, val, 500);
       },
       onRelease: () => {
         VoxelDensityOverlay.disable(); // Explicit drop
@@ -693,6 +719,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool) {
           activeTool._modulateRadius = !activeTool._modulateRadius;
+          getOptionsURL.saveOption(`tool_${activeToolIndex}_modulateRadius`, activeTool._modulateRadius);
           main.render();
           if (main._guiXR) main._guiXR._needsRedraw = true;
         }
@@ -710,6 +737,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         if (activeTool) {
           activeTool._modulateIntensity = !activeTool._modulateIntensity;
+          getOptionsURL.saveOption(`tool_${activeToolIndex}_modulateIntensity`, activeTool._modulateIntensity);
           main.render();
           if (main._guiXR) main._guiXR._needsRedraw = true;
         }
@@ -725,7 +753,12 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       x: col1X, y: y, w: 550, h: 40,
       value: activeTool ? (activeTool._minRadiusPct !== undefined ? activeTool._minRadiusPct : 10) : 10,
       min: 1, max: 100, precision: 0,
-      onInput: (val) => { if (activeTool) { activeTool._minRadiusPct = val; } }
+      onInput: (val) => { 
+        if (activeTool) { 
+          activeTool._minRadiusPct = val; 
+          getOptionsURL.saveOption(`tool_${activeToolIndex}_minRadiusPct`, val, 500);
+        } 
+      }
     });
     y += 40 + gapBtn;
 
@@ -737,7 +770,12 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       x: col1X, y: y, w: 550, h: 40,
       value: activeTool ? (activeTool._minIntensityPct !== undefined ? activeTool._minIntensityPct : 10) : 10,
       min: 0, max: 100, precision: 0,
-      onInput: (val) => { if (activeTool) { activeTool._minIntensityPct = val; } }
+      onInput: (val) => { 
+        if (activeTool) { 
+          activeTool._minIntensityPct = val; 
+          getOptionsURL.saveOption(`tool_${activeToolIndex}_minIntensityPct`, val, 500);
+        } 
+      }
     });
     y += 40 + gapBtn;
 
@@ -749,7 +787,12 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       x: col1X, y: y, w: 550, h: 40,
       value: activeTool ? (activeTool._pressureBias !== undefined ? activeTool._pressureBias : 0) : 0,
       min: -0.95, max: 0.95, precision: 2, step: 0.05,
-      onInput: (val) => { if (activeTool) { activeTool._pressureBias = val; } }
+      onInput: (val) => { 
+        if (activeTool) { 
+          activeTool._pressureBias = val; 
+          getOptionsURL.saveOption(`tool_${activeToolIndex}_pressureBias`, val, 500);
+        } 
+      }
     });
     y += 40 + gapSection;
 
@@ -796,6 +839,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     onInteract: () => {
       if (activeTool) {
         activeTool._clay = !activeTool._clay;
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_clay`, activeTool._clay);
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
@@ -812,6 +856,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     onInteract: () => {
       if (activeTool) {
         activeTool._accumulate = !activeTool._accumulate;
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_accumulate`, activeTool._accumulate);
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
@@ -827,6 +872,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     onInteract: () => {
       if (activeTool) {
         activeTool._culling = !activeTool._culling;
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_culling`, activeTool._culling);
         main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
@@ -875,11 +921,13 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     options: alphaOptions,
     value: currentAlphaIndex,
     disabled: !activeTool,
-    onSelect: (idx) => {
-      if (activeTool) {
+    onSelect: (id) => {
+      const idx = alphaOptions.findIndex(o => o.id === id);
+      if (idx >= 0) {
         const name = alphaNames[idx];
         activeTool._idAlpha = name;
-        // Picking.setIdAlpha() is usually called by the tool on stroke, but we update the tool prop here.
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_alpha`, name);
+        main.render();
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     }

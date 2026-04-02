@@ -1,4 +1,5 @@
 import TR from './GuiTR.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 class GuiConfig {
 
@@ -17,6 +18,7 @@ class GuiConfig {
 
   onLangChange(value) {
     TR.select = this._langs[parseInt(value, 10)];
+    getOptionsURL.saveOption('language', TR.select);
     this._ctrlGui.initGui();
   }
 }

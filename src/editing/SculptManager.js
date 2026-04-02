@@ -1,4 +1,5 @@
 import Selection from '../drawables/Selection.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 import Tools from './tools/Tools.js';
 import Enums from '../misc/Enums.js';
 import HoleFilling from './HoleFilling.js';
@@ -62,8 +63,29 @@ class SculptManager {
   init() {
     var main = this._main;
     var tools = this._tools;
+    const opts = getOptionsURL();
+    const saved = opts._rawSaved || {};
+
     for (var i = 0, nb = Tools.length; i < nb; ++i) {
-      if (Tools[i]) tools[i] = new Tools[i](main);
+      if (Tools[i]) {
+        tools[i] = new Tools[i](main);
+        
+        // Restore per-tool settings from localStorage
+        if (saved[`tool_${i}_radius`] !== undefined) tools[i]._radius = saved[`tool_${i}_radius`];
+        if (saved[`tool_${i}_intensity`] !== undefined) tools[i]._intensity = saved[`tool_${i}_intensity`];
+        if (saved[`tool_${i}_roughness`] !== undefined) tools[i]._material[0] = saved[`tool_${i}_roughness`];
+        if (saved[`tool_${i}_metallic`] !== undefined) tools[i]._material[1] = saved[`tool_${i}_metallic`];
+        if (saved[`tool_${i}_clay`] !== undefined) tools[i]._clay = saved[`tool_${i}_clay`];
+        if (saved[`tool_${i}_accumulate`] !== undefined) tools[i]._accumulate = saved[`tool_${i}_accumulate`];
+        if (saved[`tool_${i}_culling`] !== undefined) tools[i]._culling = saved[`tool_${i}_culling`];
+        if (saved[`tool_${i}_topoCheck`] !== undefined) tools[i]._topoCheck = saved[`tool_${i}_topoCheck`];
+        if (saved[`tool_${i}_modulateRadius`] !== undefined) tools[i]._modulateRadius = saved[`tool_${i}_modulateRadius`];
+        if (saved[`tool_${i}_modulateIntensity`] !== undefined) tools[i]._modulateIntensity = saved[`tool_${i}_modulateIntensity`];
+        if (saved[`tool_${i}_minRadiusPct`] !== undefined) tools[i]._minRadiusPct = saved[`tool_${i}_minRadiusPct`];
+        if (saved[`tool_${i}_minIntensityPct`] !== undefined) tools[i]._minIntensityPct = saved[`tool_${i}_minIntensityPct`];
+        if (saved[`tool_${i}_pressureBias`] !== undefined) tools[i]._pressureBias = saved[`tool_${i}_pressureBias`];
+        if (saved[`tool_${i}_alpha`] !== undefined) tools[i]._idAlpha = saved[`tool_${i}_alpha`];
+      }
     }
   }
 

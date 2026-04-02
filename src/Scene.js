@@ -36,11 +36,12 @@ class Scene {
   constructor() {
     this._gl = null; // webgl context
 
+    const opts = getOptionsURL();
     this._vrDeviceRadius = 0.05;
 
     // Feature Toggle: Aim (Ray) vs Touch (Sphere) picking
-    this._vrUseVolumeIntersect = true; // By default, use Contact Picking (true) instead of Laser Pointer Raycasting (false)
-    this._vrAmbidextrousCursors = false; // Disable offhand sculpting cursors by default to reduce visual clutter
+    this._vrUseVolumeIntersect = !opts.aimPickingMode; // By default, use Contact Picking (true) instead of Laser Pointer Raycasting (false)
+    this._vrAmbidextrousCursors = opts.ambidextrousCursors; // Disable offhand sculpting cursors by default to reduce visual clutter
 
     this._cameraSpeed = 0.25;
 
@@ -94,7 +95,7 @@ class Scene {
     };
 
     // renderable stuffs
-    var opts = getOptionsURL();
+    // Already declared at top of constructor
     this._showContour = opts.outline;
     this._showGrid = opts.grid;
     this._grid = null;
@@ -209,7 +210,7 @@ class Scene {
     // If we Rotate 180, we are looking effectively "Standard Forward".
 
     // [Step 1] Hand Swap Feature
-    this._dominantHand = 'right'; // 'right' or 'left'
+    this._dominantHand = getOptionsURL().leftHandMode ? 'left' : 'right'; // 'right' or 'left'
     this._selectionLocked = false; // Lock Selection State
     this._vrIsNegative = false; // Universal Sub Mode State
 
@@ -1068,7 +1069,8 @@ class Scene {
     // Initialize Three.js Renderer
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: true
+      antialias: true,
+      preserveDrawingBuffer: true
     });
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setSize(window.innerWidth, window.innerHeight);
@@ -4456,8 +4458,8 @@ class Scene {
                         const bottomRArc = ringLine.getObjectByName("bottom_right");
                         
                         // Active FG color (uses tool._oldColor captured when eyedropper was enabled)
-                        const activeLowerLeftColor = tool._oldColor ? tool._oldColor : tool._color;
-                        const activeLowerRightColor = tool._colorSecondary; // Always BG color
+                        const activeLowerLeftColor = tool._oldColor ? tool._oldColor : (tool._color ? tool._color : [color.r, color.g, color.b]);
+                        const activeLowerRightColor = tool._colorSecondary ? tool._colorSecondary : (tool._color ? tool._color : [color.r, color.g, color.b]); // Fallback to primary or cursor color
                         
                         if (hasSampled) {
                             if (topArc && topArc.material) topArc.material.color.copy(sampledColor);

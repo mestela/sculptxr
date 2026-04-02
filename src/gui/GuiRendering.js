@@ -96,6 +96,7 @@ class GuiRendering {
   onEnvironmentChanged(val) {
     ShaderPBR.idEnv = val;
     this.onUpdateCtrlExposure();
+    getOptionsURL.saveOption('environment', val);
     this._main.render();
   }
 
@@ -131,6 +132,12 @@ class GuiRendering {
           warning = true;
         } else {
           mesh.setShaderType(val);
+          
+          let shaderName = 'pbr';
+          if (val === Enums.Shader.MATCAP) shaderName = 'matcap';
+          else if (val === Enums.Shader.UV) shaderName = 'uv';
+          getOptionsURL.saveOption('shader', shaderName);
+
           main.render();
         }
         if (warning)
@@ -149,6 +156,7 @@ class GuiRendering {
         mesh.setShaderType(Enums.Shader.MATCAP);
       mesh.setMatcap(value);
     }
+    getOptionsURL.saveOption('matcap', value);
     this._main.render();
   }
 
@@ -157,6 +165,7 @@ class GuiRendering {
     for (var i = 0, nb = meshes.length; i < nb; ++i) {
       meshes[i].setFlatShading(bool);
     }
+    getOptionsURL.saveOption('flatshading', bool);
     this._main.render();
   }
 
@@ -165,6 +174,7 @@ class GuiRendering {
     for (var i = 0, nb = meshes.length; i < nb; ++i) {
       meshes[i].setShowWireframe(bool);
     }
+    getOptionsURL.saveOption('wireframe', bool);
     this._main.render();
   }
 

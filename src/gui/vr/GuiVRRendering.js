@@ -1,4 +1,5 @@
 import Enums from '../../misc/Enums.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 import TR from '../GuiTR.js';
 import Shader from '../../render/ShaderLib.js';
 
@@ -46,6 +47,12 @@ export default function getRenderingWidgets(main) {
         return;
       }
       mesh.setShaderType(id);
+      
+      let shaderName = 'pbr';
+      if (id === Enums.Shader.MATCAP) shaderName = 'matcap';
+      else if (id === Enums.Shader.UV) shaderName = 'uv';
+      getOptionsURL.saveOption('shader', shaderName);
+
       main.render();
       if (main.guiXR) main.guiXR._needsUpdate = true;
     }
@@ -95,6 +102,7 @@ export default function getRenderingWidgets(main) {
       options: envOptions,
       onSelect: (id) => {
         ShaderPBR.idEnv = id;
+        getOptionsURL.saveOption('environment', id);
         main.render();
         if (main.guiXR) main.guiXR._needsUpdate = true;
       }
@@ -130,6 +138,7 @@ export default function getRenderingWidgets(main) {
       options: matcapOptions,
       onSelect: (id) => {
         mesh.setMatcap(id);
+        getOptionsURL.saveOption('matcap', id);
         main.render();
         if (main.guiXR) main.guiXR._needsUpdate = true;
       }

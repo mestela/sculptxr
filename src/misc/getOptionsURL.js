@@ -4,6 +4,7 @@ var keyAction = Enums.KeyAction;
 
 var queryBool = function (value, def) {
   if (value === undefined) return def;
+  if (typeof value === 'boolean') return value;
   return value !== 'false' && value !== '0';
 };
 
@@ -119,42 +120,97 @@ var getOptionsURL = function () {
   options = {};
 
   var params = readUrlParameters();
+  var localParams = {};
+  try {
+    const stored = localStorage.getItem('sculptxr_settings');
+    if (stored) localParams = JSON.parse(stored);
+  } catch (e) {}
+
+  options._rawSaved = localParams; // Expose for dynamic lookups (per-tool)
+
+  var getVal = function (key, def) {
+    if (params[key] !== undefined) return params[key];
+    if (localParams[key] !== undefined) return localParams[key];
+    return def;
+  };
 
   // misc
-  options.language = params.language; // english/chinese/korean/japanese/russian/turkish/swedish/french/german
-  options.scalecenter = queryBool(params.scalecenter, false);
+  options.language = getVal('language', undefined); // english/chinese/korean/japanese/russian/turkish/swedish/french/german
+  options.scalecenter = queryBool(getVal('scalecenter'), false);
 
   // display
-  options.grid = queryBool(params.grid, true);
-  options.outline = queryBool(params.outline, false);
-  options.outlinecolor = queryColor(params.outlinecolor, [0.3, 0.0, 0.0, 1.0]);
-  options.mirrorline = queryBool(params.mirrorline, false);
-  options.darkenunselected = queryBool(params.darkenunselected, true);
+  options.grid = queryBool(getVal('grid'), true);
+  options.outline = queryBool(getVal('outline'), false);
+  options.outlinecolor = queryColor(getVal('outlinecolor'), [0.3, 0.0, 0.0, 1.0]);
+  options.mirrorline = queryBool(getVal('mirrorline'), false);
+  options.darkenunselected = queryBool(getVal('darkenunselected'), true);
 
   // camera
-  options.projection = getEnum(Enums.Projection, params.projection, Enums.Projection.PERSPECTIVE); // perspective/orthographic
-  options.cameramode = getEnum(Enums.CameraMode, params.cameramode, Enums.Projection.ORBIT); // orbit/spherical/plane
-  options.pivot = queryBool(params.pivot, true);
-  options.fov = queryNumber(params.fov, 10, 90, 45); // [10-90]
+  options.projection = getEnum(Enums.Projection, getVal('projection'), Enums.Projection.PERSPECTIVE); // perspective/orthographic
+  options.cameramode = getEnum(Enums.CameraMode, getVal('cameramode'), Enums.Projection.ORBIT); // orbit/spherical/plane
+  options.pivot = queryBool(getVal('pivot'), true);
+  options.fov = queryNumber(getVal('fov'), 10, 90, 45); // [10-90]
 
   // rendering
-  options.flatshading = queryBool(params.flatshading, false);
-  options.wireframe = queryBool(params.wireframe, false);
-  options.curvature = queryNumber(params.curvature, 0, 5, 0); // [0-5]
-  options.exposure = queryNumber(params.exposure, 0, 5); // [0-5]
-  options.environment = queryInteger(params.environment, 0, Infinity, 2); // [0-inf]
-  options.matcap = queryInteger(params.matcap, 0, Infinity, 3); // [0-inf]
-  options.shader = getEnum(Enums.Shader, params.shader, Enums.Shader.PBR); // pbr/matcap/normal/uv
-  options.filmic = queryBool(params.filmic, false);
+  options.flatshading = queryBool(getVal('flatshading'), false);
+  options.wireframe = queryBool(getVal('wireframe'), false);
+  options.curvature = queryNumber(getVal('curvature'), 0, 5, 0); // [0-5]
+  options.exposure = queryNumber(getVal('exposure'), 0, 5); // [0-5]
+  options.environment = queryInteger(getVal('environment'), 0, Infinity, 2); // [0-inf]
+  options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 3); // [0-inf]
+  options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
+  options.filmic = queryBool(getVal('filmic'), false);
 
-  options.modelurl = params.modelurl;
+  options.modelurl = params.modelurl; // URL only
 
-  options.shortcuts = readShortcuts(params.shortcuts);
+  options.controllerModel = getVal('controllerModel', 'Auto');
+  window._xrControllerOverride = options.controllerModel; // Global override for XR load sequence
+
+  // VR UI Settings
+  options.leftHandMode = queryBool(getVal('leftHandMode'), false);
+  options.aimPickingMode = queryBool(getVal('aimPickingMode'), true); // Default true
+  options.ambidextrousCursors = queryBool(getVal('ambidextrousCursors'), false);
+  options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
+  options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.001);
+  options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.2);
+  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.5);
+  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.5);
+  options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
+  const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
+  options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, isMobileVR ? 0 : 1); // 0=fast, 1=smooth, 2=full
+
+  options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
   return options;
 };
 
+getOptionsURL._saveTimers = {};
+
+getOptionsURL.saveOption = function (key, value, debounceMs) {
+  if (debounceMs) {
+    clearTimeout(getOptionsURL._saveTimers[key]);
+    getOptionsURL._saveTimers[key] = setTimeout(() => {
+      getOptionsURL.saveOption(key, value, 0);
+    }, debounceMs);
+    return;
+  }
+
+  try {
+    let localParams = {};
+    const stored = localStorage.getItem('sculptxr_settings');
+    if (stored) localParams = JSON.parse(stored);
+    localParams[key] = value;
+    localStorage.setItem('sculptxr_settings', JSON.stringify(localParams));
+    if (options) options[key] = value; // update runtime snapshot
+  } catch (e) {
+    console.warn("Failed to save to localStorage:", e);
+  }
+};
+
 getOptionsURL();
+
+window.saveOption = getOptionsURL.saveOption;
+window.getOptionsURL = getOptionsURL;
 
 getOptionsURL.getShortKey = function (key) {
   // handles numpad

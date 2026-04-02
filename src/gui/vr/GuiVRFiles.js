@@ -43,15 +43,14 @@ export default function getFilesWidgets(main) {
   addHeader('Export Scene');
   addCheckbox('export_all', 'Export all', exportAll);
   addButton('export_sgl', 'Save .sgl (SculptGL)');
+  addButton('browser_save', 'Save to browser storage');
+  addButton('browser_load', 'Load from local storage');
   addButton('export_obj', 'Save .obj');
   addButton('export_ply', 'Save .ply');
   addButton('export_stl', 'Save .stl');
   addCheckbox('export_zbrush', 'OBJ color zbrush', objZbrush);
   addCheckbox('export_append', 'OBJ color append', objAppend);
   // addButton('go_sketchfab', 'Go to Sketchfab !');
-  widgets.push({ type: 'button', id: 'go_sketchfab', label: 'Go to Sketchfab ! (Disabled)', x, y, w: contentW, h: itemH, textAlign: 'left', disabled: true });
-  y += itemH;
-
   // --- Export Textures ---
   y += 10;
   addHeader('Export textures');

@@ -1,4 +1,5 @@
 import Enums from '../misc/Enums.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 import TR from './GuiTR.js';
 import Tools from '../editing/tools/Tools.js';
@@ -14,6 +15,7 @@ import getToolsWidgets from './vr/GuiVRTools.js';
 import getSceneWidgets from './vr/GuiVRScene.js';
 import getRenderingWidgets from './vr/GuiVRRendering.js';
 import getFilesWidgets from './vr/GuiVRFiles.js';
+import getGalleryWidgets from './vr/GuiVRGallery.js';
 import getHistoryWidgets from './vr/GuiVRHistory.js';
 import getReferenceWidgets from './vr/GuiVRReference.js'; // Replaces Background
 import getCameraWidgets from './vr/GuiVRCamera.js';
@@ -79,12 +81,16 @@ export default class GuiXR {
       this._ctx = this._createFilteredContextProxy(this._canvas.getContext('2d'));
     }
 
+    const opts = getOptionsURL();
     this._uiSettings = {
       resolution: 256, // Voxel Resolution
       radius: 1.0, // Voxel Radius
-      triggerCurve: 0.5,
-      menuBrightness: 0.3,
-      menuSaturation: 1.0,
+      triggerCurve: opts.triggerCurve,
+      menuBrightness: opts.menuBrightness,
+      menuSaturation: opts.menuSaturation,
+      wireframeAlpha: opts.wireframeAlpha,
+      wireframeBias: opts.wireframeBias,
+      offsetY: opts.offsetY
     };
 
     // Preload Dropper Icon
@@ -920,7 +926,9 @@ export default class GuiXR {
     if ((this._activeSlider || this._activeColorPicker) && !isPressed) {
       if (this._activeSlider) {
         if (this._activeSlider.id === 'stack_size' && this._main) {
-          this._main.getStateManager().setNewMaxStack(Math.round(this._activeSlider.value));
+          const val = Math.round(this._activeSlider.value);
+          this._main.getStateManager().setNewMaxStack(val);
+          getOptionsURL.saveOption('maxUndo', val);
         } else if (this._activeSlider.onRelease) {
           this._activeSlider.onRelease(this._activeSlider.value);
         }
@@ -1453,7 +1461,7 @@ export default class GuiXR {
             // Keep open for specific actions like Undo/Redo or Tools
             // ALSO keep open for Outliner buttons (select, delete) to allow batch ops
             const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
-            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def'].includes(w.id) || isOutliner;
+            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load'].includes(w.id) || isOutliner;
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'colorpicker_embedded') {
@@ -1810,11 +1818,12 @@ export default class GuiXR {
     if (w.id === 'flat') {
       const val = !main.getMesh().getFlatShading();
       main.getMesh().setFlatShading(val);
-      // Force update to ensure visual sync if needed
+      getOptionsURL.saveOption('flatshading', val);
     }
     if (w.id === 'wireframe') {
       const val = !main.getMesh().getShowWireframe();
       main.getMesh().setShowWireframe(val);
+      getOptionsURL.saveOption('wireframe', val);
     }
 
     // Toggles
@@ -1823,8 +1832,8 @@ export default class GuiXR {
       if (sym) {
         const val = !sym.getValue();
         sym.setValue(val);
-        w.value = val; // Store state in widget for visual toggle?
-        // Note: toggle rendering isn't fully wired to w.value yet in GuiXR draw() for standard toggles, but logic should work.
+        w.value = val;
+        getOptionsURL.saveOption('mirrorline', val);
       }
     }
 
@@ -1852,6 +1861,24 @@ export default class GuiXR {
     }
     else if (id === 'export_sgl') {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSGL();
+    }
+    else if (id === 'browser_save') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveToBrowserStorage();
+    }
+    else if (id === 'browser_load') {
+      const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
+      if (guiFiles) {
+        guiFiles.refreshBrowserSaves(); // Refresh list before opening
+        const data = getGalleryWidgets(main);
+        this.openOverlay('menu', {
+          x: 200, // Pop out location
+          y: 200,
+          w: data.width,
+          h: data.height,
+          widgets: data.widgets,
+          title: 'Browser Gallery'
+        });
+      }
     }
     else if (id === 'export_obj') {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsOBJ();
@@ -2952,7 +2979,6 @@ export default class GuiXR {
     }
     
     ctx.fillStyle = textColor;
-    ctx.textAlign = 'center';
 
     let fontSize = '24px sans-serif';
     if (wid.data && wid.data.fontSize) {
@@ -2962,7 +2988,16 @@ export default class GuiXR {
     }
     ctx.font = fontSize;
 
-    ctx.fillText(wid.label || '', wx + wid.w / 2, wy + wid.h / 2 + 8);
+    if (wid.data && wid.data.thumbImage) {
+      try {
+        ctx.drawImage(wid.data.thumbImage, wx + 5, wy + 5, wid.h - 10, wid.h - 10);
+      } catch (e) {}
+      ctx.textAlign = 'left';
+      ctx.fillText(wid.label || '', wx + wid.h + 5, wy + wid.h / 2 + 8);
+    } else {
+      ctx.textAlign = 'center';
+      ctx.fillText(wid.label || '', wx + wid.w / 2, wy + wid.h / 2 + 8);
+    }
   }
 
   _drawEmbeddedColorPicker(ctx, w) {

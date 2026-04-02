@@ -1,4 +1,5 @@
 import Enums from '../../misc/Enums.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 import TR from '../GuiTR.js';
 
 export default function getSettingsWidgets(main) {
@@ -28,6 +29,7 @@ export default function getSettingsWidgets(main) {
     onInteract: () => {
       const newHand = main._dominantHand === 'left' ? 'right' : 'left';
       if (main.setDominantHand) main.setDominantHand(newHand);
+      getOptionsURL.saveOption('leftHandMode', newHand === 'left');
     }
   });
   y += ITEM_H + GAP;
@@ -37,6 +39,7 @@ export default function getSettingsWidgets(main) {
     value: !main._vrUseVolumeIntersect,
     onInteract: () => {
       main._vrUseVolumeIntersect = !main._vrUseVolumeIntersect;
+      getOptionsURL.saveOption('aimPickingMode', !main._vrUseVolumeIntersect);
       if (main.guiXR) main.guiXR._needsRedraw = true;
     }
   });
@@ -47,6 +50,7 @@ export default function getSettingsWidgets(main) {
     value: !!main._vrAmbidextrousCursors,
     onInteract: () => {
       main._vrAmbidextrousCursors = !main._vrAmbidextrousCursors;
+      getOptionsURL.saveOption('ambidextrousCursors', main._vrAmbidextrousCursors);
       if (main.guiXR) main.guiXR._needsRedraw = true;
     }
   });
@@ -60,6 +64,7 @@ export default function getSettingsWidgets(main) {
       if (main._guiXR) {
         main._guiXR._uiSettings.triggerCurve = val;
       }
+      getOptionsURL.saveOption('triggerCurve', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -97,6 +102,7 @@ export default function getSettingsWidgets(main) {
       // console.log(`[SculptGL] selectedOption resolved to: ${selectedOption ? selectedOption.label : 'not found'}`);
       if (selectedOption) {
         window._xrControllerOverride = selectedOption.label;
+        getOptionsURL.saveOption('controllerModel', selectedOption.label);
         // console.log(`[SculptGL] _xrControllerOverride updated to: ${window._xrControllerOverride}`);
         
         const scene = main || window.app;
@@ -131,6 +137,7 @@ export default function getSettingsWidgets(main) {
           wireMesh.material.uniforms.uBias.value = val;
         }
       }
+      getOptionsURL.saveOption('wireframeBias', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -150,6 +157,7 @@ export default function getSettingsWidgets(main) {
           wireMesh.material.uniforms.uOpacity.value = val;
         }
       }
+      getOptionsURL.saveOption('wireframeAlpha', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -172,6 +180,7 @@ export default function getSettingsWidgets(main) {
         main._guiPopup._uiSettings.menuBrightness = val;
         main._guiPopup._needsRedraw = true;
       }
+      getOptionsURL.saveOption('menuBrightness', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -194,6 +203,7 @@ export default function getSettingsWidgets(main) {
         main._guiPopup._uiSettings.menuSaturation = val;
         main._guiPopup._needsRedraw = true;
       }
+      getOptionsURL.saveOption('menuSaturation', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -206,13 +216,14 @@ export default function getSettingsWidgets(main) {
     type: 'slider', id: 'offsetY', label: 'Head Height', x: 0, y: y, w: menuW, h: ITEM_H,
     min: -2.0, max: 0.0, step: 0.1,
     value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.offsetY !== undefined ? main.getGui()._uiXR._uiSettings.offsetY : -1.2,
-    onInteract: (val) => {
+    onInput: (val) => {
       // Store globally for persistence
       if (main.getGui()._uiXR) {
         main.getGui()._uiXR._uiSettings.offsetY = val;
       }
       // Apply immediately
       main.updateVROffsets();
+      getOptionsURL.saveOption('offsetY', val, 500);
     }
   });
   y += ITEM_H + GAP;
@@ -276,6 +287,7 @@ export default function getSettingsWidgets(main) {
     onSelect: (id) => {
       if (main.getMesh()) {
         main.getMesh().setWireframeType(id);
+        getOptionsURL.saveOption('wireframeType', id);
         main.render();
       }
     }
