@@ -1,3 +1,8 @@
+# v1.0.73
+- **Feature**: **User-Adjustable Stylus Offset (Z-Shift)**: Added a "Stylus Z-Shift" slider to VR Settings (-0.15m to +0.15m). Allows pulling the visual stylus tip backward/forward to sit flush with the physical controller model across different runtimes (PCVR vs. Standalone).
+- **Fix**: **Local WASM Loading over Network IP**: Resolved `TypeError: Incorrect response MIME type` when testing locally via network IPs by swapping fragile hostname string-mapping for Vite's native `import.meta.env.DEV`.
+- **Fix**: **WebXR Stylus Options Persistence**: Whitelisted stylus variables in `getOptionsURL.js` ensuring changes persist across page reloads. Visual meshes now automatically pre-scale and pre-shift to stored values on startup.
+
 # v1.0.72
 - **Feature**: **Visually Rich Browser Gallery**: Implemented a standalone, visually rich overlay gallery for managing saved sculpts within VR.
 - **Feature**: **Procedural and Real Thumbnails**: Added support for thumbnails in the gallery. In non-VR mode, it force-renders the canvas synchronously. In VR mode, it auto-frames the sculpt using a transient headset camera and snaps it!
