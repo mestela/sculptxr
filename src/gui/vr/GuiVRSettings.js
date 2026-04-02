@@ -69,6 +69,38 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'stylus_length', label: 'Stylus Length', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: 0.0, max: 0.30, step: 0.01,
+    value: main._guiXR && main._guiXR._uiSettings.stylusLength !== undefined ? main._guiXR._uiSettings.stylusLength : 0.10,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.stylusLength = val;
+      }
+      if (main.updateStylusLength) {
+        main.updateStylusLength(val);
+      }
+      getOptionsURL.saveOption('stylusLength', val, 500);
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'slider', id: 'stylus_offset', label: 'Stylus Z-Shift', x: 0, y: y, w: menuW, h: ITEM_H,
+    min: -0.15, max: 0.15, step: 0.01,
+    value: main._guiXR && main._guiXR._uiSettings.stylusOffset !== undefined ? main._guiXR._uiSettings.stylusOffset : 0.0,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.stylusOffset = val;
+      }
+      if (main.updateStylusOffset) {
+        main.updateStylusOffset(val);
+      }
+      getOptionsURL.saveOption('stylusOffset', val, 500);
+    }
+  });
+  y += ITEM_H + GAP;
+
   // --- CONTROLLER MODEL ---
   widgets.push({ type: 'header', label: 'Controller Model Override', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
@@ -124,12 +156,12 @@ export default function getSettingsWidgets(main) {
   widgets.push({
     type: 'slider', id: 'wireframe_bias', label: 'Wireframe Bias', x: 0, y: y, w: menuW, h: ITEM_H,
     min: 0.0, max: 0.005, step: 0.0001,
-    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.wireframeBias !== undefined ? main.getGui()._uiXR._uiSettings.wireframeBias : 0.001,
+    value: main.getGuiXR() && main.getGuiXR()._uiSettings.wireframeBias !== undefined ? main.getGuiXR()._uiSettings.wireframeBias : 0.001,
     precision: 4, // Allow viewing full 0.0001 increments
     onInput: (val) => {
       // GuiXR now passes absolute values!
-      if (main.getGui()._uiXR) {
-        main.getGui()._uiXR._uiSettings.wireframeBias = val;
+      if (main.getGuiXR()) {
+        main.getGuiXR()._uiSettings.wireframeBias = val;
       }
       if (window.app && window.app.getMesh()) {
         const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
@@ -145,11 +177,11 @@ export default function getSettingsWidgets(main) {
   widgets.push({
     type: 'slider', id: 'wireframe_alpha', label: 'Wireframe Opacity', x: 0, y: y, w: menuW, h: ITEM_H,
     min: 0.0, max: 1.0, step: 0.05,
-    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.wireframeAlpha !== undefined ? main.getGui()._uiXR._uiSettings.wireframeAlpha : 0.2, // Default 0.2
+    value: main.getGuiXR() && main.getGuiXR()._uiSettings.wireframeAlpha !== undefined ? main.getGuiXR()._uiSettings.wireframeAlpha : 0.2,
     precision: 2, // Percentage (0.00 to 1.00)
     onInput: (val) => {
-      if (main.getGui()._uiXR) {
-        main.getGui()._uiXR._uiSettings.wireframeAlpha = val;
+      if (main.getGuiXR()) {
+        main.getGuiXR()._uiSettings.wireframeAlpha = val;
       }
       if (window.app && window.app.getMesh()) {
         const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
@@ -215,11 +247,11 @@ export default function getSettingsWidgets(main) {
   widgets.push({
     type: 'slider', id: 'offsetY', label: 'Head Height', x: 0, y: y, w: menuW, h: ITEM_H,
     min: -2.0, max: 0.0, step: 0.1,
-    value: main.getGui()._uiXR && main.getGui()._uiXR._uiSettings.offsetY !== undefined ? main.getGui()._uiXR._uiSettings.offsetY : -1.2,
+    value: main.getGuiXR() && main.getGuiXR()._uiSettings.offsetY !== undefined ? main.getGuiXR()._uiSettings.offsetY : -1.2,
     onInput: (val) => {
       // Store globally for persistence
-      if (main.getGui()._uiXR) {
-        main.getGui()._uiXR._uiSettings.offsetY = val;
+      if (main.getGuiXR()) {
+        main.getGuiXR()._uiSettings.offsetY = val;
       }
       // Apply immediately
       main.updateVROffsets();

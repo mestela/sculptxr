@@ -178,6 +178,8 @@ var getOptionsURL = function () {
   options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
   const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
   options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, isMobileVR ? 0 : 1); // 0=fast, 1=smooth, 2=full
+  options.stylusLength = queryNumber(getVal('stylusLength'), 0.0, 0.30, 0.10);
+  options.stylusOffset = queryNumber(getVal('stylusOffset'), -0.15, 0.15, 0.0);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

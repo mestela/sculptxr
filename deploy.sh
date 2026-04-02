@@ -67,6 +67,7 @@ cp -r app dist/
 # Copy Voxel Workers and wasm to dist in the correct relative path
 mkdir -p dist/src/workers
 cp -r src/workers/* dist/src/workers/
+cp node_modules/manifold-3d/manifold.wasm dist/
 
 echo "🚀 Deploying to ${HOST}:${DEST}..."
 

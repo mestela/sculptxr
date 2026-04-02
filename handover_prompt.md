@@ -4,32 +4,34 @@
 
 ## Current Situation / Obstacles
 
-We are finalizing the **Symmetry Mirroring pipeline using the Rust-based Manifold-3D WASM library**. We encountered issues where standard meshes were rejected as "un-manifold" due to un-shared indices and edge shifts.
+We have finalized the **Persistent Browser Gallery and Thumbnail Pipeline** for WebXR. The system now allows users to save sculpts to IndexedDB, view them in a standalone pop-out gallery, and see high-fidelity thumbnails framed auto-magically.
 
 ### Key Achievements this Session:
-1.  **Resolved Reading Indices Shift Bug**:
-    *   Found that the worker's `symmetryMirror` and `validateManifold` were falling into a default "triangle reading" path for Quad meshes because `mesh.isQuad` was undefined in the session.
-    *   **Fixed**: The worker now intercepts `length % 4` arrays and triangulates them properly even if passed through the triangle path.
-2.  **Standalone Validator and Fault Highlighting**:
-    *   Constructed a standalone module in `VoxelWorker.js` to run un-scaled integer-bucket welds and report open holes / branching edges *without* crashing the Manifold library constructor.
-    *   Faults are reported back via indices and painted **Red** in the viewport using direct WebGL `updateColorBuffer()` calls.
-3.  **Persistent UI State (Auto-Heal Checkbox)**:
-    *   Created an `Automatic Heal and Weld` checkbox in `GuiVRTopology.js` to let users adopt a unified indices mesh back into viewport without running the costly Quad Remesher.
-    *   Tucked `healState` at the module scope so that UI Redraws don't reset it to false.
+
+1.  **Visually Rich Browser Gallery**:
+    *   Decoupled the load gallery from the main files menu. It now pops open as a beautiful floating overlay that stays open during interactions.
+2.  **Auto-Fitting Smart Thumbnails in WebXR**:
+    *   Implemented a transient central headset camera (no eye offsets) that looks directly at the bounding box center of your sculpt.
+    *   **Auto-FOV**: Dynamically computes the distance to fit the max dimension of the object into frame with padding! 
+    *   **UI Sweep**: Automatically sets `visible = false` for ALL scene children except the mesh and lights, ensuring ultra-clean screens snaps with no controllers or HUDs visible.
+    *   **Synchronous Gamma Correction**: Feeds through an offscreen 2D canvas with CSS filters `contrast(1.4) brightness(0.8) saturate(1.2)` to fix linear export desaturation washouts!
+3.  **UI State Restoration Fixes**:
+    *   Resolved a legacy typo (reading from `main.getGui()._uiXR` vs `main.getGuiXR()`) that was resetting user sliders (Head Height, Opacity) back to defaults on redraw.
+4.  **Deployment Resilience**:
+    *   Solved `<DOCTYPE html>` 404 wasm streaming errors in subdirectories. The deploy script now copies `manifold.wasm` to the dist root, and the WebWorker finds it dynamically using relative parent URL math (`../manifold.wasm`).
 
 ---
 
 ## Next Steps / Backlog
 
-### Immediate Priorities (Topology Stability)
-1.  **Manual Repair Verification**:
-    *   Now that the Quad shift bug is resolved, running **Validate Manifold** should show a clean non-corrupted fault count.
-    *   If cracks linger, use `DeleteFace` and `FillHole` to patch them.
-2.  **Spin Edge (Orientation Tool)**:
-    *   Not yet implemented. Need to let users select an edge and flip its orientation between two adjacent quads.
+The following items are ready to be picked up from `docs/threejs_todo.md`:
 
-### Future Roadmap
-1.  **Transform Gizmo Fix (Tracking Drift)**: Reorder Three.js Gizmo translations to pure TRS (`position`, `quaternion`, `scale`) tracking instead of raw matrix multiplication to prevent skewing and wobble under double-grip scaling.
-2.  **IndexedDB Storage**: Persist options and projects locally.
+0. **Controler stylus tip adjust**: its too long and too far away for PCVR, it should be user configurable and pick a better default. Ask user for details. 
+1.  **Desktop Modes & Spectator Cam**:
+    *   Reimplement spectator views utilizing the multi-pass camera render tech we built for thumbnails.
+2.  **UI Migration (`three-mesh-ui`)**:
+    *   Begin moving the raw canvas overlays to true Three.js UI components.
+3.  **Floating VR Keyboard Integration**.
+4.  **Box Modeling Tools Integration** (Kokraf).
 
 Good luck! 🛠️

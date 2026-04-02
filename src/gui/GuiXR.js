@@ -82,6 +82,7 @@ export default class GuiXR {
     }
 
     const opts = getOptionsURL();
+    console.log(`[GuiXR] Loading settings: stylusLength=${opts.stylusLength}, stylusOffset=${opts.stylusOffset}`);
     this._uiSettings = {
       resolution: 256, // Voxel Resolution
       radius: 1.0, // Voxel Radius
@@ -90,7 +91,9 @@ export default class GuiXR {
       menuSaturation: opts.menuSaturation,
       wireframeAlpha: opts.wireframeAlpha,
       wireframeBias: opts.wireframeBias,
-      offsetY: opts.offsetY
+      offsetY: opts.offsetY,
+      stylusLength: opts.stylusLength,
+      stylusOffset: opts.stylusOffset
     };
 
     // Preload Dropper Icon

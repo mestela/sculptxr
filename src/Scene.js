@@ -898,6 +898,45 @@ class Scene {
     if (window.screenLog) window.screenLog(`Dominant Hand: ${this._dominantHand}`, "lime");
   }
 
+  getStylusLength() {
+    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusLength !== undefined) {
+      return this._guiXR._uiSettings.stylusLength;
+    }
+    return this._isQuestStandalone ? 0.15 : 0.10;
+  }
+
+  updateStylusLength(val) {
+    const scaleFactor = val / 0.10;
+    const updateMesh = (ctrl) => {
+      if (!ctrl) return;
+      const spike = ctrl.getObjectByName('stylus_spike');
+      if (spike) {
+        spike.scale.set(1, 1, scaleFactor);
+      }
+    };
+    updateMesh(this._vrControllerLeft);
+    updateMesh(this._vrControllerRight);
+  }
+
+  getStylusOffset() {
+    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusOffset !== undefined) {
+      return this._guiXR._uiSettings.stylusOffset;
+    }
+    return 0.0;
+  }
+
+  updateStylusOffset(val) {
+    const updateMesh = (ctrl) => {
+      if (!ctrl) return;
+      const spike = ctrl.getObjectByName('stylus_spike');
+      if (spike) {
+        spike.position.z = -val; // Negative to shift forward, Positive to shift backward
+      }
+    };
+    updateMesh(this._vrControllerLeft);
+    updateMesh(this._vrControllerRight);
+  }
+
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, frame = null) {
@@ -1957,11 +1996,20 @@ class Scene {
             // Controller Stylus Spike
             const spikeGeo = new THREE.CylinderGeometry(0, 0.005, 0.10, 16);
             spikeGeo.rotateX(-Math.PI / 2);
-            spikeGeo.translate(0, 0, -0.05);
-            const spikeOffsetZ = this._isQuestStandalone ? -0.05 : 0.0;
-            spikeGeo.translate(0, 0, spikeOffsetZ);
+            spikeGeo.translate(0, 0, -0.05); // Base at 0, Tip at -0.10
+            
             const spikeMat = new THREE.MeshBasicMaterial({ color: 0x4d4d4d });
-            controller.add(new THREE.Mesh(spikeGeo, spikeMat));
+            const spikeMesh = new THREE.Mesh(spikeGeo, spikeMat);
+            spikeMesh.name = 'stylus_spike';
+            controller.add(spikeMesh);
+
+            // Apply loaded settings immediately on creation
+            const defLength = this.getStylusLength();
+            const defOffset = this.getStylusOffset();
+            console.log(`[Scene] Applying defaults to spikeMesh: Length=${defLength}, Offset=${defOffset}`);
+            const scaleFactor = defLength / 0.10;
+            spikeMesh.scale.set(1, 1, scaleFactor);
+            spikeMesh.position.z = -defOffset;
 
             // Keep the 'connected' listener purely for diagnostic logging, 
             // AND robust static mapping!
@@ -3495,7 +3543,7 @@ class Scene {
     }
 
     // [STYLUS PROP] Tip Position Calculation (Parity with live laser visual)
-    const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+    const offZ = this.getStylusLength() + this.getStylusOffset();
     const tipPhys = vec3.create();
     vec3.scaleAndAdd(tipPhys, physicalOrigin, rayDirPhys, offZ);
 
@@ -3695,7 +3743,7 @@ class Scene {
       }
 
       if (useVolume) {
-        const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+        const offZ = this.getStylusLength() + this.getStylusOffset();
         const volumePhys = vec3.create();
         vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
         const volumeEnginePos = vec3.clone(volumePhys);
@@ -3721,7 +3769,7 @@ class Scene {
 
       if (useVolume) {
         // Calculate physical tip origin identically to _updateVRCursors (Visual Sphere Location)
-        const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+        const offZ = this.getStylusLength() + this.getStylusOffset();
         const volumePhys = vec3.create();
         vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
         const volumeEnginePos = vec3.clone(volumePhys);
@@ -4212,7 +4260,7 @@ class Scene {
             vec3.normalize(dir, dir);
 
             // Calculate Physical Tip explicitly for volume sphere visual positioning
-            const offZ = this._isQuestStandalone ? 0.15 : 0.10;
+            const offZ = this.getStylusLength() + this.getStylusOffset();
             const tipPhys = vec3.create();
             vec3.scaleAndAdd(tipPhys, origin, dir, offZ);
 

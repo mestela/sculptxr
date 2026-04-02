@@ -25,6 +25,7 @@
     -   **Update** `README.md`: Keep only the **latest 3 releases**. Link to `docs/releases.md` for older history.
 2.  **Version**:
     -   **Increment** version in `index.html` (e.g., `<title>SculptXR v0.7.121</title>`).
+    -   **Increment** version in `src/Version.js` (e.g., `export const VERSION = 'v1.0.72';`).
 3.  **Deploy**:
     -   Run `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
 

@@ -127,8 +127,8 @@ export default function getTopologyWidgets(main) {
         main.getSculptManager().meshToVoxel();
         
         main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
-        if (main.getGui()._uiXR) {
-          main.getGui()._uiXR.refreshToolsWidget(); // Refresh VR tools UI
+        if (main.getGuiXR()) {
+          main.getGuiXR().refreshToolsWidget(); // Refresh VR tools UI
         }
       }
     }

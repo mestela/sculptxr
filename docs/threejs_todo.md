@@ -7,8 +7,7 @@
 ---
 
 ## 1. Todo
-
-* [ ] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
+* [ ] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
@@ -17,6 +16,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [x] **thumbstick should scroll menu**
 * [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.
 * [x] **Symmetry**: get working in all modes
