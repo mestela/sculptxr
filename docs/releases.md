@@ -1,3 +1,10 @@
+# v1.0.72
+- **Feature**: **Visually Rich Browser Gallery**: Implemented a standalone, visually rich overlay gallery for managing saved sculpts within VR.
+- **Feature**: **Procedural and Real Thumbnails**: Added support for thumbnails in the gallery. In non-VR mode, it force-renders the canvas synchronously. In VR mode, it auto-frames the sculpt using a transient headset camera and snaps it!
+- **UX**: **Auto-Fitting Camera Viewport**: The thumbnail camera automatically computes the bounding box of your sculpt and adjusts FOV to fit it perfectly in frame!
+- **UX**: **Ultra Clean UI Screen Snaps**: It temporarily hides all scene children (menus, HUDs, controllers) during screenshot render passes to ensure pristine thumbnail views!
+- **Fix**: **Resolved Popup Closing Bug**: Fixed a race condition where the gallery overlay would close immediately after being opened from the Files menu.
+
 # v1.0.71
 - **Feature**: **Thumbstick Menu Scrolling**: Either thumbstick (dominant or non-dominant) can be used to scroll the VR main menu viewport when pointing the laser at it.
 - **UX**: **Variable Scroll Speed Limits**: Default thumbstick scrolling set to a high-tempo `24px` per tick. Holding the secondary trigger drops it to `4px` for fine precision.

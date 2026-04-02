@@ -301,12 +301,9 @@ class GuiFiles {
       timestamp: timestamp 
     }).then(() => {
       if (window.screenLog) window.screenLog(`SUCCESS: Stashed sculpt ${key}`, 'lime');
-      console.log(`[IndexedDB] Stashed ${key}. Thumb size: ${thumb.length}`);
-      
       this.refreshBrowserSaves(); // Refresh internal list
     }).catch(err => {
       if (window.screenLog) window.screenLog(`ERROR: Stash failed: ${err}`, 'red');
-      console.error("[IndexedDB] Stash error:", err);
     });
   }
 
@@ -341,15 +338,12 @@ class GuiFiles {
 
   deleteBrowserSave(key) {
     if (window.screenLog) window.screenLog(`Deleting ${key} from storage...`, 'orange');
-    console.log(`[IndexedDB] Deleting ${key}...`);
     
     StorageDB.delete(key).then(() => {
       if (window.screenLog) window.screenLog(`SUCCESS: Deleted ${key}`, 'lime');
-      console.log(`[IndexedDB] Deleted ${key}`);
       this.refreshBrowserSaves(); // Refresh list
     }).catch(err => {
       if (window.screenLog) window.screenLog(`ERROR: Delete failed: ${err}`, 'red');
-      console.error("[IndexedDB] Delete error:", err);
     });
   }
 
