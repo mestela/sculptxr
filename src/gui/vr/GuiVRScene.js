@@ -66,17 +66,57 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', id: 'header_booleans', label: 'Booleans', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
-  widgets.push({
-    type: 'button', id: 'booleanUnion', label: 'Union Selection', x: 20, y: y, w: menuW - 40, h: ITEM_H,
-    onInteract: () => {
+  const selectedMeshes = main.getSelectedMeshes();
+  let booleanLabel = 'Boolean Ops (Select 2)';
+  let booleanInteract = null;
+  let booleanDisabled = true;
+
+  if (selectedMeshes.length === 2) {
+    const mesh1 = selectedMeshes[0];
+    const mesh2 = selectedMeshes[1];
+    const v1 = mesh1.isVisible();
+    const v2 = mesh2.isVisible();
+
+    if (v1 && v2) {
+      booleanLabel = 'Boolean Union';
+    } else if (!v1 && !v2) {
+      booleanLabel = 'Boolean Intersect';
+    } else {
+      booleanLabel = 'Boolean Subtract';
+    }
+    
+    booleanDisabled = false;
+    booleanInteract = () => {
       try {
         if (main.getSculptManager()) {
-          main.getSculptManager().booleanUnionSelection();
+          let op = 'union';
+          if (v1 && v2) op = 'union';
+          else if (!v1 && !v2) op = 'intersect';
+          else op = 'subtract';
+          
+          main.getSculptManager().booleanOperationSelection(op);
         }
       } catch (e) {
         console.error(e);
       }
-    }
+    };
+  } else if (selectedMeshes.length > 2) {
+    booleanLabel = 'Boolean (Keep selection <= 2)';
+  } else if (selectedMeshes.length === 1) {
+    booleanLabel = 'Boolean (Select 1 more)';
+  }
+
+  widgets.push({
+    type: 'button', id: 'booleanOp', label: booleanLabel, x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    disabled: booleanDisabled,
+    onInteract: booleanInteract
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'checkbox', id: 'quadrangulate_boolean', label: 'Quadrangulate Result', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    value: Remesh.QUADRANGULATE,
+    onInteract: (val) => { Remesh.QUADRANGULATE = val; }
   });
   y += ITEM_H + GAP;
 

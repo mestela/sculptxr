@@ -436,17 +436,31 @@ class SculptManager {
     });
   }
 
-  booleanUnionSelection() {
+  booleanOperationSelection(op) {
     if (this._isProcessingSlice) return; // Share lock
     this._isProcessingSlice = true;
 
     const selectedMeshes = this._main.getSelectedMeshes().slice(); // Snapshot
     this._pendingUnionMeshes = selectedMeshes; 
     
-    if (selectedMeshes.length < 2) {
-      if (window.screenLog) window.screenLog("Select at least two meshes to union", "yellow");
+    if (selectedMeshes.length !== 2) {
+      if (window.screenLog) window.screenLog("Select exactly two meshes for this operation", "yellow");
       this._isProcessingSlice = false;
       return;
+    }
+
+    const mesh1 = selectedMeshes[0];
+    const mesh2 = selectedMeshes[1];
+    const v1 = mesh1.isVisible();
+    const v2 = mesh2.isVisible();
+
+    let sortedMeshes = selectedMeshes;
+    if (op === 'subtract') {
+      // Subtract invisible from visible.
+      // So baseMesh (visible) goes first!
+      if (!v1) {
+        sortedMeshes = [mesh2, mesh1];
+      }
     }
 
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
@@ -458,8 +472,8 @@ class SculptManager {
 
     const meshesData = [];
 
-    for (let i = 0; i < selectedMeshes.length; i++) {
-      const mesh = selectedMeshes[i];
+    for (let i = 0; i < sortedMeshes.length; i++) {
+      const mesh = sortedMeshes[i];
       const nbVertices = mesh.getNbVertices();
       const vAr = mesh.getVertices();
       const fAr = mesh.getFaces();
@@ -475,29 +489,22 @@ class SculptManager {
         vArWorld[id + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
       }
 
-      const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
-
       meshesData.push({
         v: vArWorld,
         f: fAr,
-        isTriangles: !isTriangles // If TRI_INDEX found, it's triangles (stride 4, tri + pad). Wait, SculpGL uses stride 4 for both!
-        // If it's a quad mesh, faces has 4 valid indices.
-        // If it's tri, faces[3] = TRI_INDEX.
-        // Let's use the same logic as symmetryMirror: `isTriangles: !mesh.isQuad` if available, or check faces[3].
-        // mesh.isQuad is a reliable flag set on MeshStatic!
+        isTriangles: !mesh.isQuad
       });
-      // Correct the flag to use mesh.isQuad if available, or fallback
-      meshesData[meshesData.length - 1].isTriangles = !mesh.isQuad;
     }
 
     try {
       voxelTool._worker.postMessage({
-        type: 'BOOLEAN_UNION',
+        type: 'BOOLEAN_OPERATION',
         meshes: meshesData,
+        op: op,
         quadrangulate: Remesh.QUADRANGULATE
       });
     } catch (e) {
-      console.error("[SculptManager] postMessage failed for Boolean Union:", e);
+      console.error("[SculptManager] postMessage failed for Boolean:", e);
       this._isProcessingSlice = false;
     }
   }

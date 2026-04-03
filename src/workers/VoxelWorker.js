@@ -163,8 +163,8 @@ self.onmessage = function (e) {
       case 'QUADRANGULATE_ONLY':
         quadrangulateOnly(msg);
         break;
-      case 'BOOLEAN_UNION':
-        booleanUnion(msg);
+      case 'BOOLEAN_OPERATION':
+        booleanOperation(msg);
         break;
       case 'SYMMETRY_MIRROR':
         symmetryMirror(msg);
@@ -720,15 +720,15 @@ function sliceAndCap(msg) {
   }
 }
 
-function booleanUnion(msg) {
+function booleanOperation(msg) {
   try {
     const manifold = globalThis.manifold;
     if (!manifold) {
-      console.error("booleanUnion: manifold not loaded");
+      console.error("booleanOperation: manifold not loaded");
       return;
     }
 
-    console.log(`[VoxelWorker] booleanUnion started! Num meshes=${msg.meshes.length}`);
+    console.log(`[VoxelWorker] booleanOperation started! Op=${msg.op}, Num meshes=${msg.meshes.length}`);
 
     let combinedManifold = null;
 
@@ -761,13 +761,21 @@ function booleanUnion(msg) {
         if (!combinedManifold) {
             combinedManifold = currentManifold;
         } else {
-            console.log(`[VoxelWorker] Unioning mesh ${i+1}/${msg.meshes.length}...`);
-            combinedManifold = combinedManifold.add(currentManifold);
+            if (msg.op === 'subtract') {
+                console.log(`[VoxelWorker] Subtracting mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.subtract(currentManifold);
+            } else if (msg.op === 'intersect') {
+                console.log(`[VoxelWorker] Intersecting mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.intersect(currentManifold);
+            } else {
+                console.log(`[VoxelWorker] Unioning mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.add(currentManifold);
+            }
         }
     }
 
     if (!combinedManifold) {
-        console.error("booleanUnion: no valid meshes to union");
+        console.error("booleanOperation: no valid meshes to operate on");
         return;
     }
 
@@ -793,7 +801,7 @@ function booleanUnion(msg) {
     }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
 
   } catch (err) {
-      console.error("booleanUnion Error:", err);
+      console.error("booleanOperation Error:", err);
       self.postMessage({ type: 'BOOLEAN_UNION_ERROR', error: err.message });
   }
 }
