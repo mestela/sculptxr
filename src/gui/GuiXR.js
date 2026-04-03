@@ -116,6 +116,8 @@ export default class GuiXR {
 
     this._scrollOffset = 0; // Vertical scroll
     this._maxScroll = 0;
+    this._scrollOffsetOverlay = 0;
+    this._maxScrollOverlay = 0;
 
     this._cursor = { x: -1, y: -1, active: false };
     this._radius = 0.20;
@@ -335,9 +337,9 @@ export default class GuiXR {
         this.openOverlay('menu', {
           x: overlayX,
           y: overlayY,
-          w: data.width,
-          h: data.height,
-          widgets: data.widgets,
+          w: data.width || 400,
+          h: (data.height || 600) - (tabName === 'Settings' ? 150 : 0),
+          widgets: Array.isArray(data) ? data : data.widgets,
           tabName: tabName
         });
         this.draw();
@@ -725,7 +727,7 @@ export default class GuiXR {
     }
 
     for (const w of this._overlayData.widgets) {
-      if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
+      if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
         if (!w.disabled && !w.header && w.type !== 'info') {
           hitWidget = w;
           newHover = w;
@@ -761,8 +763,17 @@ export default class GuiXR {
         const ox = this._overlayData.x;
         const oy = this._overlayData.y;
         
-        if (oldHover) this._drawOverlayWidget(oldHover, this._ctx, ox, oy, false);
-        if (newHover) this._drawOverlayWidget(newHover, this._ctx, ox, oy, true);
+        this._ctx.save();
+        if (!this._overlayData.isToolPicker) {
+          this._ctx.beginPath();
+          this._ctx.rect(ox, oy, this._overlayData.w, this._overlayData.h);
+          this._ctx.clip();
+        }
+        
+        if (oldHover) this._drawOverlayWidget(oldHover, this._ctx, ox, oy - this._scrollOffsetOverlay, false);
+        if (newHover) this._drawOverlayWidget(newHover, this._ctx, ox, oy - this._scrollOffsetOverlay, true);
+        
+        this._ctx.restore();
         
         this._needsUpload = true; // Request throttled upload
       }
@@ -883,6 +894,12 @@ export default class GuiXR {
       if (Array.isArray(tabData)) widgets = tabData;
       else if (tabData.widgets) widgets = tabData.widgets;
     }
+    let maxY = 0;
+    widgets.forEach(w => {
+      if (w.y + w.h > maxY) maxY = w.y + w.h;
+    });
+    this._maxScroll = Math.max(0, maxY + HEADER_HEIGHT - CANVAS_SIZE);
+
     const currentY = HEADER_HEIGHT - this._scrollOffset;
 
     // Normalize generic view if needed, but usually they are absolute.
@@ -1471,7 +1488,7 @@ export default class GuiXR {
 
     // Check click on menu widgets
     for (const w of data.widgets) {
-      if (rx >= w.x && rx <= w.x + w.w && ry >= w.y && ry <= w.y + w.h) {
+      if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
         if (!w.disabled && !w.header) {
           if (data.isToolPicker && window.screenLog) {
             // window.screenLog(`[Click] HIT! ${w.id}`, 'lime');
@@ -1597,6 +1614,20 @@ export default class GuiXR {
 
     this._overlay = type;
     this._overlayData = data;
+    
+    if (type === 'menu' && data && data.widgets) {
+      let maxY = 0;
+      data.widgets.forEach(w => {
+        if (w.y + w.h > maxY) maxY = w.y + w.h;
+      });
+      // Add 150px buffer for Settings to allow scrolling comboboxes
+      const buffer = data.tabName === 'Settings' ? 150 : 0;
+      this._maxScrollOverlay = Math.max(0, maxY + buffer - data.h);
+      this._scrollOffsetOverlay = 0; // Reset scroll on open
+    } else {
+      this._scrollOffsetOverlay = 0;
+    }
+
     this._overlayOpenTime = performance.now();
     this._needsRedraw = true;
     this.draw();
@@ -1772,6 +1803,9 @@ export default class GuiXR {
 
     // Prefer onInteract if defined (New System)
     if (w.onInteract) {
+      if (w.type === 'checkbox') {
+        w.value = !w.value;
+      }
       w.onInteract(w.value);
       return;
     }
@@ -2392,10 +2426,21 @@ export default class GuiXR {
       }
 
       // Draw Menu Widgets
+      ctx.save();
+      if (!this._overlayData.isToolPicker) {
+        ctx.beginPath();
+        ctx.rect(x, y, mw, mh);
+        ctx.clip();
+      }
+
       widgets.forEach(wid => {
         const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
-        this._drawOverlayWidget(wid, ctx, x, y, isHover);
+        const wy = y + wid.y - this._scrollOffsetOverlay;
+        if (wy + wid.h >= y && wy <= y + mh) {
+          this._drawOverlayWidget(wid, ctx, x, y - this._scrollOffsetOverlay, isHover);
+        }
       });
+      ctx.restore();
 
       // No restore needed (caller handles it)
       return;
@@ -2891,44 +2936,43 @@ export default class GuiXR {
 
         ctx.fillStyle = wid.disabled ? '#555' : 'white';
         ctx.textAlign = 'left';
-        ctx.font = '24px sans-serif';
+        ctx.font = this.styles.fontOverlay || '20px sans-serif';
         ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
 
         const checkSize = wid.h * 0.6;
         const checkW = checkSize;
-        const checkX = wid.x + wid.w - checkW - 20;
+        const checkX = wid.w < 100 ? wid.x + (wid.w - checkW) / 2 : wid.x + wid.w - checkW - 20;
         const checkY = wid.y + (wid.h - checkW) / 2;
 
         ctx.fillStyle = '#111';
         ctx.fillRect(checkX, checkY, checkW, checkW);
+        ctx.strokeStyle = '#444';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(checkX, checkY, checkW, checkW);
 
-        if (wid.id === 'mirrorMask' || wid.id === 'mirrorSculpt' || wid.id === 'smoothTop' || wid.id === 'isLocked' || wid.id === 'show_radius' || wid.id === 'use_brush_normal' || wid.id === 'fixed_radius' || wid.id === 'sculpt_symmetry') {
+        ctx.save();
+        ctx.translate(checkX, checkY);
+        ctx.scale(checkW / 24, checkW / 24); // Scale Lucide 24x24 to checkW
+
+        if (wid.isVisibility || wid.id === 'mirrorMask' || wid.id === 'mirrorSculpt' || wid.id === 'smoothTop' || wid.id === 'isLocked' || wid.id === 'show_radius' || wid.id === 'use_brush_normal' || wid.id === 'fixed_radius' || wid.id === 'sculpt_symmetry') {
           const eyeColor = wid.value ? '#00D0FF' : '#444';
           ctx.strokeStyle = eyeColor;
-          ctx.lineWidth = 4;
+          ctx.lineWidth = 2;
+          const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+          ctx.stroke(eyePath);
           ctx.beginPath();
-          ctx.moveTo(checkX + 4, checkY + checkW * 0.5);
-          ctx.quadraticCurveTo(checkX + checkW * 0.5, checkY + 8, checkX + checkW - 4, checkY + checkW * 0.5);
-          ctx.moveTo(checkX + 4, checkY + checkW * 0.5);
-          ctx.quadraticCurveTo(checkX + checkW * 0.5, checkY + checkW - 8, checkX + checkW - 4, checkY + checkW * 0.5);
-          ctx.stroke();
-
+          ctx.arc(12, 12, 3, 0, Math.PI * 2);
           ctx.fillStyle = eyeColor;
-          ctx.beginPath();
-          ctx.arc(checkX + checkW * 0.5, checkY + checkW * 0.5, 6, 0, Math.PI * 2);
           ctx.fill();
         } else {
           if (wid.value) {
             ctx.strokeStyle = '#00D0FF';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            const pad = 8;
-            ctx.moveTo(checkX + pad, checkY + checkW * 0.5);
-            ctx.lineTo(checkX + checkW * 0.4, checkY + checkW - pad);
-            ctx.lineTo(checkX + checkW - pad, checkY + pad);
-            ctx.stroke();
+            ctx.lineWidth = 2;
+            const checkPath = new Path2D('M20 6 9 17l-5-5');
+            ctx.stroke(checkPath);
           }
         }
+        ctx.restore();
       }
       else if (wid.type === 'combobox') {
         ctx.fillStyle = isHovered ? '#444' : '#333';
@@ -2955,7 +2999,7 @@ export default class GuiXR {
         }
 
         ctx.textAlign = 'left';
-        ctx.font = '24px sans-serif';
+        ctx.font = this.styles.fontOverlay || '20px sans-serif';
         ctx.fillStyle = 'white';
         ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
 
@@ -3035,6 +3079,15 @@ export default class GuiXR {
       } catch (e) {}
       ctx.textAlign = 'left';
       ctx.fillText(wid.label || '', wx + wid.h + 5, wy + wid.h / 2 + 8);
+    } else if (wid.icon === 'x') {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(wx + 12, wy + 12);
+      ctx.lineTo(wx + wid.w - 12, wy + wid.h - 12);
+      ctx.moveTo(wx + wid.w - 12, wy + 12);
+      ctx.lineTo(wx + 12, wy + wid.h - 12);
+      ctx.stroke();
     } else {
       ctx.textAlign = 'center';
       ctx.fillText(wid.label || '', wx + wid.w / 2, wy + wid.h / 2 + 8);
@@ -3655,7 +3708,7 @@ export default class GuiXR {
     const wy = y + wid.y;
 
     // Hover Background (Generic)
-    if (isHover) {
+    if (isHover && !wid.header) {
       ctx.fillStyle = this.styles.colorWidgetHover;
       ctx.fillRect(wx, wy, wid.w, wid.h);
     } else {
@@ -3685,19 +3738,16 @@ export default class GuiXR {
       ctx.fillStyle = isHover ? '#444' : '#333';
       ctx.fillRect(wx, wy, wid.w, wid.h);
 
-      const boxSize = 24;
-      const boxX = wx + wid.w - boxSize - 5;
+      const boxSize = 32;
+      const boxX = wx + (wid.w - boxSize) / 2;
       const boxY = wy + (wid.h - boxSize) / 2;
 
-      if (wid.icon === 'eye') {
+      if (wid.isVisibility) {
         const eyeColor = wid.value ? '#00D0FF' : '#444';
         ctx.strokeStyle = eyeColor;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(boxX + 2, boxY + boxSize * 0.5);
-        ctx.quadraticCurveTo(boxX + boxSize * 0.5, boxY + 4, boxX + boxSize - 2, boxY + boxSize * 0.5);
-        ctx.moveTo(boxX + 2, boxY + boxSize * 0.5);
-        ctx.quadraticCurveTo(boxX + boxSize * 0.5, boxY + boxSize - 4, boxX + boxSize - 2, boxY + boxSize * 0.5);
+        ctx.ellipse(boxX + boxSize * 0.5, boxY + boxSize * 0.5, boxSize * 0.4, boxSize * 0.2, 0, 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.fillStyle = eyeColor;

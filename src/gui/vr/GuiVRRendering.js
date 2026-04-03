@@ -37,7 +37,7 @@ export default function getRenderingWidgets(main) {
     type: 'combobox',
     id: 'shader_type',
     label: '',
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 360, h: btnH,
     value: shaderType,
     options: shaderOptions,
     onSelect: (id) => {
@@ -64,7 +64,7 @@ export default function getRenderingWidgets(main) {
     type: 'slider',
     id: 'curvature',
     label: TR('renderingCurvature'),
-    x: col1X, y: y, w: 400, h: 50,
+    x: col1X, y: y, w: 360, h: 50,
     min: 0, max: 100,
     value: mesh.getCurvature() * 20.0, 
     onInput: (val) => { mesh.setCurvature(val / 20.0); main.render(); }
@@ -76,7 +76,7 @@ export default function getRenderingWidgets(main) {
     type: 'checkbox',
     id: 'filmic',
     label: TR('renderingFilmic'),
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 360, h: btnH,
     value: ShaderMERGE.FILMIC,
     onInteract: () => {
       ShaderMERGE.FILMIC = !ShaderMERGE.FILMIC;
@@ -97,7 +97,7 @@ export default function getRenderingWidgets(main) {
       type: 'combobox',
       id: 'environment',
       label: '',
-      x: col1X, y: y, w: 400, h: btnH,
+      x: col1X, y: y, w: 360, h: btnH,
       value: ShaderPBR.idEnv,
       options: envOptions,
       onSelect: (id) => {
@@ -114,7 +114,7 @@ export default function getRenderingWidgets(main) {
       type: 'slider',
       id: 'exposure',
       label: TR('renderingExposure'),
-      x: col1X, y: y, w: 400, h: 50,
+      x: col1X, y: y, w: 360, h: 50,
       value: ShaderPBR.exposure,
       min: 0, max: 5,
       onInput: (val) => { ShaderPBR.exposure = val; main.render(); }
@@ -133,7 +133,7 @@ export default function getRenderingWidgets(main) {
       type: 'combobox',
       id: 'matcap',
       label: '',
-      x: col1X, y: y, w: 400, h: btnH,
+      x: col1X, y: y, w: 360, h: btnH,
       value: mesh.getMatcap(),
       options: matcapOptions,
       onSelect: (id) => {
@@ -149,7 +149,7 @@ export default function getRenderingWidgets(main) {
       type: 'button',
       id: 'import_matcap',
       label: TR('renderingImportMatcap'),
-      x: col1X, y: y, w: 400, h: btnH,
+      x: col1X, y: y, w: 360, h: btnH,
       onInteract: () => {
         const el = document.getElementById('matcapopen');
         if (el) el.click();
@@ -168,7 +168,7 @@ export default function getRenderingWidgets(main) {
       type: 'button',
       id: 'import_uv',
       label: TR('renderingImportUV'),
-      x: col1X, y: y, w: 400, h: btnH,
+      x: col1X, y: y, w: 360, h: btnH,
       onInteract: () => {
         const el = document.getElementById('textureopen');
         if (el) el.click();
@@ -185,7 +185,7 @@ export default function getRenderingWidgets(main) {
     type: 'slider',
     id: 'transparency',
     label: TR('renderingTransparency'),
-    x: col1X, y: y, w: 400, h: 50,
+    x: col1X, y: y, w: 360, h: 50,
     value: (1.0 - mesh.getOpacity()) * 100,
     onInput: (val) => {
       mesh.setOpacity(1.0 - val / 100.0);
@@ -198,7 +198,7 @@ export default function getRenderingWidgets(main) {
     type: 'checkbox',
     id: 'flat',
     label: TR('renderingFlat'),
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 360, h: btnH,
     value: mesh.getFlatShading(),
     onInteract: () => { mesh.setFlatShading(!mesh.getFlatShading()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
   });
@@ -208,7 +208,7 @@ export default function getRenderingWidgets(main) {
     type: 'checkbox',
     id: 'wireframe',
     label: TR('renderingWireframe'),
-    x: col1X, y: y, w: 400, h: btnH,
+    x: col1X, y: y, w: 360, h: btnH,
     value: mesh.getShowWireframe(),
     onInteract: () => { mesh.setShowWireframe(!mesh.getShowWireframe()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
   });

@@ -168,13 +168,13 @@ var getOptionsURL = function () {
 
   // VR UI Settings
   options.leftHandMode = queryBool(getVal('leftHandMode'), false);
-  options.aimPickingMode = queryBool(getVal('aimPickingMode'), true); // Default true
+  options.aimPickingMode = queryBool(getVal('aimPickingMode'), false); // Default false
   options.ambidextrousCursors = queryBool(getVal('ambidextrousCursors'), false);
   options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
-  options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.001);
-  options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.2);
-  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.5);
-  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.5);
+  options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);
+  options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.25);
+  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.25);
+  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 1.0);
   options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
   const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
   options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, isMobileVR ? 0 : 1); // 0=fast, 1=smooth, 2=full

@@ -2697,8 +2697,13 @@ class Scene {
             const isScrollTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
             const scrollSpeed = isScrollTriggerPressed ? 4 : 24; // Default 24, slow-mo 4
 
-            this._guiXR._scrollOffset += (valY > 0 ? 1 : -1) * scrollSpeed;
-            this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+            if (this._guiXR._overlay === 'menu') {
+              this._guiXR._scrollOffsetOverlay += (valY > 0 ? 1 : -1) * scrollSpeed;
+              this._guiXR._scrollOffsetOverlay = Math.max(0, Math.min(this._guiXR._scrollOffsetOverlay, this._guiXR._maxScrollOverlay || 0));
+            } else {
+              this._guiXR._scrollOffset += (valY > 0 ? 1 : -1) * scrollSpeed;
+              this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+            }
             this._guiXR._needsRedraw = true;
           } else if (isPressedY) {
             if (now - state.lastRadiusTime > targetRateY) { 

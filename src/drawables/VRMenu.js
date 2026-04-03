@@ -37,6 +37,7 @@ class VRMenu {
     });
 
     this.mesh = new THREE.Mesh(geometry, material);
+    this.mesh.renderOrder = 1000; // Ensure UI draws over wireframe!
     
     // OVERLAY_SCALE: The UI canvas is drawn dense (1024x1024) but scaled up physically for VR legibility.
     // We make it 10% bigger than before (0.904 * 1.1 = 0.9944)
