@@ -1,3 +1,7 @@
+# v1.0.75
+- **Feature**: **VR UI Standardization**: Standardized widget alignment, padding, and font sizes across all VR HUD tabs (Scene, Settings, Rendering). Replaced legacy canvas-drawn shapes with crisp, high-fidelity SVG path icons for visibility, delete, and checkboxes.
+- **Feature**: **Scrollable Overlay Menus**: Enabled thumbstick scrolling on massive overlay menus (like Settings) with proper isolation from background tabs.
+
 # v1.0.73
 - **Feature**: **User-Adjustable Stylus Offset (Z-Shift)**: Added a "Stylus Z-Shift" slider to VR Settings (-0.15m to +0.15m). Allows pulling the visual stylus tip backward/forward to sit flush with the physical controller model across different runtimes (PCVR vs. Standalone).
 - **Fix**: **Local WASM Loading over Network IP**: Resolved `TypeError: Incorrect response MIME type` when testing locally via network IPs by swapping fragile hostname string-mapping for Vite's native `import.meta.env.DEV`.
