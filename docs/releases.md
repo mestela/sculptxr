@@ -1,3 +1,8 @@
+# v1.0.77
+- **Feature**: **Global Exposure and Tone Mapping Controls**: Replaced the non-functional "Filmic" checkbox with a comprehensive control set in the VR Rendering menu, including a Tone Mapping combobox (None, Linear, Reinhard, Cineon, ACESFilmic) and a global Exposure slider (0.0 to 3.0).
+- **Feature**: **Matcap Exposure Support**: Added a `uExposure` uniform to the custom Matcap shader to allow Matcap materials to respond to the global exposure slider.
+- **Cleanup**: Removed the competing PBR-specific exposure slider to avoid conflict with the new global control.
+
 # v1.0.76
 - **Feature**: **Advanced Dynamic Boolean Modes**: Context-aware operations triggered by visibility states when exactly 2 objects are selected (Union if both visible, Subtract if one visible, Intersect if both invisible).
 - **Feature**: **Quadrangulate Toggle**: Added an explicit toggle to quadrangulate the resulting boolean mesh immediately.
