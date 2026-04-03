@@ -492,9 +492,8 @@ class FillHole extends SculptBase {
             }
           }
         }
-        if (bestIdx === -1) bestIdx = 0;
-
         const b = [];
+        for (let i = 0; i < P; ++i) b.push(loop[(bestIdx + i) % P]);
 
         const getVIdxAt = (i, j) => {
           if (i > 0 && i < M && j > 0 && j < N) return getIntVIdx(i, j); // Interior

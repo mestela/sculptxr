@@ -1638,11 +1638,11 @@ class Scene {
 
     // Force Init Controllers & Menu IMMEDIATELY (Before Session Set!)
     // console.log("[USER EVENT] Calling this.initVRControllers()...");
-    if (window.screenLog) window.screenLog("[XR] Calling initVRControllers", "yellow");
+    // if (window.screenLog) window.screenLog("[XR] Calling initVRControllers", "yellow");
     this.initVRControllers();
 
     // console.log(`[USER EVENT] Input Sources pre-boot count: ${session.inputSources ? session.inputSources.length : 'undefined'}`);
-    if (window.screenLog) window.screenLog(`[XR] Pre-boot InputSources: ${session.inputSources?.length}`, "yellow");
+    // if (window.screenLog) window.screenLog(`[XR] Pre-boot InputSources: ${session.inputSources?.length}`, "yellow");
 
     // console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
     await this._renderer.xr.setSession(session);
@@ -1851,7 +1851,7 @@ class Scene {
       window.fetch = function (...args) {
         if (typeof args[0] === 'string' && (args[0].includes('webxr-input-profiles') || args[0].endsWith('.glb') || args[0].endsWith('.gltf'))) {
           // console.log(`[SculptGL] Fetching: ${args[0]}`);
-          if (window.screenLog) window.screenLog(`[Fetch] ${args[0]}`, "gray");
+          // if (window.screenLog) window.screenLog(`[Fetch] ${args[0]}`, "gray");
         }
         return nativeFetch.apply(this, args);
       };
@@ -1906,10 +1906,10 @@ class Scene {
     }
 
 
-      if (window.screenLog) window.screenLog(`[XR] initVRControllers check: Initialized=${!!this._controllersInitialized}`, "cyan");
+      // if (window.screenLog) window.screenLog(`[XR] initVRControllers check: Initialized=${!!this._controllersInitialized}`, "cyan");
       if (!this._controllersInitialized) {
         this._controllersInitialized = true;
-        if (window.screenLog) window.screenLog("[XR] Creating Dynamic Controller Groups", "cyan");
+        // if (window.screenLog) window.screenLog("[XR] Creating Dynamic Controller Groups", "cyan");
         if (this._renderer && this._scene) {
 
           this._vrControllerLeft = null;
@@ -1951,7 +1951,7 @@ class Scene {
                                     get: function(target, prop) {
                                         if (prop === 'profiles') {
                                             // console.log(`[SculptGL] Proxy: Overriding profiles to [${override}]`);
-                                            if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                                            // if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
                                             return [override];
                                         }
                                         const value = target[prop];
@@ -2006,7 +2006,7 @@ class Scene {
             // Apply loaded settings immediately on creation
             const defLength = this.getStylusLength();
             const defOffset = this.getStylusOffset();
-            console.log(`[Scene] Applying defaults to spikeMesh: Length=${defLength}, Offset=${defOffset}`);
+            // console.log(`[Scene] Applying defaults to spikeMesh: Length=${defLength}, Offset=${defOffset}`);
             const scaleFactor = defLength / 0.10;
             spikeMesh.scale.set(1, 1, scaleFactor);
             spikeMesh.position.z = -defOffset;
@@ -2017,7 +2017,7 @@ class Scene {
                 if (event.data && event.data.handedness) {
                     const hand = event.data.handedness;
                     const profiles = event.data.profiles ? event.data.profiles.join(', ') : 'none';
-                    if (window.screenLog) window.screenLog(`[XR] ${hand} profiles: [${profiles}]`, "cyan");
+                    // if (window.screenLog) window.screenLog(`[XR] ${hand} profiles: [${profiles}]`, "cyan");
 
                     if (hand === 'left') {
                         this._vrControllerLeft = controller;
@@ -2032,7 +2032,7 @@ class Scene {
             controller.addEventListener('disconnected', (event) => {
                 const hand = event.data?.handedness;
                 // console.log(`[SculptGL] Controller [${i}] Disconnected (${hand})`);
-                if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Disconnected (${hand})`, "red");
+                // if (window.screenLog) window.screenLog(`[XR] Controller [${i}] Disconnected (${hand})`, "red");
 
                 if (hand === 'left' && this._vrControllerLeft === controller) {
                     this._vrControllerLeft = null;
@@ -4553,7 +4553,7 @@ class Scene {
                 get: function(target, prop) {
                     if (prop === 'profiles') {
                         // console.log(`[SculptGL] Proxy (reload): Overriding to [${override}]`);
-                        if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                        // if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
                         return [override];
                     }
                     const value = target[prop];
@@ -4623,7 +4623,7 @@ window._reloadControllerModels = function() {
                 get: function(target, prop) {
                     if (prop === 'profiles') {
                         // console.log(`[SculptGL] Proxy (reload): Overriding to [${override}]`);
-                        if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
+                        // if (window.screenLog) window.screenLog(`[Proxy] Overriding to [${override}]`, "orange");
                         return [override];
                     }
                     const value = target[prop];
@@ -4655,7 +4655,7 @@ window._reloadControllerModels = function() {
             // console.log(`[SculptGL] Invoking fetchProfile directly for profile overwrite...`);
             utils.fetchProfile(activeSource, factory.path, 'generic-trigger').then( ({ profile, assetPath }) => {
                 // console.log(`[SculptGL] fetchProfile resolved: ${profile.profileId}, Asset: ${assetPath}`);
-                if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
+                // if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
 
                 const controllerModel = new utils.XRControllerModel();
                 controllerModel.motionController = new utils.MotionController(activeSource, profile, assetPath);
@@ -4672,7 +4672,7 @@ window._reloadControllerModels = function() {
                     if (!factory.gltfLoader) throw new Error('GLTFLoader missing.');
                     factory.gltfLoader.setPath('');
                     // console.log(`[SculptGL] Fetching network asset: ${controllerModel.motionController.assetUrl}`);
-                    if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
+                    // if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
                     factory.gltfLoader.load(controllerModel.motionController.assetUrl, (asset) => {
                         // console.log(`[SculptGL] GLTF Loaded: ${controllerModel.motionController.assetUrl}`);
                         factory._assetCache[ controllerModel.motionController.assetUrl ] = asset;

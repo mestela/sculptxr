@@ -231,7 +231,7 @@ export default function getTopologyWidgets(main) {
           type: 'QUADRANGULATE_ONLY',
           v: mesh.getVertices(),
           f: mesh.getFaces(),
-          rejectSeams: true,
+          rejectSeams: false,
           symmetryX: mesh.getSymmetryOrigin ? mesh.getSymmetryOrigin()[0] : 0
         });
       } else {

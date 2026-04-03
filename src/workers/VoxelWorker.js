@@ -163,6 +163,9 @@ self.onmessage = function (e) {
       case 'QUADRANGULATE_ONLY':
         quadrangulateOnly(msg);
         break;
+      case 'BOOLEAN_UNION':
+        booleanUnion(msg);
+        break;
       case 'SYMMETRY_MIRROR':
         symmetryMirror(msg);
         break;
@@ -717,6 +720,84 @@ function sliceAndCap(msg) {
   }
 }
 
+function booleanUnion(msg) {
+  try {
+    const manifold = globalThis.manifold;
+    if (!manifold) {
+      console.error("booleanUnion: manifold not loaded");
+      return;
+    }
+
+    console.log(`[VoxelWorker] booleanUnion started! Num meshes=${msg.meshes.length}`);
+
+    let combinedManifold = null;
+
+    for (let i = 0; i < msg.meshes.length; i++) {
+        const meshData = msg.meshes[i];
+        let triFaces = meshData.f;
+        
+        // Stride 4 to Stride 3 (unpadding)
+        if (triFaces.length % 4 === 0) {
+            if (triFaces[3] === 4294967295 || triFaces[3] === 0xFFFFFFFF) {
+                triFaces = unpadTriangles(triFaces);
+            } else if (!meshData.isTriangles) {
+                triFaces = triangulateQuads(triFaces);
+            }
+        }
+
+        const welded = weldVertices(meshData.v, triFaces);
+        let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
+        cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
+
+        const triVertsTyped = new Uint32Array(cleanFaces);
+        const mMesh = new manifold.Mesh({
+            numProp: 3,
+            vertProperties: welded.vertices,
+            triVerts: triVertsTyped
+        });
+
+        const currentManifold = new manifold.Manifold(mMesh);
+
+        if (!combinedManifold) {
+            combinedManifold = currentManifold;
+        } else {
+            console.log(`[VoxelWorker] Unioning mesh ${i+1}/${msg.meshes.length}...`);
+            combinedManifold = combinedManifold.add(currentManifold);
+        }
+    }
+
+    if (!combinedManifold) {
+        console.error("booleanUnion: no valid meshes to union");
+        return;
+    }
+
+    const resultMesh = combinedManifold.getMesh();
+    const weldedAfter = weldVertices(resultMesh.vertProperties, resultMesh.triVerts);
+
+    let paddedFaces;
+    let topologyStats;
+    if (msg.quadrangulate !== false) {
+        console.log(`[VoxelWorker] Quadrangulating Boolean result...`);
+        const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces, false, 0);
+        paddedFaces = result.paddedFaces;
+        topologyStats = result.stats;
+    } else {
+        paddedFaces = padTrianglesToQuads(weldedAfter.faces);
+    }
+
+    self.postMessage({
+        type: 'BOOLEAN_UNION_RESULT',
+        v: weldedAfter.vertices,
+        f: paddedFaces,
+        stats: topologyStats
+    }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
+
+  } catch (err) {
+      console.error("booleanUnion Error:", err);
+      self.postMessage({ type: 'BOOLEAN_UNION_ERROR', error: err.message });
+  }
+}
+
 function symmetryMirror(msg) {
   try {
     const manifold = globalThis.manifold;
@@ -1053,7 +1134,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
     const bz = vertices[v2 + 2] - vertices[v0 + 2];
 
     let nx = ay * bz - az * by;
-    let ny = az * ax - ax * bz;
+    let ny = az * bx - ax * bz;
     let nz = ax * by - ay * bx;
 
     const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
@@ -1061,6 +1142,13 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
       nx /= len;
       ny /= len;
       nz /= len;
+    } else {
+      if (numTris < 20) {
+        console.log(`[Quadrangulate] Zero normal for tri ${i}!`);
+        console.log(`[Quadrangulate]   v0 idx: ${triIndices[i * 3]} coords: [${vertices[v0]}, ${vertices[v0 + 1]}, ${vertices[v0 + 2]}]`);
+        console.log(`[Quadrangulate]   v1 idx: ${triIndices[i * 3 + 1]} coords: [${vertices[v1]}, ${vertices[v1 + 1]}, ${vertices[v1 + 2]}]`);
+        console.log(`[Quadrangulate]   v2 idx: ${triIndices[i * 3 + 2]} coords: [${vertices[v2]}, ${vertices[v2 + 1]}, ${vertices[v2 + 2]}]`);
+      }
     }
 
     normals[i * 3] = nx;
@@ -1075,13 +1163,19 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   // Candidate collection
   const candidates = [];
 
+  if (numTris < 20) console.log(`[Quadrangulate] Total triangles: ${numTris}, Edges in map: ${edgeMap.size}`);
+
   for (const [key, edgeData] of edgeMap.entries()) {
+    if (numTris < 20) console.log(`[Quadrangulate] Checking edge ${key}, tris: [${edgeData.tris.join(',')}]`);
     if (edgeData.tris.length !== 2) continue;
 
     const triA = edgeData.tris[0];
     const triB = edgeData.tris[1];
 
-    if (merged[triA] || merged[triB]) continue;
+    if (merged[triA] || merged[triB]) {
+      if (numTris < 20) console.log(`[Quadrangulate]   Skipping: One or both triangles already merged.`);
+      continue;
+    }
 
     const dot = normals[triA * 3] * normals[triB * 3] +
                 normals[triA * 3 + 1] * normals[triB * 3 + 1] +
@@ -1089,15 +1183,20 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
     const v1x = vertices[edgeData.v0 * 3];
     const v2x = vertices[edgeData.v1 * 3];
-    // Check against symmetryX (with tolerance for welding bucket spacing) OR fallback to standard center line (X=0)
     const isOnSeam = (Math.abs(v1x - symmetryX) < 0.05 && Math.abs(v2x - symmetryX) < 0.05) ||
                      (Math.abs(v1x) < 0.02 && Math.abs(v2x) < 0.02);
 
     if (rejectSeams && isOnSeam) {
-      continue; // Skip merging edges that lie on the symmetry plane!
+      if (numTris < 20) console.log(`[Quadrangulate]   Skipping: Edge is on seam.`);
+      continue;
     }
 
     if (!isOnSeam && Math.abs(dot) < 0.2) {
+      if (numTris < 20) {
+        console.log(`[Quadrangulate]   Skipping: Low dot product ${dot}`);
+        console.log(`[Quadrangulate]     TriA=${triA} normal: [${normals[triA * 3]}, ${normals[triA * 3 + 1]}, ${normals[triA * 3 + 2]}]`);
+        console.log(`[Quadrangulate]     TriB=${triB} normal: [${normals[triB * 3]}, ${normals[triB * 3 + 1]}, ${normals[triB * 3 + 2]}]`);
+      }
       stats.rejectedDot++;
       continue; 
     }
@@ -1204,10 +1303,10 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
     const p4 = [vertices[angles[3].idx * 3], vertices[angles[3].idx * 3 + 1], vertices[angles[3].idx * 3 + 2]];
 
     let error = quadCalcError(p1, p2, p3, p4);
-    // Disabling strict 2D convexity penalty for curved meshes!
-    // if (!isConvex) {
-    //   error += 5.0; 
-    // }
+    if (numTris < 20) {
+      console.log(`[Quadrangulate] Candidate: TriA=${triA}, TriB=${triB}, Error=${error}`);
+      console.log(`[Quadrangulate]   Angles: ${angles.map(a => a.idx).join(',')}`);
+    }
 
     candidates.push({
       triA,
@@ -1232,8 +1331,13 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   });
 
   // Merge candidates (Best first)
+  if (numTris < 20) console.log(`[Quadrangulate] Total candidates after sorting: ${candidates.length}`);
   for (const cand of candidates) {
-    if (merged[cand.triA] || merged[cand.triB]) continue;
+    if (merged[cand.triA] || merged[cand.triB]) {
+      if (numTris < 20) console.log(`[Quadrangulate] Skipping candidate ${cand.triA}-${cand.triB} (already merged)`);
+      continue;
+    }
+    if (numTris < 20) console.log(`[Quadrangulate] Merging ${cand.triA} and ${cand.triB} with error ${cand.error}`);
     outQuads.push(cand.quad);
     merged[cand.triA] = 1;
     merged[cand.triB] = 1;

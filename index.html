@@ -5,15 +5,15 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v1.0.73</title>
+    <title>SculptXR v1.0.74</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v1.0.73
+                                                              Version: v1.0.74
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v1.0.73">
+    <meta property="og:title" content="SculptXR v1.0.74">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
     <style>
         body {
@@ -132,18 +132,20 @@
         import { VERSION } from './src/Version.js';
 
         window.onload = async () => {
+            const nativeLog = console.log;
             // Environment checks
             const isProd = window.location.hostname === 'tokeru.com' && !window.location.pathname.includes('beta');
             window._showDebugLog = false; // Set to false to maximize performance (silences DOM logs)
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
+                nativeLog(msg); // All logs go to console!
                 if (window.app) {
                     const scene = window.app;
-                    if (scene._guiMini && scene._guiMini._isVisible) {
+                    if (scene._guiMini) {
                         scene._guiMini.printLog(msg, color);
                     }
-                    if (scene._guiXR && scene._guiXR._isVisible) {
+                    if (scene._guiXR) {
                         scene._guiXR.printLog(msg, color);
                     }
                 }
@@ -194,6 +196,19 @@
             console.log = function (...args) {
                 const msg = args.join(' ');
                 if (msg.includes('Resolved profile for') || msg.includes('Connected inputSource:')) return;
+
+                // Pipe to VR Debug history if enabled
+                const scene = window.app;
+                const debugMode = scene && scene.getGuiXR && scene.getGuiXR()._uiSettings && scene.getGuiXR()._uiSettings.debugMode;
+                if (debugMode && window.screenLog) {
+                    // Avoid loop by checking if we are already in screenLog
+                    if (!args[0] || (typeof args[0] === 'string' && !args[0].startsWith('[ScreenLog]'))) {
+                        // Filter out noisy profile/connection logs from the VR view
+                        if (!msg.includes('[Profile]') && !msg.includes('[XR]')) {
+                            window.screenLog('[Console] ' + msg);
+                        }
+                    }
+                }
 
                 if (!window._showDebugLog) {
                     cls.apply(console, args);

@@ -7,6 +7,9 @@
 ---
 
 ## 1. Todo
+* [ ] **new scene tab issues**: missing clear scene and similar tools, hover flash highlights gaps between menu entrues
+* [ ] **menu styling**: seems unbalanced, come up with a better design. same for overall vr menu
+* [ ] **overal exposure/brightness**: virtual desktop too bright and overexposed
 * [ ] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this

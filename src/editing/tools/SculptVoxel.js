@@ -128,6 +128,11 @@ class SculptVoxel extends SculptBase {
         this._main.getSculptManager().onSymmetryMirrorFaults(msg);
       } else if (msg.type === 'VALIDATE_MANIFOLD_RESULT') {
         this._main.getSculptManager().onSymmetryMirrorFaults(msg); // Just reuse the faults painter for simplicity!
+      } else if (msg.type === 'BOOLEAN_UNION_RESULT') {
+        this._main.getSculptManager().onBooleanUnionResult(msg);
+      } else if (msg.type === 'BOOLEAN_UNION_ERROR') {
+        if (window.screenLog) window.screenLog("Boolean Union failed: " + msg.error, "red");
+        this._main.getSculptManager()._isProcessingSlice = false; 
       } else if (msg.type === 'TRIANGULATE_RESULT') {
         this._main.getSculptManager().onTriangulateResult(msg);
       } else if (msg.type === 'QUADRANGULATE_RESULT') {
@@ -1657,9 +1662,8 @@ class SculptVoxel extends SculptBase {
   }
 
   updateVoxelMesh(res) {
-    if (window.screenLog) {
-      window.screenLog(`Voxel Tool: updateVoxelMesh (Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4})`, "cyan");
-    }
+    // if (window.screenLog)
+    //   window.screenLog(`Voxel Tool: updateVoxelMesh (Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4})`, "cyan");
     // console.log(`[SculptVoxel] updateVoxelMesh called with Verts=${res.vertices.length / 3}, Faces=${res.faces.length / 4}`);
 
     if (res.vertices.length === 0) {

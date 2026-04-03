@@ -12,82 +12,6 @@ export default function getSceneWidgets(main) {
   const HEADER_H = 30; // Slightly smaller header for menu
   const GAP = 5;
 
-  // --- SCENE ---
-  widgets.push({ type: 'header', label: 'Scene', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
-
-  widgets.push({ type: 'button', id: 'reset', label: 'Reset / Clear', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.clearScene() });
-  y += ITEM_H + GAP;
-
-  // Primitives
-  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addSphere() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCube() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCylinder() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addTorus() });
-  y += ITEM_H + GAP;
-
-  // Separator?
-  y += 10;
-
-  // --- SELECTION ---
-  widgets.push({ type: 'header', label: 'Selection', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
-
-  // Multi-select Checkbox
-  widgets.push({
-    type: 'checkbox', id: 'multiselect', label: 'Multi-select', x: 0, y: y, w: menuW, h: ITEM_H,
-    value: !!main._vrMultiSelect,
-    onInteract: () => { main._vrMultiSelect = !main._vrMultiSelect; }
-  });
-  y += ITEM_H + GAP;
-
-  widgets.push({
-    type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H,
-    onInteract: () => {
-      try { main.duplicateSelection(); }
-      catch (e) { console.error(e); }
-    }
-  });
-  y += ITEM_H + GAP;
-
-  widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
-  y += ITEM_H + GAP;
-
-  widgets.push({
-    type: 'button', id: 'merge', label: 'Merge', x: 0, y: y, w: menuW, h: ITEM_H,
-    onInteract: () => {
-      try {
-        if (main.getGui() && main.getGui()._ctrlScene) {
-          main.getGui()._ctrlScene.merge();
-          // Auto-disable multi-select after merge
-          main._vrMultiSelect = false;
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  });
-  y += ITEM_H + GAP;
-
-  // Isolate
-  let isIsolate = false;
-  if (main.getGui() && main.getGui()._ctrlScene) {
-    isIsolate = main.getGui()._ctrlScene.hasHiddenMeshes();
-  }
-  widgets.push({
-    type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H,
-    value: isIsolate,
-    onInteract: (val) => {
-      if (main.getGui() && main.getGui()._ctrlScene) {
-        main.getGui()._ctrlScene._ctrlIsolate.setValue(val, false);
-      }
-    }
-  });
-  y += ITEM_H + GAP;
-
   // --- OUTLINER ---
   widgets.push({ type: 'header', label: 'Outliner', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
@@ -134,8 +58,100 @@ export default function getSceneWidgets(main) {
 
   y += 10;
 
+  // --- BOOLEANS ---
+  widgets.push({ type: 'header', label: 'Booleans', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'booleanUnion', label: 'Union Selection', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      try {
+        if (main.getSculptManager()) {
+          main.getSculptManager().booleanUnionSelection();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  y += 10;
+
+  // --- SELECTION ---
+  widgets.push({ type: 'header', label: 'Selection', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  // Multi-select Checkbox
+  widgets.push({
+    type: 'checkbox', id: 'multiselect', label: 'Multi-select Mode', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: !!main._vrMultiSelect,
+    onInteract: () => { main._vrMultiSelect = !main._vrMultiSelect; }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      try { main.duplicateSelection(); }
+      catch (e) { console.error(e); }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
+  y += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'merge', label: 'Merge (Visual)', x: 0, y: y, w: menuW, h: ITEM_H,
+    onInteract: () => {
+      try {
+        if (main.getGui() && main.getGui()._ctrlScene) {
+          main.getGui()._ctrlScene.merge();
+          main._vrMultiSelect = false;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  // Isolate
+  let isIsolate = false;
+  if (main.getGui() && main.getGui()._ctrlScene) {
+    isIsolate = main.getGui()._ctrlScene.hasHiddenMeshes();
+  }
+  widgets.push({
+    type: 'checkbox', id: 'isolate', label: 'Isolate', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: isIsolate,
+    onInteract: (val) => {
+      if (main.getGui() && main.getGui()._ctrlScene) {
+        main.getGui()._ctrlScene._ctrlIsolate.setValue(val, false);
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
+  y += 10;
+
+  // --- PRIMITIVES ---
+  widgets.push({ type: 'header', label: 'Primitives', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  y += HEADER_H + GAP;
+
+  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addSphere() });
+  y += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCube() });
+  y += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addCylinder() });
+  y += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => main.addTorus() });
+  y += ITEM_H + GAP;
+
+  y += 10;
+
   // --- EXTRA ---
-  widgets.push({ type: 'header', label: 'Extra', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+  widgets.push({ type: 'header', label: 'Display & Symmetry', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
 
   widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 0, y: y, w: menuW, h: ITEM_H, value: main._showGrid, onInteract: () => { main._showGrid = !main._showGrid; main.render(); } });

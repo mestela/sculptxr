@@ -36,8 +36,8 @@ import StateManager from '../states/StateManager.js';
 const TAB_HEIGHT = 68; // Increased from 52 (+30%)
 const CANVAS_SIZE = 1024;
 
-const GLOBAL_TABS = ['Files', 'Scene', 'History', 'Reference', 'Settings', 'About & Help'];
-const SECTIONS = ['Rendering', 'Topology', 'Sculpting & Painting'];
+const GLOBAL_TABS = ['Files', 'History', 'Reference', 'Settings', 'About & Help'];
+const SECTIONS = ['Tools', 'Scene', 'Topology', 'Rendering'];
 
 const TAB_ROWS = Math.ceil(GLOBAL_TABS.length / 3); // Dynamic rows
 const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; 
@@ -82,7 +82,7 @@ export default class GuiXR {
     }
 
     const opts = getOptionsURL();
-    console.log(`[GuiXR] Loading settings: stylusLength=${opts.stylusLength}, stylusOffset=${opts.stylusOffset}`);
+    // console.log(`[GuiXR] Loading settings: stylusLength=${opts.stylusLength}, stylusOffset=${opts.stylusOffset}`);
     this._uiSettings = {
       resolution: 256, // Voxel Resolution
       radius: 1.0, // Voxel Radius
@@ -105,14 +105,14 @@ export default class GuiXR {
     this._needsRedraw = true; // Request Canvas Redraw
     this._needsUpload = true; // Request GPU Upload (formerly _needsUpdate)
     this._textureAllocated = false;
-    this._activeTab = 'Sculpting & Painting'; // Default section open?
+    this._activeTab = 'Tools'; // Default section open?
     // Actually if they are collapsible, we need a map of open/closed states.
     this._sectionStates = {
       'Rendering': false,
       'Topology': false,
-      'Sculpting & Painting': true
+      'Tools': true
     };
-    this._activeSection = 'Sculpting & Painting'; // Default active section
+    this._activeSection = 'Tools'; // Default active section
 
     this._scrollOffset = 0; // Vertical scroll
     this._maxScroll = 0;
@@ -135,7 +135,8 @@ export default class GuiXR {
       'History': getHistoryWidgets,
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
-      'Sculpting & Painting': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
+      'Tools': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
+      'Debug': (main) => this.getDebugWidgets(main),
       'Reference': getReferenceWidgets,
       'Settings': getCameraWidgets, // Wait, Camera Widgets ARE the settings? User said "hid the settings menu".
       // Actually, GuiVRCamera.js exports getCameraWidgets but the tab was likely named 'Camera'.
@@ -231,7 +232,8 @@ export default class GuiXR {
     };
 
     // --- POPUP VR LOG SYSTEM ---
-    this._logLines = []; // { text: "msg", color: "lime", time: 0 }
+    this._logLines = window._vrLogHistory || [];
+    window._vrLogHistory = this._logLines; // { text: "msg", color: "lime", time: 0 }
 
     // Expose for Console
     window.guiXR = this;
@@ -775,10 +777,10 @@ export default class GuiXR {
     const gens = this._widgetGenerators;
 
     if (this._isMiniHUD) {
-      if (!this._tabWidgets['Sculpting & Painting'] && gens['Sculpting & Painting']) {
-        this._tabWidgets['Sculpting & Painting'] = gens['Sculpting & Painting'](main, true);
+      if (!this._tabWidgets['Tools'] && gens['Tools']) {
+        this._tabWidgets['Tools'] = gens['Tools'](main, true);
       }
-      const rawWidgets = this._tabWidgets['Sculpting & Painting'] || [];
+      const rawWidgets = this._tabWidgets['Tools'] || [];
 
       // Filter to only the core bare minimum controls for the Mini-HUD
       // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
@@ -814,11 +816,12 @@ export default class GuiXR {
       let currentY = HEADER_HEIGHT - this._scrollOffset;
 
       // Sub-Tabs Header
-      const activeSec = this._activeSection || 'Sculpting & Painting';
+      const activeSec = this._activeSection || 'Tools';
       const tabMargin = 6; // Indent slightly so bevel doesn't overlap the blue panel border
-      const tabWidth = (CANVAS_SIZE - tabMargin * 2) / 3;
+      const sections = this.getSections ? this.getSections() : ['Tools', 'Scene', 'Topology', 'Rendering'];
+      const tabWidth = (CANVAS_SIZE - tabMargin * 2) / sections.length;
       
-      SECTIONS.forEach((sec, idx) => {
+      sections.forEach((sec, idx) => {
         allWidgets.push({
           type: 'sub_tab',
           label: sec,
@@ -840,10 +843,12 @@ export default class GuiXR {
       }
       const secWidgets = this._tabWidgets[secTitle];
 
-      if (secWidgets) {
+      const widgetsArray = secWidgets.widgets || secWidgets;
+
+      if (widgetsArray && Array.isArray(widgetsArray)) {
         let minY = Infinity;
         let maxY = -Infinity;
-        secWidgets.forEach(w => {
+        widgetsArray.forEach(w => {
           if (w.y < minY) minY = w.y;
           if (w.y + w.h > maxY) maxY = w.y + w.h;
         });
@@ -853,7 +858,7 @@ export default class GuiXR {
 
         const sectionHeight = maxY - minY + 20;
 
-        secWidgets.forEach(w => {
+        widgetsArray.forEach(w => {
           allWidgets.push({
             ...w,
             y: w.y - minY + currentY + 10 // Apply scroll offset if needed, but here we don't apply it to the sub-tabs!
@@ -907,6 +912,41 @@ export default class GuiXR {
     });
 
     return offsetWidgets;
+  }
+
+  getSections() {
+    const base = ['Tools', 'Scene', 'Topology', 'Rendering'];
+    if (this._uiSettings && this._uiSettings.debugMode) {
+      base.push('Debug');
+    }
+    return base;
+  }
+
+  getDebugWidgets(main) {
+    const widgets = [];
+    const menuW = CANVAS_SIZE;
+    let y = HEADER_HEIGHT + 70;
+    const ITEM_H = 40;
+    const HEADER_H = 30;
+    const GAP = 5;
+
+    widgets.push({ type: 'header', label: 'Console Mirror', x: 0, y: y, w: menuW, h: HEADER_H, header: true });
+    y += HEADER_H + GAP;
+
+    // Display history of logs
+    const lines = this._logLines || [];
+    for (let i = 0; i < lines.length; i++) {
+      widgets.push({
+        type: 'info',
+        label: lines[i].text,
+        x: 20,
+        y: y,
+        color: lines[i].color || '#fff'
+      });
+      y += 25; // Compact line height
+    }
+
+    return widgets;
   }
 
   onInteract(u, v, isPressed) {
@@ -2039,7 +2079,7 @@ export default class GuiXR {
       this._drawInternal();
     } catch (e) {
       console.error("[GuiXR] Draw Error:", e);
-      if (window.screenLog) window.screenLog("[GuiXR] Draw Error: " + e.message, "red");
+      // Removed screenLog call to prevent infinite loop when draw fails!
     }
   }
 
@@ -2255,33 +2295,29 @@ export default class GuiXR {
     }
 
     // --- DRAW HUD LOG ---
-    if (this._isMiniHUD && this._logLines && this._logLines.length > 0) {
-      ctx.save();
-      ctx.textAlign = 'left';
-      ctx.font = 'bold 20px monospace';
-
-      // Bottom left corner
-      const startX = 20;
-      let currentY = h - 20 - (this._logLines.length * 30);
-
-      // Background dimming for readability
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(startX - 10, currentY - 30, 800, (this._logLines.length * 30) + 40);
-
+    if (this._uiSettings && this._uiSettings.debugMode && this._logLines && this._logLines.length > 0) {
       const now = performance.now();
-      for (let i = this._logLines.length - 1; i >= 0; i--) {
-        const line = this._logLines[i];
-        if (now - line.time > 5000) {
-          this._logLines.splice(i, 1);
-          this._needsRedraw = true;
-          continue;
-        }
+      const displayLines = this._logLines.slice(-2).filter(line => now - line.time < 5000);
 
-        ctx.fillStyle = line.color || '#fff';
-        ctx.fillText(line.text, startX, currentY);
-        currentY += 30;
+      if (displayLines.length > 0) {
+        ctx.save();
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 20px monospace';
+
+        const startX = 20;
+        let currentY = h - 20 - (displayLines.length * 30);
+
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(startX - 10, currentY - 30, 800, (displayLines.length * 30) + 40);
+
+        for (let i = 0; i < displayLines.length; i++) {
+          const line = displayLines[i];
+          ctx.fillStyle = line.color || '#fff';
+          ctx.fillText(line.text, startX, currentY);
+          currentY += 30;
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
 
     // --- DRAW DEBUG CURSOR (Verify Raycast Hits) ---
@@ -2301,12 +2337,14 @@ export default class GuiXR {
       if (!l.trim()) continue;
       this._logLines.push({ text: l, color: color, time: now });
     }
-    // Keep max 2 lines for the VR HUD
-    if (this._logLines.length > 2) {
-      this._logLines = this._logLines.slice(this._logLines.length - 2);
+    // Keep max 20 lines for history
+    if (this._logLines.length > 20) {
+      this._logLines = this._logLines.slice(this._logLines.length - 20);
     }
-    this._needsRedraw = true;
-    this.draw();
+    if (this._isVisible) {
+      this._needsRedraw = true;
+      this.draw();
+    }
   }
 
   _drawOverlay(ctx, w, h) {

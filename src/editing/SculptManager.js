@@ -415,8 +415,6 @@ class SculptManager {
     if (this._isProcessingSlice) return; // Prevent duplicate clicks
     this._isProcessingSlice = true;
 
-    
-
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (!voxelTool || !voxelTool._worker) {
       console.error("SculptManager: VoxelWorker not initialized!");
@@ -436,6 +434,72 @@ class SculptManager {
       isQuad: isQuad,
       side: 1 // 1 for +X, -1 for -X
     });
+  }
+
+  booleanUnionSelection() {
+    if (this._isProcessingSlice) return; // Share lock
+    this._isProcessingSlice = true;
+
+    const selectedMeshes = this._main.getSelectedMeshes().slice(); // Snapshot
+    this._pendingUnionMeshes = selectedMeshes; 
+    
+    if (selectedMeshes.length < 2) {
+      if (window.screenLog) window.screenLog("Select at least two meshes to union", "yellow");
+      this._isProcessingSlice = false;
+      return;
+    }
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not available for Booleans");
+      this._isProcessingSlice = false;
+      return;
+    }
+
+    const meshesData = [];
+
+    for (let i = 0; i < selectedMeshes.length; i++) {
+      const mesh = selectedMeshes[i];
+      const nbVertices = mesh.getNbVertices();
+      const vAr = mesh.getVertices();
+      const fAr = mesh.getFaces();
+      const matrix = mesh.getMatrix();
+
+      // Transform to world space
+      const vArWorld = new Float32Array(nbVertices * 3);
+      for (let j = 0; j < nbVertices; j++) {
+        const id = j * 3;
+        const x = vAr[id], y = vAr[id + 1], z = vAr[id + 2];
+        vArWorld[id]     = matrix[0] * x + matrix[4] * y + matrix[8]  * z + matrix[12];
+        vArWorld[id + 1] = matrix[1] * x + matrix[5] * y + matrix[9]  * z + matrix[13];
+        vArWorld[id + 2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+      }
+
+      const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
+
+      meshesData.push({
+        v: vArWorld,
+        f: fAr,
+        isTriangles: !isTriangles // If TRI_INDEX found, it's triangles (stride 4, tri + pad). Wait, SculpGL uses stride 4 for both!
+        // If it's a quad mesh, faces has 4 valid indices.
+        // If it's tri, faces[3] = TRI_INDEX.
+        // Let's use the same logic as symmetryMirror: `isTriangles: !mesh.isQuad` if available, or check faces[3].
+        // mesh.isQuad is a reliable flag set on MeshStatic!
+      });
+      // Correct the flag to use mesh.isQuad if available, or fallback
+      meshesData[meshesData.length - 1].isTriangles = !mesh.isQuad;
+    }
+
+    try {
+      voxelTool._worker.postMessage({
+        type: 'BOOLEAN_UNION',
+        meshes: meshesData,
+        quadrangulate: Remesh.QUADRANGULATE
+      });
+    } catch (e) {
+      console.error("[SculptManager] postMessage failed for Boolean Union:", e);
+      this._isProcessingSlice = false;
+    }
   }
 
   onSliceAndCapResult(msg) {
@@ -481,6 +545,75 @@ class SculptManager {
 
     main.addNewMesh(newMesh);
     main.setMesh(newMesh);
+  }
+
+  onBooleanUnionResult(msg) {
+    this._isProcessingSlice = false; // Reset lock
+
+    if (!this._pendingUnionMeshes || this._pendingUnionMeshes.length === 0) {
+      console.warn("No pending union meshes found!");
+      return;
+    }
+
+    const main = this._main;
+    const newMesh = new MeshStatic(main._gl);
+
+    newMesh.setVertices(msg.v);
+    newMesh.setFaces(msg.f);
+    newMesh.setNbFaces(msg.f.length / 4);
+    newMesh.setNbVertices(msg.v.length / 3);
+    newMesh.isQuad = true; // Output is quads!
+
+    newMesh.init();
+    newMesh.initRender();
+
+    // Set matrix to identity since vertices are in world space
+    import('gl-matrix').then(({ mat4 }) => {
+      const identityMat = mat4.create();
+      newMesh.setMatrix(identityMat);
+    });
+
+    const oldMeshes = this._pendingUnionMeshes.slice(); // Snapshot
+
+    const redoUnion = () => {
+      console.log(`[SculptManager] redoUnion EXECUTE`);
+      // Remove old meshes manually
+      for (const m of oldMeshes) {
+        const idx = main._meshes.indexOf(m);
+        if (idx >= 0) {
+          if (main._worldGroup && m.getThreeMesh()) main._worldGroup.remove(m.getThreeMesh());
+          main._meshes.splice(idx, 1);
+        }
+      }
+      // Add new mesh manually
+      main._meshes.push(newMesh);
+      if (main._worldGroup && newMesh.getThreeMesh()) main._worldGroup.add(newMesh.getThreeMesh());
+      main.setMesh(newMesh);
+      if (main.guiXR && main.guiXR.refreshSceneWidget) main.guiXR.refreshSceneWidget();
+    };
+
+    const undoUnion = () => {
+      console.log(`[SculptManager] undoUnion EXECUTE`);
+      // Remove new mesh manually
+      const idx = main._meshes.indexOf(newMesh);
+      if (idx >= 0) {
+        if (main._worldGroup && newMesh.getThreeMesh()) main._worldGroup.remove(newMesh.getThreeMesh());
+        main._meshes.splice(idx, 1);
+      }
+      // Add old meshes manually
+      for (const m of oldMeshes) {
+        main._meshes.push(m);
+        if (main._worldGroup && m.getThreeMesh()) main._worldGroup.add(m.getThreeMesh());
+      }
+      main.setMesh(oldMeshes[0]);
+      if (main.guiXR && main.guiXR.refreshSceneWidget) main.guiXR.refreshSceneWidget();
+    };
+
+    redoUnion(); // Execute now
+
+    this._main.getStateManager().pushStateCustom(undoUnion, redoUnion);
+
+    this._pendingUnionMeshes = null; // Clear
   }
 
   onSymmetryMirrorFaults(data) {

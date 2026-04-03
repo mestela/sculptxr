@@ -350,7 +350,7 @@ class XRControllerModelFactory {
 				}
 
 				// console.log(`[SculptGL] Resolved profile for ${xrInputSource.handedness}: ${profile.profileId}, Asset: ${assetPath}`);
-				if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
+				// if (window.screenLog) window.screenLog(`[Profile] Resolved: ${profile.profileId}`, "cyan");
 
 				controllerModel.motionController = new MotionController(
 					xrInputSource,
@@ -377,10 +377,10 @@ class XRControllerModelFactory {
 
 					this.gltfLoader.setPath( '' );
 					// console.log(`[SculptGL] Loading Asset: ${controllerModel.motionController.assetUrl}`);
-					if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
+					// if (window.screenLog) window.screenLog(`[GLTF] Loading: ${controllerModel.motionController.assetUrl}`, "yellow");
 					this.gltfLoader.load( controllerModel.motionController.assetUrl, ( asset ) => {
 						// console.log(`[SculptGL] GLTF Loaded: ${controllerModel.motionController.assetUrl}`);
-						if (window.screenLog) window.screenLog(`[GLTF] Loaded: ${controllerModel.motionController.assetUrl}`, "lime");
+						// if (window.screenLog) window.screenLog(`[GLTF] Loaded: ${controllerModel.motionController.assetUrl}`, "lime");
 
 						this._assetCache[ controllerModel.motionController.assetUrl ] = asset;
 

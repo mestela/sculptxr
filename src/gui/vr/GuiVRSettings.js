@@ -264,6 +264,19 @@ export default function getSettingsWidgets(main) {
   y += HEADER_H + GAP;
 
   widgets.push({
+    type: 'checkbox', id: 'debug_mode', label: 'Debug Mode (HUD Logs)', x: 0, y: y, w: menuW, h: ITEM_H,
+    value: main._guiXR && main._guiXR._uiSettings.debugMode === true,
+    onInteract: () => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.debugMode = !main._guiXR._uiSettings.debugMode;
+        main._guiXR._needsRedraw = true;
+      }
+      getOptionsURL.saveOption('debugMode', main._guiXR && main._guiXR._uiSettings.debugMode);
+    }
+  });
+  y += ITEM_H + GAP;
+
+  widgets.push({
     type: 'button', id: 'log_perf_profile', label: 'Log Perf Profile (120f)', x: 0, y: y, w: menuW, h: ITEM_H,
     onInteract: () => {
       if (window.debugProfile) window.debugProfile(120);

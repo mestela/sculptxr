@@ -36,7 +36,7 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       const manifoldInstance = await manifoldModule.default({
         locateFile: (path) => {
           if (path.endsWith('.wasm')) {
-            const isDev = self.location.hostname === 'localhost' || self.location.hostname === '127.0.0.1' || self.location.hostname === '0.0.0.0';
+            const isDev = import.meta.env.DEV;
             if (!isDev) {
               // In production, assume worker is in assets/ and wasm is in root dist/
               return new URL('../manifold.wasm', import.meta.url).href;
