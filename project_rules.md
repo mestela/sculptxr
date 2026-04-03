@@ -4,6 +4,8 @@
 > [!IMPORTANT]
 > **VIOLATION OF THESE RULES WILL RESULT IN SESSION TERMINATION.**
 
+MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on the overall project before responding. NO EXCEPTIONS.
+
 1.  **Step ID Prefix**:
     *   EVERY SINGLE RESPONSE must start with `Step Id: {id}`. Look at the user's last message `Step Id` and increment it. NO EXCEPTIONS.
 2.  **Browser Subagent**:

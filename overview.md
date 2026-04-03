@@ -1,0 +1,41 @@
+# SculptXR Project Overview
+
+This document provides a consolidated, high-level overview of the SculptXR project. It synthesizes the information found in the project's documentation, accounting for the recent shift in architectural direction towards Three.js.
+
+## 1. Core Definition
+SculptXR is an immersive 3D sculpting application designed for Virtual Reality (VR) on the web. It aims to provide high-performance, organic sculpting tools in a mobile VR environment (specifically targeting platforms like GalaxyXR and Meta Quest).
+
+## 2. Architectural Evolution (The Three.js Pivot)
+*   **The Transition**: The project is currently migrating its rendering and scene management from a highly bespoke, raw WebGL engine (inherited from SculptGL) to **Three.js**.
+*   **Context**: While the bespoke engine offered extreme control over memory and buffer uploads, a recent high-performance proof-of-concept by the Three.js maintainer proved that a Three.js-based architecture is viable and offers superior forward-looking possibilities.
+*   **Status**: The project is in a "fit and finish" phase for the Three.js port, working towards full feature parity with the legacy implementation while maintaining high framerates in standalone VR. Note that older documentation (like `code_analysis.md`) arguing against Three.js has been superseded by this new direction.
+
+## 3. Key Systems & Features
+
+### Core Sculpting Toolset
+*   **Legacy Base**: Inherits the core brush engine of SculptGL (including Draw, Inflate, Flatten, Twist, and Pinch) for high-performance vertex displacement.
+*   **VR Adaptation**: While these core tools are stable and heavily documented, the primary effort over the months has been adapting their interaction paradigms (from screen-space mouse input to 6DOF controller rays) and optimizing the math to feel natural in physical meter space.
+
+### Voxel Sculpting Engine
+*   **Current State**: Uses a Wasm-optimized **SurfaceNets** implementation to extract meshes from signed distance fields (SDF). JS writes directly into the WASM heap (Zero-Copy) to avoid serialization overhead.
+*   **Deferred Plans**: Ambitious plans for infinite chunked grids exist in documentation but have not been fully implemented.
+
+### Modeling & Topology Operations
+*   **Core Sculpting & 'Feel'**: The project focuses heavily on tactile "feel" and refining core interactions. This includes magnetic snapping for laser pointers, surface-relative culling to prevent brush drift on curves, and handling raw controller poses in meters (Physical World Space). Selection systems and stroke systems have been overhauled to remove jitter and fight temporal variable corruption.
+*   **Low-Poly Edit Tools**: Recently added tools for low-poly workflows, including a two-click sequential Weld tool to refine geometry.
+*   **Advanced Booleans**: Supports visibility-state-driven Union, Subtract, and Intersect operations when two objects are selected.
+*   **Quadrangulation & Symmetry**: Features a robust quad-merging system inspired by Blender's BMesh error metric. Uses `Manifold-3D` to guarantee watertight meshes for booleans and symmetry mirrors.
+*   **Undo/Redo Stability**: Employs a "Wholistic Object Swapping" pattern for topology-altering tools. Instead of in-place mutation, it swaps entire mesh references to avoid data corruption in the undo stack.
+
+### Interaction & UI
+*   **Paradigm**: "Right is Might, Left is Meta." The right hand handles action/sculpting and raycasting, while the left hand holds the UI palette and acts as a modifier. Left-handed mode is fully operational and works fine.
+*   **VR HUD**: A heavy custom UI rasterized to a 2D canvas and uploaded to a WebGL texture. Optimized to decouple redraws from heavy GPU uploads to maintain 90fps.
+
+## 4. Platform Quirks & Hardware Workarounds
+The project contains critical documentation on overcoming mobile WebXR barriers:
+*   **GalaxyXR**: Requires aggressive FBO (Framebuffer Object) rebinding per-eye to prevent right-eye dropouts, and strict avoidance of `.innerText` (replaced with `.textContent`) to prevent massive CPU layout thrashing.
+*   **Virtual Desktop**: Resolved a critical controller detection failure by removing the `hand-tracking` flag from session requests, preventing confused fallback behavior between physical controllers and optical hand tracking.
+*   **Apple Vision Pro**: Notes that enabling full hand tracking requires specific optional flags in WebXR setup to bypass game-like transient pointers, and AVP currently lacks `immersive-ar` support in Safari.
+
+---
+*This overview represents the state of understanding prior to a deep code audit.*

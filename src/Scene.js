@@ -1114,6 +1114,8 @@ class Scene {
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setSize(window.innerWidth, window.innerHeight);
     this._renderer.xr.enabled = true; // WebXR support is native in Three.js
+    this._renderer.toneMapping = THREE.LinearToneMapping;
+    this._renderer.toneMappingExposure = 1.0;
 
     // Initialize underlying GL context for legacy code compatibility (temporarily)
     this._gl = this._renderer.getContext();
