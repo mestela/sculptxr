@@ -1,4 +1,4 @@
-# SculptXR (v1.0.75)
+# SculptXR (v1.0.76)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.76**: **Advanced Dynamic Boolean Modes & Quad Toggle**: Context-aware operations triggered by visibility states when exactly 2 objects are selected. Added quadrangulate toggle.
 *   **v1.0.75**: **VR UI Standardization & Scrollable Overlays**: Standardized font sizes, layout bounds, and injected crisp Lucide-inspired SVG path icons across the entire WebXR HUD. Enabled thumbstick scrolling on tall floating menus.
 *   **v1.0.73**: **Stylus Offset Calibration & Local WASM Fixes**: Calibrate stylus base position using Z-Shift slider in VR settings. Fixed local WASM loading issues when accessing via remote IPs.
-*   **v1.0.72**: **Visually Rich Browser Gallery & Auto-Fitting Smart Thumbnails**: Dedicated overlay gallery for managing saved sculpts. Auto-fits thumbnails to bounding box while ultra-clearing background scene noise. Synchronous CSS color correction!
 
 [View Full Release History](docs/releases.md)
 

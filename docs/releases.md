@@ -1,3 +1,7 @@
+# v1.0.76
+- **Feature**: **Advanced Dynamic Boolean Modes**: Context-aware operations triggered by visibility states when exactly 2 objects are selected (Union if both visible, Subtract if one visible, Intersect if both invisible).
+- **Feature**: **Quadrangulate Toggle**: Added an explicit toggle to quadrangulate the resulting boolean mesh immediately.
+
 # v1.0.75
 - **Feature**: **VR UI Standardization**: Standardized widget alignment, padding, and font sizes across all VR HUD tabs (Scene, Settings, Rendering). Replaced legacy canvas-drawn shapes with crisp, high-fidelity SVG path icons for visibility, delete, and checkboxes.
 - **Feature**: **Scrollable Overlay Menus**: Enabled thumbstick scrolling on massive overlay menus (like Settings) with proper isolation from background tabs.
