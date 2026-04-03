@@ -888,6 +888,25 @@ class Scene {
     return this._exposure;
   }
 
+  getToneMapping() {
+    return this._renderer ? this._renderer.toneMapping : 1;
+  }
+
+  setExposure(val) {
+    this._exposure = val;
+    if (this._renderer) {
+      this._renderer.toneMappingExposure = val;
+    }
+    this.render();
+  }
+
+  setToneMapping(val) {
+    if (this._renderer) {
+      this._renderer.toneMapping = val;
+    }
+    this.render();
+  }
+
   setDominantHand(hand) {
     if (hand !== 'left' && hand !== 'right') {
       console.warn("setDominantHand: Invalid handedness (use 'left' or 'right')");

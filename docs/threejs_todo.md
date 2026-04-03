@@ -7,9 +7,7 @@
 ---
 
 ## 1. Todo
-* [ ] **new scene tab issues**: missing clear scene and similar tools, hover flash highlights gaps between menu entrues
-* [ ] **menu styling**: seems unbalanced, come up with a better design. same for overall vr menu
-* [ ] **overal exposure/brightness**: virtual desktop too bright and overexposed
+
 * [ ] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
@@ -19,6 +17,10 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **overal exposure/brightness**: virtual desktop too bright and overexposed
+* [x] **boolean modes**: union, subtract, intersect
+* [x] **menu styling**: seems unbalanced, come up with a better design. same for overall vr menu
+* [x] **new scene tab issues**: missing clear scene and similar tools, hover flash highlights gaps between menu entrues
 * [x] **Local Storage**: Saving user options is long overdue, possibly store local projects, recently used etc
 * [x] **thumbstick should scroll menu**
 * [x] **Audit menus** and test the rest of the full VR menu to ensure all sections function correctly.

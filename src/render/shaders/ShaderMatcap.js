@@ -93,6 +93,7 @@ ShaderMatcap.fragment = [
   '  vec2 texCoord = normal.xy * 0.5 + 0.5;',
   '  // texCoord.y = 1.0 - texCoord.y; // Keep Y upright',
   '  vec3 color = texture2D(uTexture0, texCoord).rgb * vColor; // Double gamma removed',
+  '  color *= uExposure;',
   '  // Bypass encodeFragColor (which does sRGB conversion) to prevent double-sRGB washing out',
   '  gl_FragColor = vec4(color, uAlpha);',
   '}'

@@ -71,20 +71,42 @@ export default function getRenderingWidgets(main) {
   });
   y += 50 + gapBtn;
 
-  // Filmic Tonemapping
+  // Tone Mapping
+  const toneMappingOptions = [
+    { label: 'None', id: 0 },
+    { label: 'Linear', id: 1 },
+    { label: 'Reinhard', id: 2 },
+    { label: 'Cineon', id: 3 },
+    { label: 'ACESFilmic', id: 4 }
+  ];
+
   widgets.push({
-    type: 'checkbox',
-    id: 'filmic',
-    label: TR('renderingFilmic'),
+    type: 'combobox',
+    id: 'tone_mapping',
+    label: 'Tone Mapping',
     x: col1X, y: y, w: 360, h: btnH,
-    value: ShaderMERGE.FILMIC,
-    onInteract: () => {
-      ShaderMERGE.FILMIC = !ShaderMERGE.FILMIC;
-      main.render();
+    value: main.getToneMapping(),
+    options: toneMappingOptions,
+    onSelect: (id) => {
+      main.setToneMapping(id);
       if (main.guiXR) main.guiXR._needsUpdate = true;
-    } 
+    }
   });
-  y += btnH + gapSection;
+  y += btnH + gapBtn;
+
+  // Exposure
+  widgets.push({
+    type: 'slider',
+    id: 'exposure',
+    label: 'Exposure',
+    x: col1X, y: y, w: 360, h: 50,
+    min: 0, max: 3,
+    value: main.getExposure(),
+    onInput: (val) => {
+      main.setExposure(val);
+    }
+  });
+  y += 50 + gapSection;
 
 
   // --- 2. ENVIRONMENT (PBR) ---
@@ -109,17 +131,7 @@ export default function getRenderingWidgets(main) {
     });
     y += btnH + gapBtn;
 
-    // PBR Exposure (Visible only in PBR in desktop)
-    widgets.push({
-      type: 'slider',
-      id: 'exposure',
-      label: TR('renderingExposure'),
-      x: col1X, y: y, w: 360, h: 50,
-      value: ShaderPBR.exposure,
-      min: 0, max: 5,
-      onInput: (val) => { ShaderPBR.exposure = val; main.render(); }
-    });
-    y += 50 + gapSection;
+
   }
 
   // --- 3. MATERIAL (MATCAP) ---
