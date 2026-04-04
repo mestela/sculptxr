@@ -1,3 +1,9 @@
+# v1.0.79
+- **Feature**: **Low-Poly Tools Conformation**: Standardized `FillHole`, `SpinEdge`, `Weld`, and `SnapWeldCenter` to use the snapshot-based state management system for reliable Undo/Redo.
+- **Feature**: **Grid Solver for FillHole**: Implemented a robust 2D projection corner detection algorithm to analytically determine `M x N` grid dimensions, preventing skewing on curved surfaces.
+- **Fix**: **Wireframe Cache Invalidation**: Forced wireframe cache invalidation in `applyMeshSnapshot` to ensure Three.js wireframe meshes are rebuilt after topology mutations.
+- **Fix**: **Defensive UV Resizing**: Added safety checks to prevent `RangeError` when modifying vertex counts in `Weld` and `SnapWeldCenter`.
+
 # v1.0.78
 - **Fix**: **Voxel Mesh Alignment Drift**: Corrected grid-to-world coordinate mapping by standardizing on `resolution - 1` for step calculations, eliminating volume loss/inflation and scale-drift issues.
 - **Fix**: **Voxel Material & Wireframe Inheritance**: Ensured voxelized mesh correctly inherits source polygon mesh's material properties and wireframe visibility state.
