@@ -20,11 +20,14 @@ class DeleteFace extends SculptBase {
     const mesh = this.getMesh();
     if (!mesh) return false;
 
-    const faces = mesh.getFaces();
-    const vertices = mesh.getVertices();
+    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    const faces = activeMesh.getFaces();
+    const facesTexCoord = activeMesh.getFacesTexCoord();
 
     const newFaces = new Uint32Array(faces.length - 4);
+    const newFacesTexCoord = facesTexCoord ? new Uint32Array(facesTexCoord.length - 4) : null;
     let head = 0;
+    let headT = 0;
     
     for (let i = 0; i < faces.length; i += 4) {
       if (i === faceIdx * 4) continue;
@@ -32,42 +35,41 @@ class DeleteFace extends SculptBase {
       newFaces[head++] = faces[i+1];
       newFaces[head++] = faces[i+2];
       newFaces[head++] = faces[i+3];
+      
+      if (newFacesTexCoord) {
+        newFacesTexCoord[headT++] = facesTexCoord[i];
+        newFacesTexCoord[headT++] = facesTexCoord[i+1];
+        newFacesTexCoord[headT++] = facesTexCoord[i+2];
+        newFacesTexCoord[headT++] = facesTexCoord[i+3];
+      }
     }
 
-    const oldFaces = faces;
+    console.log("[DeleteFace] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    const replaceMeshState = (prevMesh, fArr) => {
-      console.log(`[DeleteFace] replaceMeshState EXECUTE: faces length=${fArr.length/4}`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      
-      const nextMesh = new MeshStatic(this._main._gl);
-      nextMesh.setVertices(vertices);
-      nextMesh.setNbVertices(vertices.length / 3);
-      nextMesh.setFaces(fArr);
-      nextMesh.setNbFaces(fArr.length / 4);
-      
-      nextMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      nextMesh.initRender();
-      
-      nextMesh.setMatrix(prevMesh.getMatrix());
-      nextMesh.setShaderType(prevMesh.getShaderType());
-      if (prevMesh.getShowWireframe) nextMesh.setShowWireframe(prevMesh.getShowWireframe());
+    // Set new state
+    activeMesh.setFaces(newFaces);
+    activeMesh.setNbFaces(newFaces.length / 4);
+    
+    if (newFacesTexCoord) {
+      activeMesh.setFacesTexCoord(newFacesTexCoord);
+    }
 
-      this._main.replaceMesh(prevMesh, nextMesh);
-    };
+    activeMesh.allocateArrays();
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    
+    if (activeMesh._renderData)
+      activeMesh.updateDuplicateColorsAndMaterials();
+    activeMesh.updateBuffers();
 
-    const undoDelete = () => {
-      replaceMeshState(this.getMesh(), oldFaces);
-    };
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    const redoDelete = () => {
-      replaceMeshState(this.getMesh(), newFaces);
-    };
-
-    this._main.getStateManager().pushStateCustom(undoDelete, redoDelete);
-    redoDelete();
+    this._main.getStateManager().pushStateCustom(
+      () => this.applyMeshSnapshot(activeMesh, undoSnapshot),
+      () => this.applyMeshSnapshot(activeMesh, redoSnapshot)
+    );
 
     return true; // We did an edit
   }

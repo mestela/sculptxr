@@ -64,36 +64,65 @@ class SplitFace extends SculptBase {
 
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
 
+    // Handle UV mapped meshes
+    const facesTexCoord = activeMesh.getFacesTexCoord();
+    let newFacesTexCoord = null;
+    console.log("[SplitFace] facesTexCoord present?", facesTexCoord !== null);
+    if (facesTexCoord) {
+      newFacesTexCoord = new Uint32Array(facesTexCoord.length + 4);
+      newFacesTexCoord.set(facesTexCoord);
+      
+      const v1t = facesTexCoord[idf];
+      const v2t = facesTexCoord[idf + 1];
+      const v3t = facesTexCoord[idf + 2];
+      const v4t = facesTexCoord[idf + 3];
+      
+      let tri1t, tri2t;
+      if (d13 < d24) {
+        tri1t = [v1t, v2t, v3t, Utils.TRI_INDEX];
+        tri2t = [v1t, v3t, v4t, Utils.TRI_INDEX];
+      } else {
+        tri1t = [v2t, v3t, v4t, Utils.TRI_INDEX];
+        tri2t = [v4t, v1t, v2t, Utils.TRI_INDEX];
+      }
+      
+
+      
+      newFacesTexCoord[idf] = tri1t[0];
+      newFacesTexCoord[idf + 1] = tri1t[1];
+      newFacesTexCoord[idf + 2] = tri1t[2];
+      newFacesTexCoord[idf + 3] = tri1t[3];
+      
+      newFacesTexCoord[lastIdx] = tri2t[0];
+      newFacesTexCoord[lastIdx + 1] = tri2t[1];
+      newFacesTexCoord[lastIdx + 2] = tri2t[2];
+      newFacesTexCoord[lastIdx + 3] = tri2t[3];
+    }
+
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
+
     activeMesh.setFaces(newFaces);
     activeMesh.setNbFaces(newFaces.length / 4);
+    
+    if (newFacesTexCoord) {
+      activeMesh.setFacesTexCoord(newFacesTexCoord);
+    }
 
-    activeMesh.init();
+    activeMesh.allocateArrays();
+
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    
+    if (activeMesh._renderData)
+      activeMesh.updateDuplicateColorsAndMaterials();
+    activeMesh.updateBuffers();
     activeMesh.initRender();
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    const undoFaces = faces;
-    const redoFaces = newFaces;
-
-    const undoSplit = () => {
-      console.log(`[SplitFace] undoSplit EXECUTE: setting f=${undoFaces.length/4}`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(undoFaces);
-      activeMesh.setNbFaces(undoFaces.length / 4);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-    };
-
-    const redoSplit = () => {
-      console.log(`[SplitFace] redoSplit EXECUTE: setting f=${redoFaces.length/4}`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(redoFaces);
-      activeMesh.setNbFaces(redoFaces.length / 4);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-    };
+    console.log("[SplitFace] Pushing custom state...");
+    const undoSplit = () => this.applyMeshSnapshot(activeMesh, undoSnapshot);
+    const redoSplit = () => this.applyMeshSnapshot(activeMesh, redoSnapshot);
 
     this._main.getStateManager().pushStateCustom(undoSplit, redoSplit);
 

@@ -105,6 +105,10 @@ class SpinEdge extends SculptBase {
     const vD = unshared2[0];
 
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    
+    console.log("[SpinEdge] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
+
     const newFaces = new Uint32Array(faces);
 
     const f1Id = f1 * 4;
@@ -120,45 +124,28 @@ class SpinEdge extends SculptBase {
     newFaces[f2Id + 3] = Utils.TRI_INDEX;
 
     activeMesh.setFaces(newFaces);
-    activeMesh.init();
-    activeMesh.initRender();
+    activeMesh.initTopology();
+    
+    // Clear wireframe caches
     if (activeMesh._meshData) {
       activeMesh._meshData._drawElementsWireframe = null;
       activeMesh._meshData._drawArraysWireframe = null;
     }
+    
+    // Update buffers if needed (initTopology doesn't do WebGL)
     if (activeMesh.updateBuffers) activeMesh.updateBuffers();
+    else if (activeMesh.initRender) activeMesh.initRender();
 
-    const undoFaces = faces;
-    const redoFaces = newFaces;
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
     const undoSpin = () => {
       console.log(`[SpinEdge] undoSpin EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(undoFaces);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-      if (activeMesh._meshData) {
-        activeMesh._meshData._drawElementsWireframe = null;
-        activeMesh._meshData._drawArraysWireframe = null;
-      }
-      if (activeMesh.updateBuffers) activeMesh.updateBuffers();
+      this.applyMeshSnapshot(activeMesh, undoSnapshot);
     };
 
     const redoSpin = () => {
       console.log(`[SpinEdge] redoSpin EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(redoFaces);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-      if (activeMesh._meshData) {
-        activeMesh._meshData._drawElementsWireframe = null;
-        activeMesh._meshData._drawArraysWireframe = null;
-      }
-      if (activeMesh.updateBuffers) activeMesh.updateBuffers();
+      this.applyMeshSnapshot(activeMesh, redoSnapshot);
     };
 
     this._main.getStateManager().pushStateCustom(undoSpin, redoSpin);

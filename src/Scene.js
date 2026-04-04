@@ -2630,11 +2630,13 @@ class Scene {
                 state.waitingForNeutral = true;
 
                 if (valX < -T_PRESS) {
+                   console.log("[Scene] Thumbstick Undo detected!");
                    if (this._stateManager) {
                      this._stateManager.undo();
                      this._main ? this._main.render() : this.render();
                    }
                  } else if (valX > T_PRESS) {
+                   console.log("[Scene] Thumbstick Redo detected!");
                    if (this._stateManager) {
                      this._stateManager.redo();
                      this._main ? this._main.render() : this.render();

@@ -11,7 +11,7 @@ SculptXR follows a top-down delegation pattern for handling interactions, especi
 3.  **Execution (`SculptBase.js` & Subclasses)**: The active tool processes the input.
     *   **Continuous Stroke Tools**: (e.g., Brush, Smooth) Sample positions along the controller path and apply localized deformation.
     *   **One-Shot Click Tools**: (e.g., SplitFace, Weld) Execute their logic entirely within the `start()` method on initial trigger press, ignoring the continuous stroke.
-4.  **Heavy Lifting (`VoxelWorker.js`)**: Complex operations (Voxel remeshing, CSG Booleans, Symmetry Mirroring) are offloaded to a worker thread to maintain high frame rates in VR.
+4.  **Heavy Lifting (`GeometryWorker.js`)**: Complex operations (Voxel remeshing, CSG Booleans, Symmetry Mirroring) are offloaded to a worker thread to maintain high frame rates in VR.
 5.  **Rendering Bridge (`Mesh.js`)**: Converts the internal quad/triangle data structures into flat arrays suitable for Three.js GPU buffers and handles matrix synchronization with WebXR.
 
 ---
@@ -27,6 +27,10 @@ These tools inherit the default continuous stroke behavior from `SculptBase` wit
 ### One-Shot Click Tools (Low-Poly)
 These tools inherit from `SculptBase` but set `_continuous = false` and do not implement `stroke()`. They execute their operation once on trigger press based on the picked element.
 *   `DeleteFace`, `FillHole`, `DissolveEdge`, `SplitFace`, `SpinEdge`, `CollapseEdge`, `DissolveVertex`, `Weld`.
+*   `SnapWeldCenter`: A specialized tool to clean up the centerline seam by detecting and collapsing diamond faces into a single straight edge.
+
+> [!IMPORTANT]
+> **Data Retention Requirement**: When implementing tools that replace the mesh object entirely (like `DeleteFace` and `FillHole`), you must explicitly clone and transfer the `colors` and `materials` (roughness/metalness) arrays to the new mesh. Tools that modify the geometry in-place retain this data automatically.
 
 ### Special Cases (Overridden `updateXR`)
 
@@ -37,7 +41,7 @@ These tools inherit from `SculptBase` but set `_continuous = false` and do not i
 | **`Paint`** | VR Supported | Manages a state machine for the VR Eyedropper and live color sampling. |
 | **`Move`** | VR Supported | Full 6DOF movement. Forces full octree rebuilds on completion. |
 | **`TransformVR`** | VR Supported | Provides a dedicated 3D gizmo for precise Translate/Rotate/Scale in VR. |
-| **`SculptVoxel`** | VR Supported | Communicates with `VoxelWorker`. Handles volume advection and custom trigger pressure curves. See modes below. |
+| **`SculptVoxel`** | VR Supported | Communicates with `GeometryWorker`. Handles volume advection and custom trigger pressure curves. See modes below. |
 | **`Transform`** | **Desktop Only** | The VR update method is a safety stub to prevent crashes. |
 
 ---
@@ -70,13 +74,13 @@ SculptXR manages history and undo/redo operations via `StateManager.js` using se
 
 *   **Localized Geometric Undo**: For standard brushes (e.g., Sculpt, Paint), the system records only the modified vertex indices and their previous attributes (position, color) before a stroke. This keeps memory overhead low.
 *   **Custom Undo/Redo Functions (`pushStateCustom`)**: For complex operations changing mesh topology or visibility (like Quad Remeshing and Voxel Conversion), the system allows pushing custom function pairs. This is used to handle adding/removing meshes and toggling visibility of source meshes in a single atomic step.
-*   **Worker-Side History**: Inside `VoxelWorker.js`, a local stack of distance fields is maintained. This allows rapid undo/redo of voxel operations without needing to transfer huge volumes of grid data back and forth to the main thread.
+*   **Worker-Side History**: Inside `GeometryWorker.js`, a local stack of distance fields is maintained. This allows rapid undo/redo of voxel operations without needing to transfer huge volumes of grid data back and forth to the main thread.
 
 ---
 
 ## The Voxel Sculpting Tool (`SculptVoxel.js`)
 
-Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engine within a single tool slot. It delegates heavy lifting to `VoxelWorker.js` and supports the following modes (selectable in the VR HUD):
+Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engine within a single tool slot. It delegates heavy lifting to `GeometryWorker.js` and supports the following modes (selectable in the VR HUD):
 
 *   **Add / Subtract**: Mutates the distance field by combining sphere or cube signed distance functions (SDFs).
 *   **Inflate / Deflate**: Shifts the isosurface outwards or inwards along the gradient.
@@ -100,7 +104,7 @@ Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engi
     *   **Three.js Integration**: Constructs `THREE.Mesh` and implements a custom wireframe shader using `gl_FragDepth` to stop depth fighting.
     *   **Matrix Sync**: Disables Three.js `matrixAutoUpdate` and manually pushes engine transforms to ensure WebXR alignment.
 
-### Voxel & Topology Pipeline: `VoxelWorker.js`
+### Voxel & Topology Pipeline: `GeometryWorker.js`
 *   **Role**: Asynchronous engine for heavy geometry operations.
 *   **Key Logic**:
     *   **Hybrid Engine**: Uses `manifold-3d` (C++ via WASM) for robust booleans and a custom Rust module for advanced quad remeshing.

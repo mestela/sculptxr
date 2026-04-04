@@ -199,38 +199,61 @@ class DissolveEdge extends SculptBase {
     console.log(`[DissolveEdge] Face array shrunk from ${faces.length} to ${newFaces.length} indices.`);
 
     const prevMesh = this.getMesh();
-    
-    // Modify the active mesh in-place to prevent scene flashes during re-rendering!
     const activeMesh = prevMesh.getCurrentMesh ? prevMesh.getCurrentMesh() : prevMesh;
 
+    console.log("[DissolveEdge] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
+
+    // Set new state
     activeMesh.setFaces(newFaces);
     activeMesh.setNbFaces(newFaces.length / 4);
     activeMesh.isQuad = true; // Mark as containing quads!
 
-    activeMesh.init();
-    activeMesh.initRender();
+    const facesTexCoord = activeMesh.getFacesTexCoord();
+    if (facesTexCoord) {
+      const newFacesTexCoord = new Uint32Array(facesTexCoord.length - 4);
+      let headT = 0;
+      for (let i = 0; i < faces.length; i += 4) {
+        const currentFaceIdx = i / 4;
+        if (currentFaceIdx === f1 || currentFaceIdx === f2) continue;
+        newFacesTexCoord[headT++] = facesTexCoord[i];
+        newFacesTexCoord[headT++] = facesTexCoord[i + 1];
+        newFacesTexCoord[headT++] = facesTexCoord[i + 2];
+        newFacesTexCoord[headT++] = facesTexCoord[i + 3];
+      }
+      
+      // Map UVs for the new quad [vC, edgeV1, vD, edgeV2]
+      const getUV = (faceIdx, vertIdx) => {
+        const fOffset = faceIdx * 4;
+        for (let k = 0; k < 4; ++k) {
+          if (faces[fOffset + k] === vertIdx) return facesTexCoord[fOffset + k];
+        }
+        return 0; // Fallback
+      };
 
-    // Push state for undo/redo before making changes!
-    this._main.getStateManager().pushState(prevMesh);
+      newFacesTexCoord[headT++] = getUV(f1, quad[0]); // vC from f1
+      newFacesTexCoord[headT++] = getUV(f1, quad[1]); // edgeV1 from f1
+      newFacesTexCoord[headT++] = getUV(f2, quad[2]); // vD from f2
+      newFacesTexCoord[headT++] = getUV(f1, quad[3]); // edgeV2 from f1
 
-    const undoFaces = faces;
-    const redoFaces = newFaces;
+      activeMesh.setFacesTexCoord(newFacesTexCoord);
+    }
 
-    const undoDissolve = () => {
-      activeMesh.setFaces(undoFaces);
-      activeMesh.setNbFaces(undoFaces.length / 4);
-      activeMesh.init();
-      activeMesh.initRender();
-    };
+    activeMesh.allocateArrays();
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    
+    if (activeMesh._renderData)
+      activeMesh.updateDuplicateColorsAndMaterials();
+    activeMesh.updateBuffers();
 
-    const redoDissolve = () => {
-      activeMesh.setFaces(redoFaces);
-      activeMesh.setNbFaces(redoFaces.length / 4);
-      activeMesh.init();
-      activeMesh.initRender();
-    };
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    this._main.getStateManager().pushStateCustom(undoDissolve, redoDissolve);
+    this._main.getStateManager().pushStateCustom(
+      () => this.applyMeshSnapshot(activeMesh, undoSnapshot),
+      () => this.applyMeshSnapshot(activeMesh, redoSnapshot)
+    );
     
     console.log("[DissolveEdge] Successfully applied dissolve operation!");
     return true; // We did an edit

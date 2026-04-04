@@ -795,7 +795,7 @@ export default class GuiXR {
 
       // Filter to only the core bare minimum controls for the Mini-HUD
       // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
-      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe', 'picker'];
+      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe', 'picker', 'symmetry'];
       const filtered = rawWidgets.filter(w => allowedIds.includes(w.id));
 
       // Re-pack vertically and clamp width for the new 300x500 Mini-HUD canvas

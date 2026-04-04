@@ -7,6 +7,7 @@ import RenderData from './RenderData.js';
 import MeshSymmetry from './MeshSymmetry.js';
 import * as THREE from 'three';
 import ShaderManager from '../render/ShaderManager.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 /*
 Basic usage:
@@ -473,9 +474,9 @@ class Mesh {
            }
          `,
          uniforms: {
-           uBias: { value: 0.001 }, // Default 1mm (works best on Quest/Pro)
-           uColor: { value: new THREE.Color(0x000000) },
-           uOpacity: { value: 0.2 }
+            uBias: { value: getOptionsURL().wireframeBias !== undefined ? parseFloat(getOptionsURL().wireframeBias) : 0.001 }, // Default 1mm (works best on Quest/Pro)
+            uColor: { value: new THREE.Color(0x000000) },
+            uOpacity: { value: getOptionsURL().wireframeAlpha !== undefined ? parseFloat(getOptionsURL().wireframeAlpha) : 0.2 }
          },
          transparent: true,
          depthTest: true,
@@ -679,8 +680,9 @@ class Mesh {
         ny += faceNormals[id + 1];
         nz += faceNormals[id + 2];
       }
-      var len = end - start;
-      if (len !== 0.0) len = 1.0 / len;
+      var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 0.00001) len = 1.0 / len;
+      else len = 0;
       ind *= 3;
       nAr[ind] = nx * len;
       nAr[ind + 1] = ny * len;
@@ -890,9 +892,12 @@ class Mesh {
       }
 
       // normals
-      faceNormals[idTri] = crx;
-      faceNormals[idTri + 1] = cry;
-      faceNormals[idTri + 2] = crz;
+      var nLen = Math.sqrt(crx * crx + cry * cry + crz * crz);
+      if (nLen > 0.00001) nLen = 1.0 / nLen;
+      else nLen = 0;
+      faceNormals[idTri] = crx * nLen;
+      faceNormals[idTri + 1] = cry * nLen;
+      faceNormals[idTri + 2] = crz * nLen;
       // boxes
       faceBoxes[idBox] = xmin;
       faceBoxes[idBox + 1] = ymin;
@@ -1330,6 +1335,7 @@ class Mesh {
 
     var cAr = this.getColors();
     var mAr = this.getMaterials();
+    var nAr = this.getNormals();
     var startCount = this.getVerticesDuplicateStartCount();
 
     var full = iVerts === undefined;
@@ -1348,6 +1354,17 @@ class Mesh {
       var mx = mAr[idOrig];
       var my = mAr[idOrig + 1];
       var mz = mAr[idOrig + 2];
+      
+      var nx = 0, ny = 0, nz = 0;
+      if (nAr) {
+        nx = nAr[idOrig];
+        ny = nAr[idOrig + 1];
+        nz = nAr[idOrig + 2];
+      }
+
+      var vrfStartCount = this.getVerticesRingFaceStartCount();
+      const origHasFaces = vrfStartCount[ind * 2 + 1] > 0;
+
       for (var j = start; j < end; ++j) {
         var idDup = j * 3;
         cAr[idDup] = cx;
@@ -1356,6 +1373,13 @@ class Mesh {
         mAr[idDup] = mx;
         mAr[idDup + 1] = my;
         mAr[idDup + 2] = mz;
+        // Only overwrite duplicate normal if the original actually has faces!
+        // This prevents zero normals of unused vertices from blanking out used duplicates.
+        if (nAr && origHasFaces) {
+          nAr[idDup] = nx;
+          nAr[idDup + 1] = ny;
+          nAr[idDup + 2] = nz;
+        }
       }
     }
   }
@@ -2859,6 +2883,172 @@ class Mesh {
     vArOld.set(vArNew);
     cArOld.set(cArNew);
     mArOld.set(mArNew);
+
+  }
+
+  subdivideFlow() {
+    var fAr = this.getFaces();
+    var vAr = this.getVertices();
+    var nAr = this.getNormals();
+    var cAr = this.getColors();
+    var mAr = this.getMaterials();
+    
+    var nbFaces = this.getNbFaces();
+    var nbVertices = this.getNbVertices();
+    var nbEdges = this.getNbEdges();
+    
+    console.log("[Mesh] subdivideFlow started. Faces:", nbFaces, "Verts:", nbVertices, "Edges:", nbEdges);
+    
+    // 1. Compute face centers
+    var faceCenters = new Float32Array(nbFaces * 3);
+    for (var i = 0; i < nbFaces; ++i) {
+      var id = i * 4;
+      var iv1 = fAr[id];
+      var iv2 = fAr[id + 1];
+      var iv3 = fAr[id + 2];
+      var iv4 = fAr[id + 3];
+      
+      var count = iv4 !== Utils.TRI_INDEX ? 4 : 3;
+      var cx = vAr[iv1 * 3] + vAr[iv2 * 3] + vAr[iv3 * 3];
+      var cy = vAr[iv1 * 3 + 1] + vAr[iv2 * 3 + 1] + vAr[iv3 * 3 + 1];
+      var cz = vAr[iv1 * 3 + 2] + vAr[iv2 * 3 + 2] + vAr[iv3 * 3 + 2];
+      
+      if (iv4 !== Utils.TRI_INDEX) {
+        cx += vAr[iv4 * 3];
+        cy += vAr[iv4 * 3 + 1];
+        cz += vAr[iv4 * 3 + 2];
+      }
+      
+      faceCenters[i * 3] = cx / count;
+      faceCenters[i * 3 + 1] = cy / count;
+      faceCenters[i * 3 + 2] = cz / count;
+    }
+    
+    // 2. Build vertex -> faces mapping
+    this.initVertexRings();
+    var vrfStartCount = this.getVerticesRingFaceStartCount();
+    var vertRingFace = this.getVerticesRingFace();
+    
+    // 3. Create new faces (one for each original vertex)
+    var newNbFaces = nbVertices;
+    var newFAr = new Uint32Array(newNbFaces * 4);
+    var faceCount = 0;
+    
+    for (var i = 0; i < nbVertices; ++i) {
+      var startF = vrfStartCount[i * 2];
+      var countF = vrfStartCount[i * 2 + 1];
+      if (countF < 3) continue; // Skip boundary vertices
+      
+      var vx = vAr[i * 3];
+      var vy = vAr[i * 3 + 1];
+      var vz = vAr[i * 3 + 2];
+      
+      var nx = nAr[i * 3];
+      var ny = nAr[i * 3 + 1];
+      var nz = nAr[i * 3 + 2];
+      
+      // Find two orthogonal vectors in tangent plane
+      var ux = 1, uy = 0, uz = 0;
+      if (Math.abs(nx) > 0.9) { ux = 0; uy = 1; uz = 0; }
+      // cross product N x U
+      var wx = ny * uz - nz * uy;
+      var wy = nz * ux - nx * uz;
+      var wz = nx * uy - ny * ux;
+      // make U orthogonal to N and W
+      ux = wy * nz - wz * ny;
+      uy = wz * nx - wx * nz;
+      uz = wx * ny - wy * nx;
+      
+      // Normalize U and W
+      var lenU = Math.sqrt(ux*ux + uy*uy + uz*uz);
+      ux /= lenU; uy /= lenU; uz /= lenU;
+      var lenW = Math.sqrt(wx*wx + wy*wy + wz*wz);
+      wx /= lenW; wy /= lenW; wz /= lenW;
+      
+      // Collect face centers and compute angles
+      var centers = [];
+      for (var j = 0; j < countF; ++j) {
+        var faceId = vertRingFace[startF + j];
+        var cx = faceCenters[faceId * 3];
+        var cy = faceCenters[faceId * 3 + 1];
+        var cz = faceCenters[faceId * 3 + 2];
+        
+        var dx = cx - vx;
+        var dy = cy - vy;
+        var dz = cz - vz;
+        
+        var u = dx * ux + dy * uy + dz * uz;
+        var w = dx * wx + dy * wy + dz * wz;
+        
+        centers.push({ id: faceId, angle: Math.atan2(w, u) });
+      }
+      
+      // Sort by angle
+      centers.sort((a, b) => a.angle - b.angle);
+      
+      // Create quad or triangle
+      var idNew = faceCount * 4;
+      if (centers.length >= 4) {
+        newFAr[idNew] = centers[0].id;
+        newFAr[idNew + 1] = centers[1].id;
+        newFAr[idNew + 2] = centers[2].id;
+        newFAr[idNew + 3] = centers[3].id;
+      } else if (centers.length === 3) {
+        newFAr[idNew] = centers[0].id;
+        newFAr[idNew + 1] = centers[1].id;
+        newFAr[idNew + 2] = centers[2].id;
+        newFAr[idNew + 3] = Utils.TRI_INDEX;
+      }
+      faceCount++;
+    }
+    
+    // 4. Update mesh
+    this.setNbVertices(nbFaces);
+    this.setVertices(faceCenters);
+    
+    // Clear colors and materials or average them
+    var newCAr = new Float32Array(nbFaces * 3);
+    var newMAr = new Float32Array(nbFaces * 3);
+    newCAr.fill(1.0); // Default white
+    this.setColors(newCAr);
+    this.setMaterials(newMAr);
+    
+    var actualFAr = new Uint32Array(faceCount * 4);
+    actualFAr.set(newFAr.subarray(0, faceCount * 4));
+    this.setFaces(actualFAr);
+    
+    this._meshData._facesToTriangles = new Uint32Array(faceCount);
+    this._meshData._trianglesABC = this.computeTrianglesFromFaces(actualFAr).slice();
+    
+    this.updateFacesAabbAndNormal();
+    this.updateVerticesNormal();
+    this.updateWireframeBuffer();
+    
+    this._meshData._vertRingVert = null;
+    this._meshData._vertRingFace = null;
+    this._meshData._vertRingFaceStartCount = null;
+    this._meshData._vertRingVertStartCount = null;
+    this._meshData._faceEdges = null;
+    
+    this.initFaceRings();
+    this.initEdges();
+    this.initVertexRings();
+    
+    this.updateGeometry();
+
+      
+
+    
+
+    
+
+    
+
+    
+
+
+
+    
 
   }
 

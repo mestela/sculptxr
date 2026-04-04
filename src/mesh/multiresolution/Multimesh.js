@@ -1,6 +1,7 @@
 import MeshResolution from './MeshResolution.js';
 import Mesh from '../Mesh.js';
 import * as THREE from 'three';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 import Buffer from '../../render/Buffer.js';
 import Subdivision from '../../editing/Subdivision.js';
 import Reversion from '../../editing/Reversion.js';
@@ -360,10 +361,30 @@ class Multimesh extends Mesh {
         
         if (!this._renderData._wireframeMesh) {
           var wireGeometry = new THREE.BufferGeometry();
-          var wireMaterial = new THREE.LineBasicMaterial({ 
-            color: 0x000000, 
-            transparent: true, 
-            opacity: 0.2 
+          var wireMaterial = new THREE.ShaderMaterial({
+            vertexShader: `
+              uniform float uBias;
+              void main() {
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+              }
+            `,
+            fragmentShader: `
+              uniform vec3 uColor;
+              uniform float uOpacity;
+              uniform float uBias;
+              void main() {
+                gl_FragColor = vec4(uColor, uOpacity);
+                gl_FragDepth = clamp(gl_FragCoord.z - uBias, 0.0, 1.0);
+              }
+            `,
+            uniforms: {
+              uBias: { value: getOptionsURL().wireframeBias !== undefined ? parseFloat(getOptionsURL().wireframeBias) : 0.001 },
+              uColor: { value: new THREE.Color(0x000000) },
+              uOpacity: { value: getOptionsURL().wireframeAlpha !== undefined ? parseFloat(getOptionsURL().wireframeAlpha) : 0.2 }
+            },
+            transparent: true,
+            depthTest: true,
+            depthWrite: false
           });
           this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
           this._renderData._wireframeMesh.frustumCulled = false;

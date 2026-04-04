@@ -60,7 +60,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.SPIN_EDGE,
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,
-    Enums.Tools.WELD
+    Enums.Tools.WELD,
+    Enums.Tools.SNAP_WELD_CENTER
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -830,6 +831,23 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += btnH + gapBtn;
   }
 
+  // Brush Symmetry Toggle
+  widgets.push({
+    type: 'checkbox',
+    id: 'symmetry',
+    label: 'Symmetry',
+    x: col1X, y: y, w: 550, h: btnH,
+    value: main.getSculptManager()._symmetry,
+    onInteract: () => {
+      const mgr = main.getSculptManager();
+      mgr._symmetry = !mgr._symmetry;
+      main.render();
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+      if (main._guiMini) main._guiMini._needsRedraw = true;
+    }
+  });
+  y += btnH + gapBtn;
+
   widgets.push({
     type: 'checkbox',
     id: 'clay',
@@ -961,19 +979,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += gapHeader;
 
     if (showSym) {
-      widgets.push({
-        type: 'checkbox',
-        id: 'symmetry',
-        label: 'Symmetry',
-        x: col1X, y: y, w: 300, h: btnH,
-        value: mgr._symmetry,
-        onInteract: () => {
-          mgr._symmetry = !mgr._symmetry;
-          main.render();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-        }
-      });
-      y += btnH + gapBtn;
 
       // Re-symmetrize Buttons
       const btnW_Sym = (300 - 10) / 2;

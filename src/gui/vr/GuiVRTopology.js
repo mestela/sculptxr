@@ -2,10 +2,11 @@ import Enums from '../../misc/Enums.js';
 import Remesh from '../../editing/Remesh.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
-
+import Subdivision from '../../editing/Subdivision.js';
 
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import MeshDynamic from '../../mesh/dynamic/MeshDynamic.js';
+import MeshStatic from '../../mesh/meshStatic/MeshStatic.js';
 
 let healState = false; // Persistent toggle across UI redraws
 
@@ -246,6 +247,8 @@ export default function getTopologyWidgets(main) {
     }
   });
   y += btnH + gapBtn;
+
+
 
   widgets.push({
     type: 'button', id: 'quad_manual', label: 'Quadrangulate', x: col1X, y: y, w: 170, h: btnH,

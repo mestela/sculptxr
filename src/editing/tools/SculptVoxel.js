@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import SculptBase from './SculptBase.js';
-import VoxelWorker from '../../workers/VoxelWorker.js?worker';
+import GeometryWorker from '../../workers/GeometryWorker.js?worker';
 import MeshStatic from '../../mesh/meshStatic/MeshStatic.js';
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
 import { vec3, mat4, quat } from 'gl-matrix';
@@ -23,7 +23,7 @@ class SculptVoxel extends SculptBase {
     // Initialize Voxel Worker
     // Box size 100.0 (matches Utils.SCALE / Desktop Scale)
     // Resolution 64 (Better quality for larger space)
-    this._worker = new VoxelWorker();
+    this._worker = new GeometryWorker();
 
     this._worker.onerror = (e) => {
       if (e.message) {

@@ -3,6 +3,7 @@ import Utils from '../../misc/Utils.js';
 import Geometry from '../../math3d/Geometry.js';
 import { vec3, mat4 } from 'gl-matrix';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
+import Mesh from '../../mesh/Mesh.js';
 
 // Overview sculpt :
 // start (check if we hit the mesh, start state stack) -> startSculpt
@@ -115,6 +116,76 @@ class SculptBase {
     var mesh = this.getMesh();
     if (!mesh) return;
     this._main.getStateManager().pushStateGeometry(mesh);
+  }
+
+  captureMeshSnapshot(mesh) {
+    if (!mesh) return null;
+    return {
+      faces: new Uint32Array(mesh.getFaces()),
+      vertices: new Float32Array(mesh.getVertices()),
+      colors: mesh.getColors() ? new Float32Array(mesh.getColors()) : null,
+      materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials()) : null,
+      facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord()) : null,
+      nbFaces: mesh.getNbFaces(),
+      nbVertices: mesh.getNbVertices()
+    };
+  }
+
+  applyMeshSnapshot(mesh, snapshot) {
+    console.log("[SculptBase] applyMeshSnapshot CALLED! Snapshot nbFaces=", snapshot.nbFaces);
+    if (!mesh || !snapshot) return;
+    const wasOptim = Mesh.OPTIMIZE;
+    Mesh.OPTIMIZE = false;
+    
+    console.log("[SculptBase] Setting faces...");
+    mesh.setFaces(snapshot.faces);
+    console.log("[SculptBase] Setting nbFaces...");
+    mesh.setNbFaces(snapshot.nbFaces);
+    console.log("[SculptBase] Setting vertices...");
+    mesh.setVertices(snapshot.vertices);
+    console.log("[SculptBase] Setting nbVertices...");
+    mesh.setNbVertices(snapshot.nbVertices);
+    
+    if (snapshot.colors) {
+      console.log("[SculptBase] Setting colors...");
+      mesh.setColors(snapshot.colors);
+    }
+    if (snapshot.materials) {
+      console.log("[SculptBase] Setting materials...");
+      mesh.setMaterials(snapshot.materials);
+    }
+    if (snapshot.facesTexCoord) {
+      console.log("[SculptBase] Setting facesTexCoord...");
+      mesh.setFacesTexCoord(snapshot.facesTexCoord);
+    }
+    
+    console.log("[SculptBase] Calling allocateArrays...");
+    mesh.allocateArrays();
+
+    console.log("[SculptBase] Calling initTopology...");
+    mesh.initTopology();
+    
+    // Clear wireframe caches to force re-computation on undo/redo!
+    if (mesh._meshData) {
+      mesh._meshData._drawElementsWireframe = null;
+      mesh._meshData._drawArraysWireframe = null;
+    }
+
+    console.log("[SculptBase] Calling updateGeometry...");
+    mesh.updateGeometry();
+    console.log("[SculptBase] Calling updateCenter...");
+    mesh.updateCenter();
+    if (mesh._renderData) {
+      console.log("[SculptBase] Calling updateDuplicateColorsAndMaterials...");
+      mesh.updateDuplicateColorsAndMaterials();
+    }
+    console.log("[SculptBase] Calling updateBuffers...");
+    mesh.updateBuffers();
+    
+    Mesh.OPTIMIZE = wasOptim;
+    console.log("[SculptBase] Calling initRender...");
+    mesh.initRender();
+    console.log("[SculptBase] applyMeshSnapshot SUCCESS!");
   }
 
   startSculpt() {

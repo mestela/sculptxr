@@ -31,6 +31,9 @@ MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on t
 3.  **Deploy**:
     -   Run `./deploy.sh` (Production) or `./deploy_beta.sh` (Beta).
 
+## Environment Paths
+*   **Node**: `/opt/homebrew/bin/node`
+
 ## Workflow Rules (STRICT ADHERENCE)
 1. **PLANNING MODE IS SACRED**: When in "Planning Mode" or asked to "Plan", **NO CODE EDITS** are permitted. Analysis and reading only.
 2. **VITE FIRST**: ALL code testing must be done locally via Vite.

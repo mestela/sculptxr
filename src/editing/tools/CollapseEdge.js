@@ -71,28 +71,11 @@ class CollapseEdge extends SculptBase {
     const vrfStartCount = mesh.getVerticesRingFaceStartCount();
     const vertRingFace = mesh.getVerticesRingFace();
 
-    const findFacesSharingEdge = (a, b) => {
-      const listA = [];
-      const startCountIdxA = a * 2;
-      const startIdxA = vrfStartCount[startCountIdxA];
-      const countA = vrfStartCount[startCountIdxA + 1];
-      for (let i = 0; i < countA; ++i) listA.push(vertRingFace[startIdxA + i]);
-
-      const listB = [];
-      const startCountIdxB = b * 2;
-      const startIdxB = vrfStartCount[startCountIdxB];
-      const countB = vrfStartCount[startCountIdxB + 1];
-      for (let i = 0; i < countB; ++i) listB.push(vertRingFace[startIdxB + i]);
-
-      return listA.filter(f => listB.includes(f));
-    };
-
-    const sharingFaces = findFacesSharingEdge(edgeV1, edgeV2);
-    console.log(`[CollapseEdge] Found ${sharingFaces.length} sharing faces for edge ${edgeV1}-${edgeV2}.`);
+    const prevMesh = this.getMesh();
+    const activeMesh = prevMesh.getCurrentMesh ? prevMesh.getCurrentMesh() : prevMesh;
 
     // Edge Collapse logic:
-    // Move edgeV2 to the average of edgeV1 and edgeV2. Then replace all references to edgeV2 with edgeV1 (or vice versa).
-    // We'll replace edgeV2 with edgeV1 in the remaining faces.
+    // Move edgeV2 to the average of edgeV1 and edgeV2. Then replace all references to edgeV2 with edgeV1.
     
     // Average position
     const v1Idx = edgeV1 * 3;
@@ -101,14 +84,15 @@ class CollapseEdge extends SculptBase {
     const avgY = (vertices[v1Idx + 1] + vertices[v2Idx + 1]) * 0.5;
     const avgZ = (vertices[v1Idx + 2] + vertices[v2Idx + 2]) * 0.5;
 
-    // Filter faces to remove degenerate ones (sharing faces)
-    const newFaces = new Uint32Array(faces.length - sharingFaces.length * 4);
+    // Filter faces to remove degenerate ones
+    const tempFaces = new Uint32Array(faces.length);
+    const facesTexCoord = activeMesh.getFacesTexCoord();
+    const tempFacesTexCoord = facesTexCoord ? new Uint32Array(facesTexCoord.length) : null;
     let head = 0;
+    let headT = 0;
+    let droppedCount = 0;
 
     for (let i = 0; i < faces.length; i += 4) {
-      const idx = i / 4;
-      if (sharingFaces.includes(idx)) continue; // Drop sharing faces
-      
       let fv0 = faces[i];
       let fv1 = faces[i + 1];
       let fv2 = faces[i + 2];
@@ -120,61 +104,92 @@ class CollapseEdge extends SculptBase {
       if (fv2 === edgeV2) fv2 = edgeV1;
       if (fv3 === edgeV2) fv3 = edgeV1;
 
-      newFaces[head++] = fv0;
-      newFaces[head++] = fv1;
-      newFaces[head++] = fv2;
-      newFaces[head++] = fv3;
+      // Filter duplicates to detect degeneracy
+      const unique = [];
+      if (!unique.includes(fv0)) unique.push(fv0);
+      if (!unique.includes(fv1)) unique.push(fv1);
+      if (!unique.includes(fv2)) unique.push(fv2);
+      if (!unique.includes(fv3)) unique.push(fv3);
+
+      // Remove TRI_INDEX from unique if present
+      const triIdx = unique.indexOf(Utils.TRI_INDEX);
+      if (triIdx !== -1) unique.splice(triIdx, 1);
+
+      if (unique.length < 3) {
+        // Drop face!
+        droppedCount++;
+        continue;
+      }
+
+      // Reconstruct face
+      tempFaces[head++] = unique[0];
+      tempFaces[head++] = unique[1];
+      tempFaces[head++] = unique[2];
+      tempFaces[head++] = unique.length > 3 ? unique[3] : Utils.TRI_INDEX;
+
+      if (tempFacesTexCoord) {
+        let fv0t = facesTexCoord[i];
+        let fv1t = facesTexCoord[i + 1];
+        let fv2t = facesTexCoord[i + 2];
+        let fv3t = facesTexCoord[i + 3];
+
+        if (faces[i] === edgeV2) fv0t = edgeV1;
+        if (faces[i + 1] === edgeV2) fv1t = edgeV1;
+        if (faces[i + 2] === edgeV2) fv2t = edgeV1;
+        if (faces[i + 3] === edgeV2) fv3t = edgeV1;
+
+        tempFacesTexCoord[headT++] = fv0t;
+        tempFacesTexCoord[headT++] = fv1t;
+        tempFacesTexCoord[headT++] = fv2t;
+        tempFacesTexCoord[headT++] = fv3t;
+      }
     }
 
-    const prevMesh = this.getMesh();
-    const activeMesh = prevMesh.getCurrentMesh ? prevMesh.getCurrentMesh() : prevMesh;
+    const newFaces = new Uint32Array(tempFaces.subarray(0, head));
+    let newFacesTexCoord = null;
+    if (tempFacesTexCoord) {
+      newFacesTexCoord = new Uint32Array(tempFacesTexCoord.subarray(0, headT));
+    }
 
-    // Save old state
-    const undoFaces = new Uint32Array(faces);
-    const undoVerts = new Float32Array(vertices);
+    console.log(`[CollapseEdge] Dropped ${droppedCount} degenerate faces, new face count: ${newFaces.length / 4}`);
+
+    console.log("[CollapseEdge] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
 
     // Set new state
     activeMesh.setFaces(newFaces);
     activeMesh.setNbFaces(newFaces.length / 4);
+    
+    if (newFacesTexCoord) {
+      activeMesh.setFacesTexCoord(newFacesTexCoord);
+    }
 
     // Apply average position to edgeV1
     vertices[v1Idx] = avgX;
     vertices[v1Idx + 1] = avgY;
     vertices[v1Idx + 2] = avgZ;
 
-    activeMesh.init();
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    if (activeMesh._renderData)
+      activeMesh.updateDuplicateColorsAndMaterials();
+    activeMesh.updateBuffers();
     activeMesh.initRender();
 
-    const redoFaces = newFaces;
-    const redoVerts = new Float32Array(vertices); // Wait, vertices are modified in place! Both undo and redo will point to same vertices if we don't save deep copies!
-    // But since vertices are modified in-place, we should use our Wholistic object swap!
-    // But for a tool, sometimes in-place is okay if we are careful!
-    
-    const undoCollapse = () => {
-      console.log(`[CollapseEdge] undoCollapse EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(undoFaces);
-      activeMesh.setNbFaces(undoFaces.length / 4);
-      activeMesh.setVertices(undoVerts); 
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
+
+    const pushState = () => {
+      const undoOp = () => {
+        this.applyMeshSnapshot(activeMesh, undoSnapshot);
+      };
+      const redoOp = () => {
+        this.applyMeshSnapshot(activeMesh, redoSnapshot);
+      };
+      this._main.getStateManager().pushStateCustom(undoOp, redoOp);
     };
 
-    const redoCollapse = () => {
-      console.log(`[CollapseEdge] redoCollapse EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(redoFaces);
-      activeMesh.setNbFaces(redoFaces.length / 4);
-      activeMesh.setVertices(redoVerts);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-    };
-
-    this._main.getStateManager().pushStateCustom(undoCollapse, redoCollapse);
+    pushState();
     
     return true;
   }

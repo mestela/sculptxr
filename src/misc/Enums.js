@@ -41,7 +41,8 @@ Enums.Tools = {
   SPIN_EDGE: 22,
   COLLAPSE_EDGE: 23,
   DISSOLVE_VERTEX: 24,
-  WELD: 25
+  WELD: 25,
+  SNAP_WELD_CENTER: 26
 };
 
 // display shader type

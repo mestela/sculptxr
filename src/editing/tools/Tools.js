@@ -25,6 +25,7 @@ import SpinEdge from './SpinEdge.js';
 import CollapseEdge from './CollapseEdge.js';
 import DissolveVertex from './DissolveVertex.js';
 import Weld from './Weld.js';
+import SnapWeldCenter from './SnapWeldCenter.js';
 
 var Tools = [];
 
@@ -53,6 +54,7 @@ Tools[Enums.Tools.SPIN_EDGE] = SpinEdge;
 Tools[Enums.Tools.COLLAPSE_EDGE] = CollapseEdge;
 Tools[Enums.Tools.DISSOLVE_VERTEX] = DissolveVertex;
 Tools[Enums.Tools.WELD] = Weld;
+Tools[Enums.Tools.SNAP_WELD_CENTER] = SnapWeldCenter;
 // Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
@@ -80,6 +82,7 @@ Tools[Enums.Tools.SPIN_EDGE].uiName = 'sculptSpinEdge';
 Tools[Enums.Tools.COLLAPSE_EDGE].uiName = 'sculptCollapseEdge';
 Tools[Enums.Tools.DISSOLVE_VERTEX].uiName = 'sculptDissolveVertex';
 Tools[Enums.Tools.WELD].uiName = 'sculptWeld';
+Tools[Enums.Tools.SNAP_WELD_CENTER].uiName = 'sculptSnapWeldCenter';
 // Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;

@@ -114,41 +114,74 @@ class DissolveVertex extends SculptBase {
     const prevMesh = this.getMesh();
     const activeMesh = prevMesh.getCurrentMesh ? prevMesh.getCurrentMesh() : prevMesh;
 
-    // Save old state
-    const undoFaces = new Uint32Array(faces);
+    console.log("[DissolveVertex] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
+
+    // Handle UVs if present
+    const facesTexCoord = activeMesh.getFacesTexCoord();
+    let newFacesTexCoord = null;
+    if (facesTexCoord) {
+      const tempTexCoord = [];
+      
+      for (let i = 0; i < faces.length; i += 4) {
+        const idx = i / 4;
+        if (connectedFaces.includes(idx)) {
+          let fv = [faces[i], faces[i + 1], faces[i + 2], faces[i + 3]];
+          const activeCount = fv.filter(v => v !== Utils.TRI_INDEX).length;
+          
+          if (activeCount <= 3) {
+            // Triangle dropped!
+            continue;
+          }
+          
+          // Quad becoming triangle!
+          const remainingIdx = [];
+          for (let k = 0; k < 4; ++k) {
+            if (faces[i + k] !== closestVert && faces[i + k] !== Utils.TRI_INDEX) {
+              remainingIdx.push(k);
+            }
+          }
+          
+          if (remainingIdx.length === 3) {
+            tempTexCoord.push(facesTexCoord[i + remainingIdx[0]]);
+            tempTexCoord.push(facesTexCoord[i + remainingIdx[1]]);
+            tempTexCoord.push(facesTexCoord[i + remainingIdx[2]]);
+            tempTexCoord.push(0); // Dummy for 4th element
+          }
+        } else {
+          // Keep face
+          tempTexCoord.push(facesTexCoord[i]);
+          tempTexCoord.push(facesTexCoord[i + 1]);
+          tempTexCoord.push(facesTexCoord[i + 2]);
+          tempTexCoord.push(facesTexCoord[i + 3]);
+        }
+      }
+      newFacesTexCoord = new Uint32Array(tempTexCoord);
+    }
 
     // Set new state
     activeMesh.setFaces(tNewFaces);
     activeMesh.setNbFaces(tNewFaces.length / 4);
+    
+    if (newFacesTexCoord) {
+      activeMesh.setFacesTexCoord(newFacesTexCoord);
+    }
 
-    activeMesh.init();
-    activeMesh.initRender();
+    activeMesh.allocateArrays();
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    
+    if (activeMesh._renderData)
+      activeMesh.updateDuplicateColorsAndMaterials();
+    activeMesh.updateBuffers();
 
-    const redoFaces = tNewFaces;
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    const undoDissolve = () => {
-      console.log(`[DissolveVertex] undoDissolve EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(undoFaces);
-      activeMesh.setNbFaces(undoFaces.length / 4);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-    };
-
-    const redoDissolve = () => {
-      console.log(`[DissolveVertex] redoDissolve EXECUTE`);
-      const wasOptim = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      activeMesh.setFaces(redoFaces);
-      activeMesh.setNbFaces(redoFaces.length / 4);
-      activeMesh.init();
-      Mesh.OPTIMIZE = wasOptim;
-      activeMesh.initRender();
-    };
-
-    this._main.getStateManager().pushStateCustom(undoDissolve, redoDissolve);
+    this._main.getStateManager().pushStateCustom(
+      () => this.applyMeshSnapshot(activeMesh, undoSnapshot),
+      () => this.applyMeshSnapshot(activeMesh, redoSnapshot)
+    );
     
     return true;
   }

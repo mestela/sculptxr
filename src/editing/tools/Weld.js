@@ -80,6 +80,12 @@ class Weld extends SculptBase {
     const target = targetVert;
     this._sourceVertex = -1; // Reset for next run
 
+    let sourceRefCount = 0;
+    for (let i = 0; i < faces.length; ++i) {
+      if (faces[i] === source) sourceRefCount++;
+    }
+    console.log(`[Weld] Source vertex ${source} is referenced by ${sourceRefCount} face corners.`);
+
     const newFaces = [];
     const undoFaces = new Uint32Array(faces);
 
@@ -127,38 +133,54 @@ class Weld extends SculptBase {
     }
 
     const typedFaces = new Uint32Array(newFaces);
+    
+    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
 
-    mesh.setFaces(typedFaces);
-    mesh.setNbFaces(typedFaces.length / 4);
+    console.log("[Weld] Capturing undo snapshot...");
+    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
 
-    const wasOptim = Mesh.OPTIMIZE;
-    Mesh.OPTIMIZE = false;
-    mesh.init();
-    Mesh.OPTIMIZE = wasOptim;
-    mesh.initRender();
+    activeMesh.setFaces(typedFaces);
+    activeMesh.setNbFaces(typedFaces.length / 4);
 
-    const redoFaces = typedFaces;
+    // Safety check: Ensure texCoordsST is at least as large as nbVertices to prevent RangeError in allocateArrays!
+    if (activeMesh.hasUV()) {
+      const nbVerts = activeMesh.getNbVertices();
+      const nbTex = activeMesh.getTexCoords().length / 2;
+      if (nbVerts > nbTex) {
+        console.log(`[Weld] Safety resizing texCoordsST from ${nbTex} to ${nbVerts}`);
+        const newTex = new Float32Array(nbVerts * 2);
+        newTex.set(activeMesh.getTexCoords());
+        activeMesh.setTexCoords(newTex);
+      }
+    }
+
+    console.log(`[Weld] Faces count changed from ${faces.length / 4} to ${typedFaces.length / 4}`);
+
+    activeMesh.allocateArrays();
+    activeMesh.initTopology();
+    activeMesh.updateGeometry();
+    activeMesh.updateCenter();
+    activeMesh.updateDuplicateColorsAndMaterials();
+    
+    // Clear wireframe caches
+    if (activeMesh._meshData) {
+      activeMesh._meshData._drawElementsWireframe = null;
+      activeMesh._meshData._drawArraysWireframe = null;
+    }
+    
+    if (activeMesh.updateBuffers) activeMesh.updateBuffers();
+    else if (activeMesh.initRender) activeMesh.initRender();
+
+    const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
     const undoWeld = () => {
       console.log(`[Weld] undoWeld EXECUTE`);
-      const wasO = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      mesh.setFaces(undoFaces);
-      mesh.setNbFaces(undoFaces.length / 4);
-      mesh.init();
-      Mesh.OPTIMIZE = wasO;
-      mesh.initRender();
+      this.applyMeshSnapshot(activeMesh, undoSnapshot);
     };
 
     const redoWeld = () => {
       console.log(`[Weld] redoWeld EXECUTE`);
-      const wasO = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false;
-      mesh.setFaces(redoFaces);
-      mesh.setNbFaces(redoFaces.length / 4);
-      mesh.init();
-      Mesh.OPTIMIZE = wasO;
-      mesh.initRender();
+      this.applyMeshSnapshot(activeMesh, redoSnapshot);
     };
 
     this._main.getStateManager().pushStateCustom(undoWeld, redoWeld);
