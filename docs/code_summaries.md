@@ -42,6 +42,38 @@ These tools inherit from `SculptBase` but set `_continuous = false` and do not i
 
 ---
 
+## Persistence & Options Subsystem
+
+SculptXR manages state and settings across sessions using a combination of URL parameters, Local Storage, and IndexedDB:
+
+### 1. Options & Settings (`getOptionsURL.js`)
+*   **Role**: Centralized configuration manager that loads settings on startup and provides methods to save them.
+*   **Data Sources**:
+    *   **URL Parameters**: Highest priority. Used for session-specific overrides (e.g., loading a specific model via `modelurl`).
+    *   **Local Storage**: Used for persistent user preferences (e.g., UI theme, brush sizes, voxel resolution). Stored under the key `sculptxr_settings` as a JSON string.
+*   **Key Behavior**:
+    *   Exposes a function `getOptionsURL()` that returns a snapshot of resolved options.
+    *   Provides `getOptionsURL.saveOption(key, value, debounceMs)` to persist settings back to `localStorage` with optional debouncing.
+
+### 2. Large Data Storage (`StorageDB.js`)
+*   **Role**: Wrapper around browser **IndexedDB** for storing large assets like meshes and projects.
+*   **Key Behavior**:
+    *   Opens a database named `SculptXR_Workspace`.
+    *   Uses a single object store `assets` to store key-value pairs.
+    *   Provides asynchronous `get`, `set`, `delete`, and `getAll` methods returning Promises.
+
+---
+
+## Undo & State Management
+
+SculptXR manages history and undo/redo operations via `StateManager.js` using several distinct mechanisms:
+
+*   **Localized Geometric Undo**: For standard brushes (e.g., Sculpt, Paint), the system records only the modified vertex indices and their previous attributes (position, color) before a stroke. This keeps memory overhead low.
+*   **Custom Undo/Redo Functions (`pushStateCustom`)**: For complex operations changing mesh topology or visibility (like Quad Remeshing and Voxel Conversion), the system allows pushing custom function pairs. This is used to handle adding/removing meshes and toggling visibility of source meshes in a single atomic step.
+*   **Worker-Side History**: Inside `VoxelWorker.js`, a local stack of distance fields is maintained. This allows rapid undo/redo of voxel operations without needing to transfer huge volumes of grid data back and forth to the main thread.
+
+---
+
 ## The Voxel Sculpting Tool (`SculptVoxel.js`)
 
 Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engine within a single tool slot. It delegates heavy lifting to `VoxelWorker.js` and supports the following modes (selectable in the VR HUD):

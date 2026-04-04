@@ -1,6 +1,7 @@
 import Enums from '../../misc/Enums.js';
 import Remesh from '../../editing/Remesh.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 
 
 import Multimesh from '../../mesh/multiresolution/Multimesh.js';
@@ -10,6 +11,10 @@ let healState = false; // Persistent toggle across UI redraws
 
 export default function getTopologyWidgets(main) {
   const widgets = [];
+
+  // Load saved voxel resolution
+  const savedRes = getOptionsURL().remesh_resolution;
+  if (savedRes !== undefined) Remesh.RESOLUTION = savedRes;
 
   const menuW = 400;
   const col1X = 20;
@@ -118,18 +123,42 @@ export default function getTopologyWidgets(main) {
   widgets.push({ type: 'info', label: 'Voxel Conversion', x: col1X, y: y });
   y += gapHeader;
 
+  // Dedicated Resolution Slider for Voxel Conversion (Logarithmic 0-200)
+  widgets.push({
+    type: 'slider', id: 'voxelConvertRes', label: 'Voxel Density', x: col1X, y: y, w: 350, h: 40,
+    value: Math.min(1, Math.sqrt(Remesh.RESOLUTION / 200)), min: 0, max: 1, step: 0.01,
+    getDisplayValue: (val) => (Math.pow(val, 2) * 200).toFixed(0),
+    onInput: (val) => {
+      const actualRes = Math.round(Math.pow(val, 2) * 200);
+      Remesh.RESOLUTION = actualRes;
+      getOptionsURL.saveOption('remesh_resolution', actualRes, 500);
+      const tMesh = main.getMesh();
+      if (tMesh) {
+        VoxelDensityOverlay.enable(tMesh, actualRes);
+      }
+    },
+    onRelease: () => {
+      VoxelDensityOverlay.disable();
+    }
+  });
+  y += 40 + gapBtn;
+
   widgets.push({
     type: 'button', id: 'mesh_to_voxel', label: 'Convert Mesh to Voxels', x: col1X, y: y, w: 350, h: btnH,
     disabled: !mesh || mesh.isVoxel,
     onInteract: () => {
+      console.log(`[GuiVRTopology] Convert Mesh to Voxels clicked! mesh=${!!mesh} isVoxel=${mesh ? mesh.isVoxel : "N/A"}`);
       if (!mesh || mesh.isVoxel) return;
       if (main.getSculptManager().meshToVoxel) {
+        console.log(`[GuiVRTopology] Calling meshToVoxel()`);
         main.getSculptManager().meshToVoxel();
         
         main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
         if (main.getGuiXR()) {
           main.getGuiXR().refreshToolsWidget(); // Refresh VR tools UI
         }
+      } else {
+        console.error(`[GuiVRTopology] meshToVoxel method not found on SculptManager!`);
       }
     }
   });

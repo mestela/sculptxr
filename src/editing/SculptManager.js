@@ -170,7 +170,8 @@ class SculptManager {
 
   meshToVoxel() {
     var mesh = this._main.getMesh();
-    if (!mesh || !mesh.getVertices) return; // Need a valid mesh
+    if (!mesh) return;
+    if (!mesh.getVertices) return;
 
     var voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (mesh._isVoxel || mesh.constructor.name === 'MeshProxy') {
@@ -253,11 +254,17 @@ class SculptManager {
 
     // Use manual resolution from Remesh slider
     let newRes = Remesh.RESOLUTION;
-    newRes = Math.min(128, Math.max(32, newRes)); // Clamp [32, 128]
+    newRes = Math.min(200, Math.max(8, newRes)); // Clamp [8, 200]
 
     // Save these for when the worker returns the mesh!
     voxelTool._pendingSize = maxExtent;
-    voxelTool._pendingOffset = [cx - maxExtent / 2, cy - maxExtent / 2, cz - maxExtent / 2];
+    
+    voxelTool._pendingOffset = [
+        cx - maxExtent / 2,
+        cy - maxExtent / 2,
+        cz - maxExtent / 2
+    ];
+
     voxelTool._pendingRes = newRes;
 
     
@@ -864,19 +871,46 @@ class SculptManager {
       newMesh.setShowWireframe(activeMesh.getShowWireframe());
     }
 
-    activeMesh.setVisible(false);
-    if (activeMesh.setShowWireframe) {
-      activeMesh.setShowWireframe(false);
-    }
-    if (activeMesh.getThreeMesh) {
-      const threeMesh = activeMesh.getThreeMesh();
-      if (threeMesh) {
-        threeMesh.visible = false;
+    const sourceMesh = activeMesh;
+    const quadMesh = newMesh;
+    
+    const undoOp = () => {
+      quadMesh.setVisible(false);
+      if (quadMesh.getThreeMesh()) quadMesh.getThreeMesh().visible = false;
+      
+      sourceMesh.setVisible(true);
+      if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = true;
+      
+      const idx = this._main.getMeshes().indexOf(quadMesh);
+      if (idx >= 0) this._main.getMeshes().splice(idx, 1);
+      if (this._main._worldGroup && quadMesh.getThreeMesh()) {
+        this._main._worldGroup.remove(quadMesh.getThreeMesh());
       }
-    }
-
-    main.addNewMesh(newMesh);
-    main.setMesh(newMesh);
+      
+      this._main.setMesh(sourceMesh);
+      if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
+    };
+    
+    const redoOp = () => {
+      sourceMesh.setVisible(false);
+      if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = false;
+      
+      quadMesh.setVisible(true);
+      if (quadMesh.getThreeMesh()) quadMesh.getThreeMesh().visible = true;
+      
+      if (!this._main.getMeshes().includes(quadMesh)) {
+        this._main.getMeshes().push(quadMesh);
+        if (this._main._worldGroup && quadMesh.getThreeMesh()) {
+          this._main._worldGroup.add(quadMesh.getThreeMesh());
+        }
+      }
+      
+      this._main.setMesh(quadMesh);
+      if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
+    };
+    
+    redoOp();
+    this._main.getStateManager().pushStateCustom(undoOp, redoOp);
 
     
   }

@@ -1724,7 +1724,7 @@ class SculptVoxel extends SculptBase {
         // window.screenLog(`[SculptVoxel] gridMatrix Translate [${this._gridMatrix[12].toFixed(3)}, ${this._gridMatrix[13].toFixed(3)}, ${this._gridMatrix[14].toFixed(3)}]`, "cyan");
       }
       
-      const scale = this._pendingSize / (this._pendingRes || 128);
+      const scale = this._pendingSize / ((this._pendingRes || 128) - 1);
       this._gridMatrix[0] = scale;
       this._gridMatrix[5] = scale;
       this._gridMatrix[10] = scale;
@@ -1785,10 +1785,12 @@ class SculptVoxel extends SculptBase {
       
       // Ensure topology is built BEFORE copying wireframe state
       if (this._voxelMesh.getShowWireframe()) {
+        newMesh._wireframe = null; // Force rebuild!
         newMesh.allocateArrays();
         newMesh.initFaceRings();
         newMesh.initEdges();
         newMesh.updateGeometry();
+        newMesh.updateWireframeBuffer(); // PUSH TO GPU AFTER EDGES BUILT!
       }
 
       newMesh.setShowWireframe(this._voxelMesh.getShowWireframe());
@@ -1818,7 +1820,57 @@ class SculptVoxel extends SculptBase {
         newMesh.setFlatShading(false);
       }
       if (this._pendingSourceMesh) {
-        this._main.replaceMesh(this._pendingSourceMesh, newMesh);
+        const sourceMesh = this._pendingSourceMesh;
+        const voxelMesh = newMesh;
+        
+        // Copy material and wireframe settings!
+        newMesh.setShaderType(sourceMesh.getShaderType());
+        newMesh.setMatcap(sourceMesh.getMatcap());
+        newMesh.setFlatShading(sourceMesh.getFlatShading());
+        newMesh.setFlatColor(sourceMesh.getFlatColor());
+        if (sourceMesh.getShowWireframe && newMesh.setShowWireframe) {
+          newMesh.setShowWireframe(sourceMesh.getShowWireframe());
+        }
+        
+        const undoOp = () => {
+          voxelMesh.setVisible(false);
+          if (voxelMesh.getThreeMesh()) voxelMesh.getThreeMesh().visible = false;
+          
+          sourceMesh.setVisible(true);
+          if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = true;
+          
+          const idx = this._main.getMeshes().indexOf(voxelMesh);
+          if (idx >= 0) this._main.getMeshes().splice(idx, 1);
+          if (this._main._worldGroup && voxelMesh.getThreeMesh()) {
+            this._main._worldGroup.remove(voxelMesh.getThreeMesh());
+          }
+          
+          this._main.setMesh(sourceMesh);
+          if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
+          if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+        };
+        
+        const redoOp = () => {
+          sourceMesh.setVisible(false);
+          if (sourceMesh.getThreeMesh()) sourceMesh.getThreeMesh().visible = false;
+          
+          voxelMesh.setVisible(true);
+          if (voxelMesh.getThreeMesh()) voxelMesh.getThreeMesh().visible = true;
+          
+          if (!this._main.getMeshes().includes(voxelMesh)) {
+            this._main.getMeshes().push(voxelMesh);
+            if (this._main._worldGroup && voxelMesh.getThreeMesh()) {
+              this._main._worldGroup.add(voxelMesh.getThreeMesh());
+            }
+          }
+          
+          this._main.setMesh(voxelMesh);
+          if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
+          if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+        };
+        
+        redoOp();
+        this._main.getStateManager().pushStateCustom(undoOp, redoOp);
         this._pendingSourceMesh = null;
       } else {
         this._main.addNewMesh(newMesh);
@@ -1961,6 +2013,21 @@ class SculptVoxel extends SculptBase {
       if (mesh.getIndexBuffer()) mesh.getIndexBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
       
       mesh.updateBuffers(); // Sync to GPU
+      
+      // Update wireframe if enabled!
+      if (mesh.getShowWireframe && mesh.getShowWireframe()) {
+        mesh._wireframe = null; // Force rebuild!
+        mesh.updateWireframeBuffer();
+        
+        // Force Three.js to use the new array!
+        const rd = mesh.getRenderData();
+        if (rd && rd._wireframeMesh) {
+          const wireGeom = rd._wireframeMesh.geometry;
+          const indices = mesh.getWireframe();
+          wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
+          wireGeom.setDrawRange(0, indices.length);
+        }
+      }
     }
   }
 

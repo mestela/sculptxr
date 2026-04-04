@@ -9,7 +9,7 @@ import Smooth from './tools/Smooth.js';
 import HoleFilling from './HoleFilling.js';
 
 var Remesh = {};
-Remesh.RESOLUTION = 150;
+Remesh.RESOLUTION = 20;
 Remesh.BLOCK = false;
 Remesh.SMOOTHING = true;
 Remesh.QUADRANGULATE = false;

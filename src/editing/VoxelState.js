@@ -128,10 +128,10 @@ class VoxelState {
 
     // Centered at (0, 0, 0) - full scene coverage
     this._min = [-size * 0.5, -size * 0.5, -size * 0.5];
-    this._max = [size * 0.5, size * 0.5, size * 0.5];
-
-    this._step = size / res;
-
+    this._size = size;
+    this._resolution = res;
+    this._step = size / (res - 1);
+    
     this._dims = [res, res, res];
     this._count = res * res * res;
 
@@ -208,7 +208,7 @@ class VoxelState {
     const d001 = this._distanceField[idx + rxy];
     const d101 = this._distanceField[idx + 1 + rxy];
     const d011 = this._distanceField[idx + rx + rxy];
-    const d111 = this._distanceField[idx + 1 + rx + rxy];
+    const d111 = this._distanceField[idx + 1 + rxy];
 
     // Lerp X
     const d00 = d000 + (d100 - d000) * fx;
@@ -1374,7 +1374,7 @@ class VoxelState {
       self.postMessage({ type: 'LOG', data: `VoxelState.resample: oldRes=${oldRes} newRes=${newRes} useSize=${useSize} useMin=${useMin}` });
     }
 
-    const newStep = useSize / newRes;
+    const newStep = useSize / (newRes - 1);
     const newDF = new Float32Array(newRes * newRes * newRes);
     newDF.fill(10000.0); // Default to Far
 

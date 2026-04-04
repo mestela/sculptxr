@@ -2810,7 +2810,14 @@ export default class GuiXR {
     ctx.textAlign = 'left';
     ctx.fillText(`${wid.label}`, wx + 2, wy + 28);
 
-    let valStr = (wid.value !== undefined && wid.value !== null) ? wid.value.toFixed(wid.precision || 2) : 'ERR';
+    let valStr = 'ERR';
+    if (wid.value !== undefined && wid.value !== null) {
+      if (wid.getDisplayValue) {
+        valStr = wid.getDisplayValue(wid.value);
+      } else {
+        valStr = wid.value.toFixed(wid.precision || 2);
+      }
+    }
     ctx.textAlign = 'right';
     ctx.fillStyle = '#fff';
     ctx.fillText(valStr, wx + wid.w - 2, wy + 28);
