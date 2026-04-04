@@ -1,4 +1,4 @@
-# SculptXR (v1.0.77)
+# SculptXR (v1.0.78)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.78**: **Voxel Pipeline Stabilization**: Fixed voxel mesh alignment drift, enabled material/wireframe inheritance, and resolved tangled wireframes during live edits.
 *   **v1.0.77**: **Global Exposure & Tone Mapping**: Added tone mapping combobox and exposure slider to VR Rendering menu. Fixed Matcap shader to support exposure.
 *   **v1.0.76**: **Advanced Dynamic Boolean Modes & Quad Toggle**: Context-aware operations triggered by visibility states when exactly 2 objects are selected. Added quadrangulate toggle.
-*   **v1.0.75**: **VR UI Standardization & Scrollable Overlays**: Standardized font sizes, layout bounds, and injected crisp Lucide-inspired SVG path icons across the entire WebXR HUD. Enabled thumbstick scrolling on tall floating menus.
 
 [View Full Release History](docs/releases.md)
 

@@ -1,3 +1,9 @@
+# v1.0.78
+- **Fix**: **Voxel Mesh Alignment Drift**: Corrected grid-to-world coordinate mapping by standardizing on `resolution - 1` for step calculations, eliminating volume loss/inflation and scale-drift issues.
+- **Fix**: **Voxel Material & Wireframe Inheritance**: Ensured voxelized mesh correctly inherits source polygon mesh's material properties and wireframe visibility state.
+- **Fix**: **Tangled Wireframe during Voxel Edits**: Resolved wireframe line scrambles during live voxel sculpting by forcing a rebuild of the wireframe index buffer (`_wireframe = null`) when topology changes.
+- **Fix**: **Undo/Redo UI Synchronization**: Custom undo/redo steps now trigger a HUD redraw to ensure visibility and UI state are correctly reflected in VR.
+
 # v1.0.77
 - **Feature**: **Global Exposure and Tone Mapping Controls**: Replaced the non-functional "Filmic" checkbox with a comprehensive control set in the VR Rendering menu, including a Tone Mapping combobox (None, Linear, Reinhard, Cineon, ACESFilmic) and a global Exposure slider (0.0 to 3.0).
 - **Feature**: **Matcap Exposure Support**: Added a `uExposure` uniform to the custom Matcap shader to allow Matcap materials to respond to the global exposure slider.
