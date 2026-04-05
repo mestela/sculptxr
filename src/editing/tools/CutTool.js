@@ -110,6 +110,7 @@ class CutTool extends SculptBase {
   updateXR(picking, isPressed, origin, dir, options) {
     if (!isPressed) {
       this.updatePreselection(picking);
+      this.updatePreviewMesh();
     }
     super.updateXR(picking, isPressed, origin, dir, options);
   }
@@ -303,9 +304,12 @@ class CutTool extends SculptBase {
       points.push(new THREE.Vector3(pWorld[0], pWorld[1], pWorld[2]));
     }
     
-    // Removed rubber-banding to current hit point as requested.
+    // Add rubber-banding to hover marker (yellow sphere) if available
+    if (this._highlightSphere && this._highlightSphere.visible && this._cutPoints.length > 0) {
+      points.push(this._highlightSphere.position.clone());
+    }
     
-    if (this._cutPoints.length < 2) {
+    if (points.length < 2) {
       if (this._previewMesh) {
         this._previewMesh.visible = false;
       }
@@ -317,9 +321,26 @@ class CutTool extends SculptBase {
     }
     
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const colors = [];
+    const isHovering = this._highlightSphere && this._highlightSphere.visible;
+    for (let i = 0; i < points.length; i++) {
+      if (isHovering && i === points.length - 1) {
+        colors.push(1, 1, 0); // Yellow for the hover point
+      } else {
+        colors.push(1, 0, 0); // Red for confirmed points
+      }
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     
     if (!this._previewMesh) {
-      const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 1, depthTest: false, transparent: true, depthWrite: false, opacity: 0.4 });
+      const material = new THREE.LineBasicMaterial({ 
+        vertexColors: true, 
+        linewidth: 1, 
+        depthTest: false, 
+        transparent: true, 
+        depthWrite: false, 
+        opacity: 0.4 
+      });
       this._previewMesh = new THREE.Line(geometry, material);
       this._previewMesh.renderOrder = 9999;
       this._previewMesh.isPickable = false;
@@ -369,6 +390,7 @@ class CutTool extends SculptBase {
     console.log("[CutTool] start called");
     const picking = this._main.getPicking();
     if (!this._isCutting) {
+      this.clearPreview();
       this._cutPoints = [];
       this._isCutting = true;
       this._strokeFrameCount = 0;
@@ -838,8 +860,9 @@ class CutTool extends SculptBase {
       return;
     }
     
-    const mesh = this.getMesh();
-    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    try {
+      const mesh = this.getMesh();
+      const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     const vertices = activeMesh.getVertices();
     const colors = activeMesh.getColors();
     const materials = activeMesh.getMaterials();
@@ -870,6 +893,7 @@ class CutTool extends SculptBase {
         ];
         
         const facesUV = activeMesh.getFacesTexCoord();
+        const texCoordsST = activeMesh.getTexCoords();
         let uvNew = [0, 0];
         if (facesUV && texCoordsST) {
           const uvA = vA;
@@ -982,6 +1006,7 @@ class CutTool extends SculptBase {
       }
       
       if (foundFaceIdx === -1) {
+        console.warn(`[CutTool] Failed to find shared face for segment ${i} to ${i+1}`);
         failCount++;
         continue;
       }
@@ -1319,7 +1344,7 @@ class CutTool extends SculptBase {
     }
     
     if (failCount > 0) {
-      // Failed to find faces for some segments
+      console.warn(`[CutTool] Cut completed with ${failCount} failed segments.`);
     }
     
 
@@ -1335,9 +1360,12 @@ class CutTool extends SculptBase {
     activeMesh.initRender();
     
     // Invalidate wireframe caches
-    if (activeMesh._meshData) {
-      activeMesh._meshData._drawElementsWireframe = null;
-      activeMesh._meshData._drawArraysWireframe = null;
+      if (activeMesh._meshData) {
+        activeMesh._meshData._drawElementsWireframe = null;
+        activeMesh._meshData._drawArraysWireframe = null;
+      }
+    } catch (e) {
+      console.error("[CutTool] Error in completeCut:", e);
     }
     
     this._cutPoints = [];
@@ -1366,6 +1394,16 @@ class CutTool extends SculptBase {
       }
       this._indicatorSpheres = null;
     }
+
+    if (this._highlightSphere) {
+      parentNode.remove(this._highlightSphere);
+      this._highlightSphere.geometry.dispose();
+      this._highlightSphere.material.dispose();
+      this._highlightSphere = null;
+    }
+
+    this._cutPoints = [];
+    this._isCutting = false;
     
     if (this._sphereGeometry) {
       this._sphereGeometry.dispose();
