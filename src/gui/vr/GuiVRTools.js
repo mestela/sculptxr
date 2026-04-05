@@ -57,6 +57,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.FILL_HOLE,
     Enums.Tools.DISSOLVE_EDGE,
     Enums.Tools.SPLIT_FACE,
+    Enums.Tools.SPLIT_EDGE,
+    Enums.Tools.EDGE_CREATE,
     Enums.Tools.SPIN_EDGE,
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,
@@ -100,6 +102,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.FILL_HOLE:
       case Enums.Tools.DISSOLVE_EDGE:
       case Enums.Tools.SPLIT_FACE:
+      case Enums.Tools.SPLIT_EDGE:
+      case Enums.Tools.EDGE_CREATE:
       case Enums.Tools.SPIN_EDGE:
       case Enums.Tools.WELD:
         return '#c5ebc5'; // Green (bright)

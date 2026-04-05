@@ -3942,7 +3942,10 @@ class Scene {
     // (currentTool and isToolActive defined above at Menu Block)
 
     let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive);
-    // Logs removed
+    
+    if (isTriggerPressed && window.screenLog && this._logThrottle % 30 === 0) {
+      window.screenLog(`[VR] canSculpt: ${canSculpt} picked: ${!!picked} allowAir: ${allowAir} isToolActive: ${!!isToolActive}`, canSculpt ? "lime" : "orange");
+    }
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");

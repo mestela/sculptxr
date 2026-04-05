@@ -163,6 +163,9 @@ self.onmessage = function (e) {
       case 'QUADRANGULATE_ONLY':
         quadrangulateOnly(msg);
         break;
+      case 'BOOLEAN_OPERATION':
+        booleanOperation(msg);
+        break;
       case 'SYMMETRY_MIRROR':
         symmetryMirror(msg);
         break;
@@ -179,7 +182,7 @@ self.onmessage = function (e) {
 
 function meshToVoxel(msg) {
   if (msg.res && msg.size && msg.center) {
-    // console.log(`[VoxelWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
+    // console.log(`[GeometryWorker] meshToVoxel: Re-initializing VoxelState with Res=${msg.res}, Size=${msg.size.toFixed(2)}`);
     voxelState = new VoxelState(msg.res, msg.size); // Dynamic re-init!
   }
 
@@ -188,7 +191,7 @@ function meshToVoxel(msg) {
   if (voxelState.addMeshSDF(msg.v, msg.c, msg.m, msg.f)) {
     isDirty = true;
   } else {
-    // console.warn(`[VoxelWorker] addMeshSDF FAILED or NO CHANGE!`);
+    // console.warn(`[GeometryWorker] addMeshSDF FAILED or NO CHANGE!`);
   }
   postMesh();
 }
@@ -502,7 +505,7 @@ function filterCollinearTriangles(vertices, faces) {
     }
   }
   if (count > 0) {
-    console.log(`[VoxelWorker] filterCollinearTriangles: dropped ${count} collinear faces.`);
+    console.log(`[GeometryWorker] filterCollinearTriangles: dropped ${count} collinear faces.`);
   }
   return out;
 }
@@ -717,6 +720,92 @@ function sliceAndCap(msg) {
   }
 }
 
+function booleanOperation(msg) {
+  try {
+    const manifold = globalThis.manifold;
+    if (!manifold) {
+      console.error("booleanOperation: manifold not loaded");
+      return;
+    }
+
+    console.log(`[GeometryWorker] booleanOperation started! Op=${msg.op}, Num meshes=${msg.meshes.length}`);
+
+    let combinedManifold = null;
+
+    for (let i = 0; i < msg.meshes.length; i++) {
+        const meshData = msg.meshes[i];
+        let triFaces = meshData.f;
+        
+        // Stride 4 to Stride 3 (unpadding)
+        if (triFaces.length % 4 === 0) {
+            if (triFaces[3] === 4294967295 || triFaces[3] === 0xFFFFFFFF) {
+                triFaces = unpadTriangles(triFaces);
+            } else if (!meshData.isTriangles) {
+                triFaces = triangulateQuads(triFaces);
+            }
+        }
+
+        const welded = weldVertices(meshData.v, triFaces);
+        let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
+        cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
+
+        const triVertsTyped = new Uint32Array(cleanFaces);
+        const mMesh = new manifold.Mesh({
+            numProp: 3,
+            vertProperties: welded.vertices,
+            triVerts: triVertsTyped
+        });
+
+        const currentManifold = new manifold.Manifold(mMesh);
+
+        if (!combinedManifold) {
+            combinedManifold = currentManifold;
+        } else {
+            if (msg.op === 'subtract') {
+                console.log(`[GeometryWorker] Subtracting mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.subtract(currentManifold);
+            } else if (msg.op === 'intersect') {
+                console.log(`[GeometryWorker] Intersecting mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.intersect(currentManifold);
+            } else {
+                console.log(`[GeometryWorker] Unioning mesh ${i+1}/${msg.meshes.length}...`);
+                combinedManifold = combinedManifold.add(currentManifold);
+            }
+        }
+    }
+
+    if (!combinedManifold) {
+        console.error("booleanOperation: no valid meshes to operate on");
+        return;
+    }
+
+    const resultMesh = combinedManifold.getMesh();
+    const weldedAfter = weldVertices(resultMesh.vertProperties, resultMesh.triVerts);
+
+    let paddedFaces;
+    let topologyStats;
+    if (msg.quadrangulate !== false) {
+        console.log(`[GeometryWorker] Quadrangulating Boolean result...`);
+        const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces, false, 0);
+        paddedFaces = result.paddedFaces;
+        topologyStats = result.stats;
+    } else {
+        paddedFaces = padTrianglesToQuads(weldedAfter.faces);
+    }
+
+    self.postMessage({
+        type: 'BOOLEAN_UNION_RESULT',
+        v: weldedAfter.vertices,
+        f: paddedFaces,
+        stats: topologyStats
+    }, [weldedAfter.vertices.buffer, paddedFaces.buffer]);
+
+  } catch (err) {
+      console.error("booleanOperation Error:", err);
+      self.postMessage({ type: 'BOOLEAN_UNION_ERROR', error: err.message });
+  }
+}
+
 function symmetryMirror(msg) {
   try {
     const manifold = globalThis.manifold;
@@ -725,7 +814,7 @@ function symmetryMirror(msg) {
       return;
     }
 
-    console.log(`[VoxelWorker] symmetryMirror started! isTriangles=${msg.isTriangles}`);
+    console.log(`[GeometryWorker] symmetryMirror started! isTriangles=${msg.isTriangles}`);
 
     const vertices = msg.v;
     const faces = msg.f;
@@ -733,20 +822,20 @@ function symmetryMirror(msg) {
 
     let triFaces = faces;
     if (!isTriangles) {
-      console.log(`[VoxelWorker] triangulateQuads starting... for ${faces.length} faces`);
+      console.log(`[GeometryWorker] triangulateQuads starting... for ${faces.length} faces`);
       triFaces = triangulateQuads(faces);
-      console.log(`[VoxelWorker] triangulateQuads done!`);
+      console.log(`[GeometryWorker] triangulateQuads done!`);
     } else {
       if (faces.length % 4 === 0) {
         if (faces[3] === 4294967295 || faces[3] === 0xFFFFFFFF) {
-          console.log(`[VoxelWorker] unpadTriangles starting... for 4-padded array of length ${faces.length}`);
+          console.log(`[GeometryWorker] unpadTriangles starting... for 4-padded array of length ${faces.length}`);
           triFaces = unpadTriangles(faces);
         } else {
-          console.log(`[VoxelWorker] quad mesh detected in triangles path! Triangulating before validation...`);
+          console.log(`[GeometryWorker] quad mesh detected in triangles path! Triangulating before validation...`);
           triFaces = triangulateQuads(faces); // Triangulate quads properly!
         }
       } else {
-        console.log(`[VoxelWorker] faces already unpadded or not 4-padded (length=${faces.length}). Using as-is.`);
+        console.log(`[GeometryWorker] faces already unpadded or not 4-padded (length=${faces.length}). Using as-is.`);
         triFaces = faces;
       }
     }
@@ -755,17 +844,17 @@ function symmetryMirror(msg) {
     const pt = msg.ptPlane;
 
     // 1. Clean up unscaled quad face indices + weld duplicate vertices (watertight)
-    console.log(`[VoxelWorker] weldVertices starting... for ${triFaces.length} faces`);
+    console.log(`[GeometryWorker] weldVertices starting... for ${triFaces.length} faces`);
     const welded = weldVertices(vertices, triFaces);
-    console.log(`[VoxelWorker] weldVertices done! unique vertices=${welded.vertices.length}, faces=${welded.faces.length}`);
+    console.log(`[GeometryWorker] weldVertices done! unique vertices=${welded.vertices.length}, faces=${welded.faces.length}`);
 
     let cleanFaces = filterDegenerateTriangles(welded.vertices, welded.faces);
-    console.log(`[VoxelWorker] filterDegenerateTriangles done! faces length=${cleanFaces.length}`);
+    console.log(`[GeometryWorker] filterDegenerateTriangles done! faces length=${cleanFaces.length}`);
 
     // 3. Filter collinear triangles (zero area via cross product)
-    console.log(`[VoxelWorker] filterCollinearTriangles starting...`);
+    console.log(`[GeometryWorker] filterCollinearTriangles starting...`);
     cleanFaces = filterCollinearTriangles(welded.vertices, cleanFaces);
-    console.log(`[VoxelWorker] filterCollinearTriangles done! faces length=${cleanFaces.length}`);
+    console.log(`[GeometryWorker] filterCollinearTriangles done! faces length=${cleanFaces.length}`);
 
     // 4. Snap vertices to the symmetry plane before slicing!
     const snapEpsilon = 1e-3; 
@@ -804,7 +893,7 @@ function symmetryMirror(msg) {
       if (count === 1) boundaryEdges++;
       if (count > 2) oversharedEdges++;
     }
-    console.log(`[VoxelWorker] symmetryMirror Watertight Check: Open Boundaries (Holes)=${boundaryEdges}, Overshared Edges (Branching)=${oversharedEdges}`);
+    console.log(`[GeometryWorker] symmetryMirror Watertight Check: Open Boundaries (Holes)=${boundaryEdges}, Overshared Edges (Branching)=${oversharedEdges}`);
 
     if (boundaryEdges > 0 || oversharedEdges > 0) {
       const faultIndices = [];
@@ -822,7 +911,7 @@ function symmetryMirror(msg) {
         type: 'SYMMETRY_MIRROR_FAULTS',
         holesIndices: faultIndices
       });
-      return; // Halt execution early to prevent the known Manifold crash!
+      console.log(`[GeometryWorker] Proceeding despite faults, as requested.`);
     }
 
     const triVertsTyped = new Uint32Array(cleanFaces);
@@ -833,12 +922,12 @@ function symmetryMirror(msg) {
       triVerts: triVertsTyped
     });
 
-    console.log(`[VoxelWorker] Creating Manifold constructor...`);
+    console.log(`[GeometryWorker] Creating Manifold constructor...`);
     const m = new manifold.Manifold(mMesh);
     
     const offset = pt[0]*normal[0] + pt[1]*normal[1] + pt[2]*normal[2];
 
-    console.log(`[VoxelWorker] splitByPlane: normal=[${normal}], offset=${offset}`);
+    console.log(`[GeometryWorker] splitByPlane: normal=[${normal}], offset=${offset}`);
     const parts = m.splitByPlane(normal, offset);
 
     // splitByPlane returns an array of [pos, neg]!
@@ -846,9 +935,9 @@ function symmetryMirror(msg) {
     const moved = source.translate({ x: -pt[0], y: -pt[1], z: -pt[2] });
     const mirrored = moved.mirror({ x: normal[0], y: normal[1], z: normal[2] });
     const restored = mirrored.translate({ x: pt[0], y: pt[1], z: pt[2] });
-    console.log(`[VoxelWorker] Mirroring done!`);
+    console.log(`[GeometryWorker] Mirroring done!`);
     
-    console.log(`[VoxelWorker] Composing sides...`);
+    console.log(`[GeometryWorker] Composing sides...`);
     let combined;
     try {
         if (typeof source.add === 'function') {
@@ -860,7 +949,7 @@ function symmetryMirror(msg) {
         console.error("Compose/Add failed, trying fallback compose", e);
         combined = manifold.Manifold.compose([source, restored]);
     }
-    console.log(`[VoxelWorker] Union/Compose done!`);
+    console.log(`[GeometryWorker] Union/Compose done!`);
     const resultMesh = combined.getMesh();
 
     // Weld vertices after Manifold union to remove duplicate seam vertices!
@@ -870,13 +959,13 @@ function symmetryMirror(msg) {
     let paddedFaces;
     let topologyStats;
     if (msg.quadrangulate !== false) {
-      console.log(`[VoxelWorker] Running custom Priority Quadrangulation...`);
+      console.log(`[GeometryWorker] Running custom Priority Quadrangulation...`);
       const symmetryX = pt ? pt[0] : 0; // Use symmetry plane center
       const result = quadrangulateGreedy(weldedAfter.vertices, weldedAfter.faces, true, symmetryX); // Reject seam merges
       paddedFaces = result.paddedFaces;
       topologyStats = result.stats;
     } else {
-      console.log(`[VoxelWorker] Skipping Quadrangulation. Padding triangles to quad stride.`);
+      console.log(`[GeometryWorker] Skipping Quadrangulation. Padding triangles to quad stride.`);
       paddedFaces = padTrianglesToQuads(weldedAfter.faces);
     }
  
@@ -1053,7 +1142,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
     const bz = vertices[v2 + 2] - vertices[v0 + 2];
 
     let nx = ay * bz - az * by;
-    let ny = az * ax - ax * bz;
+    let ny = az * bx - ax * bz;
     let nz = ax * by - ay * bx;
 
     const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
@@ -1061,6 +1150,13 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
       nx /= len;
       ny /= len;
       nz /= len;
+    } else {
+      if (numTris < 20) {
+        console.log(`[Quadrangulate] Zero normal for tri ${i}!`);
+        console.log(`[Quadrangulate]   v0 idx: ${triIndices[i * 3]} coords: [${vertices[v0]}, ${vertices[v0 + 1]}, ${vertices[v0 + 2]}]`);
+        console.log(`[Quadrangulate]   v1 idx: ${triIndices[i * 3 + 1]} coords: [${vertices[v1]}, ${vertices[v1 + 1]}, ${vertices[v1 + 2]}]`);
+        console.log(`[Quadrangulate]   v2 idx: ${triIndices[i * 3 + 2]} coords: [${vertices[v2]}, ${vertices[v2 + 1]}, ${vertices[v2 + 2]}]`);
+      }
     }
 
     normals[i * 3] = nx;
@@ -1075,13 +1171,19 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   // Candidate collection
   const candidates = [];
 
+  if (numTris < 20) console.log(`[Quadrangulate] Total triangles: ${numTris}, Edges in map: ${edgeMap.size}`);
+
   for (const [key, edgeData] of edgeMap.entries()) {
+    if (numTris < 20) console.log(`[Quadrangulate] Checking edge ${key}, tris: [${edgeData.tris.join(',')}]`);
     if (edgeData.tris.length !== 2) continue;
 
     const triA = edgeData.tris[0];
     const triB = edgeData.tris[1];
 
-    if (merged[triA] || merged[triB]) continue;
+    if (merged[triA] || merged[triB]) {
+      if (numTris < 20) console.log(`[Quadrangulate]   Skipping: One or both triangles already merged.`);
+      continue;
+    }
 
     const dot = normals[triA * 3] * normals[triB * 3] +
                 normals[triA * 3 + 1] * normals[triB * 3 + 1] +
@@ -1089,15 +1191,20 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
     const v1x = vertices[edgeData.v0 * 3];
     const v2x = vertices[edgeData.v1 * 3];
-    // Check against symmetryX (with tolerance for welding bucket spacing) OR fallback to standard center line (X=0)
     const isOnSeam = (Math.abs(v1x - symmetryX) < 0.05 && Math.abs(v2x - symmetryX) < 0.05) ||
                      (Math.abs(v1x) < 0.02 && Math.abs(v2x) < 0.02);
 
     if (rejectSeams && isOnSeam) {
-      continue; // Skip merging edges that lie on the symmetry plane!
+      if (numTris < 20) console.log(`[Quadrangulate]   Skipping: Edge is on seam.`);
+      continue;
     }
 
     if (!isOnSeam && Math.abs(dot) < 0.2) {
+      if (numTris < 20) {
+        console.log(`[Quadrangulate]   Skipping: Low dot product ${dot}`);
+        console.log(`[Quadrangulate]     TriA=${triA} normal: [${normals[triA * 3]}, ${normals[triA * 3 + 1]}, ${normals[triA * 3 + 2]}]`);
+        console.log(`[Quadrangulate]     TriB=${triB} normal: [${normals[triB * 3]}, ${normals[triB * 3 + 1]}, ${normals[triB * 3 + 2]}]`);
+      }
       stats.rejectedDot++;
       continue; 
     }
@@ -1204,10 +1311,10 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
     const p4 = [vertices[angles[3].idx * 3], vertices[angles[3].idx * 3 + 1], vertices[angles[3].idx * 3 + 2]];
 
     let error = quadCalcError(p1, p2, p3, p4);
-    // Disabling strict 2D convexity penalty for curved meshes!
-    // if (!isConvex) {
-    //   error += 5.0; 
-    // }
+    if (numTris < 20) {
+      console.log(`[Quadrangulate] Candidate: TriA=${triA}, TriB=${triB}, Error=${error}`);
+      console.log(`[Quadrangulate]   Angles: ${angles.map(a => a.idx).join(',')}`);
+    }
 
     candidates.push({
       triA,
@@ -1232,8 +1339,13 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   });
 
   // Merge candidates (Best first)
+  if (numTris < 20) console.log(`[Quadrangulate] Total candidates after sorting: ${candidates.length}`);
   for (const cand of candidates) {
-    if (merged[cand.triA] || merged[cand.triB]) continue;
+    if (merged[cand.triA] || merged[cand.triB]) {
+      if (numTris < 20) console.log(`[Quadrangulate] Skipping candidate ${cand.triA}-${cand.triB} (already merged)`);
+      continue;
+    }
+    if (numTris < 20) console.log(`[Quadrangulate] Merging ${cand.triA} and ${cand.triB} with error ${cand.error}`);
     outQuads.push(cand.quad);
     merged[cand.triA] = 1;
     merged[cand.triB] = 1;
@@ -1357,25 +1469,73 @@ function remeshQuads(msg) {
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
 
-  console.log(`[VoxelWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
+  console.log(`[GeometryWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
   wasm.free_mesh_result(resPtr);
   wasm.dealloc(vPtr, vLen * 4);
   wasm.dealloc(fPtr, fLen * 4);
 
+  let outColors = null;
+  if (msg.colors) {
+    console.log("[GeometryWorker] Transferring vertex colors...");
+    outColors = transferColors(outVertices, vertices, msg.colors);
+  }
+
   const transfer = [];
   if (outVertices.buffer) transfer.push(outVertices.buffer);
   if (outFaces.buffer) transfer.push(outFaces.buffer);
+  if (outColors && outColors.buffer) transfer.push(outColors.buffer);
 
   self.postMessage({
     type: 'MESH_UPDATE_QUAD',
     data: {
       vertices: outVertices,
       faces: outFaces,
+      colors: outColors,
       id: msg.id
     }
   }, transfer);
-}function validateManifold(msg) {
+}
+
+function transferColors(newVerts, oldVerts, oldColors) {
+  const newColors = new Float32Array(newVerts.length);
+  const nLen = newVerts.length / 3;
+  const oLen = oldVerts.length / 3;
+  
+  for (let i = 0; i < nLen; i++) {
+    const nx = newVerts[i * 3];
+    const ny = newVerts[i * 3 + 1];
+    const nz = newVerts[i * 3 + 2];
+    
+    let minDistSq = Infinity;
+    let closestIdx = -1;
+    
+    for (let j = 0; j < oLen; j++) {
+      const ox = oldVerts[j * 3];
+      const oy = oldVerts[j * 3 + 1];
+      const oz = oldVerts[j * 3 + 2];
+      
+      const dx = nx - ox;
+      const dy = ny - oy;
+      const dz = nz - oz;
+      const dSq = dx*dx + dy*dy + dz*dz;
+      
+      if (dSq < minDistSq) {
+        minDistSq = dSq;
+        closestIdx = j;
+      }
+    }
+    
+    if (closestIdx !== -1) {
+      newColors[i * 3] = oldColors[closestIdx * 3];
+      newColors[i * 3 + 1] = oldColors[closestIdx * 3 + 1];
+      newColors[i * 3 + 2] = oldColors[closestIdx * 3 + 2];
+    }
+  }
+  return newColors;
+}
+
+function validateManifold(msg) {
   const vertices = msg.v;
   const faces = msg.f;
   const isTriangles = msg.isTriangles;

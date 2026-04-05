@@ -25,6 +25,7 @@ SculptXR is an immersive 3D sculpting application designed for Virtual Reality (
 *   **Low-Poly Edit Tools**: Recently added tools for low-poly workflows, including a two-click sequential Weld tool to refine geometry.
 *   **Advanced Booleans**: Supports visibility-state-driven Union, Subtract, and Intersect operations when two objects are selected.
 *   **Quadrangulation & Symmetry**: Features a robust quad-merging system inspired by Blender's BMesh error metric. Uses `Manifold-3D` to guarantee watertight meshes for booleans and symmetry mirrors.
+*   **N-gon Support**: The mesh system strictly supports triangles and quads. It does not support faces with more than 4 vertices (N-gons).
 *   **Undo/Redo Stability**: Employs a "Wholistic Object Swapping" pattern for topology-altering tools. Instead of in-place mutation, it swaps entire mesh references to avoid data corruption in the undo stack.
 
 ### Interaction & UI

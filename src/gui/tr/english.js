@@ -137,6 +137,8 @@ var TR = {
   sculptDissolveVertex: 'Dissolve Vertex',
   sculptDissolveEdge: 'Dissolve Edge',
   sculptSplitFace: 'Split Face',
+  sculptSplitEdge: 'Split Edge',
+  sculptEdgeCreate: 'Edge Create',
   sculptSpinEdge: 'Spin Edge',
   sculptWeld: 'Weld',
   sculptSnapWeldCenter: 'Snap & Weld to Center',

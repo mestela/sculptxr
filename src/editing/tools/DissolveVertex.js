@@ -176,6 +176,19 @@ class DissolveVertex extends SculptBase {
       activeMesh.updateDuplicateColorsAndMaterials();
     activeMesh.updateBuffers();
 
+    // Cleanup floating indicator if it exists!
+    if (this._main._floatingIndicators) {
+      const k = this._main._floatingIndicators.findIndex(ind => ind.vIdx === closestVert);
+      if (k !== -1) {
+        console.log(`[DissolveVertex] Removing indicator for dissolved vertex ${closestVert}`);
+        const ind = this._main._floatingIndicators[k];
+        this._main._floatingIndicators.splice(k, 1);
+        if (ind.mesh && ind.mesh.parent) {
+          ind.mesh.parent.remove(ind.mesh);
+        }
+      }
+    }
+
     const redoSnapshot = this.captureMeshSnapshot(activeMesh);
 
     this._main.getStateManager().pushStateCustom(
