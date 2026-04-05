@@ -20,7 +20,7 @@ GuiSculptingTools.initGuiTools = function (sculpt, menu, main) {
 
     var uTool = GuiTools[i];
     if (!uTool) {
-      console.error('No gui for tool index : ' + i);
+      // Stub UI for tools that don't have a desktop GUI defined yet (e.g. VR only tools)
       GuiTools[i] = { // FIX: Assign to GuiTools array, not GuiSculptingTools object
         _ctrls: [],
         init: function () {}

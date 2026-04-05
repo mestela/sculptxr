@@ -194,6 +194,8 @@ export default function getSceneWidgets(main) {
   y += ITEM_H + GAP;
   widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addTorus() });
   y += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addGrid', label: 'Add Grid', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addGrid() });
+  y += ITEM_H + GAP;
 
   y += 10;
 

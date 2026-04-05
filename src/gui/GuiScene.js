@@ -19,6 +19,7 @@ class GuiScene {
     menu.addButton(TR('sceneAddCube'), this._main, 'addCube');
     menu.addButton(TR('sceneAddCylinder'), this._main, 'addCylinder');
     menu.addButton(TR('sceneAddTorus'), this._main, 'addTorus');
+    menu.addButton('Add Grid', this._main, 'addGrid');
 
     // menu.addTitle(TR('Torus'));
     // menu.addSlider(TR('Arc'), this._main._torusRadius, this.updateTorusRadius.bind(this), 0.01, Math.PI * 2, 0.001);

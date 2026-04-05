@@ -345,7 +345,7 @@ class Scene {
 
     var modelURL = getOptionsURL().modelurl;
     if (modelURL) this.addModelURL(modelURL);
-    else this.addGrid3x3(); // [USER REQUEST] Default grid enabled
+    else this.addSphere(); // Return default mesh to multires sculpting sphere
 
     // [DEBUG] Visualize Sphere Lift Target
     // this.updateDebugPivot([0, 1.3, -0.5], true);
@@ -1396,6 +1396,15 @@ class Scene {
     mesh.normalizeSize();
     mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
     mesh._typeName = "Grid3x3";
+    mesh.isQuad = true; 
+    return this.addNewMesh(mesh);
+  }
+
+  addGrid() {
+    var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 4, 4));
+    mesh.normalizeSize();
+    mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
+    mesh._typeName = "Grid4x4";
     mesh.isQuad = true; 
     return this.addNewMesh(mesh);
   }

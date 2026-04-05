@@ -680,9 +680,8 @@ class Mesh {
         ny += faceNormals[id + 1];
         nz += faceNormals[id + 2];
       }
-      var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      if (len > 0.00001) len = 1.0 / len;
-      else len = 0;
+      var len = end - start;
+      if (len !== 0.0) len = 1.0 / len;
       ind *= 3;
       nAr[ind] = nx * len;
       nAr[ind + 1] = ny * len;
@@ -891,13 +890,9 @@ class Mesh {
         crz += ax * by - ay * bx;
       }
 
-      // normals
-      var nLen = Math.sqrt(crx * crx + cry * cry + crz * crz);
-      if (nLen > 0.00001) nLen = 1.0 / nLen;
-      else nLen = 0;
-      faceNormals[idTri] = crx * nLen;
-      faceNormals[idTri + 1] = cry * nLen;
-      faceNormals[idTri + 2] = crz * nLen;
+      faceNormals[idTri] = crx;
+      faceNormals[idTri + 1] = cry;
+      faceNormals[idTri + 2] = crz;
       // boxes
       faceBoxes[idBox] = xmin;
       faceBoxes[idBox + 1] = ymin;
