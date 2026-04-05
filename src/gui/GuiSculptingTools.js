@@ -476,4 +476,9 @@ GuiTools[Enums.Tools.WELD] = {
   init: function () { }
 };
 
+GuiTools[Enums.Tools.CUT_TOOL] = {
+  _ctrls: [],
+  init: function () { }
+};
+
 export default GuiSculptingTools;

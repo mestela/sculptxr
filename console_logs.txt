@@ -1,0 +1,180 @@
+client:495 [vite] connecting...
+client:618 [vite] connected.
+MarchingCubes.js:4 MarchingCubes evaluating...
+Scene.js:32 Scene.js loaded v0.7.658
+GuiSculptingTools.js:23 No gui for tool index : 26
+GuiSculptingTools.initGuiTools @ GuiSculptingTools.js:23
+init @ GuiSculpting.js:49
+GuiSculpting @ GuiSculpting.js:33
+initGui @ Gui.js:73
+start @ Scene.js:284
+window.onload @ index.html:301
+GuiSculptingTools.js:23 No gui for tool index : 27
+GuiSculptingTools.initGuiTools @ GuiSculptingTools.js:23
+init @ GuiSculpting.js:49
+GuiSculpting @ GuiSculpting.js:33
+initGui @ Gui.js:73
+start @ Scene.js:284
+window.onload @ index.html:301
+GuiSculptingTools.js:23 No gui for tool index : 28
+GuiSculptingTools.initGuiTools @ GuiSculptingTools.js:23
+init @ GuiSculpting.js:49
+GuiSculpting @ GuiSculpting.js:33
+initGui @ Gui.js:73
+start @ Scene.js:284
+window.onload @ index.html:301
+GeometryWorker.js:51 VoxelWorker: Manifold-3D Loaded Successfully!
+GeometryWorker.js:68 VoxelWorker: Rust WASM Loaded Successfully!
+VoxelState.js:163 VoxelState: Constructor End
+index.html:142 [USER EVENT] Enter VR clicked: immersive-ar
+SculptGL.js:942 Unsupported feature requested: layers
+startXRSession @ SculptGL.js:942
+onEnterVR @ index.html:362
+(anonymous) @ index.html:341
+index.html:142 [XR] Session Start Triggered
+index.html:142 [XR] setSession Resolved
+index.html:142 [Profile] samsung-galaxyxr -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/samsung-galaxyxr/left.glb
+index.html:142 [Profile] samsung-galaxyxr -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/samsung-galaxyxr/right.glb
+index.html:214 [CutTool] start called
+index.html:214 [CutTool] Initial face from picking: 0
+index.html:214 [CutTool] Proceeding with face 0
+index.html:214 [CutTool] Found feature: {type: 'edge', vA: 2, vB: 3, t: 0.5}
+index.html:214 [CutTool] Added point: {type: 'edge', vA: 2, vB: 3, t: 0.5}
+index.html:214 [CutTool] Total points now: 1
+index.html:214 [CutTool] end called
+index.html:214 [CutTool] start called
+index.html:214 [CutTool] Initial face from picking: 0
+index.html:214 [CutTool] Proceeding with face 0
+index.html:214 [CutTool] Found feature: {type: 'edge', vA: 1, vB: 2, t: 0.5}
+index.html:214 [CutTool] Added point: {type: 'edge', vA: 1, vB: 2, t: 0.5}
+index.html:214 [CutTool] Total points now: 2
+index.html:142 [VR] canSculpt: true picked: true allowAir: false isToolActive: false
+index.html:214 [CutTool] end called
+index.html:214 [CutTool] start called
+index.html:214 [CutTool] Initial face from picking: 1
+index.html:214 [CutTool] Proceeding with face 1
+index.html:214 [CutTool] Found feature: {type: 'edge', vA: 5, vB: 2, t: 0.5}
+index.html:214 [CutTool] Added point: {type: 'edge', vA: 5, vB: 2, t: 0.5}
+index.html:214 [CutTool] Total points now: 3
+index.html:142 [VR] canSculpt: true picked: true allowAir: false isToolActive: false
+index.html:214 [CutTool] end called
+index.html:214 [CutTool] start called
+index.html:214 [CutTool] Initial face from picking: 2
+index.html:214 [CutTool] Proceeding with face 2
+index.html:214 [CutTool] Found feature: {type: 'edge', vA: 7, vB: 2, t: 0.5}
+index.html:214 [CutTool] Added point: {type: 'edge', vA: 7, vB: 2, t: 0.5}
+index.html:214 [CutTool] Total points now: 4
+index.html:214 [CutTool] end called
+index.html:214 [CutTool] start called
+index.html:214 [CutTool] Initial face from picking: 3
+ [CutTool] Proceeding with face 3
+ [CutTool] Found feature: {type: 'edge', vA: 3, vB: 2, t: 0.5}
+ [CutTool] Loop closed. Completing cut.
+ [CutTool] completeCut called
+ [CutTool] Initial NbVertices: 16
+ [CutTool] Loop 1: Creating vertices for 5 points.
+ [CutTool] Processing point 0: type=edge, vA=2, vB=3, t=0.5
+ [CutTool] Processing point 1: type=edge, vA=1, vB=2, t=0.5
+ [CutTool] Processing point 2: type=edge, vA=5, vB=2, t=0.5
+ [CutTool] Processing point 3: type=edge, vA=7, vB=2, t=0.5
+ [CutTool] Processing point 4: type=edge, vA=2, vB=3, t=0.5
+ [CutTool] Loop 1 finished. Created 4 new vertices.
+ [CutTool] Allocating 4 new vertices.
+ [CutTool] Setting vertex 16 to pos [-0.3333333358168602, 0, -0.1666666716337204]
+ [CutTool] Setting vertex 17 to pos [-0.1666666716337204, 0, -0.3333333358168602]
+ [CutTool] Setting vertex 18 to pos [0, 0, -0.1666666716337204]
+ [CutTool] Setting vertex 19 to pos [-0.1666666716337204, 0, 0]
+ [CutTool] 6: Filled new arrays
+ [CutTool] 7: Called setVertices
+ [CutTool] 8: Called setColors
+ [CutTool] 9: Called setMaterials
+ [CutTool] 10: Called setTexCoords
+ [CutTool] 11: Called setNbVertices
+ [CutTool] NbVertices after Loop 1: 20
+ [CutTool] Processing 5 cut points.
+ [CutTool] Applying 3-Quad Split on face 0
+ [CutTool] perform3QuadSplit: pCenter = [-0.3333333358168602, 0, -0.3333333358168602]
+ [CutTool] Applying 3-Quad Split on face 1
+ [CutTool] perform3QuadSplit: pCenter = [0, 0, -0.3333333358168602]
+ [CutTool] Applying 3-Quad Split on face 2
+ [CutTool] perform3QuadSplit: pCenter = [0, 0, 0]
+ [CutTool] Applying 3-Quad Split on face 3
+ [CutTool] perform3QuadSplit: pCenter = [-0.3333333358168602, 0, 0]
+ [CutTool] Pre-allocation check:
+   NbVertices: 24
+   Vertices array length / 3: 24
+   TexCoords array length / 2: 24
+   Faces array length / 4: 17
+ === MESH STRUCTURE DUMP ===
+ Vertices (24):
+   V0: [-0.5000, 0.0000, -0.5000]
+   V1: [-0.1667, 0.0000, -0.5000]
+   V2: [-0.1667, 0.0000, -0.1667]
+   V3: [-0.5000, 0.0000, -0.1667]
+   V4: [0.1667, 0.0000, -0.5000]
+   V5: [0.1667, 0.0000, -0.1667]
+   V6: [0.1667, 0.0000, 0.1667]
+   V7: [-0.1667, 0.0000, 0.1667]
+   V8: [-0.5000, 0.0000, 0.1667]
+   V9: [0.5000, 0.0000, -0.1667]
+   V10: [0.5000, 0.0000, 0.1667]
+   V11: [0.5000, 0.0000, -0.5000]
+   V12: [0.5000, 0.0000, 0.5000]
+   V13: [0.1667, 0.0000, 0.5000]
+   V14: [-0.1667, 0.0000, 0.5000]
+   V15: [-0.5000, 0.0000, 0.5000]
+   V16: [-0.3333, 0.0000, -0.1667]
+   V17: [-0.1667, 0.0000, -0.3333]
+   V18: [0.0000, 0.0000, -0.1667]
+   V19: [-0.1667, 0.0000, 0.0000]
+   V20: [-0.3333, 0.0000, -0.3333]
+   V21: [0.0000, 0.0000, -0.3333]
+   V22: [0.0000, 0.0000, 0.0000]
+   V23: [-0.3333, 0.0000, 0.0000]
+index.html:214 Faces (17):
+index.html:214   F0: [2, 16, 20, 17]
+index.html:214   F1: [2, 17, 21, 18]
+index.html:214   F2: [2, 18, 22, 19]
+index.html:214   F3: [2, 19, 23, 16]
+index.html:214   F4: [5, 9, 10, 6]
+index.html:214   F5: [4, 11, 9, 5]
+index.html:214   F6: [6, 10, 12, 13]
+index.html:214   F7: [7, 6, 13, 14]
+index.html:214   F8: [8, 7, 14, 15]
+index.html:214   F9: [3, 0, 20, 16]
+index.html:214   F10: [1, 17, 20, 0]
+index.html:214   F11: [1, 4, 21, 17]
+index.html:214   F12: [5, 18, 21, 4]
+index.html:214   F13: [5, 6, 22, 18]
+index.html:214   F14: [7, 19, 22, 6]
+index.html:214   F15: [7, 8, 23, 19]
+index.html:214   F16: [3, 16, 23, 8]
+index.html:214 Faces UVs:
+index.html:214   F0UV: [2, 16, 20, 17]
+index.html:214   F1UV: [2, 17, 21, 18]
+index.html:214   F2UV: [2, 18, 22, 19]
+index.html:214   F3UV: [2, 19, 23, 16]
+index.html:214   F4UV: [5, 9, 10, 6]
+index.html:214   F5UV: [4, 11, 9, 5]
+index.html:214   F6UV: [6, 10, 12, 13]
+index.html:214   F7UV: [7, 6, 13, 14]
+index.html:214   F8UV: [8, 7, 14, 15]
+index.html:214   F9UV: [3, 0, 20, 16]
+index.html:214   F10UV: [1, 17, 20, 0]
+index.html:214   F11UV: [1, 4, 21, 17]
+index.html:214   F12UV: [5, 18, 21, 4]
+index.html:214   F13UV: [5, 6, 22, 18]
+index.html:214   F14UV: [7, 19, 22, 6]
+index.html:214   F15UV: [7, 8, 23, 19]
+index.html:214   F16UV: [3, 16, 23, 8]
+index.html:214 === END DUMP ===
+index.html:214 [CutTool] Cut completed.
+index.html:214 [CutTool] end called
+index.html:142 [Profile] generic-fixed-hand -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/generic-fixed-hand/left.glb
+index.html:142 [Profile] generic-fixed-hand -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/generic-fixed-hand/right.glb
+index.html:142 [Profile] samsung-galaxyxr -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/samsung-galaxyxr/left.glb
+index.html:142 [Profile] samsung-galaxyxr -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/samsung-galaxyxr/right.glb
+index.html:142 [VR] canSculpt: true picked: true allowAir: true isToolActive: false
+index.html:142 [Profile] generic-fixed-hand -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/generic-fixed-hand/left.glb
+index.html:142 [Profile] generic-fixed-hand -> https://cdn.jsdelivr.net/npm/@webxr-input-profiles/assets@1.0/dist/profiles/generic-fixed-hand/right.glb
+chunk-UVLSQTRI.js?v=8fdb7538:39688 [Violation] 'end' handler took 235ms

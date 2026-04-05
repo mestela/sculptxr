@@ -132,6 +132,7 @@ var TR = {
   sculptGrab: 'Grab (G)',
   sculptTransformVR: 'Transform VR',
   sculptDeleteFace: 'Delete Face',
+  sculptCutTool: 'Cut Tool',
   sculptFillHole: 'Fill Hole',
   sculptCollapseEdge: 'Collapse Edge',
   sculptDissolveVertex: 'Dissolve Vertex',

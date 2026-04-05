@@ -533,21 +533,21 @@ class Mesh {
 
     if (this.hasUV()) {
       var nbTexCoords = this._meshData._texCoordsST.length / 2;
+      var maxCount = Math.max(nbVertices, nbTexCoords);
 
-      var tmp = new Float32Array(nbTexCoords * 3);
+      var tmp = new Float32Array(maxCount * 3);
       tmp.set(this._meshData._verticesXYZ);
       this._meshData._verticesXYZ = tmp;
 
-      this._meshData._normalsXYZ = new Float32Array(nbTexCoords * 3);
+      this._meshData._normalsXYZ = new Float32Array(maxCount * 3);
 
-      tmp = new Float32Array(nbTexCoords * 3);
+      tmp = new Float32Array(maxCount * 3);
       if (this._meshData._colorsRGB) tmp.set(this._meshData._colorsRGB);
       this._meshData._colorsRGB = tmp;
 
-      tmp = new Float32Array(nbTexCoords * 3);
+      tmp = new Float32Array(maxCount * 3);
       if (this._meshData._materialsPBR) tmp.set(this._meshData._materialsPBR);
       this._meshData._materialsPBR = tmp;
-
     } else {
       if (!this._meshData._normalsXYZ || this._meshData._normalsXYZ.length !== nbVertices * 3)
         this._meshData._normalsXYZ = new Float32Array(nbVertices * 3);

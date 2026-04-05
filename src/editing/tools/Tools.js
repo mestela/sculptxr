@@ -29,6 +29,7 @@ import SnapWeldCenter from './SnapWeldCenter.js';
 import SplitEdge from './SplitEdge.js';
 import SimpleSplitEdge from './SimpleSplitEdge.js';
 import EdgeCreate from './EdgeCreate.js';
+import CutTool from './CutTool.js';
 
 var Tools = [];
 
@@ -60,6 +61,7 @@ Tools[Enums.Tools.WELD] = Weld;
 Tools[Enums.Tools.SNAP_WELD_CENTER] = SnapWeldCenter;
 Tools[Enums.Tools.SPLIT_EDGE] = SimpleSplitEdge;
 Tools[Enums.Tools.EDGE_CREATE] = EdgeCreate;
+Tools[Enums.Tools.CUT_TOOL] = CutTool;
 // Tools[Enums.Tools.SLIDE] = Slide;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
@@ -90,6 +92,7 @@ Tools[Enums.Tools.WELD].uiName = 'sculptWeld';
 Tools[Enums.Tools.SNAP_WELD_CENTER].uiName = 'sculptSnapWeldCenter';
 Tools[Enums.Tools.SPLIT_EDGE].uiName = 'sculptSplitEdge';
 Tools[Enums.Tools.EDGE_CREATE].uiName = 'sculptEdgeCreate';
+Tools[Enums.Tools.CUT_TOOL].uiName = 'sculptCutTool';
 // Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 
 export default Tools;

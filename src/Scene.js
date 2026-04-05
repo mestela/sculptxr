@@ -345,7 +345,7 @@ class Scene {
 
     var modelURL = getOptionsURL().modelurl;
     if (modelURL) this.addModelURL(modelURL);
-    else this.addSphere(); // [USER REQUEST] Default sphere re-enabled
+    else this.addGrid3x3(); // [USER REQUEST] Default grid enabled
 
     // [DEBUG] Visualize Sphere Lift Target
     // this.updateDebugPivot([0, 1.3, -0.5], true);
@@ -1389,6 +1389,15 @@ class Scene {
     mesh.isQuad = true; // Sphere is quads (subdivided cube)
     this.addNewMesh(mesh);
     return mesh;
+  }
+
+  addGrid3x3() {
+    var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 3, 3));
+    mesh.normalizeSize();
+    mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.7, 0.7, 0.7]);
+    mesh._typeName = "Grid3x3";
+    mesh.isQuad = true; 
+    return this.addNewMesh(mesh);
   }
 
   addCube() {

@@ -361,6 +361,62 @@ var createGridArray = function (
   };
 };
 
+var createPlaneGridArray = function (nx = 3, ny = 3, width = 1.0, height = 1.0) {
+  var nbVertices = (nx + 1) * (ny + 1);
+  var nbFaces = nx * ny;
+  
+  var vAr = new Float32Array(nbVertices * 3);
+  var uvAr = new Float32Array(nbVertices * 2);
+  var fAr = new Uint32Array(nbFaces * 4);
+  var ftAr = new Uint32Array(nbFaces * 4);
+  
+  var id = 0;
+  for (var j = 0; j <= ny; j++) {
+    for (var i = 0; i <= nx; i++) {
+      var k = 3 * id;
+      vAr[k] = (i / nx - 0.5) * width;
+      vAr[k + 1] = 0.0;
+      vAr[k + 2] = (j / ny - 0.5) * height;
+      
+      var ku = 2 * id;
+      uvAr[ku] = i / nx;
+      uvAr[ku + 1] = j / ny;
+      
+      id++;
+    }
+  }
+  
+  id = 0;
+  for (var j = 0; j < ny; j++) {
+    for (var i = 0; i < nx; i++) {
+      var k = 4 * id;
+      var v0 = j * (nx + 1) + i;
+      var v1 = v0 + 1;
+      var v2 = (j + 1) * (nx + 1) + i + 1;
+      var v3 = (j + 1) * (nx + 1) + i;
+      
+      fAr[k] = v0;
+      fAr[k + 1] = v1;
+      fAr[k + 2] = v2;
+      fAr[k + 3] = v3;
+      
+      ftAr[k] = v0;
+      ftAr[k + 1] = v1;
+      ftAr[k + 2] = v2;
+      ftAr[k + 3] = v3;
+      
+      id++;
+    }
+  }
+  
+  return {
+    vertices: vAr,
+    uv: uvAr,
+    faces: fAr,
+    facesUV: ftAr
+  };
+};
+
 var createMesh = function (gl, arr) {
   var mesh = new MeshStatic(gl);
   mesh.setVertices(arr.vertices);
@@ -402,6 +458,10 @@ Primitives.createTorus = function (gl) {
 
 Primitives.createPlane = function (gl) {
   return createMesh(gl, createPlaneArray.apply(this, slice.call(arguments, 1)));
+};
+
+Primitives.createPlaneGrid = function (gl, nx, ny) {
+  return createMesh(gl, createPlaneGridArray(nx, ny));
 };
 
 Primitives.createArrow = function (gl, thick = 0.5, height = 2.0, rConeT = 5.0, rConeH = 0.2, radSegments = 4, heightSegments = 1) {

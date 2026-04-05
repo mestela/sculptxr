@@ -63,7 +63,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,
     Enums.Tools.WELD,
-    Enums.Tools.SNAP_WELD_CENTER
+    Enums.Tools.SNAP_WELD_CENTER,
+    Enums.Tools.CUT_TOOL
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -106,6 +107,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.EDGE_CREATE:
       case Enums.Tools.SPIN_EDGE:
       case Enums.Tools.WELD:
+      case Enums.Tools.CUT_TOOL:
         return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)
