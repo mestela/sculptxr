@@ -107,6 +107,42 @@ class CutTool extends SculptBase {
     return { distSq: dx*dx + dy*dy + dz*dz, t: t };
   }
 
+  getFacesForFeature(activeMesh, feature) {
+    const vrfStartCount = activeMesh.getVerticesRingFaceStartCount();
+    const vertRingFace = activeMesh.getVerticesRingFace();
+    
+    if (feature.type === 'vertex') {
+      const v = feature.vIdx;
+      const start = vrfStartCount[v * 2];
+      const count = vrfStartCount[v * 2 + 1];
+      const faces = [];
+      for (let i = 0; i < count; i++) {
+        faces.push(vertRingFace[start + i]);
+      }
+      return faces;
+    } else if (feature.type === 'edge') {
+      const vA = feature.vA;
+      const vB = feature.vB;
+      
+      const startA = vrfStartCount[vA * 2];
+      const countA = vrfStartCount[vA * 2 + 1];
+      const facesA = [];
+      for (let i = 0; i < countA; i++) {
+        facesA.push(vertRingFace[startA + i]);
+      }
+      
+      const startB = vrfStartCount[vB * 2];
+      const countB = vrfStartCount[vB * 2 + 1];
+      const facesB = [];
+      for (let i = 0; i < countB; i++) {
+        facesB.push(vertRingFace[startB + i]);
+      }
+      
+      return facesA.filter(f => facesB.includes(f));
+    }
+    return [];
+  }
+
   updateXR(picking, isPressed, origin, dir, options) {
     if (!isPressed) {
       this.updatePreselection(picking);
@@ -185,8 +221,21 @@ class CutTool extends SculptBase {
       }
     }
     
+    if (this._cutPoints.length > 0 && this._preselectedFeature) {
+      const lastPt = this._cutPoints[this._cutPoints.length - 1];
+      const facesLast = this.getFacesForFeature(activeMesh, lastPt);
+      const facesCandidate = this.getFacesForFeature(activeMesh, this._preselectedFeature);
+      
+      const sharesFace = facesLast.some(f => facesCandidate.includes(f));
+      if (!sharesFace) {
+        this._preselectedFeature = null;
+        this.updateHighlightSphere(null);
+        return;
+      }
+    }
+    
     const feature = this._preselectedFeature;
-      if (feature) {
+    if (feature) {
         this._preselectedFeature = feature;
         const vertices = activeMesh.getVertices();
         let snapPos = [0, 0, 0];
