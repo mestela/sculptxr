@@ -29,26 +29,21 @@ if (activeMesh._meshData) {
 }
 ```
 
-## 4. Defensive UV Resizing
-When adding new vertices in a mesh with UVs (`activeMesh.hasUV()`), you must grow the UV buffer (`texCoordsST`) and duplicate count buffer (`verticesDuplicateStartCount`) to match the new vertex count, even if it was smaller before. Failure to do so will cause `allocateArrays()` to throw `RangeError: offset is out of bounds` due to internal size assumptions.
+## 4. Defensive UV Resizing & Synchronization
+When adding new vertices in a mesh with UVs (`activeMesh.hasUV()`), you must grow the UV buffer (`texCoordsST`) synchronously with the vertex buffer to match the new vertex count. 
 
-Example:
+*   **The Truncation Pitfall**: Historically, `Mesh.allocateArrays()` would truncate the physical vertex storage arrays to match the size of the UV array if UVs existed. If you added 4 vertices but didn't add 4 UVs, the physical storage for those vertices was discarded, leading to out-of-bounds WebGL errors and mesh blackouts. While we have patched `allocateArrays` to use the maximum of both counts, keeping them in sync avoids undefined behavior.
+*   **GPU Alignment**: WebGL expects aligned attribute buffers. Always ensure new vertices get valid (even if default `[0,0]`) UV coordinates.
+
+Example of synchronous expansion:
 ```javascript
 if (activeMesh.hasUV()) {
   const texCoordsST = activeMesh.getTexCoords();
   if (texCoordsST) {
-    const newTexCoordsST = new Float32Array(texCoordsST.length + 2);
+    const newTexCoordsST = new Float32Array((oldNb + newCount) * 2);
     newTexCoordsST.set(texCoordsST);
-    newTexCoordsST[newVIdx * 2] = 0;
-    newTexCoordsST[newVIdx * 2 + 1] = 0;
+    // Fill new UVs...
     activeMesh.setTexCoords(newTexCoordsST);
-
-    const dupCW = activeMesh.getVerticesDuplicateStartCount();
-    if (dupCW) {
-      const newDupCW = new Uint32Array(dupCW.length + 2);
-      newDupCW.set(dupCW);
-      activeMesh.setVerticesDuplicateStartCount(newDupCW);
-    }
   }
 }
 ```
@@ -76,4 +71,7 @@ if (this._main._worldGroup) {
 parentNode.add(helperMesh);
 ```
 If you add to the root scene directly while the local coordinates are in `_worldGroup` space, the helper will appear way off in the distance due to missing offset transforms!
-```
+## 7. Accurate Vertex Counting
+When modifying topology, avoid relying on relative additions like `setNbVertices(getNbVertices() + newCount)` at the end of long operations. Stale references or concurrent state reads can cause this addition to result in the wrong final count.
+
+*   **Best Practice**: Store the initial count (e.g., `let nbVertices = activeMesh.getNbVertices()`) at the start, increment it strictly as you create new vertices, and pass that absolute counter directly to `activeMesh.setNbVertices(nbVertices)`. This ensures that you are setting exactly what you tracked, ignoring potential background changes.

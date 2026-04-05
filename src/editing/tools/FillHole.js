@@ -482,7 +482,7 @@ class FillHole extends SculptBase {
         for (let i = oldMats.length; i < newMats.length; i += 3) {
           newMats[i] = 0.5; // Default roughness
           newMats[i + 1] = 0.5; // Default metalness
-          newMats[i + 2] = 0.0;
+          newMats[i + 2] = 1.0;
         }
         activeMesh.setMaterials(newMats);
       }
