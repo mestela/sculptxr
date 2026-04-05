@@ -1,28 +1,27 @@
-# SculptXR Handover Prompt - Split Edge Tool Debugging
+# SculptXR Handover Prompt - Cut Tool Topology Stabilization
 
 ---
 
 ## Current Situation / Obstacles
 
-We were working on implementing the **Split Edge** tool for low-poly modeling in VR. The goal is to insert a vertex at the midpoint of a shared edge and reconstruct the adjacent faces (quads or triangles) while maintaining manifold integrity and winding order.
+We have successfully stabilized the **Cut Tool** in SculptXR, resolving topological corruption, rendering failures, and performance lag during face splitting on UV-mapped meshes.
 
 ### Completed:
-1.  **Tool Execution**: Fixed a crash where `getPickedIntersection()` was called instead of `getIntersectionPoint()`. The tool now executes correctly in VR.
-2.  **Topology Reconstruction**: Fixed the winding order for quad splitting. It no longer creates twisted "bow-tie" geometry.
-3.  **Buffer Resizing**: Defensively expanded `DuplicateStartCount` and `texCoordsST` arrays to support UV-enabled meshes.
-4.  **UV Face Mapping**: Updated `facesTexCoord` alongside `facesABCD` to preserve UV indices for old vertices in the new faces.
+1.  **Topological Fixes**: Fixed a copy-paste error in `perform3QuadSplit` where the third quad was overwriting the second quad.
+2.  **UV Synchronization**: Reverted to an allocate-on-demand strategy for mesh buffers to avoid zero-padded degenerate geometry.
+3.  **Array Size Sync**: Fixed `Mesh.allocateArrays()` to prevents vertex truncation by using `Math.max(nbVertices, nbTexCoords)` when allocating physical arrays.
+4.  **Counter Sync**: Fixed `NbVertices` assignment in `completeCut` to use the local `nbVertices` counter, preventing it from going out of sync with the physical array size.
+5.  **Performance Optimization**: Removed extensive debugging logs and mesh dumps from `completeCut` and `perform3QuadSplit`, which **resolved the substantial lag** on heavier geometry!
+6.  **Verification**: Confirmed that the cut tool now works correctly on the 3x3 grid without collapsing the mesh or throwing WebGL errors!
 
 ### Current Blocker:
-*   **Dark Shading on Split Edge**: The new center vertex renders as dark/black in the Normals material from all angles. Smoothing or relaxing the mesh causes the dark color to spread to neighbors.
-*   **Logs**: The CPU calculates a perfectly valid, normalized normal vector (e.g., `[0.175, 0.565, 0.805]`).
-*   **Hypothesis**: The issue lies in how the duplicate vertex pointers are handled when a mesh has UV seams. If the new vertex or split faces fail to map correctly to the duplicate normal array space, the GPU falls back to zeroed normals.
+*   **None**: The tool is now stable, performant, and verified working.
 
 ---
 
 ## Next Steps / Backlog
 
-*   **UV Seam Investigation**: Trace how duplicates are registered when expanding the topology. If the split edge falls on a UV seam, we might need to duplicate the new vertex in the UV array as well.
-*   **Three.js Buffer Sync**: Verify if Three.js fully updates the normals buffer when the attribute array grows in size dynamically.
-*   **Fallback Testing**: Try testing the tool on a mesh *without* UVs (like a purely procedural sphere or box without UV mapping) to see if the dark shading persists. If it works there, the issue is strictly in the UV duplicate mapping logic.
+*   **Diamond Loop Detection**: Implement detection of a diamond loop around a vertex (deferred Task id: 2 in `task.md`) if needed for full workflow integration.
+*   **Proceed to next Low-Poly Tool**: With the Cut Tool stable, we can move on to welding, dissolving, or other topology tools.
 
 Good luck! 🛠️

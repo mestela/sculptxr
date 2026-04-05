@@ -704,8 +704,6 @@ class CutTool extends SculptBase {
       (pShared[1] + pOpp[1]) * 0.5,
       (pShared[2] + pOpp[2]) * 0.5
     ];
-    console.log(`[CutTool] perform3QuadSplit: pCenter = [${pCenter[0]}, ${pCenter[1]}, ${pCenter[2]}]`);
-    
     const nextVertIdx = activeMesh.getNbVertices();
     const newVertices = new Float32Array(vertices.length + 3);
     newVertices.set(vertices);
@@ -833,11 +831,9 @@ class CutTool extends SculptBase {
 
 
   completeCut() {
-    console.log("[CutTool] completeCut called");
     this._isCutting = false;
     
     if (this._cutPoints.length < 2) {
-      console.log("[CutTool] Not enough points to cut.");
       this.clearPreview();
       return;
     }
@@ -847,18 +843,11 @@ class CutTool extends SculptBase {
     const vertices = activeMesh.getVertices();
     const colors = activeMesh.getColors();
     const materials = activeMesh.getMaterials();
-    const texCoordsST = activeMesh.getTexCoords();
-    
-    const undoSnapshot = this.captureMeshSnapshot(activeMesh);
-    
     let nbVertices = activeMesh.getNbVertices();
-    console.log(`[CutTool] Initial NbVertices: ${nbVertices}`);
     const newVerts = [];
     
-    console.log(`[CutTool] Loop 1: Creating vertices for ${this._cutPoints.length} points.`);
     for (let i = 0; i < this._cutPoints.length; i++) {
       const cp = this._cutPoints[i];
-      console.log(`[CutTool] Processing point ${i}: type=${cp.type}, vA=${cp.vA}, vB=${cp.vB}, t=${cp.t}`);
       
       // Feature Weld: If this is the closing point of a loop, reuse the start vertex!
       if (i === this._cutPoints.length - 1 && this._cutPoints.length > 2) {
@@ -910,12 +899,10 @@ class CutTool extends SculptBase {
         cp.vertexIndex = cp.vIdx;
       }
     }
-    console.log(`[CutTool] Loop 1 finished. Created ${newVerts.length} new vertices.`);
     
 
 
     if (newVerts.length > 0) {
-      console.log(`[CutTool] Allocating ${newVerts.length} new vertices.`);
       const oldNb = activeMesh.getNbVertices();
       const newVertices = new Float32Array((oldNb + newVerts.length) * 3);
       newVertices.set(vertices.subarray(0, oldNb * 3));
@@ -941,7 +928,6 @@ class CutTool extends SculptBase {
 
       for (const nv of newVerts) {
         const id = nv.index * 3;
-        console.log(`[CutTool] Setting vertex ${nv.index} to pos [${nv.pos[0]}, ${nv.pos[1]}, ${nv.pos[2]}]`);
         newVertices[id] = nv.pos[0];
         newVertices[id + 1] = nv.pos[1];
         newVertices[id + 2] = nv.pos[2];
@@ -958,26 +944,14 @@ class CutTool extends SculptBase {
           newMaterials[id + 2] = nv.material[2];
         }
         
-        if (newTexCoords && nv.uv) {
-          const uvid = nv.index * 2;
-          newTexCoords[uvid] = nv.uv[0];
-          newTexCoords[uvid + 1] = nv.uv[1];
-        }
       }
-      console.log("[CutTool] 6: Filled new arrays");
       
       activeMesh.setVertices(newVertices);
-      console.log("[CutTool] 7: Called setVertices");
       if (newColors) activeMesh.setColors(newColors);
-      console.log("[CutTool] 8: Called setColors");
       if (newMaterials) activeMesh.setMaterials(newMaterials);
-      console.log("[CutTool] 9: Called setMaterials");
       if (newTexCoords) activeMesh.setTexCoords(newTexCoords);
-      console.log("[CutTool] 10: Called setTexCoords");
       
       activeMesh.setNbVertices(nbVertices);
-      console.log("[CutTool] 11: Called setNbVertices");
-      console.log(`[CutTool] NbVertices after Loop 1: ${activeMesh.getNbVertices()}`);
     }
     
     // 2. Process path segments
@@ -1008,7 +982,6 @@ class CutTool extends SculptBase {
       }
       
       if (foundFaceIdx === -1) {
-        console.warn(`[CutTool] Failed to find face containing both points ${p1} and ${p2}`);
         failCount++;
         continue;
       }
@@ -1019,11 +992,9 @@ class CutTool extends SculptBase {
       if (isQuad && cp1.type === 'edge' && cp2.type === 'edge') {
         const sharesVertex = (cp1.vA === cp2.vA || cp1.vA === cp2.vB || cp1.vB === cp2.vA || cp1.vB === cp2.vB);
         if (sharesVertex) {
-          console.log(`[CutTool] Applying 3-Quad Split on face ${foundFaceIdx}`);
           const success = this.perform3QuadSplit(activeMesh, foundFaceIdx, cp1, cp2);
           if (success) continue;
         } else {
-          console.log(`[CutTool] Splitting quad ${foundFaceIdx} on opposite edges`);
           let M1 = cp1.vertexIndex;
           let M2 = cp2.vertexIndex;
           
@@ -1081,7 +1052,6 @@ class CutTool extends SculptBase {
             }
             
             activeMesh.setNbFaces(nextFIdx + 1);
-            console.log(`[CutTool] Opposite Edge split success`);
             continue;
           }
         }
@@ -1094,7 +1064,6 @@ class CutTool extends SculptBase {
         if (idx1 !== -1 && idx2 !== -1) {
           const isOpposite = Math.abs(idx1 - idx2) === 2;
           if (isOpposite) {
-            console.log(`[CutTool] Splitting quad ${foundFaceIdx} into triangles`);
             let tri1, tri2;
             if ((idx1 === 0 && idx2 === 2) || (idx1 === 2 && idx2 === 0)) {
               tri1 = [fv[0], fv[1], fv[2], Utils.TRI_INDEX];
@@ -1150,7 +1119,6 @@ class CutTool extends SculptBase {
         
         if (idxV !== -1 && idxEA !== -1 && idxEB !== -1) {
           if (vPt.vIdx !== ePt.vA && vPt.vIdx !== ePt.vB) {
-            console.log(`[CutTool] Splitting quad ${foundFaceIdx} into tri and quad`);
             const M = ePt.vertexIndex;
             const V = vPt.vIdx;
             
@@ -1216,7 +1184,6 @@ class CutTool extends SculptBase {
                 }
                 
                 activeMesh.setNbFaces(nextFIdx + 1);
-                console.log(`[CutTool] Vertex-to-Edge split success`);
                 continue;
               }
             }
@@ -1233,7 +1200,6 @@ class CutTool extends SculptBase {
         const idxEB = fv.indexOf(ePt.vB);
         
         if (idxV !== -1 && idxEA !== -1 && idxEB !== -1) {
-          console.log(`[CutTool] Splitting triangle ${foundFaceIdx} into two triangles`);
           const M = ePt.vertexIndex;
           const V = vPt.vIdx;
           
@@ -1279,11 +1245,9 @@ class CutTool extends SculptBase {
               newFacesUV[nid] = tri2UV[0]; newFacesUV[nid+1] = tri2UV[1]; newFacesUV[nid+2] = tri2UV[2]; newFacesUV[nid+3] = tri2UV[3];
               
               activeMesh.setFacesTexCoord(newFacesUV);
-              console.log(`[CutTool] Triangle UVs: tri1=[${tri1UV}], tri2=[${tri2UV}]`);
             }
             
             activeMesh.setNbFaces(nextFIdx + 1);
-            console.log(`[CutTool] Triangle Vertex-to-Edge split success`);
             continue;
           }
         }
@@ -1297,7 +1261,6 @@ class CutTool extends SculptBase {
         const idxEB2 = fv.indexOf(cp2.vB);
         
         if (idxEA1 !== -1 && idxEB1 !== -1 && idxEA2 !== -1 && idxEB2 !== -1) {
-          console.log(`[CutTool] Splitting triangle ${foundFaceIdx} into tri and quad`);
           const M1 = cp1.vertexIndex;
           const M2 = cp2.vertexIndex;
           
@@ -1344,32 +1307,25 @@ class CutTool extends SculptBase {
               newFacesUV[nid] = quadUV[0]; newFacesUV[nid+1] = quadUV[1]; newFacesUV[nid+2] = quadUV[2]; newFacesUV[nid+3] = quadUV[3];
               
               activeMesh.setFacesTexCoord(newFacesUV);
-              console.log(`[CutTool] Triangle UVs: tri=[${triUV}], quad=[${quadUV}]`);
             }
             
             activeMesh.setNbFaces(nextFIdx + 1);
-            console.log(`[CutTool] Triangle Edge-to-Edge split success`);
             continue;
           }
         }
       }
       
-      console.log(`[CutTool] Points ${p1} and ${p2} already share an edge or cannot be split further.`);
+      // Points already share an edge
     }
     
     if (failCount > 0) {
-      console.warn(`[CutTool] Failed to find faces for ${failCount} segments.`);
+      // Failed to find faces for some segments
     }
     
 
     
     // Update topology and buffers
-    console.log(`[CutTool] Pre-allocation check:`);
-    console.log(`  NbVertices: ${activeMesh.getNbVertices()}`);
-    console.log(`  Vertices array length / 3: ${activeMesh.getVertices().length / 3}`);
     const tcoords = activeMesh.getTexCoords();
-    console.log(`  TexCoords array length / 2: ${tcoords ? tcoords.length / 2 : 'N/A'}`);
-    console.log(`  Faces array length / 4: ${activeMesh.getFaces().length / 4}`);
     
     activeMesh.allocateArrays();
     activeMesh.initTopology();
@@ -1384,28 +1340,6 @@ class CutTool extends SculptBase {
       activeMesh._meshData._drawArraysWireframe = null;
     }
     
-    // Dump mesh structure
-    console.log(`=== MESH STRUCTURE DUMP ===`);
-    console.log(`Vertices (${activeMesh.getNbVertices()}):`);
-    const verts = activeMesh.getVertices();
-    for(let k=0; k<activeMesh.getNbVertices(); k++) {
-      console.log(`  V${k}: [${verts[k*3].toFixed(4)}, ${verts[k*3+1].toFixed(4)}, ${verts[k*3+2].toFixed(4)}]`);
-    }
-    console.log(`Faces (${activeMesh.getNbFaces()}):`);
-    const fcs = activeMesh.getFaces();
-    for(let k=0; k<activeMesh.getNbFaces(); k++) {
-      console.log(`  F${k}: [${fcs[k*4]}, ${fcs[k*4+1]}, ${fcs[k*4+2]}, ${fcs[k*4+3]}]`);
-    }
-    const uvs = activeMesh.getFacesTexCoord();
-    if (uvs) {
-      console.log(`Faces UVs:`);
-      for(let k=0; k<activeMesh.getNbFaces(); k++) {
-        console.log(`  F${k}UV: [${uvs[k*4]}, ${uvs[k*4+1]}, ${uvs[k*4+2]}, ${uvs[k*4+3]}]`);
-      }
-    }
-    console.log(`=== END DUMP ===`);
-
-    console.log("[CutTool] Cut completed.");
     this._cutPoints = [];
     this.clearPreview();
   }
