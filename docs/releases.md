@@ -1,3 +1,8 @@
+# v1.0.81
+- **Feature**: **Live Rubberband Preview**: Implemented a live rubberband line that stretches to the hover-snapped marker, giving immediate feedback.
+- **UX**: **Topology-Restricted Selections**: Limited valid next cut points to only features that share a face with the last clicked point, preventing invalid complex cuts.
+- **Fix**: **Fault Marker Cleanup**: Ensured all markers (including yellow highlight sphere) are cleaned up on tool exit and undo.
+
 # v1.0.79
 - **Feature**: **Low-Poly Tools Conformation**: Standardized `FillHole`, `SpinEdge`, `Weld`, and `SnapWeldCenter` to use the snapshot-based state management system for reliable Undo/Redo.
 - **Feature**: **Grid Solver for FillHole**: Implemented a robust 2D projection corner detection algorithm to analytically determine `M x N` grid dimensions, preventing skewing on curved surfaces.

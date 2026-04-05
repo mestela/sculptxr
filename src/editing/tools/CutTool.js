@@ -436,7 +436,6 @@ class CutTool extends SculptBase {
   }
 
   start(ctrl) {
-    console.log("[CutTool] start called");
     const picking = this._main.getPicking();
     if (!this._isCutting) {
       this.clearPreview();
@@ -446,21 +445,17 @@ class CutTool extends SculptBase {
     }
     this._currentFace = picking.getPickedFace();
     const hitPoint = picking.getIntersectionPoint();
-    console.log("[CutTool] Initial face from picking:", this._currentFace);
     
     const mesh = this.getMesh();
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     
     if (this._currentFace === undefined || this._currentFace === -1) {
-      console.log("[CutTool] No face hit on start.");
       return;
     }
     
     if (this._currentFace >= activeMesh.getNbFaces()) {
-      console.log(`[CutTool] Face out of bounds (${this._currentFace}), trying sphere fallback at hitPoint:`, hitPoint);
       // Search in a 5cm radius bubble
       const candidateFaces = activeMesh.intersectSphere(hitPoint, 0.05 * 0.05);
-      console.log("[CutTool] IntersectSphere candidates:", candidateFaces.length);
       
       if (candidateFaces.length > 0) {
         let closestFace = -1;
@@ -488,25 +483,19 @@ class CutTool extends SculptBase {
         }
         
         if (closestFace !== -1) {
-          console.log(`[CutTool] Fallback found closest face ${closestFace}`);
           this._currentFace = closestFace;
         }
-      } else {
-        console.log("[CutTool] intersectSphere returned no faces.");
       }
     }
     
     if (this._currentFace !== undefined && this._currentFace >= 0) {
-      console.log(`[CutTool] Proceeding with face ${this._currentFace}`);
       
       const feature = this._preselectedFeature || this.findClosestEdgeOrVertex(picking, this._currentFace);
       
       if (feature) {
-        console.log("[CutTool] Found feature:", feature);
         // Check for double click (open path complete)
         const lastPt = this._cutPoints[this._cutPoints.length - 1];
         if (lastPt && this.areFeaturesEqual(lastPt, feature)) {
-          console.log("[CutTool] Double click detected. Completing cut.");
           this.completeCut();
           return;
         }
@@ -514,16 +503,13 @@ class CutTool extends SculptBase {
         // Check for loop closure
         const firstPt = this._cutPoints[0];
         if (firstPt && this._cutPoints.length > 2 && this.areFeaturesEqual(firstPt, feature)) {
-          console.log("[CutTool] Loop closed. Completing cut.");
           // Push a clone of the first point to ensure exact match!
           this._cutPoints.push(Object.assign({}, firstPt));
           this.completeCut();
           return;
         }
         
-        console.log(`[CutTool] Added point:`, feature);
         this._cutPoints.push(feature);
-        console.log(`[CutTool] Total points now: ${this._cutPoints.length}`);
         this.updatePreviewMesh(picking.getIntersectionPoint());
         
         this._preselectedFeature = null; // Clear to force fresh preselection
@@ -577,7 +563,6 @@ class CutTool extends SculptBase {
     const idx2 = aug.indexOf(cp2.vertexIndex);
     
     if (idx1 === -1 || idx2 === -1) {
-      console.log("[CutTool] Points not found in augmented list.");
       return false;
     }
     
@@ -587,11 +572,8 @@ class CutTool extends SculptBase {
     const len1 = j - i;
     const len2 = aug.length - len1;
     
-    console.log(`[CutTool] splitFaceWithPoints: idx1=${idx1}, idx2=${idx2}, len1=${len1}, len2=${len2}, aug.length=${aug.length}`);
-    
     // Check for 5+3 split in a quad (aug length 6)
     if (aug.length === 6 && (len1 === 2 || len2 === 2)) {
-      console.log("[CutTool] 5+3 split detected! Converting to 3 quads.");
       
       let v_mid_idx, cp1_idx, cp2_idx;
       if (len1 === 2) {
@@ -694,8 +676,6 @@ class CutTool extends SculptBase {
     const f1 = aug.slice(i, j + 1);
     const f2 = aug.slice(j).concat(aug.slice(0, i + 1));
     
-    console.log("[CutTool] Split face into", f1, "and", f2);
-    
     const newFaces = new Uint32Array(faces.length + 4);
     newFaces.set(faces);
     
@@ -725,7 +705,6 @@ class CutTool extends SculptBase {
   }
 
   end() {
-    console.log("[CutTool] end called");
   }
 
   perform3QuadSplit(activeMesh, fIdx, cp1, cp2) {
@@ -762,7 +741,6 @@ class CutTool extends SculptBase {
     const nextV = fv[(idxShared + 1) % 4];
     
     if (v1 !== nextV) {
-      console.log(`[CutTool] Swapping v1/v2 and p1/p2 to maintain CCW order`);
       const tmpV = v1; v1 = v2; v2 = tmpV;
       const tmpP = p1; p1 = p2; p2 = tmpP;
     }
@@ -1028,7 +1006,6 @@ class CutTool extends SculptBase {
     }
     
     // 2. Process path segments
-    console.log(`[CutTool] Processing ${this._cutPoints.length} cut points.`);
     let failCount = 0;
     
     for (let i = 0; i < this._cutPoints.length - 1; i++) {
@@ -1055,7 +1032,6 @@ class CutTool extends SculptBase {
       }
       
       if (foundFaceIdx === -1) {
-        console.warn(`[CutTool] Failed to find shared face for segment ${i} to ${i+1}`);
         failCount++;
         continue;
       }
@@ -1392,9 +1368,6 @@ class CutTool extends SculptBase {
       // Points already share an edge
     }
     
-    if (failCount > 0) {
-      console.warn(`[CutTool] Cut completed with ${failCount} failed segments.`);
-    }
     
 
     
