@@ -382,18 +382,6 @@ class FillHole extends SculptBase {
         // Int vertex index mapping: intVertices[j-1][i-1] is nextVertIdx + (j-1)*(M-1) + (i-1)
         const getIntVIdx = (i, j) => nextVertIdx + (j - 1) * (M - 1) + (i - 1);
 
-        for (let j = 1; j < N; ++j) {
-          for (let i = 1; i < M; ++i) {
-            const vIdx = getIntVIdx(i, j);
-            const uNorm = i / M - 0.5;
-            const vNorm = j / N - 0.5;
-
-            newVertices[vIdx * 3] = cx + uNorm * wU * ux + vNorm * wV * vx;
-            newVertices[vIdx * 3 + 1] = cy + uNorm * wU * uy + vNorm * wV * vy;
-            newVertices[vIdx * 3 + 2] = cz + uNorm * wU * uz + vNorm * wV * vz;
-          }
-        }
-
         const getVIdxAt = (i, j) => {
           if (i > 0 && i < M && j > 0 && j < N) return getIntVIdx(i, j); // Interior
           // Boundary
@@ -403,6 +391,95 @@ class FillHole extends SculptBase {
           if (i === 0) return b[M + N + M + (N - j)];
           return b[0];
         };
+
+        // Prep colors and materials interpolation
+        const oldColors = mesh.getColors();
+        let newColors = null;
+        if (oldColors) {
+          newColors = new Float32Array(newVertices.length);
+          newColors.set(oldColors);
+        }
+        const oldMats = mesh.getMaterials();
+        let newMats = null;
+        if (oldMats) {
+          newMats = new Float32Array(newVertices.length);
+          newMats.set(oldMats);
+        }
+
+        const getColor = (vIdx) => {
+          const ind = vIdx * 3;
+          return [oldColors[ind], oldColors[ind + 1], oldColors[ind + 2]];
+        };
+        const getMaterial = (vIdx) => {
+          const ind = vIdx * 3;
+          return [oldMats[ind], oldMats[ind + 1], oldMats[ind + 2]];
+        };
+        const lerpArray = (a1, a2, t) => {
+          return [
+            a1[0] + (a2[0] - a1[0]) * t,
+            a1[1] + (a2[1] - a1[1]) * t,
+            a1[2] + (a2[2] - a1[2]) * t
+          ];
+        };
+
+        for (let j = 1; j < N; ++j) {
+          for (let i = 1; i < M; ++i) {
+            const vIdx = getIntVIdx(i, j);
+            const uNorm = i / M - 0.5;
+            const vNorm = j / N - 0.5;
+
+            newVertices[vIdx * 3] = cx + uNorm * wU * ux + vNorm * wV * vx;
+            newVertices[vIdx * 3 + 1] = cy + uNorm * wU * uy + vNorm * wV * vy;
+            newVertices[vIdx * 3 + 2] = cz + uNorm * wU * uz + vNorm * wV * vz;
+
+            const u = i / M;
+            const v = j / N;
+
+            if (newColors) {
+              const c_bottom = getColor(getVIdxAt(i, 0));
+              const c_top = getColor(getVIdxAt(i, N));
+              const c_left = getColor(getVIdxAt(0, j));
+              const c_right = getColor(getVIdxAt(M, j));
+
+              const c_00 = getColor(getVIdxAt(0, 0));
+              const c_M0 = getColor(getVIdxAt(M, 0));
+              const c_0N = getColor(getVIdxAt(0, N));
+              const c_MN = getColor(getVIdxAt(M, N));
+
+              const c_U = lerpArray(c_bottom, c_top, v);
+              const c_V = lerpArray(c_left, c_right, u);
+              const c_B = lerpArray(lerpArray(c_00, c_M0, u), lerpArray(c_0N, c_MN, u), v);
+
+              const ind = vIdx * 3;
+              newColors[ind] = Math.min(Math.max(c_U[0] + c_V[0] - c_B[0], 0.0), 1.0);
+              newColors[ind + 1] = Math.min(Math.max(c_U[1] + c_V[1] - c_B[1], 0.0), 1.0);
+              newColors[ind + 2] = Math.min(Math.max(c_U[2] + c_V[2] - c_B[2], 0.0), 1.0);
+            }
+
+            if (newMats) {
+              const m_bottom = getMaterial(getVIdxAt(i, 0));
+              const m_top = getMaterial(getVIdxAt(i, N));
+              const m_left = getMaterial(getVIdxAt(0, j));
+              const m_right = getMaterial(getVIdxAt(M, j));
+
+              const m_00 = getMaterial(getVIdxAt(0, 0));
+              const m_M0 = getMaterial(getVIdxAt(M, 0));
+              const m_0N = getMaterial(getVIdxAt(0, N));
+              const m_MN = getMaterial(getVIdxAt(M, N));
+
+              const m_U = lerpArray(m_bottom, m_top, v);
+              const m_V = lerpArray(m_left, m_right, u);
+              const m_B = lerpArray(lerpArray(m_00, m_M0, u), lerpArray(m_0N, m_MN, u), v);
+
+              const ind = vIdx * 3;
+              newMats[ind] = Math.min(Math.max(m_U[0] + m_V[0] - m_B[0], 0.0), 1.0);
+              newMats[ind + 1] = Math.min(Math.max(m_U[1] + m_V[1] - m_B[1], 0.0), 1.0);
+              newMats[ind + 2] = 1.0; // Mask
+            }
+          }
+        }
+        if (newColors) mesh.setColors(newColors);
+        if (newMats) mesh.setMaterials(newMats);
 
         // Wire M x N quads!
         for (let j = 0; j < N; ++j) {
@@ -436,6 +513,41 @@ class FillHole extends SculptBase {
       newVertices[nextVertIdx * 3 + 1] = cy;
       newVertices[nextVertIdx * 3 + 2] = cz;
 
+      const oldColors = mesh.getColors();
+      if (oldColors) {
+        const newColors = new Float32Array(newVertices.length);
+        newColors.set(oldColors);
+        
+        let r = 0, g = 0, b = 0;
+        for (const vIdx of loop) {
+          const ind = vIdx * 3;
+          r += oldColors[ind];
+          g += oldColors[ind + 1];
+          b += oldColors[ind + 2];
+        }
+        newColors[nextVertIdx * 3] = r / loop.length;
+        newColors[nextVertIdx * 3 + 1] = g / loop.length;
+        newColors[nextVertIdx * 3 + 2] = b / loop.length;
+        mesh.setColors(newColors);
+      }
+
+      const oldMats = mesh.getMaterials();
+      if (oldMats) {
+        const newMats = new Float32Array(newVertices.length);
+        newMats.set(oldMats);
+        
+        let rough = 0, metal = 0;
+        for (const vIdx of loop) {
+          const ind = vIdx * 3;
+          rough += oldMats[ind];
+          metal += oldMats[ind + 1];
+        }
+        newMats[nextVertIdx * 3] = rough / loop.length;
+        newMats[nextVertIdx * 3 + 1] = metal / loop.length;
+        newMats[nextVertIdx * 3 + 2] = 1.0; // Mask
+        mesh.setMaterials(newMats);
+      }
+
       for (let i = 0; i < loop.length; i++) {
         const vA = loop[i];
         const vB = loop[(i + 1) % loop.length];
@@ -461,32 +573,7 @@ class FillHole extends SculptBase {
     activeMesh.setFaces(typedFaces);
     activeMesh.setNbFaces(typedFaces.length / 4);
     
-    if (activeMesh.getColors()) {
-      const oldColors = activeMesh.getColors();
-      if (newVertices.length > oldColors.length) {
-        const newColors = new Float32Array(newVertices.length);
-        newColors.set(oldColors);
-        for (let i = oldColors.length; i < newColors.length; i += 3) {
-          newColors[i] = 1.0;
-          newColors[i + 1] = 1.0;
-          newColors[i + 2] = 1.0;
-        }
-        activeMesh.setColors(newColors);
-      }
-    }
-    if (activeMesh.getMaterials()) {
-      const oldMats = activeMesh.getMaterials();
-      if (newVertices.length > oldMats.length) {
-        const newMats = new Float32Array(newVertices.length);
-        newMats.set(oldMats);
-        for (let i = oldMats.length; i < newMats.length; i += 3) {
-          newMats[i] = 0.5; // Default roughness
-          newMats[i + 1] = 0.5; // Default metalness
-          newMats[i + 2] = 1.0;
-        }
-        activeMesh.setMaterials(newMats);
-      }
-    }
+
 
     // Handle UVs if present
     const facesTexCoord = activeMesh.getFacesTexCoord();
