@@ -1,3 +1,9 @@
+# v1.0.120
+- **Fix**: **Mesh Shading Corruption (Black Mesh)**: Resolved issue where `DeleteFace` and other topological edits caused the mesh to go black.
+    - Fixed `allocateArrays` in `Mesh.js` to correctly copy existing colors and materials when reallocating arrays for non-UV meshes (e.g., from `baby_shark`).
+    - Added a final pass in `updateGeometry` to catch and fix zero-length or NaN normals by forcing them to `[0, 1, 0]`.
+- **UX**: **VR Sliders Fix**: Fixed hardcoded values in `decimateTargetFaces` and `remeshEdgeLength` sliders in `GuiVRTopology.js` so they are now fully interactive and retain their values. Added `getDisplayValue` to format and update their text labels in real-time.
+
 # v1.0.119
 - **Feature**: **Stylus Tilt Controls**: Added a "Stylus Tilt" slider to the VR Settings menu (range ±45°). Updated laser pointer, raycast picking, and volume intersection to account for the tilted stylus.
 

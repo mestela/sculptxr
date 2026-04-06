@@ -7,7 +7,7 @@
 ---
 
 ## 1. Todo
-
+* [ ] **Quadrangulate** should leave existing quads alone. option maybe? 
 * [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
 * [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [ ] **Triangulate**: Either internal or another library

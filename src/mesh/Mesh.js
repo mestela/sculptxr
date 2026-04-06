@@ -516,29 +516,7 @@ class Mesh {
     this.updateFacesAabbAndNormal(iFaces);
     this.updateVerticesNormal(iVerts);
     
-    // Diagnostic Logger
-    if (window.enableMeshDiagnostics) {
-      const normals = this.getNormals();
-      if (normals) {
-        let nanCount = 0;
-        let zeroCount = 0;
-        for (let i = 0; i < normals.length; i += 3) {
-          const x = normals[i];
-          const y = normals[i+1];
-          const z = normals[i+2];
-          if (isNaN(x) || isNaN(y) || isNaN(z)) {
-            nanCount++;
-          } else if (x*x + y*y + z*z < 0.0001) {
-            zeroCount++;
-          }
-        }
-        if (nanCount > 0 || zeroCount > 0) {
-          console.warn(`[Diagnostic] Mesh.updateGeometry: ${nanCount} NaN, ${zeroCount} Zero normals found!`);
-          if (window.screenLog) window.screenLog(`Normals Corrupt: ${nanCount} NaN, ${zeroCount} Zero`, "red");
-        }
-      }
-    }
-    
+
     if (iFaces === undefined) {
       this.computeOctree(); 
     } else {

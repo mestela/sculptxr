@@ -1284,9 +1284,6 @@ class SculptManager {
 
   onQuadRemeshResult(data) {
     if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
-    
-    // Enable mesh diagnostics for remeshed meshes
-    window.enableMeshDiagnostics = true;
     this._isProcessingQuads = false;
 
     const activeMesh = this._main.getMesh();
