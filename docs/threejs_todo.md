@@ -7,10 +7,8 @@
 ---
 
 ## 1. Todo
-* [ ] **Stylus tilt**: Someone asked for that, easy to add.
-* [ ] **Undo for cut tool**: should be able to undo a marker, not just undo the entire operation
+* [x] **Stylus tilt**: Added slider, saved to local storage, and updated tip physics.
 * [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
-* [ ] **Symmetry cut**: Fails on latest test head after simple edits
 * [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [ ] **Triangulate**: Either internal or another library
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
@@ -21,6 +19,8 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [?] **Symmetry cut**: Fails on latest test head after simple edits --- partial progress, needs work
+* [x] **Undo for cut tool**: should be able to undo a marker, not just undo the entire operation
 * [x] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something.. fixed now?
 * [x] **overal exposure/brightness**: virtual desktop too bright and overexposed
 * [x] **boolean modes**: union, subtract, intersect

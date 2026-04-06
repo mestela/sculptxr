@@ -956,6 +956,30 @@ class Scene {
     updateMesh(this._vrControllerRight);
   }
 
+  getStylusTilt() {
+    if (this._guiXR && this._guiXR._uiSettings && this._guiXR._uiSettings.stylusTilt !== undefined) {
+      return this._guiXR._uiSettings.stylusTilt;
+    }
+    return 0.0;
+  }
+
+  updateStylusTilt(val) {
+    const rad = val * Math.PI / 180.0;
+    const updateMesh = (ctrl) => {
+      if (!ctrl) return;
+      const spike = ctrl.getObjectByName('stylus_spike');
+      if (spike) {
+        spike.rotation.x = rad;
+      }
+      const rayRoot = ctrl.getObjectByName('pointer_ray_root');
+      if (rayRoot) {
+        rayRoot.rotation.x = rad;
+      }
+    };
+    updateMesh(this._vrControllerLeft);
+    updateMesh(this._vrControllerRight);
+  }
+
   // Simplified VR Render (Bypassing RTT/PostProc for now)
   // Shared Render Logic (Parity for Spectator)
   _renderSceneVR(cam, viewMatrix, projMatrix, worldViewMatrixOverride = null, frame = null) {
@@ -2045,10 +2069,13 @@ class Scene {
             // Apply loaded settings immediately on creation
             const defLength = this.getStylusLength();
             const defOffset = this.getStylusOffset();
-            // console.log(`[Scene] Applying defaults to spikeMesh: Length=${defLength}, Offset=${defOffset}`);
+            const defTilt = this.getStylusTilt();
+            // console.log(`[Scene] Applying defaults to spikeMesh: Length=${defLength}, Offset=${defOffset}, Tilt=${defTilt}`);
             const scaleFactor = defLength / 0.10;
             spikeMesh.scale.set(1, 1, scaleFactor);
             spikeMesh.position.z = -defOffset;
+            spikeMesh.rotation.x = defTilt * Math.PI / 180.0;
+            rayRoot.rotation.x = defTilt * Math.PI / 180.0;
 
             // Keep the 'connected' listener purely for diagnostic logging, 
             // AND robust static mapping!
@@ -3047,10 +3074,13 @@ class Scene {
 
         if (ctrl3D) {
           ctrl3D.updateMatrixWorld(true);
-          const rayOrigin = new THREE.Vector3();
-          const rayDir = new THREE.Vector3(0, 0, -1);
+          const off = this.getStylusOffset();
+          const tilt = this.getStylusTilt() * Math.PI / 180.0;
           
-          rayOrigin.setFromMatrixPosition(ctrl3D.matrixWorld);
+          const rayOrigin = new THREE.Vector3(0, 0, -off);
+          rayOrigin.applyMatrix4(ctrl3D.matrixWorld);
+          
+          const rayDir = new THREE.Vector3(0, Math.sin(tilt), -Math.cos(tilt));
           rayDir.transformDirection(ctrl3D.matrixWorld).normalize();
 
           origin = vec3.fromValues(rayOrigin.x, rayOrigin.y, rayOrigin.z);
@@ -3064,9 +3094,21 @@ class Scene {
           }
           if (rayPose) {
              const mat = rayPose.transform.matrix;
+             const off = this.getStylusOffset();
+             const tilt = this.getStylusTilt() * Math.PI / 180.0;
+             
+             const untiltedDir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
+             vec3.normalize(untiltedDir, untiltedDir);
+             
              origin = vec3.fromValues(mat[12], mat[13], mat[14]);
-             dir = vec3.fromValues(-mat[8], -mat[9], -mat[10]);
-             vec3.normalize(dir, dir);
+             vec3.scaleAndAdd(origin, origin, untiltedDir, off);
+             
+             const xAxis = vec3.fromValues(mat[0], mat[1], mat[2]);
+             const qTilt = quat.create();
+             quat.setAxisAngle(qTilt, xAxis, tilt);
+             
+             dir = vec3.clone(untiltedDir);
+             vec3.transformQuat(dir, dir, qTilt);
           }
         }
         
@@ -3558,7 +3600,8 @@ class Scene {
     if (this._vrControllerDirPhys) {
         rayDirPhys = vec3.clone(this._vrControllerDirPhys);
     } else {
-        rayDirPhys = vec3.fromValues(0, 0, -1);
+        const tilt = this.getStylusTilt() * Math.PI / 180.0;
+        rayDirPhys = vec3.fromValues(0, Math.sin(tilt), -Math.cos(tilt));
         vec3.transformQuat(rayDirPhys, rayDirPhys, [q.x, q.y, q.z, q.w]);
     }
 
@@ -3599,9 +3642,18 @@ class Scene {
     }
 
     // [STYLUS PROP] Tip Position Calculation (Parity with live laser visual)
-    const offZ = this.getStylusLength() + this.getStylusOffset();
+    const len = this.getStylusLength();
+    const off = this.getStylusOffset();
+    
+    // Offset is along untilted Z axis
+    const untiltedDir = vec3.fromValues(0, 0, -1);
+    vec3.transformQuat(untiltedDir, untiltedDir, [q.x, q.y, q.z, q.w]);
+    
+    const basePhys = vec3.create();
+    vec3.scaleAndAdd(basePhys, physicalOrigin, untiltedDir, off);
+    
     const tipPhys = vec3.create();
-    vec3.scaleAndAdd(tipPhys, physicalOrigin, rayDirPhys, offZ);
+    vec3.scaleAndAdd(tipPhys, basePhys, rayDirPhys, len);
 
     const tipModel = vec3.create();
     if (this._spectatorMode === Enums.SpectatorMode.STATIONARY && this._camera._specView && this._camera._specViewPhys) {
@@ -3799,9 +3851,14 @@ class Scene {
       }
 
       if (useVolume) {
-        const offZ = this.getStylusLength() + this.getStylusOffset();
+        const len = this.getStylusLength();
+        const off = this.getStylusOffset();
+        const untiltedDir = vec3.fromValues(0, 0, -1);
+        vec3.transformQuat(untiltedDir, untiltedDir, [q.x, q.y, q.z, q.w]);
+        const basePhys = vec3.create();
+        vec3.scaleAndAdd(basePhys, physicalOrigin, untiltedDir, off);
         const volumePhys = vec3.create();
-        vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
+        vec3.scaleAndAdd(volumePhys, basePhys, rayDirPhys, len);
         const volumeEnginePos = vec3.clone(volumePhys);
         if (this._xrWorldOffset) {
           vec3.transformMat4(volumeEnginePos, volumeEnginePos, this._xrWorldOffset.inverse.matrix);
@@ -3825,9 +3882,14 @@ class Scene {
 
       if (useVolume) {
         // Calculate physical tip origin identically to _updateVRCursors (Visual Sphere Location)
-        const offZ = this.getStylusLength() + this.getStylusOffset();
+        const len = this.getStylusLength();
+        const off = this.getStylusOffset();
+        const untiltedDir = vec3.fromValues(0, 0, -1);
+        vec3.transformQuat(untiltedDir, untiltedDir, [q.x, q.y, q.z, q.w]);
+        const basePhys = vec3.create();
+        vec3.scaleAndAdd(basePhys, physicalOrigin, untiltedDir, off);
         const volumePhys = vec3.create();
-        vec3.scaleAndAdd(volumePhys, physicalOrigin, rayDirPhys, offZ);
+        vec3.scaleAndAdd(volumePhys, basePhys, rayDirPhys, len);
         const volumeEnginePos = vec3.clone(volumePhys);
         if (this._xrWorldOffset) {
           vec3.transformMat4(volumeEnginePos, volumeEnginePos, this._xrWorldOffset.inverse.matrix);
@@ -4315,13 +4377,25 @@ class Scene {
 
             const m = pose.transform.matrix;
             const origin = [m[12], m[13], m[14]];
-            const dir = [-m[8], -m[9], -m[10]];
-            vec3.normalize(dir, dir);
-
-            // Calculate Physical Tip explicitly for volume sphere visual positioning
-            const offZ = this.getStylusLength() + this.getStylusOffset();
+            const untiltedDir = vec3.fromValues(-m[8], -m[9], -m[10]);
+            vec3.normalize(untiltedDir, untiltedDir);
+            
+            const xAxis = vec3.fromValues(m[0], m[1], m[2]);
+            const tilt = this.getStylusTilt() * Math.PI / 180.0;
+            const qTilt = quat.create();
+            quat.setAxisAngle(qTilt, xAxis, tilt);
+            
+            const dir = vec3.clone(untiltedDir);
+            vec3.transformQuat(dir, dir, qTilt);
+            
+            const off = this.getStylusOffset();
+            const len = this.getStylusLength();
+            
+            const basePhys = vec3.create();
+            vec3.scaleAndAdd(basePhys, origin, untiltedDir, off);
+            
             const tipPhys = vec3.create();
-            vec3.scaleAndAdd(tipPhys, origin, dir, offZ);
+            vec3.scaleAndAdd(tipPhys, basePhys, dir, len);
 
             // Ray Engine Raycast MUST originate from the Controller Root, 
             // otherwise the origin begins INSIDE the 3D mesh when the physical tip penetrates the clay, causing Raycast to hit erratic backfaces!

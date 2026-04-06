@@ -1,22 +1,22 @@
-# Handover Prompt (Protocol Enforced)
+# Handover Prompt - Symmetry Mirror Topology Issues
 
-**Project Status**: v1.0.87 - Fixed Garbage Leak in Snapshots for Cut Tool
+**Project Status**: v1.0.115 - Symmetry Mirror stable on grids but failing on production assets.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Resolved persistent edge collapsing on undo by manually slicing arrays in `captureMeshSnapshot` to prevent garbage at the end of pre-allocated buffers from leaking into the snapshot.
-
-## Deployed Version
-- **Beta**: N/A (Deployment disabled in rules)
-- **Prod**: N/A (Deployment disabled in rules)
-
-## Interactive Debugging
-- **Preference**: Use browser console for immediate state inspection.
-- **Workflow**: Provide copy-pasteable snippets.
+**Checkpoint**: Attempted to restore symmetry mirror topology by pipeline reordering, aggressive quad bisection, and adjustable welding tolerance. Works on simple grids but fails on complex production assets with non-manifold artifacts.
 
 ## Summary of Work
-1.  Overrode the snapshot capture logic in `CutTool.js` to manually slice arrays using `subarray(0, count)` based on active counts (`nbFaces`, `nbVertices`). This prevents the large pre-allocated capacity arrays (which contain garbage at the end) from being copied in full and causing issues when restored.
-2.  Incremented version to `v1.0.87` in `index.html` and `src/Version.js`.
-3.  Updated `docs/releases.md` and `README.md`.
+1.  **Topology Restoration**: Reverted experimental grid optimizations in favor of stable O(N^2) welding.
+2.  **Pipeline Reordering**: Ordered the flow as Welding -> Cleanup -> Dissolution -> Cleanup -> Compaction.
+3.  **Bisection Logic**: Added aggressive quad bisection at the start of the pipeline for faces crossing the plane.
+4.  **Dissolution Safety**: Refined valence-2 dissolution to only trigger if both neighbors are on the centerline.
+5.  **Welding Tolerance**: Increased `EPSILON` to `0.01` to collapse slivers.
+6.  **Undo/Redo**: Fixed snapshot corruption by using non-destructive snapping and wireframe invalidation.
+
+## Known Issues & Blockers
+- **Non-Manifold Artifacts**: Complex production assets still produce non-manifold T-junctions or overlapping geometry at the symmetry plane if the input mesh has faces straddling the plane that aren't clean quads.
+- **Performance**: The O(N^2) welding is slow on large assets.
+- **Limitations**: The tool lacks a full geometric clipping engine (like a boolean operator), so it cannot reliably cut triangles without adding vertices.
 
 ## Next Steps
-- Verify that undoing a completed cut no longer leaves collapsed edges at the origin.
-- If verified, commit the changes.
+- **Revisit Symmetry Tool**: The tool needs a fundamental refactor to use a robust geometric clipping approach (e.g., via the WASM Manifold or Voxel engines) rather than purely topologic/index operations if it is to handle production assets reliably.
+- **Rollback or Refine**: Decide whether to accept the current limitations for low-poly or invest in full clipping.

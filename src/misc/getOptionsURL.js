@@ -180,6 +180,7 @@ var getOptionsURL = function () {
   options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, isMobileVR ? 0 : 1); // 0=fast, 1=smooth, 2=full
   options.stylusLength = queryNumber(getVal('stylusLength'), 0.0, 0.30, 0.10);
   options.stylusOffset = queryNumber(getVal('stylusOffset'), -0.15, 0.15, 0.0);
+  options.stylusTilt = queryNumber(getVal('stylusTilt'), -45.0, 45.0, 0.0);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

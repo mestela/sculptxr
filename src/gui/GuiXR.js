@@ -93,7 +93,8 @@ export default class GuiXR {
       wireframeBias: opts.wireframeBias,
       offsetY: opts.offsetY,
       stylusLength: opts.stylusLength,
-      stylusOffset: opts.stylusOffset
+      stylusOffset: opts.stylusOffset,
+      stylusTilt: opts.stylusTilt
     };
 
     // Preload Dropper Icon

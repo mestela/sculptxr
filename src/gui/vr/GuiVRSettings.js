@@ -101,6 +101,22 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'stylus_tilt', label: 'Stylus Tilt', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    min: -45, max: 45, step: 1,
+    value: main._guiXR && main._guiXR._uiSettings.stylusTilt !== undefined ? main._guiXR._uiSettings.stylusTilt : 0.0,
+    onInput: (val) => {
+      if (main._guiXR) {
+        main._guiXR._uiSettings.stylusTilt = val;
+      }
+      if (main.updateStylusTilt) {
+        main.updateStylusTilt(val);
+      }
+      getOptionsURL.saveOption('stylusTilt', val, 500);
+    }
+  });
+  y += ITEM_H + GAP;
+
   // --- CONTROLLER MODEL ---
   widgets.push({ type: 'header', label: 'Controller Model Override', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
   y += HEADER_H + GAP;
