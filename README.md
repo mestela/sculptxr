@@ -1,4 +1,4 @@
-# SculptXR (v1.0.93)
+# SculptXR (v1.0.119)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.93**: **Fix**: **Removed Valence-2 Dissolution**: Removed the experimental block that dissolved valence-2 vertices on the centerline in `symmetryMirror`. This was causing severe topology corruption by blindly merging vertices without geometric validation.
-*   **v1.0.91**: **Optimization**: **Spatial Grid for Welding**: Replaced the `O(N^2)` distance search in `symmetryMirror` with a spatial grid (cell size `0.001`) with neighbor checks. This restores near-instant performance on large production assets while maintaining robust floating-point tolerance.
-*   **v1.0.90**: **Fix**: **Symmetry Plane Sliver Faces**: Added a check in `symmetryMirror` to discard faces where all vertices lie entirely on the symmetry plane (`X = 0`). This prevents zero-width "internal walls" from creating non-manifold geometry.
+*   **v1.0.119**: **Feature**: **Stylus Tilt Controls**: Added a "Stylus Tilt" slider to the VR Settings menu (range ±45°). Updated laser pointer, raycast picking, and volume intersection to account for the tilted stylus.
+*   **v1.0.115**: **Fix**: **Symmetry Mirror Topology**: Standardized pipeline to Welding -> Cleanup -> Dissolution -> Cleanup -> Compaction. Increased welding tolerance to 0.01 to collapse tiny sliver edges.
+*   **v1.0.93**: **Fix**: **Removed Valence-2 Dissolution**: Removed the experimental block that dissolved valence-2 vertices on the centerline in `symmetryMirror`.
 
 [View Full Release History](docs/releases.md)
 
