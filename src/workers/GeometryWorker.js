@@ -60,8 +60,33 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       const response = await fetch(wasmUrl);
       const { instance } = await WebAssembly.instantiateStreaming(response, {
         env: {
-          // Provide basic math env if Rust standard library requires panic handlers (shouldn't for no_std/basic std)
-        }
+          js_getrandom: function(ptr, len) {
+            if (!globalThis.wasmModule) {
+              console.error("js_getrandom called before wasmModule was set!");
+              return;
+            }
+            const buf = new Uint8Array(globalThis.wasmModule.memory.buffer, ptr, len);
+            crypto.getRandomValues(buf);
+          }
+        },
+        __wbindgen_placeholder__: new Proxy({}, {
+          get: function(target, prop) {
+            console.warn(`[GeometryWorker] Stub called for __wbindgen_placeholder__.${prop}`);
+            return function() {
+              console.warn(`[GeometryWorker] Stub executed for __wbindgen_placeholder__.${prop}`);
+              return 0;
+            };
+          }
+        }),
+        __wbindgen_externref_xform__: new Proxy({}, {
+          get: function(target, prop) {
+            console.warn(`[GeometryWorker] Stub called for __wbindgen_externref_xform__.${prop}`);
+            return function() {
+              console.warn(`[GeometryWorker] Stub executed for __wbindgen_externref_xform__.${prop}`);
+              return 0;
+            };
+          }
+        })
       });
       globalThis.wasmModule = instance.exports;
       wasmModule = instance.exports;
@@ -153,6 +178,12 @@ self.onmessage = function (e) {
         break;
       case 'REMESH_QUADRS':
         remeshQuads(msg);
+        break;
+      case 'SIMPLIFY_MESH':
+        simplifyMesh(msg);
+        break;
+      case 'REMESH_ISOTROPIC':
+        remeshIsotropic(msg);
         break;
       case 'SLICE_AND_CAP':
         sliceAndCap(msg);
@@ -1429,13 +1460,9 @@ function remeshQuads(msg) {
   const wasm = globalThis.wasmModule;
   const vertices = msg.v;
   
-  let finalFaces = msg.f;
-  let stride = 4;
-  
-  if (msg.isTriangles) {
-    stride = 3;
-    finalFaces = unpadTriangles(msg.f);
-  }
+  // remesh_quads_wasm expects 4-padded faces always (even for triangles)
+  const finalFaces = msg.f;
+  const stride = 4;
 
   const targetFaces = msg.targetFaces;
 
@@ -1470,6 +1497,155 @@ function remeshQuads(msg) {
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
 
   console.log(`[GeometryWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
+
+  wasm.free_mesh_result(resPtr);
+  wasm.dealloc(vPtr, vLen * 4);
+  wasm.dealloc(fPtr, fLen * 4);
+
+  let outColors = null;
+  if (msg.colors) {
+    console.log("[GeometryWorker] Transferring vertex colors...");
+    outColors = transferColors(outVertices, vertices, msg.colors);
+  }
+
+  const transfer = [];
+  if (outVertices.buffer) transfer.push(outVertices.buffer);
+  if (outFaces.buffer) transfer.push(outFaces.buffer);
+  if (outColors && outColors.buffer) transfer.push(outColors.buffer);
+
+  self.postMessage({
+    type: 'MESH_UPDATE_QUAD',
+    data: {
+      vertices: outVertices,
+      faces: outFaces,
+      colors: outColors,
+      id: msg.id
+    }
+  }, transfer);
+}
+
+function simplifyMesh(msg) {
+  if (!globalThis.wasmModule) {
+    console.error("simplifyMesh: wasmModule not loaded");
+    return;
+  }
+  const wasm = globalThis.wasmModule;
+
+  const vertices = msg.v;
+  let finalFaces = msg.f;
+  
+  if (msg.isTriangles) {
+    finalFaces = unpadTriangles(msg.f);
+  }
+
+  const targetFaces = msg.targetFaces || 0;
+  const errorThreshold = msg.errorThreshold || 0.001;
+
+  const vLen = vertices.length;
+  const fLen = finalFaces.length;
+
+  const vPtr = wasm.alloc(vLen * 4);
+  const fPtr = wasm.alloc(fLen * 4);
+
+  new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+
+  const resPtr = wasm.simplify_mesh_wasm(vPtr, vLen, fPtr, fLen, targetFaces, errorThreshold);
+
+  if (resPtr === 0) {
+    console.error("simplify_mesh_wasm FAILED");
+    wasm.dealloc(vPtr, vLen * 4);
+    wasm.dealloc(fPtr, fLen * 4);
+    
+    self.postMessage({
+      type: 'MESH_UPDATE_QUAD_ERROR',
+      message: "Rust simplify_mesh_wasm returned 0 (failed to simplify)"
+    });
+    return;
+  }
+
+  const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
+  const outVPtr = meta[0], outVLen = meta[1];
+  const outFPtr = meta[2], outFLen = meta[3];
+
+  const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
+  const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+
+  console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
+
+  wasm.free_mesh_result(resPtr);
+  wasm.dealloc(vPtr, vLen * 4);
+  wasm.dealloc(fPtr, fLen * 4);
+
+  let outColors = null;
+  if (msg.colors) {
+    console.log("[GeometryWorker] Transferring vertex colors...");
+    outColors = transferColors(outVertices, vertices, msg.colors);
+  }
+
+  const transfer = [];
+  if (outVertices.buffer) transfer.push(outVertices.buffer);
+  if (outFaces.buffer) transfer.push(outFaces.buffer);
+  if (outColors && outColors.buffer) transfer.push(outColors.buffer);
+
+  self.postMessage({
+    type: 'MESH_UPDATE_QUAD',
+    data: {
+      vertices: outVertices,
+      faces: outFaces,
+      colors: outColors,
+      id: msg.id
+    }
+  }, transfer);
+}
+
+function remeshIsotropic(msg) {
+  if (!globalThis.wasmModule) {
+    console.error("remeshIsotropic: wasmModule not loaded");
+    return;
+  }
+  const wasm = globalThis.wasmModule;
+
+  const vertices = msg.v;
+  let finalFaces = msg.f;
+  
+  if (msg.isTriangles) {
+    finalFaces = unpadTriangles(msg.f);
+  }
+
+  const targetEdgeLength = msg.targetEdgeLength || 0.1;
+
+  const vLen = vertices.length;
+  const fLen = finalFaces.length;
+
+  const vPtr = wasm.alloc(vLen * 4);
+  const fPtr = wasm.alloc(fLen * 4);
+
+  new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+
+  const resPtr = wasm.remesh_isotropic_wasm(vPtr, vLen, fPtr, fLen, targetEdgeLength);
+
+  if (resPtr === 0) {
+    console.error("remesh_isotropic_wasm FAILED");
+    wasm.dealloc(vPtr, vLen * 4);
+    wasm.dealloc(fPtr, fLen * 4);
+    
+    self.postMessage({
+      type: 'MESH_UPDATE_QUAD_ERROR',
+      message: "Rust remesh_isotropic_wasm returned 0 (failed to remesh)"
+    });
+    return;
+  }
+
+  const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
+  const outVPtr = meta[0], outVLen = meta[1];
+  const outFPtr = meta[2], outFLen = meta[3];
+
+  const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
+  const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+
+  console.log(`[GeometryWorker] remeshIsotropic output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
   wasm.free_mesh_result(resPtr);
   wasm.dealloc(vPtr, vLen * 4);

@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: The VR Cut Tool UX has been refined with live rubberband preview and restricted neighbor snapping. Diagnostic logs have been removed. Version incremented to `v1.0.81`.
+**Project Status**: Stylus Tilt Controls added (±45°) and fully integrated with laser pointer, UI raycast, and volume picking. Symmetry Mirror welding tolerance increased. Version incremented to `v1.0.119`.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Cut Tool UX Refinement Complete.
+**Checkpoint**: Stylus Tilt Feature Complete.
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -13,16 +13,14 @@
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Current Situation / Obstacles
-The Cut Tool is now stable and has a polished UX in VR.
+The Stylus Tilt feature is now stable and polished. The Symmetry Mirror tool was also stabilized for simple cases but needs a refactor for complex assets.
 
-### Completed (v1.0.81):
-1.  **Live Rubberband Preview**: Immediate visual feedback showing the path to the current hover point.
-2.  **Topological Snap Restriction**: Prevents complex cut failures by only allowing snapping to immediate neighbors after the first point.
-3.  **Marker Cleanup**: Robust cleanup of all markers on tool exit.
-4.  **Logging Removal**: All diagnostic logs have been removed for production readiness.
+### Completed (v1.0.119):
+1.  **Stylus Tilt**: Added slider to VR Settings (±45°).
+2.  **Laser & UI Raycast**: Updated to follow the tilted stylus direction.
+3.  **Volume Intersect**: Updated tip calculation to use tilted trigonometry.
+4.  **Symmetry Mirror**: Increased tolerance to 0.01 to fix sliver edges.
 
 ## Next Steps / Backlog
 Based on `docs/threejs_todo.md`:
-*   **Undo for Cut Tool**: Implement granular undo for individual cut markers.
-*   **Symmetry Issues**: Investigate symmetry breaking after voxel conversion and symmetry cut failures.
-* **Animation**: Explore that for PCVR
+1.  **Triangulate**: Either internal or another library. Work on this next.

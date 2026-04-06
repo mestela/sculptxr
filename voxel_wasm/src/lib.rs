@@ -1,5 +1,18 @@
 // Voxel WASM Bridge for SculptXR
 use std::mem;
+use baby_shark::remeshing::incremental::IncrementalRemesher;
+
+
+unsafe extern "C" {
+    fn js_getrandom(ptr: *mut u8, len: usize);
+}
+
+fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    unsafe { js_getrandom(buf.as_mut_ptr(), buf.len()); }
+    Ok(())
+}
+
+getrandom::register_custom_getrandom!(custom_getrandom);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn alloc(size: usize) -> *mut u8 {
@@ -492,6 +505,222 @@ pub extern "C" fn remesh_quads_wasm(
             out_faces_flat.push(f[2] as u32);
             out_faces_flat.push(4294967295); // TRI_INDEX (-1)
         }
+    }
+
+    out_vertices_flat.shrink_to_fit();
+    out_faces_flat.shrink_to_fit();
+
+    let result = Box::new(MeshResult {
+        vertices_ptr: out_vertices_flat.as_mut_ptr(),
+        vertices_len: out_vertices_flat.len(),
+        faces_ptr: out_faces_flat.as_mut_ptr(),
+        faces_len: out_faces_flat.len(),
+        colors_ptr: std::ptr::null_mut(),
+        colors_len: 0,
+        materials_ptr: std::ptr::null_mut(),
+        materials_len: 0,
+        normals_ptr: std::ptr::null_mut(),
+        normals_len: 0,
+    });
+
+    std::mem::forget(out_vertices_flat);
+    std::mem::forget(out_faces_flat);
+
+    Box::into_raw(result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn simplify_mesh_wasm(
+    vertices_ptr: *const f32,
+    vertices_len: usize,
+    faces_ptr: *const u32,
+    faces_len: usize,
+    target_faces: u32,
+    error_threshold: f32,
+) -> *mut MeshResult {
+    if vertices_ptr.is_null() || faces_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let vertices_slice = unsafe { std::slice::from_raw_parts(vertices_ptr, vertices_len) };
+    let faces_slice = unsafe { std::slice::from_raw_parts(faces_ptr, faces_len) };
+
+    let mut baby_shark_vertices = Vec::with_capacity(vertices_len / 3);
+    for i in (0..vertices_len).step_by(3) {
+        baby_shark_vertices.push(nalgebra::Vector3::new(
+            vertices_slice[i],
+            vertices_slice[i + 1],
+            vertices_slice[i + 2],
+        ));
+    }
+
+    let mut baby_shark_faces = Vec::new();
+    for i in (0..faces_len).step_by(4) {
+        if faces_slice[i + 3] == 4294967295 {
+             baby_shark_faces.push(faces_slice[i] as usize);
+             baby_shark_faces.push(faces_slice[i + 1] as usize);
+             baby_shark_faces.push(faces_slice[i + 2] as usize);
+        } else {
+             let v0 = faces_slice[i] as usize;
+             let v1 = faces_slice[i + 1] as usize;
+             let v2 = faces_slice[i + 2] as usize;
+             let v3 = faces_slice[i + 3] as usize;
+             
+             baby_shark_faces.push(v0);
+             baby_shark_faces.push(v1);
+             baby_shark_faces.push(v2);
+             
+             baby_shark_faces.push(v0);
+             baby_shark_faces.push(v2);
+             baby_shark_faces.push(v3);
+        }
+    }
+
+    let mut mesh = baby_shark::mesh::corner_table::CornerTableF::from_vertex_and_face_slices(
+        &baby_shark_vertices,
+        &baby_shark_faces,
+    );
+
+    let mut decimator = baby_shark::decimation::EdgeDecimator::new();
+    
+    if target_faces > 0 {
+        decimator = decimator.min_faces_count(Some(target_faces as usize));
+        let criteria = baby_shark::decimation::ConstantErrorDecimationCriteria::new(1e10);
+        decimator = decimator.decimation_criteria(criteria);
+    } else {
+        decimator = decimator.min_faces_count(None);
+        let criteria = baby_shark::decimation::ConstantErrorDecimationCriteria::new(error_threshold);
+        decimator = decimator.decimation_criteria(criteria);
+    }
+    
+    decimator.decimate(&mut mesh);
+
+    let mut out_vertices_flat = Vec::with_capacity(mesh.count_vertices() * 3);
+    let mut id_to_index = std::collections::HashMap::new();
+    let mut current_idx = 0;
+    
+    for v_id in mesh.vertices() {
+        let pos = mesh.vertex_position(v_id);
+        out_vertices_flat.push(pos.x);
+        out_vertices_flat.push(pos.y);
+        out_vertices_flat.push(pos.z);
+        id_to_index.insert(v_id, current_idx);
+        current_idx += 1;
+    }
+    
+    let mut out_faces_flat = Vec::new();
+    for f_id in mesh.faces() {
+        let (v0, v1, v2) = mesh.face_vertices(f_id);
+        let idx0 = *id_to_index.get(&v0).unwrap() as u32;
+        let idx1 = *id_to_index.get(&v1).unwrap() as u32;
+        let idx2 = *id_to_index.get(&v2).unwrap() as u32;
+        
+        out_faces_flat.push(idx0);
+        out_faces_flat.push(idx1);
+        out_faces_flat.push(idx2);
+        out_faces_flat.push(4294967295); // TRI_INDEX (-1)
+    }
+
+    out_vertices_flat.shrink_to_fit();
+    out_faces_flat.shrink_to_fit();
+
+    let result = Box::new(MeshResult {
+        vertices_ptr: out_vertices_flat.as_mut_ptr(),
+        vertices_len: out_vertices_flat.len(),
+        faces_ptr: out_faces_flat.as_mut_ptr(),
+        faces_len: out_faces_flat.len(),
+        colors_ptr: std::ptr::null_mut(),
+        colors_len: 0,
+        materials_ptr: std::ptr::null_mut(),
+        materials_len: 0,
+        normals_ptr: std::ptr::null_mut(),
+        normals_len: 0,
+    });
+
+    std::mem::forget(out_vertices_flat);
+    std::mem::forget(out_faces_flat);
+
+    Box::into_raw(result)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn remesh_isotropic_wasm(
+    vertices_ptr: *const f32,
+    vertices_len: usize,
+    faces_ptr: *const u32,
+    faces_len: usize,
+    target_edge_length: f32,
+) -> *mut MeshResult {
+    if vertices_ptr.is_null() || faces_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let vertices_slice = unsafe { std::slice::from_raw_parts(vertices_ptr, vertices_len) };
+    let faces_slice = unsafe { std::slice::from_raw_parts(faces_ptr, faces_len) };
+
+    let mut baby_shark_vertices = Vec::with_capacity(vertices_len / 3);
+    for i in (0..vertices_len).step_by(3) {
+        baby_shark_vertices.push(nalgebra::Vector3::new(
+            vertices_slice[i],
+            vertices_slice[i + 1],
+            vertices_slice[i + 2],
+        ));
+    }
+
+    let mut baby_shark_faces = Vec::new();
+    for i in (0..faces_len).step_by(4) {
+        if faces_slice[i + 3] == 4294967295 {
+             baby_shark_faces.push(faces_slice[i] as usize);
+             baby_shark_faces.push(faces_slice[i + 1] as usize);
+             baby_shark_faces.push(faces_slice[i + 2] as usize);
+        } else {
+             let v0 = faces_slice[i] as usize;
+              let v1 = faces_slice[i + 1] as usize;
+             let v2 = faces_slice[i + 2] as usize;
+             let v3 = faces_slice[i + 3] as usize;
+             
+             baby_shark_faces.push(v0);
+             baby_shark_faces.push(v1);
+             baby_shark_faces.push(v2);
+             
+             baby_shark_faces.push(v0);
+             baby_shark_faces.push(v2);
+             baby_shark_faces.push(v3);
+        }
+    }
+
+    let mut mesh = baby_shark::mesh::corner_table::CornerTableF::from_vertex_and_face_slices(
+        &baby_shark_vertices,
+        &baby_shark_faces,
+    );
+
+    let remesher = IncrementalRemesher::default();
+    remesher.remesh(&mut mesh, target_edge_length);
+
+    let mut out_vertices_flat = Vec::with_capacity(mesh.count_vertices() * 3);
+    let mut id_to_index = std::collections::HashMap::new();
+    let mut current_idx = 0;
+    
+    for v_id in mesh.vertices() {
+        let pos = mesh.vertex_position(v_id);
+        out_vertices_flat.push(pos.x);
+        out_vertices_flat.push(pos.y);
+        out_vertices_flat.push(pos.z);
+        id_to_index.insert(v_id, current_idx);
+        current_idx += 1;
+    }
+    
+    let mut out_faces_flat = Vec::new();
+    for f_id in mesh.faces() {
+        let (v0, v1, v2) = mesh.face_vertices(f_id);
+        let idx0 = *id_to_index.get(&v0).unwrap() as u32;
+        let idx1 = *id_to_index.get(&v1).unwrap() as u32;
+        let idx2 = *id_to_index.get(&v2).unwrap() as u32;
+        
+        out_faces_flat.push(idx0);
+        out_faces_flat.push(idx1);
+        out_faces_flat.push(idx2);
+        out_faces_flat.push(4294967295); // TRI_INDEX (-1)
     }
 
     out_vertices_flat.shrink_to_fit();

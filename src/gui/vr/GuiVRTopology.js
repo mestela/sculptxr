@@ -305,6 +305,64 @@ export default function getTopologyWidgets(main) {
     }
   });
   y += btnH + gapBtn;
+ 
+   // --- DECIMATION ---
+   widgets.push({ type: 'info', label: 'Mesh Decimation', x: col1X, y: y });
+   y += gapHeader;
+ 
+   if (window.decimationTargetFaces === undefined) {
+     window.decimationTargetFaces = 5000;
+   }
+
+   widgets.push({
+     type: 'slider', id: 'decimateTargetFaces', label: 'Target Faces', x: col1X, y: y, w: 350, h: 40,
+     value: window.decimationTargetFaces, min: 100, max: 50000, step: 100,
+     getDisplayValue: (val) => val.toFixed(0),
+     onInput: (val) => {
+       window.decimationTargetFaces = val;
+     }
+   });
+   y += 40 + gapBtn;
+ 
+   widgets.push({
+     type: 'button', id: 'decimate_mesh', label: 'Decimate Mesh', x: col1X, y: y, w: 350, h: btnH,
+     onInteract: () => {
+       console.log(`[GuiVRTopology] Decimate Mesh Button clicked!`);
+       const targetFaces = window.decimationTargetFaces || 5000;
+       main.getSculptManager().simplifyMesh(targetFaces, 0.001);
+       if (main.guiXR) main.guiXR._needsRedraw = true;
+     }
+   });
+   y += btnH + gapSection;
+
+   // --- ISOTROPIC REMESHING ---
+   widgets.push({ type: 'info', label: 'Isotropic Remeshing', x: col1X, y: y });
+   y += gapHeader;
+ 
+   if (window.remeshEdgeLength === undefined) {
+     window.remeshEdgeLength = 0.1;
+   }
+
+   widgets.push({
+     type: 'slider', id: 'remeshEdgeLength', label: 'Edge Length', x: col1X, y: y, w: 350, h: 40,
+     value: window.remeshEdgeLength, min: 0.01, max: 1.0, step: 0.01,
+     getDisplayValue: (val) => val.toFixed(2),
+     onInput: (val) => {
+       window.remeshEdgeLength = val;
+     }
+   });
+   y += 40 + gapBtn;
+ 
+   widgets.push({
+     type: 'button', id: 'remesh_isotropic', label: 'Remesh Isotropic', x: col1X, y: y, w: 350, h: btnH,
+     onInteract: () => {
+       console.log(`[GuiVRTopology] Remesh Isotropic Button clicked!`);
+       const edgeLength = window.remeshEdgeLength || 0.1;
+       main.getSculptManager().remeshIsotropic(edgeLength);
+       if (main.guiXR) main.guiXR._needsRedraw = true;
+     }
+   });
+   y += btnH + gapSection;
 
   widgets.push({
     type: 'button', id: 'voxel_mirror_lr', label: 'Mirror L \u2192 R', x: col1X, y: y, w: 170, h: btnH,

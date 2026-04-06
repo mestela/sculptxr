@@ -516,6 +516,29 @@ class Mesh {
     this.updateFacesAabbAndNormal(iFaces);
     this.updateVerticesNormal(iVerts);
     
+    // Diagnostic Logger
+    if (window.enableMeshDiagnostics) {
+      const normals = this.getNormals();
+      if (normals) {
+        let nanCount = 0;
+        let zeroCount = 0;
+        for (let i = 0; i < normals.length; i += 3) {
+          const x = normals[i];
+          const y = normals[i+1];
+          const z = normals[i+2];
+          if (isNaN(x) || isNaN(y) || isNaN(z)) {
+            nanCount++;
+          } else if (x*x + y*y + z*z < 0.0001) {
+            zeroCount++;
+          }
+        }
+        if (nanCount > 0 || zeroCount > 0) {
+          console.warn(`[Diagnostic] Mesh.updateGeometry: ${nanCount} NaN, ${zeroCount} Zero normals found!`);
+          if (window.screenLog) window.screenLog(`Normals Corrupt: ${nanCount} NaN, ${zeroCount} Zero`, "red");
+        }
+      }
+    }
+    
     if (iFaces === undefined) {
       this.computeOctree(); 
     } else {
@@ -525,6 +548,25 @@ class Mesh {
     if (this._renderData) {
       this.updateDuplicateGeometry(iVerts);
       this.updateDrawArrays(iFaces);
+      
+      // Final fallback for zero normals in render buffers
+      const normals = this.getNormals();
+      if (normals) {
+        let fixedCount = 0;
+        for (let i = 0; i < normals.length; i += 3) {
+          const x = normals[i];
+          const y = normals[i+1];
+          const z = normals[i+2];
+          const mag = x*x + y*y + z*z;
+          if (isNaN(x) || isNaN(y) || isNaN(z) || mag < 0.0001) {
+             normals[i] = 0.0;
+             normals[i+1] = 1.0;
+             normals[i+2] = 0.0;
+             fixedCount++;
+          }
+        }
+
+      }
     }
   }
 
@@ -552,11 +594,21 @@ class Mesh {
       if (!this._meshData._normalsXYZ || this._meshData._normalsXYZ.length !== nbVertices * 3)
         this._meshData._normalsXYZ = new Float32Array(nbVertices * 3);
 
-      if (!this._meshData._colorsRGB || this._meshData._colorsRGB.length !== nbVertices * 3)
-        this._meshData._colorsRGB = new Float32Array(nbVertices * 3);
+      if (!this._meshData._colorsRGB || this._meshData._colorsRGB.length !== nbVertices * 3) {
+        let tmp = new Float32Array(nbVertices * 3);
+        if (this._meshData._colorsRGB) {
+          tmp.set(this._meshData._colorsRGB.subarray(0, Math.min(this._meshData._colorsRGB.length, nbVertices * 3)));
+        }
+        this._meshData._colorsRGB = tmp;
+      }
 
-      if (!this._meshData._materialsPBR || this._meshData._materialsPBR.length !== nbVertices * 3)
-        this._meshData._materialsPBR = new Float32Array(nbVertices * 3);
+      if (!this._meshData._materialsPBR || this._meshData._materialsPBR.length !== nbVertices * 3) {
+        let tmp = new Float32Array(nbVertices * 3);
+        if (this._meshData._materialsPBR) {
+          tmp.set(this._meshData._materialsPBR.subarray(0, Math.min(this._meshData._materialsPBR.length, nbVertices * 3)));
+        }
+        this._meshData._materialsPBR = tmp;
+      }
     }
 
     this._meshData._vertOnEdge = new Uint8Array(nbVertices);
@@ -681,11 +733,18 @@ class Mesh {
         nz += faceNormals[id + 2];
       }
       var len = end - start;
-      if (len !== 0.0) len = 1.0 / len;
       ind *= 3;
-      nAr[ind] = nx * len;
-      nAr[ind + 1] = ny * len;
-      nAr[ind + 2] = nz * len;
+      var nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (nLen > 1e-12) {
+        nLen = 1.0 / nLen;
+        nAr[ind] = nx * nLen;
+        nAr[ind + 1] = ny * nLen;
+        nAr[ind + 2] = nz * nLen;
+      } else {
+        nAr[ind] = 0.0;
+        nAr[ind + 1] = 1.0; // Default up vector
+        nAr[ind + 2] = 0.0;
+      }
     }
   }
 

@@ -373,6 +373,61 @@ class SculptManager {
     });
   }
 
+  simplifyMesh(targetFaces, errorThreshold) {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not initialized!");
+      return;
+    }
+
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+    const cAr = mesh.getColors();
+
+    const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
+
+    voxelTool._worker.postMessage({
+      type: 'SIMPLIFY_MESH',
+      v: vAr,
+      f: fAr,
+      colors: cAr,
+      targetFaces: targetFaces,
+      errorThreshold: errorThreshold,
+      id: mesh.getID(),
+      isTriangles: isTriangles
+    });
+  }
+
+  remeshIsotropic(targetEdgeLength) {
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    const voxelTool = this.getTool(Enums.Tools.VOXEL);
+    if (!voxelTool || !voxelTool._worker) {
+      console.error("SculptManager: VoxelWorker not initialized!");
+      return;
+    }
+
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+    const cAr = mesh.getColors();
+
+    const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
+
+    voxelTool._worker.postMessage({
+      type: 'REMESH_ISOTROPIC',
+      v: vAr,
+      f: fAr,
+      colors: cAr,
+      targetEdgeLength: targetEdgeLength,
+      id: mesh.getID(),
+      isTriangles: isTriangles
+    });
+  }
+
   symmetryMirror(side) {
     const mesh = this._main.getMesh();
     if (!mesh) return;
@@ -1128,7 +1183,6 @@ class SculptManager {
 
     // Push state
     this._main.getStateManager().pushStateCustom(undoMirror, redoMirror);
-
     }
 
   onTriangulateResult(data) {
@@ -1230,6 +1284,9 @@ class SculptManager {
 
   onQuadRemeshResult(data) {
     if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
+    
+    // Enable mesh diagnostics for remeshed meshes
+    window.enableMeshDiagnostics = true;
     this._isProcessingQuads = false;
 
     const activeMesh = this._main.getMesh();
@@ -1246,6 +1303,33 @@ class SculptManager {
     }
     
     newMesh.init(); // Automatically allocates arrays, computes topology, geometry, and center!
+    
+    // Fix zero normals produced by isolated vertices or canceling face normals
+    const normals = newMesh.getNormals();
+    if (normals) {
+      let fixedCount = 0;
+      for (let i = 0; i < normals.length; i += 3) {
+        const x = normals[i];
+        const y = normals[i+1];
+        const z = normals[i+2];
+        const mag = Math.sqrt(x*x + y*y + z*z);
+        if (mag < 0.001) {
+          normals[i] = 0;
+          normals[i+1] = 1; // Default up vector
+          normals[i+2] = 0;
+          fixedCount++;
+        } else {
+          // Normalize to ensure consistent shading
+          normals[i] = x / mag;
+          normals[i+1] = y / mag;
+          normals[i+2] = z / mag;
+        }
+      }
+      if (fixedCount > 0) {
+        console.log(`[SculptManager] Fixed ${fixedCount} zero/invalid normals.`);
+      }
+    }
+
     newMesh.initRender(); // <-- Generate Three.js geometry!
     newMesh.isQuad = true; // Remeshed output is quads!
 
