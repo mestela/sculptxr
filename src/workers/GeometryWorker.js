@@ -1113,7 +1113,7 @@ function quadCalcError(v1, v2, v3, v4) {
 }
 
 // Coplanar Triangle Merging (Quadrangulation)
-function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetryX = 0) {
+function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetryX = 0, isQuadTri = null, originalQuads = []) {
   if (!triIndices || triIndices.length === 0) return new Uint32Array(0);
 
   const numTris = triIndices.length / 3;
@@ -1196,7 +1196,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   }
 
   const merged = new Uint8Array(numTris);
-  const outQuads = [];
+  const outQuads = [...originalQuads];
   const outTris = [];
 
   // Candidate collection
@@ -1213,6 +1213,9 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
     if (merged[triA] || merged[triB]) {
       if (numTris < 20) console.log(`[Quadrangulate]   Skipping: One or both triangles already merged.`);
+      continue;
+    }
+    if (isQuadTri && (isQuadTri[triA] || isQuadTri[triB])) {
       continue;
     }
 
@@ -1385,7 +1388,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
   // Set rest of Triangles
   for (let i = 0; i < numTris; i++) {
-    if (!merged[i]) {
+    if (!merged[i] && (!isQuadTri || !isQuadTri[i])) {
       outTris.push([triIndices[i * 3], triIndices[i * 3 + 1], triIndices[i * 3 + 2]]);
       stats.leftoverTris++;
     }
@@ -1434,7 +1437,166 @@ function triangulateOnly(msg) {
 }
 
 function quadrangulateOnly(msg) {
-  // First triangulate if it has quads!
+  const faces = msg.f;
+  const vertices = msg.v;
+  
+  if (msg.skipsQuads) {
+    // Advanced mode: ONLY merge adjacent triangles, ignore quads, preserve colors and vertices!
+    const edgeMap = new Map(); // key -> [faceIdx]
+    
+    // 1. Build edge map for TRIANGLES only!
+    for (let i = 0; i < faces.length; i += 4) {
+      if (faces[i + 3] === 4294967295) {
+        const v0 = faces[i];
+        const v1 = faces[i + 1];
+        const v2 = faces[i + 2];
+        
+        const edges = [
+          [v0, v1], [v1, v2], [v2, v0]
+        ];
+        
+        for (const [a, b] of edges) {
+          const minV = Math.min(a, b);
+          const maxV = Math.max(a, b);
+          const key = `${minV}_${maxV}`;
+          
+          let list = edgeMap.get(key);
+          if (!list) {
+            list = [];
+            edgeMap.set(key, list);
+          }
+          list.push(i);
+        }
+      }
+    }
+    
+    const merged = new Set();
+    const newQuads = [];
+    
+    // 2. Find candidates!
+    for (const [key, faceList] of edgeMap.entries()) {
+      if (faceList.length === 2) {
+        const fA = faceList[0];
+        const fB = faceList[1];
+        
+        if (merged.has(fA) || merged.has(fB)) continue;
+        
+        const av0 = faces[fA];
+        const av1 = faces[fA + 1];
+        const av2 = faces[fA + 2];
+        
+        const bv0 = faces[fB];
+        const bv1 = faces[fB + 1];
+        const bv2 = faces[fB + 2];
+        
+        const [v0Str, v1Str] = key.split('_');
+        const ev0 = parseInt(v0Str);
+        const ev1 = parseInt(v1Str);
+        
+        let diaA = -1;
+        if (av0 !== ev0 && av0 !== ev1) diaA = av0;
+        else if (av1 !== ev0 && av1 !== ev1) diaA = av1;
+        else diaA = av2;
+        
+        let diaB = -1;
+        if (bv0 !== ev0 && bv0 !== ev1) diaB = bv0;
+        else if (bv1 !== ev0 && bv1 !== ev1) diaB = bv1;
+        else diaB = bv2;
+        
+        if (diaA === -1 || diaB === -1) continue;
+        
+        // 2D Projection & Angle Sort to ensure correct quad winding!
+        const pts = [ev0, diaA, ev1, diaB].map(idx => ({
+          idx,
+          x: vertices[idx * 3],
+          y: vertices[idx * 3 + 1],
+          z: vertices[idx * 3 + 2]
+        }));
+
+        const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+        const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+        const cz = (pts[0].z + pts[1].z + pts[2].z + pts[3].z) / 4;
+
+        // Crude normal!
+        const ax = pts[1].x - pts[0].x;
+        const ay = pts[1].y - pts[0].y;
+        const az = pts[1].z - pts[0].z;
+        const bx = pts[2].x - pts[0].x;
+        const by = pts[2].y - pts[0].y;
+        const bz = pts[2].z - pts[0].z;
+        const nx = ay * bz - az * by;
+        const ny = az * bx - ax * bz;
+        const nz = ax * by - ay * bx;
+
+        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const snx = nx / (nLen || 1);
+        const sny = ny / (nLen || 1);
+        const snz = nz / (nLen || 1);
+
+        let tx = 1, ty = 0, tz = 0;
+        if (Math.abs(snx) > 0.9) { tx = 0; ty = 1; }
+        let ux = ty * snz - tz * sny;
+        let uy = tz * snx - tx * snz;
+        let uz = tx * sny - ty * snx;
+        const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz);
+        ux /= (uLen || 1); uy /= (uLen || 1); uz /= (uLen || 1);
+
+        let vx = sny * uz - snz * uy;
+        let vy = snz * ux - snx * uz;
+        let vz = snx * uy - sny * ux;
+        const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        vx /= (vLen || 1); vy /= (vLen || 1); vz /= (vLen || 1);
+
+        const angles = pts.map(p => {
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          const dz = p.z - cz;
+          const x = dx * ux + dy * uy + dz * uz;
+          const y = dx * vx + dy * vy + dz * vz;
+          return { idx: p.idx, theta: Math.atan2(y, x) };
+        });
+
+        angles.sort((a, b) => a.theta - b.theta);
+        
+        newQuads.push([angles[0].idx, angles[1].idx, angles[2].idx, angles[3].idx]);
+        merged.add(fA);
+        merged.add(fB);
+      }
+    }
+    
+    // 3. Reconstruct faces!
+    const finalFaces = [];
+    for (let i = 0; i < faces.length; i += 4) {
+      if (faces[i + 3] !== 4294967295) {
+        finalFaces.push(faces[i], faces[i + 1], faces[i + 2], faces[i + 3]);
+      } else {
+        if (!merged.has(i)) {
+          finalFaces.push(faces[i], faces[i + 1], faces[i + 2], -1);
+        }
+      }
+    }
+    
+    for (const quad of newQuads) {
+      finalFaces.push(quad[0], quad[1], quad[2], quad[3]);
+    }
+    
+    const padded = new Uint32Array(finalFaces);
+    
+    const transfer = [vertices.buffer, padded.buffer, msg.c ? msg.c.buffer : null].filter(Boolean);
+    const uniqueTransfer = [...new Set(transfer)];
+    
+    self.postMessage({
+      type: 'QUADRANGULATE_RESULT',
+      v: vertices,
+      f: padded,
+      c: msg.c, // Pass back original colors directly!
+      stats: { tris: faces.length / 4, merged: newQuads.length }
+    }, uniqueTransfer);
+    
+    return;
+  }
+  
+  // Original behavior!
   const tris = triangulateQuads(msg.f);
   
   // Weld vertices to ensure clean connectivity for sorting
@@ -1443,12 +1605,25 @@ function quadrangulateOnly(msg) {
   // Run our perfect quadrangulation!
   const result = quadrangulateGreedy(welded.vertices, welded.faces, msg.rejectSeams, msg.symmetryX);
   
+  // Handle colors if present!
+  let newColors = null;
+  if (msg.c) {
+    newColors = new Float32Array(welded.vertices.length);
+    for (let i = 0; i < welded.newToOldMap.length; i++) {
+      const oldIdx = welded.newToOldMap[i];
+      newColors[i * 3] = msg.c[oldIdx * 3];
+      newColors[i * 3 + 1] = msg.c[oldIdx * 3 + 1];
+      newColors[i * 3 + 2] = msg.c[oldIdx * 3 + 2];
+    }
+  }
+
   self.postMessage({
     type: 'QUADRANGULATE_RESULT',
     v: welded.vertices,
     f: result.paddedFaces,
+    c: newColors,
     stats: result.stats
-  }, [welded.vertices.buffer, result.paddedFaces.buffer]);
+  }, [welded.vertices.buffer, result.paddedFaces.buffer, newColors ? newColors.buffer : null].filter(Boolean));
 }
 
 function remeshQuads(msg) {

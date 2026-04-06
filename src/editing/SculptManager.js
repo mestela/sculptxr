@@ -1238,22 +1238,23 @@ class SculptManager {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    
-
     // 1. Capture OLD state for UNDO
     const oldFaces = new Uint32Array(mesh.getFaces());
     const oldVerts = new Float32Array(mesh.getVertices());
+    const oldColors = mesh.getColors() ? new Float32Array(mesh.getColors()) : null;
     const wasQuad = mesh.isQuad;
 
     // 2. Capture NEW state for REDO
     const newFaces = new Uint32Array(data.f);
     const newVerts = new Float32Array(data.v);
+    const newColors = data.c ? new Float32Array(data.c) : null;
 
     const undoQuads = () => {
       mesh.setVertices(oldVerts);
       mesh.setNbVertices(oldVerts.length / 3);
       mesh.setFaces(oldFaces);
       mesh.setNbFaces(oldFaces.length / 4);
+      if (oldColors) mesh.setColors(oldColors);
       mesh.isQuad = wasQuad;
       const wasOptim = Mesh.OPTIMIZE;
       Mesh.OPTIMIZE = false;
@@ -1268,6 +1269,7 @@ class SculptManager {
       mesh.setNbVertices(newVerts.length / 3);
       mesh.setFaces(newFaces);
       mesh.setNbFaces(newFaces.length / 4);
+      if (newColors) mesh.setColors(newColors);
       mesh.isQuad = true;
       const wasOptim = Mesh.OPTIMIZE;
       Mesh.OPTIMIZE = false; // Bypass the fArUV capacity crash!
@@ -1278,7 +1280,6 @@ class SculptManager {
     };
 
     this._main.getStateManager().pushStateCustom(undoQuads, redoQuads);
-
     redoQuads();
   }
 

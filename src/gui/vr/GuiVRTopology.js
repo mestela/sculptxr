@@ -251,6 +251,13 @@ export default function getTopologyWidgets(main) {
 
 
   widgets.push({
+    type: 'checkbox', id: 'quad_skip_quads', label: 'Skip Quads', x: col1X, y: y, w: 170, h: 30,
+    value: window.quadSkipQuads || false,
+    onInteract: (val) => { window.quadSkipQuads = val; }
+  });
+  y += 30 + 10;
+
+  widgets.push({
     type: 'button', id: 'quad_manual', label: 'Quadrangulate', x: col1X, y: y, w: 170, h: btnH,
     onInteract: () => {
       console.log(`[GuiVRTopology] Manual Quadrangulate Button clicked!`);
@@ -263,6 +270,8 @@ export default function getTopologyWidgets(main) {
           type: 'QUADRANGULATE_ONLY',
           v: mesh.getVertices(),
           f: mesh.getFaces(),
+          c: mesh.getColors(),
+          skipsQuads: window.quadSkipQuads || false,
           rejectSeams: false,
           symmetryX: mesh.getSymmetryOrigin ? mesh.getSymmetryOrigin()[0] : 0
         });

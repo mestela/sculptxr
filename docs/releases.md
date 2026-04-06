@@ -1,3 +1,8 @@
+# v1.0.121
+- **Feature**: **Local Triangle-Only Quadrangulation**: Added a "Skip Quads" option to the Quadrangulate tool in VR. When enabled, it performs a purely local search to merge adjacent triangles into quads without welding vertices or processing existing quads. This prevents loss of color data and preserves clean topology.
+- **Fix**: **Color Loss in Quadrangulation**: Fixed issue where the regular Quadrangulate tool removed vertex colors by mapping colors to the new welded vertices in the worker.
+- **Fix**: **DataCloneError**: Fixed a worker error when color and vertex arrays shared the same memory buffer by filtering duplicates from the transfer list.
+
 # v1.0.120
 - **Fix**: **Mesh Shading Corruption (Black Mesh)**: Resolved issue where `DeleteFace` and other topological edits caused the mesh to go black.
     - Fixed `allocateArrays` in `Mesh.js` to correctly copy existing colors and materials when reallocating arrays for non-UV meshes (e.g., from `baby_shark`).
