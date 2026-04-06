@@ -1,4 +1,4 @@
-# SculptXR (v1.0.81)
+# SculptXR (v1.0.93)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.81**: **Live Rubberband & Selection Limiting**: Added live rubberband preview and restricted next cut selections to immediate neighbors.
-*   **v1.0.79**: **Low-Poly Tools Conformation**: Standardized `FillHole`, `SpinEdge`, `Weld`, and `SnapWeldCenter` to use snapshot-based state management and fixed wireframe caching.
-*   **v1.0.78**: **Voxel Pipeline Stabilization**: Fixed voxel mesh alignment drift, enabled material/wireframe inheritance, and resolved tangled wireframes during live edits.
+*   **v1.0.93**: **Fix**: **Removed Valence-2 Dissolution**: Removed the experimental block that dissolved valence-2 vertices on the centerline in `symmetryMirror`. This was causing severe topology corruption by blindly merging vertices without geometric validation.
+*   **v1.0.91**: **Optimization**: **Spatial Grid for Welding**: Replaced the `O(N^2)` distance search in `symmetryMirror` with a spatial grid (cell size `0.001`) with neighbor checks. This restores near-instant performance on large production assets while maintaining robust floating-point tolerance.
+*   **v1.0.90**: **Fix**: **Symmetry Plane Sliver Faces**: Added a check in `symmetryMirror` to discard faces where all vertices lie entirely on the symmetry plane (`X = 0`). This prevents zero-width "internal walls" from creating non-manifold geometry.
 
 [View Full Release History](docs/releases.md)
 

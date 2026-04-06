@@ -1,27 +1,28 @@
-# SculptXR Handover Prompt - Cut Tool Topology Stabilization
+# Handover Prompt (Protocol Enforced)
 
----
+**Project Status**: The VR Cut Tool UX has been refined with live rubberband preview and restricted neighbor snapping. Diagnostic logs have been removed. Version incremented to `v1.0.81`.
+**Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
+**Checkpoint**: Cut Tool UX Refinement Complete.
+
+## Deployed Version
+- **Beta**: N/A (Deployment disabled in rules)
+- **Prod**: N/A (Deployment disabled in rules)
+
+## Interactive Debugging
+- **Preference**: Use browser console for immediate state inspection.
+- **Workflow**: Provide copy-pasteable snippets.
 
 ## Current Situation / Obstacles
+The Cut Tool is now stable and has a polished UX in VR.
 
-We have successfully stabilized the **Cut Tool** in SculptXR, resolving topological corruption, rendering failures, and performance lag during face splitting on UV-mapped meshes.
-
-### Completed:
-1.  **Topological Fixes**: Fixed a copy-paste error in `perform3QuadSplit` where the third quad was overwriting the second quad.
-2.  **UV Synchronization**: Reverted to an allocate-on-demand strategy for mesh buffers to avoid zero-padded degenerate geometry.
-3.  **Array Size Sync**: Fixed `Mesh.allocateArrays()` to prevents vertex truncation by using `Math.max(nbVertices, nbTexCoords)` when allocating physical arrays.
-4.  **Counter Sync**: Fixed `NbVertices` assignment in `completeCut` to use the local `nbVertices` counter, preventing it from going out of sync with the physical array size.
-5.  **Performance Optimization**: Removed extensive debugging logs and mesh dumps from `completeCut` and `perform3QuadSplit`, which **resolved the substantial lag** on heavier geometry!
-6.  **Verification**: Confirmed that the cut tool now works correctly on the 3x3 grid without collapsing the mesh or throwing WebGL errors!
-
-### Current Blocker:
-*   **None**: The tool is now stable, performant, and verified working.
-
----
+### Completed (v1.0.81):
+1.  **Live Rubberband Preview**: Immediate visual feedback showing the path to the current hover point.
+2.  **Topological Snap Restriction**: Prevents complex cut failures by only allowing snapping to immediate neighbors after the first point.
+3.  **Marker Cleanup**: Robust cleanup of all markers on tool exit.
+4.  **Logging Removal**: All diagnostic logs have been removed for production readiness.
 
 ## Next Steps / Backlog
-
-*   **Diamond Loop Detection**: Implement detection of a diamond loop around a vertex (deferred Task id: 2 in `task.md`) if needed for full workflow integration.
-*   **Proceed to next Low-Poly Tool**: With the Cut Tool stable, we can move on to welding, dissolving, or other topology tools.
-
-Good luck! 🛠️
+Based on `docs/threejs_todo.md`:
+*   **Undo for Cut Tool**: Implement granular undo for individual cut markers.
+*   **Symmetry Issues**: Investigate symmetry breaking after voxel conversion and symmetry cut failures.
+* **Animation**: Explore that for PCVR

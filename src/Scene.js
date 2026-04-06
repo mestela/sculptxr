@@ -2650,14 +2650,24 @@ class Scene {
                 if (valX < -T_PRESS) {
                    console.log("[Scene] Thumbstick Undo detected!");
                    if (this._stateManager) {
-                     this._stateManager.undo();
-                     this._main ? this._main.render() : this.render();
+                     const activeTool = this._sculptManager.getCurrentTool();
+                     if (activeTool && activeTool.onUndo && activeTool.onUndo()) {
+                       this._main ? this._main.render() : this.render();
+                     } else {
+                       this._stateManager.undo();
+                       this._main ? this._main.render() : this.render();
+                     }
                    }
                  } else if (valX > T_PRESS) {
                    console.log("[Scene] Thumbstick Redo detected!");
                    if (this._stateManager) {
-                     this._stateManager.redo();
-                     this._main ? this._main.render() : this.render();
+                     const activeTool = this._sculptManager.getCurrentTool();
+                     if (activeTool && activeTool.onRedo && activeTool.onRedo()) {
+                       this._main ? this._main.render() : this.render();
+                     } else {
+                       this._stateManager.redo();
+                       this._main ? this._main.render() : this.render();
+                     }
                    }
                  }
                }

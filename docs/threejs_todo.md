@@ -7,8 +7,12 @@
 ---
 
 ## 1. Todo
-
-* [ ] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something
+* [ ] **Stylus tilt**: Someone asked for that, easy to add.
+* [ ] **Undo for cut tool**: should be able to undo a marker, not just undo the entire operation
+* [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
+* [ ] **Symmetry cut**: Fails on latest test head after simple edits
+* [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
+* [ ] **Triangulate**: Either internal or another library
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
@@ -17,6 +21,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **Jumping between tabs that have scroll looks blank at first**: Needs a repaint call or something.. fixed now?
 * [x] **overal exposure/brightness**: virtual desktop too bright and overexposed
 * [x] **boolean modes**: union, subtract, intersect
 * [x] **menu styling**: seems unbalanced, come up with a better design. same for overall vr menu

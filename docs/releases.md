@@ -1,3 +1,36 @@
+# v1.0.93
+- **Fix**: **Removed Valence-2 Dissolution**: Removed the experimental block that dissolved valence-2 vertices on the centerline in `symmetryMirror`. This was causing severe topology corruption by blindly merging vertices without geometric validation.
+
+# v1.0.91
+- **Optimization**: **Spatial Grid for Welding**: Replaced the `O(N^2)` distance search in `symmetryMirror` with a spatial grid (cell size `0.001`) with neighbor checks. This restores near-instant performance on large production assets while maintaining robust floating-point tolerance.
+
+# v1.0.90
+- **Fix**: **Symmetry Plane Sliver Faces**: Added a check in `symmetryMirror` to discard faces where all vertices lie entirely on the symmetry plane (`X = 0`). This prevents zero-width "internal walls" from creating non-manifold geometry.
+
+# v1.0.89
+- **Fix**: **Distance-Based Vertex Welding**: Replaced the grid/rounding-based welding in `symmetryMirror` with a distance-based search (`EPSILON = 0.001`). This prevents floating-point drift from creating duplicate vertices at the center line that fail to weld.
+
+# v1.0.88
+- **Fix**: **Symmetry Non-Manifold Mess**: Resolved issue where `symmetryMirror` created duplicate and degenerate faces when vertices were snapped to the center plane, by adding a duplicate face removal step and compacting the face array.
+
+# v1.0.87
+- **Fix**: **Garbage Separation in Snapshots**: Resolved persistent edge collapsing on undo by manually slicing arrays in `captureMeshSnapshot` to prevent garbage at the end of pre-allocated buffers from leaking into the snapshot.
+
+# v1.0.86
+- **Fix**: **Wireframe Ghosting on Undo**: Resolved issue where undoing a completed cut left collapsed edges at the origin by forcing wireframe edge arrays to rebuild.
+
+# v1.0.85
+- **Feature**: **UV Support in Undo/Redo**: Fixed mesh corruption upon undoing a completed cut by properly capturing and restoring the UV buffer (`texCoordsST`) in custom states, adhering to Low-Poly Tool Standards.
+
+# v1.0.84
+- **Feature**: **Global Undo/Redo for Cut Operation**: Implemented global undo/redo for the completed Cut operation by capturing mesh snapshots before and after the cut, resolving the mesh "explosion" issue.
+
+# v1.0.83
+- **Feature**: **Granular Redo for Cut Tool**: Implemented a granular redo system for the Cut Tool, allowing users to restore reverted cut markers by pressing Redo (Thumbstick right on non-dominant hand).
+
+# v1.0.82
+- **Feature**: **Granular Undo for Cut Tool**: Implemented a granular undo system for the Cut Tool, allowing users to revert individual cut markers by pressing Undo (Thumbstick left on non-dominant hand).
+
 # v1.0.81
 - **Feature**: **Live Rubberband Preview**: Implemented a live rubberband line that stretches to the hover-snapped marker, giving immediate feedback.
 - **UX**: **Topology-Restricted Selections**: Limited valid next cut points to only features that share a face with the last clicked point, preventing invalid complex cuts.

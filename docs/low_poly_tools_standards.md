@@ -8,24 +8,36 @@ const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
 ```
 
 ## 2. Snapshot-Based Undo/Redo
-Replace custom array cloning with the global snapshot methods provided by `SculptBase`:
-```javascript
-const undoSnapshot = this.captureMeshSnapshot(activeMesh);
-// ... mutate mesh ...
-const redoSnapshot = this.captureMeshSnapshot(activeMesh);
+Replace custom array cloning with the global snapshot methods provided by `SculptBase` when possible. **However, beware the Garbage Pitfall**:
 
-this._main.getStateManager().pushStateCustom(
-  () => this.applyMeshSnapshot(activeMesh, undoSnapshot),
-  () => this.applyMeshSnapshot(activeMesh, redoSnapshot)
-);
+*   **The Garbage Pitfall**: `captureMeshSnapshot` copies the *entire physical buffer* of the mesh arrays (faces, vertices, etc.). SculptXR uses large pre-allocated capacity buffers that often contain garbage data at the end (beyond `nbFaces` or `nbVertices`). If you capture a snapshot of a grown mesh and then restore it, this garbage data can leak back into active use by systems that rely on array length (like wireframe generation), causing ghost geometry or collapses to the origin.
+
+*   **Best Practice for Growing Meshes**: If your tool adds vertices or faces, manually capture the snapshot by slicing the arrays to only include the active ranges:
+```javascript
+const undoSnapshot = {
+  faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+  vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+  colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+  materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+  facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+  nbFaces: activeMesh.getNbFaces(),
+  nbVertices: activeMesh.getNbVertices()
+};
+// Save UVs too if applicable!
+if (activeMesh.getTexCoords()) {
+  undoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, activeMesh.getNbTexCoords() * 2));
+}
 ```
+Then restore manually or via custom callbacks.
 
 ## 3. Wireframe Cache Invalidation
-Clear the WebGL wireframe caches on both execution and snapshot application to force Three.js to rebuild edges:
+Clear the WebGL wireframe caches on both execution and snapshot application to force Three.js to rebuild edges. Crucially, you must also clear or reset the `_edges` array to prevent stale edges from referencing non-existent vertices on undo:
 ```javascript
 if (activeMesh._meshData) {
   activeMesh._meshData._drawElementsWireframe = null;
   activeMesh._meshData._drawArraysWireframe = null;
+  // Force computeWireframe to see that edges need rebuilding!
+  activeMesh._meshData._edges = new Uint8ClampedArray(0);
 }
 ```
 

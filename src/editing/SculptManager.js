@@ -380,6 +380,7 @@ class SculptManager {
     console.log(`[SculptManager] symmetryMirror started locally! side=${side}`);
     
     var vAr = mesh.getVertices();
+    var snappedVerts = new Float32Array(vAr); // Clone to avoid modifying original in place
     var fAr = mesh.getFaces();
     var origColors = mesh.getColors();
     var nbVertices = mesh.getNbVertices();
@@ -400,11 +401,11 @@ class SculptManager {
     // 1. Label Vertices
     var labels = new Int8Array(nbVertices);
     for (var i = 0; i < nbVertices; ++i) {
-      var x = vAr[i * 3];
+      var x = snappedVerts[i * 3]; // Use snappedVerts
       
       // Force snap to center if within tolerance
       if (Math.abs(x) < SNAP_TOLERANCE) {
-        vAr[i * 3] = 0;
+        snappedVerts[i * 3] = 0;
         x = 0;
       }
       
@@ -438,6 +439,27 @@ class SculptManager {
       }
       
       if (keepFace) {
+        // Check for faces straddling the plane that need bisection
+        // Aggressive: Split ANY quad crossing the plane into triangles BEFORE cleanup!
+        var hasLeft = false;
+        var hasRight = false;
+        const faceIndices = [iv1, iv2, iv3, iv4];
+        for (let j = 0; j < 4; j++) {
+          let idx = faceIndices[j];
+          if (idx === Utils.TRI_INDEX) continue;
+          let x = snappedVerts[idx * 3]; // Use snappedVerts
+          if (x < -0.001) hasLeft = true;
+          if (x > 0.001) hasRight = true;
+        }
+        
+        if (hasLeft && hasRight && iv4 !== Utils.TRI_INDEX) {
+          // Split into two triangles along the diagonal
+          newFaces.push(iv1, iv2, iv3, Utils.TRI_INDEX);
+          newFaces.push(iv1, iv3, iv4, Utils.TRI_INDEX);
+          keptVerts.add(iv1); keptVerts.add(iv2); keptVerts.add(iv3); keptVerts.add(iv4);
+          continue;
+        }
+
         newFaces.push(iv1, iv2, iv3, iv4);
         keptVerts.add(iv1);
         keptVerts.add(iv2);
@@ -449,7 +471,7 @@ class SculptManager {
     // 3. Snap boundary vertices
     for (var i = 0; i < nbVertices; ++i) {
       if (labels[i] === -1 && keptVerts.has(i)) {
-        vAr[i * 3] = 0; // Snap to plane
+        snappedVerts[i * 3] = 0; // Snap to plane
       }
     }
     
@@ -468,7 +490,7 @@ class SculptManager {
       }
       if (!vertMap.has(oldIdx)) {
         vertMap.set(oldIdx, nextV);
-        finalVerts.push(vAr[oldIdx * 3], vAr[oldIdx * 3 + 1], vAr[oldIdx * 3 + 2]);
+        finalVerts.push(snappedVerts[oldIdx * 3], snappedVerts[oldIdx * 3 + 1], snappedVerts[oldIdx * 3 + 2]);
         if (origColors) {
           finalColors.push(origColors[oldIdx * 3], origColors[oldIdx * 3 + 1], origColors[oldIdx * 3 + 2]);
         }
@@ -532,20 +554,34 @@ class SculptManager {
     var finalFullFaces = new Uint32Array(fullFaces.length);
     nextV = 0;
     
+    const EPSILON = 0.01; // Increased to collapse tiny edges on centerline
+    const EPSILON_SQ = EPSILON * EPSILON;
+    
     for (var i = 0; i < fullVerts.length / 3; ++i) {
       var x = fullVerts[i * 3];
       var y = fullVerts[i * 3 + 1];
       var z = fullVerts[i * 3 + 2];
       
-      var key = Math.round(x*1000) + "_" + Math.round(y*1000) + "_" + Math.round(z*1000);
+      var found = -1;
+      for (let j = 0; j < uniqueVerts.length / 3; ++j) {
+        let dx = x - uniqueVerts[j * 3];
+        let dy = y - uniqueVerts[j * 3 + 1];
+        let dz = z - uniqueVerts[j * 3 + 2];
+        if (dx * dx + dy * dy + dz * dz < EPSILON_SQ) {
+          found = j;
+          break;
+        }
+      }
       
-      if (!weldMap.has(key)) {
-        weldMap.set(key, nextV);
+      if (found === -1) {
+        weldMap.set(i, nextV);
         uniqueVerts.push(x, y, z);
         if (fullColors) {
           uniqueColors.push(fullColors[i * 3], fullColors[i * 3 + 1], fullColors[i * 3 + 2]);
         }
         nextV++;
+      } else {
+        weldMap.set(i, found);
       }
     }
     
@@ -555,12 +591,60 @@ class SculptManager {
         finalFullFaces[i] = Utils.TRI_INDEX;
         continue;
       }
-      var x = fullVerts[idx * 3];
-      var y = fullVerts[idx * 3 + 1];
-      var z = fullVerts[idx * 3 + 2];
-      var key = Math.round(x*1000) + "_" + Math.round(y*1000) + "_" + Math.round(z*1000);
-      finalFullFaces[i] = weldMap.get(key);
+      finalFullFaces[i] = weldMap.get(idx);
     }
+    
+    // Dissolution loop moved below
+    
+    // Clean up faces (remove duplicates and handle triangles)
+    var seenFaces = new Set();
+    var newFacesList = [];
+    
+    for (var i = 0; i < finalFullFaces.length; i += 4) {
+      var iv1 = finalFullFaces[i];
+      var iv2 = finalFullFaces[i + 1];
+      var iv3 = finalFullFaces[i + 2];
+      var iv4 = finalFullFaces[i + 3];
+      
+      if (iv1 === Utils.TRI_INDEX) continue;
+      
+      var uvs = [];
+      if (iv1 !== Utils.TRI_INDEX) uvs.push(iv1);
+      if (iv2 !== Utils.TRI_INDEX && !uvs.includes(iv2)) uvs.push(iv2);
+      if (iv3 !== Utils.TRI_INDEX && !uvs.includes(iv3)) uvs.push(iv3);
+      if (iv4 !== Utils.TRI_INDEX && !uvs.includes(iv4)) uvs.push(iv4);
+      
+      if (uvs.length < 3) continue;
+      
+      // Check if all vertices are on the symmetry plane (X=0)
+      var allOnPlane = true;
+      for (var j = 0; j < uvs.length; j++) {
+        var idx = uvs[j];
+        if (Math.abs(uniqueVerts[idx * 3]) > 0.001) {
+          allOnPlane = false;
+          break;
+        }
+      }
+      if (allOnPlane) continue;
+      
+      // Check for duplicate faces (same set of vertices)
+      var sortedUvs = uvs.slice().sort((a, b) => a - b);
+      var key = sortedUvs.join('_');
+      if (seenFaces.has(key)) continue;
+      seenFaces.add(key);
+      
+
+      
+
+      
+      if (uvs.length === 3) {
+        newFacesList.push(uvs[0], uvs[1], uvs[2], Utils.TRI_INDEX);
+      } else {
+        newFacesList.push(uvs[0], uvs[1], uvs[2], uvs[3]);
+      }
+    }
+    
+    finalFullFaces = new Uint32Array(newFacesList);
     
     // 6.5. Dissolve valence-2 vertices on centerline
     var uniqueVertCount = uniqueVerts.length / 3;
@@ -592,79 +676,71 @@ class SculptManager {
         if (Math.abs(x) < 0.001) {
           var nArr = Array.from(neighbors[i]);
           var vA = nArr[0];
+          var vB = nArr[1];
+          // Only dissolve if BOTH neighbors are on the centerline!
+          // This ensures we only collapse edges ALONG the plane.
+          var aOnPlane = Math.abs(uniqueVerts[vA * 3]) < 0.001;
+          var bOnPlane = Math.abs(uniqueVerts[vB * 3]) < 0.001;
           
-          // Replace i with vA in all faces
-          for (var j = 0; j < finalFullFaces.length; ++j) {
-            if (finalFullFaces[j] === i) {
-              finalFullFaces[j] = vA;
+          if (aOnPlane && bOnPlane) {
+            // Replace i with vA in all faces
+            for (var j = 0; j < finalFullFaces.length; ++j) {
+              if (finalFullFaces[j] === i) {
+                finalFullFaces[j] = vA;
+              }
             }
+            dissolvedCount++;
           }
-          dissolvedCount++;
         }
       }
     }
     console.log(`[SculptManager] Dissolved ${dissolvedCount} valence-2 vertices on centerline.`);
+
+
+
+    // Remap vertices and faces to remove unused and drop degenerate faces
+    var vertMap = new Map();
+    var remapedVerts = [];
+    var remapedColors = [];
+    var remapedFaces = [];
+    var nextV = 0;
     
-    // Clean up faces (remove duplicates and handle triangles)
-    for (var i = 0; i < finalFullFaces.length; i += 4) {
+    for (let i = 0; i < finalFullFaces.length; i += 4) {
       var iv1 = finalFullFaces[i];
       var iv2 = finalFullFaces[i + 1];
       var iv3 = finalFullFaces[i + 2];
       var iv4 = finalFullFaces[i + 3];
       
+      // If the first vertex is TRI_INDEX, the face was marked as degenerate/deleted
       if (iv1 === Utils.TRI_INDEX) continue;
       
-      var uvs = [];
-      if (iv1 !== Utils.TRI_INDEX) uvs.push(iv1);
-      if (iv2 !== Utils.TRI_INDEX && !uvs.includes(iv2)) uvs.push(iv2);
-      if (iv3 !== Utils.TRI_INDEX && !uvs.includes(iv3)) uvs.push(iv3);
-      if (iv4 !== Utils.TRI_INDEX && !uvs.includes(iv4)) uvs.push(iv4);
+      const faceIndices = [iv1, iv2, iv3, iv4];
+      const mappedFace = [];
       
-      if (uvs.length < 3) {
-        finalFullFaces[i] = Utils.TRI_INDEX;
-        finalFullFaces[i + 1] = Utils.TRI_INDEX;
-        finalFullFaces[i + 2] = Utils.TRI_INDEX;
-        finalFullFaces[i + 3] = Utils.TRI_INDEX;
-      } else if (uvs.length === 3) {
-        finalFullFaces[i] = uvs[0];
-        finalFullFaces[i + 1] = uvs[1];
-        finalFullFaces[i + 2] = uvs[2];
-        finalFullFaces[i + 3] = Utils.TRI_INDEX;
-      } else {
-        finalFullFaces[i] = uvs[0];
-        finalFullFaces[i + 1] = uvs[1];
-        finalFullFaces[i + 2] = uvs[2];
-        finalFullFaces[i + 3] = uvs[3];
-      }
-    }
-    
-    // Remap vertices and faces to remove unused
-    var vertMap = new Map();
-    var remapedVerts = [];
-    var remapedColors = [];
-    var remapedFaces = new Uint32Array(finalFullFaces.length);
-    var nextV = 0;
-    
-    for (let i = 0; i < finalFullFaces.length; i++) {
-      var oldIdx = finalFullFaces[i];
-      if (oldIdx === Utils.TRI_INDEX) {
-        remapedFaces[i] = Utils.TRI_INDEX;
-        continue;
-      }
-      if (!vertMap.has(oldIdx)) {
-        vertMap.set(oldIdx, nextV);
-        remapedVerts.push(uniqueVerts[oldIdx * 3], uniqueVerts[oldIdx * 3 + 1], uniqueVerts[oldIdx * 3 + 2]);
-        if (uniqueColors.length > 0) {
-          remapedColors.push(uniqueColors[oldIdx * 3], uniqueColors[oldIdx * 3 + 1], uniqueColors[oldIdx * 3 + 2]);
+      for (let j = 0; j < 4; j++) {
+        const oldIdx = faceIndices[j];
+        if (oldIdx === Utils.TRI_INDEX) {
+          mappedFace.push(Utils.TRI_INDEX);
+          continue;
         }
-        nextV++;
+        
+        if (!vertMap.has(oldIdx)) {
+          vertMap.set(oldIdx, nextV);
+          remapedVerts.push(uniqueVerts[oldIdx * 3], uniqueVerts[oldIdx * 3 + 1], uniqueVerts[oldIdx * 3 + 2]);
+          if (uniqueColors.length > 0) {
+            remapedColors.push(uniqueColors[oldIdx * 3], uniqueColors[oldIdx * 3 + 1], uniqueColors[oldIdx * 3 + 2]);
+          }
+          nextV++;
+        }
+        mappedFace.push(vertMap.get(oldIdx));
       }
-      remapedFaces[i] = vertMap.get(oldIdx);
+      
+      remapedFaces.push(mappedFace[0], mappedFace[1], mappedFace[2], mappedFace[3]);
     }
     
     uniqueVerts = remapedVerts;
     uniqueColors = remapedColors;
-    finalFullFaces = remapedFaces;
+    finalFullFaces = new Uint32Array(remapedFaces);
     
     // 7. Update mesh
     var newMesh = new MeshStatic(this._main._gl);
@@ -687,12 +763,25 @@ class SculptManager {
     this._main.replaceMesh(mesh, newMesh);
     this._main.setMesh(newMesh);
     
+    // Invalidate wireframe cache for new mesh
+    if (newMesh._meshData) {
+      newMesh._meshData._drawElementsWireframe = null;
+      newMesh._meshData._drawArraysWireframe = null;
+      newMesh._meshData._edges = new Uint8ClampedArray(0);
+    }
+    
     const prevMeshForUndo = mesh;
     const nextMeshForRedo = newMesh;
     
     const undoMirror = () => {
       this._main.replaceMesh(nextMeshForRedo, prevMeshForUndo);
       this._main.setMesh(prevMeshForUndo);
+      // Invalidate wireframe cache for restored mesh
+      if (prevMeshForUndo._meshData) {
+        prevMeshForUndo._meshData._drawElementsWireframe = null;
+        prevMeshForUndo._meshData._drawArraysWireframe = null;
+        prevMeshForUndo._meshData._edges = new Uint8ClampedArray(0);
+      }
       if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
     };
     

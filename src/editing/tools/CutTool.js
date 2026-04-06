@@ -8,6 +8,7 @@ class CutTool extends SculptBase {
     super(main);
     this._continuous = true; // We want continuous strokes!
     this._cutPoints = [];
+    this._redoPoints = [];
     this._currentFace = -1;
     this._previewMesh = null;
   }
@@ -509,6 +510,7 @@ class CutTool extends SculptBase {
           return;
         }
         
+        this._redoPoints = []; // Clear redo chain on new interaction
         this._cutPoints.push(feature);
         this.updatePreviewMesh(picking.getIntersectionPoint());
         
@@ -520,6 +522,28 @@ class CutTool extends SculptBase {
   stroke(picking) {
     const hitPoint = picking.getIntersectionPoint();
     this.updatePreviewMesh(hitPoint);
+  }
+
+  onUndo() {
+    if (this._cutPoints.length > 0) {
+      const pt = this._cutPoints.pop();
+      this._redoPoints.push(pt);
+      const picking = this._main.getPicking();
+      this.updatePreviewMesh(picking.getIntersectionPoint());
+      return true;
+    }
+    return false;
+  }
+
+  onRedo() {
+    if (this._redoPoints && this._redoPoints.length > 0) {
+      const pt = this._redoPoints.pop();
+      this._cutPoints.push(pt);
+      const picking = this._main.getPicking();
+      this.updatePreviewMesh(picking.getIntersectionPoint());
+      return true;
+    }
+    return false;
   }
 
   doesFaceContainPoint(faceVerts, cp) {
@@ -890,6 +914,20 @@ class CutTool extends SculptBase {
     try {
       const mesh = this.getMesh();
       const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+      
+      // Manual snapshot to avoid capturing garbage at the end of physical buffers
+      const undoSnapshot = {
+        faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+        vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+        colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+        nbFaces: activeMesh.getNbFaces(),
+        nbVertices: activeMesh.getNbVertices()
+      };
+      if (activeMesh.getTexCoords()) {
+        undoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, activeMesh.getNbTexCoords() * 2));
+      }
     const vertices = activeMesh.getVertices();
     const colors = activeMesh.getColors();
     const materials = activeMesh.getMaterials();
@@ -993,6 +1031,12 @@ class CutTool extends SculptBase {
           newMaterials[id] = nv.material[0];
           newMaterials[id + 1] = nv.material[1];
           newMaterials[id + 2] = nv.material[2];
+        }
+        
+        if (newTexCoords) {
+          const uvid = nv.index * 2;
+          newTexCoords[uvid] = nv.uv[0];
+          newTexCoords[uvid + 1] = nv.uv[1];
         }
         
       }
@@ -1386,6 +1430,46 @@ class CutTool extends SculptBase {
         activeMesh._meshData._drawElementsWireframe = null;
         activeMesh._meshData._drawArraysWireframe = null;
       }
+      
+      // Manual snapshot to avoid capturing garbage at the end of physical buffers
+      const redoSnapshot = {
+        faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+        vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+        colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+        nbFaces: activeMesh.getNbFaces(),
+        nbVertices: activeMesh.getNbVertices()
+      };
+      if (activeMesh.getTexCoords()) {
+        redoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, activeMesh.getNbTexCoords() * 2));
+      }
+      
+      const undoCuts = () => {
+        if (activeMesh._meshData) {
+          activeMesh._meshData._edges = new Uint8ClampedArray(0);
+          activeMesh._meshData._drawElementsWireframe = null;
+          activeMesh._meshData._drawArraysWireframe = null;
+        }
+        this.applyMeshSnapshot(activeMesh, undoSnapshot);
+        if (undoSnapshot.texCoords) {
+          activeMesh.setTexCoords(undoSnapshot.texCoords);
+        }
+      };
+      
+      const redoCuts = () => {
+        if (activeMesh._meshData) {
+          activeMesh._meshData._edges = new Uint8ClampedArray(0);
+          activeMesh._meshData._drawElementsWireframe = null;
+          activeMesh._meshData._drawArraysWireframe = null;
+        }
+        this.applyMeshSnapshot(activeMesh, redoSnapshot);
+        if (redoSnapshot.texCoords) {
+          activeMesh.setTexCoords(redoSnapshot.texCoords);
+        }
+      };
+      
+      this._main.getStateManager().pushStateCustom(undoCuts, redoCuts);
     } catch (e) {
       console.error("[CutTool] Error in completeCut:", e);
     }
