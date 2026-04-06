@@ -1,0 +1,10 @@
+/Users/mattestela/.gemini/jetski/scratch/sculptxr/voxel_wasm/target/wasm32-unknown-unknown/release/deps/dyn_stack-3d2e2a29fd98022b.d: /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/lib.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/alloc.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/mem.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/stack_req.rs
+
+/Users/mattestela/.gemini/jetski/scratch/sculptxr/voxel_wasm/target/wasm32-unknown-unknown/release/deps/libdyn_stack-3d2e2a29fd98022b.rlib: /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/lib.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/alloc.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/mem.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/stack_req.rs
+
+/Users/mattestela/.gemini/jetski/scratch/sculptxr/voxel_wasm/target/wasm32-unknown-unknown/release/deps/libdyn_stack-3d2e2a29fd98022b.rmeta: /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/lib.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/alloc.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/mem.rs /Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/stack_req.rs
+
+/Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/lib.rs:
+/Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/alloc.rs:
+/Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/mem.rs:
+/Users/mattestela/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/dyn-stack-0.13.2/src/stack_req.rs:

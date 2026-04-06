@@ -57,7 +57,7 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     try {
       // Use robust fetch approach for Vite Web Workers
       const wasmUrl = new URL('./voxel_wasm.wasm', import.meta.url).href;
-      const response = await fetch(wasmUrl);
+      const response = await fetch(wasmUrl, { cache: 'no-store' });
       const { instance } = await WebAssembly.instantiateStreaming(response, {
         env: {
           js_getrandom: function(ptr, len) {
@@ -93,6 +93,18 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       console.log("VoxelWorker: Rust WASM Loaded Successfully!");
     } catch (wasmErr) {
       console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
+    }
+
+    try {
+      const { SimplifyModifier } = await import('three/examples/jsm/modifiers/SimplifyModifier.js');
+      const { BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute } = await import('three');
+      globalThis.SimplifyModifier = SimplifyModifier;
+      globalThis.BufferGeometry = BufferGeometry;
+      globalThis.Float32BufferAttribute = Float32BufferAttribute;
+      globalThis.Uint32BufferAttribute = Uint32BufferAttribute;
+      console.log("VoxelWorker: SimplifyModifier and Three types Loaded Successfully!");
+    } catch (simplifyErr) {
+      console.warn("VoxelWorker: SimplifyModifier Load Failed", simplifyErr);
     }
 
     isReady = true;
@@ -1644,13 +1656,17 @@ function remeshQuads(msg) {
   const vLen = vertices.length;
   const fLen = finalFaces.length;
 
+  const t0 = performance.now();
   const vPtr = wasm.alloc(vLen * 4);
   const fPtr = wasm.alloc(fLen * 4);
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
   new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
 
+  const t_exe_start = performance.now();
   const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces, stride);
+  const t_exe_end = performance.now();
 
   if (resPtr === 0) {
     console.error("remesh_quads_wasm FAILED");
@@ -1664,12 +1680,20 @@ function remeshQuads(msg) {
     return;
   }
 
+  const t_copy_out_start = performance.now();
   const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
   const outVPtr = meta[0], outVLen = meta[1];
   const outFPtr = meta[2], outFLen = meta[3];
 
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] remeshQuads Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
@@ -1719,13 +1743,17 @@ function simplifyMesh(msg) {
   const vLen = vertices.length;
   const fLen = finalFaces.length;
 
+  const t0 = performance.now();
   const vPtr = wasm.alloc(vLen * 4);
   const fPtr = wasm.alloc(fLen * 4);
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
   new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
 
+  const t_exe_start = performance.now();
   const resPtr = wasm.simplify_mesh_wasm(vPtr, vLen, fPtr, fLen, targetFaces, errorThreshold);
+  const t_exe_end = performance.now();
 
   if (resPtr === 0) {
     console.error("simplify_mesh_wasm FAILED");
@@ -1739,18 +1767,27 @@ function simplifyMesh(msg) {
     return;
   }
 
+  const t_copy_out_start = performance.now();
   const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
   const outVPtr = meta[0], outVLen = meta[1];
   const outFPtr = meta[2], outFLen = meta[3];
 
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] simplifyMesh Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
   wasm.free_mesh_result(resPtr);
   wasm.dealloc(vPtr, vLen * 4);
   wasm.dealloc(fPtr, fLen * 4);
+  console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 3}`);
 
   let outColors = null;
   if (msg.colors) {
@@ -1793,13 +1830,17 @@ function remeshIsotropic(msg) {
   const vLen = vertices.length;
   const fLen = finalFaces.length;
 
+  const t0 = performance.now();
   const vPtr = wasm.alloc(vLen * 4);
   const fPtr = wasm.alloc(fLen * 4);
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
   new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
 
+  const t_exe_start = performance.now();
   const resPtr = wasm.remesh_isotropic_wasm(vPtr, vLen, fPtr, fLen, targetEdgeLength);
+  const t_exe_end = performance.now();
 
   if (resPtr === 0) {
     console.error("remesh_isotropic_wasm FAILED");
@@ -1813,12 +1854,20 @@ function remeshIsotropic(msg) {
     return;
   }
 
+  const t_copy_out_start = performance.now();
   const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
   const outVPtr = meta[0], outVLen = meta[1];
   const outFPtr = meta[2], outFLen = meta[3];
 
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] remeshIsotropic Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] remeshIsotropic output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 

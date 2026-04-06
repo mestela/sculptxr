@@ -538,6 +538,9 @@ pub extern "C" fn simplify_mesh_wasm(
     target_faces: u32,
     error_threshold: f32,
 ) -> *mut MeshResult {
+    // Force Rayon to use a single thread to avoid overhead in WASM!
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(1).build_global();
+
     if vertices_ptr.is_null() || faces_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -651,6 +654,9 @@ pub extern "C" fn remesh_isotropic_wasm(
     faces_len: usize,
     target_edge_length: f32,
 ) -> *mut MeshResult {
+    // Force Rayon to use a single thread to avoid overhead in WASM!
+    let _ = rayon::ThreadPoolBuilder::new().num_threads(1).build_global();
+
     if vertices_ptr.is_null() || faces_ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -743,4 +749,78 @@ pub extern "C" fn remesh_isotropic_wasm(
     std::mem::forget(out_faces_flat);
 
     Box::into_raw(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn bench_remesh() {
+        // Generate a test mesh (a small grid)
+        let mut vertices = Vec::new();
+        let grid_size = 15; // 15x15 = 225 vertices
+        for y in 0..grid_size {
+            for x in 0..grid_size {
+                vertices.push(x as f32);
+                vertices.push(y as f32);
+                vertices.push(0.0);
+            }
+        }
+
+        let mut faces = Vec::new();
+        for y in 0..(grid_size - 1) {
+            for x in 0..(grid_size - 1) {
+                let v0 = (y * grid_size + x) as u32;
+                let v1 = (y * grid_size + x + 1) as u32;
+                let v2 = ((y + 1) * grid_size + x) as u32;
+                let v3 = ((y + 1) * grid_size + x + 1) as u32;
+
+                // Tri 1
+                faces.push(v0);
+                faces.push(v1);
+                faces.push(v2);
+                faces.push(4294967295);
+
+                // Tri 2
+                faces.push(v1);
+                faces.push(v3);
+                faces.push(v2);
+                faces.push(4294967295);
+            }
+        }
+
+        println!("Running native bench with {} vertices, {} faces...", vertices.len() / 3, faces.len() / 4);
+
+        let start = Instant::now();
+        
+        let mut baby_shark_vertices = Vec::with_capacity(vertices.len() / 3);
+        for i in (0..vertices.len()).step_by(3) {
+            baby_shark_vertices.push(nalgebra::Vector3::new(
+                vertices[i],
+                vertices[i + 1],
+                vertices[i + 2],
+            ));
+        }
+
+        let mut baby_shark_faces = Vec::new();
+        for i in (0..faces.len()).step_by(4) {
+             baby_shark_faces.push(faces[i] as usize);
+             baby_shark_faces.push(faces[i + 1] as usize);
+             baby_shark_faces.push(faces[i + 2] as usize);
+        }
+
+        let mut mesh = baby_shark::mesh::corner_table::CornerTableF::from_vertex_and_face_slices(
+            &baby_shark_vertices,
+            &baby_shark_faces,
+        );
+
+        let remesher = IncrementalRemesher::default();
+        remesher.remesh(&mut mesh, 1.0); // Target edge length
+
+        let duration = start.elapsed();
+        println!("Native Remesh took: {:?}", duration);
+        println!("Output vertices: {}", mesh.count_vertices());
+    }
 }

@@ -1,4 +1,4 @@
-# SculptXR (v1.0.121)
+# SculptXR (v1.0.122)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.122**: **Performance**: **WASM Threading Investigation**: Investigated 7.5s lockups, forced Rayon to single thread, and added `{ cache: 'no-store' }` to WASM fetch.
 *   **v1.0.121**: **Feature**: **Local Triangle-Only Quadrangulation**: Added a "Skip Quads" option to targetedly merge adjacent triangles without affecting existing quads or vertex colors.
 *   **v1.0.120**: **Fix**: **Mesh Shading Corruption (Black Mesh)**: Resolved issue where `DeleteFace` and other topological edits caused the mesh to go black.
-*   **v1.0.119**: **Feature**: **Stylus Tilt Controls**: Added a "Stylus Tilt" slider to the VR Settings menu (range ±45°).
 
 [View Full Release History](docs/releases.md)
 

@@ -1,3 +1,11 @@
+# v1.0.122
+- **Performance**: **WASM Threading Investigation**: Investigated 7.5-second lockups in Baby Shark library calls (`simplifyMesh`, `remeshIsotropic`).
+    - Forced Rayon to use a single thread to avoid threading overhead in the browser.
+    - Attempted full WASM multithreading with atomics and isolation headers (`Cross-Origin` headers in `vite.config.js`).
+    - Assessed `Three.js` `SimplifyModifier` as fallback (found to be too slow and hung color mapper).
+    - Retained Baby Shark at ~7s as the best available path for now.
+- **Fix**: **WASM Caching**: Added `{ cache: 'no-store' }` to the WASM fetch in `GeometryWorker.js` to ensure fresh builds are loaded.
+
 # v1.0.121
 - **Feature**: **Local Triangle-Only Quadrangulation**: Added a "Skip Quads" option to the Quadrangulate tool in VR. When enabled, it performs a purely local search to merge adjacent triangles into quads without welding vertices or processing existing quads. This prevents loss of color data and preserves clean topology.
 - **Fix**: **Color Loss in Quadrangulation**: Fixed issue where the regular Quadrangulate tool removed vertex colors by mapping colors to the new welded vertices in the worker.
