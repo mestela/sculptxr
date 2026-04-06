@@ -95,17 +95,7 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
     }
 
-    try {
-      const { SimplifyModifier } = await import('three/examples/jsm/modifiers/SimplifyModifier.js');
-      const { BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute } = await import('three');
-      globalThis.SimplifyModifier = SimplifyModifier;
-      globalThis.BufferGeometry = BufferGeometry;
-      globalThis.Float32BufferAttribute = Float32BufferAttribute;
-      globalThis.Uint32BufferAttribute = Uint32BufferAttribute;
-      console.log("VoxelWorker: SimplifyModifier and Three types Loaded Successfully!");
-    } catch (simplifyErr) {
-      console.warn("VoxelWorker: SimplifyModifier Load Failed", simplifyErr);
-    }
+
 
     isReady = true;
 

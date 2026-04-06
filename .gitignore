@@ -25,3 +25,6 @@ ngrok*
 *.sublime-project
 cert.pem
 key.pem
+
+# Rust build artifacts
+voxel_wasm/target/
