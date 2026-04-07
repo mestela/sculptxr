@@ -7,10 +7,11 @@
 ---
 
 ## 1. Todo
-* [ ] **wasm speed**: how to profile, fix?
+* [ ] **Processing states on slow processes** Like how instant meshes goes gray, do the same for decimate/isotropic remesh. Progress?
+* [ ] **Fix normals breaks things**: Especially after quad remesh/quadrangulate
+* [ ] **Symmetry line cleanup tools**: Bisected diamonds to collapse, centerline that drifts
 * [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
 * [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
-* [ ] **Triangulate**: Either internal or another library
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
@@ -19,6 +20,8 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **Triangulate**: Either internal or another library -- using baby shark
+* [x] **wasm speed**: how to profile, fix? -- as fast as we can go for the moment. single threaded etc
 * [x] **Quadrangulate** should leave existing quads alone. option maybe? 
 * [x] **Stylus tilt**: Added slider, saved to local storage, and updated tip physics.
 * [?] **Symmetry cut**: Fails on latest test head after simple edits --- partial progress, needs work

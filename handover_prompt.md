@@ -22,5 +22,4 @@ The Stylus Tilt feature is now stable and polished. The Symmetry Mirror tool was
 4.  **Symmetry Mirror**: Increased tolerance to 0.01 to fix sliver edges.
 
 ## Next Steps / Backlog
-Based on `docs/threejs_todo.md`:
-1.  **Triangulate**: Either internal or another library. Work on this next.
+Based on `docs/threejs_todo.md`

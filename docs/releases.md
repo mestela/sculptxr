@@ -1,3 +1,7 @@
+# v1.0.125
+- **UX**: **Mesh Processing State UI Feedback**: Decimation and Isotropic Remeshing buttons in the VR Topology menu now provide real-time feedback by disabling themselves and displaying a "Processing..." label while their respective WASM/Worker loops execute, mirroring the behavior of the Quad Remesher.
+- **Safety**: **Duplicate Click Prevention**: Decimation and Isotropic Remeshing operations now incorporate a duplicate click prevention lock and a 30-second safety timeout reset to prevent worker stalls from permanently locking the UI.
+
 # v1.0.122
 - **Performance**: **WASM Threading Investigation**: Investigated 7.5-second lockups in Baby Shark library calls (`simplifyMesh`, `remeshIsotropic`).
     - Forced Rayon to use a single thread to avoid threading overhead in the browser.

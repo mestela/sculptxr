@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>WebXR Controller Repro</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style>
+        body { margin: 0; background-color: #000; color: #fff; font-family: sans-serif; }
+        #info { position: absolute; top: 10px; width: 100%; text-align: center; z-index: 100; }
+        #log { position: absolute; bottom: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.7); padding: 10px; max-height: 300px; overflow-y: auto; max-width: 80%; }
+    </style>
+</head>
+<body>
+    <div id="info">WebXR Controller Test - Refresh to check persistence</div>
+    <div id="log">Log:<br></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+        const logDiv = document.getElementById('log');
+        function log(msg) {
+            logDiv.innerHTML += msg + '<br>';
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(msg);
+        }
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 10 );
+        camera.position.set( 0, 1.6, 3 );
+
+        const renderer = new THREE.WebGLRenderer( { antialias: true } );
+        renderer.setPixelRatio( window.devicePixelRatio );
+        renderer.setSize( window.innerWidth, window.innerHeight );
+        renderer.xr.enabled = true;
+        document.body.appendChild( renderer.domElement );
+
+        document.body.appendChild( VRButton.createButton( renderer ) );
+
+        const gridHelper = new THREE.GridHelper( 10, 10 );
+        scene.add( gridHelper );
+
+        const ambientLight = new THREE.AmbientLight( 0xffffff, 1.0 );
+        scene.add( ambientLight );
+
+        // Controllers
+        const controller1 = renderer.xr.getController( 0 );
+        controller1.addEventListener( 'connected', (e) => {
+            log('Controller 0 connected: ' + e.data.handedness);
+            setupController(controller1, e.data);
+        });
+        controller1.addEventListener( 'disconnected', () => { log('Controller 0 disconnected'); });
+        scene.add( controller1 );
+
+        const controller2 = renderer.xr.getController( 1 );
+        controller2.addEventListener( 'connected', (e) => {
+            log('Controller 1 connected: ' + e.data.handedness);
+            setupController(controller2, e.data);
+        });
+        controller2.addEventListener( 'disconnected', () => { log('Controller 1 disconnected'); });
+        scene.add( controller2 );
+
+        function setupController(controller, data) {
+            // Remove old visual if any
+            while(controller.children.length > 0) {
+                controller.remove(controller.children[0]);
+            }
+            // Add a simple cone to show pointing direction
+            const geometry = new THREE.ConeGeometry( 0.02, 0.1, 8 );
+            geometry.rotateX( - Math.PI / 2 );
+            const material = new THREE.MeshBasicMaterial( { color: data.handedness === 'left' ? 0xff0000 : 0x00ff00 } );
+            const mesh = new THREE.Mesh( geometry, material );
+            controller.add( mesh );
+        }
+
+        // Advanced Logging for Session Lifecycle
+        renderer.xr.addEventListener('sessionstart', () => {
+            log('--- XR Session Started ---');
+            const session = renderer.xr.getSession();
+            log('Initial Input sources count: ' + session.inputSources.length);
+            
+            for (let i = 0; i < session.inputSources.length; i++) {
+                const source = session.inputSources[i];
+                log(`Initial Source [${i}]: ${source.handedness} (${source.targetRayMode})`);
+            }
+            
+            session.addEventListener('inputsourceschange', (e) => {
+                log('Event: inputsourceschange fired');
+                const added = e.added.length !== undefined ? e.added.length : e.added.size;
+                const removed = e.removed.length !== undefined ? e.removed.length : e.removed.size;
+                log(`  Added: ${added}, Removed: ${removed}`);
+                log('  Current total sources: ' + session.inputSources.length);
+                
+                for (let i = 0; i < session.inputSources.length; i++) {
+                    const source = session.inputSources[i];
+                    log(`  Current Source [${i}]: ${source.handedness}`);
+                }
+            });
+        });
+
+        renderer.xr.addEventListener('sessionend', () => {
+            log('--- XR Session Ended ---');
+        });
+
+        renderer.setAnimationLoop( function () {
+            renderer.render( scene, camera );
+        } );
+
+        window.addEventListener( 'resize', onWindowResize );
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( window.innerWidth, window.innerHeight );
+        }
+    </script>
+</body>
+</html>

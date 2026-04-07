@@ -57,11 +57,36 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     try {
       // Use robust fetch approach for Vite Web Workers
       const wasmUrl = new URL('./voxel_wasm.wasm', import.meta.url).href;
-      const response = await fetch(wasmUrl);
+      const response = await fetch(wasmUrl, { cache: 'no-store' });
       const { instance } = await WebAssembly.instantiateStreaming(response, {
         env: {
-          // Provide basic math env if Rust standard library requires panic handlers (shouldn't for no_std/basic std)
-        }
+          js_getrandom: function(ptr, len) {
+            if (!globalThis.wasmModule) {
+              console.error("js_getrandom called before wasmModule was set!");
+              return;
+            }
+            const buf = new Uint8Array(globalThis.wasmModule.memory.buffer, ptr, len);
+            crypto.getRandomValues(buf);
+          }
+        },
+        __wbindgen_placeholder__: new Proxy({}, {
+          get: function(target, prop) {
+            console.warn(`[GeometryWorker] Stub called for __wbindgen_placeholder__.${prop}`);
+            return function() {
+              console.warn(`[GeometryWorker] Stub executed for __wbindgen_placeholder__.${prop}`);
+              return 0;
+            };
+          }
+        }),
+        __wbindgen_externref_xform__: new Proxy({}, {
+          get: function(target, prop) {
+            console.warn(`[GeometryWorker] Stub called for __wbindgen_externref_xform__.${prop}`);
+            return function() {
+              console.warn(`[GeometryWorker] Stub executed for __wbindgen_externref_xform__.${prop}`);
+              return 0;
+            };
+          }
+        })
       });
       globalThis.wasmModule = instance.exports;
       wasmModule = instance.exports;
@@ -69,6 +94,8 @@ let isDirty = false; // Tracks if the current snapshot has been modified
     } catch (wasmErr) {
       console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
     }
+
+
 
     isReady = true;
 
@@ -153,6 +180,12 @@ self.onmessage = function (e) {
         break;
       case 'REMESH_QUADRS':
         remeshQuads(msg);
+        break;
+      case 'SIMPLIFY_MESH':
+        simplifyMesh(msg);
+        break;
+      case 'REMESH_ISOTROPIC':
+        remeshIsotropic(msg);
         break;
       case 'SLICE_AND_CAP':
         sliceAndCap(msg);
@@ -1082,7 +1115,7 @@ function quadCalcError(v1, v2, v3, v4) {
 }
 
 // Coplanar Triangle Merging (Quadrangulation)
-function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetryX = 0) {
+function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetryX = 0, isQuadTri = null, originalQuads = []) {
   if (!triIndices || triIndices.length === 0) return new Uint32Array(0);
 
   const numTris = triIndices.length / 3;
@@ -1165,7 +1198,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
   }
 
   const merged = new Uint8Array(numTris);
-  const outQuads = [];
+  const outQuads = [...originalQuads];
   const outTris = [];
 
   // Candidate collection
@@ -1182,6 +1215,9 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
     if (merged[triA] || merged[triB]) {
       if (numTris < 20) console.log(`[Quadrangulate]   Skipping: One or both triangles already merged.`);
+      continue;
+    }
+    if (isQuadTri && (isQuadTri[triA] || isQuadTri[triB])) {
       continue;
     }
 
@@ -1354,7 +1390,7 @@ function quadrangulateGreedy(vertices, triIndices, rejectSeams = false, symmetry
 
   // Set rest of Triangles
   for (let i = 0; i < numTris; i++) {
-    if (!merged[i]) {
+    if (!merged[i] && (!isQuadTri || !isQuadTri[i])) {
       outTris.push([triIndices[i * 3], triIndices[i * 3 + 1], triIndices[i * 3 + 2]]);
       stats.leftoverTris++;
     }
@@ -1403,7 +1439,166 @@ function triangulateOnly(msg) {
 }
 
 function quadrangulateOnly(msg) {
-  // First triangulate if it has quads!
+  const faces = msg.f;
+  const vertices = msg.v;
+  
+  if (msg.skipsQuads) {
+    // Advanced mode: ONLY merge adjacent triangles, ignore quads, preserve colors and vertices!
+    const edgeMap = new Map(); // key -> [faceIdx]
+    
+    // 1. Build edge map for TRIANGLES only!
+    for (let i = 0; i < faces.length; i += 4) {
+      if (faces[i + 3] === 4294967295) {
+        const v0 = faces[i];
+        const v1 = faces[i + 1];
+        const v2 = faces[i + 2];
+        
+        const edges = [
+          [v0, v1], [v1, v2], [v2, v0]
+        ];
+        
+        for (const [a, b] of edges) {
+          const minV = Math.min(a, b);
+          const maxV = Math.max(a, b);
+          const key = `${minV}_${maxV}`;
+          
+          let list = edgeMap.get(key);
+          if (!list) {
+            list = [];
+            edgeMap.set(key, list);
+          }
+          list.push(i);
+        }
+      }
+    }
+    
+    const merged = new Set();
+    const newQuads = [];
+    
+    // 2. Find candidates!
+    for (const [key, faceList] of edgeMap.entries()) {
+      if (faceList.length === 2) {
+        const fA = faceList[0];
+        const fB = faceList[1];
+        
+        if (merged.has(fA) || merged.has(fB)) continue;
+        
+        const av0 = faces[fA];
+        const av1 = faces[fA + 1];
+        const av2 = faces[fA + 2];
+        
+        const bv0 = faces[fB];
+        const bv1 = faces[fB + 1];
+        const bv2 = faces[fB + 2];
+        
+        const [v0Str, v1Str] = key.split('_');
+        const ev0 = parseInt(v0Str);
+        const ev1 = parseInt(v1Str);
+        
+        let diaA = -1;
+        if (av0 !== ev0 && av0 !== ev1) diaA = av0;
+        else if (av1 !== ev0 && av1 !== ev1) diaA = av1;
+        else diaA = av2;
+        
+        let diaB = -1;
+        if (bv0 !== ev0 && bv0 !== ev1) diaB = bv0;
+        else if (bv1 !== ev0 && bv1 !== ev1) diaB = bv1;
+        else diaB = bv2;
+        
+        if (diaA === -1 || diaB === -1) continue;
+        
+        // 2D Projection & Angle Sort to ensure correct quad winding!
+        const pts = [ev0, diaA, ev1, diaB].map(idx => ({
+          idx,
+          x: vertices[idx * 3],
+          y: vertices[idx * 3 + 1],
+          z: vertices[idx * 3 + 2]
+        }));
+
+        const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+        const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+        const cz = (pts[0].z + pts[1].z + pts[2].z + pts[3].z) / 4;
+
+        // Crude normal!
+        const ax = pts[1].x - pts[0].x;
+        const ay = pts[1].y - pts[0].y;
+        const az = pts[1].z - pts[0].z;
+        const bx = pts[2].x - pts[0].x;
+        const by = pts[2].y - pts[0].y;
+        const bz = pts[2].z - pts[0].z;
+        const nx = ay * bz - az * by;
+        const ny = az * bx - ax * bz;
+        const nz = ax * by - ay * bx;
+
+        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        const snx = nx / (nLen || 1);
+        const sny = ny / (nLen || 1);
+        const snz = nz / (nLen || 1);
+
+        let tx = 1, ty = 0, tz = 0;
+        if (Math.abs(snx) > 0.9) { tx = 0; ty = 1; }
+        let ux = ty * snz - tz * sny;
+        let uy = tz * snx - tx * snz;
+        let uz = tx * sny - ty * snx;
+        const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz);
+        ux /= (uLen || 1); uy /= (uLen || 1); uz /= (uLen || 1);
+
+        let vx = sny * uz - snz * uy;
+        let vy = snz * ux - snx * uz;
+        let vz = snx * uy - sny * ux;
+        const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        vx /= (vLen || 1); vy /= (vLen || 1); vz /= (vLen || 1);
+
+        const angles = pts.map(p => {
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          const dz = p.z - cz;
+          const x = dx * ux + dy * uy + dz * uz;
+          const y = dx * vx + dy * vy + dz * vz;
+          return { idx: p.idx, theta: Math.atan2(y, x) };
+        });
+
+        angles.sort((a, b) => a.theta - b.theta);
+        
+        newQuads.push([angles[0].idx, angles[1].idx, angles[2].idx, angles[3].idx]);
+        merged.add(fA);
+        merged.add(fB);
+      }
+    }
+    
+    // 3. Reconstruct faces!
+    const finalFaces = [];
+    for (let i = 0; i < faces.length; i += 4) {
+      if (faces[i + 3] !== 4294967295) {
+        finalFaces.push(faces[i], faces[i + 1], faces[i + 2], faces[i + 3]);
+      } else {
+        if (!merged.has(i)) {
+          finalFaces.push(faces[i], faces[i + 1], faces[i + 2], -1);
+        }
+      }
+    }
+    
+    for (const quad of newQuads) {
+      finalFaces.push(quad[0], quad[1], quad[2], quad[3]);
+    }
+    
+    const padded = new Uint32Array(finalFaces);
+    
+    const transfer = [vertices.buffer, padded.buffer, msg.c ? msg.c.buffer : null].filter(Boolean);
+    const uniqueTransfer = [...new Set(transfer)];
+    
+    self.postMessage({
+      type: 'QUADRANGULATE_RESULT',
+      v: vertices,
+      f: padded,
+      c: msg.c, // Pass back original colors directly!
+      stats: { tris: faces.length / 4, merged: newQuads.length }
+    }, uniqueTransfer);
+    
+    return;
+  }
+  
+  // Original behavior!
   const tris = triangulateQuads(msg.f);
   
   // Weld vertices to ensure clean connectivity for sorting
@@ -1412,12 +1607,25 @@ function quadrangulateOnly(msg) {
   // Run our perfect quadrangulation!
   const result = quadrangulateGreedy(welded.vertices, welded.faces, msg.rejectSeams, msg.symmetryX);
   
+  // Handle colors if present!
+  let newColors = null;
+  if (msg.c) {
+    newColors = new Float32Array(welded.vertices.length);
+    for (let i = 0; i < welded.newToOldMap.length; i++) {
+      const oldIdx = welded.newToOldMap[i];
+      newColors[i * 3] = msg.c[oldIdx * 3];
+      newColors[i * 3 + 1] = msg.c[oldIdx * 3 + 1];
+      newColors[i * 3 + 2] = msg.c[oldIdx * 3 + 2];
+    }
+  }
+
   self.postMessage({
     type: 'QUADRANGULATE_RESULT',
     v: welded.vertices,
     f: result.paddedFaces,
+    c: newColors,
     stats: result.stats
-  }, [welded.vertices.buffer, result.paddedFaces.buffer]);
+  }, [welded.vertices.buffer, result.paddedFaces.buffer, newColors ? newColors.buffer : null].filter(Boolean));
 }
 
 function remeshQuads(msg) {
@@ -1429,26 +1637,26 @@ function remeshQuads(msg) {
   const wasm = globalThis.wasmModule;
   const vertices = msg.v;
   
-  let finalFaces = msg.f;
-  let stride = 4;
-  
-  if (msg.isTriangles) {
-    stride = 3;
-    finalFaces = unpadTriangles(msg.f);
-  }
+  // remesh_quads_wasm expects 4-padded faces always (even for triangles)
+  const finalFaces = msg.f;
+  const stride = 4;
 
   const targetFaces = msg.targetFaces;
 
   const vLen = vertices.length;
   const fLen = finalFaces.length;
 
+  const t0 = performance.now();
   const vPtr = wasm.alloc(vLen * 4);
   const fPtr = wasm.alloc(fLen * 4);
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
   new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
 
+  const t_exe_start = performance.now();
   const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces, stride);
+  const t_exe_end = performance.now();
 
   if (resPtr === 0) {
     console.error("remesh_quads_wasm FAILED");
@@ -1462,14 +1670,196 @@ function remeshQuads(msg) {
     return;
   }
 
+  const t_copy_out_start = performance.now();
   const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
   const outVPtr = meta[0], outVLen = meta[1];
   const outFPtr = meta[2], outFLen = meta[3];
 
   const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] remeshQuads Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
+
+  wasm.free_mesh_result(resPtr);
+  wasm.dealloc(vPtr, vLen * 4);
+  wasm.dealloc(fPtr, fLen * 4);
+
+  let outColors = null;
+  if (msg.colors) {
+    console.log("[GeometryWorker] Transferring vertex colors...");
+    outColors = transferColors(outVertices, vertices, msg.colors);
+  }
+
+  const transfer = [];
+  if (outVertices.buffer) transfer.push(outVertices.buffer);
+  if (outFaces.buffer) transfer.push(outFaces.buffer);
+  if (outColors && outColors.buffer) transfer.push(outColors.buffer);
+
+  self.postMessage({
+    type: 'MESH_UPDATE_QUAD',
+    data: {
+      vertices: outVertices,
+      faces: outFaces,
+      colors: outColors,
+      id: msg.id
+    }
+  }, transfer);
+}
+
+function simplifyMesh(msg) {
+  if (!globalThis.wasmModule) {
+    console.error("simplifyMesh: wasmModule not loaded");
+    return;
+  }
+  const wasm = globalThis.wasmModule;
+
+  const vertices = msg.v;
+  let finalFaces = msg.f;
+  
+  if (msg.isTriangles) {
+    finalFaces = unpadTriangles(msg.f);
+  }
+
+  const targetFaces = msg.targetFaces || 0;
+  const errorThreshold = msg.errorThreshold || 0.001;
+
+  const vLen = vertices.length;
+  const fLen = finalFaces.length;
+
+  const t0 = performance.now();
+  const vPtr = wasm.alloc(vLen * 4);
+  const fPtr = wasm.alloc(fLen * 4);
+
+  new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
+
+  const t_exe_start = performance.now();
+  const resPtr = wasm.simplify_mesh_wasm(vPtr, vLen, fPtr, fLen, targetFaces, errorThreshold);
+  const t_exe_end = performance.now();
+
+  if (resPtr === 0) {
+    console.error("simplify_mesh_wasm FAILED");
+    wasm.dealloc(vPtr, vLen * 4);
+    wasm.dealloc(fPtr, fLen * 4);
+    
+    self.postMessage({
+      type: 'MESH_UPDATE_QUAD_ERROR',
+      message: "Rust simplify_mesh_wasm returned 0 (failed to simplify)"
+    });
+    return;
+  }
+
+  const t_copy_out_start = performance.now();
+  const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
+  const outVPtr = meta[0], outVLen = meta[1];
+  const outFPtr = meta[2], outFLen = meta[3];
+
+  const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
+  const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] simplifyMesh Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
+
+  console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
+
+  wasm.free_mesh_result(resPtr);
+  wasm.dealloc(vPtr, vLen * 4);
+  wasm.dealloc(fPtr, fLen * 4);
+  console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 3}`);
+
+  let outColors = null;
+  if (msg.colors) {
+    console.log("[GeometryWorker] Transferring vertex colors...");
+    outColors = transferColors(outVertices, vertices, msg.colors);
+  }
+
+  const transfer = [];
+  if (outVertices.buffer) transfer.push(outVertices.buffer);
+  if (outFaces.buffer) transfer.push(outFaces.buffer);
+  if (outColors && outColors.buffer) transfer.push(outColors.buffer);
+
+  self.postMessage({
+    type: 'MESH_UPDATE_QUAD',
+    data: {
+      vertices: outVertices,
+      faces: outFaces,
+      colors: outColors,
+      id: msg.id
+    }
+  }, transfer);
+}
+
+function remeshIsotropic(msg) {
+  if (!globalThis.wasmModule) {
+    console.error("remeshIsotropic: wasmModule not loaded");
+    return;
+  }
+  const wasm = globalThis.wasmModule;
+
+  const vertices = msg.v;
+  let finalFaces = msg.f;
+  
+  if (msg.isTriangles) {
+    finalFaces = unpadTriangles(msg.f);
+  }
+
+  const targetEdgeLength = msg.targetEdgeLength || 0.1;
+
+  const vLen = vertices.length;
+  const fLen = finalFaces.length;
+
+  const t0 = performance.now();
+  const vPtr = wasm.alloc(vLen * 4);
+  const fPtr = wasm.alloc(fLen * 4);
+
+  new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
+  new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+  const t_copy_in = performance.now();
+
+  const t_exe_start = performance.now();
+  const resPtr = wasm.remesh_isotropic_wasm(vPtr, vLen, fPtr, fLen, targetEdgeLength);
+  const t_exe_end = performance.now();
+
+  if (resPtr === 0) {
+    console.error("remesh_isotropic_wasm FAILED");
+    wasm.dealloc(vPtr, vLen * 4);
+    wasm.dealloc(fPtr, fLen * 4);
+    
+    self.postMessage({
+      type: 'MESH_UPDATE_QUAD_ERROR',
+      message: "Rust remesh_isotropic_wasm returned 0 (failed to remesh)"
+    });
+    return;
+  }
+
+  const t_copy_out_start = performance.now();
+  const meta = new Uint32Array(wasm.memory.buffer, resPtr, 10);
+  const outVPtr = meta[0], outVLen = meta[1];
+  const outFPtr = meta[2], outFLen = meta[3];
+
+  const outVertices = new Float32Array(wasm.memory.buffer, outVPtr, outVLen).slice();
+  const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
+  const t_copy_out_end = performance.now();
+
+  console.log(`[GeometryWorker] remeshIsotropic Profile:`);
+  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
+
+  console.log(`[GeometryWorker] remeshIsotropic output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
   wasm.free_mesh_result(resPtr);
   wasm.dealloc(vPtr, vLen * 4);

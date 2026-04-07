@@ -377,6 +377,18 @@ class SculptManager {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
+    if (this._isProcessingQuads) return; // Prevent duplicate clicks!
+
+    this._isProcessingQuads = true;
+
+    // 30s Safety Timeout to reset UI if worker hangs
+    if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
+    this._quadRemeshTimeout = setTimeout(() => {
+      if (this._isProcessingQuads) {
+        this._isProcessingQuads = false;
+      }
+    }, 30000);
+
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (!voxelTool || !voxelTool._worker) {
       console.error("SculptManager: VoxelWorker not initialized!");
@@ -404,6 +416,18 @@ class SculptManager {
   remeshIsotropic(targetEdgeLength) {
     const mesh = this._main.getMesh();
     if (!mesh) return;
+
+    if (this._isProcessingQuads) return; // Prevent duplicate clicks!
+
+    this._isProcessingQuads = true;
+
+    // 30s Safety Timeout to reset UI if worker hangs
+    if (this._quadRemeshTimeout) clearTimeout(this._quadRemeshTimeout);
+    this._quadRemeshTimeout = setTimeout(() => {
+      if (this._isProcessingQuads) {
+        this._isProcessingQuads = false;
+      }
+    }, 30000);
 
     const voxelTool = this.getTool(Enums.Tools.VOXEL);
     if (!voxelTool || !voxelTool._worker) {

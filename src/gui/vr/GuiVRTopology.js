@@ -333,8 +333,10 @@ export default function getTopologyWidgets(main) {
    });
    y += 40 + gapBtn;
  
+   const isDecimateProcessing = main.getSculptManager().isProcessingQuads ? main.getSculptManager().isProcessingQuads() : false;
+
    widgets.push({
-     type: 'button', id: 'decimate_mesh', label: 'Decimate Mesh', x: col1X, y: y, w: 350, h: btnH,
+     type: 'button', id: 'decimate_mesh', label: isDecimateProcessing ? 'Processing...' : 'Decimate Mesh', disabled: isDecimateProcessing, x: col1X, y: y, w: 350, h: btnH,
      onInteract: () => {
        console.log(`[GuiVRTopology] Decimate Mesh Button clicked!`);
        const targetFaces = window.decimationTargetFaces || 5000;
@@ -362,8 +364,10 @@ export default function getTopologyWidgets(main) {
    });
    y += 40 + gapBtn;
  
+   const isIsoProcessing = main.getSculptManager().isProcessingQuads ? main.getSculptManager().isProcessingQuads() : false;
+
    widgets.push({
-     type: 'button', id: 'remesh_isotropic', label: 'Remesh Isotropic', x: col1X, y: y, w: 350, h: btnH,
+     type: 'button', id: 'remesh_isotropic', label: isIsoProcessing ? 'Processing...' : 'Remesh Isotropic', disabled: isIsoProcessing, x: col1X, y: y, w: 350, h: btnH,
      onInteract: () => {
        console.log(`[GuiVRTopology] Remesh Isotropic Button clicked!`);
        const edgeLength = window.remeshEdgeLength || 0.1;
