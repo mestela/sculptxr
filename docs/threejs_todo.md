@@ -7,7 +7,7 @@
 ---
 
 ## 1. Todo
-* [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
+
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
@@ -18,6 +18,7 @@
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [x] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [x] **Symmetry line cleanup tools**: Configured mirror macro-diamond culler. Full Manifold-3D CSG ghost-edge tagging & quad preservation pipeline scheduled for next execution step.
 * [x] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
 * [x] **Topology menu tidy up**: Too much vertical scrolling, too many similarly named items.

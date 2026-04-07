@@ -113,6 +113,13 @@ class Multimesh extends Mesh {
     this.updateDuplicateColorsAndMaterials();
     this.updateBuffers();
 
+    var cur = this.getCurrentMesh();
+    console.log(`[Multimesh Diagnostic] Level: ${this._sel}/${this._meshes.length - 1}`, {
+      nbVertices: cur.getNbVertices(),
+      nbFaces: cur.getNbFaces(),
+      wireframeLength: cur.getWireframe() ? cur.getWireframe().length : 0
+    });
+
     var mesh = this._meshes[this.getLowIndexRender()];
     
     // Instead of raw webgl buffer update, call the new Three.js geometry update
@@ -394,19 +401,13 @@ class Multimesh extends Mesh {
           }
         }
 
-        var indices;
-        var type = this.getWireframeType();
-        if (type === 1) { // Smooth L0
-          indices = this.getTessellatedWireframe(lowWireIdx);
-        } else if (type === 0) { // Fast L0
-          var lowWireMesh = this._meshes[lowWireIdx];
-          if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
-            lowWireMesh.allocateArrays();
-            lowWireMesh.initFaceRings();
-            lowWireMesh.initEdges();
-          }
-          indices = lowWireMesh.getWireframe();
+        var activeMesh = this.getCurrentMesh();
+        if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
+          activeMesh.allocateArrays();
+          activeMesh.initFaceRings();
+          activeMesh.initEdges();
         }
+        var indices = activeMesh.getWireframe();
 
         if (this._renderData._wireframeMesh && this._renderData._threeMesh && indices) {
           var wireGeom = this._renderData._wireframeMesh.geometry;
@@ -418,13 +419,8 @@ class Multimesh extends Mesh {
           // Share normal! REQUIRED for vertex shader inflation!
               wireGeom.setAttribute('normal', mainGeom.getAttribute('normal'));
 
-          var attr = wireGeom.getIndex();
-          if (!attr || attr.array.length !== indices.length) {
-              wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
-          } else {
-              attr.array.set(indices);
-              attr.needsUpdate = true;
-          }
+          wireGeom.setIndex(null);
+          wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
           wireGeom.setDrawRange(0, indices.length);
           this._renderData._wireframeMesh.visible = true;
         }

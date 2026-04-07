@@ -2444,19 +2444,8 @@ class Mesh {
     if (!triangles) return; // Skip if no valid index data
     
     // Relax check for index length
-    if (!geom.index || geom.index.array.length < triangles.length) {
-      if (geom.index) {
-        geom.deleteAttribute('index'); 
-      }
-      geom.setIndex(new THREE.BufferAttribute(triangles, 1));
-    } else {
-      geom.index.array.set(triangles);
-      if (this._isVoxel) {
-          // Only upload active indices!
-          geom.index.updateRange = { offset: 0, count: this.getNbTriangles() * 3 };
-      }
-      geom.index.needsUpdate = true;
-    }
+    geom.setIndex(null);
+    geom.setIndex(new THREE.BufferAttribute(triangles, 1));
     
     // TRICKY: SculptXR uses large pre-allocated capacity arrays for performance.
     // Three.js by default renders the FULL capacity array, which contains garbage/out-of-bound indices

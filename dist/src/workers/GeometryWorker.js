@@ -48,9 +48,9 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       });
       manifoldInstance.setup();
       globalThis.manifold = manifoldInstance;
-      console.log("VoxelWorker: Manifold-3D Loaded Successfully!");
+      console.log("GeometryWorker: Manifold-3D Loaded Successfully!");
     } catch (manifoldErr) {
-      console.warn("VoxelWorker: Manifold-3D Load Failed", manifoldErr);
+      console.warn("GeometryWorker: Manifold-3D Load Failed", manifoldErr);
     }
 
     // Load Rust WASM
@@ -90,9 +90,9 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       });
       globalThis.wasmModule = instance.exports;
       wasmModule = instance.exports;
-      console.log("VoxelWorker: Rust WASM Loaded Successfully!");
+      console.log("GeometryWorker: Rust WASM Loaded Successfully!");
     } catch (wasmErr) {
-      console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
+      console.warn("GeometryWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
     }
 
 
@@ -210,6 +210,7 @@ self.onmessage = function (e) {
     }
   } catch (err) {
     console.error('VoxelWorker Error:', err);
+    self.postMessage({ type: 'WORKER_ERROR', error: err.message || err.toString() });
   }
 };
 
@@ -1507,60 +1508,20 @@ function quadrangulateOnly(msg) {
         
         if (diaA === -1 || diaB === -1) continue;
         
-        // 2D Projection & Angle Sort to ensure correct quad winding!
-        const pts = [ev0, diaA, ev1, diaB].map(idx => ({
-          idx,
-          x: vertices[idx * 3],
-          y: vertices[idx * 3 + 1],
-          z: vertices[idx * 3 + 2]
-        }));
-
-        const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
-        const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
-        const cz = (pts[0].z + pts[1].z + pts[2].z + pts[3].z) / 4;
-
-        // Crude normal!
-        const ax = pts[1].x - pts[0].x;
-        const ay = pts[1].y - pts[0].y;
-        const az = pts[1].z - pts[0].z;
-        const bx = pts[2].x - pts[0].x;
-        const by = pts[2].y - pts[0].y;
-        const bz = pts[2].z - pts[0].z;
-        const nx = ay * bz - az * by;
-        const ny = az * bx - ax * bz;
-        const nz = ax * by - ay * bx;
-
-        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        const snx = nx / (nLen || 1);
-        const sny = ny / (nLen || 1);
-        const snz = nz / (nLen || 1);
-
-        let tx = 1, ty = 0, tz = 0;
-        if (Math.abs(snx) > 0.9) { tx = 0; ty = 1; }
-        let ux = ty * snz - tz * sny;
-        let uy = tz * snx - tx * snz;
-        let uz = tx * sny - ty * snx;
-        const uLen = Math.sqrt(ux * ux + uy * uy + uz * uz);
-        ux /= (uLen || 1); uy /= (uLen || 1); uz /= (uLen || 1);
-
-        let vx = sny * uz - snz * uy;
-        let vy = snz * ux - snx * uz;
-        let vz = snx * uy - sny * ux;
-        const vLen = Math.sqrt(vx * vx + vy * vy + vz * vz);
-        vx /= (vLen || 1); vy /= (vLen || 1); vz /= (vLen || 1);
-
-        const angles = pts.map(p => {
-          const dx = p.x - cx;
-          const dy = p.y - cy;
-          const dz = p.z - cz;
-          const x = dx * ux + dy * uy + dz * uz;
-          const y = dx * vx + dy * vy + dz * vz;
-          return { idx: p.idx, theta: Math.atan2(y, x) };
-        });
-
-        angles.sort((a, b) => a.theta - b.theta);
+        // Preserve Winding Order Exactly from Triangle A!
+        let vStart, vEnd;
+        if (diaA === av0) {
+          vStart = av2;
+          vEnd = av1;
+        } else if (diaA === av1) {
+          vStart = av0;
+          vEnd = av2;
+        } else {
+          vStart = av1;
+          vEnd = av0;
+        }
         
-        newQuads.push([angles[0].idx, angles[1].idx, angles[2].idx, angles[3].idx]);
+        newQuads.push([vStart, diaA, vEnd, diaB]);
         merged.add(fA);
         merged.add(fB);
       }
