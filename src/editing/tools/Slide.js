@@ -84,9 +84,22 @@ class Slide extends SculptBase {
         symPick._mesh = mesh;
         vec3.copy(symPick.getIntersectionPoint(), picking.getIntersectionPoint());
         Geometry.mirrorPoint(symPick.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+
+        // CRITICAL BUG FIX: Explicitly mirror the Ray Origin and Eye/Direction vectors
+        // so that Alpha Falloff projection does not pull left-side vertices towards the right-side cursor!
+        if (symPick._eyeDir && picking._eyeDir) {
+          vec3.copy(symPick._eyeDir, picking._eyeDir);
+          symPick._eyeDir[0] = -symPick._eyeDir[0];
+        }
+        if (symPick._origin && picking._origin) {
+          vec3.copy(symPick._origin, picking._origin);
+          symPick._origin[0] = -symPick._origin[0];
+        }
+
         symPick.setLocalRadius2(picking.getLocalRadius2());
         symPick.pickVerticesInSphere(symPick.getLocalRadius2());
         symPick.computePickedNormal();
+        symPick._negative = picking._negative;
         this.stroke(symPick, true);
       }
 
@@ -295,10 +308,34 @@ class Slide extends SculptBase {
     picking.setIdAlpha(this._idAlpha);
 
     if (picking._negative) {
-      // Run 5 intense iterations of Tangential Smooth to create a highly visible, highly liquid surface relaxation
-      for (let i = 0; i < 5; i++) {
-        Smooth.prototype.smoothTangent.call(this, iVertsInRadius, 1.0, picking);
+      var mesh = this.getMesh();
+      var vAr = mesh.getVertices();
+      var originalSigns = new Int8Array(iVertsInRadius.length);
+      for (let i = 0; i < iVertsInRadius.length; i++) {
+        var ind = iVertsInRadius[i] * 3;
+        var x = vAr[ind];
+        originalSigns[i] = (x > 0.001) ? 1 : (x < -0.001 ? -1 : 0);
       }
+
+      for (let i = 0; i < 5; i++) {
+        Smooth.prototype.smoothTangent.call(this, iVertsInRadius, 1.0, null);
+      }
+
+      if (mesh && this._main.getSculptManager().getSymmetry()) {
+        for (let i = 0; i < iVertsInRadius.length; i++) {
+          var ind = iVertsInRadius[i] * 3;
+          var origSign = originalSigns[i];
+          if (origSign === 0) {
+            vAr[ind] = 0.0;
+          } else {
+            var currX = vAr[ind];
+            if (origSign === 1 && currX < 0) vAr[ind] = 0.0;
+            if (origSign === -1 && currX > 0) vAr[ind] = 0.0;
+          }
+        }
+      }
+
+      // Standard unconstrained tangential smooth exactly matching Smooth.js valence calculations
     } else {
       this.slide(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), sym, picking);
 
