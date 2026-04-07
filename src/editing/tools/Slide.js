@@ -45,7 +45,12 @@ class Slide extends SculptBase {
   }
 
   // VR Support: Drag needs to calculate delta from controller movement
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir, options) {
+    if (options && options.isNegative !== undefined) {
+      picking._negative = options.isNegative;
+    } else {
+      picking._negative = false;
+    }
     var main = this._main;
     if (!main._vrControllerPos) return;
 
@@ -60,6 +65,39 @@ class Slide extends SculptBase {
 
       var pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
       super.makeStrokeXR(picking, pickingSym, false);
+      this.updateRender();
+      return;
+    }
+
+    if (picking._negative) {
+      var mesh = this.getMesh();
+      if (!mesh) return;
+
+      // Force explicit continuous stroke in-place even if the controller does not move!
+      picking._mesh = mesh;
+      picking.pickVerticesInSphere(picking.getLocalRadius2());
+      picking.computePickedNormal();
+      this.stroke(picking, false);
+
+      var symPick = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
+      if (symPick) {
+        symPick._mesh = mesh;
+        vec3.copy(symPick.getIntersectionPoint(), picking.getIntersectionPoint());
+        Geometry.mirrorPoint(symPick.getIntersectionPoint(), mesh.getSymmetryOrigin(), mesh.getSymmetryNormal());
+        symPick.setLocalRadius2(picking.getLocalRadius2());
+        symPick.pickVerticesInSphere(symPick.getLocalRadius2());
+        symPick.computePickedNormal();
+        this.stroke(symPick, true);
+      }
+
+      if (!this._lastVRPos) this._lastVRPos = vec3.create();
+      vec3.copy(this._lastVRPos, main._vrControllerPos);
+      if (main._vrControllerQuat) quat.copy(this._lastVRQuat, main._vrControllerQuat);
+
+      if (mesh.isDynamic) {
+        this.updateMeshBuffers();
+      }
+      
       this.updateRender();
       return;
     }
@@ -122,13 +160,33 @@ class Slide extends SculptBase {
     picking.pickVerticesInSphere(picking.getLocalRadius2());
     picking.computePickedNormal();
 
+    var runReprojectPass = (verts, centerPoint, r2, isSymmetrical) => {
+      // Run 3 strong passes of smoothTangent to guarantee highly visible grid even-flow/untangling
+      for (let iter = 0; iter < 3; iter++) {
+        Smooth.prototype.smoothTangent.call(this, verts, 0.8, picking);
+        
+        var dragBackup = vec3.clone(this._dragDir);
+        var dragSymBackup = vec3.clone(this._dragDirSym);
+        vec3.set(this._dragDir, 0, 0, 0);
+        vec3.set(this._dragDirSym, 0, 0, 0);
+
+        this.slide(verts, centerPoint, r2, isSymmetrical, picking);
+
+        vec3.copy(this._dragDir, dragBackup);
+        vec3.copy(this._dragDirSym, dragSymBackup);
+      }
+    };
+
     // Apply primary stroke
-    this.slide(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), false, picking, qScaledLocal);
+    if (picking._negative) {
+      runReprojectPass(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), false);
+    } else {
+      this.slide(picking.getPickedVertices(), picking.getIntersectionPoint(), picking.getLocalRadius2(), false, picking, qScaledLocal);
+    }
 
     // Symmetry
     var pickingSym = main.getPickingSymmetry();
     if (main.getSculptManager().getSymmetry() && pickingSym) {
-      // Mirror the delta vector for the symmetrical brush direction
       vec3.copy(this._dragDirSym, this._dragDir);
       Geometry.mirrorPoint(this._dragDirSym, [0, 0, 0], mesh.getSymmetryNormal());
 
@@ -140,11 +198,14 @@ class Slide extends SculptBase {
       pickingSym.pickVerticesInSphere(pickingSym.getLocalRadius2());
       pickingSym.computePickedNormal();
 
-      var qDeltaSym = quat.clone(qScaledLocal);
-      qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
-      qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
-
-      this.slide(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), true, pickingSym, qDeltaSym);
+      if (picking._negative) {
+        runReprojectPass(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), true);
+      } else {
+        var qDeltaSym = quat.clone(qScaledLocal);
+        qDeltaSym[1] = -qDeltaSym[1];    // Y Inverted
+        qDeltaSym[2] = -qDeltaSym[2];    // Z Inverted
+        this.slide(pickingSym.getPickedVertices(), pickingSym.getIntersectionPoint(), pickingSym.getLocalRadius2(), true, pickingSym, qDeltaSym);
+      }
     }
 
     // Update history
@@ -232,18 +293,22 @@ class Slide extends SculptBase {
 
     picking.updateAlpha(this._lockPosition);
     picking.setIdAlpha(this._idAlpha);
-    this.slide(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), sym, picking);
 
-    // Tangential relaxation pass to prevent bunching
-    // We scale intensity by the physical translational delta (how far the surface actually moved)
-    // If the user holds still, smoothing is 0. If they move, smoothing reaches a safe cap (0.3).
-    // This prevents creases from instantly blurring out when the trigger is held over them.
-    var dir = sym ? this._dragDirSym : this._dragDir;
-    var dist = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
-    var smoothIntensity = Math.min(0.3, dist * 2.0); // e.g., moving 15% of radius = 0.3 intensity
-    
-    if (smoothIntensity > 0.001) {
-      this.smoothTangent(iVertsInRadius, smoothIntensity, picking);
+    if (picking._negative) {
+      // Run 5 intense iterations of Tangential Smooth to create a highly visible, highly liquid surface relaxation
+      for (let i = 0; i < 5; i++) {
+        Smooth.prototype.smoothTangent.call(this, iVertsInRadius, 1.0, picking);
+      }
+    } else {
+      this.slide(iVertsInRadius, picking.getIntersectionPoint(), picking.getLocalRadius2(), sym, picking);
+
+      var dir = sym ? this._dragDirSym : this._dragDir;
+      var dist = Math.sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+      var smoothIntensity = Math.min(0.3, dist * 2.0);
+      
+      if (smoothIntensity > 0.001) {
+        this.smoothTangent(iVertsInRadius, smoothIntensity, picking);
+      }
     }
 
     var mesh = this.getMesh();
@@ -487,6 +552,10 @@ class Slide extends SculptBase {
       var currX = foundHit ? bestClosest[0] : vTarget[0];
       var currY = foundHit ? bestClosest[1] : vTarget[1];
       var currZ = foundHit ? bestClosest[2] : vTarget[2];
+
+      newPos[i * 3] = currX;
+      newPos[i * 3 + 1] = currY;
+      newPos[i * 3 + 2] = currZ;
     }
 
     // Clean up proxy bound cache at the end of the step so it rebuilds next frame

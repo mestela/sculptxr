@@ -46,6 +46,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.MOVE,
     Enums.Tools.GRAB,
     Enums.Tools.DRAG,
+    Enums.Tools.SLIDE,
     Enums.Tools.TWIST,
     Enums.Tools.TRANSFORM_VR,
 
