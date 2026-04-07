@@ -1,49 +1,26 @@
-# Implementation Plan: Rust/WASM Mesh Generation
+# Implementation Plan - Ray-Plane / Sutherland-Hodgman Edge Slicer
 
-## Goal
-Port the surface meshing logic (SurfaceNets) from JavaScript to Rust compiled to WebAssembly to bypass single-thread CPU limits and improve FPS.
+## Objective
+Implement a pure custom JavaScript Ray-Plane edge slicer to calculate perfect segment intersections across the $X = 0$ mirror plane for self-intersecting or non-planar quads.
 
-## Strategy
-We will use bare `wasm32-unknown-unknown` target to keep it lean, avoiding heavy runtimes. We will manage memory manually by passing pointers between JS and Rust.
+## 1. Intersection Algorithm (Sutherland-Hodgman clipping)
+- For each face that spans across the $X = 0$ plane, clip the polygon against the mirror plane.
+- **Input**: Face vertices $(v_1, v_2, \dots, v_n)$.
+- **Process**: Traverse edges. If an edge crosses $X = 0$, compute the exact intersection point via linear interpolation along the edge.
+- **Output**: A new set of vertices defining the polygon strictly on one side of the plane.
 
-## Architecture
+## 2. Epsilon and Tolerance
+- Calculate a dynamic epsilon based on `mesh.computeLocalRadius() * 1e-5`.
+- Any vertex within this epsilon to the $X = 0$ plane is snapped perfectly to $X = 0$ to prevent zero-length or non-manifold sliver triangles.
 
-### 1. Rust Crate (`voxel_wasm/`)
--   **Structure**: Flat library crate.
--   **Functions**:
-    -   `alloc(size) -> *mut u8`: Allocate memory in WASM heap.
-    -   `dealloc(ptr, size)`: Free memory in WASM heap.
-    -   `compute_surface_wasm(...) -> *const Result`: Mesh generation entry find.
--   **Result Struct**: Pointers to output arrays (vertices, faces, normals, colors, materials) and their lengths.
+## 3. Topology Resolution (No-N-gon Policy)
+- When clipping a non-planar quad, the output may form a 5-sided or 6-sided N-gon.
+- The slicer will invoke the standard greedy quadrangulation error metric to split the N-gon into valid quads or triangles.
 
-### 2. ABI Details
-We will pass:
--   `distance_field_ptr`
--   `color_field_ptr`
--   `material_field_ptr`
--   `dims` (width, height, depth)
--   `bounds` (min_x, min_y, min_z, max_x, max_y, max_z)
+## 4. Asynchronous Worker Integration
+- The slicer logic will be embedded or invoked via `GeometryWorker.js` to prevent stalling the main thread during dense mesh operations.
+- The final sliced and welded geometry is passed back to the main thread for buffer synchronization and rendering.
 
-We will return a pointer to a struct containing:
--   `vertices_ptr`, `vertices_len`
--   `faces_ptr`, `faces_len`
--   `normals_ptr`, `normals_len`
--   `colors_ptr`, `colors_len`
--   `materials_ptr`, `materials_len`
-
-### 3. JS Integration (`VoxelWorker.js`)
--   Load WASM using Vite: `import initWasm from "./voxel_wasm.wasm?init"`.
--   Instantiate and hold the memory.
--   For each chunk:
-    1.  Allocate space in WASM memory for inputs.
-    2.  Copy JS TypedArrays into WASM memory.
-    3.  Call `compute_surface_wasm`.
-    4.  Read outputs from WASM memory.
-    5.  Free inputs/outputs.
-
-## Verification
--   Rely on `npm run dev` for HMR testing.
--   Verify seams and visual fidelity match the JS version.
-
-## Versioning
--   Update version in `index.html` to `v0.9.288 - Rust WASM Plan`.
+## 5. Verification and Testing
+- Test with standard non-planar deformed faces crossing the mirror boundary.
+- Ensure the version is updated and displayed via `#log`.

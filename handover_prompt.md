@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Stylus Tilt Controls added (±45°) and fully integrated with laser pointer, UI raycast, and volume picking. Symmetry Mirror welding tolerance increased. Version incremented to `v1.0.119`.
+**Project Status**: Implemented Split-Only Symmetry Cut Debug view and magenta centerline tagging. Validated that standard CSG (Manifold-3D) breaks down on non-planar self-intersecting sculpting quads across the mirror boundary.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Stylus Tilt Feature Complete.
+**Checkpoint**: Pivoting from C++ CSG Boolean Pipeline to Custom Ray-Plane Edge Slicer.
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -13,13 +13,8 @@
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Current Situation / Obstacles
-The Stylus Tilt feature is now stable and polished. The Symmetry Mirror tool was also stabilized for simple cases but needs a refactor for complex assets.
-
-### Completed (v1.0.119):
-1.  **Stylus Tilt**: Added slider to VR Settings (±45°).
-2.  **Laser & UI Raycast**: Updated to follow the tilted stylus direction.
-3.  **Volume Intersect**: Updated tip calculation to use tilted trigonometry.
-4.  **Symmetry Mirror**: Increased tolerance to 0.01 to fix sliver edges.
+Testing confirmed that `Manifold-3D` coplanarity algorithms inherently splinter into micro-wobbles when fed sculpted, non-manifold or self-intersecting dynamic quads spanning across the zero plane. Therefore, standard boolean CSG is a dead end for this feature. 
 
 ## Next Steps / Backlog
-Based on `docs/threejs_todo.md`
+1. Abandon C++ CSG booleans for static quad mirror symmetry.
+2. Implement a pure custom **Ray-Plane / Sutherland-Hodgman Edge Slicer directly in JavaScript** to calculate perfect segment intersections across the $X = 0$ plane regardless of internal polygon intersections.

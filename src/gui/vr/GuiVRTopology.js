@@ -189,6 +189,7 @@ export default function getTopologyWidgets(main) {
     });
     y += 40 + gapBtn;
 
+    const isRemeshProcessing = main.getSculptManager().isProcessingQuads ? main.getSculptManager().isProcessingQuads() : false;
     const quadLabel = window._topologyOpFailed ? 'Failed!' : (isRemeshProcessing ? 'Processing...' : 'Quadremesh');
     widgets.push({
       type: 'button', id: 'remesh_quads', label: quadLabel, disabled: isRemeshProcessing, x: col1X, y: y, w: 350, h: btnH,
@@ -334,9 +335,12 @@ export default function getTopologyWidgets(main) {
   widgets.push({
     type: 'button', id: 'voxel_mirror_lr', label: 'Mirror L \u2192 R', x: col1X, y: y, w: 170, h: btnH,
     onInteract: () => {
+      console.log('[GuiVRTopology] Mirror L->R button clicked!');
+      if (window.screenLog) window.screenLog('[GuiVRTopology] Mirror L->R clicked', 'cyan');
       if (mesh) {
         const wasDynamic = mesh.isDynamic;
         if (!mesh.isDynamic) {
+            console.log('[GuiVRTopology] Triggering static quad/triangle symmetryMirror(-1)');
             main.getSculptManager().symmetryMirror(-1);
             if (main.guiXR) main.guiXR._needsRedraw = true;
             return;
@@ -355,8 +359,11 @@ export default function getTopologyWidgets(main) {
   widgets.push({
     type: 'button', id: 'voxel_mirror_rl', label: 'Mirror R \u2192 L', x: 200, y: y, w: 170, h: btnH,
     onInteract: () => {
+      console.log('[GuiVRTopology] Mirror R->L button clicked!');
+      if (window.screenLog) window.screenLog('[GuiVRTopology] Mirror R->L clicked', 'cyan');
       if (mesh) {
         if (!mesh.isDynamic) {
+            console.log('[GuiVRTopology] Triggering static quad/triangle symmetryMirror(1)');
             main.getSculptManager().symmetryMirror(1);
             if (main.guiXR) main.guiXR._needsRedraw = true;
             return;
@@ -371,6 +378,14 @@ export default function getTopologyWidgets(main) {
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
     }
+  });
+  y += btnH + gapBtn;
+
+  if (window.mirrorSplitOnly === undefined) window.mirrorSplitOnly = false;
+  widgets.push({
+    type: 'checkbox', id: 'mirror_split_only', label: 'Split Only (Debug Cut)', x: col1X, y: y, w: 350, h: btnH,
+    value: window.mirrorSplitOnly,
+    onInteract: () => { window.mirrorSplitOnly = !window.mirrorSplitOnly; }
   });
   y += btnH + gapBtn;
 
