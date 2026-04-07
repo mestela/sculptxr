@@ -7,7 +7,7 @@
 ---
 
 ## 1. Todo
-* [ ] **Processing states on slow processes** Like how instant meshes goes gray, do the same for decimate/isotropic remesh. Progress?
+
 * [ ] **Fix normals breaks things**: Especially after quad remesh/quadrangulate
 * [ ] **Symmetry line cleanup tools**: Bisected diamonds to collapse, centerline that drifts
 * [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
@@ -20,6 +20,7 @@
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
+* [x] **Processing states on slow processes** Like how instant meshes goes gray, do the same for decimate/isotropic remesh. Progress?
 * [x] **Triangulate**: Either internal or another library -- using baby shark
 * [x] **wasm speed**: how to profile, fix? -- as fast as we can go for the moment. single threaded etc
 * [x] **Quadrangulate** should leave existing quads alone. option maybe? 
