@@ -48,9 +48,9 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       });
       manifoldInstance.setup();
       globalThis.manifold = manifoldInstance;
-      console.log("VoxelWorker: Manifold-3D Loaded Successfully!");
+      console.log("GeometryWorker: Manifold-3D Loaded Successfully!");
     } catch (manifoldErr) {
-      console.warn("VoxelWorker: Manifold-3D Load Failed", manifoldErr);
+      console.warn("GeometryWorker: Manifold-3D Load Failed", manifoldErr);
     }
 
     // Load Rust WASM
@@ -90,9 +90,9 @@ let isDirty = false; // Tracks if the current snapshot has been modified
       });
       globalThis.wasmModule = instance.exports;
       wasmModule = instance.exports;
-      console.log("VoxelWorker: Rust WASM Loaded Successfully!");
+      console.log("GeometryWorker: Rust WASM Loaded Successfully!");
     } catch (wasmErr) {
-      console.warn("VoxelWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
+      console.warn("GeometryWorker: Rust WASM Load Failed -> using JS SurfaceNets fallback", wasmErr);
     }
 
 
@@ -210,6 +210,7 @@ self.onmessage = function (e) {
     }
   } catch (err) {
     console.error('VoxelWorker Error:', err);
+    self.postMessage({ type: 'WORKER_ERROR', error: err.message || err.toString() });
   }
 };
 

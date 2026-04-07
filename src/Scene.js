@@ -29,7 +29,7 @@ import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
 
 
-console.log("Scene.js loaded v0.7.658");
+console.log(`Scene.js loaded ${VERSION}`);
 
 class Scene {
 

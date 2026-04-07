@@ -26,6 +26,16 @@ class SculptVoxel extends SculptBase {
     this._worker = new GeometryWorker();
 
     this._worker.onerror = (e) => {
+      if (this._main && this._main.getSculptManager()) {
+        this._main.getSculptManager()._isProcessingQuads = false;
+      }
+      window._topologyOpFailed = true;
+      setTimeout(() => {
+        window._topologyOpFailed = false;
+        if (this._main && this._main.guiXR) this._main.guiXR._needsRedraw = true;
+      }, 2000);
+      if (this._main && this._main.guiXR) this._main.guiXR._needsRedraw = true;
+
       if (e.message) {
         console.error("Voxel Worker Error:", e);
         if (window.screenLog) window.screenLog(`Worker Error: ${e.message}`, "red");
@@ -72,6 +82,19 @@ class SculptVoxel extends SculptBase {
 
     this._worker.onmessage = (e) => {
       const msg = e.data;
+      if (msg.type === 'WORKER_ERROR' || msg.type === 'ERROR') {
+        if (this._main && this._main.getSculptManager()) {
+          this._main.getSculptManager()._isProcessingQuads = false;
+        }
+        window._topologyOpFailed = true;
+        setTimeout(() => {
+          window._topologyOpFailed = false;
+          if (this._main && this._main.guiXR) this._main.guiXR._needsRedraw = true;
+        }, 2000);
+        if (this._main && this._main.guiXR) this._main.guiXR._needsRedraw = true;
+        return;
+      }
+
       if (msg.type === 'LOG') {
         const logData = msg.data || '';
         // console.log("[VoxelWorker Telemetry]", logData);
