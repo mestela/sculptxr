@@ -7,8 +7,6 @@
 ---
 
 ## 1. Todo
-* [/] **Symmetry line cleanup tools**: Configured mirror macro-diamond culler. Full Manifold-3D CSG ghost-edge tagging & quad preservation pipeline scheduled for next execution step.
-* [ ] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
 * [ ] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
@@ -20,6 +18,8 @@
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [x] **Symmetry line cleanup tools**: Configured mirror macro-diamond culler. Full Manifold-3D CSG ghost-edge tagging & quad preservation pipeline scheduled for next execution step.
+* [x] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
 * [x] **Topology menu tidy up**: Too much vertical scrolling, too many similarly named items.
 * [x] **Fix normals breaks things**: Especially after quad remesh/quadrangulate
 * [x] **Processing states on slow processes** Like how instant meshes goes gray, do the same for decimate/isotropic remesh. Progress?

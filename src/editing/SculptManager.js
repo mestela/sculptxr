@@ -456,7 +456,7 @@ class SculptManager {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
-    console.log(`[SculptManager] symmetryMirror started locally! side=${side}`);
+
     
     var vAr = mesh.getVertices();
     var snappedVerts = new Float32Array(vAr); // Clone to avoid modifying original in place
@@ -475,7 +475,7 @@ class SculptManager {
     // Compute adaptive tolerance (2% of mesh radius)
     const meshRadius = mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1.0;
     const SNAP_TOLERANCE = meshRadius * 0.02; 
-    console.log(`[SculptManager] symmetryMirror: using SNAP_TOLERANCE=${SNAP_TOLERANCE.toFixed(4)}`);
+
     
     // 1. Label Vertices
     var labels = new Int8Array(nbVertices);
