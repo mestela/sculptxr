@@ -23,3 +23,13 @@ Instead of blurring the mesh inward, a Relax operation tries to make all edges r
 ## Summary
 - **Smooth:** Flattens the surface. Affects the silhouette. Shrinks volume. (Changes **Shape**)
 - **Relax:** Spreads out the vertices. Preserves the silhouette. Maintains volume. (Changes **Topology**)
+
+## [PARANOID] Reconstruction Guide: Slide Brush Sub Mode (Relaxation)
+### Goal
+Enable the Slide brush, when triggered with the Sub/Negative modifier (`A` button), to act as a continuous, stationary, non-deforming relaxation tool that perfectly unravels and untangles vertex distribution without dragging or shearing.
+
+### Plain English Logic
+1. **Continuous Evaluation**: Inside `Slide.updateXR`, if `picking._negative` is active, construct an explicit zero-distance continuous stroke loop by picking vertices around the cursor each frame and recalculating their normals.
+2. **Mirrored Offhand**: Explicitly mirror `_eyeDir` and `_origin` when using symmetry to copy the falloff cone precisely across the symmetry plane, preventing left side vertices from shearing toward the right side controller.
+3. **Un-biased Falloff**: Pass `null` instead of `picking` to `Smooth.prototype.smoothTangent` within the negative sub mode loop to remove directional alpha projection drag, allowing pure unconstrained spherical convergence.
+4. **Boundary Preservation**: Pre-check vertex starting hemispheres (`X > 0` or `X < 0`), and safely clamp any lateral vertices trying to cross the absolute mirroring boundary to `0.0`. True centerline vertices (whose topological symmetric mapped index matches their own index) remain permanently assigned to the seam plane.

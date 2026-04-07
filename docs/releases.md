@@ -1,3 +1,7 @@
+# v1.0.129
+- **Feature**: **Continuous Surface Relaxation**: Finalized the Slide brush's sub mode (Alt / Negative). Holding the negative modifier triggers a continuous, surface-constrained tangential relaxation flow across local geometry, untangling intersections in place without losing form or volume.
+- **Fix**: **Symmetry Mapping Alignment**: Fully synchronized continuous dual-handed stroke execution and alpha projection falloff mirroring on the constraint slider to perfectly match symmetric twin coordinates and eliminate offhand projection shear.
+
 # v1.0.125
 - **UX**: **Mesh Processing State UI Feedback**: Decimation and Isotropic Remeshing buttons in the VR Topology menu now provide real-time feedback by disabling themselves and displaying a "Processing..." label while their respective WASM/Worker loops execute, mirroring the behavior of the Quad Remesher.
 - **Safety**: **Duplicate Click Prevention**: Decimation and Isotropic Remeshing operations now incorporate a duplicate click prevention lock and a 30-second safety timeout reset to prevent worker stalls from permanently locking the UI.
