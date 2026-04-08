@@ -1,3 +1,7 @@
+# v1.0.132
+- **Feature**: **Extrude Keep-Together Mini-HUD Integration**: Successfully hooked up the interactive `keepExtrudeFacesTogether` boundary extraction toggle to both the main VR tools submenu and the permanent left-wrist Mini HUD interface.
+- **UX**: **Side-Wall Full Loop Spawning**: Extrude tools now explicitly support contiguous side-wall spawning via checking boundary edges dynamically when Keep-Together is completely disabled, ensuring non-merged faces generate complete exterior blocks perfectly.
+
 # v1.0.131
 - **Feature**: **Low Poly Modeling Tools**: Implemented one-shot **Extrude** and **Inset** low-poly tools explicitly optimized for VR 6DOF interaction. Extrude creates continuous quads and supports 6DOF follow movement. Inset dynamically scales a face inner-ring towards its geometric center driven seamlessly by hand displacement along the targeted surface normal.
 - **UX**: Fully integrated both new tools into the interactive VR HUD panel, complete with descriptive vector labels and synchronized visual green color-coding conforming to application low poly toolsets.

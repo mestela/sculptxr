@@ -306,6 +306,30 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   y += 60 + gapSection;
 
   // 2b. Tool Specific Settings
+  // --- EXTRUDE ---
+  if (activeToolIndex === Enums.Tools.EXTRUDE || (activeTool && activeTool.constructor.name === 'Extrude')) {
+    const keepVal = !!window.keepExtrudeFacesTogether;
+    const btnHeight = 60; // Standard btnH
+    widgets.push({
+      type: 'checkbox',
+      id: 'mini_extrude_keep_together',
+      label: 'Keep Together',
+      x: col1X, y: y, w: isMiniHUD ? 710 : 550, h: btnHeight,
+      value: keepVal,
+      onInteract: () => {
+        window.keepExtrudeFacesTogether = !window.keepExtrudeFacesTogether;
+        if (main._guiXR) {
+          main._guiXR.refreshToolsWidget();
+          main._guiXR._needsRedraw = true;
+        }
+        if (main._guiMini) {
+          main._guiMini.refreshToolsWidget();
+          main._guiMini._needsRedraw = true;
+        }
+      }
+    });
+    y += btnHeight + gapBtn;
+  }
   // --- PAINT ---
   if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
     // Color Picker (Replacing RGB Sliders & Header)
@@ -1001,6 +1025,10 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
           if (main._guiXR) {
             main._guiXR.refreshToolsWidget();
             main._guiXR._needsRedraw = true;
+          }
+          if (main._guiMini) {
+            main._guiMini.refreshToolsWidget();
+            main._guiMini._needsRedraw = true;
           }
         }
       });

@@ -1,22 +1,13 @@
-# Handover Prompt - Symmetry Mirror Topology Issues
+# Handover Prompt (Protocol Enforced)
 
-**Project Status**: v1.0.115 - Symmetry Mirror stable on grids but failing on production assets.
+**Project Status**: Finalized Extrude Keep Together Mini-HUD toggle as a standard, native checkbox element matching existing layout paradigms.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Attempted to restore symmetry mirror topology by pipeline reordering, aggressive quad bisection, and adjustable welding tolerance. Works on simple grids but fails on complex production assets with non-manifold artifacts.
+**Checkpoint**: v1.0.132 (Extrude Keep-Together Checkbox UI)
 
-## Summary of Work
-1.  **Topology Restoration**: Reverted experimental grid optimizations in favor of stable O(N^2) welding.
-2.  **Pipeline Reordering**: Ordered the flow as Welding -> Cleanup -> Dissolution -> Cleanup -> Compaction.
-3.  **Bisection Logic**: Added aggressive quad bisection at the start of the pipeline for faces crossing the plane.
-4.  **Dissolution Safety**: Refined valence-2 dissolution to only trigger if both neighbors are on the centerline.
-5.  **Welding Tolerance**: Increased `EPSILON` to `0.01` to collapse slivers.
-6.  **Undo/Redo**: Fixed snapshot corruption by using non-destructive snapping and wireframe invalidation.
+## Deployed Version
+- **Beta**: N/A (Deployment disabled in rules)
+- **Prod**: N/A (Deployment disabled in rules)
 
-## Known Issues & Blockers
-- **Non-Manifold Artifacts**: Complex production assets still produce non-manifold T-junctions or overlapping geometry at the symmetry plane if the input mesh has faces straddling the plane that aren't clean quads.
-- **Performance**: The O(N^2) welding is slow on large assets.
-- **Limitations**: The tool lacks a full geometric clipping engine (like a boolean operator), so it cannot reliably cut triangles without adding vertices.
-
-## Next Steps
-- **Revisit Symmetry Tool**: The tool needs a fundamental refactor to use a robust geometric clipping approach (e.g., via the WASM Manifold or Voxel engines) rather than purely topologic/index operations if it is to handle production assets reliably.
-- **Rollback or Refine**: Decide whether to accept the current limitations for low-poly or invest in full clipping.
+## Accomplishments
+1. Replaced the interactive `keepExtrudeFacesTogether` feature toggle with a highly polished `type: 'checkbox'` widget to guarantee consistency with the global Wireframe and Symmetry elements on the wrist Mini-HUD.
+2. Reconstructed Extrude side-wall loop definitions to fully extract individual un-merged blocks when Keep Together mode is disabled.
