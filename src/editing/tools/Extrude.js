@@ -114,8 +114,20 @@ class Extrude extends SculptBase {
       }
     }
 
-    // Low-poly standards: Snapshot based undo
-    this._undoSnapshot = this.captureMeshSnapshot(activeMesh);
+    // Low-poly standards: Snapshot based undo avoiding the Garbage Pitfall
+    this._undoSnapshot = {
+      faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+      vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+      colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+      materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+      facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+      nbFaces: activeMesh.getNbFaces(),
+      nbVertices: activeMesh.getNbVertices()
+    };
+    if (activeMesh.getTexCoords()) {
+      const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
+      this._undoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, nbTex * 2));
+    }
 
     // Duplication/Extrusion Logic
     const oldNbVertices = activeMesh.getNbVertices();
@@ -547,8 +559,25 @@ class Extrude extends SculptBase {
 
     const mesh = this.getMesh();
     const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
+
+    if (window.repairWindingOrders) {
+      window.repairWindingOrders();
+    }
+
     if (activeMesh && this._undoSnapshot) {
-      const redoSnapshot = this.captureMeshSnapshot(activeMesh);
+      const redoSnapshot = {
+        faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+        vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+        colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+        nbFaces: activeMesh.getNbFaces(),
+        nbVertices: activeMesh.getNbVertices()
+      };
+      if (activeMesh.getTexCoords()) {
+        const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
+        redoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, nbTex * 2));
+      }
       const snapshotToUndo = this._undoSnapshot;
       const snapshotToRedo = redoSnapshot;
       const undoExtrude = () => Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToUndo);

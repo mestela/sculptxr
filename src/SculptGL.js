@@ -48,6 +48,154 @@ class SculptGL extends Scene {
     window.app = this; // Ensure 'app' is also set globally
     window.sculptgl = this; // Alias for user convenience
     this._referenceManager = new ReferenceManager(this);
+    window.validateMesh = () => {
+      var mesh = this.getMesh();
+      if (!mesh) {
+        console.warn('Validate: No active mesh found.');
+        return;
+      }
+      var activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+      var fAr = activeMesh.getFaces();
+      var nbFaces = activeMesh.getNbFaces();
+      var degenerateFaces = 0;
+      var nonManifoldEdges = 0;
+      var inconsistentWinding = 0;
+      var edgeMap = new Map();
+
+      for (var i = 0; i < nbFaces; i++) {
+        var id = i * 4;
+        var v1 = fAr[id];
+        var v2 = fAr[id + 1];
+        var v3 = fAr[id + 2];
+        var isQuad = fAr[id + 3] !== 4294967295;
+        var v4 = isQuad ? fAr[id + 3] : -1;
+
+        if (v1 === v2 || v2 === v3 || v3 === v1 || (isQuad && (v4 === v1 || v4 === v2 || v4 === v3))) {
+          degenerateFaces++;
+        }
+
+        var edges = [[v1, v2], [v2, v3]];
+        if (isQuad) edges.push([v3, v4], [v4, v1]);
+        else edges.push([v3, v1]);
+
+        for (var e = 0; e < edges.length; e++) {
+          var a = edges[e][0];
+          var b = edges[e][1];
+          var key = a + '_' + b;
+          if (edgeMap.has(key)) inconsistentWinding++;
+          var undir = Math.min(a, b) + '_' + Math.max(a, b);
+          var count = edgeMap.get(undir) || 0;
+          if (count >= 2) nonManifoldEdges++;
+          edgeMap.set(undir, count + 1);
+          edgeMap.set(key, true);
+        }
+      }
+
+      const logStr = 'Mesh Validation Results:\n' +
+                     '- Degenerate Faces: ' + degenerateFaces + '\n' +
+                     '- Inconsistent Windings: ' + inconsistentWinding + '\n' +
+                     '- Non-Manifold Edges: ' + nonManifoldEdges;
+
+      if (window.screenLog) window.screenLog(logStr, (degenerateFaces || inconsistentWinding || nonManifoldEdges) ? 'red' : 'lime');
+      else console.log(logStr);
+    };
+
+    window.repairWindingOrders = () => {
+      var mesh = this.getMesh();
+      if (!mesh) {
+        console.warn('Repair: No active mesh found.');
+        return;
+      }
+      var activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+      var fAr = activeMesh.getFaces();
+      var nbFaces = activeMesh.getNbFaces();
+
+      // Map each undirected edge to its adjacent faces
+      var edgeToFaces = new Map();
+      for (var i = 0; i < nbFaces; i++) {
+        var id = i * 4;
+        var v1 = fAr[id], v2 = fAr[id + 1], v3 = fAr[id + 2];
+        var isQuad = fAr[id + 3] !== 4294967295;
+        var v4 = isQuad ? fAr[id + 3] : -1;
+
+        var edges = [[v1, v2], [v2, v3]];
+        if (isQuad) edges.push([v3, v4], [v4, v1]);
+        else edges.push([v3, v1]);
+
+        for (var e = 0; e < edges.length; e++) {
+          var a = edges[e][0], b = edges[e][1];
+          var key = Math.min(a, b) + '_' + Math.max(a, b);
+          if (!edgeToFaces.has(key)) edgeToFaces.set(key, []);
+          edgeToFaces.get(key).push(i);
+        }
+      }
+
+      var visited = new Uint8Array(nbFaces);
+      var queue = [0];
+      visited[0] = 1;
+
+      var getEdges = (faceIdx) => {
+        var id = faceIdx * 4;
+        var v1 = fAr[id], v2 = fAr[id + 1], v3 = fAr[id + 2];
+        var isQuad = fAr[id + 3] !== 4294967295;
+        var v4 = isQuad ? fAr[id + 3] : -1;
+        if (isQuad) return [[v1, v2], [v2, v3], [v3, v4], [v4, v1]];
+        return [[v1, v2], [v2, v3], [v3, v1]];
+      };
+
+      var flipsCount = 0;
+      while (queue.length > 0) {
+        var current = queue.shift();
+        var curEdges = getEdges(current);
+
+        // For each undirected edge of the current face
+        for (var e = 0; e < curEdges.length; e++) {
+          var a = curEdges[e][0], b = curEdges[e][1];
+          var key = Math.min(a, b) + '_' + Math.max(a, b);
+          var neighbors = edgeToFaces.get(key) || [];
+
+          for (var n = 0; n < neighbors.length; n++) {
+            var neighborIdx = neighbors[n];
+            if (visited[neighborIdx]) continue;
+
+            // Find the directed edge orientation on the adjacent face
+            var adjEdges = getEdges(neighborIdx);
+            var sameDir = false;
+            for (var ae = 0; ae < adjEdges.length; ae++) {
+              if (adjEdges[ae][0] === a && adjEdges[ae][1] === b) {
+                sameDir = true;
+                break;
+              }
+            }
+
+            // If the adjacent face has the exact SAME winding direction (A -> B) instead of opposite, flip it!
+            if (sameDir) {
+              var nid = neighborIdx * 4;
+              if (fAr[nid + 3] !== 4294967295) {
+                // Invert Quad: [v1, v2, v3, v4] -> [v1, v4, v3, v2]
+                var t = fAr[nid + 1];
+                fAr[nid + 1] = fAr[nid + 3];
+                fAr[nid + 3] = t;
+              } else {
+                // Invert Tri: [v1, v2, v3] -> [v1, v3, v2]
+                var t = fAr[nid + 1];
+                fAr[nid + 1] = fAr[nid + 2];
+                fAr[nid + 2] = t;
+              }
+              flipsCount++;
+            }
+
+            visited[neighborIdx] = 1;
+            queue.push(neighborIdx);
+          }
+        }
+      }
+
+      activeMesh.updateGeometry();
+      activeMesh.updateGeometryBuffers();
+      if (window.screenLog) window.screenLog('Repaired ' + flipsCount + ' inconsistent faces!', 'lime');
+      else console.log('Repaired ' + flipsCount + ' inconsistent faces!');
+    };
     window.debugDoubleTap = () => {
       window._debugTapStats = true;
       console.log("=== DOUBLE TAP DEBUG ENABLED ===");

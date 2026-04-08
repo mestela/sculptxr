@@ -9,9 +9,11 @@ class Inset extends SculptBase {
     this._continuous = true;
     this._insetVerts = null;
     this._vProxy = null;
-    this._faceCenters = null;
-    this._faceNormals = null;
+    this._vTarget = null;
     this._lastVRPos = null;
+    if (window.keepExtrudeFacesTogether === undefined) {
+      window.keepExtrudeFacesTogether = true;
+    }
   }
 
   pushState() {
@@ -112,7 +114,20 @@ class Inset extends SculptBase {
       }
     }
 
-    this._undoSnapshot = this.captureMeshSnapshot(activeMesh);
+    // Snapshot undo/redo
+    this._undoSnapshot = {
+      faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+      vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+      colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+      materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+      facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+      nbFaces: activeMesh.getNbFaces(),
+      nbVertices: activeMesh.getNbVertices()
+    };
+    if (activeMesh.getTexCoords()) {
+      const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
+      this._undoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, nbTex * 2));
+    }
 
     const oldNbVertices = activeMesh.getNbVertices();
     const oldNbFaces = activeMesh.getNbFaces();
@@ -123,49 +138,42 @@ class Inset extends SculptBase {
     const oldUVs = activeMesh.getTexCoords();
     const oldFacesUV = activeMesh.getFacesTexCoord();
 
-    // Find all outer boundary edges around target faces
-    const edgeCounts = new Map();
-    const addEdge = (a, b) => {
-      const key = a < b ? `${a}-${b}` : `${b}-${a}`;
-      edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
-    };
+    let numNewVerts = 0;
+    let numNewFaces = 0;
 
-    for (const fIdx of targetFaces) {
-      const idf = fIdx * 4;
-      const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
-      addEdge(v1, v2); addEdge(v2, v3);
-      if (v4 !== Utils.TRI_INDEX) {
-        addEdge(v3, v4); addEdge(v4, v1);
-      } else {
-        addEdge(v3, v1);
+    if (!window.keepExtrudeFacesTogether) {
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        numNewVerts += (oldFaces[idf + 3] !== Utils.TRI_INDEX) ? 4 : 3;
+        numNewFaces += (oldFaces[idf + 3] !== Utils.TRI_INDEX) ? 4 : 3;
+      }
+    } else {
+      const vertSetCount = new Set();
+      const edgeCounts = new Map();
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        vertSetCount.add(oldFaces[idf]);
+        vertSetCount.add(oldFaces[idf + 1]);
+        vertSetCount.add(oldFaces[idf + 2]);
+        if (oldFaces[idf + 3] !== Utils.TRI_INDEX) vertSetCount.add(oldFaces[idf + 3]);
+
+        const addE = (a, b) => {
+          const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+          edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
+        };
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        addE(v1, v2); addE(v2, v3);
+        if (v4 !== Utils.TRI_INDEX) {
+          addE(v3, v4); addE(v4, v1);
+        } else {
+          addE(v3, v1);
+        }
+      }
+      numNewVerts = vertSetCount.size;
+      for (const count of edgeCounts.values()) {
+        if (count === 1) numNewFaces++;
       }
     }
-
-    const boundaryEdges = [];
-    for (const fIdx of targetFaces) {
-      const idf = fIdx * 4;
-      const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
-      const checkEdge = (a, b) => {
-        const key = a < b ? `${a}-${b}` : `${b}-${a}`;
-        if (edgeCounts.get(key) === 1) boundaryEdges.push([a, b]);
-      };
-      checkEdge(v1, v2); checkEdge(v2, v3);
-      if (v4 !== Utils.TRI_INDEX) {
-        checkEdge(v3, v4); checkEdge(v4, v1);
-      } else {
-        checkEdge(v3, v1);
-      }
-    }
-
-    // Collect unique boundary vertices
-    const vertSet = new Set();
-    for (const [ea, eb] of boundaryEdges) {
-      vertSet.add(ea);
-      vertSet.add(eb);
-    }
-
-    const numNewVerts = vertSet.size;
-    const numNewFaces = boundaryEdges.length;
 
     const newNbVertices = oldNbVertices + numNewVerts;
     const newNbFaces = oldNbFaces + numNewFaces;
@@ -194,99 +202,158 @@ class Inset extends SculptBase {
       newFacesUV.set(oldFacesUV.subarray(0, oldNbFaces * 4));
     }
 
-    // Compute average center and normal of inset group
-    const center = vec3.create();
-    const normal = vec3.create();
-    const v1 = vec3.create(), v2 = vec3.create(), v3 = vec3.create();
-    
-    for (const oldV of vertSet) {
-      center[0] += oldVerts[oldV * 3];
-      center[1] += oldVerts[oldV * 3 + 1];
-      center[2] += oldVerts[oldV * 3 + 2];
-    }
-    vec3.scale(center, center, 1 / vertSet.size);
-
-    for (const fIdx of targetFaces) {
-      const idf = fIdx * 4;
-      v1[0] = oldVerts[oldFaces[idf] * 3]; v1[1] = oldVerts[oldFaces[idf] * 3 + 1]; v1[2] = oldVerts[oldFaces[idf] * 3 + 2];
-      v2[0] = oldVerts[oldFaces[idf + 1] * 3]; v2[1] = oldVerts[oldFaces[idf + 1] * 3 + 1]; v2[2] = oldVerts[oldFaces[idf + 1] * 3 + 2];
-      v3[0] = oldVerts[oldFaces[idf + 2] * 3]; v3[1] = oldVerts[oldFaces[idf + 2] * 3 + 1]; v3[2] = oldVerts[oldFaces[idf + 2] * 3 + 2];
-      
-      const cb = vec3.create(), ab = vec3.create(), cross = vec3.create();
-      vec3.sub(cb, v3, v2);
-      vec3.sub(ab, v1, v2);
-      vec3.cross(cross, cb, ab);
-      vec3.normalize(cross, cross);
-      vec3.add(normal, normal, cross);
-    }
-    vec3.normalize(normal, normal);
-
-    // Populate inset vertices (scaled slightly towards center to start)
-    const vertMap = new Map();
-    let currentVertIdx = oldNbVertices;
     const newVertIndices = [];
-
-    for (const oldV of vertSet) {
-      vertMap.set(oldV, currentVertIdx);
-      newVertIndices.push(currentVertIdx);
-
-      const origX = oldVerts[oldV * 3];
-      const origY = oldVerts[oldV * 3 + 1];
-      const origZ = oldVerts[oldV * 3 + 2];
-
-      // Start slightly inset
-      newVertices[currentVertIdx * 3] = origX + (center[0] - origX) * 0.1;
-      newVertices[currentVertIdx * 3 + 1] = origY + (center[1] - origY) * 0.1;
-      newVertices[currentVertIdx * 3 + 2] = origZ + (center[2] - origZ) * 0.1;
-
-      if (newColors) {
-        newColors[currentVertIdx * 3] = oldColors[oldV * 3];
-        newColors[currentVertIdx * 3 + 1] = oldColors[oldV * 3 + 1];
-        newColors[currentVertIdx * 3 + 2] = oldColors[oldV * 3 + 2];
-      }
-      if (newMats) {
-        newMats[currentVertIdx * 3] = oldMats[oldV * 3];
-        newMats[currentVertIdx * 3 + 1] = oldMats[oldV * 3 + 1];
-        newMats[currentVertIdx * 3 + 2] = oldMats[oldV * 3 + 2];
-      }
-      if (newUVs) {
-        newUVs[currentVertIdx * 2] = oldUVs[oldV * 2];
-        newUVs[currentVertIdx * 2 + 1] = oldUVs[oldV * 2 + 1];
-      }
-
-      currentVertIdx++;
-    }
-
-    // Update target faces to point to new inset ring
-    for (const fIdx of targetFaces) {
-      const idf = fIdx * 4;
-      const a = oldFaces[idf], b = oldFaces[idf + 1], c = oldFaces[idf + 2], d = oldFaces[idf + 3];
-      if (vertMap.has(a)) newFaces[idf] = vertMap.get(a);
-      if (vertMap.has(b)) newFaces[idf + 1] = vertMap.get(b);
-      if (vertMap.has(c)) newFaces[idf + 2] = vertMap.get(c);
-      if (d !== Utils.TRI_INDEX && vertMap.has(d)) newFaces[idf + 3] = vertMap.get(d);
-    }
-
-    // Connect outer boundary to inner inset loop
+    let currentVertIdx = oldNbVertices;
     let currentFaceIdx = oldNbFaces;
-    for (const [ea, eb] of boundaryEdges) {
-      const newEa = vertMap.get(ea);
-      const newEb = vertMap.get(eb);
 
-      const idf = currentFaceIdx * 4;
-      newFaces[idf] = ea;
-      newFaces[idf + 1] = eb;
-      newFaces[idf + 2] = newEb;
-      newFaces[idf + 3] = newEa;
+    if (!window.keepExtrudeFacesTogether) {
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        const isQuad = (v4 !== Utils.TRI_INDEX);
+        const verts = isQuad ? [v1, v2, v3, v4] : [v1, v2, v3];
+        const insetVertIds = [];
 
-      if (newFacesUV) {
-        newFacesUV[idf] = 0;
-        newFacesUV[idf + 1] = 0;
-        newFacesUV[idf + 2] = 0;
-        newFacesUV[idf + 3] = 0;
+        for (const oldV of verts) {
+          newVertIndices.push(currentVertIdx);
+          insetVertIds.push(currentVertIdx);
+
+          // Start exactly at original position (0 inset)
+          newVertices[currentVertIdx * 3] = oldVerts[oldV * 3];
+          newVertices[currentVertIdx * 3 + 1] = oldVerts[oldV * 3 + 1];
+          newVertices[currentVertIdx * 3 + 2] = oldVerts[oldV * 3 + 2];
+
+          if (newColors) {
+            newColors[currentVertIdx * 3] = oldColors[oldV * 3];
+            newColors[currentVertIdx * 3 + 1] = oldColors[oldV * 3 + 1];
+            newColors[currentVertIdx * 3 + 2] = oldColors[oldV * 3 + 2];
+          }
+          if (newMats) {
+            newMats[currentVertIdx * 3] = oldMats[oldV * 3];
+            newMats[currentVertIdx * 3 + 1] = oldMats[oldV * 3 + 1];
+            newMats[currentVertIdx * 3 + 2] = oldMats[oldV * 3 + 2];
+          }
+          if (newUVs) {
+            newUVs[currentVertIdx * 2] = oldUVs[oldV * 2];
+            newUVs[currentVertIdx * 2 + 1] = oldUVs[oldV * 2 + 1];
+          }
+          currentVertIdx++;
+        }
+
+        // Point original face to the new inner ring
+        newFaces[idf] = insetVertIds[0];
+        newFaces[idf + 1] = insetVertIds[1];
+        newFaces[idf + 2] = insetVertIds[2];
+        if (isQuad) newFaces[idf + 3] = insetVertIds[3];
+
+        // Build side walls connecting outer ring to inner ring
+        const addWall = (ea, eb, newEb, newEa) => {
+          const widf = currentFaceIdx * 4;
+          newFaces[widf] = ea;
+          newFaces[widf + 1] = eb;
+          newFaces[widf + 2] = newEb;
+          newFaces[widf + 3] = newEa;
+          if (newFacesUV) {
+            newFacesUV[widf] = 0; newFacesUV[widf + 1] = 0; newFacesUV[widf + 2] = 0; newFacesUV[widf + 3] = 0;
+          }
+          currentFaceIdx++;
+        };
+
+        addWall(v1, v2, insetVertIds[1], insetVertIds[0]);
+        addWall(v2, v3, insetVertIds[2], insetVertIds[1]);
+        if (isQuad) {
+          addWall(v3, v4, insetVertIds[3], insetVertIds[2]);
+          addWall(v4, v1, insetVertIds[0], insetVertIds[3]);
+        } else {
+          addWall(v3, v1, insetVertIds[0], insetVertIds[2]);
+        }
+      }
+    } else {
+      const vertSet = new Set();
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        vertSet.add(oldFaces[idf]);
+        vertSet.add(oldFaces[idf + 1]);
+        vertSet.add(oldFaces[idf + 2]);
+        if (oldFaces[idf + 3] !== Utils.TRI_INDEX) vertSet.add(oldFaces[idf + 3]);
       }
 
-      currentFaceIdx++;
+      const vertMap = new Map();
+      for (const oldV of vertSet) {
+        vertMap.set(oldV, currentVertIdx);
+        newVertIndices.push(currentVertIdx);
+
+        newVertices[currentVertIdx * 3] = oldVerts[oldV * 3];
+        newVertices[currentVertIdx * 3 + 1] = oldVerts[oldV * 3 + 1];
+        newVertices[currentVertIdx * 3 + 2] = oldVerts[oldV * 3 + 2];
+
+        if (newColors) {
+          newColors[currentVertIdx * 3] = oldColors[oldV * 3];
+          newColors[currentVertIdx * 3 + 1] = oldColors[oldV * 3 + 1];
+          newColors[currentVertIdx * 3 + 2] = oldColors[oldV * 3 + 2];
+        }
+        if (newMats) {
+          newMats[currentVertIdx * 3] = oldMats[oldV * 3];
+          newMats[currentVertIdx * 3 + 1] = oldMats[oldV * 3 + 1];
+          newMats[currentVertIdx * 3 + 2] = oldMats[oldV * 3 + 2];
+        }
+        if (newUVs) {
+          newUVs[currentVertIdx * 2] = oldUVs[oldV * 2];
+          newUVs[currentVertIdx * 2 + 1] = oldUVs[oldV * 2 + 1];
+        }
+        currentVertIdx++;
+      }
+
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        newFaces[idf] = vertMap.get(v1);
+        newFaces[idf + 1] = vertMap.get(v2);
+        newFaces[idf + 2] = vertMap.get(v3);
+        if (v4 !== Utils.TRI_INDEX) newFaces[idf + 3] = vertMap.get(v4);
+      }
+
+      const edgeCounts = new Map();
+      const addEdge = (a, b) => {
+        const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+        edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
+      };
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        addEdge(v1, v2); addEdge(v2, v3);
+        if (v4 !== Utils.TRI_INDEX) {
+          addEdge(v3, v4); addEdge(v4, v1);
+        } else {
+          addEdge(v3, v1);
+        }
+      }
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        const checkEdge = (a, b) => {
+          const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+          if (edgeCounts.get(key) === 1) {
+            const newEa = vertMap.get(a);
+            const newEb = vertMap.get(b);
+            const widf = currentFaceIdx * 4;
+            newFaces[widf] = a;
+            newFaces[widf + 1] = b;
+            newFaces[widf + 2] = newEb;
+            newFaces[widf + 3] = newEa;
+            if (newFacesUV) {
+              newFacesUV[widf] = 0; newFacesUV[widf + 1] = 0; newFacesUV[widf + 2] = 0; newFacesUV[widf + 3] = 0;
+            }
+            currentFaceIdx++;
+          }
+        };
+        checkEdge(v1, v2); checkEdge(v2, v3);
+        if (v4 !== Utils.TRI_INDEX) {
+          checkEdge(v3, v4); checkEdge(v4, v1);
+        } else {
+          checkEdge(v3, v1);
+        }
+      }
     }
 
     activeMesh.setFaces(newFaces);
@@ -301,7 +368,7 @@ class Inset extends SculptBase {
 
     if (activeMesh._meshData) {
       activeMesh._meshData._drawElementsWireframe = null;
-      activeMesh._drawArraysWireframe = null;
+      activeMesh._meshData._drawArraysWireframe = null;
       activeMesh._meshData._edges = new Uint8ClampedArray(0);
     }
 
@@ -315,15 +382,89 @@ class Inset extends SculptBase {
 
     this._insetVerts = new Uint32Array(newVertIndices);
     this._vProxy = new Float32Array(this._insetVerts.length * 3);
-    for (let i = 0; i < this._insetVerts.length; i++) {
-      const idx = this._insetVerts[i] * 3;
-      this._vProxy[i * 3] = newVertices[idx];
-      this._vProxy[i * 3 + 1] = newVertices[idx + 1];
-      this._vProxy[i * 3 + 2] = newVertices[idx + 2];
-    }
+    this._vTarget = new Float32Array(this._insetVerts.length * 3);
 
-    this._center = center;
-    this._normal = normal;
+    let eIdx = 0;
+    if (!window.keepExtrudeFacesTogether) {
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        const isQuad = v4 !== Utils.TRI_INDEX;
+        const count = isQuad ? 4 : 3;
+
+        const cx = (oldVerts[v1 * 3] + oldVerts[v2 * 3] + oldVerts[v3 * 3] + (isQuad ? oldVerts[v4 * 3] : 0)) / count;
+        const cy = (oldVerts[v1 * 3 + 1] + oldVerts[v2 * 3 + 1] + oldVerts[v3 * 3 + 1] + (isQuad ? oldVerts[v4 * 3 + 1] : 0)) / count;
+        const cz = (oldVerts[v1 * 3 + 2] + oldVerts[v2 * 3 + 2] + oldVerts[v3 * 3 + 2] + (isQuad ? oldVerts[v4 * 3 + 2] : 0)) / count;
+
+        for (let c = 0; c < count; c++) {
+          const idx = this._insetVerts[eIdx] * 3;
+          this._vProxy[eIdx * 3] = newVertices[idx];
+          this._vProxy[eIdx * 3 + 1] = newVertices[idx + 1];
+          this._vProxy[eIdx * 3 + 2] = newVertices[idx + 2];
+
+          this._vTarget[eIdx * 3] = cx - newVertices[idx];
+          this._vTarget[eIdx * 3 + 1] = cy - newVertices[idx + 1];
+          this._vTarget[eIdx * 3 + 2] = cz - newVertices[idx + 2];
+
+          eIdx++;
+        }
+      }
+    } else {
+      const targetAccum = new Map();
+      const countAccum = new Map();
+
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        const isQuad = v4 !== Utils.TRI_INDEX;
+        const count = isQuad ? 4 : 3;
+
+        const cx = (oldVerts[v1 * 3] + oldVerts[v2 * 3] + oldVerts[v3 * 3] + (isQuad ? oldVerts[v4 * 3] : 0)) / count;
+        const cy = (oldVerts[v1 * 3 + 1] + oldVerts[v2 * 3 + 1] + oldVerts[v3 * 3 + 1] + (isQuad ? oldVerts[v4 * 3 + 1] : 0)) / count;
+        const cz = (oldVerts[v1 * 3 + 2] + oldVerts[v2 * 3 + 2] + oldVerts[v3 * 3 + 2] + (isQuad ? oldVerts[v4 * 3 + 2] : 0)) / count;
+
+        const verts = isQuad ? [v1, v2, v3, v4] : [v1, v2, v3];
+        for (const oldV of verts) {
+          if (!targetAccum.has(oldV)) {
+            targetAccum.set(oldV, [0, 0, 0]);
+            countAccum.set(oldV, 0);
+          }
+          const tArr = targetAccum.get(oldV);
+          tArr[0] += cx - oldVerts[oldV * 3];
+          tArr[1] += cy - oldVerts[oldV * 3 + 1];
+          tArr[2] += cz - oldVerts[oldV * 3 + 2];
+          countAccum.set(oldV, countAccum.get(oldV) + 1);
+        }
+      }
+
+      for (let i = 0; i < this._insetVerts.length; i++) {
+        const idx = this._insetVerts[i] * 3;
+        this._vProxy[i * 3] = newVertices[idx];
+        this._vProxy[i * 3 + 1] = newVertices[idx + 1];
+        this._vProxy[i * 3 + 2] = newVertices[idx + 2];
+
+        const vx = newVertices[idx], vy = newVertices[idx + 1], vz = newVertices[idx + 2];
+        let bestV = -1, bestDist = Infinity;
+        for (const [oldV, tArr] of targetAccum.entries()) {
+          const dx = oldVerts[oldV * 3] - vx;
+          const dy = oldVerts[oldV * 3 + 1] - vy;
+          const dz = oldVerts[oldV * 3 + 2] - vz;
+          const dist = dx * dx + dy * dy + dz * dz;
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestV = oldV;
+          }
+        }
+
+        if (bestV !== -1) {
+          const count = countAccum.get(bestV);
+          const tArr = targetAccum.get(bestV);
+          this._vTarget[i * 3] = tArr[0] / count;
+          this._vTarget[i * 3 + 1] = tArr[1] / count;
+          this._vTarget[i * 3 + 2] = tArr[2] / count;
+        }
+      }
+    }
 
     if (main._vrControllerPos) {
       this._lastVRPos = vec3.clone(main._vrControllerPos);
@@ -355,35 +496,15 @@ class Inset extends SculptBase {
     const mesh = this.getMesh();
     if (!mesh) return;
 
-    const mInv = mat4.create();
-    mat4.invert(mInv, mesh.getMatrix());
-
-    const vStartLocal = vec3.clone(this._lastVRPos);
-    vec3.transformMat4(vStartLocal, vStartLocal, mInv);
-
-    const vCurrLocal = vec3.clone(currentPos);
-    vec3.transformMat4(vCurrLocal, vCurrLocal, mInv);
-
-    const transDelta = vec3.create();
-    vec3.sub(transDelta, vCurrLocal, vStartLocal);
-
-    // Movement along face normal drives inset amount
-    const insetDist = vec3.dot(transDelta, this._normal);
-    // Map controller distance along normal to an inset scale [0..1]
-    // Moving forward shrinks the face, moving backward keeps/reverts it
-    let scale = 0.1 + insetDist * 2.0;
-    scale = Math.max(0.01, Math.min(0.99, scale));
+    const dist = vec3.distance(currentPos, this._lastVRPos);
+    const scale = Math.min(0.99, dist * 0.1);
 
     const vAr = mesh.getVertices();
     for (let i = 0; i < this._insetVerts.length; i++) {
       const ind = this._insetVerts[i] * 3;
-      const origX = this._vProxy[i * 3];
-      const origY = this._vProxy[i * 3 + 1];
-      const origZ = this._vProxy[i * 3 + 2];
-
-      vAr[ind] = origX + (this._center[0] - origX) * scale;
-      vAr[ind + 1] = origY + (this._center[1] - origY) * scale;
-      vAr[ind + 2] = origZ + (this._center[2] - origZ) * scale;
+      vAr[ind] = this._vProxy[i * 3] + this._vTarget[i * 3] * scale;
+      vAr[ind + 1] = this._vProxy[i * 3 + 1] + this._vTarget[i * 3 + 1] * scale;
+      vAr[ind + 2] = this._vProxy[i * 3 + 2] + this._vTarget[i * 3 + 2] * scale;
     }
 
     mesh.updateGeometry(mesh.getFacesFromVertices(this._insetVerts), this._insetVerts);
@@ -394,11 +515,27 @@ class Inset extends SculptBase {
     super.end();
     this._insetVerts = null;
     this._vProxy = null;
+    this._vTarget = null;
 
     const mesh = this.getMesh();
     const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
+    if (window.repairWindingOrders) {
+      window.repairWindingOrders();
+    }
     if (activeMesh && this._undoSnapshot) {
-      const redoSnapshot = this.captureMeshSnapshot(activeMesh);
+      const redoSnapshot = {
+        faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
+        vertices: new Float32Array(activeMesh.getVertices().subarray(0, activeMesh.getNbVertices() * 3)),
+        colors: activeMesh.getColors() ? new Float32Array(activeMesh.getColors().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
+        facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
+        nbFaces: activeMesh.getNbFaces(),
+        nbVertices: activeMesh.getNbVertices()
+      };
+      if (activeMesh.getTexCoords()) {
+        const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
+        redoSnapshot.texCoords = new Float32Array(activeMesh.getTexCoords().subarray(0, nbTex * 2));
+      }
       const snapshotToUndo = this._undoSnapshot;
       const snapshotToRedo = redoSnapshot;
       const undoInset = () => Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToUndo);

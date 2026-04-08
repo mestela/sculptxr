@@ -66,6 +66,9 @@ class GuiMultiresolution {
     menu.addSlider('Target Faces', this, '_targetFaces', 100, 10000, 100);
     menu.addButton('Quadremesh', this, 'remeshQuads');
 
+    menu.addTitle('Mesh Validation');
+    menu.addButton('Validate Topology', this, 'validateMesh');
+
     this.updateDynamicVisibility(false);
   }
 
@@ -94,6 +97,84 @@ class GuiMultiresolution {
     if (sculptMgr.isProcessingQuads && sculptMgr.isProcessingQuads()) return; // Prevent duplicate clicks!
 
     sculptMgr.remeshQuads(this._targetFaces);
+  }
+
+  validateMesh() {
+    var mesh = this._main.getMesh();
+    if (!mesh) {
+      console.warn('Validate: No active mesh found.');
+      return;
+    }
+
+    // Dereference multires wrapper if active
+    var activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    var fAr = activeMesh.getFaces();
+    var vAr = activeMesh.getVertices();
+    var nbFaces = activeMesh.getNbFaces();
+    
+    var degenerateFaces = 0;
+    var nonManifoldEdges = 0;
+    var inconsistentWinding = 0;
+    
+    // Track directional edges map (stringified A_B -> count) to detect winding consistency and valence > 2
+    var edgeMap = new Map();
+
+    for (var i = 0; i < nbFaces; i++) {
+      var id = i * 4;
+      var v1 = fAr[id];
+      var v2 = fAr[id + 1];
+      var v3 = fAr[id + 2];
+      var isQuad = fAr[id + 3] !== (4294967295); // TRI_INDEX
+      var v4 = isQuad ? fAr[id + 3] : -1;
+
+      // 1. Degenerate Face Check
+      if (v1 === v2 || v2 === v3 || v3 === v1 || (isQuad && (v4 === v1 || v4 === v2 || v4 === v3))) {
+        degenerateFaces++;
+      }
+
+      // Build directed edges
+      var edges = [
+        [v1, v2],
+        [v2, v3]
+      ];
+      if (isQuad) {
+        edges.push([v3, v4], [v4, v1]);
+      } else {
+        edges.push([v3, v1]);
+      }
+
+      for (var e = 0; e < edges.length; e++) {
+        var a = edges[e][0];
+        var b = edges[e][1];
+        var key = a + '_' + b;
+        var invKey = b + '_' + a;
+
+        // Multiple directed entries in the exact same direction indicates either duplicate faces or reversed winding order!
+        if (edgeMap.has(key)) {
+          inconsistentWinding++;
+        }
+        
+        // Track undirected valence to find > 2 face sharing non-manifoldness
+        var undirectedKey = Math.min(a, b) + '_' + Math.max(a, b);
+        var currentValence = edgeMap.get(undirectedKey) || 0;
+        if (currentValence >= 2) {
+          nonManifoldEdges++;
+        }
+        edgeMap.set(undirectedKey, currentValence + 1);
+        edgeMap.set(key, true);
+      }
+    }
+
+    const logStr = 'Mesh Validation Results:\n' +
+                   '- Degenerate Faces: ' + degenerateFaces + '\n' +
+                   '- Inconsistent Windings: ' + inconsistentWinding + '\n' +
+                   '- Non-Manifold Edges: ' + nonManifoldEdges;
+
+    if (window.screenLog) {
+      window.screenLog(logStr, (degenerateFaces || inconsistentWinding || nonManifoldEdges) ? 'red' : 'lime');
+    } else {
+      console.log(logStr);
+    }
   }
 
   onKeyUp(event) {
@@ -211,14 +292,14 @@ class GuiMultiresolution {
 
     var mul = this.convertToMultimesh(mesh);
     if (mul._sel !== mul._meshes.length - 1) {
-      window.alert(TR('multiresSelectHighest'));
+      if (window.screenLog) window.screenLog(TR('multiresSelectHighest'), 'orange');
+      else console.warn(TR('multiresSelectHighest'));
       return;
     }
 
     if (mul.getNbTriangles() > 400000) {
-      if (!window.confirm(TR('multiresWarnBigMesh', mul.getNbFaces() * 4))) {
-        return;
-      }
+      // In VR, assume automatic confirmation to avoid locking the XR thread
+      if (window.screenLog) window.screenLog(TR('multiresWarnBigMesh', mul.getNbFaces() * 4), 'yellow');
     }
 
     if (mesh !== mul) {
@@ -241,14 +322,16 @@ class GuiMultiresolution {
 
     var mul = this.convertToMultimesh(mesh);
     if (mul._sel !== 0) {
-      window.alert(TR('multiresSelectLowest'));
+      if (window.screenLog) window.screenLog(TR('multiresSelectLowest'), 'orange');
+      else console.warn(TR('multiresSelectLowest'));
       return;
     }
 
     var stateRes = new StateMultiresolution(main, mul, StateMultiresolution.REVERSION);
     var newMesh = mul.computeReverse();
     if (!newMesh) {
-      window.alert(TR('multiresNotReversible'));
+      if (window.screenLog) window.screenLog(TR('multiresNotReversible'), 'orange');
+      else console.warn(TR('multiresNotReversible'));
       return;
     }
 
@@ -267,7 +350,8 @@ class GuiMultiresolution {
     var main = this._main;
     var mul = main._mesh;
     if (!this.isMultimesh(mul) || mul._sel === 0) {
-      window.alert(TR('multiresNoLower'));
+      if (window.screenLog) window.screenLog(TR('multiresNoLower'), 'orange');
+      else console.warn(TR('multiresNoLower'));
       return;
     }
 
@@ -281,7 +365,8 @@ class GuiMultiresolution {
     var main = this._main;
     var mul = main.getMesh();
     if (!this.isMultimesh(mul) || mul._sel === mul._meshes.length - 1) {
-      window.alert(TR('multiresNoHigher'));
+      if (window.screenLog) window.screenLog(TR('multiresNoHigher'), 'orange');
+      else console.warn(TR('multiresNoHigher'));
       return;
     }
 

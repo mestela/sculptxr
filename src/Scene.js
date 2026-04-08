@@ -2678,7 +2678,6 @@ class Scene {
                    const gNow = performance.now();
                    if (gNow - (this._lastGlobalUndoRedoTime || 0) > 50) {
                      this._lastGlobalUndoRedoTime = gNow;
-                     console.log("[Scene] Thumbstick Undo detected!");
                      if (this._stateManager) {
                        const activeTool = this._sculptManager.getCurrentTool();
                        if (activeTool && activeTool.onUndo && activeTool.onUndo()) {
@@ -4040,10 +4039,6 @@ class Scene {
     // (currentTool and isToolActive defined above at Menu Block)
 
     let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive);
-    
-    if (isTriggerPressed && window.screenLog && this._logThrottle % 30 === 0) {
-      window.screenLog(`[VR] canSculpt: ${canSculpt} picked: ${!!picked} allowAir: ${allowAir} isToolActive: ${!!isToolActive}`, canSculpt ? "lime" : "orange");
-    }
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");

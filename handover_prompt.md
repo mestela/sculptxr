@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Extrude tools stabilized for symmetric centerline bridging. Pinned central loop geometry to X=0. Configured default 'Keep Together' mode for contiguous block extrusions across mirrored hemispheres.
+**Project Status**: Rebuilt Inset tool from scratch with Keep Together per-face duplication and final sensitivity scaling down (0.1x multiplier).
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.131 (Extrude center-seam pinning and boundary UI integration)
+**Checkpoint**: v1.0.136 (Inset Final Sensitivity)
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -12,10 +12,9 @@
 - **Preference**: Use browser console for immediate state inspection.
 - **Workflow**: Provide copy-pasteable snippets.
 
-## Current Situation / Obstacles
-1. Standard Extrude is fully operational and successfully prevents lateral drift across the symmetry center wall.
-2. Currently implementing the interactive VR HUD toggle (`keepExtrudeFacesTogether`) to dynamically switch between isolated face boundary extraction (forming split independent pillars) and merged contiguous bridging (forming un-split continuous spans).
+## Accomplishments & Current Situation
+1. **Rebuild Inset Tool**: Fully un-welds internal per-face ring duplication on Keep Together toggle off.
+2. **Distance Sensitivity**: Halved the delta sensitivity scale completely down to `0.1` to allow ample physical motion room before reaching full inset maximum.
 
 ## Next Steps / Backlog
-1. Finalize the Extrude toggle layout directly onto the Mini-HUD wrist panel (currently WIP) to seamlessly display whenever the Extrude tool is active.
-2. Validate multi-face masking boundary calculations for more advanced low-poly selections.
+1. **User Session Sign-off**: Await user validation of the new sensitivity threshold.

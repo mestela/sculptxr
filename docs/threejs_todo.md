@@ -8,6 +8,7 @@
 
 ## 1. Todo
 
+* [ ] **Inset**: Nearly there, i think replace controller length along normal with just total distance from click
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
@@ -18,6 +19,7 @@
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [x] **Extrude** 
 * [x] **Fix level 0 wireframe after reverse**
 * [x] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [x] **Symmetry line cleanup tools**: Configured mirror macro-diamond culler. Full Manifold-3D CSG ghost-edge tagging & quad preservation pipeline scheduled for next execution step.

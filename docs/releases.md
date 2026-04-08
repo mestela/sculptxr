@@ -1,3 +1,7 @@
+# v1.0.133
+- **Fix**: **Extrude Garbage Pitfall Precaution**: Adjusted the Undo/Redo state recording mechanics within `Extrude.js` to completely avoid the "Garbage Pitfall". Array buffers are now properly and explicitly sliced using `.subarray` to limit snapshots exactly to active ranges (`nbFaces`, `nbVertices`), preventing trailing unused buffer memory from tangling wireframes or collapsing active ranges upon operation Undo/Redo.
+- **UX**: **Subdivision Alert Non-Blocking Overhaul**: Replaced all blocking `window.alert` and `window.confirm` calls within `GuiTopology.js` with non-blocking `window.screenLog` VR HUD notifications. This ensures users are never forced out of immersive WebXR mode by desktop modal dialogs when attempting reverse subdivision checks or multiresolution boundary actions.
+
 # v1.0.132
 - **Feature**: **Extrude Keep-Together Mini-HUD Integration**: Successfully hooked up the interactive `keepExtrudeFacesTogether` boundary extraction toggle to both the main VR tools submenu and the permanent left-wrist Mini HUD interface.
 - **UX**: **Side-Wall Full Loop Spawning**: Extrude tools now explicitly support contiguous side-wall spawning via checking boundary edges dynamically when Keep-Together is completely disabled, ensuring non-merged faces generate complete exterior blocks perfectly.

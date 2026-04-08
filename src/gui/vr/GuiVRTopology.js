@@ -313,6 +313,26 @@ export default function getTopologyWidgets(main) {
   y += gapHeader;
 
   widgets.push({
+    type: 'button', id: 'validate_topo_counts', label: 'Validate Topology (Counts)', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      if (window.validateMesh) {
+        window.validateMesh();
+      }
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
+    type: 'button', id: 'repair_winding_orders', label: 'Repair Winding Orders', x: col1X, y: y, w: 350, h: btnH,
+    onInteract: () => {
+      if (window.repairWindingOrders) {
+        window.repairWindingOrders();
+      }
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
     type: 'checkbox', id: 'quad_skip_quads', label: 'Skip Quads', x: col1X, y: y, w: 170, h: 30,
     value: window.quadSkipQuads || false,
     onInteract: (val) => { window.quadSkipQuads = val; }

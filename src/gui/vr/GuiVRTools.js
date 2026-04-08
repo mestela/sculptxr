@@ -306,8 +306,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   y += 60 + gapSection;
 
   // 2b. Tool Specific Settings
-  // --- EXTRUDE ---
-  if (activeToolIndex === Enums.Tools.EXTRUDE || (activeTool && activeTool.constructor.name === 'Extrude')) {
+  // --- EXTRUDE / INSET ---
+  if (activeToolIndex === Enums.Tools.EXTRUDE || activeToolIndex === Enums.Tools.INSET || (activeTool && (activeTool.constructor.name === 'Extrude' || activeTool.constructor.name === 'Inset'))) {
     const keepVal = !!window.keepExtrudeFacesTogether;
     const btnHeight = 60; // Standard btnH
     widgets.push({
