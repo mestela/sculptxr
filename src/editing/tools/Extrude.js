@@ -376,11 +376,34 @@ class Extrude extends SculptBase {
     // Setup continuous state for 6DOF Follow
     this._extrudedVerts = new Uint32Array(newVertIndices);
     this._vProxy = new Float32Array(this._extrudedVerts.length * 3);
-    for (let i = 0; i < this._extrudedVerts.length; i++) {
-      const idx = this._extrudedVerts[i] * 3;
-      this._vProxy[i * 3] = newVertices[idx];
-      this._vProxy[i * 3 + 1] = newVertices[idx + 1];
-      this._vProxy[i * 3 + 2] = newVertices[idx + 2];
+    this._vMirrorState = new Uint8Array(this._extrudedVerts.length);
+
+    // Populate mirror side context
+    let eIdx = 0;
+    if (!window.keepExtrudeFacesTogether) {
+      for (const fIdx of targetFaces) {
+        const idf = fIdx * 4;
+        const v1 = oldFaces[idf], v2 = oldFaces[idf + 1], v3 = oldFaces[idf + 2], v4 = oldFaces[idf + 3];
+        const cx = (oldVerts[v1 * 3] + oldVerts[v2 * 3] + oldVerts[v3 * 3] + (v4 !== Utils.TRI_INDEX ? oldVerts[v4 * 3] : 0)) / (v4 !== Utils.TRI_INDEX ? 4 : 3);
+        const isMirr = (cx < -0.01); // Left side mirror face
+        const count = (v4 !== Utils.TRI_INDEX ? 4 : 3);
+        for (let c = 0; c < count; c++) {
+          const idx = this._extrudedVerts[eIdx] * 3;
+          this._vProxy[eIdx * 3] = newVertices[idx];
+          this._vProxy[eIdx * 3 + 1] = newVertices[idx + 1];
+          this._vProxy[eIdx * 3 + 2] = newVertices[idx + 2];
+          this._vMirrorState[eIdx] = isMirr ? 1 : 0;
+          eIdx++;
+        }
+      }
+    } else {
+      for (let i = 0; i < this._extrudedVerts.length; i++) {
+        const idx = this._extrudedVerts[i] * 3;
+        this._vProxy[i * 3] = newVertices[idx];
+        this._vProxy[i * 3 + 1] = newVertices[idx + 1];
+        this._vProxy[i * 3 + 2] = newVertices[idx + 2];
+        this._vMirrorState[i] = (newVertices[idx] < -0.001) ? 1 : 0;
+      }
     }
 
     // Base anchoring for deltas
@@ -488,8 +511,7 @@ class Extrude extends SculptBase {
 
     for (let i = 0; i < this._extrudedVerts.length; i++) {
       const ind = this._extrudedVerts[i] * 3;
-      const signX = Math.sign(this._vProxy[i * 3]) || 1;
-      const isMirror = (signX !== primarySign);
+      const isMirror = (this._vMirrorState[i] === 1);
       
       const currPivot = isMirror ? centerMirror : pivot;
       const moveX = isMirror ? -transDelta[0] : transDelta[0];
@@ -507,7 +529,7 @@ class Extrude extends SculptBase {
       }
 
       vAr[ind] = currPivot[0] + vTemp[0] + moveX;
-      if (Math.abs(this._vProxy[i * 3]) < 0.001) {
+      if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
         vAr[ind] = 0.0;
       }
       vAr[ind + 1] = currPivot[1] + vTemp[1] + transDelta[1];
