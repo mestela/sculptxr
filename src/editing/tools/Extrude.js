@@ -421,6 +421,9 @@ class Extrude extends SculptBase {
       }
 
       vAr[ind] = currPivot[0] + vTemp[0] + moveX;
+      if (Math.abs(this._vProxy[i * 3]) < 0.001) {
+        vAr[ind] = 0.0;
+      }
       vAr[ind + 1] = currPivot[1] + vTemp[1] + transDelta[1];
       vAr[ind + 2] = currPivot[2] + vTemp[2] + transDelta[2];
     }
