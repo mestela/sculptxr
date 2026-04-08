@@ -1,3 +1,8 @@
+# v1.0.130
+- **Feature**: **Multiresolution VR HUD Readout**: Enlarged the multiresolution section in the VR Topology menu. It now precisely displays the active level range alongside targeted baseline and max-resolution vertex readouts.
+- **Feature**: **Reset to Level 0 Macro**: Added a single-click "Jump to 0 & Del Higher" button inside the Topology menu to instantly clear high-resolution multires layers in a single step.
+- **Fix**: **Reverse Base-Level Wireframe Synchronization**: Resolved crisscrossing and scrambled wireframe line segment tangling occurring on meshes constructed using the 'Reverse' algorithm down-sampling passes. By tracking `getEvenMapping` inversion tables, the pipeline dynamically translates base Level 0 line indices through the intermediate parent mapping chain (`getVerticesMapping`), guaranteeing perfect alignment against the active high-resolution shared position coordinate buffers.
+
 # v1.0.129
 - **Feature**: **Continuous Surface Relaxation**: Finalized the Slide brush's sub mode (Alt / Negative). Holding the negative modifier triggers a continuous, surface-constrained tangential relaxation flow across local geometry, untangling intersections in place without losing form or volume.
 - **Fix**: **Symmetry Mapping Alignment**: Fully synchronized continuous dual-handed stroke execution and alpha projection falloff mirroring on the constraint slider to perfectly match symmetric twin coordinates and eliminate offhand projection shear.

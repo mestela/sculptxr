@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.122**: **Performance**: **WASM Threading Investigation**: Investigated 7.5s lockups, forced Rayon to single thread, and added `{ cache: 'no-store' }` to WASM fetch.
-*   **v1.0.121**: **Feature**: **Local Triangle-Only Quadrangulation**: Added a "Skip Quads" option to targetedly merge adjacent triangles without affecting existing quads or vertex colors.
-*   **v1.0.120**: **Fix**: **Mesh Shading Corruption (Black Mesh)**: Resolved issue where `DeleteFace` and other topological edits caused the mesh to go black.
+*   **v1.0.130**: **Fix**: **Reverse Base-Level Wireframe Synchronization**: Dynamically maps base Level 0 line segment overlays through the Reversion parent mapping table chain to guarantee perfect real-time synchronization against shared high-poly coordinate buffers.
+*   **v1.0.129**: **Feature**: **Continuous Surface Relaxation**: Finalized Slide sub-mode (Alt/Negative) dragging tangential constraint surface flow.
+*   **v1.0.125**: **UX**: Added UI Processing Feedback states and Duplicate Click Prevention timeouts for WebAssembly remeshing workers.
 
 [View Full Release History](docs/releases.md)
 
