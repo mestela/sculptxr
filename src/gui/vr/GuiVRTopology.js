@@ -124,11 +124,15 @@ export default function getTopologyWidgets(main) {
 
   widgets.push({
     type: 'button', id: 'reset_base', label: 'Jump to 0 & Del Higher', x: col1X, y: y, w: 350, h: btnH,
-    disabled: !hasHigher,
+    disabled: !(isMulti && mesh._meshes.length > 1),
     onInteract: () => {
-      if (main.getGui() && main.getGui()._ctrlTopology) {
-        main.getGui()._ctrlTopology.onResolutionChanged(0);
-        main.getGui()._ctrlTopology.deleteHigher();
+      const mul = main.getMesh();
+      if (mul && mul._meshes && mul._meshes.length > 1) {
+        mul.selectResolution(0);
+        mul.deleteHigher();
+        if (main.getGui() && main.getGui()._ctrlTopology) {
+          main.getGui()._ctrlTopology.updateMeshResolution();
+        }
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }
     }

@@ -2674,26 +2674,34 @@ class Scene {
                 state.lastUndoRedoTime = now;
                 state.waitingForNeutral = true;
 
-                if (valX < -T_PRESS) {
-                   console.log("[Scene] Thumbstick Undo detected!");
-                   if (this._stateManager) {
-                     const activeTool = this._sculptManager.getCurrentTool();
-                     if (activeTool && activeTool.onUndo && activeTool.onUndo()) {
-                       this._main ? this._main.render() : this.render();
-                     } else {
-                       this._stateManager.undo();
-                       this._main ? this._main.render() : this.render();
+                 if (valX < -T_PRESS) {
+                   const gNow = performance.now();
+                   if (gNow - (this._lastGlobalUndoRedoTime || 0) > 50) {
+                     this._lastGlobalUndoRedoTime = gNow;
+                     console.log("[Scene] Thumbstick Undo detected!");
+                     if (this._stateManager) {
+                       const activeTool = this._sculptManager.getCurrentTool();
+                       if (activeTool && activeTool.onUndo && activeTool.onUndo()) {
+                         this._main ? this._main.render() : this.render();
+                       } else {
+                         this._stateManager.undo();
+                         this._main ? this._main.render() : this.render();
+                       }
                      }
                    }
                  } else if (valX > T_PRESS) {
-                   console.log("[Scene] Thumbstick Redo detected!");
-                   if (this._stateManager) {
-                     const activeTool = this._sculptManager.getCurrentTool();
-                     if (activeTool && activeTool.onRedo && activeTool.onRedo()) {
-                       this._main ? this._main.render() : this.render();
-                     } else {
-                       this._stateManager.redo();
-                       this._main ? this._main.render() : this.render();
+                   const gNow = performance.now();
+                   if (gNow - (this._lastGlobalUndoRedoTime || 0) > 50) {
+                     this._lastGlobalUndoRedoTime = gNow;
+                     console.log("[Scene] Thumbstick Redo detected!");
+                     if (this._stateManager) {
+                       const activeTool = this._sculptManager.getCurrentTool();
+                       if (activeTool && activeTool.onRedo && activeTool.onRedo()) {
+                         this._main ? this._main.render() : this.render();
+                       } else {
+                         this._stateManager.redo();
+                         this._main ? this._main.render() : this.render();
+                       }
                      }
                    }
                  }

@@ -121,11 +121,11 @@ class SculptBase {
   captureMeshSnapshot(mesh) {
     if (!mesh) return null;
     return {
-      faces: new Uint32Array(mesh.getFaces()),
-      vertices: new Float32Array(mesh.getVertices()),
-      colors: mesh.getColors() ? new Float32Array(mesh.getColors()) : null,
-      materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials()) : null,
-      facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord()) : null,
+      faces: new Uint32Array(mesh.getFaces().subarray(0, mesh.getNbFaces() * 4)),
+      vertices: new Float32Array(mesh.getVertices().subarray(0, mesh.getNbVertices() * 3)),
+      colors: mesh.getColors() ? new Float32Array(mesh.getColors().subarray(0, mesh.getNbVertices() * 3)) : null,
+      materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials().subarray(0, mesh.getNbVertices() * 3)) : null,
+      facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord().subarray(0, mesh.getNbFaces() * 4)) : null,
       nbFaces: mesh.getNbFaces(),
       nbVertices: mesh.getNbVertices()
     };
@@ -185,6 +185,10 @@ class SculptBase {
     Mesh.OPTIMIZE = wasOptim;
     console.log("[SculptBase] Calling initRender...");
     mesh.initRender();
+    if (typeof mesh.computeOctree === 'function') {
+      console.log("[SculptBase] Recomputing Octree...");
+      mesh.computeOctree();
+    }
     console.log("[SculptBase] applyMeshSnapshot SUCCESS!");
   }
 

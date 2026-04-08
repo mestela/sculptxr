@@ -45,7 +45,9 @@ Enums.Tools = {
   SNAP_WELD_CENTER: 26,
   SPLIT_EDGE: 27,
   EDGE_CREATE: 28,
-  CUT_TOOL: 29
+  CUT_TOOL: 29,
+  EXTRUDE: 30,
+  INSET: 31
 };
 
 // display shader type

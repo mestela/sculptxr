@@ -65,7 +65,9 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.DISSOLVE_VERTEX,
     Enums.Tools.WELD,
     Enums.Tools.SNAP_WELD_CENTER,
-    Enums.Tools.CUT_TOOL
+    Enums.Tools.CUT_TOOL,
+    Enums.Tools.EXTRUDE,
+    Enums.Tools.INSET
   ];
 
   const toolOptions = orderedToolIds.map(id => {
@@ -109,6 +111,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.SPIN_EDGE:
       case Enums.Tools.WELD:
       case Enums.Tools.CUT_TOOL:
+      case Enums.Tools.EXTRUDE:
+      case Enums.Tools.INSET:
         return '#c5ebc5'; // Green (bright)
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)
@@ -984,6 +988,24 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   if (showSym || showContinuous) {
     widgets.push({ type: 'info', label: 'Common', x: col1X, y: y });
     y += gapHeader;
+
+    if (activeToolIndex === Enums.Tools.EXTRUDE || (activeTool && activeTool.constructor.name === 'Extrude')) {
+      const keepVal = !!window.keepExtrudeFacesTogether;
+      widgets.push({
+        type: 'button',
+        id: 'extrude_keep_together',
+        label: keepVal ? '[X] Merged Boundary Loops' : '[ ] Isolated Face Loops',
+        x: col1X, y: y, w: 550, h: btnH,
+        onInteract: () => {
+          window.keepExtrudeFacesTogether = !keepVal;
+          if (main._guiXR) {
+            main._guiXR.refreshToolsWidget();
+            main._guiXR._needsRedraw = true;
+          }
+        }
+      });
+      y += btnH + gapBtn;
+    }
 
     if (showSym) {
 

@@ -18,6 +18,7 @@
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [x] **Fix level 0 wireframe after reverse**
 * [x] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
 * [x] **Symmetry line cleanup tools**: Configured mirror macro-diamond culler. Full Manifold-3D CSG ghost-edge tagging & quad preservation pipeline scheduled for next execution step.
 * [x] **Symmetry**: "I found symmetry stopped working when I turned mesh to voxel and back again after adding some stuff in voxels"
