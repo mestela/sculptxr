@@ -35,7 +35,12 @@ export default function getTopologyWidgets(main) {
   y += gapHeader;
 
   if (isMulti) {
-    widgets.push({ type: 'info', label: `Current Level: ${mesh._sel}`, x: col1X, y: y });
+    const numLevels = mesh._meshes.length;
+    widgets.push({ type: 'info', label: `Level ${mesh._sel} of ${numLevels - 1}, ${mesh.getNbVertices().toLocaleString()} vertices`, x: col1X, y: y });
+    y += 30;
+    widgets.push({ type: 'info', label: `Level 0: ${mesh._meshes[0].getNbVertices().toLocaleString()} vertices`, x: col1X, y: y });
+    y += 30;
+    widgets.push({ type: 'info', label: `Level ${numLevels - 1}: ${mesh._meshes[numLevels - 1].getNbVertices().toLocaleString()} vertices`, x: col1X, y: y });
     y += 40;
 
     const canDown = mesh._sel > 0;
@@ -110,6 +115,19 @@ export default function getTopologyWidgets(main) {
     disabled: !hasHigher,
     onInteract: () => {
       if (main.getGui() && main.getGui()._ctrlTopology) {
+        main.getGui()._ctrlTopology.deleteHigher();
+        if (main.guiXR) main.guiXR._needsRedraw = true;
+      }
+    }
+  });
+  y += btnH + gapBtn;
+
+  widgets.push({
+    type: 'button', id: 'reset_base', label: 'Jump to 0 & Del Higher', x: col1X, y: y, w: 350, h: btnH,
+    disabled: !hasHigher,
+    onInteract: () => {
+      if (main.getGui() && main.getGui()._ctrlTopology) {
+        main.getGui()._ctrlTopology.onResolutionChanged(0);
         main.getGui()._ctrlTopology.deleteHigher();
         if (main.guiXR) main.guiXR._needsRedraw = true;
       }

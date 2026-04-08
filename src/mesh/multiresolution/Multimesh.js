@@ -113,12 +113,6 @@ class Multimesh extends Mesh {
     this.updateDuplicateColorsAndMaterials();
     this.updateBuffers();
 
-    var cur = this.getCurrentMesh();
-    console.log(`[Multimesh Diagnostic] Level: ${this._sel}/${this._meshes.length - 1}`, {
-      nbVertices: cur.getNbVertices(),
-      nbFaces: cur.getNbFaces(),
-      wireframeLength: cur.getWireframe() ? cur.getWireframe().length : 0
-    });
 
     var mesh = this._meshes[this.getLowIndexRender()];
     
@@ -401,22 +395,53 @@ class Multimesh extends Mesh {
           }
         }
 
-        var activeMesh = this.getCurrentMesh();
-        if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
-          activeMesh.allocateArrays();
-          activeMesh.initFaceRings();
-          activeMesh.initEdges();
+        var indices;
+        var type = this.getWireframeType();
+        var hasEven = !!(this._meshes[0].getEvenMapping() || this.getCurrentMesh().getEvenMapping());
+
+        if (type === 1 || type === 0) { // Smooth or Fast L0 (Pure Base Level overlay)
+          var lowWireMesh = this._meshes[0];
+          if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
+            lowWireMesh.allocateArrays();
+            lowWireMesh.initFaceRings();
+            lowWireMesh.initEdges();
+          }
+          
+          var baseIndices = type === 1 && (!hasEven) ? this.getTessellatedWireframe(0) : lowWireMesh.getWireframe();
+          
+          // Trace the index mapping forward through the Reversion tables up to the active level coords
+          if (hasEven && this._sel > 0) {
+            var mappedIndices = new Uint32Array(baseIndices.length);
+            for (var i = 0; i < baseIndices.length; i++) {
+              var curId = baseIndices[i];
+              for (var L = 0; L < this._sel; L++) {
+                var map = this._meshes[L].getVerticesMapping();
+                if (map && curId < map.length) {
+                  curId = map[curId];
+                }
+              }
+              mappedIndices[i] = curId;
+            }
+            indices = mappedIndices;
+          } else {
+            indices = baseIndices;
+          }
+        } else { // Full Active Level wireframe
+          var activeMesh = this.getCurrentMesh();
+          if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
+            activeMesh.allocateArrays();
+            activeMesh.initFaceRings();
+            activeMesh.initEdges();
+          }
+          indices = activeMesh.getWireframe();
         }
-        var indices = activeMesh.getWireframe();
 
         if (this._renderData._wireframeMesh && this._renderData._threeMesh && indices) {
           var wireGeom = this._renderData._wireframeMesh.geometry;
           var mainGeom = this._renderData._threeMesh.geometry;
 
-          // Share position! MUST sync if mainGeom replaces position!
+          // Unconditionally link the translated wireframe to the shared high-res coordinate array
               wireGeom.setAttribute('position', mainGeom.getAttribute('position'));
-
-          // Share normal! REQUIRED for vertex shader inflation!
               wireGeom.setAttribute('normal', mainGeom.getAttribute('normal'));
 
           wireGeom.setIndex(null);
