@@ -1,3 +1,7 @@
+# v1.0.143
+- **Feature**: **Inset Tool Rewrite**: Complete ground-up rebuild of the VR Inset tool supporting dynamic independent un-welded per-face topology (when "Keep Together" is disabled), and precise per-face target midpoint averaging (when "Keep Together" is enabled) to prevent cross-cancellation and ensure coplanar, non-sinking boundary contraction across complex spherical shapes.
+- **Feature**: **Precision Start Marker**: Integrated a prominent, glowing 0.2m yellow marker sphere precisely calculated from surface intersection matrix data, perfectly illustrating where the controller initially latched to support micro-precision manual drag gestures.
+
 # v1.0.133
 - **Fix**: **Extrude Garbage Pitfall Precaution**: Adjusted the Undo/Redo state recording mechanics within `Extrude.js` to completely avoid the "Garbage Pitfall". Array buffers are now properly and explicitly sliced using `.subarray` to limit snapshots exactly to active ranges (`nbFaces`, `nbVertices`), preventing trailing unused buffer memory from tangling wireframes or collapsing active ranges upon operation Undo/Redo.
 - **UX**: **Subdivision Alert Non-Blocking Overhaul**: Replaced all blocking `window.alert` and `window.confirm` calls within `GuiTopology.js` with non-blocking `window.screenLog` VR HUD notifications. This ensures users are never forced out of immersive WebXR mode by desktop modal dialogs when attempting reverse subdivision checks or multiresolution boundary actions.

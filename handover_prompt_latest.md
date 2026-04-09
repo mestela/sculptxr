@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Refined Extrude array buffering to prevent "Garbage Pitfall" leaks, and replaced all blocking desktop alerts/confirms in multiresolution and topology operations with non-blocking VR HUD logging to safeguard immersive sessions entirely.
+**Project Status**: Rebuilt Inset tool from scratch with robust un-welded Keep Together topology, per-face target midpoint averaging for smooth coplanar scaling without sinking, and a precision start-click aim sphere helper.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.133
+**Checkpoint**: v1.0.143
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -13,9 +13,8 @@
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Accomplishments & Current Situation
-1. **Extrude Array Slicing**: Refactored Extrude's Undo/Redo snapshot captures to precisely slice typed array lengths via `.subarray()`, perfectly abiding by the low-poly "Garbage Pitfall" standards.
-2. **Non-Blocking Topology UI**: Purified `GuiTopology.js` by eradicating all blocking `window.alert` and `window.confirm` calls. Replaced them entirely with VR-safe `window.screenLog`, guaranteeing that multiresolution errors or warnings never pull artists out of their immersive headset environments.
+1. **Complete Rewrite of Inset Tool**: Implemented independent vertex duplication when Keep Together is disabled, and combined midpoint face averaging when Keep Together is enabled to maintain coplanarity over spherical/curved surfaces.
+2. **Precision Targeting Indicator**: Added a yellow 0.2m glowing sphere positioned perfectly on the mesh intersection point using `activeMesh.getMatrix()` to guide users on their initial click location.
 
 ## Next Steps / Backlog
-1. Validate any further edge-cases discovered while testing reverse subdivision or dynamic topology limits in headset.
-2. Perform standard creative testing passes using the stabilized Extrude and Multiresolution tools!
+1. **Symmetry Validation**: Validate any specific behavior for inset tools across complex models or mirroring seams if desired.

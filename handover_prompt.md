@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Rebuilt Inset tool from scratch with Keep Together per-face duplication and final sensitivity scaling down (0.1x multiplier).
+**Project Status**: Rebuilt Inset tool from scratch with robust un-welded Keep Together topology, per-face target midpoint averaging for smooth coplanar scaling without sinking, and a precision start-click aim sphere helper.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.136 (Inset Final Sensitivity)
+**Checkpoint**: v1.0.143
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -13,8 +13,8 @@
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Accomplishments & Current Situation
-1. **Rebuild Inset Tool**: Fully un-welds internal per-face ring duplication on Keep Together toggle off.
-2. **Distance Sensitivity**: Halved the delta sensitivity scale completely down to `0.1` to allow ample physical motion room before reaching full inset maximum.
+1. **Complete Rewrite of Inset Tool**: Implemented independent vertex duplication when Keep Together is disabled, and combined midpoint face averaging when Keep Together is enabled to maintain coplanarity over spherical/curved surfaces.
+2. **Precision Targeting Indicator**: Added a yellow 0.2m glowing sphere positioned perfectly on the mesh intersection point using `activeMesh.getMatrix()` to guide users on their initial click location.
 
 ## Next Steps / Backlog
-1. **User Session Sign-off**: Await user validation of the new sensitivity threshold.
+1. **Symmetry Validation**: Validate any specific behavior for inset tools across complex models or mirroring seams if desired.
