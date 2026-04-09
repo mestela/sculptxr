@@ -8,17 +8,16 @@
 
 ## 1. Todo
 
-* [ ] **Inset**: Nearly there, i think replace controller length along normal with just total distance from click
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Three-mesh-ui**: move menu system to this
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
 * [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
 * [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
-* [ ] **Box modelling**: Integrate functions from https://github.com/sengchor/kokraf?tab=readme-ov-file and put VR front end on it
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [x] **Inset**: Nearly there, i think replace controller length along normal with just total distance from click
 * [x] **Extrude** 
 * [x] **Fix level 0 wireframe after reverse**
 * [x] **Flow/relax**: Use hidden copy of mesh, conform relax over it. Or select another mesh?
