@@ -18,8 +18,13 @@ export default function getSceneWidgets(main) {
   let leftY = 10;
   let rightY = 10;
 
-  // --- LEFT COLUMN: OUTLINER ---
-  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW, h: HEADER_H, header: true });
+  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW - 150, h: HEADER_H, header: true });
+  widgets.push({ 
+    type: 'button', id: 'btn_sort_outliner', 
+    label: main._outlinerSortAz ? 'Sort: A-Z' : 'Sort: ID', 
+    x: leftX + colW - 140, y: leftY, w: 140, h: HEADER_H, 
+    onInteract: () => { main._outlinerSortAz = !main._outlinerSortAz; main.render(); } 
+  });
   leftY += HEADER_H + GAP;
 
   const meshes = main.getMeshes();
@@ -31,7 +36,23 @@ export default function getSceneWidgets(main) {
     }
   }
   
-  sortedOutlinerMeshes.sort((a, b) => a.getID() - b.getID());
+  // 1. Ensure every mesh has its label preemptively so sorting isn't null
+  let preCount = 0;
+  for (let i = 0; i < sortedOutlinerMeshes.length; i++) {
+    preCount++;
+    const m = sortedOutlinerMeshes[i];
+    if (!m._permanentStaticLabel) m._permanentStaticLabel = (m._typeName || "Mesh") + " " + preCount;
+  }
+
+  if (main._outlinerSortAz) {
+    sortedOutlinerMeshes.sort((a, b) => {
+      let nameA = a._permanentStaticLabel || "";
+      let nameB = b._permanentStaticLabel || "";
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  } else {
+    sortedOutlinerMeshes.sort((a, b) => a.getID() - b.getID());
+  }
   
   let displayCount = 0;
 

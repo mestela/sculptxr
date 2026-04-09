@@ -1530,7 +1530,16 @@ class Scene {
 
     var meshes = this._meshes;
     for (var i = 0; i < nbNewMeshes; ++i) {
-      var mesh = newMeshes[i] = new Multimesh(newMeshes[i]);
+      var innerMesh = newMeshes[i];
+      var mesh = newMeshes[i] = new Multimesh(innerMesh);
+
+      if (innerMesh._permanentStaticLabel) {
+        mesh._permanentStaticLabel = innerMesh._permanentStaticLabel;
+        console.log(`[SGL Label Restoration] Successfully mapped label '${mesh._permanentStaticLabel}' to Multimesh ${mesh.getID()}`);
+      }
+      if (innerMesh._permanentStaticId) {
+        mesh._permanentStaticId = innerMesh._permanentStaticId;
+      }
 
       if (!this._vertexSRGB && mesh.getColors()) {
         Utils.convertArrayVec3toSRGB(mesh.getColors());

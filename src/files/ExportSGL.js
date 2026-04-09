@@ -6,57 +6,12 @@ var Export = {};
 // 1 initial
 // 2 + camera,shader, matcap, wire, alpha, flat 
 // 3 faces u32 instead of i32
-Export.VERSION = 3;
-
-// current version 3
-//
-// Version (u32)
-
-// ShowGrid (u32) .v2
-// ShowMirror (u32) .v2
-// ShowContour (u32) .v2
-
-// CameraProj (u32) .v2
-// CameraMode (u32) .v2
-// CameraFov (f32) .v2
-// CameraPivot (u32) .v2
-
-// nbMeshes (u32)
-
-// Shader (u32) .v2
-// Matcap (u32) .v2
-// ShowWireframe (u32) .v2;
-// FlatShading (u32) .v2;
-// Alpha (f32) .v2
-
-// Center (f32 * 3)
-// Matrix (f32 * 16)
-// Scale (f32)
-
-// NbVertices (u32)
-// vertices (f32 * 3 * nbVertices)
-
-// nbColors (u32) => 0 or nbVertices
-// colors (f32 * 3 * nbVertices)
-
-// nbMaterials (u32) => 0 or nbVertices
-// materials (f32 * 3 * nbVertices)
-
-// NbFaces (u32)
-// faces (u32 * 4 * nbFaces)
-
-// NbTexCoords (u32) => 0 means no UV
-// texcoords (f32 * 2 * nbTexCoords)
-
-// NbFacesTexCoords (u32) => 0 or nbFaces
-// faces (u32 * 4 * nbFaces)
-//
-/** Export SGL (sculptgl) file */
+Export.VERSION = 4;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
 
-  var bytePerMesh = 3 + 16 + 1 + 6 + 5;
+  var bytePerMesh = 3 + 16 + 1 + 6 + 5 + 16;
   var nbBytes = 4 * (1 + 3 + 4 + 1 + nbMeshes * bytePerMesh);
   var i = 0;
   var mesh;
@@ -151,6 +106,14 @@ Export.exportSGL = function (meshes, main) {
     if (hasUV) {
       u32a.set(mesh.getFacesTexCoord().subarray(0, nbFaces * 4), off);
       off += nbFaces * 4;
+    }
+
+    // name / label (v4)
+    let labelStr = mesh._permanentStaticLabel || ("Mesh " + (i + 1));
+    for (let k = 0; k < 16; k++) {
+      let char1 = (k * 2 < labelStr.length) ? labelStr.charCodeAt(k * 2) : 0;
+      let char2 = (k * 2 + 1 < labelStr.length) ? labelStr.charCodeAt(k * 2 + 1) : 0;
+      u32a[off++] = (char1 << 16) | char2;
     }
   }
 

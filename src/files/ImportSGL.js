@@ -114,6 +114,20 @@ Import.importSGL = function (buffer, gl, main) {
 
     if (uv && fuv)
       mesh.initTexCoordsDataFromOBJData(uv, fuv);
+
+    if (version >= 4) {
+      let decodedStr = "";
+      for (let k = 0; k < 16; k++) {
+        let u = u32a[off++];
+        let c1 = (u >> 16) & 0xFFFF;
+        let c2 = u & 0xFFFF;
+        if (c1 !== 0) decodedStr += String.fromCharCode(c1);
+        if (c2 !== 0) decodedStr += String.fromCharCode(c2);
+      }
+      if (decodedStr.length > 0) {
+        mesh._permanentStaticLabel = decodedStr;
+      }
+    }
   }
 
   return meshes;
