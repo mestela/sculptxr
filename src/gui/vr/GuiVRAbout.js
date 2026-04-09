@@ -48,26 +48,51 @@ export default function getAboutWidgets(main) {
       let clean = line.trim();
       if (clean.length === 0) continue;
 
-      let font = '18px sans-serif';
-      let color = '#ddd';
+      // Parse mixed markdown styles on the same line
+      if (clean.startsWith('# ')) {
+         y += 20;
+         clean = clean.replace('# ', '').trim();
+         widgets.push({ type: 'info', label: clean, x: 10, y: y, w: menuW, h: 25, font: 'bold 22px sans-serif', color: '#bbb' });
+         y += 25;
+      } else {
+         if (clean.startsWith('-')) y += 15;
+         let bullet = clean.startsWith('-') ? '• ' : '';
+         let raw = bullet + clean.replace(/^- /, '').replace(/^-/, '').trim();
 
-      if (clean.startsWith('- **')) {
-         clean = clean.replace('- **', '').replace('**:', ':');
-         font = 'bold 18px sans-serif';
-         color = '#00d0ff';
-      } else if (clean.startsWith('# ')) {
-         clean = clean.replace('# ', 'Version ');
-         font = 'bold 22px sans-serif';
-         color = '#ffffff';
+         const words = raw.split(' ');
+         let currentLineWords = [];
+         let currentLen = 0;
+         const wrappedLines = [];
+
+         for (let w of words) {
+            if (currentLen + w.length + 1 > 65) {
+               wrappedLines.push(currentLineWords.join(' '));
+               currentLineWords = [w];
+               currentLen = w.length + 1;
+            } else {
+               currentLineWords.push(w);
+               currentLen += w.length + 1;
+            }
+         }
+         if (currentLineWords.length > 0) wrappedLines.push(currentLineWords.join(' '));
+
+         for (let l of wrappedLines) {
+            const spans = [];
+            let isBold = false;
+            const parts = l.split(/(\*\*|`)/);
+            for (let part of parts) {
+               if (part === '**' || part === '`') {
+                  isBold = !isBold;
+               } else if (part.length > 0) {
+                  spans.push({ text: part, bold: isBold });
+               }
+            }
+            widgets.push({ type: 'richtext', spans: spans, x: 10, y: y, w: menuW, h: 25 });
+            y += 25;
+         }
       }
 
-      // Break long lines to fit in wider menu
-      const maxChars = 85;
-      for (let i = 0; i < clean.length; i += maxChars) {
-        const chunk = clean.slice(i, i + maxChars);
-        widgets.push({ type: 'info', label: chunk, x: 10, y: y, w: menuW, h: 25, font, color });
-        y += 25;
-      }
+
     }
   } catch (e) {
     widgets.push({ type: 'info', label: 'Release notes not found.', x: 10, y: y, w: menuW, h: ITEM_H });

@@ -1,8 +1,8 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Rebuilt Inset tool from scratch with robust un-welded Keep Together topology, per-face target midpoint averaging for smooth coplanar scaling without sinking, and a precision start-click aim sphere helper.
+**Project Status**: Successfully restored thumbstick scrolling and persistent scroll-position state saving for the VR About menu overlay. Resolved the missing hook for storing `window._sculptAboutScroll` when using non-dominant thumbstick inputs.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.143
+**Checkpoint**: v1.0.148
 
 ## Deployed Version
 - **Beta**: N/A (Deployment disabled in rules)
@@ -13,8 +13,8 @@
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Accomplishments & Current Situation
-1. **Complete Rewrite of Inset Tool**: Implemented independent vertex duplication when Keep Together is disabled, and combined midpoint face averaging when Keep Together is enabled to maintain coplanarity over spherical/curved surfaces.
-2. **Precision Targeting Indicator**: Added a yellow 0.2m glowing sphere positioned perfectly on the mesh intersection point using `activeMesh.getMatrix()` to guide users on their initial click location.
+1. **Thumbstick Scrolling State Persistence**: Added an explicit check during the dominant/non-dominant thumbstick vertical scroll events in `Scene.js` to continuously capture and save `_scrollOffsetOverlay` into `window._sculptAboutScroll` when the targeted overlay is the `About & Help` tab.
+2. **Position Restoration**: Verified that the restored scroll offset correctly initializes upon re-opening the About menu overlay since `tabName` is passed down through `openOverlay`.
 
 ## Next Steps / Backlog
-1. **Symmetry Validation**: Validate any specific behavior for inset tools across complex models or mirroring seams if desired.
+1. **Verify in Headset**: Confirm thumbstick scrolling speed and persistence threshold feels natural inside the VR environment.

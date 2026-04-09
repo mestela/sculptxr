@@ -51,7 +51,7 @@ MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on t
 
 ## Commit Protocol
 **"Explicit Commits Only"**
-1.  **NEVER autonomously commit to git**: Do not run `git commit` unless the user explicitly asks you to. 
+1.  **NEVER autonomously commit to git**: Only commit when the user asks me to. Do not run `git commit` unless the user explicitly requests it. 
 2.  **Keep the Log Clean**: The user prefers to keep the git log free of broken, WIP, or intermediate commits.
 3.  **Wait for the Prompt**: When a feature is working and deployed to Beta, wait for the user to confirm it works and explicitly request a commit before pushing it to the history.
 
@@ -124,7 +124,7 @@ MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on t
 -   **Usage**: Opens a 1:1 overlay of the VR Menu texture on the desktop screen. Mouse acts as the VR Pointer.
 
 ## Handover Protocol
-**When to create**: At the end of EVERY session, or when hitting a blocking issue.
+**When to create**: At the end of EVERY session, or when hitting a blocking issue, **but ONLY update when the user explicitly requests it**.
 **File Naming**: `handover_prompt_latest.md` (refers to `handover_prompt.md`).
 **Template**:
 ```markdown

@@ -1065,7 +1065,24 @@ export default class GuiXR {
 
     // 0. Check Overlay (with Tab Switching Priority)
     if (this._overlay) {
-      if (!isRisingEdge) return; // Only interact on press
+      if (!isPressed) {
+         this._overlayDragActive = false;
+         this._lastOverlayCY = undefined;
+      } else if (isRisingEdge) {
+         this._overlayDragActive = true;
+         this._lastOverlayCY = cy;
+      } else if (this._overlayDragActive && this._lastOverlayCY !== undefined) {
+         const deltaY = cy - this._lastOverlayCY;
+         this._scrollOffsetOverlay -= deltaY;
+         this._scrollOffsetOverlay = Math.max(0, Math.min(this._scrollOffsetOverlay, this._maxScrollOverlay || 0));
+         if (this._overlayData && this._overlayData.widgets && this._overlayData.widgets[0] && this._overlayData.widgets[0].label === 'About & Help') {
+            window._sculptAboutScroll = this._scrollOffsetOverlay;
+         }
+         this._needsRedraw = true;
+         this._lastOverlayCY = cy;
+      }
+      // Continue with standard widget interaction if appropriate
+      if (!isRisingEdge) return;
       if (now - this._inputDebounce < 250) return;
 
       // PRIORITY: Check if clicking a TAB HEADER (Outside Overlay)
@@ -1352,8 +1369,17 @@ export default class GuiXR {
           // But our scrollOffset increases to scroll DOWN.
           // Dragging UP (deltaY < 0) should increase scrollOffset (scrolling down).
           // So we subtract deltaY.
-          this._scrollOffset -= deltaY;
-          this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+          if (this._overlay) {
+             this._scrollOffsetOverlay -= deltaY;
+             this._scrollOffsetOverlay = Math.max(0, Math.min(this._scrollOffsetOverlay, this._maxScrollOverlay || 0));
+             if (this._overlayData && this._overlayData.widgets && this._overlayData.widgets[0] && this._overlayData.widgets[0].label === 'About & Help') {
+                window._sculptAboutScroll = this._scrollOffsetOverlay;
+                console.log('[AboutScroll] Saved scroll offset:', window._sculptAboutScroll);
+             }
+          } else {
+             this._scrollOffset -= deltaY;
+             this._scrollOffset = Math.max(0, Math.min(this._scrollOffset, this._maxScroll));
+          }
           this._needsRedraw = true;
           this._requestDraw();
         }
@@ -1624,7 +1650,18 @@ export default class GuiXR {
       // Add 150px buffer for Settings to allow scrolling comboboxes
       const buffer = data.tabName === 'Settings' ? 150 : 0;
       this._maxScrollOverlay = Math.max(0, maxY + buffer - data.h);
-      this._scrollOffsetOverlay = 0; // Reset scroll on open
+      console.log('[AboutScroll] openOverlay called. data:', data);
+      if (data && data.widgets && data.widgets[0]) {
+         console.log('[AboutScroll] First widget label:', data.widgets[0].label);
+      }
+
+      if (data && (data.tabName === 'About & Help' || data.tabName === 'About' || (data.widgets && data.widgets[0] && data.widgets[0].label === 'About & Help'))) {
+         console.log('[AboutScroll] Matched About menu! Restoring scroll from window._sculptAboutScroll:', window._sculptAboutScroll);
+         this._scrollOffsetOverlay = window._sculptAboutScroll || 0;
+      } else if (data && (data.tabName === 'Settings' || data.tabName === 'Files' || data.tabName === 'History' || data.tabName === 'Reference')) {
+         console.log('[AboutScroll] Did NOT match About menu. Resetting _scrollOffsetOverlay to 0.');
+         this._scrollOffsetOverlay = 0;
+      }
     } else {
       this._scrollOffsetOverlay = 0;
     }
@@ -2432,6 +2469,10 @@ export default class GuiXR {
         ctx.beginPath();
         ctx.rect(x, y, mw, mh);
         ctx.clip();
+      }
+
+      if (widgets && widgets[0] && widgets[0].label === 'About & Help') {
+         this._scrollOffsetOverlay = window._sculptAboutScroll || 0;
       }
 
       widgets.forEach(wid => {
@@ -3716,7 +3757,7 @@ export default class GuiXR {
     const wy = y + wid.y;
 
     // Hover Background (Generic)
-    if (isHover && !wid.header) {
+    if (isHover && !wid.header && wid.type !== 'info' && wid.type !== 'richtext') {
       ctx.fillStyle = this.styles.colorWidgetHover;
       ctx.fillRect(wx, wy, wid.w, wid.h);
     } else {
@@ -3738,10 +3779,19 @@ export default class GuiXR {
       ctx.lineTo(wx + wid.w, wy + wid.h - 5);
       ctx.stroke();
     } else if (wid.type === 'info') {
-      ctx.fillStyle = '#bbb';
-      ctx.font = this.styles.fontOverlay;
+      ctx.fillStyle = wid.color || '#bbb';
+      ctx.font = wid.font || this.styles.fontOverlay;
       ctx.textAlign = wid.textAlign || 'left';
       ctx.fillText(wid.label, wx + (wid.textAlign === 'center' ? 0 : 5), wy + wid.h / 2 + 6);
+    } else if (wid.type === 'richtext') {
+      let currentX = wx + 5;
+      ctx.fillStyle = '#bbb';
+      ctx.textAlign = 'left';
+      for (let span of wid.spans) {
+         ctx.font = span.bold ? 'bold 18px sans-serif' : '18px sans-serif';
+         ctx.fillText(span.text, currentX, wy + wid.h / 2 + 6);
+         currentX += ctx.measureText(span.text).width;
+      }
     } else if (wid.type === 'checkbox') {
       ctx.fillStyle = isHover ? '#444' : '#333';
       ctx.fillRect(wx, wy, wid.w, wid.h);

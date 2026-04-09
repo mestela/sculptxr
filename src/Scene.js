@@ -2785,6 +2785,10 @@ class Scene {
             if (this._guiXR._overlay === 'menu') {
               this._guiXR._scrollOffsetOverlay += (valY > 0 ? 1 : -1) * scrollSpeed;
               this._guiXR._scrollOffsetOverlay = Math.max(0, Math.min(this._guiXR._scrollOffsetOverlay, this._guiXR._maxScrollOverlay || 0));
+              if (this._guiXR._overlayData && (this._guiXR._overlayData.tabName === 'About & Help' || this._guiXR._overlayData.tabName === 'About')) {
+                window._sculptAboutScroll = this._guiXR._scrollOffsetOverlay;
+                console.log('[AboutScroll] Saved thumbstick scroll offset:', window._sculptAboutScroll);
+              }
             } else {
               this._guiXR._scrollOffset += (valY > 0 ? 1 : -1) * scrollSpeed;
               this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
