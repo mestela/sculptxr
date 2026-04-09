@@ -315,7 +315,7 @@ class Grab extends SculptBase {
     } else {
       // Released
       if (this._grabbedMesh) {
-        if (window.screenLog) window.screenLog("Grab: RELEASED", "white");
+        // Released silently
       }
       this._grabbedMesh = null;
       this._activeController = null;

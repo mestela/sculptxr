@@ -145,8 +145,6 @@ export default function getSceneWidgets(main) {
     value: !!main._lockSelection,
     onInteract: (val) => { 
       main._lockSelection = val; 
-      const activeMesh = main.getMesh();
-      console.log(`[LOCK DEBUG] Checkbox Toggled! Lock Selection is now: ${val}. Active Mesh ID is: ${activeMesh ? activeMesh.getID() : 'None'}`);
     }
   });
   y += ITEM_H + GAP;

@@ -4038,11 +4038,7 @@ class Scene {
             this._eyedropperStartColor = null;
         }
 
-        console.log(`[LOCK DEBUG] Trigger Down! Lock Selection is: ${this._lockSelection}. Evaluated Picked Mesh: ID=${this._picking.getMesh() ? this._picking.getMesh().getID() : 'None'}`);
-        if (this._lockSelection) {
-          const activeMenuMesh = this.getMesh();
-          console.log(`[LOCK DEBUG] Outliner Selected Mesh is: ID=${activeMenuMesh ? activeMenuMesh.getID() : 'None'}. Forcing Tool Binding.`);
-        }
+
 
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;

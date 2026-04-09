@@ -1,3 +1,7 @@
+# v1.0.150
+- **Feature**: **VR Selection Lock Enforcement**: Enforced persistent, un-shifting target binding across all sculpted inputs and standard Grab tool executions when the `Lock Selection` toggle is active.
+- **Feature**: **Lock Multi-selection Transformation Support**: Fully integrated support for multi-selected Outliner items while locking is enabled. The manual picking filter now captures all active multi-select targets and simultaneously applies spatial transformation matrices to every included block during a single stroke event without jittering or losing focus.
+
 # v1.0.149
 - **UX**: **Persistent About Menu Scrolling**: Successfully restored thumbstick vertical scrolling and persistent state saving across overlay sessions for the VR About & Help menu.
 

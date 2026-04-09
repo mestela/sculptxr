@@ -159,7 +159,6 @@ class Picking {
   intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
     if (this._main && this._main._lockSelection) {
       const activeMesh = this._main.getMesh();
-      console.log(`[LOCK DEBUG] Mouse-Picking Executing. Lock is ON. Forcing target list down to 1 mesh: ID=${activeMesh ? activeMesh.getID() : 'null'}`);
       if (activeMesh) {
         meshes = [activeMesh];
       }
