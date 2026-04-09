@@ -1,5 +1,6 @@
 import TR from '../GuiTR.js';
 import { VERSION } from '../../Version.js';
+import releaseText from '../../docs/releases.md?raw';
 
 export default function getAboutWidgets(main) {
   const widgets = [];
@@ -35,6 +36,32 @@ export default function getAboutWidgets(main) {
   widgets.push({ type: 'info', label: 'Dominant Stick: Brush Size / Intensity', x: 10, y: y, w: menuW, h: ITEM_H });
   y += ITEM_H + GAP;
   widgets.push({ type: 'info', label: 'Grip: Move / Scale World', x: 10, y: y, w: menuW, h: ITEM_H });
+  y += ITEM_H + GAP;
+
+  // Release History Preview
+  widgets.push({ type: 'header', label: 'Recent Release Notes', x: 0, y: y, w: menuW, h: 30, header: true });
+  y += 35;
+
+  try {
+    const lines = releaseText.split('\n').slice(0, 200);
+    for (let line of lines) {
+      const clean = line.trim();
+      if (clean.length === 0) continue;
+
+      // Break long lines to fit in menu
+      const maxChars = 45;
+      for (let i = 0; i < clean.length; i += maxChars) {
+        const chunk = clean.slice(i, i + maxChars);
+        widgets.push({ type: 'info', label: chunk, x: 10, y: y, w: menuW, h: 25 });
+        y += 25;
+      }
+    }
+  } catch (e) {
+    widgets.push({ type: 'info', label: 'Release notes not found.', x: 10, y: y, w: menuW, h: ITEM_H });
+    y += ITEM_H + GAP;
+  }
+
+  widgets.push({ type: 'button', id: 'github_rel_link', label: 'Read more on GitHub', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => window.open('https://github.com/mestela/sculptxr/blob/master/docs/releases.md') });
   y += ITEM_H + GAP;
 
   return { width: menuW, height: y + 10, widgets };
