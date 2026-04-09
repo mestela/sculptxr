@@ -1,10 +1,10 @@
 import TR from '../GuiTR.js';
 import { VERSION } from '../../Version.js';
-import releaseText from '../../docs/releases.md?raw';
+import releaseText from '../../../docs/releases.md?raw';
 
 export default function getAboutWidgets(main) {
   const widgets = [];
-  const menuW = 400;
+  const menuW = 600;
   let y = 10;
   const ITEM_H = 40;
   const GAP = 5;
@@ -45,11 +45,15 @@ export default function getAboutWidgets(main) {
   try {
     const lines = releaseText.split('\n').slice(0, 200);
     for (let line of lines) {
-      const clean = line.trim();
+      let clean = line.trim();
       if (clean.length === 0) continue;
 
-      // Break long lines to fit in menu
-      const maxChars = 45;
+      // Strip markdown prefixes to clean up the raw feel
+      if (clean.startsWith('- **')) clean = clean.replace('- **', '').replace('**:', ':');
+      if (clean.startsWith('# ')) clean = clean.replace('# ', 'Version ');
+
+      // Break long lines to fit in wider menu
+      const maxChars = 85;
       for (let i = 0; i < clean.length; i += maxChars) {
         const chunk = clean.slice(i, i + maxChars);
         widgets.push({ type: 'info', label: chunk, x: 10, y: y, w: menuW, h: 25 });
@@ -64,5 +68,5 @@ export default function getAboutWidgets(main) {
   widgets.push({ type: 'button', id: 'github_rel_link', label: 'Read more on GitHub', x: 0, y: y, w: menuW, h: ITEM_H, onInteract: () => window.open('https://github.com/mestela/sculptxr/blob/master/docs/releases.md') });
   y += ITEM_H + GAP;
 
-  return { width: menuW, height: y + 10, widgets };
+  return { width: menuW, height: Math.min(600, y + 10), widgets };
 }
