@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.130**: **Fix**: **Reverse Base-Level Wireframe Synchronization**: Dynamically maps base Level 0 line segment overlays through the Reversion parent mapping table chain to guarantee perfect real-time synchronization against shared high-poly coordinate buffers.
-*   **v1.0.129**: **Feature**: **Continuous Surface Relaxation**: Finalized Slide sub-mode (Alt/Negative) dragging tangential constraint surface flow.
-*   **v1.0.125**: **UX**: Added UI Processing Feedback states and Duplicate Click Prevention timeouts for WebAssembly remeshing workers.
+*   **v1.0.149**: **UX**: Successfully restored thumbstick vertical scrolling and persistent state saving for the VR About & Help menu.
+*   **v1.0.143**: **Feature**: Complete rebuild of VR Inset tool and integrated Precision Start Marker.
+*   **v1.0.133**: **Fix**: Adjusted Undo/Redo array recording mechanics to avoid the Extrude Garbage Pitfall.
 
 [View Full Release History](docs/releases.md)
 

@@ -1374,7 +1374,6 @@ export default class GuiXR {
              this._scrollOffsetOverlay = Math.max(0, Math.min(this._scrollOffsetOverlay, this._maxScrollOverlay || 0));
              if (this._overlayData && this._overlayData.widgets && this._overlayData.widgets[0] && this._overlayData.widgets[0].label === 'About & Help') {
                 window._sculptAboutScroll = this._scrollOffsetOverlay;
-                console.log('[AboutScroll] Saved scroll offset:', window._sculptAboutScroll);
              }
           } else {
              this._scrollOffset -= deltaY;
@@ -1650,16 +1649,9 @@ export default class GuiXR {
       // Add 150px buffer for Settings to allow scrolling comboboxes
       const buffer = data.tabName === 'Settings' ? 150 : 0;
       this._maxScrollOverlay = Math.max(0, maxY + buffer - data.h);
-      console.log('[AboutScroll] openOverlay called. data:', data);
-      if (data && data.widgets && data.widgets[0]) {
-         console.log('[AboutScroll] First widget label:', data.widgets[0].label);
-      }
-
       if (data && (data.tabName === 'About & Help' || data.tabName === 'About' || (data.widgets && data.widgets[0] && data.widgets[0].label === 'About & Help'))) {
-         console.log('[AboutScroll] Matched About menu! Restoring scroll from window._sculptAboutScroll:', window._sculptAboutScroll);
          this._scrollOffsetOverlay = window._sculptAboutScroll || 0;
       } else if (data && (data.tabName === 'Settings' || data.tabName === 'Files' || data.tabName === 'History' || data.tabName === 'Reference')) {
-         console.log('[AboutScroll] Did NOT match About menu. Resetting _scrollOffsetOverlay to 0.');
          this._scrollOffsetOverlay = 0;
       }
     } else {

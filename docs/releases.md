@@ -1,3 +1,6 @@
+# v1.0.149
+- **UX**: **Persistent About Menu Scrolling**: Successfully restored thumbstick vertical scrolling and persistent state saving across overlay sessions for the VR About & Help menu.
+
 # v1.0.143
 - **Feature**: **Inset Tool Rewrite**: Complete ground-up rebuild of the VR Inset tool supporting dynamic independent un-welded per-face topology (when "Keep Together" is disabled), and precise per-face target midpoint averaging (when "Keep Together" is enabled) to prevent cross-cancellation and ensure coplanar, non-sinking boundary contraction across complex spherical shapes.
 - **Feature**: **Precision Start Marker**: Integrated a prominent, glowing 0.2m yellow marker sphere precisely calculated from surface intersection matrix data, perfectly illustrating where the controller initially latched to support micro-precision manual drag gestures.
