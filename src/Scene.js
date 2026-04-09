@@ -1535,7 +1535,6 @@ class Scene {
 
       if (innerMesh._permanentStaticLabel) {
         mesh._permanentStaticLabel = innerMesh._permanentStaticLabel;
-        console.log(`[SGL Label Restoration] Successfully mapped label '${mesh._permanentStaticLabel}' to Multimesh ${mesh.getID()}`);
       }
       if (innerMesh._permanentStaticId) {
         mesh._permanentStaticId = innerMesh._permanentStaticId;

@@ -423,4 +423,24 @@ if (res.normals && res.normals.buffer) transfer.push(res.normals.buffer);
 We removed the hardcoded `this._voxelMesh.setFlatShading(false)` override loop that fired on *every live frame* inside `updateVoxelMesh()`. Native Mesh property states tracked by the GUI and Main renderer should dictate flat shading mode without interference.
 
 ### 4. VR User Interface
-Uncommented the `voxel_smooth` checkbox in `GuiVRTools.js`. Toggling it triggers `activeTool.toggleSmooth()`, sending the `SET_SMOOTH` bit to the worker thread, causing real-time vertex normal generation to engage (smooth shading) or disengage (flat shaded poly-art).
+widgets.push({ type: 'checkbox', id: 'voxel_smooth', label: 'Smooth Normals', x: leftX, y: leftY, w: colW, h: ITEM_H, value: activeTool._options.smooth, onInteract: () => { activeTool.toggleSmooth(); main.render(); } });
+
+---
+
+# Walkthrough: SGL Outliner Label Persistence (v1.0.150)
+
+## Goal
+Ensure outliner names and multi-object visual assignments persist permanently when saving to local storage, preventing random ID scrambling on reload.
+
+## Architecture Refactoring
+- **Format Evolution**: Upgraded the binary exporter (`ExportSGL.js`) and binary importer (`ImportSGL.js`) specifications to **Version 4**.
+
+## Resolution Guide
+1. **Binary Name Appending**:
+   - In `ExportSGL.js`, inside the per-mesh packing loop, we allocate a new fixed 64-byte chunk (16 `Uint32` slots).
+   - We encode up to 32 UTF-16 characters representing `mesh._permanentStaticLabel` and shift them into the binary array.
+2. **Binary Importer Reconstruction**:
+   - In `ImportSGL.js`, when reading a `.sgl` file with `version >= 4`, we scan those trailing 16 integers, decode them back into a JavaScript UTF-16 string, and bind it directly to `_permanentStaticLabel`.
+3. **Multimesh Wrapper Fix**:
+   - During `loadScene` inside `Scene.js`, the newly parsed `MeshStatic` is enveloped in a proxy `Multimesh`.
+   - We explicitly pull `_permanentStaticLabel` and `_permanentStaticId` from the internal child and stamp them flawlessly onto the outside wrap so the VR Outliner doesn't disregard them.
