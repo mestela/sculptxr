@@ -11,4 +11,4 @@
 - [x] Remove `[LOCK DEBUG]` logs inside `Scene.js` <!-- id: 2 -->
 - [x] Remove `[LOCK DEBUG]` log inside `GuiVRScene.js` <!-- id: 3 -->
 - [x] Remove `Grab: RELEASED` log inside `Grab.js` <!-- id: 4 -->
-- [ ] Stage, verify, and push changes <!-- id: 5 -->
+- [x] Stage, verify, and push changes <!-- id: 5 -->

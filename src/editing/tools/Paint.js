@@ -315,44 +315,62 @@ class Paint extends SculptBase {
   }
 
   paintAll() {
-    var mesh = this.getMesh();
-    var iVerts = this.getUnmaskedVertices();
-    if (iVerts.length === 0)
-      return;
+    const meshes = this._main.getSelectedMeshes();
+    if (!meshes || meshes.length === 0) return;
 
-    this.pushState(true);
-    this._main.getStateManager().pushVertices(iVerts);
+    for (let mIdx = 0; mIdx < meshes.length; mIdx++) {
+      const mesh = meshes[mIdx];
+      const nbVerts = mesh.getNbVertices();
+      if (nbVerts === 0) continue;
 
-    var cAr = mesh.getColors();
-    var mAr = mesh.getMaterials();
-    var color = this._color;
-    var roughness = this._material[0];
-    var metallic = this._material[1];
-    var cr = Math.pow(color[0], 1.0 / 2.2);
-    var cg = Math.pow(color[1], 1.0 / 2.2);
-    var cb = Math.pow(color[2], 1.0 / 2.2);
-    for (var i = 0, nb = iVerts.length; i < nb; ++i) {
-      var ind = iVerts[i] * 3;
-      var fallOff = mAr[ind + 2];
-      var fallOffCompl = 1.0 - fallOff;
+      const mAr = mesh.getMaterials();
+      const iVerts = [];
+      for (let i = 0; i < nbVerts; ++i) {
+        if (mAr[i * 3 + 2] < 1.0) { // Unmasked check
+          iVerts.push(i);
+        }
+      }
+      if (iVerts.length === 0) continue;
 
-      if (this._writeAlbedo) {
-        cAr[ind] = cAr[ind] * fallOffCompl + cr * fallOff;
-        cAr[ind + 1] = cAr[ind + 1] * fallOffCompl + cg * fallOff;
-        cAr[ind + 2] = cAr[ind + 2] * fallOffCompl + cb * fallOff;
+      // Atomic Undo Support for Multi-Select
+      this._main.getStateManager().pushStateColorAndMaterial(mesh);
+      if (mIdx > 0) {
+        this._main.getStateManager().getCurrentState().squash = true;
+      }
+      this._main.getStateManager().pushVertices(iVerts);
+
+      const cAr = mesh.getColors();
+      const color = this._color;
+      const roughness = this._material[0];
+      const metallic = this._material[1];
+
+      const cr = Math.pow(color[0], 1.0 / 2.2);
+      const cg = Math.pow(color[1], 1.0 / 2.2);
+      const cb = Math.pow(color[2], 1.0 / 2.2);
+
+      for (let i = 0, nb = iVerts.length; i < nb; ++i) {
+        const ind = iVerts[i] * 3;
+        const fallOff = mAr[ind + 2];
+        const fallOffCompl = 1.0 - fallOff;
+
+        if (this._writeAlbedo) {
+          cAr[ind] = cAr[ind] * fallOffCompl + cr * fallOff;
+          cAr[ind + 1] = cAr[ind + 1] * fallOffCompl + cg * fallOff;
+          cAr[ind + 2] = cAr[ind + 2] * fallOffCompl + cb * fallOff;
+        }
+
+        if (this._writeRoughness) {
+          mAr[ind] = mAr[ind] * fallOffCompl + roughness * fallOff;
+        }
+
+        if (this._writeMetalness) {
+          mAr[ind + 1] = mAr[ind + 1] * fallOffCompl + metallic * fallOff;
+        }
       }
 
-      if (this._writeRoughness) {
-        mAr[ind] = mAr[ind] * fallOffCompl + roughness * fallOff;
-      }
-
-      if (this._writeMetalness) {
-        mAr[ind + 1] = mAr[ind + 1] * fallOffCompl + metallic * fallOff;
-      }
+      mesh.updateDuplicateColorsAndMaterials();
+      mesh.updateDrawArrays();
     }
-
-    mesh.updateDuplicateColorsAndMaterials();
-    mesh.updateDrawArrays();
     this.updateRender();
   }
 }

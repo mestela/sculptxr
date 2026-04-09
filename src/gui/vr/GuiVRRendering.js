@@ -5,8 +5,10 @@ import Shader from '../../render/ShaderLib.js';
 
 export default function getRenderingWidgets(main) {
   const widgets = [];
-  const mesh = main.getMesh();
+  let mesh = main.getMesh();
   if (!mesh) return widgets;
+
+  const meshes = main.getSelectedMeshes().length > 0 ? main.getSelectedMeshes() : [mesh];
 
   const shaderType = mesh.getShaderType();
   const ShaderMERGE = Shader[Enums.Shader.MERGE];
@@ -46,7 +48,7 @@ export default function getRenderingWidgets(main) {
         console.warn("[GuiVR] Cannot switch to UV Shader: Mesh has no UVs.");
         return;
       }
-      mesh.setShaderType(id);
+      meshes.forEach(m => m.setShaderType(id));
       
       let shaderName = 'pbr';
       if (id === Enums.Shader.MATCAP) shaderName = 'matcap';
@@ -67,7 +69,7 @@ export default function getRenderingWidgets(main) {
     x: col1X, y: y, w: 360, h: 50,
     min: 0, max: 100,
     value: mesh.getCurvature() * 20.0, 
-    onInput: (val) => { mesh.setCurvature(val / 20.0); main.render(); }
+    onInput: (val) => { meshes.forEach(m => m.setCurvature(val / 20.0)); main.render(); }
   });
   y += 50 + gapBtn;
 
@@ -149,7 +151,7 @@ export default function getRenderingWidgets(main) {
       value: mesh.getMatcap(),
       options: matcapOptions,
       onSelect: (id) => {
-        mesh.setMatcap(id);
+        meshes.forEach(m => m.setMatcap(id));
         getOptionsURL.saveOption('matcap', id);
         main.render();
         if (main.guiXR) main.guiXR._needsUpdate = true;
@@ -200,7 +202,7 @@ export default function getRenderingWidgets(main) {
     x: col1X, y: y, w: 360, h: 50,
     value: (1.0 - mesh.getOpacity()) * 100,
     onInput: (val) => {
-      mesh.setOpacity(1.0 - val / 100.0);
+      meshes.forEach(m => m.setOpacity(1.0 - val / 100.0));
       main.render();
     }
   });
@@ -212,7 +214,12 @@ export default function getRenderingWidgets(main) {
     label: TR('renderingFlat'),
     x: col1X, y: y, w: 360, h: btnH,
     value: mesh.getFlatShading(),
-    onInteract: () => { mesh.setFlatShading(!mesh.getFlatShading()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
+    onInteract: () => { 
+      const target = !mesh.getFlatShading();
+      meshes.forEach(m => m.setFlatShading(target)); 
+      main.render(); 
+      if (main.guiXR) main.guiXR._needsUpdate = true; 
+    }
   });
   y += btnH + gapBtn;
 
@@ -222,7 +229,12 @@ export default function getRenderingWidgets(main) {
     label: TR('renderingWireframe'),
     x: col1X, y: y, w: 360, h: btnH,
     value: mesh.getShowWireframe(),
-    onInteract: () => { mesh.setShowWireframe(!mesh.getShowWireframe()); main.render(); if (main.guiXR) main.guiXR._needsUpdate = true; }
+    onInteract: () => { 
+      const target = !mesh.getShowWireframe();
+      meshes.forEach(m => m.setShowWireframe(target)); 
+      main.render(); 
+      if (main.guiXR) main.guiXR._needsUpdate = true; 
+    }
   });
   y += btnH + gapSection;
 

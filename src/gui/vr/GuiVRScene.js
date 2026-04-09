@@ -1,6 +1,8 @@
 import ShaderBase from '../../render/shaders/ShaderBase.js';
 import Remesh from '../../editing/Remesh.js';
 
+let isConfirmingClear = false;
+
 export default function getSceneWidgets(main) {
   const widgets = [];
 
@@ -149,8 +151,53 @@ export default function getSceneWidgets(main) {
   });
   y += ITEM_H + GAP;
 
-  widgets.push({ type: 'button', id: 'clearScene', label: 'Clear Scene', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.clearScene() });
-  y += ITEM_H + GAP;
+  if (!isConfirmingClear) {
+    widgets.push({ 
+      type: 'button', 
+      id: 'clearScene', 
+      label: 'Clear Scene', 
+      x: 20, y: y, w: menuW - 40, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = true;
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+    y += ITEM_H + GAP;
+  } else {
+    widgets.push({ 
+      type: 'info', 
+      id: 'clearScene_info', 
+      label: 'Clear all meshes? (Cannot be undone)', 
+      x: 20, y: y, w: menuW - 40, h: ITEM_H,
+      color: '#ff4444'
+    });
+    y += ITEM_H + GAP;
+
+    const halfW = (menuW - 40 - GAP) / 2;
+    widgets.push({ 
+      type: 'button', 
+      id: 'clearScene_ok', 
+      label: 'OK', 
+      x: 20, y: y, w: halfW, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = false;
+        main.clearScene();
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+
+    widgets.push({ 
+      type: 'button', 
+      id: 'clearScene_cancel', 
+      label: 'Cancel', 
+      x: 20 + halfW + GAP, y: y, w: halfW, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = false;
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+    y += ITEM_H + GAP;
+  }
 
   widgets.push({
     type: 'button', id: 'merge', label: 'Merge (Visual)', x: 20, y: y, w: menuW - 40, h: ITEM_H,
