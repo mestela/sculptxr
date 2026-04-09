@@ -2903,8 +2903,8 @@ export default class GuiXR {
     }
     // 2. INFO / LABELS
     else if (wid.type === 'info') {
-      ctx.fillStyle = '#888';
-      ctx.font = 'italic 24px sans-serif';
+      ctx.fillStyle = wid.color || '#888';
+      ctx.font = wid.font || 'italic 24px sans-serif';
       ctx.textAlign = wid.textAlign || 'left';
       ctx.fillText(wid.label, wid.x, wid.y + 24);
     }

@@ -48,15 +48,24 @@ export default function getAboutWidgets(main) {
       let clean = line.trim();
       if (clean.length === 0) continue;
 
-      // Strip markdown prefixes to clean up the raw feel
-      if (clean.startsWith('- **')) clean = clean.replace('- **', '').replace('**:', ':');
-      if (clean.startsWith('# ')) clean = clean.replace('# ', 'Version ');
+      let font = '18px sans-serif';
+      let color = '#ddd';
+
+      if (clean.startsWith('- **')) {
+         clean = clean.replace('- **', '').replace('**:', ':');
+         font = 'bold 18px sans-serif';
+         color = '#00d0ff';
+      } else if (clean.startsWith('# ')) {
+         clean = clean.replace('# ', 'Version ');
+         font = 'bold 22px sans-serif';
+         color = '#ffffff';
+      }
 
       // Break long lines to fit in wider menu
       const maxChars = 85;
       for (let i = 0; i < clean.length; i += maxChars) {
         const chunk = clean.slice(i, i + maxChars);
-        widgets.push({ type: 'info', label: chunk, x: 10, y: y, w: menuW, h: 25 });
+        widgets.push({ type: 'info', label: chunk, x: 10, y: y, w: menuW, h: 25, font, color });
         y += 25;
       }
     }
