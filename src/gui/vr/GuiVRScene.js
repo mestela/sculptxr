@@ -334,7 +334,6 @@ export default function getSceneWidgets(main) {
   bottomY += ITEM_H + GAP;
 
   widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: leftX, y: bottomY, w: colW, h: ITEM_H, value: ShaderBase.showSymmetryLine, onInteract: () => { ShaderBase.showSymmetryLine = !ShaderBase.showSymmetryLine; main.render(); } });
-  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: rightX, y: bottomY, w: colW, h: ITEM_H, value: ShaderBase.darkenUnselected, onInteract: () => { ShaderBase.darkenUnselected = !ShaderBase.darkenUnselected; main.render(); } });
   bottomY += ITEM_H + GAP;
 
   const mesh = main.getMesh();

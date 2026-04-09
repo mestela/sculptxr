@@ -52,7 +52,6 @@ ShaderBase.strings.fragColorFunction = [
   'vec4 encodeFragColor(const in vec3 frag, const in float alpha) {',
   '  vec3 col = computeCurvature(vVertex, vNormal, frag, uCurvature, uFov);',
   '  col *= uExposure;',
-  '  if(uDarken == 1) col *= 0.3;',
   '  col *= (0.3 + 0.7 * vMasking);',
   '  if(uSym == 1 && abs(dot(uPlaneN, vVertex - uPlaneO)) < 0.0025)',
   '      col = min(col * 1.5, 1.0);',
@@ -149,7 +148,9 @@ ShaderBase.updateUniforms = (function () {
   return function (mesh, main) {
     var gl = mesh.getGL();
 
-    var darken = ShaderBase.darkenUnselected && main.getIndexSelectMesh(mesh) < 0;
+    var selIndex = main.getIndexSelectMesh(mesh);
+    var isMultiSelected = main.getSelectedMeshes && main.getSelectedMeshes().includes(mesh);
+    var darken = ShaderBase.darkenUnselected && (selIndex < 0) && (!isMultiSelected);
     var useSym = ShaderBase.showSymmetryLine && (mesh.getID() === main.getMesh().getID()) && main.getSculptManager().getSymmetry();
 
     var uniforms = this.uniforms;

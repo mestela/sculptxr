@@ -284,6 +284,8 @@ ShaderManager.updateUniforms = function(mesh, main) {
              unifs.uTexture0.value = shaderDef.texture0;
         }
     }
+    
+    material.uniformsNeedUpdate = true;
   } finally {
     // Restore
     mesh.getGL = function() { return realGL; };

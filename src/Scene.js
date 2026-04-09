@@ -1617,10 +1617,13 @@ class Scene {
     return this.getIndexMesh(mesh, true);
   }
 
-  /** Replace a mesh in the scene */
   replaceMesh(mesh, newMesh) {
     var index = this.getIndexMesh(mesh);
     if (index >= 0) this._meshes[index] = newMesh;
+    
+    var selIndex = this.getIndexSelectMesh(mesh);
+    if (selIndex >= 0) this._selectMeshes[selIndex] = newMesh;
+
     if (this._mesh === mesh) this.setMesh(newMesh);
 
     if (this._worldGroup && newMesh.getThreeMesh()) {
