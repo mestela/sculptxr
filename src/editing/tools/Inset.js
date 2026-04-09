@@ -2,6 +2,7 @@ import { vec3, mat4 } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
+import * as THREE from 'three';
 
 class Inset extends SculptBase {
   constructor(main) {
@@ -469,6 +470,34 @@ class Inset extends SculptBase {
     if (main._vrControllerPos) {
       this._lastVRPos = vec3.clone(main._vrControllerPos);
     }
+
+    const hitPoint = picking.getIntersectionPoint();
+    if (hitPoint) {
+      const worldPos = [0, 0, 0];
+      const mat = activeMesh.getMatrix();
+      vec3.transformMat4(worldPos, hitPoint, mat);
+
+      if (!this._clickSphere) {
+        const geom = new THREE.SphereGeometry(0.2, 8, 8);
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xffff00,
+          depthTest: false,
+          transparent: true,
+          depthWrite: false,
+          opacity: 0.8
+        });
+        this._clickSphere = new THREE.Mesh(geom, mat);
+        this._clickSphere.renderOrder = 9999;
+        this._clickSphere.isPickable = false;
+
+        const sceneApp = main.getScene ? main.getScene() : main._scene;
+        const targetScene = (sceneApp && sceneApp._scene) ? sceneApp._scene : sceneApp;
+        const parentNode = main._worldGroup ? main._worldGroup : targetScene;
+        if (parentNode) parentNode.add(this._clickSphere);
+      }
+      this._clickSphere.position.set(worldPos[0], worldPos[1], worldPos[2]);
+      this._clickSphere.visible = true;
+    }
   }
 
   updateXR(picking, isPressed) {
@@ -516,6 +545,10 @@ class Inset extends SculptBase {
     this._insetVerts = null;
     this._vProxy = null;
     this._vTarget = null;
+
+    if (this._clickSphere) {
+      this._clickSphere.visible = false;
+    }
 
     const mesh = this.getMesh();
     const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
