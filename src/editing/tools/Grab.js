@@ -202,16 +202,23 @@ class Grab extends SculptBase {
           // window.screenLog(`Grab Ray: O=[${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}] D=[${direction[0].toFixed(2)},${direction[1].toFixed(2)},${direction[2].toFixed(2)}]`, "white");
         }
 
-        let targetMeshes = this._main.getMeshes();
+        let targetMeshes = [];
+        const allMeshes = this._main.getMeshes();
+        for (let i = 0; i < allMeshes.length; i++) {
+          if (allMeshes[i].isVisible() && !allMeshes[i]._isVoxelChunk) {
+            targetMeshes.push(allMeshes[i]);
+          }
+        }
+        
         if (this._main && this._main._lockSelection) {
           const selGroup = this._main.getSelectedMeshes();
-          targetMeshes = (selGroup && selGroup.length > 0) ? selGroup : (this._main.getMesh() ? [this._main.getMesh()] : this._main.getMeshes());
+          targetMeshes = (selGroup && selGroup.length > 0) ? selGroup : (this._main.getMesh() ? [this._main.getMesh()] : targetMeshes);
         }
+        
         const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction);
         let mesh = hit ? picking.getMesh() : null;
 
-        // Fallback: Use Active Mesh (Relaxed Grabbing)
-        if (!mesh && this._main.getMesh()) {
+        if (!mesh && this._main.getMesh() && this._main.getMesh().isVisible()) {
           mesh = this._main.getMesh();
         }
 

@@ -6,29 +6,51 @@ let isConfirmingClear = false;
 export default function getSceneWidgets(main) {
   const widgets = [];
 
-  // Menu Dimensions
-  const menuW = 400;
-  // Let's calculate height dynamically or just strict list
-  let y = 10;
+  // Use full 1024px VR Canvas Width
+  const menuW = 1024;
+  const colW = 460;
+  const leftX = 20;
+  const rightX = 520;
   const ITEM_H = 40;
-  const HEADER_H = 30; // Slightly smaller header for menu
+  const HEADER_H = 30;
   const GAP = 5;
 
-  // --- OUTLINER ---
-  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
+  let leftY = 10;
+  let rightY = 10;
+
+  // --- LEFT COLUMN: OUTLINER ---
+  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW, h: HEADER_H, header: true });
+  leftY += HEADER_H + GAP;
 
   const meshes = main.getMeshes();
+  const sortedOutlinerMeshes = [];
+  
   for (let i = 0; i < meshes.length; i++) {
-    const mesh = meshes[i];
-    if (mesh._isVoxelChunk) continue; // Skip voxel chunks in UI
-    const typeName = (mesh._typeName || "Mesh") + " " + (i + 1);
+    if (!meshes[i]._isVoxelChunk) {
+      sortedOutlinerMeshes.push(meshes[i]);
+    }
+  }
+  
+  sortedOutlinerMeshes.sort((a, b) => a.getID() - b.getID());
+  
+  let displayCount = 0;
 
+  for (let i = 0; i < sortedOutlinerMeshes.length; i++) {
+    const mesh = sortedOutlinerMeshes[i];
+    
+    displayCount++;
+    if (!mesh._permanentStaticLabel) {
+      mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + displayCount;
+    }
+    if (!mesh._permanentStaticId) {
+      mesh._permanentStaticId = 'm_' + Math.random().toString(36).substring(2, 11);
+    }
+    
+    const stableId = mesh._permanentStaticId;
+    const typeName = mesh._permanentStaticLabel;
 
-
-    // Visibility Checkbox
     widgets.push({
-      type: 'checkbox', id: 'vis_' + i, label: '', x: 20, y: y, w: 40, h: ITEM_H,
+      type: 'checkbox', id: 'vis_' + stableId, label: '', x: leftX, y: leftY, w: 40, h: ITEM_H,
       icon: 'eye',
       isVisibility: true,
       value: mesh.isVisible(),
@@ -39,34 +61,32 @@ export default function getSceneWidgets(main) {
       }
     });
 
-    // Multi-select Checkbox
     widgets.push({
-      type: 'checkbox', id: 'multi_' + i, label: '', x: 70, y: y, w: 40, h: ITEM_H,
+      type: 'checkbox', id: 'multi_' + stableId, label: '', x: leftX + 50, y: leftY, w: 40, h: ITEM_H,
       value: main.getSelectedMeshes().includes(mesh),
-      onInteract: () => { main.setOrUnsetMesh(mesh, true); main.render(); } // Always treat as multi-select toggling
+      onInteract: () => { main.setOrUnsetMesh(mesh, true); main.render(); }
     });
 
-    // Name Button (Sets active mesh single-select style)
     widgets.push({
-      type: 'button', id: 'select_' + i, label: typeName, x: 120, y: y, w: menuW - 170, h: ITEM_H,
-      onInteract: () => { main.setOrUnsetMesh(mesh, false); main.render(); } // Clicking name sets it as single active mesh
+      type: 'button', id: 'select_' + stableId, label: typeName, x: leftX + 100, y: leftY, w: colW - 150, h: ITEM_H,
+      onInteract: () => { main.setOrUnsetMesh(mesh, false); main.render(); }
     });
 
-    // Delete Button
     widgets.push({
-      type: 'button', id: 'del_' + i, label: '', x: 340, y: y, w: 40, h: ITEM_H,
+      type: 'button', id: 'del_' + stableId, label: '', x: leftX + colW - 40, y: leftY, w: 40, h: ITEM_H,
       icon: 'x',
       onInteract: () => { main.removeMeshes([mesh]); main.render(); }
     });
 
-    y += ITEM_H + GAP;
+    leftY += ITEM_H + GAP;
   }
 
-  y += 10;
+  leftY += 10;
 
-  // --- BOOLEANS ---
-  widgets.push({ type: 'header', id: 'header_booleans', label: 'Booleans', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
+
+  // --- RIGHT COLUMN: BOOLEANS, SELECTION, PRIMITIVES ---
+  widgets.push({ type: 'header', id: 'header_booleans', label: 'Booleans', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
+  rightY += HEADER_H + GAP;
 
   const selectedMeshes = main.getSelectedMeshes();
   let booleanLabel = 'Boolean Ops (Select 2)';
@@ -79,13 +99,9 @@ export default function getSceneWidgets(main) {
     const v1 = mesh1.isVisible();
     const v2 = mesh2.isVisible();
 
-    if (v1 && v2) {
-      booleanLabel = 'Boolean Union';
-    } else if (!v1 && !v2) {
-      booleanLabel = 'Boolean Intersect';
-    } else {
-      booleanLabel = 'Boolean Subtract';
-    }
+    if (v1 && v2) booleanLabel = 'Boolean Union';
+    else if (!v1 && !v2) booleanLabel = 'Boolean Intersect';
+    else booleanLabel = 'Boolean Subtract';
     
     booleanDisabled = false;
     booleanInteract = () => {
@@ -95,7 +111,6 @@ export default function getSceneWidgets(main) {
           if (v1 && v2) op = 'union';
           else if (!v1 && !v2) op = 'intersect';
           else op = 'subtract';
-          
           main.getSculptManager().booleanOperationSelection(op);
         }
       } catch (e) {
@@ -109,98 +124,107 @@ export default function getSceneWidgets(main) {
   }
 
   widgets.push({
-    type: 'button', id: 'booleanOp', label: booleanLabel, x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    type: 'button', id: 'booleanOp', label: booleanLabel, x: rightX, y: rightY, w: colW, h: ITEM_H,
     disabled: booleanDisabled,
     onInteract: booleanInteract
   });
-  y += ITEM_H + GAP;
+  rightY += ITEM_H + GAP;
 
   widgets.push({
-    type: 'checkbox', id: 'quadrangulate_boolean', label: 'Quadrangulate Result', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    type: 'checkbox', id: 'quadrangulate_boolean', label: 'Quadrangulate Result', x: rightX, y: rightY, w: colW, h: ITEM_H,
     value: Remesh.QUADRANGULATE,
     onInteract: (val) => { Remesh.QUADRANGULATE = val; }
   });
-  y += ITEM_H + GAP;
+  rightY += ITEM_H + GAP;
 
-  y += 10;
+  rightY += 10;
 
   // --- SELECTION ---
-  widgets.push({ type: 'header', id: 'header_selection', label: 'Selection', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
+  widgets.push({ type: 'header', id: 'header_selection', label: 'Selection', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
+  rightY += HEADER_H + GAP;
 
-  // Multi-select Checkbox
-  // Multi-select Checkbox removed per user request
-  // Delete Selection button removed per user request
+  const thirdW = (colW - 2 * GAP) / 3;
+  widgets.push({
+    type: 'button', id: 'selectAll', label: 'All', x: rightX, y: rightY, w: thirdW, h: ITEM_H,
+    onInteract: () => {
+      const all = main.getMeshes();
+      all.forEach(m => {
+        if (!m._isVoxelChunk && !main.getSelectedMeshes().includes(m)) {
+          main.setOrUnsetMesh(m, true);
+        }
+      });
+      main.render();
+    }
+  });
 
   widgets.push({
-    type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    type: 'button', id: 'selectNone', label: 'None', x: rightX + thirdW + GAP, y: rightY, w: thirdW, h: ITEM_H,
+    onInteract: () => {
+      main._selectMeshes.length = 0;
+      if (main.getMesh()) main._selectMeshes.push(main.getMesh());
+      main.render();
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'selectInvert', label: 'Invert', x: rightX + 2 * (thirdW + GAP), y: rightY, w: thirdW, h: ITEM_H,
+    onInteract: () => {
+      const all = main.getMeshes();
+      const currentSelected = [...main.getSelectedMeshes()];
+      main._selectMeshes.length = 0;
+      
+      all.forEach(m => {
+        if (!m._isVoxelChunk && !currentSelected.includes(m)) {
+          main._selectMeshes.push(m);
+        }
+      });
+      if (main._selectMeshes.length === 0 && main.getMesh()) {
+        main._selectMeshes.push(main.getMesh());
+      }
+      main.render();
+    }
+  });
+  rightY += ITEM_H + GAP;
+
+  const halfWSelection = (colW - GAP) / 2;
+  widgets.push({
+    type: 'button', id: 'toggleVisSelected', label: 'Show/Hide', x: rightX, y: rightY, w: halfWSelection, h: ITEM_H,
+    onInteract: () => {
+      const selected = main.getSelectedMeshes();
+      if (selected.length > 0) {
+        const targetVis = !selected[0].isVisible();
+        selected.forEach(m => {
+          m.setVisible(targetVis);
+          if (m.getThreeMesh()) m.getThreeMesh().visible = targetVis;
+        });
+        main.render();
+      }
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'deleteSelected', label: 'Delete', x: rightX + halfWSelection + GAP, y: rightY, w: halfWSelection, h: ITEM_H,
+    onInteract: () => {
+      const selected = [...main.getSelectedMeshes()];
+      if (selected.length > 0) {
+        main.removeMeshes(selected);
+        main.render();
+      }
+    }
+  });
+  rightY += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: rightX, y: rightY, w: colW, h: ITEM_H,
     onInteract: () => {
       try { main.duplicateSelection(); }
       catch (e) { console.error(e); }
     }
   });
-  y += ITEM_H + GAP;
-
-  // Lock Selection
-  widgets.push({
-    type: 'checkbox', id: 'lockSelection', label: 'Lock Selection', x: 20, y: y, w: menuW - 40, h: ITEM_H,
-    value: !!main._lockSelection,
-    onInteract: (val) => { 
-      main._lockSelection = val; 
-    }
-  });
-  y += ITEM_H + GAP;
-
-  if (!isConfirmingClear) {
-    widgets.push({ 
-      type: 'button', 
-      id: 'clearScene', 
-      label: 'Clear Scene', 
-      x: 20, y: y, w: menuW - 40, h: ITEM_H, 
-      onInteract: () => { 
-        isConfirmingClear = true;
-        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
-      } 
-    });
-    y += ITEM_H + GAP;
-  } else {
-    widgets.push({ 
-      type: 'info', 
-      id: 'clearScene_info', 
-      label: 'Clear all meshes? (Cannot be undone)', 
-      x: 20, y: y, w: menuW - 40, h: ITEM_H,
-      color: '#ff4444'
-    });
-    y += ITEM_H + GAP;
-
-    const halfW = (menuW - 40 - GAP) / 2;
-    widgets.push({ 
-      type: 'button', 
-      id: 'clearScene_ok', 
-      label: 'OK', 
-      x: 20, y: y, w: halfW, h: ITEM_H, 
-      onInteract: () => { 
-        isConfirmingClear = false;
-        main.clearScene();
-        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
-      } 
-    });
-
-    widgets.push({ 
-      type: 'button', 
-      id: 'clearScene_cancel', 
-      label: 'Cancel', 
-      x: 20 + halfW + GAP, y: y, w: halfW, h: ITEM_H, 
-      onInteract: () => { 
-        isConfirmingClear = false;
-        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
-      } 
-    });
-    y += ITEM_H + GAP;
-  }
+  rightY += ITEM_H + GAP;
 
   widgets.push({
-    type: 'button', id: 'merge', label: 'Merge (Visual)', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    type: 'button', id: 'merge', label: 'Merge', x: rightX, y: rightY, w: colW, h: ITEM_H,
     onInteract: () => {
       try {
         if (main.getGui() && main.getGui()._ctrlScene) {
@@ -212,18 +236,23 @@ export default function getSceneWidgets(main) {
       }
     }
   });
-  y += ITEM_H + GAP;
+  rightY += ITEM_H + GAP;
 
-  // Isolate
+  widgets.push({
+    type: 'checkbox', id: 'lockSelection', label: 'Lock', x: rightX, y: rightY, w: colW, h: ITEM_H,
+    value: !!main._lockSelection,
+    onInteract: (val) => { main._lockSelection = val; }
+  });
+  rightY += ITEM_H + GAP;
+
   let isIsolate = false;
   if (main.getGui() && main.getGui()._ctrlScene) {
     isIsolate = main.getGui()._ctrlScene.hasHiddenMeshes();
   }
   widgets.push({
-    type: 'checkbox', id: 'isolate', label: 'Isolate', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    type: 'checkbox', id: 'isolate', label: 'Isolate', x: rightX, y: rightY, w: colW, h: ITEM_H,
     value: isIsolate,
     onInteract: (val) => {
-      // Manual Visibility Loop when Isolate is checked
       const selected = main.getSelectedMeshes();
       const allMeshes = main.getMeshes();
       allMeshes.forEach(m => {
@@ -232,58 +261,93 @@ export default function getSceneWidgets(main) {
         m.setVisible(targetVisibility);
         if (m.getThreeMesh()) m.getThreeMesh().visible = targetVisibility;
       });
-
       if (main.getGui() && main.getGui()._ctrlScene) {
         main.getGui()._ctrlScene._ctrlIsolate.setValue(val, false);
       }
       main.render();
     }
   });
-  y += ITEM_H + GAP;
+  rightY += ITEM_H + GAP;
 
-  y += 10;
+  if (!isConfirmingClear) {
+    widgets.push({ 
+      type: 'button', id: 'clearScene', label: 'Clear Scene', x: rightX, y: rightY, w: colW, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = true;
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+    rightY += ITEM_H + GAP;
+  } else {
+    widgets.push({ 
+      type: 'info', id: 'clearScene_info', label: 'Clear Scene? (No Undo)', x: rightX, y: rightY, w: colW, h: ITEM_H, color: '#ff4444'
+    });
+    rightY += ITEM_H + GAP;
+
+    const halfW = (colW - GAP) / 2;
+    widgets.push({ 
+      type: 'button', id: 'clearScene_ok', label: 'OK', x: rightX, y: rightY, w: halfW, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = false;
+        main.clearScene();
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+
+    widgets.push({ 
+      type: 'button', id: 'clearScene_cancel', label: 'Cancel', x: rightX + halfW + GAP, y: rightY, w: halfW, h: ITEM_H, 
+      onInteract: () => { 
+        isConfirmingClear = false;
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      } 
+    });
+    rightY += ITEM_H + GAP;
+  }
+  rightY += ITEM_H + GAP;
+
+  rightY += 10;
 
   // --- PRIMITIVES ---
-  widgets.push({ type: 'header', id: 'header_primitives', label: 'Primitives', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
+  widgets.push({ type: 'header', id: 'header_primitives', label: 'Primitives', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
+  rightY += HEADER_H + GAP;
 
-  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addSphere() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addCube() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addCylinder() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addTorus() });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'button', id: 'addGrid', label: 'Add Grid', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.addGrid() });
-  y += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addSphere', label: 'Add Sphere', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addSphere() });
+  rightY += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addCube', label: 'Add Cube', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addCube() });
+  rightY += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addCylinder', label: 'Add Cylinder', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addCylinder() });
+  rightY += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addTorus() });
+  rightY += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addGrid', label: 'Add Grid', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addGrid() });
+  rightY += ITEM_H + GAP;
 
-  y += 10;
+  rightY += 10;
 
-  // --- EXTRA ---
-  widgets.push({ type: 'header', id: 'header_display', label: 'Display & Symmetry', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
+  // --- BOTTOM ROW: DISPLAY & SYMMETRY ---
+  let bottomY = Math.max(leftY, rightY) + 20;
+  widgets.push({ type: 'header', id: 'header_display', label: 'Display & Symmetry', x: leftX, y: bottomY, w: menuW - 40, h: HEADER_H, header: true });
+  bottomY += HEADER_H + GAP;
 
-  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: 20, y: y, w: menuW - 40, h: ITEM_H, value: main._showGrid, onInteract: () => { main._showGrid = !main._showGrid; main.render(); } });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: 20, y: y, w: menuW - 40, h: ITEM_H, value: main._showContour, onInteract: () => { main._showContour = !main._showContour; main.render(); } });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: 20, y: y, w: menuW - 40, h: ITEM_H, value: ShaderBase.showSymmetryLine, onInteract: () => { ShaderBase.showSymmetryLine = !ShaderBase.showSymmetryLine; main.render(); } });
-  y += ITEM_H + GAP;
-  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: 20, y: y, w: menuW - 40, h: ITEM_H, value: ShaderBase.darkenUnselected, onInteract: () => { ShaderBase.darkenUnselected = !ShaderBase.darkenUnselected; main.render(); } });
-  y += ITEM_H + GAP;
+  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: leftX, y: bottomY, w: colW, h: ITEM_H, value: main._showGrid, onInteract: () => { main._showGrid = !main._showGrid; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: rightX, y: bottomY, w: colW, h: ITEM_H, value: main._showContour, onInteract: () => { main._showContour = !main._showContour; main.render(); } });
+  bottomY += ITEM_H + GAP;
+
+  widgets.push({ type: 'checkbox', id: 'show_sym', label: 'Show Symmetry Line', x: leftX, y: bottomY, w: colW, h: ITEM_H, value: ShaderBase.showSymmetryLine, onInteract: () => { ShaderBase.showSymmetryLine = !ShaderBase.showSymmetryLine; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'darken', label: 'Darken Unselected', x: rightX, y: bottomY, w: colW, h: ITEM_H, value: ShaderBase.darkenUnselected, onInteract: () => { ShaderBase.darkenUnselected = !ShaderBase.darkenUnselected; main.render(); } });
+  bottomY += ITEM_H + GAP;
 
   const mesh = main.getMesh();
   const symOffset = mesh ? mesh.getSymmetryOffset() : 0;
   widgets.push({
-    type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: 20, y: y, w: menuW - 40, h: ITEM_H, value: symOffset, min: -1, max: 1, step: 0.001,
+    type: 'slider', id: 'symmetryOffset', label: 'Sym Offset', x: leftX, y: bottomY, w: menuW - 40, h: ITEM_H, value: symOffset, min: -1, max: 1, step: 0.001,
     onInput: (val) => { if (mesh) { mesh.setSymmetryOffset(val); main.render(); } }
   });
-  y += ITEM_H + GAP;
+  bottomY += ITEM_H + GAP;
 
   return {
     width: menuW,
-    height: y + 10,
+    height: bottomY + 10,
     widgets: widgets
   };
 }
