@@ -64,7 +64,12 @@ class SculptBase {
     // [VR] Multi-select Check
     if (main._vrMultiSelect) ctrl = true;
 
-    var mesh = main.setOrUnsetMesh(picking.getMesh(), ctrl);
+    var mesh = null;
+    if (main._lockSelection) {
+      mesh = main.getMesh();
+    } else {
+      mesh = main.setOrUnsetMesh(picking.getMesh(), ctrl);
+    }
 
     // [VR] Return early if Multi-select is active to prevent sculpting
     if (main._vrMultiSelect) return false;

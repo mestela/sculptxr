@@ -1,4 +1,4 @@
-# Task: Release Polish, Logging Removal, and Git Push
+# Task: Enable Multi-Select Matrix Transformation in Grab.js
 
 > [!IMPORTANT]
 > **CRITICAL SESSION RULES**:
@@ -6,9 +6,5 @@
 > 2.  **No Caching Blame**: Browser caching is NEVER the valid cause of bugs here. Do not suggest clearing cache.
 > 3.  **Local Vite Testing**: Rely ENTIRELY on local Vite (`npm run dev`) for testing. Do NOT deploy to Beta or Prod.
 
-- [x] Remove all `[AboutScroll]` console logs <!-- id: 0 -->
-- [x] Increment version in `src/Version.js` and `index.html` <!-- id: 1 -->
-- [x] Update `docs/releases.md` and `README.md` <!-- id: 2 -->
-- [x] Update Handover Prompt per user request <!-- id: 3 -->
-- [x] Confirm visual diff via `git diff` before commit <!-- id: 4 -->
-- [ ] Git add, commit, and push <!-- id: 5 -->
+- [x] Broaden the picking payload inside `Scene.js` to include the full multi-select array when `this._lockSelection` is active <!-- id: 0 -->
+- [x] Apply the delta matrix transformation to the full array of selected meshes within `Grab.js` instead of just the single intercepted target <!-- id: 1 -->

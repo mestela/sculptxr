@@ -211,7 +211,7 @@ class Scene {
 
     // [Step 1] Hand Swap Feature
     this._dominantHand = getOptionsURL().leftHandMode ? 'left' : 'right'; // 'right' or 'left'
-    this._selectionLocked = false; // Lock Selection State
+    this._lockSelection = false; // Lock Selection State
     this._vrIsNegative = false; // Universal Sub Mode State
 
     // VR Ergonomics: Hybrid Button Trackers
@@ -3842,45 +3842,16 @@ class Scene {
 
 
     let picked = false;
+    
+    const activeSceneMesh = this.getMesh();
+    let targetMeshes = this._meshes;
+    if (this._lockSelection) {
+      const selectedGroup = this.getSelectedMeshes();
+      targetMeshes = (selectedGroup && selectedGroup.length > 0) ? selectedGroup : (activeSceneMesh ? [activeSceneMesh] : this._meshes);
+    }
+
     if (isTransformDrag) {
-      // Skip picking, keep current intersection
       picked = true;
-    } else if (this._selectionLocked && this._picking.getMesh()) {
-      // Keep current mesh, but we might still need to update intersection point on THAT mesh?
-      // actually intersectionRayMeshes does both selection AND intersection point update.
-      // If we skip it, we don't update the cursor position!
-      // We must force intersection ONLY on the current mesh.
-
-      // Feature Toggle: Transform uses Ray/Aim intersect instead of volume
-      let useVolume = this._vrUseVolumeIntersect;
-      const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
-      if (toolIndex === Enums.Tools.MOVE) {
-        useVolume = true;
-      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL) {
-        useVolume = false;
-      }
-
-      if (useVolume) {
-        const len = this.getStylusLength();
-        const off = this.getStylusOffset();
-        const untiltedDir = vec3.fromValues(0, 0, -1);
-        vec3.transformQuat(untiltedDir, untiltedDir, [q.x, q.y, q.z, q.w]);
-        const basePhys = vec3.create();
-        vec3.scaleAndAdd(basePhys, physicalOrigin, untiltedDir, off);
-        const volumePhys = vec3.create();
-        vec3.scaleAndAdd(volumePhys, basePhys, rayDirPhys, len);
-        const volumeEnginePos = vec3.clone(volumePhys);
-        if (this._xrWorldOffset) {
-          vec3.transformMat4(volumeEnginePos, volumeEnginePos, this._xrWorldOffset.inverse.matrix);
-        }
-        vec3.scale(volumeEnginePos, volumeEnginePos, invScale);
-
-        const paddedRadius = pickingRadius * (toolIndex === Enums.Tools.MOVE ? 1.25 : 1.0);
-        picked = this._picking.intersectionSphereMeshes([this._picking.getMesh()], volumeEnginePos, paddedRadius);
-      } else {
-        picked = this._picking.intersectionRayMeshes([this._picking.getMesh()], rayOrigin, engineDir);
-        this._picking._isVRHit = picked;
-      }
     } else {
       let useVolume = this._vrUseVolumeIntersect;
       const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
@@ -3891,7 +3862,6 @@ class Scene {
       }
 
       if (useVolume) {
-        // Calculate physical tip origin identically to _updateVRCursors (Visual Sphere Location)
         const len = this.getStylusLength();
         const off = this.getStylusOffset();
         const untiltedDir = vec3.fromValues(0, 0, -1);
@@ -3907,9 +3877,9 @@ class Scene {
         vec3.scale(volumeEnginePos, volumeEnginePos, invScale);
 
         const paddedRadius = pickingRadius * (toolIndex === Enums.Tools.MOVE ? 1.25 : 1.0);
-        picked = this._picking.intersectionSphereMeshes(this._meshes, volumeEnginePos, paddedRadius);
+        picked = this._picking.intersectionSphereMeshes(targetMeshes, volumeEnginePos, paddedRadius);
       } else {
-        picked = this._picking.intersectionRayMeshes(this._meshes, rayOrigin, engineDir);
+        picked = this._picking.intersectionRayMeshes(targetMeshes, rayOrigin, engineDir);
         this._picking._isVRHit = picked;
       }
     }
@@ -4066,6 +4036,12 @@ class Scene {
             this._eyedropperStartColor = [cTool._color[0], cTool._color[1], cTool._color[2]];
         } else {
             this._eyedropperStartColor = null;
+        }
+
+        console.log(`[LOCK DEBUG] Trigger Down! Lock Selection is: ${this._lockSelection}. Evaluated Picked Mesh: ID=${this._picking.getMesh() ? this._picking.getMesh().getID() : 'None'}`);
+        if (this._lockSelection) {
+          const activeMenuMesh = this.getMesh();
+          console.log(`[LOCK DEBUG] Outliner Selected Mesh is: ID=${activeMenuMesh ? activeMenuMesh.getID() : 'None'}. Forcing Tool Binding.`);
         }
 
         this._sculptManager.start(this._vrMultiSelect);
@@ -4450,10 +4426,14 @@ class Scene {
                 }
                 vec3.scale(originTipEngine, originTipEngine, invScale);
 
+                const app = this._main || this;
+                const activeSceneMesh = app.getMesh();
+                const targetMeshes = (app._lockSelection && activeSceneMesh) ? [activeSceneMesh] : this._meshes;
+
                 if (this._vrUseVolumeIntersect) {
-                    didHit = this._picking.intersectionSphereMeshes(this._meshes, originTipEngine, pickingRadius);
+                    didHit = this._picking.intersectionSphereMeshes(targetMeshes, originTipEngine, pickingRadius);
                 } else {
-                    didHit = this._picking.intersectionRayMeshes(this._meshes, originEngine, dirEngine);
+                    didHit = this._picking.intersectionRayMeshes(targetMeshes, originEngine, dirEngine);
                 }
 
                 // If the ray origin (controller root) penetrates the mesh, the ray will travel through the interior volume and hit the back wall ("opposite side").

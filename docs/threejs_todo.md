@@ -17,6 +17,7 @@
 * [ ] **Layers**
 * [ ] **Animation**
 
+* [*] **About**: Include recent release info, and be scrollable
 * [x] **Inset**: Nearly there, i think replace controller length along normal with just total distance from click
 * [x] **Extrude** 
 * [x] **Fix level 0 wireframe after reverse**

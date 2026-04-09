@@ -157,6 +157,13 @@ class Picking {
 
   /** Intersection between a ray the mouse position for every meshes */
   intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
+    if (this._main && this._main._lockSelection) {
+      const activeMesh = this._main.getMesh();
+      console.log(`[LOCK DEBUG] Mouse-Picking Executing. Lock is ON. Forcing target list down to 1 mesh: ID=${activeMesh ? activeMesh.getID() : 'null'}`);
+      if (activeMesh) {
+        meshes = [activeMesh];
+      }
+    }
     this._isVRHit = false;
 
     var vNear = this.unproject(mouseX, mouseY, 0.0);
@@ -186,11 +193,23 @@ class Picking {
       }
     }
 
+    if (this._main && this._main._lockSelection) {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        this._mesh = activeMesh;
+        return false;
+      }
+    }
+
     this._mesh = nearMesh;
-    vec3.copy(this._interPoint, _TMP_INTER_1);
-    this._pickedFace = nearFace;
-    if (nearFace !== -1)
-      this.updateLocalAndWorldRadius2();
+    if (nearMesh) {
+      vec3.copy(this._interPoint, _TMP_INTER_1);
+      this._pickedFace = nearFace;
+      if (nearFace !== -1)
+        this.updateLocalAndWorldRadius2();
+    } else {
+      this._pickedFace = -1;
+    }
     return !!nearMesh;
   }
 
@@ -245,6 +264,12 @@ class Picking {
 
   /** Intersection between a sphere and meshes (Contact Picking for VR) */
   intersectionSphereMeshes(meshes, worldCenter, worldRadius) {
+    if (this._main && this._main._lockSelection) {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        meshes = [activeMesh];
+      }
+    }
     this._isVRHit = true;
     var nearDistance = Infinity;
     var nearMesh = null;
@@ -387,7 +412,16 @@ class Picking {
       return true;
     }
 
-    // Reset Picking if no hit
+    // Reset Picking if no hit, UNLESS Lock Selection is enabled
+    if (this._main && this._main._lockSelection) {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        this._mesh = activeMesh;
+        // Preserve the active locked mesh so tools like Move.js don't abort due to a !picking.getMesh() check!
+        return false;
+      }
+    }
+
     this._mesh = null;
     this._pickedFace = -1;
     this._rLocal2 = 0.0;

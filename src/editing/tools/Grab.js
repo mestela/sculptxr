@@ -202,13 +202,17 @@ class Grab extends SculptBase {
           // window.screenLog(`Grab Ray: O=[${origin[0].toFixed(2)},${origin[1].toFixed(2)},${origin[2].toFixed(2)}] D=[${direction[0].toFixed(2)},${direction[1].toFixed(2)},${direction[2].toFixed(2)}]`, "white");
         }
 
-        const hit = picking.intersectionRayMeshes(this._main.getMeshes(), origin, direction);
+        let targetMeshes = this._main.getMeshes();
+        if (this._main && this._main._lockSelection) {
+          const selGroup = this._main.getSelectedMeshes();
+          targetMeshes = (selGroup && selGroup.length > 0) ? selGroup : (this._main.getMesh() ? [this._main.getMesh()] : this._main.getMeshes());
+        }
+        const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction);
         let mesh = hit ? picking.getMesh() : null;
 
         // Fallback: Use Active Mesh (Relaxed Grabbing)
         if (!mesh && this._main.getMesh()) {
           mesh = this._main.getMesh();
-          // if (shouldLog) window.screenLog(`Grab: Fallback to Active Mesh ${mesh.getID()}`, "cyan");
         }
 
         if (mesh) {
@@ -216,15 +220,15 @@ class Grab extends SculptBase {
           this._grabbedMesh = mesh;
           this._activeController = active; // First assignment
 
-          // if (window.screenLog) window.screenLog(`Grab: CAUGHT Mesh ${mesh.getID()}`, "green");
-
           // Calculate Offset (For Fallback/Init)
           this._grabOffsetMatrix = mat4.create();
           const invCtl = mat4.create();
           mat4.invert(invCtl, active.matrix);
           mat4.multiply(this._grabOffsetMatrix, invCtl, mesh.getMatrix());
 
-          if (this._main.setMesh) this._main.setMesh(mesh);
+          if (this._main.setMesh && (!this._main._lockSelection)) {
+            this._main.setMesh(mesh);
+          }
         } else {
           if (shouldLog) {
             // Log Removed
@@ -276,27 +280,34 @@ class Grab extends SculptBase {
               // window.screenLog(`Grab Delta: ${mag.toFixed(5)}`, mag > 0.0001 ? "white" : "gray");
             }
 
-            // Apply Delta to Mesh: New = Delta * Old
-            const meshMat = this._grabbedMesh.getMatrix();
-            const newMat = mat4.create();
-            mat4.multiply(newMat, delta, meshMat);
-
-            if (shouldLog) {
-              // const t = newMat.subarray(12, 15);
-              // window.screenLog(`Grab: Delta Applied`, "lime");
+            let targets = [this._grabbedMesh];
+            if (this._main && this._main._lockSelection) {
+              const selGroup = this._main.getSelectedMeshes();
+              if (selGroup && selGroup.length > 0 && selGroup.includes(this._grabbedMesh)) {
+                targets = selGroup;
+              }
             }
 
-            if (this._grabbedMesh.setMatrix) {
-              this._grabbedMesh.setMatrix(newMat);
-            } else {
-              var tData = this._grabbedMesh.getTransformData();
-              mat4.copy(tData._matrix, newMat);
+            for (let i = 0; i < targets.length; ++i) {
+              const m = targets[i];
+              const meshMat = m.getMatrix();
+              const newMat = mat4.create();
+              mat4.multiply(newMat, delta, meshMat);
+
+              if (m.setMatrix) {
+                m.setMatrix(newMat);
+              } else {
+                var tData = m.getTransformData();
+                mat4.copy(tData._matrix, newMat);
+              }
             }
 
             // Update Last Matrix
             mat4.copy(this._lastControllerMatrix, currentMat);
 
-            this._main.setMesh(this._grabbedMesh);
+            if (!this._main._lockSelection || targets.length === 1) {
+              this._main.setMesh(this._grabbedMesh);
+            }
             this._main.render();
            }
         }

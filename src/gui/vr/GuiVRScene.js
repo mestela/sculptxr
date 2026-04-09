@@ -127,12 +127,8 @@ export default function getSceneWidgets(main) {
   y += HEADER_H + GAP;
 
   // Multi-select Checkbox
-  widgets.push({
-    type: 'checkbox', id: 'multiselect', label: 'Multi-select Mode', x: 20, y: y, w: menuW - 40, h: ITEM_H,
-    value: !!main._vrMultiSelect,
-    onInteract: () => { main._vrMultiSelect = !main._vrMultiSelect; }
-  });
-  y += ITEM_H + GAP;
+  // Multi-select Checkbox removed per user request
+  // Delete Selection button removed per user request
 
   widgets.push({
     type: 'button', id: 'duplicateSelection', label: 'Duplicate', x: 20, y: y, w: menuW - 40, h: ITEM_H,
@@ -143,7 +139,16 @@ export default function getSceneWidgets(main) {
   });
   y += ITEM_H + GAP;
 
-  widgets.push({ type: 'button', id: 'deleteSelection', label: 'Delete', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.deleteCurrentSelection() });
+  // Lock Selection
+  widgets.push({
+    type: 'checkbox', id: 'lockSelection', label: 'Lock Selection', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    value: !!main._lockSelection,
+    onInteract: (val) => { 
+      main._lockSelection = val; 
+      const activeMesh = main.getMesh();
+      console.log(`[LOCK DEBUG] Checkbox Toggled! Lock Selection is now: ${val}. Active Mesh ID is: ${activeMesh ? activeMesh.getID() : 'None'}`);
+    }
+  });
   y += ITEM_H + GAP;
 
   widgets.push({ type: 'button', id: 'clearScene', label: 'Clear Scene', x: 20, y: y, w: menuW - 40, h: ITEM_H, onInteract: () => main.clearScene() });
@@ -173,9 +178,20 @@ export default function getSceneWidgets(main) {
     type: 'checkbox', id: 'isolate', label: 'Isolate', x: 20, y: y, w: menuW - 40, h: ITEM_H,
     value: isIsolate,
     onInteract: (val) => {
+      // Manual Visibility Loop when Isolate is checked
+      const selected = main.getSelectedMeshes();
+      const allMeshes = main.getMeshes();
+      allMeshes.forEach(m => {
+        if (m._isVoxelChunk) return;
+        const targetVisibility = val ? selected.includes(m) : true;
+        m.setVisible(targetVisibility);
+        if (m.getThreeMesh()) m.getThreeMesh().visible = targetVisibility;
+      });
+
       if (main.getGui() && main.getGui()._ctrlScene) {
         main.getGui()._ctrlScene._ctrlIsolate.setValue(val, false);
       }
+      main.render();
     }
   });
   y += ITEM_H + GAP;
