@@ -220,7 +220,7 @@ class Picking {
     // vNear = origin
     // vFar = origin + direction * length
     vec3.copy(_TMP_NEAR_1, origin);
-    vec3.scaleAndAdd(_TMP_FAR, origin, direction, 5000.0);
+    vec3.scaleAndAdd(_TMP_FAR_1, origin, direction, 5000.0);
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
@@ -228,7 +228,7 @@ class Picking {
 
       mat4.invert(_TMP_INV, mesh.getMatrix());
       vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
-      vec3.transformMat4(_TMP_FAR, _TMP_FAR, _TMP_INV);
+      vec3.transformMat4(_TMP_FAR, _TMP_FAR_1, _TMP_INV);
 
       if (!this.intersectionRayMesh(mesh, _TMP_NEAR, _TMP_FAR)) continue;
 
