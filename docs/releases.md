@@ -1,3 +1,6 @@
+# v1.0.154
+- **Feature**: **VR Tools Fit and Finish**: Fully polished the VR palette tabbed interface. Added a subtle 2px separation border to all sub_tabs, perfectly aligned the Mini-HUD quick-picker within safe visible margins, resolved the layout cache-lock bug so tab options swap instantly upon click, hid the non-functional 'Snap & Weld to Center' tool, and migrated all Low Poly tools to a beautifully curated desaturated yellow theme (`#dcd6a8`).
+
 # v1.0.153
 - **Feature**: **Tools Menu Tab Reorganization**: Divided the massive, single-column Tools overlay into two clean tabs ('Sculpting' and 'Low Poly') to drastically reduce UI clutter inside the VR environment. The active tab state persists seamlessly between the main sidebar and the Mini-HUD quick-picker.
 
