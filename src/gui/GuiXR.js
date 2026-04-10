@@ -1325,7 +1325,11 @@ export default class GuiXR {
       }
 
       if (targetWid.type === 'sub_tab') {
-        this._activeSection = targetWid.label;
+        if (targetWid.onInteract) {
+          targetWid.onInteract();
+        } else {
+          this._activeSection = targetWid.label;
+        }
         this._needsRedraw = true;
         this.draw();
         return;
@@ -1537,6 +1541,13 @@ export default class GuiXR {
               this._executeAction(w);
             }
             this._needsRedraw = true;
+          } else if (w.type === 'sub_tab') {
+            if (w.onInteract) {
+              w.onInteract();
+            } else {
+              this._activeSection = w.label;
+            }
+            this._needsRedraw = true;
           } else if (w.type === 'checkbox') {
             w.value = !w.value;
             this._executeAction(w);
@@ -1547,7 +1558,7 @@ export default class GuiXR {
             // Keep open for specific actions like Undo/Redo or Tools
             // ALSO keep open for Outliner buttons (select, delete) to allow batch ops
             const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
-            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load'].includes(w.id) || isOutliner;
+            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load', 'popup_tab0', 'popup_tab1'].includes(w.id) || isOutliner;
             if (!keepOpen) this.closeOverlay();
             else this._needsRedraw = true;
           } else if (w.type === 'colorpicker_embedded') {
@@ -2900,32 +2911,33 @@ export default class GuiXR {
       ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
     }
     else if (wid.type === 'sub_tab') {
-      const isSelected = wid.isActive;
+      const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
 
-      // Beveled Trapezoid Tab Aesthetic
       ctx.beginPath();
-      ctx.moveTo(wid.x, wid.y + wid.h); // Bottom Left
-      ctx.lineTo(wid.x + 15, wid.y); // Top Left
-      ctx.lineTo(wid.x + wid.w - 15, wid.y); // Top Right
-      ctx.lineTo(wid.x + wid.w, wid.y + wid.h); // Bottom Right
+      ctx.moveTo(wid.x, wid.y + wid.h);
+      ctx.lineTo(wid.x + 15, wid.y);
+      ctx.lineTo(wid.x + wid.w - 15, wid.y);
+      ctx.lineTo(wid.x + wid.w, wid.y + wid.h);
       ctx.closePath();
 
-      ctx.fillStyle = isSelected ? '#202020' : '#111'; // Match body if selected, darken if inactive
+      ctx.fillStyle = isSelected ? '#202020' : '#111';
       ctx.fill();
 
+      ctx.strokeStyle = isSelected ? '#444' : '#222';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
       if (isHovered) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)'; // Subtle brighten
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
         ctx.fill();
       }
 
       ctx.font = 'bold 24px sans-serif';
       ctx.textAlign = 'center';
       
-      // Vibrant accent for selected
-      ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa'; // Lighten inactive text for contrast
+      ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa';
       ctx.fillText(wid.label, wid.x + wid.w / 2, wid.y + wid.h / 2 + 8);
 
-      // Underline/Indicator for active
       if (isSelected) {
         ctx.fillStyle = '#00D0FF';
         ctx.fillRect(wid.x, wid.y + wid.h - 4, wid.w, 4);
@@ -3853,6 +3865,41 @@ export default class GuiXR {
 
       ctx.fillStyle = '#ccc';
       ctx.fillRect(wx + 2 + knobX - 2, barY - 2, 4, barH + 4);
+
+    } else if (wid.type === 'sub_tab') {
+      const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
+
+      ctx.beginPath();
+      ctx.moveTo(wx, wy + wid.h);
+      ctx.lineTo(wx + 15, wy);
+      ctx.lineTo(wx + wid.w - 15, wy);
+      ctx.lineTo(wx + wid.w, wy + wid.h);
+      ctx.closePath();
+
+      ctx.fillStyle = isSelected ? '#202020' : '#111';
+      ctx.fill();
+
+      ctx.strokeStyle = isSelected ? '#444' : '#222';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      if (isHover) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.fill();
+      }
+
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa';
+      ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 8);
+
+      if (isSelected) {
+        ctx.fillStyle = '#00D0FF';
+        ctx.fillRect(wx, wy + wid.h - 4, wid.w, 4);
+      } else {
+        ctx.fillStyle = '#444';
+        ctx.fillRect(wx, wy + wid.h - 2, wid.w, 2);
+      }
 
     } else if (wid.type === 'button') {
       const isActive = wid.data && wid.data.active;

@@ -14,8 +14,8 @@ MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on t
     *   **Rule**: Do NOT add features to the desktop UI unless explicitly requested. If there is ANY ambiguity, ALWAYS assume the target is the VR side (e.g. `GuiVRTools.js` / VR menu).
 4.  **No Unprompted Git Commits/Pushes**:
     *   **Rule**: NEVER `git commit` or `git push` to github unless explicitly asked to do so by the user. Do not assume a task list check-off means it's ready to push.
-5.  **Deployment Protocol [DISABLED]**:
-    *   Do NOT use `./deploy_beta.sh` or `./deploy.sh`. Rely entirely on local Vite server (`npm run dev`).
+5.  **Deployment Protocol [DISABLED & FORBIDDEN]**:
+    *   **Rule**: NEVER run `./deploy_beta.sh` or `./deploy.sh`. This is strictly forbidden under any circumstances. Rely entirely on the local Vite server (`npm run dev`).
 6.  **Debug Visibility**:
     *   `VERSION` MUST be visible in VR/Screen Log on startup.
 

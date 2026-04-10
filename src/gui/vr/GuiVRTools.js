@@ -57,8 +57,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.SPIN_EDGE,
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,
-    Enums.Tools.WELD,
-    Enums.Tools.SNAP_WELD_CENTER
+    Enums.Tools.WELD
   ];
 
   window._activeToolTab = window._activeToolTab || 0;
@@ -94,6 +93,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.TRANSFORM:
       case Enums.Tools.TRANSFORM_VR:
       case Enums.Tools.LOCALSCALE:
+        return '#c5ebc5'; // Green (bright)
+
+      case Enums.Tools.CUT_TOOL:
+      case Enums.Tools.EXTRUDE:
+      case Enums.Tools.INSET:
       case Enums.Tools.DELETE_FACE:
       case Enums.Tools.FILL_HOLE:
       case Enums.Tools.DISSOLVE_EDGE:
@@ -101,11 +105,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       case Enums.Tools.SPLIT_EDGE:
       case Enums.Tools.EDGE_CREATE:
       case Enums.Tools.SPIN_EDGE:
+      case Enums.Tools.COLLAPSE_EDGE:
+      case Enums.Tools.DISSOLVE_VERTEX:
       case Enums.Tools.WELD:
-      case Enums.Tools.CUT_TOOL:
-      case Enums.Tools.EXTRUDE:
-      case Enums.Tools.INSET:
-        return '#c5ebc5'; // Green (bright)
+        return '#dcd6a8'; // Desaturated Yellow (curated)
+
       case Enums.Tools.PAINT:
         return '#dec5eb'; // Purple (bright)
       case Enums.Tools.MASKING:
@@ -141,42 +145,45 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       onInteract: () => {
         const toolPickerWidgets = [];
         
-        const tabW = 330;
-        toolPickerWidgets.push({
-          type: 'button', id: 'popup_tab0', label: '[ Sculpting ]',
-          x: 0, y: 20, w: tabW, h: 60,
-          data: { tint: window._activeToolTab === 0 ? '#eee' : '#111' },
-          onInteract: () => {
-            window._activeToolTab = 0;
-            if (main._guiPopup) {
-               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
-               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
-            }
-          }
-        });
-
-        toolPickerWidgets.push({
-          type: 'button', id: 'popup_tab1', label: '[ Low Poly ]',
-          x: 330, y: 20, w: tabW, h: 60,
-          data: { tint: window._activeToolTab === 1 ? '#eee' : '#111' },
-          onInteract: () => {
-            window._activeToolTab = 1;
-            if (main._guiPopup) {
-               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
-               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
-            }
-          }
-        });
-
-        const pad = 0; // Removed padding to create a solid block
+        const pad = 0;
         const cols = 3;
         const btnW = 150;
         const btnH = 60;
 
-        // 1. Calculate how many valid items are in the list.
         const validOptions = toolOptions.filter(opt => opt !== null);
         const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
-        const startY = Math.max(100, 220 - (boxH / 2));
+        const startY = Math.max(160, 260 - (boxH / 2));
+
+        const tabW = 225; // Exactly half the 450px grid width!
+        const tabX = (660 - 450) / 2; // Left edge of the centered 3-button grid
+
+        toolPickerWidgets.push({
+          type: 'sub_tab', id: 'popup_tab0', label: 'Sculpting',
+          x: tabX, y: startY - 60, w: tabW, h: 60,
+          data: { active: window._activeToolTab === 0 },
+          onInteract: () => {
+            window._activeToolTab = 0;
+            if (main._guiMini) main._guiMini._tabWidgets['Tools'] = null;
+            if (main._guiPopup) {
+               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
+               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
+            }
+          }
+        });
+
+        toolPickerWidgets.push({
+          type: 'sub_tab', id: 'popup_tab1', label: 'Low Poly',
+          x: tabX + tabW, y: startY - 60, w: tabW, h: 60,
+          data: { active: window._activeToolTab === 1 },
+          onInteract: () => {
+            window._activeToolTab = 1;
+            if (main._guiMini) main._guiMini._tabWidgets['Tools'] = null;
+            if (main._guiPopup) {
+               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
+               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
+            }
+          }
+        });
 
         // Calculate maximum box width (used for vertical centering)
         const maxBoxW = cols * (btnW + pad) + pad; // Total theoretical width
@@ -239,11 +246,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += 80 + gapSection;
 
   } else {
-    const tabW = 355;
+    const tabW = 385;
     widgets.push({
-      type: 'button', id: 'sidebar_tab0', label: '[ Sculpting ]',
+      type: 'sub_tab', id: 'sidebar_tab0', label: 'Sculpting',
       x: col1X, y: y, w: tabW, h: 60,
-      data: { tint: window._activeToolTab === 0 ? '#eee' : '#111' },
+      data: { active: window._activeToolTab === 0 },
       onInteract: () => {
         window._activeToolTab = 0;
         if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
@@ -251,18 +258,15 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
 
     widgets.push({
-      type: 'button', id: 'sidebar_tab1', label: '[ Low Poly ]',
+      type: 'sub_tab', id: 'sidebar_tab1', label: 'Low Poly',
       x: col1X + tabW + 10, y: y, w: tabW, h: 60,
-      data: { tint: window._activeToolTab === 1 ? '#eee' : '#111' },
+      data: { active: window._activeToolTab === 1 },
       onInteract: () => {
         window._activeToolTab = 1;
         if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
       }
     });
-    y += 70;
-
-    widgets.push({ type: 'info', label: 'Select Tool', x: col1X, y: y, w: 200, h: 40 });
-    y += 40;
+    y += 60; // Removed gap so it sits directly on top of the buttons below!
     const pad = 15;
     const cols = 3;
     const btnW = 250;
