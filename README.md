@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.152**: **Fix**: Resolved a critical raycasting mutation bug that destabilized multi-object selection and grabbing.
 *   **v1.0.149**: **UX**: Successfully restored thumbstick vertical scrolling and persistent state saving for the VR About & Help menu.
 *   **v1.0.143**: **Feature**: Complete rebuild of VR Inset tool and integrated Precision Start Marker.
-*   **v1.0.133**: **Fix**: Adjusted Undo/Redo array recording mechanics to avoid the Extrude Garbage Pitfall.
 
 [View Full Release History](docs/releases.md)
 

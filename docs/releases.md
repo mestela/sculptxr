@@ -1,3 +1,6 @@
+# v1.0.152
+- **Fix**: **Multi-selection Raycast Stability**: Resolved a critical shared-variable mutation bug within `Picking.intersectionRayMeshes`. When evaluating multiple objects concurrently, the engine previously transformed the global ray destination vector in-place inside the loop, causing subsequent raychecks to wildly deflect. The loop now utilizes an isolated world-space copy, restoring perfect target accuracy for multi-object picking operations.
+
 # v1.0.150
 - **Feature**: **VR Selection Lock Enforcement**: Enforced persistent, un-shifting target binding across all sculpted inputs and standard Grab tool executions when the `Lock Selection` toggle is active.
 - **Feature**: **Lock Multi-selection Transformation Support**: Fully integrated support for multi-selected Outliner items while locking is enabled. The manual picking filter now captures all active multi-select targets and simultaneously applies spatial transformation matrices to every included block during a single stroke event without jittering or losing focus.

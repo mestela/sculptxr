@@ -63,7 +63,7 @@ MANDATORY: You MUST read overview.md and docs/code_summaries.md for context on t
 2.  **Documentation of Truth**: Update `walkthrough.md` (or a specific checkpoint doc) with a **Plain English Reconstruction Guide**.
     *   *Standard*: "Could a stranger rewrite this feature from scratch reading *only* this doc?"
     *   *Must include*: Key logic changes, math derivations, and specific file modifications.
-3.  **Tag**: Start commit message with `[PARANOID]`.
+
 
 ## Versioning & Debugging Protocol
 1.  **ALWAYS Increment**: Every new attempt gets a new version number (Minor/Patch). NEVER reuse a version string. **Even for small changes or tests.**
