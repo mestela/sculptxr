@@ -25,35 +25,29 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   // Removed "Tool" info header for a cleaner HUD look.
 
   // Build Options from Tools array
-  // Filter out Drag tool, LocalScale, and Transform
-  const orderedToolIds = [
-    // Red (Sculpting)
+  const tab0Ids = [
     Enums.Tools.BRUSH,
     Enums.Tools.INFLATE,
     Enums.Tools.VOXEL,
     Enums.Tools.FLATTEN,
     Enums.Tools.PINCH,
     Enums.Tools.CREASE,
-
-    // Blue (Smoothing)
     Enums.Tools.SMOOTH,
     Enums.Tools.RELAX,
-
-    // Purple (Paint)
     Enums.Tools.PAINT,
-
-    // Green (Move/Transform/Drag)
     Enums.Tools.MOVE,
     Enums.Tools.GRAB,
     Enums.Tools.DRAG,
     Enums.Tools.SLIDE,
     Enums.Tools.TWIST,
     Enums.Tools.TRANSFORM_VR,
+    Enums.Tools.MASKING
+  ];
 
-    // Orange (Masking)
-    Enums.Tools.MASKING,
-
-    // Delete Face
+  const tab1Ids = [
+    Enums.Tools.CUT_TOOL,
+    Enums.Tools.EXTRUDE,
+    Enums.Tools.INSET,
     Enums.Tools.DELETE_FACE,
     Enums.Tools.FILL_HOLE,
     Enums.Tools.DISSOLVE_EDGE,
@@ -64,19 +58,17 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,
     Enums.Tools.WELD,
-    Enums.Tools.SNAP_WELD_CENTER,
-    Enums.Tools.CUT_TOOL,
-    Enums.Tools.EXTRUDE,
-    Enums.Tools.INSET
+    Enums.Tools.SNAP_WELD_CENTER
   ];
+
+  window._activeToolTab = window._activeToolTab || 0;
+  const orderedToolIds = window._activeToolTab === 0 ? tab0Ids : tab1Ids;
 
   const toolOptions = orderedToolIds.map(id => {
     if (id === null) return null;
     const t = Tools[id];
     let label = TR(t.uiName);
-    // Strip trailing bracketed shortcuts (e.g. " (-Shift)", " (G)")
     label = label.replace(/\s*\([^)]*\)$/, '');
-    // Specifically rename "Transform VR" -> "Transform" for the UI grid
     if (label.includes('Transform VR')) label = 'Transform';
 
     return { label: label, id: id };
@@ -148,6 +140,34 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       data: { tint: getToolTint(activeToolIndex) },
       onInteract: () => {
         const toolPickerWidgets = [];
+        
+        const tabW = 330;
+        toolPickerWidgets.push({
+          type: 'button', id: 'popup_tab0', label: '[ Sculpting ]',
+          x: 0, y: 20, w: tabW, h: 60,
+          data: { tint: window._activeToolTab === 0 ? '#eee' : '#111' },
+          onInteract: () => {
+            window._activeToolTab = 0;
+            if (main._guiPopup) {
+               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
+               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
+            }
+          }
+        });
+
+        toolPickerWidgets.push({
+          type: 'button', id: 'popup_tab1', label: '[ Low Poly ]',
+          x: 330, y: 20, w: tabW, h: 60,
+          data: { tint: window._activeToolTab === 1 ? '#eee' : '#111' },
+          onInteract: () => {
+            window._activeToolTab = 1;
+            if (main._guiPopup) {
+               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
+               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
+            }
+          }
+        });
+
         const pad = 0; // Removed padding to create a solid block
         const cols = 3;
         const btnW = 150;
@@ -156,7 +176,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         // 1. Calculate how many valid items are in the list.
         const validOptions = toolOptions.filter(opt => opt !== null);
         const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
-        const startY = Math.max(20, 220 - (boxH / 2));
+        const startY = Math.max(100, 220 - (boxH / 2));
 
         // Calculate maximum box width (used for vertical centering)
         const maxBoxW = cols * (btnW + pad) + pad; // Total theoretical width
@@ -219,6 +239,28 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += 80 + gapSection;
 
   } else {
+    const tabW = 355;
+    widgets.push({
+      type: 'button', id: 'sidebar_tab0', label: '[ Sculpting ]',
+      x: col1X, y: y, w: tabW, h: 60,
+      data: { tint: window._activeToolTab === 0 ? '#eee' : '#111' },
+      onInteract: () => {
+        window._activeToolTab = 0;
+        if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
+      }
+    });
+
+    widgets.push({
+      type: 'button', id: 'sidebar_tab1', label: '[ Low Poly ]',
+      x: col1X + tabW + 10, y: y, w: tabW, h: 60,
+      data: { tint: window._activeToolTab === 1 ? '#eee' : '#111' },
+      onInteract: () => {
+        window._activeToolTab = 1;
+        if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
+      }
+    });
+    y += 70;
+
     widgets.push({ type: 'info', label: 'Select Tool', x: col1X, y: y, w: 200, h: 40 });
     y += 40;
     const pad = 15;

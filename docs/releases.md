@@ -1,4 +1,6 @@
-# v1.0.152
+# v1.0.153
+- **Feature**: **Tools Menu Tab Reorganization**: Divided the massive, single-column Tools overlay into two clean tabs ('Sculpting' and 'Low Poly') to drastically reduce UI clutter inside the VR environment. The active tab state persists seamlessly between the main sidebar and the Mini-HUD quick-picker.
+
 - **Fix**: **Multi-selection Raycast Stability**: Resolved a critical shared-variable mutation bug within `Picking.intersectionRayMeshes`. When evaluating multiple objects concurrently, the engine previously transformed the global ray destination vector in-place inside the loop, causing subsequent raychecks to wildly deflect. The loop now utilizes an isolated world-space copy, restoring perfect target accuracy for multi-object picking operations.
 
 # v1.0.150
