@@ -25,6 +25,7 @@ import getLanguageWidgets from './vr/GuiVRLanguage.js';
 import getExtraUIWidgets from './vr/GuiVRExtraUI.js';
 import getAboutWidgets from './vr/GuiVRAbout.js';
 import getTopologyWidgets from './vr/GuiVRTopology.js';
+import getAnimationWidgets from './vr/GuiVRAnimation.js';
 import Tablet from '../misc/Tablet.js';
 
 // Direct access for property setters
@@ -37,7 +38,7 @@ const TAB_HEIGHT = 68; // Increased from 52 (+30%)
 const CANVAS_SIZE = 1024;
 
 const GLOBAL_TABS = ['Files', 'History', 'Reference', 'Settings', 'About & Help'];
-const SECTIONS = ['Tools', 'Scene', 'Topology', 'Rendering'];
+const SECTIONS = ['Tools', 'Scene', 'Topology', 'Rendering', 'Animation'];
 
 const TAB_ROWS = Math.ceil(GLOBAL_TABS.length / 3); // Dynamic rows
 const HEADER_HEIGHT = TAB_HEIGHT * TAB_ROWS; 
@@ -138,6 +139,7 @@ export default class GuiXR {
       'History': getHistoryWidgets,
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
+      'Animation': getAnimationWidgets,
       'Tools': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
       'Debug': (main) => this.getDebugWidgets(main),
       'Reference': getReferenceWidgets,
@@ -830,7 +832,7 @@ export default class GuiXR {
       // Sub-Tabs Header
       const activeSec = this._activeSection || 'Tools';
       const tabMargin = 6; // Indent slightly so bevel doesn't overlap the blue panel border
-      const sections = this.getSections ? this.getSections() : ['Tools', 'Scene', 'Topology', 'Rendering'];
+      const sections = SECTIONS;
       const tabWidth = (CANVAS_SIZE - tabMargin * 2) / sections.length;
       
       sections.forEach((sec, idx) => {
@@ -984,7 +986,7 @@ export default class GuiXR {
 
     // 0.5. Active continuous interactions (High Priority)
     // Must run BEFORE everything else to prevent overlays from stealing the drag event
-    if ((this._activeSlider || this._activeColorPicker) && !isPressed) {
+    if ((this._activeSlider || this._activeColorPicker || this._activeTimeline) && !isPressed) {
       if (this._activeSlider) {
         if (this._activeSlider.id === 'stack_size' && this._main) {
           const val = Math.round(this._activeSlider.value);
@@ -1001,6 +1003,9 @@ export default class GuiXR {
         }
         this._activeColorPicker = null;
         this._activeColorPickerRegion = null;
+      }
+      if (this._activeTimeline) {
+        this._activeTimeline = null;
       }
       return;
     }
@@ -1166,7 +1171,7 @@ export default class GuiXR {
     // Dynamic Debounce
     let debounceTime = 250;
     // Faster interaction for continuous controls
-    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.id === 'roughness' || targetWid.id === 'metallic')) {
+    if (targetWid && (targetWid.type === 'slider' || targetWid.type === 'colorpicker_embedded' || targetWid.type === 'timeline' || targetWid.id === 'roughness' || targetWid.id === 'metallic')) {
       debounceTime = 16; // ~60fps for continuous controls
     }
     if (targetWid && targetWid.type === 'section_header') {
@@ -1179,11 +1184,7 @@ export default class GuiXR {
     if (isScrollInteraction || this._isDraggingContent || (!targetWid && cy > HEADER_HEIGHT)) {
       debounceTime = 0; // Immediate response for scrollbar & content drag
     } else {
-      // Only execute widget clicks on a STRICT RISING EDGE to prevent double-firings
-      // when holding the trigger for >250ms (unless it's a slider which needs continuous press)
-      // STRIKT START CHECK: To start any interaction on this layer, we MUST have a rising edge.
-      // This prevents "leakage" from overlays that close on the first frame of a press.
-      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent || this._activeColorPicker);
+      const isDragging = !!(this._activeSlider || this._isDraggingScrollbar || this._isDraggingContent || this._activeColorPicker || this._activeTimeline);
 
       if (isDragging) {
         if (!isPressed) return; // Continue drag
@@ -1283,16 +1284,47 @@ export default class GuiXR {
       } else if (this._activeColorPicker && (!targetWid || targetWid.type !== 'colorpicker_embedded' || targetWid.id !== this._activeColorPicker.id)) {
         this._handleWidgetClick(this._activeColorPicker);
         return;
+      } else if (this._activeTimeline && (!targetWid || targetWid.type !== 'timeline' || targetWid.id !== this._activeTimeline.id)) {
+        this._handleWidgetClick(this._activeTimeline);
+        return;
       }
     }
 
     // 4. Check Widgets
     if (targetWid && isPressed && this._lastScrollY === undefined) {
-      const isContinuousWid = targetWid.type === "slider" || targetWid.type === "colorpicker_embedded";
-      if (this._hasClickedWidgetThisPress && !isContinuousWid) return; // Prevent sweep-clicking multiple toggle buttons
-      this._inputDebounce = now; // SUCCESSFUL WIDGET HIT - APPLY DEBOUNCE
+      const isContinuousWid = targetWid.type === "slider" || targetWid.type === "colorpicker_embedded" || targetWid.type === "timeline";
+      if (this._hasClickedWidgetThisPress && !isContinuousWid) return; 
+      this._inputDebounce = now; 
       if (!isContinuousWid) this._hasClickedWidgetThisPress = true;
       if (targetWid.disabled) return;
+
+      if (targetWid.type === 'timeline') {
+        this._activeTimeline = targetWid;
+        // Calculate normalized horizontal drag percentage
+        let t = (cx - targetWid.x) / targetWid.w;
+        t = Math.max(0, Math.min(1, t));
+
+        const masterLen = window._animMasterDuration || 1.0;
+        const targetTime = t * masterLen;
+
+        window._animPlaying = false;
+        window._animCurrentTime = targetTime;
+
+        if (window._animationRegistry) {
+          window._animationRegistry.globalPlaybackTime = targetTime;
+          if (this._main && this._main._meshes) {
+            for (let i = 0; i < this._main._meshes.length; i++) {
+              const m = this._main._meshes[i];
+              const tr = window._animationRegistry.tracks.get(m.getID());
+              if (tr) {
+                tr.playbackTime = targetTime;
+                window._animationRegistry.update(m, true);
+              }
+            }
+          }
+        }
+        this._needsRedraw = true;
+      }
 
       if (targetWid.type === 'slider') {
         this._activeSlider = targetWid;
@@ -1539,6 +1571,28 @@ export default class GuiXR {
             w.value = val;
             if (w.id !== 'stack_size') {
               this._executeAction(w);
+            }
+            this._needsRedraw = true;
+          } else if (w.type === 'timeline') {
+            let t = Math.max(0, Math.min(1, (rx - w.x) / w.w));
+            const masterLen = window._animMasterDuration || 1.0;
+            const targetTime = t * masterLen;
+
+            window._animPlaying = false;
+            window._animCurrentTime = targetTime;
+
+            if (window._animationRegistry) {
+              window._animationRegistry.globalPlaybackTime = targetTime;
+              if (this._main && this._main._meshes) {
+                for (let i = 0; i < this._main._meshes.length; i++) {
+                  const m = this._main._meshes[i];
+                  const tr = window._animationRegistry.tracks.get(m.getID());
+                  if (tr) {
+                    tr.playbackTime = targetTime;
+                    window._animationRegistry.update(m, true);
+                  }
+                }
+              }
             }
             this._needsRedraw = true;
           } else if (w.type === 'sub_tab') {
@@ -2147,6 +2201,15 @@ export default class GuiXR {
         if (this._activeSlider && this._activeSlider.id === w.id) {
             w.value = this._activeSlider.value;
             this._activeSlider = w; // Refresh reference to the new widget clone
+        }
+
+        // Sync DAW playhead handle automatically during playback!
+        if (w.id === 'anim_scrubber' && window._animPlaying && window._animMasterDuration > 0) {
+          const liveAlpha = (window._animCurrentTime || 0) / window._animMasterDuration;
+          if (Math.abs(w.value - liveAlpha) > 0.01) {
+            w.value = liveAlpha;
+            changed = true;
+          }
         }
 
         // Flame styling needs to manually catch up
@@ -3108,6 +3171,9 @@ export default class GuiXR {
       else if (wid.type === 'button') {
         this._drawButton(ctx, wid.x, wid.y, wid, isActive, isHovered);
       }
+      else if (wid.type === 'timeline') {
+        this._drawTimeline(ctx, wid);
+      }
     }
 
     if (isHovered && wid.type !== 'info' && wid.type !== 'sub_tab') {
@@ -3187,6 +3253,108 @@ export default class GuiXR {
     } else {
       ctx.textAlign = 'center';
       ctx.fillText(wid.label || '', wx + wid.w / 2, wy + wid.h / 2 + 8);
+    }
+  }
+
+  _drawTimeline(ctx, w) {
+    // 1. Dark Graph Container
+    ctx.fillStyle = '#181818';
+    ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(w.x, w.y, w.w, w.h);
+
+    if (!window._animationRegistry) return;
+
+    const reg = window._animationRegistry;
+    const tracks = Array.from(reg.tracks.entries());
+    
+    if (tracks.length === 0) {
+      ctx.fillStyle = '#666';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No recorded tracks in memory.', w.x + w.w/2, w.y + w.h/2 + 8);
+      return;
+    }
+
+    // --- USER DIAGNOSTICS BANNER ---
+    ctx.fillStyle = '#ffff00';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'left';
+    
+    const mDur = window._animMasterDuration ? window._animMasterDuration.toFixed(2) : '0.00';
+    const curT = window._animCurrentTime ? window._animCurrentTime.toFixed(2) : '0.00';
+    const spd = window._animLastDt ? (1.0 / window._animLastDt).toFixed(0) : '0';
+
+    ctx.fillText(`Start: 0.00s | End: ${mDur}s | Cur: ${curT}s | Playback Speed: ${spd} fps`, w.x + 10, w.y + 20);
+
+    // Completely bypass UI-side tempo overriding to allow the recording engine to govern unconstrained tracking loops!
+    let maxDuration = window._animMasterDuration && window._animMasterDuration > 0 ? window._animMasterDuration : 1.0;
+
+    // 2. Draw Vertical Grid Lines (Every 1 Second)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    for (let s = 1; s <= Math.ceil(maxDuration); s++) {
+      const gridX = w.x + (s / maxDuration) * w.w;
+      ctx.beginPath();
+      ctx.moveTo(gridX, w.y);
+      ctx.lineTo(gridX, w.y + w.h);
+      ctx.stroke();
+    }
+
+    // 3. Draw Each Object's Track as a Horizontal Strip (Reduced to 25% height!)
+    const totalAvailableSlots = Math.max(4, tracks.length); 
+    const trackH = (w.h / totalAvailableSlots) * 0.5; // Make them very thin and sleek
+    tracks.forEach(([id, track], idx) => {
+      const ty = w.y + (idx * trackH) + 10;
+      
+      // Background alternating strip
+      if (idx % 2 === 1) {
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(w.x, ty, w.w, trackH);
+      }
+
+      // Track ID text
+      ctx.fillStyle = '#aaa';
+      ctx.font = '16px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`ID ${id}`, w.x + 10, ty + trackH/2 + 5);
+
+      // Render actual captured frame markers
+      if (track && track.times && track.times.length > 1) {
+        ctx.fillStyle = '#00ffcc';
+        const firstTime = track.times[0];
+        const lastTime = track.times[track.times.length - 1];
+        const xStart = w.x + (firstTime / maxDuration) * w.w;
+        const xEnd = w.x + (lastTime / maxDuration) * w.w;
+
+        // Track lifespan block
+        ctx.fillStyle = 'rgba(0, 255, 200, 0.2)';
+        ctx.fillRect(xStart, ty + 10, xEnd - xStart, trackH - 20);
+
+        // The playhead for this specific track
+        const currentAlpha = track.playbackTime / maxDuration;
+        const playheadX = w.x + currentAlpha * w.w;
+        
+        ctx.strokeStyle = '#ff3366';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(playheadX, ty);
+        ctx.lineTo(playheadX, ty + trackH);
+        ctx.stroke();
+      }
+    });
+
+    // --- PROMINENT CENTER COUNTDOWN OVERLAY ---
+    if (window._animationRegistry && window._animationRegistry.isCountingIn) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 120px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(window._animStatusText || '3...', w.x + w.w / 2, w.y + w.h / 2);
     }
   }
 

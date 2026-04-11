@@ -886,6 +886,9 @@ class Scene {
             window._animationRegistry.update(this._meshes[i]);
           }
           this._drawFullScene = true;
+          if (this._guiXR) {
+            this._guiXR._needsRedraw = true;
+          }
         }
       }
     }
