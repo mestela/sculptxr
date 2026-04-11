@@ -1,30 +1,28 @@
-# Handover Prompt: SculptXR Fit & Finish (v1.0.150)
+# Handover Prompt: SculptXR Context-Aware Intelligence (v1.0.156)
 
-**Project Status**: Clean, documented, and pushed. Full VR multi-selection persistence and spatial locking has been achieved and verified.
+**Project Status**: Clean, fully documented, and pushed to GitHub. All context-aware multi-selection and Voxel-to-Mesh workflows have been verified and locked.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: `v1.0.150`
+**Checkpoint**: `v1.0.156`
 
 ---
 
 ## 1. Major Accomplishments (This Session)
 
-1. **VR Selection Lock Stabilized**: 
-   - Modified `ProcessVRSculpting` in `Scene.js` to use a single unified picking hierarchy that strictly respects `this._lockSelection`.
-   - Modified `SculptBase.start()` to bypass unconditional `setOrUnsetMesh()` overrides when locked.
-   - Fixed the standalone generic `Grab.js` tool which had its own independent raycaster overriding the lock and jittering the Outliner menu. It now flawlessly targets the locked group and bypasses Outliner mutations.
-2. **Multi-selection Transformations**: 
-   - The system now correctly grabs the full `this.getSelectedMeshes()` array when a lock is active, iterating and applying exact controller spatial transformation matrices (`delta`) simultaneously to all multi-select items.
+1. **Context-Aware Tool Switching**:
+   - **Poly Recovery**: Selecting a standard polygon geometry in the Outliner automatically transitions the artist to the standard `Sculpting` tools tab, restoring the exact brush (e.g., `Clay`, `Inflate`) they were last utilizing.
+   - **Voxel Transition**: Highlighting a pure Voxel primitive instantly shifts the interface over to the dedicated `Voxel` tools sub-menu.
+   - **Mixed Detachment Security**: Highlighting combinations of both standard and Voxel structures simultaneously securely sets the tool context to an explicitly detached `-1` (No Tool) state. This acts as a strict read-only safety precaution, forcing artists to explicitly choose an action (like Grab) to proceed.
+
+2. **Transformation Undo History Integration**:
+   - Fixed the standalone generic `Grab.js` tool to properly record initial baseline object matrices at trigger press and explicitly push a custom restoration snapshot directly into the master `StateManager` via the native `end()` hook when the trigger is released.
+
+3. **Scene Naming De-Duplication and Output Cleansing**:
+   - Voxel primitives now default to the concise label `Voxel` instead of `Voxel Block`.
+   - Baking multiple Voxel blocks concurrently actively checks tracking variables to ensure newly generated standard geometries receive unique, non-conflicting incremental labels (`mesh1`, `mesh2`).
+   - All noisy high-frequency background string debugging and SurfaceNets console traces have been permanently stripped to preserve clear execution logging for remote ADB usage.
 
 ---
 
-## 2. Refined Backlog & Strategy
+## 2. Technical Notes & Agenda
 
-The following tasks have been explicitly prioritized by the user for the upcoming session:
-
-### 🟡 Tier 2: Layout & Batch Processing (Next Immediate Focus)
-1. **Clear Scene Warning**: Implement a local double-click or hold-to-confirm timed mechanism on the `Clear Scene` button inside `GuiVRScene.js` to protect against accidental clicks without triggering blocking desktop modal alerts.
-2. **Batch Material Overrides**: Refactor the material and color assignment loops (likely inside `StateColorAndMaterial.js` or `Scene.js` dispatchers) to apply settings to `main.getSelectedMeshes()` instead of just `main.getMesh()`.
-3. **Menu Grid Optimization**: Adjust the layout math inside `GuiVRScene.js` to render Outliner elements in a two-column format to make better use of horizontal menu real estate.
-
-### 🔴 Tier 3: Advanced VR Core Mechanics
-4. **Click-Drag Outliner**: Retrofit `GuiXR.js` event handlers to support continuous VR UV pointer dragging across sequential Outliner checkboxes without requiring individual trigger pulls.
+- There is no fixed user agenda for the upcoming phase. Focus purely on requested features, maintaining the exact rules laid out in `project_rules.md`.
