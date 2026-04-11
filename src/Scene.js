@@ -1077,6 +1077,9 @@ class Scene {
         }
       }
 
+      // Sync Ground Plane Visibility with UI
+      if (this._groundGrid) this._groundGrid.visible = !!this._showGrid;
+
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, this._camera.getThreeCamera());
       
@@ -1241,6 +1244,15 @@ class Scene {
     var dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
     dirLight.position.set(1, 1, 1);
     this._scene.add(dirLight);
+
+    // Localized Geometry Base Grid (100 units wide, 25 divisions for massive 4-meter visual blocks)
+    this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
+    this._groundGrid.material.transparent = true;
+    this._groundGrid.material.opacity = 0.5;
+    this._groundGrid.material.depthWrite = false;
+    this._groundGrid.position.y = -0.25;
+    this._groundGrid.visible = !!this._showGrid;
+    this._worldGroup.add(this._groundGrid);
 
     // Fallback/Legacy Caps init
     WebGLCaps.initWebGLExtensions(this._gl);

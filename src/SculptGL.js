@@ -802,6 +802,7 @@ class SculptGL extends Scene {
   }
 
   resetCameraMeshes(meshes) {
+    if (this._isImmersiveAR || (this.isInVR && this.isInVR())) return;
     if (!meshes) meshes = this._meshes;
 
     if (meshes.length > 0) {
