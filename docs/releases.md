@@ -1,3 +1,8 @@
+# v1.0.169
+- **Fix**: **Animation DAWs Matrix Stability**: Implemented strict quaternion length normalization and fallback sanitization inside the Mocap Looper `captureTick` and frame updates to permanently prevent invalid vector outputs from corrupting scene matrices and generating `NaN` bounding box errors.
+- **UX**: **Punch-in Marker Cleanup**: The bright orange visual reference bar that denotes your exact overdub insertion time now automatically clears from the timeline lane as soon as recording stops.
+- **Diagnostics**: Completely silenced all verbose internal tracking console logs for Grab, Animation, Label, and Puppeteer modules to provide a perfectly quiet runtime console.
+
 # v1.0.166
 - **Diagnostics**: Added detailed trace logging to the Mocap Looper punch-in pipeline and Grab tool trigger release handlers to debug secondary-track recording failures.
 
