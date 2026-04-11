@@ -1,6 +1,7 @@
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
+import AnimationRegistry from '../AnimationRegistry.js';
 
 class Grab extends SculptBase {
 
@@ -252,6 +253,16 @@ class Grab extends SculptBase {
           if (this._main.setMesh && (!this._main._lockSelection)) {
             this._main.setMesh(mesh);
           }
+
+          // --- PUPPETEER RECORDING START ---
+          if (window._animArmed) {
+            if (window._animCountIn && this._main.getNotification) {
+              this._main.getNotification().show('3... 2... 1... Recording Started!');
+            } else if (this._main.getNotification) {
+              this._main.getNotification().show('Recording Started!');
+            }
+            AnimationRegistry.startRecording(mesh);
+          }
         } else {
           if (shouldLog) {
             // Log Removed
@@ -331,6 +342,9 @@ class Grab extends SculptBase {
             if (!this._main._lockSelection || targets.length === 1) {
               this._main.setMesh(this._grabbedMesh);
             }
+            
+
+            
             this._main.render();
            }
         }
@@ -355,7 +369,12 @@ class Grab extends SculptBase {
       this._activeController = null;
       this._isTwoHanded = false;
       this._lastControllerMatrix = null;
-      this._undoMatrix = null;
+      // Auto-stop the recording loop when the user lets go of the physical VR trigger!
+      if (window._animationRegistry && window._animationRegistry.isRecording) {
+        window._animationRegistry.stopRecording();
+      }
+
+
     }
   }
 }

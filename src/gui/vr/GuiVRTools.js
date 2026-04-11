@@ -1202,13 +1202,81 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     }
   }
 
-  // --- GRAB TOOL ---
+  // --- GRAB TOOL (Puppeteer Animation) ---
   if (activeToolIndex === Enums.Tools.GRAB && activeTool) {
-    widgets.push({ type: 'info', label: 'Grab Settings', x: col1X, y: y });
+    widgets.push({ type: 'info', label: 'Puppeteer Animation', x: col1X, y: y });
     y += gapHeader;
-    // No specific settings yet? 
-    // Maybe "Uniform Scale" toggle for 2-handed?
-    // For now just placeholder or nothing.
+
+    // Global States
+    window._animArmed = window._animArmed || false;
+    window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
+    window._animPlaying = window._animPlaying || false;
+
+    // Explicit 'Record' Button Flow
+    widgets.push({
+      type: 'button',
+      id: 'anim_record',
+      label: window._animStatusText || '🔴 Record Track',
+      x: col1X, y: y, w: 350, h: btnH,
+      data: { tint: '#ff4444' },
+      onInteract: () => {
+        console.log("[Puppeteer] Record Button Clicked!");
+        
+        if (!window._animationRegistry) {
+          console.error("[Puppeteer] ERROR: AnimationRegistry missing!");
+          return;
+        }
+
+        let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
+        if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) {
+          targetMesh = main.getMeshes()[0];
+          console.log("[Puppeteer] Auto-locking onto first scene mesh.");
+        }
+
+        if (!targetMesh) {
+          console.error("[Puppeteer] FAIL: Absolutely no meshes found in scene.");
+          window._animStatusText = 'No Mesh Found!';
+          setTimeout(() => { window._animStatusText = '🔴 Record Track'; if (main._guiXR) main._guiXR._needsRedraw = true; }, 1500);
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+          return;
+        }
+        
+        console.log(`[Puppeteer] Locked onto Mesh ID: ${targetMesh.getID()}`);
+        window._animArmed = true;
+        window._animationRegistry.startRecording(targetMesh);
+      }
+    });
+
+    // Stop/Reset ALL Tracks
+    widgets.push({
+      type: 'button',
+      id: 'anim_stop_all',
+      label: '⏹ Reset All Tracks',
+      x: col1X + 360, y: y, w: 350, h: btnH,
+      data: { tint: '#aaaaaa' },
+      onInteract: () => {
+        if (window._animationRegistry) {
+          window._animationRegistry.resetAll();
+        }
+      }
+    });
+
+    y += btnH + gapBtn;
+
+    // Playback Toggle
+    widgets.push({
+      type: 'button',
+      id: 'anim_play',
+      label: window._animPlaying ? '⏸ Pause All' : '▶ Play All',
+      x: col1X, y: y, w: 710, h: btnH,
+      data: { tint: window._animPlaying ? '#ffaa00' : '#44ff44' },
+      onInteract: () => {
+        window._animPlaying = !window._animPlaying;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+      }
+    });
+
+    y += btnH + gapSection;
   }
 
   // --- VERSION UPDATE WARNING ---

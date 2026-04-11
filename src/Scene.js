@@ -877,6 +877,17 @@ class Scene {
           console.error("XR Input Error:", e);
         }
       }
+      
+      // --- PUPPETEER PLAYBACK ---
+      if (window._animPlaying && window._animationRegistry) {
+        // Drive ALL tracks continuously in parallel
+        if (this._meshes) {
+          for (let i = 0; i < this._meshes.length; i++) {
+            window._animationRegistry.update(this._meshes[i]);
+          }
+          this._drawFullScene = true;
+        }
+      }
     }
 
     if (this._renderer && this._renderer.xr) {
