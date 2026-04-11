@@ -18,15 +18,31 @@ export default function getAnimationWidgets(main) {
 
 
 
+  window._animWaitForTrigger = window._animWaitForTrigger !== undefined ? window._animWaitForTrigger : true;
+
   // 2. Countdown Toggle
   widgets.push({
     type: 'checkbox',
     id: 'anim_count_toggle',
     label: 'Use 3-Second Countdown Delay',
-    x: col1X, y: y, w: 710, h: 36,
+    x: col1X, y: y, w: 350, h: 36,
     value: window._animCountIn,
     onInteract: () => {
       window._animCountIn = !window._animCountIn;
+      if (window._animCountIn) window._animWaitForTrigger = false;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+
+  widgets.push({
+    type: 'checkbox',
+    id: 'anim_trigger_toggle',
+    label: 'Start on Trigger',
+    x: col1X + 360, y: y, w: 350, h: 36,
+    value: window._animWaitForTrigger,
+    onInteract: () => {
+      window._animWaitForTrigger = !window._animWaitForTrigger;
+      if (window._animWaitForTrigger) window._animCountIn = false;
       if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
@@ -92,10 +108,12 @@ export default function getAnimationWidgets(main) {
     }
   });
 
+  const isFlashing = window._animWaitingForGrab && (Date.now() % 1000 > 500);
+
   // Play Forwards
   widgets.push({
     type: 'button', id: 'anim_play_fwd', label: '▶', x: col1X + tW*4, y: y, w: tW, h: btnH,
-    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection !== -1) ? '#44ff44' : '#aaaaaa' },
+    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection !== -1) ? '#44ff44' : (isFlashing ? '#ff8800' : '#aaaaaa') },
     onInteract: () => {
       window._animPlaying = true;
       if (window._animationRegistry) window._animationRegistry.playbackDirection = 1;
@@ -129,7 +147,7 @@ export default function getAnimationWidgets(main) {
   // Record
   widgets.push({
     type: 'button', id: 'anim_record', label: '⬤', x: col1X + tW*7, y: y, w: tW, h: btnH,
-    data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : '#aaaaaa' },
+    data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : (isFlashing ? '#ff8800' : '#aaaaaa') },
     onInteract: () => {
       if (!window._animationRegistry) return;
 
@@ -141,6 +159,26 @@ export default function getAnimationWidgets(main) {
       if (!targetMesh) return;
       
       window._animArmed = true;
+
+      if (window._animPlaying) {
+        window._animWaitingForGrab = true;
+        window._animStatusText = '🟢 Waiting for Trigger Pull...';
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        return;
+      }
+
+      if (window._animCountIn) {
+        window._animationRegistry.startRecording(targetMesh);
+        return;
+      }
+
+      if (window._animWaitForTrigger) {
+        window._animWaitingForGrab = true;
+        window._animStatusText = '🟢 Waiting for Trigger Pull...';
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        return;
+      }
+
       window._animationRegistry.startRecording(targetMesh);
     }
   });

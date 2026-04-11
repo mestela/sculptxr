@@ -1,3 +1,19 @@
+# v1.0.166
+- **Diagnostics**: Added detailed trace logging to the Mocap Looper punch-in pipeline and Grab tool trigger release handlers to debug secondary-track recording failures.
+
+# v1.0.165
+- **Feature**: **Source-of-Truth Record Button Logic**: Completely decoupled the animation configuration toggles from recording execution. The transport Record button is now the absolute authority:
+  - If the transport is already playing, both configuration toggles are ignored and the system immediately awaits a trigger pull to punch in dynamically without interrupting playback.
+  - If the transport is stopped and Countdown is enabled, the system waits 3 seconds before starting both recording and playback simultaneously.
+- **UX**: Renamed the UI toggle to "Start on Trigger".
+
+# v1.0.164
+- **Feature**: **Punch-In on Grab (Wait for Trigger)**: Added a highly intuitive recording mode to the Mocap Looper. When enabled, clicking Record simply arms the track ("🟢 Waiting for Grab..."). The system idles infinitely until you physically squeeze the trigger and pull an object using the Grab tool, at which point it instantly and seamlessly punches in on the exact frame of contact.
+- **UX**: Made the 3-Second Countdown and Wait-for-Trigger options mutually exclusive via smart UI toggles.
+
+# v1.0.163
+- **Fix**: **Mocap Looper Multi-Track Desynchronization**: Resolved a severe timing flaw where recording a second object (overdubbing) would capture keyframes starting at loop time 0.0s instead of the active global playhead position, causing complete animation desynchronization. The registry now correctly derives its recording start offset directly from `globalPlaybackTime` for all overdub layers.
+
 # v1.0.162
 - **Feature**: **VR Animation DAW Timeline Stabilization**: Finalized the multi-track animation transport interface. Restored unconstrained, continuous playhead scrubbing that accurately tracks the physical controller pointer even if the hand drifts far outside the widget boundary.
 - **Feature**: **Rest-Pose Vector Cache Hardening**: Upgraded the `AnimationRegistry` to capture absolute 4x4 transformation matrix parameters (`position`, `quaternion`, `scale`) directly upon recording initialization, bypassing legacy array indexing to guarantee muted or deleted tracks perfectly revert meshes to their original spatial location.

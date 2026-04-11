@@ -21,5 +21,5 @@
 
 ## 2. Next Developer Focus
 
-- The multi-track animation system is currently fully operational and highly stable.
-- **Focus**: The user is ready to proceed onto the next feature milestone! Please read `overview.md`, `docs/releases.md`, and the active project rules before initiating new design workflows.
+- The multi-track animation system is currently fully operational and highly stable, but needs polishing. ask user if they don't specify.
+- **Focus**: The user is ready to proceed onto the next feature milestone! Please read `overview.md`, `docs/releases.md`, `docs/code_summary.md` and `project_rules.md` before initiating new design workflows.

@@ -22,6 +22,7 @@ class AnimationRegistry {
     window._animPlaying = false;
     window._animMasterDuration = null;
     window._animStatusText = '🔴 Punch In Ready!';
+    this.lastCaptureTime = -1;
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
     console.log('[Puppeteer] All tracks and master tempo reset.');
   }
@@ -48,6 +49,7 @@ class AnimationRegistry {
     const id = mesh.getID();
     this.activeRecordingId = id;
     this.activeMesh = mesh;
+    this.lastCaptureTime = -1;
     
     // If it is the very first track EVER, or we are resetting it:
     if (!this.tracks.has(id)) {
@@ -112,7 +114,7 @@ class AnimationRegistry {
       }
     }
 
-    window._animPlaying = true;
+    // Transport will start synchronously when punch in executes!
     
     // If user wants a countdown AND this isn't a rapid layer overdub:
     if (window._animCountIn) {
@@ -141,14 +143,16 @@ class AnimationRegistry {
 
   _executePunchIn(id) {
     this.isRecording = true;
+    window._animPlaying = true;
     
     // If we already have a Master DAW Duration running, we synchronize the recording timestamp 
     // so it drops perfectly into the moving playback buffer loop!
     const existingTrack = this.tracks.get(id);
     if (window._animMasterDuration && window._animMasterDuration > 0 && existingTrack) {
       // Set our virtual recording start offset precisely to where the global playhead currently is!
-      this.startTime = performance.now() - (existingTrack.playbackTime * 1000.0);
-      console.log(`[Puppeteer] Overdub Punch-In at loop time: ${existingTrack.playbackTime.toFixed(2)}s`);
+      const currentLoopTime = this.globalPlaybackTime || 0;
+      this.startTime = performance.now() - (currentLoopTime * 1000.0);
+      console.log(`[Puppeteer] Overdub Punch-In at loop time: ${currentLoopTime.toFixed(2)}s`);
     } else {
       this.startTime = performance.now();
       console.log(`[Puppeteer] Capturing Master Tempo Track for Mesh ${id}...`);
@@ -158,6 +162,7 @@ class AnimationRegistry {
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
 
     this.captureTimer = setInterval(() => {
+      console.log(`[Puppeteer] captureTick fired. isRecording=${this.isRecording} activeId=${this.activeRecordingId}`);
       this.captureTick();
     }, 33.3);
   }
@@ -225,15 +230,30 @@ class AnimationRegistry {
         console.log(`[Looper Overwrite] Track ${this.activeRecordingId} wrapped around master tempo boundary! Raw Time: ${rawElapsed.toFixed(2)}s -> Modulo Time: ${elapsed.toFixed(2)}s`);
       }
       
-      // Audio Looper Style: Overwrite any keyframes in this specific track that lie within a 0.05s neighborhood of our new modulo timestamp!
-      for (let i = track.times.length - 1; i >= 0; i--) {
-        if (Math.abs(track.times[i] - elapsed) < 0.05) {
-          track.times.splice(i, 1);
-          track.positions.splice(i * 3, 3);
-          track.quaternions.splice(i * 4, 4);
-          track.scales.splice(i * 3, 3);
+      if (this.lastCaptureTime >= 0) {
+        const tA = this.lastCaptureTime;
+        const tB = elapsed;
+        if (tB >= tA) {
+          for (let i = track.times.length - 1; i >= 0; i--) {
+            if (track.times[i] > tA && track.times[i] <= tB) {
+              track.times.splice(i, 1);
+              track.positions.splice(i * 3, 3);
+              track.quaternions.splice(i * 4, 4);
+              track.scales.splice(i * 3, 3);
+            }
+          }
+        } else {
+          for (let i = track.times.length - 1; i >= 0; i--) {
+            if (track.times[i] > tA || track.times[i] <= tB) {
+              track.times.splice(i, 1);
+              track.positions.splice(i * 3, 3);
+              track.quaternions.splice(i * 4, 4);
+              track.scales.splice(i * 3, 3);
+            }
+          }
         }
       }
+      this.lastCaptureTime = elapsed;
     }
 
     track.times.push(elapsed);
@@ -400,6 +420,10 @@ class AnimationRegistry {
   }
 
   update(mesh, forceScrub = false) {
+    if (window._animWaitingForGrab && window.app && window.app._guiXR) {
+      window.app._guiXR._needsRedraw = true;
+    }
+
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
     // If we are actively recording this specific mesh, completely bypass playback overrides so the user's live Grab motion isn't overwritten by pre-existing looping track data!

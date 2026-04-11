@@ -254,6 +254,11 @@ class Grab extends SculptBase {
             this._main.setMesh(mesh);
           }
 
+          if (window._animWaitingForGrab && window._animationRegistry) {
+            window._animWaitingForGrab = false;
+            window._animationRegistry.startRecording(mesh);
+          }
+
 
         } else {
           if (shouldLog) {
@@ -363,6 +368,7 @@ class Grab extends SculptBase {
       this._lastControllerMatrix = null;
       // Auto-stop the recording loop when the user lets go of the physical VR trigger!
       if (window._animationRegistry && window._animationRegistry.isRecording) {
+        console.log('[Grab Tool] Trigger released - Auto-stopping Mocap recording!');
         window._animationRegistry.stopRecording();
       }
 
