@@ -1,3 +1,7 @@
+# v1.0.155
+- **Fix**: **Phantom Mesh Resolution (ID Hardening Protocol)**: Permanently resolved the critical "Ghost Mesh" vulnerability where geometry became invisible but stuck in the scene graph after Voxel conversion or Remeshing.
+- **Fix**: **Strict Object Identity Deletions**: Overhauled `getIndexMesh()` inside the core `Scene.js` engine to prioritize exact object reference matching (`===`) rather than generic `getID()` comparisons. This completely safeguards against cross-deletions when multiple elements share identical numeric tracking IDs.
+
 # v1.0.154
 - **Feature**: **VR Tools Fit and Finish**: Fully polished the VR palette tabbed interface. Added a subtle 2px separation border to all sub_tabs, perfectly aligned the Mini-HUD quick-picker within safe visible margins, resolved the layout cache-lock bug so tab options swap instantly upon click, hid the non-functional 'Snap & Weld to Center' tool, and migrated all Low Poly tools to a beautifully curated desaturated yellow theme (`#dcd6a8`).
 

@@ -1612,12 +1612,18 @@ class Scene {
 
   getIndexMesh(mesh, select) {
     var meshes = select ? this._selectMeshes : this._meshes;
+    
+    // 1. Strict object reference match first (safest)
+    for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
+      if (meshes[i] === mesh) return i;
+    }
+    
+    // 2. Fallback to ID match only if reference check failed
     var id = mesh.getID();
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
-      var testMesh = meshes[i];
-      if (testMesh === mesh || testMesh.getID() === id)
-        return i;
+      if (meshes[i].getID() === id) return i;
     }
+    
     return -1;
   }
 

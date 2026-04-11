@@ -18,7 +18,34 @@ export default function getSceneWidgets(main) {
   let leftY = 10;
   let rightY = 10;
 
-  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW - 150, h: HEADER_H, header: true });
+  widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW - 280, h: HEADER_H, header: true });
+  
+  widgets.push({ 
+    type: 'button', id: 'btn_rescue_ghosts', 
+    label: 'Resync', 
+    x: leftX + colW - 270, y: leftY, w: 120, h: HEADER_H, 
+    onInteract: () => { 
+      const scene = main.getScene();
+      const tracked = main.getMeshes();
+      let rescuedCount = 0;
+
+      scene.traverse(node => {
+        if (node.isMesh && node.userData && node.userData.sculptMesh) {
+          const sm = node.userData.sculptMesh;
+          if (!tracked.includes(sm) && !sm._isVoxelChunk) {
+            tracked.push(sm);
+            rescuedCount++;
+          }
+        }
+      });
+
+      if (rescuedCount > 0) {
+        if (main._guiXR) main._guiXR.printLog(`Rescued ${rescuedCount} orphan meshes!`, '#00D0FF');
+        main.render();
+      }
+    } 
+  });
+
   widgets.push({ 
     type: 'button', id: 'btn_sort_outliner', 
     label: main._outlinerSortAz ? 'Sort: A-Z' : 'Sort: ID', 
