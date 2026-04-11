@@ -1584,6 +1584,9 @@ class Scene {
 
   addNewMesh(mesh) {
     this._meshes.push(mesh);
+    if (!mesh._permanentStaticLabel) {
+      mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + this._meshes.length;
+    }
     if (this._worldGroup && mesh.getThreeMesh()) {
       this._worldGroup.add(mesh.getThreeMesh());
     }

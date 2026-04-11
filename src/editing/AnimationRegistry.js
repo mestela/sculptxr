@@ -51,12 +51,51 @@ class AnimationRegistry {
     
     // If it is the very first track EVER, or we are resetting it:
     if (!this.tracks.has(id)) {
+      let px = 0, py = 0, pz = 0;
+      let qx = 0, qy = 0, qz = 0, qw = 1;
+      let sx = 1, sy = 1, sz = 1;
+
+      if (mesh.getMatrix) {
+        const m = mesh.getMatrix();
+        px = m[12]; py = m[13]; pz = m[14];
+        
+        sx = Math.hypot(m[0], m[1], m[2]);
+        sy = Math.hypot(m[4], m[5], m[6]);
+        sz = Math.hypot(m[8], m[9], m[10]);
+        
+        const invSx = 1 / sx, invSy = 1 / sy, invSz = 1 / sz;
+        const r00 = m[0]*invSx, r01 = m[1]*invSx, r02 = m[2]*invSx;
+        const r10 = m[4]*invSy, r11 = m[5]*invSy, r12 = m[6]*invSy;
+        const r20 = m[8]*invSz, r21 = m[9]*invSz, r22 = m[10]*invSz;
+        
+        const trace = r00 + r11 + r22;
+        if (trace > 0) {
+          const s = 0.5 / Math.sqrt(trace + 1.0);
+          qw = 0.25 / s; qx = (r21 - r12) * s; qy = (r02 - r20) * s; qz = (r10 - r01) * s;
+        } else if (r00 > r11 && r00 > r22) {
+          const s = 2.0 * Math.sqrt(1.0 + r00 - r11 - r22);
+          qw = (r21 - r12) / s; qx = 0.25 * s; qy = (r01 + r10) / s; qz = (r02 + r20) / s;
+        } else if (r11 > r22) {
+          const s = 2.0 * Math.sqrt(1.0 + r11 - r00 - r22);
+          qw = (r02 - r20) / s; qx = (r01 + r10) / s; qy = 0.25 * s; qz = (r12 + r21) / s;
+        } else {
+          const s = 2.0 * Math.sqrt(1.0 + r22 - r00 - r11);
+          qw = (r10 - r01) / s; qx = (r02 + r20) / s; qy = (r12 + r21) / s; qz = 0.25 * s;
+        }
+      }
+
+      console.log(`[Animation] Stored Rest Pose for ${id}: Pos[${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)}]`);
+      if (window.screenLog) window.screenLog(`[Animation] Stored Rest Pose`, "cyan");
+
       this.tracks.set(id, {
         times: [],
         positions: [],
         quaternions: [],
         scales: [],
         playbackTime: 0,
+        restPos: [px, py, pz],
+        restQuat: [qx, qy, qz, qw],
+        restScale: [sx, sy, sz],
         lastUpdate: performance.now()
       });
     }
@@ -129,8 +168,45 @@ class AnimationRegistry {
       if (liveMesh.getID() !== this.activeRecordingId) {
         this.activeRecordingId = liveMesh.getID();
         this.activeMesh = liveMesh;
-        if (!this.tracks.has(this.activeRecordingId)) {
-          this.tracks.set(this.activeRecordingId, { times: [], positions: [], quaternions: [], scales: [], playbackTime: 0 });
+        if (!this.tracks.has(this.activeRecordingId) && liveMesh.getMatrix) {
+          const m = liveMesh.getMatrix();
+          const px = m[12], py = m[13], pz = m[14];
+          
+          const sx = Math.hypot(m[0], m[1], m[2]);
+          const sy = Math.hypot(m[4], m[5], m[6]);
+          const sz = Math.hypot(m[8], m[9], m[10]);
+          
+          const invSx = 1 / sx, invSy = 1 / sy, invSz = 1 / sz;
+          const r00 = m[0]*invSx, r01 = m[1]*invSx, r02 = m[2]*invSx;
+          const r10 = m[4]*invSy, r11 = m[5]*invSy, r12 = m[6]*invSy;
+          const r20 = m[8]*invSz, r21 = m[9]*invSz, r22 = m[10]*invSz;
+          
+          const trace = r00 + r11 + r22;
+          let qx, qy, qz, qw;
+          if (trace > 0) {
+            const s = 0.5 / Math.sqrt(trace + 1.0);
+            qw = 0.25 / s; qx = (r21 - r12) * s; qy = (r02 - r20) * s; qz = (r10 - r01) * s;
+          } else if (r00 > r11 && r00 > r22) {
+            const s = 2.0 * Math.sqrt(1.0 + r00 - r11 - r22);
+            qw = (r21 - r12) / s; qx = 0.25 * s; qy = (r01 + r10) / s; qz = (r02 + r20) / s;
+          } else if (r11 > r22) {
+            const s = 2.0 * Math.sqrt(1.0 + r11 - r00 - r22);
+            qw = (r02 - r20) / s; qx = (r01 + r10) / s; qy = 0.25 * s; qz = (r12 + r21) / s;
+          } else {
+            const s = 2.0 * Math.sqrt(1.0 + r22 - r00 - r11);
+            qw = (r10 - r01) / s; qx = (r02 + r20) / s; qy = (r12 + r21) / s; qz = 0.25 * s;
+          }
+
+          console.log(`[Animation] Stored Rest Pose for ${this.activeRecordingId}: Pos[${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)}]`);
+          if (window.screenLog) window.screenLog(`[Animation] Stored Rest Pose`, "cyan");
+
+          this.tracks.set(this.activeRecordingId, { 
+            times: [], positions: [], quaternions: [], scales: [], 
+            playbackTime: 0, 
+            restPos: [px, py, pz], 
+            restQuat: [qx, qy, qz, qw], 
+            restScale: [sx, sy, sz] 
+          });
         }
       }
     }
@@ -295,7 +371,14 @@ class AnimationRegistry {
     this.activeMesh = null;
     
     window._animStatusText = window._animArmed ? '🔴 Punch In Ready!' : '⭕ Disarmed';
-    if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
+    if (window.app && window.app._guiXR) {
+      if (typeof window.app._guiXR.refreshToolsWidget === 'function') {
+        window.app._guiXR.refreshToolsWidget();
+      }
+      window.app._guiXR._needsRedraw = true;
+      window.app._guiXR.draw();
+      window.app._guiXR.updateTexture();
+    }
     
     if (!isManualAbort && this.tracks.size > 0) {
       this.globalPlaybackTime = 0;
@@ -303,6 +386,16 @@ class AnimationRegistry {
       window._animPlaying = true;
     } else if (isManualAbort) {
       window._animPlaying = false;
+    }
+  }
+
+  deleteTrack(meshId) {
+    if (this.tracks.has(meshId)) {
+      this.tracks.delete(meshId);
+      if (this.tracks.size === 0) {
+        window._animMasterDuration = 0;
+        window._animPlaying = false;
+      }
     }
   }
 
@@ -314,7 +407,12 @@ class AnimationRegistry {
 
     const now = performance.now();
 
-    if (!forceScrub) {
+    // If transport is halted, force the visual UI timeline to perfectly synchronize with the stationary playhead!
+    if (!window._animPlaying) {
+      window._animCurrentTime = this.globalPlaybackTime || 0;
+    }
+
+    if (!forceScrub && window._animPlaying) {
       if (!this.lastGlobalTime || (now - this.lastGlobalTime) > 500) {
         this.lastGlobalTime = now;
       }
@@ -344,7 +442,29 @@ class AnimationRegistry {
     }
 
     const track = this.tracks.get(mesh.getID());
-    if (!track || track.times.length < 2) return;
+    if (!track || track.times.length < 2 || track.muted) {
+      if (track && track.muted && track.restPos && mesh.getMatrix) {
+        const m = mesh.getMatrix();
+        const [px, py, pz] = track.restPos;
+        const [qx, qy, qz, qw] = track.restQuat;
+        const [sx, sy, sz] = track.restScale;
+
+        const x2 = qx + qx, y2 = qy + qy, z2 = qz + qz;
+        const xx = qx * x2, xy = qx * y2, xz = qx * z2;
+        const yy = qy * y2, yz = qy * z2, zz = qz * z2;
+        const wx = qw * x2, wy = qw * y2, wz = qw * z2;
+        
+        m[0] = (1 - (yy + zz)) * sx; m[1] = (xy + wz) * sx; m[2] = (xz - wy) * sx; m[3] = 0;
+        m[4] = (xy - wz) * sy; m[5] = (1 - (xx + zz)) * sy; m[6] = (yz + wx) * sy; m[7] = 0;
+        m[8] = (xz + wy) * sz; m[9] = (yz - wx) * sz; m[10] = (1 - (xx + yy)) * sz; m[11] = 0;
+        m[12] = px; m[13] = py; m[14] = pz; m[15] = 1;
+
+        if (mesh.updateMatrices && window.app && window.app._camera) {
+          mesh.updateMatrices(window.app._camera);
+        }
+      }
+      return;
+    }
 
     // Force the individual track to scrub precisely to the unified global clock
     track.playbackTime = this.globalPlaybackTime || 0;

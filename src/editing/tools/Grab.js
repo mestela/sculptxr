@@ -254,15 +254,7 @@ class Grab extends SculptBase {
             this._main.setMesh(mesh);
           }
 
-          // --- PUPPETEER RECORDING START ---
-          if (window._animArmed) {
-            if (window._animCountIn && this._main.getNotification) {
-              this._main.getNotification().show('3... 2... 1... Recording Started!');
-            } else if (this._main.getNotification) {
-              this._main.getNotification().show('Recording Started!');
-            }
-            AnimationRegistry.startRecording(mesh);
-          }
+
         } else {
           if (shouldLog) {
             // Log Removed

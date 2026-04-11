@@ -1249,8 +1249,25 @@ export default class GuiXR {
     // But `this._activeCombobox` overrides input in `onInteract`.
 
 
-    // 3. Check Tabs (Header) - PRIORITY over Widgets
-    // Check this BEFORE widgets to ensure we can always click tabs even if widgets are scrolled 'under' them.
+    // --- 0. ABSOLUTE PRIORITY: Continuous Drag Focus (Scrubbing, Sliders) ---
+    // If the trigger is held on a continuous widget, ignore all layout bounds and purely feed the drag!
+    if (isPressed && this._activeTimeline) {
+      this._handleWidgetClick(this._activeTimeline);
+      this._needsRedraw = true;
+      this.draw();
+      this.updateTexture();
+      return;
+    }
+    if (isPressed && this._activeSlider) {
+      this._handleWidgetClick(this._activeSlider);
+      this._needsRedraw = true;
+      this.draw();
+      this.updateTexture();
+      return;
+    }
+
+    // 3. Check Tabs (Header) - PRIORITY over standard click targets
+
     if (!this._isMiniHUD && isPressed && cy < HEADER_HEIGHT) {
       const w = this._canvas.width;
       if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
@@ -1290,8 +1307,8 @@ export default class GuiXR {
       }
     }
 
-    // 4. Check Widgets
-    if (targetWid && isPressed && this._lastScrollY === undefined) {
+    // 4. Check Widgets (Completely block if an overlay is open, OR if we are inside the 500ms trigger-release dead-zone!)
+    if (targetWid && isPressed && this._lastScrollY === undefined && !this._overlay && (!this._overlayCooldown || performance.now() - this._overlayCooldown > 500)) {
       const isContinuousWid = targetWid.type === "slider" || targetWid.type === "colorpicker_embedded" || targetWid.type === "timeline";
       if (this._hasClickedWidgetThisPress && !isContinuousWid) return; 
       this._inputDebounce = now; 
@@ -1299,30 +1316,78 @@ export default class GuiXR {
       if (targetWid.disabled) return;
 
       if (targetWid.type === 'timeline') {
-        this._activeTimeline = targetWid;
-        // Calculate normalized horizontal drag percentage
-        let t = (cx - targetWid.x) / targetWid.w;
-        t = Math.max(0, Math.min(1, t));
+        const ry = cy - targetWid.y;
+        const rx = cx - targetWid.x;
 
+        // If we are already dragging the playhead, completely ignore vertical constraints so the user's hand can drift off-axis freely!
         const masterLen = window._animMasterDuration || 1.0;
-        const targetTime = t * masterLen;
+        const currentAlpha = (window._animCurrentTime || 0) / masterLen;
+        const playheadX = targetWid.w * currentAlpha;
 
-        window._animPlaying = false;
-        window._animCurrentTime = targetTime;
+        if (this._activeTimeline || (ry <= 30 && Math.abs(rx - playheadX) < 30)) {
+          // --- 1. TOP HEADER SCRUB ZONE (or Continuous Drag) ---
+          this._activeTimeline = targetWid;
+          let t = rx / targetWid.w;
+          t = Math.max(0, Math.min(1, t));
 
-        if (window._animationRegistry) {
-          window._animationRegistry.globalPlaybackTime = targetTime;
-          if (this._main && this._main._meshes) {
-            for (let i = 0; i < this._main._meshes.length; i++) {
-              const m = this._main._meshes[i];
-              const tr = window._animationRegistry.tracks.get(m.getID());
-              if (tr) {
-                tr.playbackTime = targetTime;
-                window._animationRegistry.update(m, true);
+          const masterLen = window._animMasterDuration || 1.0;
+          const targetTime = t * masterLen;
+
+          window._animPlaying = false;
+          window._animCurrentTime = targetTime;
+
+          if (window._animationRegistry) {
+            window._animationRegistry.globalPlaybackTime = targetTime;
+            if (this._main && this._main._meshes) {
+              for (let i = 0; i < this._main._meshes.length; i++) {
+                const m = this._main._meshes[i];
+                const tr = window._animationRegistry.tracks.get(m.getID());
+                if (tr) {
+                  tr.playbackTime = targetTime;
+                  window._animationRegistry.update(m, true);
+                }
+              }
+            }
+          }
+        } else {
+          // --- 2. TRACK LANE CLICK HIT-BOXES ---
+          if (window._animationRegistry) {
+            const tracks = Array.from(window._animationRegistry.tracks.entries());
+            const laneAreaH = targetWid.h - 30;
+            const totalSlots = Math.max(4, tracks.length);
+            const trackH = laneAreaH / totalSlots;
+
+            const clickedLaneIdx = Math.floor((ry - 30) / trackH);
+
+            // 300ms debounce to prevent the eye/trash icons from rapidly toggling on every single frame of the trigger hold!
+            if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length && (!this._laneActionDebounce || performance.now() - this._laneActionDebounce > 300)) {
+              const [meshId, trackObj] = tracks[clickedLaneIdx];
+              
+              // 1. Check Trash Icon (Rightmost 60px)
+              if (rx > targetWid.w - 60) {
+                this._laneActionDebounce = performance.now();
+                window._animationRegistry.deleteTrack(meshId);
+              }
+              // 2. Check Mute/Eye Icon (Rightmost 120px to 60px)
+              else if (rx > targetWid.w - 120) {
+                this._laneActionDebounce = performance.now();
+                trackObj.muted = !trackObj.muted;
+                
+                if (window.screenLog) window.screenLog(`[Animation] Mute ${meshId}: ${trackObj.muted}`, "cyan");
+                console.log(`[Animation] Mute ${meshId}: ${trackObj.muted}`);
+
+                if (this._main && this._main._meshes) {
+                  const m = this._main._meshes.find(m => m.getID() === meshId);
+                  if (m) {
+                    window._animationRegistry.update(m, true);
+                    this._main.render();
+                  }
+                }
               }
             }
           }
         }
+        
         this._needsRedraw = true;
       }
 
@@ -1729,6 +1794,7 @@ export default class GuiXR {
   }
 
   closeOverlay() {
+    this._overlayCooldown = performance.now(); // Start a 500ms dead-zone to let user safely lift their finger off the trigger!
     this._overlay = null;
     this._overlayData = null;
     this._needsRedraw = true;
@@ -1736,6 +1802,7 @@ export default class GuiXR {
   }
 
   _handleWidgetClick(w) {
+
     if (w.type === 'slider') {
       let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
@@ -3277,73 +3344,127 @@ export default class GuiXR {
       return;
     }
 
-    // --- USER DIAGNOSTICS BANNER ---
-    ctx.fillStyle = '#ffff00';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'left';
-    
+    // --- 1. Draw Top Transport Header Strip (30px tall) ---
+    const headerH = 30;
+    ctx.fillStyle = '#222';
+    ctx.fillRect(w.x, w.y, w.w, headerH);
+
     const mDur = window._animMasterDuration ? window._animMasterDuration.toFixed(2) : '0.00';
     const curT = window._animCurrentTime ? window._animCurrentTime.toFixed(2) : '0.00';
-    const spd = window._animLastDt ? (1.0 / window._animLastDt).toFixed(0) : '0';
+    ctx.fillStyle = '#888';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`0.0s`, w.x + 5, w.y + 20);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${mDur}s`, w.x + w.w - 5, w.y + 20);
 
-    ctx.fillText(`Start: 0.00s | End: ${mDur}s | Cur: ${curT}s | Playback Speed: ${spd} fps`, w.x + 10, w.y + 20);
-
-    // Completely bypass UI-side tempo overriding to allow the recording engine to govern unconstrained tracking loops!
     let maxDuration = window._animMasterDuration && window._animMasterDuration > 0 ? window._animMasterDuration : 1.0;
 
-    // 2. Draw Vertical Grid Lines (Every 1 Second)
+    // 2. Draw Vertical Grid Lines across the lanes
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 1;
     for (let s = 1; s <= Math.ceil(maxDuration); s++) {
       const gridX = w.x + (s / maxDuration) * w.w;
       ctx.beginPath();
-      ctx.moveTo(gridX, w.y);
+      ctx.moveTo(gridX, w.y + headerH);
       ctx.lineTo(gridX, w.y + w.h);
       ctx.stroke();
     }
 
-    // 3. Draw Each Object's Track as a Horizontal Strip (Reduced to 25% height!)
+    // 3. Render Track Lanes
+    const laneAreaH = w.h - headerH;
     const totalAvailableSlots = Math.max(4, tracks.length); 
-    const trackH = (w.h / totalAvailableSlots) * 0.5; // Make them very thin and sleek
+    const trackH = laneAreaH / totalAvailableSlots;
+
     tracks.forEach(([id, track], idx) => {
-      const ty = w.y + (idx * trackH) + 10;
+      const ty = w.y + headerH + (idx * trackH);
       
-      // Background alternating strip
+      // Alternate lane background
       if (idx % 2 === 1) {
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
         ctx.fillRect(w.x, ty, w.w, trackH);
       }
 
-      // Track ID text
+      // Lane Label
       ctx.fillStyle = '#aaa';
-      ctx.font = '16px monospace';
+      ctx.font = '14px sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(`ID ${id}`, w.x + 10, ty + trackH/2 + 5);
+      let laneName = `Track ${id}`;
+      if (this._main && this._main._meshes) {
+        const found = this._main._meshes.find(m => m.getID() === id);
+        if (found) {
+          laneName = found._permanentStaticLabel || `Object ${id}`;
+          if (!found._loggedLaneName) {
+            found._loggedLaneName = true;
+            console.log(`[Animation] Lane Label Resolved for ${id}: ${laneName}`);
+            if (window.screenLog) window.screenLog(`[Label] ${id} -> ${laneName}`, "yellow");
+          }
+        }
+      }
+      ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
 
-      // Render actual captured frame markers
+      // Animation data bar
       if (track && track.times && track.times.length > 1) {
-        ctx.fillStyle = '#00ffcc';
-        const firstTime = track.times[0];
         const lastTime = track.times[track.times.length - 1];
-        const xStart = w.x + (firstTime / maxDuration) * w.w;
+        const xStart = w.x; // Force fill from the very beginning of the loop!
         const xEnd = w.x + (lastTime / maxDuration) * w.w;
 
-        // Track lifespan block
-        ctx.fillStyle = 'rgba(0, 255, 200, 0.2)';
-        ctx.fillRect(xStart, ty + 10, xEnd - xStart, trackH - 20);
-
-        // The playhead for this specific track
-        const currentAlpha = track.playbackTime / maxDuration;
-        const playheadX = w.x + currentAlpha * w.w;
-        
-        ctx.strokeStyle = '#ff3366';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(playheadX, ty);
-        ctx.lineTo(playheadX, ty + trackH);
-        ctx.stroke();
+        ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.3)' : 'rgba(0, 255, 200, 0.25)';
+        ctx.fillRect(xStart, ty + 4, xEnd - xStart, trackH - 8);
       }
+
+      // --- RIGHT-ALIGNED INTERACTIVE ICONS ---
+      // 1. Visibility (Eye) Icon
+      const eyeX = w.x + w.w - 90;
+      const eyeY = ty + trackH / 2 - 4;
+      
+      ctx.strokeStyle = track.muted ? '#444444' : '#00ffcc';
+      ctx.lineWidth = 2;
+      
+      ctx.beginPath();
+      ctx.ellipse(eyeX, eyeY, 12, 6, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      ctx.fillStyle = track.muted ? '#444444' : '#00ffcc';
+      ctx.beginPath();
+      ctx.arc(eyeX, eyeY, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2. Trash Icon
+      const trashX = w.x + w.w - 30;
+      ctx.fillStyle = '#ff4444';
+      ctx.fillText('🗑', trashX, ty + trackH / 2);
     });
+
+    // 4. Render Blender-Style Custom Playhead Cap
+    const playheadAlpha = (window._animCurrentTime || 0) / maxDuration;
+    const playheadX = w.x + playheadAlpha * w.w;
+
+    // Playhead full vertical line
+    ctx.strokeStyle = '#4488ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(playheadX, w.y + headerH);
+    ctx.lineTo(playheadX, w.y + w.h);
+    ctx.stroke();
+
+    // Blue Blender Cap
+    ctx.fillStyle = '#4488ff';
+    ctx.beginPath();
+    ctx.moveTo(playheadX - 10, w.y);
+    ctx.lineTo(playheadX + 10, w.y);
+    ctx.lineTo(playheadX + 10, w.y + headerH - 6);
+    ctx.lineTo(playheadX, w.y + headerH);
+    ctx.lineTo(playheadX - 10, w.y + headerH - 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // Current Frame text inside the cap
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(curT, playheadX, w.y + 12);
 
     // --- PROMINENT CENTER COUNTDOWN OVERLAY ---
     if (window._animationRegistry && window._animationRegistry.isCountingIn) {
