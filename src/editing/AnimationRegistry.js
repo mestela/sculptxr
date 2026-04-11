@@ -24,7 +24,6 @@ class AnimationRegistry {
     window._animStatusText = '🔴 Punch In Ready!';
     this.lastCaptureTime = -1;
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
-    console.log('[Puppeteer] All tracks and master tempo reset.');
   }
 
   startRecording(mesh) {
@@ -86,9 +85,6 @@ class AnimationRegistry {
         }
       }
 
-      console.log(`[Animation] Stored Rest Pose for ${id}: Pos[${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)}]`);
-      if (window.screenLog) window.screenLog(`[Animation] Stored Rest Pose`, "cyan");
-
       this.tracks.set(id, {
         times: [],
         positions: [],
@@ -145,24 +141,23 @@ class AnimationRegistry {
     this.isRecording = true;
     window._animPlaying = true;
     
-    // If we already have a Master DAW Duration running, we synchronize the recording timestamp 
-    // so it drops perfectly into the moving playback buffer loop!
     const existingTrack = this.tracks.get(id);
     if (window._animMasterDuration && window._animMasterDuration > 0 && existingTrack) {
       // Set our virtual recording start offset precisely to where the global playhead currently is!
       const currentLoopTime = this.globalPlaybackTime || 0;
       this.startTime = performance.now() - (currentLoopTime * 1000.0);
-      console.log(`[Puppeteer] Overdub Punch-In at loop time: ${currentLoopTime.toFixed(2)}s`);
     } else {
       this.startTime = performance.now();
-      console.log(`[Puppeteer] Capturing Master Tempo Track for Mesh ${id}...`);
     }
 
     window._animStatusText = '🔴 RECORDING!';
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
 
+    if (existingTrack) {
+      existingTrack.punchInTime = this.globalPlaybackTime || 0;
+    }
+
     this.captureTimer = setInterval(() => {
-      console.log(`[Puppeteer] captureTick fired. isRecording=${this.isRecording} activeId=${this.activeRecordingId}`);
       this.captureTick();
     }, 33.3);
   }
@@ -226,9 +221,6 @@ class AnimationRegistry {
     if (window._animMasterDuration && window._animMasterDuration > 0) {
       const rawElapsed = elapsed;
       elapsed = elapsed % window._animMasterDuration;
-      if (Math.abs(rawElapsed - elapsed) > 0.01) {
-        console.log(`[Looper Overwrite] Track ${this.activeRecordingId} wrapped around master tempo boundary! Raw Time: ${rawElapsed.toFixed(2)}s -> Modulo Time: ${elapsed.toFixed(2)}s`);
-      }
       
       if (this.lastCaptureTime >= 0) {
         const tA = this.lastCaptureTime;
@@ -261,12 +253,9 @@ class AnimationRegistry {
     if (this.activeMesh.getMatrix) {
       const m = this.activeMesh.getMatrix();
       
-      track.positions.push(m[12], m[13], m[14]);
-      
       const sx = Math.hypot(m[0], m[1], m[2]);
       const sy = Math.hypot(m[4], m[5], m[6]);
       const sz = Math.hypot(m[8], m[9], m[10]);
-      track.scales.push(sx, sy, sz);
       
       const invSx = 1 / sx, invSy = 1 / sy, invSz = 1 / sz;
       const r00 = m[0]*invSx, r01 = m[1]*invSx, r02 = m[2]*invSx;
@@ -278,32 +267,35 @@ class AnimationRegistry {
       
       if (trace > 0) {
         const s = 0.5 / Math.sqrt(trace + 1.0);
-        qw = 0.25 / s;
-        qx = (r12 - r21) * s;
-        qy = (r20 - r02) * s;
-        qz = (r01 - r10) * s;
+        qw = 0.25 / s; qx = (r12 - r21) * s; qy = (r20 - r02) * s; qz = (r01 - r10) * s;
+      } else if (r00 > r11 && r00 > r22) {
+        const s = 2.0 * Math.sqrt(1.0 + r00 - r11 - r22);
+        qw = (r12 - r21) / s; qx = 0.25 * s; qy = (r01 + r10) / s; qz = (r20 + r02) / s;
+      } else if (r11 > r22) {
+        const s = 2.0 * Math.sqrt(1.0 + r11 - r00 - r22);
+        qw = (r20 - r02) / s; qx = (r01 + r10) / s; qy = 0.25 * s; qz = (r12 + r21) / s;
       } else {
-        if (r00 > r11 && r00 > r22) {
-          const s = 2.0 * Math.sqrt(1.0 + r00 - r11 - r22);
-          qw = (r12 - r21) / s;
-          qx = 0.25 * s;
-          qy = (r01 + r10) / s;
-          qz = (r20 + r02) / s;
-        } else if (r11 > r22) {
-          const s = 2.0 * Math.sqrt(1.0 + r11 - r00 - r22);
-          qw = (r20 - r02) / s;
-          qx = (r01 + r10) / s;
-          qy = 0.25 * s;
-          qz = (r12 + r21) / s;
-        } else {
-          const s = 2.0 * Math.sqrt(1.0 + r22 - r00 - r11);
-          qw = (r01 - r10) / s;
-          qx = (r20 + r02) / s;
-          qy = (r12 + r21) / s;
-          qz = 0.25 * s;
-        }
+        const s = 2.0 * Math.sqrt(1.0 + r22 - r00 - r11);
+        qw = (r01 - r10) / s; qx = (r20 + r02) / s; qy = (r12 + r21) / s; qz = 0.25 * s;
       }
-      track.quaternions.push(qx, qy, qz, qw);
+
+      // Normalize quaternion and clamp NaNs to prevent corruption of the Mesh transform matrix
+      let len = Math.hypot(qx, qy, qz, qw);
+      if (len > 0.00001 && !isNaN(len)) {
+        qx /= len; qy /= len; qz /= len; qw /= len;
+      } else {
+        qx = 0; qy = 0; qz = 0; qw = 1;
+      }
+
+      if (isNaN(m[12]) || isNaN(sx)) {
+        track.positions.push(0, 0, 0);
+        track.scales.push(1, 1, 1);
+        track.quaternions.push(0, 0, 0, 1);
+      } else {
+        track.positions.push(m[12], m[13], m[14]);
+        track.scales.push(sx, sy, sz);
+        track.quaternions.push(qx, qy, qz, qw);
+      }
     }
     
     // Auto-sort ring buffer so that when overdubbing out of order, interpolation remains stable!
@@ -361,7 +353,6 @@ class AnimationRegistry {
     const count = track ? track.times.length : 0;
     
     if (!isManualAbort && track && count > 0 && track.times[count - 1] < 0.5) {
-      console.log(`[Puppeteer] Debouncing trigger release (Duration only ${track.times[count - 1].toFixed(2)}s) - Keeping capture alive!`);
       return;
     }
 
@@ -371,7 +362,6 @@ class AnimationRegistry {
     // If this is the very first finalized recording, lock its duration permanently as the Master Loop Boundary!
     if (track && count > 1 && (!window._animMasterDuration || window._animMasterDuration <= 0)) {
       window._animMasterDuration = track.times[track.times.length - 1];
-      console.log(`[Puppeteer] Locked Global Master Loop Tempo to: ${window._animMasterDuration.toFixed(2)}s`);
     } else if (track && count > 1 && window._animMasterDuration && window._animMasterDuration > 0) {
       const lastTime = track.times[track.times.length - 1];
       if (lastTime < window._animMasterDuration - 0.05) {
@@ -385,7 +375,9 @@ class AnimationRegistry {
       }
     }
 
-    console.log(`[Puppeteer] Take finalized. Total ring-buffer frames: ${count}`);
+    if (track) {
+      delete track.punchInTime;
+    }
 
     this.activeRecordingId = -1;
     this.activeMesh = null;
@@ -526,6 +518,11 @@ class AnimationRegistry {
       const m = mesh.getMatrix();
       
       const qx = outQuat[0], qy = outQuat[1], qz = outQuat[2], qw = outQuat[3];
+      if (isNaN(qx) || isNaN(px) || isNaN(sx)) {
+        // Completely drop out to prevent NaN matrix corruption
+        return;
+      }
+
       const x2 = qx + qx, y2 = qy + qy, z2 = qz + qz;
       const xx = qx * x2, xy = qx * y2, xz = qx * z2;
       const yy = qy * y2, yz = qy * z2, zz = qz * z2;

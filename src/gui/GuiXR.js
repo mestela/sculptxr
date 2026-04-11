@@ -3451,8 +3451,6 @@ export default class GuiXR {
           laneName = found._permanentStaticLabel || `Object ${id}`;
           if (!found._loggedLaneName) {
             found._loggedLaneName = true;
-            console.log(`[Animation] Lane Label Resolved for ${id}: ${laneName}`);
-            if (window.screenLog) window.screenLog(`[Label] ${id} -> ${laneName}`, "yellow");
           }
         }
       }
@@ -3466,6 +3464,12 @@ export default class GuiXR {
 
         ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.3)' : 'rgba(0, 255, 200, 0.25)';
         ctx.fillRect(xStart, ty + 4, xEnd - xStart, trackH - 8);
+      }
+
+      if (track && track.punchInTime !== undefined && maxDuration > 0) {
+        const punchX = w.x + (track.punchInTime / maxDuration) * w.w;
+        ctx.fillStyle = '#ff8800';
+        ctx.fillRect(punchX - 2, ty + 2, 4, trackH - 4);
       }
 
       // --- RIGHT-ALIGNED INTERACTIVE ICONS ---
