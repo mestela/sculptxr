@@ -1,3 +1,8 @@
+# v1.0.156
+- **Feature**: **Context-Aware Sculpting Intelligence**: Developed an intelligent object-selection tracker that monitors Outliner activity. Standard polygon selections automatically reactivate the last used sculpting brush, Voxel blocks switch to the Voxel tab, and mixed selections securely unset the active tool to enforce a strict, no-edit default state until explicit artist confirmation.
+- **Fix**: **Transform Undo Stack Integration**: Relocated the custom state capture block inside the standard `Grab` lifecycle from `updateXR` to the native `end()` hook to guarantee full Undo/Redo support when moving primitives in space.
+- **UX**: Removed noisy console outputs from Voxel sub-mode UI string concatenation loops and background SurfaceNets computation loops, and simplified default primitive naming inside the scene graph.
+
 # v1.0.155
 - **Fix**: **Phantom Mesh Resolution (ID Hardening Protocol)**: Permanently resolved the critical "Ghost Mesh" vulnerability where geometry became invisible but stuck in the scene graph after Voxel conversion or Remeshing.
 - **Fix**: **Strict Object Identity Deletions**: Overhauled `getIndexMesh()` inside the core `Scene.js` engine to prioritize exact object reference matching (`===`) rather than generic `getID()` comparisons. This completely safeguards against cross-deletions when multiple elements share identical numeric tracking IDs.
