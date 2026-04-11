@@ -2121,7 +2121,20 @@ export default class GuiXR {
           changed = true;
         }
       } else if (w.id === 'tool_select' && w.type === 'button') {
-        const newLabel = 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : '');
+        let newLabel = 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : '');
+        if (activeTool === Enums.Tools.VOXEL || window._activeToolTab === 2) {
+          const vTool = this._main.getSculptManager().getTool(Enums.Tools.VOXEL);
+          if (vTool) {
+            const vMode = vTool._mode;
+            const vNeg = vTool._negative;
+            if (vMode === 0 && !vNeg) newLabel = 'Tool: Voxel (Add)';
+            else if (vMode === 1 || (vMode === 0 && vNeg)) newLabel = 'Tool: Voxel (Sub)';
+            else if (vMode === 3) newLabel = 'Tool: Voxel (Smooth)';
+            else if (vMode === 4) newLabel = 'Tool: Voxel (Move)';
+            else if (vMode === 2 && !vNeg) newLabel = 'Tool: Voxel (Inflate)';
+            else if (vMode === 2 && vNeg) newLabel = 'Tool: Voxel (Deflate)';
+          }
+        }
         if (w.label !== newLabel) {
           w.label = newLabel;
           changed = true;
@@ -2302,9 +2315,21 @@ export default class GuiXR {
       ctx.fillRect(0, HEADER_HEIGHT, w, 60);
     }
 
-    // 3. Draw Sub-Tabs (Overlays scrolling content so it slides UNDERneath!)
+    // 3. Draw Sub-Tabs (Two passes to guarantee the active tab overlaps its neighbors!)
     for (let wid of widgets) {
       if (wid.type !== 'sub_tab') continue;
+      const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
+      if (isSelected) continue; // Skip active for now
+      
+      const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
+      this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
+    }
+    
+    for (let wid of widgets) {
+      if (wid.type !== 'sub_tab') continue;
+      const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
+      if (!isSelected) continue; // Draw ONLY active
+      
       const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
       this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
     }
@@ -2478,11 +2503,27 @@ export default class GuiXR {
          this._scrollOffsetOverlay = window._sculptAboutScroll || 0;
       }
 
+      // First pass: Draw everything EXCEPT the active sub_tab
       widgets.forEach(wid => {
+        const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
+        if (wid.type === 'sub_tab' && isSelected) return;
+
         const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
         const wy = y + wid.y - this._scrollOffsetOverlay;
         if (wy + wid.h >= y && wy <= y + mh) {
           this._drawOverlayWidget(wid, ctx, x, y - this._scrollOffsetOverlay, isHover);
+        }
+      });
+
+      // Second pass: Draw ONLY the active sub_tab to guarantee overlap prominence
+      widgets.forEach(wid => {
+        const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
+        if (wid.type === 'sub_tab' && isSelected) {
+          const isHover = (this._hoverOverlayWidget && this._hoverOverlayWidget.id === wid.id);
+          const wy = y + wid.y - this._scrollOffsetOverlay;
+          if (wy + wid.h >= y && wy <= y + mh) {
+            this._drawOverlayWidget(wid, ctx, x, y - this._scrollOffsetOverlay, isHover);
+          }
         }
       });
       ctx.restore();
@@ -2909,42 +2950,44 @@ export default class GuiXR {
 
       ctx.fillStyle = '#444';
       ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
-    }
-    else if (wid.type === 'sub_tab') {
+    } else if (wid.type === 'sub_tab') {
       const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
 
+      const isFirst = wid.id.endsWith('tab0');
+      const isLast = wid.id.endsWith('tab2');
+
+      const extLeft = isSelected && !isFirst ? 20 : 0;
+      const extRight = isSelected && !isLast ? 20 : 0;
+
       ctx.beginPath();
-      ctx.moveTo(wid.x, wid.y + wid.h);
-      ctx.lineTo(wid.x + 15, wid.y);
-      ctx.lineTo(wid.x + wid.w - 15, wid.y);
-      ctx.lineTo(wid.x + wid.w, wid.y + wid.h);
+      ctx.moveTo(wid.x - extLeft, wid.y + wid.h);
+      ctx.lineTo(wid.x - extLeft + 20, wid.y);
+      ctx.lineTo(wid.x + wid.w + extRight - 20, wid.y);
+      ctx.lineTo(wid.x + wid.w + extRight, wid.y + wid.h);
       ctx.closePath();
 
       ctx.fillStyle = isSelected ? '#202020' : '#111';
       ctx.fill();
 
-      ctx.strokeStyle = isSelected ? '#444' : '#222';
-      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(wid.x - extLeft, wid.y + wid.h);
+      ctx.lineTo(wid.x - extLeft + 20, wid.y);
+      ctx.lineTo(wid.x + wid.w + extRight - 20, wid.y);
+      ctx.lineTo(wid.x + wid.w + extRight, wid.y + wid.h);
+      ctx.strokeStyle = isSelected ? '#555' : '#222';
+      ctx.lineWidth = isSelected ? 3 : 2;
       ctx.stroke();
 
       if (isHovered) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.fill();
       }
 
-      ctx.font = 'bold 24px sans-serif';
+      ctx.font = isSelected ? 'bold 24px sans-serif' : '24px sans-serif';
       ctx.textAlign = 'center';
       
       ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa';
       ctx.fillText(wid.label, wid.x + wid.w / 2, wid.y + wid.h / 2 + 8);
-
-      if (isSelected) {
-        ctx.fillStyle = '#00D0FF';
-        ctx.fillRect(wid.x, wid.y + wid.h - 4, wid.w, 4);
-      } else {
-        ctx.fillStyle = '#444';
-        ctx.fillRect(wid.x, wid.y + wid.h - 2, wid.w, 2);
-      }
     }
     // 2. INFO / LABELS
     else if (wid.type === 'info') {
@@ -3067,7 +3110,7 @@ export default class GuiXR {
       }
     }
 
-    if (isHovered && wid.type !== 'info') {
+    if (isHovered && wid.type !== 'info' && wid.type !== 'sub_tab') {
       const INSET = 4; // Shift inside so lineWidth overlaps with bounding box clear
       ctx.strokeStyle = '#dfdfdf';
       ctx.lineWidth = 4;
@@ -3480,6 +3523,9 @@ export default class GuiXR {
   setMiniHUDActive(bool) {
     if (this._isMiniHUDReady && this._main && this._main._isMiniHUDActive !== bool) {
       this._main._isMiniHUDActive = bool;
+      if (this._main._guiPopup) {
+        this._main._guiPopup.closeOverlay();
+      }
       this._needsRedraw = true;
     }
   }
@@ -3761,10 +3807,10 @@ export default class GuiXR {
     const wy = y + wid.y;
 
     // Hover Background (Generic)
-    if (isHover && !wid.header && wid.type !== 'info' && wid.type !== 'richtext') {
+    if (isHover && !wid.header && wid.type !== 'info' && wid.type !== 'richtext' && wid.type !== 'sub_tab') {
       ctx.fillStyle = this.styles.colorWidgetHover;
       ctx.fillRect(wx, wy, wid.w, wid.h);
-    } else {
+    } else if (wid.type !== 'sub_tab') {
       // Clear with Menu Bg
       ctx.fillStyle = this.styles.overlayMenuBg;
       ctx.fillRect(wx, wy, wid.w, wid.h);
@@ -3869,37 +3915,46 @@ export default class GuiXR {
     } else if (wid.type === 'sub_tab') {
       const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
 
+      const isFirst = wid.id.endsWith('tab0');
+      const isLast = wid.id.endsWith('tab2');
+
+      const extLeft = isSelected && !isFirst ? 20 : 0;
+      const extRight = isSelected && !isLast ? 20 : 0;
+
       ctx.beginPath();
-      ctx.moveTo(wx, wy + wid.h);
-      ctx.lineTo(wx + 15, wy);
-      ctx.lineTo(wx + wid.w - 15, wy);
-      ctx.lineTo(wx + wid.w, wy + wid.h);
+      ctx.moveTo(wx - extLeft, wy + wid.h);
+      ctx.lineTo(wx - extLeft + 20, wy);
+      ctx.lineTo(wx + wid.w + extRight - 20, wy);
+      ctx.lineTo(wx + wid.w + extRight, wy + wid.h);
       ctx.closePath();
 
       ctx.fillStyle = isSelected ? '#202020' : '#111';
       ctx.fill();
 
-      ctx.strokeStyle = isSelected ? '#444' : '#222';
-      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(wx - extLeft, wy + wid.h);
+      ctx.lineTo(wx - extLeft + 20, wy);
+      ctx.lineTo(wx + wid.w + extRight - 20, wy);
+      ctx.lineTo(wx + wid.w + extRight, wy + wid.h);
+      ctx.strokeStyle = isSelected ? '#555' : '#222';
+      ctx.lineWidth = isSelected ? 3 : 2;
       ctx.stroke();
 
       if (isHover) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.beginPath();
+        ctx.moveTo(wx - extLeft, wy + wid.h);
+        ctx.lineTo(wx - extLeft + 20, wy);
+        ctx.lineTo(wx + wid.w + extRight - 20, wy);
+        ctx.lineTo(wx + wid.w + extRight, wy + wid.h);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
         ctx.fill();
       }
 
-      ctx.font = 'bold 24px sans-serif';
+      ctx.font = isSelected ? 'bold 24px sans-serif' : '24px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = isSelected ? '#00D0FF' : '#aaa';
       ctx.fillText(wid.label, wx + wid.w / 2, wy + wid.h / 2 + 8);
-
-      if (isSelected) {
-        ctx.fillStyle = '#00D0FF';
-        ctx.fillRect(wx, wy + wid.h - 4, wid.w, 4);
-      } else {
-        ctx.fillStyle = '#444';
-        ctx.fillRect(wx, wy + wid.h - 2, wid.w, 2);
-      }
 
     } else if (wid.type === 'button') {
       const isActive = wid.data && wid.data.active;

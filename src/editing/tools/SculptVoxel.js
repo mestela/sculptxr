@@ -1888,8 +1888,15 @@ class SculptVoxel extends SculptBase {
           }
           
           this._main.setMesh(voxelMesh);
-          if (this._main.guiXR) this._main.guiXR.refreshSceneWidget();
-          if (this._main.guiXR) this._main.guiXR._needsRedraw = true;
+          if (this._main.guiXR) {
+            this._main.guiXR.refreshSceneWidget();
+            this._main.guiXR.refreshToolsWidget();
+            this._main.guiXR._needsRedraw = true;
+          }
+          if (this._main._guiMini) {
+            this._main._guiMini.refreshToolsWidget();
+            this._main._guiMini._needsRedraw = true;
+          }
         };
         
         redoOp();
@@ -2133,6 +2140,31 @@ class SculptVoxel extends SculptBase {
 
       if (window.screenLog) window.screenLog(`MultiMesh: Tris=${multiMesh.getNbTriangles()}`, "cyan");
 
+      // Assign Unique Mesh Name
+      let baseName = 'mesh';
+      let counter = 1;
+      let isUnique = false;
+      
+      while (!isUnique) {
+        let match = false;
+        const testName = baseName + counter;
+        for (let m of main.getMeshes()) {
+          const uiName = m.uiName || m._uiName || m._name;
+          if (uiName === testName) {
+            match = true;
+            break;
+          }
+        }
+        if (!match) {
+          isUnique = true;
+          multiMesh.uiName = testName;
+          multiMesh._uiName = testName;
+          multiMesh._permanentStaticLabel = testName;
+        } else {
+          counter++;
+        }
+      }
+
       // 5. Add to Scene
       main.addNewMesh(multiMesh);
 
@@ -2158,9 +2190,15 @@ class SculptVoxel extends SculptBase {
       if (this._main.getGui() && this._main.getGui()._ctrlSculpt) {
         this._main.getGui()._ctrlSculpt.setValue(Enums.Tools.BRUSH);
       }
+      window._activeToolTab = 0;
       const guiXR = this._main.getGuiXR();
-      if (guiXR && guiXR.refreshToolsWidget) {
+      if (guiXR) {
         guiXR.refreshToolsWidget();
+        guiXR._needsRedraw = true;
+      }
+      if (this._main._guiMini) {
+        this._main._guiMini.refreshToolsWidget();
+        this._main._guiMini._needsRedraw = true;
       }
 
       // 8. Select the New Mesh

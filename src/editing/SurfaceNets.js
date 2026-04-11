@@ -233,10 +233,6 @@ SurfaceNets.computeSurface = function (voxels, bounds, computeNormals = false) {
   var maxY = bounds ? bounds.max[1] : dims[1] - 1;
   var maxZ = bounds ? bounds.max[2] : dims[2] - 1;
 
-  if (typeof self !== 'undefined' && self.postMessage) {
-    self.postMessage({ type: 'LOG', data: `SurfaceNets.computeSurface: bounds=[${minX},${minY},${minZ}] to [${maxX},${maxY},${maxZ}] dims=[${dims[0]},${dims[1]},${dims[2]}]` });
-  }
-
   // Stride constants
   var strideX = 1;
   var strideY = dims[0];

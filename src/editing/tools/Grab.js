@@ -32,8 +32,23 @@ class Grab extends SculptBase {
   }
 
   end() {
+    if (this._grabbedMesh && this._undoMatrix) {
+      const mesh = this._grabbedMesh;
+      const oldMat = mat4.clone(this._undoMatrix);
+      const newMat = mat4.clone(mesh.getMatrix());
+      const main = this._main;
+
+      main.getStateManager().pushStateCustom(() => {
+        mat4.copy(mesh.getMatrix(), oldMat);
+        main.render();
+      }, () => {
+        mat4.copy(mesh.getMatrix(), newMat);
+        main.render();
+      });
+    }
     this._grabbedMesh = null;
     this._isTwoHanded = false;
+    this._undoMatrix = null;
   }
 
   preUpdate() {
@@ -225,6 +240,7 @@ class Grab extends SculptBase {
         if (mesh) {
           if (mesh._isVoxel) return; // LOCK TRANSFORM
           this._grabbedMesh = mesh;
+          this._undoMatrix = mat4.clone(mesh.getMatrix());
           this._activeController = active; // First assignment
 
           // Calculate Offset (For Fallback/Init)
@@ -321,13 +337,25 @@ class Grab extends SculptBase {
       }
     } else {
       // Released
-      if (this._grabbedMesh) {
-        // Released silently
+      if (this._grabbedMesh && this._undoMatrix) {
+        const mesh = this._grabbedMesh;
+        const oldMat = mat4.clone(this._undoMatrix);
+        const newMat = mat4.clone(mesh.getMatrix());
+        const main = this._main;
+
+        main.getStateManager().pushStateCustom(() => {
+          mat4.copy(mesh.getMatrix(), oldMat);
+          main.render();
+        }, () => {
+          mat4.copy(mesh.getMatrix(), newMat);
+          main.render();
+        });
       }
       this._grabbedMesh = null;
       this._activeController = null;
       this._isTwoHanded = false;
       this._lastControllerMatrix = null;
+      this._undoMatrix = null;
     }
   }
 }

@@ -194,7 +194,9 @@ export default function getTopologyWidgets(main) {
         if (main.getSculptManager().meshToVoxel) {
           main.getSculptManager().meshToVoxel();
           main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
-          if (main.getGuiXR()) main.getGuiXR().refreshToolsWidget();
+          window._activeToolTab = 2;
+          if (main.guiXR) { main.guiXR.refreshToolsWidget(); main.guiXR._needsRedraw = true; }
+          if (main._guiMini) { main._guiMini.refreshToolsWidget(); main._guiMini._needsRedraw = true; }
         }
       }
     });

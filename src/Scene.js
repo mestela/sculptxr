@@ -786,6 +786,48 @@ class Scene {
     }
 
     this._mesh = mesh;
+
+    // --- TOOL CONTEXT SWITCHING ---
+    const selected = this._selectMeshes;
+    if (selected.length > 0) {
+      let hasVoxel = false;
+      let hasPoly = false;
+
+      for (let m of selected) {
+        if (m._isVoxel) hasVoxel = true;
+        else hasPoly = true;
+      }
+
+      const sc = this.getSculptManager();
+      if (sc) {
+        if (!window._lastPolyTool) window._lastPolyTool = Enums.Tools.BRUSH;
+        const curIdx = sc.getToolIndex();
+        if (curIdx !== Enums.Tools.VOXEL && curIdx !== Enums.Tools.TRANSFORM_VR && curIdx !== Enums.Tools.TRANSFORM) {
+          window._lastPolyTool = curIdx;
+        }
+
+        if (hasVoxel && hasPoly) {
+          sc.setToolIndex(-1); // Explicit safety detachment
+          window._activeToolTab = 0;
+        } else if (hasVoxel) {
+          sc.setToolIndex(Enums.Tools.VOXEL);
+          window._activeToolTab = 2;
+        } else if (hasPoly) {
+          sc.setToolIndex(window._lastPolyTool || Enums.Tools.BRUSH);
+          window._activeToolTab = 0;
+        }
+
+        if (this._guiXR) {
+          this._guiXR.refreshToolsWidget();
+          this._guiXR._needsRedraw = true;
+        }
+        if (this._guiMini) {
+          this._guiMini.refreshToolsWidget();
+          this._guiMini._needsRedraw = true;
+        }
+      }
+    }
+
     this.getGui().updateMesh();
     this.render();
     return mesh;
@@ -1441,6 +1483,43 @@ class Scene {
     mesh._typeName = "Cube";
     mesh.isQuad = true; // Cube is quads
     return this.addNewMesh(mesh);
+  }
+
+  addVoxelObject() {
+    this.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
+    const voxelTool = this.getSculptManager().getTool(Enums.Tools.VOXEL);
+    
+    if (voxelTool) {
+      if (!voxelTool._voxelMesh) {
+        const newMesh = new MeshStatic(this._gl);
+        newMesh._isVoxel = true;
+        newMesh.setID(MeshStatic.ID++);
+        newMesh._typeName = "Voxel";
+        newMesh.isQuad = true;
+        
+        newMesh.allocateArrays();
+        newMesh.initThreeMesh();
+        
+        voxelTool._voxelMesh = newMesh;
+        this.addNewMesh(newMesh);
+      }
+      
+      if (voxelTool._worker) {
+        voxelTool._worker.postMessage({ type: 'CLEAR' });
+      }
+    }
+    
+    window._activeToolTab = 2;
+    if (this._guiXR) {
+      this._guiXR.refreshToolsWidget();
+      this._guiXR._needsRedraw = true;
+    }
+    if (this._guiMini) {
+      this._guiMini.refreshToolsWidget();
+      this._guiMini._needsRedraw = true;
+    }
+    
+    return voxelTool ? voxelTool._voxelMesh : null;
   }
 
   addCylinder() {
@@ -2943,12 +3022,25 @@ class Scene {
                 // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
-                if (this._guiXR) this._guiXR.toggleVisibility();
+                if (this._guiXR) {
+                  this._guiXR.toggleVisibility();
+                  console.log(`[VR X Button] Toggled main menu visibility to ${this._guiXR._isVisible}`);
+                  if (this._guiPopup) {
+                    console.log('[VR X Button] Closing Mini-HUD tool overlay');
+                    this._guiPopup.closeOverlay();
+                  }
+                }
               } else {
                 // Button Up
                 if (tracker.longPressActive) {
                   // Momentary Release -> Revert menu visibility
-                  if (this._guiXR) this._guiXR.toggleVisibility();
+                  if (this._guiXR) {
+                    this._guiXR.toggleVisibility();
+                    console.log(`[VR X Button] Reverting main menu visibility to ${this._guiXR._isVisible}`);
+                    if (this._guiPopup) {
+                      this._guiPopup.closeOverlay();
+                    }
+                  }
                 }
                 // If quick tap, do nothing on release
                 tracker.longPressActive = false;
@@ -3003,8 +3095,12 @@ class Scene {
              const wristPos = { x: this._nonDomWristMatrix[12], y: this._nonDomWristMatrix[13], z: this._nonDomWristMatrix[14] };
              const dist = vec3.distance([pI.x, pI.y, pI.z], [wristPos.x, wristPos.y, wristPos.z]);
              
-             // Update the active state for the GUI to render the glowing border
+             const wasMiniHUDActive = this._isMiniHUDActive;
              this._isMiniHUDActive = (dist < 0.25);
+             
+             if (wasMiniHUDActive && !this._isMiniHUDActive && this._guiPopup) {
+               this._guiPopup.closeOverlay();
+             }
 
              if (this._isMiniHUDActive) {
                 isPinching = false;

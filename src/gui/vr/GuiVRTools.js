@@ -10,6 +10,8 @@ import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false) {
   if (activeToolIndex === undefined) activeToolIndex = main.getSculptManager().getToolIndex();
   const activeToolDef = Tools[activeToolIndex];
+  const mesh = main.getMesh();
+  const isVoxelMesh = mesh && mesh._isVoxel;
   const widgets = [];
 
   // Spacing Constants
@@ -28,7 +30,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
   const tab0Ids = [
     Enums.Tools.BRUSH,
     Enums.Tools.INFLATE,
-    Enums.Tools.VOXEL,
     Enums.Tools.FLATTEN,
     Enums.Tools.PINCH,
     Enums.Tools.CREASE,
@@ -136,10 +137,26 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     
     y += 60; // Space for the next button
 
+    let toolLabelText = activeToolDef ? TR(activeToolDef.uiName) : '';
+    if (activeToolIndex === Enums.Tools.VOXEL || window._activeToolTab === 2) {
+      const vTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      if (vTool) {
+        const vMode = vTool._mode;
+        const vNeg = vTool._negative;
+        if (vMode === 0 && !vNeg) toolLabelText = 'Voxel (Add)';
+        else if (vMode === 1 || (vMode === 0 && vNeg)) toolLabelText = 'Voxel (Sub)';
+        else if (vMode === 3) toolLabelText = 'Voxel (Smooth)';
+        else if (vMode === 4) toolLabelText = 'Voxel (Move)';
+        else if (vMode === 2 && !vNeg) toolLabelText = 'Voxel (Inflate)';
+        else if (vMode === 2 && vNeg) toolLabelText = 'Voxel (Deflate)';
+        else toolLabelText = `Voxel (Mode ${vMode})`;
+      }
+    }
+
     widgets.push({
       type: 'button',
       id: 'tool_select',
-      label: 'Tool: ' + (activeToolDef ? TR(activeToolDef.uiName) : ''),
+      label: 'Tool: ' + toolLabelText,
       x: col1X, y: y, w: 710, h: 80, // Much larger and wider, acts as the primary HUD button
       data: { tint: getToolTint(activeToolIndex) },
       onInteract: () => {
@@ -154,8 +171,8 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
         const startY = Math.max(160, 260 - (boxH / 2));
 
-        const tabW = 225; // Exactly half the 450px grid width!
-        const tabX = (660 - 450) / 2; // Left edge of the centered 3-button grid
+        const tabW = 150; // 450px / 3 = 150px exactly!
+        const tabX = (660 - 450) / 2;
 
         toolPickerWidgets.push({
           type: 'sub_tab', id: 'popup_tab0', label: 'Sculpting',
@@ -185,56 +202,110 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
           }
         });
 
+        toolPickerWidgets.push({
+          type: 'sub_tab', id: 'popup_tab2', label: 'Voxel',
+          x: tabX + (tabW * 2), y: startY - 60, w: tabW, h: 60,
+          data: { active: window._activeToolTab === 2 },
+          onInteract: () => {
+            window._activeToolTab = 2;
+            if (main._guiMini) main._guiMini._tabWidgets['Tools'] = null;
+            if (main._guiPopup) {
+               const toolBtn = main._guiMini ? main._guiMini._getWidgets().find(w => w.id === 'tool_select') : null;
+               if (toolBtn && toolBtn.onInteract) toolBtn.onInteract();
+            }
+          }
+        });
+
         // Calculate maximum box width (used for vertical centering)
         const maxBoxW = cols * (btnW + pad) + pad; // Total theoretical width
 
-        let currentOptionIdx = 0;
-        let numRows = Math.ceil(validOptions.length / cols);
-
-        for (let r = 0; r < numRows; r++) {
-          // How many items in *this* specific row?
-          let itemsInRow = Math.min(cols, validOptions.length - (r * cols));
-
-          // Width of just this row's items
-          let rowW = itemsInRow * (btnW + pad) - pad; // Subtract trailing pad
-          let rowStartX = (660 - rowW) / 2; // Center this specific row within the 660px Overlay
-
-          for (let c = 0; c < itemsInRow; c++) {
-            const opt = validOptions[currentOptionIdx];
-
-            toolPickerWidgets.push({
-              type: 'button', id: opt.id, label: opt.label,
-              x: rowStartX + c * (btnW + pad),
-              y: startY + r * (btnH + pad),
-              w: btnW, h: btnH,
-              data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
-            onInteract: () => {
-              const guiGroup = main.getGui()._ctrlSculpting;
-              if (guiGroup && guiGroup._ctrlSculpt) {
-                // VERY IMPORTANT: Use setValue so all GUI/Tool callbacks fire correctly 
-                // and restore saved parameters like radius!
-                guiGroup._ctrlSculpt.setValue(opt.id);
-              } else {
-                main.getSculptManager().setToolIndex(opt.id);
-              }
-
-              if (main._guiPopup) {
-                main._guiPopup.closeOverlay();
-              }
-              if (main._guiMini) {
-                main._guiMini.refreshToolsWidget();
-                main._guiMini.syncWidgetValues(); // Force values to update instantly
-                main._guiMini._needsRedraw = true;
-              }
-              if (main._guiXR) {
-                main._guiXR.refreshToolsWidget();
-                main._guiXR.syncWidgetValues();
-              }
+        if (window._activeToolTab === 2) {
+          const voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+          
+          const setVoxelMode = (m, neg) => {
+            if (!isVoxelMesh) return;
+            if (voxelTool) {
+              voxelTool._mode = m;
+              voxelTool._negative = neg;
+              main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
+              if (main._guiPopup) main._guiPopup.closeOverlay();
+              if (main._guiMini) { main._guiMini.refreshToolsWidget(); main._guiMini._needsRedraw = true; }
             }
-          });
-            currentOptionIdx++;
-          } // End inner column loop
-        } // End outer row loop
+          };
+
+          const mode = voxelTool ? voxelTool._mode : 0;
+          const isNeg = voxelTool ? voxelTool._negative : false;
+
+          const vxOptions = [
+            { label: 'Add', id: 'vx_add', active: mode === 0 && !isNeg, action: () => setVoxelMode(0, false) },
+            { label: 'Sub', id: 'vx_sub', active: mode === 1 || (mode === 0 && isNeg), action: () => setVoxelMode(1, false) },
+            { label: 'Smooth', id: 'vx_smooth', active: mode === 3, action: () => setVoxelMode(3, false) },
+            { label: 'Move', id: 'vx_move', active: mode === 4, action: () => setVoxelMode(4, false) },
+            { label: 'Inflate', id: 'vx_inf', active: mode === 2 && !isNeg, action: () => setVoxelMode(2, false) },
+            { label: 'Deflate', id: 'vx_def', active: mode === 2 && isNeg, action: () => setVoxelMode(2, true) }
+          ];
+
+          const numRows = Math.ceil(vxOptions.length / cols);
+          for (let r = 0; r < numRows; r++) {
+            const itemsInRow = Math.min(cols, vxOptions.length - (r * cols));
+            const rowW = itemsInRow * (btnW + pad) - pad;
+            const rowStartX = (660 - rowW) / 2;
+
+            for (let c = 0; c < itemsInRow; c++) {
+              const opt = vxOptions[r * cols + c];
+              toolPickerWidgets.push({
+                type: 'button', id: opt.id, label: opt.label,
+                x: rowStartX + c * (btnW + pad), y: startY + r * (btnH + pad), w: btnW, h: btnH,
+                disabled: !isVoxelMesh,
+                data: { active: opt.active, tint: '#ebc5c5' },
+                onInteract: opt.action
+              });
+            }
+          }
+        } else {
+          let currentOptionIdx = 0;
+          let numRows = Math.ceil(validOptions.length / cols);
+
+          for (let r = 0; r < numRows; r++) {
+            let itemsInRow = Math.min(cols, validOptions.length - (r * cols));
+            let rowW = itemsInRow * (btnW + pad) - pad;
+            let rowStartX = (660 - rowW) / 2;
+
+            for (let c = 0; c < itemsInRow; c++) {
+              const opt = validOptions[currentOptionIdx];
+
+              toolPickerWidgets.push({
+                type: 'button', id: opt.id, label: opt.label,
+                x: rowStartX + c * (btnW + pad),
+                y: startY + r * (btnH + pad),
+                w: btnW, h: btnH,
+                disabled: isVoxelMesh,
+                data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
+                onInteract: () => {
+                  if (isVoxelMesh) return;
+                  const guiGroup = main.getGui()._ctrlSculpting;
+                  if (guiGroup && guiGroup._ctrlSculpt) {
+                    guiGroup._ctrlSculpt.setValue(opt.id);
+                  } else {
+                    main.getSculptManager().setToolIndex(opt.id);
+                  }
+
+                  if (main._guiPopup) main._guiPopup.closeOverlay();
+                  if (main._guiMini) {
+                    main._guiMini.refreshToolsWidget();
+                    main._guiMini.syncWidgetValues();
+                    main._guiMini._needsRedraw = true;
+                  }
+                  if (main._guiXR) {
+                    main._guiXR.refreshToolsWidget();
+                    main._guiXR.syncWidgetValues();
+                  }
+                }
+              });
+              currentOptionIdx++;
+            }
+          }
+        }
 
         if (main._guiPopup) {
           main._guiPopup.openOverlay('menu', { x: 0, y: 0, w: 660, h: 660, widgets: toolPickerWidgets, isToolPicker: true });
@@ -246,7 +317,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += 80 + gapSection;
 
   } else {
-    const tabW = 385;
+    const tabW = 253; // 780px / 3 = 253px
     widgets.push({
       type: 'sub_tab', id: 'sidebar_tab0', label: 'Sculpting',
       x: col1X, y: y, w: tabW, h: 60,
@@ -266,48 +337,99 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
         if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
       }
     });
+
+    widgets.push({
+      type: 'sub_tab', id: 'sidebar_tab2', label: 'Voxel',
+      x: col1X + (tabW * 2) + 20, y: y, w: tabW, h: 60,
+      data: { active: window._activeToolTab === 2 },
+      onInteract: () => {
+        window._activeToolTab = 2;
+        if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
+      }
+    });
     y += 60; // Removed gap so it sits directly on top of the buttons below!
     const pad = 15;
     const cols = 3;
     const btnW = 250;
     const btnH = 60;
 
-    // 1. Calculate how many valid items are in the list.
-    const validDesktopOptions = toolOptions.filter(opt => opt !== null);
+    if (window._activeToolTab === 2) {
+      const voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+      
+      const setVoxelMode = (m, neg) => {
+        if (!isVoxelMesh) return;
+        if (voxelTool) {
+          voxelTool._mode = m;
+          voxelTool._negative = neg;
+          main.getSculptManager().setToolIndex(Enums.Tools.VOXEL);
+          if (main._guiXR) { main._guiXR.refreshToolsWidget(); main._guiXR._needsRedraw = true; }
+        }
+      };
 
-    let currentDesktopOptionIdx = 0;
-    let numDesktopRows = Math.ceil(validDesktopOptions.length / cols);
+      const mode = voxelTool ? voxelTool._mode : 0;
+      const isNeg = voxelTool ? voxelTool._negative : false;
 
-    for (let r = 0; r < numDesktopRows; r++) {
-      for (let c = 0; c < Math.min(cols, validDesktopOptions.length - (r * cols)); c++) {
-        const opt = validDesktopOptions[currentDesktopOptionIdx];
+      const vxOptions = [
+        { label: 'Add', id: 'vx_add', active: mode === 0 && !isNeg, action: () => setVoxelMode(0, false) },
+        { label: 'Sub', id: 'vx_sub', active: mode === 1 || (mode === 0 && isNeg), action: () => setVoxelMode(1, false) },
+        { label: 'Smooth', id: 'vx_smooth', active: mode === 3, action: () => setVoxelMode(3, false) },
+        { label: 'Move', id: 'vx_move', active: mode === 4, action: () => setVoxelMode(4, false) },
+        { label: 'Inflate', id: 'vx_inf', active: mode === 2 && !isNeg, action: () => setVoxelMode(2, false) },
+        { label: 'Deflate', id: 'vx_def', active: mode === 2 && isNeg, action: () => setVoxelMode(2, true) }
+      ];
 
-        widgets.push({
-          type: 'button', id: opt.id, label: opt.label,
-          x: col1X + c * (btnW + pad), y: y + r * (btnH + pad), w: btnW, h: btnH,
-          data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
-          onInteract: () => {
-            const guiGroup = main.getGui()._ctrlSculpting;
-            if (guiGroup && guiGroup._ctrlSculpt) {
-              guiGroup._ctrlSculpt.setValue(opt.id);
-            } else {
-              main.getSculptManager().setToolIndex(opt.id);
-            }
-
-            if (main._guiXR) {
-              main._guiXR.refreshToolsWidget();
-              main._guiXR.syncWidgetValues(); // Force values to update instantly
-              main._guiXR._needsRedraw = true;
-            }
-            if (main._guiPopup) {
-              main._guiPopup.refreshToolsWidget();
-            }
-          }
-        });
-        currentDesktopOptionIdx++;
+      for (let r = 0; r < Math.ceil(vxOptions.length / cols); r++) {
+        for (let c = 0; c < Math.min(cols, vxOptions.length - (r * cols)); c++) {
+          const opt = vxOptions[r * cols + c];
+          widgets.push({
+            type: 'button', id: opt.id, label: opt.label,
+            x: col1X + c * (btnW + pad), y: y + r * (btnH + pad), w: btnW, h: btnH,
+            disabled: !isVoxelMesh,
+            data: { active: opt.active, tint: '#ebc5c5' },
+            onInteract: opt.action
+          });
+        }
       }
+      y += Math.ceil(vxOptions.length / cols) * (btnH + pad) + gapSection;
+
+    } else {
+      const validDesktopOptions = toolOptions.filter(opt => opt !== null);
+      let currentDesktopOptionIdx = 0;
+      let numDesktopRows = Math.ceil(validDesktopOptions.length / cols);
+
+      for (let r = 0; r < numDesktopRows; r++) {
+        for (let c = 0; c < Math.min(cols, validDesktopOptions.length - (r * cols)); c++) {
+          const opt = validDesktopOptions[currentDesktopOptionIdx];
+
+          widgets.push({
+            type: 'button', id: opt.id, label: opt.label,
+            x: col1X + c * (btnW + pad), y: y + r * (btnH + pad), w: btnW, h: btnH,
+            disabled: isVoxelMesh,
+            data: { active: activeToolIndex === opt.id, tint: getToolTint(opt.id) },
+            onInteract: () => {
+              if (isVoxelMesh) return;
+              const guiGroup = main.getGui()._ctrlSculpting;
+              if (guiGroup && guiGroup._ctrlSculpt) {
+                guiGroup._ctrlSculpt.setValue(opt.id);
+              } else {
+                main.getSculptManager().setToolIndex(opt.id);
+              }
+
+              if (main._guiXR) {
+                main._guiXR.refreshToolsWidget();
+                main._guiXR.syncWidgetValues();
+                main._guiXR._needsRedraw = true;
+              }
+              if (main._guiPopup) {
+                main._guiPopup.refreshToolsWidget();
+              }
+            }
+          });
+          currentDesktopOptionIdx++;
+        }
+      }
+      y += numDesktopRows * (btnH + pad) + gapSection;
     }
-    y += numDesktopRows * (btnH + pad) + gapSection;
   }
 
 
@@ -376,8 +498,21 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     });
     y += btnHeight + gapBtn;
   }
+  if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
+    widgets.push({
+      type: 'button',
+      id: 'voxel_bake',
+      label: 'Bake to Mesh',
+      x: col1X, y: y, w: isMiniHUD ? 710 : 550, h: 60,
+      onInteract: () => {
+        if (activeTool.bakeToMesh) activeTool.bakeToMesh();
+      }
+    });
+    y += 60 + 15;
+  }
+
   // --- PAINT ---
-  if (activeToolIndex === Enums.Tools.PAINT && activeTool) {
+  if ((activeToolIndex === Enums.Tools.PAINT || activeToolIndex === Enums.Tools.VOXEL) && activeTool) {
     // Color Picker (Replacing RGB Sliders & Header)
     const color = activeTool._color;
     widgets.push({
@@ -393,9 +528,9 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     // Material (Roughness, Metallic)
     widgets.push({
       type: 'slider', id: 'roughness', label: 'Roughness', x: col1X, y: y, w: 350, h: 50,
-      value: activeTool._material[0], min: 0, max: 1, step: 0.01, precision: 2,
+      value: activeTool._material ? activeTool._material[0] : 0.4, min: 0, max: 1, step: 0.01, precision: 2,
       onInput: (val) => { 
-        activeTool._material[0] = val; 
+        if (activeTool._material) activeTool._material[0] = val; 
         getOptionsURL.saveOption(`tool_${activeToolIndex}_roughness`, val, 500);
         main.render(); 
       }
@@ -403,7 +538,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += 55;
     widgets.push({
       type: 'slider', id: 'metallic', label: 'Metallic', x: col1X, y: y, w: 350, h: 50,
-      value: activeTool._material[1], min: 0, max: 1, step: 0.01, precision: 2,
+      value: activeTool._material ? activeTool._material[1] : 0.1, min: 0, max: 1, step: 0.01, precision: 2,
       onInput: (val) => { 
         activeTool._material[1] = val; 
         getOptionsURL.saveOption(`tool_${activeToolIndex}_metallic`, val, 500);
@@ -532,86 +667,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     y += gapSection;
   }
   if (activeToolIndex === Enums.Tools.VOXEL && activeTool) {
-    widgets.push({ type: 'info', label: 'Voxel Tools', x: col1X, y: y });
-    y += gapHeader;
 
-    // Radius already handled above? Yes.
-
-    // Resolution Slider (32-256)
-    // We need to get current resolution. SculptVoxel has `_res`
-    // Voxel settings
-    const voxelResolution = activeTool._res || 64;
-
-    // Mode Buttons (Add, Sub, Inflate, Deflate)
-    const btnW = (550 - (3 * 10)) / 4; // 550 total width, 3 gaps
-    const mode = activeTool._mode || 0; // 0=Add, 1=Sub, 2=Inflate, 3=Deflate (implied by Inflate + Negative?)
-    const isNeg = activeTool._negative; // Current negative state
-
-    // DEBUG: Log current state construction
-
-    // Helper to set mode
-    const setVoxelMode = (m, neg) => {
-      if (activeTool) {
-        activeTool._mode = m;
-        activeTool._negative = neg;
-        // Force re-render of UI to show active state
-        if (main._guiXR) {
-          main._guiXR.refreshToolsWidget();
-        }
-      }
-    };
-
-    // ACTIVE STATE?
-    // We can highlight the active button.
-    // GuiVR currently doesn't support "toggle" buttons natively in 'button' type, 
-    // but we can simulate it or just use them as triggers.
-    // User wants "options", implies selection.
-
-    // Add
-    widgets.push({
-      type: 'button', id: 'vx_add', label: 'Add', x: col1X, y: y, w: btnW, h: btnH,
-      data: { active: (mode === 0 && !isNeg) },
-      onInteract: () => setVoxelMode(0, false)
-    });
-
-    // Sub
-    widgets.push({
-      type: 'button', id: 'vx_sub', label: 'Sub', x: col1X + btnW + 10, y: y, w: btnW, h: btnH,
-      data: { active: (mode === 1 || (mode === 0 && isNeg)) }, // Support both explicit Sub mode and Negative Add
-      onInteract: () => setVoxelMode(1, false)
-    });
-
-    // Smooth
-    widgets.push({
-      type: 'button', id: 'vx_smooth', label: 'Smooth', x: col1X + 2 * (btnW + 10), y: y, w: btnW, h: btnH,
-      data: { active: (mode === 3) },
-      onInteract: () => setVoxelMode(3, false)
-    });
-
-    // Move
-    widgets.push({
-      type: 'button', id: 'vx_move', label: 'Move', x: col1X + 3 * (btnW + 10), y: y, w: btnW, h: btnH,
-      data: { active: (mode === 4) },
-      onInteract: () => setVoxelMode(4, false)
-    });
-
-    y += btnH + gapBtn;
-
-    // Inflate
-    widgets.push({
-      type: 'button', id: 'vx_inf', label: 'Inflate', x: col1X, y: y, w: btnW, h: btnH,
-      data: { active: (mode === 2 && !isNeg) },
-      onInteract: () => setVoxelMode(2, false)
-    });
-
-    // Deflate
-    widgets.push({
-      type: 'button', id: 'vx_def', label: 'Deflate', x: col1X + btnW + 10, y: y, w: btnW, h: btnH,
-      data: { active: (mode === 2 && isNeg) },
-      onInteract: () => setVoxelMode(2, true)
-    });
-
-    y += btnH + gapBtn;
 
     if (!isMiniHUD) {
       // Build Up (Tapered) Toggle
@@ -686,15 +742,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       y += btnH + gapBtn;
     }
 
-    // Embedded Color Picker for Voxel Mode (Inherits tool._color)
-    widgets.push({
-      type: 'colorpicker_embedded',
-      id: 'vx_color_picker',
-      label: 'Voxel Primitive Color',
-      x: col1X, y: y, w: 550, h: 380, // Full width for alignment
-    });
-    y += 380 + gapBtn;
-
+    const voxelResolution = (activeTool && activeTool._res) ? activeTool._res : 64;
     widgets.push({
       type: 'slider',
       id: 'voxel_res',
@@ -732,23 +780,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       }
     });
     y += 40 + gapBtn;
-
-    // Bake Button
-    widgets.push({
-      type: 'button',
-      id: 'voxel_bake',
-      label: 'Bake to Mesh',
-      x: col1X, y: y, w: 550, h: btnH,
-      onInteract: () => {
-        console.error("VR BAKE BUTTON RAW ONINTERACT FIRED! activeTool is: ", !!activeTool ? activeTool.constructor.name : "null");
-        if (activeTool && activeTool.bakeToMesh) {
-          activeTool.bakeToMesh();
-        } else {
-          console.error("But activeTool.bakeToMesh evaluates to falsy!");
-        }
-      }
-    });
-    y += btnH + gapSection;
 
     widgets.push({
       type: 'checkbox',

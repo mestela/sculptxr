@@ -19,32 +19,6 @@ export default function getSceneWidgets(main) {
   let rightY = 10;
 
   widgets.push({ type: 'header', id: 'header_outliner', label: 'Outliner', x: leftX, y: leftY, w: colW - 280, h: HEADER_H, header: true });
-  
-  widgets.push({ 
-    type: 'button', id: 'btn_rescue_ghosts', 
-    label: 'Resync', 
-    x: leftX + colW - 270, y: leftY, w: 120, h: HEADER_H, 
-    onInteract: () => { 
-      const scene = main.getScene();
-      const tracked = main.getMeshes();
-      let rescuedCount = 0;
-
-      scene.traverse(node => {
-        if (node.isMesh && node.userData && node.userData.sculptMesh) {
-          const sm = node.userData.sculptMesh;
-          if (!tracked.includes(sm) && !sm._isVoxelChunk) {
-            tracked.push(sm);
-            rescuedCount++;
-          }
-        }
-      });
-
-      if (rescuedCount > 0) {
-        if (main._guiXR) main._guiXR.printLog(`Rescued ${rescuedCount} orphan meshes!`, '#00D0FF');
-        main.render();
-      }
-    } 
-  });
 
   widgets.push({ 
     type: 'button', id: 'btn_sort_outliner', 
@@ -68,7 +42,11 @@ export default function getSceneWidgets(main) {
   for (let i = 0; i < sortedOutlinerMeshes.length; i++) {
     preCount++;
     const m = sortedOutlinerMeshes[i];
-    if (!m._permanentStaticLabel) m._permanentStaticLabel = (m._typeName || "Mesh") + " " + preCount;
+    if (!m._permanentStaticLabel) {
+      if (m.uiName) m._permanentStaticLabel = m.uiName;
+      else if (m._uiName) m._permanentStaticLabel = m._uiName;
+      else m._permanentStaticLabel = (m._typeName || "Mesh") + " " + preCount;
+    }
   }
 
   if (main._outlinerSortAz) {
@@ -88,7 +66,9 @@ export default function getSceneWidgets(main) {
     
     displayCount++;
     if (!mesh._permanentStaticLabel) {
-      mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + displayCount;
+      if (mesh.uiName) mesh._permanentStaticLabel = mesh.uiName;
+      else if (mesh._uiName) mesh._permanentStaticLabel = mesh._uiName;
+      else mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + displayCount;
     }
     if (!mesh._permanentStaticId) {
       mesh._permanentStaticId = 'm_' + Math.random().toString(36).substring(2, 11);
@@ -351,9 +331,6 @@ export default function getSceneWidgets(main) {
     });
     rightY += ITEM_H + GAP;
   }
-  rightY += ITEM_H + GAP;
-
-  rightY += 10;
 
   // --- PRIMITIVES ---
   widgets.push({ type: 'header', id: 'header_primitives', label: 'Primitives', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
@@ -368,6 +345,8 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'button', id: 'addTorus', label: 'Add Torus', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addTorus() });
   rightY += ITEM_H + GAP;
   widgets.push({ type: 'button', id: 'addGrid', label: 'Add Grid', x: rightX, y: rightY, w: colW, h: ITEM_H, onInteract: () => main.addGrid() });
+  rightY += ITEM_H + GAP;
+  widgets.push({ type: 'button', id: 'addVoxelBlock', label: 'Add Empty Voxel Object', x: rightX, y: rightY, w: colW, h: ITEM_H, icon: 'box', onInteract: () => main.addVoxelObject() });
   rightY += ITEM_H + GAP;
 
   rightY += 10;
