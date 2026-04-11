@@ -1,4 +1,8 @@
-# v1.0.156
+# v1.0.162
+- **Feature**: **VR Animation DAW Timeline Stabilization**: Finalized the multi-track animation transport interface. Restored unconstrained, continuous playhead scrubbing that accurately tracks the physical controller pointer even if the hand drifts far outside the widget boundary.
+- **Feature**: **Rest-Pose Vector Cache Hardening**: Upgraded the `AnimationRegistry` to capture absolute 4x4 transformation matrix parameters (`position`, `quaternion`, `scale`) directly upon recording initialization, bypassing legacy array indexing to guarantee muted or deleted tracks perfectly revert meshes to their original spatial location.
+- **UX**: **Unified Visibility Vector Graphics**: Replaced problematic eye emoji text representations with standard scalable `Path2D` vector graphics matching the Outliner layer to ensure crisp rendering and flawless color override states across all UI elements.
+
 - **Feature**: **Context-Aware Sculpting Intelligence**: Developed an intelligent object-selection tracker that monitors Outliner activity. Standard polygon selections automatically reactivate the last used sculpting brush, Voxel blocks switch to the Voxel tab, and mixed selections securely unset the active tool to enforce a strict, no-edit default state until explicit artist confirmation.
 - **Fix**: **Transform Undo Stack Integration**: Relocated the custom state capture block inside the standard `Grab` lifecycle from `updateXR` to the native `end()` hook to guarantee full Undo/Redo support when moving primitives in space.
 - **UX**: Removed noisy console outputs from Voxel sub-mode UI string concatenation loops and background SurfaceNets computation loops, and simplified default primitive naming inside the scene graph.

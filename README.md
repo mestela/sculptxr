@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.152**: **Fix**: Resolved a critical raycasting mutation bug that destabilized multi-object selection and grabbing.
-*   **v1.0.149**: **UX**: Successfully restored thumbstick vertical scrolling and persistent state saving for the VR About & Help menu.
-*   **v1.0.143**: **Feature**: Complete rebuild of VR Inset tool and integrated Precision Start Marker.
+*   **v1.0.162**: **Feature**: Stabilized VR multi-track animation DAW timeline scrubbing and hardened the rest-pose vector state cache.
+*   **v1.0.156**: **Feature**: Context-Aware Sculpting Intelligence and hardened Outliner primitive state tracking.
+*   **v1.0.155**: **Fix**: Phantom Mesh Resolution and strict object identity reference matching.
 
 [View Full Release History](docs/releases.md)
 
