@@ -1057,6 +1057,44 @@ export default class GuiXR {
       return;
     }
 
+    if (this._activeTimeline) {
+      const targetWid = this._activeTimeline;
+      let scaledCx = cx;
+      
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        const invScale = 1 / OVERLAY_SCALE;
+        scaledCx = (cx - pivot.x) * invScale + pivot.x;
+        if (this._overlayData && this._overlayData.x !== undefined) {
+          scaledCx -= this._overlayData.x;
+        }
+      }
+
+      let t = (scaledCx - targetWid.x) / targetWid.w;
+      t = Math.max(0, Math.min(1, t));
+      const masterLen = window._animMasterDuration || 1.0;
+      const targetTime = t * masterLen;
+
+      window._animPlaying = false;
+      window._animCurrentTime = targetTime;
+
+      if (window._animationRegistry) {
+        window._animationRegistry.globalPlaybackTime = targetTime;
+        if (this._main && this._main._meshes) {
+          for (let i = 0; i < this._main._meshes.length; i++) {
+            const m = this._main._meshes[i];
+            const tr = window._animationRegistry.tracks.get(m.getID());
+            if (tr) {
+              tr.playbackTime = targetTime;
+              window._animationRegistry.update(m, true);
+            }
+          }
+        }
+      }
+      this._needsRedraw = true;
+      return;
+    }
+
     const now = performance.now();
 
     // 0. Dropdown Interaction (High Priority)
@@ -1301,8 +1339,29 @@ export default class GuiXR {
       } else if (this._activeColorPicker && (!targetWid || targetWid.type !== 'colorpicker_embedded' || targetWid.id !== this._activeColorPicker.id)) {
         this._handleWidgetClick(this._activeColorPicker);
         return;
-      } else if (this._activeTimeline && (!targetWid || targetWid.type !== 'timeline' || targetWid.id !== this._activeTimeline.id)) {
-        this._handleWidgetClick(this._activeTimeline);
+      } else if (this._activeTimeline) {
+        let t = (cx - this._activeTimeline.x) / this._activeTimeline.w;
+        t = Math.max(0, Math.min(1, t));
+        const masterLen = window._animMasterDuration || 1.0;
+        const targetTime = t * masterLen;
+
+        window._animPlaying = false;
+        window._animCurrentTime = targetTime;
+
+        if (window._animationRegistry) {
+          window._animationRegistry.globalPlaybackTime = targetTime;
+          if (this._main && this._main._meshes) {
+            for (let i = 0; i < this._main._meshes.length; i++) {
+              const m = this._main._meshes[i];
+              const tr = window._animationRegistry.tracks.get(m.getID());
+              if (tr) {
+                tr.playbackTime = targetTime;
+                window._animationRegistry.update(m, true);
+              }
+            }
+          }
+        }
+        this._needsRedraw = true;
         return;
       }
     }
@@ -1320,11 +1379,7 @@ export default class GuiXR {
         const rx = cx - targetWid.x;
 
         // If we are already dragging the playhead, completely ignore vertical constraints so the user's hand can drift off-axis freely!
-        const masterLen = window._animMasterDuration || 1.0;
-        const currentAlpha = (window._animCurrentTime || 0) / masterLen;
-        const playheadX = targetWid.w * currentAlpha;
-
-        if (this._activeTimeline || (ry <= 30 && Math.abs(rx - playheadX) < 30)) {
+        if (ry <= 30 || this._activeTimeline) {
           // --- 1. TOP HEADER SCRUB ZONE (or Continuous Drag) ---
           this._activeTimeline = targetWid;
           let t = rx / targetWid.w;
@@ -3416,19 +3471,21 @@ export default class GuiXR {
       // --- RIGHT-ALIGNED INTERACTIVE ICONS ---
       // 1. Visibility (Eye) Icon
       const eyeX = w.x + w.w - 90;
-      const eyeY = ty + trackH / 2 - 4;
+      const eyeY = ty + trackH / 2 - 12; // offset to center the 24x24 path vertically
       
-      ctx.strokeStyle = track.muted ? '#444444' : '#00ffcc';
+      ctx.save();
+      ctx.translate(eyeX - 12, eyeY);
+      ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
       ctx.lineWidth = 2;
       
-      ctx.beginPath();
-      ctx.ellipse(eyeX, eyeY, 12, 6, 0, 0, Math.PI * 2);
-      ctx.stroke();
+      const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+      ctx.stroke(eyePath);
       
-      ctx.fillStyle = track.muted ? '#444444' : '#00ffcc';
+      ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
       ctx.beginPath();
-      ctx.arc(eyeX, eyeY, 3, 0, Math.PI * 2);
+      ctx.arc(12, 12, 3, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
 
       // 2. Trash Icon
       const trashX = w.x + w.w - 30;
