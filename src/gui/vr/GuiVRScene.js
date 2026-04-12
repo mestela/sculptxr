@@ -332,6 +332,58 @@ export default function getSceneWidgets(main) {
     rightY += ITEM_H + GAP;
   }
 
+  // --- TRANSFORM UTILITIES ---
+  widgets.push({ type: 'header', id: 'header_transforms', label: 'Transform Utilities', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
+  rightY += HEADER_H + GAP;
+
+  const activeMeshForReadout = main.getMesh();
+  let scaleStr = "Identity (1.0)";
+  if (activeMeshForReadout) {
+    const sc = activeMeshForReadout.getScale();
+    if (Math.abs(sc - 1.0) > 0.001) {
+      scaleStr = sc.toFixed(6);
+    }
+  }
+
+  widgets.push({
+    type: 'info', id: 'transform_scale_readout', label: 'Current Scale: ' + scaleStr, x: rightX, y: rightY, w: colW, h: ITEM_H, color: '#aaaaaa'
+  });
+  rightY += ITEM_H + GAP;
+
+  widgets.push({
+    type: 'button', id: 'bakeTransform', label: 'Bake Transform (Freeze to Vertices)', x: rightX, y: rightY, w: colW, h: ITEM_H,
+    onInteract: () => {
+      const active = main.getMesh();
+      if (active) {
+        const vAr = active.getVertices();
+        const mat = active.getMatrix();
+        for (let j = 0; j < active.getNbVertices(); ++j) {
+          const ind = j * 3;
+          const x = vAr[ind];
+          const y = vAr[ind + 1];
+          const z = vAr[ind + 2];
+          vAr[ind]     = mat[0] * x + mat[4] * y + mat[8]  * z + mat[12];
+          vAr[ind + 1] = mat[1] * x + mat[5] * y + mat[9]  * z + mat[13];
+          vAr[ind + 2] = mat[2] * x + mat[6] * y + mat[10] * z + mat[14];
+        }
+
+        mat[0] = 1; mat[1] = 0; mat[2] = 0; mat[3] = 0;
+        mat[4] = 0; mat[5] = 1; mat[6] = 0; mat[7] = 0;
+        mat[8] = 0; mat[9] = 0; mat[10] = 1; mat[11] = 0;
+        mat[12] = 0; mat[13] = 0; mat[14] = 0; mat[15] = 1;
+
+        active.updateGeometry();
+        active.updateBuffers();
+        if (active.computeOctree) active.computeOctree();
+        main.render();
+        if (main.getGuiXR()) main.getGuiXR().refreshSceneWidget();
+      }
+    }
+  });
+  rightY += ITEM_H + GAP;
+
+  rightY += 10;
+
   // --- PRIMITIVES ---
   widgets.push({ type: 'header', id: 'header_primitives', label: 'Primitives', x: rightX, y: rightY, w: colW, h: HEADER_H, header: true });
   rightY += HEADER_H + GAP;

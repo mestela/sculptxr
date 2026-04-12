@@ -606,10 +606,10 @@ class Mesh {
     this._meshData._facesTagFlags = new Int32Array(nbFaces);
 
     this._meshData._facePosInLeaf = new Uint32Array(nbFaces);
-    var faceLeaf = this._meshData._faceLeaf;
-    faceLeaf.length = nbFaces;
-    for (var i = 0; i < nbFaces; ++i)
+    var faceLeaf = this._meshData._faceLeaf = new Array(nbFaces);
+    for (var i = 0; i < nbFaces; ++i) {
       faceLeaf[i] = null;
+    }
   }
 
   /** Init color and material array */
@@ -2317,12 +2317,16 @@ class Mesh {
           newGeom.setDrawRange(0, this.getRenderNbVertices());
       }
     } else {
-      attr.array.set(vertices);
-      if (this._isVoxel) {
-          // Only upload active vertices!
-          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
+      if (attr.updateRange) {
+        attr.updateRange.offset = 0;
+        attr.updateRange.count = -1;
       }
       attr.needsUpdate = true;
+
+      if (geom) {
+        geom.computeBoundingSphere();
+        geom.computeBoundingBox();
+      }
     }
   }
 
@@ -2339,10 +2343,9 @@ class Mesh {
       }
       geom.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     } else {
-      attr.array.set(normals);
-      if (this._isVoxel) {
-          // Only upload active normals!
-          attr.updateRange = { offset: 0, count: this.getRenderNbVertices() * 3 };
+      if (attr.updateRange) {
+        attr.updateRange.offset = 0;
+        attr.updateRange.count = -1;
       }
       attr.needsUpdate = true;
     }
@@ -2591,6 +2594,8 @@ class Mesh {
     if (mesh.hasUV()) {
       this.initTexCoordsDataFromOBJData(mesh.getTexCoords(), mesh.getFacesTexCoord());
     }
+
+    this._isVoxel = mesh._isVoxel;
 
     this.init();
     this.initRender();

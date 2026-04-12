@@ -1776,7 +1776,8 @@ function remeshIsotropic(msg) {
     finalFaces = unpadTriangles(msg.f);
   }
 
-  const targetEdgeLength = msg.targetEdgeLength || 0.1;
+  // Scale down the UI slider range by 0.1x so 0.1 = 0.01 edge length!
+  const targetEdgeLength = (msg.targetEdgeLength || 0.1) * 0.1;
 
   const vLen = vertices.length;
   const fLen = finalFaces.length;

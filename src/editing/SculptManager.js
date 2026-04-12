@@ -1353,7 +1353,7 @@ class SculptManager {
     }
 
     newMesh.initRender(); // <-- Generate Three.js geometry!
-    newMesh.isQuad = true; // Remeshed output is quads!
+    newMesh.isQuad = true;
 
     // Transfer transform from the active mesh
     newMesh.setMatrix(activeMesh.getMatrix());

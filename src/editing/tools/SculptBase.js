@@ -417,7 +417,9 @@ class SculptBase {
             for (let i = 0; i < mainVerts.length; ++i) {
               const id = mainVerts[i];
               const mid = symMap[id];
-              if (mid !== -1) newVerts[acc++] = mid;
+              if (mid !== -1 && mid < mesh.getNbVertices()) {
+                newVerts[acc++] = mid;
+              }
             }
             pickingSym._pickedVertices = newVerts.subarray(0, acc);
             symMapUsed = true;

@@ -8,17 +8,24 @@
 
 ## 1. Todo
 
-* [ ] **Animation**: record mocap over short loop for transforms. per frame sculpting mods. 
+* [ ] **Bug**: reported by user, after "remesh (voxel)", can't sculpt on mesh
+* [ ] **Animation**: per frame sculpting mods, shapekey based
+* [ ] **Animation**: per frame sculpting, shape replacement based
+* [ ] **Animation**: graph editor/frame editor
+* [ ] **Animation**: glb export
 * [ ] **AVP support**: fingers and stylus
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
-* [ ] **Three-mesh-ui**: move menu system to this
+
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
-* [ ] **Floating VR Keyboard**: there is a builtin one (part of three-mesh-ui?)
+* [ ] **Floating VR Keyboard**: there is a builtin one (use three-mesh-ui?)
 * [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
 * [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [?] **Three-mesh-ui**: move menu system to this -- advised not to.. but gemini has lied before...
+
+* [x] **Animation**: record mocap over short loop for transforms. 
 * [*] **Outliner**: Persistent names, better use of space, selection modes
 * [*] **About**: Include recent release info, and be scrollable
 * [x] **Inset**: Nearly there, i think replace controller length along normal with just total distance from click

@@ -1,3 +1,4 @@
+import { vec3, mat4 } from 'gl-matrix';
 import TR from './GuiTR.js';
 import Remesh from '../editing/Remesh.js';
 import Mesh from '../mesh/Mesh.js';
@@ -222,26 +223,14 @@ class GuiMultiresolution {
   remesh(manifold) {
     var main = this._main;
     var mesh = main.getMesh();
-    if (!mesh)
-      return;
+    if (!mesh) return;
 
-    var wasDynamic = mesh.isDynamic;
-
-    var meshes = main.getMeshes();
-    var selMeshes = main.getSelectedMeshes().slice();
-    for (var i = 0, l = selMeshes.length; i < l; ++i) {
-      var sel = selMeshes[i];
-      meshes.splice(main.getIndexMesh(sel), 1);
-      selMeshes[i] = this.convertToStaticMesh(sel);
-      if (sel === mesh)
-        mesh = selMeshes[i];
+    // Use the incredibly stable Rust-based Voxel -> Multimesh pipeline!
+    var voxelTool = main.getSculptManager().getTool(Enums.Tools.VOXEL);
+    if (voxelTool) {
+      voxelTool._autoBake = true;
     }
-
-    var newMesh = Remesh.remesh(selMeshes, mesh, manifold);
-    if (wasDynamic) newMesh = new MeshDynamic(newMesh);
-    main.getStateManager().pushStateAddRemove(newMesh, main.getSelectedMeshes().slice());
-    main.getMeshes().push(newMesh);
-    main.setMesh(newMesh);
+    this.meshToVoxel();
   }
 
   remeshMC() {

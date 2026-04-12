@@ -1948,7 +1948,12 @@ class SculptVoxel extends SculptBase {
     if (this._voxelMesh.getWireframeBuffer()) this._voxelMesh.getWireframeBuffer()._hint = this._main._gl.DYNAMIC_DRAW;
     // Removed duplicate calls
 
-    // if (nanColor > 0) console.warn(`Voxel: Fixed ${nanColor} NaN colors.`);
+    if (this._autoBake) {
+      this._autoBake = false;
+      setTimeout(() => {
+        this.bakeToMesh();
+      }, 50);
+    }
   }
 
   toggleChunksVisibility(val) {

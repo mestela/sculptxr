@@ -296,22 +296,26 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      // [Option A] Use fast iterative search ALWAYS (both hovering and sculpting)
-      // Searching outward from the center is faster and more stable against a stale Octree.
+      if (window.screenLog && this._main._vrSculpting && Math.random() < 0.1) {
+        window.screenLog(`[Pick] ID:${mesh.getID()} C:[${localCenter[0].toFixed(2)}, ${localCenter[1].toFixed(2)}, ${localCenter[2].toFixed(2)}] rSq:${localRadiusSq.toFixed(4)}`, 'cyan');
+      }
+
       var iFaces = [];
-
-      var maxLocalRadiusSq = localRadiusSq;
-      var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
-
-      var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
 
       var bound = mesh.getLocalBound();
       var dx = bound[3] - bound[0];
       var dy = bound[4] - bound[1];
       var dz = bound[5] - bound[2];
-      var meshLocalSize = Math.hypot(dx, dy, dz); // Using hypot for safety
+      var meshLocalSize = Math.hypot(dx, dy, dz);
+
+      var safeMinRadius = meshLocalSize * 0.05;
+      var safeMinRadiusSq = safeMinRadius * safeMinRadius;
+
+      var maxLocalRadiusSq = Math.max(localRadiusSq, safeMinRadiusSq);
+      var maxLocalRadius = Math.sqrt(maxLocalRadiusSq);
 
       // Step size is physically 5cm OR 5% of the mesh's bounding size, whichever is smaller.
+      var vrScale = this._main && this._main._vrScale ? this._main._vrScale : 1.0;
       var physicalStepLocal = (0.05 / vrScale) / scale;
       var meshStepLocal = Math.max(0.0001, meshLocalSize * 0.05);
       var stepLocal = Math.min(physicalStepLocal, meshStepLocal);
@@ -335,6 +339,9 @@ class Picking {
 
       const isSculpting = this._main && this._main._vrSculpting;
 
+      if (isSculpting && window.screenLog) {
+        window.screenLog(`[VR Pick Debug] Mesh ID: ${mesh.getID()}, Octree Candidate Faces: ${iFaces.length}`, 'orange');
+      }
 
       if (iFaces.length === 0) continue;
 
@@ -342,7 +349,10 @@ class Picking {
       fAr = mesh.getFaces();
 
       var faceBoxes = mesh.getFaceBoxes();
-      var lRadius = Math.sqrt(localRadiusSq);
+      var lRadius = maxLocalRadius;
+
+      var rejectedByAABB = 0;
+      var rejectedByDist = 0;
 
       // Find closest face
       for (var j = 0; j < iFaces.length; ++j) {
@@ -356,6 +366,7 @@ class Picking {
             localCenter[1] > faceBoxes[boxId + 4] + lRadius ||
             localCenter[2] < faceBoxes[boxId + 2] - lRadius ||
             localCenter[2] > faceBoxes[boxId + 5] + lRadius) {
+            rejectedByAABB++;
             continue;
         }
 
@@ -386,7 +397,7 @@ class Picking {
           }
         }
 
-        if (distSq < localRadiusSq) { // Found a potential hit within radius
+        if (distSq < maxLocalRadiusSq) { // Found a potential hit within radius
           // Convert dist to world for comparison
           var worldDist = Math.sqrt(distSq) * scale;
           if (worldDist < nearDistance) {
@@ -395,19 +406,28 @@ class Picking {
             nearFace = iFaces[j];
             vec3.copy(nearPoint, closestPoint);
           }
+        } else {
+          rejectedByDist++;
         }
+      }
+
+      if (isSculpting && window.screenLog) {
+        window.screenLog(`[VR Pick Debug] Culling Results - AABB Rejected: ${rejectedByAABB}, Dist Rejected: ${rejectedByDist}, Success: ${!!nearMesh}`, 'yellow');
       }
     }
 
 
 
     if (nearMesh) {
+      if (window.screenLog && this._main && this._main._vrSculpting) {
+         window.screenLog(`[VR Pick Success] Hit Face ID: ${nearFace} on Mesh ID: ${nearMesh.getID()}`, 'lime');
+      }
       this._mesh = nearMesh;
       vec3.copy(this._interPoint, nearPoint);
       this._pickedFace = nearFace;
       // FIX for VR: Use the passed physical radius, DO NOT re-project to screen (which updateLocalAndWorldRadius2 does)
       this._rWorld2 = worldRadius * worldRadius;
-      this._rLocal2 = this._rWorld2 / nearMesh.getScale2();
+      this._rLocal2 = maxLocalRadiusSq;
       return true;
     }
 
@@ -540,7 +560,7 @@ class Picking {
       var ddx = itx - vAr[j];
       var ddy = ity - vAr[j + 1];
       var ddz = itz - vAr[j + 2];
-      if ((ddx * ddx + ddy * ddy + ddz * ddz) < rLocal2) { // Filter precisely using actual tiny radius
+      if ((ddx * ddx + ddy * ddy + ddz * ddz) < searchRadiusSq) {
         vertSculptFlags[ind] = sculptFlag;
         pickedVertices[acc++] = ind;
       }
