@@ -3472,6 +3472,24 @@ export default class GuiXR {
         ctx.fillRect(punchX - 2, ty + 2, 4, trackH - 4);
       }
 
+      if (track && track.shapeTimes) {
+        ctx.fillStyle = '#ffcc00';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        for (let st of track.shapeTimes) {
+          const kx = w.x + (st / maxDuration) * w.w;
+          const ky = ty + trackH / 2;
+          ctx.beginPath();
+          ctx.moveTo(kx, ky - 8);
+          ctx.lineTo(kx + 8, ky);
+          ctx.lineTo(kx, ky + 8);
+          ctx.lineTo(kx - 8, ky);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
       // --- RIGHT-ALIGNED INTERACTIVE ICONS ---
       // 1. Visibility (Eye) Icon
       const eyeX = w.x + w.w - 90;

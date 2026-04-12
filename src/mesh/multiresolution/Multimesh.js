@@ -170,10 +170,12 @@ class Multimesh extends Mesh {
   deleteLower() {
     this._meshes.splice(0, this._sel);
     this.setSelection(0);
+    this.updateResolution();
   }
 
   deleteHigher() {
     this._meshes.splice(this._sel + 1);
+    this.updateResolution();
   }
 
   getLowIndexRender() {

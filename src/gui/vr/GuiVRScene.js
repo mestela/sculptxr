@@ -408,7 +408,13 @@ export default function getSceneWidgets(main) {
   widgets.push({ type: 'header', id: 'header_display', label: 'Display & Symmetry', x: leftX, y: bottomY, w: menuW - 40, h: HEADER_H, header: true });
   bottomY += HEADER_H + GAP;
 
-  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: leftX, y: bottomY, w: colW, h: ITEM_H, value: main._showGrid, onInteract: () => { main._showGrid = !main._showGrid; main.render(); } });
+  widgets.push({ type: 'checkbox', id: 'grid', label: 'Show Grid', x: leftX, y: bottomY, w: colW, h: ITEM_H, value: window.localStorage.getItem('sculptxr_showGrid') !== 'false',
+      onInteract: () => {
+        main._showGrid = !main._showGrid;
+        if (main._groundGrid) main._groundGrid.visible = main._showGrid;
+        window.localStorage.setItem('sculptxr_showGrid', main._showGrid);
+      }
+  });
   widgets.push({ type: 'checkbox', id: 'contour', label: 'Show Contour', x: rightX, y: bottomY, w: colW, h: ITEM_H, value: main._showContour, onInteract: () => { main._showContour = !main._showContour; main.render(); } });
   bottomY += ITEM_H + GAP;
 

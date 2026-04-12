@@ -5,6 +5,7 @@ class AnimationRegistry {
     this.tracks = new Map(); // Map<MeshID, { times, positions, quaternions, scales, playbackTime, lastUpdate }>
     this.activeRecordingId = -1;
     this.activeMesh = null;
+    this.clipboardShape = null; // Floating clipboard buffer for copy/pasting morph keys
     this.isRecording = false;
     this.isCountingIn = false;
     this.startTime = 0;
@@ -401,6 +402,145 @@ class AnimationRegistry {
     }
   }
 
+  addShapeKey(mesh, time) {
+    if (!mesh) return;
+    const id = mesh.getID();
+    
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [],
+        playbackTime: 0,
+        lastUpdate: performance.now()
+      });
+    }
+    
+    const track = this.tracks.get(id);
+    if (!track.shapeTimes) {
+      track.shapeTimes = [];
+      track.shapes = [];
+    }
+    
+    const v = mesh.getVertices();
+    const copy = new Float32Array(v);
+    
+    let idx = 0;
+    while (idx < track.shapeTimes.length && track.shapeTimes[idx] < time) {
+      idx++;
+    }
+    
+    if (idx < track.shapeTimes.length && Math.abs(track.shapeTimes[idx] - time) < 0.005) {
+      track.shapes[idx] = copy;
+    } else {
+      track.shapeTimes.splice(idx, 0, time);
+      track.shapes.splice(idx, 0, copy);
+    }
+    
+    if (time > (window._animMasterDuration || 0)) {
+      window._animMasterDuration = time;
+    }
+    
+    // Always snap the active playback marker to the newly created keyframe so it previews instantly!
+    window._animCurrentTime = time;
+    this.globalPlaybackTime = time;
+    
+    console.log(`[Animation] Added Shape Key for ${id} at T=${time.toFixed(2)}s`);
+  }
+
+  copyShapeKey(mesh, time) {
+    if (!mesh) return;
+    const track = this.tracks.get(mesh.getID());
+    
+    // If there's an exact keyframe nearby, pull its direct buffer:
+    let foundExact = false;
+    if (track && track.shapeTimes) {
+      for (let i = 0; i < track.shapeTimes.length; i++) {
+        if (Math.abs(track.shapeTimes[i] - time) < 0.02) {
+          const cached = track.shapes[i];
+          this.clipboardShape = new Float32Array(cached);
+          foundExact = true;
+          window._animStatusText = `📋 Copied key at ${time.toFixed(2)}s`;
+          break;
+        }
+      }
+    }
+    
+    // Otherwise, capture the live calculated interpolation state at this exact timestamp:
+    if (!foundExact) {
+      const v = mesh.getVertices();
+      if (v) {
+        this.clipboardShape = new Float32Array(v);
+        window._animStatusText = `📋 Snapshotted mesh at ${time.toFixed(2)}s`;
+      }
+    }
+  }
+
+  pasteShapeKey(mesh, time) {
+    if (!mesh || !this.clipboardShape) return;
+    const id = mesh.getID();
+    
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [],
+        playbackTime: 0, lastUpdate: performance.now()
+      });
+    }
+    
+    const track = this.tracks.get(id);
+    if (!track.shapeTimes) {
+      track.shapeTimes = [];
+      track.shapes = [];
+    }
+    
+    const copy = new Float32Array(this.clipboardShape);
+    
+    let idx = 0;
+    while (idx < track.shapeTimes.length && track.shapeTimes[idx] < time) {
+      idx++;
+    }
+    
+    if (idx < track.shapeTimes.length && Math.abs(track.shapeTimes[idx] - time) < 0.005) {
+      track.shapes[idx] = copy;
+    } else {
+      track.shapeTimes.splice(idx, 0, time);
+      track.shapes.splice(idx, 0, copy);
+    }
+    
+    if (time > (window._animMasterDuration || 0)) {
+      window._animMasterDuration = time;
+    }
+    
+    window._animCurrentTime = time;
+    this.globalPlaybackTime = time;
+    
+    // Trigger immediate refresh so the user sees the newly pasted state!
+    if (mesh.updateGeometry) mesh.updateGeometry();
+    if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+    if (window.app && window.app.render) window.app.render();
+    
+    window._animStatusText = `📥 Pasted key at ${time.toFixed(2)}s`;
+  }
+
+  deleteShapeKey(mesh, time) {
+    if (!mesh) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.shapeTimes) return;
+    
+    for (let i = track.shapeTimes.length - 1; i >= 0; i--) {
+      if (Math.abs(track.shapeTimes[i] - time) < 0.05) {
+        track.shapeTimes.splice(i, 1);
+        track.shapes.splice(i, 1);
+        window._animStatusText = `🗑️ Deleted key at ${time.toFixed(2)}s`;
+        
+        if (mesh.updateGeometry) mesh.updateGeometry();
+        if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+        if (window.app && window.app.render) window.app.render();
+        break;
+      }
+    }
+  }
+
   deleteTrack(meshId) {
     if (this.tracks.has(meshId)) {
       this.tracks.delete(meshId);
@@ -446,10 +586,13 @@ class AnimationRegistry {
         window._animLastDt = dt;
 
         if (window._animMasterDuration && window._animMasterDuration > 0) {
-          if (this.globalPlaybackTime < 0) {
-            this.globalPlaybackTime = window._animMasterDuration + (this.globalPlaybackTime % window._animMasterDuration);
-          } else {
-            this.globalPlaybackTime = this.globalPlaybackTime % window._animMasterDuration;
+          const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+          const lEnd = (window._animLoopEnd !== undefined && window._animLoopEnd > lStart) ? window._animLoopEnd : window._animMasterDuration;
+
+          if (this.globalPlaybackTime > lEnd) {
+            this.globalPlaybackTime = lStart;
+          } else if (this.globalPlaybackTime < lStart) {
+            this.globalPlaybackTime = lEnd;
           }
         }
         
@@ -458,7 +601,7 @@ class AnimationRegistry {
     }
 
     const track = this.tracks.get(mesh.getID());
-    if (!track || track.times.length < 2 || track.muted) {
+    if (!track || track.muted) {
       if (track && track.muted && track.restPos && mesh.getMatrix) {
         const m = mesh.getMatrix();
         const [px, py, pz] = track.restPos;
@@ -481,6 +624,11 @@ class AnimationRegistry {
       }
       return;
     }
+
+    // Ensure playbackTime is always set for downstream blocks
+    track.playbackTime = this.globalPlaybackTime || 0;
+
+    if (track.times && track.times.length >= 2) {
 
     // Force the individual track to scrub precisely to the unified global clock
     track.playbackTime = this.globalPlaybackTime || 0;
@@ -532,6 +680,46 @@ class AnimationRegistry {
       m[4] = (xy - wz) * sy; m[5] = (1 - (xx + zz)) * sy; m[6] = (yz + wx) * sy; m[7] = 0;
       m[8] = (xz + wy) * sz; m[9] = (yz - wx) * sz; m[10] = (1 - (xx + yy)) * sz; m[11] = 0;
       m[12] = px; m[13] = py; m[14] = pz; m[15] = 1;
+    }
+
+    }
+
+    if (track.shapeTimes && track.shapeTimes.length > 0) {
+      let sAlpha = 0;
+      let s1 = null;
+      let s2 = null;
+
+      if (track.shapeTimes.length === 1) {
+        s1 = track.shapes[0];
+        s2 = track.shapes[0];
+        sAlpha = 0;
+      } else {
+        let sIdx = 0;
+        while (sIdx < track.shapeTimes.length - 1 && track.shapeTimes[sIdx + 1] < track.playbackTime) {
+          sIdx++;
+        }
+
+        const st1 = track.shapeTimes[sIdx];
+        const st2 = track.shapeTimes[sIdx + 1];
+
+        if (st2 > st1) {
+          sAlpha = (track.playbackTime - st1) / (st2 - st1);
+        }
+
+        s1 = track.shapes[sIdx];
+        s2 = track.shapes[sIdx + 1];
+      }
+
+      const verts = mesh.getVertices();
+      if (verts && s1 && s2 && verts.length === s1.length && s1.length === s2.length) {
+        for (let i = 0; i < verts.length; i++) {
+          verts[i] = s1[i] + (s2[i] - s1[i]) * sAlpha;
+        }
+
+        if (mesh.updateGeometry) mesh.updateGeometry();
+        if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+        if (window.app && window.app.render) window.app.render();
+      }
     }
   }
 }

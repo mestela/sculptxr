@@ -555,17 +555,25 @@ var computeTexCoords = function (baseMesh, newMesh, triFaceOrQuadCenter) {
 /** Apply the reverse of a subdivision */
 Reversion.computeReverse = function (baseMesh, newMesh) {
   var nbFaces = baseMesh.getNbFaces();
-  if (nbFaces % 4 !== 0)
+  console.log("[Reversion] computeReverse start. nbFaces =", nbFaces);
+
+  if (nbFaces % 4 !== 0) {
+    console.log("[Reversion] Failed: nbFaces % 4 !== 0");
     return false;
+  }
 
   // 0 not processed, -1 odd vertex, 1 even vertex
   var vEvenTags = new Int8Array(baseMesh.getNbVertices());
-  if (!tagEvenVertices(baseMesh, vEvenTags))
+  if (!tagEvenVertices(baseMesh, vEvenTags)) {
+    console.log("[Reversion] Failed: tagEvenVertices returned false");
     return false;
+  }
 
   var triFaceOrQuadCenter = new Int32Array(nbFaces / 4);
-  if (!createFaces(baseMesh, newMesh, vEvenTags, triFaceOrQuadCenter))
+  if (!createFaces(baseMesh, newMesh, vEvenTags, triFaceOrQuadCenter)) {
+    console.log("[Reversion] Failed: createFaces returned false");
     return false;
+  }
 
   createVertices(baseMesh, newMesh, triFaceOrQuadCenter);
   copyVerticesData(baseMesh, newMesh);

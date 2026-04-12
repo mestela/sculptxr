@@ -185,6 +185,104 @@ export default function getAnimationWidgets(main) {
 
   y += btnH + gapBtn;
 
+  // 4. Shape Animation
+  widgets.push({
+    type: 'button', id: 'anim_add_shape_key', label: 'Add Shape Key at Playhead', x: col1X, y: y, w: 710, h: 42,
+    onInteract: () => {
+      if (!window._animationRegistry) return;
+      let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
+      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) {
+        targetMesh = main.getMeshes()[0];
+      }
+      if (targetMesh) {
+        window._animationRegistry.addShapeKey(targetMesh, window._animCurrentTime || 0);
+      }
+    }
+  });
+
+  y += 42 + gapBtn;
+
+  // Shape Key Copy/Paste Action Bar
+  const cW = 710 / 3;
+  widgets.push({
+    type: 'button', id: 'anim_copy_key', label: '📋 Copy Key/Shape', x: col1X, y: y, w: cW - 5, h: 42,
+    onInteract: () => {
+      if (!window._animationRegistry) return;
+      let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
+      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
+      if (targetMesh) window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'anim_paste_key', label: '📥 Paste Key', x: col1X + cW, y: y, w: cW - 5, h: 42,
+    onInteract: () => {
+      if (!window._animationRegistry) return;
+      let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
+      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
+      if (targetMesh) window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'anim_del_key', label: '🗑️ Delete Key', x: col1X + cW*2, y: y, w: cW - 5, h: 42,
+    onInteract: () => {
+      if (!window._animationRegistry) return;
+      let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
+      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
+      if (targetMesh) window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
+    }
+  });
+
+  y += 42 + gapBtn;
+
+  widgets.push({
+    type: 'slider', id: 'anim_master_duration', label: 'Scene Duration (s)', x: col1X, y: y, w: 710, h: 50,
+    min: 1.0, max: 60.0, step: 1.0,
+    value: window._animMasterDuration || 2.0,
+    data: { tint: '#ffffff' },
+    onInput: (val) => {
+      window._animMasterDuration = val;
+      if (window._animLoopEnd && window._animLoopEnd > val) {
+        window._animLoopEnd = val;
+      }
+    }
+  });
+  y += 50 + gapBtn;
+
+  widgets.push({
+    type: 'slider', id: 'anim_loop_start', label: 'Loop Start', x: col1X, y: y, w: 350, h: 50,
+    min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
+    value: window._animLoopStart || 0.0,
+    data: { tint: '#ffffff' },
+    onInput: (val) => {
+      window._animLoopStart = val;
+      if (window._animLoopEnd !== undefined && window._animLoopStart >= window._animLoopEnd) {
+        window._animLoopStart = Math.max(0, window._animLoopEnd - 0.1);
+      }
+      window._animCurrentTime = window._animLoopStart;
+      if (window._animationRegistry) {
+        window._animationRegistry.globalPlaybackTime = window._animLoopStart;
+        if (main._meshes) main._meshes.forEach(m => window._animationRegistry.update(m, true));
+      }
+    }
+  });
+
+  widgets.push({
+    type: 'slider', id: 'anim_loop_end', label: 'Loop End', x: col1X + 360, y: y, w: 350, h: 50,
+    min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
+    value: window._animLoopEnd !== undefined ? window._animLoopEnd : (window._animMasterDuration || 2.0),
+    data: { tint: '#ffffff' },
+    onInput: (val) => {
+      window._animLoopEnd = val;
+      if (window._animLoopStart !== undefined && window._animLoopEnd <= window._animLoopStart) {
+        window._animLoopEnd = window._animLoopStart + 0.1;
+      }
+    }
+  });
+
+  y += 36 + gapBtn;
+
 
 
   // 6. Sleek Timeline

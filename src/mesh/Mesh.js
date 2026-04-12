@@ -2321,6 +2321,7 @@ class Mesh {
         attr.updateRange.offset = 0;
         attr.updateRange.count = -1;
       }
+      attr.array.set(vertices);
       attr.needsUpdate = true;
 
       if (geom) {
@@ -2347,6 +2348,7 @@ class Mesh {
         attr.updateRange.offset = 0;
         attr.updateRange.count = -1;
       }
+      attr.array.set(normals);
       attr.needsUpdate = true;
     }
   }
