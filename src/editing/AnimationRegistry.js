@@ -581,7 +581,8 @@ class AnimationRegistry {
         if (!this.globalPlaybackTime) this.globalPlaybackTime = 0;
         
         const dir = this.playbackDirection !== undefined ? this.playbackDirection : 1;
-        this.globalPlaybackTime += dt * dir;
+        const speed = window._animPlaybackSpeed !== undefined ? window._animPlaybackSpeed : 1.0;
+        this.globalPlaybackTime += dt * dir * speed;
 
         window._animLastDt = dt;
 
@@ -688,13 +689,13 @@ class AnimationRegistry {
       let sAlpha = 0;
       let s1 = null;
       let s2 = null;
+      let sIdx = 0;
 
       if (track.shapeTimes.length === 1) {
         s1 = track.shapes[0];
         s2 = track.shapes[0];
         sAlpha = 0;
       } else {
-        let sIdx = 0;
         while (sIdx < track.shapeTimes.length - 1 && track.shapeTimes[sIdx + 1] < track.playbackTime) {
           sIdx++;
         }
@@ -712,8 +713,32 @@ class AnimationRegistry {
 
       const verts = mesh.getVertices();
       if (verts && s1 && s2 && verts.length === s1.length && s1.length === s2.length) {
+        let blend = sAlpha;
+
+        if (window._animShowTangents && track.shapeTimes.length > 1) {
+          let m0 = 1.0;
+          let m1 = 1.0;
+
+          if (track.tangentOffsets) {
+            const rightVal = track.tangentOffsets[`${sIdx}_right`];
+            const leftVal = track.tangentOffsets[`${sIdx + 1}_left`];
+            
+            const rightHandle = rightVal !== undefined ? rightVal : 25;
+            const leftHandle = leftVal !== undefined ? leftVal : -25;
+
+            m0 = rightHandle / 25.0;
+            m1 = -leftHandle / 25.0;
+          }
+
+          const t = sAlpha;
+          const t2 = t * t;
+          const t3 = t2 * t;
+
+          blend = (-2 * t3 + 3 * t2) + m0 * (t3 - 2 * t2 + t) + m1 * (t3 - t2);
+        }
+
         for (let i = 0; i < verts.length; i++) {
-          verts[i] = s1[i] + (s2[i] - s1[i]) * sAlpha;
+          verts[i] = s1[i] + (s2[i] - s1[i]) * blend;
         }
 
         if (mesh.updateGeometry) mesh.updateGeometry();

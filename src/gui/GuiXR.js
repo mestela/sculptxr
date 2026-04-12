@@ -1006,6 +1006,10 @@ export default class GuiXR {
       }
       if (this._activeTimeline) {
         this._activeTimeline = null;
+        this._activeKeyframeTrack = null;
+        this._activeKeyframeIndex = undefined;
+        this._activeTangentTrack = null;
+        this._activeTangentIndex = undefined;
       }
       return;
     }
@@ -1026,18 +1030,20 @@ export default class GuiXR {
         }
       }
 
-      // Calculate normalized value
-      let t = (scaledCx - sliderX) / sliderW;
-      t = Math.max(0, Math.min(1, t));
-
-      // Map to Min/Max
-      let val = t;
+      // Calculate relative thumbwheel offset
+      let deltaX = scaledCx - (this._sliderStartCx !== undefined ? this._sliderStartCx : scaledCx);
+      
+      let val = targetWid.value;
       if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
-        val = targetWid.min + t * (targetWid.max - targetWid.min);
+        const range = targetWid.max - targetWid.min;
+        const baseVal = this._sliderStartVal !== undefined ? this._sliderStartVal : targetWid.value;
+        
+        val = baseVal + (deltaX / sliderW) * range;
+        val = Math.max(targetWid.min, Math.min(targetWid.max, val));
+
         if (targetWid.step) {
           const steps = Math.round((val - targetWid.min) / targetWid.step);
           val = targetWid.min + steps * targetWid.step;
-          // Force integer UI strings for integer steps to avoid JS float precision issues (like 15.00000001)
           if (targetWid.step % 1 === 0) val = Math.round(val);
         }
       }
@@ -1070,10 +1076,52 @@ export default class GuiXR {
         }
       }
 
-      let t = (scaledCx - targetWid.x) / targetWid.w;
+      let t = (scaledCx - targetWid.x - 200) / (targetWid.w - 220);
       t = Math.max(0, Math.min(1, t));
+      
       const masterLen = window._animMasterDuration || 1.0;
-      const targetTime = t * masterLen;
+      const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+      const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : masterLen;
+      const targetTime = lStart + t * (lEnd - lStart);
+
+      if (this._activeTangentTrack && this._activeTangentIndex !== undefined) {
+        let scaledCx = cx;
+        if (this._overlay) {
+          const pivot = this._getOverlayPivot();
+          const invScale = 1 / OVERLAY_SCALE;
+          scaledCx = (cx - pivot.x) * invScale + pivot.x;
+          if (this._overlayData && this._overlayData.x !== undefined) {
+            scaledCx -= this._overlayData.x;
+          }
+        }
+        
+        const rx = scaledCx - targetWid.x;
+        let deltaX = rx - this._activeTangentKx;
+        
+        if (this._activeTangentSide === 'left') {
+          deltaX = Math.min(0, Math.max(200 - this._activeTangentKx, deltaX));
+        } else {
+          deltaX = Math.max(0, Math.min(targetWid.w - 20 - this._activeTangentKx, deltaX));
+        }
+        
+        if (!this._activeTangentTrack.tangentOffsets) {
+          this._activeTangentTrack.tangentOffsets = {};
+        }
+        const key = `${this._activeTangentIndex}_${this._activeTangentSide}`;
+        this._activeTangentTrack.tangentOffsets[key] = deltaX;
+        
+        this._needsRedraw = true;
+        return;
+      }
+
+      if (this._activeKeyframeTrack && this._activeKeyframeIndex !== undefined) {
+        const currentRx = scaledCx - targetWid.x;
+        if (this._keyDragStartRx === undefined || Math.abs(currentRx - this._keyDragStartRx) > 10) {
+          this._activeKeyframeTrack.shapeTimes[this._activeKeyframeIndex] = targetTime;
+        }
+        this._needsRedraw = true;
+        return;
+      }
 
       window._animPlaying = false;
       window._animCurrentTime = targetTime;
@@ -1340,7 +1388,7 @@ export default class GuiXR {
         this._handleWidgetClick(this._activeColorPicker);
         return;
       } else if (this._activeTimeline) {
-        let t = (cx - this._activeTimeline.x) / this._activeTimeline.w;
+        let t = (cx - this._activeTimeline.x - 200) / (this._activeTimeline.w - 220);
         t = Math.max(0, Math.min(1, t));
         const masterLen = window._animMasterDuration || 1.0;
         const targetTime = t * masterLen;
@@ -1382,7 +1430,7 @@ export default class GuiXR {
         if (ry <= 30 || this._activeTimeline) {
           // --- 1. TOP HEADER SCRUB ZONE (or Continuous Drag) ---
           this._activeTimeline = targetWid;
-          let t = rx / targetWid.w;
+          let t = (rx - 200) / (targetWid.w - 220);
           t = Math.max(0, Math.min(1, t));
 
           const masterLen = window._animMasterDuration || 1.0;
@@ -1418,13 +1466,13 @@ export default class GuiXR {
             if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length && (!this._laneActionDebounce || performance.now() - this._laneActionDebounce > 300)) {
               const [meshId, trackObj] = tracks[clickedLaneIdx];
               
-              // 1. Check Trash Icon (Rightmost 60px)
-              if (rx > targetWid.w - 60) {
+              // 1. Check Trash Icon (Left Margin: 120px to 160px)
+              if (rx >= 120 && rx <= 160) {
                 this._laneActionDebounce = performance.now();
                 window._animationRegistry.deleteTrack(meshId);
               }
-              // 2. Check Mute/Eye Icon (Rightmost 120px to 60px)
-              else if (rx > targetWid.w - 120) {
+              // 2. Check Mute/Eye Icon (Left Margin: 80px to 120px)
+              else if (rx >= 80 && rx < 120) {
                 this._laneActionDebounce = performance.now();
                 trackObj.muted = !trackObj.muted;
                 
@@ -1438,6 +1486,54 @@ export default class GuiXR {
                     this._main.render();
                   }
                 }
+              } else if (trackObj && trackObj.shapeTimes) {
+                const mDur = window._animMasterDuration || 1.0;
+                const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+                const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+                const vDur = Math.max(0.1, lEnd - lStart);
+                
+                for (let i = 0; i < trackObj.shapeTimes.length; i++) {
+                  const kTime = trackObj.shapeTimes[i];
+                  const kx = 200 + ((kTime - lStart) / vDur) * (targetWid.w - 220);
+                  
+                  const ky = targetWid.y + 30 + (clickedLaneIdx * trackH) + trackH / 2;
+
+                  if (window._animShowTangents) {
+                    let leftXOff = -25;
+                    let rightXOff = 25;
+                    if (trackObj.tangentOffsets) {
+                      if (trackObj.tangentOffsets[`${i}_left`] !== undefined) leftXOff = trackObj.tangentOffsets[`${i}_left`];
+                      if (trackObj.tangentOffsets[`${i}_right`] !== undefined) rightXOff = trackObj.tangentOffsets[`${i}_right`];
+                    }
+
+                    if (Math.abs(rx - (kx + leftXOff)) < 15) {
+                      this._activeTangentTrack = trackObj;
+                      this._activeTangentIndex = i;
+                      this._activeTangentSide = 'left';
+                      this._activeTangentKx = kx;
+                      this._activeTimeline = targetWid;
+                      break;
+                    }
+                    if (Math.abs(rx - (kx + rightXOff)) < 15) {
+                      this._activeTangentTrack = trackObj;
+                      this._activeTangentIndex = i;
+                      this._activeTangentSide = 'right';
+                      this._activeTangentKx = kx;
+                      this._activeTimeline = targetWid;
+                      break;
+                    }
+                  }
+
+                  if (Math.abs(rx - kx) < 25) {
+                    this._activeKeyframeTrack = trackObj;
+                    this._activeKeyframeIndex = i;
+                    this._keyDragStartRx = rx;
+                    this._activeTimeline = targetWid;
+                    
+                    // Do NOT update window._animCurrentTime or globalPlaybackTime to keep playhead stable
+                    break;
+                  }
+                }
               }
             }
           }
@@ -1448,31 +1544,19 @@ export default class GuiXR {
 
       if (targetWid.type === 'slider') {
         this._activeSlider = targetWid;
-
-        const sliderW = targetWid.w;
-        const sliderX = targetWid.x;
-
-        let t = (cx - sliderX) / sliderW;
-        t = Math.max(0, Math.min(1, t));
-
-        let val = t;
-        if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
-          val = targetWid.min + t * (targetWid.max - targetWid.min);
-          if (targetWid.step) {
-            const steps = Math.round((val - targetWid.min) / targetWid.step);
-            val = targetWid.min + steps * targetWid.step;
-            if (targetWid.step % 1 === 0) val = Math.round(val);
+        
+        let clickCx = cx;
+        if (this._overlay) {
+          const pivot = this._getOverlayPivot();
+          const invScale = 1 / OVERLAY_SCALE;
+          clickCx = (cx - pivot.x) * invScale + pivot.x;
+          if (this._overlayData && this._overlayData.x !== undefined) {
+            clickCx -= this._overlayData.x;
           }
         }
-
-        if (targetWid.id === 'trigger_curve') console.log(`[SLIDER CLICK] cx:${cx.toFixed(1)} t:${t.toFixed(3)} val:${val.toFixed(3)}`);
-
-        if (targetWid.value !== val) {
-          targetWid.value = val;
-          if (targetWid.onInput) targetWid.onInput(val);
-          this._executeAction(targetWid);
-          this._needsRedraw = true;
-        }
+        this._sliderStartCx = clickCx;
+        this._sliderStartVal = targetWid.value;
+        
         return;
       }
 
@@ -1678,21 +1762,17 @@ export default class GuiXR {
 
           if (w.type === 'slider') {
             this._activeSlider = w;
-            let t = Math.max(0, Math.min(1, (rx - w.x) / w.w));
-            let val = t;
-            if (isFinite(w.min) && isFinite(w.max)) {
-              val = w.min + t * (w.max - w.min);
-              if (w.step) {
-                const steps = Math.round((val - w.min) / w.step);
-                val = w.min + steps * w.step;
-                if (w.step % 1 === 0) val = Math.round(val);
+            let clickCx = cx;
+            if (this._overlay) {
+              const pivot = this._getOverlayPivot();
+              const invScale = 1 / OVERLAY_SCALE;
+              clickCx = (cx - pivot.x) * invScale + pivot.x;
+              if (this._overlayData && this._overlayData.x !== undefined) {
+                clickCx -= this._overlayData.x;
               }
             }
-            w.value = val;
-            if (w.id !== 'stack_size') {
-              this._executeAction(w);
-            }
-            this._needsRedraw = true;
+            this._sliderStartCx = clickCx;
+            this._sliderStartVal = w.value;
           } else if (w.type === 'timeline') {
             let t = Math.max(0, Math.min(1, (rx - w.x) / w.w));
             const masterLen = window._animMasterDuration || 1.0;
@@ -3391,133 +3471,207 @@ export default class GuiXR {
     const reg = window._animationRegistry;
     const tracks = Array.from(reg.tracks.entries());
     
-    if (tracks.length === 0) {
-      ctx.fillStyle = '#666';
-      ctx.font = '24px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No recorded tracks in memory.', w.x + w.w/2, w.y + w.h/2 + 8);
-      return;
-    }
+    const mDurVal = window._animMasterDuration && window._animMasterDuration > 0 ? window._animMasterDuration : 1.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
+    const tlX = w.x + 200;
+    const tlW = w.w - 220;
 
     // --- 1. Draw Top Transport Header Strip (30px tall) ---
     const headerH = 30;
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
-    const mDur = window._animMasterDuration ? window._animMasterDuration.toFixed(2) : '0.00';
+    const mDur = mDurVal.toFixed(2);
     const curT = window._animCurrentTime ? window._animCurrentTime.toFixed(2) : '0.00';
     ctx.fillStyle = '#888';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`0.0s`, w.x + 5, w.y + 20);
+    ctx.fillText(`${loopStart.toFixed(1)}s`, tlX + 5, w.y + 20);
     ctx.textAlign = 'right';
-    ctx.fillText(`${mDur}s`, w.x + w.w - 5, w.y + 20);
+    ctx.fillText(`${loopEnd.toFixed(1)}s`, tlX + tlW - 5, w.y + 20);
 
-    let maxDuration = window._animMasterDuration && window._animMasterDuration > 0 ? window._animMasterDuration : 1.0;
+    if (window._animFeedbackText && window._animFeedbackTimer) {
+      const elapsed = performance.now() - window._animFeedbackTimer;
+      if (elapsed < 2000) {
+        ctx.fillStyle = '#00ffcc';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(window._animFeedbackText, w.x + w.w / 2, w.y + 20);
+      }
+    }
+
+    // Clip timeline content to the widget bounds to prevent overflowing when zoomed
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(w.x, w.y, w.w, w.h);
+    ctx.clip();
 
     // 2. Draw Vertical Grid Lines across the lanes
     ctx.strokeStyle = '#333';
     ctx.lineWidth = 1;
-    for (let s = 1; s <= Math.ceil(maxDuration); s++) {
-      const gridX = w.x + (s / maxDuration) * w.w;
-      ctx.beginPath();
-      ctx.moveTo(gridX, w.y + headerH);
-      ctx.lineTo(gridX, w.y + w.h);
-      ctx.stroke();
+    const totalSeconds = Math.ceil(mDurVal);
+    for (let s = 0; s <= totalSeconds; s++) {
+      if (s >= loopStart && s <= loopEnd) {
+        const gridX = tlX + ((s - loopStart) / visibleDuration) * tlW;
+        ctx.beginPath();
+        ctx.moveTo(gridX, w.y + headerH);
+        ctx.lineTo(gridX, w.y + w.h);
+        ctx.stroke();
+      }
     }
+
+    // Track Column Border
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(tlX, w.y + headerH);
+    ctx.lineTo(tlX, w.y + w.h);
+    ctx.stroke();
 
     // 3. Render Track Lanes
     const laneAreaH = w.h - headerH;
-    const totalAvailableSlots = Math.max(4, tracks.length); 
-    const trackH = laneAreaH / totalAvailableSlots;
+    
+    if (tracks.length === 0) {
+      ctx.fillStyle = '#666';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No recorded tracks in memory.', w.x + w.w/2, w.y + headerH + laneAreaH/2 + 8);
+    } else {
+      const totalAvailableSlots = Math.max(4, tracks.length); 
+      const trackH = laneAreaH / totalAvailableSlots;
 
-    tracks.forEach(([id, track], idx) => {
-      const ty = w.y + headerH + (idx * trackH);
-      
-      // Alternate lane background
-      if (idx % 2 === 1) {
-        ctx.fillStyle = 'rgba(255,255,255,0.03)';
-        ctx.fillRect(w.x, ty, w.w, trackH);
-      }
+      tracks.forEach(([id, track], idx) => {
+        const ty = w.y + headerH + (idx * trackH);
+        
+        // Alternate lane background
+        if (idx % 2 === 1) {
+          ctx.fillStyle = 'rgba(255,255,255,0.03)';
+          ctx.fillRect(w.x, ty, w.w, trackH);
+        }
 
-      // Lane Label
-      ctx.fillStyle = '#aaa';
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'left';
-      let laneName = `Track ${id}`;
-      if (this._main && this._main._meshes) {
-        const found = this._main._meshes.find(m => m.getID() === id);
-        if (found) {
-          laneName = found._permanentStaticLabel || `Object ${id}`;
-          if (!found._loggedLaneName) {
-            found._loggedLaneName = true;
+        // Lane Label
+        ctx.fillStyle = '#aaa';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'left';
+        let laneName = `Track ${id}`;
+        if (this._main && this._main._meshes) {
+          const found = this._main._meshes.find(m => m.getID() === id);
+          if (found) {
+            laneName = found._permanentStaticLabel || `Object ${id}`;
+            if (!found._loggedLaneName) {
+              found._loggedLaneName = true;
+            }
           }
         }
-      }
-      ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
+        ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
 
-      // Animation data bar
-      if (track && track.times && track.times.length > 1) {
-        const lastTime = track.times[track.times.length - 1];
-        const xStart = w.x; // Force fill from the very beginning of the loop!
-        const xEnd = w.x + (lastTime / maxDuration) * w.w;
+        // Animation data bar
+        if (track && track.times && track.times.length > 1) {
+          const lastTime = track.times[track.times.length - 1];
+          const firstTime = track.times[0];
+          
+          // Only draw if it overlaps the visible loop range
+          if (lastTime >= loopStart && firstTime <= loopEnd) {
+            const xStart = tlX + (Math.max(0, firstTime - loopStart) / visibleDuration) * tlW;
+            const xEnd = tlX + (Math.min(loopEnd, lastTime - loopStart) / visibleDuration) * tlW;
 
-        ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.3)' : 'rgba(0, 255, 200, 0.25)';
-        ctx.fillRect(xStart, ty + 4, xEnd - xStart, trackH - 8);
-      }
-
-      if (track && track.punchInTime !== undefined && maxDuration > 0) {
-        const punchX = w.x + (track.punchInTime / maxDuration) * w.w;
-        ctx.fillStyle = '#ff8800';
-        ctx.fillRect(punchX - 2, ty + 2, 4, trackH - 4);
-      }
-
-      if (track && track.shapeTimes) {
-        ctx.fillStyle = '#ffcc00';
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        for (let st of track.shapeTimes) {
-          const kx = w.x + (st / maxDuration) * w.w;
-          const ky = ty + trackH / 2;
-          ctx.beginPath();
-          ctx.moveTo(kx, ky - 8);
-          ctx.lineTo(kx + 8, ky);
-          ctx.lineTo(kx, ky + 8);
-          ctx.lineTo(kx - 8, ky);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
+            ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.3)' : 'rgba(0, 255, 200, 0.25)';
+            ctx.fillRect(xStart, ty + 4, xEnd - xStart, trackH - 8);
+          }
         }
-      }
 
-      // --- RIGHT-ALIGNED INTERACTIVE ICONS ---
-      // 1. Visibility (Eye) Icon
-      const eyeX = w.x + w.w - 90;
-      const eyeY = ty + trackH / 2 - 12; // offset to center the 24x24 path vertically
-      
-      ctx.save();
-      ctx.translate(eyeX - 12, eyeY);
-      ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
-      ctx.lineWidth = 2;
-      
-      const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
-      ctx.stroke(eyePath);
-      
-      ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
-      ctx.beginPath();
-      ctx.arc(12, 12, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+        if (track && track.punchInTime !== undefined && mDurVal > 0) {
+          if (track.punchInTime >= loopStart && track.punchInTime <= loopEnd) {
+            const punchX = tlX + ((track.punchInTime - loopStart) / visibleDuration) * tlW;
+            ctx.fillStyle = '#ff8800';
+            ctx.fillRect(punchX - 2, ty + 2, 4, trackH - 4);
+          }
+        }
 
-      // 2. Trash Icon
-      const trashX = w.x + w.w - 30;
-      ctx.fillStyle = '#ff4444';
-      ctx.fillText('🗑', trashX, ty + trackH / 2);
-    });
+        if (track && track.shapeTimes) {
+          for (let i = 0; i < track.shapeTimes.length; i++) {
+            const st = track.shapeTimes[i];
+            if (st >= loopStart && st <= loopEnd) {
+              const kx = tlX + ((st - loopStart) / visibleDuration) * tlW;
+              const ky = ty + trackH / 2;
+              
+              if (window._animShowTangents) {
+                let leftXOff = -25;
+                let rightXOff = 25;
+                if (track.tangentOffsets) {
+                  if (track.tangentOffsets[`${i}_left`] !== undefined) leftXOff = track.tangentOffsets[`${i}_left`];
+                  if (track.tangentOffsets[`${i}_right`] !== undefined) rightXOff = track.tangentOffsets[`${i}_right`];
+                }
+
+                ctx.strokeStyle = '#ff00aa';
+                ctx.lineWidth = 1.5;
+                
+                ctx.beginPath();
+                ctx.moveTo(kx + leftXOff, ky);
+                ctx.lineTo(kx, ky);
+                ctx.stroke();
+                
+                ctx.fillStyle = '#ff00aa';
+                ctx.beginPath();
+                ctx.arc(kx + leftXOff, ky, 4, 0, Math.PI*2);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(kx, ky);
+                ctx.lineTo(kx + rightXOff, ky);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(kx + rightXOff, ky, 4, 0, Math.PI*2);
+                ctx.fill();
+              }
+
+              ctx.fillStyle = '#ffcc00';
+              ctx.strokeStyle = '#ffffff';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(kx, ky - 8);
+              ctx.lineTo(kx + 8, ky);
+              ctx.lineTo(kx, ky + 8);
+              ctx.lineTo(kx - 8, ky);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            }
+          }
+        }
+
+        // --- LEFT-ALIGNED INTERACTIVE ICONS ---
+        const eyeX = w.x + 100;
+        const eyeY = ty + trackH / 2 - 12; 
+        
+        ctx.save();
+        ctx.translate(eyeX - 12, eyeY);
+        ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
+        ctx.lineWidth = 2;
+        
+        const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+        ctx.stroke(eyePath);
+        
+        ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
+        ctx.beginPath();
+        ctx.arc(12, 12, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        const trashX = w.x + 140;
+        ctx.fillStyle = '#ff4444';
+        ctx.fillText('🗑', trashX, ty + trackH / 2);
+      });
+    }
 
     // 4. Render Blender-Style Custom Playhead Cap
-    const playheadAlpha = (window._animCurrentTime || 0) / maxDuration;
-    const playheadX = w.x + playheadAlpha * w.w;
+    const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
+    const playheadAlpha = (currentTimeVal - loopStart) / visibleDuration;
+    const playheadX = tlX + playheadAlpha * tlW;
 
     // Playhead full vertical line
     ctx.strokeStyle = '#4488ff';
@@ -3544,6 +3698,8 @@ export default class GuiXR {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(curT, playheadX, w.y + 12);
+
+    ctx.restore(); // End clip
 
     // --- PROMINENT CENTER COUNTDOWN OVERLAY ---
     if (window._animationRegistry && window._animationRegistry.isCountingIn) {
@@ -4014,10 +4170,9 @@ export default class GuiXR {
         // console.log(`[SculptGL] _handleDropdownInteract option resolved: ${opt.label} (val:${val})`);
         w.value = val; 
         if (w.onSelect) {
-            // console.log(`[SculptGL] _handleDropdownInteract invoking onSelect!`);
             w.onSelect(val);
-        } else {
-            // console.log(`[SculptGL] _handleDropdownInteract: No onSelect callback found!`);
+        } else if (w.onInteract) {
+            w.onInteract(val);
         }
         this._activeCombobox = null;
         this._needsRedraw = true;

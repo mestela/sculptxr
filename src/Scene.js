@@ -1713,6 +1713,10 @@ class Scene {
       }
     }
 
+    if (this._meshes.length === 1) {
+      this.setMesh(this._meshes[0]);
+    }
+
     if (this._guiXR && this._guiXR.refreshSceneWidget) {
       this._guiXR.refreshSceneWidget();
     }

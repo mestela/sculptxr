@@ -8,23 +8,21 @@ export default function getAnimationWidgets(main) {
 
   let y = 130;
 
-  widgets.push({ type: 'info', label: 'Mocap Overdub Looper', x: col1X, y: y });
-  y += gapHeader;
-
   // Global Configuration Options
   window._animArmed = window._animArmed !== undefined ? window._animArmed : true;
   window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
   window._animPlaying = window._animPlaying || false;
-
-
+  window._animMasterDuration = window._animMasterDuration !== undefined && window._animMasterDuration > 0 ? window._animMasterDuration : 2.0;
+  window._animLoopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+  window._animLoopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : window._animMasterDuration;
+  window._animPlaybackSpeed = window._animPlaybackSpeed || 1.0;
 
   window._animWaitForTrigger = window._animWaitForTrigger !== undefined ? window._animWaitForTrigger : true;
+  window._animShowTangents = window._animShowTangents || false;
 
-  // 2. Countdown Toggle
+  // 1. Toggles Row
   widgets.push({
-    type: 'checkbox',
-    id: 'anim_count_toggle',
-    label: 'Use 3-Second Countdown Delay',
+    type: 'checkbox', id: 'anim_count_toggle', label: 'Use 3-Second Countdown',
     x: col1X, y: y, w: 350, h: 36,
     value: window._animCountIn,
     onInteract: () => {
@@ -35,9 +33,7 @@ export default function getAnimationWidgets(main) {
   });
 
   widgets.push({
-    type: 'checkbox',
-    id: 'anim_trigger_toggle',
-    label: 'Start on Trigger',
+    type: 'checkbox', id: 'anim_trigger_toggle', label: 'Start on Trigger',
     x: col1X + 360, y: y, w: 350, h: 36,
     value: window._animWaitForTrigger,
     onInteract: () => {
@@ -48,9 +44,41 @@ export default function getAnimationWidgets(main) {
   });
   y += 36 + gapBtn;
 
-  // 2.5 Reset All
+  // 2. Mode Row (Tangents & Speed)
   widgets.push({
-    type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo', x: col1X, y: y, w: 710, h: 36,
+    type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangent Handles',
+    x: col1X, y: y, w: 350, h: 36,
+    value: window._animShowTangents,
+    onInteract: () => {
+      window._animShowTangents = !window._animShowTangents;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+
+  widgets.push({
+    type: 'combobox', id: 'anim_speed', label: `Speed: ${window._animPlaybackSpeed}x`,
+    x: col1X + 360, y: y, w: 350, h: 36,
+    value: window._animPlaybackSpeed,
+    options: [
+      { id: 0.1, label: 'Speed: 0.1x' },
+      { id: 0.5, label: 'Speed: 0.5x' },
+      { id: 1.0, label: 'Speed: 1.0x' },
+      { id: 1.5, label: 'Speed: 1.5x' },
+      { id: 1.8, label: 'Speed: 1.8x' },
+      { id: 2.0, label: 'Speed: 2.0x' },
+      { id: 4.0, label: 'Speed: 4.0x' }
+    ],
+    onInteract: (val) => {
+      window._animPlaybackSpeed = parseFloat(val) || 1.0;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+  y += 36 + gapBtn;
+
+  // 3. Clear All
+  widgets.push({
+    type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
+    x: col1X, y: y, w: 710, h: 36,
     onInteract: () => {
       if (!window._animationRegistry) return;
       window._animationRegistry.stopRecording(true);
@@ -185,59 +213,107 @@ export default function getAnimationWidgets(main) {
 
   y += btnH + gapBtn;
 
-  // 4. Shape Animation
+  window._animKeyMode = window._animKeyMode || 'shape';
+
+  const showFeedback = (text) => {
+    window._animFeedbackText = text;
+    window._animFeedbackTimer = performance.now();
+    if (main._guiXR) main._guiXR._needsRedraw = true;
+  };
+
+  // 4. Giant Square Keyframe Button & Unified Toolbar
+  const kRowW = 710;
+  const giantBtnSize = 100; // Double height
+  const subBtnH = (giantBtnSize - gapBtn) / 2; // 42.5px each
+  
+  // Giant Add Key Button (Left side, takes up two standard rows)
   widgets.push({
-    type: 'button', id: 'anim_add_shape_key', label: 'Add Shape Key at Playhead', x: col1X, y: y, w: 710, h: 42,
+    type: 'button', id: 'anim_add_key', label: '◆+', x: col1X, y: y, w: giantBtnSize, h: giantBtnSize,
     onInteract: () => {
       if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
-      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) {
-        targetMesh = main.getMeshes()[0];
-      }
+      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
+      
       if (targetMesh) {
-        window._animationRegistry.addShapeKey(targetMesh, window._animCurrentTime || 0);
+        if (window._animKeyMode === 'shape') {
+          window._animationRegistry.addShapeKey(targetMesh, window._animCurrentTime || 0);
+          showFeedback('◆ Added Shape Key');
+        } else {
+          showFeedback('◆ Added Transform Key');
+        }
       }
     }
   });
 
-  y += 42 + gapBtn;
-
-  // Shape Key Copy/Paste Action Bar
-  const cW = 710 / 3;
+  // Right side top: Mode Selector
   widgets.push({
-    type: 'button', id: 'anim_copy_key', label: '📋 Copy Key/Shape', x: col1X, y: y, w: cW - 5, h: 42,
+    type: 'combobox', id: 'anim_key_mode', label: 'Mode: Shape', 
+    x: col1X + giantBtnSize + gapBtn, y: y, w: kRowW - giantBtnSize - gapBtn, h: subBtnH,
+    value: window._animKeyMode,
+    options: [
+      { id: 'shape', label: 'Mode: Shape' },
+      { id: 'transform', label: 'Mode: Transform' }
+    ],
+    onInteract: () => {
+      window._animKeyMode = (window._animKeyMode === 'shape') ? 'transform' : 'shape';
+      showFeedback(`Switched to ${window._animKeyMode.toUpperCase()}`);
+    }
+  });
+
+  // Right side bottom: Clipboard Actions
+  const subActW = (kRowW - giantBtnSize - gapBtn - 30) / 3;
+  const subY = y + subBtnH + gapBtn;
+
+  widgets.push({
+    type: 'button', id: 'anim_copy_key', label: '📋 Copy', 
+    x: col1X + giantBtnSize + gapBtn, y: subY, w: subActW, h: subBtnH,
     onInteract: () => {
       if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
+      if (targetMesh) {
+        window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
+        showFeedback('📋 Copied Key');
+      }
     }
   });
 
   widgets.push({
-    type: 'button', id: 'anim_paste_key', label: '📥 Paste Key', x: col1X + cW, y: y, w: cW - 5, h: 42,
+    type: 'button', id: 'anim_paste_key', label: '📥 Paste', 
+    x: col1X + giantBtnSize + gapBtn + subActW + 15, y: subY, w: subActW, h: subBtnH,
     onInteract: () => {
       if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
+      if (targetMesh) {
+        window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
+        showFeedback('📥 Pasted Key');
+      }
     }
   });
 
   widgets.push({
-    type: 'button', id: 'anim_del_key', label: '🗑️ Delete Key', x: col1X + cW*2, y: y, w: cW - 5, h: 42,
+    type: 'button', id: 'anim_del_key', label: '🗑️ Del', 
+    x: col1X + giantBtnSize + gapBtn + (subActW + 15)*2, y: subY, w: subActW, h: subBtnH,
     onInteract: () => {
       if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
+      if (targetMesh) {
+        window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
+        showFeedback('🗑️ Deleted Key');
+      }
     }
   });
 
-  y += 42 + gapBtn;
+  y += giantBtnSize + gapBtn;
 
+  // 5. Unified Triple Slider Row
+  const sW = (710 - 30) / 3; // 226px each
+  
   widgets.push({
-    type: 'slider', id: 'anim_master_duration', label: 'Scene Duration (s)', x: col1X, y: y, w: 710, h: 50,
+    type: 'slider', id: 'anim_master_duration', label: 'Duration', 
+    x: col1X, y: y, w: sW, h: 50,
     min: 1.0, max: 60.0, step: 1.0,
     value: window._animMasterDuration || 2.0,
     data: { tint: '#ffffff' },
@@ -248,10 +324,10 @@ export default function getAnimationWidgets(main) {
       }
     }
   });
-  y += 50 + gapBtn;
 
   widgets.push({
-    type: 'slider', id: 'anim_loop_start', label: 'Loop Start', x: col1X, y: y, w: 350, h: 50,
+    type: 'slider', id: 'anim_loop_start', label: 'Start', 
+    x: col1X + sW + 15, y: y, w: sW, h: 50,
     min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
     value: window._animLoopStart || 0.0,
     data: { tint: '#ffffff' },
@@ -269,7 +345,8 @@ export default function getAnimationWidgets(main) {
   });
 
   widgets.push({
-    type: 'slider', id: 'anim_loop_end', label: 'Loop End', x: col1X + 360, y: y, w: 350, h: 50,
+    type: 'slider', id: 'anim_loop_end', label: 'End', 
+    x: col1X + (sW + 15)*2, y: y, w: sW, h: 50,
     min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
     value: window._animLoopEnd !== undefined ? window._animLoopEnd : (window._animMasterDuration || 2.0),
     data: { tint: '#ffffff' },
