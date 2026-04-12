@@ -1,3 +1,8 @@
+# v1.0.171
+- **Feature**: **Shape Key Interpolation Engine**: Activated shape morph animation capabilities directly inside the VR Animation DAW. Shape keys can now be evaluated, interpolated, and rendered to the headset entirely independently of object-level transformation keyframes.
+- **Feature**: **Morph Keyframe Management**: Implemented a clipboard-driven action bar directly above the timeline allowing precise Copy, Paste, and Delete commands for shape keys at any arbitrary playback position.
+- **UX**: Visual indicators for shape keys are rendered as bright yellow diamonds on track lanes, slider labels have been cleaned up to prevent text clipping, and the scene ground grid visibility toggle now automatically saves to local storage for persistent restoration across sessions.
+
 # v1.0.169
 - **Fix**: **Animation DAWs Matrix Stability**: Implemented strict quaternion length normalization and fallback sanitization inside the Mocap Looper `captureTick` and frame updates to permanently prevent invalid vector outputs from corrupting scene matrices and generating `NaN` bounding box errors.
 - **UX**: **Punch-in Marker Cleanup**: The bright orange visual reference bar that denotes your exact overdub insertion time now automatically clears from the timeline lane as soon as recording stops.
