@@ -223,20 +223,64 @@ export default function getAnimationWidgets(main) {
 
   // 4. Giant Square Keyframe Button & Unified Toolbar
   const kRowW = 710;
-  const giantBtnSize = 100; // Double height
-  const subBtnH = (giantBtnSize - gapBtn) / 2; // 42.5px each
+  const giantBtnSize = 100;
+  const subBtnH = (giantBtnSize - gapBtn) / 2;
   
-  // Giant Add Key Button (Left side, takes up two standard rows)
+  const captureTrackState = (mesh) => {
+    if (!mesh || !window._animationRegistry) return null;
+    const tr = window._animationRegistry.tracks.get(mesh.getID());
+    if (!tr) return null;
+    return {
+      shapeTimes: tr.shapeTimes ? tr.shapeTimes.slice() : [],
+      shapes: tr.shapes ? tr.shapes.map(arr => new Float32Array(arr)) : [],
+      tangents: tr.tangents ? tr.tangents.slice() : []
+    };
+  };
+
+  const executeWithUndo = (mesh, actionCb) => {
+    if (!mesh) return;
+    const snapBefore = captureTrackState(mesh);
+    
+    actionCb();
+    
+    const snapAfter = captureTrackState(mesh);
+    if (main && main.getStateManager && snapBefore && snapAfter) {
+      main.getStateManager().pushStateCustom(
+        () => {
+          const tr = window._animationRegistry.tracks.get(mesh.getID());
+          if (tr) {
+            tr.shapeTimes = snapBefore.shapeTimes.slice();
+            tr.shapes = snapBefore.shapes.map(arr => new Float32Array(arr));
+            tr.tangents = snapBefore.tangents.slice();
+            window._animationRegistry.update(mesh, true);
+            if (main._guiXR) main._guiXR._needsRedraw = true;
+          }
+        },
+        () => {
+          const tr = window._animationRegistry.tracks.get(mesh.getID());
+          if (tr) {
+            tr.shapeTimes = snapAfter.shapeTimes.slice();
+            tr.shapes = snapAfter.shapes.map(arr => new Float32Array(arr));
+            tr.tangents = snapAfter.tangents.slice();
+            window._animationRegistry.update(mesh, true);
+            if (main._guiXR) main._guiXR._needsRedraw = true;
+          }
+        }
+      );
+    }
+  };
+
   widgets.push({
     type: 'button', id: 'anim_add_key', label: '◆+', x: col1X, y: y, w: giantBtnSize, h: giantBtnSize,
     onInteract: () => {
-      if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       
       if (targetMesh) {
         if (window._animKeyMode === 'shape') {
-          window._animationRegistry.addShapeKey(targetMesh, window._animCurrentTime || 0);
+          executeWithUndo(targetMesh, () => {
+            window._animationRegistry.addShapeKey(targetMesh, window._animCurrentTime || 0);
+          });
           showFeedback('◆ Added Shape Key');
         } else {
           showFeedback('◆ Added Transform Key');
@@ -245,7 +289,6 @@ export default function getAnimationWidgets(main) {
     }
   });
 
-  // Right side top: Mode Selector
   widgets.push({
     type: 'combobox', id: 'anim_key_mode', label: 'Mode: Shape', 
     x: col1X + giantBtnSize + gapBtn, y: y, w: kRowW - giantBtnSize - gapBtn, h: subBtnH,
@@ -260,7 +303,6 @@ export default function getAnimationWidgets(main) {
     }
   });
 
-  // Right side bottom: Clipboard Actions
   const subActW = (kRowW - giantBtnSize - gapBtn - 30) / 3;
   const subY = y + subBtnH + gapBtn;
 
@@ -282,11 +324,12 @@ export default function getAnimationWidgets(main) {
     type: 'button', id: 'anim_paste_key', label: '📥 Paste', 
     x: col1X + giantBtnSize + gapBtn + subActW + 15, y: subY, w: subActW, h: subBtnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       if (targetMesh) {
-        window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
+        executeWithUndo(targetMesh, () => {
+          window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
+        });
         showFeedback('📥 Pasted Key');
       }
     }
@@ -296,11 +339,12 @@ export default function getAnimationWidgets(main) {
     type: 'button', id: 'anim_del_key', label: '🗑️ Del', 
     x: col1X + giantBtnSize + gapBtn + (subActW + 15)*2, y: subY, w: subActW, h: subBtnH,
     onInteract: () => {
-      if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       if (targetMesh) {
-        window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
+        executeWithUndo(targetMesh, () => {
+          window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
+        });
         showFeedback('🗑️ Deleted Key');
       }
     }
