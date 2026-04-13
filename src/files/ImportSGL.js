@@ -2,6 +2,8 @@ import Utils from '../misc/Utils.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import ExportSGL from './ExportSGL.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
+import Multimesh from '../mesh/multiresolution/Multimesh.js';
+import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
 
 var Import = {};
 
@@ -44,88 +46,197 @@ Import.importSGL = function (buffer, gl, main) {
   }
 
   var nbMeshes = u32a[off++];
-  var meshes = new Array(nbMeshes);
+  var meshes = [];
   for (var i = 0; i < nbMeshes; ++i) {
-    var mesh = meshes[i] = new MeshStatic(gl);
+    var isMulti = 0;
+    var numLevels = 1;
+    var activeIndex = 0;
 
-    // shader + matcap + wire + alpha + flat 
-    if (version >= 2) {
-      var render = mesh.getRenderData();
-      // we don't have the geometry buffer and data yet so
-      // we don't want to call updateBuffers (so no call to )
-      render._shaderType = u32a[off++];
-      render._matcap = u32a[off++];
-      render._showWireframe = u32a[off++];
-      render._flatShading = u32a[off++];
-      render._alpha = f32a[off++];
+    if (version >= 5) {
+      isMulti = u32a[off++];
+      if (isMulti) {
+        numLevels = u32a[off++];
+        activeIndex = u32a[off++];
+      }
     }
 
-    // center matrix and scale
-    mesh.getCenter().set(f32a.subarray(off, off + 3));
-    off += 3;
-    mesh.getMatrix().set(f32a.subarray(off, off + 16));
-    off += 16;
-    off++; // scale
+    var baseMesh = null;
 
-    // vertices
-    var nbElts = u32a[off++];
-    mesh.setVertices(f32a.subarray(off, off + nbElts * 3));
-    off += nbElts * 3;
+    for (var L = 0; L < numLevels; ++L) {
+      var mesh = new MeshStatic(gl);
+      if (!baseMesh) baseMesh = mesh;
 
-    // colors
-    nbElts = u32a[off++];
-    if (nbElts > 0)
-      mesh.setColors(f32a.subarray(off, off + nbElts * 3));
-    off += nbElts * 3;
+      if (version >= 2) {
+        var render = mesh.getRenderData();
+        render._shaderType = u32a[off++];
+        render._matcap = u32a[off++];
+        render._showWireframe = u32a[off++];
+        render._flatShading = u32a[off++];
+        render._alpha = f32a[off++];
+      }
 
-    // materials
-    nbElts = u32a[off++];
-    if (nbElts > 0)
-      mesh.setMaterials(f32a.subarray(off, off + nbElts * 3));
-    off += nbElts * 3;
+      mesh.getCenter().set(f32a.subarray(off, off + 3));
+      off += 3;
+      mesh.getMatrix().set(f32a.subarray(off, off + 16));
+      off += 16;
+      off++;
 
-    // faces
-    nbElts = u32a[off++];
-    if (version <= 2) {
-      mesh.setFaces(handleNegativeIndexFace(i32a.subarray(off, off + nbElts * 4)));
-    } else {
-      mesh.setFaces(u32a.subarray(off, off + nbElts * 4));
-    }
-    off += nbElts * 4;
+      var nbElts = u32a[off++];
+      mesh.setVertices(f32a.subarray(off, off + nbElts * 3));
+      off += nbElts * 3;
 
-    // uvs
-    nbElts = u32a[off++];
-    var uv = null;
-    if (nbElts)
-      uv = f32a.subarray(off, off + nbElts * 2);
-    off += nbElts * 2;
+      nbElts = u32a[off++];
+      if (nbElts > 0) mesh.setColors(f32a.subarray(off, off + nbElts * 3));
+      off += nbElts * 3;
 
-    // face uvs
-    nbElts = u32a[off++];
-    var fuv = null;
-    if (nbElts) {
+      nbElts = u32a[off++];
+      if (nbElts > 0) mesh.setMaterials(f32a.subarray(off, off + nbElts * 3));
+      off += nbElts * 3;
+
+      nbElts = u32a[off++];
       if (version <= 2) {
-        fuv = handleNegativeIndexFace(i32a.subarray(off, off + nbElts * 4));
+        mesh.setFaces(handleNegativeIndexFace(i32a.subarray(off, off + nbElts * 4)));
       } else {
-        fuv = u32a.subarray(off, off + nbElts * 4);
+        mesh.setFaces(u32a.subarray(off, off + nbElts * 4));
+      }
+      off += nbElts * 4;
+
+      nbElts = u32a[off++];
+      var uv = null;
+      if (nbElts) uv = f32a.subarray(off, off + nbElts * 2);
+      off += nbElts * 2;
+
+      nbElts = u32a[off++];
+      var fuv = null;
+      if (nbElts) {
+        if (version <= 2) fuv = handleNegativeIndexFace(i32a.subarray(off, off + nbElts * 4));
+        else fuv = u32a.subarray(off, off + nbElts * 4);
+      }
+      off += nbElts * 4;
+
+      if (uv && fuv) mesh.initTexCoordsDataFromOBJData(uv, fuv);
+
+      if (version >= 4) {
+        let decodedStr = "";
+        for (let k = 0; k < 16; k++) {
+          let u = u32a[off++];
+          let c1 = (u >> 16) & 0xFFFF;
+          let c2 = u & 0xFFFF;
+          if (c1 !== 0) decodedStr += String.fromCharCode(c1);
+          if (c2 !== 0) decodedStr += String.fromCharCode(c2);
+        }
+        if (decodedStr.length > 0) mesh._permanentStaticLabel = decodedStr;
+      }
+
+      if (!isMulti) {
+        meshes.push(mesh);
+      } else {
+        if (!baseMesh._parsedLevels) baseMesh._parsedLevels = [];
+        baseMesh._parsedLevels.push(mesh);
       }
     }
-    off += nbElts * 4;
 
-    if (uv && fuv)
-      mesh.initTexCoordsDataFromOBJData(uv, fuv);
+    if (isMulti && baseMesh && baseMesh._parsedLevels) {
+      var lvl0 = baseMesh._parsedLevels[0];
+      lvl0.allocateArrays();
+      lvl0.initTopology();
 
-    if (version >= 4) {
-      let decodedStr = "";
-      for (let k = 0; k < 16; k++) {
-        let u = u32a[off++];
-        let c1 = (u >> 16) & 0xFFFF;
-        let c2 = u & 0xFFFF;
-        if (c1 !== 0) decodedStr += String.fromCharCode(c1);
-        if (c2 !== 0) decodedStr += String.fromCharCode(c2);
+      var mm = new Multimesh(lvl0);
+      if (baseMesh._permanentStaticLabel) {
+        mm._permanentStaticLabel = baseMesh._permanentStaticLabel;
       }
-      if (decodedStr.length > 0) {
-        mesh._permanentStaticLabel = decodedStr;
+
+      for (var L = 1; L < baseMesh._parsedLevels.length; ++L) {
+        var parsedLvl = baseMesh._parsedLevels[L];
+        
+        // Fix: We MUST disable global GPU mesh optimization during import!
+        // Otherwise, the base Mesh optimizer will scramble the face/vertex ordering independently for each layer!
+        var optTemp = mm._meshes[0].constructor.OPTIMIZE;
+        mm._meshes[0].constructor.OPTIMIZE = false;
+        
+        // Allocate and initialize the loaded static mesh to be ready for display
+        parsedLvl.allocateArrays();
+        parsedLvl.initTopology();
+        parsedLvl.updateGeometry();
+        parsedLvl.updateDuplicateColorsAndMaterials();
+        
+        mm._meshes[0].constructor.OPTIMIZE = optTemp;
+        
+        // Directly wrap the perfectly loaded level into the multiresolution stack!
+        var resMesh = new mm._meshes[0].constructor(parsedLvl, true);
+        mm._meshes.push(resMesh);
+
+        console.log(`[SXR] Loaded Level ${L} directly - Verts: ${resMesh.getNbVertices()}, Faces: ${resMesh.getNbFaces()}`);
+      }
+      
+      mm.setSelection(activeIndex);
+      mm.updateResolution();
+      mm.initRender();
+      meshes.push(mm);
+      
+      console.log(`[SXR] Multiresolution Hierarchy Complete! Active Index: ${activeIndex}`);
+      
+      var debugMesh = mm.getCurrentMesh();
+      var debugVerts = debugMesh.getVertices();
+      var debugTris = debugMesh.getTriangles();
+      
+      console.log("[SXR DIAGNOSTIC] Level " + activeIndex + " First 12 Vertices (X,Y,Z):");
+      var vStr = "";
+      for (let d=0; d<36; d+=3) {
+          vStr += `[${debugVerts[d].toFixed(2)}, ${debugVerts[d+1].toFixed(2)}, ${debugVerts[d+2].toFixed(2)}] `;
+      }
+      console.log(vStr);
+      
+      console.log("[SXR DIAGNOSTIC] Level " + activeIndex + " First 24 Indices:");
+      var iStr = "";
+      if (debugTris) {
+          for (let d=0; d<24; d+=3) {
+              iStr += `(${debugTris[d]}, ${debugTris[d+1]}, ${debugTris[d+2]}) `;
+          }
+          console.log(iStr);
+      } else {
+          console.log("NO INDICES FOUND!");
+      }
+
+      var debugWire = debugMesh.getWireframe();
+      console.log(`[SXR DIAGNOSTIC] Level ${activeIndex} Wireframe Length: ${debugWire ? debugWire.length : 0}`);
+      if (debugWire && debugWire.length >= 16) {
+          var wStr = "";
+          for (let w=0; w<16; w+=2) {
+              wStr += `[${debugWire[w]} -> ${debugWire[w+1]}] `;
+          }
+          console.log(`[SXR DIAGNOSTIC] Level ${activeIndex} First 8 Wireframe Edges: ${wStr}`);
+      }
+    }
+
+    var finalMesh = isMulti ? meshes[meshes.length - 1] : baseMesh;
+    if (baseMesh._permanentStaticLabel) {
+      finalMesh._permanentStaticLabel = baseMesh._permanentStaticLabel;
+    }
+
+    if (version >= 5) {
+      var hasAnim = u32a[off++];
+      if (hasAnim) {
+        var nbKeys = u32a[off++];
+        console.log(`[SXR] Parsing Animation Track... Total Keyframes: ${nbKeys}`);
+        var trackObj = { shapeTimes: [], shapes: [] };
+
+        for (var k = 0; k < nbKeys; ++k) {
+          var time = f32a[off++];
+          var activeVCount = finalMesh.getNbVertices();
+          
+          var shapeArr = new Float32Array(activeVCount * 3);
+          shapeArr.set(f32a.subarray(off, off + activeVCount * 3));
+          off += activeVCount * 3;
+
+          trackObj.shapeTimes.push(time);
+          trackObj.shapes.push(shapeArr);
+          console.log(`[SXR] -> Read Keyframe ${k} at time ${time.toFixed(2)}s`);
+        }
+
+        if (!window._animationRegistry) window._animationRegistry = { tracks: new Map() };
+        window._animationRegistry.tracks.set(finalMesh.getID(), trackObj);
+        console.log(`[SXR] Successfully mounted Animation Track to Mesh ID: ${finalMesh.getID()}`);
       }
     }
   }

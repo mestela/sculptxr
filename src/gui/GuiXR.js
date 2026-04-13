@@ -110,7 +110,7 @@ export default class GuiXR {
     this._activeTab = 'Tools'; // Default section open?
     // Actually if they are collapsible, we need a map of open/closed states.
     this._sectionStates = {
-      'Rendering': false,
+      'Rendering': true,
       'Topology': false,
       'Tools': true
     };
@@ -2234,7 +2234,14 @@ export default class GuiXR {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveMetalness();
     }
     else if (id === 'export_sgl') {
-      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSGL();
+      if (window.screenLog) window.screenLog('[SXR Export] Triggered via VR Menu...', 'orange');
+      if (main.getGui && main.getGui()._ctrlFiles) {
+        main.getGui()._ctrlFiles.saveFileAsSGL();
+        if (window.screenLog) window.screenLog('[SXR Export] Serialization Complete!', 'lime');
+      }
+    }
+    else if (id === 'export_glb') {
+      if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsGLB();
     }
     else if (id === 'browser_save') {
       if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveToBrowserStorage();

@@ -112,12 +112,6 @@ class Multimesh extends Mesh {
     this.updateGeometry();
     this.updateDuplicateColorsAndMaterials();
     this.updateBuffers();
-
-
-    var mesh = this._meshes[this.getLowIndexRender()];
-    
-    // Instead of raw webgl buffer update, call the new Three.js geometry update
-    mesh.updateIndexBuffer();
     this.updateWireframeBuffer();
   }
 
@@ -225,11 +219,7 @@ class Multimesh extends Mesh {
   }
 
   _canUseLowRender(main) {
-    if (this.isUsingTexCoords() || this.isUsingDrawArrays()) return false;
-    if (Multimesh.RENDER_HINT === Multimesh.PICKING || Multimesh.RENDER_HINT === Multimesh.NONE) return false;
-    if (main.getMesh() === this && Multimesh.RENDER_HINT !== Multimesh.CAMERA) return false;
-    if (this.getLowIndexRender() === this._sel) return false;
-    return true;
+    return false; // Fix: Always render the true wireframe and surface of the active layer natively!
   }
 
   render(main) {
@@ -346,173 +336,89 @@ class Multimesh extends Mesh {
     return result;
   }
 
+
+
   updateWireframeBuffer() {
-    if (this.getWireframeType() === 2) {
-      super.updateWireframeBuffer();
-      return;
-    }
+    if (this.getShowWireframe()) {
+      var wireType = this.getWireframeType(); // 0: Level 0 Fast, 1: Level 0 Smooth, 2: Full
+      var activeMesh = (wireType === 0 || wireType === 1) ? this._meshes[0] : this.getCurrentMesh();
+      var sourceLevel = (wireType === 0 || wireType === 1) ? 0 : this._sel;
 
-    var lowWireIdx = this.getLowIndexWireframe();
-
-    if (lowWireIdx === this._sel) {
-      super.updateWireframeBuffer();
-      return;
-    }
-
-    if (lowWireIdx !== this._sel) {
-      if (this.getShowWireframe()) {
-        
-        if (!this._renderData._wireframeMesh) {
-          var wireGeometry = new THREE.BufferGeometry();
-          var wireMaterial = new THREE.ShaderMaterial({
-            vertexShader: `
-              uniform float uBias;
-              void main() {
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-              }
-            `,
-            fragmentShader: `
-              uniform vec3 uColor;
-              uniform float uOpacity;
-              uniform float uBias;
-              void main() {
-                gl_FragColor = vec4(uColor, uOpacity);
-                gl_FragDepth = clamp(gl_FragCoord.z - uBias, 0.0, 1.0);
-              }
-            `,
-            uniforms: {
-              uBias: { value: getOptionsURL().wireframeBias !== undefined ? parseFloat(getOptionsURL().wireframeBias) : 0.001 },
-              uColor: { value: new THREE.Color(0x000000) },
-              uOpacity: { value: getOptionsURL().wireframeAlpha !== undefined ? parseFloat(getOptionsURL().wireframeAlpha) : 0.2 }
-            },
-            transparent: true,
-            depthTest: true,
-            depthWrite: false
-          });
-          this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
-          this._renderData._wireframeMesh.frustumCulled = false;
-          this._renderData._wireframeMesh.renderOrder = 1;
-          if (this._renderData._threeMesh) {
-              this._renderData._threeMesh.add(this._renderData._wireframeMesh);
-          }
-        }
-
-        var indices;
-        var type = this.getWireframeType();
-        var hasEven = !!(this._meshes[0].getEvenMapping() || this.getCurrentMesh().getEvenMapping());
-
-        if (type === 1 || type === 0) { // Smooth or Fast L0 (Pure Base Level overlay)
-          var lowWireMesh = this._meshes[0];
-          if (!lowWireMesh.getEdges() || lowWireMesh.getEdges().length === 0) {
-            lowWireMesh.allocateArrays();
-            lowWireMesh.initFaceRings();
-            lowWireMesh.initEdges();
-          }
-          
-          var baseIndices = type === 1 && (!hasEven) ? this.getTessellatedWireframe(0) : lowWireMesh.getWireframe();
-          
-          // Trace the index mapping forward through the Reversion tables up to the active level coords
-          if (hasEven && this._sel > 0) {
-            var mappedIndices = new Uint32Array(baseIndices.length);
-            for (var i = 0; i < baseIndices.length; i++) {
-              var curId = baseIndices[i];
-              for (var L = 0; L < this._sel; L++) {
-                var map = this._meshes[L].getVerticesMapping();
-                if (map && curId < map.length) {
-                  curId = map[curId];
-                }
-              }
-              mappedIndices[i] = curId;
+      if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
+        activeMesh.allocateArrays();
+        activeMesh.initFaceRings();
+        activeMesh.initEdges();
+      }
+      
+      var indices = activeMesh.getWireframe();
+      
+      if (sourceLevel < this._meshes.length - 1 && indices) {
+        var mappedIndices = new Uint32Array(indices.length);
+        for (var i = 0; i < indices.length; i++) {
+          var curId = indices[i];
+          for (var L = sourceLevel; L < this._meshes.length - 1; L++) {
+            var map = this._meshes[L].getVerticesMapping();
+            if (map && curId < map.length) {
+              curId = map[curId];
             }
-            indices = mappedIndices;
-          } else {
-            indices = baseIndices;
           }
-        } else { // Full Active Level wireframe
-          var activeMesh = this.getCurrentMesh();
-          if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
-            activeMesh.allocateArrays();
-            activeMesh.initFaceRings();
-            activeMesh.initEdges();
-          }
-          indices = activeMesh.getWireframe();
+          mappedIndices[i] = curId;
+        }
+        indices = mappedIndices;
+      }
+
+      var currentAlpha = 0.3;
+      var rawBias = 0.001;
+      if (window.app && window.app.getGuiXR()) {
+          var ui = window.app.getGuiXR()._uiSettings;
+          if (ui.wireframeAlpha !== undefined) currentAlpha = ui.wireframeAlpha;
+          if (ui.wireframeBias !== undefined) rawBias = ui.wireframeBias;
+      }
+
+      if (indices) {
+        if (!this._renderData._wireframeMesh) {
+            var lineMaterial = new THREE.LineBasicMaterial({
+                color: 0x000000,
+                transparent: true,
+                opacity: currentAlpha,
+                depthTest: true
+            });
+            lineMaterial.userData = { uBias: { value: rawBias } };
+            lineMaterial.onBeforeCompile = function(shader) {
+                shader.uniforms.uBias = lineMaterial.userData.uBias;
+                shader.vertexShader = 'uniform float uBias;\n' + shader.vertexShader;
+                shader.vertexShader = shader.vertexShader.replace(
+                    '#include <project_vertex>',
+                    '#include <project_vertex>\n  gl_Position.z -= uBias * gl_Position.w;'
+                );
+            };
+            
+            var lineGeom = new THREE.BufferGeometry();
+            lineGeom.setAttribute('position', this._renderData._geometry.getAttribute('position'));
+            this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
+            this._renderData._wireframeMesh.frustumCulled = false;
+            this._renderData._wireframeMesh.renderOrder = 1;
+            
+            if (this._renderData._threeMesh) {
+                this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+            }
+        } else {
+            this._renderData._wireframeMesh.material.opacity = currentAlpha;
+            if (this._renderData._wireframeMesh.material.userData.uBias) {
+                this._renderData._wireframeMesh.material.userData.uBias.value = rawBias;
+            }
         }
 
-        if (this._renderData._wireframeMesh && this._renderData._threeMesh && indices) {
-          var wireGeom = this._renderData._wireframeMesh.geometry;
-          var mainGeom = this._renderData._threeMesh.geometry;
-
-          // Unconditionally link the translated wireframe to the shared high-res coordinate array
-              wireGeom.setAttribute('position', mainGeom.getAttribute('position'));
-              wireGeom.setAttribute('normal', mainGeom.getAttribute('normal'));
-
-          wireGeom.setIndex(null);
-          wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
-          wireGeom.setDrawRange(0, indices.length);
-          this._renderData._wireframeMesh.visible = true;
-        }
+        this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        this._renderData._wireframeMesh.geometry.computeBoundingSphere();
+        this._renderData._wireframeMesh.geometry.computeBoundingBox();
+        this._renderData._wireframeMesh.visible = true;
+      }
+    } else {
+      if (this._renderData._wireframeMesh) {
+        this._renderData._wireframeMesh.visible = false;
       }
     }
-  }
-
-  getRenderNbEdges() {
-    if (this._renderNbEdgesOverride !== undefined) return this._renderNbEdgesOverride;
-    return super.getRenderNbEdges();
-  }
-
-  getWireframe() {
-    return this.getCurrentMesh().getWireframe();
-  }
-
-  getNbEdges() {
-    return this.getCurrentMesh().getNbEdges();
-  }
-
-  renderWireframe(main) {
-    if (this.isUsingTexCoords() || this.isUsingDrawArrays()) return super.renderWireframe(main);
-    if (this.getWireframeType() === 2) return super.renderWireframe(main); // Full Wireframe
-
-    var lowIdx = this.getLowIndexWireframe();
-    if (lowIdx === this._sel) return super.renderWireframe(main);
-    
-    var type = this.getWireframeType();
-    var lowMesh = this._meshes[lowIdx];
-
-    // Force lazy init of the low-res wireframe arrays (if updateWireframeBuffer missed it)
-    if (type === 1) { // Smooth L0
-      if (!this._lowWireframeBuffer || !this._tessellatedWireframeCache || this._tessellatedWireframeCache.lowIdx !== lowIdx || this._tessellatedWireframeCache.selIdx !== this._sel) {
-        if (!this._lowWireframeBuffer) {
-          this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
-        }
-        var tessWire = this.getTessellatedWireframe(lowIdx);
-        this._lowWireframeBuffer.update(tessWire, tessWire.length);
-      }
-      this._renderNbEdgesOverride = this._tessellatedWireframeCache.data.length / 2;
-    } else if (type === 0) { // Fast L0
-      if (!this._lowWireframeBuffer || !lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
-        if (!lowMesh.getEdges() || lowMesh.getEdges().length === 0) {
-          lowMesh.allocateArrays();
-          lowMesh.initFaceRings();
-          lowMesh.initEdges();
-        }
-        if (!this._lowWireframeBuffer) {
-          this._lowWireframeBuffer = new Buffer(this.getGL(), this.getGL().ELEMENT_ARRAY_BUFFER, this.getGL().STATIC_DRAW);
-        }
-        this._lowWireframeBuffer.update(lowMesh.getWireframe(), lowMesh.getNbEdges() * 2);
-      }
-      this._renderNbEdgesOverride = lowMesh.getRenderNbEdges();
-    }
-
-    var render = this.getRenderData();
-    var tmpWire = this.getWireframeBuffer();
-    
-    // Temporarily bind the lower level wireframe buffer (isolated from the shared renderData buffer)
-    render._wireframeBuffer = this._lowWireframeBuffer;
-    
-    super.renderWireframe(main);
-    this._renderNbEdgesOverride = undefined;
-    
-    render._wireframeBuffer = tmpWire;
   }
 
   getSymmetryData() {

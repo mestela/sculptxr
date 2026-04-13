@@ -280,6 +280,11 @@ class Scene {
     this._grid = Primitives.createGrid(this._gl);
     this.initGrid();
 
+    var gridState = localStorage.getItem('sculptxr_showGrid');
+    if (gridState !== null) {
+      this._showGrid = (gridState === 'true' || gridState === '1' || gridState === true);
+    }
+
     this.loadTextures();
     this._gui.initGui();
     this.loadTextures();
@@ -1070,9 +1075,10 @@ class Scene {
         this._renderer.setRenderTarget(currentTarget);
       }
       
-      // Update custom shader uniforms before rendering
+      // Update custom shader uniforms and wireframe overlays before rendering
       for (var j = 0; j < nbMeshes; ++j) {
         if (meshes[j].getThreeMesh()) {
+           meshes[j].updateWireframeBuffer();
            ShaderManager.updateUniforms(meshes[j], this);
         }
       }
@@ -1639,7 +1645,14 @@ class Scene {
     var meshes = this._meshes;
     for (var i = 0; i < nbNewMeshes; ++i) {
       var innerMesh = newMeshes[i];
-      var mesh = newMeshes[i] = new Multimesh(innerMesh);
+      
+      // Fix: If the importer already returned a fully built Multimesh (like SXR format), do NOT wrap it again!
+      var mesh;
+      if (innerMesh && innerMesh._meshes) {
+          mesh = newMeshes[i] = innerMesh;
+      } else {
+          mesh = newMeshes[i] = new Multimesh(innerMesh);
+      }
 
       if (innerMesh._permanentStaticLabel) {
         mesh._permanentStaticLabel = innerMesh._permanentStaticLabel;

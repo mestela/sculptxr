@@ -210,6 +210,29 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  const wireframeOptions = [
+    { label: TR('renderingWireframeTypeSmooth') || 'Wireframe Level 0 Smooth', id: 1 },
+    { label: TR('renderingWireframeTypeFast') || 'Wireframe Level 0 Fast', id: 0 },
+    { label: TR('renderingWireframeTypeFull') || 'Wireframe Full', id: 2 }
+  ];
+
+  widgets.push({
+    type: 'combobox',
+    id: 'wireframe_type',
+    label: '',
+    x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    value: main.getMesh() ? main.getMesh().getWireframeType() : ((typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent)) ? 0 : 1),
+    options: wireframeOptions,
+    onSelect: (id) => {
+      if (main.getMesh()) {
+        main.getMesh().setWireframeType(id);
+        getOptionsURL.saveOption('wireframeType', id);
+        main.render();
+      }
+    }
+  });
+  y += ITEM_H + GAP;
+
   widgets.push({
     type: 'slider', id: 'menu_brightness', label: 'Menu Brightness', x: 20, y: y, w: menuW - 40, h: ITEM_H,
     min: 0.0, max: 1.0, step: 0.05,
@@ -324,32 +347,6 @@ export default function getSettingsWidgets(main) {
           }
         };
         requestAnimationFrame(checkDone);
-      }
-    }
-  });
-  y += ITEM_H + GAP;
-
-  widgets.push({ type: 'header', label: 'Rendering Quality', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
-  y += HEADER_H + GAP;
-
-  const wireframeOptions = [
-    { label: TR('renderingWireframeTypeSmooth') || 'Wireframe Level 0 Smooth', id: 1 },
-    { label: TR('renderingWireframeTypeFast') || 'Wireframe Level 0 Fast', id: 0 },
-    { label: TR('renderingWireframeTypeFull') || 'Wireframe Full', id: 2 }
-  ];
-
-  widgets.push({
-    type: 'combobox',
-    id: 'wireframe_type',
-    label: '',
-    x: 20, y: y, w: menuW - 40, h: ITEM_H,
-    value: main.getMesh() ? main.getMesh().getWireframeType() : ((typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent)) ? 0 : 1),
-    options: wireframeOptions,
-    onSelect: (id) => {
-      if (main.getMesh()) {
-        main.getMesh().setWireframeType(id);
-        getOptionsURL.saveOption('wireframeType', id);
-        main.render();
       }
     }
   });

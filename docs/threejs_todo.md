@@ -6,13 +6,20 @@
 
 ---
 
+user feedback, address:
+
+* [ ] it’d be great to have an object mirrored around different object (like you make one sphere for an eye and then mirror it to get another) - maybe it’s there but I couldn’t figure it out
+* [ ] when I click the big resize circle in transform tool it sometimes switches to grab tool
+* [ ] low poly extrude worked inverted for me for some reason, but it was after a remesh so maybe normals were wrong
+* [ ] the recording workflow didn’t work for me, or maybe I was doing something wrong
+
+---
+
 ## 1. Todo
 
-* [ ] **Bug**: reported by user, after "remesh (voxel)", can't sculpt on mesh
-* [ ] **Animation**: per frame sculpting mods, shapekey based
+* [ ] **Bug**: Grid only updates from saved state when the scene tab is active
+* [ ] **Anim Bug**: setting transform keys by hand doesn't work
 * [ ] **Animation**: per frame sculpting, shape replacement based
-* [ ] **Animation**: graph editor/frame editor
-* [ ] **Animation**: glb export
 * [ ] **AVP support**: fingers and stylus
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 
@@ -24,7 +31,10 @@
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
 * [?] **Three-mesh-ui**: move menu system to this -- advised not to.. but gemini has lied before...
-
+* [x] **Bug**: reported by user, after "remesh (voxel)", can't sculpt on mesh
+* [x] **Animation**: per frame sculpting mods, shapekey based
+* [x] **Animation**: graph editor/frame editor
+* [x] **Animation**: glb export
 * [x] **Animation**: record mocap over short loop for transforms. 
 * [*] **Outliner**: Persistent names, better use of space, selection modes
 * [*] **About**: Include recent release info, and be scrollable

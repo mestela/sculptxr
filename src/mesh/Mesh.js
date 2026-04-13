@@ -453,40 +453,7 @@ class Mesh {
       this._renderData._threeMesh.userData.sculptMesh = this; // Link back for pickers
       this._renderData._threeMesh.frustumCulled = false; // SculptXR calculates its own frustum culling
       
-       // Three.js Wireframe Overlay (Custom Shader with Fragment Depth Bias)
-       // [x] Update wireframe `ShaderMaterial` in `Mesh.js` to use `gl_FragDepth` in fragment shader.
-       // [x] Remove normal displacement from vertex shader.
-       var wireGeometry = new THREE.BufferGeometry();
-       var wireMaterial = new THREE.ShaderMaterial({
-         vertexShader: `
-           void main() {
-             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-           }
-         `,
-         fragmentShader: `
-           uniform vec3 uColor;
-           uniform float uOpacity;
-           uniform float uBias;
-           void main() {
-             gl_FragColor = vec4(uColor, uOpacity);
-             // WebGL 2.0 depth bias (cheat depth test to win against curved surfaces)
-             gl_FragDepth = clamp(gl_FragCoord.z - uBias, 0.0, 1.0);
-           }
-         `,
-         uniforms: {
-            uBias: { value: getOptionsURL().wireframeBias !== undefined ? parseFloat(getOptionsURL().wireframeBias) : 0.001 }, // Default 1mm (works best on Quest/Pro)
-            uColor: { value: new THREE.Color(0x000000) },
-            uOpacity: { value: getOptionsURL().wireframeAlpha !== undefined ? parseFloat(getOptionsURL().wireframeAlpha) : 0.2 }
-         },
-         transparent: true,
-         depthTest: true,
-         depthWrite: false
-       });
-       this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
-       this._renderData._wireframeMesh.frustumCulled = false;
-       this._renderData._wireframeMesh.renderOrder = 2; // Render after main to help overlay
-      this._renderData._threeMesh.add(this._renderData._wireframeMesh);
-      this._renderData._wireframeMesh.visible = this.getShowWireframe();
+
 
       this._renderData._threeMesh.onBeforeRender = function(renderer, scene, camera) {
          var mat = this.material;
@@ -1124,7 +1091,8 @@ class Mesh {
         ++acc;
       }
     }
-    return new Uint32Array(iAr.subarray(0, acc * 3));
+    var view = new Uint32Array(iAr.subarray(0, acc * 3));
+    return new Uint32Array(view); // Create an absolute, independent copy!
   }
 
   initEdges() {
@@ -2496,42 +2464,43 @@ class Mesh {
       }
       this.getWireframeBuffer().update(this.getWireframe(), this.getNbEdges() * 2);
 
-      // Lazy Init Three.js Wireframe Mesh
-      if (!this._renderData._wireframeMesh) {
-        var wireGeometry = new THREE.BufferGeometry();
-        var wireMaterial = new THREE.LineBasicMaterial({ 
-          color: 0x000000, 
-          transparent: true, 
-          opacity: 0.4 
-        });
-        this._renderData._wireframeMesh = new THREE.LineSegments(wireGeometry, wireMaterial);
-        this._renderData._wireframeMesh.frustumCulled = false;
-        this._renderData._wireframeMesh.renderOrder = 1;
-        if (this._renderData._threeMesh) {
-            this._renderData._threeMesh.add(this._renderData._wireframeMesh);
-        }
-      }
+      // Revert to pure quad edge rendering using THREE.LineSegments to suppress diagonal triangulation
+      var edgeIndices = this.getWireframe();
 
-      // Three.js Wireframe Update
-      if (this._renderData._wireframeMesh) {
-        var wireGeom = this._renderData._wireframeMesh.geometry;
-        var mainGeom = this._renderData._geometry;
-        
-        // Share position!
-        if (wireGeom.getAttribute('position') !== mainGeom.getAttribute('position')) {
-            wireGeom.setAttribute('position', mainGeom.getAttribute('position'));
-        }
-        
-        var indices = this.getWireframe();
-        var attr = wireGeom.getIndex();
-        if (!attr || attr.array.length !== indices.length) {
-            wireGeom.setIndex(new THREE.BufferAttribute(indices, 1));
-        } else {
-            attr.array.set(indices);
-            attr.needsUpdate = true;
-        }
-        wireGeom.setDrawRange(0, indices.length);
-        this._renderData._wireframeMesh.visible = true;
+      if (edgeIndices && edgeIndices.length > 0) {
+          if (!this._renderData._wireframeMesh) {
+              console.log("[SXR Wireframe] Initializing new THREE.LineSegments overlay.");
+              var lineMaterial = new THREE.LineBasicMaterial({
+                  color: 0x000000,
+                  transparent: true,
+                  opacity: 0.3,
+                  depthTest: true,
+                  polygonOffset: true,
+                  polygonOffsetFactor: -2.0,
+                  polygonOffsetUnits: -2.0
+              });
+              var lineGeom = new THREE.BufferGeometry();
+              lineGeom.setAttribute('position', this._renderData._geometry.getAttribute('position'));
+              this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
+              this._renderData._wireframeMesh.frustumCulled = false;
+              this._renderData._wireframeMesh.renderOrder = 1;
+              
+              if (this._renderData._threeMesh) {
+                  console.log("[SXR Wireframe] Attaching wireframe to threeMesh parent.");
+                  this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+              } else {
+                  console.warn("[SXR Wireframe] Failed to find _threeMesh parent to attach wireframe!");
+              }
+          }
+          
+          this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
+          this._renderData._wireframeMesh.geometry.computeBoundingSphere();
+          this._renderData._wireframeMesh.geometry.computeBoundingBox();
+          this._renderData._wireframeMesh.visible = true;
+
+          console.log("[SXR Wireframe] Wireframe successfully updated. BoundingSphere Radius:", this._renderData._wireframeMesh.geometry.boundingSphere.radius);
+      } else {
+          console.warn("[SXR Wireframe] Aborted rendering: edgeIndices array is empty or undefined.");
       }
     } else {
       if (this._renderData._wireframeMesh) {

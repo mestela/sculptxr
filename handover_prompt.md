@@ -1,13 +1,20 @@
-# Next Session Objectives: Animation DAW UX Polish
+# Next Session Objectives: Reconstructing SXR Multiresolution & Animation Tracks
 
-The user has requested the following improvements for the next development cycle:
+## Context & Current State
+The native `.sxr` (SGL2) binary exporter successfully writes all multiresolution levels and animation tracks to disk without buffer overflows. However, upon re-import via `src/files/ImportSGL.js`, the topology and wireframe indexing logic for multiresolution stacks is failing to properly establish correct parent-child subdivision links, leading to miswired polygons and missing multires levels.
 
-1. **Playhead Visibility**: Ensure the vertical playhead line is visible by default immediately upon loading the animation tab, even if the playback time is 0.0s.
-2. **Timeline Initialization**: Synchronize the visual zoom/bounds of the timeline renderer to precisely match the default `Loop Start` and `Loop End` values on initial load.
-3. **Thumbwheel Slider Mode**: Update the standard VR slider interaction logic to function as a relative encoder (thumbwheel). When a user clicks anywhere on the slider bar, it should lock the current value as a baseline offset. Moving the pointer left/right from the initial click coordinate should relatively increment/decrement the value, rather than instantly snapping the value to the absolute physical coordinate of the pointer.
+## Top Priorities for Next Developer:
 
-## Modified Files in This Session
-- `/src/Version.js`
-- `index.html`
-- `docs/releases.md`
-- `README.md`
+1. **Fix SXR Multiresolution Topology Mismatch**:
+   - **The Bug**: The parser currently attempts to use `mm.addLevel()` to rebuild level hierarchy, but because the face arrays saved to disk are already subdivided, dropping them back into the dynamic subdivider scrambles the index ring wiring.
+   - **The Goal**: Implement a manual multi-level reconstruction pass in `ImportSGL.js` that perfectly assigns each level's `facesABCD` and `verticesXYZ` directly to a dedicated `MeshResolution` container without invoking standard re-subdivision calculations.
+
+2. **Bind Outliner Names Correctly**:
+   - The string labels (`_permanentStaticLabel`) parsed from the binary footer must be assigned directly to the topmost `Multimesh` container rather than the lower-level static meshes so they appear perfectly in the Outliner.
+
+3. **Initialize the Animation Transport System**:
+   - While shape keys and timeline snapshots successfully register into the global `AnimationRegistry`, the playback engine is currently not triggering due to a missing initialization trigger on load. Wire up an automated wake-up call to restart timeline execution after `.sxr` parsing completes.
+
+## Core Implementation Files:
+- `src/files/ImportSGL.js` (Main parsing and reconstruction loop)
+- `src/files/ExportSGL.js` (Binary layout specification reference)

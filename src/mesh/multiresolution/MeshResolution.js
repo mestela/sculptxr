@@ -42,12 +42,20 @@ class MeshResolution extends Mesh {
 
   /** Go to one level above (down to up) */
   higherSynthesis(meshDown) {
+    if (!this._vertMapping) {
+        console.log(`[SXR DIAGNOSTIC] higherSynthesis bypassed for statically loaded level.`);
+        return;
+    }
     meshDown.computePartialSubdivision(this.getVertices(), this.getColors(), this.getMaterials(), this.getNbVertices());
     this.applyDetails();
   }
 
   /** Go to one level below (up to down) */
   lowerAnalysis(meshUp) {
+    if (!this._vertMapping) {
+        console.log(`[SXR DIAGNOSTIC] lowerAnalysis bypassed for statically loaded level.`);
+        return;
+    }
     this.copyDataFromHigherRes(meshUp);
     var nbVertices = meshUp.getNbVertices();
     var subdVerts = new Float32Array(nbVertices * 3);

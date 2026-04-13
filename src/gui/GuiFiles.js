@@ -60,6 +60,7 @@ class GuiFiles {
     menu.addTitle(TR('fileExportSceneTitle'));
     menu.addCheckbox(TR('fileExportAll'), this, '_exportAll');
     menu.addButton(TR('fileExportSGL'), this, 'saveFileAsSGL');
+    menu.addButton('Export GLB (Anim)', this, 'saveFileAsGLB');
     menu.addButton(TR('fileExportOBJ'), this, 'saveFileAsOBJ' /*, 'CTRL+E'*/ );
     menu.addButton(TR('fileExportPLY'), this, 'saveFileAsPLY');
     menu.addButton(TR('fileExportSTL'), this, 'saveFileAsSTL');
@@ -201,7 +202,7 @@ class GuiFiles {
   saveFileAsSGL() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportSGL(meshes, this._main), this._getTimestampedFileName('yourMesh', 'sgl'));
+    this._save(Export.exportSGL(meshes, this._main), this._getTimestampedFileName('yourMesh', 'sxr'));
   }
 
   saveToBrowserStorage() {
@@ -347,6 +348,12 @@ class GuiFiles {
     });
   }
 
+  saveFileAsGLB() {
+    var meshes = this._getExportMeshes();
+    if (!meshes) return;
+    this._save(Export.exportGLB(meshes), this._getTimestampedFileName('yourMesh', 'glb'));
+  }
+
   saveFileAsOBJ() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
@@ -377,7 +384,7 @@ class GuiFiles {
 
   _save(data, fileName, useZip) {
     if (window.screenLog) {
-      window.screenLog('Saved: ' + fileName, 'cyan');
+      window.screenLog('SUCCESS: Exported ' + fileName, 'lime');
     }
     if (!useZip) return saveAs(data, fileName);
 

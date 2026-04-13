@@ -831,10 +831,13 @@ class SculptGL extends Scene {
   ////////////////
   getFileType(name) {
     var lower = name.toLowerCase();
-    if (lower.endsWith('.obj')) return 'obj';
-    if (lower.endsWith('.sgl')) return 'sgl';
-    if (lower.endsWith('.stl')) return 'stl';
-    if (lower.endsWith('.ply')) return 'ply';
+    
+    if (lower.includes('.sgl') || lower.includes('.sxr')) return 'sgl';
+    if (lower.includes('.obj')) return 'obj';
+    if (lower.includes('.stl')) return 'stl';
+    if (lower.includes('.ply')) return 'ply';
+    if (lower.includes('.glb')) return 'glb';
+    
     return;
   }
 

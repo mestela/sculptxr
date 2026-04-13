@@ -42,7 +42,8 @@ export default function getFilesWidgets(main) {
   y += 10;
   addHeader('Export Scene');
   addCheckbox('export_all', 'Export all', exportAll);
-  addButton('export_sgl', 'Save .sgl (SculptGL)');
+  addButton('export_sgl', 'Save .sxr (SculptXR Native)');
+  addButton('export_glb', 'Save .glb (Animation DAW)');
   addButton('browser_save', 'Save to browser storage');
   addButton('browser_load', 'Load from local storage');
   addButton('export_obj', 'Save .obj');

@@ -5,6 +5,7 @@ import ExportSTL from './ExportSTL.js';
 import ExportSketchfab from './ExportSketchfab.js';
 import ExportSculpteo from './ExportSculpteo.js';
 import ExportMaterialise from './ExportMaterialise.js';
+import ExportGLTF from './ExportGLTF.js';
 
 var Export = {};
 Export.exportOBJ = ExportOBJ.exportOBJ;
@@ -16,5 +17,6 @@ Export.exportBinarySTL = ExportSTL.exportBinarySTL;
 Export.exportSketchfab = ExportSketchfab.exportSketchfab;
 Export.exportSculpteo = ExportSculpteo.exportSculpteo;
 Export.exportMaterialise = ExportMaterialise.exportMaterialise;
+Export.exportGLB = ExportGLTF.exportGLB;
 
 export default Export;

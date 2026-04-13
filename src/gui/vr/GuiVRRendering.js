@@ -230,8 +230,34 @@ export default function getRenderingWidgets(main) {
     x: col1X, y: y, w: 360, h: btnH,
     value: mesh.getShowWireframe(),
     onInteract: () => { 
+      console.log("[GuiVR] Wireframe toggle clicked! Current internal state:", mesh.getShowWireframe());
       const target = !mesh.getShowWireframe();
-      meshes.forEach(m => m.setShowWireframe(target)); 
+      
+      // Guarantee we target all scene meshes if local selection is stale
+      const targetMeshes = main.getMeshes ? main.getMeshes() : meshes;
+      targetMeshes.forEach(m => {
+          console.log("[GuiVR] Setting wireframe state on mesh:", target, "Type:", m.constructor.name);
+          m.setShowWireframe(target);
+      }); 
+      
+      main.render(); 
+      if (main.guiXR) main.guiXR._needsUpdate = true; 
+    }
+  });
+  y += btnH + gapBtn; // Fix: Separate the overlapping buttons!
+
+  widgets.push({
+    type: 'checkbox',
+    id: 'solid_shading',
+    label: 'Solid Shading',
+    x: col1X, y: y, w: 360, h: btnH,
+    value: mesh._renderData && mesh._renderData._threeMesh ? mesh._renderData._threeMesh.material.visible : true,
+    onInteract: () => { 
+      meshes.forEach(m => {
+          if (m._renderData && m._renderData._threeMesh && m._renderData._threeMesh.material) {
+              m._renderData._threeMesh.material.visible = !m._renderData._threeMesh.material.visible;
+          }
+      }); 
       main.render(); 
       if (main.guiXR) main.guiXR._needsUpdate = true; 
     }
