@@ -363,9 +363,13 @@ class Multimesh extends Mesh {
       // Mode 2: Full -> Dense active grid mapping
       var activeVerts = activeMesh.getVertices();
       var indices;
-      if (wireType === 0) indices = baseMesh.getWireframe();
-      else if (wireType === 1) indices = this.getTessellatedWireframe(0);
-      else indices = activeMesh.getWireframe();
+      if (this._meshes.length === 1 || wireType === 2) {
+        indices = activeMesh.getWireframe();
+      } else if (wireType === 0) {
+        indices = baseMesh.getWireframe();
+      } else if (wireType === 1) {
+        indices = this.getTessellatedWireframe(0);
+      }
 
       var rawAlpha = 0.3;
       var rawBias = 0.001;

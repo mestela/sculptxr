@@ -17,12 +17,10 @@ user feedback, address:
 
 ## 1. Todo
 
-* [ ] **Bug**: Grid only updates from saved state when the scene tab is active
-* [ ] **Anim Bug**: setting transform keys by hand doesn't work
 * [ ] **Animation**: per frame sculpting, shape replacement based
+* [ ] **Animation**: blendshapes
 * [ ] **AVP support**: fingers and stylus
 * [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
-
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
 * [ ] **Floating VR Keyboard**: there is a builtin one (use three-mesh-ui?)
 * [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
@@ -30,6 +28,9 @@ user feedback, address:
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: good basics for keyframe select, edit, transform, autokey
+* [x] **Anim Bug**: setting transform keys by hand doesn't work
+* [x] **Bug**: Grid only updates from saved state when the scene tab is active
 * [?] **Three-mesh-ui**: move menu system to this -- advised not to.. but gemini has lied before...
 * [x] **Bug**: reported by user, after "remesh (voxel)", can't sculpt on mesh
 * [x] **Animation**: per frame sculpting mods, shapekey based

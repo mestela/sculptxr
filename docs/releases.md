@@ -1,3 +1,12 @@
+# v1.0.206
+- **Fix**: **Symmetry Extrusions**: Enforced exact mirrored centers/rotational pivots for 6DOF transformations to protect symmetric connectivity pipelines.
+
+# v1.0.205
+- **Fix**: **Level 0 Wireframe Consistency**: Resolved wireframe rendering synchronization issues in Level 0 mode for multiresolution meshes to ensure consistent overlay updates during interaction.
+
+# v1.0.204
+- **Fix**: **Extrude Tool Symmetry**: Corrected the continuous 6DOF extrusion dragging behavior when selecting faces on the local negative X side of the mesh. Now dynamically determines primary control alignment directly from local controller contact coordinates.
+
 # v1.0.203
 - **Feature**: **Timeline Drag-Jump Elimination**: Clarified variable references inside standard multi-track sequence evaluations to prevent unintended drift behavior.
 

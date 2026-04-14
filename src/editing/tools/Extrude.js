@@ -108,7 +108,7 @@ class Extrude extends SculptBase {
           }
         }
         
-        if (bestF !== -1 && bestDist < 0.001) {
+        if (bestF !== -1 && bestDist < 0.01) {
           targetFaces.push(bestF);
         }
       }
@@ -516,23 +516,31 @@ class Extrude extends SculptBase {
     if (countRight > 0) vec3.scale(pivotRight, pivotRight, 1.0 / countRight);
     if (countLeft > 0) vec3.scale(pivotLeft, pivotLeft, 1.0 / countLeft);
 
-    const clickX = this._lastVRPos ? this._lastVRPos[0] : 1;
-    const primarySign = clickX >= 0 ? 1 : -1;
-    const pivot = clickX >= 0 ? pivotRight : pivotLeft;
-    const centerMirror = clickX >= 0 ? pivotLeft : pivotRight;
+    const primaryIsRight = vStartLocal[0] >= 0;
+
+    if (primaryIsRight && countRight > 0) {
+      pivotLeft[0] = -pivotRight[0];
+      pivotLeft[1] = pivotRight[1];
+      pivotLeft[2] = pivotRight[2];
+    } else if (!primaryIsRight && countLeft > 0) {
+      pivotRight[0] = -pivotLeft[0];
+      pivotRight[1] = pivotLeft[1];
+      pivotRight[2] = pivotLeft[2];
+    }
 
     for (let i = 0; i < this._extrudedVerts.length; i++) {
       const ind = this._extrudedVerts[i] * 3;
-      const isMirror = (this._vMirrorState[i] === 1);
+      const isLeft = (this._vMirrorState[i] === 1);
+      const isPrimary = primaryIsRight ? !isLeft : isLeft;
       
-      const currPivot = isMirror ? centerMirror : pivot;
-      const moveX = isMirror ? -transDelta[0] : transDelta[0];
+      const currPivot = isLeft ? pivotLeft : pivotRight;
+      const moveX = isPrimary ? transDelta[0] : -transDelta[0];
       
       vTemp[0] = this._vProxy[i * 3] - currPivot[0];
       vTemp[1] = this._vProxy[i * 3 + 1] - currPivot[1];
       vTemp[2] = this._vProxy[i * 3 + 2] - currPivot[2];
 
-      if (isMirror) {
+      if (!isPrimary) {
         vTemp[0] = -vTemp[0]; // Map pre-rotation coordinate precisely into primary side space
         vec3.transformQuat(vTemp, vTemp, qDeltaLocal); // Perform the exact standard primary rotation arc
         vTemp[0] = -vTemp[0]; // Mirror the resulting rotated coordinate back to the left side
