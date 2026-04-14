@@ -339,10 +339,6 @@ class Picking {
 
       const isSculpting = this._main && this._main._vrSculpting;
 
-      if (isSculpting && window.screenLog) {
-        window.screenLog(`[VR Pick Debug] Mesh ID: ${mesh.getID()}, Octree Candidate Faces: ${iFaces.length}`, 'orange');
-      }
-
       if (iFaces.length === 0) continue;
 
       vAr = mesh.getVertices();
@@ -411,17 +407,12 @@ class Picking {
         }
       }
 
-      if (isSculpting && window.screenLog) {
-        window.screenLog(`[VR Pick Debug] Culling Results - AABB Rejected: ${rejectedByAABB}, Dist Rejected: ${rejectedByDist}, Success: ${!!nearMesh}`, 'yellow');
-      }
+      // Culling complete
     }
 
 
 
     if (nearMesh) {
-      if (window.screenLog && this._main && this._main._vrSculpting) {
-         window.screenLog(`[VR Pick Success] Hit Face ID: ${nearFace} on Mesh ID: ${nearMesh.getID()}`, 'lime');
-      }
       this._mesh = nearMesh;
       vec3.copy(this._interPoint, nearPoint);
       this._pickedFace = nearFace;

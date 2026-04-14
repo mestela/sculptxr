@@ -1,3 +1,7 @@
+# v1.0.180
+- **Fix**: **Multiresolution Wireframe Stability**: Reverted `updateWireframeBuffer` in `Multimesh.js` to the stable Three.js implementation to resolve index miswiring and opacity issues.
+- **Fix**: **Animation Transport Auto-Start**: The SGL importer now properly initializes the track data within `AnimationRegistry` and triggers transport playback immediately upon loading animated SXR files.
+
 # v1.0.171
 - **Feature**: **Shape Key Interpolation Engine**: Activated shape morph animation capabilities directly inside the VR Animation DAW. Shape keys can now be evaluated, interpolated, and rendered to the headset entirely independently of object-level transformation keyframes.
 - **Feature**: **Morph Keyframe Management**: Implemented a clipboard-driven action bar directly above the timeline allowing precise Copy, Paste, and Delete commands for shape keys at any arbitrary playback position.

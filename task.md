@@ -1,4 +1,4 @@
-# Task: Implement Timeline Shape Animation
+# Task: Reconstructing SXR Multiresolution & Animation Tracks
 
 > [!IMPORTANT]
 > **CRITICAL SESSION RULES**:
@@ -6,6 +6,7 @@
 > 2.  **No Caching Blame**: Browser caching is NEVER the valid cause of bugs here. Do not suggest clearing cache.
 > 3.  **Local Vite Testing**: Rely ENTIRELY on local Vite (`npm run dev`) for testing. Do NOT deploy to Beta or Prod.
 
-- [x] Implement CPU-side linear shape keyframe interpolation in `AnimationRegistry.js` <!-- id: 0 -->
-- [x] Add "Add Shape Key" button to VR Animation UI (`GuiVRAnimation.js`) <!-- id: 1 -->
-- [x] Increment version string to `v1.0.170` <!-- id: 2 -->
+- [x] Revert `updateWireframeBuffer` in `Multimesh.js` to commit `3154233f` <!-- id: 0 -->
+- [x] Fix SXR Multiresolution Topology Mismatch in `ImportSGL.js` <!-- id: 1 -->
+- [x] Bind Outliner Names Correctly in `ImportSGL.js` <!-- id: 2 -->
+- [x] Initialize the Animation Transport System on load <!-- id: 3 -->

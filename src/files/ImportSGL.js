@@ -4,6 +4,7 @@ import ExportSGL from './ExportSGL.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
+import AnimationRegistry from '../editing/AnimationRegistry.js';
 
 var Import = {};
 
@@ -239,6 +240,7 @@ Import.importSGL = function (buffer, gl, main) {
         var nbKeys = u32a[off++];
         console.log(`[SXR] Parsing Animation Track... Total Keyframes: ${nbKeys}`);
         var trackObj = { shapeTimes: [], shapes: [] };
+        var maxTime = 0;
 
         for (var k = 0; k < nbKeys; ++k) {
           var time = f32a[off++];
@@ -250,11 +252,24 @@ Import.importSGL = function (buffer, gl, main) {
 
           trackObj.shapeTimes.push(time);
           trackObj.shapes.push(shapeArr);
+          if (time > maxTime) maxTime = time;
           console.log(`[SXR] -> Read Keyframe ${k} at time ${time.toFixed(2)}s`);
         }
 
-        if (!window._animationRegistry) window._animationRegistry = { tracks: new Map() };
-        window._animationRegistry.tracks.set(finalMesh.getID(), trackObj);
+        trackObj.times = [];
+        trackObj.positions = [];
+        trackObj.quaternions = [];
+        trackObj.scales = [];
+        trackObj.playbackTime = 0;
+        trackObj.lastUpdate = performance.now();
+
+        AnimationRegistry.tracks.set(finalMesh.getID(), trackObj);
+        
+        if (maxTime > (window._animMasterDuration || 0)) {
+          window._animMasterDuration = maxTime;
+        }
+        window._animPlaying = true;
+
         console.log(`[SXR] Successfully mounted Animation Track to Mesh ID: ${finalMesh.getID()}`);
       }
     }
