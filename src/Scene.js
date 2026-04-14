@@ -1077,8 +1077,10 @@ class Scene {
       
       // Update custom shader uniforms and wireframe overlays before rendering
       for (var j = 0; j < nbMeshes; ++j) {
-        if (meshes[j].getThreeMesh()) {
-           meshes[j].updateWireframeBuffer();
+        if (meshes[j] && meshes[j].updateWireframeBuffer) {
+            meshes[j].updateWireframeBuffer();
+        }
+        if (meshes[j] && meshes[j].getThreeMesh()) {
            ShaderManager.updateUniforms(meshes[j], this);
         }
       }
@@ -1668,8 +1670,18 @@ class Scene {
       mesh.init();
       mesh.initRender();
       meshes.push(mesh);
-      if (this._worldGroup && mesh.getThreeMesh()) {
-        this._worldGroup.add(mesh.getThreeMesh());
+      
+      var actualThreeMesh = mesh.getThreeMesh();
+      if (!actualThreeMesh && mesh.getCurrentMesh) {
+          var innerMeshLevel = mesh.getCurrentMesh();
+          if (innerMeshLevel && innerMeshLevel.getRenderData) {
+              actualThreeMesh = innerMeshLevel.getRenderData()._threeMesh;
+          }
+      }
+      
+      if (this._worldGroup && actualThreeMesh) {
+        this._worldGroup.add(actualThreeMesh);
+        console.log("[SXR Scene Debug] Added loaded mesh to Three.js world group.");
       }
     }
 

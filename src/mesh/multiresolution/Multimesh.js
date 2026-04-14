@@ -336,11 +336,9 @@ class Multimesh extends Mesh {
     return result;
   }
 
-
-
   updateWireframeBuffer() {
     if (this.getShowWireframe()) {
-      var wireType = this.getWireframeType(); // 0: Level 0 Fast, 1: Level 0 Smooth, 2: Full
+      var wireType = this.getWireframeType();
       var activeMesh = (wireType === 0 || wireType === 1) ? this._meshes[0] : this.getCurrentMesh();
       var sourceLevel = (wireType === 0 || wireType === 1) ? 0 : this._sel;
 
@@ -381,7 +379,7 @@ class Multimesh extends Mesh {
                 color: 0x000000,
                 transparent: true,
                 opacity: currentAlpha,
-                depthTest: true
+                depthTest: false
             });
             lineMaterial.userData = { uBias: { value: rawBias } };
             lineMaterial.onBeforeCompile = function(shader) {
@@ -409,7 +407,13 @@ class Multimesh extends Mesh {
             }
         }
 
-        this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+        let safeIndices = indices;
+        var activeVertsCount = this._renderData._geometry.getAttribute('position').count;
+        if (activeVertsCount < 65535 && indices instanceof Uint32Array) {
+            safeIndices = new Uint16Array(indices);
+        }
+
+        this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(safeIndices, 1));
         this._renderData._wireframeMesh.geometry.computeBoundingSphere();
         this._renderData._wireframeMesh.geometry.computeBoundingBox();
         this._renderData._wireframeMesh.visible = true;

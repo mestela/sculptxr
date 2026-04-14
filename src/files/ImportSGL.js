@@ -73,6 +73,7 @@ Import.importSGL = function (buffer, gl, main) {
         render._showWireframe = u32a[off++];
         render._flatShading = u32a[off++];
         render._alpha = f32a[off++];
+        console.log(`[SXR Binary Parse] Level ${L} parsed flags - Shader: ${render._shaderType}, ShowWireframe: ${render._showWireframe}`);
       }
 
       mesh.getCenter().set(f32a.subarray(off, off + 3));
@@ -169,9 +170,27 @@ Import.importSGL = function (buffer, gl, main) {
         console.log(`[SXR] Loaded Level ${L} directly - Verts: ${resMesh.getNbVertices()}, Faces: ${resMesh.getNbFaces()}`);
       }
       
+      // CRITICAL FIX: initRender() does not create the Three.js WebGL representations! We must call initThreeMesh() on all levels!
+      for (let L = 0; L < mm._meshes.length; L++) {
+          if (mm._meshes[L].initThreeMesh) {
+              mm._meshes[L].initThreeMesh();
+          }
+      }
+      if (mm.initThreeMesh) {
+          mm.initThreeMesh();
+      }
+
       mm.setSelection(activeIndex);
+      console.log(`[SXR Import Debug] Multimesh initialized. ActiveIndex: ${activeIndex}`);
+      console.log(`[SXR Import Debug] Calling updateResolution...`);
       mm.updateResolution();
+      console.log(`[SXR Import Debug] Calling initRender...`);
       mm.initRender();
+      console.log(`[SXR Import Debug] Calling updateWireframeBuffer explicitly...`);
+      mm.setShowWireframe(true);
+      if (mm.updateWireframeBuffer) {
+          mm.updateWireframeBuffer();
+      }
       meshes.push(mm);
       
       console.log(`[SXR] Multiresolution Hierarchy Complete! Active Index: ${activeIndex}`);

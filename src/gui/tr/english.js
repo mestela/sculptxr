@@ -30,7 +30,7 @@ var TR = {
   // file
   fileTitle: 'Files (import/export)',
   fileImportTitle: 'Import',
-  fileAdd: 'Add (obj, sgl, ply, stl)',
+  fileAdd: 'Import file...',
   fileAutoMatrix: 'Scale and center',
   fileVertexSRGB: 'sRGB vertex color',
   fileExportSceneTitle: 'Export Scene',
