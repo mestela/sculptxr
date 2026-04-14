@@ -307,7 +307,7 @@ class Scene {
     this._grid = Primitives.createGrid(this._gl);
     this.initGrid();
 
-    var gridState = localStorage.getItem('sculptxr_showGrid');
+    var gridState = localStorage.getItem('sculptxr_grid_state');
     if (gridState !== null) {
       this._showGrid = (gridState === 'true' || gridState === '1' || gridState === true);
     }

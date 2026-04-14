@@ -226,6 +226,8 @@ class GuiScene {
   onShowGrid(bool) {
     var main = this._main;
     main._showGrid = bool;
+    if (main._groundGrid) main._groundGrid.visible = bool;
+    window.localStorage.setItem('sculptxr_grid_state', bool);
     main.render();
   }
 
