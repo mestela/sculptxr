@@ -31,6 +31,33 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 
 console.log(`Scene.js loaded ${VERSION}`);
 
+window.dumpMeshTopology = function() {
+    var mainApp = window.sculptgl_instance;
+    if (!mainApp || !mainApp._meshes || mainApp._meshes.length === 0) {
+        console.log("No active mesh found.");
+        return;
+    }
+    var mm = mainApp._meshes[0];
+    if (!mm || !mm._meshes) return;
+
+    console.log(`--- [NATIVE TOPOLOGY DUMP] ---`);
+    for (var L = 0; L < mm._meshes.length; L++) {
+        var lvl = mm._meshes[L];
+        var v = lvl.getVertices();
+        var f = lvl.getFaces();
+        var vStr = "";
+        for (var i = 0; i < Math.min(v.length, 36); i += 3) {
+            vStr += `[${v[i].toFixed(2)}, ${v[i+1].toFixed(2)}, ${v[i+2].toFixed(2)}] `;
+        }
+        var fStr = "";
+        for (var i = 0; i < Math.min(f.length, 48); i += 4) {
+            fStr += `(${f[i]}, ${f[i+1]}, ${f[i+2]}, ${f[i+3]}) `;
+        }
+        console.log(`Level ${L} Vertices: ${vStr}`);
+        console.log(`Level ${L} Faces: ${fStr}`);
+    }
+};
+
 class Scene {
 
   constructor() {

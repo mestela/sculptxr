@@ -473,7 +473,7 @@ class Mesh {
 
   initTopology() {
     this.initFaceRings();
-    this.optimize();
+    // this.optimize(); // CRITICAL FIX: NEVER optimize topology! Destroys multires indices!
     this.initEdges();
     this.initVertexRings();
     this.initRenderTriangles();

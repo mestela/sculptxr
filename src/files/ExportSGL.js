@@ -95,7 +95,14 @@ Export.exportSGL = function (meshes, main) {
         u32a[off++] = mesh._sel !== undefined ? mesh._sel : 0;
       }
 
+      var originalSel = isMulti ? mesh._sel : 0;
+
       for (var L = 0; L < levels.length; ++L) {
+        if (isMulti) {
+          mesh.setSelection(L);
+          mesh.updateResolution();
+        }
+
         var lvl = levels[L];
 
         u32a[off++] = lvl.getShaderType ? lvl.getShaderType() : 1;
@@ -117,7 +124,7 @@ Export.exportSGL = function (meshes, main) {
         var nbVertices = lvl.getNbVertices();
         u32a[off++] = nbVertices;
         
-        var vArr = lvl.getVertices();
+        var vArr = (isMulti ? mesh : lvl).getVertices();
         var copyV = Math.min(vArr ? vArr.length : 0, nbVertices * 3);
         f32a.set(vArr.subarray(0, copyV), off);
         off += copyV;
@@ -195,6 +202,11 @@ Export.exportSGL = function (meshes, main) {
           let char2 = (k * 2 + 1 < labelStr.length) ? labelStr.charCodeAt(k * 2 + 1) : 0;
           u32a[off++] = (char1 << 16) | char2;
         }
+      }
+
+      if (isMulti) {
+        mesh.setSelection(originalSel);
+        mesh.updateResolution();
       }
 
       var track = window._animationRegistry ? window._animationRegistry.tracks.get(mesh.getID()) : null;

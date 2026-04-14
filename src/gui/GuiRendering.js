@@ -76,6 +76,8 @@ class GuiRendering {
 
     // wireframe
     this._ctrlShowWireframe = menu.addCheckbox(TR('renderingWireframe'), false, this.onShowWireframe.bind(this));
+    this._ctrlShowSolid = menu.addCheckbox('Show Solid Geometry', true, this.onShowSolid.bind(this));
+    
     if (RenderData.ONLY_DRAW_ARRAYS)
       this._ctrlShowWireframe.setVisibility(false);
 
@@ -178,6 +180,15 @@ class GuiRendering {
     this._main.render();
   }
 
+  onShowSolid(bool) {
+    var meshes = this._main.getSelectedMeshes();
+    for (var i = 0, nb = meshes.length; i < nb; ++i) {
+      var threeMesh = meshes[i].getRenderData()._threeMesh;
+      if (threeMesh) threeMesh.visible = bool;
+    }
+    this._main.render();
+  }
+
   addEvents() {
     var cbLoadTex = this.loadTextureUV.bind(this);
     var cbLoadMatcap = this.loadMatcap.bind(this);
@@ -205,6 +216,10 @@ class GuiRendering {
     this._ctrlShaders.setValue(mesh.getShaderType(), true);
     this._ctrlFlatShading.setValue(mesh.getFlatShading(), true);
     this._ctrlShowWireframe.setValue(mesh.getShowWireframe(), true);
+    var threeMesh = mesh.getRenderData()._threeMesh;
+    if (threeMesh && this._ctrlShowSolid) {
+        this._ctrlShowSolid.setValue(threeMesh.visible, true);
+    }
     this._ctrlMatcap.setValue(mesh.getMatcap(), true);
     this._ctrlTransparency.setValue(100 - 100 * mesh.getOpacity(), true);
     this._ctrlCurvature.setValue(20 * mesh.getCurvature(), true);

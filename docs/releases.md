@@ -1,3 +1,60 @@
+# v1.0.200
+- **Fix**: **Discrete Graphics Context Binding**: Bound parsed sub-levels to active root pointers to close transparent ghost wrappers and allow true drawing visibility.
+
+# v1.0.198
+- **Fix**: **Level State GPU Sync**: Patched `Multimesh.setSelection()` to fully trigger index and attribute boundary updates so GPU tables switch smoothly when browsing levels visually.
+
+# v1.0.197
+- **Fix**: **Synchronized Flattened Surface DrawArrays**: Triggered full `updateGeometry()` over instantiated hierarchies ensuring flattened normals and solid-shaded UV arrays render synchronized with static nodes.
+
+# v1.0.196
+- **Fix**: **Rebuilding Edge References**: Forced `initTopology()` to recompile line caches immediately after parsing pre-serialized discrete buffers to lock wireframes securely onto unshifted positions.
+
+# v1.0.195
+- **Fix**: **Absolute Static Topology Overrides**: Reverted cleanly to unified `mm.addLevel()` processing to fix missing discrete pointers, while explicitly forcing BOTH `newLevel.getFaces()` and `newLevel.getVertices()` to strictly adopt serialized memory blocks to clear edge displacement drift completely.
+
+# v1.0.194
+- **Fix**: **Restored Stable Discrete Layer Base**: Reinstated individual memory buffers over subdivided nodes while fully retaining identical spatial pointer checks to bypass dynamic boundary shifts.
+
+# v1.0.193
+- **Fix**: **Absolute Optimization Base Static Lock**: Upgraded the `.sxr` parser to strictly override the global ES6 `Mesh.OPTIMIZE` superclass constant instead of locally instanced prototypes. This perfectly prevents the GPU Tipsy index-sorting algorithm from running out-of-sync during load time, permanently fixing coordinate desynchronization over natively subdivided meshes!
+
+# v1.0.192
+- **Fix**: **Native Reconstruction and Full Mode Lock**: Restored the unified memory `mm.addLevel()` generation loop upon SXR load after successfully eliminating downstream exporter index padding, and explicitly enforced `wireframeType = 2` globally to prevent headset performance limits from clamping detailed wireframes.
+
+# v1.0.191
+- **Fix**: **Wireframe Memory Desynchronization Fix**: Synchronized the wireframe position attribute upload in `Multimesh.js` to evaluate the identical `isUsingDrawArrays()` conditional as the solid material renderer. This absolutely ensures the wireframe overlay references the exact same memory pointer as the underlying shaded geometry, completely preventing visual desynchronization and tangling.
+
+# v1.0.190
+- **Fix**: **Multiresolution Edge Structure Reversal**: Removed the redundant execution of `initTopology()` on shared level wrappers during import to immediately eliminate edge index scrambling and wireframe visual tangling.
+
+# v1.0.189
+- **Fix**: **Multiresolution Edge Topology Generation**: Enforced explicit execution of `initTopology()` on all newly instantiated `MeshResolution` level wrappers during the `.sxr` import cycle. This guarantees that every layer successfully populates its edge index reference tables, entirely preventing aborted WebGL wireframe renders on loaded subdivided meshes.
+
+# v1.0.188
+- **Fix**: **SXR Multiresolution Export Serialization Fix**: Updated `ExportSGL.js` to explicitly switch to each multiresolution layer (`setSelection(L)`) before reading its vertex array. This ensures the overarching memory pointer always retrieves the exact subdivided layout for that level, entirely preventing zero-padded coordinate artifacts at the rear of saved meshes.
+
+# v1.0.187
+- **Fix**: **Multiresolution Stack Loading Reversal**: Safely reverted the `.sxr` import reconstruction routine back to the stable discrete wrapper paradigm to immediately restore solid geometry integrity across all multiresolution levels.
+
+# v1.0.186
+- **Fix**: **Multiresolution Stack Native Re-generation**: Reconstructed the SXR import multiresolution wrapper creation loop using the native `mm.addLevel()` subdivider to guarantee perfect index alignment and mapping tables, while strictly disabling global GPU optimizations to prevent topological drift.
+
+# v1.0.185
+- **Fix**: **Base Mesh Index Scrambling Fix**: Explicitly bypassed GPU index optimization (`this.optimize()`) during the initialization of the base resolution level (Level 0) in the `.sxr` import pipeline. This ensures the base topology remains perfectly aligned with the index structures of the statically loaded higher resolution layers.
+
+# v1.0.184
+- **Fix**: **Multiresolution Wireframe Index Spaghetti Fix**: Removed the rogue index-mapping translation loop from `updateWireframeBuffer` that was corrupting WebGL index buffers by attempting to draw low-resolution arrays using high-resolution vertex IDs. Also reverted the `.sxr` import parser to the stable discrete-wrapper loading paradigm to prevent Catmull-Clark topology generation from misaligning saved project faces.
+
+# v1.0.183
+- **Fix**: **SXR Topology Reconstruction (Flat Coordinate Fix)**: Resolved the critical issue where imported multiresolution levels (1, 2, 3) collapsed into a single vertex coordinate `[0.25, 0.25, -0.25]` and failed to propagate base sculpting strokes up the hierarchy. The system now builds the multi-level stack natively using the standard `addLevel()` subdivider to guarantee 100% accurate Catmull-Clark mapping tables (`_vertMapping`), and overrides the final calculated position coordinates with the exact values parsed from the `.sxr` file payload.
+
+# v1.0.182
+- **Fix**: **Wireframe Transformation Tracking (Feet Origin Fix)**: Resolved the issue where the wireframe overlay appeared at the user's feet rather than aligned with the model. The system now correctly parents the overlay directly to the active level's `Three.js` mesh so it automatically inherits 3D spatial transformation matrices (position, rotation, scale) in real-time, and includes a self-healing matrix projection fallback for uninitialized containers.
+
+# v1.0.181
+- **Fix**: **SXR Multiresolution Wireframe Synchronization**: Completely resolved the issue where `.sxr` loaded wireframes appeared scrambled or anchored to the floor. The pipeline now extracts the exact `Float32Array` of the currently active level directly, unconditionally attaches the overlay to the root `window.app._scene` to bypass unloaded WebGL containers, and explicitly updates both index and position buffers on every single stroke so the wireframe inherits geometry deformations in real-time.
+
 # v1.0.180
 - **Fix**: **Multiresolution Wireframe Stability**: Reverted `updateWireframeBuffer` in `Multimesh.js` to the stable Three.js implementation to resolve index miswiring and opacity issues.
 - **Fix**: **Animation Transport Auto-Start**: The SGL importer now properly initializes the track data within `AnimationRegistry` and triggers transport playback immediately upon loading animated SXR files.

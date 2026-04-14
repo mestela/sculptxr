@@ -5,7 +5,7 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v1.0.180</title>
+    <title>SculptXR v1.0.200</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
@@ -199,7 +199,8 @@
 
                 // Pipe to VR Debug history if enabled
                 const scene = window.app;
-                const debugMode = scene && scene.getGuiXR && scene.getGuiXR()._uiSettings && scene.getGuiXR()._uiSettings.debugMode;
+                const guiXR = scene && scene.getGuiXR ? scene.getGuiXR() : null;
+                const debugMode = guiXR && guiXR._uiSettings && guiXR._uiSettings.debugMode;
                 if (debugMode && window.screenLog) {
                     // Avoid loop by checking if we are already in screenLog
                     if (!args[0] || (typeof args[0] === 'string' && !args[0].startsWith('[ScreenLog]'))) {

@@ -1,4 +1,4 @@
-# SculptXR (v1.0.180)
+# SculptXR (v1.0.198)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v1.0.180**: **Fix**: Stabilized SXR multiresolution wireframe overlay rendering and automated animation transport playback.
-*   **v1.0.171**: **Feature**: Activated VR shape key morphing animation engine and dedicated copy-paste keyframe clipboard UI row.
-*   **v1.0.169**: **Fix**: Stabilized Animation DAWs spatial matrices and cleared punch-in markers upon capture completion.
+*   **v1.0.198**: **Fix**: Linked explicit active level switches to automated spatial attribute rebinds.
+*   **v1.0.197**: **Fix**: Deployed automated flattened buffer rebuilds to align WebGL draw states on level shift.
+*   **v1.0.196**: **Fix**: Rebuilt stale edge mappings following parsed block overrides to fix pointer shifts.
 
 [View Full Release History](docs/releases.md)
 

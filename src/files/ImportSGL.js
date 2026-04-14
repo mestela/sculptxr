@@ -5,6 +5,7 @@ import ShaderBase from '../render/shaders/ShaderBase.js';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import MeshResolution from '../mesh/multiresolution/MeshResolution.js';
 import AnimationRegistry from '../editing/AnimationRegistry.js';
+import Mesh from '../mesh/Mesh.js';
 
 var Import = {};
 
@@ -140,6 +141,8 @@ Import.importSGL = function (buffer, gl, main) {
 
     if (isMulti && baseMesh && baseMesh._parsedLevels) {
       var lvl0 = baseMesh._parsedLevels[0];
+      var globalOptTemp = Mesh.OPTIMIZE;
+      Mesh.OPTIMIZE = false; // Enforce absolute base-class lock!
       lvl0.allocateArrays();
       lvl0.initTopology();
 
@@ -147,29 +150,27 @@ Import.importSGL = function (buffer, gl, main) {
       if (baseMesh._permanentStaticLabel) {
         mm._permanentStaticLabel = baseMesh._permanentStaticLabel;
       }
+      var optTemp = mm.getCurrentMesh().constructor.OPTIMIZE;
+      mm.getCurrentMesh().constructor.OPTIMIZE = false;
 
       for (var L = 1; L < baseMesh._parsedLevels.length; ++L) {
         var parsedLvl = baseMesh._parsedLevels[L];
         
-        // Fix: We MUST disable global GPU mesh optimization during import!
-        // Otherwise, the base Mesh optimizer will scramble the face/vertex ordering independently for each layer!
-        var optTemp = mm._meshes[0].constructor.OPTIMIZE;
-        mm._meshes[0].constructor.OPTIMIZE = false;
+        // Force uniform graphics root onto discrete instances so attributes match!
+        parsedLvl.setRenderData(mm._meshes[0].getRenderData());
         
-        // Allocate and initialize the loaded static mesh to be ready for display
         parsedLvl.allocateArrays();
         parsedLvl.initTopology();
         parsedLvl.updateGeometry();
         parsedLvl.updateDuplicateColorsAndMaterials();
         
-        mm._meshes[0].constructor.OPTIMIZE = optTemp;
-        
-        // Directly wrap the perfectly loaded level into the multiresolution stack!
         var resMesh = new mm._meshes[0].constructor(parsedLvl, true);
         mm._meshes.push(resMesh);
-
-        console.log(`[SXR] Loaded Level ${L} directly - Verts: ${resMesh.getNbVertices()}, Faces: ${resMesh.getNbFaces()}`);
       }
+
+      Mesh.OPTIMIZE = globalOptTemp;
+
+      console.log(`[SXR] Multiresolution hierarchy loaded and synchronized natively.`);
       
       // CRITICAL FIX: initRender() does not create the Three.js WebGL representations! We must call initThreeMesh() on all levels!
       for (let L = 0; L < mm._meshes.length; L++) {
@@ -183,11 +184,26 @@ Import.importSGL = function (buffer, gl, main) {
 
       mm.setSelection(activeIndex);
       console.log(`[SXR Import Debug] Multimesh initialized. ActiveIndex: ${activeIndex}`);
-      console.log(`[SXR Import Debug] Calling updateResolution...`);
+      
+      for (let L = 0; L < mm._meshes.length; L++) {
+          var lvl = mm._meshes[L];
+          var vArr = lvl.getVertices();
+          var fArr = lvl.getFaces();
+          
+          let vStr = "";
+          for (let i = 0; i < Math.min(vArr.length, 36); i += 3) {
+              vStr += `[${vArr[i].toFixed(2)}, ${vArr[i+1].toFixed(2)}, ${vArr[i+2].toFixed(2)}] `;
+          }
+          let fStr = "";
+          for (let i = 0; i < Math.min(fArr.length, 48); i += 4) {
+              fStr += `(${fArr[i]}, ${fArr[i+1]}, ${fArr[i+2]}, ${fArr[i+3] === -1 ? 'TRI' : fArr[i+3]}) `;
+          }
+          console.log(`[SXR TOPOLOGY DUMP] Level ${L} Vertices: ${vStr}`);
+          console.log(`[SXR TOPOLOGY DUMP] Level ${L} Faces: ${fStr}`);
+      }
+
       mm.updateResolution();
-      console.log(`[SXR Import Debug] Calling initRender...`);
       mm.initRender();
-      console.log(`[SXR Import Debug] Calling updateWireframeBuffer explicitly...`);
       mm.setShowWireframe(true);
       if (mm.updateWireframeBuffer) {
           mm.updateWireframeBuffer();

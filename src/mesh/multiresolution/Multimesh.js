@@ -43,6 +43,10 @@ class Multimesh extends Mesh {
   setSelection(sel) {
     this._sel = sel;
     this.setMeshData(this.getCurrentMesh().getMeshData());
+
+    // CRITICAL FIX: Must force active WebGL updates when the user browses layers, or the solid triangles cache stales onto the old counts!
+    if (this.updateBuffers) this.updateBuffers();
+    if (this.updateWireframeBuffer) this.updateWireframeBuffer();
   }
 
   addLevel() {
@@ -338,9 +342,9 @@ class Multimesh extends Mesh {
 
   updateWireframeBuffer() {
     if (this.getShowWireframe()) {
-      var wireType = this.getWireframeType(); // 0: Level 0 Fast, 1: Level 0 Smooth, 2: Full
-      var activeMesh = (wireType === 0 || wireType === 1) ? this._meshes[0] : this.getCurrentMesh();
-      var sourceLevel = (wireType === 0 || wireType === 1) ? 0 : this._sel;
+      var wireType = 2; // Force Full wireframe type internally for absolute visual debugging
+      var activeMesh = this.getCurrentMesh();
+      var sourceLevel = this._sel;
 
       if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
         activeMesh.allocateArrays();
@@ -350,20 +354,7 @@ class Multimesh extends Mesh {
       
       var indices = activeMesh.getWireframe();
       
-      if (sourceLevel < this._meshes.length - 1 && indices) {
-        var mappedIndices = new Uint32Array(indices.length);
-        for (var i = 0; i < indices.length; i++) {
-          var curId = indices[i];
-          for (var L = sourceLevel; L < this._meshes.length - 1; L++) {
-            var map = this._meshes[L].getVerticesMapping();
-            if (map && curId < map.length) {
-              curId = map[curId];
-            }
-          }
-          mappedIndices[i] = curId;
-        }
-        indices = mappedIndices;
-      }
+      // Wireframe indices and vertices should always be pulled directly and exactly from the active multiresolution mesh level!
 
       var currentAlpha = 0.3;
       var rawBias = 0.001;
@@ -374,9 +365,12 @@ class Multimesh extends Mesh {
       }
 
       if (indices) {
+        // CRITICAL: Wireframe edge rings index exclusively into the UNIQUE non-flattened vertex list! 
+        var activeVerts = activeMesh.getVertices();
+
         if (!this._renderData._wireframeMesh) {
             var lineMaterial = new THREE.LineBasicMaterial({
-                color: 0x000000,
+                color: 0x00ffff, // User request: Cyan wireframe
                 transparent: true,
                 opacity: currentAlpha,
                 depthTest: true
@@ -392,13 +386,15 @@ class Multimesh extends Mesh {
             };
             
             var lineGeom = new THREE.BufferGeometry();
-            lineGeom.setAttribute('position', this._renderData._geometry.getAttribute('position'));
             this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
             this._renderData._wireframeMesh.frustumCulled = false;
             this._renderData._wireframeMesh.renderOrder = 1;
             
-            if (this._renderData._threeMesh) {
-                this._renderData._threeMesh.add(this._renderData._wireframeMesh);
+            var initialParent = activeMesh.getRenderData()._threeMesh || this._renderData._threeMesh;
+            if (initialParent) {
+                initialParent.add(this._renderData._wireframeMesh);
+            } else if (window.app && window.app._scene) {
+                window.app._scene.add(this._renderData._wireframeMesh);
             }
         } else {
             this._renderData._wireframeMesh.material.opacity = currentAlpha;
@@ -407,6 +403,22 @@ class Multimesh extends Mesh {
             }
         }
 
+        // Self-healing: Ensure the wireframe is always parented directly to the actual 3D mesh!
+        var idealParent = activeMesh.getRenderData()._threeMesh || this._renderData._threeMesh;
+        var currentParent = this._renderData._wireframeMesh.parent;
+
+        if (idealParent && currentParent !== idealParent) {
+            idealParent.add(this._renderData._wireframeMesh);
+            this._renderData._wireframeMesh.matrixAutoUpdate = true;
+        } else if (!idealParent && currentParent === window.app._scene) {
+            // Fallback for un-instantiated wrappers: copy the absolute matrix so it doesn't sit at your feet!
+            this._renderData._wireframeMesh.matrixAutoUpdate = false;
+            this._renderData._wireframeMesh.matrix.fromArray(this.getMatrix());
+            this._renderData._wireframeMesh.matrixWorldNeedsUpdate = true;
+        }
+
+        // Always update both index and positions to keep up with live sculpting!
+        this._renderData._wireframeMesh.geometry.setAttribute('position', new THREE.BufferAttribute(activeVerts, 3));
         this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
         this._renderData._wireframeMesh.geometry.computeBoundingSphere();
         this._renderData._wireframeMesh.geometry.computeBoundingBox();
