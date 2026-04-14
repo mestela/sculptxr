@@ -358,12 +358,14 @@ class Multimesh extends Mesh {
         baseMesh.initEdges();
       }
       
-      // The absolute breakthrough:
-      // Positions ALWAYS come from the dense layer so deformations match the scene geometry!
+      // Mode 0: Level 0 Fast -> Flat base cage lines across displaced parent anchor nodes
+      // Mode 1: Level 0 Smooth -> Curved tessellated paths tracking local subdivision offsets
+      // Mode 2: Full -> Dense active grid mapping
       var activeVerts = activeMesh.getVertices();
-      
-      // Indices swap dynamically: Full (dense) vs Proxy (base cage)
-      var indices = (wireType === 1 || wireType === 2) ? baseMesh.getWireframe() : activeMesh.getWireframe();
+      var indices;
+      if (wireType === 0) indices = baseMesh.getWireframe();
+      else if (wireType === 1) indices = this.getTessellatedWireframe(0);
+      else indices = activeMesh.getWireframe();
 
       var rawAlpha = 0.3;
       var rawBias = 0.001;
