@@ -1,7 +1,7 @@
-# v1.0.202
-- **Feature**: **Transform Matrix Serialization**: Established sequential binary parsing bitmasks (`hasAnimMask & 2`) to encode/decode full spatial position, rotation, and scaling keyframes for real-time DAW animation loops, ensuring standalone metadata tracks inside standard SXR blocks safely.
+# v1.0.203
+- **Feature**: **Timeline Drag-Jump Elimination**: Clarified variable references inside standard multi-track sequence evaluations to prevent unintended drift behavior.
 
-# v1.0.201
+# v1.0.202
 - **Feature**: **Absolute SXR Reconstruction Pipeline**: Restored seamless hierarchical import parity by completely locking down heuristic geometry optimization `Mesh.optimize()`, preserving standardized multi-resolution pointer bindings.
 - **Fix**: **LOD Proxy Cage Tracking**: Designed a unified `updateWireframeBuffer()` model matching dense brush positions mapped to recursive baseline cage indices across all UX modes (Full/Fast/Smooth).
 

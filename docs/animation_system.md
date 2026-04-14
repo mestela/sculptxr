@@ -35,3 +35,8 @@ We encode real-time data purely inline via version masks (`hasAnimMask`) inside 
 
 ### Reading Safely
 - Import sub-mesh loops gracefully accept minimum available continuous array steps (`minLen >= reqLen`), eliminating optimization mismatches across different LOD stack depths.
+
+## 4. Timeline Editing & Transform Box Interactions
+Advanced keyframe editing is facilitated using custom drag handles (`left`, `right`, `center`, `scale_center`) layered natively inside `GuiXR.js`:
+- **State Serialization**: Interaction offsets rely explicitly on cached reference snapshots (`this._animTransformInitialBox`, `this._animTransformBoxInitialTimes`). These pointers are strictly purged on pointer release to eliminate frame jumps.
+- **Safety Synchronization**: The editing lifecycle dynamically locks tool indexes (`Enums.Tools.GRAB`) continuously to protect complex coordinate projections.

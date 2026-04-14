@@ -1,4 +1,4 @@
-# SculptXR (v1.0.202)
+# SculptXR (v1.0.203)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.203**: **Feature**: Standardized DAW Transform Box selection calculations and enforced synchronized Sculpting interaction parameters.
 *   **v1.0.202**: **Feature**: Extended `.sxr` buffers to cleanly serialize TRS positional sequences dynamically via bitmask indexing.
 *   **v1.0.201**: **Feature**: Resolved multiresolution topology hierarchy alignment across custom `.sxr` exports.
-*   **v1.0.198**: **Fix**: Linked explicit active level switches to automated spatial attribute rebinds.
 
 [View Full Release History](docs/releases.md)
 

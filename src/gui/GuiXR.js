@@ -4754,8 +4754,6 @@ export default class GuiXR {
 
     const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
 
-    if (window.screenLog) window.screenLog(`DROPDOWN EVAL: cx:${cx.toFixed(0)}, cy:${cy.toFixed(0)} | startX:${startX}, startY:${startY}, totalW:${totalW}, listH:${listH}`, 'yellow');
-
     if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
       const localX = (cx - startX);
       const localY = (cy - startY);
