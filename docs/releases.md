@@ -1,5 +1,8 @@
+# v1.0.201
+- **Feature**: **Absolute SXR Reconstruction Pipeline**: Restored seamless hierarchical import parity by completely locking down heuristic geometry optimization `Mesh.optimize()`, preserving standardized multi-resolution pointer bindings.
+- **Fix**: **LOD Proxy Cage Tracking**: Designed a unified `updateWireframeBuffer()` model matching dense brush positions mapped to recursive baseline cage indices across all UX modes (Full/Fast/Smooth).
+
 # v1.0.200
-- **Fix**: **Discrete Graphics Context Binding**: Bound parsed sub-levels to active root pointers to close transparent ghost wrappers and allow true drawing visibility.
 
 # v1.0.198
 - **Fix**: **Level State GPU Sync**: Patched `Multimesh.setSelection()` to fully trigger index and attribute boundary updates so GPU tables switch smoothly when browsing levels visually.

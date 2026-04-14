@@ -181,66 +181,11 @@ Import.importSGL = function (buffer, gl, main) {
       }
 
       mm.setSelection(activeIndex);
-      console.log(`[SXR Import Debug] Multimesh initialized. ActiveIndex: ${activeIndex}`);
-      
-      for (let L = 0; L < mm._meshes.length; L++) {
-          var lvl = mm._meshes[L];
-          var vArr = lvl.getVertices();
-          var fArr = lvl.getFaces();
-          
-          let vStr = "";
-          for (let i = 0; i < Math.min(vArr.length, 36); i += 3) {
-              vStr += `[${vArr[i].toFixed(2)}, ${vArr[i+1].toFixed(2)}, ${vArr[i+2].toFixed(2)}] `;
-          }
-          let fStr = "";
-          for (let i = 0; i < Math.min(fArr.length, 48); i += 4) {
-              fStr += `(${fArr[i]}, ${fArr[i+1]}, ${fArr[i+2]}, ${fArr[i+3] === -1 ? 'TRI' : fArr[i+3]}) `;
-          }
-          console.log(`[SXR TOPOLOGY DUMP] Level ${L} Vertices: ${vStr}`);
-          console.log(`[SXR TOPOLOGY DUMP] Level ${L} Faces: ${fStr}`);
-      }
-
       mm.updateResolution();
       mm.initRender();
       mm.setShowWireframe(true);
-      if (mm.updateWireframeBuffer) {
-          mm.updateWireframeBuffer();
-      }
+      if (mm.updateWireframeBuffer) mm.updateWireframeBuffer();
       meshes.push(mm);
-      
-      console.log(`[SXR] Multiresolution Hierarchy Complete! Active Index: ${activeIndex}`);
-      
-      var debugMesh = mm.getCurrentMesh();
-      var debugVerts = debugMesh.getVertices();
-      var debugTris = debugMesh.getTriangles();
-      
-      console.log("[SXR DIAGNOSTIC] Level " + activeIndex + " First 12 Vertices (X,Y,Z):");
-      var vStr = "";
-      for (let d=0; d<36; d+=3) {
-          vStr += `[${debugVerts[d].toFixed(2)}, ${debugVerts[d+1].toFixed(2)}, ${debugVerts[d+2].toFixed(2)}] `;
-      }
-      console.log(vStr);
-      
-      console.log("[SXR DIAGNOSTIC] Level " + activeIndex + " First 24 Indices:");
-      var iStr = "";
-      if (debugTris) {
-          for (let d=0; d<24; d+=3) {
-              iStr += `(${debugTris[d]}, ${debugTris[d+1]}, ${debugTris[d+2]}) `;
-          }
-          console.log(iStr);
-      } else {
-          console.log("NO INDICES FOUND!");
-      }
-
-      var debugWire = debugMesh.getWireframe();
-      console.log(`[SXR DIAGNOSTIC] Level ${activeIndex} Wireframe Length: ${debugWire ? debugWire.length : 0}`);
-      if (debugWire && debugWire.length >= 16) {
-          var wStr = "";
-          for (let w=0; w<16; w+=2) {
-              wStr += `[${debugWire[w]} -> ${debugWire[w+1]}] `;
-          }
-          console.log(`[SXR DIAGNOSTIC] Level ${activeIndex} First 8 Wireframe Edges: ${wStr}`);
-      }
     }
 
     var finalMesh = isMulti ? meshes[meshes.length - 1] : baseMesh;
