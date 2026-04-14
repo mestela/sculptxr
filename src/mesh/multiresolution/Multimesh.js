@@ -223,7 +223,7 @@ class Multimesh extends Mesh {
   }
 
   _canUseLowRender(main) {
-    return false; // Fix: Always render the true wireframe and surface of the active layer natively!
+    return false; // Allow exclusive index-to-displaced-position geometry overlays!
   }
 
   render(main) {
@@ -342,37 +342,43 @@ class Multimesh extends Mesh {
 
   updateWireframeBuffer() {
     if (this.getShowWireframe()) {
-      var wireType = 2; // Force Full wireframe type internally for absolute visual debugging
+      var optionsObj = getOptionsURL ? getOptionsURL() : {};
+      var wireType = optionsObj.wireframeType !== undefined ? optionsObj.wireframeType : 0;
       var activeMesh = this.getCurrentMesh();
-      var sourceLevel = this._sel;
+      var baseMesh = this._meshes[0];
 
       if (!activeMesh.getEdges() || activeMesh.getEdges().length === 0) {
         activeMesh.allocateArrays();
         activeMesh.initFaceRings();
         activeMesh.initEdges();
       }
+      if (!baseMesh.getEdges() || baseMesh.getEdges().length === 0) {
+        baseMesh.allocateArrays();
+        baseMesh.initFaceRings();
+        baseMesh.initEdges();
+      }
       
-      var indices = activeMesh.getWireframe();
+      // The absolute breakthrough:
+      // Positions ALWAYS come from the dense layer so deformations match the scene geometry!
+      var activeVerts = activeMesh.getVertices();
       
-      // Wireframe indices and vertices should always be pulled directly and exactly from the active multiresolution mesh level!
+      // Indices swap dynamically: Full (dense) vs Proxy (base cage)
+      var indices = (wireType === 1 || wireType === 2) ? baseMesh.getWireframe() : activeMesh.getWireframe();
 
-      var currentAlpha = 0.3;
+      var rawAlpha = 0.3;
       var rawBias = 0.001;
       if (window.app && window.app.getGuiXR()) {
           var ui = window.app.getGuiXR()._uiSettings;
-          if (ui.wireframeAlpha !== undefined) currentAlpha = ui.wireframeAlpha;
+          if (ui.wireframeAlpha !== undefined) rawAlpha = ui.wireframeAlpha;
           if (ui.wireframeBias !== undefined) rawBias = ui.wireframeBias;
       }
 
       if (indices) {
-        // CRITICAL: Wireframe edge rings index exclusively into the UNIQUE non-flattened vertex list! 
-        var activeVerts = activeMesh.getVertices();
-
         if (!this._renderData._wireframeMesh) {
             var lineMaterial = new THREE.LineBasicMaterial({
-                color: 0x00ffff, // User request: Cyan wireframe
+                color: 0x000000, // Restored black color
                 transparent: true,
-                opacity: currentAlpha,
+                opacity: rawAlpha,
                 depthTest: true
             });
             lineMaterial.userData = { uBias: { value: rawBias } };
@@ -397,7 +403,7 @@ class Multimesh extends Mesh {
                 window.app._scene.add(this._renderData._wireframeMesh);
             }
         } else {
-            this._renderData._wireframeMesh.material.opacity = currentAlpha;
+            this._renderData._wireframeMesh.material.opacity = rawAlpha;
             if (this._renderData._wireframeMesh.material.userData.uBias) {
                 this._renderData._wireframeMesh.material.userData.uBias.value = rawBias;
             }
