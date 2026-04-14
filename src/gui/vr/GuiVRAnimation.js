@@ -578,21 +578,124 @@ export default function getAnimationWidgets(main) {
   y += 50 + gapBtn;
 
   window._animActiveTool = window._animActiveTool || 'select';
+  window._animMarqueeMode = window._animMarqueeMode || 'select_only';
+  if (window._animTransformAutoSelect === undefined) window._animTransformAutoSelect = true;
+
   widgets.push({
-    type: 'combobox', id: 'anim_active_tool', label: `Tool: ${window._animActiveTool.toUpperCase()}`,
-    x: col1X, y: y, w: 300, h: 36,
+    type: 'combobox', id: 'anim_active_tool', label: `🗜️ ${window._animActiveTool.toUpperCase()}`,
+    x: col1X, y: y, w: 200, h: 36,
     value: window._animActiveTool,
     options: [
-      { id: 'select', label: 'Tool: SELECT (Click/Move)' },
-      { id: 'marquee', label: 'Tool: MARQUEE (Box Select)' }
+      { id: 'select', label: 'SELECT' },
+      { id: 'marquee', label: 'MARQUEE' },
+      { id: 'transform', label: 'TRANSFORM' }
     ],
     onInteract: (val) => {
       const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select');
       window._animActiveTool = newMode;
-      if (newMode !== 'marquee') window._animMarqueeBounds = null;
+      window._waitingForTriggerReleaseAfterToolChange = true;
+      console.log(`[Toolbar] ACTIVE TOOL SWAP: ${newMode}`);
+      if (newMode !== 'transform') {
+        window._animTransformBox = null;
+      }
+      if (main._guiXR) {
+        main._guiXR._marqueeStart = null;
+        main._guiXR._marqueeEnd = null;
+        main._guiXR._activeTimeline = null;
+        main._guiXR._transformBoxDrawing = false;
+        main._guiXR._activeTransformHandle = null;
+        main._guiXR._animTransformBoxInitialTimes = null;
+        main._guiXR._animTransformInitialBox = null;
+        main._guiXR._needsRedraw = true;
+      }
+      // If user swaps to transform mode, automatically select GRAB tool.
+      if (newMode === 'transform') {
+        const sm = main.getSculptManager();
+        if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
+        console.log(`[Toolbar] Forced Grab Tool Index assigned successfully: ${Enums.Tools.GRAB}`);
+        if (main._guiXR) {
+          main._guiXR.refreshToolsWidget();
+          main._guiXR.syncWidgetValues();
+        }
+      }
+    },
+    onSelect: (val) => {
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select');
+      window._animActiveTool = newMode;
+      window._waitingForTriggerReleaseAfterToolChange = true;
+      console.log(`[Toolbar] ACTIVE TOOL SWAP (onSelect): ${newMode}`);
+      if (newMode !== 'transform') {
+        window._animTransformBox = null;
+      }
+      if (main._guiXR) {
+        main._guiXR._marqueeStart = null;
+        main._guiXR._marqueeEnd = null;
+        main._guiXR._activeTimeline = null;
+        main._guiXR._transformBoxDrawing = false;
+        main._guiXR._activeTransformHandle = null;
+        main._guiXR._animTransformBoxInitialTimes = null;
+        main._guiXR._animTransformInitialBox = null;
+        main._guiXR._needsRedraw = true;
+      }
+      if (newMode === 'transform') {
+        const sm = main.getSculptManager();
+        if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
+        console.log(`[Toolbar] Forced Grab Tool Index assigned (onSelect): ${Enums.Tools.GRAB}`);
+        if (window.screenLog) window.screenLog(`[Toolbar] Swapped to Grab Tool Mode!`, 'green');
+        if (main._guiXR) {
+          main._guiXR.refreshToolsWidget();
+          main._guiXR.syncWidgetValues();
+        }
+      }
+    }
+  });
+
+  if (window._animAutoKey === undefined) window._animAutoKey = false;
+
+  if (window._animActiveTool === 'marquee') {
+    widgets.push({
+      type: 'combobox', id: 'anim_marquee_mode', label: `Mode: ${window._animMarqueeMode.toUpperCase()}`,
+      x: col1X + 220, y: y, w: 230, h: 36,
+      value: window._animMarqueeMode,
+      options: [
+        { id: 'select_only', label: 'Auto Select & Exit' },
+        { id: 'add', label: 'Add to Selection' },
+        { id: 'remove', label: 'Remove from Selection' }
+      ],
+      onInteract: (val) => {
+        const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select_only');
+        window._animMarqueeMode = newMode;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+      },
+      onSelect: (val) => {
+        const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select_only');
+        window._animMarqueeMode = newMode;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+      }
+    });
+  } else if (window._animActiveTool === 'transform') {
+    widgets.push({
+      type: 'checkbox', id: 'anim_transform_auto', label: 'Auto Select Keys',
+      x: col1X + 220, y: y, w: 200, h: 36,
+      value: window._animTransformAutoSelect,
+      onInteract: (val) => {
+        window._animTransformAutoSelect = !window._animTransformAutoSelect;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+      }
+    });
+  }
+
+  // Global AutoKey Option
+  widgets.push({
+    type: 'checkbox', id: 'anim_autokey', label: 'AutoKey',
+    x: col1X + 460, y: y, w: 180, h: 36,
+    value: window._animAutoKey,
+    onInteract: (val) => {
+      window._animAutoKey = !window._animAutoKey;
       if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
+
   y += 36 + gapBtn;
 
   // 6. Sleek Timeline

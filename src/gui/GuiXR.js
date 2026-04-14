@@ -278,6 +278,9 @@ export default class GuiXR {
   closeOverlay() {
     this._overlay = null;
     this._overlayData = null;
+    this._activeTimeline = null;
+    this._marqueeStart = null;
+    this._marqueeEnd = null;
     this._needsRedraw = true;
   }
 
@@ -973,10 +976,13 @@ export default class GuiXR {
     if (this._wasPressed === undefined) this._wasPressed = false;
     const isRisingEdge = (isPressed && !this._wasPressed);
     this._wasPressed = isPressed;
+    if (isRisingEdge && this._activeCombobox) {
+      if (window.screenLog) window.screenLog(`COMBOBOX DETECTED ON PRESS: ${this._activeCombobox.id}`, 'cyan');
+    }
     if (isRisingEdge) this._hasClickedWidgetThisPress = false;
     if (!isPressed) {
-      this._hasClickedWidgetThisPress = false;
       this._dragStartY = undefined;
+      this._dragStartRy = undefined;
     }
 
     if (!this._cursor.active) return;
@@ -1011,7 +1017,9 @@ export default class GuiXR {
           const y1 = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
           const y2 = Math.max(this._marqueeStart.y, this._marqueeEnd.y);
 
-          window._animSelectedKeys = [];
+          const marqMode = window._animMarqueeMode || 'select_only';
+          let pendingKeys = [];
+
           const tracks = Array.from(window._animationRegistry.tracks.entries());
           const laneAreaH = this._activeTimeline.h - 30;
           const totalSlots = Math.max(4, tracks.length);
@@ -1032,7 +1040,7 @@ export default class GuiXR {
                   const kTime = trackObj.shapeTimes[i];
                   const kx = 200 + ((kTime - lStart) / vDur) * (this._activeTimeline.w - 220);
                   if (kx >= x1 && kx <= x2) {
-                    window._animSelectedKeys.push({ meshId, type: 'shape', index: i, time: kTime });
+                    pendingKeys.push({ meshId, type: 'shape', index: i, time: kTime });
                   }
                 }
               }
@@ -1041,12 +1049,30 @@ export default class GuiXR {
                   const kTime = trackObj.times[i];
                   const kx = 200 + ((kTime - lStart) / vDur) * (this._activeTimeline.w - 220);
                   if (kx >= x1 && kx <= x2) {
-                    window._animSelectedKeys.push({ meshId, type: 'transform', index: i, time: kTime });
+                    pendingKeys.push({ meshId, type: 'transform', index: i, time: kTime });
                   }
                 }
               }
             }
           });
+
+          if (!window._animSelectedKeys) window._animSelectedKeys = [];
+
+          if (marqMode === 'add') {
+            pendingKeys.forEach(pk => {
+              if (!window._animSelectedKeys.some(sk => sk.meshId === pk.meshId && sk.type === pk.type && sk.index === pk.index)) {
+                window._animSelectedKeys.push(pk);
+              }
+            });
+          } else if (marqMode === 'remove') {
+            window._animSelectedKeys = window._animSelectedKeys.filter(sk => 
+              !pendingKeys.some(pk => pk.meshId === sk.meshId && pk.type === sk.type && pk.index === sk.index)
+            );
+          } else {
+            window._animSelectedKeys = pendingKeys;
+            console.log(`[Toolbar] FORCED BACK TO SELECT MODE because of marquee selection completion`);
+            window._animActiveTool = 'select'; // Return to select mode
+          }
         }
 
         if (this._animSelectedKeysInitialTimes && window._animationRegistry) {
@@ -1088,7 +1114,6 @@ export default class GuiXR {
             }
           });
           
-          window._animSelectedKeys = [];
           this._animSelectedKeysInitialTimes = null;
         }
 
@@ -1099,6 +1124,10 @@ export default class GuiXR {
         this._activeKeyframeIndex = undefined;
         this._activeTangentTrack = null;
         this._activeTangentIndex = undefined;
+        this._transformBoxDrawing = false;
+        this._activeTransformHandle = null;
+        this._animTransformInitialBox = null;
+        this._animTransformBoxInitialTimes = null;
       }
       return;
     }
@@ -1174,6 +1203,167 @@ export default class GuiXR {
         return;
       }
 
+      if (window._animActiveTool === 'transform') {
+        if (this._transformBoxDrawing) {
+          const rx2 = scaledCx - targetWid.x;
+          const ry2 = scaledCy - targetWid.y;
+          const rx1 = this._transformBoxStart.x;
+          
+          const t1 = (Math.min(rx1, rx2) - 200) / (targetWid.w - 220);
+          const t2 = (Math.max(rx1, rx2) - 200) / (targetWid.w - 220);
+          
+          const masterLen = window._animMasterDuration || 1.0;
+          const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+          const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : masterLen;
+          const vDur = Math.max(0.1, lEnd - lStart);
+
+          window._animTransformBox = {
+            startTime: lStart + Math.max(0, Math.min(1, t1)) * vDur,
+            endTime: lStart + Math.max(0, Math.min(1, t2)) * vDur
+          };
+
+          if (window._animTransformAutoSelect && window._animationRegistry) {
+            window._animSelectedKeys = [];
+            window._animationRegistry.tracks.forEach((trackObj, meshId) => {
+              if (trackObj.shapeTimes) {
+                trackObj.shapeTimes.forEach((kTime, i) => {
+                  if (kTime >= window._animTransformBox.startTime && kTime <= window._animTransformBox.endTime) {
+                    window._animSelectedKeys.push({ meshId, type: 'shape', index: i, time: kTime });
+                  }
+                });
+              }
+              if (trackObj.times) {
+                trackObj.times.forEach((kTime, i) => {
+                  if (kTime >= window._animTransformBox.startTime && kTime <= window._animTransformBox.endTime) {
+                    window._animSelectedKeys.push({ meshId, type: 'transform', index: i, time: kTime });
+                  }
+                });
+              }
+            });
+            this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+          }
+
+          this._needsRedraw = true;
+          return;
+        }
+
+        if (this._activeTransformHandle) {
+          const rxCurrent = scaledCx - targetWid.x;
+          const tCurrent = (rxCurrent - 200) / (targetWid.w - 220);
+          const masterLen = window._animMasterDuration || 1.0;
+          const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+          const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : masterLen;
+          const vDur = Math.max(0.1, lEnd - lStart);
+          const targetTime = lStart + Math.max(0, Math.min(1, tCurrent)) * vDur;
+
+          const tBox = window._animTransformBox;
+          if (!tBox) return;
+
+          const initBox = this._animTransformInitialBox || { startTime: tBox.startTime, endTime: tBox.endTime };
+
+          if (this._activeTransformHandle === 'left') {
+            const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
+            const dt = ((rxCurrent - rxStart) / (targetWid.w - 220)) * vDur;
+            const newStartTime = Math.max(0, Math.min(initBox.endTime - 0.01, initBox.startTime + dt));
+            tBox.startTime = newStartTime;
+            
+            if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+              const baseDur = initBox.endTime - initBox.startTime;
+              const newDur = initBox.endTime - newStartTime;
+              const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+
+              this._animTransformBoxInitialTimes.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (!track) return;
+                
+                const relTime = initBox.endTime - initKey.time;
+                const newTime = initBox.endTime - relTime * scaleFactor;
+                const finalTime = Math.max(0, Math.min(masterLen, newTime));
+
+                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
+                  track.times[initKey.index] = finalTime;
+                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
+                  track.shapeTimes[initKey.index] = finalTime;
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'right') {
+            const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
+            const dt = ((rxCurrent - rxStart) / (targetWid.w - 220)) * vDur;
+            const newEndTime = Math.max(initBox.startTime + 0.01, Math.min(masterLen, initBox.endTime + dt));
+            tBox.endTime = newEndTime;
+
+            if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+              const baseDur = initBox.endTime - initBox.startTime;
+              const newDur = newEndTime - initBox.startTime;
+              const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+
+              this._animTransformBoxInitialTimes.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (!track) return;
+                
+                const relTime = initKey.time - initBox.startTime;
+                const newTime = initBox.startTime + relTime * scaleFactor;
+                const finalTime = Math.max(0, Math.min(masterLen, newTime));
+
+                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
+                  track.times[initKey.index] = finalTime;
+                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
+                  track.shapeTimes[initKey.index] = finalTime;
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'center') {
+            const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
+            const dt = ((rxCurrent - rxStart) / (targetWid.w - 220)) * vDur;
+            const dtClamped = Math.max(-initBox.startTime, Math.min(masterLen - initBox.endTime, dt));
+            
+            tBox.startTime = initBox.startTime + dtClamped;
+            tBox.endTime = initBox.endTime + dtClamped;
+
+            if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+              this._animTransformBoxInitialTimes.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (!track) return;
+                
+                const finalTime = Math.max(0, Math.min(masterLen, initKey.time + dtClamped));
+
+                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
+                  track.times[initKey.index] = finalTime;
+                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
+                  track.shapeTimes[initKey.index] = finalTime;
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'scale_center') {
+            const initMid = (initBox.startTime + initBox.endTime) / 2;
+            const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
+            const dx = rxCurrent - rxStart;
+            const scaleFactor = Math.max(0.01, 1.0 + dx / 150.0);
+
+            tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
+            tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
+
+            if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+              this._animTransformBoxInitialTimes.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (!track) return;
+                
+                const finalTime = Math.max(0, Math.min(masterLen, initMid + (initKey.time - initMid) * scaleFactor));
+
+                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
+                  track.times[initKey.index] = finalTime;
+                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
+                  track.shapeTimes[initKey.index] = finalTime;
+                }
+              });
+            }
+          }
+          this._needsRedraw = true;
+          return;
+        }
+      }
+
       let t = (scaledCx - targetWid.x - 200) / (targetWid.w - 220);
       t = Math.max(0, Math.min(1, t));
       
@@ -1243,18 +1433,20 @@ export default class GuiXR {
         }
       }
 
-      window._animPlaying = false;
-      window._animCurrentTime = targetTime;
+      if (this._dragStartRy !== undefined && this._dragStartRy <= 30) {
+        window._animPlaying = false;
+        window._animCurrentTime = targetTime;
 
-      if (window._animationRegistry) {
-        window._animationRegistry.globalPlaybackTime = targetTime;
-        if (this._main && this._main._meshes) {
-          for (let i = 0; i < this._main._meshes.length; i++) {
-            const m = this._main._meshes[i];
-            const tr = window._animationRegistry.tracks.get(m.getID());
-            if (tr) {
-              tr.playbackTime = targetTime;
-              window._animationRegistry.update(m, true);
+        if (window._animationRegistry) {
+          window._animationRegistry.globalPlaybackTime = targetTime;
+          if (this._main && this._main._meshes) {
+            for (let i = 0; i < this._main._meshes.length; i++) {
+              const m = this._main._meshes[i];
+              const tr = window._animationRegistry.tracks.get(m.getID());
+              if (tr) {
+                tr.playbackTime = targetTime;
+                window._animationRegistry.update(m, true);
+              }
             }
           }
         }
@@ -1355,7 +1547,13 @@ export default class GuiXR {
       return;
     }
 
-
+    if (window._waitingForTriggerReleaseAfterToolChange) {
+      if (!isPressed) {
+        window._waitingForTriggerReleaseAfterToolChange = false;
+      } else {
+        return; // Ignore all timeline/widget interactions until trigger is released
+      }
+    }
 
     // Find Target Widget for Debounce Logic
     let targetWid = null;
@@ -1511,7 +1709,9 @@ export default class GuiXR {
         if (window._animActiveTool === 'marquee') {
           if (!this._marqueeStart) {
             this._marqueeStart = { x: cx - this._activeTimeline.x, y: cy - this._activeTimeline.y };
-            window._animSelectedKeys = [];
+            if ((window._animMarqueeMode || 'select_only') === 'select_only') {
+              window._animSelectedKeys = [];
+            }
           }
           this._marqueeEnd = { x: cx - this._activeTimeline.x, y: cy - this._activeTimeline.y };
           this._needsRedraw = true;
@@ -1595,14 +1795,114 @@ export default class GuiXR {
           this._activeTimeline = targetWid;
           if (!this._marqueeStart) {
             this._marqueeStart = { x: rx, y: ry };
-            window._animSelectedKeys = [];
+            if ((window._animMarqueeMode || 'select_only') === 'select_only') {
+              window._animSelectedKeys = [];
+            }
             if (window.screenLog) window.screenLog(`MARQ START: ${rx.toFixed(0)},${ry.toFixed(0)}`, 'cyan');
           }
           this._marqueeEnd = { x: rx, y: ry };
           this._needsRedraw = true;
+        } else if (window._animActiveTool === 'transform') {
+          this._activeTimeline = targetWid;
+          
+          // Force active Sculpt tool to GRAB immediately 
+          const sm = this._main.getSculptManager();
+          if (sm && sm.getToolIndex() !== Enums.Tools.GRAB) {
+            sm.setToolIndex(Enums.Tools.GRAB);
+            if (window.screenLog) window.screenLog(`[Timeline Engine] Auto-swapped Tool to GRAB!`, 'green');
+          }
+
+          if (window._animTransformBox) {
+            const mDur = window._animMasterDuration || 1.0;
+            const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+            const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+            const vDur = Math.max(0.1, lEnd - lStart);
+
+            const tBox = window._animTransformBox;
+            if (window._animTransformAutoSelect && window._animationRegistry && tBox) {
+              window._animSelectedKeys = [];
+              window._animationRegistry.tracks.forEach((trackObj, meshId) => {
+                if (trackObj.shapeTimes) {
+                  trackObj.shapeTimes.forEach((kTime, i) => {
+                    if (kTime >= tBox.startTime && kTime <= tBox.endTime) {
+                      window._animSelectedKeys.push({ meshId, type: 'shape', index: i, time: kTime });
+                    }
+                  });
+                }
+                if (trackObj.times) {
+                  trackObj.times.forEach((kTime, i) => {
+                    if (kTime >= tBox.startTime && kTime <= tBox.endTime) {
+                      window._animSelectedKeys.push({ meshId, type: 'transform', index: i, time: kTime });
+                    }
+                  });
+                }
+              });
+            }
+
+            const kxLeft = 200 + ((tBox.startTime - lStart) / vDur) * (targetWid.w - 220);
+            const kxRight = 200 + ((tBox.endTime - lStart) / vDur) * (targetWid.w - 220);
+            const kxMid = (kxLeft + kxRight) / 2;
+
+            if (Math.abs(rx - kxLeft) < 20) {
+              this._activeTransformHandle = 'left';
+              this._transformStartRx = rx;
+              this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+              if (window._animSelectedKeys) {
+                this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+              }
+              this._needsRedraw = true;
+              return;
+            } else if (Math.abs(rx - kxRight) < 20) {
+              this._activeTransformHandle = 'right';
+              this._transformStartRx = rx;
+              this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+              if (window._animSelectedKeys) {
+                this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+              }
+              this._needsRedraw = true;
+              return;
+            } else {
+              const cyMid = 30 + (targetWid.h - 30) / 2;
+              const isInsideCenterBox = Math.abs(rx - kxMid) < 25 && Math.abs(ry - cyMid) < 25;
+
+              if (isInsideCenterBox) {
+                this._activeTransformHandle = 'scale_center';
+                this._transformStartRx = rx;
+                this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+                if (window._animSelectedKeys) {
+                  this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                }
+                this._needsRedraw = true;
+                return;
+              } else {
+                const boxWidth = kxRight - kxLeft;
+                const twoThirdsStart = kxLeft + boxWidth * (1 / 6);
+                const twoThirdsEnd = kxLeft + boxWidth * (5 / 6);
+
+                if (rx >= twoThirdsStart && rx <= twoThirdsEnd) {
+                  this._activeTransformHandle = 'center';
+                  this._transformStartRx = rx;
+                  this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+                  if (window._animSelectedKeys) {
+                    this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                  }
+                  this._needsRedraw = true;
+                  return;
+                }
+              }
+            }
+            return;
+          } else {
+            this._activeTimeline = targetWid;
+            this._transformBoxDrawing = true;
+            this._transformBoxStart = { x: rx, y: ry };
+            this._needsRedraw = true;
+            return;
+          }
         } else {
           // --- 2. TRACK LANE CLICK HIT-BOXES ---
           if (window._animationRegistry) {
+            let keyFound = false;
             const tracks = Array.from(window._animationRegistry.tracks.entries());
             const laneAreaH = targetWid.h - 30;
             const totalSlots = Math.max(4, tracks.length);
@@ -1657,6 +1957,7 @@ export default class GuiXR {
                       this._activeTangentSide = 'left';
                       this._activeTangentKx = kx;
                       this._activeTimeline = targetWid;
+                      keyFound = true;
                       break;
                     }
                     if (Math.abs(rx - (kx + rightXOff)) < 15) {
@@ -1665,6 +1966,7 @@ export default class GuiXR {
                       this._activeTangentSide = 'right';
                       this._activeTangentKx = kx;
                       this._activeTimeline = targetWid;
+                      keyFound = true;
                       break;
                     }
                   }
@@ -1682,11 +1984,13 @@ export default class GuiXR {
                       window._animSelectedKeys = [{ meshId, type: 'shape', index: i, time: kTime }];
                     }
                     this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                    keyFound = true;
                     break;
                   }
                 }
+              }
 
-                if (trackObj && trackObj.times) {
+              if (trackObj && trackObj.times) {
                   const mDur = window._animMasterDuration || 1.0;
                   const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
                   const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
@@ -1707,11 +2011,16 @@ export default class GuiXR {
                         window._animSelectedKeys = [{ meshId, type: 'transform', index: i, time: kTime }];
                       }
                       this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                      keyFound = true;
                       break;
                     }
                   }
                 }
-              }
+            }
+
+            if (!keyFound && (window._animActiveTool || 'select') === 'select' && isRisingEdge) {
+              window._animSelectedKeys = [];
+              this._animSelectedKeysInitialTimes = null;
             }
           }
         }
@@ -1958,7 +2267,9 @@ export default class GuiXR {
             if (window._animActiveTool === 'marquee') {
               if (!this._marqueeStart) {
                 this._marqueeStart = { x: rx - w.x, y: (ry + this._scrollOffsetOverlay) - w.y };
-                window._animSelectedKeys = [];
+                if ((window._animMarqueeMode || 'select_only') === 'select_only') {
+                  window._animSelectedKeys = [];
+                }
               }
               this._marqueeEnd = { x: rx - w.x, y: (ry + this._scrollOffsetOverlay) - w.y };
             } else if (isHeaderStart) {
@@ -3767,16 +4078,6 @@ export default class GuiXR {
 
         // Transform Data Visualization (Slices)
         if (track && track.times && track.times.length > 0) {
-          // 1. Background Line / Chain
-          const lastTime = track.times[track.times.length - 1];
-          const firstTime = track.times[0];
-          if (lastTime >= loopStart && firstTime <= loopEnd) {
-            const xStart = tlX + (Math.max(0, firstTime - loopStart) / visibleDuration) * tlW;
-            const xEnd = tlX + (Math.min(loopEnd, lastTime - loopStart) / visibleDuration) * tlW;
-            ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.15)' : 'rgba(0, 255, 200, 0.12)';
-            ctx.fillRect(xStart, ty + (trackH/2) - 2, xEnd - xStart, 4);
-          }
-
           // 2. Individual Key Slices
           const isDense = track.times.length > 40;
           ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
@@ -3951,10 +4252,57 @@ export default class GuiXR {
       ctx.strokeStyle = '#00ffff';
       ctx.lineWidth = 3;
       ctx.strokeRect(mx1, my1, mw, mh);
-      
-      ctx.fillStyle = '#00ffff';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.fillText(`[MARQUEE]`, mx1 + 5, my1 - 10);
+    }
+    // --- TRANSFORM BOX OVERLAY ---
+    if (window._animTransformBox) {
+      const tBox = window._animTransformBox;
+      const mDur = window._animMasterDuration || 1.0;
+      const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+      const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+      const vDur = Math.max(0.1, lEnd - lStart);
+
+      const kxLeft = tlX + ((tBox.startTime - lStart) / vDur) * tlW;
+      const kxRight = tlX + ((tBox.endTime - lStart) / vDur) * tlW;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+      ctx.fillRect(kxLeft, w.y + 30, kxRight - kxLeft, w.h - 30);
+
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(kxLeft, w.y + 30, kxRight - kxLeft, w.h - 30);
+
+      ctx.setLineDash([]);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#ffff00';
+
+      ctx.beginPath();
+      ctx.moveTo(kxLeft, w.y + 30);
+      ctx.lineTo(kxLeft, w.y + w.h);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(kxRight, w.y + 30);
+      ctx.lineTo(kxRight, w.y + w.h);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+      ctx.lineWidth = 2;
+      const kxMid = (kxLeft + kxRight) / 2;
+      ctx.beginPath();
+      ctx.moveTo(kxMid, w.y + 30);
+      ctx.lineTo(kxMid, w.y + w.h);
+      ctx.stroke();
+
+      const boxSize = 40;
+      const bx = kxMid - boxSize / 2;
+      const by = w.y + 30 + (w.h - 30) / 2 - boxSize / 2;
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(bx, by, boxSize, boxSize);
+
+      ctx.restore();
     }
 
     // --- PROMINENT CENTER COUNTDOWN OVERLAY ---
@@ -4400,14 +4748,14 @@ export default class GuiXR {
     const w = this._activeCombobox;
     const layout = this._getDropdownLayout(w);
     if (!layout) {
-      // console.log(`[SculptGL] _handleDropdownInteract: No layout found for active dropdown!`);
+      if (window.screenLog) window.screenLog(`[Combobox] No dropdown layout found!`, 'orange');
       return;
     }
 
     const { startX, startY, totalW, listH, numCols, rowsPerCol, itemHeight, ox, oy } = layout;
-    // console.log(`[SculptGL] _handleDropdownInteract boundaries: startX:${startX}, totalW:${totalW}, startY:${startY}, listH:${listH}`);
 
-    // Check bounds with totalW
+    if (window.screenLog) window.screenLog(`DROPDOWN EVAL: cx:${cx.toFixed(0)}, cy:${cy.toFixed(0)} | startX:${startX}, startY:${startY}, totalW:${totalW}, listH:${listH}`, 'yellow');
+
     if (cx >= startX && cx <= startX + totalW && cy >= startY && cy <= startY + listH) {
       const localX = (cx - startX);
       const localY = (cy - startY);

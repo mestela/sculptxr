@@ -4253,8 +4253,98 @@ class Scene {
         this._vrTriggerReleaseTime = 0;
         this._eyedropperStartColor = null;
 
+        const currentMesh = this.getMesh();
+        
+        function captureTrackState(mesh) {
+          if (!window._animationRegistry) return null;
+          const id = mesh.getID();
+          const tr = window._animationRegistry.tracks.get(id);
+          if (!tr) return { shapeTimes: [], shapes: [], tangents: [], times: [], positions: [], quaternions: [], scales: [] };
+          return {
+            shapeTimes: (tr.shapeTimes || []).slice(),
+            shapes: (tr.shapes || []).map(arr => new Float32Array(arr)),
+            tangents: (tr.tangents || []).slice(),
+            times: (tr.times || []).slice(),
+            positions: (tr.positions || []).slice(),
+            quaternions: (tr.quaternions || []).slice(),
+            scales: (tr.scales || []).slice()
+          };
+        }
+        
+        const snapBefore = currentMesh ? captureTrackState(currentMesh) : null;
+
         this._sculptManager.end();
         this._action = Enums.Action.NOTHING;
+
+        // AutoKey Feature
+        if (window._animAutoKey && window._animCurrentTime !== undefined && window._animationRegistry && currentMesh) {
+          const sm = this._sculptManager;
+          const isMove = sm && (sm._toolIndex === Enums.Tools.MOVE || sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB);
+
+          if (isMove) {
+            const meshId = currentMesh.getID();
+            if (!window._animationRegistry.tracks.has(meshId)) {
+              window._animationRegistry.tracks.set(meshId, {
+                times: [], positions: [], quaternions: [], scales: [],
+                shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+              });
+            }
+            const track = window._animationRegistry.tracks.get(meshId);
+            const targetTime = window._animCurrentTime;
+
+            const tMat = currentMesh.getMatrix();
+            const pos = [tMat[12], tMat[13], tMat[14]];
+            
+            const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
+            const sy = Math.hypot(tMat[4], tMat[5], tMat[6]);
+            const sz = Math.hypot(tMat[8], tMat[9], tMat[10]);
+            
+            const m = mat3.fromValues(
+              tMat[0]/sx, tMat[1]/sx, tMat[2]/sx,
+              tMat[4]/sy, tMat[5]/sy, tMat[6]/sy,
+              tMat[8]/sz, tMat[9]/sz, tMat[10]/sz
+            );
+            const q = quat.create();
+            quat.fromMat3(q, m);
+
+            track.times.push(targetTime);
+            track.positions.push(...pos);
+            track.quaternions.push(q[0], q[1], q[2], q[3]);
+            track.scales.push(sx, sy, sz);
+
+            const snapAfter = captureTrackState(currentMesh);
+            if (this.getStateManager && snapBefore && snapAfter) {
+              this.getStateManager().pushStateCustom(
+                () => {
+                  const tr = window._animationRegistry.tracks.get(meshId);
+                  if (tr) {
+                    tr.times = snapBefore.times.slice();
+                    tr.positions = snapBefore.positions.slice();
+                    tr.quaternions = snapBefore.quaternions.slice();
+                    tr.scales = snapBefore.scales.slice();
+                    tr.shapeTimes = snapBefore.shapeTimes.slice();
+                    tr.shapes = snapBefore.shapes.map(arr => new Float32Array(arr));
+                    window._animationRegistry.update(currentMesh, true);
+                    if (this._guiXR) this._guiXR._needsRedraw = true;
+                  }
+                },
+                () => {
+                  const tr = window._animationRegistry.tracks.get(meshId);
+                  if (tr) {
+                    tr.times = snapAfter.times.slice();
+                    tr.positions = snapAfter.positions.slice();
+                    tr.quaternions = snapAfter.quaternions.slice();
+                    tr.scales = snapAfter.scales.slice();
+                    tr.shapeTimes = snapAfter.shapeTimes.slice();
+                    tr.shapes = snapAfter.shapes.map(arr => new Float32Array(arr));
+                    window._animationRegistry.update(currentMesh, true);
+                    if (this._guiXR) this._guiXR._needsRedraw = true;
+                  }
+                }
+              );
+            }
+          }
+        }
       }
     }
 
