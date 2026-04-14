@@ -75,6 +75,29 @@ export default function getAnimationWidgets(main) {
   });
   y += 36 + gapBtn;
 
+  window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
+  let rateLabel = "Dense (~30 fps)";
+  if (window._animCaptureRate >= 0.9) rateLabel = "Sparse (1.0s)";
+  else if (window._animCaptureRate >= 0.4) rateLabel = "Sparse (0.5s)";
+  else if (window._animCaptureRate >= 0.09) rateLabel = "Standard (~10 fps)";
+
+  widgets.push({
+    type: 'combobox', id: 'anim_capture_rate', label: `Rec Rate: ${rateLabel}`,
+    x: col1X, y: y, w: 710, h: 36,
+    value: window._animCaptureRate,
+    options: [
+      { id: 0.033, label: 'Dense (~30 fps / 0.03s)' },
+      { id: 0.1,   label: 'Standard (~10 fps / 0.1s)' },
+      { id: 0.5,   label: 'Sparse (2 fps / 0.5s)' },
+      { id: 1.0,   label: 'Step Key (1 fps / 1.0s)' }
+    ],
+    onInteract: (val) => {
+      window._animCaptureRate = parseFloat(val) || 0.033;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+  y += 36 + gapBtn;
+
   // 3. Clear All
   widgets.push({
     type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
@@ -283,6 +306,9 @@ export default function getAnimationWidgets(main) {
           });
           showFeedback('◆ Added Shape Key');
         } else {
+          executeWithUndo(targetMesh, () => {
+            window._animationRegistry.addTransformKey(targetMesh, window._animCurrentTime || 0);
+          });
           showFeedback('◆ Added Transform Key');
         }
       }
@@ -314,8 +340,13 @@ export default function getAnimationWidgets(main) {
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       if (targetMesh) {
-        window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
-        showFeedback('📋 Copied Key');
+        if (window._animKeyMode === 'shape') {
+          window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
+          showFeedback('📋 Copied Shape Key');
+        } else {
+          window._animationRegistry.copyTransformKey(targetMesh, window._animCurrentTime || 0);
+          showFeedback('📋 Copied Transform Key');
+        }
       }
     }
   });
@@ -327,10 +358,13 @@ export default function getAnimationWidgets(main) {
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       if (targetMesh) {
-        executeWithUndo(targetMesh, () => {
-          window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0);
-        });
-        showFeedback('📥 Pasted Key');
+        if (window._animKeyMode === 'shape') {
+          executeWithUndo(targetMesh, () => { window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0); });
+          showFeedback('📥 Pasted Shape Key');
+        } else {
+          executeWithUndo(targetMesh, () => { window._animationRegistry.pasteTransformKey(targetMesh, window._animCurrentTime || 0); });
+          showFeedback('📥 Pasted Transform Key');
+        }
       }
     }
   });
@@ -342,10 +376,15 @@ export default function getAnimationWidgets(main) {
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
       if (targetMesh) {
-        executeWithUndo(targetMesh, () => {
-          window._animationRegistry.deleteShapeKey(targetMesh, window._animCurrentTime || 0);
-        });
-        showFeedback('🗑️ Deleted Key');
+        const t = window._animLastTouchedKeyTime !== undefined ? window._animLastTouchedKeyTime : (window._animCurrentTime || 0);
+        if (window._animKeyMode === 'shape') {
+          executeWithUndo(targetMesh, () => { window._animationRegistry.deleteShapeKey(targetMesh, t); });
+          showFeedback('🗑️ Deleted Shape Key');
+        } else {
+          executeWithUndo(targetMesh, () => { window._animationRegistry.deleteTransformKey(targetMesh, t); });
+          showFeedback('🗑️ Deleted Transform Key');
+        }
+        window._animLastTouchedKeyTime = undefined; // Reset
       }
     }
   });
@@ -402,9 +441,24 @@ export default function getAnimationWidgets(main) {
     }
   });
 
+  y += 50 + gapBtn;
+
+  window._animActiveTool = window._animActiveTool || 'select';
+  widgets.push({
+    type: 'combobox', id: 'anim_active_tool', label: `Tool: ${window._animActiveTool.toUpperCase()}`,
+    x: col1X, y: y, w: 300, h: 36,
+    value: window._animActiveTool,
+    options: [
+      { id: 'select', label: 'Tool: SELECT (Click/Move)' },
+      { id: 'marquee', label: 'Tool: MARQUEE (Box Select)' }
+    ],
+    onInteract: (val) => {
+      window._animActiveTool = val;
+      if (val !== 'marquee') window._animMarqueeBounds = null;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
   y += 36 + gapBtn;
-
-
 
   // 6. Sleek Timeline
   widgets.push({

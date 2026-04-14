@@ -296,9 +296,7 @@ class Picking {
       var scale = mesh.getScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
-      if (window.screenLog && this._main._vrSculpting && Math.random() < 0.1) {
-        window.screenLog(`[Pick] ID:${mesh.getID()} C:[${localCenter[0].toFixed(2)}, ${localCenter[1].toFixed(2)}, ${localCenter[2].toFixed(2)}] rSq:${localRadiusSq.toFixed(4)}`, 'cyan');
-      }
+      // Silenced continuous console noise
 
       var iFaces = [];
 

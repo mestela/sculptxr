@@ -249,6 +249,12 @@ class AnimationRegistry {
       this.lastCaptureTime = elapsed;
     }
 
+    const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
+    if (this.lastCaptureWriteTime !== undefined) {
+      if (elapsed >= this.lastCaptureWriteTime && elapsed - this.lastCaptureWriteTime < rate) return;
+    }
+    this.lastCaptureWriteTime = elapsed;
+
     track.times.push(elapsed);
 
     if (this.activeMesh.getMatrix) {
@@ -531,11 +537,138 @@ class AnimationRegistry {
       if (Math.abs(track.shapeTimes[i] - time) < 0.05) {
         track.shapeTimes.splice(i, 1);
         track.shapes.splice(i, 1);
-        window._animStatusText = `🗑️ Deleted key at ${time.toFixed(2)}s`;
+        window._animStatusText = `🗑️ Deleted Shape key at ${time.toFixed(2)}s`;
         
         if (mesh.updateGeometry) mesh.updateGeometry();
         if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
         if (window.app && window.app.render) window.app.render();
+        break;
+      }
+    }
+  }
+
+  addTransformKey(mesh, time) {
+    if (!mesh) return;
+    const id = mesh.getID();
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+      });
+    }
+    const track = this.tracks.get(id);
+    if (!track.times) track.times = [];
+    if (!track.positions) track.positions = [];
+    if (!track.quaternions) track.quaternions = [];
+    if (!track.scales) track.scales = [];
+
+    // Extract TRS from matrix safely
+    const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    const px = m[12], py = m[13], pz = m[14];
+    const sx = Math.hypot(m[0], m[1], m[2]);
+    const sy = Math.hypot(m[4], m[5], m[6]);
+    const sz = Math.hypot(m[8], m[9], m[10]);
+
+    let qx=0, qy=0, qz=0, qw=1;
+    if (sx>0.0001 && sy>0.0001 && sz>0.0001) {
+      const r00 = m[0]/sx, r01 = m[1]/sx, r02 = m[2]/sx;
+      const r10 = m[4]/sy, r11 = m[5]/sy, r12 = m[6]/sy;
+      const r20 = m[8]/sz, r21 = m[9]/sz, r22 = m[10]/sz;
+      const trace = r00 + r11 + r22;
+      if (trace > 0) {
+        const s = 0.5 / Math.sqrt(trace + 1.0);
+        qw = 0.25 / s; qx = (r12 - r21) * s; qy = (r20 - r02) * s; qz = (r01 - r10) * s;
+      } else if (r00 > r11 && r00 > r22) {
+        const s = 2.0 * Math.sqrt(1.0 + r00 - r11 - r22);
+        qw = (r12 - r21) / s; qx = 0.25 * s; qy = (r01 + r10) / s; qz = (r20 + r02) / s;
+      } else if (r11 > r22) {
+        const s = 2.0 * Math.sqrt(1.0 + r11 - r00 - r22);
+        qw = (r20 - r02) / s; qx = (r01 + r10) / s; qy = 0.25 * s; qz = (r12 + r21) / s;
+      } else {
+        const s = 2.0 * Math.sqrt(1.0 + r22 - r00 - r11);
+        qw = (r01 - r10) / s; qx = (r20 + r02) / s; qy = (r12 + r21) / s; qz = 0.25 * s;
+      }
+      const ql = Math.hypot(qx, qy, qz, qw) || 1.0;
+      qx /= ql; qy /= ql; qz /= ql; qw /= ql;
+    }
+
+    let idx = 0;
+    while (idx < track.times.length && track.times[idx] < time) idx++;
+
+    if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
+      track.positions.splice(idx*3, 3, px, py, pz);
+      track.quaternions.splice(idx*4, 4, qx, qy, qz, qw);
+      track.scales.splice(idx*3, 3, sx, sy, sz);
+    } else {
+      track.times.splice(idx, 0, time);
+      track.positions.splice(idx*3, 0, px, py, pz);
+      track.quaternions.splice(idx*4, 0, qx, qy, qz, qw);
+      track.scales.splice(idx*3, 0, sx, sy, sz);
+    }
+    if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+    window._animCurrentTime = time;
+    this.globalPlaybackTime = time;
+  }
+
+  copyTransformKey(mesh, time) {
+    if (!mesh) return;
+    const track = this.tracks.get(mesh.getID());
+    if (track && track.times) {
+      for (let i = 0; i < track.times.length; i++) {
+        if (Math.abs(track.times[i] - time) < 0.02) {
+          this.clipboardTransform = {
+            p: track.positions.slice(i*3, i*3+3),
+            q: track.quaternions.slice(i*4, i*4+4),
+            s: track.scales.slice(i*3, i*3+3)
+          };
+          window._animStatusText = `📋 Copied Transform key`;
+          return;
+        }
+      }
+    }
+    const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    this.clipboardTransform = { p: [m[12], m[13], m[14]], q: [0,0,0,1], s: [1,1,1] };
+  }
+
+  pasteTransformKey(mesh, time) {
+    if (!mesh || !this.clipboardTransform) return;
+    const id = mesh.getID();
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+      });
+    }
+    const track = this.tracks.get(id);
+    let idx = 0;
+    while (idx < track.times.length && track.times[idx] < time) idx++;
+
+    const { p, q, s } = this.clipboardTransform;
+    if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
+      track.positions.splice(idx*3, 3, p[0], p[1], p[2]);
+      track.quaternions.splice(idx*4, 4, q[0], q[1], q[2], q[3]);
+      track.scales.splice(idx*3, 3, s[0], s[1], s[2]);
+    } else {
+      track.times.splice(idx, 0, time);
+      track.positions.splice(idx*3, 0, p[0], p[1], p[2]);
+      track.quaternions.splice(idx*4, 0, q[0], q[1], q[2], q[3]);
+      track.scales.splice(idx*3, 0, s[0], s[1], s[2]);
+    }
+    if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+  }
+
+  deleteTransformKey(mesh, time) {
+    if (!mesh) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.times) return;
+
+    for (let i = track.times.length - 1; i >= 0; i--) {
+      if (Math.abs(track.times[i] - time) < 0.05) {
+        track.times.splice(i, 1);
+        track.positions.splice(i*3, 3);
+        track.quaternions.splice(i*4, 4);
+        track.scales.splice(i*3, 3);
+        window._animStatusText = `🗑️ Deleted Transform key`;
         break;
       }
     }

@@ -1117,7 +1117,51 @@ export default class GuiXR {
       if (this._activeKeyframeTrack && this._activeKeyframeIndex !== undefined) {
         const currentRx = scaledCx - targetWid.x;
         if (this._keyDragStartRx === undefined || Math.abs(currentRx - this._keyDragStartRx) > 10) {
-          this._activeKeyframeTrack.shapeTimes[this._activeKeyframeIndex] = targetTime;
+          if (this._activeKeyframeType === 'transform' && this._activeKeyframeTrack.times) {
+            this._activeKeyframeTrack.times[this._activeKeyframeIndex] = targetTime;
+            // Bubble sort Transform Keys
+            let arr = this._activeKeyframeTrack.times;
+            for (let i = 0; i < arr.length - 1; i++) {
+              for (let j = i + 1; j < arr.length; j++) {
+                if (arr[i] > arr[j]) {
+                  let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                  // Swap positions
+                  let p = this._activeKeyframeTrack.positions;
+                  let px=p[i*3], py=p[i*3+1], pz=p[i*3+2];
+                  p[i*3]=p[j*3]; p[i*3+1]=p[j*3+1]; p[i*3+2]=p[j*3+2];
+                  p[j*3]=px; p[j*3+1]=py; p[j*3+2]=pz;
+                  // Swap quaternions
+                  let q = this._activeKeyframeTrack.quaternions;
+                  let qx=q[i*4], qy=q[i*4+1], qz=q[i*4+2], qw=q[i*4+3];
+                  q[i*4]=q[j*4]; q[i*4+1]=q[j*4+1]; q[i*4+2]=q[j*4+2]; q[i*4+3]=q[j*4+3];
+                  q[j*4]=qx; q[j*4+1]=qy; q[j*4+2]=qz; q[j*4+3]=qw;
+                  // Swap scales
+                  let s = this._activeKeyframeTrack.scales;
+                  let sx=s[i*3], sy=s[i*3+1], sz=s[i*3+2];
+                  s[i*3]=s[j*3]; s[i*3+1]=s[j*3+1]; s[i*3+2]=s[j*3+2];
+                  s[j*3]=sx; s[j*3+1]=sy; s[j*3+2]=sz;
+                  if (this._activeKeyframeIndex === i) this._activeKeyframeIndex = j;
+                  else if (this._activeKeyframeIndex === j) this._activeKeyframeIndex = i;
+                }
+              }
+            }
+          } else {
+            this._activeKeyframeTrack.shapeTimes[this._activeKeyframeIndex] = targetTime;
+            // Sort Shape Keys
+            let arr = this._activeKeyframeTrack.shapeTimes;
+            for (let i = 0; i < arr.length - 1; i++) {
+              for (let j = i + 1; j < arr.length; j++) {
+                if (arr[i] > arr[j]) {
+                  let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                  let shp = this._activeKeyframeTrack.shapes[i];
+                  this._activeKeyframeTrack.shapes[i] = this._activeKeyframeTrack.shapes[j];
+                  this._activeKeyframeTrack.shapes[j] = shp;
+                  if (this._activeKeyframeIndex === i) this._activeKeyframeIndex = j;
+                  else if (this._activeKeyframeIndex === j) this._activeKeyframeIndex = i;
+                }
+              }
+            }
+          }
         }
         this._needsRedraw = true;
         return;
@@ -1463,30 +1507,27 @@ export default class GuiXR {
             const clickedLaneIdx = Math.floor((ry - 30) / trackH);
 
             // 300ms debounce to prevent the eye/trash icons from rapidly toggling on every single frame of the trigger hold!
-            if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length && (!this._laneActionDebounce || performance.now() - this._laneActionDebounce > 300)) {
+            if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
               const [meshId, trackObj] = tracks[clickedLaneIdx];
               
-              // 1. Check Trash Icon (Left Margin: 120px to 160px)
-              if (rx >= 120 && rx <= 160) {
-                this._laneActionDebounce = performance.now();
-                window._animationRegistry.deleteTrack(meshId);
-              }
-              // 2. Check Mute/Eye Icon (Left Margin: 80px to 120px)
-              else if (rx >= 80 && rx < 120) {
-                this._laneActionDebounce = performance.now();
-                trackObj.muted = !trackObj.muted;
-                
-                if (window.screenLog) window.screenLog(`[Animation] Mute ${meshId}: ${trackObj.muted}`, "cyan");
-                console.log(`[Animation] Mute ${meshId}: ${trackObj.muted}`);
-
-                if (this._main && this._main._meshes) {
-                  const m = this._main._meshes.find(m => m.getID() === meshId);
-                  if (m) {
-                    window._animationRegistry.update(m, true);
-                    this._main.render();
+              if (!this._lastPressed && (!this._laneActionDebounce || performance.now() - this._laneActionDebounce > 300)) {
+                if (rx >= 120 && rx <= 160) {
+                  this._laneActionDebounce = performance.now();
+                  window._animationRegistry.deleteTrack(meshId);
+                } else if (rx >= 80 && rx < 120) {
+                  this._laneActionDebounce = performance.now();
+                  trackObj.muted = !trackObj.muted;
+                  if (this._main && this._main._meshes) {
+                    const m = this._main._meshes.find(m => m.getID() === meshId);
+                    if (m) {
+                      window._animationRegistry.update(m, true);
+                      this._main.render();
+                    }
                   }
                 }
-              } else if (trackObj && trackObj.shapeTimes) {
+              }
+              
+              if (trackObj && trackObj.shapeTimes) {
                 const mDur = window._animMasterDuration || 1.0;
                 const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
                 const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
@@ -1527,11 +1568,30 @@ export default class GuiXR {
                   if (Math.abs(rx - kx) < 25) {
                     this._activeKeyframeTrack = trackObj;
                     this._activeKeyframeIndex = i;
+                    window._animLastTouchedKeyTime = kTime;
                     this._keyDragStartRx = rx;
                     this._activeTimeline = targetWid;
-                    
-                    // Do NOT update window._animCurrentTime or globalPlaybackTime to keep playhead stable
                     break;
+                  }
+                }
+
+                if (trackObj && trackObj.times) {
+                  const mDur = window._animMasterDuration || 1.0;
+                  const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+                  const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+                  const vDur = Math.max(0.1, lEnd - lStart);
+                  for (let i = 0; i < trackObj.times.length; i++) {
+                    const kTime = trackObj.times[i];
+                    const kx = 200 + ((kTime - lStart) / vDur) * (targetWid.w - 220);
+                    if (Math.abs(rx - kx) < 20) {
+                      this._activeKeyframeTrack = trackObj;
+                      this._activeKeyframeIndex = i;
+                      this._activeKeyframeType = 'transform';
+                      window._animLastTouchedKeyTime = kTime;
+                      this._keyDragStartRx = rx;
+                      this._activeTimeline = targetWid;
+                      break;
+                    }
                   }
                 }
               }
@@ -3575,18 +3635,55 @@ export default class GuiXR {
         }
         ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
 
-        // Animation data bar
-        if (track && track.times && track.times.length > 1) {
+        // Transform Data Visualization (Slices)
+        if (track && track.times && track.times.length > 0) {
+          // 1. Background Line / Chain
           const lastTime = track.times[track.times.length - 1];
           const firstTime = track.times[0];
-          
-          // Only draw if it overlaps the visible loop range
           if (lastTime >= loopStart && firstTime <= loopEnd) {
             const xStart = tlX + (Math.max(0, firstTime - loopStart) / visibleDuration) * tlW;
             const xEnd = tlX + (Math.min(loopEnd, lastTime - loopStart) / visibleDuration) * tlW;
+            ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.15)' : 'rgba(0, 255, 200, 0.12)';
+            ctx.fillRect(xStart, ty + (trackH/2) - 2, xEnd - xStart, 4);
+          }
 
-            ctx.fillStyle = track.muted ? 'rgba(100, 100, 100, 0.3)' : 'rgba(0, 255, 200, 0.25)';
-            ctx.fillRect(xStart, ty + 4, xEnd - xStart, trackH - 8);
+          // 2. Individual Key Slices
+          const isDense = track.times.length > 40;
+          ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
+          ctx.strokeStyle = track.muted ? '#555555' : '#ffffff';
+          ctx.lineWidth = isDense ? 1 : 1.5;
+
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            if (t >= loopStart && t <= loopEnd) {
+              const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+              const ky = ty + trackH / 2;
+              
+              const isSel = window._animLastTouchedKeyTime !== undefined && Math.abs(window._animLastTouchedKeyTime - t) < 0.005;
+              if (isDense) {
+                ctx.fillStyle = isSel ? '#00ff00' : (track.muted ? '#888' : '#00ffff');
+                ctx.beginPath();
+                ctx.arc(kx, ky, isSel ? 5 : 3, 0, Math.PI * 2);
+                ctx.fill();
+                if (isSel) {
+                  ctx.strokeStyle = '#00ff00';
+                  ctx.lineWidth = 2;
+                  ctx.stroke();
+                }
+              } else {
+                ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
+                ctx.strokeStyle = isSel ? '#00ff00' : (track.muted ? '#555555' : '#ffffff');
+                ctx.lineWidth = isSel ? 3 : 1.5;
+                ctx.beginPath();
+                ctx.moveTo(kx, ky - (isSel ? 9 : 7));
+                ctx.lineTo(kx + (isSel ? 9 : 7), ky);
+                ctx.lineTo(kx, ky + (isSel ? 9 : 7));
+                ctx.lineTo(kx - (isSel ? 9 : 7), ky);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+              }
+            }
           }
         }
 
@@ -3636,14 +3733,15 @@ export default class GuiXR {
                 ctx.fill();
               }
 
+              const isSel = window._animLastTouchedKeyTime !== undefined && Math.abs(window._animLastTouchedKeyTime - st) < 0.005;
               ctx.fillStyle = '#ffcc00';
-              ctx.strokeStyle = '#ffffff';
-              ctx.lineWidth = 1.5;
+              ctx.strokeStyle = isSel ? '#00ff00' : '#ffffff';
+              ctx.lineWidth = isSel ? 3 : 1.5;
               ctx.beginPath();
-              ctx.moveTo(kx, ky - 8);
-              ctx.lineTo(kx + 8, ky);
-              ctx.lineTo(kx, ky + 8);
-              ctx.lineTo(kx - 8, ky);
+              ctx.moveTo(kx, ky - (isSel ? 10 : 8));
+              ctx.lineTo(kx + (isSel ? 10 : 8), ky);
+              ctx.lineTo(kx, ky + (isSel ? 10 : 8));
+              ctx.lineTo(kx - (isSel ? 10 : 8), ky);
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
