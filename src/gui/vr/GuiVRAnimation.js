@@ -351,7 +351,32 @@ export default function getAnimationWidgets(main) {
       if (!window._animationRegistry) return;
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) {
+      
+      if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+        window._animCopiedKeys = window._animSelectedKeys.map(k => {
+          const track = window._animationRegistry.tracks.get(k.meshId);
+          if (!track) return null;
+          if (k.type === 'transform' && track.times) {
+            return {
+              meshId: k.meshId,
+              type: 'transform',
+              time: k.time,
+              p: track.positions.slice(k.index*3, k.index*3+3),
+              q: track.quaternions.slice(k.index*4, k.index*4+4),
+              s: track.scales.slice(k.index*3, k.index*3+3)
+            };
+          } else if (k.type === 'shape' && track.shapeTimes) {
+            return {
+              meshId: k.meshId,
+              type: 'shape',
+              time: k.time,
+              shape: new Float32Array(track.shapes[k.index])
+            };
+          }
+          return null;
+        }).filter(Boolean);
+        showFeedback(`📋 Copied ${window._animCopiedKeys.length} Keys`);
+      } else if (targetMesh) {
         if (window._animKeyMode === 'shape') {
           window._animationRegistry.copyShapeKey(targetMesh, window._animCurrentTime || 0);
           showFeedback('📋 Copied Shape Key');
@@ -369,7 +394,86 @@ export default function getAnimationWidgets(main) {
     onInteract: () => {
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) {
+      
+      if (window._animCopiedKeys && window._animCopiedKeys.length > 0) {
+        const tMin = Math.min(...window._animCopiedKeys.map(k => k.time));
+        const pasteTime = window._animCurrentTime || 0;
+        
+        executeWithUndo(targetMesh, () => {
+          window._animCopiedKeys.forEach(k => {
+            let trackMesh = null;
+            if (main.getMeshes) trackMesh = main.getMeshes().find(m => m.getID() === k.meshId);
+            if (!trackMesh) trackMesh = targetMesh;
+            
+            const targetTime = pasteTime + (k.time - tMin);
+            
+            if (k.type === 'transform') {
+              const id = trackMesh.getID();
+              if (!window._animationRegistry.tracks.has(id)) {
+                window._animationRegistry.tracks.set(id, {
+                  times: [], positions: [], quaternions: [], scales: [],
+                  shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+                });
+              }
+              const track = window._animationRegistry.tracks.get(id);
+              track.times.push(targetTime);
+              track.positions.push(...k.p);
+              track.quaternions.push(...k.q);
+              track.scales.push(...k.s);
+            } else if (k.type === 'shape') {
+              const id = trackMesh.getID();
+              if (!window._animationRegistry.tracks.has(id)) {
+                window._animationRegistry.tracks.set(id, {
+                  times: [], positions: [], quaternions: [], scales: [],
+                  shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+                });
+              }
+              const track = window._animationRegistry.tracks.get(id);
+              track.shapeTimes.push(targetTime);
+              track.shapes.push(new Float32Array(k.shape));
+            }
+          });
+          
+          window._animationRegistry.tracks.forEach(track => {
+            if (track.times) {
+              let arr = track.times;
+              for (let i = 0; i < arr.length - 1; i++) {
+                for (let j = i + 1; j < arr.length; j++) {
+                  if (arr[i] > arr[j]) {
+                    let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                    let p = track.positions;
+                    let px=p[i*3], py=p[i*3+1], pz=p[i*3+2];
+                    p[i*3]=p[j*3]; p[i*3+1]=p[j*3+1]; p[i*3+2]=p[j*3+2];
+                    p[j*3]=px; p[j*3+1]=py; p[j*3+2]=pz;
+                    let q = track.quaternions;
+                    let qx=q[i*4], qy=q[i*4+1], qz=q[i*4+2], qw=q[i*4+3];
+                    q[i*4]=q[j*4]; q[i*4+1]=q[j*4+1]; q[i*4+2]=q[j*4+2]; q[i*4+3]=q[j*4+3];
+                    q[j*4]=qx; q[j*4+1]=qy; q[j*4+2]=qz; q[j*4+3]=qw;
+                    let s = track.scales;
+                    let sx=s[i*3], sy=s[i*3+1], sz=s[i*3+2];
+                    s[i*3]=s[j*3]; s[i*3+1]=s[j*3+1]; s[i*3+2]=s[j*3+2];
+                    s[j*3]=sx; s[j*3+1]=sy; s[j*3+2]=sz;
+                  }
+                }
+              }
+            }
+            if (track.shapeTimes) {
+              let arr = track.shapeTimes;
+              for (let i = 0; i < arr.length - 1; i++) {
+                for (let j = i + 1; j < arr.length; j++) {
+                  if (arr[i] > arr[j]) {
+                    let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+                    let shp = track.shapes[i];
+                    track.shapes[i] = track.shapes[j];
+                    track.shapes[j] = shp;
+                  }
+                }
+              }
+            }
+          });
+        });
+        showFeedback(`📥 Pasted ${window._animCopiedKeys.length} Keys`);
+      } else if (targetMesh) {
         if (window._animKeyMode === 'shape') {
           executeWithUndo(targetMesh, () => { window._animationRegistry.pasteShapeKey(targetMesh, window._animCurrentTime || 0); });
           showFeedback('📥 Pasted Shape Key');
@@ -387,7 +491,25 @@ export default function getAnimationWidgets(main) {
     onInteract: () => {
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) targetMesh = main.getMeshes()[0];
-      if (targetMesh) {
+      
+      if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+        const keysToDelete = [...window._animSelectedKeys];
+        executeWithUndo(targetMesh, () => {
+          keysToDelete.forEach(k => {
+            let trackMesh = null;
+            if (main.getMeshes) trackMesh = main.getMeshes().find(m => m.getID() === k.meshId);
+            if (!trackMesh) trackMesh = targetMesh;
+            
+            if (k.type === 'shape') {
+              window._animationRegistry.deleteShapeKey(trackMesh, k.time);
+            } else {
+              window._animationRegistry.deleteTransformKey(trackMesh, k.time);
+            }
+          });
+        });
+        window._animSelectedKeys = [];
+        showFeedback(`🗑️ Deleted ${keysToDelete.length} Keys`);
+      } else if (targetMesh) {
         const t = window._animLastTouchedKeyTime !== undefined ? window._animLastTouchedKeyTime : (window._animCurrentTime || 0);
         if (window._animKeyMode === 'shape') {
           executeWithUndo(targetMesh, () => { window._animationRegistry.deleteShapeKey(targetMesh, t); });
@@ -465,8 +587,9 @@ export default function getAnimationWidgets(main) {
       { id: 'marquee', label: 'Tool: MARQUEE (Box Select)' }
     ],
     onInteract: (val) => {
-      window._animActiveTool = val;
-      if (val !== 'marquee') window._animMarqueeBounds = null;
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select');
+      window._animActiveTool = newMode;
+      if (newMode !== 'marquee') window._animMarqueeBounds = null;
       if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });

@@ -2432,9 +2432,6 @@ class Mesh {
             if(indexArray[i] > maxIndex) maxIndex = indexArray[i];
         }
         
-        if (maxIndex >= posAttrCount) {
-             console.error("[SCULPTXR BUG IDENTIFIED] Index buffer contains a vertex ID (" + maxIndex + ") larger than or equal to position buffer count (" + posAttrCount + ")! Triangles: " + this.getNbTriangles() + " ArrayLen: " + indexArray.length);
-        }
         geom.setDrawRange(0, drawRangeCount);
     }
     
