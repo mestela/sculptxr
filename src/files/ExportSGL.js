@@ -51,14 +51,27 @@ Export.exportSGL = function (meshes, main) {
     nbBytes += 4;
 
     var track = window._animationRegistry ? window._animationRegistry.tracks.get(mesh.getID()) : null;
-    var hasAnim = track && track.shapeTimes && track.shapeTimes.length > 0 ? 1 : 0;
+    var hasShape = track && track.shapeTimes && track.shapeTimes.length > 0 ? 1 : 0;
+    var hasTransform = track && track.times && track.times.length > 0 ? 2 : 0;
+    var hasAnim = hasShape | hasTransform;
 
-    if (hasAnim) {
+    if (hasShape) {
       var nbKeys = track.shapeTimes.length;
       var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
       nbBytes += 4;
       nbBytes += nbKeys * 4;
       nbBytes += nbKeys * activeVertCount * 12;
+    }
+    
+    if (hasTransform) {
+      var nbTransKeys = track.times.length;
+      nbBytes += 4; // nbTransKeys
+      nbBytes += nbTransKeys * 4;  // times
+      nbBytes += nbTransKeys * 12; // pos
+      nbBytes += nbTransKeys * 16; // quat
+      nbBytes += nbTransKeys * 12; // scale
+      
+      nbBytes += 12 + 16 + 12; // rest pos/quat/scale
     }
   }
 
@@ -204,11 +217,13 @@ Export.exportSGL = function (meshes, main) {
       // Export completely silent! Live buffers preserve exactly.
 
       var track = window._animationRegistry ? window._animationRegistry.tracks.get(mesh.getID()) : null;
-      var hasAnim = track && track.shapeTimes && track.shapeTimes.length > 0 ? 1 : 0;
+      var hasShape = track && track.shapeTimes && track.shapeTimes.length > 0 ? 1 : 0;
+      var hasTransform = track && track.times && track.times.length > 0 ? 2 : 0;
+      var hasAnim = hasShape | hasTransform;
 
       u32a[off++] = hasAnim;
 
-      if (hasAnim) {
+      if (hasShape) {
         var nbKeys = track.shapeTimes.length;
         var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
 
@@ -227,6 +242,33 @@ Export.exportSGL = function (meshes, main) {
             off += padding;
           }
         }
+      }
+      
+      if (hasTransform) {
+        var nbTransKeys = track.times.length;
+        u32a[off++] = nbTransKeys;
+        
+        for (var k = 0; k < nbTransKeys; ++k) {
+          f32a[off++] = track.times[k];
+        }
+        for (var k = 0; k < nbTransKeys * 3; ++k) {
+          f32a[off++] = track.positions[k];
+        }
+        for (var k = 0; k < nbTransKeys * 4; ++k) {
+          f32a[off++] = track.quaternions[k];
+        }
+        for (var k = 0; k < nbTransKeys * 3; ++k) {
+          f32a[off++] = track.scales[k];
+        }
+        
+        // Write rest pose safely
+        var rP = track.restPos || [0,0,0];
+        var rQ = track.restQuat || [0,0,0,1];
+        var rS = track.restScale || [1,1,1];
+        
+        f32a[off++] = rP[0]; f32a[off++] = rP[1]; f32a[off++] = rP[2];
+        f32a[off++] = rQ[0]; f32a[off++] = rQ[1]; f32a[off++] = rQ[2]; f32a[off++] = rQ[3];
+        f32a[off++] = rS[0]; f32a[off++] = rS[1]; f32a[off++] = rS[2];
       }
     }
 

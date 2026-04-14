@@ -712,7 +712,10 @@ class AnimationRegistry {
       }
 
       const verts = mesh.getVertices();
-      if (verts && s1 && s2 && verts.length === s1.length && s1.length === s2.length) {
+      const minLen = Math.min(s1 ? s1.length : 0, s2 ? s2.length : 0, verts ? verts.length : 0);
+      const reqLen = mesh.getNbVertices ? mesh.getNbVertices() * 3 : minLen;
+
+      if (verts && s1 && s2 && minLen >= reqLen && reqLen > 0) {
         let blend = sAlpha;
 
         if (window._animShowTangents && track.shapeTimes.length > 1) {
@@ -737,7 +740,7 @@ class AnimationRegistry {
           blend = (-2 * t3 + 3 * t2) + m0 * (t3 - 2 * t2 + t) + m1 * (t3 - t2);
         }
 
-        for (let i = 0; i < verts.length; i++) {
+        for (let i = 0; i < reqLen; i++) {
           verts[i] = s1[i] + (s2[i] - s1[i]) * blend;
         }
 

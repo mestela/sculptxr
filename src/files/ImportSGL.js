@@ -194,33 +194,52 @@ Import.importSGL = function (buffer, gl, main) {
     }
 
     if (version >= 5) {
-      var hasAnim = u32a[off++];
-      if (hasAnim) {
-        var nbKeys = u32a[off++];
-        console.log(`[SXR] Parsing Animation Track... Total Keyframes: ${nbKeys}`);
-        var trackObj = { shapeTimes: [], shapes: [] };
+      var hasAnimMask = u32a[off++];
+      if (hasAnimMask > 0) {
+        var trackObj = { 
+          shapeTimes: [], shapes: [],
+          times: [], positions: [], quaternions: [], scales: [],
+          restPos: [0,0,0], restQuat: [0,0,0,1], restScale: [1,1,1],
+          playbackTime: 0, lastUpdate: performance.now() 
+        };
         var maxTime = 0;
 
-        for (var k = 0; k < nbKeys; ++k) {
-          var time = f32a[off++];
-          var activeVCount = finalMesh.getNbVertices();
-          
-          var shapeArr = new Float32Array(activeVCount * 3);
-          shapeArr.set(f32a.subarray(off, off + activeVCount * 3));
-          off += activeVCount * 3;
+        if (hasAnimMask & 1) {
+          var nbKeys = u32a[off++];
+          for (var k = 0; k < nbKeys; ++k) {
+            var time = f32a[off++];
+            var activeVCount = finalMesh.getNbVertices();
+            
+            var shapeArr = new Float32Array(activeVCount * 3);
+            shapeArr.set(f32a.subarray(off, off + activeVCount * 3));
+            off += activeVCount * 3;
 
-          trackObj.shapeTimes.push(time);
-          trackObj.shapes.push(shapeArr);
-          if (time > maxTime) maxTime = time;
-          console.log(`[SXR] -> Read Keyframe ${k} at time ${time.toFixed(2)}s`);
+            trackObj.shapeTimes.push(time);
+            trackObj.shapes.push(shapeArr);
+            if (time > maxTime) maxTime = time;
+          }
         }
 
-        trackObj.times = [];
-        trackObj.positions = [];
-        trackObj.quaternions = [];
-        trackObj.scales = [];
-        trackObj.playbackTime = 0;
-        trackObj.lastUpdate = performance.now();
+        if (hasAnimMask & 2) {
+          var nbTransKeys = u32a[off++];
+          for (var k = 0; k < nbTransKeys; ++k) trackObj.times.push(f32a[off++]);
+          for (var k = 0; k < nbTransKeys * 3; ++k) trackObj.positions.push(f32a[off++]);
+          for (var k = 0; k < nbTransKeys * 4; ++k) trackObj.quaternions.push(f32a[off++]);
+          for (var k = 0; k < nbTransKeys * 3; ++k) trackObj.scales.push(f32a[off++]);
+
+          var rP = [f32a[off++], f32a[off++], f32a[off++]];
+          var rQ = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]];
+          var rS = [f32a[off++], f32a[off++], f32a[off++]];
+
+          trackObj.restPos = rP;
+          trackObj.restQuat = rQ;
+          trackObj.restScale = rS;
+
+          if (trackObj.times.length > 0) {
+             var lastT = trackObj.times[trackObj.times.length - 1];
+             if (lastT > maxTime) maxTime = lastT;
+          }
+        }
 
         AnimationRegistry.tracks.set(finalMesh.getID(), trackObj);
         
@@ -228,8 +247,6 @@ Import.importSGL = function (buffer, gl, main) {
           window._animMasterDuration = maxTime;
         }
         window._animPlaying = true;
-
-        console.log(`[SXR] Successfully mounted Animation Track to Mesh ID: ${finalMesh.getID()}`);
       }
     }
   }
