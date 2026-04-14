@@ -256,7 +256,11 @@ export default function getAnimationWidgets(main) {
     return {
       shapeTimes: tr.shapeTimes ? tr.shapeTimes.slice() : [],
       shapes: tr.shapes ? tr.shapes.map(arr => new Float32Array(arr)) : [],
-      tangents: tr.tangents ? tr.tangents.slice() : []
+      tangents: tr.tangents ? tr.tangents.slice() : [],
+      times: tr.times ? tr.times.slice() : [],
+      positions: tr.positions ? tr.positions.slice() : [],
+      quaternions: tr.quaternions ? tr.quaternions.slice() : [],
+      scales: tr.scales ? tr.scales.slice() : []
     };
   };
 
@@ -275,6 +279,10 @@ export default function getAnimationWidgets(main) {
             tr.shapeTimes = snapBefore.shapeTimes.slice();
             tr.shapes = snapBefore.shapes.map(arr => new Float32Array(arr));
             tr.tangents = snapBefore.tangents.slice();
+            tr.times = snapBefore.times.slice();
+            tr.positions = snapBefore.positions.slice();
+            tr.quaternions = snapBefore.quaternions.slice();
+            tr.scales = snapBefore.scales.slice();
             window._animationRegistry.update(mesh, true);
             if (main._guiXR) main._guiXR._needsRedraw = true;
           }
@@ -285,6 +293,10 @@ export default function getAnimationWidgets(main) {
             tr.shapeTimes = snapAfter.shapeTimes.slice();
             tr.shapes = snapAfter.shapes.map(arr => new Float32Array(arr));
             tr.tangents = snapAfter.tangents.slice();
+            tr.times = snapAfter.times.slice();
+            tr.positions = snapAfter.positions.slice();
+            tr.quaternions = snapAfter.quaternions.slice();
+            tr.scales = snapAfter.scales.slice();
             window._animationRegistry.update(mesh, true);
             if (main._guiXR) main._guiXR._needsRedraw = true;
           }
