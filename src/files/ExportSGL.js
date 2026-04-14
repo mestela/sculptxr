@@ -98,10 +98,7 @@ Export.exportSGL = function (meshes, main) {
       var originalSel = isMulti ? mesh._sel : 0;
 
       for (var L = 0; L < levels.length; ++L) {
-        if (isMulti) {
-          mesh.setSelection(L);
-          mesh.updateResolution();
-        }
+        // Bypassed setSelection entirely so active vertex deltas do not abort!
 
         var lvl = levels[L];
 
@@ -204,10 +201,7 @@ Export.exportSGL = function (meshes, main) {
         }
       }
 
-      if (isMulti) {
-        mesh.setSelection(originalSel);
-        mesh.updateResolution();
-      }
+      // Export completely silent! Live buffers preserve exactly.
 
       var track = window._animationRegistry ? window._animationRegistry.tracks.get(mesh.getID()) : null;
       var hasAnim = track && track.shapeTimes && track.shapeTimes.length > 0 ? 1 : 0;

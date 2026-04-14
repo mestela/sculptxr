@@ -155,17 +155,15 @@ Import.importSGL = function (buffer, gl, main) {
 
       for (var L = 1; L < baseMesh._parsedLevels.length; ++L) {
         var parsedLvl = baseMesh._parsedLevels[L];
-        
-        // Force uniform graphics root onto discrete instances so attributes match!
-        parsedLvl.setRenderData(mm._meshes[0].getRenderData());
-        
-        parsedLvl.allocateArrays();
-        parsedLvl.initTopology();
-        parsedLvl.updateGeometry();
-        parsedLvl.updateDuplicateColorsAndMaterials();
-        
-        var resMesh = new mm._meshes[0].constructor(parsedLvl, true);
-        mm._meshes.push(resMesh);
+        var nextLevel = mm.addLevel(); // Restores topological linkage absolutely!
+
+        // Hard drop the spatial vectors from the parsed save directly over the valid links
+        var targetVerts = nextLevel.getVertices();
+        var sourceVerts = parsedLvl.getVertices();
+        if (targetVerts && sourceVerts) {
+            targetVerts.set(sourceVerts.subarray(0, targetVerts.length));
+        }
+        nextLevel.updateGeometry();
       }
 
       Mesh.OPTIMIZE = globalOptTemp;
