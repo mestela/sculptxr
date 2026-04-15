@@ -2466,7 +2466,6 @@ class Mesh {
 
       if (edgeIndices && edgeIndices.length > 0) {
           if (!this._renderData._wireframeMesh) {
-              console.log("[SXR Wireframe] Initializing new THREE.LineSegments overlay.");
               var lineMaterial = new THREE.LineBasicMaterial({
                   color: 0x000000,
                   transparent: true,
@@ -2483,7 +2482,6 @@ class Mesh {
               this._renderData._wireframeMesh.renderOrder = 1;
               
               if (this._renderData._threeMesh) {
-                  console.log("[SXR Wireframe] Attaching wireframe to threeMesh parent.");
                   this._renderData._threeMesh.add(this._renderData._wireframeMesh);
               } else {
                   console.warn("[SXR Wireframe] Failed to find _threeMesh parent to attach wireframe!");
@@ -2494,8 +2492,6 @@ class Mesh {
           this._renderData._wireframeMesh.geometry.computeBoundingSphere();
           this._renderData._wireframeMesh.geometry.computeBoundingBox();
           this._renderData._wireframeMesh.visible = true;
-
-          console.log("[SXR Wireframe] Wireframe successfully updated. BoundingSphere Radius:", this._renderData._wireframeMesh.geometry.boundingSphere.radius);
       } else {
           console.warn("[SXR Wireframe] Aborted rendering: edgeIndices array is empty or undefined.");
       }
