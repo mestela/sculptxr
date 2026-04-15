@@ -2495,7 +2495,7 @@ export default class GuiXR {
   _handleWidgetClick(w) {
     if (!window._firstGuiInteractLogged) {
       window._firstGuiInteractLogged = true;
-      console.log("[Telemetry] First GUI Widget Interaction:", w.id || w.label);
+      // console.log("[Telemetry] First GUI Widget Interaction:", w.id || w.label);
     }
 
     if (w.type === 'slider') {

@@ -1,3 +1,8 @@
+# v1.0.211
+- **Feature**: **Frame-Based Animation Workflow**: Transitioned the animation system from time-based to frame-based logic, with a user-definable FPS setting (default 24).
+- **UX**: **Precision Sliders**: Implemented release-on-trigger-depress interaction for sliders and playhead to eliminate hand-drift.
+- **Cleanup**: **Telemetry Purge**: Commented out verbose [Telemetry] and [USER EVENT] logs in Scene.js, GuiXR.js, and index.html for clean release.
+
 # v1.0.209
 - **Fix**: Set viewport frame sizing directly to ensure layer binding stability.
 

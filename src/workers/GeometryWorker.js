@@ -1640,11 +1640,11 @@ function remeshQuads(msg) {
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
   const t_copy_out_end = performance.now();
 
-  console.log(`[GeometryWorker] remeshQuads Profile:`);
-  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
-  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
-  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
-  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
+  // console.log(`[GeometryWorker] remeshQuads Profile:`);
+  // console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  // console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  // console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  // console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] remeshQuads output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
@@ -1727,11 +1727,11 @@ function simplifyMesh(msg) {
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
   const t_copy_out_end = performance.now();
 
-  console.log(`[GeometryWorker] simplifyMesh Profile:`);
-  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
-  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
-  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
-  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
+  // console.log(`[GeometryWorker] simplifyMesh Profile:`);
+  // console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  // console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  // console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  // console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] simplifyMesh output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 
@@ -1815,11 +1815,11 @@ function remeshIsotropic(msg) {
   const outFaces = new Uint32Array(wasm.memory.buffer, outFPtr, outFLen).slice();
   const t_copy_out_end = performance.now();
 
-  console.log(`[GeometryWorker] remeshIsotropic Profile:`);
-  console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
-  console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
-  console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
-  console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
+  // console.log(`[GeometryWorker] remeshIsotropic Profile:`);
+  // console.log(`  Copy IN: ${(t_copy_in - t0).toFixed(2)} ms`);
+  // console.log(`  WASM Exe: ${(t_exe_end - t_exe_start).toFixed(2)} ms`);
+  // console.log(`  Copy OUT: ${(t_copy_out_end - t_copy_out_start).toFixed(2)} ms`);
+  // console.log(`  Total: ${(t_copy_out_end - t0).toFixed(2)} ms`);
 
   console.log(`[GeometryWorker] remeshIsotropic output: vLen = ${outVertices.length / 3}, fLen = ${outFaces.length / 4} (elements=${outFaces.length})`);
 

@@ -898,17 +898,17 @@ class Scene {
 
       if (!window._firstXRFrameLogged) {
         window._firstXRFrameLogged = true;
-        console.log("[Telemetry] First XRFrame Rendered!");
+        // console.log("[Telemetry] First XRFrame Rendered!");
       }
 
       if (!window._firstXRInputHandled && refSpace) {
         window._firstXRInputHandled = true;
-        console.log("[Telemetry] Reference Space obtained, first handleXRInput executed!");
+        // console.log("[Telemetry] Reference Space obtained, first handleXRInput executed!");
       }
 
       this._xrFrameCount = (this._xrFrameCount || 0) + 1;
       if (this._xrFrameCount % 60 === 0 || this._xrFrameCount === 10 || this._xrFrameCount === 30) {
-        console.log(`[Telemetry] WebXR Render Active: Frame #${this._xrFrameCount}`);
+        // console.log(`[Telemetry] WebXR Render Active: Frame #${this._xrFrameCount}`);
       }
 
       this._logThrottle = (this._logThrottle || 0) + 1;
@@ -1875,7 +1875,7 @@ class Scene {
   }
   async enterXR(session) {
     window._lastLogTime = performance.now();
-    console.log("[Telemetry] WebXR Session entered");
+    // console.log("[Telemetry] WebXR Session entered");
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
@@ -1900,12 +1900,12 @@ class Scene {
 
     this._renderer.resetState();
 
-    console.log("[USER EVENT] Calling this.initVRControllers()...");
+    // console.log("[USER EVENT] Calling this.initVRControllers()...");
     this.initVRControllers();
 
-    console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
+    // console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
     await this._renderer.xr.setSession(session);
-    console.log("[USER EVENT] setSession completely resolved!");
+    // console.log("[USER EVENT] setSession completely resolved!");
     if (window.screenLog) window.screenLog("[XR] setSession Resolved", "lime");
 
     // Force first frame render to prevent WebXR Session Timeout
@@ -4296,7 +4296,7 @@ class Scene {
 
         if (!window._firstSculptLogged) {
           window._firstSculptLogged = true;
-          console.log("[Telemetry] First Sculpt Stroke Started!");
+          // console.log("[Telemetry] First Sculpt Stroke Started!");
         }
 
         const cTool = this._sculptManager.getCurrentTool();
