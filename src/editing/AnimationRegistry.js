@@ -100,7 +100,6 @@ class AnimationRegistry {
     }
     
     if (this.tracks.size <= 1) {
-      window._animMasterDuration = 0;
       // Also completely wipe any pre-existing keyframes on this single track so it captures from a fresh zero state!
       const tr = this.tracks.get(id);
       if (tr) {
@@ -678,7 +677,6 @@ class AnimationRegistry {
     if (this.tracks.has(meshId)) {
       this.tracks.delete(meshId);
       if (this.tracks.size === 0) {
-        window._animMasterDuration = 0;
         window._animPlaying = false;
       }
     }

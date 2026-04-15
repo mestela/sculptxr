@@ -131,6 +131,8 @@ export default class GuiXR {
 
     this._inputDebounce = 0; // Debounce all interactions
     this._activeCombobox = null; // In-context dropdown state
+    this._activeNumberpad = null; // Target widget for numberpad
+    this._numberpadValue = ''; // Current string value in numberpad
 
 
     this._widgetGenerators = {
@@ -282,6 +284,8 @@ export default class GuiXR {
     this._marqueeStart = null;
     this._marqueeEnd = null;
     this._needsRedraw = true;
+    this._justClosedOverlay = true;
+    setTimeout(() => { this._justClosedOverlay = false; }, 500);
   }
 
   // Console Helper for Tab Switching
@@ -607,6 +611,12 @@ export default class GuiXR {
       this._updateOverlayHover();
 
       // FALL THROUGH to check Tabs (if cy < HEADER_HEIGHT)
+    }
+
+    if (this._activeNumberpad) {
+      this._hoverWidget = null;
+      this._hoverTab = null;
+      return;
     }
 
     if (this._activeCombobox) {
@@ -972,7 +982,7 @@ export default class GuiXR {
     return widgets;
   }
 
-  onInteract(u, v, isPressed) {
+  onInteract(u, v, isPressed, depth = 0) {
     if (this._wasPressed === undefined) this._wasPressed = false;
     const isRisingEdge = (isPressed && !this._wasPressed);
     this._wasPressed = isPressed;
@@ -980,9 +990,25 @@ export default class GuiXR {
       if (window.screenLog) window.screenLog(`COMBOBOX DETECTED ON PRESS: ${this._activeCombobox.id}`, 'cyan');
     }
     if (isRisingEdge) this._hasClickedWidgetThisPress = false;
+    if (isRisingEdge && this._justClosedOverlay) {
+      return;
+    }
     if (!isPressed) {
       this._dragStartY = undefined;
       this._dragStartRy = undefined;
+    }
+
+    if (isRisingEdge) {
+      this._maxTriggerDepth = depth;
+    } else if (isPressed) {
+      this._maxTriggerDepth = Math.max(this._maxTriggerDepth || 0, depth);
+    }
+
+    let shouldRelease = !isPressed;
+    if (isPressed && (this._activeSlider || this._activeTimeline)) {
+      if (depth < this._maxTriggerDepth - 0.05) {
+        shouldRelease = true;
+      }
     }
 
     if (!this._cursor.active) return;
@@ -992,8 +1018,22 @@ export default class GuiXR {
 
     // 0.5. Active continuous interactions (High Priority)
     // Must run BEFORE everything else to prevent overlays from stealing the drag event
-    if ((this._activeSlider || this._activeColorPicker || this._activeTimeline) && !isPressed) {
+    if ((this._activeSlider || this._activeColorPicker || this._activeTimeline) && shouldRelease) {
       if (this._activeSlider) {
+        let clickCx = cx;
+        if (this._overlay) {
+          const pivot = this._getOverlayPivot();
+          const invScale = 1 / OVERLAY_SCALE;
+          clickCx = (cx - pivot.x) * invScale + pivot.x;
+          if (this._overlayData && this._overlayData.x !== undefined) {
+            clickCx -= this._overlayData.x;
+          }
+        }
+        const deltaX = Math.abs(clickCx - this._sliderStartCx);
+        if (deltaX < 5 && !this._justClosedNumberpad) { // Tap threshold
+          this._openNumberpad(this._activeSlider);
+        }
+
         if (this._activeSlider.id === 'stack_size' && this._main) {
           const val = Math.round(this._activeSlider.value);
           this._main.getStateManager().setNewMaxStack(val);
@@ -1155,8 +1195,9 @@ export default class GuiXR {
       if (isFinite(targetWid.min) && isFinite(targetWid.max)) {
         const range = targetWid.max - targetWid.min;
         const baseVal = this._sliderStartVal !== undefined ? this._sliderStartVal : targetWid.value;
+        const sensitivity = targetWid.sensitivity !== undefined ? targetWid.sensitivity : 1.0;
         
-        val = baseVal + (deltaX / sliderW) * range;
+        val = baseVal + (deltaX / sliderW) * range * sensitivity;
         val = Math.max(targetWid.min, Math.min(targetWid.max, val));
 
         if (targetWid.step) {
@@ -1458,6 +1499,14 @@ export default class GuiXR {
     const now = performance.now();
 
     // 0. Dropdown Interaction (High Priority)
+    if (this._activeNumberpad) {
+      if (!isRisingEdge) return; // Only interact on PRESS explicitly
+      if (now - this._inputDebounce < 250) return;
+      this._inputDebounce = now;
+      this._handleNumberpadInteract(cx, cy);
+      return;
+    }
+
     if (this._activeCombobox) {
       if (!isRisingEdge) return; // Only interact on PRESS explicitly
       if (now - this._inputDebounce < 250) return;
@@ -2195,6 +2244,10 @@ export default class GuiXR {
   }
 
   _handleMenuInteract(cx, cy) {
+    if (this._activeNumberpad) {
+      this._handleNumberpadInteract(cx, cy);
+      return;
+    }
     if (this._activeCombobox) {
       // console.log(`[SculptGL] _activeCombobox is active, delegating to _handleDropdownInteract with cx:${cx}, cy:${cy}`);
       this._handleDropdownInteract(cx, cy);
@@ -2438,6 +2491,10 @@ export default class GuiXR {
   }
 
   _handleWidgetClick(w) {
+    if (!window._firstGuiInteractLogged) {
+      window._firstGuiInteractLogged = true;
+      console.log("[Telemetry] First GUI Widget Interaction:", w.id || w.label);
+    }
 
     if (w.type === 'slider') {
       let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
@@ -3164,6 +3221,18 @@ export default class GuiXR {
       }
 
       this._drawActiveCombobox(ctx);
+      ctx.restore();
+    }
+
+    if (this._activeNumberpad) {
+      ctx.save();
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        ctx.translate(pivot.x, pivot.y);
+        ctx.scale(OVERLAY_SCALE, OVERLAY_SCALE);
+        ctx.translate(-pivot.x, -pivot.y);
+      }
+      this._drawNumberpad(ctx);
       ctx.restore();
     }
 
@@ -4798,6 +4867,13 @@ export default class GuiXR {
     this.draw();
   }
 
+  _openNumberpad(widget) {
+    this._activeNumberpad = widget;
+    this._numberpadValue = widget.value !== undefined ? widget.value.toString() : '';
+    this._needsRedraw = true;
+    this.draw();
+  }
+
   _drawActiveCombobox(ctx) {
     const w = this._activeCombobox;
     const layout = this._getDropdownLayout(w);
@@ -4872,6 +4948,189 @@ export default class GuiXR {
       const label = opt.label || opt;
       ctx.fillText(label, x + 20, y + itemHeight / 2 + 8);
     });
+  }
+
+  _drawNumberpad(ctx) {
+    const w = this._activeNumberpad;
+    if (!w) return;
+
+    const padW = 300;
+    const padH = 400;
+    const startX = (this._canvas.width - padW) / 2;
+    const startY = (this._canvas.height - padH) / 2;
+
+    // Background
+    ctx.fillStyle = '#222';
+    ctx.fillRect(startX, startY, padW, padH);
+
+    // Border
+    ctx.strokeStyle = '#00D0FF';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(startX, startY, padW, padH);
+
+    // Title or Value Display
+    ctx.fillStyle = '#333';
+    ctx.fillRect(startX + 10, startY + 10, padW - 80, 50);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 30px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(this._numberpadValue, startX + padW - 90, startY + 45);
+
+    // Clear Button
+    let isClearHovered = false;
+    if (this._cursor.active) {
+      let cx = this._cursor.x;
+      let cy = this._cursor.y;
+      if (this._overlay) {
+        const pivot = this._getOverlayPivot();
+        const invScale = 1 / OVERLAY_SCALE;
+        cx = (cx - pivot.x) * invScale + pivot.x;
+        cy = (cy - pivot.y) * invScale + pivot.y;
+      }
+      if (cx >= startX + padW - 60 && cx <= startX + padW - 10 && cy >= startY + 10 && cy <= startY + 60) {
+        isClearHovered = true;
+      }
+    }
+
+    ctx.fillStyle = isClearHovered ? '#555' : '#444';
+    ctx.fillRect(startX + padW - 60, startY + 10, 50, 50);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText('C', startX + padW - 35, startY + 45);
+
+    // Buttons Grid
+    const buttons = [
+      '7', '8', '9',
+      '4', '5', '6',
+      '1', '2', '3',
+      '0', '.', 'Del',
+      'Enter'
+    ];
+
+    const btnW = (padW - 40) / 3;
+    const btnH = 50;
+    const gap = 10;
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 25px monospace';
+
+    buttons.forEach((btn, i) => {
+      let x, y, wBtn, hBtn;
+      if (btn === 'Enter') {
+        x = startX + 10;
+        y = startY + 70 + 4 * (btnH + gap);
+        wBtn = padW - 20;
+        hBtn = btnH;
+      } else {
+        const row = Math.floor(i / 3);
+        const col = i % 3;
+        x = startX + 10 + col * (btnW + gap);
+        y = startY + 70 + row * (btnH + gap);
+        wBtn = btnW;
+        hBtn = btnH;
+      }
+
+      // Hover effect
+      let isHovered = false;
+      if (this._cursor.active) {
+        let cx = this._cursor.x;
+        let cy = this._cursor.y;
+        if (this._overlay) {
+          const pivot = this._getOverlayPivot();
+          const invScale = 1 / OVERLAY_SCALE;
+          cx = (cx - pivot.x) * invScale + pivot.x;
+          cy = (cy - pivot.y) * invScale + pivot.y;
+        }
+        if (cx >= x && cx <= x + wBtn && cy >= y && cy <= y + hBtn) {
+          isHovered = true;
+        }
+      }
+
+      // Draw button background
+      ctx.fillStyle = isHovered ? '#555' : '#444';
+      ctx.fillRect(x, y, wBtn, hBtn);
+
+      // Draw text
+      ctx.fillStyle = '#fff';
+      ctx.fillText(btn, x + wBtn / 2, y + hBtn / 2 + 8);
+    });
+  }
+
+  _handleNumberpadInteract(cx, cy) {
+    const pivot = this._getOverlayPivot();
+    const invScale = 1 / OVERLAY_SCALE;
+    const scx = (cx - pivot.x) * invScale + pivot.x;
+    const scy = (cy - pivot.y) * invScale + pivot.y;
+
+    const padW = 300;
+    const padH = 400;
+    const startX = (this._canvas.width - padW) / 2;
+    const startY = (this._canvas.height - padH) / 2;
+
+    const buttons = [
+      '7', '8', '9',
+      '4', '5', '6',
+      '1', '2', '3',
+      '0', '.', 'Del',
+      'Enter'
+    ];
+
+    const btnW = (padW - 40) / 3;
+    const btnH = 50;
+    const gap = 10;
+
+    // Check Clear Button
+    if (scx >= startX + padW - 60 && scx <= startX + padW - 10 && scy >= startY + 10 && scy <= startY + 60) {
+      this._numberpadValue = '';
+      this._needsRedraw = true;
+      this.draw();
+      return;
+    }
+
+    buttons.forEach((btn, i) => {
+      let x, y, wBtn, hBtn;
+      if (btn === 'Enter') {
+        x = startX + 10;
+        y = startY + 70 + 4 * (btnH + gap);
+        wBtn = padW - 20;
+        hBtn = btnH;
+      } else {
+        const row = Math.floor(i / 3);
+        const col = i % 3;
+        x = startX + 10 + col * (btnW + gap);
+        y = startY + 70 + row * (btnH + gap);
+        wBtn = btnW;
+        hBtn = btnH;
+      }
+
+      if (scx >= x && scx <= x + wBtn && scy >= y && scy <= y + hBtn) {
+        if (btn === 'Del') {
+          this._numberpadValue = this._numberpadValue.slice(0, -1);
+        } else if (btn === 'Enter') {
+          const val = parseFloat(this._numberpadValue);
+          if (!isNaN(val) && this._activeNumberpad) {
+            this._activeNumberpad.value = val;
+            if (this._activeNumberpad.onInput) this._activeNumberpad.onInput(val);
+            if (this._activeNumberpad.onRelease) this._activeNumberpad.onRelease(val);
+          }
+          this._activeNumberpad = null;
+          this._justClosedNumberpad = true;
+          setTimeout(() => { this._justClosedNumberpad = false; }, 500);
+        } else {
+          this._numberpadValue += btn;
+        }
+        this._needsRedraw = true;
+        this.draw();
+      }
+    });
+
+    if (scx < startX || scx > startX + padW || scy < startY || scy > startY + padH) {
+      this._activeNumberpad = null;
+      this._justClosedNumberpad = true;
+      setTimeout(() => { this._justClosedNumberpad = false; }, 500);
+      this._needsRedraw = true;
+      this.draw();
+    }
   }
 
   _getDropdownLayout(w) {

@@ -139,7 +139,7 @@
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
-                nativeLog(msg); // All logs go to console!
+                console.log(msg); // Route through intercepted console.log
                 if (window.app) {
                     const scene = window.app;
                     if (scene._guiMini) {
@@ -197,6 +197,10 @@
                 const msg = args.join(' ');
                 if (msg.includes('Resolved profile for') || msg.includes('Connected inputSource:')) return;
 
+                const now = performance.now();
+                const delta = now - (window._lastLogTime || now);
+                window._lastLogTime = now;
+
                 const scene = window.app;
                 const guiXR = scene && scene.getGuiXR ? scene.getGuiXR() : null;
                 const debugMode = guiXR && guiXR._uiSettings && guiXR._uiSettings.debugMode;
@@ -209,7 +213,7 @@
                 }
 
                 if (!window._showDebugLog) {
-                    cls.apply(console, args);
+                    cls.call(console, `[+${delta.toFixed(1)}ms]`, ...args);
                     return;
                 }
                 // Update on-screen log if available

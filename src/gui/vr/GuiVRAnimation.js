@@ -106,7 +106,6 @@ export default function getAnimationWidgets(main) {
       if (!window._animationRegistry) return;
       window._animationRegistry.stopRecording(true);
       window._animationRegistry.tracks.clear();
-      window._animMasterDuration = 0;
       window._animCurrentTime = 0;
       window._animationRegistry.globalPlaybackTime = 0;
     }
@@ -531,8 +530,9 @@ export default function getAnimationWidgets(main) {
   widgets.push({
     type: 'slider', id: 'anim_master_duration', label: 'Duration', 
     x: col1X, y: y, w: sW, h: 50,
-    min: 1.0, max: 60.0, step: 1.0,
+    min: 1.0, max: 30.0, step: 1.0,
     value: window._animMasterDuration || 2.0,
+    sensitivity: 0.5,
     data: { tint: '#ffffff' },
     onInput: (val) => {
       window._animMasterDuration = val;
@@ -547,6 +547,7 @@ export default function getAnimationWidgets(main) {
     x: col1X + sW + 15, y: y, w: sW, h: 50,
     min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
     value: window._animLoopStart || 0.0,
+    sensitivity: 0.5,
     data: { tint: '#ffffff' },
     onInput: (val) => {
       window._animLoopStart = val;
@@ -566,6 +567,7 @@ export default function getAnimationWidgets(main) {
     x: col1X + (sW + 15)*2, y: y, w: sW, h: 50,
     min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
     value: window._animLoopEnd !== undefined ? window._animLoopEnd : (window._animMasterDuration || 2.0),
+    sensitivity: 0.5,
     data: { tint: '#ffffff' },
     onInput: (val) => {
       window._animLoopEnd = val;

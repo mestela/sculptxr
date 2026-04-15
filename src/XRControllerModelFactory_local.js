@@ -324,6 +324,14 @@ class XRControllerModelFactory {
 	createControllerModel( controller ) {
 
 		const controllerModel = new XRControllerModel();
+
+		// Add zero-delay fallback visual representation (Gray Sphere) to prevent gray void UX
+		const fallbackGeo = new SphereGeometry(0.03, 8, 8);
+		const fallbackMat = new MeshBasicMaterial({ color: 0xaaaaaa, wireframe: true });
+		const fallbackMesh = new Mesh(fallbackGeo, fallbackMat);
+		controllerModel.add(fallbackMesh);
+		controllerModel.fallbackMesh = fallbackMesh;
+
 		let scene = null;
 
 		controller.addEventListener( 'connected', ( event ) => {
@@ -363,6 +371,11 @@ class XRControllerModelFactory {
 
 					scene = cachedAsset.scene.clone();
 
+					if ( controllerModel.fallbackMesh ) {
+						controllerModel.remove( controllerModel.fallbackMesh );
+						controllerModel.fallbackMesh = null;
+					}
+
 					addAssetSceneToControllerModel( controllerModel, scene );
 
 					if ( this.onLoad ) this.onLoad( scene );
@@ -386,6 +399,11 @@ class XRControllerModelFactory {
 
 						scene = asset.scene.clone();
 
+						if ( controllerModel.fallbackMesh ) {
+							controllerModel.remove( controllerModel.fallbackMesh );
+							controllerModel.fallbackMesh = null;
+						}
+
 						addAssetSceneToControllerModel( controllerModel, scene );
 
 						if ( this.onLoad ) this.onLoad( scene );
@@ -402,8 +420,31 @@ class XRControllerModelFactory {
 				}
 
 			} ).catch( ( err ) => {
-				console.error(`[SculptGL] Error in fetchProfile: ${err.message}`);
-				if (window.screenLog) window.screenLog(`[XR Error] fetchProfile: ${err.message}`, "red");
+				console.error(`[SculptGL] Error in fetchProfile: ${err.message}. Retrying with default profile.`);
+				if (window.screenLog) window.screenLog(`[XR] Retrying with default profile`, "orange");
+				
+				fetchProfile( { profiles: [ DEFAULT_PROFILE ], gamepad: xrInputSource.gamepad }, this.path, DEFAULT_PROFILE ).then( ( { profile, assetPath } ) => {
+					controllerModel.motionController = new MotionController( xrInputSource, profile, assetPath );
+					const cachedAsset = this._assetCache[ controllerModel.motionController.assetUrl ];
+					if ( cachedAsset ) {
+						scene = cachedAsset.scene.clone();
+						addAssetSceneToControllerModel( controllerModel, scene );
+						if ( this.onLoad ) this.onLoad( scene );
+					} else {
+						if ( ! this.gltfLoader ) throw new Error( 'GLTFLoader not set.' );
+						this.gltfLoader.setPath( '' );
+						this.gltfLoader.load( controllerModel.motionController.assetUrl, ( asset ) => {
+							this._assetCache[ controllerModel.motionController.assetUrl ] = asset;
+							scene = asset.scene.clone();
+							addAssetSceneToControllerModel( controllerModel, scene );
+							if ( this.onLoad ) this.onLoad( scene );
+						}, null, ( err ) => {
+							console.error(`[SculptGL] GLTF Load Failed for default profile: ${err.message}`);
+						});
+					}
+				}).catch(e => {
+					console.error(`[SculptGL] Fallback fetchProfile failed: ${e.message}`);
+				});
 			} );
 
 		} );

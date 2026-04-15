@@ -896,7 +896,22 @@ class Scene {
       if (!frame) return;
       const refSpace = this._renderer.xr.getReferenceSpace();
 
-      this._logThrottle = (this._logThrottle || 0) + 1; // Increment!
+      if (!window._firstXRFrameLogged) {
+        window._firstXRFrameLogged = true;
+        console.log("[Telemetry] First XRFrame Rendered!");
+      }
+
+      if (!window._firstXRInputHandled && refSpace) {
+        window._firstXRInputHandled = true;
+        console.log("[Telemetry] Reference Space obtained, first handleXRInput executed!");
+      }
+
+      this._xrFrameCount = (this._xrFrameCount || 0) + 1;
+      if (this._xrFrameCount % 60 === 0 || this._xrFrameCount === 10 || this._xrFrameCount === 30) {
+        console.log(`[Telemetry] WebXR Render Active: Frame #${this._xrFrameCount}`);
+      }
+
+      this._logThrottle = (this._logThrottle || 0) + 1;
 
       // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
       if (this._guiXR) this._guiXR.update();
@@ -1246,8 +1261,7 @@ class Scene {
     // Initialize Three.js Renderer
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: true,
-      preserveDrawingBuffer: true
+      antialias: true
     });
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1860,12 +1874,12 @@ class Scene {
     }
   }
   async enterXR(session) {
-    // console.log("[USER EVENT] Scene.enterXR executing with session:", session);
+    window._lastLogTime = performance.now();
+    console.log("[Telemetry] WebXR Session entered");
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
     session.addEventListener('end', this.onXREnd.bind(this));
-    window._disableVRControllerModels = true;
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
     // or matrices pollute the state.
@@ -1881,7 +1895,10 @@ class Scene {
     // Enable Three.js WebXR
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
-    this._renderer.xr.setFramebufferScaleFactor(1.0);
+    this._renderer.xr.enabled = true;
+    this._renderer.xr.setReferenceSpaceType('local-floor');
+
+    this._renderer.resetState();
 
     console.log("[USER EVENT] Calling this.initVRControllers()...");
     this.initVRControllers();
@@ -2090,9 +2107,54 @@ class Scene {
       window._fetchIntercepted = true;
       const nativeFetch = window.fetch;
       window.fetch = function (...args) {
-        if (typeof args[0] === 'string' && (args[0].includes('webxr-input-profiles') || args[0].endsWith('.glb') || args[0].endsWith('.gltf'))) {
-          // console.log(`[SculptGL] Fetching: ${args[0]}`);
-          // if (window.screenLog) window.screenLog(`[Fetch] ${args[0]}`, "gray");
+        const url = args[0];
+        if (typeof url === 'string' && (url.includes('webxr-input-profiles') || url.endsWith('.glb') || url.endsWith('.gltf') || url.includes('/profiles/'))) {
+          return new Promise((resolve, reject) => {
+            if (window.caches) {
+              window.caches.open('sculptxr-controller-assets').then(cache => {
+                cache.match(url).then(cachedResponse => {
+                  if (cachedResponse) {
+                    // console.log(`[Cache API] Resolved from cache: ${url}`);
+                    resolve(cachedResponse);
+                    return;
+                  }
+                  
+                  const timeoutId = setTimeout(() => {
+                    reject(new Error("Fetch timeout for " + url));
+                  }, 1500);
+
+                  nativeFetch.apply(this, args).then(res => {
+                    clearTimeout(timeoutId);
+                    if (res.ok) {
+                      cache.put(url, res.clone());
+                    }
+                    resolve(res);
+                  }).catch(err => {
+                    clearTimeout(timeoutId);
+                    reject(err);
+                  });
+                }).catch(() => {
+                  // Cache match failed
+                  nativeFetch.apply(this, args).then(resolve).catch(reject);
+                });
+              }).catch(() => {
+                // Cache open failed
+                nativeFetch.apply(this, args).then(resolve).catch(reject);
+              });
+            } else {
+              const timeoutId = setTimeout(() => {
+                reject(new Error("Fetch timeout for " + url));
+              }, 1500);
+
+              nativeFetch.apply(this, args).then(res => {
+                clearTimeout(timeoutId);
+                resolve(res);
+              }).catch(err => {
+                clearTimeout(timeoutId);
+                reject(err);
+              });
+            }
+          });
         }
         return nativeFetch.apply(this, args);
       };
@@ -2219,12 +2281,10 @@ class Scene {
             };
 
             let model = null;
-            if (!window._disableVRControllerModels) {
-                try {
-                    model = controllerModelFactory.createControllerModel(grip);
-                } catch(e) {
-                    console.warn("Failed to create controller model", e);
-                }
+            try {
+                model = controllerModelFactory.createControllerModel(grip);
+            } catch(e) {
+                console.warn("Failed to create controller model", e);
             }
             if (model) grip.add(model);
             this._scene.add(grip);
@@ -3361,9 +3421,10 @@ class Scene {
 
           let pressed = false;
           let bottomedOut = false;
+          let depth = 0;
           if (source.gamepad && source.gamepad.buttons[0]) {
             // FIRE EARLY: Trigger UI hits at 10% depression instead of waiting for a full physical click
-            const depth = source.gamepad.buttons[0].value;
+            depth = source.gamepad.buttons[0].value;
             pressed = depth > 0.1 || source.gamepad.buttons[0].pressed;
             bottomedOut = depth >= 0.99 || source.gamepad.buttons[0].pressed;
           }
@@ -3419,7 +3480,7 @@ class Scene {
             if (this._activePressedGui && this._activePressedGui !== targetGuiXR) {
               targetGuiXR.onInteract(currU, currV, false);
             } else {
-              targetGuiXR.onInteract(currU, currV, pressed);
+              targetGuiXR.onInteract(currU, currV, pressed, depth);
             }
 
             // Calc Laser Distance (visual clamping)
@@ -4232,6 +4293,11 @@ class Scene {
         this._vrSculpting = true;
         this._vrLockedHand = source.handedness; // LOCK HAND
         this._vrTriggerReleaseTime = 0; // Reset Timer
+
+        if (!window._firstSculptLogged) {
+          window._firstSculptLogged = true;
+          console.log("[Telemetry] First Sculpt Stroke Started!");
+        }
 
         const cTool = this._sculptManager.getCurrentTool();
         if (cTool && cTool._pickColor) {

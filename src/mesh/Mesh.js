@@ -2488,7 +2488,10 @@ class Mesh {
               }
           }
           
-          this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
+          const geom = this._renderData._wireframeMesh.geometry;
+          if (!geom.index || geom.index.array !== edgeIndices) {
+              geom.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
+          }
           this._renderData._wireframeMesh.visible = true;
       } else {
           console.warn("[SXR Wireframe] Aborted rendering: edgeIndices array is empty or undefined.");

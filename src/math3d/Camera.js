@@ -287,8 +287,7 @@ class Camera {
     if (this._threeCamera) {
       if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
           // WE ARE IN VR. DO NOT TOUCH THE THREE.JS CAMERA!
-          // Three.js WebXRManager owns it and is dynamically applying the headset poses to it.
-          this._threeCamera.matrixAutoUpdate = true;
+          this._threeCamera.matrixAutoUpdate = false;
       } else {
           // Desktop Mode: Sync Three.js camera to SculptGL's orbit camera for flat-screen rendering
           this._threeCamera.matrixAutoUpdate = false;
