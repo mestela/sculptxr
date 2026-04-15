@@ -1411,7 +1411,8 @@ export default class GuiXR {
       const masterLen = window._animMasterDuration || 1.0;
       const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
       const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : masterLen;
-      const targetTime = lStart + t * (lEnd - lStart);
+      const fps = window._animFPS || 24;
+      const targetTime = Math.round((lStart + t * (lEnd - lStart)) * fps) / fps;
 
       if (this._activeTangentTrack && this._activeTangentIndex !== undefined) {
         let scaledCx = cx;
@@ -1772,7 +1773,8 @@ export default class GuiXR {
         let t = (cx - this._activeTimeline.x - 200) / (this._activeTimeline.w - 220);
         t = Math.max(0, Math.min(1, t));
         const masterLen = window._animMasterDuration || 1.0;
-        const targetTime = t * masterLen;
+        const fps = window._animFPS || 24;
+        const targetTime = Math.round(t * masterLen * fps) / fps;
 
         window._animPlaying = false;
         window._animCurrentTime = targetTime;
@@ -4061,14 +4063,17 @@ export default class GuiXR {
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
-    const mDur = mDurVal.toFixed(2);
-    const curT = window._animCurrentTime ? window._animCurrentTime.toFixed(2) : '0.00';
+    const fps = window._animFPS || 24;
+    const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;
+    const loopStartF = Math.round(loopStart * fps);
+    const loopEndF = Math.round(loopEnd * fps);
+
     ctx.fillStyle = '#888';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`${loopStart.toFixed(1)}s`, tlX + 5, w.y + 20);
+    ctx.fillText(`${loopStartF}f`, tlX + 5, w.y + 20);
     ctx.textAlign = 'right';
-    ctx.fillText(`${loopEnd.toFixed(1)}s`, tlX + tlW - 5, w.y + 20);
+    ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + 20);
 
     if (window._animFeedbackText && window._animFeedbackTimer) {
       const elapsed = performance.now() - window._animFeedbackTimer;

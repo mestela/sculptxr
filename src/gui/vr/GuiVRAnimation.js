@@ -98,6 +98,30 @@ export default function getAnimationWidgets(main) {
   });
   y += 36 + gapBtn;
 
+  // 2.5 FPS Setting
+  widgets.push({
+    type: 'slider', id: 'anim_fps', label: 'Timeline FPS',
+    x: col1X, y: y, w: 350, h: 50,
+    value: window._animFPS || 24,
+    min: 1, max: 60, step: 1,
+    onInput: (val) => {
+      window._animFPS = Math.round(val);
+      if (main._guiXR) {
+        const widgets = main._guiXR._getWidgets();
+        if (widgets) {
+          const durSlider = widgets.find(w => w.id === 'anim_master_duration');
+          if (durSlider) durSlider.step = 1 / window._animFPS;
+          const startSlider = widgets.find(w => w.id === 'anim_loop_start');
+          if (startSlider) startSlider.step = 1 / window._animFPS;
+          const endSlider = widgets.find(w => w.id === 'anim_loop_end');
+          if (endSlider) endSlider.step = 1 / window._animFPS;
+        }
+        main._guiXR._needsRedraw = true;
+      }
+    }
+  });
+  y += 50 + gapBtn;
+
   // 3. Clear All
   widgets.push({
     type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
@@ -530,10 +554,11 @@ export default function getAnimationWidgets(main) {
   widgets.push({
     type: 'slider', id: 'anim_master_duration', label: 'Duration', 
     x: col1X, y: y, w: sW, h: 50,
-    min: 1.0, max: 30.0, step: 1.0,
+    min: 1.0, max: 30.0, step: 1 / (window._animFPS || 24),
     value: window._animMasterDuration || 2.0,
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
+    getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
     onInput: (val) => {
       window._animMasterDuration = val;
       if (window._animLoopEnd && window._animLoopEnd > val) {
@@ -545,10 +570,11 @@ export default function getAnimationWidgets(main) {
   widgets.push({
     type: 'slider', id: 'anim_loop_start', label: 'Start', 
     x: col1X + sW + 15, y: y, w: sW, h: 50,
-    min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
+    min: 0.0, max: window._animMasterDuration || 2.0, step: 1 / (window._animFPS || 24),
     value: window._animLoopStart || 0.0,
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
+    getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
     onInput: (val) => {
       window._animLoopStart = val;
       if (window._animLoopEnd !== undefined && window._animLoopStart >= window._animLoopEnd) {
@@ -565,10 +591,11 @@ export default function getAnimationWidgets(main) {
   widgets.push({
     type: 'slider', id: 'anim_loop_end', label: 'End', 
     x: col1X + (sW + 15)*2, y: y, w: sW, h: 50,
-    min: 0.0, max: window._animMasterDuration || 2.0, step: 0.1,
+    min: 0.0, max: window._animMasterDuration || 2.0, step: 1 / (window._animFPS || 24),
     value: window._animLoopEnd !== undefined ? window._animLoopEnd : (window._animMasterDuration || 2.0),
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
+    getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
     onInput: (val) => {
       window._animLoopEnd = val;
       if (window._animLoopStart !== undefined && window._animLoopEnd <= window._animLoopStart) {
