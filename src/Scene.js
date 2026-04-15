@@ -893,6 +893,7 @@ class Scene {
 
     if (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting) {
       const frame = this._renderer.xr.getFrame();
+      if (!frame) return;
       const refSpace = this._renderer.xr.getReferenceSpace();
 
       this._logThrottle = (this._logThrottle || 0) + 1; // Increment!
@@ -1864,6 +1865,7 @@ class Scene {
     this._xrSession = session;
 
     session.addEventListener('end', this.onXREnd.bind(this));
+    window._disableVRControllerModels = true;
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
     // or matrices pollute the state.
@@ -1879,18 +1881,14 @@ class Scene {
     // Enable Three.js WebXR
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
+    this._renderer.xr.setFramebufferScaleFactor(1.0);
 
-    // Force Init Controllers & Menu IMMEDIATELY (Before Session Set!)
-    // console.log("[USER EVENT] Calling this.initVRControllers()...");
-    // if (window.screenLog) window.screenLog("[XR] Calling initVRControllers", "yellow");
+    console.log("[USER EVENT] Calling this.initVRControllers()...");
     this.initVRControllers();
 
-    // console.log(`[USER EVENT] Input Sources pre-boot count: ${session.inputSources ? session.inputSources.length : 'undefined'}`);
-    // if (window.screenLog) window.screenLog(`[XR] Pre-boot InputSources: ${session.inputSources?.length}`, "yellow");
-
-    // console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
+    console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
     await this._renderer.xr.setSession(session);
-    // console.log("[USER EVENT] setSession completely resolved!");
+    console.log("[USER EVENT] setSession completely resolved!");
     if (window.screenLog) window.screenLog("[XR] setSession Resolved", "lime");
 
     // Force first frame render to prevent WebXR Session Timeout
@@ -1900,7 +1898,6 @@ class Scene {
     session.requestReferenceSpace('local-floor').then((refSpace) => {
       this._baseRefSpace = refSpace;
       this.updateVROffsets();
-      // console.log("[USER EVENT] local-floor RefSpace Established!");
     }).catch(e => {
       console.warn("Failed to get local-floor for internal offset tracking", e);
       if (window.screenLog) window.screenLog("Failed RefSpace: " + e.message, "red");
@@ -2221,8 +2218,15 @@ class Scene {
                 }
             };
 
-            const model = controllerModelFactory.createControllerModel(grip);
-            grip.add(model);
+            let model = null;
+            if (!window._disableVRControllerModels) {
+                try {
+                    model = controllerModelFactory.createControllerModel(grip);
+                } catch(e) {
+                    console.warn("Failed to create controller model", e);
+                }
+            }
+            if (model) grip.add(model);
             this._scene.add(grip);
 
             // Controller ray lines (attached to Target Ray Space)

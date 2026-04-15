@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v1.0.206</title>
+    <title>SculptXR v1.0.210</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v1.0.206
+                                                              Version: v1.0.210
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -197,14 +197,11 @@
                 const msg = args.join(' ');
                 if (msg.includes('Resolved profile for') || msg.includes('Connected inputSource:')) return;
 
-                // Pipe to VR Debug history if enabled
                 const scene = window.app;
                 const guiXR = scene && scene.getGuiXR ? scene.getGuiXR() : null;
                 const debugMode = guiXR && guiXR._uiSettings && guiXR._uiSettings.debugMode;
                 if (debugMode && window.screenLog) {
-                    // Avoid loop by checking if we are already in screenLog
                     if (!args[0] || (typeof args[0] === 'string' && !args[0].startsWith('[ScreenLog]'))) {
-                        // Filter out noisy profile/connection logs from the VR view
                         if (!msg.includes('[Profile]') && !msg.includes('[XR]')) {
                             window.screenLog('[Console] ' + msg);
                         }

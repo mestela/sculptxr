@@ -1,3 +1,12 @@
+# v1.0.209
+- **Fix**: Set viewport frame sizing directly to ensure layer binding stability.
+
+# v1.0.208
+- **Fix**: **Framebuffer Initialization Synchronization**: Silenced corrupted early WebGL draw routines when initializing display frame allocations.
+
+# v1.0.207
+- **Optimization**: **Startup Render Loop Bound Suppression**: Removed expensive recursive frame bounds recalculations on child wireframe bindings.
+
 # v1.0.206
 - **Fix**: **Symmetry Extrusions**: Enforced exact mirrored centers/rotational pivots for 6DOF transformations to protect symmetric connectivity pipelines.
 
