@@ -983,19 +983,21 @@ export default class GuiXR {
   }
 
   onInteract(u, v, isPressed, depth = 0) {
-    if (isPressed) {
-      console.log(`[GuiXR] onInteract U:${u.toFixed(2)} V:${v.toFixed(2)}`);
-    }
-    if (this._wasPressed === undefined) this._wasPressed = false;
     const isRisingEdge = (isPressed && !this._wasPressed);
     this._wasPressed = isPressed;
-    if (isRisingEdge && this._activeCombobox) {
-      if (window.screenLog) window.screenLog(`COMBOBOX DETECTED ON PRESS: ${this._activeCombobox.id}`, 'cyan');
-    }
     if (isRisingEdge) this._hasClickedWidgetThisPress = false;
     if (isRisingEdge && this._justClosedOverlay) {
       return;
     }
+    if (this._ignoreUntilRelease) {
+      console.log(`[GuiXR] onInteract ignored because _ignoreUntilRelease is true. isPressed: ${isPressed}`);
+      if (!isPressed) {
+        this._ignoreUntilRelease = false; // Reset for next press
+        console.log(`[GuiXR] _ignoreUntilRelease reset to false on release`);
+      }
+      return; // Ignore all events (including release) until trigger is released!
+    }
+
     if (!isPressed) {
       this._dragStartY = undefined;
       this._dragStartRy = undefined;
@@ -1113,7 +1115,6 @@ export default class GuiXR {
             );
           } else {
             window._animSelectedKeys = pendingKeys;
-            console.log(`[Toolbar] FORCED BACK TO SELECT MODE because of marquee selection completion`);
             window._animActiveTool = 'select'; // Return to select mode
           }
         }
@@ -1209,8 +1210,6 @@ export default class GuiXR {
           if (targetWid.step % 1 === 0) val = Math.round(val);
         }
       }
-      
-      if (targetWid.id === 'trigger_curve') console.log(`[SLIDER DRAG] cx:${cx.toFixed(1)} t:${t.toFixed(3)} val:${val.toFixed(3)} w.val:${targetWid.value}`);
 
       // Update
       if (targetWid.value !== val) {
@@ -1816,7 +1815,6 @@ export default class GuiXR {
         const isHeaderStart = this._lastPressed ? (this._dragStartRy !== undefined && this._dragStartRy <= 30) : (ry <= 30);
         if (!this._lastPressed) {
           this._dragStartRy = ry;
-          console.log(`[Timeline Start] Tool: '${window._animActiveTool}' ry: ${ry}`);
         }
 
         if (window._animActiveTool !== 'marquee' && isHeaderStart) {
@@ -1830,7 +1828,6 @@ export default class GuiXR {
 
           window._animPlaying = false;
           window._animCurrentTime = targetTime;
-          console.log(`[Playhead Grabbed] t: ${targetTime} rx: ${rx} ry: ${ry} tool: ${window._animActiveTool}`);
 
           if (window._animationRegistry) {
             window._animationRegistry.globalPlaybackTime = targetTime;
@@ -1852,7 +1849,6 @@ export default class GuiXR {
             if ((window._animMarqueeMode || 'select_only') === 'select_only') {
               window._animSelectedKeys = [];
             }
-            if (window.screenLog) window.screenLog(`MARQ START: ${rx.toFixed(0)},${ry.toFixed(0)}`, 'cyan');
           }
           this._marqueeEnd = { x: rx, y: ry };
           this._needsRedraw = true;
@@ -1863,7 +1859,6 @@ export default class GuiXR {
           const sm = this._main.getSculptManager();
           if (sm && sm.getToolIndex() !== Enums.Tools.GRAB) {
             sm.setToolIndex(Enums.Tools.GRAB);
-            if (window.screenLog) window.screenLog(`[Timeline Engine] Auto-swapped Tool to GRAB!`, 'green');
           }
 
           if (window._animTransformBox) {
@@ -2254,11 +2249,9 @@ export default class GuiXR {
       return;
     }
     if (this._activeCombobox) {
-      // console.log(`[SculptGL] _activeCombobox is active, delegating to _handleDropdownInteract with cx:${cx}, cy:${cy}`);
       this._handleDropdownInteract(cx, cy);
       return;
     }
-    const t0 = performance.now();
     const data = this._overlayData;
     if (!data || !data.widgets) return;
 
@@ -2273,10 +2266,6 @@ export default class GuiXR {
     // Relativize coords
     const rx = scx - data.x;
     const ry = scy - data.y;
-
-    if (data.isToolPicker && window.screenLog) {
-      // window.screenLog(`[Click] cy:${cy.toFixed(0)} ry:${ry.toFixed(0)}`, 'pink');
-    }
 
     if (this._activeSlider) {
       const w = this._activeSlider;
@@ -2303,10 +2292,6 @@ export default class GuiXR {
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
         if (!w.disabled && !w.header) {
-          if (data.isToolPicker && window.screenLog) {
-            // window.screenLog(`[Click] HIT! ${w.id}`, 'lime');
-          }
-
           if (w.type === 'slider') {
             this._activeSlider = w;
             let clickCx = cx;
@@ -2367,9 +2352,6 @@ export default class GuiXR {
             this._needsRedraw = true;
           } else if (w.type === 'button') {
             this._executeAction(w);
-            // Close menu on action? 
-            // Keep open for specific actions like Undo/Redo or Tools
-            // ALSO keep open for Outliner buttons (select, delete) to allow batch ops
             const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
             const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load', 'popup_tab0', 'popup_tab1'].includes(w.id) || isOutliner;
             if (!keepOpen) this.closeOverlay();
@@ -2387,13 +2369,9 @@ export default class GuiXR {
           }
           return;
         }
-        const t1 = performance.now();
-        // if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
         return;
       }
     }
-    const t1 = performance.now();
-    // if (t1 - t0 > 2) console.log(`[Perf] GuiXR._handleMenuInteract took ${(t1 - t0).toFixed(2)}ms`);
   }
 
   _getWidgetValue(tab, id) {
@@ -2492,15 +2470,12 @@ export default class GuiXR {
     this._overlay = null;
     this._overlayData = null;
     this._needsRedraw = true;
+    this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
+    console.log(`[GuiXR] closeOverlay - setting _ignoreUntilRelease = true`);
     this.draw();
   }
 
   _handleWidgetClick(w) {
-    if (!window._firstGuiInteractLogged) {
-      window._firstGuiInteractLogged = true;
-      // console.log("[Telemetry] First GUI Widget Interaction:", w.id || w.label);
-    }
-
     if (w.type === 'slider') {
       let t = Math.max(0, Math.min(1, (this._cursor.x - w.x) / w.w));
 
@@ -2656,7 +2631,7 @@ export default class GuiXR {
   onClick() { }
 
   _executeAction(w) {
-    console.log(`[GuiXR] Exec: ${w.id || w.label || 'unknown'}`);
+    if (!w.onInteract && !w.onSelect) return;
     const main = this._main;
     if (!main) return;
 
@@ -3157,8 +3132,20 @@ export default class GuiXR {
       const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
       if (isSelected) continue; // Skip active for now
       
+      const isSectionTab = wid.id && wid.id.startsWith('sub_tab_');
+      if (!isSectionTab) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, HEADER_HEIGHT + 60 - 4, w, h - (HEADER_HEIGHT + 60) + 4);
+        ctx.clip();
+      }
+      
       const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
       this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
+      
+      if (!isSectionTab) {
+        ctx.restore();
+      }
     }
     
     for (let wid of widgets) {
@@ -3166,8 +3153,20 @@ export default class GuiXR {
       const isSelected = wid.isActive !== undefined ? wid.isActive : (wid.data && wid.data.active);
       if (!isSelected) continue; // Draw ONLY active
       
+      const isSectionTab = wid.id && wid.id.startsWith('sub_tab_');
+      if (!isSectionTab) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, HEADER_HEIGHT + 60 - 4, w, h - (HEADER_HEIGHT + 60) + 4);
+        ctx.clip();
+      }
+      
       const isHovered = (this._hoverWidget && this._hoverWidget.id === wid.id);
       this._drawSingleWidgetGeneric(ctx, wid, isHovered, mesh, activeTool);
+      
+      if (!isSectionTab) {
+        ctx.restore();
+      }
     }
 
 

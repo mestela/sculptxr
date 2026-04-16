@@ -2,6 +2,7 @@ import { vec3, mat4, quat } from 'gl-matrix';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 
 // Configuration constants
@@ -281,7 +282,7 @@ class GizmoVR {
       worldScale = this._main._worldGroup.scale.x; // fallback for Scene
     }
 
-    let scaleFactor = 31.25; // Constant base size in sculpt space
+    let scaleFactor = getOptionsURL().gizmoScale || 15.625; // Constant base size in sculpt space
     if (window.debugGizmoScale) {
       scaleFactor = window.debugGizmoScale;
     }

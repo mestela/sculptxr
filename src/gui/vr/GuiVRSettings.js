@@ -117,6 +117,26 @@ export default function getSettingsWidgets(main) {
   });
   y += ITEM_H + GAP;
 
+  widgets.push({
+    type: 'slider', id: 'gizmo_scale', label: 'Gizmo Scale', x: 20, y: y, w: menuW - 40, h: ITEM_H,
+    min: 5.0, max: 100.0, step: 1.0,
+    value: getOptionsURL().gizmoScale || 15.625,
+    precision: 1,
+    onInput: (val) => {
+      getOptionsURL.saveOption('gizmoScale', val, 500);
+      const sc = main.getSculptManager();
+      if (sc) {
+        const tool = sc.getTool(Enums.Tools.TRANSFORM_VR);
+        if (tool && tool._gizmo) {
+          tool._gizmo._resize(val);
+          tool._gizmo._lastScale = val;
+        }
+      }
+      if (main.render) main.render();
+    }
+  });
+  y += ITEM_H + GAP;
+ 
   // --- CONTROLLER MODEL ---
   widgets.push({ type: 'header', label: 'Controller Model Override', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
   y += HEADER_H + GAP;

@@ -181,6 +181,7 @@ var getOptionsURL = function () {
   options.stylusLength = queryNumber(getVal('stylusLength'), 0.0, 0.30, 0.10);
   options.stylusOffset = queryNumber(getVal('stylusOffset'), -0.15, 0.15, 0.0);
   options.stylusTilt = queryNumber(getVal('stylusTilt'), -45.0, 45.0, 0.0);
+  options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

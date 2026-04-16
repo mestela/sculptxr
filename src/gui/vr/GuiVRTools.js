@@ -169,7 +169,7 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
         const validOptions = toolOptions.filter(opt => opt !== null);
         const boxH = Math.ceil(validOptions.length / cols) * (btnH + pad) + pad;
-        const startY = Math.max(160, 260 - (boxH / 2));
+        const startY = Math.max(260, 260 - (boxH / 2)); // Increased to 260 to clear section tabs (196)
 
         const tabW = 150; // 450px / 3 = 150px exactly!
         const tabX = (660 - 450) / 2;
