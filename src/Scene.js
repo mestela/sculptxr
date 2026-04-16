@@ -845,7 +845,9 @@ class Scene {
           sc.setToolIndex(Enums.Tools.VOXEL);
           window._activeToolTab = 2;
         } else if (hasPoly) {
-          sc.setToolIndex(window._lastPolyTool || Enums.Tools.BRUSH);
+          if (curIdx !== Enums.Tools.TRANSFORM_VR && curIdx !== Enums.Tools.TRANSFORM) {
+            sc.setToolIndex(window._lastPolyTool || Enums.Tools.BRUSH);
+          }
           window._activeToolTab = 0;
         }
 
@@ -3983,7 +3985,7 @@ class Scene {
 
     // FIX: Only block STARTING given we are not already sculpting/grabbing
     const currentTool = this._sculptManager.getCurrentTool();
-    const isToolActive = currentTool && currentTool._grabbedMesh;
+    const isToolActive = currentTool && (currentTool._grabbedMesh || currentTool._initInput || currentTool._isGizmoHovered);
     const isSculpting = this._vrSculpting;
 
     // LATCH TRIGGERS AFTER MENU INTERACTION
@@ -4203,7 +4205,7 @@ class Scene {
     let isColorSmoothOverride = false;
     let previousToolIndex = -1;
 
-    if (session && session.inputSources) {
+    if (session && session.inputSources && !this._isPointingAtMenu && !this._wasPointingAtMenu) {
       for (let src of session.inputSources) {
         if (src.handedness === nonDomHand && src.gamepad) {
           // Button 0 (Index Trigger)
@@ -4573,6 +4575,12 @@ class Scene {
         // Universal Sub Mode: Apply Effective Negative State to Tool
         const toolParams = currentTool || tool; // handle variable changes via scope shift
         if (toolParams) toolParams._negative = isNegative;
+
+        if (this._wasTriggerPressed !== isTriggerPressed) {
+          const activeTool = this._sculptManager.getCurrentTool();
+          console.log(`[Scene] Trigger changed to ${isTriggerPressed}. Active tool: ${activeTool ? activeTool.constructor.name : 'null'}`);
+          this._wasTriggerPressed = isTriggerPressed;
+        }
 
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,

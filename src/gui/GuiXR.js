@@ -983,6 +983,9 @@ export default class GuiXR {
   }
 
   onInteract(u, v, isPressed, depth = 0) {
+    if (isPressed) {
+      console.log(`[GuiXR] onInteract U:${u.toFixed(2)} V:${v.toFixed(2)}`);
+    }
     if (this._wasPressed === undefined) this._wasPressed = false;
     const isRisingEdge = (isPressed && !this._wasPressed);
     this._wasPressed = isPressed;
@@ -2653,6 +2656,7 @@ export default class GuiXR {
   onClick() { }
 
   _executeAction(w) {
+    console.log(`[GuiXR] Exec: ${w.id || w.label || 'unknown'}`);
     const main = this._main;
     if (!main) return;
 

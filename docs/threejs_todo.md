@@ -6,17 +6,15 @@
 
 ---
 
-user feedback, address:
-
-* [ ] it’d be great to have an object mirrored around different object (like you make one sphere for an eye and then mirror it to get another) - maybe it’s there but I couldn’t figure it out
-* [ ] when I click the big resize circle in transform tool it sometimes switches to grab tool
-* [ ] low poly extrude worked inverted for me for some reason, but it was after a remesh so maybe normals were wrong
-* [ ] the recording workflow didn’t work for me, or maybe I was doing something wrong
-
----
-
 ## 1. Todo
-
+* [ ] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool
+* [ ] **Animation**: not all keyframe edit events can be undone atm. 
+* [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
+* [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
+* [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
+* [ ] **Animation**: per key interp type... or just one and use beziers to control? needs hold keys tho, not easy with beziers
+* [ ] **Animation**: graph editor
+* [ ] **Animation**: recording sculpting, move, like we record transforms
 * [ ] **Animation**: per frame sculpting, shape replacement based
 * [ ] **Animation**: blendshapes
 * [ ] **AVP support**: fingers and stylus

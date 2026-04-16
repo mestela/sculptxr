@@ -24,6 +24,7 @@ class TransformVR extends SculptBase {
     this._vrActiveHand = null;
     this._lastHoverHand = null;
     this._dragMesh = null; // MESH LOCKING: Specific mesh being dragged
+    this._isGizmoHovered = false;
   }
 
   start(ctrl) {
@@ -83,11 +84,17 @@ class TransformVR extends SculptBase {
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
+    if (this._wasPressed !== isPressed) {
+      console.log(`[TransformVR] updateXR, isPressed: ${isPressed}, initInput: ${this._initInput}`);
+      this._wasPressed = isPressed;
+    }
+
     if (this._gizmo) {
       this._gizmo.update(this._main.getCamera());
 
       // 1. Hover Logic (Only if not dragging AND not in grace period)
       if (!this._initInput && (!this._graceFrames || this._graceFrames === 0)) {
+        this._isGizmoHovered = false;
         const main = this._main;
         const currentHand = options ? options.handedness : "unknown";
 
@@ -103,6 +110,7 @@ class TransformVR extends SculptBase {
             var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
             if (hitType !== -1) {
               this._updateStateFromGizmo(hitType);
+              this._isGizmoHovered = true;
             }
           } else {
             const rayOrigin = origin || main._vrControllerPos;
@@ -119,6 +127,7 @@ class TransformVR extends SculptBase {
               var vrHitType = this._gizmo.intersectPhysical(rayOrigin, rayDir, radiusMeters, false);
               if (vrHitType !== -1) {
                 this._updateStateFromGizmo(vrHitType);
+                this._isGizmoHovered = true;
               }
             }
           }
@@ -132,8 +141,12 @@ class TransformVR extends SculptBase {
     if (!isPressed) {
       if (this._vrActiveHand && currentHand === this._vrActiveHand) {
         this._graceFrames = (this._graceFrames || 0) + 1;
+        if (this._graceFrames % 2 === 0) {
+          console.log(`[TransformVR] Grace: ${this._graceFrames}`);
+        }
         if (this._graceFrames > 5) {
           if (this._dragMesh && this._dragMesh._isVoxel) return; // LOCK TRANSFORM
+          console.log(`[TransformVR] Reset! Trigger lost.`);
           this._initInput = false;
           this._vrActiveHand = null;
            this._lastHoverHand = null;

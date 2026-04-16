@@ -488,6 +488,7 @@ class SculptBase {
 
     // HOVER STATE (Trigger Released)
     if (!isPressed) {
+      this._vrStrokeStarted = false; // Reset VR stroke flag
       // Just update picking/cursor, no sculpting
       this.makeStrokeXR(picking, pickingSym, false, origin, dir, options);
       this._lastVRPos = vec3.clone(worldPos); // Keep sync
@@ -496,6 +497,12 @@ class SculptBase {
     }
 
     // SCULPTING STATE (Trigger Pressed)
+    if (!this._vrStrokeStarted) {
+      this._vrStrokeStarted = true;
+      this.pushState(); // Pushes StateGeometry or StateDynamic
+      console.log("[SculptBase] VR Stroke Start: Pushed State");
+    }
+
     var dist = vec3.dist(worldPos, this._lastVRPos);
 
     // PACING FIX: If using Aim (Raycast) mode rather than Volume intersect, the physical controller 
