@@ -990,10 +990,8 @@ export default class GuiXR {
       return;
     }
     if (this._ignoreUntilRelease) {
-      console.log(`[GuiXR] onInteract ignored because _ignoreUntilRelease is true. isPressed: ${isPressed}`);
       if (!isPressed) {
         this._ignoreUntilRelease = false; // Reset for next press
-        console.log(`[GuiXR] _ignoreUntilRelease reset to false on release`);
       }
       return; // Ignore all events (including release) until trigger is released!
     }
@@ -2471,7 +2469,6 @@ export default class GuiXR {
     this._overlayData = null;
     this._needsRedraw = true;
     this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
-    console.log(`[GuiXR] closeOverlay - setting _ignoreUntilRelease = true`);
     this.draw();
   }
 
@@ -4847,14 +4844,9 @@ export default class GuiXR {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
         // console.log(`[SculptGL] _handleDropdownInteract option resolved: ${opt.label} (val:${val})`);
-        w.value = val; 
-        if (w.onSelect) {
-            w.onSelect(val);
-        } else if (w.onInteract) {
-            w.onInteract(val);
-        }
         this._activeCombobox = null;
         this._needsRedraw = true;
+        this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
         this.draw();
       }
       return;
@@ -4865,6 +4857,7 @@ export default class GuiXR {
     if (cx >= ox + w.x && cx <= ox + w.x + w.w && cy >= oy + w.y && cy <= oy + w.y + w.h) {
       this._activeCombobox = null;
       this._needsRedraw = true;
+      this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
       this.draw();
       return;
     }

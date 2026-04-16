@@ -7,7 +7,6 @@
 ---
 
 ## 1. Todo
-* [ ] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool
 * [ ] **Animation**: not all keyframe edit events can be undone atm. 
 * [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
@@ -26,6 +25,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool
 * [x] **Animation**: good basics for keyframe select, edit, transform, autokey
 * [x] **Anim Bug**: setting transform keys by hand doesn't work
 * [x] **Bug**: Grid only updates from saved state when the scene tab is active
