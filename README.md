@@ -1,4 +1,4 @@
-# SculptXR (v1.0.211)
+# SculptXR (v1.0.212)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.212**: **Fix**: VR Menu sub-tab overdraw and combobox ghost clicks fixed.
 *   **v1.0.211**: **Feature**: Frame-based animation workflow and telemetry cleanup.
 *   **v1.0.210**: **Diagnostics**: Stripped background sequencing outputs clean.
-*   **v1.0.209**: **Fix**: Forced direct layout definitions on standard framebuffers.
 
 [View Full Release History](docs/releases.md)
 

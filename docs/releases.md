@@ -1,3 +1,8 @@
+# v1.0.212
+- **Fix**: **VR Menu Sub-Tab Overdraw**: Resolved issue where tool sub-tabs (Sculpting, Low Poly, Voxel) drew over the section tabs and global tabs by implementing conditional clipping and adjusting default positioning.
+- **Fix**: **Combobox Ghost Clicks**: Prevented fall-through clicks on release of combobox dropdowns by setting the `_ignoreUntilRelease` safety flag directly in `_handleDropdownInteract`.
+- **Cleanup**: Removed verbose debug logs from `GuiXR.js`.
+
 # v1.0.211
 - **Feature**: **Frame-Based Animation Workflow**: Transitioned the animation system from time-based to frame-based logic, with a user-definable FPS setting (default 24).
 - **UX**: **Precision Sliders**: Implemented release-on-trigger-depress interaction for sliders and playhead to eliminate hand-drift.
