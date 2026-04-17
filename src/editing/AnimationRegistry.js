@@ -308,6 +308,44 @@ class AnimationRegistry {
     this._sortRingBuffer(track);
   }
 
+  sortTrack(track) {
+    if (track.times) {
+      let arr = track.times;
+      for (let i = 0; i < arr.length - 1; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          if (arr[i] > arr[j]) {
+            let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+            let p = track.positions;
+            let px=p[i*3], py=p[i*3+1], pz=p[i*3+2];
+            p[i*3]=p[j*3]; p[i*3+1]=p[j*3+1]; p[i*3+2]=p[j*3+2];
+            p[j*3]=px; p[j*3+1]=py; p[j*3+2]=pz;
+            let q = track.quaternions;
+            let qx=q[i*4], qy=q[i*4+1], qz=q[i*4+2], qw=q[i*4+3];
+            q[i*4]=q[j*4]; q[i*4+1]=q[j*4+1]; q[i*4+2]=q[j*4+2]; q[i*4+3]=q[j*4+3];
+            q[j*4]=qx; q[j*4+1]=qy; q[j*4+2]=qz; q[j*4+3]=qw;
+            let s = track.scales;
+            let sx=s[i*3], sy=s[i*3+1], sz=s[i*3+2];
+            s[i*3]=s[j*3]; s[i*3+1]=s[j*3+1]; s[i*3+2]=s[j*3+2];
+            s[j*3]=sx; s[j*3+1]=sy; s[j*3+2]=sz;
+          }
+        }
+      }
+    }
+    if (track.shapeTimes) {
+      let arr = track.shapeTimes;
+      for (let i = 0; i < arr.length - 1; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          if (arr[i] > arr[j]) {
+            let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+            let shp = track.shapes[i];
+            track.shapes[i] = track.shapes[j];
+            track.shapes[j] = shp;
+          }
+        }
+      }
+    }
+  }
+
   _sortRingBuffer(track) {
     if (track.times.length < 2) return;
     const n = track.times.length - 1;

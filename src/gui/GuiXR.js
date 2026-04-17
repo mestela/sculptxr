@@ -141,7 +141,7 @@ export default class GuiXR {
       'History': getHistoryWidgets,
       'Rendering': getRenderingWidgets,
       'Topology': getTopologyWidgets,
-      'Animation': getAnimationWidgets,
+      'Animation': (main) => getAnimationWidgets(main, Enums),
       'Tools': (main, isMiniHUD) => getToolsWidgets(main, main.getSculptManager().getToolIndex(), isMiniHUD),
       'Debug': (main) => this.getDebugWidgets(main),
       'Reference': getReferenceWidgets,
@@ -1122,42 +1122,64 @@ export default class GuiXR {
         }
 
         if (this._animSelectedKeysInitialTimes && window._animationRegistry) {
+          // Phase 2: Command Pattern Undo for timeline dragging
+          const commands = [];
+          this._animSelectedKeysInitialTimes.forEach(initKey => {
+            const track = window._animationRegistry.tracks.get(initKey.meshId);
+            if (!track) return;
+            
+            let curTime = undefined;
+            if (initKey.type === 'transform' && track.times) {
+              curTime = track.times[initKey.index];
+            } else if (initKey.type === 'shape' && track.shapeTimes) {
+              curTime = track.shapeTimes[initKey.index];
+            }
+            
+            if (curTime !== undefined && Math.abs(curTime - initKey.time) > 0.001) {
+              commands.push({
+                meshId: initKey.meshId,
+                type: initKey.type,
+                index: initKey.index,
+                oldTime: initKey.time,
+                newTime: curTime
+              });
+            }
+          });
+
+          if (commands.length > 0 && this._main && this._main.getStateManager) {
+            this._main.getStateManager().pushStateCustom(
+              () => { // UNDO
+                commands.forEach(cmd => {
+                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
+                  if (!tr) return;
+                  if (cmd.type === 'transform' && tr.times) {
+                    tr.times[cmd.index] = cmd.oldTime;
+                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
+                    tr.shapeTimes[cmd.index] = cmd.oldTime;
+                  }
+                  window._animationRegistry.sortTrack(tr);
+                });
+                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
+              },
+              () => { // REDO
+                commands.forEach(cmd => {
+                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
+                  if (!tr) return;
+                  if (cmd.type === 'transform' && tr.times) {
+                    tr.times[cmd.index] = cmd.newTime;
+                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
+                    tr.shapeTimes[cmd.index] = cmd.newTime;
+                  }
+                  window._animationRegistry.sortTrack(tr);
+                });
+                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
+              }
+            );
+          }
+
+          // Use the new helper method to sort tracks
           window._animationRegistry.tracks.forEach((track, meshId) => {
-            if (track.times) {
-              let arr = track.times;
-              for (let i = 0; i < arr.length - 1; i++) {
-                for (let j = i + 1; j < arr.length; j++) {
-                  if (arr[i] > arr[j]) {
-                    let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-                    let p = track.positions;
-                    let px=p[i*3], py=p[i*3+1], pz=p[i*3+2];
-                    p[i*3]=p[j*3]; p[i*3+1]=p[j*3+1]; p[i*3+2]=p[j*3+2];
-                    p[j*3]=px; p[j*3+1]=py; p[j*3+2]=pz;
-                    let q = track.quaternions;
-                    let qx=q[i*4], qy=q[i*4+1], qz=q[i*4+2], qw=q[i*4+3];
-                    q[i*4]=q[j*4]; q[i*4+1]=q[j*4+1]; q[i*4+2]=q[j*4+2]; q[i*4+3]=q[j*4+3];
-                    q[j*4]=qx; q[j*4+1]=qy; q[j*4+2]=qz; q[j*4+3]=qw;
-                    let s = track.scales;
-                    let sx=s[i*3], sy=s[i*3+1], sz=s[i*3+2];
-                    s[i*3]=s[j*3]; s[i*3+1]=s[j*3+1]; s[i*3+2]=s[j*3+2];
-                    s[j*3]=sx; s[j*3+1]=sy; s[j*3+2]=sz;
-                  }
-                }
-              }
-            }
-            if (track.shapeTimes) {
-              let arr = track.shapeTimes;
-              for (let i = 0; i < arr.length - 1; i++) {
-                for (let j = i + 1; j < arr.length; j++) {
-                  if (arr[i] > arr[j]) {
-                    let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
-                    let shp = track.shapes[i];
-                    track.shapes[i] = track.shapes[j];
-                    track.shapes[j] = shp;
-                  }
-                }
-              }
-            }
+            window._animationRegistry.sortTrack(track);
           });
           
           this._animSelectedKeysInitialTimes = null;
@@ -1173,6 +1195,67 @@ export default class GuiXR {
         this._transformBoxDrawing = false;
         this._activeTransformHandle = null;
         this._animTransformInitialBox = null;
+
+        if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+          const commands = [];
+          this._animTransformBoxInitialTimes.forEach(initKey => {
+            const track = window._animationRegistry.tracks.get(initKey.meshId);
+            if (!track) return;
+            
+            let curTime = undefined;
+            if (initKey.type === 'transform' && track.times) {
+              curTime = track.times[initKey.index];
+            } else if (initKey.type === 'shape' && track.shapeTimes) {
+              curTime = track.shapeTimes[initKey.index];
+            }
+            
+            if (curTime !== undefined && Math.abs(curTime - initKey.time) > 0.001) {
+              commands.push({
+                meshId: initKey.meshId,
+                type: initKey.type,
+                index: initKey.index,
+                oldTime: initKey.time,
+                newTime: curTime
+              });
+            }
+          });
+
+          if (commands.length > 0 && this._main && this._main.getStateManager) {
+            this._main.getStateManager().pushStateCustom(
+              () => { // UNDO
+                commands.forEach(cmd => {
+                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
+                  if (!tr) return;
+                  if (cmd.type === 'transform' && tr.times) {
+                    tr.times[cmd.index] = cmd.oldTime;
+                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
+                    tr.shapeTimes[cmd.index] = cmd.oldTime;
+                  }
+                  window._animationRegistry.sortTrack(tr);
+                });
+                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
+              },
+              () => { // REDO
+                commands.forEach(cmd => {
+                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
+                  if (!tr) return;
+                  if (cmd.type === 'transform' && tr.times) {
+                    tr.times[cmd.index] = cmd.newTime;
+                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
+                    tr.shapeTimes[cmd.index] = cmd.newTime;
+                  }
+                  window._animationRegistry.sortTrack(tr);
+                });
+                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
+              }
+            );
+          }
+
+          window._animationRegistry.tracks.forEach((track, meshId) => {
+            window._animationRegistry.sortTrack(track);
+          });
+        }
+
         this._animTransformBoxInitialTimes = null;
       }
       return;
@@ -1942,6 +2025,12 @@ export default class GuiXR {
                 }
               }
             }
+            // Clicked in empty space with box existing: remove box and start new one
+            window._animTransformBox = null;
+            window._animSelectedKeys = [];
+            this._transformBoxDrawing = true;
+            this._transformBoxStart = { x: rx, y: ry };
+            this._needsRedraw = true;
             return;
           } else {
             this._activeTimeline = targetWid;

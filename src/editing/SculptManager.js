@@ -33,7 +33,6 @@ class SculptManager {
   }
 
   setToolIndex(id) {
-    console.log(`[SculptManager] setToolIndex: ${id}`);
     const oldTool = this.getCurrentTool();
     if (oldTool && oldTool.clearPreview) {
       oldTool.clearPreview();

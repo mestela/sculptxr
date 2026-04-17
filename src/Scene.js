@@ -1525,9 +1525,10 @@ class Scene {
     mesh.normalizeSize();
     this.subdivideClamp(mesh);
 
-    // Default to MATCAP with Skin Hazardousarts2 (idMat 3)
+    // Default to MATCAP with Pearl (or from settings)
+    const opts = getOptionsURL();
     mesh.setShaderType(Enums.Shader.MATCAP);
-    mesh.setMatcap(3);
+    mesh.setMatcap(opts.matcap);
 
     mesh._typeName = "Sphere";
     mesh.isQuad = true; // Sphere is quads (subdivided cube)
@@ -4343,18 +4344,19 @@ class Scene {
           };
         }
         
-        const snapBefore = currentMesh ? captureTrackState(currentMesh) : null;
-
         this._sculptManager.end();
         this._action = Enums.Action.NOTHING;
 
         // AutoKey Feature
-        if (window._animAutoKey && window._animCurrentTime !== undefined && window._animationRegistry && currentMesh) {
+        if (window._animAutoKey && window._animationRegistry && currentMesh) {
           const sm = this._sculptManager;
           const isMove = sm && (sm._toolIndex === Enums.Tools.MOVE || sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB);
 
+          if (window.screenLog) window.screenLog(`[AutoKey] Detected. isMove=${isMove} tool=${sm ? sm._toolIndex : 'null'}`, "cyan");
+
           if (isMove) {
             const meshId = currentMesh.getID();
+            if (window.screenLog) window.screenLog(`[AutoKey] Adding key at ${window._animCurrentTime}`, "cyan");
             if (!window._animationRegistry.tracks.has(meshId)) {
               window._animationRegistry.tracks.set(meshId, {
                 times: [], positions: [], quaternions: [], scales: [],
@@ -4362,7 +4364,19 @@ class Scene {
               });
             }
             const track = window._animationRegistry.tracks.get(meshId);
-            const targetTime = window._animCurrentTime;
+            const targetTime = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
+
+            // If this is a new track or empty, and we are not at frame 0,
+            // automatically add a key at frame 0 with the OLD position (before the move).
+            if (track.times.length === 0 && targetTime > 0.005) {
+              const tool = this._sculptManager.getCurrentTool();
+              if (tool && tool._undoMatrix) {
+                const currMat = mat4.clone(currentMesh.getMatrix());
+                currentMesh.setMatrix(tool._undoMatrix);
+                window._animationRegistry.addTransformKey(currentMesh, 0.0);
+                currentMesh.setMatrix(currMat);
+              }
+            }
 
             const tMat = currentMesh.getMatrix();
             const pos = [tMat[12], tMat[13], tMat[14]];
@@ -4379,39 +4393,76 @@ class Scene {
             const q = quat.create();
             quat.fromMat3(q, m);
 
-            track.times.push(targetTime);
-            track.positions.push(...pos);
-            track.quaternions.push(q[0], q[1], q[2], q[3]);
-            track.scales.push(sx, sy, sz);
+            // Check if keyframe already exists for update vs add
+            let keyIdx = -1;
+            if (track.times) {
+              for (let i = 0; i < track.times.length; i++) {
+                if (Math.abs(track.times[i] - targetTime) < 0.005) {
+                  keyIdx = i;
+                  break;
+                }
+              }
+            }
 
-            const snapAfter = captureTrackState(currentMesh);
-            if (this.getStateManager && snapBefore && snapAfter) {
+            const wasUpdate = keyIdx >= 0;
+            let oldData = null;
+            if (wasUpdate) {
+              oldData = {
+                pos: track.positions.slice(keyIdx * 3, keyIdx * 3 + 3),
+                q: track.quaternions.slice(keyIdx * 4, keyIdx * 4 + 4),
+                s: track.scales.slice(keyIdx * 3, keyIdx * 3 + 3)
+              };
+            }
+
+            // Use centralized method to add/update keyframe
+            window._animationRegistry.addTransformKey(currentMesh, targetTime);
+            if (this._guiXR) this._guiXR._needsRedraw = true;
+
+            const newData = {
+              pos: [...pos],
+              q: [q[0], q[1], q[2], q[3]],
+              s: [sx, sy, sz]
+            };
+
+            if (this.getStateManager) {
               this.getStateManager().pushStateCustom(
-                () => {
+                () => { // UNDO
                   const tr = window._animationRegistry.tracks.get(meshId);
-                  if (tr) {
-                    tr.times = snapBefore.times.slice();
-                    tr.positions = snapBefore.positions.slice();
-                    tr.quaternions = snapBefore.quaternions.slice();
-                    tr.scales = snapBefore.scales.slice();
-                    tr.shapeTimes = snapBefore.shapeTimes.slice();
-                    tr.shapes = snapBefore.shapes.map(arr => new Float32Array(arr));
-                    window._animationRegistry.update(currentMesh, true);
-                    if (this._guiXR) this._guiXR._needsRedraw = true;
+                  if (!tr) return;
+                  if (wasUpdate) {
+                    // Restore old values
+                    let idx = 0;
+                    while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
+                    if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
+                      tr.positions.splice(idx*3, 3, ...oldData.pos);
+                      tr.quaternions.splice(idx*4, 4, ...oldData.q);
+                      tr.scales.splice(idx*3, 3, ...oldData.s);
+                    }
+                  } else {
+                    // Remove the added key
+                    window._animationRegistry.deleteTransformKey(currentMesh, targetTime);
                   }
+                  window._animationRegistry.update(currentMesh, true);
+                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 },
-                () => {
+                () => { // REDO
                   const tr = window._animationRegistry.tracks.get(meshId);
-                  if (tr) {
-                    tr.times = snapAfter.times.slice();
-                    tr.positions = snapAfter.positions.slice();
-                    tr.quaternions = snapAfter.quaternions.slice();
-                    tr.scales = snapAfter.scales.slice();
-                    tr.shapeTimes = snapAfter.shapeTimes.slice();
-                    tr.shapes = snapAfter.shapes.map(arr => new Float32Array(arr));
-                    window._animationRegistry.update(currentMesh, true);
-                    if (this._guiXR) this._guiXR._needsRedraw = true;
+                  if (!tr) return;
+                  let idx = 0;
+                  while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
+                  
+                  if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
+                    tr.positions.splice(idx*3, 3, ...newData.pos);
+                    tr.quaternions.splice(idx*4, 4, ...newData.q);
+                    tr.scales.splice(idx*3, 3, ...newData.s);
+                  } else {
+                    tr.times.splice(idx, 0, targetTime);
+                    tr.positions.splice(idx*3, 0, ...newData.pos);
+                    tr.quaternions.splice(idx*4, 0, ...newData.q);
+                    tr.scales.splice(idx*3, 0, ...newData.s);
                   }
+                  window._animationRegistry.update(currentMesh, true);
+                  if (this._guiXR) this._guiXR._needsRedraw = true;
                 }
               );
             }
@@ -4577,8 +4628,6 @@ class Scene {
         if (toolParams) toolParams._negative = isNegative;
 
         if (this._wasTriggerPressed !== isTriggerPressed) {
-          const activeTool = this._sculptManager.getCurrentTool();
-          console.log(`[Scene] Trigger changed to ${isTriggerPressed}. Active tool: ${activeTool ? activeTool.constructor.name : 'null'}`);
           this._wasTriggerPressed = isTriggerPressed;
         }
 
