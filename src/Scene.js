@@ -4352,11 +4352,8 @@ class Scene {
           const sm = this._sculptManager;
           const isMove = sm && (sm._toolIndex === Enums.Tools.MOVE || sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB);
 
-          if (window.screenLog) window.screenLog(`[AutoKey] Detected. isMove=${isMove} tool=${sm ? sm._toolIndex : 'null'}`, "cyan");
-
           if (isMove) {
             const meshId = currentMesh.getID();
-            if (window.screenLog) window.screenLog(`[AutoKey] Adding key at ${window._animCurrentTime}`, "cyan");
             if (!window._animationRegistry.tracks.has(meshId)) {
               window._animationRegistry.tracks.set(meshId, {
                 times: [], positions: [], quaternions: [], scales: [],

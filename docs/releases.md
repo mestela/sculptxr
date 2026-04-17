@@ -1,3 +1,9 @@
+# v1.0.213
+- **Feature**: **AutoKey Frame 0 Fallback**: Automatically creates a key at frame 0 with the original position when moving an object at a later frame, ensuring animation starts from the beginning.
+- **Fix**: **AutoKey Undefined Time**: Resolved issue where AutoKey failed to trigger on startup because `window._animCurrentTime` was undefined.
+- **Fix**: **Vite Import Error**: Resolved Vite import-analysis error in `GuiVRAnimation.js` by passing `Enums` from `GuiXR.js` instead of importing it directly.
+- **UX**: **Paste Refresh**: Pasting keys now immediately refreshes the 3D view.
+
 # v1.0.212
 - **Fix**: **VR Menu Sub-Tab Overdraw**: Resolved issue where tool sub-tabs (Sculpting, Low Poly, Voxel) drew over the section tabs and global tabs by implementing conditional clipping and adjusting default positioning.
 - **Fix**: **Combobox Ghost Clicks**: Prevented fall-through clicks on release of combobox dropdowns by setting the `_ignoreUntilRelease` safety flag directly in `_handleDropdownInteract`.
