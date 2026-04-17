@@ -530,6 +530,10 @@ export default class GuiXR {
       this._cursor.x = u * this._canvas.width;
       this._cursor.y = v * this._canvas.height;
       this._updateHover();
+      
+      if (this._activeCombobox) {
+        this._needsRedraw = true; // Always redraw when combobox is open to update hover highlight!
+      }
     }
     // Optimization: Don't set _needsRedraw = true unconditionally here.
     // _updateHover will handle it if widget changes.
@@ -4844,6 +4848,12 @@ export default class GuiXR {
         const opt = w.options[index];
         const val = opt.id !== undefined ? opt.id : index;
         // console.log(`[SculptGL] _handleDropdownInteract option resolved: ${opt.label} (val:${val})`);
+        w.value = val; 
+        if (w.onSelect) {
+            w.onSelect(val);
+        } else if (w.onInteract) {
+            w.onInteract(val);
+        }
         this._activeCombobox = null;
         this._needsRedraw = true;
         this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!

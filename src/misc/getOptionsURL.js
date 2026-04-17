@@ -157,7 +157,7 @@ var getOptionsURL = function () {
   options.curvature = queryNumber(getVal('curvature'), 0, 5, 0); // [0-5]
   options.exposure = queryNumber(getVal('exposure'), 0, 5); // [0-5]
   options.environment = queryInteger(getVal('environment'), 0, Infinity, 2); // [0-inf]
-  options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 3); // [0-inf]
+  options.matcap = queryInteger(getVal('matcap'), 0, Infinity, 4); // [0-inf]
   options.shader = getEnum(Enums.Shader, getVal('shader'), Enums.Shader.PBR); // pbr/matcap/normal/uv
   options.filmic = queryBool(getVal('filmic'), false);
 
