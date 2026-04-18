@@ -47,6 +47,7 @@ class GuiScene {
     menu.addTitle(TR('renderingExtra'));
     menu.addCheckbox(TR('contourShow'), this._main._showContour, this.onShowContour.bind(this));
     menu.addCheckbox(TR('renderingGrid'), this._main._showGrid, this.onShowGrid.bind(this));
+    menu.addSlider('Grid Opacity', 0.5, this.onGridOpacity.bind(this), 0.0, 1.0, 0.01);
     menu.addCheckbox(TR('renderingSymmetryLine'), ShaderBase.showSymmetryLine, this.onShowSymmetryLine.bind(this));
     this._ctrlOffSym = menu.addSlider('SymOffset', 0.0, this.onOffsetSymmetry.bind(this), -1.0, 1.0, 0.001);
   }
@@ -229,6 +230,14 @@ class GuiScene {
     if (main._groundGrid) main._groundGrid.visible = bool;
     window.localStorage.setItem('sculptxr_grid_state', bool);
     main.render();
+  }
+
+  onGridOpacity(val) {
+    var main = this._main;
+    if (main._groundGrid) {
+      main._groundGrid.material.opacity = val;
+      main.render();
+    }
   }
 
   onShowContour(bool) {

@@ -73,7 +73,7 @@ class Scene {
     this._cameraSpeed = 0.25;
 
     // cache canvas stuffs
-    this._pixelRatio = 1.0;
+    this._pixelRatio = window.devicePixelRatio || 1.0;
     this._viewport = document.getElementById('viewport');
 
     // Detect Quest Standalone (OculusBrowser) for Offset Fix
@@ -1243,7 +1243,7 @@ class Scene {
   updateMatricesAndSort() {
     var meshes = this._meshes;
     var cam = this._camera;
-    if (meshes.length > 0) {
+    if (meshes.length > 0 && !window._disableOptimizeNearFar) {
       cam.optimizeNearFar(this.computeBoundingBoxScene());
     }
 
@@ -1285,9 +1285,8 @@ class Scene {
     // If we want the mesh to be down in front of the user (like on a desk), we put meshes in a _worldGroup
     // and move/scale the _worldGroup, while the headset roams the root scene freely.
     this._worldGroup = new THREE.Group();
-    // Default Startup Transform (from User A-Button query)
-    this._worldGroup.position.set(0.250, 0.921, -0.800);
-    this._worldGroup.quaternion.set(0.212, -0.222, 0.085, 0.948);
+    this._worldGroup.position.set(0, 0, 0);
+    this._worldGroup.quaternion.set(0, 0, 0, 1);
     this._worldGroup.scale.set(0.701, 0.701, 0.701);
     this._scene.add(this._worldGroup);
     
@@ -1391,8 +1390,31 @@ class Scene {
 
     // setTimeout(() => { if(window.diagnoseGridMesh) window.diagnoseGridMesh(); }, 2000);
 
+    window.addEventListener('resize', this.onCanvasResize.bind(this));
 
+    window.setAspect = (aspect) => {
+      window._forcedAspect = aspect;
+      this.onCanvasResize();
+      console.log(`Forced Aspect to ${aspect}`);
+    };
 
+    window.setScaleX = (scaleX) => {
+      if (this._camera && this._camera.getThreeCamera()) {
+        const camera = this._camera;
+        const threeCam = camera.getThreeCamera();
+        
+        // Directly modify the X scale in the projection matrix
+        threeCam.projectionMatrix.elements[0] = (1.0 / Math.tan((threeCam.fov * Math.PI / 180.0) / 2.0)) / threeCam.aspect * scaleX;
+        threeCam.projectionMatrixInverse.copy(threeCam.projectionMatrix).invert();
+        
+        // Also update custom projection matrix
+        const proj = camera.getProjection();
+        proj[0] = (1.0 / Math.tan((camera.getFov() * Math.PI / 180.0) / 2.0)) / threeCam.aspect * scaleX;
+        
+        console.log(`Forced ScaleX to ${scaleX}`);
+        this.render();
+      }
+    };
   }
 
   /** Load textures (preload) */
@@ -1427,8 +1449,51 @@ class Scene {
   /** Called when the window is resized */
   onCanvasResize() {
     var viewport = this._viewport;
+    
+    // Force viewport to fill the area excluding top bar and sidebar
+    viewport.style.position = 'absolute';
+    viewport.style.top = '40px';
+    viewport.style.bottom = '0px';
+    viewport.style.left = '0px';
+    viewport.style.right = '310px';
+
     var newWidth = viewport.clientWidth * this._pixelRatio;
     var newHeight = viewport.clientHeight * this._pixelRatio;
+
+    if (window.screenLog) {
+      window.screenLog(`Viewport: ${viewport.clientWidth}x${viewport.clientHeight}, PR: ${this._pixelRatio.toFixed(1)}`, "cyan");
+      window.screenLog(`Aspect: ${(viewport.clientWidth / viewport.clientHeight).toFixed(3)}`, "cyan");
+    }
+
+    var aspect = window._forcedAspect || (viewport.clientWidth / viewport.clientHeight);
+    
+    if (this._camera && this._camera.getThreeCamera()) {
+      const threeCam = this._camera.getThreeCamera();
+      
+      threeCam.aspect = aspect;
+      
+      if (window._forcedAspect) {
+        // If aspect is forced, use a fixed base FOV to avoid compounding effects
+        const baseFov = 45;
+        this._camera.setFov(baseFov);
+        threeCam.fov = baseFov;
+      } else {
+        // Calculate adjusted FOV to maintain constant horizontal FOV
+        const baseFov = 45;
+        const adjFov = 2 * Math.atan(Math.tan(baseFov * Math.PI / 360.0) / aspect) * 360.0 / Math.PI;
+        
+        // Update custom camera FOV (which updates its projection matrix)
+        this._camera.setFov(adjFov);
+        threeCam.fov = adjFov;
+      }
+      
+      threeCam.updateProjectionMatrix();
+      
+      if (window.screenLog) {
+        window.screenLog(`Aspect: ${aspect.toFixed(3)}`, "cyan");
+        window.screenLog(`FOV: ${threeCam.fov.toFixed(1)}`, "magenta");
+      }
+    }
 
     this._canvasOffsetLeft = viewport.offsetLeft;
     this._canvasOffsetTop = viewport.offsetTop;
@@ -1437,6 +1502,14 @@ class Scene {
 
     this._canvas.width = newWidth;
     this._canvas.height = newHeight;
+
+    // Force CSS size to match client size (prevent stretching)
+    this._canvas.style.width = viewport.clientWidth + 'px';
+    this._canvas.style.height = viewport.clientHeight + 'px';
+
+    if (this._renderer) {
+      this._renderer.setSize(viewport.clientWidth, viewport.clientHeight, false);
+    }
 
     this._gl.viewport(0, 0, newWidth, newHeight);
     this._camera.onResize(newWidth, newHeight);

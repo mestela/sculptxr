@@ -7,7 +7,6 @@
 ---
 
 ## 1. Todo
-* [ ] **Animation**: not all keyframe edit events can be undone atm. 
 * [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
@@ -25,6 +24,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: not all keyframe edit events can be undone atm. 
 * [x] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool
 * [x] **Animation**: good basics for keyframe select, edit, transform, autokey
 * [x] **Anim Bug**: setting transform keys by hand doesn't work

@@ -60,7 +60,7 @@ class Camera {
     this._mode = opts.cameramode || Enums.CameraMode.ORBIT; // SPHERICAL / PLANE
     this._projectionType = opts.projection || Enums.Projection.PERSPECTIVE; // ORTHOGRAPHIC
 
-    this._quatRot = [0.0, 0.0, 0.0, 1.0]; // quaternion rotation
+    this._quatRot = [0.1305, 0.0, 0.0, 0.9914]; // quaternion rotation (looking down 15 deg)
     this._view = mat4.create(); // view matrix
     this._proj = mat4.create(); // projection matrix
     this._viewport = mat4.create(); // viewport matrix
@@ -338,9 +338,21 @@ class Camera {
 
   updateProjection() {
     if (this._projectionType === Enums.Projection.PERSPECTIVE) {
-      mat4.perspective(this._proj, this._fov * Math.PI / 180.0, this._width / this._height, this._near, this._far);
-      this._proj[10] = -1.0;
-      this._proj[14] = -2 * this._near;
+      if (this._threeCamera) {
+        this._threeCamera.fov = this._fov;
+        this._threeCamera.aspect = this._width / this._height;
+        this._threeCamera.near = this._near;
+        this._threeCamera.far = this._far;
+        this._threeCamera.updateProjectionMatrix();
+        
+        // Copy Three.js projection matrix to this._proj for raycasting!
+        // Three.js uses column-major order, same as gl-matrix!
+        mat4.copy(this._proj, this._threeCamera.projectionMatrix.elements);
+      } else {
+        mat4.perspective(this._proj, this._fov * Math.PI / 180.0, this._width / this._height, this._near, this._far);
+        this._proj[10] = -1.0;
+        this._proj[14] = -2 * this._near;
+      }
     } else {
       this.updateOrtho();
     }
@@ -349,25 +361,6 @@ class Camera {
     if (this._main && this._main._xrSession && this._main._desktopCameraCache) {
       if (!this._unprojectDiverted) {
         mat4.copy(this._main._desktopCameraCache.proj, this._proj);
-      }
-    }
-
-    if (this._threeCamera) {
-      if (this._main && this._main._renderer && this._main._renderer.xr && this._main._renderer.xr.isPresenting) {
-        // VR MODE: Do nothing. Three.js WebXRManager dynamically calculates
-        // the stereoscopic projection matrices for each eye per frame.
-      } else {
-        if (this._projectionType === Enums.Projection.PERSPECTIVE) {
-          this._threeCamera.fov = this._fov;
-          this._threeCamera.aspect = this._width / this._height;
-          this._threeCamera.near = this._near;
-          this._threeCamera.far = this._far;
-          this._threeCamera.updateProjectionMatrix();
-        } else {
-          // Ortho not fully supported in Three.js branch yet, fallback
-          this._threeCamera.projectionMatrix.fromArray(this._proj);
-          this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
-        }
       }
     }
   }
@@ -448,7 +441,7 @@ class Camera {
     var delta = [0.0, 0.0, 30.0 + this._speed / 3.0];
     vec3.sub(delta, delta, this._trans);
     this.translateDelay(delta, DELAY_MOVE_TO);
-    this.quatDelay([0.0, 0.0, 0.0, 1.0], DELAY_MOVE_TO);
+    this.quatDelay([0.1305, 0.0, 0.0, 0.9914], DELAY_MOVE_TO);
   }
 
   resetViewFront() {
@@ -503,7 +496,8 @@ class Camera {
   unproject(mouseX, mouseY, z) {
     var out = [0.0, 0.0, 0.0];
     mat4.invert(_TMP_MAT, this.computeWorldToScreenMatrix(_TMP_MAT));
-    return vec3.transformMat4(out, vec3.set(out, mouseX, this._height - mouseY, z), _TMP_MAT);
+    const y = window._invertY ? mouseY : (this._height - mouseY);
+    return vec3.transformMat4(out, vec3.set(out, mouseX, y, z), _TMP_MAT);
   }
 
   /** Project a vertex onto the screen */

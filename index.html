@@ -135,7 +135,7 @@
             const nativeLog = console.log;
             // Environment checks
             const isProd = window.location.hostname === 'tokeru.com' && !window.location.pathname.includes('beta');
-            window._showDebugLog = false; // Set to false to maximize performance (silences DOM logs)
+            window._showDebugLog = true; // Enable for debugging
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {

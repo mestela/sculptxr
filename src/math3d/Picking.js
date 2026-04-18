@@ -437,12 +437,20 @@ class Picking {
     return false;
   }
 
-  /** Intersection between a ray the mouse position */
   intersectionMouseMesh(mesh = this._main.getMesh(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
     var vNear = this.unproject(mouseX, mouseY, 0.0);
     var vFar = this.unproject(mouseX, mouseY, 0.1);
+    
+    if (window._debugRay) {
+      var eyeDir = [0, 0, 0];
+      vec3.sub(eyeDir, vFar, vNear);
+      vec3.normalize(eyeDir, eyeDir);
+      console.log("Ray Dir:", eyeDir, "Mouse:", mouseX, mouseY, "Cam Size:", this._main.getCamera()._width, this._main.getCamera()._height);
+    }
+
     var matInverse = mat4.create();
-    mat4.invert(matInverse, mesh.getMatrix());
+    mesh.getThreeMesh().updateMatrixWorld(true);
+    mat4.invert(matInverse, mesh.getThreeMesh().matrixWorld.elements);
     vec3.transformMat4(vNear, vNear, matInverse);
     vec3.transformMat4(vFar, vFar, matInverse);
     return this.intersectionRayMesh(mesh, vNear, vFar);

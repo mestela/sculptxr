@@ -110,3 +110,10 @@ Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engi
     *   **Hybrid Engine**: Uses `manifold-3d` (C++ via WASM) for robust booleans and a custom Rust module for advanced quad remeshing.
     *   **Greedy Quadrangulation**: Contains a custom port of Blender's `quad_calc_error` metric to merge triangles back into clean quads after destructive operations.
     *   **Worker History**: Maintains a local stack of distance fields to allow instant Undo/Redo of voxel operations without main-thread roundtrips.
+
+### Animation System: `AnimationRegistry.js` & `GuiVRAnimation.js`
+*   **Role**: Manages the multi-track animation state and timeline visualization in VR.
+*   **Key Logic**:
+    *   **Registry**: `window._animationRegistry` stores track data (shapes, times, positions, quaternions, scales) mapped to mesh IDs.
+    *   **Timeline UI**: Rendered via `GuiVRAnimation.js` and `GuiXR.js` for transport controls and keyframe manipulation.
+    *   **Undo/Redo**: Integrated with `StateManager.js` for keyframe edit events.

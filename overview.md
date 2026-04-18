@@ -32,6 +32,12 @@ SculptXR is an immersive 3D sculpting application designed for Virtual Reality (
 *   **Paradigm**: "Right is Might, Left is Meta." The right hand handles action/sculpting and raycasting, while the left hand holds the UI palette and acts as a modifier. Left-handed mode is fully operational and works fine.
 *   **VR HUD**: A heavy custom UI rasterized to a 2D canvas and uploaded to a WebGL texture. Optimized to decouple redraws from heavy GPU uploads to maintain 90fps.
 
+### Animation System (DAW)
+*   **Architecture**: A multi-track non-linear mocap sequencer supporting track loops, morph-shape delta overlays, and hierarchical scene modifications.
+*   **Features**: Supports keyframe selection, editing, transformation, and AutoKey logic. Mocap recording over short loops is supported for transforms.
+*   **Data Storage**: Tracks map to mesh IDs and store both shape keys (vertex snapshots) and transform keys (Position/Rotation/Scale).
+*   **Export**: Supports saving animation data in custom `.sxr`/`.sgl` formats and exporting to standard GLB.
+
 ## 4. Platform Quirks & Hardware Workarounds
 The project contains critical documentation on overcoming mobile WebXR barriers:
 *   **GalaxyXR**: Requires aggressive FBO (Framebuffer Object) rebinding per-eye to prevent right-eye dropouts, and strict avoidance of `.innerText` (replaced with `.textContent`) to prevent massive CPU layout thrashing.

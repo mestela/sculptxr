@@ -970,8 +970,12 @@ class SculptGL extends Scene {
   }
 
   setMousePosition(event) {
-    this._mouseX = this._pixelRatio * (event.pageX - this._canvasOffsetLeft);
-    this._mouseY = this._pixelRatio * (event.pageY - this._canvasOffsetTop);
+    const rect = this._canvas.getBoundingClientRect();
+    this._mouseX = this._pixelRatio * (event.clientX - rect.left);
+    this._mouseY = this._pixelRatio * (event.clientY - rect.top);
+    if (window._debugMouse) {
+      console.log("Mouse:", this._mouseX, this._mouseY, "Rect:", rect.left, rect.top);
+    }
   }
 
   onDeviceDown(event) {

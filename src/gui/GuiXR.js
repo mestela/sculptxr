@@ -208,10 +208,12 @@ export default class GuiXR {
       });
     }
 
-    // Desktop Preview Toggle (Dev Tool)
+    // Desktop Preview Toggle (Dev Tool) - Only for main GUI!
     window.addEventListener('keydown', (e) => {
       if (e.shiftKey && e.altKey && e.code === 'KeyV') {
-        this.togglePreview();
+        if (!this._isMiniHUD && !this._isPopupHUD) {
+          this.togglePreview();
+        }
       }
     });
 
@@ -403,6 +405,7 @@ export default class GuiXR {
 
     this._canvas.style.width = '100%';
     this._canvas.style.height = '100%';
+    this._canvas.style.filter = 'brightness(1.5)'; // Compensate for missing Three.js color transform
 
     div.appendChild(this._canvas);
     document.body.appendChild(div);
@@ -412,9 +415,8 @@ export default class GuiXR {
     // Start Desktop Render Loop
     const loop = () => {
       if (!this._previewContainer) return;
-      if (this._needsRedraw) {
-        this.draw();
-      }
+      this._needsRedraw = true; // Force redraw for desktop preview
+      this.draw();
       requestAnimationFrame(loop);
     };
     loop();
@@ -449,6 +451,8 @@ export default class GuiXR {
     };
     const onPointerUp = (e) => {
       e.preventDefault();
+      const { x, y } = mapEventToPixels(e);
+      this.onInteract(x, y, false); // Reset press state!
       this.setCursor(-1, -1); // Deactivate cursor
     };
 
@@ -1808,8 +1812,7 @@ export default class GuiXR {
     }
 
     // 3. Check Tabs (Header) - PRIORITY over standard click targets
-
-    if (!this._isMiniHUD && isPressed && cy < HEADER_HEIGHT) {
+    if (!this._isMiniHUD && isRisingEdge && cy < HEADER_HEIGHT) {
       const w = this._canvas.width;
       if (this._viewMode === 'SIDEBAR' || GLOBAL_TABS.includes(this._viewMode)) {
         const row1 = GLOBAL_TABS.slice(0, 3);
