@@ -176,7 +176,8 @@ class Picking {
       if (!mesh.isVisible() || mesh.isPickable === false)
         continue;
 
-      mat4.invert(_TMP_INV, mesh.getMatrix());
+      mesh.getThreeMesh().updateMatrixWorld(true);
+      mat4.invert(_TMP_INV, mesh.getThreeMesh().matrixWorld.elements);
       vec3.transformMat4(_TMP_NEAR_1, vNear, _TMP_INV);
       vec3.transformMat4(_TMP_FAR, vFar, _TMP_INV);
       if (!this.intersectionRayMesh(mesh, _TMP_NEAR_1, _TMP_FAR))
@@ -646,12 +647,12 @@ class Picking {
   }
 
   computeWorldRadius2(ignorePressure) {
-
-    vec3.transformMat4(_TMP_INTER, this.getIntersectionPoint(), this._mesh.getMatrix());
-
+    this._mesh.getThreeMesh().updateMatrixWorld(true);
+    vec3.transformMat4(_TMP_INTER, this.getIntersectionPoint(), this._mesh.getThreeMesh().matrixWorld.elements);
+ 
     var offsetX = this._main.getSculptManager().getCurrentTool().getScreenRadius();
     if (!ignorePressure) offsetX *= Tablet.getPressureRadius();
-
+ 
     var screenInter = this.project(_TMP_INTER);
     return vec3.sqrDist(_TMP_INTER, this.unproject(screenInter[0] + offsetX, screenInter[1], screenInter[2]));
   }
@@ -659,7 +660,10 @@ class Picking {
   updateLocalAndWorldRadius2() {
     if (!this._mesh) return;
     this._rWorld2 = this.computeWorldRadius2();
-    this._rLocal2 = this._rWorld2 / this._mesh.getScale2();
+    
+    const m = this._mesh.getThreeMesh().matrixWorld.elements;
+    const scale2 = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
+    this._rLocal2 = this._rWorld2 / scale2;
   }
 
   unproject(x, y, z) {
@@ -748,6 +752,7 @@ class Picking {
     vec3.scaleAndAdd(out, out, vField.subarray(iv2, iv2 + 3), len2 * invSum);
     vec3.scaleAndAdd(out, out, vField.subarray(iv3, iv3 + 3), len3 * invSum);
     if (isQuad) vec3.scaleAndAdd(out, out, vField.subarray(iv4, iv4 + 3), len4 * invSum);
+    vec3.normalize(out, out);
     return out;
   }
 

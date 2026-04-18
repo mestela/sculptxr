@@ -1407,6 +1407,10 @@ class SculptManager {
   }
 
   postRender() {
+    const tool = this.getCurrentTool();
+    if (tool && tool.postRender) {
+      tool.postRender(this._selection);
+    }
   }
   addSculptToScene(scene) {
     return this.getCurrentTool().addSculptToScene(scene);

@@ -267,7 +267,7 @@ class SculptBase {
     var dx = main._mouseX - this._lastMouseX;
     var dy = main._mouseY - this._lastMouseY;
     var dist = Math.sqrt(dx * dx + dy * dy);
-    var minSpacing = 0.15 * this._radius * main.getPixelRatio();
+    var minSpacing = 0.02 * this._radius * main.getPixelRatio();
 
     if (dist <= minSpacing)
       return;

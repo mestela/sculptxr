@@ -2,6 +2,7 @@ import { mat3, mat4, vec3 } from 'gl-matrix';
 import Buffer from '../render/Buffer.js';
 import ShaderLib from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
+import * as THREE from 'three';
 
 var _TMP_MATPV = mat4.create();
 var _TMP_MAT = mat4.create();
@@ -163,36 +164,66 @@ class Selection {
 
   render(main) {
     // ABORT if we are in VR (VR uses renderVR), UNLESS we are rendering a decoupled desktop spectator view.
-    // In STATIONARY mode, we want the desktop user to see their mouse cursor radius.
     if (main.getXRMode && main.getXRMode()) {
-      // Check if we are currently drawing to the desktop canvas (null framebuffer)
       const gl = this._gl;
       if (gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null) {
-        return; // We are inside the VR headset pass, do not render desktop cursor here.
+        return; 
       }
-
-      // If the UI is hidden because VR controllers are active,不要 draw the desktop cursor either!
       if (window.isUIHiddenForVR) {
         return;
       }
     }
 
-    // if there's an offset then it means we are editing the tool radius
     var pickedMesh = main.getPicking().getMesh() && !this._isEditMode;
 
-    // Fix Dual Cursor: If WebXR is active and the intersection data belongs to the VR controllers,
-    // do NOT draw the 3D mouse cursor hovering over the mesh, because it would just copy the VR intersection point.
-    // Instead, "pickedMesh = false" forces the desktop to draw the 2D cursor (circle) at the actual physical mouse position.
     if (main.getXRMode && main.getXRMode() && main.getPicking()._isVRHit) {
       pickedMesh = false;
     }
 
-    if (pickedMesh) this._updateMatricesMesh(main.getCamera(), main);
-    else this._updateMatricesBackground(main.getCamera(), main);
+    if (!this._threeCircle) {
+      const geo = new THREE.RingGeometry(0.9, 1.0, 32);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
+      this._threeCircle = new THREE.Mesh(geo, mat);
+      this._threeCircle.renderOrder = 10000; // Render on top
+      
+      const dotGeo = new THREE.SphereGeometry(0.005, 8, 8);
+      this._threeDot = new THREE.Mesh(dotGeo, mat);
+      this._threeDot.renderOrder = 10000; // Render on top
+    }
 
-    var drawCircle = main._action === Enums.Action.NOTHING;
-    vec3.set(this._color, 0.8, drawCircle && pickedMesh ? 0.0 : 0.4, 0.0);
-    ShaderLib[Enums.Shader.SELECTION].getOrCreate(this._gl).draw(this, drawCircle, main.getSculptManager().getSymmetry());
+    if (pickedMesh) {
+      var picking = main.getPicking();
+      var mesh = picking.getMesh();
+      var threeMesh = mesh.getThreeMesh();
+      
+      // Attach to the mesh if not already, so it inherits local space transforms
+      if (this._threeCircle.parent !== threeMesh) {
+        threeMesh.add(this._threeCircle);
+        threeMesh.add(this._threeDot);
+      }
+      
+      var worldRadius = Math.sqrt(picking.computeWorldRadius2(true)); // Ignore pressure for indicator
+      const m = threeMesh.matrixWorld.elements;
+      const scale2 = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
+      var localRadius = worldRadius / Math.sqrt(scale2);
+      
+      var interPoint = picking.getIntersectionPoint();
+      
+      this._threeCircle.position.fromArray(interPoint);
+      this._threeCircle.scale.set(localRadius, localRadius, localRadius);
+      
+      // Align with local normal
+      var normal = picking.computePickedNormal();
+      this._threeCircle.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(normal[0], normal[1], normal[2]));
+      
+      this._threeCircle.visible = true;
+      
+      this._threeDot.position.fromArray(interPoint);
+      this._threeDot.visible = true;
+    } else {
+      if (this._threeCircle) this._threeCircle.visible = false;
+      if (this._threeDot) this._threeDot.visible = false;
+    }
 
     this._isEditMode = false;
   }

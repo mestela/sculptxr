@@ -13,7 +13,7 @@ class Brush extends SculptBase {
     this._negative = false;
     this._clay = false;
     this._culling = false;
-    this._accumulate = true; // if we ignore the proxy
+    this._accumulate = false; // if we ignore the proxy
     this._idAlpha = 0;
     this._lockPosition = false;
   }
@@ -64,7 +64,7 @@ class Brush extends SculptBase {
     var radius = Math.sqrt(radiusSquared);
     if (radius < 1e-6) return; // Prevent division by zero / NaNs
 
-    var deformIntensityBrush = intensity * radius * 0.5;
+    var deformIntensityBrush = intensity * radius * 0.1;
     if (this._negative)
       deformIntensityBrush = -deformIntensityBrush;
     var cx = center[0];
