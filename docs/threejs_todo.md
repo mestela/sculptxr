@@ -7,8 +7,8 @@
 ---
 
 ## 1. Todo
-* [ ] **Desktop modes**: Getting base desktop sculpting working again, then the hmd+desktop hybrid modes.
 
+* [ ] **Desktop**: hmd+desktop hybrid
 * [ ] **Animation**: transform box should allow scaling into negative to reverse key order.
 * [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
@@ -26,6 +26,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Desktop**: Getting base desktop sculpting working again
 * [x] **Animation**: not all keyframe edit events can be undone atm. 
 * [x] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool
 * [x] **Animation**: good basics for keyframe select, edit, transform, autokey

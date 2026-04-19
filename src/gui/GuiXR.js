@@ -298,12 +298,10 @@ export default class GuiXR {
     this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
     this.draw();
 
-    console.log("[GuiXR] closeOverlay called, isPopupHUD:", this._isPopupHUD, "previewContainer:", this._previewContainer);
     if (this._isPopupHUD && this._previewContainer) {
       document.body.removeChild(this._previewContainer);
       this._previewContainer = null;
       if (this._previewCleanup) this._previewCleanup();
-      console.log("[GuiXR] Popup Preview Hidden via closeOverlay");
     }
   }
 
@@ -2415,7 +2413,6 @@ export default class GuiXR {
     // Check click on menu widgets
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
-        console.log("[GuiXR] Hit overlay widget:", w.id, "type:", w.type);
         if (!w.disabled && !w.header) {
           if (w.type === 'slider') {
             this._activeSlider = w;
@@ -2545,7 +2542,6 @@ export default class GuiXR {
 
   openOverlay(type, data) {
     if (this._isPopupHUD && this._main._guiMini && this._main._guiMini._previewContainer) {
-      console.log("[GuiXR] openOverlay calling togglePreview for popup, current previewContainer:", this._previewContainer);
       if (!this._previewContainer) {
         this.togglePreview();
       }

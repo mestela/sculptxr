@@ -1,4 +1,4 @@
-# SculptXR (v1.0.213)
+# SculptXR (v1.0.214)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.214**: **Feature**: VR Mini-HUD Masking controls and Desktop Preview enhancements.
 *   **v1.0.213**: **Feature**: AutoKey frame 0 fallback and undefined time fix.
 *   **v1.0.212**: **Fix**: VR Menu sub-tab overdraw and combobox ghost clicks fixed.
-*   **v1.0.211**: **Feature**: Frame-based animation workflow and telemetry cleanup.
 
 [View Full Release History](docs/releases.md)
 

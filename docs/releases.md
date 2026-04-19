@@ -1,3 +1,11 @@
+# v1.0.214
+- **Feature**: **VR Mini-HUD Masking Controls**: Added "Clear Mask" and "Invert Mask" buttons side-by-side in the mini-HUD for quick access.
+- **Feature**: **Masking Hardness Slider**: Added a "Hardness" slider to the Masking tool VR interface and whitelisted it for the Mini-HUD.
+- **Feature**: **Desktop Preview for Mini-HUD**: Added `Alt + Shift + B` shortcut to toggle a desktop preview of the VR Mini-HUD for easier debugging.
+- **Fix**: **Mini-HUD Preview Aspect Ratio**: Fixed the desktop preview to respect the Mini-HUD's native aspect ratio (300x500) instead of forcing a square.
+- **Fix**: **Popup Auto-Preview & Cleanup**: Tool picker popups triggered from the mini-HUD preview now correctly spawn their own desktop previews and clean up properly when a tool is selected or closed.
+- **Cleanup**: Removed duplicate `closeOverlay` method in `GuiXR.js` that was shadowing the cleanup logic.
+
 # v1.0.213
 - **Feature**: **AutoKey Frame 0 Fallback**: Automatically creates a key at frame 0 with the original position when moving an object at a later frame, ensuring animation starts from the beginning.
 - **Fix**: **AutoKey Undefined Time**: Resolved issue where AutoKey failed to trigger on startup because `window._animCurrentTime` was undefined.
