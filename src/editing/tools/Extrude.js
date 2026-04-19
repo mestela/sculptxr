@@ -30,15 +30,44 @@ class Extrude extends SculptBase {
       const picking = main.getPicking();
       const pickedFace = picking.getPickedFace();
       if (pickedFace !== undefined && pickedFace >= 0) {
-        if (this._selectedFaces.has(pickedFace)) {
+        this._dragSelectMode = this._selectedFaces.has(pickedFace) ? 'remove' : 'add';
+        
+        const mesh = this.getMesh();
+        const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+        const symFace = main.getSculptManager().getSymmetry() ? this.getSymmetricalFace(activeMesh, pickedFace) : -1;
+        
+        if (this._dragSelectMode === 'remove') {
           this._selectedFaces.delete(pickedFace);
+          if (symFace !== -1) this._selectedFaces.delete(symFace);
         } else {
           this._selectedFaces.add(pickedFace);
+          if (symFace !== -1) this._selectedFaces.add(symFace);
         }
+        this._lastPickedFace = pickedFace; 
         this.updateSelectionHighlight();
         main.render();
+      } else {
+        // Clicked in empty space -> Clear selection
+        if (this._selectedFaces.size > 0) {
+          const savedSelection = new Set(this._selectedFaces);
+          const undoDrop = () => {
+            this._selectedFaces = new Set(savedSelection);
+            this.updateSelectionHighlight();
+            main.render();
+          };
+          const redoDrop = () => {
+            this._selectedFaces.clear();
+            this.updateSelectionHighlight();
+            main.render();
+          };
+          main.getStateManager().pushStateCustom(undoDrop, redoDrop);
+
+          this._selectedFaces.clear();
+          this.updateSelectionHighlight();
+          main.render();
+        }
       }
-      return;
+      return true; // Return true to enable drag selection on desktop
     }
     
     if (!isDesktop && main._vrSecondaryTriggerPressed) {
@@ -64,7 +93,19 @@ class Extrude extends SculptBase {
         main.render();
       } else {
         if (this._selectedFaces.size > 0) {
-          this._prevSelectedFaces = new Set(this._selectedFaces); 
+          const savedSelection = new Set(this._selectedFaces);
+          const undoDrop = () => {
+            this._selectedFaces = new Set(savedSelection);
+            this.updateSelectionHighlight();
+            main.render();
+          };
+          const redoDrop = () => {
+            this._selectedFaces.clear();
+            this.updateSelectionHighlight();
+            main.render();
+          };
+          main.getStateManager().pushStateCustom(undoDrop, redoDrop);
+
           this._selectedFaces.clear();
           this.updateSelectionHighlight();
           main.render();
@@ -74,7 +115,7 @@ class Extrude extends SculptBase {
     }
     
     this._lastPickedFace = null;
-    super.start(ctrl);
+    return super.start(ctrl);
   }
 
   updateSelectionHighlight() {
@@ -156,14 +197,6 @@ class Extrude extends SculptBase {
   }
 
   onUndo() {
-    if (this._prevSelectedFaces) {
-      this._selectedFaces = new Set(this._prevSelectedFaces);
-      this._prevSelectedFaces = null;
-      this.updateSelectionHighlight();
-      this._main.render();
-      return true;
-    }
-    
     if (this._main._stateManager) {
       this._main._stateManager.undo();
       this.updateSelectionHighlight();
@@ -235,10 +268,12 @@ class Extrude extends SculptBase {
 
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     const pickedFaceIdx = picking.getPickedFace();
-    console.log("[Extrude] startSculpt called, pickedFaceIdx:", pickedFaceIdx);
+    // console.log("[Extrude] startSculpt called, pickedFaceIdx:", pickedFaceIdx);
     if (pickedFaceIdx === undefined || pickedFaceIdx < 0) {
       return;
     }
+    
+    this._startMouseY = main._mouseY;
 
     // Calculate initial normal for desktop extrusion
     const faces = activeMesh.getFaces();
@@ -906,39 +941,65 @@ class Extrude extends SculptBase {
   sculptStroke() {
     const main = this._main;
     const mesh = this.getMesh();
-    if (!mesh || !this._extrudedVerts || !this._vProxy || !this._extrudeNormal) return;
+    const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
+    
+    // Support drag selection on desktop!
+    if (main._shiftKey) {
+      if (!activeMesh) return;
+      const picking = main.getPicking();
+      const pickedFace = picking.getPickedFace();
+      if (pickedFace !== undefined && pickedFace >= 0) {
+        if (pickedFace !== this._lastPickedFace) {
+          const symFace = main.getSculptManager().getSymmetry() ? this.getSymmetricalFace(activeMesh, pickedFace) : -1;
+          
+          if (this._dragSelectMode === 'remove') {
+            this._selectedFaces.delete(pickedFace);
+            if (symFace !== -1) this._selectedFaces.delete(symFace);
+          } else {
+            this._selectedFaces.add(pickedFace);
+            if (symFace !== -1) this._selectedFaces.add(symFace);
+          }
+          this._lastPickedFace = pickedFace;
+          this.updateSelectionHighlight();
+          main.render();
+        }
+      }
+      return; // Skip extrusion!
+    }
 
-    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    if (!mesh || !this._extrudedVerts || !this._vProxy || !this._extrudeNormal) return;
     
     // Calculate delta based on mouse Y movement
-    const dy = main._mouseY - this._lastMouseY;
+    const dy = main._mouseY - this._startMouseY;
     
     // We need a scale factor to map pixels to world space units
-    // Let's use a simple scale for now
-    const scale = -dy * 0.002; // Negative because moving mouse up usually means extruding OUT
+    const scale = -dy * 0.002; 
     
     const transDelta = vec3.create();
     vec3.scale(transDelta, this._extrudeNormal, scale);
 
     const vAr = activeMesh.getVertices();
+    const isMultiFace = this._selectedFaces && this._selectedFaces.size > 0;
     
-    // Move all extruded vertices along the normal
+    // Move all extruded vertices along their own normal or average normal
     for (let i = 0; i < this._extrudedVerts.length; i++) {
       const ind = this._extrudedVerts[i] * 3;
-      const isLeft = (this._vMirrorState[i] === 1);
-      const isPrimary = this._primaryIsRight ? !isLeft : isLeft;
-      const moveX = isPrimary ? transDelta[0] : -transDelta[0];
       
-      vAr[ind] = this._vProxy[i * 3] + moveX;
+      const newV = this._extrudedVerts[i];
+      const oldV = this._newToOldMap ? this._newToOldMap.get(newV) : null;
+      const normal = (oldV !== null && this._vertNormals) ? this._vertNormals.get(oldV) : this._extrudeNormal;
+      
+      vAr[ind] = this._vProxy[i * 3] + normal[0] * scale;
       if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
         vAr[ind] = 0.0;
       }
-      vAr[ind + 1] = this._vProxy[i * 3 + 1] + transDelta[1];
-      vAr[ind + 2] = this._vProxy[i * 3 + 2] + transDelta[2];
+      vAr[ind + 1] = this._vProxy[i * 3 + 1] + normal[1] * scale;
+      vAr[ind + 2] = this._vProxy[i * 3 + 2] + normal[2] * scale;
     }
 
     activeMesh.updateGeometry(activeMesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
     this.updateRender();
+    this.updateSelectionHighlight();
   }
 
   end() {

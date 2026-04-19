@@ -1,3 +1,8 @@
+# v1.0.216
+- **Feature**: **Geometric Wireframe Bias**: Replaced the unreliable shader-based clip-space bias with a geometric vertex offset along normals, successfully preventing z-fighting on desktop.
+- **UI**: **Wireframe Opacity Slider**: Added a live wireframe opacity slider to the desktop rendering menu and grouped all wireframe controls together.
+- **UX**: **Desktop Defaults**: Set default wireframe opacity to 0.25 and bias to 0.001 for desktop interface.
+
 # v1.0.215
 - **Fix**: **Extrude Tool Deadlock**: Resolved issue where tool switched to Masking after undo operations by updating `getSelectedTool()` to query `SculptManager` directly.
 - **Fix**: **Inset Tool Desktop Support**: Implemented `sculptStroke()` in `Inset.js` to map vertical mouse drag to inset scale, fixing `this.stroke is not a function` error.

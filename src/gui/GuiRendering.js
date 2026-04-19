@@ -75,9 +75,10 @@ class GuiRendering {
     this._ctrlFlatShading = menu.addCheckbox(TR('renderingFlat'), false, this.onFlatShading.bind(this));
 
     // wireframe
-    this._ctrlShowWireframe = menu.addCheckbox(TR('renderingWireframe'), false, this.onShowWireframe.bind(this));
     this._ctrlShowSolid = menu.addCheckbox('Show Solid Geometry', true, this.onShowSolid.bind(this));
-    this._ctrlWireframeBias = menu.addSlider('Wireframe Bias', 0.001, this.onWireframeBiasChanged.bind(this), 0, 0.005, 0.0001);
+    this._ctrlShowWireframe = menu.addCheckbox(TR('renderingWireframe'), false, this.onShowWireframe.bind(this));
+    this._ctrlWireframeOpacity = menu.addSlider('Wireframe Opacity', 0.25, this.onWireframeOpacityChanged.bind(this), 0, 1, 0.01);
+    this._ctrlWireframeBias = menu.addSlider('Wireframe Bias', 0.001, this.onWireframeBiasChanged.bind(this), 0, 0.1, 0.0001);
     
     if (RenderData.ONLY_DRAW_ARRAYS)
       this._ctrlShowWireframe.setVisibility(false);
@@ -86,12 +87,38 @@ class GuiRendering {
   }
 
   onWireframeBiasChanged(val) {
-    if (window.app && window.app.getMesh()) {
-      const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
-      if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
-        wireMesh.material.uniforms.uBias.value = val;
+    if (window.app && window.app.getGuiXR()) {
+      window.app.getGuiXR()._uiSettings.wireframeBias = val;
+    }
+    const mesh = window.app ? window.app.getMesh() : null;
+    if (mesh) {
+      const wireMesh = mesh.getRenderData()._wireframeMesh;
+      if (wireMesh && wireMesh.material && wireMesh.material.userData && wireMesh.material.userData.uBias) {
+        wireMesh.material.userData.uBias.value = val;
+      }
+      if (mesh.updateWireframeBuffer) {
+        mesh.updateWireframeBuffer();
       }
     }
+    getOptionsURL.saveOption('wireframeBias', val, 500);
+    this._main.render();
+  }
+
+  onWireframeOpacityChanged(val) {
+    if (window.app && window.app.getGuiXR()) {
+      window.app.getGuiXR()._uiSettings.wireframeAlpha = val;
+    }
+    const mesh = window.app ? window.app.getMesh() : null;
+    if (mesh) {
+      const wireMesh = mesh.getRenderData()._wireframeMesh;
+      if (wireMesh && wireMesh.material) {
+        wireMesh.material.opacity = val;
+      }
+      if (mesh.updateWireframeBuffer) {
+        mesh.updateWireframeBuffer();
+      }
+    }
+    getOptionsURL.saveOption('wireframeAlpha', val, 500);
     this._main.render();
   }
 
@@ -229,8 +256,13 @@ class GuiRendering {
     this._ctrlShowWireframe.setValue(mesh.getShowWireframe(), true);
     if (this._ctrlWireframeBias) {
       const wireMesh = mesh.getRenderData()._wireframeMesh;
-      if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
-        this._ctrlWireframeBias.setValue(wireMesh.material.uniforms.uBias.value, true);
+      if (wireMesh && wireMesh.material) {
+        if (wireMesh.material.userData && wireMesh.material.userData.uBias) {
+          this._ctrlWireframeBias.setValue(wireMesh.material.userData.uBias.value, true);
+        }
+        if (this._ctrlWireframeOpacity) {
+          this._ctrlWireframeOpacity.setValue(wireMesh.material.opacity, true);
+        }
       }
     }
     var threeMesh = mesh.getRenderData()._threeMesh;

@@ -70,7 +70,7 @@ class SculptBase {
     } else {
       mesh = main.setOrUnsetMesh(picking.getMesh(), ctrl);
     }
-    console.log("[SculptBase] start called, picking mesh:", picking.getMesh(), "active mesh:", mesh);
+    // console.log("[SculptBase] start called, picking mesh:", picking.getMesh(), "active mesh:", mesh);
 
     // [VR] Return early if Multi-select is active to prevent sculpting
     if (main._vrMultiSelect) return false;
@@ -102,7 +102,7 @@ class SculptBase {
       this._lastVRPos = vec3.clone(main._vrControllerPos);
     }
 
-    console.log("[SculptBase] about to call startSculpt, this is:", this.constructor.name);
+    // console.log("[SculptBase] about to call startSculpt, this is:", this.constructor.name);
     this.startSculpt();
 
     return true;

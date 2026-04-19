@@ -193,8 +193,8 @@ class SculptGL extends Scene {
 
       activeMesh.updateGeometry();
       activeMesh.updateGeometryBuffers();
-      if (window.screenLog) window.screenLog('Repaired ' + flipsCount + ' inconsistent faces!', 'lime');
-      else console.log('Repaired ' + flipsCount + ' inconsistent faces!');
+      // if (window.screenLog) window.screenLog('Repaired ' + flipsCount + ' inconsistent faces!', 'lime');
+      // else console.log('Repaired ' + flipsCount + ' inconsistent faces!');
     };
     window.debugDoubleTap = () => {
       window._debugTapStats = true;

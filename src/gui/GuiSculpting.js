@@ -237,12 +237,12 @@ class GuiSculpting {
 
   _checkModifierKey(event) {
     var selectedTool = this.getSelectedTool();
-    console.log("[GuiSculpting] _checkModifierKey, ctrl:", event.ctrlKey, "selected:", selectedTool, "toolOnRelease:", this._toolOnRelease);
+    // console.log("[GuiSculpting] _checkModifierKey, ctrl:", event.ctrlKey, "selected:", selectedTool, "toolOnRelease:", this._toolOnRelease);
 
     if (this._main._action === Enums.Action.NOTHING) {
       if (event.shiftKey && !event.altKey && !event.ctrlKey) {
         // smoothing on shift key
-        if (selectedTool !== Enums.Tools.SMOOTH) {
+        if (selectedTool !== Enums.Tools.SMOOTH && selectedTool !== Enums.Tools.EXTRUDE) {
           this._toolOnRelease = selectedTool;
           this._ctrlSculpt.setValue(Enums.Tools.SMOOTH);
         }
@@ -321,7 +321,7 @@ class GuiSculpting {
 
   onKeyUp(event) {
     var releaseTool = this._main._action === Enums.Action.NOTHING && this._toolOnRelease !== -1 && !event.ctrlKey && !event.shiftKey;
-    console.log("[GuiSculpting] onKeyUp, releaseTool:", releaseTool, "toolOnRelease:", this._toolOnRelease, "ctrl:", event.ctrlKey);
+    // console.log("[GuiSculpting] onKeyUp, releaseTool:", releaseTool, "toolOnRelease:", this._toolOnRelease, "ctrl:", event.ctrlKey);
     if (!event.altKey || releaseTool)
       this.releaseInvertSign();
 

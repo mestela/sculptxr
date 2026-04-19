@@ -358,9 +358,6 @@ class Multimesh extends Mesh {
         baseMesh.initEdges();
       }
       
-      // Mode 0: Level 0 Fast -> Flat base cage lines across displaced parent anchor nodes
-      // Mode 1: Level 0 Smooth -> Curved tessellated paths tracking local subdivision offsets
-      // Mode 2: Full -> Dense active grid mapping
       var activeVerts = activeMesh.getVertices();
       var indices;
       if (this._meshes.length === 1 || wireType === 2) {
@@ -371,7 +368,7 @@ class Multimesh extends Mesh {
         indices = this.getTessellatedWireframe(0);
       }
 
-      var rawAlpha = 0.3;
+      var rawAlpha = 0.25;
       var rawBias = 0.001;
       if (window.app && window.app.getGuiXR()) {
           var ui = window.app.getGuiXR()._uiSettings;
@@ -380,6 +377,19 @@ class Multimesh extends Mesh {
       }
 
       if (indices) {
+        // Apply geometric bias along normals to prevent z-fighting
+        var activeNormals = activeMesh.getNormals();
+        var biasedVerts = activeVerts;
+        
+        if (activeNormals && rawBias > 0) {
+          biasedVerts = new Float32Array(activeVerts.length);
+          for (var i = 0; i < activeVerts.length; i += 3) {
+            biasedVerts[i] = activeVerts[i] + activeNormals[i] * rawBias;
+            biasedVerts[i+1] = activeVerts[i+1] + activeNormals[i+1] * rawBias;
+            biasedVerts[i+2] = activeVerts[i+2] + activeNormals[i+2] * rawBias;
+          }
+        }
+
         if (!this._renderData._wireframeMesh) {
             var lineMaterial = new THREE.LineBasicMaterial({
                 color: 0x000000, // Restored black color
@@ -387,15 +397,6 @@ class Multimesh extends Mesh {
                 opacity: rawAlpha,
                 depthTest: true
             });
-            lineMaterial.userData = { uBias: { value: rawBias } };
-            lineMaterial.onBeforeCompile = function(shader) {
-                shader.uniforms.uBias = lineMaterial.userData.uBias;
-                shader.vertexShader = 'uniform float uBias;\n' + shader.vertexShader;
-                shader.vertexShader = shader.vertexShader.replace(
-                    '#include <project_vertex>',
-                    '#include <project_vertex>\n  gl_Position.z -= uBias * gl_Position.w;'
-                );
-            };
             
             var lineGeom = new THREE.BufferGeometry();
             this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
@@ -410,9 +411,6 @@ class Multimesh extends Mesh {
             }
         } else {
             this._renderData._wireframeMesh.material.opacity = rawAlpha;
-            if (this._renderData._wireframeMesh.material.userData.uBias) {
-                this._renderData._wireframeMesh.material.userData.uBias.value = rawBias;
-            }
         }
 
         // Self-healing: Ensure the wireframe is always parented directly to the actual 3D mesh!
@@ -423,14 +421,13 @@ class Multimesh extends Mesh {
             idealParent.add(this._renderData._wireframeMesh);
             this._renderData._wireframeMesh.matrixAutoUpdate = true;
         } else if (!idealParent && currentParent === window.app._scene) {
-            // Fallback for un-instantiated wrappers: copy the absolute matrix so it doesn't sit at your feet!
             this._renderData._wireframeMesh.matrixAutoUpdate = false;
             this._renderData._wireframeMesh.matrix.fromArray(this.getMatrix());
             this._renderData._wireframeMesh.matrixWorldNeedsUpdate = true;
         }
 
         // Always update both index and positions to keep up with live sculpting!
-        this._renderData._wireframeMesh.geometry.setAttribute('position', new THREE.BufferAttribute(activeVerts, 3));
+        this._renderData._wireframeMesh.geometry.setAttribute('position', new THREE.BufferAttribute(biasedVerts, 3));
         this._renderData._wireframeMesh.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
         this._renderData._wireframeMesh.geometry.computeBoundingSphere();
         this._renderData._wireframeMesh.geometry.computeBoundingBox();
