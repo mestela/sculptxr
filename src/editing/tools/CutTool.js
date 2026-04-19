@@ -269,7 +269,7 @@ class CutTool extends SculptBase {
   updateHighlightSphere(pos) {
     if (!this._highlightSphere) {
       this._highlightSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.1, 8, 8),
+        new THREE.SphereGeometry(0.2, 8, 8),
         new THREE.MeshBasicMaterial({ color: 0xffff00, depthTest: false, transparent: true, opacity: 0.8 })
       );
       this._highlightSphere.renderOrder = 10000;
@@ -415,7 +415,7 @@ class CutTool extends SculptBase {
     if (this._main._worldGroup) parentNode = this._main._worldGroup;
     
     if (!this._sphereGeometry) {
-      this._sphereGeometry = new THREE.SphereGeometry(0.02, 8, 8);
+      this._sphereGeometry = new THREE.SphereGeometry(0.04, 8, 8);
       this._sphereMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, depthTest: false, transparent: true, depthWrite: false });
     }
     
@@ -434,6 +434,15 @@ class CutTool extends SculptBase {
       parentNode.add(s);
       this._indicatorSpheres.push(s);
     }
+  }
+
+  preUpdate(canBeContinuous) {
+    super.preUpdate(canBeContinuous);
+    if (this._main._vrSculpting) return;
+    
+    const picking = this._main.getPicking();
+    this.updatePreselection(picking);
+    this.updatePreviewMesh(picking.getIntersectionPoint());
   }
 
   start(ctrl) {

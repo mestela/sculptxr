@@ -53,8 +53,6 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
     Enums.Tools.FILL_HOLE,
     Enums.Tools.DISSOLVE_EDGE,
     Enums.Tools.SPLIT_FACE,
-    Enums.Tools.SPLIT_EDGE,
-    Enums.Tools.EDGE_CREATE,
     Enums.Tools.SPIN_EDGE,
     Enums.Tools.COLLAPSE_EDGE,
     Enums.Tools.DISSOLVE_VERTEX,

@@ -515,6 +515,31 @@ class Inset extends SculptBase {
     this.sculptStrokeXR(picking);
   }
 
+  sculptStroke() {
+    const main = this._main;
+    const mesh = this.getMesh();
+    if (!mesh || !this._insetVerts || !this._vProxy || !this._vTarget) return;
+
+    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    
+    // Calculate delta based on mouse Y movement
+    const dy = main._mouseY - this._lastMouseY;
+    
+    // Negative because moving mouse up usually means insetting IN
+    const scale = Math.min(0.99, Math.max(0, -dy * 0.002)); 
+    
+    const vAr = activeMesh.getVertices();
+    for (let i = 0; i < this._insetVerts.length; i++) {
+      const ind = this._insetVerts[i] * 3;
+      vAr[ind] = this._vProxy[i * 3] + this._vTarget[i * 3] * scale;
+      vAr[ind + 1] = this._vProxy[i * 3 + 1] + this._vTarget[i * 3 + 1] * scale;
+      vAr[ind + 2] = this._vProxy[i * 3 + 2] + this._vTarget[i * 3 + 2] * scale;
+    }
+
+    activeMesh.updateGeometry(activeMesh.getFacesFromVertices(this._insetVerts), this._insetVerts);
+    this.updateRender();
+  }
+
   sculptStrokeXR(picking) {
     if (!this._lastVRPos || !this._insetVerts || !this._vProxy) return;
 

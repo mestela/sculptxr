@@ -48,8 +48,8 @@ class GuiSculpting {
     const lowPolyTools = [
       Enums.Tools.DELETE_FACE, Enums.Tools.FILL_HOLE, Enums.Tools.DISSOLVE_EDGE,
       Enums.Tools.SPLIT_FACE, Enums.Tools.SPIN_EDGE, Enums.Tools.COLLAPSE_EDGE,
-      Enums.Tools.DISSOLVE_VERTEX, Enums.Tools.WELD, Enums.Tools.SNAP_WELD_CENTER,
-      Enums.Tools.SPLIT_EDGE, Enums.Tools.EDGE_CREATE, Enums.Tools.CUT_TOOL,
+      Enums.Tools.DISSOLVE_VERTEX, Enums.Tools.WELD,
+      Enums.Tools.CUT_TOOL,
       Enums.Tools.EXTRUDE, Enums.Tools.INSET
     ];
 
@@ -72,6 +72,11 @@ class GuiSculpting {
 
     menu.addTitle('Low Poly Tools');
     this._ctrlLowPoly = menu.addCombobox('', lowPolyTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(lowPolyTools));
+    
+    // Global option for Inset and Extrude
+    this._ctrlKeepTogether = menu.addCheckbox('Keep Together', !!window.keepExtrudeFacesTogether, (val) => {
+      window.keepExtrudeFacesTogether = val;
+    });
 
     menu.addTitle('Voxel Tools');
     this._ctrlVoxel = menu.addCombobox('', voxelTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(voxelTools));
