@@ -555,7 +555,6 @@ var computeTexCoords = function (baseMesh, newMesh, triFaceOrQuadCenter) {
 /** Apply the reverse of a subdivision */
 Reversion.computeReverse = function (baseMesh, newMesh) {
   var nbFaces = baseMesh.getNbFaces();
-  console.log("[Reversion] computeReverse start. nbFaces =", nbFaces);
 
   if (nbFaces % 4 !== 0) {
     console.log("[Reversion] Failed: nbFaces % 4 !== 0");

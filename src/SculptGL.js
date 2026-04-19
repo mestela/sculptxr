@@ -756,8 +756,6 @@ class SculptGL extends Scene {
 
     if (evProxy.pageX === undefined) return; // Prevent crash if completely blank event
 
-    if (window.screenLog) window.screenLog(`onDoubleTap: Hammer=${!!e.center} X=${evProxy.pageX} Y=${evProxy.pageY}`, "cyan");
-
     this.setMousePosition(evProxy);
 
     var picking = this._picking;

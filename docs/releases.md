@@ -1,3 +1,11 @@
+# v1.0.215
+- **Fix**: **Extrude Tool Deadlock**: Resolved issue where tool switched to Masking after undo operations by updating `getSelectedTool()` to query `SculptManager` directly.
+- **Fix**: **Inset Tool Desktop Support**: Implemented `sculptStroke()` in `Inset.js` to map vertical mouse drag to inset scale, fixing `this.stroke is not a function` error.
+- **Feature**: **Keep Together Option**: Added "Keep Together" checkbox to the desktop Low Poly tools list.
+- **UX**: **Cut Tool Preselection**: Enabled preselection highlight dot and confirmed cut points on desktop by overriding `preUpdate()` in `CutTool.js`.
+- **UI**: **Tool Cleanup**: Hidden **Split Edge**, **Edge Create**, and **Snap and Weld to Center** from both Desktop and VR UIs as requested.
+- **Cleanup**: Removed noisy logs in `SculptGL.js` and `Reversion.js`.
+
 # v1.0.214
 - **Feature**: **VR Mini-HUD Masking Controls**: Added "Clear Mask" and "Invert Mask" buttons side-by-side in the mini-HUD for quick access.
 - **Feature**: **Masking Hardness Slider**: Added a "Hardness" slider to the Masking tool VR interface and whitelisted it for the Mini-HUD.
