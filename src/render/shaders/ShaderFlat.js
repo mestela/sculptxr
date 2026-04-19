@@ -38,12 +38,15 @@ ShaderFlat.fragment = [
   'uniform float uAlpha;',
   'varying vec3 vVertex;',
   'varying vec3 vColor;',
+  'varying float vMasking;',
   'void main() {',
   '  vec3 n = normalize(cross(dFdx(vVertex), dFdy(vVertex)));',
   '  vec3 lDir = normalize(vec3(0.0, 0.0, 1.0));',
   '  float diffuse = max(0.0, dot(n, lDir));',
   '  diffuse = diffuse * 0.5 + 0.5; // Ambient + Diffuse',
-  '  gl_FragColor = vec4(vColor * diffuse, uAlpha);',
+  '  vec3 color = vColor * diffuse;',
+  '  color *= (0.3 + 0.7 * vMasking);',
+  '  gl_FragColor = vec4(color, uAlpha);',
   '}'
 ].join('\n');
 

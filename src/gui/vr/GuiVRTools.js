@@ -566,6 +566,17 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
 
   // --- MASKING ---
   if (activeToolIndex === Enums.Tools.MASKING && activeTool) {
+    widgets.push({
+      type: 'slider', id: 'hardness', label: 'Hardness', x: col1X, y: y, w: 350, h: 50,
+      value: activeTool._hardness !== undefined ? activeTool._hardness : 0.25, min: 0, max: 1, step: 0.01, precision: 2,
+      onInput: (val) => { 
+        activeTool._hardness = val; 
+        getOptionsURL.saveOption(`tool_${activeToolIndex}_hardness`, val, 500);
+        main.render(); 
+      }
+    });
+    y += 55;
+
     widgets.push({ type: 'info', label: 'Masking Actions', x: col1X, y: y });
     y += gapHeader;
 

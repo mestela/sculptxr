@@ -215,6 +215,12 @@ export default class GuiXR {
           this.togglePreview();
         }
       }
+      // Mini-HUD Preview Shortcut
+      if (e.shiftKey && e.altKey && e.code === 'KeyB') {
+        if (this._isMiniHUD) {
+          this.togglePreview();
+        }
+      }
     });
 
     this._pendingDraw = false;
@@ -280,6 +286,7 @@ export default class GuiXR {
   }
 
   closeOverlay() {
+    this._overlayCooldown = performance.now(); // Start a 500ms dead-zone to let user safely lift their finger off the trigger!
     this._overlay = null;
     this._overlayData = null;
     this._activeTimeline = null;
@@ -288,6 +295,16 @@ export default class GuiXR {
     this._needsRedraw = true;
     this._justClosedOverlay = true;
     setTimeout(() => { this._justClosedOverlay = false; }, 500);
+    this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
+    this.draw();
+
+    console.log("[GuiXR] closeOverlay called, isPopupHUD:", this._isPopupHUD, "previewContainer:", this._previewContainer);
+    if (this._isPopupHUD && this._previewContainer) {
+      document.body.removeChild(this._previewContainer);
+      this._previewContainer = null;
+      if (this._previewCleanup) this._previewCleanup();
+      console.log("[GuiXR] Popup Preview Hidden via closeOverlay");
+    }
   }
 
   // Console Helper for Tab Switching
@@ -399,9 +416,9 @@ export default class GuiXR {
     div.style.background = '#222';
     div.style.boxShadow = '0 0 20px rgba(0,0,0,0.8)';
     // Scale to fit height
-    const scale = (window.innerHeight * 0.8) / CANVAS_SIZE;
-    div.style.width = `${CANVAS_SIZE * scale}px`;
-    div.style.height = `${CANVAS_SIZE * scale}px`;
+    const scale = (window.innerHeight * 0.8) / this._canvas.height;
+    div.style.width = `${this._canvas.width * scale}px`;
+    div.style.height = `${this._canvas.height * scale}px`;
 
     this._canvas.style.width = '100%';
     this._canvas.style.height = '100%';
@@ -819,7 +836,7 @@ export default class GuiXR {
 
       // Filter to only the core bare minimum controls for the Mini-HUD
       // And we use the 'tool_select' widget to popup the MAIN menu tools panel!
-      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe', 'picker', 'symmetry', 'mini_extrude_keep_together'];
+      const allowedIds = ['tool_select', 'radius', 'intensity', 'negative', 'wireframe', 'picker', 'symmetry', 'mini_extrude_keep_together', 'mask_clear', 'mask_invert', 'hardness'];
       const filtered = rawWidgets.filter(w => allowedIds.includes(w.id));
 
       // Re-pack vertically and clamp width for the new 300x500 Mini-HUD canvas
@@ -827,9 +844,11 @@ export default class GuiXR {
       const targetWidth = this._canvas.width - (paddingX * 2);
 
       let currentY = 20; // Start near the top
+      let skipYIncrement = false;
       filtered.forEach(w => {
-        w.x = paddingX;        // Reset x to a small margin
-        w.w = targetWidth;     // Clamp width
+        w.w = targetWidth;     // Default width
+        w.x = paddingX;        // Default X
+        w.y = currentY;        // Default Y
 
         if (w.id === 'picker') {
           let spaceLeft = this._canvas.height - currentY - 10;
@@ -838,9 +857,20 @@ export default class GuiXR {
           w.h = 40; // Compress sliders from default 60 to save height
         }
 
-        w.y = currentY;        // Stack vertically
+        if (w.id === 'mask_clear') {
+          w.w = targetWidth / 2 - 5;
+          skipYIncrement = true; // Don't move to next row yet
+        } else if (w.id === 'mask_invert') {
+          w.w = targetWidth / 2 - 5;
+          w.x = paddingX + targetWidth / 2 + 5;
+          skipYIncrement = false; // Restore row increment
+        }
+
         let pad = (w.type === 'slider') ? 5 : 20; // tighter pad for sliders
-        currentY += w.h + pad;  // Widget height + padding
+        
+        if (!skipYIncrement) {
+          currentY += w.h + pad;  // Widget height + padding
+        }
       });
 
       return filtered;
@@ -2385,6 +2415,7 @@ export default class GuiXR {
     // Check click on menu widgets
     for (const w of data.widgets) {
       if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
+        console.log("[GuiXR] Hit overlay widget:", w.id, "type:", w.type);
         if (!w.disabled && !w.header) {
           if (w.type === 'slider') {
             this._activeSlider = w;
@@ -2513,6 +2544,13 @@ export default class GuiXR {
   }
 
   openOverlay(type, data) {
+    if (this._isPopupHUD && this._main._guiMini && this._main._guiMini._previewContainer) {
+      console.log("[GuiXR] openOverlay calling togglePreview for popup, current previewContainer:", this._previewContainer);
+      if (!this._previewContainer) {
+        this.togglePreview();
+      }
+    }
+
     if (data && data.isToolPicker) {
       // This expands the dark background panel
       data.w = 500; // Original is 660
@@ -2559,14 +2597,6 @@ export default class GuiXR {
     this.draw();
   }
 
-  closeOverlay() {
-    this._overlayCooldown = performance.now(); // Start a 500ms dead-zone to let user safely lift their finger off the trigger!
-    this._overlay = null;
-    this._overlayData = null;
-    this._needsRedraw = true;
-    this._ignoreUntilRelease = true; // Prevent fall-through clicks on release!
-    this.draw();
-  }
 
   _handleWidgetClick(w) {
     if (w.type === 'slider') {
