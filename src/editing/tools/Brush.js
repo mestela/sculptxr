@@ -13,7 +13,8 @@ class Brush extends SculptBase {
     this._negative = false;
     this._clay = false;
     this._culling = false;
-    this._accumulate = false; // if we ignore the proxy
+    this._accumulate = true; // if we ignore the proxy
+    this._useInitNormal = true;
     this._idAlpha = 0;
     this._lockPosition = false;
   }
@@ -87,8 +88,7 @@ class Brush extends SculptBase {
       var vx = vAr[ind];
       var vy = vAr[ind + 1];
       var vz = vAr[ind + 2];
-      var fallOff = dist * dist;
-      fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
+      var fallOff = 0.5 + 0.5 * Math.cos(dist * Math.PI);
       fallOff *= mAr[ind + 2] * deformIntensityBrush * picking.getAlpha(vx, vy, vz);
       vAr[ind] = vx + anx * fallOff;
       vAr[ind + 1] = vy + any * fallOff;

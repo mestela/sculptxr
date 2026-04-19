@@ -267,16 +267,24 @@ class SculptBase {
     var dx = main._mouseX - this._lastMouseX;
     var dy = main._mouseY - this._lastMouseY;
     var dist = Math.sqrt(dx * dx + dy * dy);
-    var minSpacing = 0.02 * this._radius * main.getPixelRatio();
+    var minSpacing = 0.15 * this._radius * main.getPixelRatio();
 
     if (dist <= minSpacing)
       return;
 
-    var step = 1.0 / Math.floor(dist / minSpacing);
+    var count = Math.floor(dist / minSpacing);
+    if (count < 1) count = 1;
+    var step = 1.0 / count;
     dx *= step;
     dy *= step;
     var mouseX = this._lastMouseX + dx;
     var mouseY = this._lastMouseY + dy;
+    
+    console.log(`[sculptStroke] dist: ${dist.toFixed(2)}, minSpacing: ${minSpacing.toFixed(2)}, count: ${count}`);
+
+    if (this._useInitNormal) {
+      this._initNormal = vec3.clone(picking.getPickedNormal());
+    }
 
     for (var i = step; i <= 1.0; i += step) {
       if (!this.makeStroke(mouseX, mouseY, picking, pickingSym))
@@ -303,7 +311,11 @@ class SculptBase {
     var pick1 = picking.getMesh();
     if (pick1) {
       picking.pickVerticesInSphere(picking.getLocalRadius2());
-      picking.computePickedNormal();
+      if (this._useInitNormal) {
+        vec3.copy(picking.getPickedNormal(), this._initNormal);
+      } else {
+        picking.computePickedNormal();
+      }
     }
     // if dyn topo, we need to the picking and the sculpting altogether
     var dynTopo = mesh.isDynamic && !this._lockPosition;

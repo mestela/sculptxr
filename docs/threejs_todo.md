@@ -7,6 +7,9 @@
 ---
 
 ## 1. Todo
+* [ ] **Desktop modes**: Getting base desktop sculpting working again, then the hmd+desktop hybrid modes.
+
+* [ ] **Animation**: transform box should allow scaling into negative to reverse key order.
 * [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
@@ -16,7 +19,6 @@
 * [ ] **Animation**: per frame sculpting, shape replacement based
 * [ ] **Animation**: blendshapes
 * [ ] **AVP support**: fingers and stylus
-* [ ] **Desktop modes**: Niche, but should make a stab at reimplementing. Use quest 2 for this
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
 * [ ] **Floating VR Keyboard**: there is a builtin one (use three-mesh-ui?)
 * [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
