@@ -214,7 +214,9 @@ class Selection {
       
       // Align with local normal
       var normal = picking.computePickedNormal();
-      this._threeCircle.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(normal[0], normal[1], normal[2]));
+      if (normal) {
+        this._threeCircle.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(normal[0], normal[1], normal[2]));
+      }
       
       this._threeCircle.visible = true;
       

@@ -943,6 +943,16 @@ class Scene {
       }
     }
 
+    // Desktop Animation Playback
+    if (window._animPlaying && window._animationRegistry && !(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+      if (this._meshes) {
+        for (let i = 0; i < this._meshes.length; i++) {
+          window._animationRegistry.update(this._meshes[i]);
+        }
+        this._drawFullScene = true; // Ensure we redraw
+      }
+    }
+
     if (this._renderer && this._renderer.xr) {
       if (this._renderer.xr.isPresenting && !window._loggedXRRender) {
          // console.log("WebXR isPresenting - forcing _drawScene()");
@@ -981,13 +991,7 @@ class Scene {
     }
     */
     
-    // Explicitly bind the target FBO for the remaining legacy renders (like Gizmo)
-    // However, if we are in WebXR, do NOT bind it to null, because Three.js has already bound the XRWebGLLayer framebuffer.
-    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
-        gl.enable(gl.DEPTH_TEST);
-        if (this._sculptManager) this._sculptManager.postRender(); // draw sculpting gizmo stuffs
-    }
+    // (Legacy postRender moved to after Three.js render)
   }
 
   getExposure() {
@@ -1154,6 +1158,11 @@ class Scene {
         const currentTargetPost = this._renderer.getRenderTarget();
         this._renderer.resetState();
         this._renderer.setRenderTarget(currentTargetPost);
+
+        // Draw sculpting gizmo stuffs over Three.js render
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.enable(gl.DEPTH_TEST);
+        if (this._sculptManager) this._sculptManager.postRender();
       }
       
       if (isVR) {

@@ -57,20 +57,36 @@ class Transform extends SculptBase {
       return;
 
     var meshes = this._main.getSelectedMeshes();
+    const main = this._main;
+
     for (var i = 0; i < meshes.length; ++i) {
-      this._forceToolMesh = meshes[i];
+      const mesh = meshes[i];
+      const em = mesh.getEditMatrix();
+      
+      const oldMat = mat4.clone(mesh.getMatrix());
+      
+      const newMat = mat4.create();
+      mat4.mul(newMat, oldMat, em);
+      
+      main.getStateManager().pushStateCustom(() => {
+        // UNDO
+        mat4.copy(mesh.getMatrix(), oldMat);
+        mesh.updateMatrices(main.getCamera());
+        main.render();
+      }, () => {
+        // REDO
+        mat4.copy(mesh.getMatrix(), newMat);
+        mesh.updateMatrices(main.getCamera());
+        main.render();
+      });
 
-      this.pushState();
-      if (i > 0) this._main.getStateManager().getCurrentState().squash = true;
-
-      var iVerts = this.getUnmaskedVertices();
-      this._main.getStateManager().pushVertices(iVerts);
-      this.applyEditMatrix(iVerts);
-
-      if (iVerts.length === 0) continue;
-      this.updateMeshBuffers();
+      // Apply to current state
+      mat4.copy(mesh.getMatrix(), newMat);
+      mat4.identity(em);
+      mesh.updateMatrices(main.getCamera());
     }
-    this._forceToolMesh = null;
+    
+    main.render();
   }
 
   applyEditMatrix(iVerts) {

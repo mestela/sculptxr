@@ -8,10 +8,10 @@
 
 ## 1. Todo
 
+* [ ] **Hair/Fur**: 
 * [ ] **Low Poly**: Snapping for retopo. Best approach here? Hmm. Snap from one object to another? More work on the slide tool maybe?
 * [ ] **Desktop**: hmd+desktop hybrid
 * [ ] **Animation**: transform box should allow scaling into negative to reverse key order.
-* [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
 * [ ] **Animation**: per key interp type... or just one and use beziers to control? needs hold keys tho, not easy with beziers
@@ -27,6 +27,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [x] **Desktop**: low poly tools
 * [x] **Desktop**: Getting base desktop sculpting working again
 * [x] **Animation**: not all keyframe edit events can be undone atm. 

@@ -11,6 +11,8 @@ import GuiScene from './GuiScene.js';
 import GuiSculpting from './GuiSculpting.js';
 import GuiStates from './GuiStates.js';
 import GuiTablet from './GuiTablet.js';
+import GuiTimeline from './GuiTimeline.js';
+import GuiAnimation from './GuiAnimation.js';
 import ShaderContour from '../render/shaders/ShaderContour.js';
 
 import Export from '../files/Export.js';
@@ -34,6 +36,8 @@ class Gui {
     this._ctrlSculpting = null;
     this._ctrlTopology = null;
     this._ctrlRendering = null;
+    this._ctrlAnimation = null;
+    this._ctrlTimeline = null;
 
     this._ctrlNotification = null;
 
@@ -71,6 +75,11 @@ class Gui {
     ctrls[idc++] = this._ctrlRendering = new GuiRendering(this._sidebar, this);
     ctrls[idc++] = this._ctrlTopology = new GuiTopology(this._sidebar, this);
     ctrls[idc++] = this._ctrlSculpting = new GuiSculpting(this._sidebar, this);
+    ctrls[idc++] = this._ctrlAnimation = new GuiAnimation(this._sidebar, this);
+
+    // Initialize custom timeline panel
+    this._ctrlTimeline = new GuiTimeline(this._main);
+    this._ctrlTimeline.setVisibility(true);
 
     // gui extra
     var extra = this._topbar.addExtra();

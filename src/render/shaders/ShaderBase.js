@@ -94,7 +94,7 @@ var processShader = function (str) {
 };
 
 ShaderBase.getOrCreate = function (gl) {
-  if (this.program)
+  if (this.program && gl.isProgram(this.program))
     return this;
 
   var vname = '\n#define SHADER_NAME ' + this.vertexName + '\n';

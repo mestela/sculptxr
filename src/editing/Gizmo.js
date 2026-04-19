@@ -1,6 +1,7 @@
 import { vec2, vec3, mat4, quat } from 'gl-matrix';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
+import * as THREE from 'three';
 
 // configs colors
 var COLOR_X = vec3.fromValues(0.7, 0.2, 0.2);
@@ -10,7 +11,7 @@ var COLOR_GREY = vec3.fromValues(0.4, 0.4, 0.4);
 var COLOR_SW = vec3.fromValues(0.8, 0.4, 0.2);
 
 // overall scale of the gizmo
-var GIZMO_SIZE = 80.0;
+var GIZMO_SIZE = 160.0;
 // arrow
 var ARROW_LENGTH = 2.5;
 var ARROW_CONE_THICK = 6.0;
@@ -42,6 +43,16 @@ var createGizmo = function (type, nbAxis = -1) {
     updateMatrix() {
       mat4.copy(this._drawGeo.getMatrix(), this._finalMatrix);
       mat4.copy(this._pickGeo.getMatrix(), this._finalMatrix);
+      var tm = this._drawGeo.getThreeMesh();
+      if (tm) {
+        mat4.copy(tm.matrix.elements, this._finalMatrix);
+        tm.matrixWorldNeedsUpdate = true;
+      }
+      var tmp = this._pickGeo.getThreeMesh();
+      if (tmp) {
+        mat4.copy(tmp.matrix.elements, this._finalMatrix);
+        tmp.matrixWorldNeedsUpdate = true;
+      }
     },
     updateFinalMatrix(mat) {
       mat4.mul(this._finalMatrix, mat, this._baseMatrix);
@@ -131,6 +142,25 @@ class Gizmo {
     this._main = main;
     this._gl = main._gl;
 
+    this._group = new THREE.Group();
+    this._group.name = "Transform Gizmo Group";
+    this._group.visible = false; // Hide by default!
+
+    let worldGroup = null;
+    if (this._main._worldGroup) {
+      worldGroup = this._main._worldGroup;
+    } else if (this._main._scene && this._main._scene._worldGroup) {
+      worldGroup = this._main._scene._worldGroup;
+    } else if (this._main.getScene && this._main.getScene()._worldGroup) {
+      worldGroup = this._main.getScene()._worldGroup;
+    }
+
+    if (worldGroup) {
+      worldGroup.add(this._group);
+    } else if (this._main._scene && this._main._scene._scene) {
+      this._main._scene._scene.add(this._group);
+    }
+
     // activated gizmos
     this._activatedType =
       Gizmo.TRANS_XYZ | Gizmo.ROT_XYZ | Gizmo.PLANE_XYZ | Gizmo.SCALE_XYZW | Gizmo.ROT_W;
@@ -198,10 +228,12 @@ class Gizmo {
     if (Math.abs(this._currentScale - scale) < scale * 0.1) return; // Verify diff > 10%
     this._currentScale = scale;
 
-    // Nuking old geometries? Browsers handle GC.
-    this._initTranslate(scale);
-    this._initRotate(scale);
-    this._initScale(scale);
+    if (this._group) this._group.clear();
+
+    // Use unit scale for geometry, matrix handles scaling!
+    this._initTranslate(1.0);
+    this._initRotate(1.0);
+    this._initScale(1.0);
     this._initPickables();
   }
 
@@ -255,6 +287,29 @@ class Gizmo {
       ARROW_CONE_LENGTH // FIXED: Do not scale Ratio
     );
     tra._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = tra._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      mat4.copy(threeMesh.matrix.elements, tra._baseMatrix);
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
+
+    const pickThreeMesh = tra._pickGeo.getThreeMesh();
+    if (pickThreeMesh) {
+      pickThreeMesh.visible = false;
+      pickThreeMesh.matrixAutoUpdate = false;
+      mat4.copy(pickThreeMesh.matrix.elements, tra._baseMatrix);
+      if (this._group) this._group.add(pickThreeMesh);
+    }
   }
 
   _createPlane(pla, color, wx, wy, wz, hx, hy, hz, scale = 1.0) {
@@ -264,6 +319,28 @@ class Gizmo {
     pla._pickGeo._gizmo = pla;
     pla._drawGeo = Primitives.createPlane(this._gl, 0.0, 0.0, 0.0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = pla._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+      threeMesh.matrixAutoUpdate = false;
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
+
+    const pickThreeMesh = pla._pickGeo.getThreeMesh();
+    if (pickThreeMesh) {
+      pickThreeMesh.visible = false;
+      pickThreeMesh.matrixAutoUpdate = false;
+      if (this._group) this._group.add(pickThreeMesh);
+    }
   }
 
   _initTranslate(scale = 1.0) {
@@ -291,6 +368,27 @@ class Gizmo {
     rot._pickGeo._gizmo = rot;
     rot._drawGeo = Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = rot._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
+
+    const pickThreeMesh = rot._pickGeo.getThreeMesh();
+    if (pickThreeMesh) {
+      pickThreeMesh.visible = false;
+      pickThreeMesh.matrixAutoUpdate = false;
+      if (this._group) this._group.add(pickThreeMesh);
+    }
   }
 
   _initRotate(scale = 1.0) {
@@ -310,6 +408,29 @@ class Gizmo {
     sca._pickGeo._gizmo = sca;
     sca._drawGeo = Primitives.createCube(this._gl, CUBE_SIDE * scale);
     sca._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = sca._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      mat4.copy(threeMesh.matrix.elements, sca._baseMatrix);
+      threeMesh.renderOrder = 100;
+      if (this._group) this._group.add(threeMesh);
+    }
+
+    const pickThreeMesh = sca._pickGeo.getThreeMesh();
+    if (pickThreeMesh) {
+      pickThreeMesh.visible = false;
+      pickThreeMesh.matrixAutoUpdate = false;
+      mat4.copy(pickThreeMesh.matrix.elements, sca._baseMatrix);
+      if (this._group) this._group.add(pickThreeMesh);
+    }
   }
 
   _initScale(scale = 1.0) {
@@ -592,9 +713,15 @@ class Gizmo {
   _drawGizmo(elt, camera) {
     elt.updateMatrix();
     var drawGeo = elt._drawGeo;
-    drawGeo.setFlatColor(elt._isSelected ? elt._colorSelect : elt._color);
-    drawGeo.updateMatrices(camera || this._main.getCamera());
-    drawGeo.render(this._main);
+    var threeMesh = drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.visible = true;
+      // Matrix is already updated in elt.updateMatrix() via createGizmo's updateMatrix!
+      var color = elt._isSelected ? elt._colorSelect : elt._color;
+      if (threeMesh.material) {
+        threeMesh.material.color.setRGB(color[0], color[1], color[2]);
+      }
+    }
   }
 
   _updateLineHelper(x1, y1, x2, y2) {
@@ -829,6 +956,11 @@ class Gizmo {
     var meshes = this._main.getSelectedMeshes();
     for (var i = 0; i < meshes.length; ++i) {
       vec3.transformMat4(tmp, inter, this._editScaleRotInv[i]);
+      
+      // Account for parent scale (_worldGroup)
+      let S = 1.0;
+      if (this._main._worldGroup) S = this._main._worldGroup.scale.x;
+      vec3.scale(tmp, tmp, 1.0 / S);
 
       var edim = meshes[i].getEditMatrix();
       mat4.identity(edim);
@@ -909,6 +1041,11 @@ class Gizmo {
   render(camera) {
     this._updateMatrices(camera);
 
+    // Hide all first, Three.js handles rendering via scene graph
+    if (this._group) {
+      this._group.children.forEach(child => child.visible = false);
+    }
+
     var type = this._isEditing && this._selected ? this._selected._type : this._activatedType;
 
     if (type & ROT_W) this._drawGizmo(this._rotW, camera);
@@ -930,7 +1067,7 @@ class Gizmo {
     if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
     if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
 
-    if (this._isEditing) this._lineHelper.render(this._main);
+    // if (this._isEditing) this._lineHelper.render(this._main);
   }
 
   renderVR(camera) {
@@ -957,7 +1094,7 @@ class Gizmo {
     if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
     if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
 
-    if (this._isEditing) this._lineHelper.render(this._main);
+    // if (this._isEditing) this._lineHelper.render(this._main);
   }
 
   onMouseOver() {

@@ -2220,8 +2220,8 @@ class Mesh {
   render(main) {
     if (!this.isVisible()) return;
     try {
-      // Commented out legacy WebGL1 draw loop, letting Three.js handle it
-      // Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
+      // Restore legacy WebGL1 draw loop for overlays like Gizmo
+      Shader[this.getShaderType()].getOrCreate(this.getGL()).draw(this, main);
     } catch (e) { } 
   }
 

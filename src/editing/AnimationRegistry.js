@@ -850,6 +850,11 @@ class AnimationRegistry {
       m[4] = (xy - wz) * sy; m[5] = (1 - (xx + zz)) * sy; m[6] = (yz + wx) * sy; m[7] = 0;
       m[8] = (xz + wy) * sz; m[9] = (yz - wx) * sz; m[10] = (1 - (xx + yy)) * sz; m[11] = 0;
       m[12] = px; m[13] = py; m[14] = pz; m[15] = 1;
+
+      if (mesh.updateMatrices && window.app && window.app._camera) {
+        mesh.updateMatrices(window.app._camera);
+      }
+      if (window.app && window.app.render) window.app.render();
     }
 
     }

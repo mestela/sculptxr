@@ -38,6 +38,12 @@ class SculptManager {
       oldTool.clearPreview();
     }
     this._toolIndex = id;
+
+    // Toggle desktop Transform gizmo visibility
+    const transformTool = this._tools[Enums.Tools.TRANSFORM];
+    if (transformTool && transformTool._gizmo && transformTool._gizmo._group) {
+      transformTool._gizmo._group.visible = (id === Enums.Tools.TRANSFORM);
+    }
   }
 
   getToolIndex() {

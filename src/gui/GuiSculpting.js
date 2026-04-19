@@ -50,7 +50,8 @@ class GuiSculpting {
       Enums.Tools.SPLIT_FACE, Enums.Tools.SPIN_EDGE, Enums.Tools.COLLAPSE_EDGE,
       Enums.Tools.DISSOLVE_VERTEX, Enums.Tools.WELD,
       Enums.Tools.CUT_TOOL,
-      Enums.Tools.EXTRUDE, Enums.Tools.INSET
+      Enums.Tools.EXTRUDE, Enums.Tools.INSET,
+      Enums.Tools.TRANSFORM
     ];
 
     const voxelTools = [
