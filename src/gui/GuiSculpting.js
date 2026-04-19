@@ -37,14 +37,49 @@ class GuiSculpting {
     var menu = this._menu = guiParent.addMenu(TR('sculptTitle'));
     menu.open();
 
-    menu.addTitle(TR('sculptTool'));
+    // sculpt tool categories
+    const sculptTools = [
+      Enums.Tools.BRUSH, Enums.Tools.INFLATE, Enums.Tools.TWIST, Enums.Tools.SMOOTH,
+      Enums.Tools.FLATTEN, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.DRAG,
+      Enums.Tools.RELAX, Enums.Tools.PAINT, Enums.Tools.MOVE, Enums.Tools.MASKING,
+      Enums.Tools.LOCALSCALE, Enums.Tools.TRANSFORM
+    ];
 
-    // sculpt tool
-    var optTools = {};
-    for (var i = 0, nbTools = Tools.length; i < nbTools; ++i) {
-      if (Tools[i]) optTools[i] = TR(Tools[i].uiName);
-    }
-    this._ctrlSculpt = menu.addCombobox(TR('sculptTool'), this._sculptManager.getToolIndex(), this.onChangeTool.bind(this), optTools);
+    const lowPolyTools = [
+      Enums.Tools.DELETE_FACE, Enums.Tools.FILL_HOLE, Enums.Tools.DISSOLVE_EDGE,
+      Enums.Tools.SPLIT_FACE, Enums.Tools.SPIN_EDGE, Enums.Tools.COLLAPSE_EDGE,
+      Enums.Tools.DISSOLVE_VERTEX, Enums.Tools.WELD, Enums.Tools.SNAP_WELD_CENTER,
+      Enums.Tools.SPLIT_EDGE, Enums.Tools.EDGE_CREATE, Enums.Tools.CUT_TOOL,
+      Enums.Tools.EXTRUDE, Enums.Tools.INSET
+    ];
+
+    const voxelTools = [
+      Enums.Tools.VOXEL
+    ];
+
+    const buildOptTools = (list) => {
+      const opts = { '-1': 'None' };
+      list.forEach(id => {
+        if (Tools[id]) opts[id] = TR(Tools[id].uiName);
+      });
+      return opts;
+    };
+
+    const currentTool = this._sculptManager.getToolIndex();
+
+    menu.addTitle('Sculpt Tools');
+    this._ctrlSculpt = menu.addCombobox('', sculptTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(sculptTools));
+
+    menu.addTitle('Low Poly Tools');
+    this._ctrlLowPoly = menu.addCombobox('', lowPolyTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(lowPolyTools));
+
+    menu.addTitle('Voxel Tools');
+    this._ctrlVoxel = menu.addCombobox('', voxelTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(voxelTools));
+
+    // Store lists for sync
+    this._sculptToolsList = sculptTools;
+    this._lowPolyToolsList = lowPolyTools;
+    this._voxelToolsList = voxelTools;
 
     GuiSculptingTools.initGuiTools(this._sculptManager, this._menu, this._main);
 
@@ -114,7 +149,7 @@ class GuiSculpting {
   }
 
   getSelectedTool() {
-    return this._ctrlSculpt.getValue();
+    return this._sculptManager.getToolIndex();
   }
 
   releaseInvertSign() {
@@ -128,6 +163,13 @@ class GuiSculpting {
 
   onChangeTool(newValue) {
     newValue = parseInt(newValue, 10);
+    if (newValue === -1) return; // Ignore "None" selection
+
+    // Sync other comboboxes
+    if (this._ctrlSculpt) this._ctrlSculpt.setValue(this._sculptToolsList.includes(newValue) ? newValue : -1, true);
+    if (this._ctrlLowPoly) this._ctrlLowPoly.setValue(this._lowPolyToolsList.includes(newValue) ? newValue : -1, true);
+    if (this._ctrlVoxel) this._ctrlVoxel.setValue(this._voxelToolsList.includes(newValue) ? newValue : -1, true);
+
     GuiSculptingTools.hide(this._sculptManager.getToolIndex());
     this._sculptManager.setToolIndex(newValue);
     GuiSculptingTools.show(newValue);
@@ -190,6 +232,7 @@ class GuiSculpting {
 
   _checkModifierKey(event) {
     var selectedTool = this.getSelectedTool();
+    console.log("[GuiSculpting] _checkModifierKey, ctrl:", event.ctrlKey, "selected:", selectedTool, "toolOnRelease:", this._toolOnRelease);
 
     if (this._main._action === Enums.Action.NOTHING) {
       if (event.shiftKey && !event.altKey && !event.ctrlKey) {
@@ -273,11 +316,12 @@ class GuiSculpting {
 
   onKeyUp(event) {
     var releaseTool = this._main._action === Enums.Action.NOTHING && this._toolOnRelease !== -1 && !event.ctrlKey && !event.shiftKey;
+    console.log("[GuiSculpting] onKeyUp, releaseTool:", releaseTool, "toolOnRelease:", this._toolOnRelease, "ctrl:", event.ctrlKey);
     if (!event.altKey || releaseTool)
       this.releaseInvertSign();
 
     if (releaseTool) {
-      this._ctrlSculpt.setValue(this._toolOnRelease);
+      this.onChangeTool(this._toolOnRelease);
       this._toolOnRelease = -1;
     }
 

@@ -77,11 +77,22 @@ class GuiRendering {
     // wireframe
     this._ctrlShowWireframe = menu.addCheckbox(TR('renderingWireframe'), false, this.onShowWireframe.bind(this));
     this._ctrlShowSolid = menu.addCheckbox('Show Solid Geometry', true, this.onShowSolid.bind(this));
+    this._ctrlWireframeBias = menu.addSlider('Wireframe Bias', 0.001, this.onWireframeBiasChanged.bind(this), 0, 0.005, 0.0001);
     
     if (RenderData.ONLY_DRAW_ARRAYS)
       this._ctrlShowWireframe.setVisibility(false);
 
     this.addEvents();
+  }
+
+  onWireframeBiasChanged(val) {
+    if (window.app && window.app.getMesh()) {
+      const wireMesh = window.app.getMesh().getRenderData()._wireframeMesh;
+      if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
+        wireMesh.material.uniforms.uBias.value = val;
+      }
+    }
+    this._main.render();
   }
 
   onFilmic(val) {
@@ -216,6 +227,12 @@ class GuiRendering {
     this._ctrlShaders.setValue(mesh.getShaderType(), true);
     this._ctrlFlatShading.setValue(mesh.getFlatShading(), true);
     this._ctrlShowWireframe.setValue(mesh.getShowWireframe(), true);
+    if (this._ctrlWireframeBias) {
+      const wireMesh = mesh.getRenderData()._wireframeMesh;
+      if (wireMesh && wireMesh.material && wireMesh.material.uniforms) {
+        this._ctrlWireframeBias.setValue(wireMesh.material.uniforms.uBias.value, true);
+      }
+    }
     var threeMesh = mesh.getRenderData()._threeMesh;
     if (threeMesh && this._ctrlShowSolid) {
         this._ctrlShowSolid.setValue(threeMesh.visible, true);

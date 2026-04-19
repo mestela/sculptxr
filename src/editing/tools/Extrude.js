@@ -30,14 +30,36 @@ class Extrude extends SculptBase {
 
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     const pickedFaceIdx = picking.getPickedFace();
+    console.log("[Extrude] startSculpt called, pickedFaceIdx:", pickedFaceIdx);
     if (pickedFaceIdx === undefined || pickedFaceIdx < 0) {
       return;
     }
 
+    // Calculate initial normal for desktop extrusion
+    const faces = activeMesh.getFaces();
+    const oldVerts = activeMesh.getVertices();
+    const idf = pickedFaceIdx * 4;
+    const v1 = faces[idf], v2 = faces[idf + 1], v3 = faces[idf + 2];
+    
+    const p1x = oldVerts[v1 * 3], p1y = oldVerts[v1 * 3 + 1], p1z = oldVerts[v1 * 3 + 2];
+    const p2x = oldVerts[v2 * 3], p2y = oldVerts[v2 * 3 + 1], p2z = oldVerts[v2 * 3 + 2];
+    const p3x = oldVerts[v3 * 3], p3y = oldVerts[v3 * 3 + 1], p3z = oldVerts[v3 * 3 + 2];
+    
+    const e1x = p2x - p1x, e1y = p2y - p1y, e1z = p2z - p1z;
+    const e2x = p3x - p1x, e2y = p3y - p1y, e2z = p3z - p1z;
+    
+    this._extrudeNormal = vec3.create();
+    this._extrudeNormal[0] = e1y * e2z - e1z * e2y;
+    this._extrudeNormal[1] = e1z * e2x - e1x * e2z;
+    this._extrudeNormal[2] = e1x * e2y - e1y * e2x;
+    vec3.normalize(this._extrudeNormal, this._extrudeNormal);
+
+    const cx = (p1x + p2x + p3x) / 3;
+    this._primaryIsRight = cx >= -0.01;
+
     // Determine faces to extrude (mask-aware: all completely unmasked faces, or just nearest if none masked)
     const targetFaces = [];
     const materials = activeMesh.getMaterials();
-    const faces = activeMesh.getFaces();
     let useMaskGroup = false;
 
     if (materials) {
@@ -133,7 +155,6 @@ class Extrude extends SculptBase {
     const oldNbVertices = activeMesh.getNbVertices();
     const oldNbFaces = activeMesh.getNbFaces();
     const oldFaces = activeMesh.getFaces();
-    const oldVerts = activeMesh.getVertices();
     const oldColors = activeMesh.getColors();
     const oldMats = activeMesh.getMaterials();
     const oldUVs = activeMesh.getTexCoords();
@@ -557,6 +578,44 @@ class Extrude extends SculptBase {
     }
 
     mesh.updateGeometry(mesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
+    this.updateRender();
+  }
+
+  sculptStroke() {
+    const main = this._main;
+    const mesh = this.getMesh();
+    if (!mesh || !this._extrudedVerts || !this._vProxy || !this._extrudeNormal) return;
+
+    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    
+    // Calculate delta based on mouse Y movement
+    const dy = main._mouseY - this._lastMouseY;
+    
+    // We need a scale factor to map pixels to world space units
+    // Let's use a simple scale for now
+    const scale = -dy * 0.002; // Negative because moving mouse up usually means extruding OUT
+    
+    const transDelta = vec3.create();
+    vec3.scale(transDelta, this._extrudeNormal, scale);
+
+    const vAr = activeMesh.getVertices();
+    
+    // Move all extruded vertices along the normal
+    for (let i = 0; i < this._extrudedVerts.length; i++) {
+      const ind = this._extrudedVerts[i] * 3;
+      const isLeft = (this._vMirrorState[i] === 1);
+      const isPrimary = this._primaryIsRight ? !isLeft : isLeft;
+      const moveX = isPrimary ? transDelta[0] : -transDelta[0];
+      
+      vAr[ind] = this._vProxy[i * 3] + moveX;
+      if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
+        vAr[ind] = 0.0;
+      }
+      vAr[ind + 1] = this._vProxy[i * 3 + 1] + transDelta[1];
+      vAr[ind + 2] = this._vProxy[i * 3 + 2] + transDelta[2];
+    }
+
+    activeMesh.updateGeometry(activeMesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
     this.updateRender();
   }
 
