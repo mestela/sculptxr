@@ -3086,6 +3086,7 @@ class Scene {
           // Check Secondary Hand Trigger for slow-modifier
           const nonDomSource = this._dominantHand === 'left' ? right : left;
           const isSecondaryTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
+          this._vrSecondaryTriggerPressed = isSecondaryTriggerPressed;
           const speedModifier = isSecondaryTriggerPressed ? 0.1 : 1.0;
 
           // Timer for Repeat/Debounce
@@ -4282,7 +4283,7 @@ class Scene {
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
               isColorSmoothOverride = true;
-            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel') {
+            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel' && activeTool.constructor.name !== 'Extrude') {
               // Disable Smooth toggle for Voxel tool as it does not fully support it yet
               isSmoothOverride = true;
             }
@@ -4344,7 +4345,7 @@ class Scene {
     // FIX: If tool reports it is "active" (like Grab holding a mesh), we MUST NOT end the stroke.
     // (currentTool and isToolActive defined above at Menu Block)
 
-    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive);
+    let canSculpt = isTriggerPressed && (picked || this._vrSculpting || allowAir || isToolActive || this._vrSecondaryTriggerPressed);
 
     // if (isTriggerPressed && !canSculpt && this._logThrottle % 60 === 0 && window.screenLog) {
     //   if (window.screenLog) window.screenLog(`Blocked: Pick=${!!picked} Air=${allowAir} Active=${!!isToolActive}`, "orange");

@@ -8,6 +8,7 @@
 
 ## 1. Todo
 
+* [ ] **Low Poly**: Snapping for retopo. Best approach here? Hmm. Snap from one object to another? More work on the slide tool maybe?
 * [ ] **Desktop**: hmd+desktop hybrid
 * [ ] **Animation**: transform box should allow scaling into negative to reverse key order.
 * [ ] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
@@ -26,6 +27,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Desktop**: low poly tools
 * [x] **Desktop**: Getting base desktop sculpting working again
 * [x] **Animation**: not all keyframe edit events can be undone atm. 
 * [x] **Bug**:  when I click the big resize circle in transform tool it sometimes switches to grab tool

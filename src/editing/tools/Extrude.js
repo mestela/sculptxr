@@ -2,6 +2,7 @@ import { vec3, mat4, quat } from 'gl-matrix';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
+import * as THREE from 'three';
 
 class Extrude extends SculptBase {
   constructor(main) {
@@ -14,10 +15,214 @@ class Extrude extends SculptBase {
     if (window.keepExtrudeFacesTogether === undefined) {
       window.keepExtrudeFacesTogether = true;
     }
+    this._selectedFaces = new Set();
   }
 
   pushState() {
     // Disabled: Exclusively use the single custom state snapshot in end().
+  }
+
+  start(ctrl) {
+    const main = this._main;
+    const isDesktop = !main._vrSculpting;
+    
+    if (isDesktop && main._shiftKey) {
+      const picking = main.getPicking();
+      const pickedFace = picking.getPickedFace();
+      if (pickedFace !== undefined && pickedFace >= 0) {
+        if (this._selectedFaces.has(pickedFace)) {
+          this._selectedFaces.delete(pickedFace);
+        } else {
+          this._selectedFaces.add(pickedFace);
+        }
+        this.updateSelectionHighlight();
+        main.render();
+      }
+      return;
+    }
+    
+    if (!isDesktop && main._vrSecondaryTriggerPressed) {
+      const picking = main.getPicking();
+      const pickedFace = picking.getPickedFace();
+      if (pickedFace !== undefined && pickedFace >= 0) {
+        // Determine drag mode based on initial face state
+        this._dragSelectMode = this._selectedFaces.has(pickedFace) ? 'remove' : 'add';
+        
+        const mesh = this.getMesh();
+        const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+        const symFace = main.getSculptManager().getSymmetry() ? this.getSymmetricalFace(activeMesh, pickedFace) : -1;
+        
+        if (this._dragSelectMode === 'remove') {
+          this._selectedFaces.delete(pickedFace);
+          if (symFace !== -1) this._selectedFaces.delete(symFace);
+        } else {
+          this._selectedFaces.add(pickedFace);
+          if (symFace !== -1) this._selectedFaces.add(symFace);
+        }
+        this._lastPickedFace = pickedFace; 
+        this.updateSelectionHighlight();
+        main.render();
+      } else {
+        if (this._selectedFaces.size > 0) {
+          this._prevSelectedFaces = new Set(this._selectedFaces); 
+          this._selectedFaces.clear();
+          this.updateSelectionHighlight();
+          main.render();
+        }
+      }
+      return;
+    }
+    
+    this._lastPickedFace = null;
+    super.start(ctrl);
+  }
+
+  updateSelectionHighlight() {
+    const mesh = this.getMesh();
+    if (!mesh) return;
+    const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+    const faces = activeMesh.getFaces();
+    const vertices = activeMesh.getVertices();
+    const mat = activeMesh.getMatrix();
+    
+    const positions = [];
+    
+    if (this._selectedFaces && this._selectedFaces.size > 0) {
+      for (const fIdx of this._selectedFaces) {
+        const idf = fIdx * 4;
+        const v1 = faces[idf];
+        const v2 = faces[idf + 1];
+        const v3 = faces[idf + 2];
+        const v4 = faces[idf + 3];
+        const isTri = v4 === Utils.TRI_INDEX;
+        
+        const p1 = [vertices[v1 * 3], vertices[v1 * 3 + 1], vertices[v1 * 3 + 2]];
+        const p2 = [vertices[v2 * 3], vertices[v2 * 3 + 1], vertices[v2 * 3 + 2]];
+        const p3 = [vertices[v3 * 3], vertices[v3 * 3 + 1], vertices[v3 * 3 + 2]];
+        const p4 = isTri ? null : [vertices[v4 * 3], vertices[v4 * 3 + 1], vertices[v4 * 3 + 2]];
+        
+        const pushTriangle = (a, b, c) => {
+          const wa = [0,0,0], wb = [0,0,0], wc = [0,0,0];
+          vec3.transformMat4(wa, a, mat);
+          vec3.transformMat4(wb, b, mat);
+          vec3.transformMat4(wc, c, mat);
+          positions.push(wa[0], wa[1], wa[2]);
+          positions.push(wb[0], wb[1], wb[2]);
+          positions.push(wc[0], wc[1], wc[2]);
+        };
+        
+        pushTriangle(p1, p2, p3);
+        if (!isTri) {
+          pushTriangle(p1, p3, p4);
+        }
+      }
+    }
+    
+    if (positions.length === 0) {
+      if (this._selectionMesh) {
+        this._selectionMesh.visible = false;
+      }
+      return;
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    
+    if (!this._selectionMesh) {
+      const material = new THREE.MeshBasicMaterial({ 
+        color: 0xffff00, 
+        depthTest: false, 
+        transparent: true, 
+        depthWrite: false, 
+        opacity: 0.4,
+        side: THREE.DoubleSide
+      });
+      this._selectionMesh = new THREE.Mesh(geometry, material);
+      this._selectionMesh.renderOrder = 10000;
+      this._selectionMesh.isPickable = false;
+      
+      const sceneApp = this._main.getScene ? this._main.getScene() : this._main._scene;
+      let targetScene = sceneApp;
+      if (sceneApp && sceneApp._scene) targetScene = sceneApp._scene;
+      
+      let parentNode = targetScene;
+      if (this._main._worldGroup) parentNode = this._main._worldGroup;
+      parentNode.add(this._selectionMesh);
+    } else {
+      this._selectionMesh.geometry.dispose();
+      this._selectionMesh.geometry = geometry;
+      this._selectionMesh.visible = true;
+    }
+  }
+
+  onUndo() {
+    if (this._prevSelectedFaces) {
+      this._selectedFaces = new Set(this._prevSelectedFaces);
+      this._prevSelectedFaces = null;
+      this.updateSelectionHighlight();
+      this._main.render();
+      return true;
+    }
+    
+    if (this._main._stateManager) {
+      this._main._stateManager.undo();
+      this.updateSelectionHighlight();
+      this._main.render();
+      return true;
+    }
+    
+    return false;
+  }
+
+  onRedo() {
+    if (this._main._stateManager) {
+      this._main._stateManager.redo();
+      this.updateSelectionHighlight();
+      this._main.render();
+      return true;
+    }
+    return false;
+  }
+
+  getSymmetricalFace(mesh, faceIdx) {
+    const faces = mesh.getFaces();
+    const oldVerts = mesh.getVertices();
+    const idf = faceIdx * 4;
+    const v1 = faces[idf], v2 = faces[idf + 1], v3 = faces[idf + 2], v4 = faces[idf + 3];
+    
+    const cx = (oldVerts[v1 * 3] + oldVerts[v2 * 3] + oldVerts[v3 * 3] + (v4 !== Utils.TRI_INDEX ? oldVerts[v4 * 3] : 0)) / (v4 !== Utils.TRI_INDEX ? 4 : 3);
+    const cy = (oldVerts[v1 * 3 + 1] + oldVerts[v2 * 3 + 1] + oldVerts[v3 * 3 + 1] + (v4 !== Utils.TRI_INDEX ? oldVerts[v4 * 3 + 1] : 0)) / (v4 !== Utils.TRI_INDEX ? 4 : 3);
+    const cz = (oldVerts[v1 * 3 + 2] + oldVerts[v2 * 3 + 2] + oldVerts[v3 * 3 + 2] + (v4 !== Utils.TRI_INDEX ? oldVerts[v4 * 3 + 2] : 0)) / (v4 !== Utils.TRI_INDEX ? 4 : 3);
+
+    const mx = -cx; 
+    
+    let bestF = -1;
+    let bestDist = Infinity;
+    
+    for (let f = 0; f < mesh.getNbFaces(); f++) {
+      if (f === faceIdx) continue;
+
+      const idf_m = f * 4;
+      const mv1 = faces[idf_m], mv2 = faces[idf_m + 1], mv3 = faces[idf_m + 2], mv4 = faces[idf_m + 3];
+      
+      const fcx = (oldVerts[mv1 * 3] + oldVerts[mv2 * 3] + oldVerts[mv3 * 3] + (mv4 !== Utils.TRI_INDEX ? oldVerts[mv4 * 3] : 0)) / (mv4 !== Utils.TRI_INDEX ? 4 : 3);
+      const fcy = (oldVerts[mv1 * 3 + 1] + oldVerts[mv2 * 3 + 1] + oldVerts[mv3 * 3 + 1] + (mv4 !== Utils.TRI_INDEX ? oldVerts[mv4 * 3 + 1] : 0)) / (mv4 !== Utils.TRI_INDEX ? 4 : 3);
+      const fcz = (oldVerts[mv1 * 3 + 2] + oldVerts[mv2 * 3 + 2] + oldVerts[mv3 * 3 + 2] + (mv4 !== Utils.TRI_INDEX ? oldVerts[mv4 * 3 + 2] : 0)) / (mv4 !== Utils.TRI_INDEX ? 4 : 3);
+
+      const dx = fcx - mx;
+      const dy = fcy - cy;
+      const dz = fcz - cz;
+      const dist = dx * dx + dy * dy + dz * dz;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestF = f;
+      }
+    }
+    
+    if (bestF !== -1 && bestDist < 0.01) {
+      return bestF;
+    }
+    return -1;
   }
 
   startSculpt() {
@@ -57,12 +262,16 @@ class Extrude extends SculptBase {
     const cx = (p1x + p2x + p3x) / 3;
     this._primaryIsRight = cx >= -0.01;
 
-    // Determine faces to extrude (mask-aware: all completely unmasked faces, or just nearest if none masked)
+    // Determine faces to extrude
     const targetFaces = [];
     const materials = activeMesh.getMaterials();
     let useMaskGroup = false;
 
-    if (materials) {
+    if (this._selectedFaces && this._selectedFaces.size > 0) {
+      for (const f of this._selectedFaces) {
+        targetFaces.push(f);
+      }
+    } else if (materials) {
       let anyMasked = false;
       let anyUnmasked = false;
       for (let i = 0; i < activeMesh.getNbVertices(); i++) {
@@ -92,7 +301,7 @@ class Extrude extends SculptBase {
       }
     }
 
-    if (!useMaskGroup || targetFaces.length === 0) {
+    if (targetFaces.length === 0) {
       targetFaces.push(pickedFaceIdx);
 
       // Add symmetry support for click face
@@ -136,6 +345,46 @@ class Extrude extends SculptBase {
       }
     }
 
+    // Compute per-vertex normals for selection
+    this._vertNormals = new Map();
+    const vAr = activeMesh.getVertices();
+    const facesAr = activeMesh.getFaces();
+    
+    for (const fIdx of targetFaces) {
+      const idf = fIdx * 4;
+      const v1 = facesAr[idf];
+      const v2 = facesAr[idf + 1];
+      const v3 = facesAr[idf + 2];
+      const v4 = facesAr[idf + 3];
+      const isTri = v4 === Utils.TRI_INDEX;
+      
+      const p1 = [vAr[v1 * 3], vAr[v1 * 3 + 1], vAr[v1 * 3 + 2]];
+      const p2 = [vAr[v2 * 3], vAr[v2 * 3 + 1], vAr[v2 * 3 + 2]];
+      const p3 = [vAr[v3 * 3], vAr[v3 * 3 + 1], vAr[v3 * 3 + 2]];
+      
+      const e1 = vec3.create(), e2 = vec3.create(), n = vec3.create();
+      vec3.sub(e1, p2, p1);
+      vec3.sub(e2, p3, p1);
+      vec3.cross(n, e1, e2);
+      vec3.normalize(n, n);
+      
+      const addNormal = (v) => {
+        if (!this._vertNormals.has(v)) {
+          this._vertNormals.set(v, vec3.create());
+        }
+        vec3.add(this._vertNormals.get(v), this._vertNormals.get(v), n);
+      };
+      
+      addNormal(v1);
+      addNormal(v2);
+      addNormal(v3);
+      if (!isTri) addNormal(v4);
+    }
+    
+    for (const [v, n] of this._vertNormals.entries()) {
+      vec3.normalize(n, n);
+    }
+
     // Low-poly standards: Snapshot based undo avoiding the Garbage Pitfall
     this._undoSnapshot = {
       faces: new Uint32Array(activeMesh.getFaces().subarray(0, activeMesh.getNbFaces() * 4)),
@@ -144,7 +393,8 @@ class Extrude extends SculptBase {
       materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
       facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
       nbFaces: activeMesh.getNbFaces(),
-      nbVertices: activeMesh.getNbVertices()
+      nbVertices: activeMesh.getNbVertices(),
+      selectedFaces: new Set(this._selectedFaces)
     };
     if (activeMesh.getTexCoords()) {
       const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
@@ -166,6 +416,8 @@ class Extrude extends SculptBase {
 
     let numNewVerts = 0;
     let numNewFaces = 0;
+    
+    this._newToOldMap = new Map();
 
     if (!window.keepExtrudeFacesTogether) {
       // Mode 1: Isolated Face Blocks (Completely un-welded individual extruded pillars)
@@ -242,6 +494,7 @@ class Extrude extends SculptBase {
         for (const oldV of verts) {
           newVertIndices.push(currentVertIdx);
           extrudedVertIds.push(currentVertIdx);
+          this._newToOldMap.set(currentVertIdx, oldV);
 
           newVertices[currentVertIdx * 3] = oldVerts[oldV * 3];
           newVertices[currentVertIdx * 3 + 1] = oldVerts[oldV * 3 + 1];
@@ -307,6 +560,7 @@ class Extrude extends SculptBase {
       for (const oldV of vertSet) {
         vertMap.set(oldV, currentVertIdx);
         newVertIndices.push(currentVertIdx);
+        this._newToOldMap.set(currentVertIdx, oldV);
 
         newVertices[currentVertIdx * 3] = oldVerts[oldV * 3];
         newVertices[currentVertIdx * 3 + 1] = oldVerts[oldV * 3 + 1];
@@ -451,8 +705,48 @@ class Extrude extends SculptBase {
   }
 
   // WebXR Support for 6DOF Dragging
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
+    
+    if (options && options.controllers) {
+      const dominantHand = options.handedness;
+      const nonDominantHand = dominantHand === 'left' ? 'right' : 'left';
+      
+      let isSecondaryTriggerPressed = false;
+      for (const ctrl of options.controllers) {
+        if (ctrl.handedness === nonDominantHand) {
+          if (ctrl.buttons && ctrl.buttons[0] && ctrl.buttons[0].pressed) {
+            isSecondaryTriggerPressed = true;
+          }
+          break;
+        }
+      }
+      
+      if (isSecondaryTriggerPressed) {
+        if (isPressed) {
+          const pickedFace = picking.getPickedFace();
+          if (pickedFace !== undefined && pickedFace >= 0) {
+            if (pickedFace !== this._lastPickedFace) {
+              const mesh = this.getMesh();
+              const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
+              const symFace = main.getSculptManager().getSymmetry() ? this.getSymmetricalFace(activeMesh, pickedFace) : -1;
+              
+              if (this._dragSelectMode === 'remove') {
+                this._selectedFaces.delete(pickedFace);
+                if (symFace !== -1) this._selectedFaces.delete(symFace);
+              } else {
+                this._selectedFaces.add(pickedFace);
+                if (symFace !== -1) this._selectedFaces.add(symFace);
+              }
+              this.updateSelectionHighlight();
+            }
+          }
+        }
+        this.updateRender();
+        return;
+      }
+    }
+
     if (!isPressed) {
       if (main._vrControllerPos) {
         if (!this._lastVRPos) this._lastVRPos = vec3.create();
@@ -493,6 +787,14 @@ class Extrude extends SculptBase {
     const transDelta = vec3.create();
     vec3.sub(transDelta, vCurrLocal, vStartLocal);
 
+    const isMultiFace = this._selectedFaces && this._selectedFaces.size > 0;
+
+    // Lock to normal only for multi-face
+    if (isMultiFace && this._extrudeNormal) {
+      const dot = vec3.dot(transDelta, this._extrudeNormal);
+      vec3.scale(transDelta, this._extrudeNormal, dot);
+    }
+
     const qMesh = quat.create();
     mat4.getRotation(qMesh, mesh.getMatrix());
     const qMeshInv = quat.create();
@@ -507,7 +809,10 @@ class Extrude extends SculptBase {
     const qDeltaLocal = quat.create();
     const qStartInv = quat.create();
     quat.invert(qStartInv, qStartLocal);
-    quat.multiply(qDeltaLocal, qCurrLocal, qStartInv);
+    
+    if (!isMultiFace) {
+      quat.multiply(qDeltaLocal, qCurrLocal, qStartInv); 
+    }
 
     // Move all extruded vertices
     const vAr = mesh.getVertices();
@@ -555,30 +860,47 @@ class Extrude extends SculptBase {
       const isPrimary = primaryIsRight ? !isLeft : isLeft;
       
       const currPivot = isLeft ? pivotLeft : pivotRight;
-      const moveX = isPrimary ? transDelta[0] : -transDelta[0];
       
-      vTemp[0] = this._vProxy[i * 3] - currPivot[0];
-      vTemp[1] = this._vProxy[i * 3 + 1] - currPivot[1];
-      vTemp[2] = this._vProxy[i * 3 + 2] - currPivot[2];
-
-      if (!isPrimary) {
-        vTemp[0] = -vTemp[0]; // Map pre-rotation coordinate precisely into primary side space
-        vec3.transformQuat(vTemp, vTemp, qDeltaLocal); // Perform the exact standard primary rotation arc
-        vTemp[0] = -vTemp[0]; // Mirror the resulting rotated coordinate back to the left side
+      if (isMultiFace) {
+        const newV = this._extrudedVerts[i];
+        const oldV = this._newToOldMap ? this._newToOldMap.get(newV) : null;
+        const normal = (oldV !== null && this._vertNormals) ? this._vertNormals.get(oldV) : this._extrudeNormal;
+        
+        const dot = vec3.dot(transDelta, this._extrudeNormal);
+        
+        vAr[ind] = this._vProxy[i * 3] + normal[0] * dot;
+        if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
+          vAr[ind] = 0.0;
+        }
+        vAr[ind + 1] = this._vProxy[i * 3 + 1] + normal[1] * dot;
+        vAr[ind + 2] = this._vProxy[i * 3 + 2] + normal[2] * dot;
       } else {
-        vec3.transformQuat(vTemp, vTemp, qDeltaLocal);
-      }
+        const moveX = isPrimary ? transDelta[0] : -transDelta[0];
+        
+        vTemp[0] = this._vProxy[i * 3] - currPivot[0];
+        vTemp[1] = this._vProxy[i * 3 + 1] - currPivot[1];
+        vTemp[2] = this._vProxy[i * 3 + 2] - currPivot[2];
 
-      vAr[ind] = currPivot[0] + vTemp[0] + moveX;
-      if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
-        vAr[ind] = 0.0;
+        if (!isPrimary) {
+          vTemp[0] = -vTemp[0];
+          vec3.transformQuat(vTemp, vTemp, qDeltaLocal);
+          vTemp[0] = -vTemp[0];
+        } else {
+          vec3.transformQuat(vTemp, vTemp, qDeltaLocal);
+        }
+
+        vAr[ind] = currPivot[0] + vTemp[0] + moveX;
+        if (Math.abs(this._vProxy[i * 3]) < 0.001 && window.keepExtrudeFacesTogether) {
+          vAr[ind] = 0.0;
+        }
+        vAr[ind + 1] = currPivot[1] + vTemp[1] + transDelta[1];
+        vAr[ind + 2] = currPivot[2] + vTemp[2] + transDelta[2];
       }
-      vAr[ind + 1] = currPivot[1] + vTemp[1] + transDelta[1];
-      vAr[ind + 2] = currPivot[2] + vTemp[2] + transDelta[2];
     }
 
     mesh.updateGeometry(mesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
     this.updateRender();
+    this.updateSelectionHighlight();
   }
 
   sculptStroke() {
@@ -621,6 +943,9 @@ class Extrude extends SculptBase {
 
   end() {
     super.end();
+    
+    // Retain selection after extrude! Do not clear here.
+    
     this._extrudedVerts = null;
     this._vProxy = null;
 
@@ -639,7 +964,8 @@ class Extrude extends SculptBase {
         materials: activeMesh.getMaterials() ? new Float32Array(activeMesh.getMaterials().subarray(0, activeMesh.getNbVertices() * 3)) : null,
         facesTexCoord: activeMesh.getFacesTexCoord() ? new Uint32Array(activeMesh.getFacesTexCoord().subarray(0, activeMesh.getNbFaces() * 4)) : null,
         nbFaces: activeMesh.getNbFaces(),
-        nbVertices: activeMesh.getNbVertices()
+        nbVertices: activeMesh.getNbVertices(),
+        selectedFaces: new Set(this._selectedFaces)
       };
       if (activeMesh.getTexCoords()) {
         const nbTex = activeMesh.getNbTexCoords ? activeMesh.getNbTexCoords() : activeMesh.getNbVertices();
@@ -647,8 +973,20 @@ class Extrude extends SculptBase {
       }
       const snapshotToUndo = this._undoSnapshot;
       const snapshotToRedo = redoSnapshot;
-      const undoExtrude = () => Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToUndo);
-      const redoExtrude = () => Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToRedo);
+      const undoExtrude = () => {
+        Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToUndo);
+        if (snapshotToUndo.selectedFaces) {
+          this._selectedFaces = new Set(snapshotToUndo.selectedFaces);
+          this.updateSelectionHighlight();
+        }
+      };
+      const redoExtrude = () => {
+        Object.getPrototypeOf(this).applyMeshSnapshot.call(this, activeMesh, snapshotToRedo);
+        if (snapshotToRedo.selectedFaces) {
+          this._selectedFaces = new Set(snapshotToRedo.selectedFaces);
+          this.updateSelectionHighlight();
+        }
+      };
       this._main.getStateManager().pushStateCustom(undoExtrude, redoExtrude);
       this._undoSnapshot = null;
     }
