@@ -1460,10 +1460,7 @@ class Scene {
     var newWidth = viewport.clientWidth * this._pixelRatio;
     var newHeight = viewport.clientHeight * this._pixelRatio;
 
-    if (window.screenLog) {
-      window.screenLog(`Viewport: ${viewport.clientWidth}x${viewport.clientHeight}, PR: ${this._pixelRatio.toFixed(1)}`, "cyan");
-      window.screenLog(`Aspect: ${(viewport.clientWidth / viewport.clientHeight).toFixed(3)}`, "cyan");
-    }
+
 
     var aspect = window._forcedAspect || (viewport.clientWidth / viewport.clientHeight);
     
@@ -1489,10 +1486,7 @@ class Scene {
       
       threeCam.updateProjectionMatrix();
       
-      if (window.screenLog) {
-        window.screenLog(`Aspect: ${aspect.toFixed(3)}`, "cyan");
-        window.screenLog(`FOV: ${threeCam.fov.toFixed(1)}`, "magenta");
-      }
+
     }
 
     this._canvasOffsetLeft = viewport.offsetLeft;

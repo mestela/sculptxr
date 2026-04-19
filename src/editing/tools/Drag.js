@@ -14,9 +14,14 @@ class Drag extends SculptBase {
   }
 
   // VR Support: Drag needs to calculate delta from controller movement
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir, options) {
     var main = this._main;
     if (!main._vrControllerPos) return;
+
+    // Guard: If we are dragging with one hand, ignore the other hand
+    if (main._vrLockedHand && options && options.handedness !== main._vrLockedHand) {
+      return;
+    }
 
     if (!isPressed) {
       // HOVER
@@ -37,23 +42,29 @@ class Drag extends SculptBase {
       return;
     }
 
-    // VR DRAG LOGIC (Modernized to match Move.js logic)
-    var deltaWorld = vec3.create();
-    vec3.sub(deltaWorld, main._vrControllerPos, this._lastVRPos);
-
     var mesh = this.getMesh();
     if (!mesh) return;
 
-    var invMat = mat4.create();
-    mat4.invert(invMat, mesh.getMatrix());
+    // Use getMatrix() just like Move.js
+    var mInv = mat4.create();
+    mat4.invert(mInv, mesh.getMatrix());
 
-    // Vector transformation (ignore translation by doing head - zero)
-    var zero = vec3.create();
-    var localZero = vec3.create();
-    var localHead = vec3.create();
-    vec3.transformMat4(localZero, zero, invMat);
-    vec3.transformMat4(localHead, deltaWorld, invMat);
-    vec3.sub(this._dragDir, localHead, localZero);
+    var vPrevLocal = vec3.clone(this._lastVRPos);
+    vec3.transformMat4(vPrevLocal, vPrevLocal, mInv);
+
+    var vCurrLocal = vec3.clone(main._vrControllerPos);
+    vec3.transformMat4(vCurrLocal, vCurrLocal, mInv);
+
+    // Compute frame-to-frame delta in local space
+    vec3.sub(this._dragDir, vCurrLocal, vPrevLocal);
+
+    // Safety guard for huge deltas
+    var deltaLength = vec3.length(this._dragDir);
+    if (deltaLength > 0.5) {
+      console.log(`VR Drag: Ignoring huge delta: ${deltaLength.toFixed(4)}`);
+      vec3.copy(this._lastVRPos, main._vrControllerPos);
+      return;
+    }
 
     // repick vertices at new center (Scene.js updated intersection)
     picking._mesh = mesh;
@@ -82,8 +93,12 @@ class Drag extends SculptBase {
       this.stroke(pickingSym, true);
     }
 
-    // Update history
+    // Update history for frame-to-frame delta
     vec3.copy(this._lastVRPos, main._vrControllerPos);
+
+    if (typeof mesh.computeOctree === 'function') {
+      mesh.computeOctree();
+    }
 
     if (mesh.isDynamic) {
       this.updateMeshBuffers();
@@ -103,7 +118,9 @@ class Drag extends SculptBase {
     var dist = Math.sqrt(dx * dx + dy * dy);
     var minSpacing = 0.15 * this._radius;
 
-    var step = 1.0 / Math.floor(dist / minSpacing);
+    var count = Math.floor(dist / minSpacing);
+    if (count < 1) count = 1;
+    var step = 1.0 / count;
     dx *= step;
     dy *= step;
     var mouseX = this._lastMouseX;
@@ -123,6 +140,9 @@ class Drag extends SculptBase {
         break;
       mouseX += dx;
       mouseY += dy;
+      if (typeof mesh.computeOctree === 'function') {
+        mesh.computeOctree();
+      }
     }
 
     this.updateRender();
@@ -194,6 +214,7 @@ class Drag extends SculptBase {
       var dy = vy - cy;
       var dz = vz - cz;
       var dist = Math.sqrt(dx * dx + dy * dy + dz * dz) / radius;
+      if (dist > 1.0) continue;
       var fallOff = dist * dist;
       fallOff = 3.0 * fallOff * fallOff - 4.0 * fallOff * dist + 1.0;
 
@@ -227,7 +248,7 @@ class Drag extends SculptBase {
     var vNear = picking.unproject(mouseX, mouseY, 0.0);
     var vFar = picking.unproject(mouseX, mouseY, 0.1);
     var matInverse = mat4.create();
-    mat4.invert(matInverse, mesh.getMatrix());
+    mat4.invert(matInverse, mesh.getThreeMesh().matrixWorld.elements);
     vec3.transformMat4(vNear, vNear, matInverse);
     vec3.transformMat4(vFar, vFar, matInverse);
     var dir = this._dragDir;
@@ -242,7 +263,7 @@ class Drag extends SculptBase {
     picking.setIntersectionPoint(Geometry.vertexOnLine(center, vNear, vFar));
     vec3.sub(dir, picking.getIntersectionPoint(), center);
     picking._mesh = mesh;
-    picking.updateLocalAndWorldRadius2();
+    // picking.updateLocalAndWorldRadius2();
     var eyeDir = picking.getEyeDirection();
     vec3.sub(eyeDir, vFar, vNear);
     vec3.normalize(eyeDir, eyeDir);

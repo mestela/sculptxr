@@ -51,7 +51,7 @@ class SculptBase {
     // Is this a VR controller stroke or a Desktop mouse stroke?
     if (!main._vrSculpting) {
     // Desktop: Evaluate picking using the mouse
-      if (!picking.intersectionMouseMeshes() && !this._allowAir)
+      if (!picking.intersectionMouseMeshes())
         return false;
     } else {
       // VR: Evaluating using the VR Ray (already computed in handleXRInput)
@@ -230,6 +230,7 @@ class SculptBase {
   }
 
   update(continuous) {
+    if (this._main._vrSculpting) return;
     if (this._lockPosition === true)
       return this.updateSculptLock(continuous);
     this.sculptStroke();

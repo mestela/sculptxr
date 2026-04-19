@@ -422,7 +422,7 @@ class Move extends SculptBase {
     var vNear = picking.unproject(mouseX, mouseY, 0.0);
     var vFar = picking.unproject(mouseX, mouseY, 0.1);
     var matInverse = mat4.create();
-    mat4.invert(matInverse, mesh.getMatrix());
+    mat4.invert(matInverse, mesh.getThreeMesh().matrixWorld.elements);
     vec3.transformMat4(vNear, vNear, matInverse);
     vec3.transformMat4(vFar, vFar, matInverse);
 
