@@ -86,6 +86,10 @@ class Transform extends SculptBase {
       mesh.updateMatrices(main.getCamera());
     }
     
+    if (window._animationRegistry && window._animationRegistry.isRecording) {
+      window._animationRegistry.stopRecording();
+    }
+    
     main.render();
   }
 

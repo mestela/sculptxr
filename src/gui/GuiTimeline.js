@@ -189,31 +189,38 @@ export default class GuiTimeline {
     ctx.textAlign = 'right';
     ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + headerH / 2);
 
-    // Show value of closest key to playhead
-    const activeMesh = this._main.getMesh();
-    if (activeMesh) {
-      const id = activeMesh.getID();
-      const track = reg.tracks.get(id);
-      if (track && track.times) {
-        const curTime = window._animCurrentTime || 0;
-        let closestIdx = -1;
-        let minDist = 0.1; // 100ms tolerance
-        for (let i = 0; i < track.times.length; i++) {
-          const dist = Math.abs(track.times[i] - curTime);
-          if (dist < minDist) {
-            minDist = dist;
-            closestIdx = i;
+    // Show status or value of closest key to playhead
+    if (reg.isCountingIn || reg.isRecording) {
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(window._animStatusText || '', w.w / 2, w.y + headerH / 2);
+    } else {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        const id = activeMesh.getID();
+        const track = reg.tracks.get(id);
+        if (track && track.times) {
+          const curTime = window._animCurrentTime || 0;
+          let closestIdx = -1;
+          let minDist = 0.1; // 100ms tolerance
+          for (let i = 0; i < track.times.length; i++) {
+            const dist = Math.abs(track.times[i] - curTime);
+            if (dist < minDist) {
+              minDist = dist;
+              closestIdx = i;
+            }
           }
-        }
-        if (closestIdx >= 0) {
-          const px = track.positions[closestIdx * 3];
-          const py = track.positions[closestIdx * 3 + 1];
-          const pz = track.positions[closestIdx * 3 + 2];
-          
-          ctx.fillStyle = '#ffcc00';
-          ctx.font = '12px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`Key at ${track.times[closestIdx].toFixed(2)}s: Pos(${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
+          if (closestIdx >= 0) {
+            const px = track.positions[closestIdx * 3];
+            const py = track.positions[closestIdx * 3 + 1];
+            const pz = track.positions[closestIdx * 3 + 2];
+            
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Key at ${track.times[closestIdx].toFixed(2)}s: Pos(${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
+          }
         }
       }
     }

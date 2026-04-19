@@ -1,4 +1,4 @@
-import { quat } from 'gl-matrix';
+import { quat, mat4 } from 'gl-matrix';
 
 class AnimationRegistry {
   constructor() {
@@ -257,7 +257,8 @@ class AnimationRegistry {
     track.times.push(elapsed);
 
     if (this.activeMesh.getMatrix) {
-      const m = this.activeMesh.getMatrix();
+      const m = mat4.create();
+      mat4.mul(m, this.activeMesh.getMatrix(), this.activeMesh.getEditMatrix());
       
       const sx = Math.hypot(m[0], m[1], m[2]);
       const sy = Math.hypot(m[4], m[5], m[6]);

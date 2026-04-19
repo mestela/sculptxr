@@ -9,6 +9,7 @@ class GuiAnimation {
   }
 
   init(guiParent) {
+    window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
     var menu = this._menu = guiParent.addMenu('Animation');
     menu.close();
 
