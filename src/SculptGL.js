@@ -1,6 +1,6 @@
 import './misc/Polyfill.js';
 import { VERSION } from './Version.js';
-import { vec3, mat4, quat } from 'gl-matrix';
+import { vec3, mat4, quat, mat3 } from 'gl-matrix';
 import { Manager as HammerManager, Pan, Pinch, Tap } from 'hammerjs';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
@@ -931,6 +931,182 @@ class SculptGL extends Scene {
     this.setCanvasCursor('default');
     Multimesh.RENDER_HINT = Multimesh.NONE;
     if (this._sculptManager) this._sculptManager.end();
+
+    const currentMesh = this.getMesh();
+    if (window._animAutoKey && window._animationRegistry && currentMesh && this._action === Enums.Action.SCULPT_EDIT) {
+      const sm = this._sculptManager;
+      const isMove = sm && (sm._toolIndex === Enums.Tools.TRANSFORM);
+      const fps = window._animFPS || 24;
+      const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
+      window._animCurrentTime = targetTime;
+      window._animationRegistry.globalPlaybackTime = targetTime;
+      const meshId = currentMesh.getID();
+
+      if (isMove) {
+        // Transform AutoKey
+        if (!window._animationRegistry.tracks.has(meshId)) {
+          window._animationRegistry.tracks.set(meshId, {
+            times: [], positions: [], quaternions: [], scales: [],
+            shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+          });
+        }
+        const track = window._animationRegistry.tracks.get(meshId);
+
+        // Frame 0 fallback
+        if (track.times.length === 0 && targetTime > 0.005) {
+          const tool = this._sculptManager.getCurrentTool();
+          if (tool && tool._undoMatrix) {
+            const currMat = mat4.clone(currentMesh.getMatrix());
+            currentMesh.setMatrix(tool._undoMatrix);
+            window._animationRegistry.addTransformKey(currentMesh, 0.0);
+            currentMesh.setMatrix(currMat);
+          }
+        }
+
+        const tMat = currentMesh.getMatrix();
+        const pos = [tMat[12], tMat[13], tMat[14]];
+        
+        const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
+        const sy = Math.hypot(tMat[4], tMat[5], tMat[6]);
+        const sz = Math.hypot(tMat[8], tMat[9], tMat[10]);
+        
+        const m = mat3.fromValues(
+          tMat[0]/sx, tMat[1]/sx, tMat[2]/sx,
+          tMat[4]/sy, tMat[5]/sy, tMat[6]/sy,
+          tMat[8]/sz, tMat[9]/sz, tMat[10]/sz
+        );
+        const q = quat.create();
+        quat.fromMat3(q, m);
+
+        let keyIdx = -1;
+        if (track.times) {
+          for (let i = 0; i < track.times.length; i++) {
+            if (Math.abs(track.times[i] - targetTime) < 0.005) {
+              keyIdx = i;
+              break;
+            }
+          }
+        }
+
+        const wasUpdate = keyIdx >= 0;
+        let oldData = null;
+        if (wasUpdate) {
+          oldData = {
+            pos: track.positions.slice(keyIdx * 3, keyIdx * 3 + 3),
+            q: track.quaternions.slice(keyIdx * 4, keyIdx * 4 + 4),
+            s: track.scales.slice(keyIdx * 3, keyIdx * 3 + 3)
+          };
+        }
+
+        window._animationRegistry.addTransformKey(currentMesh, targetTime);
+        
+        const newData = {
+          pos: [...pos],
+          q: [q[0], q[1], q[2], q[3]],
+          s: [sx, sy, sz]
+        };
+
+        if (this._stateManager) {
+          this._stateManager.pushStateCustom(
+            () => { // UNDO
+              const tr = window._animationRegistry.tracks.get(meshId);
+              if (!tr) return;
+              if (wasUpdate) {
+                let idx = 0;
+                while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
+                if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
+                  tr.positions.splice(idx*3, 3, ...oldData.pos);
+                  tr.quaternions.splice(idx*4, 4, ...oldData.q);
+                  tr.scales.splice(idx*3, 3, ...oldData.s);
+                }
+              } else {
+                window._animationRegistry.deleteTransformKey(currentMesh, targetTime);
+              }
+              window._animationRegistry.update(currentMesh, true);
+            },
+            () => { // REDO
+              const tr = window._animationRegistry.tracks.get(meshId);
+              if (!tr) return;
+              let idx = 0;
+              while (idx < tr.times.length && tr.times[idx] < targetTime) idx++;
+              
+              if (idx < tr.times.length && Math.abs(tr.times[idx] - targetTime) < 0.005) {
+                tr.positions.splice(idx*3, 3, ...newData.pos);
+                tr.quaternions.splice(idx*4, 4, ...newData.q);
+                tr.scales.splice(idx*3, 3, ...newData.s);
+              } else {
+                tr.times.splice(idx, 0, targetTime);
+                tr.positions.splice(idx*3, 0, ...newData.pos);
+                tr.quaternions.splice(idx*4, 0, ...newData.q);
+                tr.scales.splice(idx*3, 0, ...newData.s);
+              }
+              window._animationRegistry.update(currentMesh, true);
+            }
+          );
+        }
+      } else if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
+        // Shape AutoKey
+        if (!window._animationRegistry.tracks.has(meshId)) {
+          window._animationRegistry.tracks.set(meshId, {
+            times: [], positions: [], quaternions: [], scales: [],
+            shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+          });
+        }
+        const track = window._animationRegistry.tracks.get(meshId);
+        
+        const v = currentMesh.getVertices();
+        const copy = new Float32Array(v);
+        
+        let keyIdx = -1;
+        if (track.shapeTimes) {
+          for (let i = 0; i < track.shapeTimes.length; i++) {
+            if (Math.abs(track.shapeTimes[i] - targetTime) < 0.005) {
+              keyIdx = i;
+              break;
+            }
+          }
+        }
+        
+        const wasUpdate = keyIdx >= 0;
+        let oldData = null;
+        if (wasUpdate) {
+          oldData = track.shapes[keyIdx];
+        }
+        
+        window._animationRegistry.addShapeKey(currentMesh, targetTime);
+        
+        if (this._stateManager) {
+          this._stateManager.pushStateCustom(
+            () => { // UNDO
+              const tr = window._animationRegistry.tracks.get(meshId);
+              if (!tr) return;
+              if (wasUpdate) {
+                let idx = 0;
+                while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < targetTime) idx++;
+                if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - targetTime) < 0.005) {
+                  tr.shapes[idx] = oldData;
+                }
+              } else {
+                window._animationRegistry.deleteShapeKey(currentMesh, targetTime);
+              }
+            },
+            () => { // REDO
+              const tr = window._animationRegistry.tracks.get(meshId);
+              if (!tr) return;
+              let idx = 0;
+              while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < targetTime) idx++;
+              
+              if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - targetTime) < 0.005) {
+                tr.shapes[idx] = copy;
+              } else {
+                tr.shapeTimes.splice(idx, 0, targetTime);
+                tr.shapes.splice(idx, 0, copy);
+              }
+            }
+          );
+        }
+      }
+    }
 
     if (this._action === Enums.Action.MASK_EDIT && this._mesh) {
 

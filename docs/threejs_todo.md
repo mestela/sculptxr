@@ -7,8 +7,9 @@
 ---
 
 ## 1. Todo
-
-* [ ] **Animation**: transform box should allow scaling into negative to reverse key order.
+* [ ] **Animation**: on desktop, undo isn't working properly
+* [x] **Animation**: on desktop, can't paste multiple keys
+* [ ] **Animation**: calculator for duration is seconds, it should be frames
 * [ ] **Hair/Fur**: 
 * [ ] **Low Poly**: Snapping for retopo. Best approach here? Hmm. Snap from one object to another? More work on the slide tool maybe?
 * [ ] **Desktop**: hmd+desktop hybrid
@@ -27,6 +28,10 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: transform box should allow scaling into negative to reverse key order.
+* [x] **Animation**: on desktop, the key mode should have a default selection. probably transform.
+* [x] **Animation**: on desktop, autokey doesn't work
+* [x] **Animation**: autokey should work for shape on both desktop and vr
 * [x] **Animation**: on desktop
 * [x] **Extrude**: secondary trigger to multiselect/paint select faces, then extrude with primary trigger?
 * [x] **Desktop**: low poly tools

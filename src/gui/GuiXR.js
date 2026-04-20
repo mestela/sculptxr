@@ -1050,7 +1050,8 @@ export default class GuiXR {
       }
     }
 
-    if (!this._cursor.active) return;
+    const hasActiveInteraction = this._activeSlider || this._activeColorPicker || this._activeTimeline;
+    if (!this._cursor.active && !hasActiveInteraction) return;
 
     const cx = this._cursor.x;
     const cy = this._cursor.y;
@@ -1153,10 +1154,18 @@ export default class GuiXR {
           }
         }
 
-        if (this._animSelectedKeysInitialTimes && window._animationRegistry) {
+        if (window._animTransformBoxInitialTimes && window._animationRegistry) {
+          const reg = window._animationRegistry;
+          // Capture times before sorting
+          const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
+            const track = reg.tracks.get(key.meshId);
+            const times = key.type === 'transform' ? track.times : track.shapeTimes;
+            return { ...key, time: times ? times[key.index] : 0 };
+          }) : [];
+
           // Phase 2: Command Pattern Undo for timeline dragging
           const commands = [];
-          this._animSelectedKeysInitialTimes.forEach(initKey => {
+          window._animTransformBoxInitialTimes.forEach(initKey => {
             const track = window._animationRegistry.tracks.get(initKey.meshId);
             if (!track) return;
             
@@ -1173,37 +1182,74 @@ export default class GuiXR {
                 type: initKey.type,
                 index: initKey.index,
                 oldTime: initKey.time,
-                newTime: curTime
+                newTime: curTime,
+                oldPos: track.positions ? track.positions.slice(initKey.index * 3, initKey.index * 3 + 3) : null,
+                oldQuat: track.quaternions ? track.quaternions.slice(initKey.index * 4, initKey.index * 4 + 4) : null,
+                oldScale: track.scales ? track.scales.slice(initKey.index * 3, initKey.index * 3 + 3) : null
               });
             }
           });
-
           if (commands.length > 0 && this._main && this._main.getStateManager) {
             this._main.getStateManager().pushStateCustom(
               () => { // UNDO
                 commands.forEach(cmd => {
                   const tr = window._animationRegistry.tracks.get(cmd.meshId);
                   if (!tr) return;
-                  if (cmd.type === 'transform' && tr.times) {
-                    tr.times[cmd.index] = cmd.oldTime;
-                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
-                    tr.shapeTimes[cmd.index] = cmd.oldTime;
+                  const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                  if (!times) return;
+                  
+                  let idx = -1;
+                  for (let i = 0; i < times.length; i++) {
+                    if (Math.abs(times[i] - cmd.newTime) < 0.005) {
+                      idx = i;
+                      break;
+                    }
                   }
-                  window._animationRegistry.sortTrack(tr);
+                  if (idx !== -1) {
+                    times[idx] = cmd.oldTime;
+                    if (cmd.type === 'transform' && tr.positions && cmd.oldPos) {
+                      tr.positions.splice(idx * 3, 3, ...cmd.oldPos);
+                      tr.quaternions.splice(idx * 4, 4, ...cmd.oldQuat);
+                      tr.scales.splice(idx * 3, 3, ...cmd.oldScale);
+                    }
+                  }
                 });
+                const affectedTrackIds = new Set(commands.map(c => c.meshId));
+                affectedTrackIds.forEach(id => {
+                  const tr = window._animationRegistry.tracks.get(id);
+                  if (tr) window._animationRegistry.sortTrack(tr);
+                });
+                if (this._main && this._main._meshes) {
+                  this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+                }
                 if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
               },
               () => { // REDO
                 commands.forEach(cmd => {
                   const tr = window._animationRegistry.tracks.get(cmd.meshId);
                   if (!tr) return;
-                  if (cmd.type === 'transform' && tr.times) {
-                    tr.times[cmd.index] = cmd.newTime;
-                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
-                    tr.shapeTimes[cmd.index] = cmd.newTime;
+                  const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                  if (!times) return;
+                  
+                  let idx = -1;
+                  for (let i = 0; i < times.length; i++) {
+                    if (Math.abs(times[i] - cmd.oldTime) < 0.005) {
+                      idx = i;
+                      break;
+                    }
                   }
-                  window._animationRegistry.sortTrack(tr);
+                  if (idx !== -1) {
+                    times[idx] = cmd.newTime;
+                  }
                 });
+                const affectedTrackIds = new Set(commands.map(c => c.meshId));
+                affectedTrackIds.forEach(id => {
+                  const tr = window._animationRegistry.tracks.get(id);
+                  if (tr) window._animationRegistry.sortTrack(tr);
+                });
+                if (this._main && this._main._meshes) {
+                  this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+                }
                 if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
               }
             );
@@ -1214,7 +1260,26 @@ export default class GuiXR {
             window._animationRegistry.sortTrack(track);
           });
           
-          this._animSelectedKeysInitialTimes = null;
+          // Update indices based on times
+          if (window._animSelectedKeys) {
+            window._animSelectedKeys = selectedKeysWithTimes.map(key => {
+              const track = reg.tracks.get(key.meshId);
+              if (!track) return key;
+              const times = key.type === 'transform' ? track.times : track.shapeTimes;
+              if (!times) return key;
+              
+              let newIdx = -1;
+              for (let i = 0; i < times.length; i++) {
+                if (Math.abs(times[i] - key.time) < 0.005) {
+                  newIdx = i;
+                  break;
+                }
+              }
+              return { ...key, index: newIdx };
+            }).filter(k => k.index !== -1);
+          }
+
+          window._animTransformBoxInitialTimes = null;
         }
 
         this._marqueeStart = null;
@@ -1225,70 +1290,17 @@ export default class GuiXR {
         this._activeTangentTrack = null;
         this._activeTangentIndex = undefined;
         this._transformBoxDrawing = false;
+        // Normalize transform box if scaled negative
+        const tBox = window._animTransformBox;
+        if (tBox && tBox.startTime > tBox.endTime) {
+          const tmp = tBox.startTime;
+          tBox.startTime = tBox.endTime;
+          tBox.endTime = tmp;
+        }
         this._activeTransformHandle = null;
         this._animTransformInitialBox = null;
 
-        if (this._animTransformBoxInitialTimes && window._animationRegistry) {
-          const commands = [];
-          this._animTransformBoxInitialTimes.forEach(initKey => {
-            const track = window._animationRegistry.tracks.get(initKey.meshId);
-            if (!track) return;
-            
-            let curTime = undefined;
-            if (initKey.type === 'transform' && track.times) {
-              curTime = track.times[initKey.index];
-            } else if (initKey.type === 'shape' && track.shapeTimes) {
-              curTime = track.shapeTimes[initKey.index];
-            }
-            
-            if (curTime !== undefined && Math.abs(curTime - initKey.time) > 0.001) {
-              commands.push({
-                meshId: initKey.meshId,
-                type: initKey.type,
-                index: initKey.index,
-                oldTime: initKey.time,
-                newTime: curTime
-              });
-            }
-          });
-
-          if (commands.length > 0 && this._main && this._main.getStateManager) {
-            this._main.getStateManager().pushStateCustom(
-              () => { // UNDO
-                commands.forEach(cmd => {
-                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
-                  if (!tr) return;
-                  if (cmd.type === 'transform' && tr.times) {
-                    tr.times[cmd.index] = cmd.oldTime;
-                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
-                    tr.shapeTimes[cmd.index] = cmd.oldTime;
-                  }
-                  window._animationRegistry.sortTrack(tr);
-                });
-                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
-              },
-              () => { // REDO
-                commands.forEach(cmd => {
-                  const tr = window._animationRegistry.tracks.get(cmd.meshId);
-                  if (!tr) return;
-                  if (cmd.type === 'transform' && tr.times) {
-                    tr.times[cmd.index] = cmd.newTime;
-                  } else if (cmd.type === 'shape' && tr.shapeTimes) {
-                    tr.shapeTimes[cmd.index] = cmd.newTime;
-                  }
-                  window._animationRegistry.sortTrack(tr);
-                });
-                if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
-              }
-            );
-          }
-
-          window._animationRegistry.tracks.forEach((track, meshId) => {
-            window._animationRegistry.sortTrack(track);
-          });
-        }
-
-        this._animTransformBoxInitialTimes = null;
+        window._animTransformBoxInitialTimes = null;
       }
       return;
     }
@@ -1424,7 +1436,7 @@ export default class GuiXR {
           if (this._activeTransformHandle === 'left') {
             const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
             const dt = ((rxCurrent - rxStart) / (targetWid.w - 220)) * vDur;
-            const newStartTime = Math.max(0, Math.min(initBox.endTime - 0.01, initBox.startTime + dt));
+            const newStartTime = Math.max(0, Math.min(masterLen, initBox.startTime + dt));
             tBox.startTime = newStartTime;
             
             if (this._animTransformBoxInitialTimes && window._animationRegistry) {
@@ -1437,8 +1449,13 @@ export default class GuiXR {
           } else if (this._activeTransformHandle === 'right') {
             const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
             const dt = ((rxCurrent - rxStart) / (targetWid.w - 220)) * vDur;
-            const newEndTime = Math.max(initBox.startTime + 0.01, Math.min(masterLen, initBox.endTime + dt));
+            const newEndTime = initBox.endTime + dt;
             tBox.endTime = newEndTime;
+            
+            if (newEndTime > masterLen) {
+              window._animMasterDuration = newEndTime;
+              window._animLoopEnd = newEndTime;
+            }
 
             if (this._animTransformBoxInitialTimes && window._animationRegistry) {
               const baseDur = initBox.endTime - initBox.startTime;
@@ -1473,7 +1490,7 @@ export default class GuiXR {
             const initMid = (initBox.startTime + initBox.endTime) / 2;
             const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
             const dx = rxCurrent - rxStart;
-            const scaleFactor = Math.max(0.01, 1.0 + dx / 150.0);
+            const scaleFactor = 1.0 + dx / 150.0;
 
             tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
             tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
@@ -1982,7 +1999,7 @@ export default class GuiXR {
               this._transformStartRx = rx;
               this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
               if (window._animSelectedKeys) {
-                this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
               }
               this._needsRedraw = true;
               return;
@@ -1991,7 +2008,7 @@ export default class GuiXR {
               this._transformStartRx = rx;
               this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
               if (window._animSelectedKeys) {
-                this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
               }
               this._needsRedraw = true;
               return;
@@ -2004,7 +2021,7 @@ export default class GuiXR {
                 this._transformStartRx = rx;
                 this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
                 if (window._animSelectedKeys) {
-                  this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                  window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
                 }
                 this._needsRedraw = true;
                 return;
@@ -2124,7 +2141,7 @@ export default class GuiXR {
                       window._animSelectedKeys = [{ meshId, type: 'shape', index: i, time: kTime }];
                       window._animTransformBox = null;
                     }
-                    this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                    window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
                     keyFound = true;
                     break;
                   }
@@ -2152,7 +2169,7 @@ export default class GuiXR {
                         window._animSelectedKeys = [{ meshId, type: 'transform', index: i, time: kTime }];
                         window._animTransformBox = null;
                       }
-                      this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                      window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
                       keyFound = true;
                       break;
                     }
@@ -2162,7 +2179,7 @@ export default class GuiXR {
 
             if (!keyFound && (window._animActiveTool || 'select') === 'select' && isRisingEdge) {
               window._animSelectedKeys = [];
-              this._animSelectedKeysInitialTimes = null;
+              window._animTransformBoxInitialTimes = null;
             }
           }
         }

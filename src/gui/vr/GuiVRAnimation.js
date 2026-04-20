@@ -1,4 +1,5 @@
 // Dummy comment to test Vite error line
+let isConfirmingClearAnim = false;
 export default function getAnimationWidgets(main, Enums) {
   const widgets = [];
 
@@ -124,18 +125,45 @@ export default function getAnimationWidgets(main, Enums) {
   y += 50 + gapBtn;
 
   // 3. Clear All
-  widgets.push({
-    type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
-    x: col1X, y: y, w: 710, h: 36,
-    onInteract: () => {
-      if (!window._animationRegistry) return;
-      window._animationRegistry.stopRecording(true);
-      window._animationRegistry.tracks.clear();
-      window._animCurrentTime = 0;
-      window._animationRegistry.globalPlaybackTime = 0;
-    }
-  });
-  y += 36 + gapBtn;
+  if (!isConfirmingClearAnim) {
+    widgets.push({
+      type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
+      x: col1X, y: y, w: 710, h: 36,
+      onInteract: () => {
+        isConfirmingClearAnim = true;
+        if (main._guiXR) main._guiXR.refreshToolsWidget();
+      }
+    });
+    y += 36 + gapBtn;
+  } else {
+    widgets.push({
+      type: 'info', id: 'anim_clear_info', label: 'Clear All Animation? (No Undo)', x: col1X, y: y, w: 710, h: 36, color: '#ff4444'
+    });
+    y += 36 + gapBtn;
+
+    const halfW = (710 - gapBtn) / 2;
+    widgets.push({
+      type: 'button', id: 'anim_clear_ok', label: 'OK', x: col1X, y: y, w: halfW, h: 36,
+      onInteract: () => {
+        isConfirmingClearAnim = false;
+        if (!window._animationRegistry) return;
+        window._animationRegistry.stopRecording(true);
+        window._animationRegistry.tracks.clear();
+        window._animCurrentTime = 0;
+        window._animationRegistry.globalPlaybackTime = 0;
+        if (main._guiXR) main._guiXR.refreshToolsWidget();
+      }
+    });
+
+    widgets.push({
+      type: 'button', id: 'anim_clear_cancel', label: 'Cancel', x: col1X + halfW + gapBtn, y: y, w: halfW, h: 36,
+      onInteract: () => {
+        isConfirmingClearAnim = false;
+        if (main._guiXR) main._guiXR.refreshToolsWidget();
+      }
+    });
+    y += 36 + gapBtn;
+  }
 
   // 3. Standard 8-Button Transport Bar
   const tW = 710 / 8;

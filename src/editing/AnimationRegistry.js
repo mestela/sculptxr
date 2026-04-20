@@ -724,6 +724,35 @@ class AnimationRegistry {
   deleteSelectedKeys(selectedKeys) {
     if (!selectedKeys || selectedKeys.length === 0) return;
     
+    const commands = [];
+    
+    // Capture data before deletion
+    selectedKeys.forEach(key => {
+      const track = this.tracks.get(key.meshId);
+      if (!track) return;
+      
+      if (key.type === 'transform' && track.times && track.times[key.index] !== undefined) {
+        const idx = key.index;
+        commands.push({
+          meshId: key.meshId,
+          type: 'transform',
+          time: track.times[idx],
+          pos: track.positions.slice(idx * 3, idx * 3 + 3),
+          quat: track.quaternions.slice(idx * 4, idx * 4 + 4),
+          scale: track.scales.slice(idx * 3, idx * 3 + 3)
+        });
+      } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
+        const idx = key.index;
+        commands.push({
+          meshId: key.meshId,
+          type: 'shape',
+          time: track.shapeTimes[idx],
+          shape: new Float32Array(track.shapes[idx])
+        });
+      }
+    });
+
+    // Proceed with deletion
     const groups = new Map();
     selectedKeys.forEach(key => {
       const groupKey = `${key.meshId}_${key.type}`;
@@ -754,6 +783,68 @@ class AnimationRegistry {
     
     window._animSelectedKeys = [];
     window._animTransformBox = null;
+
+    // Push to StateManager
+    if (window.app && window.app.getStateManager() && commands.length > 0) {
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          console.log("[Undo] Restore Deleted Keys (" + commands.length + " keys)");
+          commands.forEach(cmd => {
+            const tr = this.tracks.get(cmd.meshId);
+            if (!tr) return;
+            
+            if (cmd.type === 'transform') {
+              tr.times.push(cmd.time);
+              tr.positions.push(...cmd.pos);
+              tr.quaternions.push(...cmd.quat);
+              tr.scales.push(...cmd.scale);
+            } else if (cmd.type === 'shape') {
+              tr.shapeTimes.push(cmd.time);
+              tr.shapes.push(cmd.shape);
+            }
+          });
+          
+          const affectedTrackIds = new Set(commands.map(c => c.meshId));
+          affectedTrackIds.forEach(id => {
+            const tr = this.tracks.get(id);
+            if (tr) this.sortTrack(tr);
+          });
+          
+          if (window.app.render) window.app.render();
+        },
+        () => { // REDO
+          console.log("[Redo] Delete Keys (" + commands.length + " keys)");
+          commands.forEach(cmd => {
+            const tr = this.tracks.get(cmd.meshId);
+            if (!tr) return;
+            
+            const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+            if (!times) return;
+            
+            let idx = -1;
+            for (let i = 0; i < times.length; i++) {
+              if (Math.abs(times[i] - cmd.time) < 0.005) {
+                idx = i;
+                break;
+              }
+            }
+            if (idx !== -1) {
+              if (cmd.type === 'transform') {
+                tr.times.splice(idx, 1);
+                tr.positions.splice(idx * 3, 3);
+                tr.quaternions.splice(idx * 4, 4);
+                tr.scales.splice(idx * 3, 3);
+              } else if (cmd.type === 'shape') {
+                tr.shapeTimes.splice(idx, 1);
+                tr.shapes.splice(idx, 1);
+              }
+            }
+          });
+          
+          if (window.app.render) window.app.render();
+        }
+      );
+    }
   }
 
   getKeysInTimeRange(tMin, tMax, laneMin, laneMax) {

@@ -4427,7 +4427,7 @@ class Scene {
         // AutoKey Feature
         if (window._animAutoKey && window._animationRegistry && currentMesh) {
           const sm = this._sculptManager;
-          const isMove = sm && (sm._toolIndex === Enums.Tools.MOVE || sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB);
+          const isMove = sm && (sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB);
 
           if (isMove) {
             const meshId = currentMesh.getID();
@@ -4438,7 +4438,10 @@ class Scene {
               });
             }
             const track = window._animationRegistry.tracks.get(meshId);
-            const targetTime = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
+            const fps = window._animFPS || 24;
+            const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
+            window._animCurrentTime = targetTime;
+            window._animationRegistry.globalPlaybackTime = targetTime;
 
             // If this is a new track or empty, and we are not at frame 0,
             // automatically add a key at frame 0 with the OLD position (before the move).
@@ -4536,6 +4539,75 @@ class Scene {
                     tr.scales.splice(idx*3, 0, ...newData.s);
                   }
                   window._animationRegistry.update(currentMesh, true);
+                  if (this._guiXR) this._guiXR._needsRedraw = true;
+                }
+              );
+            }
+          } else if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
+            const fps = window._animFPS || 24;
+            const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
+            window._animCurrentTime = targetTime;
+            window._animationRegistry.globalPlaybackTime = targetTime;
+            const meshId = currentMesh.getID();
+            
+            if (!window._animationRegistry.tracks.has(meshId)) {
+              window._animationRegistry.tracks.set(meshId, {
+                times: [], positions: [], quaternions: [], scales: [],
+                shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+              });
+            }
+            const track = window._animationRegistry.tracks.get(meshId);
+            
+            const v = currentMesh.getVertices();
+            const copy = new Float32Array(v);
+            
+            let keyIdx = -1;
+            if (track.shapeTimes) {
+              for (let i = 0; i < track.shapeTimes.length; i++) {
+                if (Math.abs(track.shapeTimes[i] - targetTime) < 0.005) {
+                  keyIdx = i;
+                  break;
+                }
+              }
+            }
+            
+            const wasUpdate = keyIdx >= 0;
+            let oldData = null;
+            if (wasUpdate) {
+              oldData = track.shapes[keyIdx];
+            }
+            
+            window._animationRegistry.addShapeKey(currentMesh, targetTime);
+            if (this._guiXR) this._guiXR._needsRedraw = true;
+            
+            if (this.getStateManager) {
+              this.getStateManager().pushStateCustom(
+                () => { // UNDO
+                  const tr = window._animationRegistry.tracks.get(meshId);
+                  if (!tr) return;
+                  if (wasUpdate) {
+                    let idx = 0;
+                    while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < targetTime) idx++;
+                    if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - targetTime) < 0.005) {
+                      tr.shapes[idx] = oldData;
+                    }
+                  } else {
+                    window._animationRegistry.deleteShapeKey(currentMesh, targetTime);
+                  }
+                  if (this._guiXR) this._guiXR._needsRedraw = true;
+                },
+                () => { // REDO
+                  const tr = window._animationRegistry.tracks.get(meshId);
+                  if (!tr) return;
+                  let idx = 0;
+                  while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < targetTime) idx++;
+                  
+                  if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - targetTime) < 0.005) {
+                    tr.shapes[idx] = copy;
+                  } else {
+                    tr.shapeTimes.splice(idx, 0, targetTime);
+                    tr.shapes.splice(idx, 0, copy);
+                  }
                   if (this._guiXR) this._guiXR._needsRedraw = true;
                 }
               );

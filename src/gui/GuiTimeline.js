@@ -366,7 +366,7 @@ export default class GuiTimeline {
         const baseDur = initBox.endTime - initBox.startTime;
         
         if (this._activeTransformHandle === 'left') {
-          const newStartTime = Math.max(0, Math.min(initBox.endTime - 0.01, initBox.startTime + dt));
+          const newStartTime = Math.max(0, Math.min(mDurVal, initBox.startTime + dt));
           tBox.startTime = newStartTime;
           const newDur = initBox.endTime - newStartTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
@@ -375,8 +375,14 @@ export default class GuiTimeline {
             window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.endTime, scaleFactor, mDurVal);
           }
         } else if (this._activeTransformHandle === 'right') {
-          const newEndTime = Math.max(initBox.startTime + 0.01, Math.min(mDurVal, initBox.endTime + dt));
+          const newEndTime = initBox.endTime + dt;
           tBox.endTime = newEndTime;
+          
+          if (newEndTime > mDurVal) {
+            window._animMasterDuration = newEndTime;
+            window._animLoopEnd = newEndTime;
+          }
+          
           const newDur = newEndTime - initBox.startTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
           
@@ -385,7 +391,7 @@ export default class GuiTimeline {
           }
         } else if (this._activeTransformHandle === 'scale_center') {
           const initMid = (initBox.startTime + initBox.endTime) / 2;
-          const scaleFactor = Math.max(0.01, 1.0 + dx / 150.0);
+          const scaleFactor = 1.0 + dx / 150.0;
           
           tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
           tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
@@ -417,9 +423,33 @@ export default class GuiTimeline {
     } else if (this._isDraggingKeyframe) {
       const reg = window._animationRegistry;
       if (reg) {
+        const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
+          const track = reg.tracks.get(key.meshId);
+          const times = key.type === 'transform' ? track.times : track.shapeTimes;
+          return { ...key, time: times ? times[key.index] : 0 };
+        }) : [];
+
         reg.tracks.forEach((track, meshId) => {
           reg.sortTrack(track);
         });
+
+        if (window._animSelectedKeys) {
+          window._animSelectedKeys = selectedKeysWithTimes.map(key => {
+            const track = reg.tracks.get(key.meshId);
+            if (!track) return key;
+            const times = key.type === 'transform' ? track.times : track.shapeTimes;
+            if (!times) return key;
+            
+            let newIdx = -1;
+            for (let i = 0; i < times.length; i++) {
+              if (Math.abs(times[i] - key.time) < 0.005) {
+                newIdx = i;
+                break;
+              }
+            }
+            return { ...key, index: newIdx };
+          }).filter(k => k.index !== -1);
+        }
       }
       this._isDraggingKeyframe = false;
       this._activeKeyframeTrack = null;
@@ -429,9 +459,138 @@ export default class GuiTimeline {
     } else if (this._activeTransformHandle) {
       const reg = window._animationRegistry;
       if (reg) {
+        // 1. Capture times for index update later
+        const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
+          const track = reg.tracks.get(key.meshId);
+          const times = key.type === 'transform' ? track.times : track.shapeTimes;
+          return { ...key, time: times ? times[key.index] : 0 };
+        }) : [];
+
+        // 2. Calculate commands for undo/redo
+        const commands = [];
+        if (this._animTransformBoxInitialTimes) {
+          this._animTransformBoxInitialTimes.forEach(initKey => {
+            const track = reg.tracks.get(initKey.meshId);
+            if (!track) return;
+            
+            let curTime = undefined;
+            if (initKey.type === 'transform' && track.times) {
+              curTime = track.times[initKey.index];
+            } else if (initKey.type === 'shape' && track.shapeTimes) {
+              curTime = track.shapeTimes[initKey.index];
+            }
+            
+            if (curTime !== undefined && Math.abs(curTime - initKey.time) > 0.001) {
+              commands.push({
+                meshId: initKey.meshId,
+                type: initKey.type,
+                oldTime: initKey.time,
+                newTime: curTime,
+                oldPos: track.positions ? track.positions.slice(initKey.index * 3, initKey.index * 3 + 3) : null,
+                oldQuat: track.quaternions ? track.quaternions.slice(initKey.index * 4, initKey.index * 4 + 4) : null,
+                oldScale: track.scales ? track.scales.slice(initKey.index * 3, initKey.index * 3 + 3) : null
+              });
+            }
+          });
+        }
+
+        // 3. Push custom state to StateManager
+        if (commands.length > 0 && this._main && this._main.getStateManager()) {
+          this._main.getStateManager().pushStateCustom(
+            () => { // UNDO
+              commands.forEach(cmd => {
+                const tr = reg.tracks.get(cmd.meshId);
+                if (!tr) return;
+                const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                if (!times) return;
+                
+                let idx = -1;
+                for (let i = 0; i < times.length; i++) {
+                  if (Math.abs(times[i] - cmd.newTime) < 0.005) {
+                    idx = i;
+                    break;
+                  }
+                }
+                if (idx !== -1) {
+                  times[idx] = cmd.oldTime;
+                  if (cmd.type === 'transform' && tr.positions && cmd.oldPos) {
+                    tr.positions.splice(idx * 3, 3, ...cmd.oldPos);
+                    tr.quaternions.splice(idx * 4, 4, ...cmd.oldQuat);
+                    tr.scales.splice(idx * 3, 3, ...cmd.oldScale);
+                  }
+                }
+              });
+              const affectedTrackIds = new Set(commands.map(c => c.meshId));
+              affectedTrackIds.forEach(id => {
+                const tr = reg.tracks.get(id);
+                if (tr) reg.sortTrack(tr);
+              });
+              if (this._main && this._main._meshes) {
+                this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+              }
+              this.draw();
+            },
+            () => { // REDO
+              commands.forEach(cmd => {
+                const tr = reg.tracks.get(cmd.meshId);
+                if (!tr) return;
+                const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                if (!times) return;
+                
+                let idx = -1;
+                for (let i = 0; i < times.length; i++) {
+                  if (Math.abs(times[i] - cmd.oldTime) < 0.005) {
+                    idx = i;
+                    break;
+                  }
+                }
+                if (idx !== -1) {
+                  times[idx] = cmd.newTime;
+                }
+              });
+              const affectedTrackIds = new Set(commands.map(c => c.meshId));
+              affectedTrackIds.forEach(id => {
+                const tr = reg.tracks.get(id);
+                if (tr) reg.sortTrack(tr);
+              });
+              if (this._main && this._main._meshes) {
+                this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+              }
+              this.draw();
+            }
+          );
+        }
+
+        // 4. Sort tracks
         reg.tracks.forEach((track, meshId) => {
           reg.sortTrack(track);
         });
+
+        // 5. Update indices after sorting
+        if (window._animSelectedKeys) {
+          window._animSelectedKeys = selectedKeysWithTimes.map(key => {
+            const track = reg.tracks.get(key.meshId);
+            if (!track) return key;
+            const times = key.type === 'transform' ? track.times : track.shapeTimes;
+            if (!times) return key;
+            
+            let newIdx = -1;
+            for (let i = 0; i < times.length; i++) {
+              if (Math.abs(times[i] - key.time) < 0.005) {
+                newIdx = i;
+                break;
+              }
+            }
+            return { ...key, index: newIdx };
+          }).filter(k => k.index !== -1);
+        }
+      }
+      // Normalize transform box if scaled negative
+      const tBox = window._animTransformBox;
+      if (tBox && tBox.startTime > tBox.endTime) {
+        const tmp = tBox.startTime;
+        tBox.startTime = tBox.endTime;
+        tBox.endTime = tmp;
       }
       this._activeTransformHandle = null;
       this._animTransformInitialBox = null;
@@ -615,11 +774,14 @@ export default class GuiTimeline {
             const t = singleSelected.type === 'transform' ? track.times[kIdx] : track.shapeTimes[kIdx];
             const frame = Math.round(t * fps);
             let px = 0, py = 0, pz = 0;
-            if (singleSelected.type === 'transform' && track.positions) {
+            if (singleSelected.type === 'transform' && track.positions && (kIdx * 3 + 2) < track.positions.length) {
               px = track.positions[kIdx * 3];
               py = track.positions[kIdx * 3 + 1];
               pz = track.positions[kIdx * 3 + 2];
             }
+            px = px || 0;
+            py = py || 0;
+            pz = pz || 0;
             ctx.fillStyle = '#ffcc00';
             ctx.font = '12px sans-serif';
             ctx.textAlign = 'center';

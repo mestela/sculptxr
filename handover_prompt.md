@@ -3,6 +3,8 @@
 ## Current State & Focus
 You are stepping into the **SculptXR** project, a WebXR-based sculpting and animation tool.
 
+MANDATORY: You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the overall project before responding. NO EXCEPTIONS.
+
 ### 🚀 Active Objective
 We just completed a pass on **Wireframe Rendering Controls on Desktop**, adding live sliders for opacity and bias, and fixing the z-fighting issue with a geometric bias approach.
 

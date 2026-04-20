@@ -17,9 +17,10 @@ class StateManager {
     this.limit = /OculusBrowser/.test(navigator.userAgent) ? 15 : 50;
   }
 
-  pushStateCustom(undocb, redocb, squash) {
+  pushStateCustom(undocb, redocb, squash, name) {
     var st = new StCustom(undocb, redocb);
     st.squash = squash;
+    st.name = name;
     this.pushState(st);
   }
 
@@ -108,6 +109,7 @@ class StateManager {
       return;
 
     var state = this.getCurrentState();
+    console.log("[Undo] Operation: " + (state.name || state.constructor.name));
     var redoState = state.createRedo();
     redoState.squash = state.squash;
     this._redos.push(redoState);
@@ -123,6 +125,7 @@ class StateManager {
       return;
 
     var state = this._redos[this._redos.length - 1];
+    console.log("[Redo] Operation: " + (state.name || state.constructor.name));
     state.redo();
     this._curUndoIndex++;
     this._redos.pop();

@@ -22,6 +22,8 @@ MANDATORY: You MUST read `docs/overview.md` and `docs/code_summaries.md` for con
 ## 🚀 Release Workflow
 **Goal:** Maintain a clean history and simple README while keeping full records.
 
+0. **Post mortem**:
+    - Inform the user about the level of context provided by this file, `docs/overview.md` and `docs/code_summaries.md`. Was it enough to complete the task effectively? Do they need more information? If so, what additional context is required? Please discuss with the user.
 1.  **Documentation**:
     -   **Add** new release notes to top of `docs/releases.md`.
     -   **Update** `README.md`: Keep only the **latest 3 releases**. Link to `docs/releases.md` for older history.
