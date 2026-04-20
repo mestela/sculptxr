@@ -550,8 +550,8 @@ export default class GuiXR {
       this._cursor.y = v * this._canvas.height;
       this._updateHover();
       
-      if (this._activeCombobox) {
-        this._needsRedraw = true; // Always redraw when combobox is open to update hover highlight!
+      if (this._activeCombobox || this._activeNumberpad) {
+        this._needsRedraw = true; // Always redraw when combobox or numberpad is open to update hover highlight!
       }
     }
     // Optimization: Don't set _needsRedraw = true unconditionally here.
@@ -5045,7 +5045,7 @@ export default class GuiXR {
 
   _openNumberpad(widget) {
     this._activeNumberpad = widget;
-    this._numberpadValue = widget.value !== undefined ? widget.value.toString() : '';
+    this._numberpadValue = widget.getDisplayValue ? widget.getDisplayValue(widget.value) : (widget.value !== undefined ? widget.value.toString() : '');
     this._needsRedraw = true;
     this.draw();
   }
@@ -5168,8 +5168,17 @@ export default class GuiXR {
       }
     }
 
-    ctx.fillStyle = isClearHovered ? '#555' : '#444';
+    ctx.fillStyle = '#444';
     ctx.fillRect(startX + padW - 60, startY + 10, 50, 50);
+    
+    if (isClearHovered) {
+      const INSET = 2;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(startX + padW - 60 + INSET, startY + 10 + INSET, 50 - INSET * 2, 50 - INSET * 2);
+      ctx.lineWidth = 1;
+    }
+
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.fillText('C', startX + padW - 35, startY + 45);
@@ -5223,8 +5232,16 @@ export default class GuiXR {
       }
 
       // Draw button background
-      ctx.fillStyle = isHovered ? '#555' : '#444';
+      ctx.fillStyle = '#444';
       ctx.fillRect(x, y, wBtn, hBtn);
+
+      if (isHovered) {
+        const INSET = 2;
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(x + INSET, y + INSET, wBtn - INSET * 2, hBtn - INSET * 2);
+        ctx.lineWidth = 1;
+      }
 
       // Draw text
       ctx.fillStyle = '#fff';
@@ -5283,8 +5300,11 @@ export default class GuiXR {
         if (btn === 'Del') {
           this._numberpadValue = this._numberpadValue.slice(0, -1);
         } else if (btn === 'Enter') {
-          const val = parseFloat(this._numberpadValue);
+          let val = parseFloat(this._numberpadValue);
           if (!isNaN(val) && this._activeNumberpad) {
+            if (this._activeNumberpad.fromDisplayValue) {
+              val = this._activeNumberpad.fromDisplayValue(val);
+            }
             this._activeNumberpad.value = val;
             if (this._activeNumberpad.onInput) this._activeNumberpad.onInput(val);
             if (this._activeNumberpad.onRelease) this._activeNumberpad.onRelease(val);

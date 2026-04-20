@@ -1,26 +1,28 @@
-# SculptXR Handover Prompt
+# Handover Prompt (Protocol Enforced)
 
-## Current State & Focus
-You are stepping into the **SculptXR** project, a WebXR-based sculpting and animation tool.
+**Project Status**: Working on Animation DAW improvements. Just completed a major pass on Desktop/VR parity, AutoKey fixes, Transform Box enhancements, and Undo reliability.
+**Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
+**Checkpoint**: v1.0.219 released and pushed to GitHub.
 
-MANDATORY: You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the overall project before responding. NO EXCEPTIONS.
+## MANDATORY reading
+You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the overall project before responding. NO EXCEPTIONS.
 
-### 🚀 Active Objective
-We just completed a pass on **Wireframe Rendering Controls on Desktop**, adding live sliders for opacity and bias, and fixing the z-fighting issue with a geometric bias approach.
+## Deployed Version
+- **Beta**: v1.0.219
+- **Prod**: v1.0.217 (or older)
 
-### 🛠 Recent Achievements
-- **Geometric Wireframe Bias (v1.0.216)**: Replaced the unreliable shader-based clip-space bias with a geometric vertex offset along normals, successfully preventing z-fighting on desktop.
-- **Wireframe Opacity Slider**: Added a live wireframe opacity slider to the desktop rendering menu and grouped all wireframe controls together.
-- **Desktop Defaults**: Set default wireframe opacity to 0.25 and bias to 0.001 for desktop interface.
-- **Undo-Deadlock Resolution (v1.0.215)**: Fixed an issue where `Ctrl+Z` (undo) caused the active tool to revert to Masking by updating `getSelectedTool()` to query `SculptManager` directly.
-- **Inset Tool Desktop Support**: Implemented a desktop-specific `sculptStroke()` in `Inset.js` to map vertical mouse drag to inset scale, resolving a runtime error.
-- **UI Parity**: Added a "Keep Together" checkbox to the desktop Low Poly UI to match VR behavior for symmetry plane management.
-- **Tool Cleanup**: Hidden non-functional or redundant tools (**Split Edge**, **Edge Create**, and **Snap and Weld to Center**) from both Desktop and VR UIs to reduce clutter and confusion.
+## Interactive Debugging
+- **Preference**: Use browser console for immediate state inspection.
+- **Workflow**: Provide copy-pasteable snippets.
 
-### 🔍 Next Steps
-no agenda
+## Recent Achievements (v1.0.219)
+- **Motion Record Undo**: Recording a motion is now fully undoable. The system captures the track state and mesh matrix before recording and restores them on Undo.
+- **Multi-Key Copy/Paste on Desktop**: Ported the VR multi-key copy/paste logic to desktop, allowing batch operations on selected keys.
+- **Transform Box Expansion**: Allowed the right handle of the transform box to expand the timeline duration and loop end automatically when pulled past the current limit, in both Desktop and VR.
+- **Single Key Delete Undo**: Refactored single key deletion to use the batch deletion logic, making it fully undoable.
+- **VR Undo Reliability**: Fixed a variable name mismatch and allowed processing release events even if the cursor is inactive, making Undo much more reliable in VR.
+- **Named Undo Operations**: Added an optional name parameter to `pushStateCustom` to provide specific descriptions in the console for custom operations.
 
-## Context
-- **Framework**: Custom framework (historically SculptGL) migrating to Three.js.
-- **UI**: Category-based dropdowns on desktop; custom 3D UI (GuiXR) in VR.
-- **Low Poly Workflow**: Destructive geometry operations (Extrude, Inset, Cut) supporting ngons (triangles/quads).
+## Next Steps
+- **Graph Editor**: The user mentioned looking into a graph editor if things get unstable again, to better see what the data is doing under the hood.
+- **Address remaining TODOs**: Check `docs/threejs_todo.md` for remaining tasks.

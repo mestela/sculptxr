@@ -7,19 +7,19 @@
 ---
 
 ## 1. Todo
-* [ ] **Animation**: on desktop, undo isn't working properly
-* [x] **Animation**: on desktop, can't paste multiple keys
 * [ ] **Animation**: calculator for duration is seconds, it should be frames
-* [ ] **Hair/Fur**: 
-* [ ] **Low Poly**: Snapping for retopo. Best approach here? Hmm. Snap from one object to another? More work on the slide tool maybe?
-* [ ] **Desktop**: hmd+desktop hybrid
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
-* [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
-* [ ] **Animation**: per key interp type... or just one and use beziers to control? needs hold keys tho, not easy with beziers
 * [ ] **Animation**: graph editor
-* [ ] **Animation**: recording sculpting, move, like we record transforms
+
+* [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
+* [ ] **Animation**: per key interp type; hold, bezier, linear
 * [ ] **Animation**: per frame sculpting, shape replacement based
 * [ ] **Animation**: blendshapes
+
+* [ ] **Low Poly**: Snapping for retopo. Snap from one object to another? More work on the slide tool maybe?
+* [ ] **Desktop**: hmd+desktop hybrid
+* [ ] **Hair/Fur**: Examples: https://github.com/FeliDipi/Grass or https://piellardj.github.io/fur-threejs/ 
+
 * [ ] **AVP support**: fingers and stylus
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
 * [ ] **Floating VR Keyboard**: there is a builtin one (use three-mesh-ui?)
@@ -28,6 +28,9 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: recording sculpting, move, like we record transforms
+* [x] **Animation**: on desktop, undo isn't working properly
+* [x] **Animation**: on desktop, can't paste multiple keys
 * [x] **Animation**: transform box should allow scaling into negative to reverse key order.
 * [x] **Animation**: on desktop, the key mode should have a default selection. probably transform.
 * [x] **Animation**: on desktop, autokey doesn't work

@@ -1,20 +1,25 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Rebuilt Inset tool from scratch with robust un-welded Keep Together topology, per-face target midpoint averaging for smooth coplanar scaling without sinking, and a precision start-click aim sphere helper.
+**Project Status**: Working on Animation DAW improvements. Just completed a major pass on Desktop/VR parity, AutoKey fixes, Transform Box enhancements, and Undo reliability.
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.143
+**Checkpoint**: v1.0.219 released and pushed to GitHub.
 
 ## Deployed Version
-- **Beta**: N/A (Deployment disabled in rules)
-- **Prod**: N/A (Deployment disabled in rules)
+- **Beta**: v1.0.219
+- **Prod**: v1.0.217 (or older)
 
 ## Interactive Debugging
 - **Preference**: Use browser console for immediate state inspection.
 - **Workflow**: Provide copy-pasteable snippets.
 
-## Accomplishments & Current Situation
-1. **Complete Rewrite of Inset Tool**: Implemented independent vertex duplication when Keep Together is disabled, and combined midpoint face averaging when Keep Together is enabled to maintain coplanarity over spherical/curved surfaces.
-2. **Precision Targeting Indicator**: Added a yellow 0.2m glowing sphere positioned perfectly on the mesh intersection point using `activeMesh.getMatrix()` to guide users on their initial click location.
+## Recent Achievements (v1.0.219)
+- **Motion Record Undo**: Recording a motion is now fully undoable. The system captures the track state and mesh matrix before recording and restores them on Undo.
+- **Multi-Key Copy/Paste on Desktop**: Ported the VR multi-key copy/paste logic to desktop, allowing batch operations on selected keys.
+- **Transform Box Expansion**: Allowed the right handle of the transform box to expand the timeline duration and loop end automatically when pulled past the current limit, in both Desktop and VR.
+- **Single Key Delete Undo**: Refactored single key deletion to use the batch deletion logic, making it fully undoable.
+- **VR Undo Reliability**: Fixed a variable name mismatch and allowed processing release events even if the cursor is inactive, making Undo much more reliable in VR.
+- **Named Undo Operations**: Added an optional name parameter to `pushStateCustom` to provide specific descriptions in the console for custom operations.
 
-## Next Steps / Backlog
-1. **Symmetry Validation**: Validate any specific behavior for inset tools across complex models or mirroring seams if desired.
+## Next Steps
+- **Graph Editor**: The user mentioned looking into a graph editor if things get unstable again, to better see what the data is doing under the hood.
+- **Address remaining TODOs**: Check `docs/threejs_todo.md` for remaining tasks.

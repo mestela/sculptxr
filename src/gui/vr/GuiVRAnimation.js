@@ -1078,10 +1078,12 @@ export default function getAnimationWidgets(main, Enums) {
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
     getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
+    fromDisplayValue: (val) => val / (window._animFPS || 24),
     onInput: (val) => {
       window._animMasterDuration = val;
-      if (window._animLoopEnd && window._animLoopEnd > val) {
-        window._animLoopEnd = val;
+      window._animLoopEnd = val;
+      if (window._animLoopStart !== undefined && window._animLoopStart >= val) {
+        window._animLoopStart = Math.max(0, val - 0.1);
       }
     }
   });
@@ -1094,6 +1096,7 @@ export default function getAnimationWidgets(main, Enums) {
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
     getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
+    fromDisplayValue: (val) => val / (window._animFPS || 24),
     onInput: (val) => {
       window._animLoopStart = val;
       if (window._animLoopEnd !== undefined && window._animLoopStart >= window._animLoopEnd) {
@@ -1115,6 +1118,7 @@ export default function getAnimationWidgets(main, Enums) {
     sensitivity: 0.5,
     data: { tint: '#ffffff' },
     getDisplayValue: (val) => `${Math.round(val * (window._animFPS || 24))}`,
+    fromDisplayValue: (val) => val / (window._animFPS || 24),
     onInput: (val) => {
       window._animLoopEnd = val;
       if (window._animLoopStart !== undefined && window._animLoopEnd <= window._animLoopStart) {
