@@ -967,6 +967,17 @@ class AnimationRegistry {
     });
   }
 
+  moveSelectedKeysValue(selectedKeys, dVal) {
+    selectedKeys.forEach(key => {
+      const track = this.tracks.get(key.meshId);
+      if (!track) return;
+      
+      if (key.type === 'transform' && track.positions && key.index !== undefined && key.channel !== undefined) {
+        track.positions[key.index * 3 + key.channel] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
+      }
+    });
+  }
+
   scaleSelectedKeys(selectedKeys, pivotTime, scaleFactor, masterDuration) {
     selectedKeys.forEach(initKey => {
       const track = this.tracks.get(initKey.meshId);
@@ -1113,14 +1124,37 @@ class AnimationRegistry {
       alpha = (track.playbackTime - t1) / (t2 - t1);
     }
 
-    const pIdx1 = frameIdx * 3, pIdx2 = (frameIdx + 1) * 3;
-    const px = track.positions[pIdx1] + (track.positions[pIdx2] - track.positions[pIdx1]) * alpha;
-    const py = track.positions[pIdx1 + 1] + (track.positions[pIdx2 + 1] - track.positions[pIdx1 + 1]) * alpha;
-    const pz = track.positions[pIdx1 + 2] + (track.positions[pIdx2 + 2] - track.positions[pIdx1 + 2]) * alpha;
+    let blend = alpha;
+    if (window._animShowTangents && track.times.length > 1) {
+      let m0 = 1.0;
+      let m1 = 1.0;
 
-    const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * alpha;
-    const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * alpha;
-    const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * alpha;
+      if (track.tangentOffsets) {
+        const rightVal = track.tangentOffsets[`trans_${frameIdx}_right`];
+        const leftVal = track.tangentOffsets[`trans_${frameIdx + 1}_left`];
+        
+        const rightHandle = rightVal !== undefined ? rightVal : 25;
+        const leftHandle = leftVal !== undefined ? leftVal : -25;
+
+        m0 = rightHandle / 25.0;
+        m1 = -leftHandle / 25.0;
+      }
+
+      const t = alpha;
+      const t2 = t * t;
+      const t3 = t2 * t;
+
+      blend = (-2 * t3 + 3 * t2) + m0 * (t3 - 2 * t2 + t) + m1 * (t3 - t2);
+    }
+
+    const pIdx1 = frameIdx * 3, pIdx2 = (frameIdx + 1) * 3;
+    const px = track.positions[pIdx1] + (track.positions[pIdx2] - track.positions[pIdx1]) * blend;
+    const py = track.positions[pIdx1 + 1] + (track.positions[pIdx2 + 1] - track.positions[pIdx1 + 1]) * blend;
+    const pz = track.positions[pIdx1 + 2] + (track.positions[pIdx2 + 2] - track.positions[pIdx1 + 2]) * blend;
+
+    const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * blend;
+    const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * blend;
+    const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * blend;
 
     const qIdx1 = frameIdx * 4, qIdx2 = (frameIdx + 1) * 4;
     const q1 = [track.quaternions[qIdx1], track.quaternions[qIdx1 + 1], track.quaternions[qIdx1 + 2], track.quaternions[qIdx1 + 3]];

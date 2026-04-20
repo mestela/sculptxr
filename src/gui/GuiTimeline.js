@@ -20,6 +20,23 @@ export default class GuiTimeline {
     this._transformStartRx = 0;
     this._animTransformInitialBox = null;
 
+    this._mode = 'dope'; // 'dope' or 'graph'
+    this._panY = 0;
+    this._zoomY = 100.0; // Default scale: 1 unit = 100 pixels
+    this._activeKeyframeChannel = null;
+    this._keyDragStartVal = 0;
+    this._isDraggingTangent = false;
+    this._activeTangentTrack = null;
+    this._activeTangentIndex = undefined;
+    this._activeTangentSide = null;
+    this._activeTangentKx = 0;
+    this._activeTangentType = null;
+    this._isPanningGraph = false;
+    this._isZoomingGraph = false;
+    this._panStartRy = 0;
+    this._panStartOffsetY = 0;
+    this._zoomStartRy = 0;
+    this._zoomStartScaleY = 100.0;
     this.initDOM();
     this.startLoop();
   }
@@ -49,6 +66,7 @@ export default class GuiTimeline {
     this._canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
     window.addEventListener('mousemove', this.onMouseMove.bind(this));
     window.addEventListener('mouseup', this.onMouseUp.bind(this));
+    this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     this.onResize();
   }
@@ -84,6 +102,445 @@ export default class GuiTimeline {
     this.draw();
   }
 
+  valueToY(val) {
+    const headerH = 30;
+    const graphH = this._cssHeight - headerH;
+    return headerH + graphH / 2 - (val * this._zoomY + this._panY);
+  }
+
+  yToValue(y) {
+    const headerH = 30;
+    const graphH = this._cssHeight - headerH;
+    return (headerH + graphH / 2 - y - this._panY) / this._zoomY;
+  }
+
+  drawGraph(ctx) {
+    const headerH = 30;
+    const graphH = this._cssHeight - headerH;
+    const tlX = 200;
+    const tlW = this._cssWidth - 220;
+
+    const reg = window._animationRegistry;
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
+    // 1. Draw Vertical Grid Lines (Time)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    const totalSeconds = Math.ceil(mDurVal);
+    for (let s = 0; s <= totalSeconds; s++) {
+      if (s >= loopStart && s <= loopEnd) {
+        const gridX = tlX + ((s - loopStart) / visibleDuration) * tlW;
+        ctx.beginPath();
+        ctx.moveTo(gridX, headerH);
+        ctx.lineTo(gridX, this._cssHeight);
+        ctx.stroke();
+      }
+    }
+
+
+
+    // 3. Draw Zero Axis
+    const zeroY = this.valueToY(0);
+    if (zeroY >= headerH && zeroY <= this._cssHeight) {
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(tlX, zeroY);
+      ctx.lineTo(tlX + tlW, zeroY);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    // 4. Draw Playhead
+    const curTime = window._animCurrentTime || 0;
+    if (curTime >= loopStart && curTime <= loopEnd) {
+      const playheadX = tlX + ((curTime - loopStart) / visibleDuration) * tlW;
+      ctx.strokeStyle = '#4488ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, headerH);
+      ctx.lineTo(playheadX, this._cssHeight);
+      ctx.stroke();
+    }
+
+    // 5. Draw Curves for Active Mesh
+    const activeMesh = this._main.getMesh();
+    if (activeMesh) {
+      const id = activeMesh.getID();
+      const track = reg.tracks.get(id);
+      if (track && track.times && track.times.length >= 2) {
+        // Draw Position X, Y, Z
+        const colors = ['#ff4444', '#44ff44', '#4444ff']; // R, G, B
+        
+        for (let channel = 0; channel < 3; channel++) {
+          ctx.strokeStyle = colors[channel];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          
+          for (let i = 0; i < track.times.length - 1; i++) {
+            const t1 = track.times[i];
+            const t2 = track.times[i + 1];
+            
+            let m0 = 1.0;
+            let m1 = 1.0;
+            if (track.tangentOffsets) {
+              const rightVal = track.tangentOffsets[`trans_${i}_right`];
+              const leftVal = track.tangentOffsets[`trans_${i + 1}_left`];
+              const rightHandle = rightVal !== undefined ? rightVal : 25;
+              const leftHandle = leftVal !== undefined ? leftVal : -25;
+              m0 = rightHandle / 25.0;
+              m1 = -leftHandle / 25.0;
+            }
+
+            const steps = 20;
+            for (let s = 0; s <= steps; s++) {
+              const alpha = s / steps;
+              const tVal = alpha;
+              const tSq = tVal * tVal;
+              const tCu = tSq * tVal;
+              
+              const blend = (-2 * tCu + 3 * tSq) + m0 * (tCu - 2 * tSq + tVal) + m1 * (tCu - tSq);
+              
+              const time = t1 + alpha * (t2 - t1);
+              const val1 = track.positions[i * 3 + channel];
+              const val2 = track.positions[(i + 1) * 3 + channel];
+              const val = val1 + (val2 - val1) * blend;
+              
+              const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+              const y = this.valueToY(val);
+              
+              if (i === 0 && s === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+          }
+          ctx.stroke();
+        }
+
+        // Draw dots at keyframes
+        ctx.fillStyle = '#ffcc00';
+        for (let i = 0; i < track.times.length; i++) {
+          const t = track.times[i];
+          for (let channel = 0; channel < 3; channel++) {
+            const val = track.positions[i * 3 + channel];
+            const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const y = this.valueToY(val);
+            
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Draw Tangent Handles for Position Keys
+        if (window._animShowTangents) {
+          ctx.strokeStyle = '#ff00aa';
+          ctx.lineWidth = 1.5;
+          
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            
+            const val = track.positions[i * 3 + selChannel];
+            const ky = this.valueToY(val);
+            
+            const rightVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right`] : undefined;
+            const leftVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left`] : undefined;
+            const rightXOff = rightVal !== undefined ? rightVal : 25;
+            const leftXOff = leftVal !== undefined ? leftVal : -25;
+
+            // Draw right handle
+            if (i < track.times.length - 1) {
+              ctx.beginPath();
+              ctx.moveTo(kx, ky);
+              ctx.lineTo(kx + rightXOff, ky);
+              ctx.stroke();
+              
+              ctx.fillStyle = '#ff00aa';
+              ctx.beginPath();
+              ctx.arc(kx + rightXOff, ky, 4, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            
+            // Draw left handle
+            if (i > 0) {
+              ctx.beginPath();
+              ctx.moveTo(kx, ky);
+              ctx.lineTo(kx + leftXOff, ky);
+              ctx.stroke();
+              
+              ctx.fillStyle = '#ff00aa';
+              ctx.beginPath();
+              ctx.arc(kx + leftXOff, ky, 4, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      }
+
+      // 6. Draw Shape Key Interpolation Curves (Blend Factor)
+      if (track && track.shapeTimes && track.shapeTimes.length >= 2 && window._animShowTangents) {
+        ctx.strokeStyle = '#ff00ff'; // Magenta for shape blend
+        ctx.lineWidth = 2;
+        
+        const ky0 = this.valueToY(0);
+        const ky1 = this.valueToY(1);
+
+        for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+          const t1 = track.shapeTimes[i];
+          const t2 = track.shapeTimes[i + 1];
+          
+          if (t2 > t1) {
+            ctx.beginPath();
+            
+            let m0 = 1.0;
+            let m1 = 1.0;
+            if (track.tangentOffsets) {
+              const rightVal = track.tangentOffsets[`${i}_right`];
+              const leftVal = track.tangentOffsets[`${i + 1}_left`];
+              const rightHandle = rightVal !== undefined ? rightVal : 25;
+              const leftHandle = leftVal !== undefined ? leftVal : -25;
+              m0 = rightHandle / 25.0;
+              m1 = -leftHandle / 25.0;
+            }
+
+            const steps = 20;
+            for (let s = 0; s <= steps; s++) {
+              const alpha = s / steps;
+              const tVal = alpha;
+              const tSq = tVal * tVal;
+              const tCu = tSq * tVal;
+              
+              const blend = (-2 * tCu + 3 * tSq) + m0 * (tCu - 2 * tSq + tVal) + m1 * (tCu - tSq);
+              
+              const time = t1 + alpha * (t2 - t1);
+              const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+              const y = this.valueToY(blend);
+              
+              if (s === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+            ctx.stroke();
+
+            // Draw Tangent Handles
+            ctx.strokeStyle = '#ff00aa';
+            ctx.lineWidth = 1.5;
+            
+            const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+            const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+            
+            const rightVal = track.tangentOffsets ? track.tangentOffsets[`${i}_right`] : undefined;
+            const leftVal = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left`] : undefined;
+            const rightXOff = rightVal !== undefined ? rightVal : 25;
+            const leftXOff = leftVal !== undefined ? leftVal : -25;
+            
+            // Draw right handle at start of segment
+            ctx.beginPath();
+            ctx.moveTo(kx1, ky0);
+            ctx.lineTo(kx1 + rightXOff, ky0);
+            ctx.stroke();
+            
+            ctx.fillStyle = '#ff00aa';
+            ctx.beginPath();
+            ctx.arc(kx1 + rightXOff, ky0, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw left handle at end of segment
+            ctx.beginPath();
+            ctx.moveTo(kx2, ky1);
+            ctx.lineTo(kx2 + leftXOff, ky1);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.arc(kx2 + leftXOff, ky1, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+    }
+  }
+
+  handleGraphMouseDown(rx, ry) {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+    const id = activeMesh.getID();
+    const track = reg.tracks.get(id);
+    if (!track) return;
+
+    const headerH = 30;
+    const tlX = 200;
+    const tlW = this._cssWidth - 220;
+
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
+    // Check Position Keys
+    if (track.times && track.positions) {
+      for (let i = 0; i < track.times.length; i++) {
+        const t = track.times[i];
+        const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+
+        for (let c = 0; c < 3; c++) {
+          const val = track.positions[i * 3 + c];
+          const y = this.valueToY(val);
+
+          if (Math.hypot(rx - x, ry - y) < 10) {
+            this._isDraggingKeyframe = true;
+            this._activeKeyframeTrack = track;
+            this._activeMeshId = id;
+            this._activeKeyframeIndex = i;
+            this._activeKeyframeType = 'transform';
+            this._activeKeyframeChannel = c;
+            this._keyDragStartRx = rx;
+            this._keyDragStartTime = t;
+            this._keyDragStartVal = val;
+
+            window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, startVal: val }];
+            this.draw();
+            return;
+          }
+        }
+      }
+    }
+
+    // Check Position Key Tangents
+    if (track.times && window._animShowTangents) {
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+      const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+      for (let i = 0; i < track.times.length; i++) {
+        const t = track.times[i];
+        const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+        
+        const val = track.positions[i * 3 + selChannel];
+        const ky = this.valueToY(val);
+        
+        const rightVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right`] : undefined;
+        const leftVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left`] : undefined;
+        const rightXOff = rightVal !== undefined ? rightVal : 25;
+        const leftXOff = leftVal !== undefined ? leftVal : -25;
+
+        // Check right handle
+        if (i < track.times.length - 1 && Math.abs(rx - (kx + rightXOff)) < 10 && Math.abs(ry - ky) < 10) {
+          this._isDraggingTangent = true;
+          this._activeTangentTrack = track;
+          this._activeTangentIndex = i;
+          this._activeTangentSide = 'right';
+          this._activeTangentKx = kx;
+          this._activeTangentType = 'transform';
+          return;
+        }
+        // Check left handle
+        if (i > 0 && Math.abs(rx - (kx + leftXOff)) < 10 && Math.abs(ry - ky) < 10) {
+          this._isDraggingTangent = true;
+          this._activeTangentTrack = track;
+          this._activeTangentIndex = i;
+          this._activeTangentSide = 'left';
+          this._activeTangentKx = kx;
+          this._activeTangentType = 'transform';
+          return;
+        }
+      }
+    }
+
+    // Check Shape Key Tangents
+    if (track.shapeTimes && window._animShowTangents) {
+      const ky0 = this.valueToY(0);
+      const ky1 = this.valueToY(1);
+
+      for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+        const t1 = track.shapeTimes[i];
+        const t2 = track.shapeTimes[i + 1];
+        
+        const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+        const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+        
+        const rightVal = track.tangentOffsets ? track.tangentOffsets[`${i}_right`] : undefined;
+        const leftVal = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left`] : undefined;
+        const rightXOff = rightVal !== undefined ? rightVal : 25;
+        const leftXOff = leftVal !== undefined ? leftVal : -25;
+
+        // Check right handle
+        if (Math.abs(rx - (kx1 + rightXOff)) < 10 && Math.abs(ry - ky0) < 10) {
+          this._isDraggingTangent = true;
+          this._activeTangentTrack = track;
+          this._activeTangentIndex = i;
+          this._activeTangentSide = 'right';
+          this._activeTangentKx = kx1;
+          return;
+        }
+        // Check left handle
+        if (Math.abs(rx - (kx2 + leftXOff)) < 10 && Math.abs(ry - ky1) < 10) {
+          this._isDraggingTangent = true;
+          this._activeTangentTrack = track;
+          this._activeTangentIndex = i + 1;
+          this._activeTangentSide = 'left';
+          this._activeTangentKx = kx2;
+          return;
+        }
+      }
+    }
+  }
+
+  autoFitGraph() {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+    const id = activeMesh.getID();
+    const track = reg.tracks.get(id);
+    if (!track) return;
+
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+
+    if (track.positions && track.times && track.times.length > 0) {
+      for (let i = 0; i < track.times.length; i++) {
+        for (let c = 0; c < 3; c++) {
+          const val = track.positions[i * 3 + c];
+          if (val < minVal) minVal = val;
+          if (val > maxVal) maxVal = val;
+        }
+      }
+    }
+
+    if (minVal === Infinity) {
+      minVal = 0;
+      maxVal = 1;
+    }
+
+    const range = maxVal - minVal;
+    const headerH = 30;
+    const graphH = this._cssHeight - headerH;
+
+    const midVal = (minVal + maxVal) / 2;
+
+    if (range > 0.0001) {
+      this._zoomY = (graphH * 0.8) / range;
+      this._panY = -midVal * this._zoomY;
+    } else {
+      this._zoomY = 100.0;
+      this._panY = -midVal * this._zoomY;
+    }
+  }
+
   setVisibility(visible) {
     this._visible = visible;
     this._container.style.display = visible ? 'block' : 'none';
@@ -110,9 +567,34 @@ export default class GuiTimeline {
     const ry = e.clientY - rect.top;
 
     if (ry < 30) {
+      if (rx >= 10 && rx <= 100) {
+        this._mode = this._mode === 'graph' ? 'dope' : 'graph';
+        if (this._mode === 'graph') {
+          this.autoFitGraph();
+        }
+        this.draw();
+        return;
+      }
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
     } else {
+      if (this._mode === 'graph') {
+        if (e.button === 1) { // Middle click
+          this._isPanningGraph = true;
+          this._panStartRy = ry;
+          this._panStartOffsetY = this._panY;
+          e.preventDefault();
+          return;
+        } else if (e.button === 2) { // Right click
+          this._isZoomingGraph = true;
+          this._zoomStartRy = ry;
+          this._zoomStartScaleY = this._zoomY;
+          e.preventDefault();
+          return;
+        }
+        this.handleGraphMouseDown(rx, ry);
+        return;
+      }
       // Check if clicked on Mute or Delete!
       const reg = window._animationRegistry;
       if (reg) {
@@ -307,11 +789,29 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    if (this._isPanningGraph) {
+      const rect = this._canvas.getBoundingClientRect();
+      const ry = e.clientY - rect.top;
+      const dy = ry - this._panStartRy;
+      this._panY = this._panStartOffsetY - dy;
+      this.draw();
+      return;
+    } else if (this._isZoomingGraph) {
+      const rect = this._canvas.getBoundingClientRect();
+      const ry = e.clientY - rect.top;
+      const dy = ry - this._zoomStartRy;
+      const factor = Math.pow(1.01, -dy);
+      this._zoomY = this._zoomStartScaleY * factor;
+      this.draw();
+      return;
+    }
+
     if (this._isDraggingPlayhead) {
       this.handleInteraction(e);
     } else if (this._isDraggingKeyframe) {
       const rect = this._canvas.getBoundingClientRect();
       const rx = e.clientX - rect.left;
+      const ry = e.clientY - rect.top;
       
       const tlX = 200;
       const tlW = this._cssWidth - 220;
@@ -328,17 +828,57 @@ export default class GuiTimeline {
       const dt = targetTime - this._keyDragStartTime;
       
       if (window._animationRegistry) {
-        if (this._animSelectedKeysInitialTimes) {
-          window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, mDurVal);
-        } else if (this._activeMeshId) {
-          const singleKey = [{
-            meshId: this._activeMeshId,
-            type: this._activeKeyframeType,
-            index: this._activeKeyframeIndex,
-            time: this._keyDragStartTime
-          }];
-          window._animationRegistry.moveSelectedKeys(singleKey, dt, mDurVal);
+        if (this._mode === 'graph') {
+          if (this._activeMeshId) {
+            const singleKey = [{
+              meshId: this._activeMeshId,
+              type: this._activeKeyframeType,
+              index: this._activeKeyframeIndex,
+              time: this._keyDragStartTime,
+              channel: this._activeKeyframeChannel,
+              startVal: this._keyDragStartVal
+            }];
+            window._animationRegistry.moveSelectedKeys(singleKey, dt, mDurVal);
+            
+            const targetVal = this.yToValue(ry);
+            const dVal = targetVal - this._keyDragStartVal;
+            window._animationRegistry.moveSelectedKeysValue(singleKey, dVal);
+          }
+        } else {
+          if (this._animSelectedKeysInitialTimes) {
+            window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, mDurVal);
+          } else if (this._activeMeshId) {
+            const singleKey = [{
+              meshId: this._activeMeshId,
+              type: this._activeKeyframeType,
+              index: this._activeKeyframeIndex,
+              time: this._keyDragStartTime
+            }];
+            window._animationRegistry.moveSelectedKeys(singleKey, dt, mDurVal);
+          }
         }
+      }
+      
+      this.draw();
+    } else if (this._isDraggingTangent) {
+      const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      
+      let deltaX = rx - this._activeTangentKx;
+      
+      if (this._activeTangentSide === 'left') {
+        deltaX = Math.min(0, deltaX);
+      } else {
+        deltaX = Math.max(0, deltaX);
+      }
+      
+      if (this._activeTangentTrack) {
+        if (!this._activeTangentTrack.tangentOffsets) {
+          this._activeTangentTrack.tangentOffsets = {};
+        }
+        const prefix = this._activeTangentType === 'transform' ? 'trans_' : '';
+        const key = `${prefix}${this._activeTangentIndex}_${this._activeTangentSide}`;
+        this._activeTangentTrack.tangentOffsets[key] = deltaX;
       }
       
       this.draw();
@@ -456,6 +996,12 @@ export default class GuiTimeline {
       this._activeKeyframeIndex = undefined;
       this._activeKeyframeType = null;
       this._animSelectedKeysInitialTimes = null;
+    } else if (this._isDraggingTangent) {
+      this._isDraggingTangent = false;
+      this._activeTangentTrack = null;
+      this._activeTangentIndex = undefined;
+      this._activeTangentSide = null;
+      this._activeTangentKx = 0;
     } else if (this._activeTransformHandle) {
       const reg = window._animationRegistry;
       if (reg) {
@@ -602,6 +1148,8 @@ export default class GuiTimeline {
     this._isDraggingMarquee = false;
     this._marqueeStart = null;
     this._marqueeEnd = null;
+    this._isPanningGraph = false;
+    this._isZoomingGraph = false;
     this.draw();
   }
 
@@ -739,6 +1287,15 @@ export default class GuiTimeline {
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
+    // Draw Mode Toggle Button
+    ctx.fillStyle = '#444';
+    ctx.fillRect(10, 5, 90, 20);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this._mode === 'graph' ? 'Mode: Graph' : 'Mode: Dope', 55, 15);
+
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;
     const loopStartF = Math.round(loopStart * fps);
@@ -800,6 +1357,11 @@ export default class GuiTimeline {
           }
         }
       }
+    }
+
+    if (this._mode === 'graph') {
+      this.drawGraph(ctx);
+      return;
     }
 
     // 2. Draw Vertical Grid Lines

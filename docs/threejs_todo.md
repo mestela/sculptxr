@@ -7,27 +7,25 @@
 ---
 
 ## 1. Todo
-* [ ] **Animation**: calculator for duration is seconds, it should be frames
-* [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [ ] **Animation**: graph editor
 
+* [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
 * [ ] **Animation**: per key interp type; hold, bezier, linear
 * [ ] **Animation**: per frame sculpting, shape replacement based
 * [ ] **Animation**: blendshapes
-
 * [ ] **Low Poly**: Snapping for retopo. Snap from one object to another? More work on the slide tool maybe?
 * [ ] **Desktop**: hmd+desktop hybrid
 * [ ] **Hair/Fur**: Examples: https://github.com/FeliDipi/Grass or https://piellardj.github.io/fur-threejs/ 
-
 * [ ] **AVP support**: fingers and stylus
 * [ ] **Preview menus in desktop again** ctrl-shift-v works but doesn't actually show the menu contents.
 * [ ] **Floating VR Keyboard**: there is a builtin one (use three-mesh-ui?)
-* [ ] **Other Features**: TBD (Will emerge as the menu and tools are fully audited). What else is unlocked by using threejs?
-* [ ] **Materials**: move to native threejs materials, allowing for better integration with post process effects and whatnot.
+* [ ] **Other Features**: TBD  What else is unlocked by using threejs?
+* [ ] **Materials**: move to native threejs materials, allowing for better integration with post process etc
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: calculator for duration is seconds, it should be frames
 * [x] **Animation**: recording sculpting, move, like we record transforms
 * [x] **Animation**: on desktop, undo isn't working properly
 * [x] **Animation**: on desktop, can't paste multiple keys
