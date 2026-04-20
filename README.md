@@ -1,4 +1,4 @@
-# SculptXR (v1.0.216)
+# SculptXR (v1.0.217)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.217**: **Feature**: Desktop timeline snapping, off by default, clean UI, and OpenXR warning fade.
 *   **v1.0.216**: **Feature**: Geometric wireframe bias and live opacity controls on desktop.
 *   **v1.0.215**: **Fix**: Extrude tool deadlock and Inset tool desktop support.
-*   **v1.0.214**: **Feature**: VR Mini-HUD Masking controls and Desktop Preview enhancements.
 
 [View Full Release History](docs/releases.md)
 

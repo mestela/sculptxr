@@ -79,7 +79,7 @@ class Gui {
 
     // Initialize custom timeline panel
     this._ctrlTimeline = new GuiTimeline(this._main);
-    this._ctrlTimeline.setVisibility(true);
+    this._ctrlTimeline.setVisibility(false);
 
     // gui extra
     var extra = this._topbar.addExtra();
@@ -260,6 +260,11 @@ class Gui {
       return;
     this.callFunc('removeEvents');
     this.setVisibility(false);
+    
+    if (this._ctrlTimeline && this._ctrlTimeline._container && this._ctrlTimeline._container.parentNode) {
+      this._ctrlTimeline._container.parentNode.removeChild(this._ctrlTimeline._container);
+    }
+    
     this._guiMain.domMain.parentNode.removeChild(this._guiMain.domMain);
   }
 

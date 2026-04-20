@@ -13,7 +13,14 @@ class GuiAnimation {
     var menu = this._menu = guiParent.addMenu('Animation');
     menu.close();
 
-    menu.addCheckbox('Show Timeline', true, this.toggleTimeline.bind(this));
+    menu.addCheckbox('Show Timeline', false, this.toggleTimeline.bind(this));
+    
+    window._animShowTransformBox = false;
+    menu.addCheckbox('Show Transform Box', false, (val) => {
+      window._animShowTransformBox = val;
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    });
 
     // Settings
     menu.addTitle('Settings');
@@ -61,7 +68,9 @@ class GuiAnimation {
 
   // Callbacks
   toggleTimeline(val) {
+    console.log('toggleTimeline called with', val);
     const timeline = this._ctrlGui._ctrlTimeline;
+    console.log('timeline is', timeline);
     if (timeline) {
       timeline.setVisibility(val);
     }

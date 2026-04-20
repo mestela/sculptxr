@@ -5,7 +5,20 @@ export default class GuiTimeline {
     this._canvas = null;
     this._ctx = null;
     this._visible = false;
-    this._isDragging = false;
+    this._isDraggingPlayhead = false;
+    this._isDraggingMarquee = false;
+    this._isDraggingKeyframe = false;
+    this._activeKeyframeTrack = null;
+    this._activeKeyframeIndex = undefined;
+    this._activeKeyframeType = null;
+    this._keyDragStartRx = 0;
+    this._keyDragStartTime = 0;
+    this._animSelectedKeysInitialTimes = null;
+    this._marqueeStart = null;
+    this._marqueeEnd = null;
+    this._activeTransformHandle = null;
+    this._transformStartRx = 0;
+    this._animTransformInitialBox = null;
 
     this.initDOM();
     this.startLoop();
@@ -74,6 +87,7 @@ export default class GuiTimeline {
   setVisibility(visible) {
     this._visible = visible;
     this._container.style.display = visible ? 'block' : 'none';
+    this._container.style.visibility = visible ? 'visible' : 'hidden';
     if (visible) {
       this.onResize(); // Ensure size is correct
       this.draw();
@@ -91,18 +105,343 @@ export default class GuiTimeline {
   }
 
   onMouseDown(e) {
-    this._isDragging = true;
-    this.handleInteraction(e);
-  }
+    const rect = this._canvas.getBoundingClientRect();
+    const rx = e.clientX - rect.left;
+    const ry = e.clientY - rect.top;
 
-  onMouseMove(e) {
-    if (this._isDragging) {
+    if (ry < 30) {
+      this._isDraggingPlayhead = true;
       this.handleInteraction(e);
+    } else {
+      // Check if clicked on Mute or Delete!
+      const reg = window._animationRegistry;
+      if (reg) {
+        const tracks = Array.from(reg.tracks.entries());
+        const headerH = 30;
+        const laneAreaH = this._cssHeight - headerH;
+        const totalSlots = Math.max(4, tracks.length);
+        const trackH = laneAreaH / totalSlots;
+        const clickedLaneIdx = Math.floor((ry - headerH) / trackH);
+
+        if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
+          const [meshId, trackObj] = tracks[clickedLaneIdx];
+          if (rx >= 80 && rx < 120) {
+            trackObj.muted = !trackObj.muted;
+            this.draw();
+            return; // Don't start marquee
+          } else if (rx >= 120 && rx <= 160) {
+            if (confirm(`Delete track for Object ${meshId}?`)) {
+              window._animationRegistry.deleteTrack(meshId);
+              this.draw();
+            }
+            return; // Don't start marquee
+          }
+        }
+      }
+
+      // Check if clicked on a key!
+      if (reg) {
+        const tracks = Array.from(reg.tracks.entries());
+        const headerH = 30;
+        const laneAreaH = this._cssHeight - headerH;
+        const totalSlots = Math.max(4, tracks.length);
+        const trackH = laneAreaH / totalSlots;
+
+        const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+        const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+        const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+        const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+        
+        const tlX = 200;
+        const tlW = this._cssWidth - 220;
+
+        // Check if clicked on Transform Box handles!
+        if (window._animShowTransformBox && window._animTransformBox) {
+          const tBox = window._animTransformBox;
+          const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
+          const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
+          const kxMid = (kxLeft + kxRight) / 2;
+
+          const boxSize = 40;
+          const by = headerH + (this._cssHeight - headerH) / 2 - boxSize / 2;
+          const cyMid = headerH + (this._cssHeight - headerH) / 2;
+
+          if (Math.abs(rx - kxLeft) < 10) {
+            this._activeTransformHandle = 'left';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+            if (window._animSelectedKeys) {
+              this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
+                const tr = reg.tracks.get(sk.meshId);
+                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                return { ...sk, time };
+              });
+            }
+            return;
+          } else if (Math.abs(rx - kxRight) < 10) {
+            this._activeTransformHandle = 'right';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+            if (window._animSelectedKeys) {
+              this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
+                const tr = reg.tracks.get(sk.meshId);
+                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                return { ...sk, time };
+              });
+            }
+            return;
+          } else if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - cyMid) < 20) {
+            this._activeTransformHandle = 'scale_center';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+            if (window._animSelectedKeys) {
+              this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
+                const tr = reg.tracks.get(sk.meshId);
+                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                return { ...sk, time };
+              });
+            }
+            return;
+          } else if (rx >= kxLeft && rx <= kxRight) {
+            const boxWidth = kxRight - kxLeft;
+            const twoThirdsStart = kxLeft + boxWidth * (1 / 6);
+            const twoThirdsEnd = kxLeft + boxWidth * (5 / 6);
+
+            if (rx >= twoThirdsStart && rx <= twoThirdsEnd) {
+              this._activeTransformHandle = 'center';
+              this._transformStartRx = rx;
+              this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
+              if (window._animSelectedKeys) {
+                this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
+                  const tr = reg.tracks.get(sk.meshId);
+                  const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                  return { ...sk, time };
+                });
+              }
+              return;
+            }
+          }
+        }
+
+        let keyFound = false;
+
+        tracks.forEach(([meshId, trackObj], laneIdx) => {
+          const ty = headerH + (laneIdx * trackH);
+          const ky = ty + trackH / 2;
+          
+          if (ry >= ty && ry <= ty + trackH) {
+            if (trackObj.times) {
+              for (let i = 0; i < trackObj.times.length; i++) {
+                const t = trackObj.times[i];
+                const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+                if (Math.abs(rx - kx) < 10 && Math.abs(ry - ky) < 10) {
+                  this._isDraggingKeyframe = true;
+                  this._activeKeyframeTrack = trackObj;
+                  this._activeMeshId = meshId;
+                  this._activeKeyframeIndex = i;
+                  this._activeKeyframeType = 'transform';
+                  this._keyDragStartRx = rx;
+                  this._keyDragStartTime = t;
+                  
+                  const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'transform' && k.index === i);
+                  if (isPartSelection) {
+                    this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                      const tr = reg.tracks.get(k.meshId);
+                      const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                      return { ...k, time };
+                    });
+                  } else {
+                    this._animSelectedKeysInitialTimes = null;
+                    // Select only this key!
+                    window._animSelectedKeys = [{ meshId, type: 'transform', index: i }];
+                    window._animTransformBox = null;
+                  }
+                  
+                  keyFound = true;
+                  break;
+                }
+              }
+            }
+            if (!keyFound && trackObj.shapeTimes) {
+              for (let i = 0; i < trackObj.shapeTimes.length; i++) {
+                const t = trackObj.shapeTimes[i];
+                const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+                if (Math.abs(rx - kx) < 10 && Math.abs(ry - ky) < 10) {
+                  this._isDraggingKeyframe = true;
+                  this._activeKeyframeTrack = trackObj;
+                  this._activeMeshId = meshId;
+                  this._activeKeyframeIndex = i;
+                  this._activeKeyframeType = 'shape';
+                  this._keyDragStartRx = rx;
+                  this._keyDragStartTime = t;
+                  
+                  const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'shape' && k.index === i);
+                  if (isPartSelection) {
+                    this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                      const tr = reg.tracks.get(k.meshId);
+                      const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                      return { ...k, time };
+                    });
+                  } else {
+                    this._animSelectedKeysInitialTimes = null;
+                    // Select only this key!
+                    window._animSelectedKeys = [{ meshId, type: 'shape', index: i }];
+                    window._animTransformBox = null;
+                  }
+                  
+                  keyFound = true;
+                  break;
+                }
+              }
+            }
+          }
+        });
+
+        if (keyFound) return;
+      }
+
+      this._isDraggingMarquee = true;
+      this._marqueeStart = { x: rx, y: ry };
+      this._marqueeEnd = { x: rx, y: ry };
     }
   }
 
-  onMouseUp() {
-    this._isDragging = false;
+  onMouseMove(e) {
+    if (this._isDraggingPlayhead) {
+      this.handleInteraction(e);
+    } else if (this._isDraggingKeyframe) {
+      const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      
+      const tlX = 200;
+      const tlW = this._cssWidth - 220;
+      
+      const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+      const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+      const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+      
+      let t = (rx - tlX) / tlW;
+      t = Math.max(0, Math.min(1, t));
+      const targetTime = loopStart + t * visibleDuration;
+      
+      const dt = targetTime - this._keyDragStartTime;
+      
+      if (window._animationRegistry) {
+        if (this._animSelectedKeysInitialTimes) {
+          window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, mDurVal);
+        } else if (this._activeMeshId) {
+          const singleKey = [{
+            meshId: this._activeMeshId,
+            type: this._activeKeyframeType,
+            index: this._activeKeyframeIndex,
+            time: this._keyDragStartTime
+          }];
+          window._animationRegistry.moveSelectedKeys(singleKey, dt, mDurVal);
+        }
+      }
+      
+      this.draw();
+    } else if (this._activeTransformHandle) {
+      const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      
+      const tlX = 200;
+      const tlW = this._cssWidth - 220;
+      
+      const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+      const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+      const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+      
+      const vDur = visibleDuration;
+      
+      const tBox = window._animTransformBox;
+      const initBox = this._animTransformInitialBox;
+      
+      if (tBox && initBox) {
+        const dx = rx - this._transformStartRx;
+        const dt = (dx / tlW) * vDur;
+        
+        const baseDur = initBox.endTime - initBox.startTime;
+        
+        if (this._activeTransformHandle === 'left') {
+          const newStartTime = Math.max(0, Math.min(initBox.endTime - 0.01, initBox.startTime + dt));
+          tBox.startTime = newStartTime;
+          const newDur = initBox.endTime - newStartTime;
+          const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+          
+          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.endTime, scaleFactor, mDurVal);
+          }
+        } else if (this._activeTransformHandle === 'right') {
+          const newEndTime = Math.max(initBox.startTime + 0.01, Math.min(mDurVal, initBox.endTime + dt));
+          tBox.endTime = newEndTime;
+          const newDur = newEndTime - initBox.startTime;
+          const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+          
+          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.startTime, scaleFactor, mDurVal);
+          }
+        } else if (this._activeTransformHandle === 'scale_center') {
+          const initMid = (initBox.startTime + initBox.endTime) / 2;
+          const scaleFactor = Math.max(0.01, 1.0 + dx / 150.0);
+          
+          tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
+          tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
+          
+          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initMid, scaleFactor, mDurVal);
+          }
+        } else if (this._activeTransformHandle === 'center') {
+          const dtClamped = Math.max(-initBox.startTime, Math.min(mDurVal - initBox.endTime, dt));
+          tBox.startTime = initBox.startTime + dtClamped;
+          tBox.endTime = initBox.endTime + dtClamped;
+          
+          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
+            window._animationRegistry.moveSelectedKeys(this._animTransformBoxInitialTimes, dtClamped, mDurVal);
+          }
+        }
+      }
+      this.draw();
+    } else if (this._isDraggingMarquee) {
+      const rect = this._canvas.getBoundingClientRect();
+      this._marqueeEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      this.draw();
+    }
+  }
+
+  onMouseUp(e) {
+    if (this._isDraggingMarquee) {
+      this.finalizeMarquee(e);
+    } else if (this._isDraggingKeyframe) {
+      const reg = window._animationRegistry;
+      if (reg) {
+        reg.tracks.forEach((track, meshId) => {
+          reg.sortTrack(track);
+        });
+      }
+      this._isDraggingKeyframe = false;
+      this._activeKeyframeTrack = null;
+      this._activeKeyframeIndex = undefined;
+      this._activeKeyframeType = null;
+      this._animSelectedKeysInitialTimes = null;
+    } else if (this._activeTransformHandle) {
+      const reg = window._animationRegistry;
+      if (reg) {
+        reg.tracks.forEach((track, meshId) => {
+          reg.sortTrack(track);
+        });
+      }
+      this._activeTransformHandle = null;
+      this._animTransformInitialBox = null;
+      this._animTransformBoxInitialTimes = null;
+    }
+    this._isDraggingPlayhead = false;
+    this._isDraggingMarquee = false;
+    this._marqueeStart = null;
+    this._marqueeEnd = null;
+    this.draw();
   }
 
   handleInteraction(e) {
@@ -136,6 +475,69 @@ export default class GuiTimeline {
         }
         if (this._main.render) this._main.render();
       }
+    }
+  }
+
+  finalizeMarquee(e) {
+    if (!this._marqueeStart || !this._marqueeEnd) return;
+    
+    const x1 = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+    const x2 = Math.max(this._marqueeStart.x, this._marqueeEnd.x);
+    const y1 = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+    const y2 = Math.max(this._marqueeStart.y, this._marqueeEnd.y);
+
+    const addMode = e && e.shiftKey;
+    if (!addMode) {
+      window._animSelectedKeys = [];
+    }
+    
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    
+    const headerH = 30;
+    const tracks = Array.from(reg.tracks.entries());
+    const laneAreaH = this._cssHeight - headerH;
+    const totalSlots = Math.max(4, tracks.length);
+    const trackH = laneAreaH / totalSlots;
+
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    
+    const tlX = 200;
+    const tlW = this._cssWidth - 220;
+
+    const tMin = loopStart + ((x1 - tlX) / tlW) * visibleDuration;
+    const tMax = loopStart + ((x2 - tlX) / tlW) * visibleDuration;
+    
+    const laneMin = Math.floor((y1 - headerH) / trackH);
+    const laneMax = Math.floor((y2 - headerH) / trackH);
+
+    const newKeys = reg.getKeysInTimeRange(tMin, tMax, laneMin, laneMax);
+    
+    newKeys.forEach(nk => {
+      const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === nk.meshId && k.type === nk.type && k.index === nk.index);
+      if (!alreadySelected) {
+        window._animSelectedKeys.push(nk);
+      }
+    });
+
+    // Automatically create transform box around selection!
+    if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+      let minT = Infinity;
+      let maxT = -Infinity;
+      window._animSelectedKeys.forEach(k => {
+        const track = reg.tracks.get(k.meshId);
+        if (track) {
+          const t = k.type === 'transform' ? track.times[k.index] : track.shapeTimes[k.index];
+          if (t < minT) minT = t;
+          if (t > maxT) maxT = t;
+        }
+      });
+      window._animTransformBox = { startTime: minT, endTime: maxT };
+    } else {
+      window._animTransformBox = null;
     }
   }
 
@@ -200,26 +602,37 @@ export default class GuiTimeline {
       if (activeMesh) {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);
-        if (track && track.times) {
+        if (track) {
+          const fps = window._animFPS || 24;
           const curTime = window._animCurrentTime || 0;
-          let closestIdx = -1;
-          let minDist = 0.1; // 100ms tolerance
-          for (let i = 0; i < track.times.length; i++) {
-            const dist = Math.abs(track.times[i] - curTime);
-            if (dist < minDist) {
-              minDist = dist;
-              closestIdx = i;
+          const snappedTime = Math.round(curTime * fps) / fps;
+          
+          // Check if a SINGLE key is selected!
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          
+          if (singleSelected && singleSelected.meshId === id) {
+            const kIdx = singleSelected.index;
+            const t = singleSelected.type === 'transform' ? track.times[kIdx] : track.shapeTimes[kIdx];
+            const frame = Math.round(t * fps);
+            let px = 0, py = 0, pz = 0;
+            if (singleSelected.type === 'transform' && track.positions) {
+              px = track.positions[kIdx * 3];
+              py = track.positions[kIdx * 3 + 1];
+              pz = track.positions[kIdx * 3 + 2];
             }
-          }
-          if (closestIdx >= 0) {
-            const px = track.positions[closestIdx * 3];
-            const py = track.positions[closestIdx * 3 + 1];
-            const pz = track.positions[closestIdx * 3 + 2];
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`key ${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
+          } else {
+            // Show interpolated value at playhead!
+            const [px, py, pz] = reg.getInterpolatedPosition(track, snappedTime);
+            const frame = Math.round(curTime * fps);
             
             ctx.fillStyle = '#ffcc00';
             ctx.font = '12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(`Key at ${track.times[closestIdx].toFixed(2)}s: Pos(${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
+            ctx.fillText(`${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
           }
         }
       }
@@ -251,10 +664,7 @@ export default class GuiTimeline {
     const laneAreaH = w.h - headerH;
     
     if (tracks.length === 0) {
-      ctx.fillStyle = '#666';
-      ctx.font = '18px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No recorded tracks in memory.', w.w / 2, w.y + headerH + laneAreaH / 2);
+      // Empty timeline message removed as requested
     } else {
       const totalAvailableSlots = Math.max(4, tracks.length); 
       const trackH = laneAreaH / totalAvailableSlots;
@@ -282,20 +692,77 @@ export default class GuiTimeline {
         }
         ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
 
+        // Draw Eye Icon (Mute)
+        const eyeX = w.x + 100;
+        ctx.save();
+        ctx.translate(eyeX - 12, ty + trackH / 2 - 12); // Match VR translation and alignment
+        ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
+        ctx.lineWidth = 2;
+        const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+        ctx.stroke(eyePath);
+        
+        // Pupil (missing in previous desktop version)
+        ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
+        ctx.beginPath();
+        ctx.arc(12, 12, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Draw Trash Icon (Delete)
+        const trashX = w.x + 140;
+        ctx.save();
+        ctx.translate(trashX, ty + trackH / 2 - 6); // Correct vertical alignment for trash path
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        // Lid
+        ctx.moveTo(0, 2);
+        ctx.lineTo(12, 2);
+        // Handle
+        ctx.moveTo(4, 2);
+        ctx.lineTo(4, 0);
+        ctx.lineTo(8, 0);
+        ctx.lineTo(8, 2);
+        // Body
+        ctx.moveTo(2, 2);
+        ctx.lineTo(3, 12);
+        ctx.lineTo(9, 12);
+        ctx.lineTo(10, 2);
+        ctx.stroke();
+        ctx.restore();
+
         // Transform Data Visualization
         if (track && track.times && track.times.length > 0) {
-          ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
-          ctx.strokeStyle = track.muted ? '#555555' : '#ffffff';
-          ctx.lineWidth = 1;
-
           for (let i = 0; i < track.times.length; i++) {
             const t = track.times[i];
             if (t >= loopStart && t <= loopEnd) {
               const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
               const ky = ty + trackH / 2;
               
+              const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i);
+              let isSelected = isMultiSel;
+              
+              if (this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd) {
+                const mx1 = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+                const mx2 = Math.max(this._marqueeStart.x, this._marqueeEnd.x);
+                const my1 = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+                const my2 = Math.max(this._marqueeStart.y, this._marqueeEnd.y);
+                
+                if (kx >= mx1 && kx <= mx2 && ky >= my1 && ky <= my2) {
+                  isSelected = true;
+                }
+              }
+              
+              ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
+              ctx.strokeStyle = isSelected ? '#00ff00' : (track.muted ? '#555555' : '#ffffff');
+              ctx.lineWidth = isSelected ? 3 : 1.5;
+              
               ctx.beginPath();
-              ctx.arc(kx, ky, 3, 0, Math.PI * 2);
+              ctx.moveTo(kx, ky - (isSelected ? 9 : 7));
+              ctx.lineTo(kx + (isSelected ? 9 : 7), ky);
+              ctx.lineTo(kx, ky + (isSelected ? 9 : 7));
+              ctx.lineTo(kx - (isSelected ? 9 : 7), ky);
+              ctx.closePath();
               ctx.fill();
               ctx.stroke();
             }
@@ -310,13 +777,29 @@ export default class GuiTimeline {
               const kx = tlX + ((st - loopStart) / visibleDuration) * tlW;
               const ky = ty + trackH / 2;
               
+              const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
+              let isSelected = isMultiSel;
+              
+              if (this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd) {
+                const mx1 = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+                const mx2 = Math.max(this._marqueeStart.x, this._marqueeEnd.x);
+                const my1 = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+                const my2 = Math.max(this._marqueeStart.y, this._marqueeEnd.y);
+                
+                if (kx >= mx1 && kx <= mx2 && ky >= my1 && ky <= my2) {
+                  isSelected = true;
+                }
+              }
+              
               ctx.fillStyle = '#ffcc00';
-              ctx.strokeStyle = '#ffffff';
+              ctx.strokeStyle = isSelected ? '#00ff00' : '#ffffff';
+              ctx.lineWidth = isSelected ? 3 : 1.5;
+              
               ctx.beginPath();
-              ctx.moveTo(kx, ky - 5);
-              ctx.lineTo(kx + 5, ky);
-              ctx.lineTo(kx, ky + 5);
-              ctx.lineTo(kx - 5, ky);
+              ctx.moveTo(kx, ky - (isSelected ? 7 : 5));
+              ctx.lineTo(kx + (isSelected ? 7 : 5), ky);
+              ctx.lineTo(kx, ky + (isSelected ? 7 : 5));
+              ctx.lineTo(kx - (isSelected ? 7 : 5), ky);
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
@@ -326,9 +809,61 @@ export default class GuiTimeline {
       });
     }
 
+    // Render Transform Box
+    if (window._animShowTransformBox && window._animTransformBox) {
+      const tBox = window._animTransformBox;
+      const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
+      const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+      ctx.fillRect(kxLeft, w.y + headerH, kxRight - kxLeft, w.h - headerH);
+
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(kxLeft, w.y + headerH, kxRight - kxLeft, w.h - headerH);
+
+      ctx.setLineDash([]);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#ffff00';
+
+      // Left edge handle
+      ctx.beginPath();
+      ctx.moveTo(kxLeft, w.y + headerH);
+      ctx.lineTo(kxLeft, w.y + w.h);
+      ctx.stroke();
+
+      // Right edge handle
+      ctx.beginPath();
+      ctx.moveTo(kxRight, w.y + headerH);
+      ctx.lineTo(kxRight, w.y + w.h);
+      ctx.stroke();
+
+      // Center line
+      ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+      ctx.lineWidth = 2;
+      const kxMid = (kxLeft + kxRight) / 2;
+      ctx.beginPath();
+      ctx.moveTo(kxMid, w.y + headerH);
+      ctx.lineTo(kxMid, w.y + w.h);
+      ctx.stroke();
+
+      // Center box handle
+      const boxSize = 40;
+      const bx = kxMid - boxSize / 2;
+      const by = w.y + headerH + (w.h - headerH) / 2 - boxSize / 2;
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(bx, by, boxSize, boxSize);
+
+      ctx.restore();
+    }
+
     // 4. Render Playhead
     const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
-    const playheadAlpha = (currentTimeVal - loopStart) / visibleDuration;
+    const snappedTime = Math.round(currentTimeVal * fps) / fps;
+    const playheadAlpha = (snappedTime - loopStart) / visibleDuration;
     const playheadX = tlX + playheadAlpha * tlW;
 
     if (playheadX >= tlX && playheadX <= tlX + tlW) {
@@ -357,6 +892,19 @@ export default class GuiTimeline {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(curT, playheadX, w.y + headerH / 2);
+    }
+
+    // 5. Render Marquee Box
+    if (this._marqueeStart && this._marqueeEnd) {
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 1;
+      const x = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+      const y = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+      const w = Math.abs(this._marqueeEnd.x - this._marqueeStart.x);
+      const h = Math.abs(this._marqueeEnd.y - this._marqueeStart.y);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
     }
   }
 }

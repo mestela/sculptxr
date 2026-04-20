@@ -1432,20 +1432,7 @@ export default class GuiXR {
               const newDur = initBox.endTime - newStartTime;
               const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
 
-              this._animTransformBoxInitialTimes.forEach(initKey => {
-                const track = window._animationRegistry.tracks.get(initKey.meshId);
-                if (!track) return;
-                
-                const relTime = initBox.endTime - initKey.time;
-                const newTime = initBox.endTime - relTime * scaleFactor;
-                const finalTime = Math.max(0, Math.min(masterLen, newTime));
-
-                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
-                  track.times[initKey.index] = finalTime;
-                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
-                  track.shapeTimes[initKey.index] = finalTime;
-                }
-              });
+              window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.endTime, scaleFactor, masterLen);
             }
           } else if (this._activeTransformHandle === 'right') {
             const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
@@ -1458,20 +1445,7 @@ export default class GuiXR {
               const newDur = newEndTime - initBox.startTime;
               const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
 
-              this._animTransformBoxInitialTimes.forEach(initKey => {
-                const track = window._animationRegistry.tracks.get(initKey.meshId);
-                if (!track) return;
-                
-                const relTime = initKey.time - initBox.startTime;
-                const newTime = initBox.startTime + relTime * scaleFactor;
-                const finalTime = Math.max(0, Math.min(masterLen, newTime));
-
-                if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
-                  track.times[initKey.index] = finalTime;
-                } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
-                  track.shapeTimes[initKey.index] = finalTime;
-                }
-              });
+              window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.startTime, scaleFactor, masterLen);
             }
           } else if (this._activeTransformHandle === 'center') {
             const rxStart = this._transformStartRx !== undefined ? this._transformStartRx : rxCurrent;
@@ -1568,25 +1542,20 @@ export default class GuiXR {
         if (this._keyDragStartRx === undefined || Math.abs(currentRx - this._keyDragStartRx) > 10) {
           const dt = targetTime - (window._animLastTouchedKeyTime !== undefined ? window._animLastTouchedKeyTime : targetTime);
           
-          if (this._animSelectedKeysInitialTimes && window._animationRegistry) {
-            this._animSelectedKeysInitialTimes.forEach(initKey => {
-              const track = window._animationRegistry.tracks.get(initKey.meshId);
-              if (!track) return;
-              
-              const newTime = Math.max(0, Math.min(masterLen, initKey.time + dt));
-              
-              if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
-                track.times[initKey.index] = newTime;
-              } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
-                track.shapeTimes[initKey.index] = newTime;
+          if (window._animationRegistry) {
+            if (this._animSelectedKeysInitialTimes) {
+              window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, masterLen);
+            } else {
+              const meshId = Array.from(window._animationRegistry.tracks.entries()).find(([id, t]) => t === this._activeKeyframeTrack)?.[0];
+              if (meshId) {
+                const singleKey = [{
+                  meshId: meshId,
+                  type: this._activeKeyframeType,
+                  index: this._activeKeyframeIndex,
+                  time: window._animLastTouchedKeyTime !== undefined ? window._animLastTouchedKeyTime : targetTime
+                }];
+                window._animationRegistry.moveSelectedKeys(singleKey, dt, masterLen);
               }
-            });
-            this._needsRedraw = true;
-          } else {
-            if (this._activeKeyframeType === 'transform' && this._activeKeyframeTrack.times) {
-              this._activeKeyframeTrack.times[this._activeKeyframeIndex] = targetTime;
-            } else if (this._activeKeyframeType === 'shape' && this._activeKeyframeTrack.shapeTimes) {
-              this._activeKeyframeTrack.shapeTimes[this._activeKeyframeIndex] = targetTime;
             }
             this._needsRedraw = true;
           }
@@ -2153,6 +2122,7 @@ export default class GuiXR {
                     const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === meshId && sk.type === 'shape' && sk.index === i);
                     if (!inSel) {
                       window._animSelectedKeys = [{ meshId, type: 'shape', index: i, time: kTime }];
+                      window._animTransformBox = null;
                     }
                     this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
                     keyFound = true;
@@ -2180,6 +2150,7 @@ export default class GuiXR {
                       const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === meshId && sk.type === 'transform' && sk.index === i);
                       if (!inSel) {
                         window._animSelectedKeys = [{ meshId, type: 'transform', index: i, time: kTime }];
+                        window._animTransformBox = null;
                       }
                       this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
                       keyFound = true;
@@ -4197,13 +4168,54 @@ export default class GuiXR {
     ctx.textAlign = 'right';
     ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + 20);
 
-    if (window._animFeedbackText && window._animFeedbackTimer) {
-      const elapsed = performance.now() - window._animFeedbackTimer;
-      if (elapsed < 2000) {
-        ctx.fillStyle = '#00ffcc';
-        ctx.font = 'bold 14px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(window._animFeedbackText, w.x + w.w / 2, w.y + 20);
+    if (window._animFeedbackText && window._animFeedbackTimer && (performance.now() - window._animFeedbackTimer) < 2000) {
+      ctx.fillStyle = '#00ffcc';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(window._animFeedbackText, w.x + w.w / 2, w.y + 20);
+    } else if (reg.isCountingIn || reg.isRecording) {
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(window._animStatusText || '', w.x + w.w / 2, w.y + 20);
+    } else {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        const id = activeMesh.getID();
+        const track = reg.tracks.get(id);
+        if (track) {
+          const fps = window._animFPS || 24;
+          const curTime = window._animCurrentTime || 0;
+          const snappedTime = Math.round(curTime * fps) / fps;
+          
+          // Check if a SINGLE key is selected!
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          
+          if (singleSelected && singleSelected.meshId === id) {
+            const kIdx = singleSelected.index;
+            const t = singleSelected.type === 'transform' ? track.times[kIdx] : track.shapeTimes[kIdx];
+            const frame = Math.round(t * fps);
+            let px = 0, py = 0, pz = 0;
+            if (singleSelected.type === 'transform' && track.positions) {
+              px = track.positions[kIdx * 3];
+              py = track.positions[kIdx * 3 + 1];
+              pz = track.positions[kIdx * 3 + 2];
+            }
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`key ${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.x + w.w / 2, w.y + 20);
+          } else {
+            // Show interpolated value at playhead!
+            const [px, py, pz] = reg.getInterpolatedPosition(track, snappedTime);
+            const frame = Math.round(curTime * fps);
+            
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.x + w.w / 2, w.y + 20);
+          }
+        }
       }
     }
 
@@ -4239,10 +4251,7 @@ export default class GuiXR {
     const laneAreaH = w.h - headerH;
     
     if (tracks.length === 0) {
-      ctx.fillStyle = '#666';
-      ctx.font = '24px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('No recorded tracks in memory.', w.x + w.w/2, w.y + headerH + laneAreaH/2 + 8);
+      // Empty timeline message removed as requested
     } else {
       const totalAvailableSlots = Math.max(4, tracks.length); 
       const trackH = laneAreaH / totalAvailableSlots;
@@ -4397,14 +4406,33 @@ export default class GuiXR {
         ctx.restore();
 
         const trashX = w.x + 140;
-        ctx.fillStyle = '#ff4444';
-        ctx.fillText('🗑', trashX, ty + trackH / 2);
+        ctx.save();
+        ctx.translate(trashX, ty + trackH / 2 - 6);
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        // Lid
+        ctx.moveTo(0, 2);
+        ctx.lineTo(12, 2);
+        // Handle
+        ctx.moveTo(4, 2);
+        ctx.lineTo(4, 0);
+        ctx.lineTo(8, 0);
+        ctx.lineTo(8, 2);
+        // Body
+        ctx.moveTo(2, 2);
+        ctx.lineTo(3, 12);
+        ctx.lineTo(9, 12);
+        ctx.lineTo(10, 2);
+        ctx.stroke();
+        ctx.restore();
       });
     }
 
     // 4. Render Blender-Style Custom Playhead Cap
     const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
-    const playheadAlpha = (currentTimeVal - loopStart) / visibleDuration;
+    const snappedTime = Math.round(currentTimeVal * fps) / fps;
+    const playheadAlpha = (snappedTime - loopStart) / visibleDuration;
     const playheadX = tlX + playheadAlpha * tlW;
 
     // Playhead full vertical line

@@ -721,6 +721,98 @@ class AnimationRegistry {
     }
   }
 
+  getKeysInTimeRange(tMin, tMax, laneMin, laneMax) {
+    let selected = [];
+    const tracks = Array.from(this.tracks.entries());
+    
+    for (let i = Math.max(0, laneMin); i <= Math.min(tracks.length - 1, laneMax); i++) {
+      const [meshId, track] = tracks[i];
+      
+      if (track.times) {
+        for (let j = 0; j < track.times.length; j++) {
+          const t = track.times[j];
+          if (t >= tMin && t <= tMax) {
+            selected.push({ meshId, type: 'transform', index: j });
+          }
+        }
+      }
+      if (track.shapeTimes) {
+        for (let j = 0; j < track.shapeTimes.length; j++) {
+          const t = track.shapeTimes[j];
+          if (t >= tMin && t <= tMax) {
+            selected.push({ meshId, type: 'shape', index: j });
+          }
+        }
+      }
+    }
+    return selected;
+  }
+
+  moveSelectedKeys(selectedKeys, dt, masterDuration) {
+    selectedKeys.forEach(key => {
+      const track = this.tracks.get(key.meshId);
+      if (!track) return;
+      
+      if (key.type === 'transform' && track.times && track.times[key.index] !== undefined) {
+        const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
+        track.times[key.index] = newTime;
+      } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
+        const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
+        track.shapeTimes[key.index] = newTime;
+      }
+    });
+  }
+
+  scaleSelectedKeys(selectedKeys, pivotTime, scaleFactor, masterDuration) {
+    selectedKeys.forEach(initKey => {
+      const track = this.tracks.get(initKey.meshId);
+      if (!track) return;
+      
+      const relTime = initKey.time - pivotTime;
+      const newTime = pivotTime + relTime * scaleFactor;
+      const finalTime = Math.max(0, Math.min(masterDuration, newTime));
+
+      if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
+        track.times[initKey.index] = finalTime;
+      } else if (initKey.type === 'shape' && track.shapeTimes && track.shapeTimes[initKey.index] !== undefined) {
+        track.shapeTimes[initKey.index] = finalTime;
+      }
+    });
+  }
+
+  getInterpolatedPosition(track, time) {
+    if (!track || !track.times || track.times.length === 0) return [0, 0, 0];
+    if (track.times.length === 1) return [track.positions[0], track.positions[1], track.positions[2]];
+    
+    let frameIdx = 0;
+    while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < time) {
+      frameIdx++;
+    }
+    
+    if (frameIdx === track.times.length - 1) {
+      const idx = frameIdx * 3;
+      return [track.positions[idx], track.positions[idx+1], track.positions[idx+2]];
+    }
+    
+    const t1 = track.times[frameIdx];
+    const t2 = track.times[frameIdx + 1];
+    let alpha = 0;
+    if (t2 > t1) alpha = (time - t1) / (t2 - t1);
+    
+    const pIdx1 = frameIdx * 3, pIdx2 = (frameIdx + 1) * 3;
+    const px = track.positions[pIdx1] + (track.positions[pIdx2] - track.positions[pIdx1]) * alpha;
+    const py = track.positions[pIdx1 + 1] + (track.positions[pIdx2 + 1] - track.positions[pIdx1 + 1]) * alpha;
+    const pz = track.positions[pIdx1 + 2] + (track.positions[pIdx2 + 2] - track.positions[pIdx1 + 2]) * alpha;
+    
+    return [px, py, pz];
+  }
+
+  sortAllTracks() {
+    this.tracks.forEach((track) => {
+      this.sortTrack(track);
+    });
+  }
+
   update(mesh, forceScrub = false) {
     if (window._animWaitingForGrab && window.app && window.app._guiXR) {
       window.app._guiXR._needsRedraw = true;

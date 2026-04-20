@@ -1,3 +1,10 @@
+# v1.0.217
+- **Feature**: **Desktop Timeline Snapping**: Playhead now snaps to integer frames based on FPS setting, ensuring parity with VR.
+- **UI**: **Desktop Timeline Off by Default**: Timeline and Transform Box are now off by default in desktop mode to reduce clutter.
+- **UI**: **Clean Timeline**: Removed "No recorded tracks in memory." text from empty timeline.
+- **UI**: **VR Button Layering**: Moved VR buttons back to bottom with z-index 10000 to prevent occlusion by timeline.
+- **UI**: **OpenXR Warning Fade**: Changed OpenXR warning to a fade-in/fade-out message with click-to-dismiss.
+
 # v1.0.216
 - **Feature**: **Geometric Wireframe Bias**: Replaced the unreliable shader-based clip-space bias with a geometric vertex offset along normals, successfully preventing z-fighting on desktop.
 - **UI**: **Wireframe Opacity Slider**: Added a live wireframe opacity slider to the desktop rendering menu and grouped all wireframe controls together.
