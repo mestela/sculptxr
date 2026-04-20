@@ -30,6 +30,7 @@ export default class GuiTimeline {
     this._activeTangentIndex = undefined;
     this._activeTangentSide = null;
     this._activeTangentKx = 0;
+    this._activeTangentKy = 0;
     this._activeTangentType = null;
     this._isPanningGraph = false;
     this._isZoomingGraph = false;
@@ -184,30 +185,69 @@ export default class GuiTimeline {
             const t1 = track.times[i];
             const t2 = track.times[i + 1];
             
+            const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+            const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+            const isSelectedChannel = selChannel === channel;
+
             let m0 = 1.0;
             let m1 = 1.0;
-            if (track.tangentOffsets) {
-              const rightVal = track.tangentOffsets[`trans_${i}_right`];
-              const leftVal = track.tangentOffsets[`trans_${i + 1}_left`];
-              const rightHandle = rightVal !== undefined ? rightVal : 25;
-              const leftHandle = leftVal !== undefined ? leftVal : -25;
-              m0 = rightHandle / 25.0;
-              m1 = -leftHandle / 25.0;
-            }
+            
+            const dt = t2 - t1;
+            
+            const val1 = track.positions[i * 3 + channel];
+            const val2 = track.positions[(i + 1) * 3 + channel];
+
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${channel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] : undefined;
+
+            const dt0 = rightDt !== undefined ? rightDt : 0.2;
+            const dv0 = rightDv !== undefined ? rightDv : (val2 - val1) * 0.33;
+            const dt1 = leftDt !== undefined ? leftDt : -0.2;
+            const dv1 = leftDv !== undefined ? leftDv : -(val2 - val1) * 0.33;
+
+            const p1x = dt0 / dt;
+            const p2x = 1 + dt1 / dt;
 
             const steps = 20;
             for (let s = 0; s <= steps; s++) {
-              const alpha = s / steps;
-              const tVal = alpha;
-              const tSq = tVal * tVal;
-              const tCu = tSq * tVal;
+              const targetAlpha = s / steps;
               
-              const blend = (-2 * tCu + 3 * tSq) + m0 * (tCu - 2 * tSq + tVal) + m1 * (tCu - tSq);
+              let val = 0;
+              if (window._animShowTangents && isSelectedChannel) {
+                // Solve for t using binary search (inline)
+                let low = 0;
+                let high = 1;
+                let t = 0.5;
+                for (let j = 0; j < 10; j++) {
+                  const tSq = t * t;
+                  const tCu = tSq * t;
+                  const omt = 1 - t;
+                  const omtSq = omt * omt;
+                  const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
+                  if (Math.abs(currentAlpha - targetAlpha) < 0.001) break;
+                  if (currentAlpha < targetAlpha) low = t;
+                  else high = t;
+                  t = (low + high) / 2;
+                }
+
+                const omt = 1 - t;
+                const omtSq = omt * omt;
+                const omtCu = omtSq * omt;
+                const tSq = t * t;
+                const tCu = tSq * t;
+                
+                const p1y = val1 + dv0;
+                const p2y = val2 + dv1;
+
+                val = omtCu * val1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * val2;
+              } else {
+                val = val1 + (val2 - val1) * targetAlpha;
+              }
               
-              const time = t1 + alpha * (t2 - t1);
-              const val1 = track.positions[i * 3 + channel];
-              const val2 = track.positions[(i + 1) * 3 + channel];
-              const val = val1 + (val2 - val1) * blend;
+              const time = t1 + targetAlpha * (t2 - t1);
               
               const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
               const y = this.valueToY(val);
@@ -252,21 +292,26 @@ export default class GuiTimeline {
             const val = track.positions[i * 3 + selChannel];
             const ky = this.valueToY(val);
             
-            const rightVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right`] : undefined;
-            const leftVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left`] : undefined;
-            const rightXOff = rightVal !== undefined ? rightVal : 25;
-            const leftXOff = leftVal !== undefined ? leftVal : -25;
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+
+            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+            const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : 0;
+            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+            const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : 0;
 
             // Draw right handle
             if (i < track.times.length - 1) {
               ctx.beginPath();
               ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + rightXOff, ky);
+              ctx.lineTo(kx + rightXOff, ky + rightYOff);
               ctx.stroke();
               
               ctx.fillStyle = '#ff00aa';
               ctx.beginPath();
-              ctx.arc(kx + rightXOff, ky, 4, 0, Math.PI * 2);
+              ctx.arc(kx + rightXOff, ky + rightYOff, 4, 0, Math.PI * 2);
               ctx.fill();
             }
             
@@ -274,12 +319,12 @@ export default class GuiTimeline {
             if (i > 0) {
               ctx.beginPath();
               ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + leftXOff, ky);
+              ctx.lineTo(kx + leftXOff, ky + leftYOff);
               ctx.stroke();
               
               ctx.fillStyle = '#ff00aa';
               ctx.beginPath();
-              ctx.arc(kx + leftXOff, ky, 4, 0, Math.PI * 2);
+              ctx.arc(kx + leftXOff, ky + leftYOff, 4, 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -436,23 +481,30 @@ export default class GuiTimeline {
         const rightXOff = rightVal !== undefined ? rightVal : 25;
         const leftXOff = leftVal !== undefined ? leftVal : -25;
 
+        const rightYVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_y`] : undefined;
+        const leftYVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_y`] : undefined;
+        const rightYOff = rightYVal !== undefined ? rightYVal : 0;
+        const leftYOff = leftYVal !== undefined ? leftYVal : 0;
+
         // Check right handle
-        if (i < track.times.length - 1 && Math.abs(rx - (kx + rightXOff)) < 10 && Math.abs(ry - ky) < 10) {
+        if (i < track.times.length - 1 && Math.abs(rx - (kx + rightXOff)) < 10 && Math.abs(ry - (ky + rightYOff)) < 10) {
           this._isDraggingTangent = true;
           this._activeTangentTrack = track;
           this._activeTangentIndex = i;
           this._activeTangentSide = 'right';
           this._activeTangentKx = kx;
+          this._activeTangentKy = ky;
           this._activeTangentType = 'transform';
           return;
         }
         // Check left handle
-        if (i > 0 && Math.abs(rx - (kx + leftXOff)) < 10 && Math.abs(ry - ky) < 10) {
+        if (i > 0 && Math.abs(rx - (kx + leftXOff)) < 10 && Math.abs(ry - (ky + leftYOff)) < 10) {
           this._isDraggingTangent = true;
           this._activeTangentTrack = track;
           this._activeTangentIndex = i;
           this._activeTangentSide = 'left';
           this._activeTangentKx = kx;
+          this._activeTangentKy = ky;
           this._activeTangentType = 'transform';
           return;
         }
@@ -789,6 +841,18 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    const rect = this._canvas.getBoundingClientRect();
+    const rx = e.clientX - rect.left;
+    const ry = e.clientY - rect.top;
+    
+    const tlX = 200;
+    const tlW = this._cssWidth - 220;
+    
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
     if (this._isPanningGraph) {
       const rect = this._canvas.getBoundingClientRect();
       const ry = e.clientY - rect.top;
@@ -809,18 +873,6 @@ export default class GuiTimeline {
     if (this._isDraggingPlayhead) {
       this.handleInteraction(e);
     } else if (this._isDraggingKeyframe) {
-      const rect = this._canvas.getBoundingClientRect();
-      const rx = e.clientX - rect.left;
-      const ry = e.clientY - rect.top;
-      
-      const tlX = 200;
-      const tlW = this._cssWidth - 220;
-      
-      const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-      const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-      const visibleDuration = Math.max(0.1, loopEnd - loopStart);
-      
       let t = (rx - tlX) / tlW;
       t = Math.max(0, Math.min(1, t));
       const targetTime = loopStart + t * visibleDuration;
@@ -861,10 +913,8 @@ export default class GuiTimeline {
       
       this.draw();
     } else if (this._isDraggingTangent) {
-      const rect = this._canvas.getBoundingClientRect();
-      const rx = e.clientX - rect.left;
-      
       let deltaX = rx - this._activeTangentKx;
+      const deltaY = ry - this._activeTangentKy;
       
       if (this._activeTangentSide === 'left') {
         deltaX = Math.min(0, deltaX);
@@ -877,8 +927,14 @@ export default class GuiTimeline {
           this._activeTangentTrack.tangentOffsets = {};
         }
         const prefix = this._activeTangentType === 'transform' ? 'trans_' : '';
-        const key = `${prefix}${this._activeTangentIndex}_${this._activeTangentSide}`;
-        this._activeTangentTrack.tangentOffsets[key] = deltaX;
+        const dt = (deltaX / tlW) * visibleDuration;
+        const dv = -deltaY / this._zoomY;
+        
+        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+        const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+        this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dt`] = dt;
+        this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
       }
       
       this.draw();

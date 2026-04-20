@@ -29,6 +29,16 @@ class GuiAnimation {
     menu.addCheckbox('Show Tangents', window, '_animShowTangents');
     menu.addSlider('FPS', window, '_animFPS', 1, 60, 1);
     
+    const rateModes = [0.033, 0.1, 0.5, 1.0];
+    const rateLabels = ['Dense (~30 fps)', 'Standard (~10 fps)', 'Sparse (2 fps)', 'Step Key (1 fps)'];
+    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
+    let defaultRateIdx = rateModes.indexOf(window._animCaptureRate);
+    if (defaultRateIdx === -1) defaultRateIdx = 0;
+
+    menu.addCombobox('Bake Rate', defaultRateIdx, (val) => {
+      window._animCaptureRate = rateModes[val];
+    }, rateLabels);
+
     // Transport
     menu.addTitle('Transport');
     menu.addDualButton('|◀ Jump Start', '▶| Jump End', this, this, 'toStart', 'toEnd');

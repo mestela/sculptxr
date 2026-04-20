@@ -1028,6 +1028,24 @@ class AnimationRegistry {
     });
   }
 
+  getBezierT(targetAlpha, p1x, p2x) {
+    let low = 0;
+    let high = 1;
+    let t = 0.5;
+    for (let i = 0; i < 10; i++) {
+      const tSq = t * t;
+      const tCu = tSq * t;
+      const omt = 1 - t;
+      const omtSq = omt * omt;
+      const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
+      if (Math.abs(currentAlpha - targetAlpha) < 0.001) return t;
+      if (currentAlpha < targetAlpha) low = t;
+      else high = t;
+      t = (low + high) / 2;
+    }
+    return t;
+  }
+
   update(mesh, forceScrub = false) {
     if (window._animWaitingForGrab && window.app && window.app._guiXR) {
       window.app._guiXR._needsRedraw = true;
@@ -1035,12 +1053,10 @@ class AnimationRegistry {
 
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
-    // If we are actively recording this specific mesh, completely bypass playback overrides so the user's live Grab motion isn't overwritten by pre-existing looping track data!
     if (this.isRecording && mesh.getID() === this.activeRecordingId) return;
 
     const now = performance.now();
 
-    // If transport is halted, force the visual UI timeline to perfectly synchronize with the stationary playhead!
     if (!window._animPlaying) {
       window._animCurrentTime = this.globalPlaybackTime || 0;
     }
@@ -1103,58 +1119,61 @@ class AnimationRegistry {
       return;
     }
 
-    // Ensure playbackTime is always set for downstream blocks
     track.playbackTime = this.globalPlaybackTime || 0;
 
     if (track.times && track.times.length >= 2) {
-
-    // Force the individual track to scrub precisely to the unified global clock
-    track.playbackTime = this.globalPlaybackTime || 0;
-
-    let frameIdx = 0;
-    while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < track.playbackTime) {
-      frameIdx++;
-    }
-
-    const t1 = track.times[frameIdx];
-    const t2 = track.times[frameIdx + 1];
-    
-    let alpha = 0;
-    if (t2 > t1) {
-      alpha = (track.playbackTime - t1) / (t2 - t1);
-    }
-
-    let blend = alpha;
-    if (window._animShowTangents && track.times.length > 1) {
-      let m0 = 1.0;
-      let m1 = 1.0;
-
-      if (track.tangentOffsets) {
-        const rightVal = track.tangentOffsets[`trans_${frameIdx}_right`];
-        const leftVal = track.tangentOffsets[`trans_${frameIdx + 1}_left`];
-        
-        const rightHandle = rightVal !== undefined ? rightVal : 25;
-        const leftHandle = leftVal !== undefined ? leftVal : -25;
-
-        m0 = rightHandle / 25.0;
-        m1 = -leftHandle / 25.0;
+      let frameIdx = 0;
+      while (frameIdx < track.times.length - 1 && track.times[frameIdx + 1] < track.playbackTime) {
+        frameIdx++;
       }
 
-      const t = alpha;
-      const t2 = t * t;
-      const t3 = t2 * t;
+      const t1 = track.times[frameIdx];
+      const t2 = track.times[frameIdx + 1];
+      const dt = t2 - t1;
+      let px = 0, py = 0, pz = 0;
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
 
-      blend = (-2 * t3 + 3 * t2) + m0 * (t3 - 2 * t2 + t) + m1 * (t3 - t2);
-    }
+      for (let c = 0; c < 3; c++) {
+        const v1 = track.positions[frameIdx * 3 + c];
+        const v2 = track.positions[(frameIdx + 1) * 3 + c];
+        let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
+        const isSelectedChannel = singleSelected && singleSelected.type === 'transform' && singleSelected.meshId === mesh.getID() && singleSelected.channel === c;
 
-    const pIdx1 = frameIdx * 3, pIdx2 = (frameIdx + 1) * 3;
-    const px = track.positions[pIdx1] + (track.positions[pIdx2] - track.positions[pIdx1]) * blend;
-    const py = track.positions[pIdx1 + 1] + (track.positions[pIdx2 + 1] - track.positions[pIdx1 + 1]) * blend;
-    const pz = track.positions[pIdx1 + 2] + (track.positions[pIdx2 + 2] - track.positions[pIdx1 + 2]) * blend;
+        if (window._animShowTangents && track.times.length > 1 && isSelectedChannel) {
+          const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dt`] : undefined;
+          const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dv_${c}`] : undefined;
+          const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;
+          const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dv_${c}`] : undefined;
+          const dt0 = rightDt !== undefined ? rightDt : 0.2;
+          const dv0 = rightDv !== undefined ? rightDv : (v2 - v1) * 0.33;
+          const dt1 = leftDt !== undefined ? leftDt : -0.2;
+          const dv1 = leftDv !== undefined ? leftDv : -(v2 - v1) * 0.33;
 
-    const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * blend;
-    const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * blend;
-    const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * blend;
+          const p1x = dt0 / dt;
+          const p2x = 1 + dt1 / dt;
+          const t = this.getBezierT(alpha, p1x, p2x);
+          const omt = 1 - t;
+          const omtSq = omt * omt;
+          const omtCu = omtSq * omt;
+          const tSq = t * t;
+          const tCu = tSq * t;
+          const p1y = v1 + dv0;
+          const p2y = v2 + dv1;
+
+          const val = omtCu * v1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * v2;
+          if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
+        } else {
+          const val = v1 + (v2 - v1) * alpha;
+          if (c === 0) px = val; else if (c === 1) py = val; else if (c === 2) pz = val;
+        }
+      }
+
+      const pIdx1 = frameIdx * 3;
+      const pIdx2 = (frameIdx + 1) * 3;
+      let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
+      const sx = track.scales[pIdx1] + (track.scales[pIdx2] - track.scales[pIdx1]) * alpha;
+      const sy = track.scales[pIdx1 + 1] + (track.scales[pIdx2 + 1] - track.scales[pIdx1 + 1]) * alpha;
+      const sz = track.scales[pIdx1 + 2] + (track.scales[pIdx2 + 2] - track.scales[pIdx1 + 2]) * alpha;
 
     const qIdx1 = frameIdx * 4, qIdx2 = (frameIdx + 1) * 4;
     const q1 = [track.quaternions[qIdx1], track.quaternions[qIdx1 + 1], track.quaternions[qIdx1 + 2], track.quaternions[qIdx1 + 3]];
