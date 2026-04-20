@@ -557,7 +557,9 @@ export default class GuiTimeline {
                 this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
               }
               this.draw();
-            }
+            },
+            false,
+            "Transform Box Edit"
           );
         }
 

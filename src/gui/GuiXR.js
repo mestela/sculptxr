@@ -1251,7 +1251,9 @@ export default class GuiXR {
                   this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
                 }
                 if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
-              }
+              },
+              false,
+              "Transform Box Edit"
             );
           }
 

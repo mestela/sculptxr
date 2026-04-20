@@ -51,6 +51,27 @@ class AnimationRegistry {
     this.activeMesh = mesh;
     this.lastCaptureTime = -1;
     
+    // Capture state before recording for Undo!
+    const track = this.tracks.get(id);
+    this._trackStateBeforeRecording = null;
+    if (track) {
+      this._trackStateBeforeRecording = {
+        times: track.times ? track.times.slice() : [],
+        positions: track.positions ? track.positions.slice() : [],
+        quaternions: track.quaternions ? track.quaternions.slice() : [],
+        scales: track.scales ? track.scales.slice() : [],
+        shapeTimes: track.shapeTimes ? track.shapeTimes.slice() : [],
+        shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+        meshMatrix: mesh.getMatrix ? mesh.getMatrix().slice() : null
+      };
+    } else {
+      this._trackStateBeforeRecording = {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [],
+        meshMatrix: mesh.getMatrix ? mesh.getMatrix().slice() : null
+      };
+    }
+    
     // If it is the very first track EVER, or we are resetting it:
     if (!this.tracks.has(id)) {
       let px = 0, py = 0, pz = 0;
@@ -424,6 +445,63 @@ class AnimationRegistry {
       delete track.punchInTime;
     }
 
+    // Push Undo state for recording!
+    if (!isManualAbort && track && count > 0 && this._trackStateBeforeRecording) {
+      const stateAfter = {
+        times: track.times.slice(),
+        positions: track.positions.slice(),
+        quaternions: track.quaternions.slice(),
+        scales: track.scales.slice(),
+        shapeTimes: track.shapeTimes ? track.shapeTimes.slice() : [],
+        shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : []
+      };
+      
+      const stateBefore = this._trackStateBeforeRecording;
+      const meshId = this.activeRecordingId;
+      
+      if (window.app && window.app.getStateManager()) {
+        window.app.getStateManager().pushStateCustom(
+          () => { // UNDO
+            console.log("[Undo] Restore Track State before Recording");
+            const tr = this.tracks.get(meshId);
+            if (!tr) return;
+            tr.times = stateBefore.times.slice();
+            tr.positions = stateBefore.positions.slice();
+            tr.quaternions = stateBefore.quaternions.slice();
+            tr.scales = stateBefore.scales.slice();
+            tr.shapeTimes = stateBefore.shapeTimes.slice();
+            tr.shapes = stateBefore.shapes.map(s => new Float32Array(s));
+            this.sortTrack(tr);
+            
+            const msh = window.app.getMesh();
+            if (msh && msh.getID() === meshId) {
+              if (stateBefore.meshMatrix) {
+                msh.setMatrix(stateBefore.meshMatrix);
+              }
+              this.update(msh, true);
+            }
+            
+            if (window.app.render) window.app.render();
+          },
+          () => { // REDO
+            console.log("[Redo] Restore Recorded Track State");
+            const tr = this.tracks.get(meshId);
+            if (!tr) return;
+            tr.times = stateAfter.times.slice();
+            tr.positions = stateAfter.positions.slice();
+            tr.quaternions = stateAfter.quaternions.slice();
+            tr.scales = stateAfter.scales.slice();
+            tr.shapeTimes = stateAfter.shapeTimes.slice();
+            tr.shapes = stateAfter.shapes.map(s => new Float32Array(s));
+            this.sortTrack(tr);
+            if (window.app.render) window.app.render();
+          },
+          false,
+          "Record Motion"
+        );
+      }
+    }
+
     this.activeRecordingId = -1;
     this.activeMesh = null;
     
@@ -573,8 +651,8 @@ class AnimationRegistry {
     
     for (let i = track.shapeTimes.length - 1; i >= 0; i--) {
       if (Math.abs(track.shapeTimes[i] - time) < 0.05) {
-        track.shapeTimes.splice(i, 1);
-        track.shapes.splice(i, 1);
+        const singleKey = [{ meshId: mesh.getID(), type: 'shape', index: i }];
+        this.deleteSelectedKeys(singleKey);
         window._animStatusText = `🗑️ Deleted Shape key at ${time.toFixed(2)}s`;
         
         if (mesh.updateGeometry) mesh.updateGeometry();
@@ -702,10 +780,8 @@ class AnimationRegistry {
 
     for (let i = track.times.length - 1; i >= 0; i--) {
       if (Math.abs(track.times[i] - time) < 0.05) {
-        track.times.splice(i, 1);
-        track.positions.splice(i*3, 3);
-        track.quaternions.splice(i*4, 4);
-        track.scales.splice(i*3, 3);
+        const singleKey = [{ meshId: mesh.getID(), type: 'transform', index: i }];
+        this.deleteSelectedKeys(singleKey);
         window._animStatusText = `🗑️ Deleted Transform key`;
         break;
       }
@@ -842,7 +918,9 @@ class AnimationRegistry {
           });
           
           if (window.app.render) window.app.render();
-        }
+        },
+        false,
+        "Delete Keys"
       );
     }
   }
