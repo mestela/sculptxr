@@ -1,3 +1,12 @@
+# v1.0.219
+- **Feature**: **Motion Record Undo**: Recording a motion is now fully undoable. The system captures the track state and mesh matrix before recording and restores them on Undo.
+- **Feature**: **Multi-Key Copy/Paste on Desktop**: Ported the VR multi-key copy/paste logic to desktop, allowing batch operations on selected keys.
+- **Fix**: **Transform Box Expansion**: Allowed the right handle of the transform box to expand the timeline duration and loop end automatically when pulled past the current limit, in both Desktop and VR.
+- **Fix**: **Single Key Delete Undo**: Refactored single key deletion to use the batch deletion logic, making it fully undoable.
+- **Fix**: **VR Undo Reliability**: Fixed a variable name mismatch and allowed processing release events even if the cursor is inactive, making Undo much more reliable in VR.
+- **UI**: **Named Undo Operations**: Added an optional name parameter to `pushStateCustom` to provide specific descriptions in the console for custom operations like "Delete Keys" and "Transform Box Edit".
+- **Cleanup**: Removed verbose `Undo Debug` and `AutoKey Debug` logs from the console.
+
 # v1.0.217
 - **Feature**: **Desktop Timeline Snapping**: Playhead now snaps to integer frames based on FPS setting, ensuring parity with VR.
 - **UI**: **Desktop Timeline Off by Default**: Timeline and Transform Box are now off by default in desktop mode to reduce clutter.
