@@ -22,15 +22,10 @@ class GuiAnimation {
       if (timeline) timeline.draw();
     });
 
-    // Settings
-    menu.addTitle('Settings');
     menu.addCheckbox('AutoKey', window, '_animAutoKey');
     menu.addCheckbox('Count-in', window, '_animCountIn');
     menu.addCheckbox('Wait for Trigger', window, '_animWaitForTrigger');
     menu.addCheckbox('Show Tangents', window, '_animShowTangents');
-
-    // Playback
-    menu.addTitle('Playback');
     menu.addSlider('FPS', window, '_animFPS', 1, 60, 1);
     
     // Transport
@@ -42,7 +37,6 @@ class GuiAnimation {
     menu.addButton('Clear All Animation', this, 'clearAll');
 
     // Timeline Range
-    menu.addTitle('Timeline Range');
     const fps = window._animFPS || 24;
     window._animLoopStart = 0;
     window._animLoopEnd = window._animMasterDuration || 2.0;
@@ -63,7 +57,7 @@ class GuiAnimation {
     menu.addButton('Add Keyframe', this, 'addKeyframe');
     
     menu.addDualButton('📋 Copy Key', '📥 Paste Key', this, this, 'copyKey', 'pasteKey');
-    menu.addButton('🗑️ Delete Key', this, 'deleteKey');
+    menu.addDualButton('✂️ Cut Key', '🗑️ Delete Key', this, this, 'cutKey', 'deleteKey');
   }
 
   // Callbacks
@@ -199,10 +193,23 @@ class GuiAnimation {
     window._animationRegistry.update(targetMesh, true);
   }
 
+  cutKey() {
+    this.copyKey();
+    this.deleteKey();
+  }
+
   deleteKey() {
     if (!window._animationRegistry) return;
     let targetMesh = this._main.getMesh();
     if (!targetMesh) return;
+
+    if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+      window._animationRegistry.deleteSelectedKeys(window._animSelectedKeys);
+      if (window.screenLog) window.screenLog('🗑️ Deleted Selected Keys', 'orange');
+      window._animationRegistry.update(targetMesh, true);
+      return;
+    }
+    
     const targetTime = window._animCurrentTime || 0;
     
     if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {

@@ -5,15 +5,15 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v1.0.216</title>
+    <title>SculptXR v1.0.217</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!-- 
                                                               SculptXR - WebXR sculpting application 
-                                                              Version: v1.0.214
+                                                              Version: v1.0.217
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
-    <meta property="og:title" content="SculptXR v1.0.214">
+    <meta property="og:title" content="SculptXR v1.0.217">
     <style>
         body {
             margin: 0;
@@ -57,7 +57,7 @@
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 999;
+            z-index: 10000;
             display: flex;
             flex-direction: row;
             align-items: center;
@@ -84,7 +84,7 @@
         }
     </style>
 
-  <script type="module" crossorigin src="./assets/index-BeiEGJtD.js"></script>
+  <script type="module" crossorigin src="./assets/index-BS055pYQ.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-5kxBUa7a.css">
 </head>
 
@@ -96,11 +96,8 @@
 
     <!-- Warning Dialog if OpenXR is not detected promptly -->
     <div id="xr-warning"
-        style="display: none; position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 15px 25px; border-radius: 8px; font-family: sans-serif; text-align: center; z-index: 9999; border: 1px solid #444;">
-        <p style="margin: 0 0 10px 0; font-size: 16px;">OpenXR not detected.</p>
-        <p style="margin: 0 0 15px 0; font-size: 14px; color: #ccc;">Try restarting Chrome?</p>
-        <button onclick="document.getElementById('xr-warning').style.display='none'"
-            style="background: #2196F3; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">OK</button>
+        style="display: none; position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: white; padding: 15px 25px; border-radius: 8px; font-family: sans-serif; text-align: center; z-index: 9999; border: 1px solid #444; cursor: pointer; opacity: 0; white-space: nowrap;">
+        <p style="margin: 0; font-size: 16px;">OpenXR not detected. Try restarting Chrome?</p>
     </div>
 
     <!-- Update Available Banner -->

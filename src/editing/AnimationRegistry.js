@@ -721,6 +721,41 @@ class AnimationRegistry {
     }
   }
 
+  deleteSelectedKeys(selectedKeys) {
+    if (!selectedKeys || selectedKeys.length === 0) return;
+    
+    const groups = new Map();
+    selectedKeys.forEach(key => {
+      const groupKey = `${key.meshId}_${key.type}`;
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(key.index);
+    });
+    
+    groups.forEach((indices, groupKey) => {
+      const [meshIdStr, type] = groupKey.split('_');
+      const meshId = parseInt(meshIdStr, 10);
+      const track = this.tracks.get(meshId);
+      if (!track) return;
+      
+      indices.sort((a, b) => b - a);
+      
+      indices.forEach(idx => {
+        if (type === 'transform' && track.times && track.times[idx] !== undefined) {
+          track.times.splice(idx, 1);
+          track.positions.splice(idx * 3, 3);
+          track.quaternions.splice(idx * 4, 4);
+          track.scales.splice(idx * 3, 3);
+        } else if (type === 'shape' && track.shapeTimes && track.shapeTimes[idx] !== undefined) {
+          track.shapeTimes.splice(idx, 1);
+          track.shapes.splice(idx, 1);
+        }
+      });
+    });
+    
+    window._animSelectedKeys = [];
+    window._animTransformBox = null;
+  }
+
   getKeysInTimeRange(tMin, tMax, laneMin, laneMax) {
     let selected = [];
     const tracks = Array.from(this.tracks.entries());
