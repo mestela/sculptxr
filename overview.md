@@ -44,5 +44,10 @@ The project contains critical documentation on overcoming mobile WebXR barriers:
 *   **Virtual Desktop**: Resolved a critical controller detection failure by removing the `hand-tracking` flag from session requests, preventing confused fallback behavior between physical controllers and optical hand tracking.
 *   **Apple Vision Pro**: Notes that enabling full hand tracking requires specific optional flags in WebXR setup to bypass game-like transient pointers, and AVP currently lacks `immersive-ar` support in Safari.
 
+## 5. Animation & Undo System Implementation Notes
+*   **VR State Sharing**: VR UI instances may recreate or lose instance properties across frames. To ensure state survives from click to release (e.g., `_animTransformBoxInitialTimes`), store it on `window` rather than `this`.
+*   **Sorting Side Effects**: Operations that sort keys by time (like `sortTrack`) will shift array indices. Any Undo/Redo operations must rely on time-based lookups rather than index-based lookups to avoid data corruption.
+*   **Undo for Complex Operations**: Operations like "Delete Keys" and "Record Motion" must capture full state (times and values) before execution and restore them in Undo, as simple time-shifting is not sufficient when keys swap order or are removed.
+
 ---
-*This overview represents the state of understanding prior to a deep code audit.*
+*This overview represents the state of understanding after the animation and undo system audit.*
