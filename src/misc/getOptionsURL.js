@@ -169,6 +169,7 @@ var getOptionsURL = function () {
   // VR UI Settings
   options.leftHandMode = queryBool(getVal('leftHandMode'), false);
   options.aimPickingMode = queryBool(getVal('aimPickingMode'), false); // Default false
+  options.debugMode = queryBool(getVal('debugMode'), false);
   options.ambidextrousCursors = queryBool(getVal('ambidextrousCursors'), false);
   options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
   options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);

@@ -38,6 +38,9 @@ export default class GuiTimeline {
     this._panStartOffsetY = 0;
     this._zoomStartRy = 0;
     this._zoomStartScaleY = 100.0;
+    this._isResizingPanel = false;
+    this._lastMouseX = -1;
+    this._lastMouseY = -1;
     this.initDOM();
     this.startLoop();
   }
@@ -203,20 +206,22 @@ export default class GuiTimeline {
             const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dt`] : undefined;
             const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] : undefined;
 
-            const dt0 = rightDt !== undefined ? rightDt : 0.2;
-            const dv0 = rightDv !== undefined ? rightDv : (val2 - val1) * 0.33;
-            const dt1 = leftDt !== undefined ? leftDt : -0.2;
-            const dv1 = leftDv !== undefined ? leftDv : -(val2 - val1) * 0.33;
+            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+            const dv0 = rightDv !== undefined ? rightDv : 0.0;
+            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+            const dv1 = leftDv !== undefined ? leftDv : 0.0;
 
             const p1x = dt0 / dt;
             const p2x = 1 + dt1 / dt;
+
+            const hasTangents = track.tangentOffsets && (track.tangentOffsets[`trans_${i}_right_dv_${channel}`] !== undefined || track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] !== undefined);
 
             const steps = 20;
             for (let s = 0; s <= steps; s++) {
               const targetAlpha = s / steps;
               
               let val = 0;
-              if (window._animShowTangents && isSelectedChannel) {
+              if (window._animShowTangents && (isSelectedChannel || hasTangents)) {
                 // Solve for t using binary search (inline)
                 let low = 0;
                 let high = 1;
@@ -263,7 +268,6 @@ export default class GuiTimeline {
         }
 
         // Draw dots at keyframes
-        ctx.fillStyle = '#ffcc00';
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           for (let channel = 0; channel < 3; channel++) {
@@ -271,6 +275,13 @@ export default class GuiTimeline {
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
             const y = this.valueToY(val);
             
+            const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
+            const isHovered = Math.hypot(this._lastMouseX - x, this._lastMouseY - y) < 10;
+
+            if (isSelected) ctx.fillStyle = '#00ff00'; // Green
+            else if (isHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+            else ctx.fillStyle = '#888888'; // Gray
+
             ctx.beginPath();
             ctx.arc(x, y, 4, 0, Math.PI * 2);
             ctx.fill();
@@ -279,7 +290,7 @@ export default class GuiTimeline {
 
         // Draw Tangent Handles for Position Keys
         if (window._animShowTangents) {
-          ctx.strokeStyle = '#ff00aa';
+          ctx.strokeStyle = '#888888'; // Default line color gray
           ctx.lineWidth = 1.5;
           
           const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
@@ -309,7 +320,13 @@ export default class GuiTimeline {
               ctx.lineTo(kx + rightXOff, ky + rightYOff);
               ctx.stroke();
               
-              ctx.fillStyle = '#ff00aa';
+              const isRightHovered = Math.hypot(this._lastMouseX - (kx + rightXOff), this._lastMouseY - (ky + rightYOff)) < 10;
+              const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right';
+
+              if (isRightActive) ctx.fillStyle = '#00ff00'; // Green
+              else if (isRightHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+              else ctx.fillStyle = '#888888'; // Gray
+              
               ctx.beginPath();
               ctx.arc(kx + rightXOff, ky + rightYOff, 4, 0, Math.PI * 2);
               ctx.fill();
@@ -322,7 +339,13 @@ export default class GuiTimeline {
               ctx.lineTo(kx + leftXOff, ky + leftYOff);
               ctx.stroke();
               
-              ctx.fillStyle = '#ff00aa';
+              const isLeftHovered = Math.hypot(this._lastMouseX - (kx + leftXOff), this._lastMouseY - (ky + leftYOff)) < 10;
+              const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'left';
+
+              if (isLeftActive) ctx.fillStyle = '#00ff00'; // Green
+              else if (isLeftHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+              else ctx.fillStyle = '#888888'; // Gray
+              
               ctx.beginPath();
               ctx.arc(kx + leftXOff, ky + leftYOff, 4, 0, Math.PI * 2);
               ctx.fill();
@@ -476,37 +499,48 @@ export default class GuiTimeline {
         const val = track.positions[i * 3 + selChannel];
         const ky = this.valueToY(val);
         
-        const rightVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right`] : undefined;
-        const leftVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left`] : undefined;
-        const rightXOff = rightVal !== undefined ? rightVal : 25;
-        const leftXOff = leftVal !== undefined ? leftVal : -25;
+        const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+        const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+        const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+        const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
 
-        const rightYVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_y`] : undefined;
-        const leftYVal = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_y`] : undefined;
-        const rightYOff = rightYVal !== undefined ? rightYVal : 0;
-        const leftYOff = leftYVal !== undefined ? leftYVal : 0;
+        const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+        const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : 0;
+        const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+        const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : 0;
 
         // Check right handle
-        if (i < track.times.length - 1 && Math.abs(rx - (kx + rightXOff)) < 10 && Math.abs(ry - (ky + rightYOff)) < 10) {
-          this._isDraggingTangent = true;
-          this._activeTangentTrack = track;
-          this._activeTangentIndex = i;
-          this._activeTangentSide = 'right';
-          this._activeTangentKx = kx;
-          this._activeTangentKy = ky;
-          this._activeTangentType = 'transform';
-          return;
+        if (i < track.times.length - 1) {
+          const dist = Math.hypot(rx - (kx + rightXOff), ry - (ky + rightYOff));
+          console.log(`[Graph Debug] Right Handle ${i}: dist=${dist.toFixed(2)}, rx=${rx}, ry=${ry}, hx=${(kx + rightXOff).toFixed(2)}, hy=${(ky + rightYOff).toFixed(2)}`);
+          if (dist < 10) {
+            console.log("[Graph Debug] -> Clicked Right Tangent Handle", i);
+            this._isDraggingTangent = true;
+            this._activeTangentTrack = track;
+            this._activeTangentIndex = i;
+            this._activeTangentSide = 'right';
+            this._activeTangentKx = kx;
+            this._activeTangentKy = ky;
+            this._activeTangentType = 'transform';
+            return;
+          }
         }
+        
         // Check left handle
-        if (i > 0 && Math.abs(rx - (kx + leftXOff)) < 10 && Math.abs(ry - (ky + leftYOff)) < 10) {
-          this._isDraggingTangent = true;
-          this._activeTangentTrack = track;
-          this._activeTangentIndex = i;
-          this._activeTangentSide = 'left';
-          this._activeTangentKx = kx;
-          this._activeTangentKy = ky;
-          this._activeTangentType = 'transform';
-          return;
+        if (i > 0) {
+          const dist = Math.hypot(rx - (kx + leftXOff), ry - (ky + leftYOff));
+          console.log(`[Graph Debug] Left Handle ${i}: dist=${dist.toFixed(2)}, rx=${rx}, ry=${ry}, hx=${(kx + leftXOff).toFixed(2)}, hy=${(ky + leftYOff).toFixed(2)}`);
+          if (dist < 10) {
+            console.log("[Graph Debug] -> Clicked Left Tangent Handle", i);
+            this._isDraggingTangent = true;
+            this._activeTangentTrack = track;
+            this._activeTangentIndex = i;
+            this._activeTangentSide = 'left';
+            this._activeTangentKx = kx;
+            this._activeTangentKy = ky;
+            this._activeTangentType = 'transform';
+            return;
+          }
         }
       }
     }
@@ -617,6 +651,13 @@ export default class GuiTimeline {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
+
+    if (ry < 5) {
+      this._isResizingPanel = true;
+      this._resizeStartScreenY = e.clientY;
+      this._resizeStartHeight = this._cssHeight;
+      return;
+    }
 
     if (ry < 30) {
       if (rx >= 10 && rx <= 100) {
@@ -845,6 +886,23 @@ export default class GuiTimeline {
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
     
+    this._lastMouseX = rx;
+    this._lastMouseY = ry;
+    
+    if (ry < 5 && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph) {
+      this._canvas.style.cursor = 'ns-resize';
+    } else {
+      this._canvas.style.cursor = 'default';
+    }
+
+    if (this._isResizingPanel) {
+      const dy = e.clientY - this._resizeStartScreenY;
+      const newHeight = Math.max(100, this._resizeStartHeight - dy);
+      this._container.style.height = newHeight + 'px';
+      this.onResize();
+      return;
+    }
+
     const tlX = 200;
     const tlW = this._cssWidth - 220;
     
@@ -913,6 +971,7 @@ export default class GuiTimeline {
       
       this.draw();
     } else if (this._isDraggingTangent) {
+      console.log("[Graph Debug] Dragging Tangent Handle", this._activeTangentIndex, this._activeTangentSide);
       let deltaX = rx - this._activeTangentKx;
       const deltaY = ry - this._activeTangentKy;
       
@@ -1206,6 +1265,7 @@ export default class GuiTimeline {
     this._marqueeEnd = null;
     this._isPanningGraph = false;
     this._isZoomingGraph = false;
+    this._isResizingPanel = false;
     this.draw();
   }
 

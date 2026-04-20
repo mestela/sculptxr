@@ -26,8 +26,10 @@ class GuiAnimation {
     menu.addCheckbox('AutoKey', window._animAutoKey, this.toggleAutoKey.bind(this));
     menu.addCheckbox('Count-in', window, '_animCountIn');
     menu.addCheckbox('Wait for Trigger', window, '_animWaitForTrigger');
+    window._animShowTangents = false;
     menu.addCheckbox('Show Tangents', window, '_animShowTangents');
     menu.addSlider('FPS', window, '_animFPS', 1, 60, 1);
+    menu.addSlider('Playback Speed', window, '_animPlaybackSpeed', 0.1, 4.0, 0.1);
     
     const rateModes = [0.033, 0.1, 0.5, 1.0];
     const rateLabels = ['Dense (~30 fps)', 'Standard (~10 fps)', 'Sparse (2 fps)', 'Step Key (1 fps)'];

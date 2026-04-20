@@ -228,7 +228,10 @@ class GuiScene {
     var main = this._main;
     main._showGrid = bool;
     if (main._groundGrid) main._groundGrid.visible = bool;
-    window.localStorage.setItem('sculptxr_grid_state', bool);
+    const stored = localStorage.getItem('sculptxr_settings');
+    const settings = stored ? JSON.parse(stored) : {};
+    settings.grid = bool;
+    localStorage.setItem('sculptxr_settings', JSON.stringify(settings));
     main.render();
   }
 

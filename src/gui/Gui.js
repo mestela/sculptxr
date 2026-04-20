@@ -14,6 +14,7 @@ import GuiTablet from './GuiTablet.js';
 import GuiTimeline from './GuiTimeline.js';
 import GuiAnimation from './GuiAnimation.js';
 import ShaderContour from '../render/shaders/ShaderContour.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 import Export from '../files/Export.js';
 
@@ -106,12 +107,18 @@ class Gui {
     extra.addCheckbox('Force Grey Controllers', window._forceGreyControllers === true, (val) => {
       window._forceGreyControllers = val;
     });
-    extra.addCheckbox('Show Debug Log', window._showDebugLog !== false, (val) => {
+    const opts = getOptionsURL();
+    extra.addCheckbox('Show Debug Log', opts.debugMode, (val) => {
       window._showDebugLog = val;
+      getOptionsURL.saveOption('debugMode', val);
       const log = document.getElementById('log');
       if (log) log.style.display = val ? 'block' : 'none';
       if (val && window.screenLog) window.screenLog("Debug Log Enabled", "lime");
     });
+    
+    const log = document.getElementById('log');
+    if (log) log.style.display = opts.debugMode ? 'block' : 'none';
+
     extra.addButton('Clear Log', () => {
       const logContainer = document.getElementById('log');
       if (logContainer) {

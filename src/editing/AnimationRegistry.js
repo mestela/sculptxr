@@ -1138,16 +1138,15 @@ class AnimationRegistry {
         const v2 = track.positions[(frameIdx + 1) * 3 + c];
         let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
         const isSelectedChannel = singleSelected && singleSelected.type === 'transform' && singleSelected.meshId === mesh.getID() && singleSelected.channel === c;
-
-        if (window._animShowTangents && track.times.length > 1 && isSelectedChannel) {
+        if (window._animShowTangents && track.times.length > 1) {
           const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dt`] : undefined;
           const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dv_${c}`] : undefined;
           const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;
           const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dv_${c}`] : undefined;
-          const dt0 = rightDt !== undefined ? rightDt : 0.2;
-          const dv0 = rightDv !== undefined ? rightDv : (v2 - v1) * 0.33;
-          const dt1 = leftDt !== undefined ? leftDt : -0.2;
-          const dv1 = leftDv !== undefined ? leftDv : -(v2 - v1) * 0.33;
+          const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+          const dv0 = rightDv !== undefined ? rightDv : 0.0;
+          const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+          const dv1 = leftDv !== undefined ? leftDv : 0.0;
 
           const p1x = dt0 / dt;
           const p2x = 1 + dt1 / dt;

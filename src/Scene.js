@@ -307,10 +307,15 @@ class Scene {
     this._grid = Primitives.createGrid(this._gl);
     this.initGrid();
 
-    var gridState = localStorage.getItem('sculptxr_grid_state');
-    if (gridState !== null) {
-      this._showGrid = (gridState === 'true' || gridState === '1' || gridState === true);
-    }
+    var gridState = true;
+    try {
+      const stored = localStorage.getItem('sculptxr_settings');
+      if (stored) {
+        const settings = JSON.parse(stored);
+        if (settings.grid !== undefined) gridState = settings.grid;
+      }
+    } catch (e) {}
+    this._showGrid = gridState;
 
     this.loadTextures();
     this._gui.initGui();
