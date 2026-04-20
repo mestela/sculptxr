@@ -1028,6 +1028,25 @@ class AnimationRegistry {
     });
   }
 
+  getCurveSlope(track, keyIdx, channel) {
+    if (!track.times || track.times.length < 2) return 0;
+    const i = keyIdx;
+    const c = channel;
+    if (i === 0) {
+      return (track.positions[3 + c] - track.positions[c]) / (track.times[1] - track.times[0]);
+    }
+    if (i === track.times.length - 1) {
+      const pIdx = (i - 1) * 3;
+      const cIdx = i * 3;
+      return (track.positions[cIdx + c] - track.positions[pIdx + c]) / (track.times[i] - track.times[i - 1]);
+    }
+    const pIdx = (i - 1) * 3;
+    const nIdx = (i + 1) * 3;
+    const dt = track.times[i + 1] - track.times[i - 1];
+    if (dt === 0) return 0;
+    return (track.positions[nIdx + c] - track.positions[pIdx + c]) / dt;
+  }
+
   getBezierT(targetAlpha, p1x, p2x) {
     let low = 0;
     let high = 1;
@@ -1144,9 +1163,13 @@ class AnimationRegistry {
           const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;
           const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dv_${c}`] : undefined;
           const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-          const dv0 = rightDv !== undefined ? rightDv : 0.0;
           const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-          const dv1 = leftDv !== undefined ? leftDv : 0.0;
+          
+          const slope0 = this.getCurveSlope(track, frameIdx, c);
+          const slope1 = this.getCurveSlope(track, frameIdx + 1, c);
+          
+          const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
+          const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
 
           const p1x = dt0 / dt;
           const p2x = 1 + dt1 / dt;

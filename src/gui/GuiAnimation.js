@@ -29,6 +29,7 @@ class GuiAnimation {
     window._animShowTangents = false;
     menu.addCheckbox('Show Tangents', window, '_animShowTangents');
     menu.addSlider('FPS', window, '_animFPS', 1, 60, 1);
+    window._animPlaybackSpeed = 1.0;
     menu.addSlider('Playback Speed', window, '_animPlaybackSpeed', 0.1, 4.0, 0.1);
     
     const rateModes = [0.033, 0.1, 0.5, 1.0];

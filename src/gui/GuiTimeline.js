@@ -41,6 +41,7 @@ export default class GuiTimeline {
     this._isResizingPanel = false;
     this._lastMouseX = -1;
     this._lastMouseY = -1;
+    window._animTiedTangents = true;
     this.initDOM();
     this.startLoop();
   }
@@ -107,19 +108,63 @@ export default class GuiTimeline {
   }
 
   valueToY(val) {
-    const headerH = 30;
+    const headerH = 50;
     const graphH = this._cssHeight - headerH;
     return headerH + graphH / 2 - (val * this._zoomY + this._panY);
   }
 
   yToValue(y) {
-    const headerH = 30;
+    const headerH = 50;
     const graphH = this._cssHeight - headerH;
     return (headerH + graphH / 2 - y - this._panY) / this._zoomY;
   }
 
+  drawPlayhead(ctx) {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const tlX = 200;
+    const tlW = this._cssWidth - 220;
+    const headerH = 50;
+    const fps = window._animFPS || 24;
+    const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
+    const snappedTime = Math.round(currentTimeVal * fps) / fps;
+    const playheadAlpha = (snappedTime - loopStart) / visibleDuration;
+    const playheadX = tlX + playheadAlpha * tlW;
+
+    if (playheadX >= tlX && playheadX <= tlX + tlW) {
+      ctx.strokeStyle = '#4488ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playheadX, headerH);
+      ctx.lineTo(playheadX, this._cssHeight);
+      ctx.stroke();
+
+      const capStartY = 25;
+      ctx.fillStyle = '#4488ff';
+      ctx.beginPath();
+      ctx.moveTo(playheadX - 8, capStartY);
+      ctx.lineTo(playheadX + 8, capStartY);
+      ctx.lineTo(playheadX + 8, headerH - 5);
+      ctx.lineTo(playheadX, headerH);
+      ctx.lineTo(playheadX - 8, headerH - 5);
+      ctx.closePath();
+      ctx.fill();
+
+      const curT = Math.round(currentTimeVal * fps);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(curT, playheadX, 37);
+    }
+  }
+
   drawGraph(ctx) {
-    const headerH = 30;
+    const headerH = 50;
     const graphH = this._cssHeight - headerH;
     const tlX = 200;
     const tlW = this._cssWidth - 220;
@@ -158,17 +203,7 @@ export default class GuiTimeline {
       ctx.lineWidth = 1;
     }
 
-    // 4. Draw Playhead
-    const curTime = window._animCurrentTime || 0;
-    if (curTime >= loopStart && curTime <= loopEnd) {
-      const playheadX = tlX + ((curTime - loopStart) / visibleDuration) * tlW;
-      ctx.strokeStyle = '#4488ff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(playheadX, headerH);
-      ctx.lineTo(playheadX, this._cssHeight);
-      ctx.stroke();
-    }
+
 
     // 5. Draw Curves for Active Mesh
     const activeMesh = this._main.getMesh();
@@ -207,9 +242,39 @@ export default class GuiTimeline {
             const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] : undefined;
 
             const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-            const dv0 = rightDv !== undefined ? rightDv : 0.0;
             const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-            const dv1 = leftDv !== undefined ? leftDv : 0.0;
+
+            let slope0 = 0;
+            if (i === 0) {
+              slope0 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+            } else if (i === track.times.length - 1) {
+              const pIdx = (i - 1) * 3;
+              const cIdx = i * 3;
+              slope0 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i] - track.times[i - 1]);
+            } else {
+              const pIdx = (i - 1) * 3;
+              const nIdx = (i + 1) * 3;
+              const dt_seg = track.times[i + 1] - track.times[i - 1];
+              slope0 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+            }
+
+            let slope1 = 0;
+            const i1 = i + 1;
+            if (i1 === 0) {
+              slope1 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+            } else if (i1 === track.times.length - 1) {
+              const pIdx = (i1 - 1) * 3;
+              const cIdx = i1 * 3;
+              slope1 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i1] - track.times[i1 - 1]);
+            } else {
+              const pIdx = (i1 - 1) * 3;
+              const nIdx = (i1 + 1) * 3;
+              const dt_seg = track.times[i1 + 1] - track.times[i1 - 1];
+              slope1 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+            }
+
+            const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
+            const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
 
             const p1x = dt0 / dt;
             const p2x = 1 + dt1 / dt;
@@ -221,7 +286,7 @@ export default class GuiTimeline {
               const targetAlpha = s / steps;
               
               let val = 0;
-              if (window._animShowTangents && (isSelectedChannel || hasTangents)) {
+              if (window._animShowTangents) {
                 // Solve for t using binary search (inline)
                 let low = 0;
                 let high = 1;
@@ -282,8 +347,13 @@ export default class GuiTimeline {
             else if (isHovered) ctx.fillStyle = '#ffcc00'; // Yellow
             else ctx.fillStyle = '#888888'; // Gray
 
+            const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
             ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            if (isTied) {
+              ctx.arc(x, y, 4, 0, Math.PI * 2);
+            } else {
+              ctx.fillRect(x - 4, y - 4, 8, 8);
+            }
             ctx.fill();
           }
         }
@@ -308,10 +378,15 @@ export default class GuiTimeline {
             const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
             const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
 
+            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
+            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
             const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-            const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : 0;
+            const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
+            
             const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-            const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : 0;
+            const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
 
             // Draw right handle
             if (i < track.times.length - 1) {
@@ -437,9 +512,12 @@ export default class GuiTimeline {
         }
       }
     }
+
+    this.drawPlayhead(ctx);
   }
 
   handleGraphMouseDown(rx, ry) {
+    console.log("[Graph Debug] handleGraphMouseDown called at", rx, ry);
     const reg = window._animationRegistry;
     if (!reg) return;
 
@@ -449,7 +527,9 @@ export default class GuiTimeline {
     const track = reg.tracks.get(id);
     if (!track) return;
 
-    const headerH = 30;
+    console.log("[Graph Debug] track.times length:", track.times ? track.times.length : 0, "showTangents:", window._animShowTangents);
+
+    const headerH = 50;
     const tlX = 200;
     const tlW = this._cssWidth - 220;
 
@@ -504,17 +584,20 @@ export default class GuiTimeline {
         const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
         const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
 
+        const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
+        const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+        const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
         const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-        const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : 0;
+        const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * this._zoomY;
+        
         const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-        const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : 0;
+        const leftYOff = leftDv !== undefined ? -leftDv * this._zoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * this._zoomY;
 
         // Check right handle
         if (i < track.times.length - 1) {
           const dist = Math.hypot(rx - (kx + rightXOff), ry - (ky + rightYOff));
-          console.log(`[Graph Debug] Right Handle ${i}: dist=${dist.toFixed(2)}, rx=${rx}, ry=${ry}, hx=${(kx + rightXOff).toFixed(2)}, hy=${(ky + rightYOff).toFixed(2)}`);
           if (dist < 10) {
-            console.log("[Graph Debug] -> Clicked Right Tangent Handle", i);
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
             this._activeTangentIndex = i;
@@ -529,9 +612,7 @@ export default class GuiTimeline {
         // Check left handle
         if (i > 0) {
           const dist = Math.hypot(rx - (kx + leftXOff), ry - (ky + leftYOff));
-          console.log(`[Graph Debug] Left Handle ${i}: dist=${dist.toFixed(2)}, rx=${rx}, ry=${ry}, hx=${(kx + leftXOff).toFixed(2)}, hy=${(ky + leftYOff).toFixed(2)}`);
           if (dist < 10) {
-            console.log("[Graph Debug] -> Clicked Left Tangent Handle", i);
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
             this._activeTangentIndex = i;
@@ -613,7 +694,7 @@ export default class GuiTimeline {
     }
 
     const range = maxVal - minVal;
-    const headerH = 30;
+    const headerH = 50;
     const graphH = this._cssHeight - headerH;
 
     const midVal = (minVal + maxVal) / 2;
@@ -659,13 +740,28 @@ export default class GuiTimeline {
       return;
     }
 
-    if (ry < 30) {
+    if (ry < 50) {
       if (rx >= 10 && rx <= 100) {
         this._mode = this._mode === 'graph' ? 'dope' : 'graph';
         if (this._mode === 'graph') {
           this.autoFitGraph();
         }
         this.draw();
+        return;
+      }
+      if (rx >= 120 && rx <= 230) {
+        const reg = window._animationRegistry;
+        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+        if (singleSelected) {
+          const track = reg.tracks.get(singleSelected.meshId);
+          if (track) {
+            if (!track.tangentOffsets) track.tangentOffsets = {};
+            const key = `trans_${singleSelected.index}_tied`;
+            const cur = track.tangentOffsets[key] !== false;
+            track.tangentOffsets[key] = !cur;
+            this.draw();
+          }
+        }
         return;
       }
       this._isDraggingPlayhead = true;
@@ -692,7 +788,7 @@ export default class GuiTimeline {
       const reg = window._animationRegistry;
       if (reg) {
         const tracks = Array.from(reg.tracks.entries());
-        const headerH = 30;
+        const headerH = 50;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
@@ -717,7 +813,7 @@ export default class GuiTimeline {
       // Check if clicked on a key!
       if (reg) {
         const tracks = Array.from(reg.tracks.entries());
-        const headerH = 30;
+        const headerH = 50;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
@@ -994,6 +1090,14 @@ export default class GuiTimeline {
 
         this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dt`] = dt;
         this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
+
+        const isTied = this._activeTangentTrack.tangentOffsets ? this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_tied`] !== false : true;
+
+        if (isTied) {
+          const otherSide = this._activeTangentSide === 'right' ? 'left' : 'right';
+          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dt`] = -dt;
+          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dv_${selChannel}`] = -dv;
+        }
       }
       
       this.draw();
@@ -1319,7 +1423,7 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
     
-    const headerH = 30;
+    const headerH = 50;
     const tracks = Array.from(reg.tracks.entries());
     const laneAreaH = this._cssHeight - headerH;
     const totalSlots = Math.max(4, tracks.length);
@@ -1399,7 +1503,7 @@ export default class GuiTimeline {
     const tlW = w.w - 220;
 
     // --- 1. Draw Top Transport Header Strip (30px tall) ---
-    const headerH = 30;
+    const headerH = 50;
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
@@ -1412,6 +1516,23 @@ export default class GuiTimeline {
     ctx.textBaseline = 'middle';
     ctx.fillText(this._mode === 'graph' ? 'Mode: Graph' : 'Mode: Dope', 55, 15);
 
+    // Tied Tangents Toggle
+    if (this._mode === 'graph') {
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+      let isTied = true;
+      if (singleSelected) {
+        const track = reg.tracks.get(singleSelected.meshId);
+        if (track && track.tangentOffsets) {
+          isTied = track.tangentOffsets[`trans_${singleSelected.index}_tied`] !== false;
+        }
+      }
+
+      ctx.fillStyle = singleSelected ? '#444' : '#222';
+      ctx.fillRect(120, 5, 110, 20);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(isTied ? 'Tangents: Tied' : 'Tangents: Broken', 175, 15);
+    }
+
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;
     const loopStartF = Math.round(loopStart * fps);
@@ -1421,16 +1542,16 @@ export default class GuiTimeline {
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(`${loopStartF}f`, tlX + 5, w.y + headerH / 2);
+    ctx.fillText(`${loopStartF}f`, tlX + 5, w.y + 40);
     ctx.textAlign = 'right';
-    ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + headerH / 2);
+    ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + 40);
 
     // Show status or value of closest key to playhead
     if (reg.isCountingIn || reg.isRecording) {
       ctx.fillStyle = '#ff4444';
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(window._animStatusText || '', w.w / 2, w.y + headerH / 2);
+      ctx.fillText(window._animStatusText || '', w.w / 2, w.y + 40);
     } else {
       const activeMesh = this._main.getMesh();
       if (activeMesh) {
@@ -1702,39 +1823,7 @@ export default class GuiTimeline {
       ctx.restore();
     }
 
-    // 4. Render Playhead
-    const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
-    const snappedTime = Math.round(currentTimeVal * fps) / fps;
-    const playheadAlpha = (snappedTime - loopStart) / visibleDuration;
-    const playheadX = tlX + playheadAlpha * tlW;
-
-    if (playheadX >= tlX && playheadX <= tlX + tlW) {
-      // Playhead full vertical line
-      ctx.strokeStyle = '#4488ff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(playheadX, w.y + headerH);
-      ctx.lineTo(playheadX, w.y + w.h);
-      ctx.stroke();
-
-      // Playhead Cap
-      ctx.fillStyle = '#4488ff';
-      ctx.beginPath();
-      ctx.moveTo(playheadX - 8, w.y);
-      ctx.lineTo(playheadX + 8, w.y);
-      ctx.lineTo(playheadX + 8, w.y + headerH - 5);
-      ctx.lineTo(playheadX, w.y + headerH);
-      ctx.lineTo(playheadX - 8, w.y + headerH - 5);
-      ctx.closePath();
-      ctx.fill();
-
-      // Current Frame text
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(curT, playheadX, w.y + headerH / 2);
-    }
+    this.drawPlayhead(ctx);
 
     // 5. Render Marquee Box
     if (this._marqueeStart && this._marqueeEnd) {
