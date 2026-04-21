@@ -286,36 +286,32 @@ export default class GuiTimeline {
               const targetAlpha = s / steps;
               
               let val = 0;
-              if (window._animShowTangents) {
-                // Solve for t using binary search (inline)
-                let low = 0;
-                let high = 1;
-                let t = 0.5;
-                for (let j = 0; j < 10; j++) {
-                  const tSq = t * t;
-                  const tCu = tSq * t;
-                  const omt = 1 - t;
-                  const omtSq = omt * omt;
-                  const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
-                  if (Math.abs(currentAlpha - targetAlpha) < 0.001) break;
-                  if (currentAlpha < targetAlpha) low = t;
-                  else high = t;
-                  t = (low + high) / 2;
-                }
-
-                const omt = 1 - t;
-                const omtSq = omt * omt;
-                const omtCu = omtSq * omt;
+              // Solve for t using binary search (inline)
+              let low = 0;
+              let high = 1;
+              let t = 0.5;
+              for (let j = 0; j < 10; j++) {
                 const tSq = t * t;
                 const tCu = tSq * t;
-                
-                const p1y = val1 + dv0;
-                const p2y = val2 + dv1;
-
-                val = omtCu * val1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * val2;
-              } else {
-                val = val1 + (val2 - val1) * targetAlpha;
+                const omt = 1 - t;
+                const omtSq = omt * omt;
+                const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
+                if (Math.abs(currentAlpha - targetAlpha) < 0.001) break;
+                if (currentAlpha < targetAlpha) low = t;
+                else high = t;
+                t = (low + high) / 2;
               }
+
+              const omt = 1 - t;
+              const omtSq = omt * omt;
+              const omtCu = omtSq * omt;
+              const tSq = t * t;
+              const tCu = tSq * t;
+              
+              const p1y = val1 + dv0;
+              const p2y = val2 + dv1;
+
+              val = omtCu * val1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * val2;
               
               const time = t1 + targetAlpha * (t2 - t1);
               
@@ -360,11 +356,11 @@ export default class GuiTimeline {
 
         // Draw Tangent Handles for Position Keys
         if (window._animShowTangents) {
-          ctx.strokeStyle = '#888888'; // Default line color gray
-          ctx.lineWidth = 1.5;
-          
           const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
           const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          ctx.strokeStyle = '#888888'; // Revert to gray!
+          ctx.lineWidth = 1.5;
 
           for (let i = 0; i < track.times.length; i++) {
             const t = track.times[i];
@@ -403,7 +399,7 @@ export default class GuiTimeline {
               else ctx.fillStyle = '#888888'; // Gray
               
               ctx.beginPath();
-              ctx.arc(kx + rightXOff, ky + rightYOff, 4, 0, Math.PI * 2);
+              ctx.arc(kx + rightXOff, ky + rightYOff, 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
             
@@ -422,7 +418,7 @@ export default class GuiTimeline {
               else ctx.fillStyle = '#888888'; // Gray
               
               ctx.beginPath();
-              ctx.arc(kx + leftXOff, ky + leftYOff, 4, 0, Math.PI * 2);
+              ctx.arc(kx + leftXOff, ky + leftYOff, 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -517,7 +513,6 @@ export default class GuiTimeline {
   }
 
   handleGraphMouseDown(rx, ry) {
-    console.log("[Graph Debug] handleGraphMouseDown called at", rx, ry);
     const reg = window._animationRegistry;
     if (!reg) return;
 
@@ -526,8 +521,6 @@ export default class GuiTimeline {
     const id = activeMesh.getID();
     const track = reg.tracks.get(id);
     if (!track) return;
-
-    console.log("[Graph Debug] track.times length:", track.times ? track.times.length : 0, "showTangents:", window._animShowTangents);
 
     const headerH = 50;
     const tlX = 200;
@@ -1067,7 +1060,6 @@ export default class GuiTimeline {
       
       this.draw();
     } else if (this._isDraggingTangent) {
-      console.log("[Graph Debug] Dragging Tangent Handle", this._activeTangentIndex, this._activeTangentSide);
       let deltaX = rx - this._activeTangentKx;
       const deltaY = ry - this._activeTangentKy;
       

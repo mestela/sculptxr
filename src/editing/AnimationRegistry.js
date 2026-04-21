@@ -1157,7 +1157,7 @@ class AnimationRegistry {
         const v2 = track.positions[(frameIdx + 1) * 3 + c];
         let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
         const isSelectedChannel = singleSelected && singleSelected.type === 'transform' && singleSelected.meshId === mesh.getID() && singleSelected.channel === c;
-        if (window._animShowTangents && track.times.length > 1) {
+        if (track.times.length > 1) {
           const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dt`] : undefined;
           const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx}_right_dv_${c}`] : undefined;
           const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${frameIdx + 1}_left_dt`] : undefined;

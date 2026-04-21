@@ -227,6 +227,26 @@ Import.importSGL = function (buffer, gl, main) {
           for (var k = 0; k < nbTransKeys * 4; ++k) trackObj.quaternions.push(f32a[off++]);
           for (var k = 0; k < nbTransKeys * 3; ++k) trackObj.scales.push(f32a[off++]);
 
+          if (version >= 6) {
+            trackObj.tangentOffsets = {};
+            for (var k = 0; k < nbTransKeys; ++k) {
+              const rDt = f32a[off++];
+              trackObj.tangentOffsets[`trans_${k}_right_dt`] = rDt;
+              for (let c = 0; c < 3; c++) {
+                trackObj.tangentOffsets[`trans_${k}_right_dv_${c}`] = f32a[off++];
+              }
+
+              const lDt = f32a[off++];
+              trackObj.tangentOffsets[`trans_${k}_left_dt`] = lDt;
+              for (let c = 0; c < 3; c++) {
+                trackObj.tangentOffsets[`trans_${k}_left_dv_${c}`] = f32a[off++];
+              }
+
+              const tied = f32a[off++];
+              trackObj.tangentOffsets[`trans_${k}_tied`] = (tied > 0.5);
+            }
+          }
+
           var rP = [f32a[off++], f32a[off++], f32a[off++]];
           var rQ = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]];
           var rS = [f32a[off++], f32a[off++], f32a[off++]];

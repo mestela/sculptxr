@@ -8,7 +8,7 @@ var Export = {};
 // 3 faces u32 instead of i32
 // 4 label string
 // 5 (SGL2) Multiresolution stack & Animation track caching
-Export.VERSION = 5;
+Export.VERSION = 6;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -70,6 +70,7 @@ Export.exportSGL = function (meshes, main) {
       nbBytes += nbTransKeys * 12; // pos
       nbBytes += nbTransKeys * 16; // quat
       nbBytes += nbTransKeys * 12; // scale
+      nbBytes += nbTransKeys * 36; // tangents (9 floats per key)
       
       nbBytes += 12 + 16 + 12; // rest pos/quat/scale
     }
@@ -259,6 +260,31 @@ Export.exportSGL = function (meshes, main) {
         }
         for (var k = 0; k < nbTransKeys * 3; ++k) {
           f32a[off++] = track.scales[k];
+        }
+        
+        // Write Tangents (9 floats per key)
+        for (var k = 0; k < nbTransKeys; ++k) {
+          const dt = (k < nbTransKeys - 1) ? track.times[k+1] - track.times[k] : 0.2;
+          
+          const rDt = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_right_dt`] : undefined;
+          const lDt = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_left_dt`] : undefined;
+          const tied = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_tied`] !== false : true;
+
+          f32a[off++] = rDt !== undefined ? rDt : dt * 0.33;
+          for (let c = 0; c < 3; c++) {
+            const rDv = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_right_dv_${c}`] : undefined;
+            const slope = window._animationRegistry ? window._animationRegistry.getCurveSlope(track, k, c) : 0;
+            f32a[off++] = rDv !== undefined ? rDv : slope * (rDt !== undefined ? rDt : dt * 0.33);
+          }
+
+          f32a[off++] = lDt !== undefined ? lDt : -dt * 0.33;
+          for (let c = 0; c < 3; c++) {
+            const lDv = track.tangentOffsets ? track.tangentOffsets[`trans_${k}_left_dv_${c}`] : undefined;
+            const slope = window._animationRegistry ? window._animationRegistry.getCurveSlope(track, k, c) : 0;
+            f32a[off++] = lDv !== undefined ? lDv : slope * (lDt !== undefined ? lDt : -dt * 0.33);
+          }
+
+          f32a[off++] = tied ? 1.0 : 0.0;
         }
         
         // Write rest pose safely
