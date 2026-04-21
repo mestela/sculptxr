@@ -1,4 +1,4 @@
-# SculptXR (v1.0.219)
+# SculptXR (v1.0.220)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.220**: **Feature**: Graph Editor 2D Transform Box, Marquee Selection, Pivot Zoom, Selection/Transform Undo.
 *   **v1.0.219**: **Feature**: Motion Record Undo, Multi-Key Copy/Paste on Desktop.
 *   **v1.0.217**: **Feature**: Desktop timeline snapping, off by default, clean UI, and OpenXR warning fade.
-*   **v1.0.216**: **Feature**: Geometric wireframe bias and live opacity controls on desktop.
 
 [View Full Release History](docs/releases.md)
 

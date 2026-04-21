@@ -1,3 +1,16 @@
+# v1.0.220
+- **Feature**: **Graph Editor 2D Transform Box**: Added a full 2D Transform Box to the graph editor, supporting scaling in both time and value space via edge handles, and 2D translation by dragging inside the box.
+- **Feature**: **Graph Editor Marquee Selection**: Implemented marquee selection in the graph editor with a visual overlay box and live highlighting of keys inside the box.
+- **Feature**: **Graph Editor 2D Pivot Zoom**: Right-click drag now scales the view both horizontally (time) and vertically (value) around the exact click pivot point.
+- **Feature**: **Graph Editor Selection Undo**: Added selection changes to the undo queue, named "graph editor multikeys selection".
+- **Feature**: **Graph Editor Transform Undo**: Added transform box operations to the undo queue, named "graph editor transform box".
+- **Fix**: **Graph Editor Playhead Scrubbing**: Fixed playhead scrubbing to be zoom-aware and update the 3D view in real-time.
+- **Fix**: **Graph Editor Key Jumping**: Resolved time and value jumps when starting to drag keys.
+- **UI**: **Graph Editor Colors**: Changed selected keys to Yellow and hovered keys to Cyan to avoid conflict with the green Y channel.
+- **UI**: **Graph Editor Clipping**: Added a clipping mask to prevent curves and keys from drawing over the header.
+- **Optimization**: **Playback Speed Persistence**: Playback speed is now saved to and restored from local storage.
+- **Optimization**: **No Auto-Play on Load**: Loading an SXR file no longer automatically starts playback.
+
 # v1.0.219
 - **Feature**: **Motion Record Undo**: Recording a motion is now fully undoable. The system captures the track state and mesh matrix before recording and restores them on Undo.
 - **Feature**: **Multi-Key Copy/Paste on Desktop**: Ported the VR multi-key copy/paste logic to desktop, allowing batch operations on selected keys.
