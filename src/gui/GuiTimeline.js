@@ -42,6 +42,8 @@ export default class GuiTimeline {
     this._lastMouseX = -1;
     this._lastMouseY = -1;
     window._animTiedTangents = true;
+    this._viewStart = undefined;
+    this._viewDuration = undefined;
     this.initDOM();
     this.startLoop();
   }
@@ -123,9 +125,17 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStartReal;
+      this._viewDuration = visibleDurationReal;
+    }
+
+    const loopStart = this._viewStart;
+    const visibleDuration = this._viewDuration;
     const tlX = 200;
     const tlW = this._cssWidth - 220;
     const headerH = 50;
@@ -171,9 +181,23 @@ export default class GuiTimeline {
 
     const reg = window._animationRegistry;
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStartReal;
+      this._viewDuration = visibleDurationReal;
+    }
+
+    const loopStart = this._viewStart;
+    const visibleDuration = this._viewDuration;
+    const loopEnd = loopStart + visibleDuration;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tlX, headerH, tlW, this._cssHeight - headerH);
+    ctx.clip();
 
     // 1. Draw Vertical Grid Lines (Time)
     ctx.strokeStyle = '#333';
@@ -338,9 +362,15 @@ export default class GuiTimeline {
             
             const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
             const isHovered = Math.hypot(this._lastMouseX - x, this._lastMouseY - y) < 10;
+            
+            const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
+                                    x >= Math.min(this._marqueeStart.x, this._marqueeEnd.x) &&
+                                    x <= Math.max(this._marqueeStart.x, this._marqueeEnd.x) &&
+                                    y >= Math.min(this._marqueeStart.y, this._marqueeEnd.y) &&
+                                    y <= Math.max(this._marqueeStart.y, this._marqueeEnd.y);
 
-            if (isSelected) ctx.fillStyle = '#00ff00'; // Green
-            else if (isHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+            if (isSelected || isInsideMarquee) ctx.fillStyle = '#ffff00'; // Yellow
+            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
             else ctx.fillStyle = '#888888'; // Gray
 
             const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
@@ -394,8 +424,8 @@ export default class GuiTimeline {
               const isRightHovered = Math.hypot(this._lastMouseX - (kx + rightXOff), this._lastMouseY - (ky + rightYOff)) < 10;
               const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right';
 
-              if (isRightActive) ctx.fillStyle = '#00ff00'; // Green
-              else if (isRightHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+              if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
+              else if (isRightHovered) ctx.fillStyle = '#00ffff'; // Cyan
               else ctx.fillStyle = '#888888'; // Gray
               
               ctx.beginPath();
@@ -413,8 +443,8 @@ export default class GuiTimeline {
               const isLeftHovered = Math.hypot(this._lastMouseX - (kx + leftXOff), this._lastMouseY - (ky + leftYOff)) < 10;
               const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'left';
 
-              if (isLeftActive) ctx.fillStyle = '#00ff00'; // Green
-              else if (isLeftHovered) ctx.fillStyle = '#ffcc00'; // Yellow
+              if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
+              else if (isLeftHovered) ctx.fillStyle = '#00ffff'; // Cyan
               else ctx.fillStyle = '#888888'; // Gray
               
               ctx.beginPath();
@@ -509,7 +539,69 @@ export default class GuiTimeline {
       }
     }
 
+    // Draw Transform Box in Graph Mode!
+    if (window._animShowTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        const id = activeMesh.getID();
+        const track = reg.tracks.get(id);
+        if (track && track.times) {
+          let minT = Infinity;
+          let maxT = -Infinity;
+          let minV = Infinity;
+          let maxV = -Infinity;
+          
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          window._animSelectedKeys.forEach(sk => {
+            if (sk.meshId === id && sk.type === 'transform') {
+              const t = track.times[sk.index];
+              const val = track.positions[sk.index * 3 + selChannel];
+              
+              if (t < minT) minT = t;
+              if (t > maxT) maxT = t;
+              if (val < minV) minV = val;
+              if (val > maxV) maxV = val;
+            }
+          });
+          
+          if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
+            const kxLeft = tlX + ((minT - loopStart) / visibleDuration) * tlW;
+            const kxRight = tlX + ((maxT - loopStart) / visibleDuration) * tlW;
+            const kyTop = this.valueToY(maxV);
+            const kyBottom = this.valueToY(minV);
+            
+            ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
+            
+            ctx.fillStyle = '#ffff00';
+            // Top edge handle
+            ctx.fillRect(kxLeft + (kxRight - kxLeft)/2 - 10, kyTop - 5, 20, 5);
+            // Bottom edge handle
+            ctx.fillRect(kxLeft + (kxRight - kxLeft)/2 - 10, kyBottom, 20, 5);
+          }
+        }
+      }
+    }
+
+    ctx.restore();
+
     this.drawPlayhead(ctx);
+
+    // 5. Render Marquee Box in Graph Mode
+    if (this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd) {
+      ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 1;
+      const x = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+      const y = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+      const w = Math.abs(this._marqueeEnd.x - this._marqueeStart.x);
+      const h = Math.abs(this._marqueeEnd.y - this._marqueeStart.y);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+    }
   }
 
   handleGraphMouseDown(rx, ry) {
@@ -527,11 +619,75 @@ export default class GuiTimeline {
     const tlW = this._cssWidth - 220;
 
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStartReal;
+      this._viewDuration = visibleDurationReal;
+    }
+
+    const loopStart = this._viewStart;
+    const visibleDuration = this._viewDuration;
 
     // Check Position Keys
+    if (window._animShowTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+      let minT = Infinity;
+      let maxT = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+      const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+      window._animSelectedKeys.forEach(sk => {
+        if (sk.meshId === id && sk.type === 'transform') {
+          const t = track.times[sk.index];
+          const val = track.positions[sk.index * 3 + selChannel];
+          
+          if (t < minT) minT = t;
+          if (t > maxT) maxT = t;
+          if (val < minV) minV = val;
+          if (val > maxV) maxV = val;
+        }
+      });
+      
+      if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
+        const kxLeft = tlX + ((minT - loopStart) / visibleDuration) * tlW;
+        const kxRight = tlX + ((maxT - loopStart) / visibleDuration) * tlW;
+        const kyTop = this.valueToY(maxV);
+        const kyBottom = this.valueToY(minV);
+        
+        // Check Top handle
+        if (Math.abs(rx - (kxLeft + (kxRight - kxLeft)/2)) < 10 && Math.abs(ry - kyTop) < 10) {
+          this._activeTransformHandle = 'top';
+          this._transformStartRy = ry;
+          this._animTransformInitialBox = { minV, maxV };
+          
+          this._animTransformBoxInitialKeys = window._animSelectedKeys.map(sk => {
+            const val = sk.type === 'transform' ? track.positions[sk.index * 3 + selChannel] : 0;
+            return { ...sk, val };
+          });
+          
+          return;
+        }
+        // Check Bottom handle
+        if (Math.abs(rx - (kxLeft + (kxRight - kxLeft)/2)) < 10 && Math.abs(ry - kyBottom) < 10) {
+          this._activeTransformHandle = 'bottom';
+          this._transformStartRy = ry;
+          this._animTransformInitialBox = { minV, maxV };
+          
+          this._animTransformBoxInitialKeys = window._animSelectedKeys.map(sk => {
+            const val = sk.type === 'transform' ? track.positions[sk.index * 3 + selChannel] : 0;
+            return { ...sk, val };
+          });
+          
+          return;
+        }
+      }
+    }
+
     if (track.times && track.positions) {
       for (let i = 0; i < track.times.length; i++) {
         const t = track.times[i];
@@ -545,14 +701,37 @@ export default class GuiTimeline {
             this._isDraggingKeyframe = true;
             this._activeKeyframeTrack = track;
             this._activeMeshId = id;
+            
+            const reg = window._animationRegistry;
+            if (reg) {
+              this._undoTracksBeforeMove = new Map();
+              reg.tracks.forEach((tr, mId) => {
+                this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+              });
+            }
             this._activeKeyframeIndex = i;
             this._activeKeyframeType = 'transform';
             this._activeKeyframeChannel = c;
             this._keyDragStartRx = rx;
-            this._keyDragStartTime = t;
-            this._keyDragStartVal = val;
+            this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+            this._keyDragStartVal = this.yToValue(ry);
 
-            window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, startVal: val }];
+            const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === c);
+            
+            if (isPartSelection) {
+              this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                const tr = reg.tracks.get(k.meshId);
+                const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                const startVal = k.type === 'transform' ? tr.positions[k.index * 3 + (k.channel !== undefined ? k.channel : 0)] : 0;
+                return { ...k, time, startVal };
+              });
+            } else {
+              this._animSelectedKeysInitialTimes = null;
+              // Select only this key!
+              window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, startVal: val }];
+              window._animTransformBox = null;
+            }
+            
             this.draw();
             return;
           }
@@ -656,6 +835,10 @@ export default class GuiTimeline {
         }
       }
     }
+    
+    this._isDraggingMarquee = true;
+    this._marqueeStart = { x: rx, y: ry };
+    this._marqueeEnd = { x: rx, y: ry };
   }
 
   autoFitGraph() {
@@ -721,6 +904,24 @@ export default class GuiTimeline {
     loop();
   }
 
+  cloneTrack(track) {
+    const cloned = {
+      times: [...track.times],
+      positions: [...track.positions],
+      quaternions: [...track.quaternions],
+      scales: [...track.scales],
+      shapeTimes: [...track.shapeTimes],
+      shapes: track.shapes.map(s => new Float32Array(s)),
+      playbackTime: track.playbackTime,
+      muted: track.muted,
+      tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+    };
+    if (track.restPos) cloned.restPos = [...track.restPos];
+    if (track.restQuat) cloned.restQuat = [...track.restQuat];
+    if (track.restScale) cloned.restScale = [...track.restScale];
+    return cloned;
+  }
+
   onMouseDown(e) {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
@@ -770,7 +971,28 @@ export default class GuiTimeline {
         } else if (e.button === 2) { // Right click
           this._isZoomingGraph = true;
           this._zoomStartRy = ry;
+          this._zoomStartRx = rx;
           this._zoomStartScaleY = this._zoomY;
+          this._zoomStartPanY = this._panY;
+          
+          const tlX = 200;
+          const tlW = this._cssWidth - 220;
+          const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+          const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+          const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+          const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+          
+          if (this._viewDuration === undefined) {
+            this._viewStart = loopStart;
+            this._viewDuration = visibleDuration;
+          }
+          
+          this._zoomStartDuration = this._viewDuration;
+          this._zoomStartViewStart = this._viewStart;
+          
+          this._zoomPivotTime = this._viewStart + ((rx - tlX) / tlW) * this._viewDuration;
+          this._zoomPivotValue = this.yToValue(ry);
+          
           e.preventDefault();
           return;
         }
@@ -902,6 +1124,14 @@ export default class GuiTimeline {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
+                  
+                  const reg = window._animationRegistry;
+                  if (reg) {
+                    this._undoTracksBeforeMove = new Map();
+                    reg.tracks.forEach((tr, mId) => {
+                      this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+                    });
+                  }
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'transform';
                   this._keyDragStartRx = rx;
@@ -996,9 +1226,17 @@ export default class GuiTimeline {
     const tlW = this._cssWidth - 220;
     
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStartReal;
+      this._viewDuration = visibleDurationReal;
+    }
+
+    const loopStart = this._viewStart;
+    const visibleDuration = this._viewDuration;
 
     if (this._isPanningGraph) {
       const rect = this._canvas.getBoundingClientRect();
@@ -1009,15 +1247,57 @@ export default class GuiTimeline {
       return;
     } else if (this._isZoomingGraph) {
       const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
       const ry = e.clientY - rect.top;
+      
+      const dx = rx - this._zoomStartRx;
       const dy = ry - this._zoomStartRy;
-      const factor = Math.pow(1.01, -dy);
-      this._zoomY = this._zoomStartScaleY * factor;
+      
+      // Vertical Zoom (Y)
+      const factorY = Math.pow(1.01, -dy);
+      const newZoomY = this._zoomStartScaleY * factorY;
+      
+      // Update panY to keep pivot value fixed!
+      this._panY = this._zoomStartPanY + this._zoomPivotValue * (this._zoomStartScaleY - newZoomY);
+      this._zoomY = newZoomY;
+
+      // Horizontal Zoom (X)
+      const factorX = Math.pow(1.01, dx);
+      const newDuration = Math.max(0.1, this._zoomStartDuration / factorX);
+      
+      // Update viewStart to keep pivot time fixed!
+      this._viewStart = this._zoomPivotTime - (this._zoomPivotTime - this._zoomStartViewStart) * (newDuration / this._zoomStartDuration);
+      this._viewDuration = newDuration;
+      
       this.draw();
       return;
     }
 
     if (this._isDraggingPlayhead) {
+      if (this._mode === 'graph') {
+        const rect = this._canvas.getBoundingClientRect();
+        const rx = e.clientX - rect.left;
+        const tlX = 200;
+        const tlW = this._cssWidth - 220;
+        
+        let t = (rx - tlX) / tlW;
+        t = Math.max(0, Math.min(1, t));
+        const targetTime = this._viewStart + t * this._viewDuration;
+        
+        window._animPlaying = false;
+        window._animCurrentTime = targetTime;
+        if (window._animationRegistry) {
+          window._animationRegistry.globalPlaybackTime = targetTime;
+          
+          if (this._main && this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+          if (this._main.render) this._main.render();
+        }
+        
+        this.draw();
+        return;
+      }
       this.handleInteraction(e);
     } else if (this._isDraggingKeyframe) {
       let t = (rx - tlX) / tlW;
@@ -1026,9 +1306,17 @@ export default class GuiTimeline {
       
       const dt = targetTime - this._keyDragStartTime;
       
+      console.log(`[Graph Debug] Drag Key: rx=${rx}, targetTime=${targetTime.toFixed(3)}, startTime=${this._keyDragStartTime.toFixed(3)}, dt=${dt.toFixed(3)}`);
+      
       if (window._animationRegistry) {
         if (this._mode === 'graph') {
-          if (this._activeMeshId) {
+          const targetVal = this.yToValue(ry);
+          const dVal = targetVal - this._keyDragStartVal;
+          
+          if (this._animSelectedKeysInitialTimes) {
+            window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, mDurVal);
+            window._animationRegistry.moveSelectedKeysValue(this._animSelectedKeysInitialTimes, dVal);
+          } else if (this._activeMeshId) {
             const singleKey = [{
               meshId: this._activeMeshId,
               type: this._activeKeyframeType,
@@ -1038,11 +1326,13 @@ export default class GuiTimeline {
               startVal: this._keyDragStartVal
             }];
             window._animationRegistry.moveSelectedKeys(singleKey, dt, mDurVal);
-            
-            const targetVal = this.yToValue(ry);
-            const dVal = targetVal - this._keyDragStartVal;
             window._animationRegistry.moveSelectedKeysValue(singleKey, dVal);
           }
+
+          if (this._main && this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+          if (this._main.render) this._main.render();
         } else {
           if (this._animSelectedKeysInitialTimes) {
             window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, mDurVal);
@@ -1093,6 +1383,46 @@ export default class GuiTimeline {
       }
       
       this.draw();
+    } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
+      const rect = this._canvas.getBoundingClientRect();
+      const ry = e.clientY - rect.top;
+      
+      const targetVal = this.yToValue(ry);
+      const initialBox = this._animTransformInitialBox;
+      
+      let factor = 1.0;
+      if (initialBox.maxV !== initialBox.minV) {
+        if (this._activeTransformHandle === 'top') {
+          factor = (targetVal - initialBox.minV) / (initialBox.maxV - initialBox.minV);
+        } else {
+          factor = (initialBox.maxV - targetVal) / (initialBox.maxV - initialBox.minV);
+        }
+      }
+      
+      const activeMesh = this._main.getMesh();
+      if (activeMesh && window._animationRegistry && this._animTransformBoxInitialKeys) {
+        const id = activeMesh.getID();
+        const track = window._animationRegistry.tracks.get(id);
+        if (track) {
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          this._animTransformBoxInitialKeys.forEach(sk => {
+            if (sk.meshId === id && sk.type === 'transform' && sk.channel === selChannel) {
+              const initialVal = sk.val;
+              let newVal = 0;
+              if (this._activeTransformHandle === 'top') {
+                newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
+              } else {
+                newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
+              }
+              track.positions[sk.index * 3 + selChannel] = newVal;
+            }
+          });
+        }
+      }
+      this.draw();
+      return;
     } else if (this._activeTransformHandle) {
       const rect = this._canvas.getBoundingClientRect();
       const rx = e.clientX - rect.left;
@@ -1200,6 +1530,33 @@ export default class GuiTimeline {
             }
             return { ...key, index: newIdx };
           }).filter(k => k.index !== -1);
+        }
+        
+        if (this._undoTracksBeforeMove) {
+          const beforeState = this._undoTracksBeforeMove;
+          const afterState = new Map();
+          reg.tracks.forEach((track, meshId) => {
+            afterState.set(meshId, this.cloneTrack(track));
+          });
+          
+          const cbUndo = () => {
+            beforeState.forEach((track, meshId) => {
+              reg.tracks.set(meshId, this.cloneTrack(track));
+            });
+            this._main.render();
+            this.draw();
+          };
+          
+          const cbRedo = () => {
+            afterState.forEach((track, meshId) => {
+              reg.tracks.set(meshId, this.cloneTrack(track));
+            });
+            this._main.render();
+            this.draw();
+          };
+          
+          this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys move');
+          this._undoTracksBeforeMove = null;
         }
       }
       this._isDraggingKeyframe = false;
@@ -1416,21 +1773,74 @@ export default class GuiTimeline {
     if (!reg) return;
     
     const headerH = 50;
-    const tracks = Array.from(reg.tracks.entries());
-    const laneAreaH = this._cssHeight - headerH;
-    const totalSlots = Math.max(4, tracks.length);
-    const trackH = laneAreaH / totalSlots;
 
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStartReal;
+      this._viewDuration = visibleDurationReal;
+    }
+
+    const loopStart = this._viewStart;
+    const visibleDuration = this._viewDuration;
     
     const tlX = 200;
     const tlW = this._cssWidth - 220;
 
     const tMin = loopStart + ((x1 - tlX) / tlW) * visibleDuration;
     const tMax = loopStart + ((x2 - tlX) / tlW) * visibleDuration;
+
+    if (this._mode === 'graph') {
+      const vMax = this.yToValue(y1);
+      const vMin = this.yToValue(y2);
+      
+      const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
+      
+      const newKeys = [];
+      const activeMesh = this._main.getMesh();
+      if (activeMesh) {
+        const id = activeMesh.getID();
+        const track = reg.tracks.get(id);
+        if (track && track.times) {
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            if (t >= tMin && t <= tMax) {
+              for (let c = 0; c < 3; c++) {
+                const val = track.positions[i * 3 + c];
+                if (val >= vMin && val <= vMax) {
+                  newKeys.push({ meshId: id, type: 'transform', index: i, channel: c });
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!addMode) window._animSelectedKeys = [];
+      window._animSelectedKeys.push(...newKeys);
+      
+      const afterSelection = [...window._animSelectedKeys];
+      const cbUndo = () => {
+        window._animSelectedKeys = beforeSelection;
+        this.draw();
+      };
+      const cbRedo = () => {
+        window._animSelectedKeys = afterSelection;
+        this.draw();
+      };
+      this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys selection');
+
+      this.draw();
+      return;
+    }
+    const tracks = Array.from(reg.tracks.entries());
+    const laneAreaH = this._cssHeight - headerH;
+    const totalSlots = Math.max(4, tracks.length);
+    const trackH = laneAreaH / totalSlots;
+
+
     
     const laneMin = Math.floor((y1 - headerH) / trackH);
     const laneMax = Math.floor((y2 - headerH) / trackH);

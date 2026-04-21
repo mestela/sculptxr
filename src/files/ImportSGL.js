@@ -266,7 +266,6 @@ Import.importSGL = function (buffer, gl, main) {
         if (maxTime > (window._animMasterDuration || 0)) {
           window._animMasterDuration = maxTime;
         }
-        window._animPlaying = true;
       }
     }
   }
