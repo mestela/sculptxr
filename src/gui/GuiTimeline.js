@@ -557,7 +557,7 @@ export default class GuiTimeline {
           window._animSelectedKeys.forEach(sk => {
             if (sk.meshId === id && sk.type === 'transform') {
               const t = track.times[sk.index];
-              const val = track.positions[sk.index * 3 + selChannel];
+              const val = track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
               
               if (t < minT) minT = t;
               if (t > maxT) maxT = t;
@@ -581,6 +581,12 @@ export default class GuiTimeline {
             ctx.fillRect(kxLeft + (kxRight - kxLeft)/2 - 10, kyTop - 5, 20, 5);
             // Bottom edge handle
             ctx.fillRect(kxLeft + (kxRight - kxLeft)/2 - 10, kyBottom, 20, 5);
+            // Left edge handle
+            ctx.fillRect(kxLeft - 5, kyTop + (kyBottom - kyTop)/2 - 10, 5, 20);
+            // Right edge handle
+            ctx.fillRect(kxRight, kyTop + (kyBottom - kyTop)/2 - 10, 5, 20);
+            // Center handle
+            ctx.fillRect(kxLeft + (kxRight - kxLeft)/2 - 5, kyTop + (kyBottom - kyTop)/2 - 5, 10, 10);
           }
         }
       }
@@ -602,6 +608,23 @@ export default class GuiTimeline {
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
     }
+  }
+
+  getInitialKeysForTransform(selectedKeys, reg, selChannel) {
+    return selectedKeys.map(sk => {
+      const tr = reg.tracks.get(sk.meshId);
+      const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+      const val = sk.type === 'transform' ? tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] : 0;
+      return { ...sk, time, val };
+    });
+  }
+
+  getInitialTimesForTransform(selectedKeys, reg) {
+    return selectedKeys.map(sk => {
+      const tr = reg.tracks.get(sk.meshId);
+      const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+      return { ...sk, time };
+    });
   }
 
   handleGraphMouseDown(rx, ry) {
@@ -633,6 +656,12 @@ export default class GuiTimeline {
 
     // Check Position Keys
     if (window._animShowTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+      
+      this._undoTracksBeforeMove = new Map();
+      reg.tracks.forEach((tr, mId) => {
+        this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+      });
+
       let minT = Infinity;
       let maxT = -Infinity;
       let minV = Infinity;
@@ -644,7 +673,7 @@ export default class GuiTimeline {
       window._animSelectedKeys.forEach(sk => {
         if (sk.meshId === id && sk.type === 'transform') {
           const t = track.times[sk.index];
-          const val = track.positions[sk.index * 3 + selChannel];
+          const val = track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
           
           if (t < minT) minT = t;
           if (t > maxT) maxT = t;
@@ -664,12 +693,7 @@ export default class GuiTimeline {
           this._activeTransformHandle = 'top';
           this._transformStartRy = ry;
           this._animTransformInitialBox = { minV, maxV };
-          
-          this._animTransformBoxInitialKeys = window._animSelectedKeys.map(sk => {
-            const val = sk.type === 'transform' ? track.positions[sk.index * 3 + selChannel] : 0;
-            return { ...sk, val };
-          });
-          
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
           return;
         }
         // Check Bottom handle
@@ -677,12 +701,44 @@ export default class GuiTimeline {
           this._activeTransformHandle = 'bottom';
           this._transformStartRy = ry;
           this._animTransformInitialBox = { minV, maxV };
-          
-          this._animTransformBoxInitialKeys = window._animSelectedKeys.map(sk => {
-            const val = sk.type === 'transform' ? track.positions[sk.index * 3 + selChannel] : 0;
-            return { ...sk, val };
-          });
-          
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
+          return;
+        }
+        // Check Left handle
+        if (Math.abs(rx - kxLeft) < 10 && ry >= kyTop && ry <= kyBottom) {
+          this._activeTransformHandle = 'left';
+          this._transformStartRx = rx;
+          this._animTransformInitialBox = { startTime: minT, endTime: maxT };
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
+          return;
+        }
+        // Check Right handle
+        if (Math.abs(rx - kxRight) < 10 && ry >= kyTop && ry <= kyBottom) {
+          this._activeTransformHandle = 'right';
+          this._transformStartRx = rx;
+          this._animTransformInitialBox = { startTime: minT, endTime: maxT };
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
+          return;
+        }
+        // Check Center Scale handle
+        const kxMid = (kxLeft + kxRight) / 2;
+        const kyMid = (kyTop + kyBottom) / 2;
+        if (Math.abs(rx - kxMid) < 10 && Math.abs(ry - kyMid) < 10) {
+          this._activeTransformHandle = 'scale_center';
+          this._transformStartRx = rx;
+          this._animTransformInitialBox = { startTime: minT, endTime: maxT };
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
+          return;
+        }
+        // Check Translate Box
+        if (rx >= kxLeft && rx <= kxRight && ry >= kyTop && ry <= kyBottom) {
+          this._activeTransformHandle = 'center';
+          this._transformStartRx = rx;
+          this._transformStartRy = ry;
+          this._animTransformInitialBox = { startTime: minT, endTime: maxT, minV, maxV };
+          this._keyDragStartVal = this.yToValue(ry);
+          this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+          this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
           return;
         }
       }
@@ -727,9 +783,24 @@ export default class GuiTimeline {
               });
             } else {
               this._animSelectedKeysInitialTimes = null;
+              
+              const beforeSelection = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
+              
               // Select only this key!
               window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, startVal: val }];
               window._animTransformBox = null;
+              
+              const afterSelection = [...window._animSelectedKeys];
+              const cbUndo = () => {
+                console.log("[Graph Debug] Undo Click Selection. Before:", beforeSelection);
+                window._animSelectedKeys = beforeSelection;
+                this.draw();
+              };
+              const cbRedo = () => {
+                window._animSelectedKeys = afterSelection;
+                this.draw();
+              };
+              this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys selection');
             }
             
             this.draw();
@@ -839,6 +910,7 @@ export default class GuiTimeline {
     this._isDraggingMarquee = true;
     this._marqueeStart = { x: rx, y: ry };
     this._marqueeEnd = { x: rx, y: ry };
+    this._undoSelectionBeforeMarquee = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({...k})) : [];
   }
 
   autoFitGraph() {
@@ -1208,6 +1280,8 @@ export default class GuiTimeline {
     this._lastMouseX = rx;
     this._lastMouseY = ry;
     
+
+    
     if (ry < 5 && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph) {
       this._canvas.style.cursor = 'ns-resize';
     } else {
@@ -1408,7 +1482,7 @@ export default class GuiTimeline {
           const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
 
           this._animTransformBoxInitialKeys.forEach(sk => {
-            if (sk.meshId === id && sk.type === 'transform' && sk.channel === selChannel) {
+            if (sk.meshId === id && sk.type === 'transform') {
               const initialVal = sk.val;
               let newVal = 0;
               if (this._activeTransformHandle === 'top') {
@@ -1416,9 +1490,14 @@ export default class GuiTimeline {
               } else {
                 newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
               }
-              track.positions[sk.index * 3 + selChannel] = newVal;
+              track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
             }
           });
+          
+          if (this._main && this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+          if (this._main.render) this._main.render();
         }
       }
       this.draw();
@@ -1452,23 +1531,39 @@ export default class GuiTimeline {
           const newDur = initBox.endTime - newStartTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
           
-          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
-            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.endTime, scaleFactor, mDurVal);
+          if (this._animTransformBoxInitialKeys) {
+            this._animTransformBoxInitialKeys.forEach((initKey, idx) => {
+              const track = window._animationRegistry.tracks.get(initKey.meshId);
+              if (track && initKey.type === 'transform' && track.times) {
+                const relTime = initKey.time - initBox.endTime;
+                const newTime = initBox.endTime + relTime * scaleFactor;
+                const finalTime = Math.max(0, Math.min(mDurVal, newTime));
+                
+                track.times[initKey.index] = finalTime;
+              }
+            });
           }
         } else if (this._activeTransformHandle === 'right') {
           const newEndTime = initBox.endTime + dt;
           tBox.endTime = newEndTime;
           
+          const newDur = newEndTime - initBox.startTime;
+          const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+
           if (newEndTime > mDurVal) {
             window._animMasterDuration = newEndTime;
             window._animLoopEnd = newEndTime;
           }
           
-          const newDur = newEndTime - initBox.startTime;
-          const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
-          
-          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
-            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initBox.startTime, scaleFactor, mDurVal);
+          if (this._animTransformBoxInitialKeys) {
+            this._animTransformBoxInitialKeys.forEach(initKey => {
+              const track = window._animationRegistry.tracks.get(initKey.meshId);
+              if (track && initKey.type === 'transform' && track.times) {
+                const relTime = initKey.time - initBox.startTime;
+                const newTime = initBox.startTime + relTime * scaleFactor;
+                track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+              }
+            });
           }
         } else if (this._activeTransformHandle === 'scale_center') {
           const initMid = (initBox.startTime + initBox.endTime) / 2;
@@ -1477,17 +1572,46 @@ export default class GuiTimeline {
           tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
           tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
           
-          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
-            window._animationRegistry.scaleSelectedKeys(this._animTransformBoxInitialTimes, initMid, scaleFactor, mDurVal);
+          if (this._animTransformBoxInitialKeys) {
+            this._animTransformBoxInitialKeys.forEach(initKey => {
+              const track = window._animationRegistry.tracks.get(initKey.meshId);
+              if (track && initKey.type === 'transform' && track.times) {
+                const relTime = initKey.time - initMid;
+                const newTime = initMid + relTime * scaleFactor;
+                track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+              }
+            });
           }
         } else if (this._activeTransformHandle === 'center') {
           const dtClamped = Math.max(-initBox.startTime, Math.min(mDurVal - initBox.endTime, dt));
           tBox.startTime = initBox.startTime + dtClamped;
           tBox.endTime = initBox.endTime + dtClamped;
           
-          if (this._animTransformBoxInitialTimes && window._animationRegistry) {
-            window._animationRegistry.moveSelectedKeys(this._animTransformBoxInitialTimes, dtClamped, mDurVal);
+          if (this._animTransformBoxInitialKeys) {
+            this._animTransformBoxInitialKeys.forEach(initKey => {
+              const track = window._animationRegistry.tracks.get(initKey.meshId);
+              if (track && initKey.type === 'transform' && track.times) {
+                track.times[initKey.index] = Math.max(0, Math.min(mDurVal, initKey.time + dtClamped));
+              }
+            });
+            
+            if (this._mode === 'graph' && this._keyDragStartVal !== undefined) {
+              const targetVal = this.yToValue(this._lastMouseY);
+              const dVal = targetVal - this._keyDragStartVal;
+              
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.positions && initKey.channel !== undefined) {
+                  track.positions[initKey.index * 3 + initKey.channel] = (initKey.val !== undefined ? initKey.val : 0) + dVal;
+                }
+              });
+            }
           }
+          
+          if (this._main && this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+          if (this._main.render) this._main.render();
         }
       }
       this.draw();
@@ -1708,6 +1832,35 @@ export default class GuiTimeline {
         tBox.startTime = tBox.endTime;
         tBox.endTime = tmp;
       }
+
+      // Push undo state for Transform Box!
+      if (reg && this._undoTracksBeforeMove) {
+        const beforeState = this._undoTracksBeforeMove;
+        const afterState = new Map();
+        reg.tracks.forEach((track, meshId) => {
+          afterState.set(meshId, this.cloneTrack(track));
+        });
+        
+        const cbUndo = () => {
+          beforeState.forEach((track, meshId) => {
+            reg.tracks.set(meshId, this.cloneTrack(track));
+          });
+          this._main.render();
+          this.draw();
+        };
+        
+        const cbRedo = () => {
+          afterState.forEach((track, meshId) => {
+            reg.tracks.set(meshId, this.cloneTrack(track));
+          });
+          this._main.render();
+          this.draw();
+        };
+        
+        this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor transform box');
+        this._undoTracksBeforeMove = null;
+      }
+
       this._activeTransformHandle = null;
       this._animTransformInitialBox = null;
       this._animTransformBoxInitialTimes = null;
@@ -1797,7 +1950,7 @@ export default class GuiTimeline {
       const vMax = this.yToValue(y1);
       const vMin = this.yToValue(y2);
       
-      const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
+      const beforeSelection = this._undoSelectionBeforeMarquee || [];
       
       const newKeys = [];
       const activeMesh = this._main.getMesh();
@@ -1821,8 +1974,27 @@ export default class GuiTimeline {
       if (!addMode) window._animSelectedKeys = [];
       window._animSelectedKeys.push(...newKeys);
       
+      if (window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+        let minT = Infinity;
+        let maxT = -Infinity;
+        window._animSelectedKeys.forEach(k => {
+          const track = reg.tracks.get(k.meshId);
+          if (track && track.times) {
+            const t = track.times[k.index];
+            if (t < minT) minT = t;
+            if (t > maxT) maxT = t;
+          }
+        });
+        if (minT !== Infinity && maxT !== Infinity) {
+          window._animTransformBox = { startTime: minT, endTime: maxT };
+        }
+      } else {
+        window._animTransformBox = null;
+      }
+
       const afterSelection = [...window._animSelectedKeys];
       const cbUndo = () => {
+        console.log("[Graph Debug] Undo Marquee Selection. Before:", beforeSelection);
         window._animSelectedKeys = beforeSelection;
         this.draw();
       };
