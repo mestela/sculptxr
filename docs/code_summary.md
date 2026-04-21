@@ -111,9 +111,10 @@ Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engi
     *   **Greedy Quadrangulation**: Contains a custom port of Blender's `quad_calc_error` metric to merge triangles back into clean quads after destructive operations.
     *   **Worker History**: Maintains a local stack of distance fields to allow instant Undo/Redo of voxel operations without main-thread roundtrips.
 
-### Animation System: `AnimationRegistry.js` & `GuiVRAnimation.js`
-*   **Role**: Manages the multi-track animation state and timeline visualization in VR.
+### Animation System: `AnimationRegistry.js`, `GuiVRAnimation.js` & `GuiTimeline.js`
+*   **Role**: Manages the multi-track animation state and timeline visualization in both VR and Desktop.
 *   **Key Logic**:
     *   **Registry**: `window._animationRegistry` stores track data (shapes, times, positions, quaternions, scales) mapped to mesh IDs.
-    *   **Timeline UI**: Rendered via `GuiVRAnimation.js` and `GuiXR.js` for transport controls and keyframe manipulation.
+    *   **Timeline UI**: Rendered via `GuiVRAnimation.js` in VR and `GuiTimeline.js` on Desktop.
+    *   **Graph Editor**: `GuiTimeline.js` handles both the Dopesheet and Graph Editor on desktop. The Graph Editor supports 2D pivot zoom, marquee selection, and a full 2D transform box for value/time manipulation.
     *   **Undo/Redo**: Integrated with `StateManager.js` for keyframe edit events.

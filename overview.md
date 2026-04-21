@@ -48,6 +48,9 @@ The project contains critical documentation on overcoming mobile WebXR barriers:
 *   **VR State Sharing**: VR UI instances may recreate or lose instance properties across frames. To ensure state survives from click to release (e.g., `_animTransformBoxInitialTimes`), store it on `window` rather than `this`.
 *   **Sorting Side Effects**: Operations that sort keys by time (like `sortTrack`) will shift array indices. Any Undo/Redo operations must rely on time-based lookups rather than index-based lookups to avoid data corruption.
 *   **Undo for Complex Operations**: Operations like "Delete Keys" and "Record Motion" must capture full state (times and values) before execution and restore them in Undo, as simple time-shifting is not sufficient when keys swap order or are removed.
+*   **Decoupled View Bounds in Graph Mode**: Graph mode uses view bounds (`_viewStart`, `_viewDuration`) decoupled from loop bounds. Ensure all mouse interaction math (scrubbing, dragging) uses view bounds when in graph mode to avoid large jumps.
+*   **Transform Box State Persistence**: The Transform Box relies on a global `window._animTransformBox` object. Ensure it is created when selection changes in Graph mode too.
+*   **Safe Deep Cloning**: When capturing undo state for tracks, avoid `JSON.stringify` on tracks because they contain `Float32Array` (shapes). Use a manual clone method that creates new `Float32Array` instances.
 
 ---
 *This overview represents the state of understanding after the animation and undo system audit.*
