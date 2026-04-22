@@ -4949,6 +4949,161 @@ export default class GuiXR {
       }
     }
 
+    // Draw Shape Key Time Curve (Time Warping) in VR
+    const activeMeshForShape = this._main.getMesh();
+    if (activeMeshForShape) {
+      const id = activeMeshForShape.getID();
+      const track = reg.tracks.get(id);
+      
+      if (track && track.shapeTimes) {
+        if (track.shapeTimes.length >= 2) {
+          ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
+          ctx.lineWidth = 2;
+          
+          for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+            const t1 = track.shapeTimes[i];
+            const t2 = track.shapeTimes[i + 1];
+            const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
+            const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
+            
+            const ky1 = valueToY(v1);
+            const ky2 = valueToY(v2);
+            
+            ctx.beginPath();
+            
+            const steps = 20;
+            let m0 = 1.0;
+            let m1 = 1.0;
+            if (window._animShowTangents && track.tangentOffsets) {
+              const rightVal = track.tangentOffsets[`${i}_right_dt`];
+              const leftVal = track.tangentOffsets[`${i + 1}_left_dt`];
+              const rightHandle = rightVal !== undefined ? rightVal : 25;
+              const leftHandle = leftVal !== undefined ? leftVal : -25;
+              m0 = rightHandle / 25.0;
+              m1 = -leftHandle / 25.0;
+            }
+
+            for (let s = 0; s <= steps; s++) {
+              const alpha = s / steps;
+              let blend = alpha;
+              if (window._animShowTangents && track.tangentOffsets) {
+                const rightDt = track.tangentOffsets[`${i}_right_dt`];
+                const rightDv = track.tangentOffsets[`${i}_right_dv`];
+                const leftDt = track.tangentOffsets[`${i + 1}_left_dt`];
+                const leftDv = track.tangentOffsets[`${i + 1}_left_dv`];
+                
+                const dt = t2 - t1;
+                const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+                const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+                
+                const slope = dt > 0 ? (v2 - v1) / dt : 0;
+                const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+                const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+                
+                const p1x = dt0 / dt;
+                const p2x = 1 + dt1 / dt;
+                
+                const t_bez = reg.getBezierT(alpha, p1x, p2x);
+                const omt = 1 - t_bez;
+                const omtSq = omt * omt;
+                const omtCu = omtSq * omt;
+                const tSq = t_bez * t_bez;
+                const tCu = tSq * t_bez;
+                
+                const p1y = v1 + dv0;
+                const p2y = v2 + dv1;
+                
+                const warpedTime = omtCu * v1 + 3 * omtSq * t_bez * p1y + 3 * omt * tSq * p2y + tCu * v2;
+                blend = (warpedTime - v1) / (v2 - v1);
+              }
+              
+              const time = t1 + alpha * (t2 - t1);
+              const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+              const y = valueToY(v1 + (v2 - v1) * blend);
+              
+              if (s === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            
+            // Draw Tangent Handles
+            if (window._animShowTangents) {
+              ctx.strokeStyle = '#888888';
+              ctx.lineWidth = 1;
+              
+              const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+              const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+              
+              const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
+              const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
+              const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
+              const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
+              
+              const dt = t2 - t1;
+              const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+              const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+              const slope = dt > 0 ? (v2 - v1) / dt : 0;
+              const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+              const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+
+              const rightXOff = (dt0 / visibleDuration) * tlW;
+              const rightYOff = -dv0 * window._animZoomY;
+              const leftXOff = (dt1 / visibleDuration) * tlW;
+              const leftYOff = -dv1 * window._animZoomY;
+
+              // Draw right handle
+              ctx.beginPath();
+              ctx.moveTo(kx1, ky1);
+              ctx.lineTo(kx1 + rightXOff, ky1 + rightYOff);
+              ctx.stroke();
+              
+              // Circle
+              ctx.fillStyle = '#888888';
+              ctx.beginPath();
+              ctx.arc(kx1 + rightXOff, ky1 + rightYOff, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+              
+              // Draw left handle
+              ctx.beginPath();
+              ctx.moveTo(kx2, ky2);
+              ctx.lineTo(kx2 + leftXOff, ky2 + leftYOff);
+              ctx.stroke();
+              
+              ctx.beginPath();
+              ctx.arc(kx2 + leftXOff, ky2 + leftYOff, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        
+        // Draw Shape Keys (Points)
+        for (let i = 0; i < track.shapeTimes.length; i++) {
+          const t = track.shapeTimes[i];
+          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+          const val = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t;
+          const y = valueToY(val);
+          
+          const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
+          
+          ctx.fillStyle = isSelected ? '#ffff00' : '#ff00ff';
+          
+          ctx.beginPath();
+          ctx.moveTo(x, y - 5);
+          ctx.lineTo(x + 5, y);
+          ctx.lineTo(x, y + 5);
+          ctx.lineTo(x - 5, y);
+          ctx.closePath();
+          ctx.fill();
+          
+          if (isSelected) {
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
     ctx.restore();
   }
 
@@ -5065,6 +5220,66 @@ export default class GuiXR {
           }
         }
 
+        // Check Shape Key Tangents in VR
+        if (window._animShowTangents && track.shapeTimes) {
+          for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+            const t1 = track.shapeTimes[i];
+            const t2 = track.shapeTimes[i + 1];
+            const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
+            const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
+            
+            const ky1_val = valueToY(v1);
+            const ky2_val = valueToY(v2);
+            
+            const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+            const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+            
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
+            
+            const dt = t2 - t1;
+            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+            const slope = dt > 0 ? (v2 - v1) / dt : 0;
+            const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+            const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+
+            const rightXOff = (dt0 / visibleDuration) * tlW;
+            const rightYOff = -dv0 * window._animZoomY;
+            const leftXOff = (dt1 / visibleDuration) * tlW;
+            const leftYOff = -dv1 * window._animZoomY;
+
+            // Check right handle
+            if (i < track.shapeTimes.length - 1) {
+              if (Math.hypot(rx - (kx1 + rightXOff), ry - (ky1_val + rightYOff)) < 20) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i;
+                this._activeTangentSide = 'right';
+                this._activeTangentKx = kx1;
+                this._activeTangentKy = ky1_val + rightYOff;
+                this._activeTangentType = 'shape';
+                return;
+              }
+            }
+            // Check left handle
+            if (i > 0) {
+              if (Math.hypot(rx - (kx2 + leftXOff), ry - (ky2_val + leftYOff)) < 20) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i + 1;
+                this._activeTangentSide = 'left';
+                this._activeTangentKx = kx2;
+                this._activeTangentKy = ky2_val + leftYOff;
+                this._activeTangentType = 'shape';
+                return;
+              }
+            }
+          }
+        }
+
         // Check keys
         if (track.times && track.positions) {
           for (let i = 0; i < track.times.length; i++) {
@@ -5135,6 +5350,67 @@ export default class GuiXR {
                 this._needsRedraw = true;
                 return;
               }
+            }
+          }
+        }
+
+        // Check Shape Keys in VR
+        if (track.shapeTimes && track.shapeOutputTimes) {
+          for (let i = 0; i < track.shapeTimes.length; i++) {
+            const t = track.shapeTimes[i];
+            const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const val = track.shapeOutputTimes[i];
+            const y = valueToY(val);
+
+            if (Math.hypot(rx - x, ry - y) < 20) {
+              this._isDraggingKeyframe = true;
+              this._activeTimeline = w;
+              this._activeKeyframeTrack = track;
+              this._activeMeshId = id;
+              this._activeKeyframeIndex = i;
+              this._activeKeyframeType = 'shape';
+              this._activeKeyframeChannel = 0;
+              let clickT = (rx - tlX) / tlW;
+              clickT = Math.max(0, Math.min(1, clickT));
+              this._keyDragStartTime = loopStart + clickT * visibleDuration;
+              this._keyInitialTime = t;
+              this._keyDragStartVal = val;
+              
+              this._undoTracksBeforeMove = new Map();
+              reg.tracks.forEach((tr, mId) => {
+                this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+              });
+
+              const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
+              if (inSel) {
+                this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                  const tr = reg.tracks.get(k.meshId);
+                  const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                  const startVal = k.type === 'shape' ? tr.shapeOutputTimes[k.index] : 0;
+                  return { ...k, time, startVal: val };
+                });
+              } else {
+                this._animSelectedKeysInitialTimes = null;
+                
+                const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
+                window._animSelectedKeys = [{ meshId: id, type: 'shape', index: i, time: t }];
+                window._animTransformBox = null;
+                
+                const afterSelection = [...window._animSelectedKeys];
+                const cbUndo = () => {
+                  window._animSelectedKeys = beforeSelection;
+                  this._needsRedraw = true;
+                };
+                const cbRedo = () => {
+                  window._animSelectedKeys = afterSelection;
+                  this._needsRedraw = true;
+                };
+                if (this._main && this._main.getStateManager) {
+                  this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys selection');
+                }
+              }
+              this._needsRedraw = true;
+              return;
             }
           }
         }
@@ -5358,14 +5634,23 @@ export default class GuiXR {
           const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
 
           this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dt`] = dt;
-          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
+          
+          if (this._activeTangentType === 'shape') {
+            this._activeTangentTrack.tangentOffsets[`${this._activeTangentIndex}_${this._activeTangentSide}_dv`] = dv;
+          } else {
+            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
+          }
 
           const isTied = this._activeTangentTrack.tangentOffsets ? this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_tied`] !== false : true;
 
           if (isTied) {
             const otherSide = this._activeTangentSide === 'right' ? 'left' : 'right';
             this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dt`] = -dt;
-            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dv_${selChannel}`] = -dv;
+            if (this._activeTangentType === 'shape') {
+              this._activeTangentTrack.tangentOffsets[`${this._activeTangentIndex}_${otherSide}_dv`] = -dv;
+            } else {
+              this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dv_${selChannel}`] = -dv;
+            }
           }
         }
         this._needsRedraw = true;

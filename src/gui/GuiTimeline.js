@@ -1107,6 +1107,25 @@ export default class GuiTimeline {
       this._zoomY = 100.0;
       this._panY = -midVal * this._zoomY;
     }
+
+    // Horizontal Auto-Fit
+    let minT = Infinity;
+    let maxT = -Infinity;
+    if (track.times && track.times.length > 0) {
+      minT = Math.min(minT, track.times[0]);
+      maxT = Math.max(maxT, track.times[track.times.length - 1]);
+    }
+    if (track.shapeTimes && track.shapeTimes.length > 0) {
+      minT = Math.min(minT, track.shapeTimes[0]);
+      maxT = Math.max(maxT, track.shapeTimes[track.shapeTimes.length - 1]);
+    }
+    
+    if (minT !== Infinity && maxT !== Infinity) {
+      const duration = maxT - minT;
+      this._viewStart = Math.max(0, minT - duration * 0.1);
+      this._viewDuration = Math.max(0.1, duration * 1.2);
+      console.log(`[autoFitGraph] minT=${minT}, maxT=${maxT}, viewStart=${this._viewStart}, viewDuration=${this._viewDuration}`);
+    }
   }
 
   setVisibility(visible) {

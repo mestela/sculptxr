@@ -619,6 +619,8 @@ export default function getAnimationWidgets(main, Enums) {
               track.shapes[foundIdx] = new Float32Array(k.shape);
             } else {
               track.shapeTimes.push(targetTime);
+              if (!track.shapeOutputTimes) track.shapeOutputTimes = [];
+              track.shapeOutputTimes.push(targetTime);
               track.shapes.push(new Float32Array(k.shape));
             }
             
@@ -681,6 +683,7 @@ export default function getAnimationWidgets(main, Enums) {
                     while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
                     if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
                       tr.shapeTimes.splice(idx, 1);
+                      if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
                       tr.shapes.splice(idx, 1);
                     }
                   }
@@ -721,6 +724,7 @@ export default function getAnimationWidgets(main, Enums) {
                     tr.shapes[idx] = cmd.newData;
                   } else {
                     tr.shapeTimes.splice(idx, 0, cmd.time);
+                    if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 0, cmd.time);
                     tr.shapes.splice(idx, 0, cmd.newData);
                   }
                 }
