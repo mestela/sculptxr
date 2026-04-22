@@ -3886,7 +3886,7 @@ export default class GuiXR {
       }
     }
     ctx.textAlign = 'right';
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#ccc';
     ctx.fillText(valStr, wx + wid.w - 2, wy + 28);
 
     // 2. Slider Track (Thin, Bottom)
@@ -4011,7 +4011,7 @@ export default class GuiXR {
         ctx.fillStyle = wid.disabled ? '#2a2a2a' : (isActive ? '#444' : '#333');
         ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
-        ctx.fillStyle = wid.disabled ? '#555' : 'white';
+        ctx.fillStyle = wid.disabled ? '#555' : '#ccc';
         ctx.textAlign = 'left';
         ctx.font = this.styles.fontOverlay || '20px sans-serif';
         ctx.fillText(wid.label, wid.x + 20, wid.y + wid.h / 2 + 10);
@@ -4077,7 +4077,7 @@ export default class GuiXR {
 
         ctx.textAlign = 'left';
         ctx.font = this.styles.fontOverlay || '20px sans-serif';
-        ctx.fillStyle = 'white';
+        ctx.fillStyle = '#ccc';
         ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
 
         ctx.textAlign = 'right';
@@ -4152,6 +4152,83 @@ export default class GuiXR {
       fontSize = this.styles.fontOverlay;
     }
     ctx.font = fontSize;
+
+    const isTransport = ['anim_to_start', 'anim_prev_frame', 'anim_play_rev', 'anim_stop', 'anim_play_fwd', 'anim_next_frame', 'anim_to_end', 'anim_record'].includes(wid.id);
+    
+    if (isTransport) {
+      const cx = wx + wid.w / 2;
+      const cy = wy + wid.h / 2;
+      
+      if (wid.id === 'anim_stop') {
+        const size = 16;
+        ctx.fillRect(cx - size/2, cy - size/2, size, size);
+      } else if (wid.id === 'anim_record') {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (wid.id === 'anim_play_fwd') {
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy - 8);
+        ctx.lineTo(cx + 8, cy);
+        ctx.lineTo(cx - 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+      } else if (wid.id === 'anim_play_rev') {
+        ctx.beginPath();
+        ctx.moveTo(cx + 8, cy - 8);
+        ctx.lineTo(cx - 8, cy);
+        ctx.lineTo(cx + 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+      } else if (wid.id === 'anim_next_frame') {
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy - 8);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx - 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 8);
+        ctx.lineTo(cx + 8, cy);
+        ctx.lineTo(cx, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+      } else if (wid.id === 'anim_prev_frame') {
+        ctx.beginPath();
+        ctx.moveTo(cx + 8, cy - 8);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx + 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 8);
+        ctx.lineTo(cx - 8, cy);
+        ctx.lineTo(cx, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+      } else if (wid.id === 'anim_to_end') {
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy - 8);
+        ctx.lineTo(cx + 4, cy);
+        ctx.lineTo(cx - 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.fillRect(cx + 6, cy - 8, 2, 16);
+      } else if (wid.id === 'anim_to_start') {
+        ctx.fillRect(cx - 8, cy - 8, 2, 16);
+        
+        ctx.beginPath();
+        ctx.moveTo(cx + 8, cy - 8);
+        ctx.lineTo(cx - 4, cy);
+        ctx.lineTo(cx + 8, cy + 8);
+        ctx.closePath();
+        ctx.fill();
+      }
+      return;
+    }
 
     if (wid.data && wid.data.thumbImage) {
       try {
@@ -4774,8 +4851,13 @@ export default class GuiXR {
             else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
             else ctx.fillStyle = '#888888'; // Gray
 
+            const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
             ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            if (isTied) {
+              ctx.arc(x, y, 4, 0, Math.PI * 2);
+            } else {
+              ctx.fillRect(x - 4, y - 4, 8, 8);
+            }
             ctx.fill();
           }
         }
@@ -5132,6 +5214,7 @@ export default class GuiXR {
 
       if (ry <= headerH) {
         this._isDraggingPlayhead = true;
+        this._activeTimeline = w;
         return;
       }
       window._animTransformBox = null;
@@ -5193,6 +5276,11 @@ export default class GuiXR {
         const targetTime = loopStart + t * visibleDuration;
         window._animCurrentTime = targetTime;
         if (reg) reg.globalPlaybackTime = targetTime;
+        
+        if (this._main && this._main._meshes) {
+          this._main._meshes.forEach(m => reg.update(m, true));
+        }
+        
         this._needsRedraw = true;
       } else if (this._isDraggingKeyframe) {
         let t = (rx - 200) / tlW;

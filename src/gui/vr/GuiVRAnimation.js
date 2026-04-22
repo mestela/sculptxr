@@ -24,8 +24,8 @@ export default function getAnimationWidgets(main, Enums) {
 
   // 1. Toggles Row
   widgets.push({
-    type: 'checkbox', id: 'anim_count_toggle', label: 'Use 3-Second Countdown',
-    x: col1X, y: y, w: 350, h: 36,
+    type: 'checkbox', id: 'anim_count_toggle', label: 'Countdown',
+    x: col1X, y: y, w: 464, h: 36,
     value: window._animCountIn,
     onInteract: () => {
       window._animCountIn = !window._animCountIn;
@@ -36,7 +36,7 @@ export default function getAnimationWidgets(main, Enums) {
 
   widgets.push({
     type: 'checkbox', id: 'anim_trigger_toggle', label: 'Start on Trigger',
-    x: col1X + 360, y: y, w: 350, h: 36,
+    x: col1X + 464 + 15, y: y, w: 464, h: 36,
     value: window._animWaitForTrigger,
     onInteract: () => {
       window._animWaitForTrigger = !window._animWaitForTrigger;
@@ -46,52 +46,43 @@ export default function getAnimationWidgets(main, Enums) {
   });
   y += 36 + gapBtn;
 
-  // 2. Mode Row (Tangents & Speed)
+  // 2. Mode Row (Speed & Capture Rate)
   widgets.push({
-    type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangent Handles',
-    x: col1X, y: y, w: 350, h: 36,
-    value: window._animShowTangents,
-    onInteract: () => {
-      window._animShowTangents = !window._animShowTangents;
-      if (main._guiXR) main._guiXR._needsRedraw = true;
-    }
-  });
-
-  widgets.push({
-    type: 'combobox', id: 'anim_speed', label: `Speed: ${window._animPlaybackSpeed}x`,
-    x: col1X + 360, y: y, w: 350, h: 36,
+    type: 'combobox', id: 'anim_speed', label: `Play at ${window._animPlaybackSpeed}x`,
+    x: col1X, y: y, w: 464, h: 36,
     value: window._animPlaybackSpeed,
     options: [
-      { id: 0.1, label: 'Speed: 0.1x' },
-      { id: 0.5, label: 'Speed: 0.5x' },
-      { id: 1.0, label: 'Speed: 1.0x' },
-      { id: 1.5, label: 'Speed: 1.5x' },
-      { id: 1.8, label: 'Speed: 1.8x' },
-      { id: 2.0, label: 'Speed: 2.0x' },
-      { id: 4.0, label: 'Speed: 4.0x' }
+      { id: 0.1, label: 'Play at 0.1x' },
+      { id: 0.5, label: 'Play at 0.5x' },
+      { id: 1.0, label: 'Play at 1.0x' },
+      { id: 1.5, label: 'Play at 1.5x' },
+      { id: 1.8, label: 'Play at 1.8x' },
+      { id: 2.0, label: 'Play at 2.0x' },
+      { id: 4.0, label: 'Play at 4.0x' }
     ],
     onInteract: (val) => {
       window._animPlaybackSpeed = parseFloat(val) || 1.0;
       if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
-  y += 36 + gapBtn;
 
   window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
-  let rateLabel = "Standard (~10 fps)";
-  if (window._animCaptureRate >= 0.9) rateLabel = "Sparse (1.0s)";
-  else if (window._animCaptureRate >= 0.4) rateLabel = "Sparse (0.5s)";
-  else if (window._animCaptureRate >= 0.09) rateLabel = "Standard (~10 fps)";
+  
+  const currentFps = window._animFPS || 24;
+  let rateLabel = "Capture at 10fps";
+  if (window._animCaptureRate >= 0.9) rateLabel = "Capture at 1fps";
+  else if (window._animCaptureRate >= 0.4) rateLabel = "Capture at 2fps";
+  else if (window._animCaptureRate === 1 / currentFps) rateLabel = `Capture at ${currentFps}fps`;
 
   widgets.push({
-    type: 'combobox', id: 'anim_capture_rate', label: `Rec Rate: ${rateLabel}`,
-    x: col1X, y: y, w: 710, h: 36,
+    type: 'combobox', id: 'anim_capture_rate', label: rateLabel,
+    x: col1X + 464 + 15, y: y, w: 464, h: 36,
     value: window._animCaptureRate,
     options: [
-      { id: 0.033, label: 'Dense (~30 fps / 0.03s)' },
-      { id: 0.1,   label: 'Standard (~10 fps / 0.1s)' },
-      { id: 0.5,   label: 'Sparse (2 fps / 0.5s)' },
-      { id: 1.0,   label: 'Step Key (1 fps / 1.0s)' }
+      { id: 1 / currentFps, label: `Capture at ${currentFps}fps` },
+      { id: 0.1,   label: 'Capture at 10fps' },
+      { id: 0.5,   label: 'Capture at 2fps' },
+      { id: 1.0,   label: 'Capture at 1fps' }
     ],
     onInteract: (val) => {
       window._animCaptureRate = parseFloat(val) || 0.1;
@@ -103,7 +94,7 @@ export default function getAnimationWidgets(main, Enums) {
   // 2.5 FPS Setting
   widgets.push({
     type: 'slider', id: 'anim_fps', label: 'Timeline FPS',
-    x: col1X, y: y, w: 350, h: 50,
+    x: col1X, y: y, w: 944, h: 50,
     value: window._animFPS || 24,
     min: 1, max: 60, step: 1,
     onInput: (val) => {
@@ -122,13 +113,16 @@ export default function getAnimationWidgets(main, Enums) {
       }
     }
   });
+
+
+
   y += 50 + gapBtn;
 
   // 3. Clear All
   if (!isConfirmingClearAnim) {
     widgets.push({
-      type: 'button', id: 'anim_reset_all', label: 'Clear All Animation & Reset Looper Tempo',
-      x: col1X, y: y, w: 710, h: 36,
+      type: 'button', id: 'anim_reset_all', label: 'Reset',
+      x: col1X, y: y, w: 944, h: 36,
       onInteract: () => {
         isConfirmingClearAnim = true;
         if (main._guiXR) main._guiXR.refreshToolsWidget();
@@ -137,11 +131,11 @@ export default function getAnimationWidgets(main, Enums) {
     y += 36 + gapBtn;
   } else {
     widgets.push({
-      type: 'info', id: 'anim_clear_info', label: 'Clear All Animation? (No Undo)', x: col1X, y: y, w: 710, h: 36, color: '#ff4444'
+      type: 'info', id: 'anim_clear_info', label: 'Clear All Animation? (No Undo)', x: col1X, y: y, w: 944, h: 36, color: '#ff4444'
     });
     y += 36 + gapBtn;
 
-    const halfW = (710 - gapBtn) / 2;
+    const halfW = (944 - gapBtn) / 2;
     widgets.push({
       type: 'button', id: 'anim_clear_ok', label: 'OK', x: col1X, y: y, w: halfW, h: 36,
       onInteract: () => {
@@ -166,7 +160,7 @@ export default function getAnimationWidgets(main, Enums) {
   }
 
   // 3. Standard 8-Button Transport Bar
-  const tW = 710 / 8;
+  const tW = 944 / 8;
   
   // Jump to Start
   widgets.push({
@@ -193,7 +187,7 @@ export default function getAnimationWidgets(main, Enums) {
   // Play Backwards
   widgets.push({
     type: 'button', id: 'anim_play_rev', label: '◀', x: col1X + tW*2, y: y, w: tW, h: btnH,
-    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection === -1) ? '#44ff44' : '#aaaaaa' },
+    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection === -1) ? '#44ff44' : '#ccc' },
     onInteract: () => {
       window._animPlaying = true;
       if (window._animationRegistry) window._animationRegistry.playbackDirection = -1;
@@ -202,7 +196,7 @@ export default function getAnimationWidgets(main, Enums) {
 
   // Stop
   widgets.push({
-    type: 'button', id: 'anim_stop', label: '■', x: col1X + tW*3, y: y, w: tW, h: btnH,
+    type: 'button', id: 'anim_stop', label: '⬛', x: col1X + tW*3, y: y, w: tW, h: btnH,
     onInteract: () => {
       window._animPlaying = false;
       if (window._animationRegistry) {
@@ -216,7 +210,7 @@ export default function getAnimationWidgets(main, Enums) {
   // Play Forwards
   widgets.push({
     type: 'button', id: 'anim_play_fwd', label: '▶', x: col1X + tW*4, y: y, w: tW, h: btnH,
-    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection !== -1) ? '#44ff44' : (isFlashing ? '#ff8800' : '#aaaaaa') },
+    data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection !== -1) ? '#44ff44' : (isFlashing ? '#ff8800' : '#ccc') },
     onInteract: () => {
       window._animPlaying = true;
       if (window._animationRegistry) window._animationRegistry.playbackDirection = 1;
@@ -250,7 +244,7 @@ export default function getAnimationWidgets(main, Enums) {
   // Record
   widgets.push({
     type: 'button', id: 'anim_record', label: '⬤', x: col1X + tW*7, y: y, w: tW, h: btnH,
-    data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : (isFlashing ? '#ff8800' : '#aaaaaa') },
+    data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : (isFlashing ? '#ff8800' : '#ccc') },
     onInteract: () => {
       if (!window._animationRegistry) return;
 
@@ -312,7 +306,7 @@ export default function getAnimationWidgets(main, Enums) {
   };
 
   // 4. Giant Square Keyframe Button & Unified Toolbar
-  const kRowW = 710;
+  const kRowW = 944;
   const giantBtnSize = 100;
   const subBtnH = (giantBtnSize - gapBtn) / 2;
 
@@ -477,12 +471,12 @@ export default function getAnimationWidgets(main, Enums) {
   });
 
   widgets.push({
-    type: 'combobox', id: 'anim_key_mode', label: 'Mode: Shape', 
+    type: 'combobox', id: 'anim_key_mode', label: 'Keying mode: Shape', 
     x: col1X + giantBtnSize + gapBtn, y: y, w: kRowW - giantBtnSize - gapBtn, h: subBtnH,
     value: window._animKeyMode,
     options: [
-      { id: 'shape', label: 'Mode: Shape' },
-      { id: 'transform', label: 'Mode: Transform' }
+      { id: 'shape', label: 'Keying mode: Shape' },
+      { id: 'transform', label: 'Keying mode: Transform' }
     ],
     onInteract: () => {
       console.log(`[Combobox] onInteract, before toggle: ${window._animKeyMode}`);
@@ -1083,7 +1077,7 @@ export default function getAnimationWidgets(main, Enums) {
   y += giantBtnSize + gapBtn;
 
   // 5. Unified Triple Slider Row
-  const sW = (710 - 30) / 3; // 226px each
+  const sW = (944 - 30) / 3; // 304px each
   
   widgets.push({
     type: 'slider', id: 'anim_master_duration', label: 'Duration', 
@@ -1150,7 +1144,7 @@ export default function getAnimationWidgets(main, Enums) {
 
   widgets.push({
     type: 'combobox', id: 'anim_active_tool', label: `🗜️ ${window._animActiveTool.toUpperCase()}`,
-    x: col1X, y: y, w: 200, h: 36,
+    x: col1X, y: y, w: 304, h: 36,
     value: window._animActiveTool,
     options: [
       { id: 'select', label: 'SELECT' },
@@ -1220,7 +1214,7 @@ export default function getAnimationWidgets(main, Enums) {
   if (window._animActiveTool === 'marquee') {
     widgets.push({
       type: 'combobox', id: 'anim_marquee_mode', label: `Mode: ${window._animMarqueeMode.toUpperCase()}`,
-      x: col1X + 220, y: y, w: 230, h: 36,
+      x: col1X + 304 + 15, y: y, w: 304, h: 36,
       value: window._animMarqueeMode,
       options: [
         { id: 'select_only', label: 'Auto Select & Exit' },
@@ -1241,7 +1235,7 @@ export default function getAnimationWidgets(main, Enums) {
   } else if (window._animActiveTool === 'transform') {
     widgets.push({
       type: 'checkbox', id: 'anim_transform_auto', label: 'Auto Select Keys',
-      x: col1X + 220, y: y, w: 200, h: 36,
+      x: col1X + 304 + 15, y: y, w: 304, h: 36,
       value: window._animTransformAutoSelect,
       onInteract: (val) => {
         window._animTransformAutoSelect = !window._animTransformAutoSelect;
@@ -1253,7 +1247,7 @@ export default function getAnimationWidgets(main, Enums) {
   // Global AutoKey Option
   widgets.push({
     type: 'checkbox', id: 'anim_autokey', label: 'AutoKey',
-    x: col1X + 460, y: y, w: 180, h: 36,
+    x: col1X + (304 + 15) * 2, y: y, w: 304, h: 36,
     value: window._animAutoKey,
     onInteract: (val) => {
       window._animAutoKey = !window._animAutoKey;
@@ -1266,7 +1260,7 @@ export default function getAnimationWidgets(main, Enums) {
   window._animTimelineMode = window._animTimelineMode || 'dope';
   widgets.push({
     type: 'combobox', id: 'anim_timeline_mode', label: `Mode: ${window._animTimelineMode.toUpperCase()}`,
-    x: col1X, y: y, w: 350, h: 36,
+    x: col1X, y: y, w: 944, h: 36,
     value: window._animTimelineMode,
     options: [
       { id: 'dope', label: 'Mode: Dope' },
@@ -1291,11 +1285,46 @@ export default function getAnimationWidgets(main, Enums) {
   });
   y += 36 + gapBtn;
 
+  widgets.push({
+    type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangents',
+    x: col1X, y: y, w: 464, h: 36,
+    value: window._animShowTangents,
+    onInteract: () => {
+      window._animShowTangents = !window._animShowTangents;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+
+  widgets.push({
+    type: 'button', id: 'anim_tangent_tied_toggle', label: 'Tie/Break Tangent',
+    x: col1X + 464 + 15, y: y, w: 464, h: 36,
+    onInteract: () => {
+      const reg = window._animationRegistry;
+      if (!reg) return;
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+      if (singleSelected) {
+        const track = reg.tracks.get(singleSelected.meshId);
+        if (track) {
+          if (!track.tangentOffsets) track.tangentOffsets = {};
+          const key = `trans_${singleSelected.index}_tied`;
+          const cur = track.tangentOffsets[key] !== false;
+          track.tangentOffsets[key] = !cur;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+          showFeedback(cur ? 'Broken Tangent' : 'Tied Tangent');
+        }
+      } else {
+        showFeedback('Select a single key first');
+      }
+    }
+  });
+
+  y += 36 + gapBtn;
+
   // 6. Sleek Timeline
   widgets.push({
     type: 'timeline',
     id: 'anim_timeline',
-    x: col1X, y: y, w: 710, h: 300
+    x: col1X, y: y, w: 944, h: 300
   });
 
   return widgets;
