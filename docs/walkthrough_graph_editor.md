@@ -47,3 +47,39 @@ Upgrade the SculptXR desktop graph editor from a basic read-only preview to a fu
 *   `src/gui/GuiTimeline.js`: Core implementation of UI, interaction, and drawing.
 *   `src/files/ImportSGL.js`: Removed auto-play on load.
 *   `src/gui/GuiAnimation.js`: Added playback speed persistence.
+
+## VR Parity & Polish (v1.0.221)
+
+### Objective
+Port the graph editor features from desktop to VR, achieving parity and polishing the VR UI for better usability.
+
+### Key Fixes & Implementation Details
+
+#### 1. Key Dragging Math Fix
+*   **Problem**: Dragging keys in VR graph mode was scale-dependent (faster when zoomed in, slower when zoomed out).
+*   **Solution**: Removed the incorrect scaling factor `* (tlW / 1000.0)` in `GuiXR.js`. Now it uses raw canvas delta mapped to time via `visibleDuration / tlW`.
+*   **Event Stealing**: Prevented dopesheet interaction code from stealing drag events in graph mode by adding an early check for graph mode in `onInteract`.
+
+#### 2. Tangent Handles in VR
+*   **Feature**: Added support for drawing and manipulating tangent handles in VR graph mode.
+*   **Display**: Broken tangents are drawn as squares, tied tangents as circles.
+*   **Interaction**: Added "Tie/Break Tangent" button in VR UI.
+
+#### 3. Tangent Scrambling on Key Deletion/Insertion
+*   **Problem**: Deleting or inserting keys scrambled tangents because they were stored by index (e.g., `trans_3_right_dt`).
+*   **Solution**: Added index-shifting logic in `AnimationRegistry.js` (`deleteSelectedKeys`, `addTransformKey`, etc.) to update tangent keys when indices change.
+
+#### 4. Transform Box Fixes in VR
+*   **Undo**: Added missing state capturing for undo when clicking transform handles.
+*   **NaN Fix**: Set `_keyDragStartVal` when clicking the center handle to prevent `NaN` results during translation.
+*   **Scale Limit**: Added `Math.max(0.05, ...)` to `scaleCenter` to prevent keys from collapsing to 0 or flipping order.
+
+#### 5. UI Polish & Layout
+*   **Width Expansion**: Expanded widgets to fill panel width (compensated for scrollbar by using `944` max width).
+*   **Unification**: Unified text color to `#ccc` for all VR UI elements. Made stop button a flat square instead of a small font character. Drawn transport icons with paths instead of font characters to ensure consistency between desktop and headset.
+*   **Layout**: Reorganized layout to put "Timeline Mode", "Op: Select", "Show Tangents", and "Tie/Break" on a single row at the bottom. Made tangent buttons conditional on graph mode.
+
+### Files Modified
+*   `src/gui/GuiXR.js`: Core VR UI and interaction implementation.
+*   `src/gui/vr/GuiVRAnimation.js`: VR Animation panel layout and widgets.
+*   `src/editing/AnimationRegistry.js`: Key deletion and insertion logic.
