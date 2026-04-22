@@ -35,11 +35,8 @@ export default function getGalleryWidgets(main) {
         textAlign: 'left',
         data: { thumbImage: save.value.thumbImage },
         onInteract: () => {
-          if (window.screenLog) window.screenLog(`[GuiVRGallery] Clicked load for key: ${save.key}`, "lime");
           if (guiFiles) {
             guiFiles.loadSpecificBrowserSave(save.key);
-          } else {
-            if (window.screenLog) window.screenLog(`[GuiVRGallery] guiFiles is null!`, "red");
           }
         }
       });

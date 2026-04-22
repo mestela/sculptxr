@@ -7,11 +7,10 @@
 ---
 
 ## 1. Todo
-* [ ] **Animation**: graph editor
 
+* [ ] **Tablet**: UI doesn't work on ios, why?
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
-* [ ] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
-* [ ] **Animation**: per key interp type; hold, bezier, linear
+* [-] **Animation**: per key interp type; hold, bezier, linear [partially there, can do broken tangents]
 * [ ] **Animation**: per frame sculpting, shape replacement based
 * [ ] **Animation**: blendshapes
 * [ ] **Low Poly**: Snapping for retopo. Snap from one object to another? More work on the slide tool maybe?
@@ -25,6 +24,9 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Animation**: graph editor in vr
+* [x] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
+* [x] **Animation**: graph editor in desktop
 * [x] **Animation**: calculator for duration is seconds, it should be frames
 * [x] **Animation**: recording sculpting, move, like we record transforms
 * [x] **Animation**: on desktop, undo isn't working properly

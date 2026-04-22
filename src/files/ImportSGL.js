@@ -31,7 +31,6 @@ Import.importSGL = function (buffer, gl, main) {
 
   var off = 0;
   var version = u32a[off++];
-  console.log(`[ImportSGL] File Version: ${version}, Supported Max Version: ${ExportSGL.VERSION}`);
   if (version > ExportSGL.VERSION)
     return [];
 

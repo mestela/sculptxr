@@ -28,8 +28,6 @@ class GuiFiles {
 
   refreshBrowserSaves() {
     return StorageDB.getAll().then(saves => {
-      console.log(`[GuiFiles] refreshBrowserSaves found ${saves.length} saves.`);
-      if (window.screenLog) window.screenLog(`[GuiFiles] Found ${saves.length} saves`, "cyan");
       // Sort by timestamp desc (newest first)
       this._browserSaves = saves.sort((a, b) => {
         const tA = a.value && a.value.timestamp ? a.value.timestamp : 0;
@@ -86,7 +84,6 @@ class GuiFiles {
 
   addFile() {
     const input = document.getElementById('fileopen');
-    console.log("[GuiFiles] addFile called, fileopen element:", input);
     if (input) {
       const oldPointerEvents = input.style.pointerEvents;
       const oldZIndex = input.style.zIndex;
@@ -337,7 +334,6 @@ class GuiFiles {
   }
 
   loadSpecificBrowserSave(key) {
-    console.log(`[GuiFiles] loadSpecificBrowserSave called for key:`, key);
     if (window.screenLog) window.screenLog(`Loading ${key}...`, 'cyan');
     StorageDB.get(key).then(data => {
       if (!data) {
@@ -353,7 +349,6 @@ class GuiFiles {
         return blob;
       }
     }).then(buf => {
-      console.log(`[GuiFiles] Got buffer, length:`, buf ? buf.byteLength : 0);
       if (buf) {
         this._main.loadScene(buf, 'sgl');
         if (window.screenLog) window.screenLog('Loaded from browser storage!', 'lime');
