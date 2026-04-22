@@ -978,12 +978,12 @@ export default class GuiTimeline {
 
   cloneTrack(track) {
     const cloned = {
-      times: [...track.times],
-      positions: [...track.positions],
-      quaternions: [...track.quaternions],
-      scales: [...track.scales],
-      shapeTimes: [...track.shapeTimes],
-      shapes: track.shapes.map(s => new Float32Array(s)),
+      times: track.times ? [...track.times] : [],
+      positions: track.positions ? [...track.positions] : [],
+      quaternions: track.quaternions ? [...track.quaternions] : [],
+      scales: track.scales ? [...track.scales] : [],
+      shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+      shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
       playbackTime: track.playbackTime,
       muted: track.muted,
       tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
@@ -1379,8 +1379,6 @@ export default class GuiTimeline {
       const targetTime = loopStart + t * visibleDuration;
       
       const dt = targetTime - this._keyDragStartTime;
-      
-      console.log(`[Graph Debug] Drag Key: rx=${rx}, targetTime=${targetTime.toFixed(3)}, startTime=${this._keyDragStartTime.toFixed(3)}, dt=${dt.toFixed(3)}`);
       
       if (window._animationRegistry) {
         if (this._mode === 'graph') {
