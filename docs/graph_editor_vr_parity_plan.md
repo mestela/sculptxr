@@ -9,8 +9,8 @@ This document outlines the inventory of features in the Desktop Graph Editor and
 *   [*] **Panning**: Moving the view in both time and value axes.
 *   [*] **Curve Rendering**: Smooth cubic Bezier interpolation for position channels (X, Y, Z) with a binary search solver for even time stepping.
 *   [*] **Key Rendering**: Dots at keyframes, color-coded for selection (Yellow) and hover (Cyan).
-*   [ ] **Tangent Handles**: Rendering and interactive editing of handles to adjust curve slopes.
-*   [ ] **Marquee Selection**: 2D box selection with live highlight of keys during drag. (Selection undo implemented).
+*   [x] **Tangent Handles**: Rendering and interactive editing of handles to adjust curve slopes.
+*   [x] **Marquee Selection**: 2D box selection with live highlight of keys during drag. (Selection undo implemented).
 *   [ ] **2D Transform Box**: Scaling and translating selected keys in both time and value.
 *   [*] **Auto Fit**: Automatically scaling and panning the view to fit all keys of the active mesh.
 *   [*] **Undo/Redo Support**: Custom undo states for selection changes and transform operations to handle index shifting. (Transform and Marquee Selection undo implemented).

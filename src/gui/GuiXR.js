@@ -4616,7 +4616,7 @@ export default class GuiXR {
       ctx.strokeRect(mx1, my1, mw, mh);
     }
     // --- TRANSFORM BOX OVERLAY ---
-    if (window._animTransformBox) {
+    if (window._animTimelineMode !== 'graph' && window._animTransformBox) {
       const tBox = window._animTransformBox;
       const mDur = window._animMasterDuration || 1.0;
       const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -4632,10 +4632,8 @@ export default class GuiXR {
 
       ctx.strokeStyle = '#ffff00';
       ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
       ctx.strokeRect(kxLeft, w.y + 30, kxRight - kxLeft, w.h - 30);
 
-      ctx.setLineDash([]);
       ctx.lineWidth = 4;
       ctx.strokeStyle = '#ffff00';
 
@@ -5163,6 +5161,30 @@ export default class GuiXR {
           const kxMid = (kxLeft + kxRight) / 2;
           const kyMid = (kyTop + kyBottom) / 2;
 
+          if (window._animSelectedKeys) {
+            this._animTransformBoxInitialKeys = window._animSelectedKeys.map(sk => {
+              const tr = reg.tracks.get(sk.meshId);
+              const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+              const val = sk.type === 'transform' ? tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] : 0;
+              return { ...sk, time, val };
+            });
+
+            this._undoTracksBeforeMove = new Map();
+            reg.tracks.forEach((tr, mId) => {
+              this._undoTracksBeforeMove.set(mId, {
+                times: tr.times ? [...tr.times] : [],
+                positions: tr.positions ? [...tr.positions] : [],
+                quaternions: tr.quaternions ? [...tr.quaternions] : [],
+                scales: tr.scales ? [...tr.scales] : [],
+                shapeTimes: tr.shapeTimes ? [...tr.shapeTimes] : [],
+                shapes: tr.shapes ? tr.shapes.map(s => new Float32Array(s)) : [],
+                playbackTime: tr.playbackTime,
+                muted: tr.muted,
+                tangentOffsets: tr.tangentOffsets ? JSON.parse(JSON.stringify(tr.tangentOffsets)) : undefined
+              });
+            });
+          }
+
           if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - kyTop) < 20) {
             this._activeTransformHandle = 'top';
             this._transformStartRy = ry;
@@ -5197,6 +5219,7 @@ export default class GuiXR {
             this._activeTransformHandle = 'center';
             this._transformStartRx = rx;
             this._transformStartRy = ry;
+            this._keyDragStartVal = yToValue(ry);
             this._animTransformInitialBox = { ...tBox };
             return;
           }
@@ -5429,7 +5452,7 @@ export default class GuiXR {
             }
           } else if (this._activeTransformHandle === 'scale_center') {
             const initMid = (initBox.startTime + initBox.endTime) / 2;
-            const scaleFactor = 1.0 + dx / 150.0;
+            const scaleFactor = Math.max(0.05, 1.0 + dx / 150.0);
             
             tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
             tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
@@ -5628,6 +5651,66 @@ export default class GuiXR {
 
       this._isDraggingMarquee = false;
       this._needsRedraw = true;
+    }
+
+    if (this._activeTransformHandle && this._undoTracksBeforeMove) {
+      console.log("[Graph UI Debug] Pushing transform box undo state");
+      const beforeState = this._undoTracksBeforeMove;
+      const afterState = new Map();
+      reg.tracks.forEach((track, meshId) => {
+        afterState.set(meshId, {
+          times: track.times ? [...track.times] : [],
+          positions: track.positions ? [...track.positions] : [],
+          quaternions: track.quaternions ? [...track.quaternions] : [],
+          scales: track.scales ? [...track.scales] : [],
+          shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+          shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+          playbackTime: track.playbackTime,
+          muted: track.muted,
+          tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+        });
+      });
+      
+      const cbUndo = () => {
+        beforeState.forEach((track, meshId) => {
+          reg.tracks.set(meshId, {
+            times: track.times ? [...track.times] : [],
+            positions: track.positions ? [...track.positions] : [],
+            quaternions: track.quaternions ? [...track.quaternions] : [],
+            scales: track.scales ? [...track.scales] : [],
+            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+            playbackTime: track.playbackTime,
+            muted: track.muted,
+            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+          });
+        });
+        if (this._main && this._main.render) this._main.render();
+        this._needsRedraw = true;
+      };
+      
+      const cbRedo = () => {
+        afterState.forEach((track, meshId) => {
+          reg.tracks.set(meshId, {
+            times: track.times ? [...track.times] : [],
+            positions: track.positions ? [...track.positions] : [],
+            quaternions: track.quaternions ? [...track.quaternions] : [],
+            scales: track.scales ? [...track.scales] : [],
+            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+            playbackTime: track.playbackTime,
+            muted: track.muted,
+            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+          });
+        });
+        if (this._main && this._main.render) this._main.render();
+        this._needsRedraw = true;
+      };
+      
+      if (this._main && this._main.getStateManager) {
+        this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor transform box');
+      }
+      this._undoTracksBeforeMove = null;
     }
 
     if (this._isDraggingKeyframe && this._undoTracksBeforeMove) {
