@@ -5107,7 +5107,16 @@ export default class GuiXR {
                 });
 
                 const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i);
-                if (!inSel) {
+                if (inSel) {
+                  this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                    const tr = reg.tracks.get(k.meshId);
+                    const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                    const val = k.type === 'transform' ? tr.positions[k.index * 3 + (k.channel !== undefined ? k.channel : 0)] : 0;
+                    return { ...k, time, startVal: val };
+                  });
+                } else {
+                  this._animSelectedKeysInitialTimes = null;
+                  
                   const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
                   window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, time: t }];
                   window._animTransformBox = null;
@@ -5294,7 +5303,7 @@ export default class GuiXR {
         const targetVal = yToValue(ry);
         const dVal = targetVal - this._keyDragStartVal;
         
-        const singleKey = [{
+        const keysToMove = this._animSelectedKeysInitialTimes || [{
           meshId: this._activeMeshId,
           type: this._activeKeyframeType,
           index: this._activeKeyframeIndex,
@@ -5303,8 +5312,8 @@ export default class GuiXR {
           startVal: this._keyDragStartVal
         }];
         
-        reg.moveSelectedKeys(singleKey, dt, mDurVal);
-        reg.moveSelectedKeysValue(singleKey, dVal);
+        reg.moveSelectedKeys(keysToMove, dt, mDurVal);
+        reg.moveSelectedKeysValue(keysToMove, dVal);
         
         if (this._main && this._main._meshes) {
           this._main._meshes.forEach(m => reg.update(m, true));
@@ -5579,6 +5588,9 @@ export default class GuiXR {
         );
       } else {
         window._animSelectedKeys = pendingKeys;
+        if (marqMode === 'select_only') {
+          window._animActiveTool = 'select';
+        }
       }
 
       const afterSelection = [...window._animSelectedKeys];
@@ -5591,7 +5603,7 @@ export default class GuiXR {
       }
 
       // Compute 2D bounds for Transform Box in Graph Mode!
-      if (window._animSelectedKeys.length > 1) {
+      if (window._animActiveTool === 'transform' && window._animSelectedKeys.length > 1) {
         let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
         window._animSelectedKeys.forEach(sk => {
           const tr = reg.tracks.get(sk.meshId);

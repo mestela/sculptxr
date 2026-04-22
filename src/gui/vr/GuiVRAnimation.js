@@ -189,8 +189,15 @@ export default function getAnimationWidgets(main, Enums) {
     type: 'button', id: 'anim_play_rev', label: '◀', x: col1X + tW*2, y: y, w: tW, h: btnH,
     data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection === -1) ? '#44ff44' : '#ccc' },
     onInteract: () => {
-      window._animPlaying = true;
-      if (window._animationRegistry) window._animationRegistry.playbackDirection = -1;
+      const reg = window._animationRegistry;
+      if (window._animPlaying && reg && reg.playbackDirection === -1) {
+        window._animPlaying = false;
+        reg.stopRecording(true);
+      } else {
+        window._animPlaying = true;
+        if (reg) reg.playbackDirection = -1;
+      }
+      if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
 
@@ -212,8 +219,15 @@ export default function getAnimationWidgets(main, Enums) {
     type: 'button', id: 'anim_play_fwd', label: '▶', x: col1X + tW*4, y: y, w: tW, h: btnH,
     data: { tint: (window._animPlaying && window._animationRegistry && window._animationRegistry.playbackDirection !== -1) ? '#44ff44' : (isFlashing ? '#ff8800' : '#ccc') },
     onInteract: () => {
-      window._animPlaying = true;
-      if (window._animationRegistry) window._animationRegistry.playbackDirection = 1;
+      const reg = window._animationRegistry;
+      if (window._animPlaying && reg && reg.playbackDirection === 1) {
+        window._animPlaying = false;
+        reg.stopRecording(true);
+      } else {
+        window._animPlaying = true;
+        if (reg) reg.playbackDirection = 1;
+      }
+      if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
 
@@ -1173,6 +1187,27 @@ export default function getAnimationWidgets(main, Enums) {
         const sm = main.getSculptManager();
         if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
         console.log(`[Toolbar] Forced Grab Tool Index assigned successfully: ${Enums.Tools.GRAB}`);
+        
+        // Create transform box if selection has multiple keys
+        const reg = window._animationRegistry;
+        if (reg && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+          let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
+          window._animSelectedKeys.forEach(sk => {
+            const tr = reg.tracks.get(sk.meshId);
+            if (tr) {
+              const t = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+              const val = sk.type === 'transform' ? tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] : 0;
+              if (t < minT) minT = t;
+              if (t > maxT) maxT = t;
+              if (val < minV) minV = val;
+              if (val > maxV) maxV = val;
+            }
+          });
+          if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
+            window._animTransformBox = { startTime: minT, endTime: maxT, minV, maxV };
+          }
+        }
+
         if (main._guiXR) {
           main._guiXR.refreshToolsWidget();
           main._guiXR.syncWidgetValues();
@@ -1201,6 +1236,27 @@ export default function getAnimationWidgets(main, Enums) {
         if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
         console.log(`[Toolbar] Forced Grab Tool Index assigned (onSelect): ${Enums.Tools.GRAB}`);
         if (window.screenLog) window.screenLog(`[Toolbar] Swapped to Grab Tool Mode!`, 'green');
+        
+        // Create transform box if selection has multiple keys
+        const reg = window._animationRegistry;
+        if (reg && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+          let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
+          window._animSelectedKeys.forEach(sk => {
+            const tr = reg.tracks.get(sk.meshId);
+            if (tr) {
+              const t = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+              const val = sk.type === 'transform' ? tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] : 0;
+              if (t < minT) minT = t;
+              if (t > maxT) maxT = t;
+              if (val < minV) minV = val;
+              if (val > maxV) maxV = val;
+            }
+          });
+          if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
+            window._animTransformBox = { startTime: minT, endTime: maxT, minV, maxV };
+          }
+        }
+
         if (main._guiXR) {
           main._guiXR.refreshToolsWidget();
           main._guiXR.syncWidgetValues();

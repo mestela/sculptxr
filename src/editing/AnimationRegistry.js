@@ -556,6 +556,27 @@ class AnimationRegistry {
     } else {
       track.shapeTimes.splice(idx, 0, time);
       track.shapes.splice(idx, 0, copy);
+      
+      // Shift tangent offsets up for keys after idx
+      if (track.tangentOffsets) {
+        const newOffsets = {};
+        for (const k in track.tangentOffsets) {
+          const parts = k.split('_');
+          const kIdx = parseInt(parts[0], 10);
+          if (!isNaN(kIdx)) {
+            if (kIdx >= idx) {
+              parts[0] = (kIdx + 1).toString();
+              const newKey = parts.join('_');
+              newOffsets[newKey] = track.tangentOffsets[k];
+            } else {
+              newOffsets[k] = track.tangentOffsets[k];
+            }
+          } else {
+            newOffsets[k] = track.tangentOffsets[k];
+          }
+        }
+        track.tangentOffsets = newOffsets;
+      }
     }
     
     if (time > (window._animMasterDuration || 0)) {
@@ -627,6 +648,27 @@ class AnimationRegistry {
     } else {
       track.shapeTimes.splice(idx, 0, time);
       track.shapes.splice(idx, 0, copy);
+      
+      // Shift tangent offsets up for keys after idx
+      if (track.tangentOffsets) {
+        const newOffsets = {};
+        for (const k in track.tangentOffsets) {
+          const parts = k.split('_');
+          const kIdx = parseInt(parts[0], 10);
+          if (!isNaN(kIdx)) {
+            if (kIdx >= idx) {
+              parts[0] = (kIdx + 1).toString();
+              const newKey = parts.join('_');
+              newOffsets[newKey] = track.tangentOffsets[k];
+            } else {
+              newOffsets[k] = track.tangentOffsets[k];
+            }
+          } else {
+            newOffsets[k] = track.tangentOffsets[k];
+          }
+        }
+        track.tangentOffsets = newOffsets;
+      }
     }
     
     if (time > (window._animMasterDuration || 0)) {
@@ -720,6 +762,27 @@ class AnimationRegistry {
       track.positions.splice(idx*3, 0, px, py, pz);
       track.quaternions.splice(idx*4, 0, qx, qy, qz, qw);
       track.scales.splice(idx*3, 0, sx, sy, sz);
+      
+      // Shift tangent offsets up for keys after idx
+      if (track.tangentOffsets) {
+        const newOffsets = {};
+        for (const k in track.tangentOffsets) {
+          const parts = k.split('_');
+          if (parts[0] === 'trans') {
+            const kIdx = parseInt(parts[1], 10);
+            if (kIdx >= idx) {
+              parts[1] = (kIdx + 1).toString();
+              const newKey = parts.join('_');
+              newOffsets[newKey] = track.tangentOffsets[k];
+            } else {
+              newOffsets[k] = track.tangentOffsets[k];
+            }
+          } else {
+            newOffsets[k] = track.tangentOffsets[k];
+          }
+        }
+        track.tangentOffsets = newOffsets;
+      }
     }
     if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
     window._animCurrentTime = time;
@@ -769,6 +832,27 @@ class AnimationRegistry {
       track.positions.splice(idx*3, 0, p[0], p[1], p[2]);
       track.quaternions.splice(idx*4, 0, q[0], q[1], q[2], q[3]);
       track.scales.splice(idx*3, 0, s[0], s[1], s[2]);
+      
+      // Shift tangent offsets up for keys after idx
+      if (track.tangentOffsets) {
+        const newOffsets = {};
+        for (const k in track.tangentOffsets) {
+          const parts = k.split('_');
+          if (parts[0] === 'trans') {
+            const kIdx = parseInt(parts[1], 10);
+            if (kIdx >= idx) {
+              parts[1] = (kIdx + 1).toString();
+              const newKey = parts.join('_');
+              newOffsets[newKey] = track.tangentOffsets[k];
+            } else {
+              newOffsets[k] = track.tangentOffsets[k];
+            }
+          } else {
+            newOffsets[k] = track.tangentOffsets[k];
+          }
+        }
+        track.tangentOffsets = newOffsets;
+      }
     }
     if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
   }
@@ -855,6 +939,43 @@ class AnimationRegistry {
           track.shapes.splice(idx, 1);
         }
       });
+
+      // Update tangent offsets after all deletions for this track
+      if (track.tangentOffsets) {
+        const newOffsets = {};
+        for (const k in track.tangentOffsets) {
+          const parts = k.split('_');
+          let kIdx = NaN;
+          let isTransform = false;
+          
+          if (parts[0] === 'trans') {
+            kIdx = parseInt(parts[1], 10);
+            isTransform = true;
+          } else {
+            kIdx = parseInt(parts[0], 10);
+          }
+          
+          if (!isNaN(kIdx)) {
+            if (indices.includes(kIdx)) {
+              continue; // Delete
+            }
+            // Count how many deleted indices are less than kIdx
+            const shift = indices.filter(idx => idx < kIdx).length;
+            const newIdx = kIdx - shift;
+            
+            if (isTransform) {
+              parts[1] = newIdx.toString();
+            } else {
+              parts[0] = newIdx.toString();
+            }
+            const newKey = parts.join('_');
+            newOffsets[newKey] = track.tangentOffsets[k];
+          } else {
+            newOffsets[k] = track.tangentOffsets[k];
+          }
+        }
+        track.tangentOffsets = newOffsets;
+      }
     });
     
     window._animSelectedKeys = [];

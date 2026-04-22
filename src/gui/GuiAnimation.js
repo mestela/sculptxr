@@ -151,13 +151,25 @@ class GuiAnimation {
   }
 
   playRev() {
-    window._animPlaying = true;
-    if (window._animationRegistry) window._animationRegistry.playbackDirection = -1;
+    const reg = window._animationRegistry;
+    if (window._animPlaying && reg && reg.playbackDirection === -1) {
+      window._animPlaying = false;
+      reg.stopRecording(true);
+    } else {
+      window._animPlaying = true;
+      if (reg) reg.playbackDirection = -1;
+    }
   }
 
   playFwd() {
-    window._animPlaying = true;
-    if (window._animationRegistry) window._animationRegistry.playbackDirection = 1;
+    const reg = window._animationRegistry;
+    if (window._animPlaying && reg && reg.playbackDirection === 1) {
+      window._animPlaying = false;
+      reg.stopRecording(true);
+    } else {
+      window._animPlaying = true;
+      if (reg) reg.playbackDirection = 1;
+    }
   }
 
   stop() {
