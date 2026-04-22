@@ -1045,7 +1045,7 @@ export default class GuiXR {
 
     let shouldRelease = !isPressed;
     if (isPressed && (this._activeSlider || this._activeTimeline)) {
-      if (depth < this._maxTriggerDepth - 0.05) {
+      if (depth < this._maxTriggerDepth - 0.05 && !this._activeTimeline) {
         shouldRelease = true;
       }
     }
@@ -1091,7 +1091,10 @@ export default class GuiXR {
         this._activeColorPickerRegion = null;
       }
       if (this._activeTimeline) {
-        if (this._marqueeStart && this._marqueeEnd && window._animationRegistry) {
+        if (window._animTimelineMode === 'graph') {
+          this._handleGraphTimelineRelease();
+        } else {
+          if (this._marqueeStart && this._marqueeEnd && window._animationRegistry) {
           const x1 = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
           const x2 = Math.max(this._marqueeStart.x, this._marqueeEnd.x);
           const y1 = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
@@ -1283,12 +1286,15 @@ export default class GuiXR {
 
           window._animTransformBoxInitialTimes = null;
         }
+        }
 
         this._marqueeStart = null;
         this._marqueeEnd = null;
         this._activeTimeline = null;
         this._activeKeyframeTrack = null;
         this._activeKeyframeIndex = undefined;
+        this._activeKeyframeType = null;
+        this._activeKeyframeChannel = undefined;
         this._activeTangentTrack = null;
         this._activeTangentIndex = undefined;
         this._transformBoxDrawing = false;
@@ -1304,6 +1310,7 @@ export default class GuiXR {
 
         window._animTransformBoxInitialTimes = null;
       }
+      this._activeTimeline = null;
       return;
     }
 
@@ -1356,6 +1363,13 @@ export default class GuiXR {
     }
 
     if (this._activeTimeline) {
+      if (window._animTimelineMode === 'graph') {
+        const targetWid = this._activeTimeline;
+        const ry = cy - targetWid.y;
+        const rx = cx - targetWid.x;
+        this._handleGraphTimelineInteraction(rx, ry, targetWid, isPressed, isRisingEdge);
+        return;
+      }
       const targetWid = this._activeTimeline;
       let scaledCx = cx;
       let scaledCy = cy;
@@ -1722,6 +1736,12 @@ export default class GuiXR {
       }
     }
 
+    if (this._activeTimeline && (this._isDraggingKeyframe || this._isDraggingMarquee || this._isDraggingPlayhead)) {
+      targetWid = this._activeTimeline;
+    }
+
+
+
     // Scrollbar Interaction Check (Needed for Debug Log)
     const canvasW = this._canvas.width;
     const isScrollInteraction = this._isDraggingScrollbar || (cx >= canvasW - 40 && cy > HEADER_HEIGHT);
@@ -1914,6 +1934,11 @@ export default class GuiXR {
       if (targetWid.type === 'timeline') {
         const ry = cy - targetWid.y;
         const rx = cx - targetWid.x;
+
+        if (window._animTimelineMode === 'graph') {
+          this._handleGraphTimelineInteraction(rx, ry, targetWid, isPressed, isRisingEdge);
+          return;
+        }
 
         // Restrict playhead drags to the very top header zone!
         const isHeaderStart = this._lastPressed ? (this._dragStartRy !== undefined && this._dragStartRy <= 30) : (ry <= 30);
@@ -4163,9 +4188,19 @@ export default class GuiXR {
     const tracks = Array.from(reg.tracks.entries());
     
     const mDurVal = window._animMasterDuration && window._animMasterDuration > 0 ? window._animMasterDuration : 1.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    let loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    let loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    let visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
+    if (window._animTimelineMode === 'graph') {
+      if (window._animViewDuration === undefined) {
+        window._animViewStart = loopStart;
+        window._animViewDuration = visibleDuration;
+      }
+      loopStart = window._animViewStart;
+      visibleDuration = window._animViewDuration;
+      loopEnd = loopStart + visibleDuration;
+    }
 
     const tlX = w.x + 200;
     const tlW = w.w - 220;
@@ -4220,6 +4255,9 @@ export default class GuiXR {
               py = track.positions[kIdx * 3 + 1];
               pz = track.positions[kIdx * 3 + 2];
             }
+            px = px || 0;
+            py = py || 0;
+            pz = pz || 0;
             ctx.fillStyle = '#ffcc00';
             ctx.font = '12px sans-serif';
             ctx.textAlign = 'center';
@@ -4266,12 +4304,15 @@ export default class GuiXR {
     ctx.lineTo(tlX, w.y + w.h);
     ctx.stroke();
 
-    // 3. Render Track Lanes
-    const laneAreaH = w.h - headerH;
-    
-    if (tracks.length === 0) {
-      // Empty timeline message removed as requested
+    if (window._animTimelineMode === 'graph') {
+      this._drawGraphTimeline(ctx, w);
     } else {
+      // 3. Render Track Lanes
+      const laneAreaH = w.h - headerH;
+      
+      if (tracks.length === 0) {
+        // Empty timeline message removed as requested
+      } else {
       const totalAvailableSlots = Math.max(4, tracks.length); 
       const trackH = laneAreaH / totalAvailableSlots;
 
@@ -4447,6 +4488,7 @@ export default class GuiXR {
         ctx.restore();
       });
     }
+    }
 
     // 4. Render Blender-Style Custom Playhead Cap
     const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
@@ -4559,6 +4601,1024 @@ export default class GuiXR {
       ctx.textBaseline = 'middle';
       ctx.fillText(window._animStatusText || '3...', w.x + w.w / 2, w.y + w.h / 2);
     }
+  }
+
+  _drawGraphTimeline(ctx, w) {
+    const headerH = 30;
+    const tlX = w.x + 200;
+    const tlW = w.w - 220;
+
+    const reg = window._animationRegistry;
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    if (window._animViewDuration === undefined) {
+      window._animViewStart = loopStartReal;
+      window._animViewDuration = visibleDurationReal;
+    }
+
+    const loopStart = window._animViewStart;
+    const visibleDuration = window._animViewDuration;
+    const loopEnd = loopStart + visibleDuration;
+
+    if (window._animZoomY === undefined) window._animZoomY = 100.0;
+    if (window._animPanY === undefined) window._animPanY = 0.0;
+
+    const valueToY = (val) => {
+      const midY = w.y + headerH + (w.h - headerH) / 2;
+      return midY - (val * window._animZoomY + window._animPanY);
+    };
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(tlX, w.y + headerH, tlW, w.h - headerH);
+    ctx.clip();
+
+    // Zero Axis
+    const zeroY = valueToY(0);
+    if (zeroY >= w.y + headerH && zeroY <= w.y + w.h) {
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(tlX, zeroY);
+      ctx.lineTo(tlX + tlW, zeroY);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    // Curves for Active Mesh
+    const activeMesh = this._main.getMesh();
+    if (activeMesh) {
+      const id = activeMesh.getID();
+      const track = reg.tracks.get(id);
+      if (track && track.times && track.times.length >= 2) {
+        const colors = ['#ff4444', '#44ff44', '#4444ff']; // R, G, B
+        
+        for (let channel = 0; channel < 3; channel++) {
+          ctx.strokeStyle = colors[channel];
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          
+          for (let i = 0; i < track.times.length - 1; i++) {
+            const t1 = track.times[i];
+            const t2 = track.times[i + 1];
+            const dt = t2 - t1;
+            const val1 = track.positions[i * 3 + channel];
+            const val2 = track.positions[(i + 1) * 3 + channel];
+
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${channel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i + 1}_left_dv_${channel}`] : undefined;
+
+            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+
+            let slope0 = 0;
+            if (i === 0) {
+              slope0 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+            } else if (i === track.times.length - 1) {
+              const pIdx = (i - 1) * 3;
+              const cIdx = i * 3;
+              slope0 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i] - track.times[i - 1]);
+            } else {
+              const pIdx = (i - 1) * 3;
+              const nIdx = (i + 1) * 3;
+              const dt_seg = track.times[i + 1] - track.times[i - 1];
+              slope0 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+            }
+
+            let slope1 = 0;
+            const i1 = i + 1;
+            if (i1 === 0) {
+              slope1 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+            } else if (i1 === track.times.length - 1) {
+              const pIdx = (i1 - 1) * 3;
+              const cIdx = i1 * 3;
+              slope1 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i1] - track.times[i1 - 1]);
+            } else {
+              const pIdx = (i1 - 1) * 3;
+              const nIdx = (i1 + 1) * 3;
+              const dt_seg = track.times[i1 + 1] - track.times[i1 - 1];
+              slope1 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+            }
+
+            const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
+            const dv1 = leftDv !== undefined ? leftDv : slope1 * dt1;
+
+            const p1x = dt0 / dt;
+            const p2x = 1 + dt1 / dt;
+
+            const steps = 20;
+            for (let s = 0; s <= steps; s++) {
+              const targetAlpha = s / steps;
+              let low = 0;
+              let high = 1;
+              let t = 0.5;
+              for (let j = 0; j < 10; j++) {
+                const tSq = t * t;
+                const tCu = tSq * t;
+                const omt = 1 - t;
+                const omtSq = omt * omt;
+                const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
+                if (Math.abs(currentAlpha - targetAlpha) < 0.001) break;
+                if (currentAlpha < targetAlpha) low = t;
+                else high = t;
+                t = (low + high) / 2;
+              }
+
+              const omt = 1 - t;
+              const omtSq = omt * omt;
+              const omtCu = omtSq * omt;
+              const tSq = t * t;
+              const tCu = tSq * t;
+              
+              const p1y = val1 + dv0;
+              const p2y = val2 + dv1;
+
+              const val = omtCu * val1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * val2;
+              const time = t1 + targetAlpha * (t2 - t1);
+              const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+              const y = valueToY(val);
+              
+              if (i === 0 && s === 0) {
+                ctx.moveTo(x, y);
+              } else {
+                ctx.lineTo(x, y);
+              }
+            }
+          }
+          ctx.stroke();
+        }
+
+        // Dots at keyframes
+        for (let i = 0; i < track.times.length; i++) {
+          const t = track.times[i];
+          for (let channel = 0; channel < 3; channel++) {
+            const val = track.positions[i * 3 + channel];
+            const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const y = valueToY(val);
+            
+            const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
+            const isHovered = this._cursor.active && Math.hypot(this._cursor.x - x, this._cursor.y - y) < 20;
+            
+            const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
+                                    x >= Math.min(this._marqueeStart.x, this._marqueeEnd.x) &&
+                                    x <= Math.max(this._marqueeStart.x, this._marqueeEnd.x) &&
+                                    y >= Math.min(this._marqueeStart.y, this._marqueeEnd.y) &&
+                                    y <= Math.max(this._marqueeStart.y, this._marqueeEnd.y);
+
+            if (isSelected || isInsideMarquee) ctx.fillStyle = '#ffff00'; // Yellow
+            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
+            else ctx.fillStyle = '#888888'; // Gray
+
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Draw Tangent Handles for Position Keys
+        if (window._animShowTangents) {
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          ctx.strokeStyle = '#888888';
+          ctx.lineWidth = 1.5;
+
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const val = track.positions[i * 3 + selChannel];
+            const ky = valueToY(val);
+            
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+
+            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
+            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
+            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+            const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
+            
+            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+            const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
+
+            // Draw right handle
+            if (i < track.times.length - 1) {
+              ctx.beginPath();
+              ctx.moveTo(kx, ky);
+              ctx.lineTo(kx + rightXOff, ky + rightYOff);
+              ctx.stroke();
+              
+              ctx.fillStyle = '#888888';
+              ctx.beginPath();
+              ctx.arc(kx + rightXOff, ky + rightYOff, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            
+            // Draw left handle
+            if (i > 0) {
+              ctx.beginPath();
+              ctx.moveTo(kx, ky);
+              ctx.lineTo(kx + leftXOff, ky + leftYOff);
+              ctx.stroke();
+              
+              ctx.fillStyle = '#888888';
+              ctx.beginPath();
+              ctx.arc(kx + leftXOff, ky + leftYOff, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+        
+        // Draw Transform Box in Graph Mode!
+        if (window._animTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
+          const tBox = window._animTransformBox;
+          if (tBox.minV !== undefined && tBox.maxV !== undefined) {
+            const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
+            const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
+            const kyTop = valueToY(tBox.maxV);
+            const kyBottom = valueToY(tBox.minV);
+            
+            ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
+            
+            ctx.fillStyle = '#ffff00';
+            const kxMid = (kxLeft + kxRight) / 2;
+            const kyMid = (kyTop + kyBottom) / 2;
+            
+            // Top edge handle
+            ctx.fillRect(kxMid - 10, kyTop - 5, 20, 5);
+            // Bottom edge handle
+            ctx.fillRect(kxMid - 10, kyBottom, 20, 5);
+            // Left edge handle
+            ctx.fillRect(kxLeft - 5, kyMid - 10, 5, 20);
+            // Right edge handle
+            ctx.fillRect(kxRight, kyMid - 10, 5, 20);
+            // Center handle
+            ctx.fillRect(kxMid - 5, kyMid - 5, 10, 10);
+          }
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  _handleGraphTimelineInteraction(rx, ry, w, isPressed, isRisingEdge) {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+    const id = activeMesh.getID();
+    const track = reg.tracks.get(id);
+    if (!track) return;
+
+    const headerH = 30;
+    const tlX = 200;
+    const tlW = w.w - 220;
+
+    const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+
+    const loopStart = window._animViewStart;
+    const visibleDuration = window._animViewDuration;
+
+    const valueToY = (val) => {
+      const midY = headerH + (w.h - headerH) / 2;
+      return midY - (val * window._animZoomY + window._animPanY);
+    };
+
+    const yToValue = (y) => {
+      const midY = headerH + (w.h - headerH) / 2;
+      return (midY - y - window._animPanY) / window._animZoomY;
+    };
+
+    const scene = this._main.getScene ? this._main.getScene() : this._main._scene;
+    
+    let isSecondaryTrigger = false;
+    let isButtonA = false;
+    
+    if (window._vrInputSources && scene) {
+      const domHand = scene._dominantHand || 'right';
+      const nonDomHand = domHand === 'left' ? 'right' : 'left';
+      
+      for (const src of window._vrInputSources) {
+        if (src.handedness === nonDomHand && src.gamepad && src.gamepad.buttons[0]) {
+          isSecondaryTrigger = src.gamepad.buttons[0].pressed;
+        }
+        if (src.handedness === domHand && src.gamepad && src.gamepad.buttons[4]) {
+          isButtonA = src.gamepad.buttons[4].pressed;
+        }
+      }
+    }
+
+    if (isRisingEdge) {
+      this._dragStartRx = rx;
+      this._dragStartRy = ry;
+
+      const toolMode = window._animActiveTool || 'select';
+
+      if (toolMode === 'select') {
+        // Check tangents first if enabled
+        if (window._animShowTangents && track.times) {
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const val = track.positions[i * 3 + selChannel];
+            const ky = valueToY(val);
+
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+
+            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
+            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
+            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+            const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
+            
+            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+            const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
+
+            // Check right handle
+            if (i < track.times.length - 1) {
+              if (Math.hypot(rx - (kx + rightXOff), ry - (ky + rightYOff)) < 20) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i;
+                this._activeTangentSide = 'right';
+                this._activeTangentKx = kx;
+                this._activeTangentKy = ky;
+                this._activeTangentType = 'transform';
+                return;
+              }
+            }
+            // Check left handle
+            if (i > 0) {
+              if (Math.hypot(rx - (kx + leftXOff), ry - (ky + leftYOff)) < 20) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i;
+                this._activeTangentSide = 'left';
+                this._activeTangentKx = kx;
+                this._activeTangentKy = ky;
+                this._activeTangentType = 'transform';
+                return;
+              }
+            }
+          }
+        }
+
+        // Check keys
+        if (track.times && track.positions) {
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+
+            for (let c = 0; c < 3; c++) {
+              const val = track.positions[i * 3 + c];
+              const y = valueToY(val);
+
+              if (Math.hypot(rx - x, ry - y) < 20) {
+                this._isDraggingKeyframe = true;
+                this._activeTimeline = w;
+                this._activeKeyframeTrack = track;
+                this._activeMeshId = id;
+                this._activeKeyframeIndex = i;
+                this._activeKeyframeType = 'transform';
+                this._activeKeyframeChannel = c;
+                let clickT = (rx - tlX) / tlW;
+                clickT = Math.max(0, Math.min(1, clickT));
+                this._keyDragStartTime = loopStart + clickT * visibleDuration;
+                this._keyInitialTime = t;
+                this._keyDragStartVal = val;
+                
+                this._undoTracksBeforeMove = new Map();
+                reg.tracks.forEach((tr, mId) => {
+                  this._undoTracksBeforeMove.set(mId, {
+                    times: tr.times ? [...tr.times] : [],
+                    positions: tr.positions ? [...tr.positions] : [],
+                    quaternions: tr.quaternions ? [...tr.quaternions] : [],
+                    scales: tr.scales ? [...tr.scales] : [],
+                    shapeTimes: tr.shapeTimes ? [...tr.shapeTimes] : [],
+                    shapes: tr.shapes ? tr.shapes.map(s => new Float32Array(s)) : [],
+                    playbackTime: tr.playbackTime,
+                    muted: tr.muted,
+                    tangentOffsets: tr.tangentOffsets ? JSON.parse(JSON.stringify(tr.tangentOffsets)) : undefined
+                  });
+                });
+
+                const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i);
+                if (!inSel) {
+                  const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
+                  window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, time: t }];
+                  window._animTransformBox = null;
+                  
+                  const afterSelection = [...window._animSelectedKeys];
+                  const cbUndo = () => {
+                    window._animSelectedKeys = beforeSelection;
+                    this._needsRedraw = true;
+                  };
+                  const cbRedo = () => {
+                    window._animSelectedKeys = afterSelection;
+                    this._needsRedraw = true;
+                  };
+                  if (this._main && this._main.getStateManager) {
+                    this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys selection');
+                  }
+                }
+                this._needsRedraw = true;
+                return;
+              }
+            }
+          }
+        }
+      } else if (toolMode === 'marquee') {
+        this._isDraggingMarquee = true;
+        this._activeTimeline = w;
+        this._marqueeStart = { x: rx, y: ry };
+        this._marqueeEnd = { x: rx, y: ry };
+        if ((window._animMarqueeMode || 'select_only') === 'select_only') {
+          window._animSelectedKeys = [];
+        }
+        this._needsRedraw = true;
+        return;
+      } else if (toolMode === 'transform') {
+        if (window._animTransformBox) {
+          this._activeTimeline = w;
+          const tBox = window._animTransformBox;
+          
+          const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
+          const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
+          const kyTop = valueToY(tBox.maxV);
+          const kyBottom = valueToY(tBox.minV);
+          
+          const kxMid = (kxLeft + kxRight) / 2;
+          const kyMid = (kyTop + kyBottom) / 2;
+
+          if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - kyTop) < 20) {
+            this._activeTransformHandle = 'top';
+            this._transformStartRy = ry;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+          if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - kyBottom) < 20) {
+            this._activeTransformHandle = 'bottom';
+            this._transformStartRy = ry;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+          if (Math.abs(rx - kxLeft) < 20 && ry >= kyTop && ry <= kyBottom) {
+            this._activeTransformHandle = 'left';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+          if (Math.abs(rx - kxRight) < 20 && ry >= kyTop && ry <= kyBottom) {
+            this._activeTransformHandle = 'right';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+          if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - kyMid) < 20) {
+            this._activeTransformHandle = 'scale_center';
+            this._transformStartRx = rx;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+          if (rx >= kxLeft && rx <= kxRight && ry >= kyTop && ry <= kyBottom) {
+            this._activeTransformHandle = 'center';
+            this._transformStartRx = rx;
+            this._transformStartRy = ry;
+            this._animTransformInitialBox = { ...tBox };
+            return;
+          }
+        }
+      }
+
+      if (isSecondaryTrigger) {
+        this._isZoomingGraph = true;
+        this._zoomStartDuration = window._animViewDuration;
+        this._zoomStartScaleY = window._animZoomY;
+        this._zoomStartPanY = window._animPanY;
+        this._zoomStartViewStart = window._animViewStart;
+        this._zoomPivotTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+        this._zoomPivotValue = yToValue(ry);
+        return;
+      }
+
+      if (isButtonA) {
+        this._isPanningGraph = true;
+        this._panStartOffsetY = window._animPanY;
+        this._panStartViewStart = window._animViewStart;
+        return;
+      }
+
+      if (ry <= headerH) {
+        this._isDraggingPlayhead = true;
+        return;
+      }
+      window._animTransformBox = null;
+      window._animSelectedKeys = [];
+      this._needsRedraw = true;
+      
+    } else if (isPressed) {
+      const dx = rx - this._dragStartRx;
+      const dy = ry - this._dragStartRy;
+      
+
+
+      if (this._isZoomingGraph) {
+        if (!isSecondaryTrigger) {
+          this._isZoomingGraph = false;
+        } else {
+          // Horizontal Zoom (X)
+          if (Math.abs(dx) > Math.abs(dy)) {
+            const factorX = Math.pow(1.01, dx);
+            const newDuration = Math.max(0.1, this._zoomStartDuration / factorX);
+            window._animViewStart = this._zoomPivotTime - (this._zoomPivotTime - this._zoomStartViewStart) * (newDuration / this._zoomStartDuration);
+            window._animViewDuration = newDuration;
+          } 
+          // Vertical Zoom (Y)
+          else {
+            const factorY = Math.pow(1.01, -dy);
+            const newZoomY = this._zoomStartScaleY * factorY;
+            window._animPanY = this._zoomStartPanY + this._zoomPivotValue * (this._zoomStartScaleY - newZoomY);
+            window._animZoomY = newZoomY;
+          }
+          this._needsRedraw = true;
+          this.draw();
+          this.updateTexture();
+          return;
+        }
+      }
+
+      if (this._isPanningGraph) {
+        if (!isButtonA) {
+          this._isPanningGraph = false;
+        } else {
+          // Horizontal Pan
+          const dt = (dx / tlW) * visibleDuration;
+          window._animViewStart = this._panStartViewStart - dt;
+          
+          // Vertical Pan
+          window._animPanY = this._panStartOffsetY - dy;
+          
+          this._needsRedraw = true;
+          this.draw();
+          this.updateTexture();
+          return;
+        }
+      }
+
+      if (this._isDraggingPlayhead) {
+        let t = (rx - tlX) / tlW;
+        t = Math.max(0, Math.min(1, t));
+        const targetTime = loopStart + t * visibleDuration;
+        window._animCurrentTime = targetTime;
+        if (reg) reg.globalPlaybackTime = targetTime;
+        this._needsRedraw = true;
+      } else if (this._isDraggingKeyframe) {
+        let t = (rx - 200) / tlW;
+        t = Math.max(0, Math.min(1, t));
+        const targetTime = window._animViewStart + t * window._animViewDuration;
+        const keyTime = this._activeKeyframeTrack.times[this._activeKeyframeIndex];
+        const dt = targetTime - this._keyDragStartTime;
+        
+        console.log(`[Graph UI Debug] Drag Key: rx=${rx}, t=${t.toFixed(3)}, targetTime=${targetTime.toFixed(3)}, dt=${dt.toFixed(3)}, zoom=${window._animViewDuration.toFixed(3)}`);
+        
+        const targetVal = yToValue(ry);
+        const dVal = targetVal - this._keyDragStartVal;
+        
+        const singleKey = [{
+          meshId: this._activeMeshId,
+          type: this._activeKeyframeType,
+          index: this._activeKeyframeIndex,
+          time: this._keyInitialTime,
+          channel: this._activeKeyframeChannel,
+          startVal: this._keyDragStartVal
+        }];
+        
+        reg.moveSelectedKeys(singleKey, dt, mDurVal);
+        reg.moveSelectedKeysValue(singleKey, dVal);
+        
+        if (this._main && this._main._meshes) {
+          this._main._meshes.forEach(m => reg.update(m, true));
+        }
+        this._needsRedraw = true;
+      } else if (this._isDraggingTangent) {
+        let deltaX = rx - this._activeTangentKx;
+        const deltaY = ry - this._activeTangentKy;
+        
+        if (this._activeTangentSide === 'left') deltaX = Math.min(0, deltaX);
+        else deltaX = Math.max(0, deltaX);
+        
+        if (this._activeTangentTrack) {
+          if (!this._activeTangentTrack.tangentOffsets) this._activeTangentTrack.tangentOffsets = {};
+          const prefix = this._activeTangentType === 'transform' ? 'trans_' : '';
+          const dt = (deltaX / tlW) * visibleDuration;
+          const dv = -deltaY / window._animZoomY;
+          
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dt`] = dt;
+          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
+
+          const isTied = this._activeTangentTrack.tangentOffsets ? this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_tied`] !== false : true;
+
+          if (isTied) {
+            const otherSide = this._activeTangentSide === 'right' ? 'left' : 'right';
+            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dt`] = -dt;
+            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dv_${selChannel}`] = -dv;
+          }
+        }
+        this._needsRedraw = true;
+      } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
+        const targetVal = yToValue(ry);
+        const initialBox = this._animTransformInitialBox;
+        
+        let factor = 1.0;
+        if (initialBox.maxV !== initialBox.minV) {
+          if (this._activeTransformHandle === 'top') {
+            factor = (targetVal - initialBox.minV) / (initialBox.maxV - initialBox.minV);
+          } else {
+            factor = (initialBox.maxV - targetVal) / (initialBox.maxV - initialBox.minV);
+          }
+        }
+        
+        if (activeMesh && reg && this._animTransformBoxInitialKeys) {
+          this._animTransformBoxInitialKeys.forEach(sk => {
+            if (sk.meshId === id && sk.type === 'transform') {
+              const initialVal = sk.val;
+              let newVal = 0;
+              if (this._activeTransformHandle === 'top') {
+                newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
+              } else {
+                newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
+              }
+              track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
+            }
+          });
+          
+          if (this._main && this._main._meshes) {
+            this._main._meshes.forEach(m => reg.update(m, true));
+          }
+          this._needsRedraw = true;
+        }
+      } else if (this._activeTransformHandle) {
+        const tBox = window._animTransformBox;
+        const initBox = this._animTransformInitialBox;
+        
+        if (tBox && initBox) {
+          const dx = rx - this._transformStartRx;
+          const dt = (dx / tlW) * visibleDuration;
+          
+          const baseDur = initBox.endTime - initBox.startTime;
+          
+          if (this._activeTransformHandle === 'left') {
+            const newStartTime = Math.max(0, Math.min(mDurVal, initBox.startTime + dt));
+            tBox.startTime = newStartTime;
+            const newDur = initBox.endTime - newStartTime;
+            const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = reg.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.times) {
+                  const relTime = initKey.time - initBox.endTime;
+                  const newTime = initBox.endTime + relTime * scaleFactor;
+                  track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'right') {
+            const newEndTime = initBox.endTime + dt;
+            tBox.endTime = newEndTime;
+            
+            const newDur = newEndTime - initBox.startTime;
+            const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
+
+            if (newEndTime > mDurVal) {
+              window._animMasterDuration = newEndTime;
+              window._animLoopEnd = newEndTime;
+            }
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = reg.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.times) {
+                  const relTime = initKey.time - initBox.startTime;
+                  const newTime = initBox.startTime + relTime * scaleFactor;
+                  track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'scale_center') {
+            const initMid = (initBox.startTime + initBox.endTime) / 2;
+            const scaleFactor = 1.0 + dx / 150.0;
+            
+            tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
+            tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = reg.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.times) {
+                  const relTime = initKey.time - initMid;
+                  const newTime = initMid + relTime * scaleFactor;
+                  track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+                }
+              });
+            }
+          } else if (this._activeTransformHandle === 'center') {
+            const dtClamped = Math.max(-initBox.startTime, Math.min(mDurVal - initBox.endTime, dt));
+            tBox.startTime = initBox.startTime + dtClamped;
+            tBox.endTime = initBox.endTime + dtClamped;
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = reg.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.times) {
+                  track.times[initKey.index] = Math.max(0, Math.min(mDurVal, initKey.time + dtClamped));
+                }
+              });
+              
+              const targetVal = yToValue(ry);
+              const dVal = targetVal - this._keyDragStartVal;
+              
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = reg.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.positions && initKey.channel !== undefined) {
+                  track.positions[initKey.index * 3 + initKey.channel] = (initKey.val !== undefined ? initKey.val : 0) + dVal;
+                }
+              });
+            }
+            
+            if (this._main && this._main._meshes) {
+              this._main._meshes.forEach(m => reg.update(m, true));
+            }
+          }
+          this._needsRedraw = true;
+        }
+      } else if (this._isDraggingMarquee) {
+        this._marqueeEnd = { x: rx, y: ry };
+        this._needsRedraw = true;
+      }
+    }
+  }
+
+  autoFitGraphTimeline(w) {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+    const id = activeMesh.getID();
+    const track = reg.tracks.get(id);
+    if (!track) return;
+
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+
+    if (track.positions && track.times && track.times.length > 0) {
+      for (let i = 0; i < track.times.length; i++) {
+        for (let c = 0; c < 3; c++) {
+          const val = track.positions[i * 3 + c];
+          if (val < minVal) minVal = val;
+          if (val > maxVal) maxVal = val;
+        }
+      }
+    }
+
+    if (minVal === Infinity) {
+      minVal = 0;
+      maxVal = 1;
+    }
+
+    const range = maxVal - minVal;
+    const headerH = 30;
+    const graphH = w.h - headerH;
+
+    const midVal = (minVal + maxVal) / 2;
+
+    if (range > 0.0001) {
+      window._animZoomY = (graphH * 0.8) / range;
+      window._animPanY = -midVal * window._animZoomY;
+    } else {
+      window._animZoomY = 100.0;
+      window._animPanY = -midVal * window._animZoomY;
+    }
+    
+    this._needsRedraw = true;
+  }
+
+  _handleGraphTimelineRelease() {
+    console.log("[Graph UI Debug] _handleGraphTimelineRelease called");
+    const reg = window._animationRegistry;
+    if (!reg) return;
+
+    const activeMesh = this._main.getMesh();
+    if (!activeMesh) return;
+    const id = activeMesh.getID();
+    const track = reg.tracks.get(id);
+    if (!track) return;
+
+    const headerH = 30;
+    const tlX = 200;
+    const tlW = this._activeTimeline.w - 220;
+
+    const loopStart = window._animViewStart;
+    const visibleDuration = window._animViewDuration;
+
+    const valueToY = (val) => {
+      const midY = headerH + (this._activeTimeline.h - headerH) / 2;
+      return midY - (val * window._animZoomY + window._animPanY);
+    };
+
+    if (this._isDraggingMarquee) {
+      const xMin = Math.min(this._marqueeStart.x, this._marqueeEnd.x);
+      const xMax = Math.max(this._marqueeStart.x, this._marqueeEnd.x);
+      const yMin = Math.min(this._marqueeStart.y, this._marqueeEnd.y);
+      const yMax = Math.max(this._marqueeStart.y, this._marqueeEnd.y);
+      
+      const marqMode = window._animMarqueeMode || 'select_only';
+      let pendingKeys = [];
+
+      if (track.times && track.positions) {
+        for (let i = 0; i < track.times.length; i++) {
+          const t = track.times[i];
+          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+
+          for (let c = 0; c < 3; c++) {
+            const val = track.positions[i * 3 + c];
+            const y = valueToY(val);
+
+            if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
+              pendingKeys.push({ meshId: id, type: 'transform', index: i, channel: c, time: t });
+            }
+          }
+        }
+      }
+
+      const beforeSelection = this._undoSelectionBeforeMarquee || [];
+      
+      if (marqMode === 'add') {
+        pendingKeys.forEach(pk => {
+          if (!window._animSelectedKeys.some(sk => sk.meshId === pk.meshId && sk.type === pk.type && sk.index === pk.index)) {
+            window._animSelectedKeys.push(pk);
+          }
+        });
+      } else if (marqMode === 'remove') {
+        window._animSelectedKeys = window._animSelectedKeys.filter(sk => 
+          !pendingKeys.some(pk => pk.meshId === sk.meshId && pk.type === sk.type && pk.index === sk.index)
+        );
+      } else {
+        window._animSelectedKeys = pendingKeys;
+      }
+
+      const afterSelection = [...window._animSelectedKeys];
+      
+      const cbUndo = () => { window._animSelectedKeys = beforeSelection; this._needsRedraw = true; };
+      const cbRedo = () => { window._animSelectedKeys = afterSelection; this._needsRedraw = true; };
+      
+      if (this._main && this._main.getStateManager) {
+        this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor marquee selection');
+      }
+
+      // Compute 2D bounds for Transform Box in Graph Mode!
+      if (window._animSelectedKeys.length > 1) {
+        let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
+        window._animSelectedKeys.forEach(sk => {
+          const tr = reg.tracks.get(sk.meshId);
+          if (tr) {
+            const t = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+            const val = sk.type === 'transform' ? tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] : 0;
+            if (t < minT) minT = t;
+            if (t > maxT) maxT = t;
+            if (val < minV) minV = val;
+            if (val > maxV) maxV = val;
+          }
+        });
+        
+        if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
+          window._animTransformBox = { startTime: minT, endTime: maxT, minV, maxV };
+        } else {
+          window._animTransformBox = null;
+        }
+      } else {
+        window._animTransformBox = null;
+      }
+
+      this._isDraggingMarquee = false;
+      this._needsRedraw = true;
+    }
+
+    if (this._isDraggingKeyframe && this._undoTracksBeforeMove) {
+      console.log("[Graph UI Debug] Pushing multikeys move undo state");
+      const beforeState = this._undoTracksBeforeMove;
+      const afterState = new Map();
+      reg.tracks.forEach((track, meshId) => {
+        afterState.set(meshId, {
+          times: track.times ? [...track.times] : [],
+          positions: track.positions ? [...track.positions] : [],
+          quaternions: track.quaternions ? [...track.quaternions] : [],
+          scales: track.scales ? [...track.scales] : [],
+          shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+          shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+          playbackTime: track.playbackTime,
+          muted: track.muted,
+          tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+        });
+      });
+      
+      const cbUndo = () => {
+        beforeState.forEach((track, meshId) => {
+          reg.tracks.set(meshId, {
+            times: track.times ? [...track.times] : [],
+            positions: track.positions ? [...track.positions] : [],
+            quaternions: track.quaternions ? [...track.quaternions] : [],
+            scales: track.scales ? [...track.scales] : [],
+            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+            playbackTime: track.playbackTime,
+            muted: track.muted,
+            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+          });
+        });
+        console.log("[Graph Undo] Restored tracks in cbUndo");
+        if (this._main) {
+          this._main.render();
+          if (this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+        }
+        this._needsRedraw = true;
+        this.draw();
+        this.updateTexture();
+      };
+      
+      const cbRedo = () => {
+        afterState.forEach((track, meshId) => {
+          reg.tracks.set(meshId, {
+            times: track.times ? [...track.times] : [],
+            positions: track.positions ? [...track.positions] : [],
+            quaternions: track.quaternions ? [...track.quaternions] : [],
+            scales: track.scales ? [...track.scales] : [],
+            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+            playbackTime: track.playbackTime,
+            muted: track.muted,
+            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+          });
+        });
+        console.log("[Graph Redo] Restored tracks in cbRedo");
+        if (this._main) {
+          this._main.render();
+          if (this._main._meshes) {
+            this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
+          }
+        }
+        this._needsRedraw = true;
+        this.draw();
+        this.updateTexture();
+      };
+      
+      if (this._main && this._main.getStateManager) {
+        this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys move');
+      }
+      this._undoTracksBeforeMove = null;
+    }
+
+    if (this._activeTransformHandle) {
+      reg.tracks.forEach((track, meshId) => {
+        reg.sortTrack(track);
+      });
+      this._activeTransformHandle = null;
+      this._needsRedraw = true;
+    }
+
+    this._isDraggingPlayhead = false;
+    this._isDraggingKeyframe = false;
+    this._isDraggingTangent = false;
+    this._isZoomingGraph = false;
+    this._isPanningGraph = false;
   }
 
   _drawEmbeddedColorPicker(ctx, w) {

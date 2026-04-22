@@ -49,7 +49,7 @@ class GuiAnimation {
     
     const rateModes = [0.033, 0.1, 0.5, 1.0];
     const rateLabels = ['Dense (~30 fps)', 'Standard (~10 fps)', 'Sparse (2 fps)', 'Step Key (1 fps)'];
-    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
+    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
     let defaultRateIdx = rateModes.indexOf(window._animCaptureRate);
     if (defaultRateIdx === -1) defaultRateIdx = 0;
 

@@ -269,7 +269,7 @@ class AnimationRegistry {
       this.lastCaptureTime = elapsed;
     }
 
-    const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
+    const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
     if (this.lastCaptureWriteTime !== undefined) {
       if (elapsed >= this.lastCaptureWriteTime && elapsed - this.lastCaptureWriteTime < rate) return;
     }

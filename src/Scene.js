@@ -71,6 +71,7 @@ class Scene {
     this._vrAmbidextrousCursors = opts.ambidextrousCursors; // Disable offhand sculpting cursors by default to reduce visual clutter
 
     this._cameraSpeed = 0.25;
+    this._vrSecondaryTriggerPressed = false;
 
     // cache canvas stuffs
     this._pixelRatio = window.devicePixelRatio || 1.0;
@@ -2855,6 +2856,7 @@ class Scene {
 
     const session = frame.session;
     const sources = session.inputSources;
+    window._vrInputSources = sources;
 
     // Tick Diagnostic Log
     if (!this._tickLog) this._tickLog = 0;
@@ -2906,6 +2908,9 @@ class Scene {
       if (s.handedness === 'right') right = s;
       if (s.handedness === 'left') left = s;
     }
+
+    const nonDomSource = this._dominantHand === 'left' ? right : left;
+    this._vrSecondaryTriggerPressed = !!(nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed);
 
     // Reset Menu Pointing State (Per Frame)
     this._isPointingAtMenu = false;
@@ -3099,8 +3104,7 @@ class Scene {
 
           // Check Secondary Hand Trigger for slow-modifier
           const nonDomSource = this._dominantHand === 'left' ? right : left;
-          const isSecondaryTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
-          this._vrSecondaryTriggerPressed = isSecondaryTriggerPressed;
+          const isSecondaryTriggerPressed = this._vrSecondaryTriggerPressed;
           const speedModifier = isSecondaryTriggerPressed ? 0.1 : 1.0;
 
           // Timer for Repeat/Debounce
@@ -3542,7 +3546,7 @@ class Scene {
           this._globalGuiWasPressed = pressed;
 
           // Dispatch Interaction
-          if (hit || (this._activePressedGui && targetGuiXR === this._activePressedGui)) {
+          if (hit || (this._activePressedGui && pressed)) {
             this._isPointingAtMenu = true;
             
             // FIX REVERTED: We are no longer using native Three.js raycasting. 
@@ -3562,8 +3566,11 @@ class Scene {
             
             targetGuiXR._updateHover(); // Trigger UI loop (uses GuiXR's internal this._cursor)
 
-            if (this._activePressedGui && this._activePressedGui !== targetGuiXR) {
-              targetGuiXR.onInteract(currU, currV, false);
+            if (this._activePressedGui) {
+              this._activePressedGui.onInteract(currU, currV, pressed, depth);
+              if (this._activePressedGui !== targetGuiXR) {
+                targetGuiXR.onInteract(currU, currV, false);
+              }
             } else {
               targetGuiXR.onInteract(currU, currV, pressed, depth);
             }
@@ -3649,7 +3656,6 @@ class Scene {
 
     // Priority: Locked Hand (if sculpting) > Pressed Hand > Dominant Hand > Other Hand > First Found
     const domSource = this._dominantHand === 'left' ? left : right;
-    const nonDomSource = this._dominantHand === 'left' ? right : left;
 
     if (this._vrSculpting && this._vrLockedHand) {
       // Find the locked hand source

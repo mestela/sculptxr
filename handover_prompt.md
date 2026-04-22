@@ -1,28 +1,39 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Working on Animation DAW improvements. Just completed a major pass on Desktop/VR parity, AutoKey fixes, Transform Box enhancements, and Undo reliability.
+**Project Status**: Completed major Graph Editor overhaul on Desktop. Ready to port these features to VR!
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: v1.0.219 released and pushed to GitHub.
+**Checkpoint**: v1.0.220 released and pushed to GitHub branch `animation`.
 
 ## MANDATORY reading
 You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the overall project before responding. NO EXCEPTIONS.
+Also read `docs/walkthrough_graph_editor.md` for details on the recent graph editor implementation!
 
 ## Deployed Version
-- **Beta**: v1.0.219
-- **Prod**: v1.0.217 (or older)
+- **Beta**: v1.0.220 (Pushed to GitHub, not deployed via script)
+- **Prod**: v1.0.219
 
 ## Interactive Debugging
 - **Preference**: Use browser console for immediate state inspection.
 - **Workflow**: Provide copy-pasteable snippets.
 
-## Recent Achievements (v1.0.219)
-- **Motion Record Undo**: Recording a motion is now fully undoable. The system captures the track state and mesh matrix before recording and restores them on Undo.
-- **Multi-Key Copy/Paste on Desktop**: Ported the VR multi-key copy/paste logic to desktop, allowing batch operations on selected keys.
-- **Transform Box Expansion**: Allowed the right handle of the transform box to expand the timeline duration and loop end automatically when pulled past the current limit, in both Desktop and VR.
-- **Single Key Delete Undo**: Refactored single key deletion to use the batch deletion logic, making it fully undoable.
-- **VR Undo Reliability**: Fixed a variable name mismatch and allowed processing release events even if the cursor is inactive, making Undo much more reliable in VR.
-- **Named Undo Operations**: Added an optional name parameter to `pushStateCustom` to provide specific descriptions in the console for custom operations.
+## Recent Achievements (v1.0.220)
+- **2D Transform Box in Graph Mode**: Full support for scaling in time and value, and 2D translation.
+- **Marquee Selection in Graph Mode**: Visual overlay and live highlight of keys.
+- **2D Pivot Zoom**: Scaling around click position in both axes.
+- **Selection & Transform Undo**: Custom undo states for graph operations.
+- **Playhead Scrubbing Fix**: Zoom-aware and live 3D view update.
+- **UI Refinements**: Colors updated to avoid conflict with Y channel, clipping added to protect header.
+- **Auto-Play Stopped**: Loading SXR files no longer starts playback automatically.
+- **Playback Speed Persistence**: Saved to local storage.
+
+## Current Status & Blockers (VR Porting Attempt)
+We attempted to port the Graph Editor to VR in this session, but encountered severe issues with key dragging interaction:
+- **Key Dragging Amplification**: When zoomed in, dragging a key horizontally moves it much faster than the controller cursor. When zoomed out, it moves slower. This implies a scaling mismatch in the `visibleDuration` or `tlW` application between interaction and drawing.
+- **Failed Debugging**: We tried switching to relative delta movement, simulated wider timeline width, and added extensive logging. However, we were unable to see the `isPressed` continuous interaction logs in the console, suggesting that the interaction loop was not firing as expected or flags were being reset prematurely.
+- **Interaction Locking**: We attempted to lock interaction to the timeline widget during drags to prevent ray slipping, but it initially broke button clicks on the panel. We fixed that by clearing `this._activeTimeline` on release, but the dragging issue persists.
+- **Default Capture Rate**: Successfully updated the default capture rate to 10fps (0.1s) in both VR and Desktop configs.
 
 ## Next Steps
-- **Graph Editor**: The user mentioned looking into a graph editor if things get unstable again, to better see what the data is doing under the hood.
-- **Address remaining TODOs**: Check `docs/threejs_todo.md` for remaining tasks.
+- **Big Rethink on VR Drag Math**: A fresh pair of eyes is needed to figure out why the absolute mapping of cursor to time is failing in VR when zoomed in. Check if `visibleDuration` is being applied consistently across `_drawGraphTimeline` and `_handleGraphTimelineInteraction`.
+- **Restore Clean State**: I have removed all the noisy debug logs I added during this session.
+- refer to `/docs/graph_editor_vr_parity_plan.md` for a full plan

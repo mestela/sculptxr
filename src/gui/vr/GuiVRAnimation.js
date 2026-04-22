@@ -77,8 +77,8 @@ export default function getAnimationWidgets(main, Enums) {
   });
   y += 36 + gapBtn;
 
-  window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.033;
-  let rateLabel = "Dense (~30 fps)";
+  window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+  let rateLabel = "Standard (~10 fps)";
   if (window._animCaptureRate >= 0.9) rateLabel = "Sparse (1.0s)";
   else if (window._animCaptureRate >= 0.4) rateLabel = "Sparse (0.5s)";
   else if (window._animCaptureRate >= 0.09) rateLabel = "Standard (~10 fps)";
@@ -94,7 +94,7 @@ export default function getAnimationWidgets(main, Enums) {
       { id: 1.0,   label: 'Step Key (1 fps / 1.0s)' }
     ],
     onInteract: (val) => {
-      window._animCaptureRate = parseFloat(val) || 0.033;
+      window._animCaptureRate = parseFloat(val) || 0.1;
       if (main._guiXR) main._guiXR._needsRedraw = true;
     }
   });
@@ -253,6 +253,21 @@ export default function getAnimationWidgets(main, Enums) {
     data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : (isFlashing ? '#ff8800' : '#aaaaaa') },
     onInteract: () => {
       if (!window._animationRegistry) return;
+
+      // Backup check: if key mode is transform and tool isn't grab/transform, swap to grab
+      if (window._animKeyMode === 'transform') {
+        const sm = main.getSculptManager();
+        if (sm) {
+          const currTool = sm.getToolIndex();
+          if (currTool !== Enums.Tools.TRANSFORM && currTool !== Enums.Tools.GRAB) {
+            sm.setToolIndex(Enums.Tools.GRAB);
+            if (main._guiXR) {
+              main._guiXR.refreshToolsWidget();
+              main._guiXR.syncWidgetValues();
+            }
+          }
+        }
+      }
 
       let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
       if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) {
@@ -1246,6 +1261,34 @@ export default function getAnimationWidgets(main, Enums) {
     }
   });
 
+  y += 36 + gapBtn;
+
+  window._animTimelineMode = window._animTimelineMode || 'dope';
+  widgets.push({
+    type: 'combobox', id: 'anim_timeline_mode', label: `Mode: ${window._animTimelineMode.toUpperCase()}`,
+    x: col1X, y: y, w: 350, h: 36,
+    value: window._animTimelineMode,
+    options: [
+      { id: 'dope', label: 'Mode: Dope' },
+      { id: 'graph', label: 'Mode: Graph' }
+    ],
+    onInteract: (val) => {
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
+      window._animTimelineMode = newMode;
+      if (newMode === 'graph' && main._guiXR && main._guiXR.autoFitGraphTimeline) {
+        main._guiXR.autoFitGraphTimeline({ h: 300 });
+      }
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    },
+    onSelect: (val) => {
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
+      window._animTimelineMode = newMode;
+      if (newMode === 'graph' && main._guiXR && main._guiXR.autoFitGraphTimeline) {
+        main._guiXR.autoFitGraphTimeline({ h: 300 });
+      }
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
   y += 36 + gapBtn;
 
   // 6. Sleek Timeline
