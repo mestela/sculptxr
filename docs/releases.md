@@ -1,3 +1,13 @@
+# v1.0.221
+- **Feature**: **Graph Editor Multi-Key Dragging in VR**: Supported moving multiple selected keys in VR graph mode by capturing initial states on click.
+- **Feature**: **Transport Play Toggle**: Made play buttons act as toggles for both desktop and VR.
+- **Feature**: **Graph Editor Tangent Handles in VR**: Added Tie/Break Tangent button and square display for broken tangents in VR.
+- **Fix**: **Graph Editor Tangent Scrambling**: Added index-shifting logic to prevent tangent scrambling when keys are deleted or inserted in `AnimationRegistry`.
+- **Fix**: **Graph Editor Key Dragging in VR**: Fixed key dragging math to be zoom-independent and prevented dopesheet interaction from stealing events.
+- **Fix**: **Graph Editor Transform Box in VR**: Added missing state capturing for undo, fixed `NaN` corruption on translation, and added safety limit to `scaleCenter` to prevent key collapse.
+- **Fix**: **Graph Editor Marquee Selection in VR**: Fixed marquee to exit to `select` mode automatically in 'auto select & exit' mode.
+- **UI**: **VR Animation UI Overhaul**: Unified text color to `#ccc`, made stop button a flat square, expanded widgets to fill panel width (compensated for scrollbar), renamed labels to 'Op: Select' and 'Timeline'/'Graph Editor', and reorganized the layout to put tangents and mode on a single line at the bottom, with tangent buttons conditional on graph mode.
+
 # v1.0.220
 - **Feature**: **Graph Editor 2D Transform Box**: Added a full 2D Transform Box to the graph editor, supporting scaling in both time and value space via edge handles, and 2D translation by dragging inside the box.
 - **Feature**: **Graph Editor Marquee Selection**: Implemented marquee selection in the graph editor with a visual overlay box and live highlighting of keys inside the box.

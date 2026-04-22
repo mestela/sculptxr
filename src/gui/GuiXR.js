@@ -5321,7 +5321,6 @@ export default class GuiXR {
         const keyTime = this._activeKeyframeTrack.times[this._activeKeyframeIndex];
         const dt = targetTime - this._keyDragStartTime;
         
-        console.log(`[Graph UI Debug] Drag Key: rx=${rx}, t=${t.toFixed(3)}, targetTime=${targetTime.toFixed(3)}, dt=${dt.toFixed(3)}, zoom=${window._animViewDuration.toFixed(3)}`);
         
         const targetVal = yToValue(ry);
         const dVal = targetVal - this._keyDragStartVal;
@@ -5550,7 +5549,6 @@ export default class GuiXR {
   }
 
   _handleGraphTimelineRelease() {
-    console.log("[Graph UI Debug] _handleGraphTimelineRelease called");
     const reg = window._animationRegistry;
     if (!reg) return;
 
@@ -5654,7 +5652,6 @@ export default class GuiXR {
     }
 
     if (this._activeTransformHandle && this._undoTracksBeforeMove) {
-      console.log("[Graph UI Debug] Pushing transform box undo state");
       const beforeState = this._undoTracksBeforeMove;
       const afterState = new Map();
       reg.tracks.forEach((track, meshId) => {
@@ -5714,7 +5711,6 @@ export default class GuiXR {
     }
 
     if (this._isDraggingKeyframe && this._undoTracksBeforeMove) {
-      console.log("[Graph UI Debug] Pushing multikeys move undo state");
       const beforeState = this._undoTracksBeforeMove;
       const afterState = new Map();
       reg.tracks.forEach((track, meshId) => {
