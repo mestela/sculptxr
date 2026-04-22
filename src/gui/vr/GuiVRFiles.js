@@ -1,4 +1,6 @@
 
+import getGalleryWidgets from './GuiVRGallery.js';
+
 export default function getFilesWidgets(main) {
   const widgets = [];
 
@@ -16,8 +18,8 @@ export default function getFilesWidgets(main) {
     widgets.push({ type: 'info', label, x, y, w: contentW, h: headerH, header: true }); // Special flag for header style
     y += headerH;
   };
-  const addButton = (id, label) => {
-    widgets.push({ type: 'button', id, label, x, y, w: contentW, h: itemH, textAlign: 'left' });
+  const addButton = (id, label, onInteract) => {
+    widgets.push({ type: 'button', id, label, x, y, w: contentW, h: itemH, textAlign: 'left', onInteract });
     y += itemH;
   };
   const addCheckbox = (id, label, value) => {
@@ -45,7 +47,26 @@ export default function getFilesWidgets(main) {
   addButton('export_sgl', 'Save .sxr (SculptXR Native)');
   addButton('export_glb', 'Save .glb (Animation DAW)');
   addButton('browser_save', 'Save to browser storage');
-  addButton('browser_load', 'Load from local storage');
+  addButton('browser_load', 'Load from local storage', () => {
+    const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
+    if (guiFiles) {
+      guiFiles.refreshBrowserSaves().then(() => {
+        const data = getGalleryWidgets(main);
+        if (main._guiXR) {
+          main._guiXR.openOverlay('menu', {
+            x: 200,
+            y: 200,
+            w: data.width,
+            h: data.height,
+            widgets: data.widgets,
+            title: 'Browser Gallery'
+          });
+          main._guiXR._needsRedraw = true;
+          main._guiXR.draw();
+        }
+      });
+    }
+  });
   addButton('export_obj', 'Save .obj');
   addButton('export_ply', 'Save .ply');
   addButton('export_stl', 'Save .stl');

@@ -98,6 +98,25 @@ export default class GuiXR {
       stylusTilt: opts.stylusTilt
     };
 
+    window.showVRGallery = () => {
+      const main = window.app;
+      if (main && main.getGui() && main.getGui()._ctrlFiles) {
+        main.getGui()._ctrlFiles.refreshBrowserSaves().then(() => {
+          const data = getGalleryWidgets(main);
+          main._guiXR.openOverlay('menu', {
+            x: 200,
+            y: 200,
+            w: data.width,
+            h: data.height,
+            widgets: data.widgets,
+            title: 'Browser Gallery'
+          });
+          main._guiXR._needsRedraw = true;
+          main._guiXR.draw();
+        });
+      }
+    };
+
     // Preload Dropper Icon
     this._dropperIcon = new Image();
     this._dropperIcon.src = 'resources/dropper.png';
@@ -1035,6 +1054,7 @@ export default class GuiXR {
     if (!isPressed) {
       this._dragStartY = undefined;
       this._dragStartRy = undefined;
+      this._activeVisibilityDrag = false;
     }
 
     if (isRisingEdge) {
@@ -1714,7 +1734,7 @@ export default class GuiXR {
       }
 
       this._inputDebounce = now;
-      this._handleOverlayInteract(cx, cy, isPressed);
+      this._handleOverlayInteract(cx, cy, isPressed, isRisingEdge);
       return;
     }
 
@@ -1738,6 +1758,13 @@ export default class GuiXR {
 
     if (this._activeTimeline && (this._isDraggingKeyframe || this._isDraggingMarquee || this._isDraggingPlayhead)) {
       targetWid = this._activeTimeline;
+    }
+
+    if (isRisingEdge && targetWid) {
+      if (window.screenLog) window.screenLog(`[onInteract] Down over: ${targetWid.id}`, "white");
+    }
+    if (!isPressed && this._wasPressed && targetWid) {
+      if (window.screenLog) window.screenLog(`[onInteract] Up over: ${targetWid.id}`, "white");
     }
 
 
@@ -1926,6 +1953,19 @@ export default class GuiXR {
     // 4. Check Widgets (Completely block if an overlay is open, OR if we are inside the 500ms trigger-release dead-zone!)
     if (targetWid && isPressed && this._lastScrollY === undefined && !this._overlay && (!this._overlayCooldown || performance.now() - this._overlayCooldown > 500)) {
       const isContinuousWid = targetWid.type === "slider" || targetWid.type === "colorpicker_embedded" || targetWid.type === "timeline";
+      const isVisDrag = this._activeVisibilityDrag && targetWid.type === 'checkbox' && targetWid.isVisibility;
+      
+      // Drag through visibility checkboxes in main UI
+      if (isVisDrag) {
+        if (targetWid.value !== this._targetVisibilityState) {
+          if (window.screenLog) window.screenLog(`[onInteract] Set vis ${targetWid.id} to ${this._targetVisibilityState}`, "lime");
+          targetWid.value = this._targetVisibilityState;
+          targetWid.onInteract(targetWid.value);
+          this._needsRedraw = true;
+        }
+        return; // Skip normal click handling!
+      }
+
       if (this._hasClickedWidgetThisPress && !isContinuousWid) return; 
       this._inputDebounce = now; 
       if (!isContinuousWid) this._hasClickedWidgetThisPress = true;
@@ -2313,7 +2353,7 @@ export default class GuiXR {
     }
   }
 
-  _handleOverlayInteract(cx, cy, isPressed) {
+  _handleOverlayInteract(cx, cy, isPressed, isRisingEdge) {
     // Input Transform for Scale
     const data = this._overlayData;
     const isToolPicker = data && data.isToolPicker;
@@ -2357,7 +2397,7 @@ export default class GuiXR {
     } else if (this._overlay === 'colorpicker') {
       this._handleColorPickerInteract(cx, cy);
     } else if (this._overlay === 'menu') {
-      this._handleMenuInteract(cx, cy);
+      this._handleMenuInteract(cx, cy, isPressed, isRisingEdge);
     }
   }
 
@@ -2380,7 +2420,7 @@ export default class GuiXR {
     }
   }
 
-  _handleMenuInteract(cx, cy) {
+  _handleMenuInteract(cx, cy, isPressed, isRisingEdge) {
     if (this._activeNumberpad) {
       this._handleNumberpadInteract(cx, cy);
       return;
@@ -2390,7 +2430,10 @@ export default class GuiXR {
       return;
     }
     const data = this._overlayData;
-    if (!data || !data.widgets) return;
+    if (!data || !data.widgets) {
+      if (window.screenLog) window.screenLog(`[_handleMenuInteract] No overlay data or widgets!`, "red");
+      return;
+    }
 
     // Normalize coordinates to counter OVERLAY_SCALE rendering
     const invScale = 1.0 / OVERLAY_SCALE;
@@ -2403,6 +2446,27 @@ export default class GuiXR {
     // Relativize coords
     const rx = scx - data.x;
     const ry = scy - data.y;
+
+    // Drag through visibility checkboxes
+    if (this._activeVisibilityDrag && isPressed) {
+      if (window.screenLog) window.screenLog(`[GuiXR] Drag vis active, rx=${Math.round(rx)}`, "cyan");
+      for (const w of data.widgets) {
+        if (rx >= w.x && rx <= w.x + w.w && (ry + this._scrollOffsetOverlay) >= w.y && (ry + this._scrollOffsetOverlay) <= w.y + w.h) {
+          if (!w.disabled && w.type === 'checkbox' && w.isVisibility) {
+            if (w.value !== this._targetVisibilityState) {
+              if (window.screenLog) window.screenLog(`[GuiXR] Set vis ${w.id} to ${this._targetVisibilityState}`, "lime");
+              w.value = this._targetVisibilityState;
+              w.onInteract(w.value);
+              this._needsRedraw = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (!isPressed) {
+      this._activeVisibilityDrag = false;
+    }
 
     if (this._activeSlider) {
       const w = this._activeSlider;
@@ -2484,15 +2548,23 @@ export default class GuiXR {
             }
             this._needsRedraw = true;
           } else if (w.type === 'checkbox') {
-            w.value = !w.value;
-            this._executeAction(w);
-            this._needsRedraw = true;
+            if (isRisingEdge) {
+              w.value = !w.value;
+              if (w.isVisibility) {
+                this._activeVisibilityDrag = true;
+                this._targetVisibilityState = w.value;
+              }
+              this._executeAction(w);
+              this._needsRedraw = true;
+            }
           } else if (w.type === 'button') {
-            this._executeAction(w);
-            const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
-            const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load', 'popup_tab0', 'popup_tab1'].includes(w.id) || isOutliner;
-            if (!keepOpen) this.closeOverlay();
-            else this._needsRedraw = true;
+            if (isRisingEdge) {
+              this._executeAction(w);
+              const isOutliner = typeof w.id === 'string' && (w.id.startsWith('del_') || w.id.startsWith('select_'));
+              const keepOpen = ['undo', 'redo', 'addSphere', 'addCube', 'addCylinder', 'addTorus', 'vx_add', 'vx_sub', 'vx_inf', 'vx_def', 'browser_load', 'popup_tab0', 'popup_tab1'].includes(w.id) || isOutliner;
+              if (!keepOpen) this.closeOverlay();
+              else this._needsRedraw = true;
+            }
           } else if (w.type === 'colorpicker_embedded') {
             if (this._activeColorPicker && this._activeColorPicker.id === w.id) {
               this._activeColorPicker = w; // Refresh pointer
@@ -2765,6 +2837,7 @@ export default class GuiXR {
   onClick() { }
 
   _executeAction(w) {
+    if (window.screenLog) window.screenLog(`[_executeAction] id=${w.id}`, "white");
     if (!w.onInteract && !w.onSelect) return;
     const main = this._main;
     if (!main) return;
@@ -2775,6 +2848,10 @@ export default class GuiXR {
     if (w.onInteract) {
       if (w.type === 'checkbox') {
         w.value = !w.value;
+        if (w.isVisibility) {
+          this._activeVisibilityDrag = true;
+          this._targetVisibilityState = w.value;
+        }
       }
       w.onInteract(w.value);
       return;
@@ -2922,15 +2999,18 @@ export default class GuiXR {
     else if (id === 'browser_load') {
       const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
       if (guiFiles) {
-        guiFiles.refreshBrowserSaves(); // Refresh list before opening
-        const data = getGalleryWidgets(main);
-        this.openOverlay('menu', {
-          x: 200, // Pop out location
-          y: 200,
-          w: data.width,
-          h: data.height,
-          widgets: data.widgets,
-          title: 'Browser Gallery'
+        guiFiles.refreshBrowserSaves().then(() => {
+          const data = getGalleryWidgets(main);
+          this.openOverlay('menu', {
+            x: 200,
+            y: 200,
+            w: data.width,
+            h: data.height,
+            widgets: data.widgets,
+            title: 'Browser Gallery'
+          });
+          this._needsRedraw = true;
+          this.draw();
         });
       }
     }

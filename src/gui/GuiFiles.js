@@ -27,9 +27,15 @@ class GuiFiles {
   }
 
   refreshBrowserSaves() {
-    StorageDB.getAll().then(saves => {
+    return StorageDB.getAll().then(saves => {
+      console.log(`[GuiFiles] refreshBrowserSaves found ${saves.length} saves.`);
+      if (window.screenLog) window.screenLog(`[GuiFiles] Found ${saves.length} saves`, "cyan");
       // Sort by timestamp desc (newest first)
-      this._browserSaves = saves.sort((a, b) => b.value.timestamp - a.value.timestamp);
+      this._browserSaves = saves.sort((a, b) => {
+        const tA = a.value && a.value.timestamp ? a.value.timestamp : 0;
+        const tB = b.value && b.value.timestamp ? b.value.timestamp : 0;
+        return tB - tA;
+      });
       
       // Pre-load images for thumbnails
       this._browserSaves.forEach(save => {
@@ -331,6 +337,7 @@ class GuiFiles {
   }
 
   loadSpecificBrowserSave(key) {
+    console.log(`[GuiFiles] loadSpecificBrowserSave called for key:`, key);
     if (window.screenLog) window.screenLog(`Loading ${key}...`, 'cyan');
     StorageDB.get(key).then(data => {
       if (!data) {
@@ -346,11 +353,13 @@ class GuiFiles {
         return blob;
       }
     }).then(buf => {
+      console.log(`[GuiFiles] Got buffer, length:`, buf ? buf.byteLength : 0);
       if (buf) {
         this._main.loadScene(buf, 'sgl');
         if (window.screenLog) window.screenLog('Loaded from browser storage!', 'lime');
       }
     }).catch(err => {
+      console.error(`[GuiFiles] Failed to load:`, err);
       if (window.screenLog) window.screenLog('Failed to load: ' + err, 'red');
     });
   }
