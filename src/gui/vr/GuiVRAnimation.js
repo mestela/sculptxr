@@ -5,7 +5,7 @@ export default function getAnimationWidgets(main, Enums) {
 
   const col1X = 20;
   const btnH = 50; 
-  const gapBtn = 15;
+  const gapBtn = 10;
   const gapHeader = 30;
 
   let y = 130;
@@ -13,6 +13,9 @@ export default function getAnimationWidgets(main, Enums) {
   // Global Configuration Options
   window._animArmed = window._animArmed !== undefined ? window._animArmed : true;
   window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
+  window._animActiveTool = window._animActiveTool || 'select';
+  window._animMarqueeMode = window._animMarqueeMode || 'select_only';
+  if (window._animTransformAutoSelect === undefined) window._animTransformAutoSelect = true;
   window._animPlaying = window._animPlaying || false;
   window._animMasterDuration = window._animMasterDuration !== undefined && window._animMasterDuration > 0 ? window._animMasterDuration : 2.0;
   window._animLoopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -91,32 +94,6 @@ export default function getAnimationWidgets(main, Enums) {
   });
   y += 36 + gapBtn;
 
-  // 2.5 FPS Setting
-  widgets.push({
-    type: 'slider', id: 'anim_fps', label: 'Timeline FPS',
-    x: col1X, y: y, w: 944, h: 50,
-    value: window._animFPS || 24,
-    min: 1, max: 60, step: 1,
-    onInput: (val) => {
-      window._animFPS = Math.round(val);
-      if (main._guiXR) {
-        const widgets = main._guiXR._getWidgets();
-        if (widgets) {
-          const durSlider = widgets.find(w => w.id === 'anim_master_duration');
-          if (durSlider) durSlider.step = 1 / window._animFPS;
-          const startSlider = widgets.find(w => w.id === 'anim_loop_start');
-          if (startSlider) startSlider.step = 1 / window._animFPS;
-          const endSlider = widgets.find(w => w.id === 'anim_loop_end');
-          if (endSlider) endSlider.step = 1 / window._animFPS;
-        }
-        main._guiXR._needsRedraw = true;
-      }
-    }
-  });
-
-
-
-  y += 50 + gapBtn;
 
   // 3. Clear All
   if (!isConfirmingClearAnim) {
@@ -1090,7 +1067,47 @@ export default function getAnimationWidgets(main, Enums) {
 
   y += giantBtnSize + gapBtn;
 
-  // 5. Unified Triple Slider Row
+  // --- NEW ORDER ---
+
+
+
+  // 6. Timeline FPS & AutoKey Row
+  if (window._animAutoKey === undefined) window._animAutoKey = false;
+
+  widgets.push({
+    type: 'slider', id: 'anim_fps', label: 'Timeline FPS',
+    x: col1X, y: y, w: 464, h: 50,
+    value: window._animFPS || 24,
+    min: 1, max: 60, step: 1,
+    onInput: (val) => {
+      window._animFPS = Math.round(val);
+      if (main._guiXR) {
+        const widgets = main._guiXR._getWidgets();
+        if (widgets) {
+          const durSlider = widgets.find(w => w.id === 'anim_master_duration');
+          if (durSlider) durSlider.step = 1 / window._animFPS;
+          const startSlider = widgets.find(w => w.id === 'anim_loop_start');
+          if (startSlider) startSlider.step = 1 / window._animFPS;
+          const endSlider = widgets.find(w => w.id === 'anim_loop_end');
+          if (endSlider) endSlider.step = 1 / window._animFPS;
+        }
+        main._guiXR._needsRedraw = true;
+      }
+    }
+  });
+
+  widgets.push({
+    type: 'checkbox', id: 'anim_autokey', label: 'AutoKey',
+    x: col1X + 464 + 15, y: y, w: 464, h: 50,
+    value: window._animAutoKey,
+    onInteract: (val) => {
+      window._animAutoKey = !window._animAutoKey;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+  y += 50 + gapBtn;
+
+  // 7. Unified Triple Slider Row (Duration, Start, End)
   const sW = (944 - 30) / 3; // 304px each
   
   widgets.push({
@@ -1149,21 +1166,44 @@ export default function getAnimationWidgets(main, Enums) {
       }
     }
   });
-
   y += 50 + gapBtn;
 
-  window._animActiveTool = window._animActiveTool || 'select';
-  window._animMarqueeMode = window._animMarqueeMode || 'select_only';
-  if (window._animTransformAutoSelect === undefined) window._animTransformAutoSelect = true;
+  // 8. Timeline Mode, Op: Select, Show Tangents, Tie/Break Row
+  const reg = window._animationRegistry;
+  window._animTimelineMode = window._animTimelineMode || 'dope';
+  
+  const qW = 228; // Quarter width with 10px gaps
+  
+  // Timeline Mode
+  widgets.push({
+    type: 'combobox', id: 'anim_timeline_mode', label: window._animTimelineMode === 'graph' ? 'Graph Editor' : 'Timeline',
+    x: col1X, y: y, w: qW, h: 36,
+    value: window._animTimelineMode,
+    options: [
+      { id: 'dope', label: 'Timeline' },
+      { id: 'graph', label: 'Graph Editor' }
+    ],
+    onInteract: (val) => {
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
+      window._animTimelineMode = newMode;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    },
+    onSelect: (val) => {
+      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
+      window._animTimelineMode = newMode;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
 
+  // Op: Select
   widgets.push({
     type: 'combobox', id: 'anim_active_tool', label: `🗜️ ${window._animActiveTool.toUpperCase()}`,
-    x: col1X, y: y, w: 304, h: 36,
+    x: col1X + qW + gapBtn, y: y, w: qW, h: 36,
     value: window._animActiveTool,
     options: [
-      { id: 'select', label: 'SELECT' },
-      { id: 'marquee', label: 'MARQUEE' },
-      { id: 'transform', label: 'TRANSFORM' }
+      { id: 'select', label: 'Op: Select' },
+      { id: 'marquee', label: 'Op: Marquee' },
+      { id: 'transform', label: 'Op: Transform' }
     ],
     onInteract: (val) => {
       const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'select');
@@ -1182,14 +1222,10 @@ export default function getAnimationWidgets(main, Enums) {
         main._guiXR._animTransformInitialBox = null;
         main._guiXR._needsRedraw = true;
       }
-      // If user swaps to transform mode, automatically select GRAB tool.
       if (newMode === 'transform') {
         const sm = main.getSculptManager();
         if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
-        console.log(`[Toolbar] Forced Grab Tool Index assigned successfully: ${Enums.Tools.GRAB}`);
         
-        // Create transform box if selection has multiple keys
-        const reg = window._animationRegistry;
         if (reg && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
           let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
           window._animSelectedKeys.forEach(sk => {
@@ -1234,11 +1270,8 @@ export default function getAnimationWidgets(main, Enums) {
       if (newMode === 'transform') {
         const sm = main.getSculptManager();
         if (sm) sm.setToolIndex(Enums.Tools.GRAB); 
-        console.log(`[Toolbar] Forced Grab Tool Index assigned (onSelect): ${Enums.Tools.GRAB}`);
         if (window.screenLog) window.screenLog(`[Toolbar] Swapped to Grab Tool Mode!`, 'green');
         
-        // Create transform box if selection has multiple keys
-        const reg = window._animationRegistry;
         if (reg && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
           let minT = Infinity, maxT = -Infinity, minV = Infinity, maxV = -Infinity;
           window._animSelectedKeys.forEach(sk => {
@@ -1265,12 +1298,49 @@ export default function getAnimationWidgets(main, Enums) {
     }
   });
 
-  if (window._animAutoKey === undefined) window._animAutoKey = false;
+  // Tangent buttons only visible if graph editor is visible
+  if (window._animTimelineMode === 'graph') {
+    // Show Tangents
+    widgets.push({
+      type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangents',
+      x: col1X + (qW + gapBtn) * 2, y: y, w: qW, h: 36,
+      value: window._animShowTangents,
+      onInteract: () => {
+        window._animShowTangents = !window._animShowTangents;
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+      }
+    });
 
+    // Tie/Break Tangent
+    widgets.push({
+      type: 'button', id: 'anim_tangent_tied_toggle', label: 'Tie/Break Tangent',
+      x: col1X + (qW + gapBtn) * 3, y: y, w: qW, h: 36,
+      onInteract: () => {
+        if (!reg) return;
+        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+        if (singleSelected) {
+          const track = reg.tracks.get(singleSelected.meshId);
+          if (track) {
+            if (!track.tangentOffsets) track.tangentOffsets = {};
+            const key = `trans_${singleSelected.index}_tied`;
+            const cur = track.tangentOffsets[key] !== false;
+            track.tangentOffsets[key] = !cur;
+            if (main._guiXR) main._guiXR._needsRedraw = true;
+            showFeedback(cur ? 'Broken Tangent' : 'Tied Tangent');
+          }
+        } else {
+          showFeedback('Select a single key first');
+        }
+      }
+    });
+  }
+  y += 36 + gapBtn;
+
+  // 5. Conditional Tool Row (Marquee Mode or Transform Auto Select)
   if (window._animActiveTool === 'marquee') {
     widgets.push({
       type: 'combobox', id: 'anim_marquee_mode', label: `Mode: ${window._animMarqueeMode.toUpperCase()}`,
-      x: col1X + 304 + 15, y: y, w: 304, h: 36,
+      x: col1X, y: y, w: 944, h: 36,
       value: window._animMarqueeMode,
       options: [
         { id: 'select_only', label: 'Auto Select & Exit' },
@@ -1288,95 +1358,21 @@ export default function getAnimationWidgets(main, Enums) {
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     });
+    y += 36 + gapBtn;
   } else if (window._animActiveTool === 'transform') {
     widgets.push({
       type: 'checkbox', id: 'anim_transform_auto', label: 'Auto Select Keys',
-      x: col1X + 304 + 15, y: y, w: 304, h: 36,
+      x: col1X, y: y, w: 944, h: 36,
       value: window._animTransformAutoSelect,
       onInteract: (val) => {
         window._animTransformAutoSelect = !window._animTransformAutoSelect;
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     });
+    y += 36 + gapBtn;
   }
 
-  // Global AutoKey Option
-  widgets.push({
-    type: 'checkbox', id: 'anim_autokey', label: 'AutoKey',
-    x: col1X + (304 + 15) * 2, y: y, w: 304, h: 36,
-    value: window._animAutoKey,
-    onInteract: (val) => {
-      window._animAutoKey = !window._animAutoKey;
-      if (main._guiXR) main._guiXR._needsRedraw = true;
-    }
-  });
-
-  y += 36 + gapBtn;
-
-  window._animTimelineMode = window._animTimelineMode || 'dope';
-  widgets.push({
-    type: 'combobox', id: 'anim_timeline_mode', label: `Mode: ${window._animTimelineMode.toUpperCase()}`,
-    x: col1X, y: y, w: 944, h: 36,
-    value: window._animTimelineMode,
-    options: [
-      { id: 'dope', label: 'Mode: Dope' },
-      { id: 'graph', label: 'Mode: Graph' }
-    ],
-    onInteract: (val) => {
-      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
-      window._animTimelineMode = newMode;
-      if (newMode === 'graph' && main._guiXR && main._guiXR.autoFitGraphTimeline) {
-        main._guiXR.autoFitGraphTimeline({ h: 300 });
-      }
-      if (main._guiXR) main._guiXR._needsRedraw = true;
-    },
-    onSelect: (val) => {
-      const newMode = typeof val === 'string' ? val : (val && val.id ? val.id : 'dope');
-      window._animTimelineMode = newMode;
-      if (newMode === 'graph' && main._guiXR && main._guiXR.autoFitGraphTimeline) {
-        main._guiXR.autoFitGraphTimeline({ h: 300 });
-      }
-      if (main._guiXR) main._guiXR._needsRedraw = true;
-    }
-  });
-  y += 36 + gapBtn;
-
-  widgets.push({
-    type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangents',
-    x: col1X, y: y, w: 464, h: 36,
-    value: window._animShowTangents,
-    onInteract: () => {
-      window._animShowTangents = !window._animShowTangents;
-      if (main._guiXR) main._guiXR._needsRedraw = true;
-    }
-  });
-
-  widgets.push({
-    type: 'button', id: 'anim_tangent_tied_toggle', label: 'Tie/Break Tangent',
-    x: col1X + 464 + 15, y: y, w: 464, h: 36,
-    onInteract: () => {
-      const reg = window._animationRegistry;
-      if (!reg) return;
-      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-      if (singleSelected) {
-        const track = reg.tracks.get(singleSelected.meshId);
-        if (track) {
-          if (!track.tangentOffsets) track.tangentOffsets = {};
-          const key = `trans_${singleSelected.index}_tied`;
-          const cur = track.tangentOffsets[key] !== false;
-          track.tangentOffsets[key] = !cur;
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-          showFeedback(cur ? 'Broken Tangent' : 'Tied Tangent');
-        }
-      } else {
-        showFeedback('Select a single key first');
-      }
-    }
-  });
-
-  y += 36 + gapBtn;
-
-  // 6. Sleek Timeline
+  // 9. Sleek Timeline
   widgets.push({
     type: 'timeline',
     id: 'anim_timeline',

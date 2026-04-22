@@ -11,7 +11,7 @@ This document outlines the inventory of features in the Desktop Graph Editor and
 *   [*] **Key Rendering**: Dots at keyframes, color-coded for selection (Yellow) and hover (Cyan).
 *   [x] **Tangent Handles**: Rendering and interactive editing of handles to adjust curve slopes.
 *   [x] **Marquee Selection**: 2D box selection with live highlight of keys during drag. (Selection undo implemented).
-*   [ ] **2D Transform Box**: Scaling and translating selected keys in both time and value.
+*   [x] **2D Transform Box**: Scaling and translating selected keys in both time and value.
 *   [*] **Auto Fit**: Automatically scaling and panning the view to fit all keys of the active mesh.
 *   [*] **Undo/Redo Support**: Custom undo states for selection changes and transform operations to handle index shifting. (Transform and Marquee Selection undo implemented).
 
