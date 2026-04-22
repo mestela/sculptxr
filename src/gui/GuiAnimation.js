@@ -62,7 +62,7 @@ class GuiAnimation {
     menu.addDualButton('|◀ Jump Start', '▶| Jump End', this, this, 'toStart', 'toEnd');
     menu.addDualButton('◀◀ Prev Frame', '▶▶ Next Frame', this, this, 'prevFrame', 'nextFrame');
     menu.addDualButton('◀ Play Rev', '▶ Play Fwd', this, this, 'playRev', 'playFwd');
-    menu.addDualButton('■ Stop', '⬤ Record', this, this, 'stop', 'record');
+    menu.addDualButton('⏹ Stop', '⬤ Record', this, this, 'stop', 'record');
     menu.addButton('Clear All Animation', this, 'clearAll');
     menu.addButton('Print Tracks to Console', this, 'printTracks');
 
@@ -374,6 +374,8 @@ class GuiAnimation {
             track.shapes[foundIdx] = new Float32Array(k.shape);
           } else {
             track.shapeTimes.push(targetTime);
+            if (!track.shapeOutputTimes) track.shapeOutputTimes = [];
+            track.shapeOutputTimes.push(targetTime);
             track.shapes.push(new Float32Array(k.shape));
           }
           
@@ -431,14 +433,15 @@ class GuiAnimation {
                   if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
                     tr.shapes[idx] = cmd.oldData;
                   }
-                } else {
-                  let idx = 0;
-                  while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
-                  if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
-                    tr.shapeTimes.splice(idx, 1);
-                    tr.shapes.splice(idx, 1);
+                  } else {
+                    let idx = 0;
+                    while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < cmd.time) idx++;
+                    if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - cmd.time) < 0.005) {
+                      tr.shapeTimes.splice(idx, 1);
+                      if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
+                      tr.shapes.splice(idx, 1);
+                    }
                   }
-                }
               }
             });
             
@@ -476,6 +479,7 @@ class GuiAnimation {
                   tr.shapes[idx] = cmd.newData;
                 } else {
                   tr.shapeTimes.splice(idx, 0, cmd.time);
+                  if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 0, cmd.time);
                   tr.shapes.splice(idx, 0, cmd.newData);
                 }
               }

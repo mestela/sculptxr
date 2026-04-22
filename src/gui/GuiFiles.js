@@ -79,7 +79,24 @@ class GuiFiles {
   }
 
   addFile() {
-    document.getElementById('fileopen').click();
+    const input = document.getElementById('fileopen');
+    console.log("[GuiFiles] addFile called, fileopen element:", input);
+    if (input) {
+      const oldPointerEvents = input.style.pointerEvents;
+      const oldZIndex = input.style.zIndex;
+      
+      input.style.pointerEvents = 'auto';
+      input.style.zIndex = '9999';
+      
+      input.click();
+      
+      setTimeout(() => {
+        input.style.pointerEvents = oldPointerEvents;
+        input.style.zIndex = oldZIndex;
+      }, 500);
+    } else {
+      console.error("[GuiFiles] fileopen element not found!");
+    }
   }
 
   onTextureSize(value) {

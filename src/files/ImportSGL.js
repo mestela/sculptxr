@@ -208,6 +208,20 @@ Import.importSGL = function (buffer, gl, main) {
           var nbKeys = u32a[off++];
           for (var k = 0; k < nbKeys; ++k) {
             var time = f32a[off++];
+            
+            let outputTime = time;
+            if (version >= 7) {
+              outputTime = f32a[off++];
+              
+              if (!trackObj.tangentOffsets) trackObj.tangentOffsets = {};
+              
+              trackObj.tangentOffsets[`${k}_right_dt`] = f32a[off++];
+              trackObj.tangentOffsets[`${k}_right_dv`] = f32a[off++];
+              trackObj.tangentOffsets[`${k}_left_dt`] = f32a[off++];
+              trackObj.tangentOffsets[`${k}_left_dv`] = f32a[off++];
+              trackObj.tangentOffsets[`${k}_tied`] = (f32a[off++] > 0.5);
+            }
+            
             var activeVCount = finalMesh.getNbVertices();
             
             var shapeArr = new Float32Array(activeVCount * 3);
@@ -215,6 +229,8 @@ Import.importSGL = function (buffer, gl, main) {
             off += activeVCount * 3;
 
             trackObj.shapeTimes.push(time);
+            if (!trackObj.shapeOutputTimes) trackObj.shapeOutputTimes = [];
+            trackObj.shapeOutputTimes.push(outputTime);
             trackObj.shapes.push(shapeArr);
             if (time > maxTime) maxTime = time;
           }

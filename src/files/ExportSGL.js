@@ -8,7 +8,7 @@ var Export = {};
 // 3 faces u32 instead of i32
 // 4 label string
 // 5 (SGL2) Multiresolution stack & Animation track caching
-Export.VERSION = 6;
+Export.VERSION = 7;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -58,9 +58,11 @@ Export.exportSGL = function (meshes, main) {
     if (hasShape) {
       var nbKeys = track.shapeTimes.length;
       var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
-      nbBytes += 4;
-      nbBytes += nbKeys * 4;
-      nbBytes += nbKeys * activeVertCount * 12;
+      nbBytes += 4; // nbKeys
+      nbBytes += nbKeys * 4; // shapeTimes
+      nbBytes += nbKeys * 4; // shapeOutputTimes
+      nbBytes += nbKeys * 20; // tangents (5 floats)
+      nbBytes += nbKeys * activeVertCount * 12; // shapes
     }
     
     if (hasTransform) {
@@ -231,6 +233,20 @@ Export.exportSGL = function (meshes, main) {
         u32a[off++] = nbKeys;
         for (var k = 0; k < nbKeys; ++k) {
           f32a[off++] = track.shapeTimes[k];
+          f32a[off++] = track.shapeOutputTimes ? track.shapeOutputTimes[k] : track.shapeTimes[k];
+          
+          const rightDt = track.tangentOffsets ? track.tangentOffsets[`${k}_right_dt`] : undefined;
+          const rightDv = track.tangentOffsets ? track.tangentOffsets[`${k}_right_dv`] : undefined;
+          const leftDt = track.tangentOffsets ? track.tangentOffsets[`${k}_left_dt`] : undefined;
+          const leftDv = track.tangentOffsets ? track.tangentOffsets[`${k}_left_dv`] : undefined;
+          const tied = track.tangentOffsets ? track.tangentOffsets[`${k}_tied`] !== false : true;
+
+          f32a[off++] = rightDt !== undefined ? rightDt : 25;
+          f32a[off++] = rightDv !== undefined ? rightDv : 0;
+          f32a[off++] = leftDt !== undefined ? leftDt : -25;
+          f32a[off++] = leftDv !== undefined ? leftDv : 0;
+          f32a[off++] = tied ? 1.0 : 0.0;
+
           var shapeArr = track.shapes[k];
           var lenToCopy = Math.min(shapeArr.length, activeVertCount * 3);
           

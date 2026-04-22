@@ -362,6 +362,11 @@ class AnimationRegistry {
             let shp = track.shapes[i];
             track.shapes[i] = track.shapes[j];
             track.shapes[j] = shp;
+            if (track.shapeOutputTimes) {
+              let tmpOut = track.shapeOutputTimes[i];
+              track.shapeOutputTimes[i] = track.shapeOutputTimes[j];
+              track.shapeOutputTimes[j] = tmpOut;
+            }
           }
         }
       }
@@ -531,7 +536,7 @@ class AnimationRegistry {
     if (!this.tracks.has(id)) {
       this.tracks.set(id, {
         times: [], positions: [], quaternions: [], scales: [],
-        shapeTimes: [], shapes: [],
+        shapeTimes: [], shapes: [], shapeOutputTimes: [],
         playbackTime: 0,
         lastUpdate: performance.now()
       });
@@ -542,7 +547,14 @@ class AnimationRegistry {
       track.shapeTimes = [];
       track.shapes = [];
     }
+    if (!track.shapeOutputTimes) {
+      track.shapeOutputTimes = [];
+    }
     
+    if (isNaN(time)) {
+      console.error("[Animation] Attempted to add shape key at NaN time!");
+      return;
+    }
     const v = mesh.getVertices();
     const copy = new Float32Array(v);
     
@@ -555,6 +567,7 @@ class AnimationRegistry {
       track.shapes[idx] = copy;
     } else {
       track.shapeTimes.splice(idx, 0, time);
+      track.shapeOutputTimes.splice(idx, 0, time); // Default output time is input time
       track.shapes.splice(idx, 0, copy);
       
       // Shift tangent offsets up for keys after idx
@@ -625,15 +638,22 @@ class AnimationRegistry {
     if (!this.tracks.has(id)) {
       this.tracks.set(id, {
         times: [], positions: [], quaternions: [], scales: [],
-        shapeTimes: [], shapes: [],
+        shapeTimes: [], shapes: [], shapeOutputTimes: [],
         playbackTime: 0, lastUpdate: performance.now()
       });
     }
     
+    if (isNaN(time)) {
+      console.error("[Animation] Attempted to paste shape key at NaN time!");
+      return;
+    }
     const track = this.tracks.get(id);
     if (!track.shapeTimes) {
       track.shapeTimes = [];
       track.shapes = [];
+    }
+    if (!track.shapeOutputTimes) {
+      track.shapeOutputTimes = [];
     }
     
     const copy = new Float32Array(this.clipboardShape);
@@ -647,6 +667,7 @@ class AnimationRegistry {
       track.shapes[idx] = copy;
     } else {
       track.shapeTimes.splice(idx, 0, time);
+      track.shapeOutputTimes.splice(idx, 0, time);
       track.shapes.splice(idx, 0, copy);
       
       // Shift tangent offsets up for keys after idx
@@ -679,9 +700,7 @@ class AnimationRegistry {
     this.globalPlaybackTime = time;
     
     // Trigger immediate refresh so the user sees the newly pasted state!
-    if (mesh.updateGeometry) mesh.updateGeometry();
-    if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
-    if (window.app && window.app.render) window.app.render();
+    this.update(mesh, true);
     
     window._animStatusText = `📥 Pasted key at ${time.toFixed(2)}s`;
   }
@@ -907,6 +926,7 @@ class AnimationRegistry {
           meshId: key.meshId,
           type: 'shape',
           time: track.shapeTimes[idx],
+          outputTime: track.shapeOutputTimes ? track.shapeOutputTimes[idx] : track.shapeTimes[idx],
           shape: new Float32Array(track.shapes[idx])
         });
       }
@@ -936,6 +956,7 @@ class AnimationRegistry {
           track.scales.splice(idx * 3, 3);
         } else if (type === 'shape' && track.shapeTimes && track.shapeTimes[idx] !== undefined) {
           track.shapeTimes.splice(idx, 1);
+          if (track.shapeOutputTimes) track.shapeOutputTimes.splice(idx, 1);
           track.shapes.splice(idx, 1);
         }
       });
@@ -997,6 +1018,7 @@ class AnimationRegistry {
               tr.scales.push(...cmd.scale);
             } else if (cmd.type === 'shape') {
               tr.shapeTimes.push(cmd.time);
+              if (tr.shapeOutputTimes) tr.shapeOutputTimes.push(cmd.outputTime);
               tr.shapes.push(cmd.shape);
             }
           });
@@ -1033,6 +1055,7 @@ class AnimationRegistry {
                 tr.scales.splice(idx * 3, 3);
               } else if (cmd.type === 'shape') {
                 tr.shapeTimes.splice(idx, 1);
+                if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
                 tr.shapes.splice(idx, 1);
               }
             }
@@ -1095,6 +1118,8 @@ class AnimationRegistry {
       
       if (key.type === 'transform' && track.positions && key.index !== undefined && key.channel !== undefined) {
         track.positions[key.index * 3 + key.channel] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
+      } else if (key.type === 'shape' && track.shapeOutputTimes && key.index !== undefined) {
+        track.shapeOutputTimes[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
       }
     });
   }
@@ -1358,12 +1383,74 @@ class AnimationRegistry {
       let s2 = null;
       let sIdx = 0;
 
+      // Evaluate Time Curve to get warpedTime
+      let warpedTime = track.playbackTime;
+      if (track.shapeOutputTimes && track.shapeOutputTimes.length >= 2) {
+        let idx = 0;
+        while (idx < track.shapeTimes.length - 2 && track.shapeTimes[idx + 1] < track.playbackTime) {
+          idx++;
+        }
+        const t1 = track.shapeTimes[idx];
+        const t2 = track.shapeTimes[idx + 1];
+        const dt = t2 - t1;
+        const v1 = (track.shapeOutputTimes && idx < track.shapeOutputTimes.length) ? track.shapeOutputTimes[idx] : t1;
+        const v2 = (track.shapeOutputTimes && (idx + 1) < track.shapeOutputTimes.length) ? track.shapeOutputTimes[idx + 1] : t2;
+        
+        let alpha = dt > 0 ? (track.playbackTime - t1) / dt : 0;
+        
+        const hasShapeTangents = track.tangentOffsets && (track.tangentOffsets[`${idx}_right_dt`] !== undefined || track.tangentOffsets[`${idx + 1}_left_dt`] !== undefined);
+        
+        if (hasShapeTangents) {
+          const rightDt = track.tangentOffsets[`${idx}_right_dt`];
+          const rightDv = track.tangentOffsets[`${idx}_right_dv`];
+          const leftDt = track.tangentOffsets[`${idx + 1}_left_dt`];
+          const leftDv = track.tangentOffsets[`${idx + 1}_left_dv`];
+          
+          const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+          const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+          
+          const slope = dt > 0 ? (v2 - v1) / dt : 0;
+          
+          const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+          const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+          
+          const p1x = dt0 / dt;
+          const p2x = 1 + dt1 / dt;
+          
+          const t_bez = this.getBezierT(alpha, p1x, p2x);
+          
+          const omt = 1 - t_bez;
+          const omtSq = omt * omt;
+          const omtCu = omtSq * omt;
+          const tSq = t_bez * t_bez;
+          const tCu = tSq * t_bez;
+          
+          const p1y = v1 + dv0;
+          const p2y = v2 + dv1;
+          
+          warpedTime = omtCu * v1 + 3 * omtSq * t_bez * p1y + 3 * omt * tSq * p2y + tCu * v2;
+        } else {
+          warpedTime = v1 + (v2 - v1) * alpha;
+        }
+        
+        // Clamp warped time to valid range
+        const minTime = track.shapeTimes[0];
+        const maxTime = track.shapeTimes[track.shapeTimes.length - 1];
+        warpedTime = Math.max(minTime, Math.min(maxTime, warpedTime));
+        
+        if (isNaN(warpedTime)) {
+          const rv = track.tangentOffsets ? track.tangentOffsets[`${idx}_right`] : 'N/A';
+          const lv = track.tangentOffsets ? track.tangentOffsets[`${idx + 1}_left`] : 'N/A';
+          console.log(`[Animation Debug] warpedTime is NaN! idx=${idx}, t1=${t1}, t2=${t2}, v1=${v1}, v2=${v2}, alpha=${alpha}, rightVal=${rv}, leftVal=${lv}`);
+        }
+      }
+
       if (track.shapeTimes.length === 1) {
         s1 = track.shapes[0];
         s2 = track.shapes[0];
         sAlpha = 0;
       } else {
-        while (sIdx < track.shapeTimes.length - 1 && track.shapeTimes[sIdx + 1] < track.playbackTime) {
+        while (sIdx < track.shapeTimes.length - 1 && track.shapeTimes[sIdx + 1] < warpedTime) {
           sIdx++;
         }
 
@@ -1371,7 +1458,7 @@ class AnimationRegistry {
         const st2 = track.shapeTimes[sIdx + 1];
 
         if (st2 > st1) {
-          sAlpha = (track.playbackTime - st1) / (st2 - st1);
+          sAlpha = (warpedTime - st1) / (st2 - st1);
         }
 
         s1 = track.shapes[sIdx];
@@ -1408,7 +1495,12 @@ class AnimationRegistry {
         }
 
         for (let i = 0; i < reqLen; i++) {
-          verts[i] = s1[i] + (s2[i] - s1[i]) * blend;
+          const val = s1[i] + (s2[i] - s1[i]) * blend;
+          if (isNaN(val)) {
+            console.error(`[Animation] NaN detected in interpolated vertex ${i}! blend=${blend}, s1=${s1[i]}, s2=${s2[i]}`);
+            return; // Stop updating to prevent console explosion
+          }
+          verts[i] = val;
         }
 
         if (mesh.updateGeometry) mesh.updateGeometry();
