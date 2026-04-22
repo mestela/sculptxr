@@ -315,7 +315,7 @@ Export.exportSGL = function (meshes, main) {
     }
 
     var data = new DataView(buffer, 0, off * 4);
-    return new Blob([data]);
+    return new Blob([data], { type: 'application/octet-stream' });
   } catch (e) {
     if (window.screenLog) {
       window.screenLog('[SXR Crash] ' + e.name + ': ' + e.message, 'red');

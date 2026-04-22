@@ -44,9 +44,15 @@ export default function getFilesWidgets(main) {
   y += 10;
   addHeader('Export Scene');
   addCheckbox('export_all', 'Export all', exportAll);
-  addButton('export_sgl', 'Save .sxr (SculptXR Native)');
-  addButton('export_glb', 'Save .glb (Animation DAW)');
-  addButton('browser_save', 'Save to browser storage');
+  addButton('export_sgl', 'Save .sxr (SculptXR Native)', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSGL();
+  });
+  addButton('export_glb', 'Save .glb (Animation DAW)', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsGLB();
+  });
+  addButton('browser_save', 'Save to browser storage', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveToBrowserStorage();
+  });
   addButton('browser_load', 'Load from local storage', () => {
     const guiFiles = (main.getGui && main.getGui()) ? main.getGui()._ctrlFiles : null;
     if (guiFiles) {
@@ -67,9 +73,15 @@ export default function getFilesWidgets(main) {
       });
     }
   });
-  addButton('export_obj', 'Save .obj');
-  addButton('export_ply', 'Save .ply');
-  addButton('export_stl', 'Save .stl');
+  addButton('export_obj', 'Save .obj', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsOBJ();
+  });
+  addButton('export_ply', 'Save .ply', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsPLY();
+  });
+  addButton('export_stl', 'Save .stl', () => {
+    if (main.getGui && main.getGui()._ctrlFiles) main.getGui()._ctrlFiles.saveFileAsSTL();
+  });
   addCheckbox('export_zbrush', 'OBJ color zbrush', objZbrush);
   addCheckbox('export_append', 'OBJ color append', objAppend);
   // addButton('go_sketchfab', 'Go to Sketchfab !');
