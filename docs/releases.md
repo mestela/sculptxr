@@ -1,3 +1,10 @@
+# v1.0.223
+- **Fix**: **VR Dopesheet Multi-Move**: Fixed state loss of selected keys across frames by storing `_animSelectedKeysInitialTimes` on `window` instead of `this`.
+- **Fix**: **VR Dopesheet Drag Fallback**: Populated `window._animSelectedKeysInitialTimes` when clicking keys in Dopesheet mode to prevent falling back to single key move.
+- **Fix**: **ReferenceError in _handleGraphTimelineRelease**: Defined `yToValue` using `TimelineHelper` to fix crash when releasing marquee in Dopesheet mode.
+- **Fix**: **Shape Key Mapping Bug**: Fixed incorrect value mapping when populating initial times for shape keys in Dopesheet mode.
+- **Cleanup**: Removed verbose logging added for debugging.
+
 # v1.0.221
 - **Feature**: **Graph Editor Multi-Key Dragging in VR**: Supported moving multiple selected keys in VR graph mode by capturing initial states on click.
 - **Feature**: **Transport Play Toggle**: Made play buttons act as toggles for both desktop and VR.
