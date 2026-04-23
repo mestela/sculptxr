@@ -540,6 +540,7 @@ class SculptGL extends Scene {
     // pointer
     canvas.addEventListener('pointerdown', cbOnPointer, false);
     canvas.addEventListener('pointermove', cbOnPointer, false);
+    canvas.addEventListener('pointerup', cbOnPointer, false);
 
     // mouse
     canvas.addEventListener('mousedown', this.onMouseDown.bind(this), false);
@@ -575,6 +576,18 @@ class SculptGL extends Scene {
 
   onPointer(event) {
     Tablet.pressure = event.pressure;
+    
+    // Handle Apple Pencil (pen) directly like a mouse to enable sculpting!
+    // Finger (touch) continues to fall through to Hammer.js for orbit/pan/zoom.
+    if (event.pointerType === 'pen') {
+      if (event.type === 'pointerdown') {
+        this.onMouseDown(event);
+      } else if (event.type === 'pointermove') {
+        this.onMouseMove(event);
+      } else if (event.type === 'pointerup') {
+        this.onMouseUp(event);
+      }
+    }
   }
 
   initHammer() {
@@ -688,8 +701,8 @@ class SculptGL extends Scene {
       return;
     this._focusGui = false;
     var evProxy = this._eventProxy;
-    evProxy.pageX = e.center.x;
-    evProxy.pageY = e.center.y;
+    evProxy.clientX = e.center.x;
+    evProxy.clientY = e.center.y;
     this.onPanUpdateNbPointers(Math.min(3, e.pointers.length));
   }
 
@@ -697,8 +710,8 @@ class SculptGL extends Scene {
     if (e.pointerType === 'mouse')
       return;
     var evProxy = this._eventProxy;
-    evProxy.pageX = e.center.x;
-    evProxy.pageY = e.center.y;
+    evProxy.clientX = e.center.x;
+    evProxy.clientY = e.center.y;
 
     var nbPointers = Math.min(3, e.pointers.length);
     if (nbPointers !== this._lastNbPointers) {
@@ -746,15 +759,15 @@ class SculptGL extends Scene {
 
     var evProxy = this._eventProxy;
 
-    // Handle both Hammer.js (e.center) and native dblclick (e.pageX)
-    evProxy.pageX = e.center ? e.center.x : e.pageX;
-    evProxy.pageY = e.center ? e.center.y : e.pageY;
+    // Handle both Hammer.js (e.center) and native dblclick (e.clientX)
+    evProxy.clientX = e.center ? e.center.x : e.clientX;
+    evProxy.clientY = e.center ? e.center.y : e.clientY;
 
     if (window._debugTapStats) {
-      console.log(`[SculptGL.js:onDoubleTap] Fired! Hammer=${!!e.center} X=${evProxy.pageX} Y=${evProxy.pageY}`);
+      console.log(`[SculptGL.js:onDoubleTap] Fired! Hammer=${!!e.center} X=${evProxy.clientX} Y=${evProxy.clientY}`);
     }
 
-    if (evProxy.pageX === undefined) return; // Prevent crash if completely blank event
+    if (evProxy.clientX === undefined) return; // Prevent crash if completely blank event
 
     this.setMousePosition(evProxy);
 

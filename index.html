@@ -83,6 +83,8 @@
         .xr-button:active {
             background: #004578;
         }
+
+
     </style>
 
     <script type="module" src="./src/main.js"></script>
@@ -237,6 +239,50 @@
                 cls.apply(console, args);
             };
 
+            console.error = function (...args) {
+                const msg = args.join(' ');
+                const logEl = document.getElementById('log');
+                if (logEl) {
+                    if (logEl.children.length > 50) {
+                        if (logEl.firstChild && logEl.firstChild.tagName === 'BUTTON') {
+                            if (logEl.children.length > 1) {
+                                logEl.removeChild(logEl.children[1]);
+                            }
+                        } else {
+                            logEl.removeChild(logEl.firstChild);
+                        }
+                    }
+                    const line = document.createElement('div');
+                    line.textContent = "[ERROR] " + msg;
+                    line.style.color = "red";
+                    logEl.appendChild(line);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+                cerr.apply(console, args);
+            };
+
+            window.addEventListener('error', function (e) {
+                const logEl = document.getElementById('log');
+                if (logEl) {
+                    const line = document.createElement('div');
+                    line.textContent = "UNCAUGHT: " + e.message + " at " + e.filename + ":" + e.lineno;
+                    line.style.color = "red";
+                    logEl.appendChild(line);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            });
+
+            window.addEventListener('unhandledrejection', function (e) {
+                const logEl = document.getElementById('log');
+                if (logEl) {
+                    const line = document.createElement('div');
+                    line.textContent = "REJECT: " + e.reason;
+                    line.style.color = "orange";
+                    logEl.appendChild(line);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+            });
+
             // Add Copy Button (Ensured logic)
             const logContainer = document.getElementById('log');
             if (logContainer) {
@@ -387,6 +433,86 @@
                     if (window.screenLog) window.screenLog("[USER EVENT ERR] App not ready!", "red");
                 }
             }
+
+            // Touch to Mouse Mapper for UI elements (iPad support)
+            (function() {
+                const mainCanvas = document.getElementById('canvas');
+                let activeTouch = null;
+                let activeTouchTarget = null;
+
+                function isOrHasSliderParent(el) {
+                    while (el && el !== document.body) {
+                        if (el.classList && el.classList.contains('gui-slider')) return true;
+                        el = el.parentElement;
+                    }
+                    return false;
+                }
+
+                document.addEventListener('touchstart', function(e) {
+                    if (e.target === mainCanvas) return;
+                    if (activeTouch !== null) return; // Only handle one touch
+                    
+                    const isSlider = isOrHasSliderParent(e.target);
+                    const isTimelineCanvas = e.target.tagName === 'CANVAS' && e.target !== mainCanvas;
+                    
+                    if (!isSlider && !isTimelineCanvas) {
+                        // Let it fall through to native scrolling!
+                        return;
+                    }
+                    
+                    activeTouch = e.touches[0];
+                    activeTouchTarget = e.target;
+                    dispatchMouseEvent('mousedown', activeTouch, activeTouchTarget);
+                    e.preventDefault();
+                }, { passive: false });
+
+                document.addEventListener('touchmove', function(e) {
+                    if (activeTouch === null) return;
+                    
+                    let touch = null;
+                    for (let i = 0; i < e.touches.length; i++) {
+                        if (e.touches[i].identifier === activeTouch.identifier) {
+                            touch = e.touches[i];
+                            break;
+                        }
+                    }
+                    if (!touch) return;
+
+                    dispatchMouseEvent('mousemove', touch, activeTouchTarget);
+                    e.preventDefault();
+                }, { passive: false });
+
+                document.addEventListener('touchend', function(e) {
+                    if (activeTouch === null) return;
+                    
+                    let touch = null;
+                    for (let i = 0; i < e.changedTouches.length; i++) {
+                        if (e.changedTouches[i].identifier === activeTouch.identifier) {
+                            touch = e.changedTouches[i];
+                            break;
+                        }
+                    }
+                    if (!touch) return;
+
+                    dispatchMouseEvent('mouseup', touch, activeTouchTarget);
+                    activeTouch = null;
+                    e.preventDefault();
+                }, { passive: false });
+
+                function dispatchMouseEvent(type, touch, target) {
+                    const mouseEvent = new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: touch.clientX,
+                        clientY: touch.clientY,
+                        screenX: touch.screenX,
+                        screenY: touch.screenY,
+                        which: 1
+                    });
+                    target.dispatchEvent(mouseEvent);
+                }
+            })();
         };
     </script>
 </body>

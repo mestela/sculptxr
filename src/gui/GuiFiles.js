@@ -63,7 +63,6 @@ class GuiFiles {
     // export
     menu.addTitle(TR('fileExportSceneTitle'));
     menu.addCheckbox(TR('fileExportAll'), this, '_exportAll');
-    menu.addButton(TR('fileExportSGL'), this, 'saveFileAsSGL');
     menu.addButton('Export .sxr (SculptXR)', this, 'saveFileAsSGL');
     menu.addButton('Export GLB (Anim)', this, 'saveFileAsGLB');
     menu.addButton(TR('fileExportOBJ'), this, 'saveFileAsOBJ' /*, 'CTRL+E'*/ );

@@ -115,6 +115,38 @@ class Gui {
       if (log) log.style.display = val ? 'block' : 'none';
       if (val && window.screenLog) window.screenLog("Debug Log Enabled", "lime");
     });
+
+    extra.addCheckbox('Show Eruda Console', false, (val) => {
+      if (val) {
+        if (!window.eruda) {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+          script.onload = () => {
+            window.eruda.init();
+            window.eruda.show();
+          };
+          document.head.appendChild(script);
+        } else {
+          window.eruda.show();
+          // Force show button if it was hidden
+          const container = document.querySelector('.eruda-container');
+          if (container && container.shadowRoot) {
+            const btn = container.shadowRoot.querySelector('.eruda-entry-btn');
+            if (btn) btn.style.setProperty('display', 'block', 'important');
+          }
+        }
+      } else {
+        if (window.eruda) {
+          window.eruda.hide();
+          // Hide button
+          const container = document.querySelector('.eruda-container');
+          if (container && container.shadowRoot) {
+            const btn = container.shadowRoot.querySelector('.eruda-entry-btn');
+            if (btn) btn.style.setProperty('display', 'none', 'important');
+          }
+        }
+      }
+    });
     
     const log = document.getElementById('log');
     if (log) log.style.display = opts.debugMode ? 'block' : 'none';

@@ -28,6 +28,15 @@ import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
 
+if (typeof XRRigidTransform === 'undefined') {
+    console.log('Polyfilling XRRigidTransform for iOS/Safari');
+    window.XRRigidTransform = class XRRigidTransform {
+        constructor(position = { x: 0, y: 0, z: 0 }, orientation = { x: 0, y: 0, z: 0, w: 1 }) {
+            this.position = { x: position.x || 0, y: position.y || 0, z: position.z || 0 };
+            this.orientation = { x: orientation.x || 0, y: orientation.y || 0, z: orientation.z || 0, w: orientation.w || 1 };
+        }
+    };
+}
 
 console.log(`Scene.js loaded ${VERSION}`);
 
