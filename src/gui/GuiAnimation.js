@@ -1,3 +1,4 @@
+import TimelineHelper from './TimelineHelper.js';
 import TR from './GuiTR.js';
 
 class GuiAnimation {
@@ -213,6 +214,12 @@ class GuiAnimation {
     let targetMesh = this._main.getMesh();
     if (!targetMesh) return;
     
+    const reg = window._animationRegistry;
+    const beforeState = new Map();
+    reg.tracks.forEach((track, meshId) => {
+      beforeState.set(meshId, TimelineHelper.cloneTrack(track));
+    });
+
     const fps = window._animFPS || 24;
     const targetTime = Math.round((window._animCurrentTime || 0) * fps) / fps;
     
@@ -220,13 +227,41 @@ class GuiAnimation {
     window._animCurrentTime = targetTime;
     window._animationRegistry.globalPlaybackTime = targetTime;
     
+    let actionName = '';
     if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
       window._animationRegistry.addShapeKey(targetMesh, targetTime);
+      actionName = 'add shape key';
       if (window.screenLog) window.screenLog('◆ Added Shape Key', 'lime');
     } else {
       window._animationRegistry.addTransformKey(targetMesh, targetTime);
+      actionName = 'add transform key';
       if (window.screenLog) window.screenLog('◆ Added Transform Key', 'lime');
     }
+
+    const afterState = new Map();
+    reg.tracks.forEach((track, meshId) => {
+      afterState.set(meshId, TimelineHelper.cloneTrack(track));
+    });
+
+    const cbUndo = () => {
+      beforeState.forEach((track, meshId) => {
+        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
+      });
+      this._main.render();
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    };
+
+    const cbRedo = () => {
+      afterState.forEach((track, meshId) => {
+        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
+      });
+      this._main.render();
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    };
+
+    this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, actionName);
   }
 
   copyKey() {
@@ -518,23 +553,57 @@ class GuiAnimation {
     let targetMesh = this._main.getMesh();
     if (!targetMesh) return;
 
+    const reg = window._animationRegistry;
+    const beforeState = new Map();
+    reg.tracks.forEach((track, meshId) => {
+      beforeState.set(meshId, TimelineHelper.cloneTrack(track));
+    });
+
+    let actionName = '';
+
     if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
       window._animationRegistry.deleteSelectedKeys(window._animSelectedKeys);
+      actionName = 'delete selected keys';
       if (window.screenLog) window.screenLog('🗑️ Deleted Selected Keys', 'orange');
-      window._animationRegistry.update(targetMesh, true);
-      return;
-    }
-    
-    const targetTime = window._animCurrentTime || 0;
-    
-    if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
-      window._animationRegistry.deleteShapeKey(targetMesh, targetTime);
-      if (window.screenLog) window.screenLog('🗑️ Deleted Shape Key', 'orange');
     } else {
-      window._animationRegistry.deleteTransformKey(targetMesh, targetTime);
-      if (window.screenLog) window.screenLog('🗑️ Deleted Transform Key', 'orange');
+      const targetTime = window._animCurrentTime || 0;
+      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
+        window._animationRegistry.deleteShapeKey(targetMesh, targetTime);
+        actionName = 'delete shape key';
+        if (window.screenLog) window.screenLog('🗑️ Deleted Shape Key', 'orange');
+      } else {
+        window._animationRegistry.deleteTransformKey(targetMesh, targetTime);
+        actionName = 'delete transform key';
+        if (window.screenLog) window.screenLog('🗑️ Deleted Transform Key', 'orange');
+      }
     }
+
     window._animationRegistry.update(targetMesh, true);
+
+    const afterState = new Map();
+    reg.tracks.forEach((track, meshId) => {
+      afterState.set(meshId, TimelineHelper.cloneTrack(track));
+    });
+
+    const cbUndo = () => {
+      beforeState.forEach((track, meshId) => {
+        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
+      });
+      this._main.render();
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    };
+
+    const cbRedo = () => {
+      afterState.forEach((track, meshId) => {
+        reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
+      });
+      this._main.render();
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    };
+
+    this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, actionName);
   }
 
   updateMesh() {

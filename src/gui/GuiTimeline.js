@@ -43,6 +43,7 @@ export default class GuiTimeline {
     this._isResizingPanel = false;
     this._lastMouseX = -1;
     this._lastMouseY = -1;
+    this._isMouseOver = false;
     window._animTiedTangents = true;
     this._viewStart = undefined;
     this._viewDuration = undefined;
@@ -76,8 +77,14 @@ export default class GuiTimeline {
     window.addEventListener('mousemove', this.onMouseMove.bind(this));
     window.addEventListener('mouseup', this.onMouseUp.bind(this));
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this._canvas.addEventListener('mouseenter', () => { this._isMouseOver = true; });
+    this._canvas.addEventListener('mouseleave', () => { this._isMouseOver = false; });
 
     this.onResize();
+  }
+
+  isMouseOver() {
+    return this._isMouseOver;
   }
 
   onResize() {
@@ -334,7 +341,7 @@ export default class GuiTimeline {
             const y = this.valueToY(val);
             
             const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
-            const isHovered = Math.hypot(this._lastMouseX - x, this._lastMouseY - y) < 10;
+            const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
             
             const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
                                     x >= Math.min(this._marqueeStart.x, this._marqueeEnd.x) &&
@@ -394,7 +401,7 @@ export default class GuiTimeline {
               ctx.lineTo(kx + rightXOff, ky + rightYOff);
               ctx.stroke();
               
-              const isRightHovered = Math.hypot(this._lastMouseX - (kx + rightXOff), this._lastMouseY - (ky + rightYOff)) < 10;
+              const isRightHovered = TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, this._lastMouseX, this._lastMouseY, 10);
               const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right';
 
               if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
@@ -413,7 +420,7 @@ export default class GuiTimeline {
               ctx.lineTo(kx + leftXOff, ky + leftYOff);
               ctx.stroke();
               
-              const isLeftHovered = Math.hypot(this._lastMouseX - (kx + leftXOff), this._lastMouseY - (ky + leftYOff)) < 10;
+              const isLeftHovered = TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, this._lastMouseX, this._lastMouseY, 10);
               const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'left';
 
               if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
@@ -505,7 +512,7 @@ export default class GuiTimeline {
               ctx.lineTo(kx1 + rightXOff, ky1 + rightYOff);
               ctx.stroke();
               
-              const isRightHovered = Math.hypot(this._lastMouseX - (kx1 + rightXOff), this._lastMouseY - (ky1 + rightYOff)) < 10;
+              const isRightHovered = TimelineHelper.isKeyHovered(kx1 + rightXOff, ky1 + rightYOff, this._lastMouseX, this._lastMouseY, 10);
               const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right' && this._activeTangentType === 'shape';
               
               if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
@@ -522,7 +529,7 @@ export default class GuiTimeline {
               ctx.lineTo(kx2 + leftXOff, ky2 + leftYOff);
               ctx.stroke();
               
-              const isLeftHovered = Math.hypot(this._lastMouseX - (kx2 + leftXOff), this._lastMouseY - (ky2 + leftYOff)) < 10;
+              const isLeftHovered = TimelineHelper.isKeyHovered(kx2 + leftXOff, ky2 + leftYOff, this._lastMouseX, this._lastMouseY, 10);
               const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'left' && this._activeTangentType === 'shape';
               
               if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
@@ -544,7 +551,7 @@ export default class GuiTimeline {
           const y = this.valueToY(val);
           
           const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
-          const isHovered = Math.hypot(this._lastMouseX - x, this._lastMouseY - y) < 10;
+          const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
           
           const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
                                   x >= Math.min(this._marqueeStart.x, this._marqueeEnd.x) &&
@@ -676,7 +683,7 @@ export default class GuiTimeline {
       
       this._undoTracksBeforeMove = new Map();
       reg.tracks.forEach((tr, mId) => {
-        this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+        this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
       });
 
       let minT = Infinity;
@@ -740,10 +747,12 @@ export default class GuiTimeline {
         // Check Center Scale handle
         const kxMid = (kxLeft + kxRight) / 2;
         const kyMid = (kyTop + kyBottom) / 2;
-        if (Math.abs(rx - kxMid) < 10 && Math.abs(ry - kyMid) < 10) {
+        if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - kyMid) < 20) {
           this._activeTransformHandle = 'scale_center';
           this._transformStartRx = rx;
-          this._animTransformInitialBox = { startTime: minT, endTime: maxT };
+          this._transformStartRy = ry;
+          this._scaleCenterLock = null;
+          this._animTransformInitialBox = { startTime: minT, endTime: maxT, minV, maxV };
           this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
           return;
         }
@@ -770,7 +779,7 @@ export default class GuiTimeline {
           const val = track.positions[i * 3 + c];
           const y = this.valueToY(val);
 
-          if (Math.hypot(rx - x, ry - y) < 10) {
+          if (TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) {
             this._isDraggingKeyframe = true;
             this._activeKeyframeTrack = track;
             this._activeMeshId = id;
@@ -779,7 +788,7 @@ export default class GuiTimeline {
             if (reg) {
               this._undoTracksBeforeMove = new Map();
               reg.tracks.forEach((tr, mId) => {
-                this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+                this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
               });
             }
             this._activeKeyframeIndex = i;
@@ -835,7 +844,7 @@ export default class GuiTimeline {
         const val = track.shapeOutputTimes[i];
         const y = this.valueToY(val);
 
-        if (Math.hypot(rx - x, ry - y) < 10) {
+        if (TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) {
           this._isDraggingKeyframe = true;
           this._activeKeyframeTrack = track;
           this._activeMeshId = id;
@@ -844,7 +853,7 @@ export default class GuiTimeline {
           if (reg) {
             this._undoTracksBeforeMove = new Map();
             reg.tracks.forEach((tr, mId) => {
-              this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+              this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
             });
           }
           this._activeKeyframeIndex = i;
@@ -918,8 +927,7 @@ export default class GuiTimeline {
 
         // Check right handle
         if (i < track.times.length - 1) {
-          const dist = Math.hypot(rx - (kx + rightXOff), ry - (ky + rightYOff));
-          if (dist < 10) {
+          if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) {
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
             this._activeTangentIndex = i;
@@ -933,8 +941,7 @@ export default class GuiTimeline {
         
         // Check left handle
         if (i > 0) {
-          const dist = Math.hypot(rx - (kx + leftXOff), ry - (ky + leftYOff));
-          if (dist < 10) {
+          if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) {
             this._isDraggingTangent = true;
             this._activeTangentTrack = track;
             this._activeTangentIndex = i;
@@ -1095,23 +1102,7 @@ export default class GuiTimeline {
     loop();
   }
 
-  cloneTrack(track) {
-    const cloned = {
-      times: track.times ? [...track.times] : [],
-      positions: track.positions ? [...track.positions] : [],
-      quaternions: track.quaternions ? [...track.quaternions] : [],
-      scales: track.scales ? [...track.scales] : [],
-      shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
-      shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
-      playbackTime: track.playbackTime,
-      muted: track.muted,
-      tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
-    };
-    if (track.restPos) cloned.restPos = [...track.restPos];
-    if (track.restQuat) cloned.restQuat = [...track.restQuat];
-    if (track.restScale) cloned.restScale = [...track.restScale];
-    return cloned;
-  }
+
 
   onMouseDown(e) {
     const rect = this._canvas.getBoundingClientRect();
@@ -1247,9 +1238,27 @@ export default class GuiTimeline {
           const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
           const kxMid = (kxLeft + kxRight) / 2;
 
-          const boxSize = 40;
-          const by = headerH + (this._cssHeight - headerH) / 2 - boxSize / 2;
-          const cyMid = headerH + (this._cssHeight - headerH) / 2;
+          let minV = Infinity;
+          let maxV = -Infinity;
+          if (window._animSelectedKeys) {
+            window._animSelectedKeys.forEach(sk => {
+              const tr = reg.tracks.get(sk.meshId);
+              if (tr && sk.type === 'transform' && tr.positions) {
+                const val = tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
+                if (val < minV) minV = val;
+                if (val > maxV) maxV = val;
+              }
+            });
+          }
+          
+          let kyTop = headerH;
+          let kyBottom = this._cssHeight;
+          if (minV !== Infinity && maxV !== Infinity && this._mode === 'graph') {
+            kyTop = this.valueToY(maxV);
+            kyBottom = this.valueToY(minV);
+          }
+          
+          const cyMid = (kyTop + kyBottom) / 2;
 
           if (Math.abs(rx - kxLeft) < 10) {
             this._activeTransformHandle = 'left';
@@ -1278,13 +1287,27 @@ export default class GuiTimeline {
           } else if (Math.abs(rx - kxMid) < 20 && Math.abs(ry - cyMid) < 20) {
             this._activeTransformHandle = 'scale_center';
             this._transformStartRx = rx;
+            this._transformStartRy = ry;
+            this._scaleCenterLock = null;
             this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
             if (window._animSelectedKeys) {
-              this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
-                const tr = reg.tracks.get(sk.meshId);
-                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
-                return { ...sk, time };
+              const singleSelected = window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+              const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+              this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, selChannel);
+              
+              // Calculate minV and maxV for vertical scaling
+              let minV = Infinity;
+              let maxV = -Infinity;
+              this._animTransformBoxInitialKeys.forEach(sk => {
+                if (sk.val !== undefined) {
+                  if (sk.val < minV) minV = sk.val;
+                  if (sk.val > maxV) maxV = sk.val;
+                }
               });
+              if (minV !== Infinity && maxV !== Infinity) {
+                this._animTransformInitialBox.minV = minV;
+                this._animTransformInitialBox.maxV = maxV;
+              }
             }
             return;
           } else if (rx >= kxLeft && rx <= kxRight) {
@@ -1328,7 +1351,7 @@ export default class GuiTimeline {
                   if (reg) {
                     this._undoTracksBeforeMove = new Map();
                     reg.tracks.forEach((tr, mId) => {
-                      this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+                      this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
                     });
                   }
                   this._activeKeyframeIndex = i;
@@ -1543,6 +1566,16 @@ export default class GuiTimeline {
       }
       this.handleInteraction(e);
     } else if (this._isDraggingKeyframe) {
+      let loopStart = this._viewStart;
+      let visibleDuration = this._viewDuration;
+      
+      if (this._mode === 'dope') {
+        loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+        const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+        const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+        visibleDuration = Math.max(0.1, loopEnd - loopStart);
+      }
+
       let t = (rx - tlX) / tlW;
       t = Math.max(0, Math.min(1, t));
       const targetTime = loopStart + t * visibleDuration;
@@ -1701,20 +1734,47 @@ export default class GuiTimeline {
           }
         } else if (this._activeTransformHandle === 'scale_center') {
           const initMid = (initBox.startTime + initBox.endTime) / 2;
-          const scaleFactor = 1.0 + dx / 150.0;
+          const initMidV = (initBox.minV !== undefined && initBox.maxV !== undefined) ? (initBox.minV + initBox.maxV) / 2 : 0;
           
-          tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
-          tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
+          const dx = rx - this._transformStartRx;
+          const dy = ry - this._transformStartRy;
           
-          if (this._animTransformBoxInitialKeys) {
-            this._animTransformBoxInitialKeys.forEach(initKey => {
-              const track = window._animationRegistry.tracks.get(initKey.meshId);
-              if (track && initKey.type === 'transform' && track.times) {
-                const relTime = initKey.time - initMid;
-                const newTime = initMid + relTime * scaleFactor;
-                track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
-              }
-            });
+          if (!this._scaleCenterLock) {
+            if (Math.abs(dy) > 10) {
+              this._scaleCenterLock = 'vertical';
+            } else if (Math.abs(dx) > 10 || this._mode === 'dope') {
+              this._scaleCenterLock = 'horizontal';
+            }
+          }
+          
+          if (this._scaleCenterLock === 'horizontal') {
+            const scaleFactor = 1.0 + dx / 150.0;
+            tBox.startTime = initMid - (initMid - initBox.startTime) * scaleFactor;
+            tBox.endTime = initMid + (initBox.endTime - initMid) * scaleFactor;
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.times) {
+                  const relTime = initKey.time - initMid;
+                  const newTime = initMid + relTime * scaleFactor;
+                  track.times[initKey.index] = Math.max(0, Math.min(mDurVal, newTime));
+                }
+              });
+            }
+          } else if (this._scaleCenterLock === 'vertical' && initBox.minV !== undefined) {
+            const scaleFactorY = 1.0 - dy / 150.0;
+            
+            if (this._animTransformBoxInitialKeys) {
+              this._animTransformBoxInitialKeys.forEach(initKey => {
+                const track = window._animationRegistry.tracks.get(initKey.meshId);
+                if (track && initKey.type === 'transform' && track.positions) {
+                  const relVal = initKey.val - initMidV;
+                  const newVal = initMidV + relVal * scaleFactorY;
+                  track.positions[initKey.index * 3 + (initKey.channel !== undefined ? initKey.channel : 0)] = newVal;
+                }
+              });
+            }
           }
         } else if (this._activeTransformHandle === 'center') {
           const dtClamped = Math.max(-initBox.startTime, Math.min(mDurVal - initBox.endTime, dt));
@@ -1794,12 +1854,12 @@ export default class GuiTimeline {
           const beforeState = this._undoTracksBeforeMove;
           const afterState = new Map();
           reg.tracks.forEach((track, meshId) => {
-            afterState.set(meshId, this.cloneTrack(track));
+            afterState.set(meshId, TimelineHelper.cloneTrack(track));
           });
           
           const cbUndo = () => {
             beforeState.forEach((track, meshId) => {
-              reg.tracks.set(meshId, this.cloneTrack(track));
+              reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
             });
             this._main.render();
             this.draw();
@@ -1807,7 +1867,7 @@ export default class GuiTimeline {
           
           const cbRedo = () => {
             afterState.forEach((track, meshId) => {
-              reg.tracks.set(meshId, this.cloneTrack(track));
+              reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
             });
             this._main.render();
             this.draw();
@@ -1972,12 +2032,12 @@ export default class GuiTimeline {
         const beforeState = this._undoTracksBeforeMove;
         const afterState = new Map();
         reg.tracks.forEach((track, meshId) => {
-          afterState.set(meshId, this.cloneTrack(track));
+          afterState.set(meshId, TimelineHelper.cloneTrack(track));
         });
         
         const cbUndo = () => {
           beforeState.forEach((track, meshId) => {
-            reg.tracks.set(meshId, this.cloneTrack(track));
+            reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
           });
           this._main.render();
           this.draw();
@@ -1985,7 +2045,7 @@ export default class GuiTimeline {
         
         const cbRedo = () => {
           afterState.forEach((track, meshId) => {
-            reg.tracks.set(meshId, this.cloneTrack(track));
+            reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
           });
           this._main.render();
           this.draw();
@@ -2103,17 +2163,7 @@ export default class GuiTimeline {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);
         if (track && track.times) {
-          for (let i = 0; i < track.times.length; i++) {
-            const t = track.times[i];
-            if (t >= tMin && t <= tMax) {
-              for (let c = 0; c < 3; c++) {
-                const val = track.positions[i * 3 + c];
-                if (val >= vMin && val <= vMax) {
-                  newKeys.push({ meshId: id, type: 'transform', index: i, channel: c });
-                }
-              }
-            }
-          }
+          newKeys.push(...TimelineHelper.getKeysInGraphRange(reg, id, tMin, tMax, vMin, vMax));
         }
       }
       if (!addMode) window._animSelectedKeys = [];

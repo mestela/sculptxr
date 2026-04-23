@@ -109,7 +109,7 @@ class StateManager {
       return;
 
     var state = this.getCurrentState();
-    console.log("[Undo] Operation: " + (state.name || state.constructor.name));
+    console.log("[Undo] " + (state.name || state.constructor.name));
     var redoState = state.createRedo();
     redoState.squash = state.squash;
     this._redos.push(redoState);
@@ -125,7 +125,7 @@ class StateManager {
       return;
 
     var state = this._redos[this._redos.length - 1];
-    console.log("[Redo] Operation: " + (state.name || state.constructor.name));
+    console.log("[Redo] " + (state.name || state.constructor.name));
     state.redo();
     this._curUndoIndex++;
     this._redos.pop();

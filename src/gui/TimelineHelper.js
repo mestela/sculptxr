@@ -52,6 +52,7 @@ export default class TimelineHelper {
 
     tracks.forEach(([id, track], idx) => {
       const ty = w.y + headerH + (idx * trackH);
+      const tyBottom = ty + trackH;
       
       // Alternate lane background
       if (idx % 2 === 1) {
@@ -122,23 +123,27 @@ export default class TimelineHelper {
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i);
             let isInsideMarquee = false;
             
-            if (uiState.isDraggingMarquee && uiState.marqueeStart && uiState.marqueeEnd) {
-              const mx1 = Math.min(uiState.marqueeStart.x, uiState.marqueeEnd.x);
-              const mx2 = Math.max(uiState.marqueeStart.x, uiState.marqueeEnd.x);
-              const my1 = Math.min(uiState.marqueeStart.y, uiState.marqueeEnd.y);
-              const my2 = Math.max(uiState.marqueeStart.y, uiState.marqueeEnd.y);
+            if (uiState._marqueeStart && uiState._marqueeEnd) {
+              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x);
+              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x);
+              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y);
+              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y);
               
-              if (kx >= mx1 && kx <= mx2 && ky >= my1 && ky <= my2) {
+              const laneOverlap = (my1 <= tyBottom && my2 >= ty);
+              
+              if (laneOverlap && kx >= mx1 && kx <= mx2) {
                 isInsideMarquee = true;
               }
             }
             
+            const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
-
+            
             if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
+            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan for hover
             else ctx.fillStyle = '#888888'; // Muted Gray
             
-            ctx.strokeStyle = isSelected ? '#ffff00' : '#888888';
+            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#888888');
             ctx.lineWidth = 1.5;
             
             ctx.beginPath();
@@ -164,23 +169,28 @@ export default class TimelineHelper {
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
             let isInsideMarquee = false;
             
-            if (uiState.isDraggingMarquee && uiState.marqueeStart && uiState.marqueeEnd) {
-              const mx1 = Math.min(uiState.marqueeStart.x, uiState.marqueeEnd.x);
-              const mx2 = Math.max(uiState.marqueeStart.x, uiState.marqueeEnd.x);
-              const my1 = Math.min(uiState.marqueeStart.y, uiState.marqueeEnd.y);
-              const my2 = Math.max(uiState.marqueeStart.y, uiState.marqueeEnd.y);
+            if (uiState._marqueeStart && uiState._marqueeEnd) {
+              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x);
+              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x);
+              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y);
+              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y);
               
-              if (kx >= mx1 && kx <= mx2 && ky >= my1 && ky <= my2) {
+              const laneOverlap = (my1 <= tyBottom && my2 >= ty);
+              
+              if (laneOverlap && kx >= mx1 && kx <= mx2) {
                 isInsideMarquee = true;
+                console.log(`[DopeSheet] Shape Key ${i} in track ${id} is inside marquee!`);
               }
             }
             
+            const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
-
+            
             if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
+            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan for hover
             else ctx.fillStyle = '#888888'; // Muted Gray
             
-            ctx.strokeStyle = isSelected ? '#ffff00' : '#888888';
+            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#888888');
             ctx.lineWidth = 1.5;
             
             ctx.beginPath();
@@ -238,6 +248,47 @@ export default class TimelineHelper {
     }
   }
 
+  static getKeysInGraphRange(reg, trackId, tMin, tMax, vMin, vMax) {
+    const newKeys = [];
+    const track = reg.tracks.get(trackId);
+    if (track && track.times) {
+      for (let i = 0; i < track.times.length; i++) {
+        const t = track.times[i];
+        if (t >= tMin && t <= tMax) {
+          for (let c = 0; c < 3; c++) {
+            const val = track.positions[i * 3 + c];
+            if (val >= vMin && val <= vMax) {
+              newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c, time: t });
+            }
+          }
+        }
+      }
+    }
+    return newKeys;
+  }
+
+  static isKeyHovered(keyX, keyY, cursorX, cursorY, threshold) {
+    return Math.hypot(cursorX - keyX, cursorY - keyY) < threshold;
+  }
+
+  static cloneTrack(track) {
+    const cloned = {
+      times: track.times ? [...track.times] : [],
+      positions: track.positions ? [...track.positions] : [],
+      quaternions: track.quaternions ? [...track.quaternions] : [],
+      scales: track.scales ? [...track.scales] : [],
+      shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
+      shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+      playbackTime: track.playbackTime,
+      muted: track.muted,
+      tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
+    };
+    if (track.restPos) cloned.restPos = [...track.restPos];
+    if (track.restQuat) cloned.restQuat = [...track.restQuat];
+    if (track.restScale) cloned.restScale = [...track.restScale];
+    return cloned;
+  }
+
   static drawMarqueeBox(ctx, marqueeStart, marqueeEnd, offsetX = 0, offsetY = 0, lineWidth = 1) {
     if (!marqueeStart || !marqueeEnd) return;
     ctx.fillStyle = 'rgba(0, 255, 255, 0.1)';
@@ -259,37 +310,17 @@ export default class TimelineHelper {
     let kyBottom = w.y + w.h;
     
     if (valueToYFunc && tBox.minV !== undefined && tBox.maxV !== undefined) {
-      // GRAPH MODE (Bounded Box)
-      const kyTop = valueToYFunc(tBox.maxV);
-      const kyBottom = valueToYFunc(tBox.minV);
+      kyTop = valueToYFunc(tBox.maxV);
+      kyBottom = valueToYFunc(tBox.minV);
       
-      ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
-      ctx.fillRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
-
-      ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
-      
+      // Draw top/bottom handles for graph mode
       ctx.fillStyle = '#ffff00';
       const kxMid = (kxLeft + kxRight) / 2;
-      const kyMid = (kyTop + kyBottom) / 2;
-      
-      // Top edge handle
       ctx.fillRect(kxMid - 10, kyTop - 5, 20, 5);
-      // Bottom edge handle
       ctx.fillRect(kxMid - 10, kyBottom, 20, 5);
-      // Left edge handle
-      ctx.fillRect(kxLeft - 5, kyMid - 10, 5, 20);
-      // Right edge handle
-      ctx.fillRect(kxRight, kyMid - 10, 5, 20);
-      // Center handle
-      ctx.fillRect(kxMid - 5, kyMid - 5, 10, 10);
-      
-      ctx.restore();
-      return; // Exit early for graph mode
     }
 
-    // DOPESHEET MODE (Full Height)
+    ctx.save();
     ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
     ctx.fillRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
 

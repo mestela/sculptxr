@@ -1,13 +1,14 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Active Development - Animation Tools Tweaks
+**Project Status**: Active Development - Timeline Unification
 **Current Working Directory**: `/Users/mattestela/.gemini/jetski/scratch/sculptxr`
-**Checkpoint**: Shape Key Time Warping and VR Fixes Completed
+**Checkpoint**: Timeline and Graph Editor Unification Completed (Desktop Verified)
 
 ## MANDATORY reading
 You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the overall project before responding. NO EXCEPTIONS.
 
 ## Deployed Version
+- **Local**: v1.0.223
 - **Beta**: v1.0.221
 - **Prod**: v1.0.220
 
@@ -16,12 +17,11 @@ You MUST read `docs/overview.md` and `docs/code_summaries.md` for context on the
 - **Workflow**: Provide copy-pasteable snippets.
 
 ## Accomplishments
-- **Time Warping**: Implemented 2D Bezier time curve for shape keys in Graph Editor (Desktop & VR).
-- **Parity**: Ported Time Warping UI and interaction to VR (`GuiXR.js`).
-- **File I/O**: Upgraded `.sxr` format to Version 7 to save/load shape key output times and tangents.
-- **UI Polish**: Fixed stop icon size on desktop, enabled dragging through visibility checkboxes in VR Outliner.
-- **Bug Fixes**: Resolved many crashes and race conditions in VR UI and animation system.
-- **Gallery Fix**: Fixed race condition and callback handling for "Load from local storage" in VR.
+- **Timeline Unification**: Created `src/gui/TimelineHelper.js` and extracted shared math, dopesheet rendering, key moving, tangent manipulation, and overlay drawing (Marquee, Transform Box).
+- **Desktop Polish**: Fixed many issues in Desktop timeline (handles missing, wrong colors, live highlight failing, key popping).
+- **Undo Support**: Added state-based Undo/Redo support to `addKeyframe` and `deleteKey` in `GuiAnimation.js`.
+- **Interaction Refinement**: Added directional lock and vertical scaling to center handle of Transform Box in Graph Editor!
 
 ## Outstanding Issues / Next Steps
-
+- **VR Verification**: The refactored Dopesheet rendering and interaction logic in `GuiXR.js` needs to be verified in VR on device!
+- **Further Unification**: Consider extracting more interaction state machines if needed.

@@ -4656,7 +4656,7 @@ export default class GuiXR {
             const y = valueToY(val);
             
             const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i && k.channel === channel);
-            const isHovered = this._cursor.active && Math.hypot(this._cursor.x - x, this._cursor.y - y) < 20;
+            const isHovered = this._cursor.active && TimelineHelper.isKeyHovered(x, y, this._cursor.x, this._cursor.y, 20);
             
             const isInsideMarquee = this._isDraggingMarquee && this._marqueeStart && this._marqueeEnd &&
                                     x >= Math.min(this._marqueeStart.x, this._marqueeEnd.x) &&
@@ -4974,7 +4974,7 @@ export default class GuiXR {
 
             // Check right handle
             if (i < track.times.length - 1) {
-              if (Math.hypot(rx - (kx + rightXOff), ry - (ky + rightYOff)) < 20) {
+              if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 20)) {
                 this._isDraggingTangent = true;
                 this._activeTangentTrack = track;
                 this._activeTangentIndex = i;
@@ -4987,7 +4987,7 @@ export default class GuiXR {
             }
             // Check left handle
             if (i > 0) {
-              if (Math.hypot(rx - (kx + leftXOff), ry - (ky + leftYOff)) < 20) {
+              if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 20)) {
                 this._isDraggingTangent = true;
                 this._activeTangentTrack = track;
                 this._activeTangentIndex = i;
@@ -5034,7 +5034,7 @@ export default class GuiXR {
 
             // Check right handle
             if (i < track.shapeTimes.length - 1) {
-              if (Math.hypot(rx - (kx1 + rightXOff), ry - (ky1_val + rightYOff)) < 20) {
+              if (TimelineHelper.isKeyHovered(kx1 + rightXOff, ky1_val + rightYOff, rx, ry, 20)) {
                 this._isDraggingTangent = true;
                 this._activeTangentTrack = track;
                 this._activeTangentIndex = i;
@@ -5047,7 +5047,7 @@ export default class GuiXR {
             }
             // Check left handle
             if (i > 0) {
-              if (Math.hypot(rx - (kx2 + leftXOff), ry - (ky2_val + leftYOff)) < 20) {
+              if (TimelineHelper.isKeyHovered(kx2 + leftXOff, ky2_val + leftYOff, rx, ry, 20)) {
                 this._isDraggingTangent = true;
                 this._activeTangentTrack = track;
                 this._activeTangentIndex = i + 1;
@@ -5071,7 +5071,7 @@ export default class GuiXR {
               const val = track.positions[i * 3 + c];
               const y = valueToY(val);
 
-              if (Math.hypot(rx - x, ry - y) < 20) {
+              if (TimelineHelper.isKeyHovered(x, y, rx, ry, 20)) {
                 this._isDraggingKeyframe = true;
                 this._activeTimeline = w;
                 this._activeKeyframeTrack = track;
@@ -5143,7 +5143,7 @@ export default class GuiXR {
             const val = track.shapeOutputTimes[i];
             const y = valueToY(val);
 
-            if (Math.hypot(rx - x, ry - y) < 20) {
+            if (TimelineHelper.isKeyHovered(x, y, rx, ry, 20)) {
               this._isDraggingKeyframe = true;
               this._activeTimeline = w;
               this._activeKeyframeTrack = track;
@@ -5616,19 +5616,13 @@ export default class GuiXR {
       let pendingKeys = [];
 
       if (track.times && track.positions) {
-        for (let i = 0; i < track.times.length; i++) {
-          const t = track.times[i];
-          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+        const tMin = loopStart + ((xMin - tlX) / tlW) * visibleDuration;
+        const tMax = loopStart + ((xMax - tlX) / tlW) * visibleDuration;
+        const vMax = yToValue(yMin);
+        const vMin = yToValue(yMax);
 
-          for (let c = 0; c < 3; c++) {
-            const val = track.positions[i * 3 + c];
-            const y = valueToY(val);
-
-            if (x >= xMin && x <= xMax && y >= yMin && y <= yMax) {
-              pendingKeys.push({ meshId: id, type: 'transform', index: i, channel: c, time: t });
-            }
-          }
-        }
+        const keysInBox = TimelineHelper.getKeysInGraphRange(reg, id, tMin, tMax, vMin, vMax);
+        pendingKeys.push(...keysInBox);
       }
 
       const beforeSelection = this._undoSelectionBeforeMarquee || [];
@@ -5765,17 +5759,7 @@ export default class GuiXR {
       
       const cbUndo = () => {
         beforeState.forEach((track, meshId) => {
-          reg.tracks.set(meshId, {
-            times: track.times ? [...track.times] : [],
-            positions: track.positions ? [...track.positions] : [],
-            quaternions: track.quaternions ? [...track.quaternions] : [],
-            scales: track.scales ? [...track.scales] : [],
-            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
-            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
-            playbackTime: track.playbackTime,
-            muted: track.muted,
-            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
-          });
+          reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
         });
         console.log("[Graph Undo] Restored tracks in cbUndo");
         if (this._main) {
@@ -5791,17 +5775,7 @@ export default class GuiXR {
       
       const cbRedo = () => {
         afterState.forEach((track, meshId) => {
-          reg.tracks.set(meshId, {
-            times: track.times ? [...track.times] : [],
-            positions: track.positions ? [...track.positions] : [],
-            quaternions: track.quaternions ? [...track.quaternions] : [],
-            scales: track.scales ? [...track.scales] : [],
-            shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
-            shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
-            playbackTime: track.playbackTime,
-            muted: track.muted,
-            tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined
-          });
+          reg.tracks.set(meshId, TimelineHelper.cloneTrack(track));
         });
         console.log("[Graph Redo] Restored tracks in cbRedo");
         if (this._main) {
