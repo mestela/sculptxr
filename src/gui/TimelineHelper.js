@@ -117,17 +117,17 @@ export default class TimelineHelper {
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           if (t >= loopStart && t <= loopEnd) {
-            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const kx = w.x + tlX + ((t - loopStart) / visibleDuration) * tlW;
             const ky = ty + trackH / 2;
             
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i);
             let isInsideMarquee = false;
             
             if (uiState._marqueeStart && uiState._marqueeEnd) {
-              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x);
-              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x);
-              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y);
-              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y);
+              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
               
               const laneOverlap = (my1 <= tyBottom && my2 >= ty);
               
@@ -163,17 +163,17 @@ export default class TimelineHelper {
         for (let i = 0; i < track.shapeTimes.length; i++) {
           const st = track.shapeTimes[i];
           if (st >= loopStart && st <= loopEnd) {
-            const kx = tlX + ((st - loopStart) / visibleDuration) * tlW;
+            const kx = w.x + tlX + ((st - loopStart) / visibleDuration) * tlW;
             const ky = ty + trackH / 2;
             
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
             let isInsideMarquee = false;
             
             if (uiState._marqueeStart && uiState._marqueeEnd) {
-              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x);
-              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x);
-              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y);
-              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y);
+              const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+              const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+              const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+              const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
               
               const laneOverlap = (my1 <= tyBottom && my2 >= ty);
               
@@ -287,6 +287,36 @@ export default class TimelineHelper {
     if (track.restQuat) cloned.restQuat = [...track.restQuat];
     if (track.restScale) cloned.restScale = [...track.restScale];
     return cloned;
+  }
+
+  static scaleKeysVertical(track, initialKeys, initialBox, targetVal, handle, tBox) {
+    let factor = 1.0;
+    if (initialBox.maxV !== initialBox.minV) {
+      if (handle === 'top') {
+        factor = (targetVal - initialBox.minV) / (initialBox.maxV - initialBox.minV);
+      } else {
+        factor = (initialBox.maxV - targetVal) / (initialBox.maxV - initialBox.minV);
+      }
+    }
+    
+    initialKeys.forEach(sk => {
+      if (sk.type === 'transform') {
+        const initialVal = sk.val;
+        let newVal = 0;
+        if (handle === 'top') {
+          newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
+        } else {
+          newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
+        }
+        track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
+      }
+    });
+    
+    if (handle === 'top') {
+      tBox.maxV = targetVal;
+    } else {
+      tBox.minV = targetVal;
+    }
   }
 
   static drawMarqueeBox(ctx, marqueeStart, marqueeEnd, offsetX = 0, offsetY = 0, lineWidth = 1) {

@@ -1597,8 +1597,8 @@ export default class GuiXR {
           const dt = targetTime - (window._animLastTouchedKeyTime !== undefined ? window._animLastTouchedKeyTime : targetTime);
           
           if (window._animationRegistry) {
-            if (this._animSelectedKeysInitialTimes) {
-              window._animationRegistry.moveSelectedKeys(this._animSelectedKeysInitialTimes, dt, masterLen);
+            if (window._animSelectedKeysInitialTimes) {
+              window._animationRegistry.moveSelectedKeys(window._animSelectedKeysInitialTimes, dt, masterLen);
             } else {
               const meshId = Array.from(window._animationRegistry.tracks.entries()).find(([id, t]) => t === this._activeKeyframeTrack)?.[0];
               if (meshId) {
@@ -2210,6 +2210,12 @@ export default class GuiXR {
                       window._animTransformBox = null;
                     }
                     window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                    window._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                      const tr = window._animationRegistry.tracks.get(k.meshId);
+                      const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                      const startVal = k.type === 'shape' ? (tr.shapeOutputTimes ? tr.shapeOutputTimes[k.index] : time) : 0;
+                      return { ...k, time, startVal };
+                    });
                     keyFound = true;
                     break;
                   }
@@ -2238,6 +2244,12 @@ export default class GuiXR {
                         window._animTransformBox = null;
                       }
                       window._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => ({...sk}));
+                      window._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                        const tr = window._animationRegistry.tracks.get(k.meshId);
+                        const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
+                        const val = k.type === 'transform' ? tr.positions[k.index * 3 + (k.channel !== undefined ? k.channel : 0)] : 0;
+                        return { ...k, time, startVal: val };
+                      });
                       keyFound = true;
                       break;
                     }
@@ -5102,14 +5114,14 @@ export default class GuiXR {
 
                 const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i);
                 if (inSel) {
-                  this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                  window._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
                     const tr = reg.tracks.get(k.meshId);
                     const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
                     const val = k.type === 'transform' ? tr.positions[k.index * 3 + (k.channel !== undefined ? k.channel : 0)] : 0;
                     return { ...k, time, startVal: val };
                   });
                 } else {
-                  this._animSelectedKeysInitialTimes = null;
+                  window._animSelectedKeysInitialTimes = null;
                   
                   const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
                   window._animSelectedKeys = [{ meshId: id, type: 'transform', index: i, channel: c, time: t }];
@@ -5164,14 +5176,14 @@ export default class GuiXR {
 
               const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
               if (inSel) {
-                this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                window._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
                   const tr = reg.tracks.get(k.meshId);
                   const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
                   const startVal = k.type === 'shape' ? tr.shapeOutputTimes[k.index] : 0;
-                  return { ...k, time, startVal: val };
+                  return { ...k, time, startVal: startVal };
                 });
               } else {
-                this._animSelectedKeysInitialTimes = null;
+                window._animSelectedKeysInitialTimes = null;
                 
                 const beforeSelection = window._animSelectedKeys ? [...window._animSelectedKeys] : [];
                 window._animSelectedKeys = [{ meshId: id, type: 'shape', index: i, time: t }];
@@ -5358,6 +5370,7 @@ export default class GuiXR {
           return;
         }
       }
+    } // Close if (isRisingEdge)
 
       if (this._isDraggingPlayhead) {
         let t = (rx - tlX) / tlW;
@@ -5374,15 +5387,19 @@ export default class GuiXR {
       } else if (this._isDraggingKeyframe) {
         let t = (rx - 200) / tlW;
         t = Math.max(0, Math.min(1, t));
-        const targetTime = window._animViewStart + t * window._animViewDuration;
-        const keyTime = this._activeKeyframeTrack.times[this._activeKeyframeIndex];
-        const dt = targetTime - this._keyDragStartTime;
         
+        const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+        const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+        const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+        const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+
+        const targetTime = (window._animTimelineMode === 'dope') ? (loopStart + t * visibleDuration) : (window._animViewStart + t * window._animViewDuration);
+        const dt = targetTime - this._keyDragStartTime;
         
         const targetVal = yToValue(ry);
         const dVal = targetVal - this._keyDragStartVal;
         
-        const keysToMove = this._animSelectedKeysInitialTimes || [{
+        const keysToMove = window._animSelectedKeysInitialTimes || [{
           meshId: this._activeMeshId,
           type: this._activeKeyframeType,
           index: this._activeKeyframeIndex,
@@ -5391,7 +5408,10 @@ export default class GuiXR {
           startVal: this._keyDragStartVal
         }];
         
-        TimelineHelper.moveKeys(reg, keysToMove, dt, dVal, mDurVal, this._main);
+        const dValToUse = (window._animTimelineMode === 'graph') ? dVal : undefined;
+        
+        
+        TimelineHelper.moveKeys(reg, keysToMove, dt, dValToUse, mDurVal, this._main);
         this._needsRedraw = true;
       } else if (this._isDraggingTangent) {
         const activeTangent = {
@@ -5536,7 +5556,6 @@ export default class GuiXR {
         this._marqueeEnd = { x: rx, y: ry };
         this._needsRedraw = true;
       }
-    }
   }
 
   autoFitGraphTimeline(w) {
@@ -5605,6 +5624,8 @@ export default class GuiXR {
       const midY = headerH + (this._activeTimeline.h - headerH) / 2;
       return midY - (val * window._animZoomY + window._animPanY);
     };
+
+    const yToValue = (y) => TimelineHelper.yToValue(y, this._activeTimeline.h, headerH, window._animZoomY, window._animPanY, 0);
 
     if (this._isDraggingMarquee) {
       const xMin = Math.min(this._marqueeStart.x, this._marqueeEnd.x);

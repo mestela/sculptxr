@@ -1631,35 +1631,12 @@ export default class GuiTimeline {
       const targetVal = this.yToValue(ry);
       const initialBox = this._animTransformInitialBox;
       
-      let factor = 1.0;
-      if (initialBox.maxV !== initialBox.minV) {
-        if (this._activeTransformHandle === 'top') {
-          factor = (targetVal - initialBox.minV) / (initialBox.maxV - initialBox.minV);
-        } else {
-          factor = (initialBox.maxV - targetVal) / (initialBox.maxV - initialBox.minV);
-        }
-      }
-      
       const activeMesh = this._main.getMesh();
       if (activeMesh && window._animationRegistry && this._animTransformBoxInitialKeys) {
         const id = activeMesh.getID();
         const track = window._animationRegistry.tracks.get(id);
         if (track) {
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
-          this._animTransformBoxInitialKeys.forEach(sk => {
-            if (sk.meshId === id && sk.type === 'transform') {
-              const initialVal = sk.val;
-              let newVal = 0;
-              if (this._activeTransformHandle === 'top') {
-                newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
-              } else {
-                newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
-              }
-              track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
-            }
-          });
+          TimelineHelper.scaleKeysVertical(track, this._animTransformBoxInitialKeys, initialBox, targetVal, this._activeTransformHandle, window._animTransformBox);
           
           if (this._main && this._main._meshes) {
             this._main._meshes.forEach(m => window._animationRegistry.update(m, true));
