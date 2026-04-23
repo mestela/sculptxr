@@ -1,3 +1,4 @@
+import TimelineHelper from './TimelineHelper.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
@@ -4464,187 +4465,7 @@ export default class GuiXR {
     if (window._animTimelineMode === 'graph') {
       this._drawGraphTimeline(ctx, w);
     } else {
-      // 3. Render Track Lanes
-      const laneAreaH = w.h - headerH;
-      
-      if (tracks.length === 0) {
-        // Empty timeline message removed as requested
-      } else {
-      const totalAvailableSlots = Math.max(4, tracks.length); 
-      const trackH = laneAreaH / totalAvailableSlots;
-
-      tracks.forEach(([id, track], idx) => {
-        const ty = w.y + headerH + (idx * trackH);
-        
-        // Alternate lane background
-        if (idx % 2 === 1) {
-          ctx.fillStyle = 'rgba(255,255,255,0.03)';
-          ctx.fillRect(w.x, ty, w.w, trackH);
-        }
-
-        // Lane Label
-        ctx.fillStyle = '#aaa';
-        ctx.font = '14px sans-serif';
-        ctx.textAlign = 'left';
-        let laneName = `Track ${id}`;
-        if (this._main && this._main._meshes) {
-          const found = this._main._meshes.find(m => m.getID() === id);
-          if (found) {
-            laneName = found._permanentStaticLabel || `Object ${id}`;
-            if (!found._loggedLaneName) {
-              found._loggedLaneName = true;
-            }
-          }
-        }
-        ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
-
-        // Transform Data Visualization (Slices)
-        if (track && track.times && track.times.length > 0) {
-          // 2. Individual Key Slices
-          const isDense = track.times.length > 40;
-          ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
-          ctx.strokeStyle = track.muted ? '#555555' : '#ffffff';
-          ctx.lineWidth = isDense ? 1 : 1.5;
-
-          for (let i = 0; i < track.times.length; i++) {
-            const t = track.times[i];
-            if (t >= loopStart && t <= loopEnd) {
-              const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-              const ky = ty + trackH / 2;
-              
-              const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i);
-              const isSel = isMultiSel || (window._animLastTouchedKeyTime !== undefined && Math.abs(window._animLastTouchedKeyTime - t) < 0.005);
-              if (isDense) {
-                ctx.fillStyle = isSel ? '#00ff00' : (track.muted ? '#888' : '#00ffff');
-                ctx.beginPath();
-                ctx.arc(kx, ky, isSel ? 5 : 3, 0, Math.PI * 2);
-                ctx.fill();
-                if (isSel) {
-                  ctx.strokeStyle = '#00ff00';
-                  ctx.lineWidth = 2;
-                  ctx.stroke();
-                }
-              } else {
-                ctx.fillStyle = track.muted ? '#888888' : '#00ffff';
-                ctx.strokeStyle = isSel ? '#00ff00' : (track.muted ? '#555555' : '#ffffff');
-                ctx.lineWidth = isSel ? 3 : 1.5;
-                ctx.beginPath();
-                ctx.moveTo(kx, ky - (isSel ? 9 : 7));
-                ctx.lineTo(kx + (isSel ? 9 : 7), ky);
-                ctx.lineTo(kx, ky + (isSel ? 9 : 7));
-                ctx.lineTo(kx - (isSel ? 9 : 7), ky);
-                ctx.closePath();
-                ctx.fill();
-                ctx.stroke();
-              }
-            }
-          }
-        }
-
-        if (track && track.punchInTime !== undefined && mDurVal > 0) {
-          if (track.punchInTime >= loopStart && track.punchInTime <= loopEnd) {
-            const punchX = tlX + ((track.punchInTime - loopStart) / visibleDuration) * tlW;
-            ctx.fillStyle = '#ff8800';
-            ctx.fillRect(punchX - 2, ty + 2, 4, trackH - 4);
-          }
-        }
-
-        if (track && track.shapeTimes) {
-          for (let i = 0; i < track.shapeTimes.length; i++) {
-            const st = track.shapeTimes[i];
-            if (st >= loopStart && st <= loopEnd) {
-              const kx = tlX + ((st - loopStart) / visibleDuration) * tlW;
-              const ky = ty + trackH / 2;
-              
-              if (window._animShowTangents) {
-                let leftXOff = -25;
-                let rightXOff = 25;
-                if (track.tangentOffsets) {
-                  if (track.tangentOffsets[`${i}_left`] !== undefined) leftXOff = track.tangentOffsets[`${i}_left`];
-                  if (track.tangentOffsets[`${i}_right`] !== undefined) rightXOff = track.tangentOffsets[`${i}_right`];
-                }
-
-                ctx.strokeStyle = '#ff00aa';
-                ctx.lineWidth = 1.5;
-                
-                ctx.beginPath();
-                ctx.moveTo(kx + leftXOff, ky);
-                ctx.lineTo(kx, ky);
-                ctx.stroke();
-                
-                ctx.fillStyle = '#ff00aa';
-                ctx.beginPath();
-                ctx.arc(kx + leftXOff, ky, 4, 0, Math.PI*2);
-                ctx.fill();
-
-                ctx.beginPath();
-                ctx.moveTo(kx, ky);
-                ctx.lineTo(kx + rightXOff, ky);
-                ctx.stroke();
-                
-                ctx.beginPath();
-                ctx.arc(kx + rightXOff, ky, 4, 0, Math.PI*2);
-                ctx.fill();
-              }
-
-              const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
-              const isSel = isMultiSel || (window._animLastTouchedKeyTime !== undefined && Math.abs(window._animLastTouchedKeyTime - st) < 0.005);
-              ctx.fillStyle = '#ffcc00';
-              ctx.strokeStyle = isSel ? '#00ff00' : '#ffffff';
-              ctx.lineWidth = isSel ? 3 : 1.5;
-              ctx.beginPath();
-              ctx.moveTo(kx, ky - (isSel ? 10 : 8));
-              ctx.lineTo(kx + (isSel ? 10 : 8), ky);
-              ctx.lineTo(kx, ky + (isSel ? 10 : 8));
-              ctx.lineTo(kx - (isSel ? 10 : 8), ky);
-              ctx.closePath();
-              ctx.fill();
-              ctx.stroke();
-            }
-          }
-        }
-
-        // --- LEFT-ALIGNED INTERACTIVE ICONS ---
-        const eyeX = w.x + 100;
-        const eyeY = ty + trackH / 2 - 12; 
-        
-        ctx.save();
-        ctx.translate(eyeX - 12, eyeY);
-        ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
-        ctx.lineWidth = 2;
-        
-        const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
-        ctx.stroke(eyePath);
-        
-        ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
-        ctx.beginPath();
-        ctx.arc(12, 12, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-
-        const trashX = w.x + 140;
-        ctx.save();
-        ctx.translate(trashX, ty + trackH / 2 - 6);
-        ctx.strokeStyle = '#ff4444';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        // Lid
-        ctx.moveTo(0, 2);
-        ctx.lineTo(12, 2);
-        // Handle
-        ctx.moveTo(4, 2);
-        ctx.lineTo(4, 0);
-        ctx.lineTo(8, 0);
-        ctx.lineTo(8, 2);
-        // Body
-        ctx.moveTo(2, 2);
-        ctx.lineTo(3, 12);
-        ctx.lineTo(9, 12);
-        ctx.lineTo(10, 2);
-        ctx.stroke();
-        ctx.restore();
-      });
-    }
+      TimelineHelper.drawDopeSheet(ctx, tracks, w, headerH, tlX, tlW, loopStart, visibleDuration, this._main, this);
     }
 
     // 4. Render Blender-Style Custom Playhead Cap
@@ -4682,67 +4503,11 @@ export default class GuiXR {
     ctx.restore(); // End clip
 
     // --- MARQUEE SELECT RECTANGLE OVERLAY (ABSOLUTE PROMINENT VISIBILITY) ---
-    if (this._marqueeStart && this._marqueeEnd) {
-      const mx1 = Math.min(this._marqueeStart.x + w.x, this._marqueeEnd.x + w.x);
-      const my1 = Math.min(this._marqueeStart.y + w.y, this._marqueeEnd.y + w.y);
-      const mw = Math.abs(this._marqueeEnd.x - this._marqueeStart.x);
-      const mh = Math.abs(this._marqueeEnd.y - this._marqueeStart.y);
-      
-      ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
-      ctx.fillRect(mx1, my1, mw, mh);
-      
-      ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(mx1, my1, mw, mh);
-    }
+    TimelineHelper.drawMarqueeBox(ctx, this._marqueeStart, this._marqueeEnd, w.x, w.y, 3);
     // --- TRANSFORM BOX OVERLAY ---
     if (window._animTimelineMode !== 'graph' && window._animTransformBox) {
       const tBox = window._animTransformBox;
-      const mDur = window._animMasterDuration || 1.0;
-      const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-      const lEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
-      const vDur = Math.max(0.1, lEnd - lStart);
-
-      const kxLeft = tlX + ((tBox.startTime - lStart) / vDur) * tlW;
-      const kxRight = tlX + ((tBox.endTime - lStart) / vDur) * tlW;
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
-      ctx.fillRect(kxLeft, w.y + 30, kxRight - kxLeft, w.h - 30);
-
-      ctx.strokeStyle = '#ffff00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(kxLeft, w.y + 30, kxRight - kxLeft, w.h - 30);
-
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = '#ffff00';
-
-      ctx.beginPath();
-      ctx.moveTo(kxLeft, w.y + 30);
-      ctx.lineTo(kxLeft, w.y + w.h);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(kxRight, w.y + 30);
-      ctx.lineTo(kxRight, w.y + w.h);
-      ctx.stroke();
-
-      ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
-      ctx.lineWidth = 2;
-      const kxMid = (kxLeft + kxRight) / 2;
-      ctx.beginPath();
-      ctx.moveTo(kxMid, w.y + 30);
-      ctx.lineTo(kxMid, w.y + w.h);
-      ctx.stroke();
-
-      const boxSize = 40;
-      const bx = kxMid - boxSize / 2;
-      const by = w.y + 30 + (w.h - 30) / 2 - boxSize / 2;
-      ctx.strokeStyle = '#ffff00';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(bx, by, boxSize, boxSize);
-
-      ctx.restore();
+      TimelineHelper.drawTransformBox(ctx, tBox, w, 30, tlX, tlW, loopStart, visibleDuration);
     }
 
     // --- PROMINENT CENTER COUNTDOWN OVERLAY ---
@@ -4781,10 +4546,7 @@ export default class GuiXR {
     if (window._animZoomY === undefined) window._animZoomY = 100.0;
     if (window._animPanY === undefined) window._animPanY = 0.0;
 
-    const valueToY = (val) => {
-      const midY = w.y + headerH + (w.h - headerH) / 2;
-      return midY - (val * window._animZoomY + window._animPanY);
-    };
+    const valueToY = (val) => TimelineHelper.valueToY(val, w.h, headerH, window._animZoomY, window._animPanY, w.y);
 
     ctx.save();
     ctx.beginPath();
@@ -4869,31 +4631,8 @@ export default class GuiXR {
             const steps = 20;
             for (let s = 0; s <= steps; s++) {
               const targetAlpha = s / steps;
-              let low = 0;
-              let high = 1;
-              let t = 0.5;
-              for (let j = 0; j < 10; j++) {
-                const tSq = t * t;
-                const tCu = tSq * t;
-                const omt = 1 - t;
-                const omtSq = omt * omt;
-                const currentAlpha = 3 * omtSq * t * p1x + 3 * omt * tSq * p2x + tCu;
-                if (Math.abs(currentAlpha - targetAlpha) < 0.001) break;
-                if (currentAlpha < targetAlpha) low = t;
-                else high = t;
-                t = (low + high) / 2;
-              }
-
-              const omt = 1 - t;
-              const omtSq = omt * omt;
-              const omtCu = omtSq * omt;
-              const tSq = t * t;
-              const tCu = tSq * t;
-              
-              const p1y = val1 + dv0;
-              const p2y = val2 + dv1;
-
-              const val = omtCu * val1 + 3 * omtSq * t * p1y + 3 * omt * tSq * p2y + tCu * val2;
+              const t = TimelineHelper.getBezierT(targetAlpha, p1x, p2x);
+              const val = TimelineHelper.evaluateBezier(t, val1, val2, dv0, dv1);
               const time = t1 + targetAlpha * (t2 - t1);
               const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
               const y = valueToY(val);
@@ -5001,29 +4740,7 @@ export default class GuiXR {
         if (window._animTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
           const tBox = window._animTransformBox;
           if (tBox.minV !== undefined && tBox.maxV !== undefined) {
-            const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
-            const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
-            const kyTop = valueToY(tBox.maxV);
-            const kyBottom = valueToY(tBox.minV);
-            
-            ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
-            
-            ctx.fillStyle = '#ffff00';
-            const kxMid = (kxLeft + kxRight) / 2;
-            const kyMid = (kyTop + kyBottom) / 2;
-            
-            // Top edge handle
-            ctx.fillRect(kxMid - 10, kyTop - 5, 20, 5);
-            // Bottom edge handle
-            ctx.fillRect(kxMid - 10, kyBottom, 20, 5);
-            // Left edge handle
-            ctx.fillRect(kxLeft - 5, kyMid - 10, 5, 20);
-            // Right edge handle
-            ctx.fillRect(kxRight, kyMid - 10, 5, 20);
-            // Center handle
-            ctx.fillRect(kxMid - 5, kyMid - 5, 10, 10);
+            TimelineHelper.drawTransformBox(ctx, tBox, w, headerH, tlX, tlW, loopStart, visibleDuration, (val) => valueToY(val));
           }
         }
       }
@@ -5084,16 +4801,7 @@ export default class GuiXR {
                 const p2x = 1 + dt1 / dt;
                 
                 const t_bez = reg.getBezierT(alpha, p1x, p2x);
-                const omt = 1 - t_bez;
-                const omtSq = omt * omt;
-                const omtCu = omtSq * omt;
-                const tSq = t_bez * t_bez;
-                const tCu = tSq * t_bez;
-                
-                const p1y = v1 + dv0;
-                const p2y = v2 + dv1;
-                
-                const warpedTime = omtCu * v1 + 3 * omtSq * t_bez * p1y + 3 * omt * tSq * p2y + tCu * v2;
+                const warpedTime = TimelineHelper.evaluateBezier(t_bez, v1, v2, dv0, dv1);
                 blend = (warpedTime - v1) / (v2 - v1);
               }
               
@@ -5209,15 +4917,8 @@ export default class GuiXR {
     const loopStart = window._animViewStart;
     const visibleDuration = window._animViewDuration;
 
-    const valueToY = (val) => {
-      const midY = headerH + (w.h - headerH) / 2;
-      return midY - (val * window._animZoomY + window._animPanY);
-    };
-
-    const yToValue = (y) => {
-      const midY = headerH + (w.h - headerH) / 2;
-      return (midY - y - window._animPanY) / window._animZoomY;
-    };
+    const valueToY = (val) => TimelineHelper.valueToY(val, w.h, headerH, window._animZoomY, window._animPanY, 0);
+    const yToValue = (y) => TimelineHelper.yToValue(y, w.h, headerH, window._animZoomY, window._animPanY, 0);
 
     const scene = this._main.getScene ? this._main.getScene() : this._main._scene;
     
@@ -5690,49 +5391,19 @@ export default class GuiXR {
           startVal: this._keyDragStartVal
         }];
         
-        reg.moveSelectedKeys(keysToMove, dt, mDurVal);
-        reg.moveSelectedKeysValue(keysToMove, dVal);
-        
-        if (this._main && this._main._meshes) {
-          this._main._meshes.forEach(m => reg.update(m, true));
-        }
+        TimelineHelper.moveKeys(reg, keysToMove, dt, dVal, mDurVal, this._main);
         this._needsRedraw = true;
       } else if (this._isDraggingTangent) {
-        let deltaX = rx - this._activeTangentKx;
-        const deltaY = ry - this._activeTangentKy;
+        const activeTangent = {
+          kx: this._activeTangentKx,
+          ky: this._activeTangentKy,
+          side: this._activeTangentSide,
+          type: this._activeTangentType,
+          index: this._activeTangentIndex
+        };
+        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
         
-        if (this._activeTangentSide === 'left') deltaX = Math.min(0, deltaX);
-        else deltaX = Math.max(0, deltaX);
-        
-        if (this._activeTangentTrack) {
-          if (!this._activeTangentTrack.tangentOffsets) this._activeTangentTrack.tangentOffsets = {};
-          const prefix = this._activeTangentType === 'transform' ? 'trans_' : '';
-          const dt = (deltaX / tlW) * visibleDuration;
-          const dv = -deltaY / window._animZoomY;
-          
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
-          this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dt`] = dt;
-          
-          if (this._activeTangentType === 'shape') {
-            this._activeTangentTrack.tangentOffsets[`${this._activeTangentIndex}_${this._activeTangentSide}_dv`] = dv;
-          } else {
-            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${this._activeTangentSide}_dv_${selChannel}`] = dv;
-          }
-
-          const isTied = this._activeTangentTrack.tangentOffsets ? this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_tied`] !== false : true;
-
-          if (isTied) {
-            const otherSide = this._activeTangentSide === 'right' ? 'left' : 'right';
-            this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dt`] = -dt;
-            if (this._activeTangentType === 'shape') {
-              this._activeTangentTrack.tangentOffsets[`${this._activeTangentIndex}_${otherSide}_dv`] = -dv;
-            } else {
-              this._activeTangentTrack.tangentOffsets[`${prefix}${this._activeTangentIndex}_${otherSide}_dv_${selChannel}`] = -dv;
-            }
-          }
-        }
+        TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, window._animZoomY, singleSelected);
         this._needsRedraw = true;
       } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
         const targetVal = yToValue(ry);

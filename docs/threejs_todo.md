@@ -18,7 +18,7 @@
 
 ## 1. Todo
 
-* [ ] **Tablet**: UI doesn't work on ios, why?
+
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [-] **Animation**: per key interp type; hold, bezier, linear [partially there, can do broken tangents]
 * [ ] **Animation**: per frame sculpting, shape replacement based
@@ -34,6 +34,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] **Tablet**: UI doesn't work on ios, why?
 * [x] **Animation**: graph editor in vr
 * [x] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?
 * [x] **Animation**: graph editor in desktop
