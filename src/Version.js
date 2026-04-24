@@ -1,1 +1,1 @@
-export const VERSION = 'v1.0.223';
+export const VERSION = 'v1.0.224 - Enhance Graph Editor';

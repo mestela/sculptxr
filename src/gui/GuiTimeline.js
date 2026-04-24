@@ -1174,7 +1174,6 @@ export default class GuiTimeline {
       const duration = maxT - minT;
       this._viewStart = Math.max(0, minT - duration * 0.1);
       this._viewDuration = Math.max(0.1, duration * 1.2);
-      console.log(`[autoFitGraph] minT=${minT}, maxT=${maxT}, viewStart=${this._viewStart}, viewDuration=${this._viewDuration}`);
     }
   }
 

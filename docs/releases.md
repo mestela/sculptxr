@@ -1,3 +1,15 @@
+# v1.0.224
+- **Feature**: **Graph Editor Channel Visibility in Fit View**: Updated "Fit View" in both Desktop and VR to only fit to visible channels, and included shape keys in the calculation.
+- **Feature**: **Graph Editor Time Fitting in VR**: Added horizontal time fitting to VR Graph Editor for parity with desktop.
+- **Feature**: **Shape Key Hover and Selection in Graph Editor**: Added hover highlights for shape keys and their tangent handles in VR.
+- **Fix**: **Graph Editor View Range Consistency**: Fixed inconsistency where playhead and interaction used compressed range while header used full range in graph mode, and reset view to full range when switching to Dope Sheet mode on desktop.
+- **Fix**: **Marquee Selection for Shape Keys**: Fixed `getKeysInGraphRange` to include shape keys and respect visibility, so they can be selected with marquee.
+- **Fix**: **NaN Error on Paste in Graph Editor**: Fixed division by zero in Bezier evaluation when `dt` is zero in `AnimationRegistry.js`.
+- **Fix**: **NaN Error on Copy/Paste in Desktop GUI**: Fixed `copyKey` in `GuiAnimation.js` to use `kTime` instead of `k.time` for shape keys, preventing `NaN` times.
+- **Fix**: **Overlap in Dope Sheet**: Separated transform and shape keys vertically in `drawDopeSheet` to avoid overlap.
+- **Fix**: **Tangent Handle Selection in VR**: Removed incorrect `i > 0` check in `GuiXR.js` that prevented selecting some left handles.
+- **Cleanup**: Removed debug logs in `GuiTimeline.js`, `GuiXR.js`, `GuiAnimation.js`, and `AnimationRegistry.js`.
+
 # v1.0.223
 - **Fix**: **VR Dopesheet Multi-Move**: Fixed state loss of selected keys across frames by storing `_animSelectedKeysInitialTimes` on `window` instead of `this`.
 - **Fix**: **VR Dopesheet Drag Fallback**: Populated `window._animSelectedKeysInitialTimes` when clicking keys in Dopesheet mode to prevent falling back to single key move.

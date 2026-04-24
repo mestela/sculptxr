@@ -362,7 +362,6 @@ class GuiAnimation {
         }
         
         const targetTime = pasteTime + (k.time - tMin);
-        console.log("[Paste Debug] k.time:", k.time, "tMin:", tMin, "pasteTime:", pasteTime, "targetTime:", targetTime);
         if (targetTime > (window._animMasterDuration || 0)) {
           window._animMasterDuration = targetTime;
         }

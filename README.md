@@ -1,4 +1,4 @@
-# SculptXR (v1.0.223)
+# SculptXR (v1.0.224)
 
 WebXR Sculpting
 
@@ -12,9 +12,9 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v1.0.224**: **Feature**: Graph Editor Visibility in Fit View, Time Fitting in VR, Shape Key Hover/Selection, and critical bug fixes for NaN errors and overlap.
 *   **v1.0.223**: **Fix**: VR Dopesheet Multi-Move, ReferenceError fix, and cleanup.
 *   **v1.0.221**: **Feature**: Graph Editor Multi-Key Dragging, Transport Play Toggle, Tangent Handles, and UI Overhaul in VR.
-*   **v1.0.220**: **Feature**: Graph Editor 2D Transform Box, Marquee Selection, Pivot Zoom, Selection/Transform Undo.
 
 [View Full Release History](docs/releases.md)
 

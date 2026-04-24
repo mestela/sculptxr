@@ -5137,9 +5137,8 @@ export default class GuiXR {
       return;
     }
 
-    if (window.screenLog && (isRisingEdge || Math.random() < 0.05)) {
-      window.screenLog(`Graph Inter: rx=${Math.round(rx)}, ry=${Math.round(ry)}, shift=${this._previewShiftKey}, ctrl=${this._previewCtrlKey}`, "yellow");
-    }
+
+
 
     if (isRisingEdge) {
       this._dragStartRx = rx;

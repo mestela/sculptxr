@@ -6,15 +6,10 @@
 
 ## 0. Graph editor issues/features
 
-* [ ] Tangents too easy to grab and misplace in vr, esp when panning/zooming
-* [ ] Hover highlight missing on tangents
-* [ ] Tangent disply should be removed from timeline, they don't work
 * [ ] Check baking to glb works, i assume we'll need to pre-frame bake or something
-* [ ] Quick option to flatten off tangents for shape keys
-* [ ] Option to lock angle, only adjust length of tangent
-* [ ] Option to lock scale, only adjust angle
+* [ ] tangents; Option to lock scale, only adjust angle
 * [ ] Allow playhead to move outside of range, so users can place spare shapes at frames -1, -2 etc
-* [ ] Fit view button for both desktop and vr
+
 
 ## 1. Todo
 
@@ -34,6 +29,12 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] tangents; Option to lock angle, only adjust length of tangent
+* [x] Quick option to flatten off tangents for shape keys
+* [x] Tangents too easy to grab and misplace in vr, esp when panning/zooming
+* [x] Hover highlight missing on tangents
+* [x] Fit view button for both desktop and vr
+* [x] Tangent disply should be removed from timeline, they don't work
 * [x] Unify desktop and vr graph editor/timeline, too much code to maintain now.
 * [x] **Tablet**: UI doesn't work on ios, why?
 * [x] **Animation**: graph editor in vr

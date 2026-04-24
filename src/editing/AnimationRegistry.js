@@ -600,7 +600,6 @@ class AnimationRegistry {
     window._animCurrentTime = time;
     this.globalPlaybackTime = time;
     
-    console.log(`[Animation] Added Shape Key for ${id} at T=${time.toFixed(2)}s`);
   }
 
   copyShapeKey(mesh, time) {
