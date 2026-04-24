@@ -118,7 +118,7 @@ export default class TimelineHelper {
           const t = track.times[i];
           if (t >= loopStart && t <= loopEnd) {
             const kx = w.x + tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const ky = ty + trackH / 2;
+            const ky = ty + trackH / 2 - 10; // Offset higher to avoid overlap with shape keys
             
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i);
             let isInsideMarquee = false;
@@ -164,7 +164,7 @@ export default class TimelineHelper {
           const st = track.shapeTimes[i];
           if (st >= loopStart && st <= loopEnd) {
             const kx = w.x + tlX + ((st - loopStart) / visibleDuration) * tlW;
-            const ky = ty + trackH / 2;
+            const ky = ty + trackH / 2 + 10; // Offset lower to avoid overlap with transform keys
             
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
             let isInsideMarquee = false;
@@ -251,19 +251,39 @@ export default class TimelineHelper {
   static getKeysInGraphRange(reg, trackId, tMin, tMax, vMin, vMax) {
     const newKeys = [];
     const track = reg.tracks.get(trackId);
+    
+    const channelsVisible = window._animChannelVisible || [true, true, true, true];
+    
     if (track && track.times) {
       for (let i = 0; i < track.times.length; i++) {
         const t = track.times[i];
         if (t >= tMin && t <= tMax) {
           for (let c = 0; c < 3; c++) {
-            const val = track.positions[i * 3 + c];
-            if (val >= vMin && val <= vMax) {
-              newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c, time: t });
+            if (channelsVisible[c]) {
+              const val = track.positions[i * 3 + c];
+              if (val >= vMin && val <= vMax) {
+                newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c, time: t });
+              }
             }
           }
         }
       }
     }
+    
+    if (track && track.shapeTimes && track.shapeOutputTimes) {
+      if (channelsVisible[3]) {
+        for (let i = 0; i < track.shapeTimes.length; i++) {
+          const t = track.shapeTimes[i];
+          if (t >= tMin && t <= tMax) {
+            const val = track.shapeOutputTimes[i];
+            if (val >= vMin && val <= vMax) {
+              newKeys.push({ meshId: trackId, type: 'shape', index: i, time: t });
+            }
+          }
+        }
+      }
+    }
+    
     return newKeys;
   }
 
@@ -279,6 +299,7 @@ export default class TimelineHelper {
       scales: track.scales ? [...track.scales] : [],
       shapeTimes: track.shapeTimes ? [...track.shapeTimes] : [],
       shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
+      shapeOutputTimes: track.shapeOutputTimes ? [...track.shapeOutputTimes] : [],
       playbackTime: track.playbackTime,
       muted: track.muted,
       tangentOffsets: track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined

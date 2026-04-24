@@ -12,6 +12,7 @@ class GuiAnimation {
   init(guiParent) {
     window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
     window._animAutoKey = window._animAutoKey !== undefined ? window._animAutoKey : false;
+    window._animWaitForTrigger = window._animWaitForTrigger !== undefined ? window._animWaitForTrigger : true;
     var menu = this._menu = guiParent.addMenu('Animation');
     menu.close();
 
@@ -185,6 +186,29 @@ class GuiAnimation {
     let targetMesh = this._main.getMesh();
     if (!targetMesh) return;
     window._animArmed = true;
+
+    if (window._animCountIn) {
+      window._animationRegistry.startRecording(targetMesh);
+      return;
+    }
+
+    if (window._animWaitForTrigger) {
+      window._animWaitingForGrab = true;
+      window._animStatusText = '🟢 Waiting for Click...';
+      
+      const canvas = this._main.getCanvas();
+      const onClick = (e) => {
+        if (e.button !== 0) return; // Only left click
+        canvas.removeEventListener('mousedown', onClick);
+        if (window._animWaitingForGrab) {
+          window._animWaitingForGrab = false;
+          window._animationRegistry.startRecording(targetMesh);
+        }
+      };
+      canvas.addEventListener('mousedown', onClick);
+      return;
+    }
+
     window._animationRegistry.startRecording(targetMesh);
   }
 
@@ -294,7 +318,7 @@ class GuiAnimation {
           return {
             meshId: k.meshId,
             type: 'shape',
-            time: k.time,
+            time: kTime,
             shape: new Float32Array(track.shapes[k.index])
           };
         }

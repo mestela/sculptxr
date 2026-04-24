@@ -125,6 +125,7 @@ class Transform extends SculptBase {
   }
 
   postRender() {
+    super.postRender(this._main.getSculptManager().getSelection());
     if (this.getMesh())
       this._gizmo.render();
   }

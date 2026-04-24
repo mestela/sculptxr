@@ -420,6 +420,10 @@ export default class GuiXR {
     if (this._previewContainer) {
       document.body.removeChild(this._previewContainer);
       this._previewContainer = null;
+      
+      if (this._previewOnKeyDown) window.removeEventListener('keydown', this._previewOnKeyDown);
+      if (this._previewOnKeyUp) window.removeEventListener('keyup', this._previewOnKeyUp);
+      
       console.log("[GuiXR] Desktop Preview Hidden");
       return;
     }
@@ -446,6 +450,27 @@ export default class GuiXR {
     document.body.appendChild(div);
     this._previewContainer = div;
 
+    // Key listeners for Shift/Ctrl overrides without mouse move
+    this._previewOnKeyDown = (e) => {
+      if (e.key === 'Shift') {
+        this._previewShiftKey = true;
+        if (this._cursor.active && this._wasPressed) {
+          this.onInteract(this._cursor.x / this._canvas.width, this._cursor.y / this._canvas.height, true);
+        }
+      }
+      if (e.key === 'Control') {
+        this._previewCtrlKey = true;
+        if (this._cursor.active && this._wasPressed) {
+          this.onInteract(this._cursor.x / this._canvas.width, this._cursor.y / this._canvas.height, true);
+        }
+      }
+    };
+    this._previewOnKeyUp = (e) => {
+      if (e.key === 'Shift') this._previewShiftKey = false;
+      if (e.key === 'Control') this._previewCtrlKey = false;
+    };
+    window.addEventListener('keydown', this._previewOnKeyDown);
+    window.addEventListener('keyup', this._previewOnKeyUp);
 
     // Start Desktop Render Loop
     const loop = () => {
@@ -728,6 +753,10 @@ export default class GuiXR {
       this._hoverWidget = newHover;
       this._needsRedraw = true; // Full redraw!
       this._requestDraw();
+    }
+    
+    if (this._hoverWidget && this._hoverWidget.id === 'anim_timeline') {
+      this._needsRedraw = true;
     }
   }
 
@@ -1071,6 +1100,7 @@ export default class GuiXR {
       this._dragStartY = undefined;
       this._dragStartRy = undefined;
       this._activeVisibilityDrag = false;
+      this._viewManipActiveThisPress = false;
     }
 
     if (isRisingEdge) {
@@ -2536,6 +2566,30 @@ export default class GuiXR {
             this._sliderStartVal = w.value;
           } else if (w.type === 'timeline') {
             const isHeaderStart = (ry + this._scrollOffsetOverlay) - w.y <= 30;
+            const relX = rx - w.x;
+            const relY = (ry + this._scrollOffsetOverlay) - w.y;
+            
+            if (isRisingEdge && window.screenLog) {
+              window.screenLog(`TL Click: relX=${Math.round(relX)}, relY=${Math.round(relY)}, mode=${window._animTimelineMode}`, "yellow");
+            }
+
+            // Gutter click for Graph Editor channels
+            if (isRisingEdge && window._animTimelineMode === 'graph' && relX < 200 && relY > 30) {
+              if (window.screenLog) window.screenLog(`Gutter click: relX=${Math.round(relX)}, relY=${Math.round(relY)}`, "cyan");
+              const gutterY = 30 + 10;
+              const rowH = 30;
+              const channel = Math.floor((relY - gutterY) / rowH);
+              
+              if (channel >= 0 && channel < 3) {
+                if (relX >= 5 && relX <= 150) {
+                  if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true];
+                  window._animChannelVisible[channel] = !window._animChannelVisible[channel];
+                  this._needsRedraw = true;
+                  return;
+                }
+              }
+            }
+
             if (window._animActiveTool === 'marquee') {
               if (!this._marqueeStart) {
                 this._marqueeStart = { x: rx - w.x, y: (ry + this._scrollOffsetOverlay) - w.y };
@@ -4579,6 +4633,73 @@ export default class GuiXR {
 
     const valueToY = (val) => TimelineHelper.valueToY(val, w.h, headerH, window._animZoomY, window._animPanY, w.y);
 
+    // Draw Gutter Content (Channel List) for Graph Editor
+    ctx.save();
+    const gutterY = w.y + headerH + 10;
+    const rowH = 30;
+    const colors = ['#ff4444', '#44ff44', '#4444ff'];
+    const labels = ['X Location', 'Y Location', 'Z Location'];
+    
+    const activeMeshForGutter = this._main.getMesh();
+    const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
+    const trackForGutter = idForGutter ? reg.tracks.get(idForGutter) : null;
+    
+    if (trackForGutter && trackForGutter.shapeTimes && trackForGutter.shapeTimes.length >= 2) {
+      colors.push('#ff00ff');
+      labels.push('Shape Anim');
+    }
+    
+    if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+
+    for (let channel = 0; channel < labels.length; channel++) {
+      const ry = gutterY + channel * rowH;
+      
+      // Color bar
+      ctx.fillStyle = colors[channel];
+      ctx.fillRect(w.x + 5, ry + 5, 5, 20);
+      
+      // Eye Icon
+      const isVisible = window._animChannelVisible[channel];
+      
+      ctx.save();
+      ctx.translate(w.x + 20, ry + 3);
+      ctx.scale(0.8, 0.8); // Scale down a bit
+      ctx.strokeStyle = isVisible ? '#00ffff' : '#555';
+      ctx.lineWidth = 1.5;
+      const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+      ctx.stroke(eyePath);
+      ctx.beginPath();
+      ctx.arc(12, 12, 3, 0, Math.PI * 2);
+      ctx.fillStyle = isVisible ? '#00ffff' : '#555';
+      ctx.fill();
+      ctx.restore();
+      
+      // Label
+      ctx.fillStyle = isVisible ? '#ccc' : '#666';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labels[channel], w.x + 50, ry + 15);
+    }
+    
+    // Fit View Icon (Lower Left of Gutter)
+    const iconX = w.x + 10;
+    const iconY = w.y + w.h - 30;
+    const isHovered = this._cursor.active && this._cursor.x >= iconX && this._cursor.x <= iconX + 24 && this._cursor.y >= iconY && this._cursor.y <= iconY + 24;
+    
+    ctx.strokeStyle = isHovered ? '#00ffff' : '#888888';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    ctx.save();
+    ctx.translate(iconX, iconY);
+    const fitPath = new Path2D('M 10 10 L 4 4 M 4 4 L 8 4 M 4 4 L 4 8 M 14 10 L 20 4 M 20 4 L 16 4 M 20 4 L 20 8 M 10 14 L 4 20 M 4 20 L 8 20 M 4 20 L 4 16 M 14 14 L 20 20 M 20 20 L 16 20 M 20 20 L 20 16');
+    ctx.stroke(fitPath);
+    ctx.restore();
+
+    ctx.restore();
+
     ctx.save();
     ctx.beginPath();
     ctx.rect(tlX, w.y + headerH, tlW, w.h - headerH);
@@ -4605,6 +4726,9 @@ export default class GuiXR {
         const colors = ['#ff4444', '#44ff44', '#4444ff']; // R, G, B
         
         for (let channel = 0; channel < 3; channel++) {
+          const isVisible = window._animChannelVisible[channel];
+          if (!isVisible) continue;
+          
           ctx.strokeStyle = colors[channel];
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -4682,6 +4806,9 @@ export default class GuiXR {
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           for (let channel = 0; channel < 3; channel++) {
+            const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
+            if (!isVisible) continue;
+            
             const val = track.positions[i * 3 + channel];
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
             const y = valueToY(val);
@@ -4712,65 +4839,67 @@ export default class GuiXR {
 
         // Draw Tangent Handles for Position Keys
         if (window._animShowTangents) {
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
           ctx.strokeStyle = '#888888';
           ctx.lineWidth = 1.5;
 
-          for (let i = 0; i < track.times.length; i++) {
-            const t = track.times[i];
-            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const val = track.positions[i * 3 + selChannel];
-            const ky = valueToY(val);
-            
-            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
-            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
-            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
-            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+          for (let channel = 0; channel < 3; channel++) {
+            const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
+            if (!isVisible) continue;
 
-            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
-            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
-            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
-
-            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-            const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
-            
-            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-            const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
-
-            // Draw right handle
-            if (i < track.times.length - 1) {
-              const handleX = kx + rightXOff;
-              const handleY = ky + rightYOff;
-              const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
-
-              ctx.beginPath();
-              ctx.moveTo(kx, ky);
-              ctx.lineTo(handleX, handleY);
-              ctx.stroke();
+            for (let i = 0; i < track.times.length; i++) {
+              const t = track.times[i];
+              const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+              const val = track.positions[i * 3 + channel];
+              const ky = valueToY(val);
               
-              ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
-              ctx.beginPath();
-              ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            
-            // Draw left handle
-            if (i > 0) {
-              const handleX = kx + leftXOff;
-              const handleY = ky + leftYOff;
-              const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
+              const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+              const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${channel}`] : undefined;
+              const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+              const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${channel}`] : undefined;
 
-              ctx.beginPath();
-              ctx.moveTo(kx, ky);
-              ctx.lineTo(handleX, handleY);
-              ctx.stroke();
+              const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, channel) : 0;
+              const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+              const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
+              const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+              const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
               
-              ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
-              ctx.beginPath();
-              ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
-              ctx.fill();
+              const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+              const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
+
+              // Draw right handle
+              if (i < track.times.length - 1) {
+                const handleX = kx + rightXOff;
+                const handleY = ky + rightYOff;
+                const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
+
+                ctx.beginPath();
+                ctx.moveTo(kx, ky);
+                ctx.lineTo(handleX, handleY);
+                ctx.stroke();
+                
+                ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
+              
+              // Draw left handle
+              if (i > 0) {
+                const handleX = kx + leftXOff;
+                const handleY = ky + leftYOff;
+                const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
+
+                ctx.beginPath();
+                ctx.moveTo(kx, ky);
+                ctx.lineTo(handleX, handleY);
+                ctx.stroke();
+                
+                ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
+                ctx.beginPath();
+                ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
+                ctx.fill();
+              }
             }
           }
         }
@@ -4793,139 +4922,158 @@ export default class GuiXR {
       
       if (track && track.shapeTimes) {
         if (track.shapeTimes.length >= 2) {
-          ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
-          ctx.lineWidth = 2;
-          
-          for (let i = 0; i < track.shapeTimes.length - 1; i++) {
-            const t1 = track.shapeTimes[i];
-            const t2 = track.shapeTimes[i + 1];
-            const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
-            const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
+          const isVisible = window._animChannelVisible ? window._animChannelVisible[3] !== false : true;
+          if (isVisible) {
+            ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
+            ctx.lineWidth = 2;
             
-            const ky1 = valueToY(v1);
-            const ky2 = valueToY(v2);
-            
-            ctx.beginPath();
-            
-            const steps = 20;
-            let m0 = 1.0;
-            let m1 = 1.0;
-            if (window._animShowTangents && track.tangentOffsets) {
-              const rightVal = track.tangentOffsets[`${i}_right_dt`];
-              const leftVal = track.tangentOffsets[`${i + 1}_left_dt`];
-              const rightHandle = rightVal !== undefined ? rightVal : 25;
-              const leftHandle = leftVal !== undefined ? leftVal : -25;
-              m0 = rightHandle / 25.0;
-              m1 = -leftHandle / 25.0;
-            }
-
-            for (let s = 0; s <= steps; s++) {
-              const alpha = s / steps;
-              let blend = alpha;
+            for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+              const t1 = track.shapeTimes[i];
+              const t2 = track.shapeTimes[i + 1];
+              const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
+              const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
+              
+              const ky1 = valueToY(v1);
+              const ky2 = valueToY(v2);
+              
+              ctx.beginPath();
+              
+              const steps = 20;
+              let m0 = 1.0;
+              let m1 = 1.0;
               if (window._animShowTangents && track.tangentOffsets) {
-                const rightDt = track.tangentOffsets[`${i}_right_dt`];
-                const rightDv = track.tangentOffsets[`${i}_right_dv`];
-                const leftDt = track.tangentOffsets[`${i + 1}_left_dt`];
-                const leftDv = track.tangentOffsets[`${i + 1}_left_dv`];
+                const rightVal = track.tangentOffsets[`${i}_right_dt`];
+                const leftVal = track.tangentOffsets[`${i + 1}_left_dt`];
+                const rightHandle = rightVal !== undefined ? rightVal : 25;
+                const leftHandle = leftVal !== undefined ? leftVal : -25;
+                m0 = rightHandle / 25.0;
+                m1 = -leftHandle / 25.0;
+              }
+
+              for (let s = 0; s <= steps; s++) {
+                const alpha = s / steps;
+                let blend = alpha;
+                if (window._animShowTangents && track.tangentOffsets) {
+                  const rightDt = track.tangentOffsets[`${i}_right_dt`];
+                  const rightDv = track.tangentOffsets[`${i}_right_dv`];
+                  const leftDt = track.tangentOffsets[`${i + 1}_left_dt`];
+                  const leftDv = track.tangentOffsets[`${i + 1}_left_dv`];
+                  
+                  const dt = t2 - t1;
+                  const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+                  const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+                  
+                  const slope = dt > 0 ? (v2 - v1) / dt : 0;
+                  const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+                  const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+                  
+                  const p1x = dt0 / dt;
+                  const p2x = 1 + dt1 / dt;
+                  
+                  const t_bez = reg.getBezierT(alpha, p1x, p2x);
+                  const warpedTime = TimelineHelper.evaluateBezier(t_bez, v1, v2, dv0, dv1);
+                  blend = (warpedTime - v1) / (v2 - v1);
+                }
+                
+                const time = t1 + alpha * (t2 - t1);
+                const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+                const y = valueToY(v1 + (v2 - v1) * blend);
+                
+                if (s === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+              }
+              ctx.stroke();
+              
+              // Draw Tangent Handles
+              if (window._animShowTangents) {
+                ctx.strokeStyle = '#888888';
+                ctx.lineWidth = 1;
+                
+                const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+                const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+                
+                const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
+                const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
+                const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
+                const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
                 
                 const dt = t2 - t1;
                 const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
                 const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-                
                 const slope = dt > 0 ? (v2 - v1) / dt : 0;
                 const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
                 const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+
+                const rightXOff = (dt0 / visibleDuration) * tlW;
+                const rightYOff = -dv0 * window._animZoomY;
+                const leftXOff = (dt1 / visibleDuration) * tlW;
+                const leftYOff = -dv1 * window._animZoomY;
+
+                // Draw right handle
+                ctx.beginPath();
+                ctx.moveTo(kx1, ky1);
+                ctx.lineTo(kx1 + rightXOff, ky1 + rightYOff);
+                ctx.stroke();
                 
-                const p1x = dt0 / dt;
-                const p2x = 1 + dt1 / dt;
+                // Circle
+                const isRightHovered = this._cursor.active && TimelineHelper.isKeyHovered(kx1 + rightXOff, ky1 + rightYOff, this._cursor.x, this._cursor.y, 20);
+                const isRightActive = this._isDraggingTangent && this._activeTangentIndex === i && this._activeTangentSide === 'right' && this._activeTangentType === 'shape';
                 
-                const t_bez = reg.getBezierT(alpha, p1x, p2x);
-                const warpedTime = TimelineHelper.evaluateBezier(t_bez, v1, v2, dv0, dv1);
-                blend = (warpedTime - v1) / (v2 - v1);
+                if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
+                else if (isRightHovered) ctx.fillStyle = '#00ffff'; // Cyan
+                else ctx.fillStyle = '#888888'; // Gray
+                
+                ctx.beginPath();
+                ctx.arc(kx1 + rightXOff, ky1 + rightYOff, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw left handle
+                ctx.beginPath();
+                ctx.moveTo(kx2, ky2);
+                ctx.lineTo(kx2 + leftXOff, ky2 + leftYOff);
+                ctx.stroke();
+                
+                const isLeftHovered = this._cursor.active && TimelineHelper.isKeyHovered(kx2 + leftXOff, ky2 + leftYOff, this._cursor.x, this._cursor.y, 20);
+                const isLeftActive = this._isDraggingTangent && this._activeTangentIndex === (i + 1) && this._activeTangentSide === 'left' && this._activeTangentType === 'shape';
+                
+                if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
+                else if (isLeftHovered) ctx.fillStyle = '#00ffff'; // Cyan
+                else ctx.fillStyle = '#888888'; // Gray
+                
+                ctx.beginPath();
+                ctx.arc(kx2 + leftXOff, ky2 + leftYOff, 2.5, 0, Math.PI * 2);
+                ctx.fill();
               }
-              
-              const time = t1 + alpha * (t2 - t1);
-              const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
-              const y = valueToY(v1 + (v2 - v1) * blend);
-              
-              if (s === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
             }
-            ctx.stroke();
             
-            // Draw Tangent Handles
-            if (window._animShowTangents) {
-              ctx.strokeStyle = '#888888';
-              ctx.lineWidth = 1;
+            // Draw Shape Keys (Points)
+            for (let i = 0; i < track.shapeTimes.length; i++) {
+              const t = track.shapeTimes[i];
+              const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+              const val = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t;
+              const y = valueToY(val);
               
-              const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
-              const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+              const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
+              const isHovered = this._cursor.active && TimelineHelper.isKeyHovered(x, y, this._cursor.x, this._cursor.y, 20);
               
-              const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
-              const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
-              const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
-              const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
+              if (isSelected) ctx.fillStyle = '#ffff00';
+              else if (isHovered) ctx.fillStyle = '#00ffff';
+              else ctx.fillStyle = '#ff00ff';
               
-              const dt = t2 - t1;
-              const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-              const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-              const slope = dt > 0 ? (v2 - v1) / dt : 0;
-              const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
-              const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
-
-              const rightXOff = (dt0 / visibleDuration) * tlW;
-              const rightYOff = -dv0 * window._animZoomY;
-              const leftXOff = (dt1 / visibleDuration) * tlW;
-              const leftYOff = -dv1 * window._animZoomY;
-
-              // Draw right handle
               ctx.beginPath();
-              ctx.moveTo(kx1, ky1);
-              ctx.lineTo(kx1 + rightXOff, ky1 + rightYOff);
-              ctx.stroke();
-              
-              // Circle
-              ctx.fillStyle = '#888888';
-              ctx.beginPath();
-              ctx.arc(kx1 + rightXOff, ky1 + rightYOff, 2.5, 0, Math.PI * 2);
+              ctx.moveTo(x, y - 5);
+              ctx.lineTo(x + 5, y);
+              ctx.lineTo(x, y + 5);
+              ctx.lineTo(x - 5, y);
+              ctx.closePath();
               ctx.fill();
               
-              // Draw left handle
-              ctx.beginPath();
-              ctx.moveTo(kx2, ky2);
-              ctx.lineTo(kx2 + leftXOff, ky2 + leftYOff);
-              ctx.stroke();
-              
-              ctx.beginPath();
-              ctx.arc(kx2 + leftXOff, ky2 + leftYOff, 2.5, 0, Math.PI * 2);
-              ctx.fill();
+              if (isSelected) {
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+              }
             }
-          }
-        }
-        
-        // Draw Shape Keys (Points)
-        for (let i = 0; i < track.shapeTimes.length; i++) {
-          const t = track.shapeTimes[i];
-          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
-          const val = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t;
-          const y = valueToY(val);
-          
-          const isSelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'shape' && k.index === i);
-          
-          ctx.fillStyle = isSelected ? '#ffff00' : '#ff00ff';
-          
-          ctx.beginPath();
-          ctx.moveTo(x, y - 5);
-          ctx.lineTo(x + 5, y);
-          ctx.lineTo(x, y + 5);
-          ctx.lineTo(x - 5, y);
-          ctx.closePath();
-          ctx.fill();
-          
-          if (isSelected) {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 1;
-            ctx.stroke();
           }
         }
       }
@@ -4982,135 +5130,71 @@ export default class GuiXR {
     if (this._previewShiftKey) isSecondaryTrigger = true;
     if (this._previewCtrlKey) isButtonA = true;
 
+    if (this._viewManipActiveThisPress && !this._isZoomingGraph && !this._isPanningGraph) {
+      if (!isPressed) {
+        this._viewManipActiveThisPress = false;
+      }
+      return;
+    }
+
+    if (window.screenLog && (isRisingEdge || Math.random() < 0.05)) {
+      window.screenLog(`Graph Inter: rx=${Math.round(rx)}, ry=${Math.round(ry)}, shift=${this._previewShiftKey}, ctrl=${this._previewCtrlKey}`, "yellow");
+    }
+
     if (isRisingEdge) {
       this._dragStartRx = rx;
       this._dragStartRy = ry;
 
+      if (isSecondaryTrigger) {
+        this._isZoomingGraph = true;
+        this._viewManipActiveThisPress = true;
+        this._zoomStartDuration = window._animViewDuration;
+        this._zoomStartScaleY = window._animZoomY;
+        this._zoomStartPanY = window._animPanY;
+        this._zoomStartViewStart = window._animViewStart;
+        this._zoomPivotTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+        this._zoomPivotValue = yToValue(ry);
+        return;
+      }
+
+      if (isButtonA) {
+        this._isPanningGraph = true;
+        this._viewManipActiveThisPress = true;
+        this._panStartOffsetY = window._animPanY;
+        this._panStartViewStart = window._animViewStart;
+        return;
+      }
+
+      // Gutter click for Graph Editor channels in Main UI
+      if (rx < 200 && ry > 30) {
+        if (window.screenLog) window.screenLog(`Gutter click (Main): rx=${Math.round(rx)}, ry=${Math.round(ry)}`, "cyan");
+        
+        // Fit View Icon Click
+        if (isRisingEdge && rx >= 10 && rx <= 34 && ry >= w.h - 30 && ry <= w.h - 6) {
+          this.autoFitGraphTimeline(w);
+          this._needsRedraw = true;
+          return;
+        }
+
+        const gutterY = 30 + 10;
+        const rowH = 30;
+        const channel = Math.floor((ry - gutterY) / rowH);
+        
+        const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
+        if (channel >= 0 && channel < maxChannels) {
+          if (rx >= 5 && rx <= 150) {
+            if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+            window._animChannelVisible[channel] = !window._animChannelVisible[channel];
+            this._needsRedraw = true;
+            return;
+          }
+        }
+      }
+
       const toolMode = window._animActiveTool || 'select';
 
       if (toolMode === 'select') {
-        // Check tangents first if enabled
-        if (window._animShowTangents && track.times) {
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
-
-          for (let i = 0; i < track.times.length; i++) {
-            const t = track.times[i];
-            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const val = track.positions[i * 3 + selChannel];
-            const ky = valueToY(val);
-
-            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
-            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
-            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
-            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
-
-            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
-            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
-            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
-
-            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
-            const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
-            
-            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
-            const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
-
-            // Check right handle
-            if (i < track.times.length - 1) {
-              if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 20)) {
-                this._isDraggingTangent = true;
-                this._activeTangentTrack = track;
-                this._activeTangentIndex = i;
-                this._activeTangentSide = 'right';
-                this._activeTangentKx = kx;
-                this._activeTangentKy = ky;
-                this._activeTangentType = 'transform';
-                this._initialTangentVecX = rightXOff;
-                this._initialTangentVecY = rightYOff;
-                this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
-                return;
-              }
-            }
-            // Check left handle
-            if (i > 0) {
-              if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 20)) {
-                this._isDraggingTangent = true;
-                this._activeTangentTrack = track;
-                this._activeTangentIndex = i;
-                this._activeTangentSide = 'left';
-                this._activeTangentKx = kx;
-                this._activeTangentKy = ky;
-                this._activeTangentType = 'transform';
-                this._initialTangentVecX = leftXOff;
-                this._initialTangentVecY = leftYOff;
-                this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
-                return;
-              }
-            }
-          }
-        }
-
-        // Check Shape Key Tangents in VR
-        if (window._animShowTangents && track.shapeTimes) {
-          for (let i = 0; i < track.shapeTimes.length - 1; i++) {
-            const t1 = track.shapeTimes[i];
-            const t2 = track.shapeTimes[i + 1];
-            const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
-            const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
-            
-            const ky1_val = valueToY(v1);
-            const ky2_val = valueToY(v2);
-            
-            const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
-            const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
-            
-            const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
-            const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
-            const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
-            const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
-            
-            const dt = t2 - t1;
-            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-            const slope = dt > 0 ? (v2 - v1) / dt : 0;
-            const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
-            const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
-
-            const rightXOff = (dt0 / visibleDuration) * tlW;
-            const rightYOff = -dv0 * window._animZoomY;
-            const leftXOff = (dt1 / visibleDuration) * tlW;
-            const leftYOff = -dv1 * window._animZoomY;
-
-            // Check right handle
-            if (i < track.shapeTimes.length - 1) {
-              if (TimelineHelper.isKeyHovered(kx1 + rightXOff, ky1_val + rightYOff, rx, ry, 20)) {
-                this._isDraggingTangent = true;
-                this._activeTangentTrack = track;
-                this._activeTangentIndex = i;
-                this._activeTangentSide = 'right';
-                this._activeTangentKx = kx1;
-                this._activeTangentKy = ky1_val + rightYOff;
-                this._activeTangentType = 'shape';
-                return;
-              }
-            }
-            // Check left handle
-            if (i > 0) {
-              if (TimelineHelper.isKeyHovered(kx2 + leftXOff, ky2_val + leftYOff, rx, ry, 20)) {
-                this._isDraggingTangent = true;
-                this._activeTangentTrack = track;
-                this._activeTangentIndex = i + 1;
-                this._activeTangentSide = 'left';
-                this._activeTangentKx = kx2;
-                this._activeTangentKy = ky2_val + leftYOff;
-                this._activeTangentType = 'shape';
-                return;
-              }
-            }
-          }
-        }
-
-        // Check keys
+        // Check keys first (moved here for precedence)
         if (track.times && track.positions) {
           for (let i = 0; i < track.times.length; i++) {
             const t = track.times[i];
@@ -5149,7 +5233,7 @@ export default class GuiXR {
                   });
                 });
 
-                const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i);
+                const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'transform' && sk.index === i && sk.channel === c);
                 if (inSel) {
                   window._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
                     const tr = reg.tracks.get(k.meshId);
@@ -5208,7 +5292,7 @@ export default class GuiXR {
               
               this._undoTracksBeforeMove = new Map();
               reg.tracks.forEach((tr, mId) => {
-                this._undoTracksBeforeMove.set(mId, this.cloneTrack(tr));
+                this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
               });
 
               const inSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'shape' && sk.index === i);
@@ -5234,12 +5318,133 @@ export default class GuiXR {
                 const cbRedo = () => {
                   window._animSelectedKeys = afterSelection;
                   this._needsRedraw = true;
-                };
+                  };
                 if (this._main && this._main.getStateManager) {
                   this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, 'graph editor multikeys selection');
                 }
               }
               this._needsRedraw = true;
+              return;
+            }
+          }
+        }
+
+        // Check tangents after keys
+        if (window._animShowTangents && track.times) {
+          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+          const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
+
+          for (let i = 0; i < track.times.length; i++) {
+            const t = track.times[i];
+            const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const val = track.positions[i * 3 + selChannel];
+            const ky = valueToY(val);
+
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${selChannel}`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_left_dv_${selChannel}`] : undefined;
+
+            const slope = reg.getCurveSlope ? reg.getCurveSlope(track, i, selChannel) : 0;
+            const dt_right = (i < track.times.length - 1) ? track.times[i + 1] - track.times[i] : 0.2;
+            const dt_left = (i > 0) ? track.times[i] - track.times[i - 1] : 0.2;
+
+            const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+            const rightYOff = rightDv !== undefined ? -rightDv * window._animZoomY : -slope * (rightDt !== undefined ? rightDt : dt_right * 0.33) * window._animZoomY;
+            
+            const leftXOff = leftDt !== undefined ? (leftDt / visibleDuration) * tlW : -25;
+            const leftYOff = leftDv !== undefined ? -leftDv * window._animZoomY : -slope * (leftDt !== undefined ? leftDt : -dt_left * 0.33) * window._animZoomY;
+
+            // Check right handle
+            if (i < track.times.length - 1) {
+              if (TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 20)) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i;
+                this._activeTangentSide = 'right';
+                this._activeTangentKx = kx;
+                this._activeTangentKy = ky;
+                this._activeTangentType = 'transform';
+                this._initialTangentVecX = rightXOff;
+                this._initialTangentVecY = rightYOff;
+                this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
+                return;
+              }
+            }
+            // Check left handle
+            if (TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 20)) {
+              this._isDraggingTangent = true;
+              this._activeTangentTrack = track;
+              this._activeTangentIndex = i;
+              this._activeTangentSide = 'left';
+              this._activeTangentKx = kx;
+              this._activeTangentKy = ky;
+              this._activeTangentType = 'transform';
+              this._initialTangentVecX = leftXOff;
+              this._initialTangentVecY = leftYOff;
+              this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
+              return;
+            }
+          }
+        }
+
+        // Check Shape Key Tangents in VR
+        if (window._animShowTangents && track.shapeTimes) {
+          for (let i = 0; i < track.shapeTimes.length - 1; i++) {
+            const t1 = track.shapeTimes[i];
+            const t2 = track.shapeTimes[i + 1];
+            const v1 = track.shapeOutputTimes ? track.shapeOutputTimes[i] : t1;
+            const v2 = track.shapeOutputTimes ? track.shapeOutputTimes[i + 1] : t2;
+            
+            const ky1_val = valueToY(v1);
+            const ky2_val = valueToY(v2);
+            
+            const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
+            const kx2 = tlX + ((t2 - loopStart) / visibleDuration) * tlW;
+            
+            const rightDt = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dt`] : undefined;
+            const rightDv = track.tangentOffsets ? track.tangentOffsets[`${i}_right_dv`] : undefined;
+            const leftDt = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dt`] : undefined;
+            const leftDv = track.tangentOffsets ? track.tangentOffsets[`${i + 1}_left_dv`] : undefined;
+            
+            const dt = t2 - t1;
+            const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+            const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
+            const slope = dt > 0 ? (v2 - v1) / dt : 0;
+            const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
+            const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
+
+            const rightXOff = (dt0 / visibleDuration) * tlW;
+            const rightYOff = -dv0 * window._animZoomY;
+            const leftXOff = (dt1 / visibleDuration) * tlW;
+            const leftYOff = -dv1 * window._animZoomY;
+
+            // Check right handle
+            if (i < track.shapeTimes.length - 1) {
+              if (TimelineHelper.isKeyHovered(kx1 + rightXOff, ky1_val + rightYOff, rx, ry, 20)) {
+                this._isDraggingTangent = true;
+                this._activeTangentTrack = track;
+                this._activeTangentIndex = i;
+                this._activeTangentSide = 'right';
+                this._activeTangentKx = kx1;
+                this._activeTangentKy = ky1_val + rightYOff;
+                this._activeTangentType = 'shape';
+                this._initialTangentVecX = rightXOff;
+                this._initialTangentVecY = rightYOff;
+                return;
+              }
+            }
+            // Check left handle
+            if (TimelineHelper.isKeyHovered(kx2 + leftXOff, ky2_val + leftYOff, rx, ry, 20)) {
+              this._isDraggingTangent = true;
+              this._activeTangentTrack = track;
+              this._activeTangentIndex = i + 1;
+              this._activeTangentSide = 'left';
+              this._activeTangentKx = kx2;
+              this._activeTangentKy = ky2_val + leftYOff;
+              this._activeTangentType = 'shape';
+              this._initialTangentVecX = leftXOff;
+              this._initialTangentVecY = leftYOff;
               return;
             }
           }
@@ -5332,24 +5537,6 @@ export default class GuiXR {
         }
       }
 
-      if (isSecondaryTrigger) {
-        this._isZoomingGraph = true;
-        this._zoomStartDuration = window._animViewDuration;
-        this._zoomStartScaleY = window._animZoomY;
-        this._zoomStartPanY = window._animPanY;
-        this._zoomStartViewStart = window._animViewStart;
-        this._zoomPivotTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
-        this._zoomPivotValue = yToValue(ry);
-        return;
-      }
-
-      if (isButtonA) {
-        this._isPanningGraph = true;
-        this._panStartOffsetY = window._animPanY;
-        this._panStartViewStart = window._animViewStart;
-        return;
-      }
-
       if (ry <= headerH) {
         this._isDraggingPlayhead = true;
         this._activeTimeline = w;
@@ -5368,6 +5555,8 @@ export default class GuiXR {
       if (this._isZoomingGraph) {
         if (!isSecondaryTrigger) {
           this._isZoomingGraph = false;
+          this._viewManipCooldown = performance.now() + 300;
+          return;
         } else {
           // Horizontal Zoom (X)
           if (Math.abs(dx) > Math.abs(dy)) {
@@ -5393,6 +5582,8 @@ export default class GuiXR {
       if (this._isPanningGraph) {
         if (!isButtonA) {
           this._isPanningGraph = false;
+          this._viewManipCooldown = performance.now() + 300;
+          return;
         } else {
           // Horizontal Pan
           const dt = (dx / tlW) * visibleDuration;
@@ -5628,10 +5819,24 @@ export default class GuiXR {
     let minVal = Infinity;
     let maxVal = -Infinity;
 
+    const channelsVisible = window._animChannelVisible || [true, true, true, true];
+
     if (track.positions && track.times && track.times.length > 0) {
       for (let i = 0; i < track.times.length; i++) {
         for (let c = 0; c < 3; c++) {
-          const val = track.positions[i * 3 + c];
+          if (channelsVisible[c]) {
+            const val = track.positions[i * 3 + c];
+            if (val < minVal) minVal = val;
+            if (val > maxVal) maxVal = val;
+          }
+        }
+      }
+    }
+
+    if (track.shapeOutputTimes && track.shapeTimes && track.shapeTimes.length > 0) {
+      if (channelsVisible[3]) {
+        for (let i = 0; i < track.shapeTimes.length; i++) {
+          const val = track.shapeOutputTimes[i];
           if (val < minVal) minVal = val;
           if (val > maxVal) maxVal = val;
         }
@@ -5655,6 +5860,28 @@ export default class GuiXR {
     } else {
       window._animZoomY = 100.0;
       window._animPanY = -midVal * window._animZoomY;
+    }
+    
+    // Horizontal Auto-Fit
+    let minT = Infinity;
+    let maxT = -Infinity;
+    
+    const anyTransformVisible = channelsVisible[0] || channelsVisible[1] || channelsVisible[2];
+    
+    if (anyTransformVisible && track.times && track.times.length > 0) {
+      minT = Math.min(minT, track.times[0]);
+      maxT = Math.max(maxT, track.times[track.times.length - 1]);
+    }
+    
+    if (channelsVisible[3] && track.shapeTimes && track.shapeTimes.length > 0) {
+      minT = Math.min(minT, track.shapeTimes[0]);
+      maxT = Math.max(maxT, track.shapeTimes[track.shapeTimes.length - 1]);
+    }
+    
+    if (minT !== Infinity && maxT !== Infinity) {
+      const duration = maxT - minT;
+      window._animViewStart = Math.max(0, minT - duration * 0.1);
+      window._animViewDuration = Math.max(0.1, duration * 1.2);
     }
     
     this._needsRedraw = true;

@@ -948,7 +948,12 @@ class Scene {
         // Drive ALL tracks continuously in parallel
         if (this._meshes) {
           for (let i = 0; i < this._meshes.length; i++) {
-            window._animationRegistry.update(this._meshes[i]);
+            const m = this._meshes[i];
+            // Skip playback update for the mesh currently being recorded
+            if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId) {
+              continue;
+            }
+            window._animationRegistry.update(m);
           }
           this._drawFullScene = true;
           if (this._guiXR) {
@@ -960,9 +965,20 @@ class Scene {
 
     // Desktop Animation Playback
     if (window._animPlaying && window._animationRegistry && !(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+      if (this._vrCursorLeft) this._vrCursorLeft.visible = false;
+      if (this._vrCursorRight) this._vrCursorRight.visible = false;
+
       if (this._meshes) {
         for (let i = 0; i < this._meshes.length; i++) {
-          window._animationRegistry.update(this._meshes[i]);
+          const m = this._meshes[i];
+          // Skip playback update for the mesh currently being recorded
+          if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId) {
+            if (window.screenLog && Math.random() < 0.05) {
+              window.screenLog(`Skipping update for recording mesh: ${m.getID()}`, "cyan");
+            }
+            continue;
+          }
+          window._animationRegistry.update(m);
         }
         this._drawFullScene = true; // Ensure we redraw
       }
@@ -1123,6 +1139,14 @@ class Scene {
     var i = 0;
     var meshes = this._meshes;
     var nbMeshes = meshes.length;
+
+    // Hide brush cursors during playback or when using transform tool
+    const sm = this._sculptManager;
+    const curIdx = sm ? sm.getToolIndex() : -1;
+    const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
+    
+    if (this._vrCursorLeft) this._vrCursorLeft.visible = !window._animPlaying && !isTransform;
+    if (this._vrCursorRight) this._vrCursorRight.visible = !window._animPlaying && !isTransform;
 
     // --- THREE.JS MAIN RENDER ---
     // Instead of looping through custom meshes, we tell Three.js to render the scene
@@ -5119,7 +5143,7 @@ class Scene {
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
 
-                cursorGroup.visible = true;
+                cursorGroup.visible = !window._animPlaying;
                 cursorGroup.position.set(0, 0, 0);
                 cursorGroup.quaternion.identity();
                 cursorGroup.scale.set(1, 1, 1);

@@ -1400,7 +1400,7 @@ class AnimationRegistry {
         
         const hasShapeTangents = track.tangentOffsets && (track.tangentOffsets[`${idx}_right_dt`] !== undefined || track.tangentOffsets[`${idx + 1}_left_dt`] !== undefined);
         
-        if (hasShapeTangents) {
+        if (dt > 0.0001 && hasShapeTangents) {
           const rightDt = track.tangentOffsets[`${idx}_right_dt`];
           const rightDv = track.tangentOffsets[`${idx}_right_dv`];
           const leftDt = track.tangentOffsets[`${idx + 1}_left_dt`];

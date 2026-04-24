@@ -134,13 +134,16 @@ export default class GuiTimeline {
     const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
     const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
 
-    if (this._viewDuration === undefined) {
-      this._viewStart = loopStartReal;
-      this._viewDuration = visibleDurationReal;
+    let loopStart = loopStartReal;
+    let visibleDuration = visibleDurationReal;
+    if (this._mode === 'graph') {
+      if (this._viewDuration === undefined) {
+        this._viewStart = loopStart;
+        this._viewDuration = visibleDuration;
+      }
+      loopStart = this._viewStart;
+      visibleDuration = this._viewDuration;
     }
-
-    const loopStart = this._viewStart;
-    const visibleDuration = this._viewDuration;
     const tlX = 200;
     const tlW = this._cssWidth - 220;
     const headerH = 50;
@@ -199,6 +202,73 @@ export default class GuiTimeline {
     const visibleDuration = this._viewDuration;
     const loopEnd = loopStart + visibleDuration;
 
+    // Draw Gutter Content (Channel List) for Graph Editor
+    ctx.save();
+    const gutterY = headerH + 10;
+    const rowH = 30;
+    const colors = ['#ff4444', '#44ff44', '#4444ff'];
+    const labels = ['X Location', 'Y Location', 'Z Location'];
+    
+    const activeMeshForGutter = this._main.getMesh();
+    const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
+    const trackForGutter = idForGutter ? reg.tracks.get(idForGutter) : null;
+    
+    if (trackForGutter && trackForGutter.shapeTimes && trackForGutter.shapeTimes.length >= 2) {
+      colors.push('#ff00ff');
+      labels.push('Shape Anim');
+    }
+    
+    if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+
+    for (let channel = 0; channel < labels.length; channel++) {
+      const ry = gutterY + channel * rowH;
+      
+      // Color bar
+      ctx.fillStyle = colors[channel];
+      ctx.fillRect(5, ry + 5, 5, 20);
+      
+      // Eye Icon
+      const isVisible = window._animChannelVisible[channel];
+      
+      ctx.save();
+      ctx.translate(20, ry + 3);
+      ctx.scale(0.8, 0.8); // Scale down a bit
+      ctx.strokeStyle = isVisible ? '#00ffff' : '#555';
+      ctx.lineWidth = 1.5;
+      const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+      ctx.stroke(eyePath);
+      ctx.beginPath();
+      ctx.arc(12, 12, 3, 0, Math.PI * 2);
+      ctx.fillStyle = isVisible ? '#00ffff' : '#555';
+      ctx.fill();
+      ctx.restore();
+      
+      // Label
+      ctx.fillStyle = isVisible ? '#ccc' : '#666';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(labels[channel], 50, ry + 15);
+    }
+    
+    // Fit View Icon (Lower Left of Gutter)
+    const iconX = 10;
+    const iconY = this._cssHeight - 30;
+    const isHovered = this._lastMouseX >= iconX && this._lastMouseX <= iconX + 24 && this._lastMouseY >= iconY && this._lastMouseY <= iconY + 24;
+    
+    ctx.strokeStyle = isHovered ? '#00ffff' : '#888888';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    ctx.save();
+    ctx.translate(iconX, iconY);
+    const fitPath = new Path2D('M 10 10 L 4 4 M 4 4 L 8 4 M 4 4 L 4 8 M 14 10 L 20 4 M 20 4 L 16 4 M 20 4 L 20 8 M 10 14 L 4 20 M 4 20 L 8 20 M 4 20 L 4 16 M 14 14 L 20 20 M 20 20 L 16 20 M 20 20 L 20 16');
+    ctx.stroke(fitPath);
+    ctx.restore();
+
+    ctx.restore();
+
     ctx.save();
     ctx.beginPath();
     ctx.rect(tlX, headerH, tlW, this._cssHeight - headerH);
@@ -244,6 +314,9 @@ export default class GuiTimeline {
         const colors = ['#ff4444', '#44ff44', '#4444ff']; // R, G, B
         
         for (let channel = 0; channel < 3; channel++) {
+          const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
+          if (!isVisible) continue;
+          
           ctx.strokeStyle = colors[channel];
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -336,6 +409,9 @@ export default class GuiTimeline {
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           for (let channel = 0; channel < 3; channel++) {
+            const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
+            if (!isVisible) continue;
+            
             const val = track.positions[i * 3 + channel];
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
             const y = this.valueToY(val);
@@ -436,10 +512,11 @@ export default class GuiTimeline {
       }
 
       // 6. Draw Shape Key Time Curve (Time Warping)
-      // 6. Draw Shape Key Time Curve (Time Warping)
       if (track && track.shapeTimes) {
         if (track.shapeTimes.length >= 2) {
-          ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
+          const isVisible = window._animChannelVisible ? window._animChannelVisible[3] !== false : true;
+          if (isVisible) {
+            ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
           ctx.lineWidth = 2;
           
           for (let i = 0; i < track.shapeTimes.length - 1; i++) {
@@ -576,6 +653,7 @@ export default class GuiTimeline {
             ctx.lineWidth = 1;
             ctx.stroke();
           }
+        }
         }
       }
     }
@@ -1033,10 +1111,24 @@ export default class GuiTimeline {
     let minVal = Infinity;
     let maxVal = -Infinity;
 
+    const channelsVisible = window._animChannelVisible || [true, true, true, true];
+
     if (track.positions && track.times && track.times.length > 0) {
       for (let i = 0; i < track.times.length; i++) {
         for (let c = 0; c < 3; c++) {
-          const val = track.positions[i * 3 + c];
+          if (channelsVisible[c]) {
+            const val = track.positions[i * 3 + c];
+            if (val < minVal) minVal = val;
+            if (val > maxVal) maxVal = val;
+          }
+        }
+      }
+    }
+
+    if (track.shapeOutputTimes && track.shapeTimes && track.shapeTimes.length > 0) {
+      if (channelsVisible[3]) {
+        for (let i = 0; i < track.shapeTimes.length; i++) {
+          const val = track.shapeOutputTimes[i];
           if (val < minVal) minVal = val;
           if (val > maxVal) maxVal = val;
         }
@@ -1065,11 +1157,15 @@ export default class GuiTimeline {
     // Horizontal Auto-Fit
     let minT = Infinity;
     let maxT = -Infinity;
-    if (track.times && track.times.length > 0) {
+    
+    const anyTransformVisible = channelsVisible[0] || channelsVisible[1] || channelsVisible[2];
+    
+    if (anyTransformVisible && track.times && track.times.length > 0) {
       minT = Math.min(minT, track.times[0]);
       maxT = Math.max(maxT, track.times[track.times.length - 1]);
     }
-    if (track.shapeTimes && track.shapeTimes.length > 0) {
+    
+    if (channelsVisible[3] && track.shapeTimes && track.shapeTimes.length > 0) {
       minT = Math.min(minT, track.shapeTimes[0]);
       maxT = Math.max(maxT, track.shapeTimes[track.shapeTimes.length - 1]);
     }
@@ -1151,6 +1247,34 @@ export default class GuiTimeline {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
     } else {
+      // Gutter click for Graph Editor channels in Desktop Timeline
+      if (this._mode === 'graph' && rx < 200 && ry > 50) {
+        // Fit View Icon Click
+        if (rx >= 10 && rx <= 34 && ry >= this._cssHeight - 30 && ry <= this._cssHeight - 6) {
+          this.autoFitGraph();
+          this.draw();
+          return;
+        }
+
+        const gutterY = 50 + 10;
+        const rowH = 30;
+        const channel = Math.floor((ry - gutterY) / rowH);
+        
+        const reg = window._animationRegistry;
+        const activeMesh = this._main.getMesh();
+        const track = activeMesh ? reg.tracks.get(activeMesh.getID()) : null;
+        const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
+        
+        if (channel >= 0 && channel < maxChannels) {
+          if (rx >= 5 && rx <= 150) {
+            if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+            window._animChannelVisible[channel] = !window._animChannelVisible[channel];
+            this.draw();
+            return;
+          }
+        }
+      }
+
       if (this._mode === 'graph') {
         if (e.button === 1) { // Middle click
           this._isPanningGraph = true;
@@ -1791,6 +1915,10 @@ export default class GuiTimeline {
       this._marqueeEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       this.draw();
     }
+    
+    if (rx >= tlX && rx <= tlX + tlW && ry >= 50) {
+      this.draw();
+    }
   }
 
   onMouseUp(e) {
@@ -2066,10 +2194,15 @@ export default class GuiTimeline {
 
 
       const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-      const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-      const visibleDuration = Math.max(0.1, loopEnd - loopStart);
-
+      let loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+      let loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+      let visibleDuration = Math.max(0.1, loopEnd - loopStart);
+      
+      if (this._mode === 'graph') {
+        loopStart = this._viewStart !== undefined ? this._viewStart : loopStart;
+        visibleDuration = this._viewDuration !== undefined ? this._viewDuration : visibleDuration;
+      }
+      
       const targetTime = loopStart + t * visibleDuration;
 
       window._animPlaying = false;
@@ -2241,9 +2374,21 @@ export default class GuiTimeline {
     const tracks = Array.from(reg.tracks.entries());
     
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-    const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-    const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+    const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+    
+    let loopStart = loopStartReal;
+    let visibleDuration = Math.max(0.1, loopEndReal - loopStartReal);
+    
+    if (this._mode === 'graph') {
+      if (this._viewDuration === undefined) {
+        this._viewStart = loopStart;
+        this._viewDuration = visibleDuration;
+      }
+      loopStart = this._viewStart;
+      visibleDuration = this._viewDuration;
+    }
+    const loopEnd = loopStart + visibleDuration;
 
     const tlX = 200; // Width allocated for track names
     const tlW = w.w - 220;

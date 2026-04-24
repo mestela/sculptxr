@@ -468,6 +468,9 @@ class Gizmo {
 
   _computeCenterGizmo(center = [0.0, 0.0, 0.0]) {
     var meshes = this._main.getSelectedMeshes();
+    if (meshes.length === 0 && this._main.getMesh()) {
+      meshes = [this._main.getMesh()];
+    }
 
     var acc = [0.0, 0.0, 0.0];
     var icenter = [0.0, 0.0, 0.0];
@@ -478,6 +481,10 @@ class Gizmo {
       vec3.add(acc, acc, icenter);
     }
     vec3.scale(center, acc, 1.0 / meshes.length);
+    
+    if (window._animationRegistry && window._animationRegistry.isRecording && window.screenLog && Math.random() < 0.05) {
+      window.screenLog(`Gizmo Center: [${center[0].toFixed(2)}, ${center[1].toFixed(2)}, ${center[2].toFixed(2)}]`, "yellow");
+    }
     return center;
   }
 

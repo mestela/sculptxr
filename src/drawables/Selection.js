@@ -180,6 +180,15 @@ class Selection {
       pickedMesh = false;
     }
 
+    // Hide brush indicator during playback or when using transform tool on desktop
+    const sm = main.getSculptManager();
+    const curIdx = sm ? sm.getToolIndex() : -1;
+    const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
+    
+    if (window._animPlaying || isTransform) {
+      pickedMesh = false;
+    }
+
     if (!this._threeCircle) {
       const geo = new THREE.RingGeometry(0.9, 1.0, 32);
       const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
