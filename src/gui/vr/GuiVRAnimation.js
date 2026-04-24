@@ -1342,6 +1342,127 @@ export default function getAnimationWidgets(main, Enums) {
   });
   y += 36 + gapBtn;
 
+  // Flatten Tangents Row
+  widgets.push({
+    type: 'button', id: 'anim_flatten_tangents', label: 'Flatten Tangents',
+    x: col1X, y: y, w: 464, h: 36,
+    disabled: !isGraphMode,
+    onInteract: () => {
+      if (!isGraphMode) return;
+      const reg = window._animationRegistry;
+      if (!reg) return;
+      
+      if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+        const savedData = [];
+        
+        window._animSelectedKeys.forEach(sk => {
+          const track = reg.tracks.get(sk.meshId);
+          if (track) {
+            if (!track.tangentOffsets) track.tangentOffsets = {};
+            const prefix = sk.type === 'transform' ? 'trans_' : '';
+            const channel = sk.channel !== undefined ? sk.channel : 0;
+            
+            const leftKey = `${prefix}${sk.index}_left_dv`;
+            const rightKey = `${prefix}${sk.index}_right_dv`;
+            const leftChanKey = `${prefix}${sk.index}_left_dv_${channel}`;
+            const rightChanKey = `${prefix}${sk.index}_right_dv_${channel}`;
+
+            // Save old values
+            savedData.push({
+              meshId: sk.meshId,
+              prefix,
+              index: sk.index,
+              channel,
+              type: sk.type,
+              oldLeftDv: track.tangentOffsets[leftKey],
+              oldRightDv: track.tangentOffsets[rightKey],
+              oldLeftChanDv: track.tangentOffsets[leftChanKey],
+              oldRightChanDv: track.tangentOffsets[rightChanKey]
+            });
+
+            // Apply flatten
+            track.tangentOffsets[leftKey] = 0;
+            track.tangentOffsets[rightKey] = 0;
+            if (sk.type === 'transform') {
+              track.tangentOffsets[leftChanKey] = 0;
+              track.tangentOffsets[rightChanKey] = 0;
+            }
+          }
+        });
+
+        // Push to State Manager for Undo/Redo
+        if (main.getStateManager && savedData.length > 0) {
+          main.getStateManager().pushStateCustom(
+            () => { // UNDO
+              savedData.forEach(d => {
+                const track = reg.tracks.get(d.meshId);
+                if (track && track.tangentOffsets) {
+                  const leftKey = `${d.prefix}${d.index}_left_dv`;
+                  const rightKey = `${d.prefix}${d.index}_right_dv`;
+                  const leftChanKey = `${d.prefix}${d.index}_left_dv_${d.channel}`;
+                  const rightChanKey = `${d.prefix}${d.index}_right_dv_${d.channel}`;
+
+                  if (d.oldLeftDv !== undefined) track.tangentOffsets[leftKey] = d.oldLeftDv;
+                  else delete track.tangentOffsets[leftKey];
+                  
+                  if (d.oldRightDv !== undefined) track.tangentOffsets[rightKey] = d.oldRightDv;
+                  else delete track.tangentOffsets[rightKey];
+
+                  if (d.type === 'transform') {
+                    if (d.oldLeftChanDv !== undefined) track.tangentOffsets[leftChanKey] = d.oldLeftChanDv;
+                    else delete track.tangentOffsets[leftChanKey];
+                    
+                    if (d.oldRightChanDv !== undefined) track.tangentOffsets[rightChanKey] = d.oldRightChanDv;
+                    else delete track.tangentOffsets[rightChanKey];
+                  }
+                }
+              });
+              if (main._guiXR) main._guiXR._needsRedraw = true;
+            },
+            () => { // REDO
+              savedData.forEach(d => {
+                const track = reg.tracks.get(d.meshId);
+                if (track && track.tangentOffsets) {
+                  const leftKey = `${d.prefix}${d.index}_left_dv`;
+                  const rightKey = `${d.prefix}${d.index}_right_dv`;
+                  const leftChanKey = `${d.prefix}${d.index}_left_dv_${d.channel}`;
+                  const rightChanKey = `${d.prefix}${d.index}_right_dv_${d.channel}`;
+
+                  track.tangentOffsets[leftKey] = 0;
+                  track.tangentOffsets[rightKey] = 0;
+                  if (d.type === 'transform') {
+                    track.tangentOffsets[leftChanKey] = 0;
+                    track.tangentOffsets[rightChanKey] = 0;
+                  }
+                }
+              });
+              if (main._guiXR) main._guiXR._needsRedraw = true;
+            }
+          );
+        }
+
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        showFeedback(`Flattened ${savedData.length} Tangents`);
+      } else {
+        showFeedback('Select keys first');
+      }
+    }
+  });
+
+  if (window._animLockTangentAngle === undefined) window._animLockTangentAngle = false;
+
+  widgets.push({
+    type: 'checkbox', id: 'anim_lock_tangent_angle', label: 'Lock Angle',
+    x: col1X + 464 + 15, y: y, w: 464, h: 36,
+    value: window._animLockTangentAngle,
+    disabled: !isGraphMode,
+    onInteract: () => {
+      window._animLockTangentAngle = !window._animLockTangentAngle;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
+  y += 36 + gapBtn;
+
   // 5. Conditional Tool Row (Marquee Mode or Transform Auto Select)
   // 5. Conditional Tool Row (Marquee Mode or Transform Auto Select)
   const toolRowH = 36;
@@ -1394,7 +1515,7 @@ export default function getAnimationWidgets(main, Enums) {
   widgets.push({
     type: 'timeline',
     id: 'anim_timeline',
-    x: col1X, y: y, w: 944, h: 250
+    x: col1X, y: y, w: 944, h: 240
   });
 
   return widgets;

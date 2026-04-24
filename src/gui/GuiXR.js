@@ -476,24 +476,38 @@ export default class GuiXR {
       if (e.button !== 0) return; // Only left click
       e.preventDefault();
       const { x, y } = mapEventToPixels(e);
+      this._previewShiftKey = e.shiftKey;
+      this._previewCtrlKey = e.ctrlKey;
       this.setCursor(x, y);
       this.onInteract(x, y, true);
     };
     const onPointerMove = (e) => {
       e.preventDefault();
       const { x, y } = mapEventToPixels(e);
+      this._previewShiftKey = e.shiftKey;
+      this._previewCtrlKey = e.ctrlKey;
       this.setCursor(x, y);
+      if (e.buttons === 1) {
+        this.onInteract(x, y, true);
+      }
     };
     const onPointerUp = (e) => {
       e.preventDefault();
       const { x, y } = mapEventToPixels(e);
+      this._previewShiftKey = e.shiftKey;
+      this._previewCtrlKey = e.ctrlKey;
       this.onInteract(x, y, false); // Reset press state!
       this.setCursor(-1, -1); // Deactivate cursor
+    };
+
+    const onContextMenu = (e) => {
+      e.preventDefault();
     };
 
     this._canvas.addEventListener('pointerdown', onPointerDown);
     this._canvas.addEventListener('pointermove', onPointerMove);
     this._canvas.addEventListener('pointerup', onPointerUp);
+    this._canvas.addEventListener('contextmenu', onContextMenu);
 
     // Desktop Mouse Wheel Logic
     const onWheel = (e) => {
@@ -511,6 +525,7 @@ export default class GuiXR {
       this._canvas.removeEventListener('pointermove', onPointerMove);
       this._canvas.removeEventListener('pointerup', onPointerUp);
       this._canvas.removeEventListener('wheel', onWheel);
+      this._canvas.removeEventListener('contextmenu', onContextMenu);
     };
 
     this._needsRedraw = true;
@@ -4726,27 +4741,35 @@ export default class GuiXR {
 
             // Draw right handle
             if (i < track.times.length - 1) {
+              const handleX = kx + rightXOff;
+              const handleY = ky + rightYOff;
+              const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
+
               ctx.beginPath();
               ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + rightXOff, ky + rightYOff);
+              ctx.lineTo(handleX, handleY);
               ctx.stroke();
               
-              ctx.fillStyle = '#888888';
+              ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
               ctx.beginPath();
-              ctx.arc(kx + rightXOff, ky + rightYOff, 2.5, 0, Math.PI * 2);
+              ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
             
             // Draw left handle
             if (i > 0) {
+              const handleX = kx + leftXOff;
+              const handleY = ky + leftYOff;
+              const isHovered = this._cursor.active && Math.abs(this._cursor.x - handleX) < 15 && Math.abs(this._cursor.y - handleY) < 15;
+
               ctx.beginPath();
               ctx.moveTo(kx, ky);
-              ctx.lineTo(kx + leftXOff, ky + leftYOff);
+              ctx.lineTo(handleX, handleY);
               ctx.stroke();
               
-              ctx.fillStyle = '#888888';
+              ctx.fillStyle = isHovered ? '#00ffff' : '#888888';
               ctx.beginPath();
-              ctx.arc(kx + leftXOff, ky + leftYOff, 2.5, 0, Math.PI * 2);
+              ctx.arc(handleX, handleY, isHovered ? 4 : 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -4955,6 +4978,10 @@ export default class GuiXR {
       }
     }
 
+    // Desktop Preview Fallbacks
+    if (this._previewShiftKey) isSecondaryTrigger = true;
+    if (this._previewCtrlKey) isButtonA = true;
+
     if (isRisingEdge) {
       this._dragStartRx = rx;
       this._dragStartRy = ry;
@@ -4998,6 +5025,9 @@ export default class GuiXR {
                 this._activeTangentKx = kx;
                 this._activeTangentKy = ky;
                 this._activeTangentType = 'transform';
+                this._initialTangentVecX = rightXOff;
+                this._initialTangentVecY = rightYOff;
+                this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
                 return;
               }
             }
@@ -5011,6 +5041,9 @@ export default class GuiXR {
                 this._activeTangentKx = kx;
                 this._activeTangentKy = ky;
                 this._activeTangentType = 'transform';
+                this._initialTangentVecX = leftXOff;
+                this._initialTangentVecY = leftYOff;
+                this._undoTangentOffsetsBeforeDrag = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
                 return;
               }
             }
@@ -5427,7 +5460,27 @@ export default class GuiXR {
         };
         const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
         
-        TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, rx, ry, tlW, visibleDuration, window._animZoomY, singleSelected);
+        let targetRx = rx;
+        let targetRy = ry;
+
+        if (window._animLockTangentAngle && this._initialTangentVecX !== undefined && this._initialTangentVecY !== undefined) {
+          const vX = this._initialTangentVecX;
+          const vY = this._initialTangentVecY;
+          const uX = rx - this._activeTangentKx;
+          const uY = ry - this._activeTangentKy;
+
+          // Project U onto V
+          const dot = uX * vX + uY * vY;
+          const lenSq = vX * vX + vY * vY;
+          
+          if (lenSq > 0.001) {
+            const scalar = dot / lenSq;
+            targetRx = this._activeTangentKx + scalar * vX;
+            targetRy = this._activeTangentKy + scalar * vY;
+          }
+        }
+
+        TimelineHelper.updateTangent(this._activeTangentTrack, activeTangent, targetRx, targetRy, tlW, visibleDuration, window._animZoomY, singleSelected);
         this._needsRedraw = true;
       } else if (this._activeTransformHandle === 'top' || this._activeTransformHandle === 'bottom') {
         const targetVal = yToValue(ry);
@@ -5826,6 +5879,25 @@ export default class GuiXR {
       });
       this._activeTransformHandle = null;
       this._needsRedraw = true;
+    }
+
+    if (this._isDraggingTangent && this._activeTangentTrack) {
+      const track = this._activeTangentTrack;
+      const oldOffsets = this._undoTangentOffsetsBeforeDrag;
+      const newOffsets = track.tangentOffsets ? JSON.parse(JSON.stringify(track.tangentOffsets)) : {};
+      
+      this._main.getStateManager().pushStateCustom(
+        () => { // UNDO
+          track.tangentOffsets = oldOffsets;
+          if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
+        },
+        () => { // REDO
+          track.tangentOffsets = newOffsets;
+          if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
+        },
+        false,
+        'edit tangent'
+      );
     }
 
     this._isDraggingPlayhead = false;
