@@ -1302,49 +1302,53 @@ export default function getAnimationWidgets(main, Enums) {
     }
   });
 
-  // Tangent buttons only visible if graph editor is visible
-  if (window._animTimelineMode === 'graph') {
-    // Show Tangents
-    widgets.push({
-      type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangents',
-      x: col1X + (qW + gapBtn) * 2, y: y, w: qW, h: 36,
-      value: window._animShowTangents,
-      onInteract: () => {
-        window._animShowTangents = !window._animShowTangents;
-        if (main._guiXR) main._guiXR._needsRedraw = true;
-      }
-    });
+  // Tangent buttons always visible but disabled if not in graph mode
+  const isGraphMode = window._animTimelineMode === 'graph';
+  
+  // Show Tangents
+  widgets.push({
+    type: 'checkbox', id: 'anim_tangent_toggle', label: 'Show Tangents',
+    x: col1X + (qW + gapBtn) * 2, y: y, w: qW, h: 36,
+    value: window._animShowTangents,
+    disabled: !isGraphMode,
+    onInteract: () => {
+      window._animShowTangents = !window._animShowTangents;
+      if (main._guiXR) main._guiXR._needsRedraw = true;
+    }
+  });
 
-    // Tie/Break Tangent
-    widgets.push({
-      type: 'button', id: 'anim_tangent_tied_toggle', label: 'Tie/Break Tangent',
-      x: col1X + (qW + gapBtn) * 3, y: y, w: qW, h: 36,
-      onInteract: () => {
-        if (!reg) return;
-        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-        if (singleSelected) {
-          const track = reg.tracks.get(singleSelected.meshId);
-          if (track) {
-            if (!track.tangentOffsets) track.tangentOffsets = {};
-            const key = `trans_${singleSelected.index}_tied`;
-            const cur = track.tangentOffsets[key] !== false;
-            track.tangentOffsets[key] = !cur;
-            if (main._guiXR) main._guiXR._needsRedraw = true;
-            showFeedback(cur ? 'Broken Tangent' : 'Tied Tangent');
-          }
-        } else {
-          showFeedback('Select a single key first');
+  // Tie/Break Tangent
+  widgets.push({
+    type: 'button', id: 'anim_tangent_tied_toggle', label: 'Tie/Break Tangent',
+    x: col1X + (qW + gapBtn) * 3, y: y, w: qW, h: 36,
+    disabled: !isGraphMode,
+    onInteract: () => {
+      if (!reg) return;
+      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+      if (singleSelected) {
+        const track = reg.tracks.get(singleSelected.meshId);
+        if (track) {
+          if (!track.tangentOffsets) track.tangentOffsets = {};
+          const key = `trans_${singleSelected.index}_tied`;
+          const cur = track.tangentOffsets[key] !== false;
+          track.tangentOffsets[key] = !cur;
+          if (main._guiXR) main._guiXR._needsRedraw = true;
+          showFeedback(cur ? 'Broken Tangent' : 'Tied Tangent');
         }
+      } else {
+        showFeedback('Select a single key first');
       }
-    });
-  }
+    }
+  });
   y += 36 + gapBtn;
 
   // 5. Conditional Tool Row (Marquee Mode or Transform Auto Select)
+  // 5. Conditional Tool Row (Marquee Mode or Transform Auto Select)
+  const toolRowH = 36;
   if (window._animActiveTool === 'marquee') {
     widgets.push({
       type: 'combobox', id: 'anim_marquee_mode', label: `Mode: ${window._animMarqueeMode.toUpperCase()}`,
-      x: col1X, y: y, w: 944, h: 36,
+      x: col1X, y: y, w: 944, h: toolRowH,
       value: window._animMarqueeMode,
       options: [
         { id: 'select_only', label: 'Auto Select & Exit' },
@@ -1362,25 +1366,35 @@ export default function getAnimationWidgets(main, Enums) {
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     });
-    y += 36 + gapBtn;
   } else if (window._animActiveTool === 'transform') {
     widgets.push({
       type: 'checkbox', id: 'anim_transform_auto', label: 'Auto Select Keys',
-      x: col1X, y: y, w: 944, h: 36,
+      x: col1X, y: y, w: 944, h: toolRowH,
       value: window._animTransformAutoSelect,
       onInteract: (val) => {
         window._animTransformAutoSelect = !window._animTransformAutoSelect;
         if (main._guiXR) main._guiXR._needsRedraw = true;
       }
     });
-    y += 36 + gapBtn;
+  } else {
+    // Fallback: Show marquee mode combobox but disabled to prevent layout shifts
+    widgets.push({
+      type: 'combobox', id: 'anim_marquee_mode_disabled', label: 'Mode: N/A',
+      x: col1X, y: y, w: 944, h: toolRowH,
+      value: 'select_only',
+      options: [
+        { id: 'select_only', label: 'Auto Select & Exit' }
+      ],
+      disabled: true
+    });
   }
+  y += toolRowH + gapBtn;
 
   // 9. Sleek Timeline
   widgets.push({
     type: 'timeline',
     id: 'anim_timeline',
-    x: col1X, y: y, w: 944, h: 300
+    x: col1X, y: y, w: 944, h: 250
   });
 
   return widgets;

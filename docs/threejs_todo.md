@@ -5,7 +5,7 @@
 **Goal:** Complete the "fit and finish" phase, ensure parity with the WebGL version, and eventually merge back to `master` as a single unified codebase.
 
 ## 0. Graph editor issues/features
-* [ ] Unify desktop and vr graph editor/timeline, too much code to maintain now.
+
 * [ ] Tangents too easy to grab and misplace in vr, esp when panning/zooming
 * [ ] Hover highlight missing on tangents
 * [ ] Tangent disply should be removed from timeline, they don't work
@@ -34,6 +34,7 @@
 * [ ] **Layers**
 * [ ] **Desktop electron build**: increase memory limits, modify load/save
 
+* [x] Unify desktop and vr graph editor/timeline, too much code to maintain now.
 * [x] **Tablet**: UI doesn't work on ios, why?
 * [x] **Animation**: graph editor in vr
 * [x] **Animation**: for shape anim, handle with a graph editor and treat as time? so diagonal graph, beziers control retime essentially?

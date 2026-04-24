@@ -4145,7 +4145,11 @@ export default class GuiXR {
         ctx.restore();
       }
       else if (wid.type === 'combobox') {
-        ctx.fillStyle = isHovered ? '#444' : '#333';
+        if (wid.disabled) {
+          ctx.fillStyle = '#222';
+        } else {
+          ctx.fillStyle = isHovered ? '#444' : '#333';
+        }
         ctx.fillRect(wid.x, wid.y, wid.w, wid.h);
 
         let displayLabel = wid.label;
@@ -4170,7 +4174,7 @@ export default class GuiXR {
 
         ctx.textAlign = 'left';
         ctx.font = this.styles.fontOverlay || '20px sans-serif';
-        ctx.fillStyle = '#ccc';
+        ctx.fillStyle = wid.disabled ? '#555' : '#ccc';
         ctx.fillText(displayLabel, wid.x + 20, wid.y + wid.h / 2 + 10);
 
         ctx.textAlign = 'right';
@@ -4187,7 +4191,7 @@ export default class GuiXR {
       }
     }
 
-    if (isHovered && wid.type !== 'info' && wid.type !== 'sub_tab') {
+    if (isHovered && wid.type !== 'info' && wid.type !== 'sub_tab' && !wid.disabled) {
       const INSET = 4; // Shift inside so lineWidth overlaps with bounding box clear
       ctx.strokeStyle = '#dfdfdf';
       ctx.lineWidth = 4;
