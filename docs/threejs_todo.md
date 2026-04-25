@@ -7,12 +7,10 @@
 ## 0. Graph editor issues/features
 
 * [ ] Check baking to glb works, i assume we'll need to pre-frame bake or something
-* [ ] tangents; Option to lock scale, only adjust angle
 * [ ] Allow playhead to move outside of range, so users can place spare shapes at frames -1, -2 etc
 
 
 ## 1. Todo
-
 
 * [ ] **Scene**: simple mirror for now? in lieu of proper scene hierarchy/instancing
 * [-] **Animation**: per key interp type; hold, bezier, linear [partially there, can do broken tangents]
