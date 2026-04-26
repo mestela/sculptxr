@@ -18,6 +18,7 @@ class GuiFiles {
     this._menu = null; // ui menu
     this._parent = guiParent;
     this._exportAll = true;
+    this._bakeAnimation = true;
 
     this._objColorZbrush = true;
     this._objColorAppended = false;
@@ -65,6 +66,7 @@ class GuiFiles {
     menu.addCheckbox(TR('fileExportAll'), this, '_exportAll');
     menu.addButton('Export .sxr (SculptXR)', this, 'saveFileAsSGL');
     menu.addButton('Export GLB (Anim)', this, 'saveFileAsGLB');
+    menu.addCheckbox('Bake Animation', this, '_bakeAnimation');
     menu.addButton(TR('fileExportOBJ'), this, 'saveFileAsOBJ' /*, 'CTRL+E'*/ );
     menu.addButton(TR('fileExportPLY'), this, 'saveFileAsPLY');
     menu.addButton(TR('fileExportSTL'), this, 'saveFileAsSTL');
@@ -372,7 +374,7 @@ class GuiFiles {
   saveFileAsGLB() {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportGLB(meshes), this._getTimestampedFileName('yourMesh', 'glb'));
+    this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation }), this._getTimestampedFileName('yourMesh', 'glb'));
   }
 
   saveFileAsOBJ() {
