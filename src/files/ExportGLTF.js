@@ -319,22 +319,43 @@ Export.exportGLB = function (meshes, options = {}) {
     var animObj = null;
     var samplerIdx = 0;
 
-    if (isAnimated) {
-      var shapeTimes = track.shapeTimes;
-      var shapes = track.shapes;
+    var hasBlendshapes = track && track.blendshapes && track.blendshapes.size > 0;
+    
+    var shapeTimes = (track && track.shapeTimes) ? track.shapeTimes : [];
+    var shapes = (track && track.shapes) ? track.shapes : [];
 
-      // Always create targets for original shape keyframes
-      for (var k = 0; k < shapeTimes.length; ++k) {
-        var shapeVerts = shapes[k];
-        var disp = new Float32Array(vAr.length);
+    // 1. Add ShotSculpt targets
+    for (var k = 0; k < shapeTimes.length; ++k) {
+      var shapeVerts = shapes[k];
+      var disp = new Float32Array(vAr.length);
 
-        for (var j = 0; j < vAr.length; ++j) {
-          var delta = shapeVerts[j] - vAr[j];
-          disp[j] = Math.abs(delta) > 0.001 ? delta : 0.0;
-        }
+      for (var j = 0; j < vAr.length; ++j) {
+        var delta = shapeVerts[j] - vAr[j];
+        disp[j] = Math.abs(delta) > 0.001 ? delta : 0.0;
+      }
 
-        var dispMinMax = getMinMax(disp, 3);
-        var dispBv = addBufferView(disp);
+      var dispMinMax = getMinMax(disp, 3);
+      var dispBv = addBufferView(disp);
+      var dispAccessor = json.accessors.length;
+      json.accessors.push({
+        bufferView: dispBv,
+        componentType: 5126,
+        count: nbVerts,
+        type: "VEC3",
+        min: dispMinMax.min,
+        max: dispMinMax.max,
+        extras: { name: `ShotSculpt_${k}` }
+      });
+
+      targets.push({ POSITION: dispAccessor });
+      weights.push(0.0);
+    }
+
+    // 2. Add Blendshape targets
+    if (hasBlendshapes) {
+      track.blendshapes.forEach((delta, name) => {
+        var dispMinMax = getMinMax(delta, 3);
+        var dispBv = addBufferView(delta);
         var dispAccessor = json.accessors.length;
         json.accessors.push({
           bufferView: dispBv,
@@ -342,149 +363,170 @@ Export.exportGLB = function (meshes, options = {}) {
           count: nbVerts,
           type: "VEC3",
           min: dispMinMax.min,
-          max: dispMinMax.max
+          max: dispMinMax.max,
+          extras: { name: name }
         });
 
         targets.push({ POSITION: dispAccessor });
         weights.push(0.0);
-      }
+      });
+    }
 
-      var timeAccessor, weightAccessor;
+    var timeAccessor, weightAccessor;
 
-      if (bake) {
-        var numSamples = Math.ceil(totalDuration / dt) + 1;
-        var bakedTimes = new Float32Array(numSamples);
-        var bakedWeights = new Float32Array(numSamples * shapeTimes.length);
+    if (bake) {
+      var numSamples = Math.ceil(totalDuration / dt) + 1;
+      var bakedTimes = new Float32Array(numSamples);
+      var totalTargets = shapeTimes.length + (hasBlendshapes ? track.blendshapes.size : 0);
+      var bakedWeights = new Float32Array(numSamples * totalTargets);
 
-        for (var s = 0; s < numSamples; ++s) {
-          var t = s * dt;
-          bakedTimes[s] = t;
-          
+      for (var s = 0; s < numSamples; ++s) {
+        var t = s * dt;
+        bakedTimes[s] = t;
+        
+        var offset = s * totalTargets;
+        
+        // Evaluate ShotSculpt
+        if (shapeTimes.length > 0) {
           var evalRes = evaluateShapes(track, t);
           var sIdx = evalRes.sIdx;
           var blend = evalRes.blend;
           
-          var offset = s * shapeTimes.length;
           bakedWeights[offset + sIdx] = 1.0 - blend;
           if (sIdx < shapeTimes.length - 1) {
             bakedWeights[offset + sIdx + 1] = blend;
           }
         }
-
-        var timeMinMax = getMinMax(bakedTimes, 1);
-        var timeBv = addBufferView(bakedTimes);
-        timeAccessor = json.accessors.length;
-        json.accessors.push({
-          bufferView: timeBv,
-          componentType: 5126,
-          count: numSamples,
-          type: "SCALAR",
-          min: timeMinMax.min,
-          max: timeMinMax.max
-        });
-
-        var weightBv = addBufferView(bakedWeights);
-        weightAccessor = json.accessors.length;
-        json.accessors.push({
-          bufferView: weightBv,
-          componentType: 5126,
-          count: numSamples * shapeTimes.length,
-          type: "SCALAR"
-        });
-
-        animObj = {
-          name: "Animation_" + id,
-          samplers: [{
-            input: timeAccessor,
-            output: weightAccessor,
-            interpolation: "LINEAR"
-          }],
-          channels: [{
-            sampler: 0,
-            target: {
-              node: json.nodes.length - 1,
-              path: "weights"
+        
+        // Evaluate Blendshapes
+        if (hasBlendshapes) {
+          var bOffset = offset + shapeTimes.length;
+          let bIdx = 0;
+          track.blendshapes.forEach((delta, name) => {
+            const bTrack = track.blendshapeTracks.get(name);
+            let weight = 0;
+            if (bTrack && bTrack.times.length > 0) {
+              weight = window._animationRegistry.evaluateScalarTrack(bTrack, t);
             }
-          }]
-        };
-        samplerIdx = 1;
-      } else {
-        // Original non-baked logic for shapes
-        var timeArr = new Float32Array(shapeTimes);
-        var timeMinMax = getMinMax(timeArr, 1);
-        var timeBv = addBufferView(timeArr);
-        timeAccessor = json.accessors.length;
-        json.accessors.push({
-          bufferView: timeBv,
-          componentType: 5126,
-          count: shapeTimes.length,
-          type: "SCALAR",
-          min: timeMinMax.min,
-          max: timeMinMax.max
-        });
-
-        var N = shapeTimes.length;
-        var K = shapeTimes.length;
-        var weightArr = new Float32Array(K * 3 * N);
-
-        for (var k = 0; k < K; ++k) {
-          var frameOffset = k * 3 * N;
-          
-          var inTan = new Float32Array(N);
-          if (k > 0) {
-            var dt_shape = shapeTimes[k] - shapeTimes[k - 1];
-            var leftVal = track.tangentOffsets ? track.tangentOffsets[`${k}_left`] : undefined;
-            var leftHandle = leftVal !== undefined ? leftVal : -25;
-            var m1 = -leftHandle / 25.0;
-            
-            inTan[k - 1] = -m1 / dt_shape;
-            inTan[k] = m1 / dt_shape;
-          }
-          weightArr.set(inTan, frameOffset);
-
-          var val = new Float32Array(N);
-          val[k] = 1.0;
-          weightArr.set(val, frameOffset + N);
-
-          var outTan = new Float32Array(N);
-          if (k < K - 1) {
-            var dt_shape = shapeTimes[k + 1] - shapeTimes[k];
-            var rightVal = track.tangentOffsets ? track.tangentOffsets[`${k}_right`] : undefined;
-            var rightHandle = rightVal !== undefined ? rightVal : 25;
-            var m0 = rightHandle / 25.0;
-            
-            outTan[k] = -m0 / dt_shape;
-            outTan[k + 1] = m0 / dt_shape;
-          }
-          weightArr.set(outTan, frameOffset + 2 * N);
+            bakedWeights[bOffset + bIdx] = weight;
+            bIdx++;
+          });
         }
-
-        var weightBv = addBufferView(weightArr);
-        weightAccessor = json.accessors.length;
-        json.accessors.push({
-          bufferView: weightBv,
-          componentType: 5126,
-          count: K * 3 * N,
-          type: "SCALAR"
-        });
-
-        animObj = {
-          name: "Animation_" + id,
-          samplers: [{
-            input: timeAccessor,
-            output: weightAccessor,
-            interpolation: "CUBICSPLINE"
-          }],
-          channels: [{
-            sampler: 0,
-            target: {
-              node: json.nodes.length - 1,
-              path: "weights"
-            }
-          }]
-        };
-        samplerIdx = 1;
       }
+
+      var timeMinMax = getMinMax(bakedTimes, 1);
+      var timeBv = addBufferView(bakedTimes);
+      timeAccessor = json.accessors.length;
+      json.accessors.push({
+        bufferView: timeBv,
+        componentType: 5126,
+        count: numSamples,
+        type: "SCALAR",
+        min: timeMinMax.min,
+        max: timeMinMax.max
+      });
+
+      var weightBv = addBufferView(bakedWeights);
+      weightAccessor = json.accessors.length;
+      json.accessors.push({
+        bufferView: weightBv,
+        componentType: 5126,
+        count: numSamples * totalTargets,
+        type: "SCALAR"
+      });
+
+      animObj = {
+        name: "Animation_" + id,
+        samplers: [{
+          input: timeAccessor,
+          output: weightAccessor,
+          interpolation: "LINEAR"
+        }],
+        channels: [{
+          sampler: 0,
+          target: {
+            node: json.nodes.length - 1,
+            path: "weights"
+          }
+        }]
+      };
+      samplerIdx = 1;
+    } else if (shapeTimes.length > 0) {
+      // Original non-baked logic for shapes (fallback)
+      var timeArr = new Float32Array(shapeTimes);
+      var timeMinMax = getMinMax(timeArr, 1);
+      var timeBv = addBufferView(timeArr);
+      timeAccessor = json.accessors.length;
+      json.accessors.push({
+        bufferView: timeBv,
+        componentType: 5126,
+        count: shapeTimes.length,
+        type: "SCALAR",
+        min: timeMinMax.min,
+        max: timeMinMax.max
+      });
+
+      var N = shapeTimes.length;
+      var K = shapeTimes.length;
+      var weightArr = new Float32Array(K * 3 * N);
+
+      for (var k = 0; k < K; ++k) {
+        var frameOffset = k * 3 * N;
+        
+        var inTan = new Float32Array(N);
+        if (k > 0) {
+          var dt_shape = shapeTimes[k] - shapeTimes[k - 1];
+          var leftVal = track.tangentOffsets ? track.tangentOffsets[`${k}_left`] : undefined;
+          var leftHandle = leftVal !== undefined ? leftVal : -25;
+          var m1 = -leftHandle / 25.0;
+          
+          inTan[k - 1] = -m1 / dt_shape;
+          inTan[k] = m1 / dt_shape;
+        }
+        weightArr.set(inTan, frameOffset);
+
+        var val = new Float32Array(N);
+        val[k] = 1.0;
+        weightArr.set(val, frameOffset + N);
+
+        var outTan = new Float32Array(N);
+        if (k < K - 1) {
+          var dt_shape = shapeTimes[k + 1] - shapeTimes[k];
+          var rightVal = track.tangentOffsets ? track.tangentOffsets[`${k}_right`] : undefined;
+          var rightHandle = rightVal !== undefined ? rightVal : 25;
+          var m0 = rightHandle / 25.0;
+          
+          outTan[k] = -m0 / dt_shape;
+          outTan[k + 1] = m0 / dt_shape;
+        }
+        weightArr.set(outTan, frameOffset + 2 * N);
+      }
+
+      var weightBv = addBufferView(weightArr);
+      weightAccessor = json.accessors.length;
+      json.accessors.push({
+        bufferView: weightBv,
+        componentType: 5126,
+        count: K * 3 * N,
+        type: "SCALAR"
+      });
+
+      animObj = {
+        name: "Animation_" + id,
+        samplers: [{
+          input: timeAccessor,
+          output: weightAccessor,
+          interpolation: "CUBICSPLINE"
+        }],
+        channels: [{
+          sampler: 0,
+          target: {
+            node: json.nodes.length - 1,
+            path: "weights"
+          }
+        }]
+      };
+      samplerIdx = 1;
     }
 
     var hasTransformAnim = track && track.times && track.times.length > 0;
@@ -826,6 +868,20 @@ Export.exportGLB = function (meshes, options = {}) {
 
     if (targets.length > 0) {
       prim.targets = targets;
+      
+      // Add targetNames to primitive extras (supported by some loaders)
+      prim.extras = prim.extras || {};
+      prim.extras.targetNames = [];
+      
+      const sTimes = (track && track.shapeTimes) ? track.shapeTimes : [];
+      for (var k = 0; k < sTimes.length; ++k) {
+        prim.extras.targetNames.push(`ShotSculpt_${k}`);
+      }
+      if (hasBlendshapes) {
+        track.blendshapes.forEach((delta, name) => {
+          prim.extras.targetNames.push(name);
+        });
+      }
     }
 
     var meshObj = {
@@ -835,6 +891,31 @@ Export.exportGLB = function (meshes, options = {}) {
 
     if (weights.length > 0) {
       meshObj.weights = weights;
+    }
+
+    if (isAnimated) {
+      meshObj.extras = meshObj.extras || {};
+      meshObj.extras.targetNames = [];
+      
+      const nodeObj = json.nodes[json.nodes.length - 1];
+      nodeObj.extras = nodeObj.extras || {};
+      nodeObj.extras.targetNames = [];
+
+      const sTimes = (track && track.shapeTimes) ? track.shapeTimes : [];
+      // Add names for ShotSculpt targets
+      for (var k = 0; k < sTimes.length; ++k) {
+        const name = `ShotSculpt_${k}`;
+        meshObj.extras.targetNames.push(name);
+        nodeObj.extras.targetNames.push(name);
+      }
+      
+      // Add names for Blendshapes
+      if (hasBlendshapes) {
+        track.blendshapes.forEach((delta, name) => {
+          meshObj.extras.targetNames.push(name);
+          nodeObj.extras.targetNames.push(name);
+        });
+      }
     }
 
     json.meshes.push(meshObj);

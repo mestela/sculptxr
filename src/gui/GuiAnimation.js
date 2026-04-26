@@ -1,5 +1,5 @@
-import TimelineHelper from './TimelineHelper.js';
 import TR from './GuiTR.js';
+import TimelineHelper from './TimelineHelper.js';
 
 class GuiAnimation {
   constructor(guiParent, ctrlGui) {
@@ -10,180 +10,67 @@ class GuiAnimation {
   }
 
   init(guiParent) {
+    // Create a folder in the yagui sidebar
+    const menu = guiParent.addMenu('Animation');
+    menu.open();
+    this._menu = menu;
+
     window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
     window._animAutoKey = window._animAutoKey !== undefined ? window._animAutoKey : false;
     window._animWaitForTrigger = window._animWaitForTrigger !== undefined ? window._animWaitForTrigger : true;
-    var menu = this._menu = guiParent.addMenu('Animation');
-    menu.close();
-
     window._animShowTangents = window._animShowTangents !== undefined ? window._animShowTangents : false;
-    menu.addCheckbox('Show Timeline', false, this.toggleTimeline.bind(this));
-    
     window._animShowTransformBox = false;
+    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+    window._animFPS = window._animFPS || 24;
+    window._animPlaybackSpeed = window._animPlaybackSpeed || 1.0;
+    window._animKeyMode = window._animKeyMode || 'transform';
+
+    // 1. View Options
+    menu.addTitle('View Options');
+    menu.addCheckbox('Show Timeline', false, (val) => this.toggleTimeline(val));
     menu.addCheckbox('Show Transform Box', false, (val) => {
       window._animShowTransformBox = val;
       const timeline = this._ctrlGui._ctrlTimeline;
       if (timeline) timeline.draw();
     });
 
-    // TRANSPORT SECTION
+    // 2. Transport
     menu.addTitle('Transport');
-    
-    // Transport buttons (Custom Single Line Icons)
-    const li = document.createElement('li');
-    const div = document.createElement('div');
-    div.style.display = 'flex';
-    div.style.justifyContent = 'space-between';
-    div.style.padding = '5px 0';
-    div.style.background = '#2a2e33';
-    
-    const buttons = [
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="2" height="12"/><path d="M14 2 L6 8 L14 14 Z"/></svg>', method: 'toStart' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9 2 L2 8 L9 14 Z"/><path d="M16 2 L9 8 L16 14 Z"/></svg>', method: 'prevFrame' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M12 2 L4 8 L12 14 Z"/></svg>', method: 'playRev' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12"/></svg>', method: 'stop' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2 L12 8 L4 14 Z"/></svg>', method: 'playFwd' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7 2 L14 8 L7 14 Z"/><path d="M0 2 L7 8 L0 14 Z"/></svg>', method: 'nextFrame' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2 L10 8 L2 14 Z"/><rect x="12" y="2" width="2" height="12"/></svg>', method: 'toEnd' },
-      { label: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6"/></svg>', method: 'record' }
-    ];
-    
-    buttons.forEach(btn => {
-      const b = document.createElement('button');
-      b.innerHTML = btn.label;
-      b.style.flex = '1';
-      b.style.margin = '0 1px';
-      b.style.padding = '8px 0';
-      b.style.background = '#343a40';
-      b.style.color = '#aaa';
-      b.style.border = 'none';
-      b.style.cursor = 'pointer';
-      b.style.fontSize = '14px';
-      
-      b.addEventListener('mouseover', () => {
-        b.style.background = '#495057';
-        b.style.color = '#fff';
-      });
-      b.addEventListener('mouseout', () => {
-        b.style.background = '#343a40';
-        b.style.color = '#aaa';
-      });
-      
-      b.addEventListener('click', (e) => {
-        e.preventDefault();
-        this[btn.method]();
-      });
-      div.appendChild(b);
-    });
-    
-    li.style.height = '40px';
-    li.style.overflow = 'visible';
-    li.style.lineHeight = 'normal';
-    
-    li.appendChild(div);
-    menu.domUl.appendChild(li);
+    menu.addButton('|< To Start', () => this.toStart());
+    menu.addButton('<< Prev Frame', () => this.prevFrame());
+    menu.addButton('< Play Rev', () => this.playRev());
+    menu.addButton('[] Stop', () => this.stop());
+    menu.addButton('> Play Fwd', () => this.playFwd());
+    menu.addButton('>> Next Frame', () => this.nextFrame());
+    menu.addButton('>| To End', () => this.toEnd());
+    menu.addButton('O Record', () => this.record());
 
-    // Count-in
-    menu.addCheckbox('Count-in', window, '_animCountIn');
-    
-    // Wait for Trigger
-    menu.addCheckbox('Wait for Trigger', window, '_animWaitForTrigger');
-    
-    // Bake Rate
-    const rateModes = [0.033, 0.1, 0.5, 1.0];
-    const rateLabels = ['Dense (~30 fps)', 'Standard (~10 fps)', 'Sparse (2 fps)', 'Step Key (1 fps)'];
-    window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
-    let defaultRateIdx = rateModes.indexOf(window._animCaptureRate);
-    if (defaultRateIdx === -1) defaultRateIdx = 0;
+    menu.addCheckbox('Count-in', window._animCountIn, (val) => { window._animCountIn = val; });
+    menu.addCheckbox('Wait for Trigger', window._animWaitForTrigger, (val) => { window._animWaitForTrigger = val; });
 
-    menu.addCombobox('Bake Rate', defaultRateIdx, (val) => {
-      window._animCaptureRate = rateModes[val];
-    }, rateLabels);
+    // Sliders
+    menu.addSlider('FPS', window._animFPS, (val) => { window._animFPS = val; }, 1, 60, 1);
+    menu.addSlider('Playback Speed', window._animPlaybackSpeed, (val) => { window._animPlaybackSpeed = val; }, 0.1, 4.0, 0.1);
 
-    // Clear All
-    menu.addButton('Clear All Animation', this, 'clearAll');
-
-    // FPS
-    menu.addSlider('FPS', window, '_animFPS', 1, 60, 1);
-
-    // Playback Speed
-    const stored = localStorage.getItem('sculptxr_settings');
-    let speed = 1.0;
-    if (stored) {
-      try {
-        const settings = JSON.parse(stored);
-        if (settings.playbackSpeed !== undefined) speed = settings.playbackSpeed;
-      } catch (e) {}
-    }
-    window._animPlaybackSpeed = speed;
-
-    menu.addSlider('Playback Speed', window._animPlaybackSpeed, (val) => {
-      window._animPlaybackSpeed = val;
-      const stored = localStorage.getItem('sculptxr_settings');
-      const settings = stored ? JSON.parse(stored) : {};
-      settings.playbackSpeed = val;
-      localStorage.setItem('sculptxr_settings', JSON.stringify(settings));
-    }, 0.1, 4.0, 0.1);
-
-    // Duration, Loop Start, Loop End
-    const fps = window._animFPS || 24;
-    window._animLoopStart = 0;
-    window._animLoopEnd = window._animMasterDuration || 2.0;
-    
-    menu.addSlider('Duration (Frames)', (window._animMasterDuration || 2.0) * fps, (val) => {
-      window._animMasterDuration = val / fps;
-    }, 1, 720, 1);
-    menu.addSlider('Loop Start (Frames)', window._animLoopStart * fps, (val) => {
-      window._animLoopStart = val / fps;
-    }, 0, 720, 1);
-    menu.addSlider('Loop End (Frames)', window._animLoopEnd * fps, (val) => {
-      window._animLoopEnd = val / fps;
-    }, 0, 720, 1);
-
-
-    // KEYFRAMES SECTION
+    // 3. Keyframes
     menu.addTitle('Keyframes');
-    
-    // Key Mode
-    const keyModes = ['shape', 'transform'];
-    window._animKeyMode = window._animKeyMode || 'transform';
-    menu.addCombobox('Key Mode', keyModes.indexOf(window._animKeyMode), (val) => {
-      window._animKeyMode = keyModes[val];
-    }, keyModes);
-    
-    // Add Keyframe
-    menu.addButton('Add Keyframe', this, 'addKeyframe');
-    
-    // Copy/Paste
-    menu.addDualButton('📋 Copy Key', '📥 Paste Key', this, this, 'copyKey', 'pasteKey');
-    
-    // Cut/Delete
-    menu.addDualButton('✂️ Cut Key', '🗑️ Delete Key', this, this, 'cutKey', 'deleteKey');
-    
-    // AutoKey
-    menu.addCheckbox('AutoKey', window._animAutoKey, this.toggleAutoKey.bind(this));
-    
-    // Show Tangents
-    menu.addCheckbox('Show Tangents', window._animShowTangents || false, (val) => {
+    menu.addCombobox('Key Mode', window._animKeyMode, (val) => { window._animKeyMode = val; }, ['shape', 'transform']);
+    menu.addButton('Add Keyframe', () => this.addKeyframe());
+    menu.addButton('Copy Key', () => this.copyKey());
+    menu.addButton('Paste Key', () => this.pasteKey());
+    menu.addButton('Delete Key', () => this.deleteKey());
+    menu.addCheckbox('AutoKey', window._animAutoKey, (val) => { this.toggleAutoKey(val); });
+    menu.addCheckbox('Show Tangents', window._animShowTangents, (val) => {
       window._animShowTangents = val;
       const timeline = this._ctrlGui._ctrlTimeline;
       if (timeline) timeline.draw();
     });
-    
-    // Lock Angle
-    menu.addCheckbox('Lock Angle', window._animLockTangentAngle || false, (val) => {
-      window._animLockTangentAngle = val;
-    });
-    
-    // Flatten Tangents
-    menu.addButton('Flatten Tangents', this, 'flattenTangents');
+
+    menu.addButton('Clear All', () => this.clearAll());
   }
 
-  // Callbacks
   toggleTimeline(val) {
-    console.log('toggleTimeline called with', val);
     const timeline = this._ctrlGui._ctrlTimeline;
-    console.log('timeline is', timeline);
     if (timeline) {
       timeline.setVisibility(val);
     }
@@ -305,17 +192,6 @@ class GuiAnimation {
     }
   }
 
-  printTracks() {
-    const reg = window._animationRegistry;
-    if (!reg) { console.log("No animation registry"); return; }
-    const tracks = Array.from(reg.tracks.entries());
-    console.log("Total Tracks:", tracks.length);
-    tracks.forEach(([id, track]) => {
-      console.log(`Track ID: ${id}, Keys count: ${track.times ? track.times.length : 0}`);
-      console.log("Times:", JSON.stringify(track.times));
-    });
-  }
-
   addKeyframe() {
     if (!window._animationRegistry) return;
     let targetMesh = this._main.getMesh();
@@ -330,7 +206,6 @@ class GuiAnimation {
     const fps = window._animFPS || 24;
     const targetTime = Math.round((window._animCurrentTime || 0) * fps) / fps;
     
-    // Snap playhead to the keyframe time
     window._animCurrentTime = targetTime;
     window._animationRegistry.globalPlaybackTime = targetTime;
     
@@ -369,107 +244,6 @@ class GuiAnimation {
     };
 
     this._main.getStateManager().pushStateCustom(cbUndo, cbRedo, false, actionName);
-  }
-
-  flattenTangents() {
-    const reg = window._animationRegistry;
-    if (!reg) return;
-    
-    if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
-      const savedData = [];
-      
-      window._animSelectedKeys.forEach(sk => {
-        const track = reg.tracks.get(sk.meshId);
-        if (track) {
-          if (!track.tangentOffsets) track.tangentOffsets = {};
-          const prefix = sk.type === 'transform' ? 'trans_' : '';
-          const channel = sk.channel !== undefined ? sk.channel : 0;
-          
-          const leftKey = `${prefix}${sk.index}_left_dv`;
-          const rightKey = `${prefix}${sk.index}_right_dv`;
-          const leftChanKey = `${prefix}${sk.index}_left_dv_${channel}`;
-          const rightChanKey = `${prefix}${sk.index}_right_dv_${channel}`;
-
-          // Save old values
-          savedData.push({
-            meshId: sk.meshId,
-            prefix,
-            index: sk.index,
-            channel,
-            type: sk.type,
-            oldLeftDv: track.tangentOffsets[leftKey],
-            oldRightDv: track.tangentOffsets[rightKey],
-            oldLeftChanDv: track.tangentOffsets[leftChanKey],
-            oldRightChanDv: track.tangentOffsets[rightChanKey]
-          });
-
-          // Apply flatten
-          track.tangentOffsets[leftKey] = 0;
-          track.tangentOffsets[rightKey] = 0;
-          if (sk.type === 'transform') {
-            track.tangentOffsets[leftChanKey] = 0;
-            track.tangentOffsets[rightChanKey] = 0;
-          }
-        }
-      });
-
-      // Push to State Manager for Undo/Redo
-      if (this._main.getStateManager && savedData.length > 0) {
-        const timeline = this._ctrlGui._ctrlTimeline;
-        this._main.getStateManager().pushStateCustom(
-          () => { // UNDO
-            savedData.forEach(d => {
-              const track = reg.tracks.get(d.meshId);
-              if (track && track.tangentOffsets) {
-                const leftKey = `${d.prefix}${d.index}_left_dv`;
-                const rightKey = `${d.prefix}${d.index}_right_dv`;
-                const leftChanKey = `${d.prefix}${d.index}_left_dv_${d.channel}`;
-                const rightChanKey = `${d.prefix}${d.index}_right_dv_${d.channel}`;
-
-                if (d.oldLeftDv !== undefined) track.tangentOffsets[leftKey] = d.oldLeftDv;
-                else delete track.tangentOffsets[leftKey];
-                
-                if (d.oldRightDv !== undefined) track.tangentOffsets[rightKey] = d.oldRightDv;
-                else delete track.tangentOffsets[rightKey];
-
-                if (d.type === 'transform') {
-                  if (d.oldLeftChanDv !== undefined) track.tangentOffsets[leftChanKey] = d.oldLeftChanDv;
-                  else delete track.tangentOffsets[leftChanKey];
-                  
-                  if (d.oldRightChanDv !== undefined) track.tangentOffsets[rightChanKey] = d.oldRightChanDv;
-                  else delete track.tangentOffsets[rightChanKey];
-                }
-              }
-            });
-            if (timeline) timeline.draw();
-          },
-          () => { // REDO
-            savedData.forEach(d => {
-              const track = reg.tracks.get(d.meshId);
-              if (track && track.tangentOffsets) {
-                const leftKey = `${d.prefix}${d.index}_left_dv`;
-                const rightKey = `${d.prefix}${d.index}_right_dv`;
-                const leftChanKey = `${d.prefix}${d.index}_left_dv_${d.channel}`;
-                const rightChanKey = `${d.prefix}${d.index}_right_dv_${d.channel}`;
-
-                track.tangentOffsets[leftKey] = 0;
-                track.tangentOffsets[rightKey] = 0;
-                if (d.type === 'transform') {
-                  track.tangentOffsets[leftChanKey] = 0;
-                  track.tangentOffsets[rightChanKey] = 0;
-                }
-              }
-            });
-            if (timeline) timeline.draw();
-          },
-          false,
-          "Flatten Tangents"
-        );
-      }
-
-      const timeline = this._ctrlGui._ctrlTimeline;
-      if (timeline) timeline.draw();
-    }
   }
 
   copyKey() {
@@ -733,7 +507,9 @@ class GuiAnimation {
             });
             
             main.render();
-          }
+          },
+          false,
+          "Paste Keys"
         );
       }
       if (window.screenLog) window.screenLog(`📥 Pasted ${window._animCopiedKeys.length} Keys`, 'lime');
@@ -814,7 +590,6 @@ class GuiAnimation {
   }
 
   updateMesh() {
-    // This can be used to update UI when active mesh changes if needed
   }
 }
 

@@ -215,7 +215,7 @@ export default class GuiTimeline {
     
     if (trackForGutter && trackForGutter.shapeTimes && trackForGutter.shapeTimes.length >= 2) {
       colors.push('#ff00ff');
-      labels.push('Shape Anim');
+      labels.push('ShotSculpt');
     }
     
     if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];

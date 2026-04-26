@@ -200,6 +200,53 @@ export default class TimelineHelper {
           }
         }
       }
+
+      // Draw Blendshape Keys (Squares)
+      if (track && track.blendshapeTracks) {
+        let bIdx = 0;
+        track.blendshapeTracks.forEach((bTrack, name) => {
+          if (bTrack && bTrack.times) {
+            for (let i = 0; i < bTrack.times.length; i++) {
+              const bt = bTrack.times[i];
+              if (bt >= loopStart && bt <= loopEnd) {
+                const kx = w.x + tlX + ((bt - loopStart) / visibleDuration) * tlW;
+                const ky = ty + trackH / 2 + 20 + (bIdx * 10); // Offset by index
+                
+                const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'blendshape' && sk.name === name && sk.index === i);
+                let isInsideMarquee = false;
+                
+                if (uiState._marqueeStart && uiState._marqueeEnd) {
+                  const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+                  const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+                  const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+                  const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+                  
+                  const laneOverlap = (my1 <= tyBottom && my2 >= ty);
+                  
+                  if (laneOverlap && kx >= mx1 && kx <= mx2) {
+                    isInsideMarquee = true;
+                  }
+                }
+                
+                const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 5);
+                const isSelected = isMultiSel || isInsideMarquee;
+                
+                if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
+                else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
+                else ctx.fillStyle = '#00ff88'; // Teal/Green for blendshapes
+                
+                ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#00ff88');
+                ctx.lineWidth = 1.5;
+                
+                ctx.beginPath();
+                ctx.fillRect(kx - 3, ky - 3, 6, 6); // Square!
+                ctx.strokeRect(kx - 3, ky - 3, 6, 6);
+              }
+            }
+          }
+          bIdx++;
+        });
+      }
     });
   }
 

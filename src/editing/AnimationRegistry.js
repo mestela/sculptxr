@@ -723,6 +723,236 @@ class AnimationRegistry {
     }
   }
 
+  createBlendshape(mesh, name) {
+    if (!mesh || !name) return;
+    const id = mesh.getID();
+    
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], playbackTime: 0, lastUpdate: performance.now()
+      });
+    }
+    
+    const track = this.tracks.get(id);
+    if (!track.blendshapes) track.blendshapes = new Map();
+    if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
+    
+    const v = mesh.getVertices();
+    
+    if (!track.baseShape) {
+      track.baseShape = new Float32Array(v); // Save current as base
+    }
+    
+    const delta = new Float32Array(v.length);
+    for (let i = 0; i < v.length; i++) {
+      delta[i] = v[i] - track.baseShape[i];
+    }
+    
+    track.blendshapes.set(name, delta);
+    track.blendshapeTracks.set(name, { times: [], values: [] });
+    
+    console.log(`[Animation] Created Blendshape ${name} for mesh ${id}`);
+
+    // Undo/Redo support
+    if (window.app && window.app.getStateManager()) {
+      const tr = track;
+      const meshId = id;
+      const d = delta;
+      
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          tr.blendshapes.delete(name);
+          tr.blendshapeTracks.delete(name);
+          this.applyBlendshapes(mesh);
+          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
+            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
+          }
+        },
+        () => { // REDO
+          tr.blendshapes.set(name, d);
+          tr.blendshapeTracks.set(name, { times: [], values: [] });
+          this.applyBlendshapes(mesh);
+          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
+            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
+          }
+        },
+        false,
+        "Create Blendshape"
+      );
+    }
+  }
+
+  setBlendshapeWeight(mesh, name, value) {
+    if (!mesh || !name) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.has(name)) return;
+    
+    const time = track.playbackTime;
+    const bTrack = track.blendshapeTracks.get(name);
+    
+    let idx = 0;
+    while (idx < bTrack.times.length && bTrack.times[idx] < time) {
+      idx++;
+    }
+    
+    if (idx < bTrack.times.length && Math.abs(bTrack.times[idx] - time) < 0.005) {
+      bTrack.values[idx] = value;
+    } else {
+      bTrack.times.splice(idx, 0, time);
+      bTrack.values.splice(idx, 0, value);
+    }
+    
+    this.applyBlendshapes(mesh);
+  }
+
+  applyBlendshapes(mesh, baseVerts) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes) return;
+    
+    const v = mesh.getVertices();
+    if (baseVerts) {
+      v.set(baseVerts);
+    } else if (track.baseShape) {
+      v.set(track.baseShape);
+    }
+    
+    track.blendshapes.forEach((delta, name) => {
+      const bTrack = track.blendshapeTracks.get(name);
+      if (!bTrack || bTrack.times.length === 0) return;
+      
+      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
+      
+      if (weight !== 0) {
+        for (let i = 0; i < v.length; i++) {
+          v[i] += delta[i] * weight;
+        }
+      }
+    });
+    
+    if (mesh.updateGeometry) mesh.updateGeometry();
+    if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+  }
+
+  evaluateScalarTrack(bTrack, time) {
+    if (bTrack.times.length === 0) return 0;
+    if (bTrack.times.length === 1) return bTrack.values[0];
+    
+    let idx = 0;
+    while (idx < bTrack.times.length - 1 && bTrack.times[idx + 1] < time) {
+      idx++;
+    }
+    
+    if (idx === bTrack.times.length - 1) return bTrack.values[idx];
+    
+    const t1 = bTrack.times[idx];
+    const t2 = bTrack.times[idx + 1];
+    const v1 = bTrack.values[idx];
+    const v2 = bTrack.values[idx + 1];
+    
+    const alpha = (time - t1) / (t2 - t1);
+    return v1 + (v2 - v1) * alpha;
+  }
+
+  deleteBlendshape(mesh, name) {
+    if (!mesh || !name) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track) return;
+    
+    const delta = track.blendshapes ? track.blendshapes.get(name) : null;
+    const bTrack = track.blendshapeTracks ? track.blendshapeTracks.get(name) : null;
+    
+    if (window.app && window.app.getStateManager()) {
+      const tr = track;
+      
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          if (delta) tr.blendshapes.set(name, delta);
+          if (bTrack) tr.blendshapeTracks.set(name, bTrack);
+          this.applyBlendshapes(mesh);
+          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
+            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
+          }
+        },
+        () => { // REDO
+          tr.blendshapes.delete(name);
+          tr.blendshapeTracks.delete(name);
+          this.applyBlendshapes(mesh);
+          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
+            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
+          }
+        },
+        false,
+        "Delete Blendshape"
+      );
+    }
+    
+    if (track.blendshapes) track.blendshapes.delete(name);
+    if (track.blendshapeTracks) track.blendshapeTracks.delete(name);
+    
+    this.applyBlendshapes(mesh);
+  }
+
+  enterBlendshapeEditMode(mesh, name) {
+    if (!mesh || !name) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.has(name)) return;
+    
+    track.editingBlendshape = name;
+    
+    const v = mesh.getVertices();
+    v.set(track.baseShape);
+    const delta = track.blendshapes.get(name);
+    for (let i = 0; i < v.length; i++) {
+      v[i] += delta[i];
+    }
+    
+    if (mesh.updateGeometry) mesh.updateGeometry();
+    if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+    
+    console.log(`[Animation] Entered edit mode for blendshape ${name}`);
+  }
+
+  exitBlendshapeEditMode(mesh) {
+    if (!mesh) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.editingBlendshape) return;
+    
+    const name = track.editingBlendshape;
+    const v = mesh.getVertices();
+    
+    const newDelta = new Float32Array(v.length);
+    for (let i = 0; i < v.length; i++) {
+      newDelta[i] = v[i] - track.baseShape[i];
+    }
+    
+    const oldDelta = track.blendshapes.get(name);
+    
+    if (window.app && window.app.getStateManager()) {
+      const tr = track;
+      
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          if (oldDelta) tr.blendshapes.set(name, oldDelta);
+          this.applyBlendshapes(mesh);
+        },
+        () => { // REDO
+          tr.blendshapes.set(name, newDelta);
+          this.applyBlendshapes(mesh);
+        },
+        false,
+        "Edit Blendshape Geometry"
+      );
+    }
+    
+    track.blendshapes.set(name, newDelta);
+    track.editingBlendshape = null;
+    
+    this.applyBlendshapes(mesh);
+    
+    console.log(`[Animation] Exited edit mode for blendshape ${name}`);
+  }
+
   addTransformKey(mesh, time) {
     if (!mesh) return;
     const id = mesh.getID();
@@ -1376,6 +1606,10 @@ class AnimationRegistry {
 
     }
 
+    let baseForBlendshapes = null;
+    const verts = mesh.getVertices();
+
+    // 1. ShotSculpt (Old Shape Key System)
     if (track.shapeTimes && track.shapeTimes.length > 0) {
       let sAlpha = 0;
       let s1 = null;
@@ -1464,7 +1698,6 @@ class AnimationRegistry {
         s2 = track.shapes[sIdx + 1];
       }
 
-      const verts = mesh.getVertices();
       const minLen = Math.min(s1 ? s1.length : 0, s2 ? s2.length : 0, verts ? verts.length : 0);
       const reqLen = mesh.getNbVertices ? mesh.getNbVertices() * 3 : minLen;
 
@@ -1505,7 +1738,14 @@ class AnimationRegistry {
         if (mesh.updateGeometry) mesh.updateGeometry();
         if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
         if (window.app && window.app.render) window.app.render();
+        
+        baseForBlendshapes = new Float32Array(verts); // Copy ShotSculpt result
       }
+    }
+
+    // 2. New Blendshape System (Layered on top)
+    if (track.blendshapes && track.blendshapes.size > 0) {
+      this.applyBlendshapes(mesh, baseForBlendshapes);
     }
   }
 }

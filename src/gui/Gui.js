@@ -13,6 +13,7 @@ import GuiStates from './GuiStates.js';
 import GuiTablet from './GuiTablet.js';
 import GuiTimeline from './GuiTimeline.js';
 import GuiAnimation from './GuiAnimation.js';
+import GuiBlendshapes from './GuiBlendshapes.js';
 import ShaderContour from '../render/shaders/ShaderContour.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
@@ -77,6 +78,7 @@ class Gui {
     ctrls[idc++] = this._ctrlTopology = new GuiTopology(this._sidebar, this);
     ctrls[idc++] = this._ctrlSculpting = new GuiSculpting(this._sidebar, this);
     ctrls[idc++] = this._ctrlAnimation = new GuiAnimation(this._sidebar, this);
+    ctrls[idc++] = this._ctrlBlendshapes = new GuiBlendshapes(this._sidebar, this);
 
     // Initialize custom timeline panel
     this._ctrlTimeline = new GuiTimeline(this._main);
