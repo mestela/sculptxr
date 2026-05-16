@@ -1503,7 +1503,7 @@ class Scene {
     viewport.style.top = '40px';
     viewport.style.bottom = '0px';
     viewport.style.left = '0px';
-    viewport.style.right = '310px';
+    viewport.style.right = '380px';
 
     var newWidth = viewport.clientWidth * this._pixelRatio;
     var newHeight = viewport.clientHeight * this._pixelRatio;

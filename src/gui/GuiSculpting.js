@@ -69,10 +69,10 @@ class GuiSculpting {
     const currentTool = this._sculptManager.getToolIndex();
 
     menu.addTitle('Sculpt Tools');
-    this._ctrlSculpt = menu.addCombobox('', sculptTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(sculptTools));
+    this._ctrlSculpt = menu.addToolGrid('', sculptTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(sculptTools));
 
     menu.addTitle('Low Poly Tools');
-    this._ctrlLowPoly = menu.addCombobox('', lowPolyTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(lowPolyTools));
+    this._ctrlLowPoly = menu.addToolGrid('', lowPolyTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(lowPolyTools));
     
     // Global option for Inset and Extrude
     this._ctrlKeepTogether = menu.addCheckbox('Keep Together', !!window.keepExtrudeFacesTogether, (val) => {
@@ -80,7 +80,7 @@ class GuiSculpting {
     });
 
     menu.addTitle('Voxel Tools');
-    this._ctrlVoxel = menu.addCombobox('', voxelTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(voxelTools));
+    this._ctrlVoxel = menu.addToolGrid('', voxelTools.includes(currentTool) ? currentTool : -1, this.onChangeTool.bind(this), buildOptTools(voxelTools));
 
     // Store lists for sync
     this._sculptToolsList = sculptTools;

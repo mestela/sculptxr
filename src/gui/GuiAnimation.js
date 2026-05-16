@@ -44,8 +44,8 @@ class GuiAnimation {
 
     const animContainer = document.createElement('div');
     animContainer.className = 'wa-animation-section wa-dark';
-    animContainer.style.padding = '5px';
-    animContainer.style.background = '#1e1e1e';
+    animContainer.style.padding = '0';
+    animContainer.style.background = 'transparent';
     animContainer.style.color = '#fff';
 
     // Stop keyboard events from bubbling up to the main app
@@ -61,21 +61,37 @@ class GuiAnimation {
       wa-button.compact-btn { --wa-button-height: 24px; font-size: 12px; }
       wa-number-input.compact-number { --wa-input-height: 24px; font-size: 12px; }
       wa-select.compact-select { --wa-input-height: 24px; font-size: 12px; }
-      .btn-grid { display: flex; gap: 2px; width: 100%; }
-      .btn-grid wa-button { flex: 1; --wa-button-height: 28px; }
+      .btn-grid { display: flex; gap: 2px; width: 100%; box-sizing: border-box; }
+      .btn-grid wa-button { flex: 1; --wa-button-height: 28px; min-width: 0 !important; }
+      .btn-grid wa-button::part(base) { padding: 0 !important; min-width: 0 !important; }
       .reverse-icon { transform: scaleX(-1); }
     `;
     animContainer.appendChild(style);
 
-    const createSection = (title, open = false) => {
-      const det = document.createElement('wa-details');
-      det.setAttribute('summary', title);
-      if (open) det.setAttribute('open', '');
-      det.className = 'compact-details';
+    const createSection = (title) => {
+      const container = document.createElement('div');
+      container.className = 'wa-stack';
+      container.style.gap = '12px';
+      container.style.marginTop = '8px';
+
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'group-title';
+      titleDiv.innerText = title;
+      titleDiv.style.fontSize = '12px';
+      titleDiv.style.fontWeight = '600';
+      titleDiv.style.color = '#888';
+      titleDiv.style.textTransform = 'uppercase';
+      titleDiv.style.borderBottom = '1px solid #2d2d2d';
+      titleDiv.style.paddingBottom = '4px';
+      titleDiv.style.marginTop = '8px';
+      container.appendChild(titleDiv);
+
       const cont = document.createElement('div');
       cont.className = 'wa-stack';
-      det.appendChild(cont);
-      return { details: det, content: cont };
+      cont.style.gap = '12px';
+      container.appendChild(cont);
+
+      return { details: container, content: cont };
     };
 
     // 1. Animation Section
