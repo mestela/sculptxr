@@ -78,7 +78,7 @@ class Gui {
     ctrls[idc++] = this._ctrlTopology = new GuiTopology(this._sidebar, this);
     ctrls[idc++] = this._ctrlSculpting = new GuiSculpting(this._sidebar, this);
     ctrls[idc++] = this._ctrlAnimation = new GuiAnimation(this._sidebar, this);
-    ctrls[idc++] = this._ctrlBlendshapes = new GuiBlendshapes(this._sidebar, this);
+    ctrls[idc++] = this._ctrlBlendshapes = new GuiBlendshapes(this._ctrlAnimation._blendshapesContent, this);
 
     // Initialize custom timeline panel
     this._ctrlTimeline = new GuiTimeline(this._main);
@@ -273,6 +273,7 @@ class Gui {
     this._ctrlTopology.updateMesh();
     this._ctrlSculpting.updateMesh();
     this._ctrlScene.updateMesh();
+    if (this._ctrlBlendshapes) this._ctrlBlendshapes.updateMesh();
     this.updateMeshInfo();
   }
 

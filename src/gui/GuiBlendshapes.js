@@ -1,5 +1,4 @@
 import '@awesome.me/webawesome/dist/styles/webawesome.css';
-import '@awesome.me/webawesome/dist/components/details/details.js';
 import '@awesome.me/webawesome/dist/components/button/button.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
 import '@awesome.me/webawesome/dist/components/input/input.js';
@@ -14,41 +13,19 @@ class GuiBlendshapes {
   }
 
   init(guiParent) {
-    const sidebarDom = guiParent.domSidebar;
-    if (!sidebarDom) return;
-
-    const container = document.createElement('div');
-    container.className = 'wa-blendshapes-section wa-dark';
-    container.style.padding = '5px';
-    container.style.background = '#1e1e1e';
-    container.style.color = '#fff';
-
-    // Stop keyboard events from bubbling up to the main app
-    container.addEventListener('keydown', (e) => e.stopPropagation());
-    container.addEventListener('keyup', (e) => e.stopPropagation());
-
-    const style = document.createElement('style');
-    style.innerHTML = `
-      .compact-details::part(header) { padding: 4px 8px; }
-      .compact-details::part(content) { padding: 8px; }
-      .blendshape-row { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid #333; }
-      .blendshape-header { display: flex; justify-content: space-between; align-items: center; gap: 5px; }
-      .blendshape-row wa-slider { width: 100%; --wa-slider-track-height: 4px; --wa-slider-thumb-size: 12px; margin-top: 2px; }
-      .blendshape-row wa-button { --wa-button-height: 20px; font-size: 11px; }
-      wa-input.compact-input { --wa-input-height: 24px; font-size: 12px; }
-      wa-button.compact-btn { --wa-button-height: 24px; font-size: 12px; }
-      wa-number-input.compact-number { --wa-input-height: 20px; width: 60px; font-size: 11px; }
-    `;
-    container.appendChild(style);
-
-    const details = document.createElement('wa-details');
-    details.setAttribute('summary', 'Blendshapes');
-    details.setAttribute('open', '');
-    details.className = 'compact-details';
+    const sidebarDom = guiParent.domSidebar || guiParent.domContainer || guiParent.domMain || guiParent;
+    if (!sidebarDom || !sidebarDom.appendChild) {
+      console.error("Cannot find a valid DOM element to attach Blendshapes UI!");
+      return;
+    }
 
     const content = document.createElement('div');
     content.className = 'wa-stack';
     content.style.gap = '10px';
+
+    // Stop keyboard events from bubbling up to the main app
+    content.addEventListener('keydown', (e) => e.stopPropagation());
+    content.addEventListener('keyup', (e) => e.stopPropagation());
 
     // Create New Blendshape
     const createGroup = document.createElement('div');
@@ -70,6 +47,8 @@ class GuiBlendshapes {
           input.value = ''; // Clear input
           this.refreshList(mesh);
         }
+      } else if (e.key === 'Escape') {
+        input.blur();
       }
     });
 
@@ -97,9 +76,7 @@ class GuiBlendshapes {
     this._listContainer.style.gap = '0';
     content.appendChild(this._listContainer);
 
-    details.appendChild(content);
-    container.appendChild(details);
-    sidebarDom.appendChild(container);
+    sidebarDom.appendChild(content);
 
     // Initial refresh
     const mesh = this._main.getMesh();
@@ -266,6 +243,11 @@ class GuiBlendshapes {
     row.appendChild(slider);
 
     this._listContainer.appendChild(row);
+  }
+
+  updateMesh() {
+    const mesh = this._main.getMesh();
+    this.refreshList(mesh);
   }
 }
 

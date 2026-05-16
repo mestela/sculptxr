@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTMLTexture Demo - Cube VR/AR</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #333; }
+        #canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+    <!-- Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
+                "three-html-render/polyfill": "https://cdn.jsdelivr.net/npm/three-html-render@0.1.2/dist/polyfill.mjs",
+                "three-html-render/renderer": "https://cdn.jsdelivr.net/npm/three-html-render@0.1.2/dist/renderer.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <!-- The content is inside the canvas as shown in the repo example -->
+    <canvas id="canvas" layoutsubtree>
+        <div id="content" style="width:512px;height:512px;padding:30px;background:#e0e0e0;font-family:sans-serif;color:#333;box-sizing:border-box;position:relative;">
+            <div style="text-align:center;margin-bottom:20px;">
+                <button style="background:#a8f5b5;color:white;border:none;border-radius:5px;padding:5px 15px;font-weight:bold;">CLICK ME</button>
+            </div>
+            
+            <div style="text-align:center;font-size:28px;color:#467297;margin-bottom:15px;">Hello world!</div>
+            
+            <div style="font-size:20px;line-height:1.4;margin-bottom:15px;">
+                I'm multi-line, <b>formatted</b>, rotated text with emoji (&#x1F60A;), RTL text <span dir="rtl">من فارسی صحبت میکنم</span>, vertical text,
+            </div>
+            
+            <div style="writing-mode: vertical-rl; font-size: 20px; height: 150px; position: absolute; left: 30px; top: 180px;">
+                这是垂直文本
+            </div>
+            
+            <div style="position: absolute; bottom: 140px; left: 30px; right: 30px; font-size:20px;">
+                an inline image ( <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==" style="height:40px;width:40px;vertical-align:middle;transform:rotate(5deg);"> ), and <span style="background:#00b31e;color:white;border-radius:5px;padding:2px 5px;font-size:14px;font-weight:bold;vertical-align:middle;">SVG</span> !
+            </div>
+            
+            <div style="position: absolute; bottom: 20px; left: 30px; right: 30px;">
+                <input type="text" placeholder="Type here..." style="width:100%;padding:10px;border-radius:5px;border:1px solid #ccc;box-sizing:border-box;margin-bottom:10px;">
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button id="vr-btn" style="background:#ff007b;color:white;border:none;border-radius:5px;padding:8px 20px;font-weight:bold;cursor:pointer;">Open VR</button>
+                    <button id="ar-btn" style="background:#00f0ff;color:black;border:none;border-radius:5px;padding:8px 20px;font-weight:bold;cursor:pointer;">Open AR</button>
+                </div>
+            </div>
+        </div>
+    </canvas>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
+        import { ThreeHTMLRenderer } from 'three-html-render/renderer';
+
+        // Install polyfill
+        installHtmlInCanvasPolyfill();
+
+        const canvas = document.getElementById('canvas');
+        const content = document.getElementById('content');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x333333);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 2;
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true; // Enable XR
+
+        const material = new THREE.MeshStandardMaterial({ 
+            roughness: 0.1,
+            metalness: 0.1
+        });
+        
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(1, 2, 3);
+        scene.add(dirLight);
+
+        const threeHtml = new ThreeHTMLRenderer();
+        threeHtml.connect(canvas, camera, renderer);
+        threeHtml.addObject(content, mesh);
+
+        // WebXR Setup
+        const vrBtn = document.getElementById('vr-btn');
+        const arBtn = document.getElementById('ar-btn');
+
+        vrBtn.addEventListener('click', async () => {
+            if (navigator.xr) {
+                try {
+                    const session = await navigator.xr.requestSession('immersive-vr', {
+                        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+                    });
+                    renderer.xr.setSession(session);
+                } catch (e) {
+                    console.error("Failed to start VR session", e);
+                    alert("VR not supported or failed to start: " + e.message);
+                }
+            } else {
+                alert("WebXR not supported in this browser.");
+            }
+        });
+
+        arBtn.addEventListener('click', async () => {
+            if (navigator.xr) {
+                try {
+                    const session = await navigator.xr.requestSession('immersive-ar', {
+                        optionalFeatures: ['local-floor']
+                    });
+                    renderer.xr.setSession(session);
+                } catch (e) {
+                    console.error("Failed to start AR session", e);
+                    alert("AR not supported or failed to start: " + e.message);
+                }
+            } else {
+                alert("WebXR not supported in this browser.");
+            }
+        });
+
+        function animate() {
+            mesh.rotation.x += 0.005;
+            mesh.rotation.y += 0.01;
+            
+            threeHtml.update();
+            renderer.render(scene, camera);
+        }
+
+        renderer.setAnimationLoop(animate);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

@@ -1,5 +1,16 @@
-import TR from './GuiTR.js';
 import TimelineHelper from './TimelineHelper.js';
+import TR from './GuiTR.js';
+
+// Web Awesome Imports
+import '@awesome.me/webawesome/dist/styles/webawesome.css';
+import '@awesome.me/webawesome/dist/components/details/details.js';
+import '@awesome.me/webawesome/dist/components/checkbox/checkbox.js';
+import '@awesome.me/webawesome/dist/components/button/button.js';
+import '@awesome.me/webawesome/dist/components/select/select.js';
+import '@awesome.me/webawesome/dist/components/option/option.js';
+import '@awesome.me/webawesome/dist/components/slider/slider.js';
+import '@awesome.me/webawesome/dist/components/number-input/number-input.js';
+import '@awesome.me/webawesome/dist/components/icon/icon.js';
 
 class GuiAnimation {
   constructor(guiParent, ctrlGui) {
@@ -10,10 +21,11 @@ class GuiAnimation {
   }
 
   init(guiParent) {
-    // Create a folder in the yagui sidebar
-    const menu = guiParent.addMenu('Animation');
-    menu.open();
-    this._menu = menu;
+    const sidebarDom = guiParent.domSidebar || guiParent.domContainer || guiParent.domMain || guiParent;
+    if (!sidebarDom || !sidebarDom.appendChild) {
+      console.error("Cannot find a valid DOM element to attach Web Awesome UI!");
+      return;
+    }
 
     window._animCountIn = window._animCountIn !== undefined ? window._animCountIn : true;
     window._animAutoKey = window._animAutoKey !== undefined ? window._animAutoKey : false;
@@ -24,49 +36,287 @@ class GuiAnimation {
     window._animFPS = window._animFPS || 24;
     window._animPlaybackSpeed = window._animPlaybackSpeed || 1.0;
     window._animKeyMode = window._animKeyMode || 'transform';
+    window._animMasterDuration = window._animMasterDuration || 2.0;
+    window._animLoopStart = window._animLoopStart || 0.0;
+    window._animLoopEnd = window._animLoopEnd || window._animMasterDuration;
 
-    // 1. View Options
-    menu.addTitle('View Options');
-    menu.addCheckbox('Show Timeline', false, (val) => this.toggleTimeline(val));
-    menu.addCheckbox('Show Transform Box', false, (val) => {
-      window._animShowTransformBox = val;
+    const fps = window._animFPS;
+
+    const animContainer = document.createElement('div');
+    animContainer.className = 'wa-animation-section wa-dark';
+    animContainer.style.padding = '5px';
+    animContainer.style.background = '#1e1e1e';
+    animContainer.style.color = '#fff';
+
+    // Stop keyboard events from bubbling up to the main app
+    animContainer.addEventListener('keydown', (e) => e.stopPropagation());
+    animContainer.addEventListener('keyup', (e) => e.stopPropagation());
+
+    const style = document.createElement('style');
+    style.innerHTML = `
+      .compact-details::part(header) { padding: 4px 8px; }
+      .compact-details::part(content) { padding: 8px; }
+      .wa-stack { display: flex; flex-direction: column; gap: 8px; }
+      wa-input.compact-input { --wa-input-height: 24px; font-size: 12px; }
+      wa-button.compact-btn { --wa-button-height: 24px; font-size: 12px; }
+      wa-number-input.compact-number { --wa-input-height: 24px; font-size: 12px; }
+      wa-select.compact-select { --wa-input-height: 24px; font-size: 12px; }
+      .btn-grid { display: flex; gap: 2px; width: 100%; }
+      .btn-grid wa-button { flex: 1; --wa-button-height: 28px; }
+      .reverse-icon { transform: scaleX(-1); }
+    `;
+    animContainer.appendChild(style);
+
+    const createSection = (title, open = false) => {
+      const det = document.createElement('wa-details');
+      det.setAttribute('summary', title);
+      if (open) det.setAttribute('open', '');
+      det.className = 'compact-details';
+      const cont = document.createElement('div');
+      cont.className = 'wa-stack';
+      det.appendChild(cont);
+      return { details: det, content: cont };
+    };
+
+    // 1. Animation Section
+    const animSection = createSection('Animation', true);
+    
+    const cbTimeline = document.createElement('wa-checkbox');
+    cbTimeline.innerText = 'Show Timeline';
+    cbTimeline.addEventListener('change', (e) => { this.toggleTimeline(e.target.checked); });
+    animSection.content.appendChild(cbTimeline);
+
+    const cbTransformBox = document.createElement('wa-checkbox');
+    cbTransformBox.innerText = 'Show transform box';
+    cbTransformBox.addEventListener('change', (e) => {
+      window._animShowTransformBox = e.target.checked;
       const timeline = this._ctrlGui._ctrlTimeline;
       if (timeline) timeline.draw();
     });
+    animSection.content.appendChild(cbTransformBox);
 
-    // 2. Transport
-    menu.addTitle('Transport');
-    menu.addButton('|< To Start', () => this.toStart());
-    menu.addButton('<< Prev Frame', () => this.prevFrame());
-    menu.addButton('< Play Rev', () => this.playRev());
-    menu.addButton('[] Stop', () => this.stop());
-    menu.addButton('> Play Fwd', () => this.playFwd());
-    menu.addButton('>> Next Frame', () => this.nextFrame());
-    menu.addButton('>| To End', () => this.toEnd());
-    menu.addButton('O Record', () => this.record());
+    // FPS Slider with value display
+    const fpsLabel = document.createElement('div');
+    fpsLabel.innerText = `FPS: ${window._animFPS}`;
+    fpsLabel.style.fontSize = '12px';
+    animSection.content.appendChild(fpsLabel);
 
-    menu.addCheckbox('Count-in', window._animCountIn, (val) => { window._animCountIn = val; });
-    menu.addCheckbox('Wait for Trigger', window._animWaitForTrigger, (val) => { window._animWaitForTrigger = val; });
+    const sliderFPS = document.createElement('wa-slider');
+    sliderFPS.setAttribute('value', window._animFPS.toString());
+    sliderFPS.setAttribute('min', '1');
+    sliderFPS.setAttribute('max', '60');
+    sliderFPS.setAttribute('step', '1');
+    sliderFPS.addEventListener('input', (e) => {
+      fpsLabel.innerText = `FPS: ${e.target.value}`;
+      window._animFPS = parseInt(e.target.value);
+    });
+    animSection.content.appendChild(sliderFPS);
 
-    // Sliders
-    menu.addSlider('FPS', window._animFPS, (val) => { window._animFPS = val; }, 1, 60, 1);
-    menu.addSlider('Playback Speed', window._animPlaybackSpeed, (val) => { window._animPlaybackSpeed = val; }, 0.1, 4.0, 0.1);
+    // Playback Speed Slider with value display
+    const speedLabel = document.createElement('div');
+    speedLabel.innerText = `Playback Speed: ${window._animPlaybackSpeed.toFixed(1)}x`;
+    speedLabel.style.fontSize = '12px';
+    animSection.content.appendChild(speedLabel);
 
-    // 3. Keyframes
-    menu.addTitle('Keyframes');
-    menu.addCombobox('Key Mode', window._animKeyMode, (val) => { window._animKeyMode = val; }, ['shape', 'transform']);
-    menu.addButton('Add Keyframe', () => this.addKeyframe());
-    menu.addButton('Copy Key', () => this.copyKey());
-    menu.addButton('Paste Key', () => this.pasteKey());
-    menu.addButton('Delete Key', () => this.deleteKey());
-    menu.addCheckbox('AutoKey', window._animAutoKey, (val) => { this.toggleAutoKey(val); });
-    menu.addCheckbox('Show Tangents', window._animShowTangents, (val) => {
-      window._animShowTangents = val;
+    const sliderSpeed = document.createElement('wa-slider');
+    sliderSpeed.setAttribute('value', window._animPlaybackSpeed.toString());
+    sliderSpeed.setAttribute('min', '0.1');
+    sliderSpeed.setAttribute('max', '4.0');
+    sliderSpeed.setAttribute('step', '0.1');
+    sliderSpeed.addEventListener('input', (e) => {
+      speedLabel.innerText = `Playback Speed: ${parseFloat(e.target.value).toFixed(1)}x`;
+      window._animPlaybackSpeed = parseFloat(e.target.value);
+    });
+    animSection.content.appendChild(sliderSpeed);
+
+    const createFrameField = (label, value, min, onChange) => {
+      const group = document.createElement('div');
+      group.style.display = 'flex';
+      group.style.alignItems = 'center';
+      group.style.justifyContent = 'space-between';
+      const lbl = document.createElement('span');
+      lbl.innerText = label;
+      lbl.style.fontSize = '12px';
+      group.appendChild(lbl);
+      const num = document.createElement('wa-number-input');
+      num.className = 'compact-number';
+      num.setAttribute('value', value.toString());
+      num.setAttribute('step', '1');
+      num.setAttribute('min', min.toString());
+      num.setAttribute('without-steppers', '');
+      num.style.width = '80px'; // Increased to prevent clipping
+      num.addEventListener('input', onChange);
+      group.appendChild(num);
+      return group;
+    };
+
+    const currentDurationFrames = Math.round(window._animMasterDuration * fps);
+    animSection.content.appendChild(createFrameField('Duration', currentDurationFrames, 1, (e) => {
+      const frames = parseInt(e.target.value, 10) || 1;
+      window._animMasterDuration = frames / window._animFPS;
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    }));
+
+    const currentLoopStartFrames = Math.round(window._animLoopStart * fps);
+    animSection.content.appendChild(createFrameField('Loop Start', currentLoopStartFrames, 0, (e) => {
+      const frames = parseInt(e.target.value, 10) || 0;
+      window._animLoopStart = frames / window._animFPS;
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    }));
+
+    const currentLoopEndFrames = Math.round(window._animLoopEnd * fps);
+    animSection.content.appendChild(createFrameField('Loop End', currentLoopEndFrames, 1, (e) => {
+      const frames = parseInt(e.target.value, 10) || 1;
+      window._animLoopEnd = frames / window._animFPS;
+      const timeline = this._ctrlGui._ctrlTimeline;
+      if (timeline) timeline.draw();
+    }));
+
+    animContainer.appendChild(animSection.details);
+
+    // 2. Transport Section
+    const transportSection = createSection('Transport', true);
+
+    const transportGrid = document.createElement('div');
+    transportGrid.className = 'btn-grid';
+
+    const transportButtons = [
+      { icon: 'backward-step', method: 'toStart' },
+      { icon: 'chevron-left', method: 'prevFrame' },
+      { icon: 'play', method: 'playRev', class: 'reverse-icon' },
+      { icon: 'stop', method: 'stop' },
+      { icon: 'play', method: 'playFwd' },
+      { icon: 'chevron-right', method: 'nextFrame' },
+      { icon: 'forward-step', method: 'toEnd' },
+      { icon: 'circle', method: 'record' }
+    ];
+
+    transportButtons.forEach(btn => {
+      const b = document.createElement('wa-button');
+      b.setAttribute('variant', 'primary'); // Dark gray background
+      b.setAttribute('size', 'small');
+      
+      const icon = document.createElement('wa-icon');
+      icon.setAttribute('name', btn.icon);
+      if (btn.class) icon.className = btn.class;
+      
+      b.appendChild(icon);
+      b.addEventListener('click', () => this[btn.method]());
+      transportGrid.appendChild(b);
+    });
+    transportSection.content.appendChild(transportGrid);
+
+    const btnClearAll = document.createElement('wa-button');
+    btnClearAll.innerText = 'Clear all animation';
+    btnClearAll.setAttribute('variant', 'danger');
+    btnClearAll.addEventListener('click', () => this.clearAll());
+    transportSection.content.appendChild(btnClearAll);
+
+    animContainer.appendChild(transportSection.details);
+
+    // 3. Record Section
+    const recordSection = createSection('Record', true);
+
+    const cbCountIn = document.createElement('wa-checkbox');
+    cbCountIn.innerText = 'Count in';
+    cbCountIn.setAttribute('checked', window._animCountIn ? '' : 'false');
+    cbCountIn.addEventListener('change', (e) => { window._animCountIn = e.target.checked; });
+    recordSection.content.appendChild(cbCountIn);
+
+    const cbTrigger = document.createElement('wa-checkbox');
+    cbTrigger.innerText = 'Wait for Trigger';
+    cbTrigger.setAttribute('checked', window._animWaitForTrigger ? '' : 'false');
+    cbTrigger.addEventListener('change', (e) => { window._animWaitForTrigger = e.target.checked; });
+    recordSection.content.appendChild(cbTrigger);
+
+    const selectRate = document.createElement('wa-select');
+    selectRate.setAttribute('label', 'Bake rate');
+    selectRate.setAttribute('value', window._animCaptureRate.toString());
+    selectRate.className = 'compact-select';
+    
+    const rateModes = [0.033, 0.1, 0.5, 1.0];
+    const rateLabels = ['Dense (~30 fps)', 'Standard (~10 fps)', 'Sparse (2 fps)', 'Step Key (1 fps)'];
+    rateModes.forEach((mode, idx) => {
+      const opt = document.createElement('wa-option');
+      opt.setAttribute('value', mode.toString());
+      opt.innerText = rateLabels[idx];
+      selectRate.appendChild(opt);
+    });
+    selectRate.addEventListener('change', (e) => { window._animCaptureRate = parseFloat(e.target.value); });
+    recordSection.content.appendChild(selectRate);
+
+    animContainer.appendChild(recordSection.details);
+
+    // 4. Keyframes Section
+    const keyframesSection = createSection('Keyframes', true);
+
+    const selectKeyMode = document.createElement('wa-select');
+    selectKeyMode.setAttribute('label', 'Key mode');
+    selectKeyMode.setAttribute('value', window._animKeyMode);
+    selectKeyMode.className = 'compact-select';
+    
+    ['shape', 'transform', 'blendshape'].forEach(mode => {
+      const opt = document.createElement('wa-option');
+      opt.setAttribute('value', mode);
+      opt.innerText = mode;
+      selectKeyMode.appendChild(opt);
+    });
+    selectKeyMode.addEventListener('change', (e) => { window._animKeyMode = e.target.value; });
+    keyframesSection.content.appendChild(selectKeyMode);
+
+    const btnAddKey = document.createElement('wa-button');
+    btnAddKey.innerText = 'Add Key';
+    btnAddKey.setAttribute('variant', 'primary');
+    btnAddKey.addEventListener('click', () => this.addKeyframe());
+    keyframesSection.content.appendChild(btnAddKey);
+
+    const keyGrid = document.createElement('div');
+    keyGrid.className = 'btn-grid';
+
+    const keyButtons = [
+      { label: 'Copy', method: 'copyKey' },
+      { label: 'Paste', method: 'pasteKey' },
+      { label: 'Cut', method: 'cutKey' },
+      { label: 'Delete', method: 'deleteKey' }
+    ];
+
+    keyButtons.forEach(btn => {
+      const b = document.createElement('wa-button');
+      b.innerText = btn.label;
+      b.setAttribute('size', 'small');
+      b.setAttribute('variant', 'primary');
+      if (btn.method === 'deleteKey') b.setAttribute('variant', 'danger');
+      b.addEventListener('click', () => this[btn.method]());
+      keyGrid.appendChild(b);
+    });
+    keyframesSection.content.appendChild(keyGrid);
+
+    const cbAutoKey = document.createElement('wa-checkbox');
+    cbAutoKey.innerText = 'Autokey';
+    cbAutoKey.setAttribute('checked', window._animAutoKey ? '' : 'false');
+    cbAutoKey.addEventListener('change', (e) => { this.toggleAutoKey(e.target.checked); });
+    keyframesSection.content.appendChild(cbAutoKey);
+
+    const cbTangents = document.createElement('wa-checkbox');
+    cbTangents.innerText = 'Show Tangents';
+    cbTangents.setAttribute('checked', window._animShowTangents ? '' : 'false');
+    cbTangents.addEventListener('change', (e) => {
+      window._animShowTangents = e.target.checked;
       const timeline = this._ctrlGui._ctrlTimeline;
       if (timeline) timeline.draw();
     });
+    keyframesSection.content.appendChild(cbTangents);
 
-    menu.addButton('Clear All', () => this.clearAll());
+    animContainer.appendChild(keyframesSection.details);
+
+    // 5. Blendshapes Section
+    const blendshapesSection = createSection('Blendshapes', true);
+    animContainer.appendChild(blendshapesSection.details);
+    this._blendshapesContent = blendshapesSection.content;
+
+    sidebarDom.appendChild(animContainer);
   }
 
   toggleTimeline(val) {
@@ -192,6 +442,17 @@ class GuiAnimation {
     }
   }
 
+  printTracks() {
+    const reg = window._animationRegistry;
+    if (!reg) { console.log("No animation registry"); return; }
+    const tracks = Array.from(reg.tracks.entries());
+    console.log("Total Tracks:", tracks.length);
+    tracks.forEach(([id, track]) => {
+      console.log(`Track ID: ${id}, Keys count: ${track.times ? track.times.length : 0}`);
+      console.log("Times:", JSON.stringify(track.times));
+    });
+  }
+
   addKeyframe() {
     if (!window._animationRegistry) return;
     let targetMesh = this._main.getMesh();
@@ -214,6 +475,18 @@ class GuiAnimation {
       window._animationRegistry.addShapeKey(targetMesh, targetTime);
       actionName = 'add shape key';
       if (window.screenLog) window.screenLog('◆ Added Shape Key', 'lime');
+    } else if (window._animKeyMode === 'blendshape') {
+      const track = reg.tracks.get(targetMesh.getID());
+      const name = track ? track.editingBlendshape : null;
+      if (name) {
+        const weight = reg.evaluateScalarTrack(track.blendshapeTracks.get(name), targetTime);
+        reg.setBlendshapeWeight(targetMesh, name, weight);
+        actionName = 'add blendshape key';
+        if (window.screenLog) window.screenLog(`◆ Added Blendshape Key [${name}]`, 'lime');
+      } else {
+        if (window.screenLog) window.screenLog('◆ No active blendshape to key!', 'orange');
+        return;
+      }
     } else {
       window._animationRegistry.addTransformKey(targetMesh, targetTime);
       actionName = 'add transform key';
@@ -283,15 +556,6 @@ class GuiAnimation {
         return null;
       }).filter(Boolean);
       if (window.screenLog) window.screenLog(`📋 Copied ${window._animCopiedKeys.length} Keys`, 'lime');
-    } else {
-      const targetTime = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
-        window._animationRegistry.copyShapeKey(targetMesh, targetTime);
-        if (window.screenLog) window.screenLog('📋 Copied Shape Key', 'lime');
-      } else {
-        window._animationRegistry.copyTransformKey(targetMesh, targetTime);
-        if (window.screenLog) window.screenLog('📋 Copied Transform Key', 'lime');
-      }
     }
   }
 
@@ -307,26 +571,9 @@ class GuiAnimation {
       const commands = [];
       const main = this._main;
       
-      const firstMeshId = window._animCopiedKeys[0].meshId;
-      const allSameMesh = window._animCopiedKeys.every(k => k.meshId === firstMeshId);
-      
       window._animCopiedKeys.forEach(k => {
-        let trackMesh = null;
-        if (allSameMesh) {
-          trackMesh = targetMesh;
-        } else {
-          if (main.getMeshes) trackMesh = main.getMeshes().find(m => m.getID() === k.meshId);
-          if (!trackMesh) trackMesh = targetMesh;
-        }
-        
         const targetTime = pasteTime + (k.time - tMin);
-        if (targetTime > (window._animMasterDuration || 0)) {
-          window._animMasterDuration = targetTime;
-        }
-        if (targetTime > (window._animLoopEnd || 0)) {
-          window._animLoopEnd = targetTime;
-        }
-        const id = trackMesh.getID();
+        const id = targetMesh.getID();
         
         if (!window._animationRegistry.tracks.has(id)) {
           window._animationRegistry.tracks.set(id, {
@@ -411,8 +658,7 @@ class GuiAnimation {
         const tr = window._animationRegistry.tracks.get(id);
         if (tr) {
           window._animationRegistry.sortTrack(tr);
-          const mesh = main.getMeshes ? main.getMeshes().find(m => m.getID() === id) : null;
-          if (mesh) window._animationRegistry.update(mesh, true);
+          window._animationRegistry.update(targetMesh, true);
         }
       });
 
@@ -513,16 +759,6 @@ class GuiAnimation {
         );
       }
       if (window.screenLog) window.screenLog(`📥 Pasted ${window._animCopiedKeys.length} Keys`, 'lime');
-    } else {
-      const targetTime = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
-        window._animationRegistry.pasteShapeKey(targetMesh, targetTime);
-        if (window.screenLog) window.screenLog('📥 Pasted Shape Key', 'lime');
-      } else {
-        window._animationRegistry.pasteTransformKey(targetMesh, targetTime);
-        if (window.screenLog) window.screenLog('📥 Pasted Transform Key', 'lime');
-      }
-      window._animationRegistry.update(targetMesh, true);
     }
   }
 
