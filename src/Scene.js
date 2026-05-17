@@ -1145,8 +1145,13 @@ class Scene {
     const curIdx = sm ? sm.getToolIndex() : -1;
     const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
     
-    if (this._vrCursorLeft) this._vrCursorLeft.visible = !window._animPlaying && !isTransform;
-    if (this._vrCursorRight) this._vrCursorRight.visible = !window._animPlaying && !isTransform;
+    // In VR, _updateVRCursors manages cursor visibility per-hand (offhand is hidden there).
+    // Only force-set visibility on desktop where _updateVRCursors doesn't run.
+    const isVRPresenting = this._renderer && this._renderer.xr && this._renderer.xr.isPresenting;
+    if (!isVRPresenting) {
+      if (this._vrCursorLeft) this._vrCursorLeft.visible = !window._animPlaying && !isTransform;
+      if (this._vrCursorRight) this._vrCursorRight.visible = !window._animPlaying && !isTransform;
+    }
 
     // --- THREE.JS MAIN RENDER ---
     // Instead of looping through custom meshes, we tell Three.js to render the scene
@@ -4999,7 +5004,7 @@ class Scene {
             const uiHitDist = isLeft ? this._vrUIHitDistLeft : this._vrUIHitDistRight;
             const cursorGroup = isLeft ? this._vrCursorLeft : this._vrCursorRight;
             const controllerGroup = isLeft ? this._vrControllerLeft : this._vrControllerRight;
-            if (!controllerGroup) continue; // Safe guard for unmapped handedness
+            if (!controllerGroup) { if (cursorGroup) cursorGroup.visible = false; continue; } // Safe guard for unmapped handedness
             const pointerLine = controllerGroup.getObjectByName('pointer_ray_root');
 
             let hitDist = 5.0;

@@ -565,6 +565,15 @@ class Inset extends SculptBase {
     this.updateRender();
   }
 
+  clearPreview() {
+    if (this._clickSphere) {
+      this._clickSphere.removeFromParent();
+      this._clickSphere.geometry.dispose();
+      this._clickSphere.material.dispose();
+      this._clickSphere = null;
+    }
+  }
+
   end() {
     super.end();
     this._insetVerts = null;
