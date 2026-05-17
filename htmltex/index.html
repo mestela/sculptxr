@@ -3,147 +3,537 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HTMLTexture Demo - Cube VR/AR</title>
+    <title>three-html-render VR performance test</title>
+
     <style>
-        body { margin: 0; overflow: hidden; background-color: #333; }
-        #canvas { width: 100vw; height: 100vh; display: block; }
-    </style>
-    <!-- Import Map -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/",
-                "three-html-render/polyfill": "https://cdn.jsdelivr.net/npm/three-html-render@0.1.2/dist/polyfill.mjs",
-                "three-html-render/renderer": "https://cdn.jsdelivr.net/npm/three-html-render@0.1.2/dist/renderer.js"
-            }
+        body { margin:0; overflow:hidden; background:#1a1a2e; }
+        #canvas { width:100vw; height:100vh; display:block; touch-action:none; }
+
+        /* ── Panel styles ──────────────────────────────────────────────── */
+        #panel {
+            width: 540px;
+            padding: 28px 32px;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            font-family: system-ui, sans-serif;
+            box-sizing: border-box;
+            border-radius: 14px;
+            border: 1px solid #313244;
         }
+        #panel h2 {
+            margin: 0 0 20px;
+            font-size: 17px;
+            font-weight: 600;
+            color: #cba6f7;
+            letter-spacing: 0.02em;
+        }
+        #panel .row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        #panel label {
+            width: 80px;
+            font-size: 13px;
+            color: #a6adc8;
+            flex-shrink: 0;
+        }
+
+        /* Sliders */
+        #panel input[type=range] {
+            flex: 1;
+            -webkit-appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: #45475a;
+            outline: none;
+            cursor: pointer;
+        }
+        #panel input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: #89b4fa;
+            cursor: pointer;
+            box-shadow: 0 0 0 3px rgba(137,180,250,0.2);
+        }
+        #panel input[type=range]:hover::-webkit-slider-thumb {
+            background: #b4d0ff;
+        }
+
+        /* Buttons */
+        #panel .btn-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin: 8px 0 16px;
+        }
+        #panel button {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: filter 0.1s;
+        }
+        #panel button:hover, #panel button.hover   { filter: brightness(1.2); }
+        #panel button:active, #panel button.active { filter: brightness(0.85); }
+        #panel .btn-brand    { background: #89b4fa; color: #1e1e2e; }
+        #panel .btn-neutral  { background: #45475a; color: #cdd6f4; }
+
+        /* Toggle switch */
+        #panel .toggle-wrap {
+            display: flex; align-items: center; gap: 10px;
+        }
+        #panel .toggle {
+            position: relative; width: 42px; height: 24px;
+        }
+        #panel .toggle input { opacity: 0; width: 0; height: 0; }
+        #panel .toggle-track {
+            position: absolute; inset: 0;
+            background: #45475a; border-radius: 12px;
+            cursor: pointer; transition: background 0.2s;
+        }
+        #panel .toggle input:checked + .toggle-track { background: #89b4fa; }
+        #panel .toggle-track::after {
+            content: '';
+            position: absolute; top: 3px; left: 3px;
+            width: 18px; height: 18px;
+            border-radius: 50%; background: white;
+            transition: transform 0.2s;
+        }
+        #panel .toggle input:checked + .toggle-track::after {
+            transform: translateX(18px);
+        }
+
+        /* Value readout */
+        #panel .val {
+            width: 32px; text-align: right;
+            font-size: 13px; color: #89b4fa;
+            font-variant-numeric: tabular-nums;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three-html-render/polyfill": "https://cdn.jsdelivr.net/npm/three-html-render/dist/polyfill.mjs",
+            "three-html-render/renderer": "https://cdn.jsdelivr.net/npm/three-html-render/dist/renderer.js"
+        }
+    }
     </script>
 </head>
 <body>
-    <!-- The content is inside the canvas as shown in the repo example -->
-    <canvas id="canvas" layoutsubtree>
-        <div id="content" style="width:512px;height:512px;padding:30px;background:#e0e0e0;font-family:sans-serif;color:#333;box-sizing:border-box;position:relative;">
-            <div style="text-align:center;margin-bottom:20px;">
-                <button style="background:#a8f5b5;color:white;border:none;border-radius:5px;padding:5px 15px;font-weight:bold;">CLICK ME</button>
-            </div>
-            
-            <div style="text-align:center;font-size:28px;color:#467297;margin-bottom:15px;">Hello world!</div>
-            
-            <div style="font-size:20px;line-height:1.4;margin-bottom:15px;">
-                I'm multi-line, <b>formatted</b>, rotated text with emoji (&#x1F60A;), RTL text <span dir="rtl">من فارسی صحبت میکنم</span>, vertical text,
-            </div>
-            
-            <div style="writing-mode: vertical-rl; font-size: 20px; height: 150px; position: absolute; left: 30px; top: 180px;">
-                这是垂直文本
-            </div>
-            
-            <div style="position: absolute; bottom: 140px; left: 30px; right: 30px; font-size:20px;">
-                an inline image ( <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==" style="height:40px;width:40px;vertical-align:middle;transform:rotate(5deg);"> ), and <span style="background:#00b31e;color:white;border-radius:5px;padding:2px 5px;font-size:14px;font-weight:bold;vertical-align:middle;">SVG</span> !
-            </div>
-            
-            <div style="position: absolute; bottom: 20px; left: 30px; right: 30px;">
-                <input type="text" placeholder="Type here..." style="width:100%;padding:10px;border-radius:5px;border:1px solid #ccc;box-sizing:border-box;margin-bottom:10px;">
-                <div style="display: flex; gap: 10px; justify-content: center;">
-                    <button id="vr-btn" style="background:#ff007b;color:white;border:none;border-radius:5px;padding:8px 20px;font-weight:bold;cursor:pointer;">Open VR</button>
-                    <button id="ar-btn" style="background:#00f0ff;color:black;border:none;border-radius:5px;padding:8px 20px;font-weight:bold;cursor:pointer;">Open AR</button>
-                </div>
+
+<!-- layoutsubtree: three-html-render moves this content into an offscreen host -->
+<canvas id="canvas" layoutsubtree>
+    <div id="panel">
+        <h2>SculptXR — Brush Settings</h2>
+
+        <div class="row">
+            <label>Radius</label>
+            <input type="range" id="sl-radius" min="0" max="100" value="40">
+            <span class="val" id="v-radius">40</span>
+        </div>
+        <div class="row">
+            <label>Intensity</label>
+            <input type="range" id="sl-intensity" min="0" max="100" value="65">
+            <span class="val" id="v-intensity">65</span>
+        </div>
+        <div class="row">
+            <label>Hardness</label>
+            <input type="range" id="sl-hardness" min="0" max="100" value="75">
+            <span class="val" id="v-hardness">75</span>
+        </div>
+
+        <div class="btn-row">
+            <button class="btn-brand">Smooth</button>
+            <button class="btn-brand">Inflate</button>
+            <button class="btn-brand">Flatten</button>
+            <button class="btn-brand">Crease</button>
+            <button class="btn-neutral">Reset</button>
+        </div>
+
+        <div class="row">
+            <label>Symmetry</label>
+            <div class="toggle-wrap">
+                <label class="toggle">
+                    <input type="checkbox" id="sym-toggle">
+                    <div class="toggle-track"></div>
+                </label>
             </div>
         </div>
-    </canvas>
+    </div>
+</canvas>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
-        import { ThreeHTMLRenderer } from 'three-html-render/renderer';
+<div id="log" style="position:fixed;top:10px;left:10px;color:#a6e3a1;font:12px monospace;
+                     pointer-events:none;white-space:pre;background:rgba(0,0,0,0.5);
+                     padding:6px 10px;border-radius:6px;"></div>
 
-        // Install polyfill
-        installHtmlInCanvasPolyfill();
+<script type="module">
+import * as THREE from 'three';
+import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
+import { ThreeHTMLRenderer }           from 'three-html-render/renderer';
 
-        const canvas = document.getElementById('canvas');
-        const content = document.getElementById('content');
+// ── Logging ──────────────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+const lines = [];
+const log = (...a) => {
+    const msg = a.join(' ');
+    console.log(msg);
+    lines.push(msg);
+    if (lines.length > 10) lines.shift();
+    logEl.textContent = lines.join('\n');
+};
 
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x333333);
+// ── rAF intercept (must run BEFORE polyfill installs) ────────────────────────
+// three-html-render schedules HTML rasterisation via window.requestAnimationFrame
+// (guarded: only one pending rAF at a time). Chrome pauses window.rAF in WebXR
+// immersive mode, so the paint callback never fires and the texture freezes.
+// We wrap rAF to track pending callbacks, then drain them each XR frame.
+const _nativeRAF = window.requestAnimationFrame.bind(window);
+const _nativeCAF = window.cancelAnimationFrame.bind(window);
+const _pendingRAF = new Map();
+let   _rafSeq = 1;
 
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.z = 2;
+window.requestAnimationFrame = (cb) => {
+    const id = _rafSeq++;
+    const nativeId = _nativeRAF((ts) => {   // still fires on desktop / non-XR
+        if (_pendingRAF.delete(id)) cb(ts); // only call if not already drained
+    });
+    _pendingRAF.set(id, { cb, nativeId });
+    return id;
+};
+window.cancelAnimationFrame = (id) => {
+    const e = _pendingRAF.get(id);
+    if (e) { _pendingRAF.delete(id); _nativeCAF(e.nativeId); }
+};
 
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.xr.enabled = true; // Enable XR
+// ── Polyfill ──────────────────────────────────────────────────────────────────
+installHtmlInCanvasPolyfill();
+log('Polyfill installed.');
 
-        const material = new THREE.MeshStandardMaterial({ 
-            roughness: 0.1,
-            metalness: 0.1
+// ── Three.js ──────────────────────────────────────────────────────────────────
+const canvas   = document.getElementById('canvas');
+const scene    = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera   = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.01, 100);
+camera.position.set(0, 1.6, 0);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+
+// ── Panel mesh ────────────────────────────────────────────────────────────────
+// three-html-render sets flipY=false, which renders upside-down in WebGL.
+// scale.y = -1 compensates visually. We handle ALL interaction via raycasting
+// (both desktop + VR) so the DOM overlay from ThreeHTMLRenderer is disabled —
+// this avoids the overlay's inverted-Y hit-test that scale.y=-1 would cause.
+//
+// Geometry must match the panel's rendered aspect ratio (width/height) so the
+// texture isn't squashed and UV→DOM hit mapping is accurate.
+const _panelEl     = document.getElementById('panel');
+const _meshW       = 1.35;
+const _panelAspect = (_panelEl.offsetWidth || 540) / (_panelEl.offsetHeight || 270);
+const _meshH       = _meshW / _panelAspect;
+const panelMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(_meshW, _meshH),
+    new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+);
+panelMesh.position.set(0, 1.6, -1.2);
+panelMesh.scale.y = -1;
+scene.add(panelMesh);
+
+// ── HTML → Texture via three-html-render ──────────────────────────────────────
+const htmlRenderer = new ThreeHTMLRenderer();
+htmlRenderer.connect(canvas, camera, renderer);
+htmlRenderer.addObject(document.getElementById('panel'), panelMesh);
+
+
+// Disable ThreeHTMLRenderer's DOM overlay so it doesn't intercept mouse events.
+// We handle all interaction ourselves via raycasting for consistent desktop+VR behaviour.
+// The overlay div is created by ThreeHTMLRenderer inside its own container — hide it.
+setTimeout(() => {
+    // ThreeHTMLRenderer appends an overlay container to document.body
+    document.querySelectorAll('[style*="pointer-events"]').forEach(el => {
+        if (el !== canvas) el.style.pointerEvents = 'none';
+    });
+}, 100);
+
+// ── Live value readouts (trigger repaint via requestPaint API) ────────────────
+[['sl-radius','v-radius'],['sl-intensity','v-intensity'],['sl-hardness','v-hardness']]
+    .forEach(([sliderId, valId]) => {
+        document.getElementById(sliderId).addEventListener('input', e => {
+            document.getElementById(valId).textContent = e.target.value;
+            canvas.requestPaint?.();
         });
-        
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const mesh = new THREE.Mesh(geometry, material);
-        scene.add(mesh);
+    });
 
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        scene.add(ambientLight);
-        
-        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(1, 2, 3);
-        scene.add(dirLight);
+// ── VR interaction ────────────────────────────────────────────────────────────
+// Desktop: ThreeHTMLRenderer's DOM overlay handles everything natively — no code needed.
+// VR:      No DOM overlay exists. Raycast → UV → panel-local px → elementFromPoint.
+//
+// UV mapping with scale.y = -1:
+//   UV.y=0 → visual top  → DOM y=0
+//   UV.y=1 → visual bottom → DOM y=panel.offsetHeight
+//   So domY = uv.y * rect.height  (same direction, NOT inverted)
 
-        const threeHtml = new ThreeHTMLRenderer();
-        threeHtml.connect(canvas, camera, renderer);
-        threeHtml.addObject(content, mesh);
+const raycaster  = new THREE.Raycaster();
+const tempMatrix = new THREE.Matrix4();
+const panel      = document.getElementById('panel');
 
-        // WebXR Setup
-        const vrBtn = document.getElementById('vr-btn');
-        const arBtn = document.getElementById('ar-btn');
+const cursorDot = new THREE.Mesh(
+    new THREE.CircleGeometry(0.008, 16),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false })
+);
+cursorDot.visible = false;
+scene.add(cursorDot);
 
-        vrBtn.addEventListener('click', async () => {
-            if (navigator.xr) {
-                try {
-                    const session = await navigator.xr.requestSession('immersive-vr', {
-                        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-                    });
-                    renderer.xr.setSession(session);
-                } catch (e) {
-                    console.error("Failed to start VR session", e);
-                    alert("VR not supported or failed to start: " + e.message);
-                }
-            } else {
-                alert("WebXR not supported in this browser.");
-            }
-        });
+function castController(ctrl) {
+    tempMatrix.identity().extractRotation(ctrl.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(ctrl.matrixWorld);
+    raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);
+    return raycaster.intersectObject(panelMesh);
+}
 
-        arBtn.addEventListener('click', async () => {
-            if (navigator.xr) {
-                try {
-                    const session = await navigator.xr.requestSession('immersive-ar', {
-                        optionalFeatures: ['local-floor']
-                    });
-                    renderer.xr.setSession(session);
-                } catch (e) {
-                    console.error("Failed to start AR session", e);
-                    alert("AR not supported or failed to start: " + e.message);
-                }
-            } else {
-                alert("WebXR not supported in this browser.");
-            }
-        });
+function vrUVToElement(uv) {
+    // three-html-render's polyfill applies scaleY(-1) to the panel element so it
+    // renders right-way-up into the flipY=false WebGL texture.  This means DOM Y
+    // runs opposite to visual Y: DOM top is at the visual bottom, and vice-versa.
+    // UV.y=0 → visual top → DOM bottom  →  relY = (1 - uv.y) * height
+    //
+    // All coordinates stay in getBoundingClientRect space so child comparisons are
+    // in the same post-transform coordinate system as panelRect.
+    const panelRect = panel.getBoundingClientRect();
+    const relX =        uv.x  * panelRect.width;
+    const relY = (1 - uv.y) * panelRect.height;
 
-        function animate() {
-            mesh.rotation.x += 0.005;
-            mesh.rotation.y += 0.01;
-            
-            threeHtml.update();
-            renderer.render(scene, camera);
+    // Walk the panel subtree to find the deepest element under (relX, relY)
+    function walk(el) {
+        const r = el.getBoundingClientRect();
+        const rx = r.left - panelRect.left;
+        const ry = r.top  - panelRect.top;
+        if (relX < rx || relX > rx + r.width || relY < ry || relY > ry + r.height) return null;
+        for (let i = el.children.length - 1; i >= 0; i--) {
+            const found = walk(el.children[i]);
+            if (found) return found;
         }
+        return el;
+    }
+    const el   = walk(panel) || panel;
+    const absX = panelRect.left + relX;
+    const absY = panelRect.top  + relY;
+    return { el, absX, absY };
+}
 
-        renderer.setAnimationLoop(animate);
+// Track interactive state across frames
+let sliderDragTarget = null;
+let hoveredBtn       = null;  // button currently under cursor
 
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-    </script>
+function sliderValueFromAbsX(input, absX) {
+    const r   = input.getBoundingClientRect();
+    const t   = Math.max(0, Math.min(1, (absX - r.left) / r.width));
+    const min = parseFloat(input.min) || 0;
+    const max = parseFloat(input.max) || 100;
+    return Math.round(min + t * (max - min));
+}
+
+function vrDispatch(type, uv, buttons = 0) {
+    const { el, absX, absY } = vrUVToElement(uv);
+
+    // ── Slider drag ──────────────────────────────────────────────────────────
+    // Synthetic pointer events don't move the native thumb, so we compute the
+    // value directly from the raycast X position and write it ourselves.
+    if (type === 'pointerdown') {
+        // walk() returns the 8px-tall track element only if the cursor is exactly
+        // on it; the visual thumb extends outside.  querySelector catches the case
+        // where walk() returned the parent .row div instead of the <input>.
+        const rangeEl = (el.tagName === 'INPUT' && el.type === 'range') ? el
+                      : el.querySelector?.('input[type=range]') ?? null;
+        if (rangeEl) sliderDragTarget = rangeEl;
+    }
+    if (type === 'pointerup') {
+        sliderDragTarget = null;
+    }
+
+    const dragTarget = sliderDragTarget;
+    if (dragTarget && (type === 'pointerdown' || type === 'pointermove')) {
+        dragTarget.value = sliderValueFromAbsX(dragTarget, absX);
+        dragTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // ── Button visual state (CSS :hover/:active don't fire via synthetic events) ─
+    const btn = el.closest('button');
+    if (btn !== hoveredBtn) {
+        hoveredBtn?.classList.remove('hover', 'active');
+        hoveredBtn = btn;
+        btn?.classList.add('hover');
+    }
+    if (type === 'pointerdown' && btn) btn.classList.add('active');
+    if (type === 'pointerup'   && btn) btn.classList.remove('active');
+
+    // ── Standard event dispatch ──────────────────────────────────────────────
+    const target = dragTarget || el;
+    target.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        pointerId: 1, pointerType: 'mouse',
+        clientX: absX, clientY: absY, buttons,
+    }));
+    if (type === 'pointerup') {
+        target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
+        log(`click → <${target.tagName.toLowerCase()}${target.id ? '#'+target.id : ''}>`);
+    }
+}
+
+// Wire up controllers
+for (let i = 0; i < 2; i++) {
+    const ctrl = renderer.xr.getController(i);
+    scene.add(ctrl);
+    ctrl.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-2)
+        ]),
+        new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.4 })
+    ));
+    ctrl.addEventListener('selectstart', () => {
+        const hits = castController(ctrl);
+        if (hits.length) vrDispatch('pointerdown', hits[0].uv, 1);
+    });
+    ctrl.addEventListener('selectend', () => {
+        const hits = castController(ctrl);
+        if (hits.length) vrDispatch('pointerup', hits[0].uv, 0);
+    });
+}
+
+// ── Desktop pointer interaction via raycasting (same UV path as VR) ──────────
+// Use pointer events (covers mouse, touch, stylus, controller) rather than
+// mouse-only events so GXR desktop / touch devices work correctly.
+const mouse2D = new THREE.Vector2();
+
+function screenToRay(clientX, clientY) {
+    mouse2D.x =  (clientX / innerWidth)  * 2 - 1;
+    mouse2D.y = -(clientY / innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse2D, camera);
+}
+
+// When a slider drag is active and the pointer leaves the mesh, project onto
+// the panel's world plane and continue dragging using screen-space X.
+function updateSliderFromScreenX(clientX) {
+    if (!sliderDragTarget) return;
+    const r   = sliderDragTarget.getBoundingClientRect();
+    const t   = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    const min = parseFloat(sliderDragTarget.min) || 0;
+    const max = parseFloat(sliderDragTarget.max) || 100;
+    sliderDragTarget.value = Math.round(min + t * (max - min));
+    sliderDragTarget.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+window.addEventListener('pointermove', e => {
+    if (renderer.xr.isPresenting) return;
+    screenToRay(e.clientX, e.clientY);
+    const hits = raycaster.intersectObject(panelMesh);
+    if (hits.length) {
+        vrDispatch('pointermove', hits[0].uv);
+    } else if (sliderDragTarget) {
+        // Pointer drifted off the mesh during a drag — keep slider updating
+        updateSliderFromScreenX(e.clientX);
+    }
+});
+window.addEventListener('pointerdown', e => {
+    if (renderer.xr.isPresenting) return;
+    screenToRay(e.clientX, e.clientY);
+    const hits = raycaster.intersectObject(panelMesh);
+    if (hits.length) {
+        // Capture the pointer so pointermove keeps firing even if the cursor
+        // leaves the canvas — prevents the browser scroll gesture from stealing
+        // the stream mid-drag.
+        e.target.setPointerCapture(e.pointerId);
+        vrDispatch('pointerdown', hits[0].uv, 1);
+    }
+});
+window.addEventListener('pointerup', e => {
+    if (renderer.xr.isPresenting) return;
+    if (e.target.hasPointerCapture?.(e.pointerId)) {
+        e.target.releasePointerCapture(e.pointerId);
+    }
+    screenToRay(e.clientX, e.clientY);
+    const hits = raycaster.intersectObject(panelMesh);
+    if (hits.length) vrDispatch('pointerup', hits[0].uv, 0);
+    else if (sliderDragTarget) { sliderDragTarget = null; }
+});
+
+// ── Render loop ───────────────────────────────────────────────────────────────
+renderer.setAnimationLoop(() => {
+    // Drain any pending window.rAF callbacks (three-html-render's paint scheduler).
+    // In WebXR immersive mode Chrome pauses window.rAF; draining here ensures the
+    // polyfill rasterises and fires onpaint → _uploadTextures() every XR frame.
+    if (renderer.xr.isPresenting && _pendingRAF.size > 0) {
+        const ts = performance.now();
+        const batch = [..._pendingRAF.entries()];
+        _pendingRAF.clear();
+        batch.forEach(([, { cb, nativeId }]) => { _nativeCAF(nativeId); cb(ts); });
+    }
+    if (canvas.requestPaint) canvas.requestPaint();
+    if (panelMesh.material.map) panelMesh.material.map.needsUpdate = true;
+
+    // VR: update cursor dot and hover events from controller ray
+    if (renderer.xr.isPresenting) {
+        let anyHit = false;
+        for (let i = 0; i < 2; i++) {
+            const ctrl = renderer.xr.getController(i);
+            if (!ctrl.visible) continue;
+            const hits = castController(ctrl);
+            if (hits.length) {
+                anyHit = true;
+                cursorDot.position.copy(hits[0].point);
+                cursorDot.position.z += 0.003;
+                cursorDot.visible = true;
+                vrDispatch('pointermove', hits[0].uv);
+            }
+        }
+        if (!anyHit) cursorDot.visible = false;
+    }
+
+    htmlRenderer.update();
+    renderer.render(scene, camera);
+});
+
+// ── XR buttons ────────────────────────────────────────────────────────────────
+const mkBtn = (label, mode, bg, right) => {
+    const b = Object.assign(document.createElement('button'), { textContent: label });
+    Object.assign(b.style, {
+        position:'fixed', bottom:'20px', right,
+        padding:'10px 24px', background:bg, color:'#fff',
+        border:'none', borderRadius:'6px', fontSize:'14px', cursor:'pointer'
+    });
+    b.onclick = async () => {
+        try {
+            const s = await navigator.xr.requestSession(mode, {
+                optionalFeatures: ['local-floor','bounded-floor']
+            });
+            renderer.xr.setSession(s);
+            log(mode + ' started');
+        } catch(e) { log('failed: ' + e.message); }
+    };
+    navigator.xr?.isSessionSupported(mode).then(ok => { b.disabled = !ok; });
+    document.body.appendChild(b);
+};
+if (navigator.xr) {
+    mkBtn('Enter VR', 'immersive-vr', '#6c63ff', '160px');
+    mkBtn('Enter AR', 'immersive-ar', '#00b894', '20px');
+}
+
+window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+
+log('Ready.');
+</script>
 </body>
 </html>

@@ -42,6 +42,7 @@
     "@awesome.me/webawesome": "^3.7.0",
     "gl-matrix": "^3.4.4",
     "manifold-3d": "^3.4.1",
+    "modern-screenshot": "^4.7.0",
     "three": "^0.183.2",
     "three-html-render": "^0.1.2"
   }

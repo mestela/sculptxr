@@ -27,6 +27,10 @@ import Remesh from './editing/Remesh.js';
 import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
+// [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
+// Must appear before any three-html-render usage.
+import { drainRAF } from './gui/htmlvr/install.js';
+import { BrushPanel } from './gui/htmlvr/BrushPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -236,6 +240,7 @@ class Scene {
     // VR Menu State
     this._guiXR = null;
     this._vrMenu = null;
+    this._brushPanel = null;   // [HTMLVRPanel] new HTML-based tools panel
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -943,6 +948,16 @@ class Scene {
       if (this._guiXR) this._guiXR.update();
       if (this._guiMini) this._guiMini.update();
       if (this._guiPopup) this._guiPopup.update();
+
+      // [HTMLVRPanel] Drain rAF + update brush panel texture
+      if (this._brushPanel) {
+        try {
+          drainRAF();
+          this._brushPanel.update(true);
+        } catch (e) {
+          console.warn('[HTMLVRPanel] update error:', e);
+        }
+      }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
@@ -2405,6 +2420,22 @@ class Scene {
     this._guiXR.init(this._gl);
     if (!this._vrMenu) this._vrMenu = new VRMenu(this._gl, this._guiXR);
 
+    // [HTMLVRPanel] Init HTML-based Brush/Tools panel
+    if (!this._brushPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._brushPanel = new BrushPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._brushPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        // Listen for pin/unpin so we can move the mesh between world and wrist.
+        this._brushPanel._element.addEventListener('bp-pin-change', (e) => {
+          this._onBrushPanelPinChange(e.detail.pinned);
+        });
+        // Start visible, attached to wrist (parented in handleXRInput once grips are known).
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] BrushPanel created', 'cyan');
+      } catch (err) {
+        console.error('[HTMLVRPanel] BrushPanel init failed:', err);
+      }
+    }
+
     // Init VR Mini-HUD System
     if (!this._guiMini) {
       this._guiMini = new GuiXR(this);
@@ -2939,6 +2970,29 @@ class Scene {
 
   // (Legacy onXRFrame loop removed in Three.js WebXR Migration)
 
+  /**
+   * [HTMLVRPanel] Called when the BrushPanel's pin button is toggled.
+   * When pinning: capture the panel's current world matrix and re-parent to scene.
+   * When unpinning: re-parent to wrist (handleXRInput will add it to uiGrip next frame).
+   */
+  _onBrushPanelPinChange(pinned) {
+    if (!this._brushPanel || !this._brushPanel.mesh || !this._scene) return;
+    const mesh = this._brushPanel.mesh;
+    if (pinned) {
+      // Capture world position and re-parent to scene root.
+      mesh.updateWorldMatrix(true, false);
+      const worldMatrix = mesh.matrixWorld.clone();
+      if (mesh.parent) mesh.parent.remove(mesh);
+      this._scene.add(mesh);
+      mesh.matrix.copy(worldMatrix);
+      mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+      mesh.matrixAutoUpdate = true;
+    } else {
+      // Remove from scene; will be re-parented to uiGrip next frame by handleXRInput.
+      if (mesh.parent) mesh.parent.remove(mesh);
+    }
+  }
+
   handleXRInput(frame, refSpace) {
     try {
 
@@ -3017,6 +3071,13 @@ class Scene {
             if (this._vrMenu && this._vrMenu.mesh.parent !== uiGrip) uiGrip.add(this._vrMenu.mesh);
             if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent !== uiGrip) uiGrip.add(this._vrMiniHUD.mesh);
             if (this._vrPopup && this._vrPopup.mesh.parent !== uiGrip) uiGrip.add(this._vrPopup.mesh);
+
+            // [HTMLVRPanel] Attach BrushPanel to wrist unless it's been pinned.
+            if (this._brushPanel && this._brushPanel.mesh && !this._brushPanel.pinned) {
+              if (this._brushPanel.mesh.parent !== uiGrip) {
+                uiGrip.add(this._brushPanel.mesh);
+              }
+            }
         } else {
             if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
             if (this._vrMiniHUD && this._vrMiniHUD.mesh.parent) this._vrMiniHUD.mesh.removeFromParent();
@@ -3609,12 +3670,54 @@ class Scene {
         
         if (origin && dir) {
           // if (Math.random() < 0.02) console.log(`[Raycast] Origin/Dir Valid - Menu:${!!this._vrMenu} GuiXR:${!!this._guiXR} Vis:${this._guiXR ? this._guiXR._isVisible : false}`);
+
+          // ── [HTMLVRPanel] BrushPanel raycast (dominant hand → panel mesh) ──
+          // We reuse the gl-matrix origin/dir already computed for this source
+          // and feed them straight into a Three.js Raycaster.
+          if (this._brushPanel && this._brushPanel.mesh) {
+            if (!this._bpRaycaster) {
+              this._bpRaycaster = new THREE.Raycaster();
+              this._bpRayOrigin = new THREE.Vector3();
+              this._bpRayDir    = new THREE.Vector3();
+            }
+            this._bpRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._bpRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._bpRaycaster.set(this._bpRayOrigin, this._bpRayDir);
+
+            const bpHits = this._bpRaycaster.intersectObject(this._brushPanel.mesh);
+            if (bpHits.length > 0) {
+              const bpUV      = bpHits[0].uv;
+              const trigger   = source.gamepad?.buttons[0];
+              const pressed   = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+              const justDown  = pressed && !this._bpWasPressed;
+              const justUp    = !pressed && this._bpWasPressed;
+
+              if (justDown)  this._brushPanel.onVRPress(bpUV);
+              else if (justUp) this._brushPanel.onVRRelease(bpUV);
+              else             this._brushPanel.onVRMove(bpUV);
+
+              this._bpWasPressed = pressed;
+              this._isPointingAtMenu = true; // suppress sculpt tool while on panel
+            } else {
+              if (this._bpWasPressed) {
+                this._brushPanel.onVRRelease({ x: 0.5, y: 0.5 });
+                this._bpWasPressed = false;
+              }
+              this._brushPanel.onVRLeave();
+            }
+
+            // Sync state to panel ~every 30 frames
+            this._bpSyncCounter = (this._bpSyncCounter || 0) + 1;
+            if (this._bpSyncCounter % 30 === 0) this._brushPanel.syncFromState();
+          }
+          // ── end BrushPanel raycast ──────────────────────────────────────
+
           let hit = null;
           let targetGuiXR = null;
 
           // PHYSICAL MATRIX SYNC: The visual Three.js meshes won't have their `matrixWorld` updated
           // until the renderer runs. But our `VRMenu.intersect` math requires the EXACT physical
-          // location of the controller *right now*. 
+          // location of the controller *right now*.
           // Extract the non-dominant controller's world matrix for the menu attachments.
           let attachMatrix = (this._dominantHand === 'right') ? this._vrPoseLeft : this._vrPoseRight;
           
