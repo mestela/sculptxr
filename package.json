@@ -39,9 +39,10 @@
   },
   "homepage": "https://github.com/mestela/sculptxr#readme",
   "dependencies": {
-    "@awesome.me/webawesome": "^3.5.0",
+    "@awesome.me/webawesome": "^3.7.0",
     "gl-matrix": "^3.4.4",
     "manifold-3d": "^3.4.1",
-    "three": "^0.183.2"
+    "three": "^0.183.2",
+    "three-html-render": "^0.1.2"
   }
 }

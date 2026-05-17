@@ -572,9 +572,19 @@ class WebAwesomeFolderMock {
     this.container.style.width = '100%';
     this.container.style.boxSizing = 'border-box';
     
-    // Stop keyboard events from bubbling up to the main app
-    this.container.addEventListener('keydown', (e) => e.stopPropagation());
-    this.container.addEventListener('keyup', (e) => e.stopPropagation());
+    // Only swallow keyboard events when the user is actively typing in a text field.
+    // Using composedPath()[0] to pierce shadow DOM (e.g. wa-number-input internals).
+    // Sliders, buttons, etc. should let events pass so global hotkeys (e.g. 'W') still work.
+    const _isTextInput = (e) => {
+      const target = e.composedPath ? e.composedPath()[0] : e.target;
+      const tag = target?.tagName?.toLowerCase();
+      const type = target?.type?.toLowerCase();
+      if (tag === 'textarea') return true;
+      if (tag === 'input' && type !== 'range' && type !== 'checkbox' && type !== 'radio' && type !== 'button' && type !== 'submit') return true;
+      return false;
+    };
+    this.container.addEventListener('keydown', (e) => { if (_isTextInput(e)) e.stopPropagation(); });
+    this.container.addEventListener('keyup', (e) => { if (_isTextInput(e)) e.stopPropagation(); });
     
     this.panelDom.appendChild(this.container);
   }
