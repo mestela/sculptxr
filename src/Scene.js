@@ -694,11 +694,16 @@ class Scene {
     // setTimeout(window.debugThreeState, 2000);
 
 
+    // Pre-warm all VR controller/cursor/menu GPU resources now, while the user is
+    // still on the desktop.  initVRControllers() has guards so every object is
+    // created at most once.  Paying the ~300ms cost here means VR entry is instant.
+    this.initVRControllers();
+
     // Start Three.js continuous render loop
     // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
     if (this._renderer) {
       this._renderer.setAnimationLoop((time, frame) => {
-        this.applyRender(null, frame); 
+        this.applyRender(null, frame);
       });
     }
   }
@@ -915,7 +920,11 @@ class Scene {
 
       if (!window._firstXRFrameLogged) {
         window._firstXRFrameLogged = true;
-        // console.log("[Telemetry] First XRFrame Rendered!");
+        const elapsed = window._xrSessionStartT ? Math.round(performance.now() - window._xrSessionStartT) : '?';
+        if (window.screenLog) window.screenLog(`[XR] First frame rendered (+${elapsed}ms from session start)`, "cyan");
+        console.log(`[XR Timing] First frame at +${elapsed}ms`);
+        // initVRControllers is deferred via Promise.resolve() below so this frame
+        // is submitted to the compositor before we block for 200+ms.
       }
 
       if (!window._firstXRInputHandled && refSpace) {
@@ -1001,7 +1010,23 @@ class Scene {
            if (window.screenLog) window.screenLog("WARNING: isPresenting true, draw stalled", "red");
        }
     }
-    
+
+    // Defer initVRControllers until AFTER _drawScene() so that frame 1 is committed
+    // to the XR compositor before we block the JS thread for ~200ms.
+    // Promise.resolve().then() is a microtask — it runs after this rAF callback
+    // returns and the frame is handed off, but before the next rAF fires.
+    if (this._vrControllersNeedInit) {
+      this._vrControllersNeedInit = false;
+      const self = this;
+      Promise.resolve().then(() => {
+        const t0 = performance.now();
+        self.initVRControllers();
+        const took = Math.round(performance.now() - t0);
+        console.log(`[XR Timing] initVRControllers took ${took}ms (deferred post-frame)`);
+        if (window.screenLog) window.screenLog(`[XR] Controllers init +${took}ms`, "lime");
+      });
+    }
+
     // Only alter global GL state if not in WebXR
     if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
         gl.disable(gl.DEPTH_TEST);
@@ -1144,7 +1169,7 @@ class Scene {
     const sm = this._sculptManager;
     const curIdx = sm ? sm.getToolIndex() : -1;
     const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
-    
+
     // In VR, _updateVRCursors manages cursor visibility per-hand (offhand is hidden there).
     // Only force-set visibility on desktop where _updateVRCursors doesn't run.
     const isVRPresenting = this._renderer && this._renderer.xr && this._renderer.xr.isPresenting;
@@ -1152,6 +1177,31 @@ class Scene {
       if (this._vrCursorLeft) this._vrCursorLeft.visible = !window._animPlaying && !isTransform;
       if (this._vrCursorRight) this._vrCursorRight.visible = !window._animPlaying && !isTransform;
     }
+
+    // ── MINIMAL VR TEST MODE ─────────────────────────────────────────────────
+    // Set window._vrMinimalTest = true in the console before entering VR to hide
+    // everything and render only the background colour.  This isolates whether
+    // the startup delay / FBO errors are caused by our draw calls or by the XR
+    // session itself.
+    //   window._vrMinimalTest = 0  → normal rendering (default)
+    //   window._vrMinimalTest = 1  → hide meshes + cursors + menus + controllers
+    //   window._vrMinimalTest = 2  → skip renderer.render() entirely (raw empty frames)
+    if (window._vrMinimalTest && isVRPresenting) {
+      const lvl = window._vrMinimalTest;
+      if (lvl >= 2) {
+        // Level 2: submit nothing at all — let the XR compositor decide what to show
+        return;
+      }
+      // Level 1: hide every scene object, render only clear colour
+      if (this._scene) {
+        this._scene.traverse(o => { if (o.isMesh || o.isLine || o.isPoints) o.visible = false; });
+      }
+      this._renderer.setClearColor(0x003300, 1); // deep green = "minimal mode active"
+      this._renderer.render(this._scene, this._camera.getThreeCamera());
+      this._renderer.setClearColor(0x000000, 0);
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // --- THREE.JS MAIN RENDER ---
     // Instead of looping through custom meshes, we tell Three.js to render the scene
@@ -1180,6 +1230,18 @@ class Scene {
 
       // Sync Ground Plane Visibility with UI
       if (this._groundGrid) this._groundGrid.visible = !!this._showGrid;
+
+      // GalaxyXR / Adreno: explicitly rebind the XR base layer framebuffer before
+      // every render. The Adreno tile renderer occasionally drops the FBO binding
+      // between frames, causing framebuffer-incomplete errors on glClear/glDraw.
+      // This mirrors the per-eye rebind fix documented in docs/galaxyxr.md.
+      if (isVR) {
+        const xrSession = this._renderer.xr.getSession();
+        const baseLayer = xrSession && xrSession.renderState && xrSession.renderState.baseLayer;
+        if (baseLayer && baseLayer.framebuffer) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
+        }
+      }
 
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, this._camera.getThreeCamera());
@@ -1316,11 +1378,16 @@ class Scene {
     // Initialize Three.js Renderer
     this._renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: true
+      antialias: false  // MSAA causes glBlitFramebufferCHROMIUM errors on WebXR session start,
+                        // dropping the first few frames and extending the gray void. Disabled.
     });
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setSize(window.innerWidth, window.innerHeight);
     this._renderer.xr.enabled = true; // WebXR support is native in Three.js
+    // Explicitly set framebuffer scale to 1.0. This prevents Three.js from creating
+    // a mismatched MSAA FBO on session start, which causes glBlitFramebufferCHROMIUM
+    // errors on the first few frames and makes the compositor show the gray void.
+    this._renderer.xr.setFramebufferScaleFactor(1.0);
     this._renderer.toneMapping = THREE.LinearToneMapping;
     this._renderer.toneMappingExposure = 1.0;
 
@@ -1999,6 +2066,7 @@ class Scene {
   async enterXR(session) {
     window._lastLogTime = performance.now();
     // console.log("[Telemetry] WebXR Session entered");
+    window._xrSessionStartT = performance.now();
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
@@ -2015,24 +2083,34 @@ class Scene {
     vec3.copy(this._desktopCameraCache.center, this._camera._center);
     vec3.copy(this._desktopCameraCache.offset, this._camera._offset);
 
-    // Enable Three.js WebXR
-    this._renderer.xr.enabled = true;
-    this._renderer.xr.setReferenceSpaceType('local-floor');
+    // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
 
     this._renderer.resetState();
 
-    // console.log("[USER EVENT] Calling this.initVRControllers()...");
-    this.initVRControllers();
-
-    // console.log("[USER EVENT] Awaiting this._renderer.xr.setSession(session)...");
+    // Call setSession as early as possible — the XR compositor starts its timeout
+    // the moment requestSession resolves. Every ms before setSession is called is
+    // time the compositor spends showing the default gray void environment.
+    const t0 = performance.now();
     await this._renderer.xr.setSession(session);
-    // console.log("[USER EVENT] setSession completely resolved!");
-    if (window.screenLog) window.screenLog("[XR] setSession Resolved", "lime");
+    const t1 = performance.now();
+    if (window.screenLog) window.screenLog(`[XR] setSession Resolved (+${Math.round(t1 - window._xrSessionStartT)}ms total, setSession took ${Math.round(t1-t0)}ms)`, "lime");
 
-    // Force first frame render to prevent WebXR Session Timeout
+    // Reset per-session telemetry flags.
+    window._firstXRFrameLogged = false;
+    window._firstXRInputHandled = false;
+    window._xrFrameCount = 0;
+
+    // Force the render flag so the very next animation loop tick draws immediately.
+    this._drawFullScene = true;
     this.render();
+
+    // initVRControllers() was already called at startup (in start()), so all GPU
+    // resources are pre-warmed.  Only set the flag if somehow init was skipped.
+    if (!this._controllersInitialized) {
+      this._vrControllersNeedInit = true;
+    }
 
     // Try to get the reference space for our own internal tracking (like UI offsets)
     session.requestReferenceSpace('local-floor').then((refSpace) => {
@@ -2151,6 +2229,24 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
+
+    // Auto-restart: re-enter immersive mode when the XR device grants a session back
+    // to this page (e.g. user puts headset back on after removing it).
+    // 'sessiongranted' is the correct event for this — it fires when the XR runtime
+    // decides this page should become the active XR app again, without requiring a
+    // new user gesture. visibilitychange does NOT fire on GalaxyXR for headset removal.
+    if (this._currentXRMode && navigator.xr) {
+      const modeToRestore = this._currentXRMode;
+      if (this._vrAutoRestartListener) {
+        navigator.xr.removeEventListener('sessiongranted', this._vrAutoRestartListener);
+      }
+      this._vrAutoRestartListener = () => {
+        navigator.xr.removeEventListener('sessiongranted', this._vrAutoRestartListener);
+        this._vrAutoRestartListener = null;
+        if (!this._xrSession) this.startXRSession(modeToRestore);
+      };
+      navigator.xr.addEventListener('sessiongranted', this._vrAutoRestartListener);
+    }
 
     // Restore the exact Desktop view from before VR
     vec3.copy(this._camera._trans, this._desktopCameraCache.trans);

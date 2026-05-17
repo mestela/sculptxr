@@ -1283,7 +1283,10 @@ class SculptGL extends Scene {
 
     try {
       const session = await navigator.xr.requestSession(mode, {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'layers']
+        // NOTE: do NOT add 'layers' here. Requesting the XRLayers feature causes
+        // Three.js to use XRProjectionLayer instead of XRWebGLLayer, which triggers
+        // a ~5-second compositor setup delay on Samsung GalaxyXR / Adreno devices.
+        optionalFeatures: ['local-floor', 'bounded-floor']
       });
 
       // TRUSTED EVENT LISTENER for File I/O

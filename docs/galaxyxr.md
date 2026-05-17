@@ -2,7 +2,27 @@
 
 Developing for WebXR on Samsung Galaxy XR devices running Chrome requires specific workarounds due to idiosyncratic behavior in both the Qualcomm Adreno GPU driver and Chrome's WebGL implementation on Android 14+.
 
-This document covers three major bugs encountered during SculptXR development and their fixes.
+This document covers four major bugs encountered during SculptXR development and their fixes.
+
+---
+
+## 4. The 5-Second VR Entry Void (`'layers'` optional feature)
+
+**The Problem:**
+Every time the user enters immersive-vr or immersive-ar mode there is a ~5-second black/gray void before any rendered content becomes visible. The JavaScript logs show frames being submitted within 200ms of session start, so the delay is not in our rendering code.
+
+**Root Cause:**
+The session was requested with `optionalFeatures: ['layers']`. When the XR runtime grants the `XRLayers` feature, Three.js's `WebXRManager.setSession()` switches from the legacy `XRWebGLLayer` path to the newer `XRProjectionLayer` path (via `XRWebGLBinding.createProjectionLayer()`). On Samsung GalaxyXR, the XR compositor takes ~5 seconds to initialise the projection-layer compositing infrastructure, during which it shows the default gray environment regardless of what the app submits.
+
+This was confirmed by a binary isolation test: even submitting zero draw calls still produced the 5-second delay, ruling out all application-level rendering as the cause.
+
+**The Fix:**
+Remove `'layers'` from `optionalFeatures` in every `navigator.xr.requestSession()` call (`SculptGL.js` and `render/VRButton.js`). This forces the session onto the `XRWebGLLayer` path on all devices, which has no perceptible startup delay on GalaxyXR and matches the behaviour of the original raw-WebGL version of SculptXR.
+
+**Trade-offs:**
+We do not currently use any layer-specific APIs (`XRQuadLayer`, `XRCylinderLayer`, etc.), so there is no functional regression. `XRProjectionLayer` is theoretically higher quality (avoids an intermediate re-sample), but the difference is imperceptible and is completely outweighed by the startup penalty on this hardware. If layer-specific features are needed in the future, request `'layers'` conditionally only on non-Samsung hardware.
+
+---
 
 ## 1. The Single-Eye Rendering Bug
 

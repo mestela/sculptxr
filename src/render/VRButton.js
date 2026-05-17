@@ -67,10 +67,10 @@ class VRButton {
 
 			const sessionOptions = {
 				...sessionInit,
+				// NOTE: do NOT add 'layers' here — see SculptGL.js for explanation.
 				optionalFeatures: [
 					'local-floor',
 					'bounded-floor',
-					'layers',
 					...( sessionInit.optionalFeatures || [] )
 				],
 			};
