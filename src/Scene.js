@@ -31,6 +31,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
 import { BrushPanel } from './gui/htmlvr/BrushPanel.js';
+import { MiniPanel  } from './gui/htmlvr/MiniPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -241,6 +242,7 @@ class Scene {
     this._guiXR = null;
     this._vrMenu = null;
     this._brushPanel = null;   // [HTMLVRPanel] new HTML-based tools panel
+    this._miniPanel  = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -949,14 +951,17 @@ class Scene {
       if (this._guiMini) this._guiMini.update();
       if (this._guiPopup) this._guiPopup.update();
 
-      // [HTMLVRPanel] Drain rAF + update brush panel texture
+      // [HTMLVRPanel] Drain rAF + update panel textures
       if (this._brushPanel) {
         try {
           drainRAF();
           this._brushPanel.update(true);
         } catch (e) {
-          console.warn('[HTMLVRPanel] update error:', e);
+          console.warn('[HTMLVRPanel] BrushPanel update error:', e);
         }
+      }
+      if (this._miniPanel) {
+        try { this._miniPanel.update(true); } catch (_) {}
       }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
@@ -2431,8 +2436,49 @@ class Scene {
         });
         // Start visible, attached to wrist (parented in handleXRInput once grips are known).
         if (window.screenLog) window.screenLog('[HTMLVRPanel] BrushPanel created', 'cyan');
+
+        // ── Console toggle: window.toggleBrushPanel() ─────────────────────
+        // Switch between the new HTML panel (default) and the legacy GuiXR Tools tab.
+        //   window.toggleBrushPanel()        — flip
+        //   window.toggleBrushPanel(true)    — force new panel on
+        //   window.toggleBrushPanel(false)   — force old GuiXR menu on
+        window._brushPanelEnabled = true;
+        window.toggleBrushPanel = (enable) => {
+          const panel = this._brushPanel;
+          if (!panel) { console.warn('[HTMLVRPanel] BrushPanel not ready yet'); return; }
+          window._brushPanelEnabled = (enable === undefined) ? !window._brushPanelEnabled : !!enable;
+          if (window._brushPanelEnabled) {
+            // Enable HTML panel mode: MiniPanel visible, BrushPanel hidden (default wrist view)
+            this._swapHtmlPanels('mini');
+          } else {
+            // Disable HTML panel mode: hide both HTML panels
+            if (panel.mesh) panel.mesh.visible = false;
+            if (this._miniPanel?.mesh) this._miniPanel.mesh.visible = false;
+          }
+          // MiniHUD visibility is gated on _brushPanelEnabled in handleXRInput — no extra call needed.
+          const state = window._brushPanelEnabled ? 'NEW (HTML MiniPanel+BrushPanel, MiniHUD hidden)' : 'OLD (GuiXR canvas + MiniHUD)';
+          console.log(`[HTMLVRPanel] Switched to ${state}`);
+          if (window.screenLog) window.screenLog(`Menu: ${state}`, window._brushPanelEnabled ? 'cyan' : 'orange');
+        };
+        console.log('[HTMLVRPanel] Menu toggle ready — call window.toggleBrushPanel() to switch');
       } catch (err) {
         console.error('[HTMLVRPanel] BrushPanel init failed:', err);
+      }
+    }
+
+    // [HTMLVRPanel] Init MiniPanel (compact wrist HUD — replaces legacy canvas MiniHUD)
+    if (!this._miniPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._miniPanel = new MiniPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._miniPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        this._miniPanel._element.addEventListener('mp-show-brush-panel', () => {
+          this._swapHtmlPanels('brush');
+        });
+        // BrushPanel starts hidden; MiniPanel is the default wrist view
+        if (this._brushPanel?.mesh) this._brushPanel.mesh.visible = false;
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] MiniPanel created', 'cyan');
+      } catch (err) {
+        console.error('[HTMLVRPanel] MiniPanel init failed:', err);
       }
     }
 
@@ -2975,8 +3021,23 @@ class Scene {
    * When pinning: capture the panel's current world matrix and re-parent to scene.
    * When unpinning: re-parent to wrist (handleXRInput will add it to uiGrip next frame).
    */
+  /**
+   * [HTMLVRPanel] Toggle which HTML panel is visible on the wrist.
+   * @param {'mini'|'brush'} show  Which panel to show; the other is hidden.
+   */
+  _swapHtmlPanels(show) {
+    const mini  = this._miniPanel?.mesh;
+    const brush = this._brushPanel?.mesh;
+    if (!mini || !brush) return;
+    mini.visible  = (show === 'mini');
+    brush.visible = (show === 'brush');
+  }
+
   _onBrushPanelPinChange(pinned) {
     if (!this._brushPanel || !this._brushPanel.mesh || !this._scene) return;
+    // Cancel any in-progress grip drag when pin state changes
+    this._bpDragActive = false;
+    this._bpDragHand   = null;
     const mesh = this._brushPanel.mesh;
     if (pinned) {
       // Capture world position and re-parent to scene root.
@@ -2988,9 +3049,47 @@ class Scene {
       mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
       mesh.matrixAutoUpdate = true;
     } else {
-      // Remove from scene; will be re-parented to uiGrip next frame by handleXRInput.
+      // Remove from pinned parent.  Reset to wrist-local defaults so handleXRInput
+      // can cleanly re-parent to uiGrip next frame without inheriting world-space values.
       if (mesh.parent) mesh.parent.remove(mesh);
+      mesh.position.set(0.10, 0.10, -0.05);
+      mesh.rotation.set(-Math.PI / 2, 0, 0);
+      mesh.scale.set(1, -1, 1);   // preserve the flipY compensation set in _createMesh
+      mesh.matrixAutoUpdate = true;
     }
+  }
+
+  /**
+   * [HTMLVRPanel] Update the thin cursor dot + ray shown when a controller
+   * points at the BrushPanel.  Creates the meshes lazily on first call.
+   *
+   * @param {THREE.Vector3|null} hitPoint  World-space hit position, or null to hide.
+   * @param {boolean}            visible
+   */
+  _updateBPCursor(hitPoint, visible) {
+    if (!this._scene) return;
+
+    // Lazy-create a single unlit dot — no ray line (the controller's own beam handles aim)
+    if (!this._bpCursorDot) {
+      const dotGeo = new THREE.BufferGeometry();
+      dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+      const dotMat = new THREE.PointsMaterial({
+        color: 0xffffff, size: 10, sizeAttenuation: false,
+        transparent: true, opacity: 0.5, depthTest: false,
+      });
+      this._bpCursorDot = new THREE.Points(dotGeo, dotMat);
+      this._bpCursorDot.renderOrder = 1001;
+      this._bpCursorDot.visible = false;
+      this._scene.add(this._bpCursorDot);
+    }
+
+    if (!visible || !hitPoint) {
+      this._bpCursorDot.visible = false;
+      return;
+    }
+
+    this._bpCursorDot.position.copy(hitPoint);
+    this._bpCursorDot.visible = true;
   }
 
   handleXRInput(frame, refSpace) {
@@ -3034,10 +3133,17 @@ class Scene {
         this._vrPopup.mesh.visible = !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
     }
     if (this._vrMiniHUD && this._guiMini) {
-        // Hide MiniHUD if Main Menu or Popup is visible to prevent physical overlap
+        // Hide MiniHUD if Main Menu or Popup is visible to prevent physical overlap.
+        // Also hide when the HTML BrushPanel is active — it occupies the same wrist space
+        // and the canvas MiniHUD steals clicks that belong to the HTML panel.
         const isMainMenuVisible = this._guiXR && this._guiXR._isVisible;
         const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
-        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isMainMenuVisible && !isPopupVisible;
+        // Suppress MiniHUD when HTML panel mode is enabled AND any HTML panel is
+        // actually visible (MiniPanel or BrushPanel).  When both HTML panels are
+        // hidden, the canvas MiniHUD slides back in as a fallback.
+        const isBrushPanelShowing = window._brushPanelEnabled !== false
+          && (!!(this._brushPanel?.mesh?.visible) || !!(this._miniPanel?.mesh?.visible));
+        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isMainMenuVisible && !isPopupVisible && !isBrushPanelShowing;
     }
 
     this._isPointingAtMenu = false;
@@ -3077,6 +3183,11 @@ class Scene {
               if (this._brushPanel.mesh.parent !== uiGrip) {
                 uiGrip.add(this._brushPanel.mesh);
               }
+            }
+
+            // [HTMLVRPanel] Attach MiniPanel to wrist (no pin button — always wrist-local).
+            if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
+              if (this._miniPanel.mesh.parent !== uiGrip) uiGrip.add(this._miniPanel.mesh);
             }
         } else {
             if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
@@ -3445,7 +3556,9 @@ class Scene {
             }
           }
 
-          // NON-DOMINANT HAND: 'X' or 'A' Button (Button 4) -> Toggle Main Menu
+          // NON-DOMINANT HAND: 'X' or 'A' Button (Button 4)
+          // HTML panel mode  → toggle BrushPanel visibility (wrist panel)
+          // Legacy mode      → toggle main GuiXR canvas menu
           if (isNonDom) {
             const btnX = btns[4];
             const handKey = this._dominantHand === 'right' ? 'left' : 'right';
@@ -3455,7 +3568,14 @@ class Scene {
                 // Button Down: Activate INSTANTLY
                 tracker.time = now;
                 tracker.longPressActive = false;
-                if (this._guiXR) {
+                if (window._brushPanelEnabled !== false) {
+                  // HTML panel mode: X toggles between MiniPanel and BrushPanel
+                  const brushVisible = !!(this._brushPanel?.mesh?.visible);
+                  this._swapHtmlPanels(brushVisible ? 'mini' : 'brush');
+                  console.log(`[VR X Button] ${brushVisible ? 'BrushPanel → MiniPanel' : 'MiniPanel → BrushPanel'}`);
+                  if (this._guiPopup) this._guiPopup.closeOverlay();
+                } else if (this._guiXR) {
+                  // Legacy mode: toggle the big canvas menu
                   this._guiXR.toggleVisibility();
                   console.log(`[VR X Button] Toggled main menu visibility to ${this._guiXR._isVisible}`);
                   if (this._guiPopup) {
@@ -3466,13 +3586,16 @@ class Scene {
               } else {
                 // Button Up
                 if (tracker.longPressActive) {
-                  // Momentary Release -> Revert menu visibility
-                  if (this._guiXR) {
+                  // Momentary Release -> Revert swap in reverse
+                  if (window._brushPanelEnabled !== false) {
+                    const brushVisible = !!(this._brushPanel?.mesh?.visible);
+                    this._swapHtmlPanels(brushVisible ? 'mini' : 'brush');
+                    console.log(`[VR X Button] Reverted: ${brushVisible ? 'MiniPanel' : 'BrushPanel'} shown`);
+                    if (this._guiPopup) this._guiPopup.closeOverlay();
+                  } else if (this._guiXR) {
                     this._guiXR.toggleVisibility();
                     console.log(`[VR X Button] Reverting main menu visibility to ${this._guiXR._isVisible}`);
-                    if (this._guiPopup) {
-                      this._guiPopup.closeOverlay();
-                    }
+                    if (this._guiPopup) this._guiPopup.closeOverlay();
                   }
                 }
                 // If quick tap, do nothing on release
@@ -3483,7 +3606,7 @@ class Scene {
               // Holding button down: Check if we crossed the threshold
               if (now - tracker.time >= HYBRID_THRESHOLD) {
                 tracker.longPressActive = true;
-                // Menu visibility was already toggled on press-down
+                // Visibility was already toggled on press-down
               }
             }
           }
@@ -3674,7 +3797,7 @@ class Scene {
           // ── [HTMLVRPanel] BrushPanel raycast (dominant hand → panel mesh) ──
           // We reuse the gl-matrix origin/dir already computed for this source
           // and feed them straight into a Three.js Raycaster.
-          if (this._brushPanel && this._brushPanel.mesh) {
+          if (this._brushPanel && this._brushPanel.mesh && window._brushPanelEnabled !== false && this._brushPanel.mesh.visible) {
             if (!this._bpRaycaster) {
               this._bpRaycaster = new THREE.Raycaster();
               this._bpRayOrigin = new THREE.Vector3();
@@ -3698,12 +3821,21 @@ class Scene {
 
               this._bpWasPressed = pressed;
               this._isPointingAtMenu = true; // suppress sculpt tool while on panel
+
+              // Hide sculpt cursor (volume sphere + ring) by pretending UI is hit
+              if (source.handedness === 'left') this._vrUIHitDistLeft  = bpHits[0].distance;
+              else                              this._vrUIHitDistRight = bpHits[0].distance;
+
+              // Show panel cursor dot + thin ray line
+              this._updateBPCursor(bpHits[0].point, true);
             } else {
               if (this._bpWasPressed) {
                 this._brushPanel.onVRRelease({ x: 0.5, y: 0.5 });
                 this._bpWasPressed = false;
               }
               this._brushPanel.onVRLeave();
+              // Hide panel cursor
+              this._updateBPCursor(null, false);
             }
 
             // Sync state to panel ~every 30 frames
@@ -3711,6 +3843,51 @@ class Scene {
             if (this._bpSyncCounter % 30 === 0) this._brushPanel.syncFromState();
           }
           // ── end BrushPanel raycast ──────────────────────────────────────
+
+          // ── [HTMLVRPanel] MiniPanel raycast ─────────────────────────────
+          if (this._miniPanel && this._miniPanel.mesh && window._brushPanelEnabled !== false && this._miniPanel.mesh.visible) {
+            if (!this._mpRaycaster) {
+              this._mpRaycaster = new THREE.Raycaster();
+              this._mpRayOrigin = new THREE.Vector3();
+              this._mpRayDir    = new THREE.Vector3();
+            }
+            this._mpRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._mpRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._mpRaycaster.set(this._mpRayOrigin, this._mpRayDir);
+
+            const mpHits = this._mpRaycaster.intersectObject(this._miniPanel.mesh);
+            if (mpHits.length > 0) {
+              const mpUV     = mpHits[0].uv;
+              const trigger  = source.gamepad?.buttons[0];
+              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+              const justDown = pressed && !this._mpWasPressed;
+              const justUp   = !pressed && this._mpWasPressed;
+
+              if (justDown)  this._miniPanel.onVRPress(mpUV);
+              else if (justUp) this._miniPanel.onVRRelease(mpUV);
+              else             this._miniPanel.onVRMove(mpUV);
+
+              this._mpWasPressed = pressed;
+              this._isPointingAtMenu = true; // suppress sculpt tool while on panel
+
+              if (source.handedness === 'left') this._vrUIHitDistLeft  = mpHits[0].distance;
+              else                              this._vrUIHitDistRight = mpHits[0].distance;
+
+              this._updateBPCursor(mpHits[0].point, true);
+            } else {
+              if (this._mpWasPressed) {
+                this._miniPanel.onVRRelease({ x: 0.5, y: 0.5 });
+                this._mpWasPressed = false;
+              }
+              this._miniPanel.onVRLeave();
+              this._updateBPCursor(null, false);
+            }
+
+            // Sync state to panel ~every 30 frames
+            this._mpSyncCounter = (this._mpSyncCounter || 0) + 1;
+            if (this._mpSyncCounter % 30 === 0) this._miniPanel.syncFromState();
+          }
+          // ── end MiniPanel raycast ────────────────────────────────────────
 
           let hit = null;
           let targetGuiXR = null;
@@ -3739,8 +3916,10 @@ class Scene {
             if (hit) targetGuiXR = this._guiPopup;
           }
 
-          // If Missed Main Menu, Check Mini-HUD (Only if Main Menu is closed)
-          if (!hit && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible && (!this._guiXR || !this._guiXR._isVisible)) {
+          // If Missed Main Menu, Check Mini-HUD (only when BrushPanel is not visible)
+          if (!hit && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible
+              && (!this._guiXR || !this._guiXR._isVisible)
+              && !(window._brushPanelEnabled !== false && this._brushPanel?.mesh?.visible)) {
             hit = this._vrMiniHUD.intersect(origin, dir);
             if (hit) targetGuiXR = this._guiMini;
           }
@@ -3821,8 +4000,12 @@ class Scene {
           } else {
             if (this._guiXR) this._guiXR.setCursor(-1, -1);
             if (this._guiMini) this._guiMini.setCursor(-1, -1);
-            if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
-            else this._vrUIHitDistRight = Infinity;
+            // Only reset if BrushPanel also didn't claim this ray — it sets _isPointingAtMenu
+            // and pre-fills _vrUIHitDist to suppress the sculpt cursor.
+            if (!this._isPointingAtMenu) {
+              if (source.handedness === 'left') this._vrUIHitDistLeft = Infinity;
+              else this._vrUIHitDistRight = Infinity;
+            }
           }
         } else {
           // Log Failure
@@ -3850,6 +4033,52 @@ class Scene {
 
           if (source.handedness === 'left') { leftGrip = isGrip; leftOrigin = originBase; leftRot = rotQuat; }
           if (source.handedness === 'right') { rightGrip = isGrip; rightOrigin = originBase; rightRot = rotQuat; }
+
+          // ── Pinned-panel grip drag ─────────────────────────────────────────
+          // When pointing at the pinned BrushPanel AND gripping, move the panel
+          // instead of the world.  Uses refSpace (Three.js world space) for pose.
+          if (this._brushPanel?.pinned && this._isPointingAtMenu && isGrip) {
+            const refPose = frame.getPose(source.gripSpace, refSpace);
+            if (refPose) {
+              const p = refPose.transform.position;
+              const q = refPose.transform.orientation;
+              const curPos = new THREE.Vector3(p.x, p.y, p.z);
+              const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+
+              if (!this._bpDragActive || this._bpDragHand !== source.handedness) {
+                // Drag start: capture grip pose and panel world transform
+                this._bpDragActive = true;
+                this._bpDragHand   = source.handedness;
+                this._bpDragGripStartPos  = curPos.clone();
+                this._bpDragGripStartQuat = curQuat.clone();
+                const mesh = this._brushPanel.mesh;
+                mesh.updateWorldMatrix(true, false);
+                this._bpDragPanelStartPos  = mesh.position.clone();
+                this._bpDragPanelStartQuat = mesh.quaternion.clone();
+              } else {
+                // Drag move: delta = current grip relative to start grip, applied to panel
+                const mesh = this._brushPanel.mesh;
+                const deltaPos = curPos.clone().sub(this._bpDragGripStartPos);
+                mesh.position.copy(this._bpDragPanelStartPos).add(deltaPos);
+
+                // Rotational delta: Q_delta = Q_cur * Q_start^-1
+                const qDelta = curQuat.clone().multiply(
+                  this._bpDragGripStartQuat.clone().invert()
+                );
+                // Rotate the panel around its drag-start position
+                mesh.quaternion.copy(qDelta).multiply(this._bpDragPanelStartQuat);
+              }
+            }
+            // This hand is busy with panel drag — suppress world navigation for it
+            if (source.handedness === 'left') { leftGrip = false; }
+            else                              { rightGrip = false; }
+
+          } else if (this._bpDragActive && this._bpDragHand === source.handedness && !isGrip) {
+            // Grip released — end panel drag
+            this._bpDragActive = false;
+            this._bpDragHand   = null;
+          }
+          // ── end panel grip drag ───────────────────────────────────────────
         }
       }
 

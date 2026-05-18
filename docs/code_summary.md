@@ -91,12 +91,42 @@ Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engi
 
 ## Core System Summaries
 
-### VR UI: `GuiVRTools.js`
-*   **Role**: A factory that generates UI controls (buttons, sliders, comboboxes) for the active tool in VR.
+### VR UI: Legacy Canvas System (`GuiXR.js`, `GuiVRTools.js`, `VRMenu.js`)
+*   **Role**: The original VR menu system. `GuiXR.js` manually paints all widgets to an `OffscreenCanvas`; `VRMenu.js` wraps that canvas as a Three.js plane texture; `GuiVRTools.js` is the widget factory for the Tools tab.
+*   **Status**: Being replaced by the HTMLVRPanel system (see below). Still active for Popup and non-Tools tabs (Scene, Topology, Rendering, etc.).
 *   **Key Logic**:
     *   **Dynamic HUD**: Exposes specialized controls based on the active tool (e.g., axis constraints for `TransformVR`, resolution settings for `Voxel`).
-    *   **Mini-HUD Support**: Contains optimized, compact layouts for controller-attached UI.
     *   **Direct Mutation**: Callbacks directly set properties on the active tool instance.
+*   **Deep Dive**: `docs/VR_UI_OVERHAUL.md`
+
+### VR UI: MiniHUD (`GuiXR.js` with `_isMiniHUD = true`, `VRMenu.js`)
+*   **Role**: Always-on compact panel permanently attached to the **non-dominant** wrist. The primary interface during active sculpting — the user never has to open a menu to adjust radius/intensity.
+*   **Status**: **Next migration target.** Currently suppressed (hidden + raycasting disabled) when the HTML BrushPanel is active (`window._brushPanelEnabled !== false`). Toggle with `window.toggleBrushPanel(false)` to fall back to the legacy canvas MiniHUD.
+*   **Canvas size**: 300 × 500 px. Offset: `(0.0, 0.05, -0.05)`, rotation: `(-π/2, π/8, 0)` (flat on palm, tilted toward user).
+*   **Widget subset** (filtered from full Tools tab by `_isMiniHUD` flag in `GuiXR._getWidgets()`):
+    *   **Main Menu button** — opens/closes the full `GuiXR` panel.
+    *   **Tool select button** (large, tinted by tool type) — tapping opens a 3-column tool picker overlay.
+    *   **Radius / Intensity sliders** — live-update the active tool.
+    *   **Negative / Symmetry / Wireframe toggles**.
+    *   **Color picker** (square, fills remaining height) — only shown for Paint tool.
+    *   **Mask Clear / Invert** — side-by-side, shown for Masking tool.
+    *   **Hardness** — shown where applicable.
+*   **Key constraint**: `isMiniHUD = true` is passed to `getToolsWidgets()`, which switches to a wider single-column layout (710px vs 550px) and skips tool-specific secondary settings panels.
+
+### VR UI: HTML Panel System (`src/gui/htmlvr/`)
+*   **Role**: Replacement for the GuiXR canvas system. Renders real HTML/CSS panels into WebGL textures via the `three-html-render` polyfill, displayed on `PlaneGeometry` meshes attached to the controller wrist (or pinned in world space).
+*   **Status**: Active. `BrushPanel` (Tools tab) is the first migrated panel. GuiXR legacy system still runs alongside for unported tabs.
+*   **Three files**:
+    *   `install.js` — singleton; installs rAF intercept + polyfill at module load time; owns the hidden host canvas; dispatches `onpaint` to registered panels.
+    *   `HTMLVRPanel.js` — base class; owns the Three.js mesh, texture pipeline (via `captureElementImage` → `texture.needsUpdate`), UV→DOM hit mapping, and pointer dispatch.
+    *   `BrushPanel.js` — concrete panel; Catppuccin Mocha HTML template; wires sliders/toggles/tool buttons to `SculptManager` state; supports wrist-follow and world-space pin/unpin.
+*   **Runtime toggle**: `window.toggleBrushPanel()` — flips between HTML panel (new) and GuiXR canvas + MiniHUD (old). `window.toggleBrushPanel(false)` forces legacy mode.
+*   **Key constraints**:
+    *   The rAF intercept in `install.js` **must** be the first `three-html-render` import. Chrome pauses `window.requestAnimationFrame` in XR immersive mode; pending rAFs are drained manually each frame via `drainRAF()`.
+    *   `ThreeHTMLRenderer` is intentionally not used — it routes texture uploads through a direct WebGL path (`texElementImage2D`) that bypasses Three.js's state machine and freezes the VR render.
+    *   Only call `requestPaint()` when content is dirty (not every frame) — SVG rasterisation of a complex panel takes 20–80 ms.
+    *   UV→DOM mapping: `relX = uv.x * width`, `relY = uv.y * height` (no inversion). The inversion used in the standalone test (`1 - uv.y`) was an artefact of `ThreeHTMLRenderer` applying `scaleY(-1)` to the DOM element; that transform is absent in the direct polyfill path.
+*   **Deep Dive**: `docs/htmlvr.md`
 
 ### Mesh Pipeline: `Mesh.js`
 *   **Role**: Bridges SculptGL data structures with Three.js rendering.

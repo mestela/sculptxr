@@ -101,6 +101,10 @@ export class HTMLVRPanel {
     this.mesh.scale.y    = -1;
     this.mesh.renderOrder = 1000; // draw on top of sculpt scene, like existing VRMenu
 
+    // Subclasses can set this._startHidden = true before calling init()
+    // to start the mesh invisible (avoids the frame where both panels are visible).
+    if (this._startHidden) this.mesh.visible = false;
+
     scene.add(this.mesh);
 
     // Trigger first paint

@@ -52,7 +52,7 @@ const CSS = `
   align-items: center;
   gap: 8px;
 }
-#bp-root h2 span.bp-pin {
+#bp-root h2 button.bp-pin {
   margin-left: auto;
   font-size: 12px;
   cursor: pointer;
@@ -64,8 +64,9 @@ const CSS = `
   color: #a6adc8;
   transition: opacity 0.15s;
 }
-#bp-root h2 span.bp-pin:hover,
-#bp-root h2 span.bp-pin.active { opacity: 1; background: #313244; color: #cba6f7; }
+#bp-root h2 button.bp-pin:hover,
+#bp-root h2 button.bp-pin.hover,
+#bp-root h2 button.bp-pin.active { opacity: 1; background: #313244; color: #cba6f7; }
 
 /* ── Tab row ──────────────────────────────────────────────────────── */
 #bp-root .bp-tabs {
@@ -272,6 +273,10 @@ export class BrushPanel extends HTMLVRPanel {
     this._tab    = 0; // 0 = Sculpting, 1 = Low Poly
     this._pinned = false;
 
+    // BrushPanel starts hidden — MiniPanel is the default wrist view.
+    // This hides the mesh immediately on creation to avoid a one-frame flash.
+    this._startHidden = true;
+
     // Initialise the Three.js mesh.
     this.init(scene, camera, renderer);
 
@@ -307,7 +312,7 @@ export class BrushPanel extends HTMLVRPanel {
     return `
       <h2>
         Brush &amp; Tools
-        <span class="bp-pin" id="bp-pin-btn" title="Pin panel in world space">📌 Pin</span>
+        <button class="bp-pin" id="bp-pin-btn" title="Pin panel in world space">📌 Pin</button>
       </h2>
 
       <div class="bp-tabs">
@@ -374,12 +379,11 @@ export class BrushPanel extends HTMLVRPanel {
         if (isNaN(id)) return;
         const sm = main.getSculptManager?.();
         if (!sm) return;
-        const guiGroup = main.getGui?.()._ctrlSculpting;
-        if (guiGroup && guiGroup._ctrlSculpt) {
-          guiGroup._ctrlSculpt.setValue(id);
-        } else {
-          sm.setToolIndex(id);
-        }
+        // Always drive via SculptManager directly — avoids the yagui setValue(0)
+        // falsy-check bug that silently drops BRUSH (id=0).
+        sm.setToolIndex(id);
+        // Best-effort sync of the desktop combobox (purely cosmetic, non-critical).
+        try { main.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(id); } catch (_) {}
         main.render?.();
         this.syncFromState();
       });
