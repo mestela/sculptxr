@@ -1131,7 +1131,9 @@ class WebAwesomeFolderMock {
       return [r, g, b];
     };
 
-    let hexVal = Array.isArray(color) ? rgbToHex(color) : color;
+    // Use ArrayBuffer.isView to catch typed arrays (Float32Array / gl-matrix vec3)
+    // as well as plain JS arrays — both need rgbToHex conversion.
+    let hexVal = (Array.isArray(color) || ArrayBuffer.isView(color)) ? rgbToHex(color) : color;
     colorInput.value = hexVal;
     
     colorInput.style.position = 'absolute';
@@ -1150,7 +1152,7 @@ class WebAwesomeFolderMock {
     this.container.appendChild(row);
 
     const updateHandler = (val, silent) => {
-      const hex = Array.isArray(val) ? rgbToHex(val) : val;
+      const hex = (Array.isArray(val) || ArrayBuffer.isView(val)) ? rgbToHex(val) : val;
       colorInput.value = hex;
       if (!silent && typeof callback === 'function') {
         if (Array.isArray(color)) {

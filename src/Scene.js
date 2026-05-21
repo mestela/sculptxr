@@ -30,8 +30,9 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { BrushPanel } from './gui/htmlvr/BrushPanel.js';
-import { MiniPanel  } from './gui/htmlvr/MiniPanel.js';
+import { BrushPanel      } from './gui/htmlvr/BrushPanel.js';
+import { MiniPanel       } from './gui/htmlvr/MiniPanel.js';
+import { ToolPickerPanel } from './gui/htmlvr/ToolPickerPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -241,8 +242,9 @@ class Scene {
     // VR Menu State
     this._guiXR = null;
     this._vrMenu = null;
-    this._brushPanel = null;   // [HTMLVRPanel] new HTML-based tools panel
-    this._miniPanel  = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
+    this._brushPanel      = null;   // [HTMLVRPanel] new HTML-based tools panel
+    this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
+    this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -962,6 +964,9 @@ class Scene {
       }
       if (this._miniPanel) {
         try { this._miniPanel.update(true); } catch (_) {}
+      }
+      if (this._toolPickerPanel) {
+        try { this._toolPickerPanel.update(true); } catch (_) {}
       }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
@@ -2474,11 +2479,41 @@ class Scene {
         this._miniPanel._element.addEventListener('mp-show-brush-panel', () => {
           this._swapHtmlPanels('brush');
         });
+        this._miniPanel._element.addEventListener('mp-show-tool-picker', () => {
+          this._swapHtmlPanels('picker');
+          this._toolPickerPanel?.syncFromState();
+        });
         // BrushPanel starts hidden; MiniPanel is the default wrist view
         if (this._brushPanel?.mesh) this._brushPanel.mesh.visible = false;
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MiniPanel created', 'cyan');
       } catch (err) {
         console.error('[HTMLVRPanel] MiniPanel init failed:', err);
+      }
+    }
+
+    // [HTMLVRPanel] Init ToolPickerPanel (separate mesh — same wrist pos as MiniPanel)
+    if (!this._toolPickerPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._toolPickerPanel = new ToolPickerPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._toolPickerPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        this._toolPickerPanel._element.addEventListener('tp-close', () => {
+          this._swapHtmlPanels('mini');
+        });
+        this._toolPickerPanel._element.addEventListener('tp-tool-selected', (e) => {
+          const id = e.detail.id;
+          const sm = this.getSculptManager?.();
+          if (sm) {
+            sm.setToolIndex(id);
+            try { this.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(id); } catch (_) {}
+          }
+          this._swapHtmlPanels('mini'); // syncFromState() is called inside _swapHtmlPanels
+        });
+        this._toolPickerPanel._element.addEventListener('tp-show-brush', () => {
+          this._swapHtmlPanels('brush');
+        });
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] ToolPickerPanel created', 'cyan');
+      } catch (err) {
+        console.error('[HTMLVRPanel] ToolPickerPanel init failed:', err);
       }
     }
 
@@ -3026,11 +3061,16 @@ class Scene {
    * @param {'mini'|'brush'} show  Which panel to show; the other is hidden.
    */
   _swapHtmlPanels(show) {
-    const mini  = this._miniPanel?.mesh;
-    const brush = this._brushPanel?.mesh;
-    if (!mini || !brush) return;
-    mini.visible  = (show === 'mini');
-    brush.visible = (show === 'brush');
+    // Sync + flush the incoming panel's texture BEFORE making it visible so
+    // the mesh never appears with stale content even for a single frame.
+    if (show === 'mini') this._miniPanel?.syncFromState();
+
+    const mini   = this._miniPanel?.mesh;
+    const brush  = this._brushPanel?.mesh;
+    const picker = this._toolPickerPanel?.mesh;
+    if (mini)   mini.visible   = (show === 'mini');
+    if (brush)  brush.visible  = (show === 'brush');
+    if (picker) picker.visible = (show === 'picker');
   }
 
   _onBrushPanelPinChange(pinned) {
@@ -3142,7 +3182,9 @@ class Scene {
         // actually visible (MiniPanel or BrushPanel).  When both HTML panels are
         // hidden, the canvas MiniHUD slides back in as a fallback.
         const isBrushPanelShowing = window._brushPanelEnabled !== false
-          && (!!(this._brushPanel?.mesh?.visible) || !!(this._miniPanel?.mesh?.visible));
+          && (!!(this._brushPanel?.mesh?.visible)
+           || !!(this._miniPanel?.mesh?.visible)
+           || !!(this._toolPickerPanel?.mesh?.visible));
         this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isMainMenuVisible && !isPopupVisible && !isBrushPanelShowing;
     }
 
@@ -3188,6 +3230,9 @@ class Scene {
             // [HTMLVRPanel] Attach MiniPanel to wrist (no pin button — always wrist-local).
             if (this._miniPanel && this._miniPanel.mesh && !this._miniPanel.pinned) {
               if (this._miniPanel.mesh.parent !== uiGrip) uiGrip.add(this._miniPanel.mesh);
+            }
+            if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
+              if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
             }
         } else {
             if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
@@ -3663,7 +3708,12 @@ class Scene {
                 isFist = false;
 
                 // INDEX FINGER Z-DEPTH PUSH-TO-CLICK
-                if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible) {
+                // Guard: skip legacy MiniHUD poke when any HTML panel is visible
+                const _htHtmlPanelVisible = window._brushPanelEnabled !== false
+                  && (!!(this._brushPanel?.mesh?.visible)
+                   || !!(this._miniPanel?.mesh?.visible)
+                   || !!(this._toolPickerPanel?.mesh?.visible));
+                if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible && !_htHtmlPanelVisible) {
                   const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
                   if (hit && hit.distance <= 0.0) {
                     isPinching = true; // Emulate Trigger pull!
@@ -3889,6 +3939,44 @@ class Scene {
           }
           // ── end MiniPanel raycast ────────────────────────────────────────
 
+          // ── [HTMLVRPanel] ToolPickerPanel raycast ────────────────────────
+          if (this._toolPickerPanel && this._toolPickerPanel.mesh && window._brushPanelEnabled !== false && this._toolPickerPanel.mesh.visible) {
+            if (!this._tpRaycaster) {
+              this._tpRaycaster = new THREE.Raycaster();
+              this._tpRayOrigin = new THREE.Vector3();
+              this._tpRayDir    = new THREE.Vector3();
+            }
+            this._tpRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._tpRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._tpRaycaster.set(this._tpRayOrigin, this._tpRayDir);
+
+            const tpHits = this._tpRaycaster.intersectObject(this._toolPickerPanel.mesh);
+            if (tpHits.length > 0) {
+              const tpUV     = tpHits[0].uv;
+              const trigger  = source.gamepad?.buttons[0];
+              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+              const justDown = pressed && !this._tpWasPressed;
+              const justUp   = !pressed && this._tpWasPressed;
+
+              if (justDown)    this._toolPickerPanel.onVRPress(tpUV);
+              else if (justUp) this._toolPickerPanel.onVRRelease(tpUV);
+              else             this._toolPickerPanel.onVRMove(tpUV);
+
+              this._tpWasPressed = pressed;
+              this._isPointingAtMenu = true;
+              if (source.handedness === 'left') this._vrUIHitDistLeft  = tpHits[0].distance;
+              else                              this._vrUIHitDistRight = tpHits[0].distance;
+              this._updateBPCursor(tpHits[0].point, true);
+            } else {
+              if (this._tpWasPressed) {
+                this._toolPickerPanel.onVRRelease({ x: 0.5, y: 0.5 });
+                this._tpWasPressed = false;
+              }
+              this._toolPickerPanel.onVRLeave();
+            }
+          }
+          // ── end ToolPickerPanel raycast ──────────────────────────────────
+
           let hit = null;
           let targetGuiXR = null;
 
@@ -3916,10 +4004,13 @@ class Scene {
             if (hit) targetGuiXR = this._guiPopup;
           }
 
-          // If Missed Main Menu, Check Mini-HUD (only when BrushPanel is not visible)
+          // If Missed Main Menu, Check Mini-HUD (only when no HTML panel is visible)
           if (!hit && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible
               && (!this._guiXR || !this._guiXR._isVisible)
-              && !(window._brushPanelEnabled !== false && this._brushPanel?.mesh?.visible)) {
+              && !(window._brushPanelEnabled !== false
+                && (!!(this._brushPanel?.mesh?.visible)
+                 || !!(this._miniPanel?.mesh?.visible)
+                 || !!(this._toolPickerPanel?.mesh?.visible)))) {
             hit = this._vrMiniHUD.intersect(origin, dir);
             if (hit) targetGuiXR = this._guiMini;
           }

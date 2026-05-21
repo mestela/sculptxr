@@ -19,6 +19,15 @@
 import * as THREE from 'three';
 import { getHostCanvas, registerPanel, unregisterPanel, drainRAF } from './install.js';
 
+/**
+ * Shared pixels-per-metre ratio for all htmlvr panels.
+ * Set meshWidth = domWidth / VR_PANEL_PX_PER_M to keep perceived font size
+ * consistent regardless of panel DOM width.
+ *   BrushPanel:  540 / 1800 = 0.30 m  ✓
+ *   MiniPanel:   240 / 1800 = 0.133 m → rounded to 0.13 m  ✓
+ */
+export const VR_PANEL_PX_PER_M = 1800;
+
 export class HTMLVRPanel {
   /**
    * @param {HTMLElement} element   Root DOM element to render.  Not yet in document —
@@ -34,8 +43,9 @@ export class HTMLVRPanel {
     this._hoveredBtn       = null;
 
     // Texture / dirty flag
-    this._texture = null;
-    this._dirty   = true;  // paint on first update
+    this._texture     = null;
+    this._dirty       = true;  // paint on first update
+    this._needsResize = false; // set true to defer resizeMesh() until next _onPaint
 
     // Three.js objects (created in _createMesh after one rAF)
     this.mesh     = null;
@@ -116,6 +126,22 @@ export class HTMLVRPanel {
   /** Override in subclasses to run code after the mesh is created. */
   _onMeshCreated(_scene) {}
 
+  /**
+   * Rebuild the mesh PlaneGeometry to match the element's current offsetHeight.
+   * Call (via requestAnimationFrame) after toggling content that changes panel height,
+   * e.g. opening/closing the tool picker overlay in MiniPanel.
+   */
+  resizeMesh() {
+    if (!this.mesh || !this._element) return;
+    const el     = this._element;
+    const w      = el.offsetWidth  || 240;
+    const h      = el.offsetHeight || 200;
+    const aspect = w / h;
+    const meshH  = this._meshWidth / aspect;
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = new THREE.PlaneGeometry(this._meshWidth, meshH);
+  }
+
   // ── Texture (called by install.js canvas.onpaint) ─────────────────────────
 
   _onPaint() {
@@ -123,6 +149,22 @@ export class HTMLVRPanel {
     try {
       const bitmap = getHostCanvas().captureElementImage(this._element);
       if (!bitmap) return;
+
+      // If a resize was deferred (to avoid stretching old texture on new geometry),
+      // update the geometry AND discard the old texture atomically with the fresh
+      // bitmap.  We MUST dispose the texture here — if we leave it allocated at the
+      // old dimensions Chrome throws GL_INVALID_VALUE / glCopySubTextureCHROMIUM
+      // when it tries to copy the new (differently-sized) bitmap into the old slot.
+      if (this._needsResize) {
+        this._needsResize = false;
+        this.resizeMesh();
+        if (this._texture) {
+          this._texture.dispose();
+          this._texture = null;
+          this.mesh.material.map = null;
+          this.mesh.material.needsUpdate = true;
+        }
+      }
 
       if (!this._texture) {
         this._texture = new THREE.Texture(bitmap);
@@ -150,16 +192,37 @@ export class HTMLVRPanel {
   update(xrIsPresenting) {
     if (!this.mesh) return;
 
+    // Drain any rAF callbacks queued by the previous frame's requestPaint().
     if (xrIsPresenting) drainRAF();
 
     if (this._dirty) {
       this._dirty = false;
       const canvas = getHostCanvas();
-      if (canvas.requestPaint) canvas.requestPaint();
+      if (canvas.requestPaint) {
+        canvas.requestPaint();
+        // Drain immediately so the polyfill rasterises in this same frame
+        // rather than waiting until the next update() call.  Without this
+        // there is a 2-frame gap between markDirty() and the texture update.
+        if (xrIsPresenting) drainRAF();
+      }
     }
   }
 
   markDirty() { this._dirty = true; }
+
+  /**
+   * Synchronously request a repaint and drain the polyfill's rAF queue.
+   * Use when the texture must be current *before* the mesh becomes visible
+   * (e.g. panel swaps) so there is zero visible stale-frame.
+   */
+  flushPaint() {
+    this._dirty = false;
+    const canvas = getHostCanvas();
+    if (canvas.requestPaint) {
+      canvas.requestPaint();
+      drainRAF();
+    }
+  }
 
   // ── VR interaction (called by Scene.js) ───────────────────────────────────
 

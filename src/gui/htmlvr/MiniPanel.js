@@ -18,9 +18,10 @@
  *   });
  */
 
-import { HTMLVRPanel } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
+import Utils          from '../../misc/Utils.js';
 
 // ── Tool tints (Catppuccin Mocha-compatible dark tones) ──────────────────────
 const TOOL_TINTS = {
@@ -75,38 +76,6 @@ const TOOL_NAMES = {
 };
 const toolName = (id) => TOOL_NAMES[id] ?? `Tool ${id}`;
 
-// ── Picker tool lists (mirrors BrushPanel's lists) ───────────────────────────
-const SCULPT_TOOLS = [
-  { id: Enums.Tools.BRUSH,        label: 'Brush'     },
-  { id: Enums.Tools.INFLATE,      label: 'Inflate'   },
-  { id: Enums.Tools.FLATTEN,      label: 'Flatten'   },
-  { id: Enums.Tools.PINCH,        label: 'Pinch'     },
-  { id: Enums.Tools.CREASE,       label: 'Crease'    },
-  { id: Enums.Tools.SMOOTH,       label: 'Smooth'    },
-  { id: Enums.Tools.RELAX,        label: 'Relax'     },
-  { id: Enums.Tools.PAINT,        label: 'Paint'     },
-  { id: Enums.Tools.MOVE,         label: 'Move'      },
-  { id: Enums.Tools.GRAB,         label: 'Grab'      },
-  { id: Enums.Tools.DRAG,         label: 'Drag'      },
-  { id: Enums.Tools.SLIDE,        label: 'Slide'     },
-  { id: Enums.Tools.TWIST,        label: 'Twist'     },
-  { id: Enums.Tools.TRANSFORM_VR, label: 'Transform' },
-  { id: Enums.Tools.MASKING,      label: 'Masking'   },
-];
-const LP_TOOLS = [
-  { id: Enums.Tools.CUT_TOOL,        label: 'Cut'       },
-  { id: Enums.Tools.EXTRUDE,         label: 'Extrude'   },
-  { id: Enums.Tools.INSET,           label: 'Inset'     },
-  { id: Enums.Tools.DELETE_FACE,     label: 'Del Face'  },
-  { id: Enums.Tools.FILL_HOLE,       label: 'Fill Hole' },
-  { id: Enums.Tools.DISSOLVE_EDGE,   label: 'Dis.Edge'  },
-  { id: Enums.Tools.SPLIT_FACE,      label: 'Split'     },
-  { id: Enums.Tools.SPIN_EDGE,       label: 'Spin'      },
-  { id: Enums.Tools.COLLAPSE_EDGE,   label: 'Col.Edge'  },
-  { id: Enums.Tools.DISSOLVE_VERTEX, label: 'Dis.Vert'  },
-  { id: Enums.Tools.WELD,            label: 'Weld'      },
-].filter(t => t.id !== undefined);
-
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
 /* ── MiniPanel — Catppuccin Mocha ──────────────────────────────────── */
@@ -120,67 +89,7 @@ const CSS = `
   border-radius: 12px;
   border: 1px solid #313244;
   user-select: none;
-  position: relative;
-  overflow: hidden;
 }
-
-/* ── Tool picker overlay ──────────────────────────────────────────── */
-/* Sits above #mp-main-body; sized to fit within the mesh's fixed height */
-#mp-picker {
-  display: none;
-  position: absolute;
-  top: 50px;     /* below the tool-btn; ~51px = btn height + margin */
-  left: 0; right: 0; bottom: 0;
-  padding: 0 2px 4px;
-  background: #1e1e2e;
-  overflow: hidden;
-  z-index: 10;
-  box-sizing: border-box;
-}
-#mp-picker.open { display: block; }
-
-/* 4-column sculpt grid — 15 tools = 4 rows, tight spacing */
-#mp-picker .mp-pick-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 3px;
-  margin-bottom: 4px;
-}
-#mp-picker .mp-pick-btn {
-  padding: 5px 2px;
-  border: 1px solid #45475a;
-  border-radius: 5px;
-  background: #313244;
-  color: #cdd6f4;
-  font-size: 9px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-  outline: none;
-  transition: filter 0.1s;
-}
-#mp-picker .mp-pick-btn:hover,
-#mp-picker .mp-pick-btn.hover  { filter: brightness(1.3); }
-#mp-picker .mp-pick-btn.active { box-shadow: 0 0 0 2px #89b4fa; }
-
-/* "Full Menu" button at bottom of picker */
-#mp-picker .mp-pick-more {
-  width: 100%;
-  padding: 5px 6px;
-  border: 1px solid #45475a;
-  border-radius: 6px;
-  background: #181825;
-  color: #6c7086;
-  font-size: 9px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
-  outline: none;
-  transition: background 0.1s, color 0.1s;
-  box-sizing: border-box;
-}
-#mp-picker .mp-pick-more:hover,
-#mp-picker .mp-pick-more.hover { background: #24243e; color: #a6adc8; }
 
 /* ── Tool button ──────────────────────────────────────────────────── */
 #mp-tool-btn {
@@ -377,48 +286,241 @@ function injectCSS() {
 
 // ── Static HTML ───────────────────────────────────────────────────────────────
 function buildHTML() {
-  // Build sculpt picker grid (4 columns, tight — fits within panel height)
-  const sculptBtns = SCULPT_TOOLS.map(t =>
-    `<button class="mp-pick-btn" data-tool-id="${t.id}" style="background:${toolTint(t.id)}">${t.label}</button>`
-  ).join('');
-
   return `
-    <!-- Tool header button — always visible, toggles picker -->
     <button id="mp-tool-btn" style="background:${toolTint(0)}">
       <span id="mp-tool-name">Brush</span>
-      <span class="mp-tool-arrow" id="mp-tool-arrow">▸ All</span>
+      <span class="mp-tool-arrow">▸ All</span>
     </button>
-
-    <!-- Tool picker overlay (shown when header is tapped) -->
-    <div id="mp-picker">
-      <div class="mp-pick-grid" id="mp-pick-sculpt">${sculptBtns}</div>
-      <button class="mp-pick-more" id="mp-pick-full">Low Poly &amp; Full Menu ▸</button>
+    <div class="mp-row">
+      <span class="mp-lbl">Radius</span>
+      <input type="range" id="mp-radius" min="5" max="250" step="1" value="50">
+      <span class="mp-val" id="mp-radius-val">50</span>
     </div>
-
-    <!-- Main HUD body (hidden when picker is open) -->
-    <div id="mp-main-body">
-      <div class="mp-row">
-        <span class="mp-lbl">Radius</span>
-        <input type="range" id="mp-radius" min="5" max="250" step="1" value="50">
-        <span class="mp-val" id="mp-radius-val">50</span>
-      </div>
-      <div class="mp-row">
-        <span class="mp-lbl">Intensity</span>
-        <input type="range" id="mp-intensity" min="0" max="100" step="1" value="50">
-        <span class="mp-val" id="mp-intensity-val">50%</span>
-      </div>
-
-      <hr class="mp-divider">
-
-      <div class="mp-toggles">
-        <button class="mp-toggle-btn" id="mp-sym">✓ Sym</button>
-        <button class="mp-toggle-btn" id="mp-neg">✓ Neg</button>
-        <button class="mp-toggle-btn" id="mp-wire">Wire</button>
-      </div>
-
-      <div id="mp-extras"></div>
+    <div class="mp-row">
+      <span class="mp-lbl">Intensity</span>
+      <input type="range" id="mp-intensity" min="0" max="100" step="1" value="50">
+      <span class="mp-val" id="mp-intensity-val">50%</span>
     </div>
+    <hr class="mp-divider">
+    <div class="mp-toggles">
+      <button class="mp-toggle-btn" id="mp-sym">✓ Sym</button>
+      <button class="mp-toggle-btn" id="mp-neg">✓ Neg</button>
+      <button class="mp-toggle-btn" id="mp-wire">Wire</button>
+    </div>
+    <div id="mp-extras"></div>
   `;
+}
+
+// ── Colour Wheel widget (pure HTML/CSS) ──────────────────────────────────────
+//
+// Renders the HSV picker as plain HTML divs + CSS gradients so it works
+// through the SVG-foreignObject polyfill.  Canvas pixel content is NOT
+// captured by foreignObject, so we use:
+//   • conic-gradient div  → hue ring
+//   • layered linear-gradient divs → SV square
+//   • absolutely-positioned divs   → indicators / swatches
+// Interaction is handled by a pointerdown listener on the root div plus
+// document-level pointermove/pointerup so drags never "lose" the target.
+//
+// Layout constants (must match the HTML template in _buildExtrasHTML):
+//   Widget: 216 × 216 px
+//   Swatch row: 40 px tall at the top
+//   Ring div: left 20, top 40, 176 × 176  → outer R = 88, inner R ≈ 68
+//   Ring centre in widget: (108, 128)      → ring mid-radius = 78
+//   SV square: left 62, top 82, 92 × 92   → half = 46
+
+const _CW_CX = 108, _CW_CY = 128;   // ring centre in widget coords
+const _CW_OR = 88,  _CW_IR = 68;    // outer / inner radius
+const _CW_MR = 78;                   // mid-radius for indicator placement
+const _CW_SX = 62,  _CW_SY = 82;    // SV square top-left
+const _CW_SS = 92;                   // SV square side length
+
+class ColorWheel {
+  constructor(rootEl, main, onchange) {
+    this._root      = rootEl;
+    this._main      = main;
+    this._onchange  = onchange;
+    this._region    = null;    // 'hue' | 'sv' | null
+    this._cachedHue = null;
+    this._lastSwap  = 0;
+    this._lastEye   = 0;
+
+    this._onDown = (e) => this._handleDown(e);
+    this._onMove = (e) => { if (this._region) this._handleMove(e); };
+    this._onUp   = ()  => { this._region = null; };
+
+    rootEl.addEventListener('pointerdown', this._onDown);
+    document.addEventListener('pointermove', this._onMove);
+    document.addEventListener('pointerup',   this._onUp);
+
+    this.draw();
+  }
+
+  dispose() {
+    this._root.removeEventListener('pointerdown', this._onDown);
+    document.removeEventListener('pointermove',   this._onMove);
+    document.removeEventListener('pointerup',     this._onUp);
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  _tool() {
+    const sm = this._main.getSculptManager?.();
+    let t = sm?.getCurrentTool?.();
+    if (!t?._color) t = sm?.getTool?.(Enums.Tools.PAINT);
+    return (t?._color) ? t : null;
+  }
+
+  _el(id) { return this._root.querySelector('#' + id); }
+
+  _localXY(e) {
+    const r = this._root.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  }
+
+  // ── Draw: update inline styles only — no canvas, no encoding ─────────────────
+
+  draw() {
+    const tool = this._tool();
+    if (!tool) return;
+
+    const [h, s, v] = Utils.rgb2hsv(tool._color[0], tool._color[1], tool._color[2]);
+    const aHue = (this._region === 'sv' && this._cachedHue !== null) ? this._cachedHue : h;
+
+    // FG / BG swatches
+    const fg = tool._color;
+    const elFg = this._el('mp-cw-fg');
+    if (elFg) elFg.style.background = `rgb(${fg[0]*255|0},${fg[1]*255|0},${fg[2]*255|0})`;
+    const sec = tool._colorSecondary ?? [0, 0, 0];
+    const elBg = this._el('mp-cw-bg');
+    if (elBg) elBg.style.background = `rgb(${sec[0]*255|0},${sec[1]*255|0},${sec[2]*255|0})`;
+
+    // Eyedropper active state
+    const elEye = this._el('mp-cw-eye');
+    if (elEye) elEye.style.color = tool._pickColor ? '#89b4fa' : '#6c7086';
+
+    // SV square: hue background layer
+    const elSvBg = this._el('mp-cw-sv-bg');
+    if (elSvBg) elSvBg.style.background = `hsl(${aHue * 360}deg,100%,50%)`;
+
+    // SV indicator position + contrast border
+    const elSvI = this._el('mp-cw-sv-i');
+    if (elSvI) {
+      elSvI.style.left        = `${s * 100}%`;
+      elSvI.style.top         = `${(1 - v) * 100}%`;
+      elSvI.style.borderColor = (v > 0.5 && s < 0.5) ? 'black' : 'white';
+    }
+
+    // Hue ring indicator: position on ring + matching hue colour
+    const elHI = this._el('mp-cw-h-i');
+    if (elHI) {
+      const ang = aHue * Math.PI * 2;
+      elHI.style.left       = `${_CW_CX + Math.cos(ang) * _CW_MR}px`;
+      elHI.style.top        = `${_CW_CY + Math.sin(ang) * _CW_MR}px`;
+      elHI.style.background = `hsl(${aHue * 360}deg,100%,50%)`;
+    }
+  }
+
+  // ── Interaction ───────────────────────────────────────────────────────────────
+
+  _handleDown(e) {
+    const [lx, ly] = this._localXY(e);
+
+    // Swap button region (left:46, top:10, ~38px wide, ~22px tall)
+    if (lx >= 44 && lx <= 86 && ly >= 8 && ly <= 32) {
+      const now = performance.now();
+      if (now - this._lastSwap > 300) {
+        this._lastSwap = now;
+        const tool = this._tool();
+        if (tool) {
+          if (typeof tool.swapColors === 'function') {
+            tool.swapColors();
+          } else if (tool._colorSecondary) {
+            const tmp = [tool._color[0], tool._color[1], tool._color[2]];
+            tool._color[0] = tool._colorSecondary[0];
+            tool._color[1] = tool._colorSecondary[1];
+            tool._color[2] = tool._colorSecondary[2];
+            tool._colorSecondary[0] = tmp[0];
+            tool._colorSecondary[1] = tmp[1];
+            tool._colorSecondary[2] = tmp[2];
+          }
+          this._main.render?.();
+          this.draw(); this._onchange?.();
+        }
+      }
+      return;
+    }
+
+    // Eyedropper region (right:8, top:10 → left:~168, ~40px wide)
+    if (lx >= 166 && lx <= 210 && ly >= 8 && ly <= 32) {
+      const now = performance.now();
+      if (now - this._lastEye > 300) {
+        this._lastEye = now;
+        const tool = this._tool();
+        if (tool) {
+          tool._pickColor = !tool._pickColor;
+          this._main.render?.();
+          this.draw(); this._onchange?.();
+        }
+      }
+      return;
+    }
+
+    this._handleInteraction(lx, ly);
+  }
+
+  _handleMove(e) {
+    const [lx, ly] = this._localXY(e);
+    this._handleInteraction(lx, ly);
+  }
+
+  _handleInteraction(lx, ly) {
+    const tool = this._tool();
+    if (!tool) return;
+
+    const [h, s, v] = Utils.rgb2hsv(tool._color[0], tool._color[1], tool._color[2]);
+    const dx   = lx - _CW_CX, dy = ly - _CW_CY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    let inSV  = lx >= _CW_SX - 10 && lx <= _CW_SX + _CW_SS + 10
+             && ly >= _CW_SY - 10 && ly <= _CW_SY + _CW_SS + 10;
+    let inHue = dist >= _CW_IR - 10 && dist <= _CW_OR + 10;
+
+    if (this._region === 'sv') {
+      inSV = true; inHue = false;
+      if (this._cachedHue === null) this._cachedHue = h;
+    } else if (this._region === 'hue') {
+      inSV = false; inHue = true;
+      this._cachedHue = null;
+    } else {
+      this._cachedHue = null;
+      // Overlap zone: prefer exact SV interior
+      if (inHue && inSV) {
+        if (lx >= _CW_SX && lx <= _CW_SX + _CW_SS
+         && ly >= _CW_SY && ly <= _CW_SY + _CW_SS) inHue = false;
+        else inSV = false;
+      }
+    }
+
+    if (inSV) {
+      this._region = 'sv';
+      const newS = Math.max(0, Math.min(1, (lx - _CW_SX) / _CW_SS));
+      const newV = Math.max(0, Math.min(1, 1 - (ly - _CW_SY) / _CW_SS));
+      const aHue = this._cachedHue !== null ? this._cachedHue : h;
+      const rgb  = Utils.hsv2rgb(aHue, newS, newV);
+      tool._color[0] = rgb[0]; tool._color[1] = rgb[1]; tool._color[2] = rgb[2];
+      this._main.render?.();
+      this.draw(); this._onchange?.();
+    } else if (inHue) {
+      this._region = 'hue';
+      let ang = Math.atan2(dy, dx);
+      if (ang < 0) ang += Math.PI * 2;
+      const rgb = Utils.hsv2rgb(ang / (Math.PI * 2), s, v);
+      tool._color[0] = rgb[0]; tool._color[1] = rgb[1]; tool._color[2] = rgb[2];
+      this._main.render?.();
+      this.draw(); this._onchange?.();
+    }
+  }
 }
 
 // ── MiniPanel ─────────────────────────────────────────────────────────────────
@@ -437,12 +539,13 @@ export class MiniPanel extends HTMLVRPanel {
     root.id = 'mp-root';
     root.innerHTML = buildHTML();
 
-    // 0.13m wide — compact wrist-HUD (reduced from 0.20 — 1/3 smaller)
-    super(root, 0.13);
+    // Width derived from shared px/m ratio so fonts match BrushPanel
+    super(root, 240 / VR_PANEL_PX_PER_M); // 0.133 m
 
-    this._main       = main;
-    this._pinned     = false;  // always false — no pin button on MiniPanel
-    this._pickerOpen = false;
+    this._main          = main;
+    this._pinned        = false;  // always false — no pin button on MiniPanel
+    this._colorWheel    = null;
+    this._lastExtrasIdx = -1;     // track last-built extras so we never compare innerHTML
 
     // Initialise the Three.js mesh.
     this.init(scene, camera, renderer);
@@ -479,61 +582,8 @@ export class MiniPanel extends HTMLVRPanel {
 
   // ── DOM event wiring ───────────────────────────────────────────────────────
 
-  // ── Picker open/close ─────────────────────────────────────────────────────
-
-  _openPicker() {
-    this._pickerOpen = true;
+  _wireHUDBody(main) {
     const root = this._element;
-    root.querySelector('#mp-picker')?.classList.add('open');
-    const arrow = root.querySelector('#mp-tool-arrow');
-    if (arrow) arrow.textContent = '× Close';
-    this._requestPaint();
-  }
-
-  _closePicker() {
-    this._pickerOpen = false;
-    const root = this._element;
-    root.querySelector('#mp-picker')?.classList.remove('open');
-    const arrow = root.querySelector('#mp-tool-arrow');
-    if (arrow) arrow.textContent = '▸ All';
-    this._requestPaint();
-  }
-
-  // ── DOM event wiring ───────────────────────────────────────────────────────
-
-  _wireEvents(main) {
-    const root = this._element;
-
-    // ── Tool button → toggle picker ──────────────────────────────────────────
-    const toolBtn = root.querySelector('#mp-tool-btn');
-    if (toolBtn) {
-      toolBtn.addEventListener('click', () => {
-        if (this._pickerOpen) this._closePicker();
-        else                  this._openPicker();
-      });
-    }
-
-    // ── Picker tool buttons ──────────────────────────────────────────────────
-    root.querySelectorAll('#mp-picker .mp-pick-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const id = parseInt(btn.dataset.toolId, 10);
-        const sm = main.getSculptManager?.();
-        if (sm) {
-          sm.setToolIndex(id);
-          try { main.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(id); } catch (_) {}
-        }
-        this._closePicker();
-        this.syncFromState();
-      });
-    });
-
-    // ── "Full Menu" button — open BrushPanel (LP tools + all settings) ───────
-    root.querySelector('#mp-pick-full')?.addEventListener('click', () => {
-      this._closePicker();
-      this._element.dispatchEvent(
-        new CustomEvent('mp-show-brush-panel', { bubbles: false })
-      );
-    });
 
     // ── Radius slider ────────────────────────────────────────────────────────
     const radiusInput = root.querySelector('#mp-radius');
@@ -581,36 +631,31 @@ export class MiniPanel extends HTMLVRPanel {
       btn.addEventListener('click', () => {
         setVal(!getVal());
         this.syncFromState();
-        this._requestPaint();
       });
     };
 
-    // Symmetry
     makeToggle('#mp-sym',
       () => main.getSculptManager?.()._symmetry,
-      (v) => {
-        const sm = main.getSculptManager?.();
-        if (sm) { sm._symmetry = v; main.render?.(); }
-      }
+      (v) => { const sm = main.getSculptManager?.(); if (sm) { sm._symmetry = v; main.render?.(); } }
     );
-
-    // Negative (subtract mode)
     makeToggle('#mp-neg',
       () => main.getSculptManager?.()._negative,
-      (v) => {
-        const sm = main.getSculptManager?.();
-        if (sm) { sm._negative = v; main.render?.(); }
-      }
+      (v) => { const sm = main.getSculptManager?.(); if (sm) { sm._negative = v; main.render?.(); } }
     );
-
-    // Wireframe
     makeToggle('#mp-wire',
       () => main.getMesh?.()?.getShowWireframe?.() ?? false,
-      (v) => {
-        const mesh = main.getMesh?.();
-        if (mesh) { mesh.setShowWireframe(v); main.render?.(); }
-      }
+      (v) => { const mesh = main.getMesh?.(); if (mesh) { mesh.setShowWireframe(v); main.render?.(); } }
     );
+  }
+
+  // ── DOM event wiring (one-time, at mesh-ready) ─────────────────────────────
+
+  _wireEvents(main) {
+    // Tool button fires event — Scene.js swaps to ToolPickerPanel
+    this._element?.querySelector('#mp-tool-btn')?.addEventListener('click', () => {
+      this._element.dispatchEvent(new CustomEvent('mp-show-tool-picker', { bubbles: false }));
+    });
+    this._wireHUDBody(main);
   }
 
   // ── Extras wiring (called after syncFromState rebuilds #mp-extras) ─────────
@@ -619,15 +664,60 @@ export class MiniPanel extends HTMLVRPanel {
     const extras = this._element?.querySelector('#mp-extras');
     if (!extras) return;
 
+    // Dispose any previous colour wheel before re-wiring
+    if (this._colorWheel) {
+      this._colorWheel.dispose();
+      this._colorWheel = null;
+    }
+
     const sm  = main.getSculptManager?.();
     const idx = sm?.getToolIndex?.() ?? -1;
 
+    // ── Brush extras ───────────────────────────────────────────────────────
+    if (idx === Enums.Tools.BRUSH) {
+      const makeToolToggle = (id, prop) => {
+        const btn = extras.querySelector(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          const t = sm?.getCurrentTool?.();
+          if (t) { t[prop] = !t[prop]; main.render?.(); }
+          this.syncFromState();
+        });
+      };
+      makeToolToggle('#mp-clay',    '_clay');
+      makeToolToggle('#mp-culling', '_culling');
+    }
+
+    // ── Smooth / Relax extras ──────────────────────────────────────────────
+    if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
+      const tangentBtn = extras.querySelector('#mp-tangent');
+      if (tangentBtn) {
+        tangentBtn.addEventListener('click', () => {
+          const t = sm?.getCurrentTool?.();
+          if (t) { t._tangent = !t._tangent; main.render?.(); }
+          this.syncFromState();
+        });
+      }
+      if (idx === Enums.Tools.SMOOTH) {
+        const sharpenBtn = extras.querySelector('#mp-sharpen');
+        if (sharpenBtn) {
+          sharpenBtn.addEventListener('click', () => {
+            const t = sm?.getCurrentTool?.();
+            if (t) { t._negative = !t._negative; main.render?.(); }
+            this.syncFromState();
+          });
+        }
+      }
+    }
+
     // ── Masking extras ─────────────────────────────────────────────────────
     if (idx === Enums.Tools.MASKING) {
-      const clearBtn  = extras.querySelector('#mp-mask-clear');
-      const invertBtn = extras.querySelector('#mp-mask-invert');
-      const hardInput = extras.querySelector('#mp-hardness');
-      const hardVal   = extras.querySelector('#mp-hardness-val');
+      const clearBtn   = extras.querySelector('#mp-mask-clear');
+      const invertBtn  = extras.querySelector('#mp-mask-invert');
+      const hardInput  = extras.querySelector('#mp-hardness');
+      const hardVal    = extras.querySelector('#mp-hardness-val');
+      const thickInput = extras.querySelector('#mp-thickness');
+      const thickVal   = extras.querySelector('#mp-thickness-val');
 
       if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -656,10 +746,31 @@ export class MiniPanel extends HTMLVRPanel {
           this._requestPaint();
         });
       }
+      if (thickInput) {
+        thickInput.addEventListener('input', () => {
+          const val = parseFloat(thickInput.value) / 100;
+          if (thickVal) thickVal.textContent = Math.round(parseFloat(thickInput.value)) + '%';
+          const t = sm?.getCurrentTool?.();
+          if (t) {
+            t._thickness = val;
+            getOptionsURL.saveOption(`tool_${idx}_thickness`, val, 500);
+            main.render?.();
+          }
+          this._requestPaint();
+        });
+      }
     }
 
     // ── Paint extras ───────────────────────────────────────────────────────
     if (idx === Enums.Tools.PAINT) {
+      // Colour wheel
+      this._colorWheel?.dispose();
+      const cwRoot = extras.querySelector('#mp-cw');
+      if (cwRoot) {
+        this._colorWheel = new ColorWheel(cwRoot, main, () => this._requestPaint());
+      }
+
+      // Roughness / metalness
       const roughInput = extras.querySelector('#mp-roughness');
       const roughVal   = extras.querySelector('#mp-roughness-val');
       const metInput   = extras.querySelector('#mp-metalness');
@@ -722,6 +833,59 @@ export class MiniPanel extends HTMLVRPanel {
         });
       }
     }
+
+    // ── TransformVR extras ─────────────────────────────────────────────────
+    if (idx === Enums.Tools.TRANSFORM_VR) {
+      extras.querySelectorAll('[data-tvr-mode]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = parseInt(btn.dataset.tvrMode, 10);
+          const t    = sm?.getCurrentTool?.();
+          if (t) { t._mode = mode; main.render?.(); }
+          this.syncFromState();
+        });
+      });
+    }
+  }
+
+  // ── Incremental extras-state sync (no innerHTML rebuild) ─────────────────
+  // Called by syncFromState() when the tool hasn't changed so we only update
+  // toggle-button active classes in-place.  Never touches innerHTML so that
+  // _colorWheel.draw()'s inline-style mutations are never disturbed.
+
+  _syncExtrasActive(extrasEl, sm, idx, tool) {
+    if (idx === Enums.Tools.BRUSH) {
+      extrasEl.querySelector('#mp-clay')   ?.classList.toggle('active', !!tool._clay);
+      extrasEl.querySelector('#mp-culling')?.classList.toggle('active', !!tool._culling);
+
+    } else if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
+      extrasEl.querySelector('#mp-tangent')?.classList.toggle('active', !!tool._tangent);
+      if (idx === Enums.Tools.SMOOTH) {
+        extrasEl.querySelector('#mp-sharpen')?.classList.toggle('active', !!tool._negative);
+      }
+
+    } else if (idx === Enums.Tools.TRANSFORM_VR) {
+      const mode = tool._mode ?? 0;
+      extrasEl.querySelectorAll('[data-tvr-mode]').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.tvrMode, 10) === mode);
+      });
+
+    } else if (idx === Enums.Tools.VOXEL) {
+      const curMode = tool._mode    ?? 0;
+      const curNeg  = tool._negative ?? false;
+      extrasEl.querySelectorAll('[data-voxel-mode]').forEach(btn => {
+        const bMode = parseInt(btn.dataset.voxelMode, 10);
+        const bNeg  = btn.dataset.voxelNeg === 'true';
+        let active;
+        if      (bMode === 0 && !bNeg) active = curMode === 0 && !curNeg;
+        else if (bMode === 1 && !bNeg) active = curMode === 1 || (curMode === 0 && curNeg);
+        else                           active = bMode === curMode && bNeg === curNeg;
+        btn.classList.toggle('active', active);
+      });
+
+    } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
+      extrasEl.querySelector('#mp-keep-together')
+        ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
+    }
   }
 
   // ── Build extras HTML for a given tool index ──────────────────────────────
@@ -729,10 +893,41 @@ export class MiniPanel extends HTMLVRPanel {
   _buildExtrasHTML(sm, idx) {
     if (!sm) return '';
 
+    // ── Brush ──────────────────────────────────────────────────────────────
+    if (idx === Enums.Tools.BRUSH) {
+      const t       = sm.getCurrentTool?.();
+      const clay    = !!(t?._clay);
+      const culling = !!(t?._culling);
+      return `
+        <hr class="mp-divider">
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${clay    ? ' active' : ''}" id="mp-clay">Clay</button>
+          <button class="mp-toggle-btn${culling ? ' active' : ''}" id="mp-culling">Culling</button>
+        </div>
+      `;
+    }
+
+    // ── Smooth / Relax ─────────────────────────────────────────────────────
+    if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
+      const t       = sm.getCurrentTool?.();
+      const tangent = !!(t?._tangent);
+      const sharpen = idx === Enums.Tools.SMOOTH && !!(t?._negative);
+      return `
+        <hr class="mp-divider">
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${tangent ? ' active' : ''}" id="mp-tangent">Tangent</button>
+          ${idx === Enums.Tools.SMOOTH
+            ? `<button class="mp-toggle-btn${sharpen ? ' active' : ''}" id="mp-sharpen">Sharpen</button>`
+            : ''}
+        </div>
+      `;
+    }
+
     // ── Masking ────────────────────────────────────────────────────────────
     if (idx === Enums.Tools.MASKING) {
-      const t       = sm.getCurrentTool?.();
-      const hardPct = Math.round((t?._hardness ?? 0.5) * 100);
+      const t        = sm.getCurrentTool?.();
+      const hardPct  = Math.round((t?._hardness  ?? 0.5) * 100);
+      const thickPct = Math.round((t?._thickness ?? 0.5) * 100);
       return `
         <hr class="mp-divider">
         <div class="mp-btn-row">
@@ -744,20 +939,46 @@ export class MiniPanel extends HTMLVRPanel {
           <input type="range" id="mp-hardness" min="0" max="100" step="1" value="${hardPct}">
           <span class="mp-val" id="mp-hardness-val">${hardPct}%</span>
         </div>
+        <div class="mp-row">
+          <span class="mp-lbl">Thickness</span>
+          <input type="range" id="mp-thickness" min="0" max="100" step="1" value="${thickPct}">
+          <span class="mp-val" id="mp-thickness-val">${thickPct}%</span>
+        </div>
       `;
     }
 
     // ── Paint ──────────────────────────────────────────────────────────────
     if (idx === Enums.Tools.PAINT) {
       const t        = sm.getCurrentTool?.();
-      const r        = t?._color?.[0] ?? 1;
-      const g        = t?._color?.[1] ?? 1;
-      const b        = t?._color?.[2] ?? 1;
       const roughPct = Math.round((t?._material?.[0] ?? 0.5) * 100);
       const metPct   = Math.round((t?._material?.[1] ?? 0.0) * 100);
+      // Pure HTML/CSS colour wheel — no canvas, renders correctly through
+      // SVG foreignObject.  Layout constants must match _CW_* at top of file.
       return `
         <hr class="mp-divider">
-        <div id="mp-color-swatch" style="background:rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)})"></div>
+        <div id="mp-cw" style="position:relative;width:216px;height:216px;background:#1e1e2e;border-radius:8px;overflow:hidden;touch-action:none">
+          <!-- BG swatch (behind) -->
+          <div id="mp-cw-bg" style="position:absolute;left:22px;top:22px;width:26px;height:26px;border:1.5px solid #585b70;background:#000"></div>
+          <!-- FG swatch (front) -->
+          <div id="mp-cw-fg" style="position:absolute;left:8px;top:8px;width:26px;height:26px;border:2px solid #89b4fa;background:#fff"></div>
+          <!-- Swap FG/BG -->
+          <button id="mp-cw-swap" style="position:absolute;left:46px;top:10px;padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#a6adc8;font-size:13px;cursor:pointer;outline:none;line-height:1">⇄</button>
+          <!-- Eyedropper -->
+          <button id="mp-cw-eye" style="position:absolute;right:8px;top:10px;padding:2px 5px;background:#181825;border:1px solid #45475a;border-radius:4px;color:#6c7086;font-size:11px;cursor:pointer;outline:none;line-height:1">✦ pick</button>
+          <!-- Hue ring: conic-gradient donut via CSS mask -->
+          <div id="mp-cw-ring" style="position:absolute;left:20px;top:40px;width:176px;height:176px;border-radius:50%;background:conic-gradient(from 90deg,#f00 0%,#ff0 16.67%,#0f0 33.33%,#0ff 50%,#00f 66.67%,#f0f 83.33%,#f00 100%);-webkit-mask:radial-gradient(circle closest-side,transparent 77%,black 78%);mask:radial-gradient(circle closest-side,transparent 77%,black 78%)"></div>
+          <!-- SV square: layered gradients -->
+          <div id="mp-cw-sv" style="position:absolute;left:62px;top:82px;width:92px;height:92px;overflow:hidden">
+            <div id="mp-cw-sv-bg" style="position:absolute;top:0;right:0;bottom:0;left:0;background:hsl(0deg,100%,50%)"></div>
+            <div style="position:absolute;top:0;right:0;bottom:0;left:0;background:linear-gradient(to right,white,transparent)"></div>
+            <div style="position:absolute;top:0;right:0;bottom:0;left:0;background:linear-gradient(to bottom,transparent,black)"></div>
+            <!-- SV indicator (hollow circle, contrast-aware border) -->
+            <div id="mp-cw-sv-i" style="position:absolute;width:12px;height:12px;border-radius:50%;border:2px solid white;box-sizing:border-box;transform:translate(-50%,-50%)"></div>
+          </div>
+          <!-- Hue ring indicator -->
+          <div id="mp-cw-h-i" style="position:absolute;width:14px;height:14px;border-radius:50%;border:2px solid rgba(0,0,0,0.8);box-sizing:border-box;background:red;transform:translate(-50%,-50%)"></div>
+        </div>
+        <hr class="mp-divider">
         <div class="mp-row">
           <span class="mp-lbl">Roughness</span>
           <input type="range" id="mp-roughness" min="0" max="100" step="1" value="${roughPct}">
@@ -773,9 +994,9 @@ export class MiniPanel extends HTMLVRPanel {
 
     // ── Voxel ──────────────────────────────────────────────────────────────
     if (idx === Enums.Tools.VOXEL) {
-      const t         = sm.getCurrentTool?.();
-      const curMode   = t?._mode ?? 0;
-      const curNeg    = t?._negative ?? false;
+      const t       = sm.getCurrentTool?.();
+      const curMode = t?._mode ?? 0;
+      const curNeg  = t?._negative ?? false;
 
       // mode 0=Add, 1=Sub, 2=Inflate/Deflate, 3=Smooth, 4=Move
       const modes = [
@@ -793,9 +1014,9 @@ export class MiniPanel extends HTMLVRPanel {
         return m.mode === curMode && m.neg === curNeg;
       };
 
-      const btns = modes.map(m => {
-        return `<button class="mp-voxel-btn${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`;
-      }).join('');
+      const btns = modes.map(m =>
+        `<button class="mp-voxel-btn${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`
+      ).join('');
 
       return `
         <hr class="mp-divider">
@@ -805,11 +1026,28 @@ export class MiniPanel extends HTMLVRPanel {
 
     // ── Extrude / Inset ────────────────────────────────────────────────────
     if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
-      const t          = sm.getCurrentTool?.();
-      const isActive   = !!(window.keepExtrudeFacesTogether ?? true);
+      const isActive = !!(window.keepExtrudeFacesTogether ?? true);
       return `
         <hr class="mp-divider">
         <button class="mp-keep-btn${isActive ? ' active' : ''}" id="mp-keep-together">Keep Together</button>
+      `;
+    }
+
+    // ── TransformVR ────────────────────────────────────────────────────────
+    if (idx === Enums.Tools.TRANSFORM_VR) {
+      const t    = sm.getCurrentTool?.();
+      const mode = t?._mode ?? 0;
+      const modes = [
+        { id: 0, label: 'Move'   },
+        { id: 1, label: 'Rotate' },
+        { id: 2, label: 'Scale'  },
+      ];
+      const btns = modes.map(m =>
+        `<button class="mp-toggle-btn${mode === m.id ? ' active' : ''}" data-tvr-mode="${m.id}">${m.label}</button>`
+      ).join('');
+      return `
+        <hr class="mp-divider">
+        <div class="mp-toggles">${btns}</div>
       `;
     }
 
@@ -870,27 +1108,41 @@ export class MiniPanel extends HTMLVRPanel {
     const wf = main.getMesh?.()?.getShowWireframe?.() ?? false;
     root.querySelector('#mp-wire')?.classList.toggle('active', wf);
 
-    // ── Tool-specific extras: rebuild HTML then re-wire ────────────────────
+    // ── Tool-specific extras: rebuild HTML only when tool changes ─────────
+    // IMPORTANT: do NOT compare extrasEl.innerHTML to the template string.
+    // _colorWheel.draw() modifies inline styles on elements inside #mp-extras
+    // (setting background:rgb(...), left:Xpx, etc.).  Those style changes land
+    // in innerHTML, so a naive string comparison triggers a rebuild — and a
+    // _needsResize / texture dispose — on every single syncFromState() call
+    // while on the Paint tool, causing a ~1-second flicker cycle.
     const extrasEl = root.querySelector('#mp-extras');
     if (extrasEl) {
-      const newHTML = this._buildExtrasHTML(sm, idx);
-      if (extrasEl.innerHTML !== newHTML) {
-        extrasEl.innerHTML = newHTML;
-        // Re-wire the newly inserted buttons/sliders
+      if (this._lastExtrasIdx !== idx) {
+        // Tool changed: rebuild the whole block and re-wire.
+        this._lastExtrasIdx = idx;
+        extrasEl.innerHTML  = this._buildExtrasHTML(sm, idx);
         this._wireExtras(main);
+        // Defer geometry resize until _onPaint fires with the fresh texture.
+        this._needsResize = true;
+      } else if (tool) {
+        // Same tool: only update active-class states in place; never touch innerHTML.
+        this._syncExtrasActive(extrasEl, sm, idx, tool);
       }
     }
 
-    // ── Picker: update active highlight on the currently selected tool ─────
-    root.querySelectorAll('#mp-picker .mp-pick-btn').forEach(btn => {
-      const btnId = parseInt(btn.dataset.toolId, 10);
-      btn.classList.toggle('active', btnId === idx);
-    });
+    // Keep the colour wheel canvas current on periodic syncs
+    // (e.g. after eyedropper picks a colour from the scene).
+    this._colorWheel?.draw();
 
     this._requestPaint();
   }
 
   // ── Paint request ──────────────────────────────────────────────────────────
+  // markDirty() is enough — the XR render loop calls update() every frame which
+  // drains the polyfill queue.  Calling flushPaint() (synchronous drain) on every
+  // interaction was causing heavy per-frame rasterisation work and felt laggy.
+  // flushPaint() is still used in _swapHtmlPanels (Scene.js) for the specific
+  // case of needing a fresh texture before a panel becomes visible.
 
   _requestPaint() {
     this.markDirty();

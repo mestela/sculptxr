@@ -23,7 +23,7 @@
  *   this._brushPanel.syncFromState();
  */
 
-import { HTMLVRPanel } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import { getHostCanvas } from './install.js';
@@ -266,8 +266,8 @@ export class BrushPanel extends HTMLVRPanel {
     root.id = 'bp-root';
     root.innerHTML = BrushPanel._buildHTML();
 
-    // 0.30m wide — matches the VRMenu density (1024px / (1024/0.30) = 0.30m)
-    super(root, 0.30);
+    // Width derived from shared px/m ratio so fonts match MiniPanel
+    super(root, 540 / VR_PANEL_PX_PER_M); // 0.30 m
 
     this._main   = main;
     this._tab    = 0; // 0 = Sculpting, 1 = Low Poly
