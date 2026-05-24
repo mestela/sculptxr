@@ -33,6 +33,7 @@ import { drainRAF } from './gui/htmlvr/install.js';
 import { BrushPanel      } from './gui/htmlvr/BrushPanel.js';
 import { MiniPanel       } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel } from './gui/htmlvr/ToolPickerPanel.js';
+import { MainMenuPanel   } from './gui/htmlvr/MainMenuPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -245,6 +246,7 @@ class Scene {
     this._brushPanel      = null;   // [HTMLVRPanel] new HTML-based tools panel
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
+    this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -967,6 +969,9 @@ class Scene {
       }
       if (this._toolPickerPanel) {
         try { this._toolPickerPanel.update(true); } catch (_) {}
+      }
+      if (this._mainMenuPanel) {
+        try { this._mainMenuPanel.update(true); } catch (_) {}
       }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
@@ -2086,6 +2091,12 @@ class Scene {
         // this.getSculptManager().getTool(Enums.Tools.WIREFRAME).toggle();
         this.render();
         break;
+      case 221: // ]  — toggle main menu desktop overlay
+        window.mmOverlay?.();
+        break;
+      case 77: // M  — toggle main menu in 3D scene (desktop + VR)
+        window.toggleMainMenu?.();
+        break;
     }
   }
   async enterXR(session) {
@@ -2514,6 +2525,151 @@ class Scene {
         if (window.screenLog) window.screenLog('[HTMLVRPanel] ToolPickerPanel created', 'cyan');
       } catch (err) {
         console.error('[HTMLVRPanel] ToolPickerPanel init failed:', err);
+      }
+    }
+
+    // [HTMLVRPanel] Init MainMenuPanel (replaces GuiXR + VRMenu main menu)
+    if (!this._mainMenuPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._mainMenuPanel = new MainMenuPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._mainMenuPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] MainMenuPanel created', 'cyan');
+
+        // Console helper: window.toggleMainMenu() to show/hide
+        window.toggleMainMenu = (visible) => {
+          const isVR = !!this._renderer?.xr?.isPresenting;
+          const show = visible ?? !this._mainMenuPanel?.mesh?.visible;
+          if (isVR) {
+            // In VR the panel is wrist-parented — just toggle via _swapHtmlPanels
+            // so MiniPanel is hidden when the main menu shows and vice-versa.
+            this._swapHtmlPanels(show ? 'main' : 'mini');
+          } else {
+            // Desktop: float the panel in front of the camera.
+            if (show && this._mainMenuPanel?.mesh) {
+              const cam = this._camera?.getThreeCamera();
+              if (cam) {
+                const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+                this._mainMenuPanel.mesh.position
+                  .copy(cam.position)
+                  .addScaledVector(fwd, 0.7);
+                this._mainMenuPanel.mesh.position.y -= 0.05;
+                this._mainMenuPanel.mesh.quaternion.copy(cam.quaternion);
+              }
+            }
+            this._mainMenuPanel?.show(show);
+          }
+        };
+        // Desktop overlay: window.mmOverlay(true/false) — shows a COPY of the panel
+        // as a normal DOM element so you can inspect the HTML/CSS without VR.
+        // The polyfill's host div has transform-style:preserve-3d which blocks
+        // position:fixed on the original element in Chrome, so we clone it instead.
+        window.mmOverlay = (show) => {
+          const OVERLAY_ID = '_mm_debug_overlay';
+          const existing = document.getElementById(OVERLAY_ID);
+          if (existing) { existing.remove(); if (show !== true) return; }
+          if (show === false) return;
+
+          const src = document.getElementById('mm-root');
+          if (!src) return console.warn('[mmOverlay] mm-root not found — panel not created yet');
+
+          // Dark backdrop
+          const backdrop = document.createElement('div');
+          backdrop.id = OVERLAY_ID;
+          backdrop.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;pointer-events:auto;';
+
+          // Panel clone — child element IDs are preserved so page CSS (injected by
+          // MainMenuPanel) applies to #mm-menubar, #mm-tabstrip, #mm-content, etc.
+          // We do NOT give the clone id="mm-root" to avoid duplicate-ID conflicts.
+          const panel = document.createElement('div');
+          panel.innerHTML = src.innerHTML;
+          // Apply mm-root structural CSS manually (the #mm-root selector won't hit panel)
+          Object.assign(panel.style, {
+            width:        src.offsetWidth  + 'px',
+            background:   '#1e1e2e',
+            color:        '#cdd6f4',
+            fontFamily:   'system-ui, -apple-system, sans-serif',
+            borderRadius: '12px',
+            border:       '2px solid #585b70',
+            overflow:     'hidden',
+            userSelect:   'none',
+            boxSizing:    'border-box',
+            boxShadow:    '0 16px 48px rgba(0,0,0,0.9)',
+          });
+
+          // Scale to fit viewport
+          const maxW = window.innerWidth  - 80;
+          const maxH = window.innerHeight - 80;
+          const scale = Math.min(1, maxW / src.offsetWidth, maxH / (src.offsetHeight || 500));
+          panel.style.transform = `scale(${scale.toFixed(3)})`;
+          panel.style.transformOrigin = 'center center';
+
+          backdrop.appendChild(panel);
+          document.body.appendChild(backdrop);
+          backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+          console.log('[mmOverlay] showing clone — click outside to dismiss, or mmOverlay(false)');
+        };
+        // Texture peek: window.mmShowCanvas() — displays the raw polyfill canvas
+        // so you can see exactly what the polyfill renders (independent of the mesh).
+        window.mmShowCanvas = () => {
+          const hc = document.getElementById('_htmlvr_host');
+          const el = this._mainMenuPanel?._element;
+          if (!hc || !el) return console.warn('[mmShowCanvas] panel not ready');
+          try {
+            const c = hc.captureElementImage(el);
+            const existing = document.getElementById('_mm_canvas_dbg');
+            if (existing) { existing.remove(); }
+            const img = document.createElement('canvas');
+            img.id = '_mm_canvas_dbg';
+            img.width  = c.width;
+            img.height = c.height;
+            const scale = Math.min(1, (window.innerWidth - 40) / c.width,
+                                      (window.innerHeight - 40) / c.height);
+            img.style.cssText = `position:fixed;bottom:20px;right:20px;z-index:99999;`
+              + `width:${Math.round(c.width*scale)}px;height:${Math.round(c.height*scale)}px;`
+              + `border:3px solid #f38ba8;cursor:pointer;`;
+            img.getContext('2d').drawImage(c, 0, 0);
+            img.title = `Polyfill canvas: ${c.width}×${c.height}. Click to dismiss.`;
+            img.onclick = () => img.remove();
+            document.body.appendChild(img);
+            const msg = `[mmShowCanvas] canvas: ${c.width}×${c.height}`;
+            console.log(msg + '. Click overlay to dismiss.');
+            // Also log via screenLog so it's visible in the VR mirror view.
+            if (window.screenLog) window.screenLog(msg, '#f38ba8');
+          } catch (e) {
+            console.warn('[mmShowCanvas]', e.message);
+            if (window.screenLog) window.screenLog(`[mmShowCanvas] ${e.message}`, 'red');
+          }
+        };
+        // Diagnostic helper: window.mmDebug() — dumps panel state
+        window.mmDebug = () => {
+          const p  = this._mainMenuPanel;
+          const el = document.getElementById('mm-root');
+          const mb = document.getElementById('mm-menubar');
+          const ts = document.getElementById('mm-tabstrip');
+          const m  = p?.mesh;
+          console.log('[mmDebug] visible:', m?.visible,
+            '| section:', p?._activeSection, '| menu:', p?._activeMenu,
+            '\n  DOM root:', el?.offsetWidth+'x'+el?.offsetHeight,
+            '| menubar:', mb?.offsetWidth+'x'+mb?.offsetHeight,
+            '| tabstrip:', ts?.offsetWidth+'x'+ts?.offsetHeight,
+            '\n  mesh geo:', m?.geometry?.parameters?.width?.toFixed(3)+'x'+m?.geometry?.parameters?.height?.toFixed(3),
+            '| mesh pos:', m?.position?.toArray?.()?.map(v=>v.toFixed(3)).join(','),
+            '\n  texture:', p?._texture?.image?.width+'x'+p?._texture?.image?.height,
+            '| contentKey:', p?._lastContentKey);
+        };
+        // Wire ']' → overlay, 'M' → 3D toggle (Scene.onKeyDown isn't on the global
+        // key listener chain so we add our own one-time handler here).
+        if (!window._mmKeyBound) {
+          window._mmKeyBound = true;
+          window.addEventListener('keydown', (e) => {
+            if (e.which === 221) window.mmOverlay?.();      // ]  → desktop HTML clone
+            if (e.which === 219) window.mmShowCanvas?.();   // [  → raw polyfill canvas
+            if (e.which === 77  && !e.ctrlKey && !e.metaKey) window.toggleMainMenu?.(); // M
+          });
+        }
+        console.log('[HTMLVRPanel] Main menu ready — ] HTML overlay, [ polyfill canvas, M 3D toggle | mmDebug() / mmShowCanvas() in console');
+      } catch (err) {
+        console.error('[HTMLVRPanel] MainMenuPanel init failed:', err);
       }
     }
 
@@ -3064,13 +3220,23 @@ class Scene {
     // Sync + flush the incoming panel's texture BEFORE making it visible so
     // the mesh never appears with stale content even for a single frame.
     if (show === 'mini') this._miniPanel?.syncFromState();
+    if (show === 'main') this._mainMenuPanel?.syncFromState();
 
     const mini   = this._miniPanel?.mesh;
     const brush  = this._brushPanel?.mesh;
     const picker = this._toolPickerPanel?.mesh;
+    const main   = this._mainMenuPanel?.mesh;
     if (mini)   mini.visible   = (show === 'mini');
     if (brush)  brush.visible  = (show === 'brush');
     if (picker) picker.visible = (show === 'picker');
+    if (main) {
+      if (show === 'main') {
+        // Delegate to show() so the deferred-visibility gate runs properly.
+        this._mainMenuPanel.show(true);
+      } else {
+        this._mainMenuPanel.show(false);
+      }
+    }
   }
 
   _onBrushPanelPinChange(pinned) {
@@ -3167,25 +3333,27 @@ class Scene {
 
     // 1. Synchronize UI Mesh Visibility with Application State
     if (this._vrMenu && this._guiXR) {
-        this._vrMenu.mesh.visible = !!this._guiXR._isVisible;
+        // In HTML panel mode the old canvas VRMenu is always hidden; the
+        // MainMenuPanel on the wrist replaces it.
+        this._vrMenu.mesh.visible = window._brushPanelEnabled !== false
+          ? false
+          : !!this._guiXR._isVisible;
     }
     if (this._vrPopup && this._guiPopup) {
         this._vrPopup.mesh.visible = !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
     }
     if (this._vrMiniHUD && this._guiMini) {
-        // Hide MiniHUD if Main Menu or Popup is visible to prevent physical overlap.
-        // Also hide when the HTML BrushPanel is active — it occupies the same wrist space
-        // and the canvas MiniHUD steals clicks that belong to the HTML panel.
-        const isMainMenuVisible = this._guiXR && this._guiXR._isVisible;
+        // Hide MiniHUD if the old legacy Main Menu or Popup is visible.
+        const isLegacyMenuVisible = this._guiXR && this._guiXR._isVisible;
         const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
         // Suppress MiniHUD when HTML panel mode is enabled AND any HTML panel is
-        // actually visible (MiniPanel or BrushPanel).  When both HTML panels are
-        // hidden, the canvas MiniHUD slides back in as a fallback.
-        const isBrushPanelShowing = window._brushPanelEnabled !== false
+        // visible (MiniPanel, BrushPanel, MainMenuPanel, ToolPicker).
+        const isHtmlPanelShowing = window._brushPanelEnabled !== false
           && (!!(this._brushPanel?.mesh?.visible)
            || !!(this._miniPanel?.mesh?.visible)
-           || !!(this._toolPickerPanel?.mesh?.visible));
-        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isMainMenuVisible && !isPopupVisible && !isBrushPanelShowing;
+           || !!(this._toolPickerPanel?.mesh?.visible)
+           || !!(this._mainMenuPanel?.mesh?.visible));
+        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
     }
 
     this._isPointingAtMenu = false;
@@ -3233,6 +3401,12 @@ class Scene {
             }
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
               if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
+            }
+            // [HTMLVRPanel] Attach MainMenuPanel to wrist — it replaces the old GuiXR VRMenu.
+            if (this._mainMenuPanel && this._mainMenuPanel.mesh) {
+              if (this._mainMenuPanel.mesh.parent !== uiGrip) {
+                uiGrip.add(this._mainMenuPanel.mesh);
+              }
             }
         } else {
             if (this._vrMenu && this._vrMenu.mesh.parent) this._vrMenu.mesh.removeFromParent();
@@ -3602,7 +3776,7 @@ class Scene {
           }
 
           // NON-DOMINANT HAND: 'X' or 'A' Button (Button 4)
-          // HTML panel mode  → toggle BrushPanel visibility (wrist panel)
+          // HTML panel mode  → toggle MainMenuPanel / MiniPanel
           // Legacy mode      → toggle main GuiXR canvas menu
           if (isNonDom) {
             const btnX = btns[4];
@@ -3614,10 +3788,11 @@ class Scene {
                 tracker.time = now;
                 tracker.longPressActive = false;
                 if (window._brushPanelEnabled !== false) {
-                  // HTML panel mode: X toggles between MiniPanel and BrushPanel
-                  const brushVisible = !!(this._brushPanel?.mesh?.visible);
-                  this._swapHtmlPanels(brushVisible ? 'mini' : 'brush');
-                  console.log(`[VR X Button] ${brushVisible ? 'BrushPanel → MiniPanel' : 'MiniPanel → BrushPanel'}`);
+                  // HTML panel mode: X toggles between MiniPanel and MainMenuPanel
+                  const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
+                  this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
+                  console.log(`[VR X Button] ${mainVisible ? 'MainMenu → MiniPanel' : 'MiniPanel → MainMenu'}`);
+                  if (window.screenLog) window.screenLog(`[X] ${mainVisible ? 'MiniPanel' : 'MainMenu'}`, 'cyan');
                   if (this._guiPopup) this._guiPopup.closeOverlay();
                 } else if (this._guiXR) {
                   // Legacy mode: toggle the big canvas menu
@@ -3633,9 +3808,9 @@ class Scene {
                 if (tracker.longPressActive) {
                   // Momentary Release -> Revert swap in reverse
                   if (window._brushPanelEnabled !== false) {
-                    const brushVisible = !!(this._brushPanel?.mesh?.visible);
-                    this._swapHtmlPanels(brushVisible ? 'mini' : 'brush');
-                    console.log(`[VR X Button] Reverted: ${brushVisible ? 'MiniPanel' : 'BrushPanel'} shown`);
+                    const mainVisible = !!(this._mainMenuPanel?.mesh?.visible);
+                    this._swapHtmlPanels(mainVisible ? 'mini' : 'main');
+                    console.log(`[VR X Button] Reverted: ${mainVisible ? 'MiniPanel' : 'MainMenu'} shown`);
                     if (this._guiPopup) this._guiPopup.closeOverlay();
                   } else if (this._guiXR) {
                     this._guiXR.toggleVisibility();
@@ -3712,7 +3887,8 @@ class Scene {
                 const _htHtmlPanelVisible = window._brushPanelEnabled !== false
                   && (!!(this._brushPanel?.mesh?.visible)
                    || !!(this._miniPanel?.mesh?.visible)
-                   || !!(this._toolPickerPanel?.mesh?.visible));
+                   || !!(this._toolPickerPanel?.mesh?.visible)
+                   || !!(this._mainMenuPanel?.mesh?.visible));
                 if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible && !_htHtmlPanelVisible) {
                   const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
                   if (hit && hit.distance <= 0.0) {
@@ -3976,6 +4152,44 @@ class Scene {
             }
           }
           // ── end ToolPickerPanel raycast ──────────────────────────────────
+
+          // ── MainMenuPanel raycast ─────────────────────────────────────────
+          if (this._mainMenuPanel?.mesh?.visible) {
+            if (!this._mmRaycaster) {
+              this._mmRaycaster = new THREE.Raycaster();
+              this._mmRayOrigin = new THREE.Vector3();
+              this._mmRayDir    = new THREE.Vector3();
+            }
+            this._mmRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._mmRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._mmRaycaster.set(this._mmRayOrigin, this._mmRayDir);
+
+            const mmHits = this._mmRaycaster.intersectObject(this._mainMenuPanel.mesh);
+            if (mmHits.length > 0) {
+              const mmUV    = mmHits[0].uv;
+              const trigger = source.gamepad?.buttons[0];
+              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+              const justDown = pressed && !this._mmWasPressed;
+              const justUp   = !pressed && this._mmWasPressed;
+
+              if (justDown)    this._mainMenuPanel.onVRPress(mmUV);
+              else if (justUp) this._mainMenuPanel.onVRRelease(mmUV);
+              else             this._mainMenuPanel.onVRMove(mmUV);
+
+              this._mmWasPressed = pressed;
+              this._isPointingAtMenu = true;
+              if (source.handedness === 'left') this._vrUIHitDistLeft  = mmHits[0].distance;
+              else                              this._vrUIHitDistRight = mmHits[0].distance;
+              this._updateBPCursor?.(mmHits[0].point, true);
+            } else {
+              if (this._mmWasPressed) {
+                this._mainMenuPanel.onVRRelease({ x: 0.5, y: 0.5 });
+                this._mmWasPressed = false;
+              }
+              this._mainMenuPanel.onVRLeave();
+            }
+          }
+          // ── end MainMenuPanel raycast ─────────────────────────────────────
 
           let hit = null;
           let targetGuiXR = null;

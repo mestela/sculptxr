@@ -172,14 +172,26 @@ export class HTMLVRPanel {
         this._texture.magFilter     = THREE.LinearFilter;
         this._texture.generateMipmaps = false;
         this._texture.flipY         = false; // polyfill renders top-to-bottom
+        // Clamp to edge so any sub-pixel mesh/texture size mismatch doesn't
+        // show a thin repeat strip at the panel edges.
+        this._texture.wrapS         = THREE.ClampToEdgeWrapping;
+        this._texture.wrapT         = THREE.ClampToEdgeWrapping;
         this.mesh.material.map      = this._texture;
         this.mesh.material.needsUpdate = true;
       } else {
         this._texture.image      = bitmap;
         this._texture.needsUpdate = true;
       }
-    } catch (_e) {
+    } catch (e) {
       // "no snapshot recorded yet" on the very first frame — expected, ignore.
+      // Log anything else so it shows in remote debugger + VR screenLog.
+      if (e?.name !== 'InvalidStateError') {
+        console.warn('[HTMLVRPanel] _onPaint unexpected error:', e?.message ?? e);
+        if (!this._paintErrLogged) {
+          this._paintErrLogged = true;
+          if (window.screenLog) window.screenLog(`[Panel] paint err: ${e?.message ?? e}`, 'red');
+        }
+      }
     }
   }
 
