@@ -32,7 +32,7 @@ import Remesh       from '../../editing/Remesh.js';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
 const MM_W         = 480;   // total DOM width  (px)
-const MM_TABS_W    = 48;    // left tab-strip width
+const MM_TABS_W    = 56;    // left tab-strip width
 const MM_MENUBAR_H = 44;    // top menubar height (px) — must match actual rendered height
 // Body height is fixed so the mesh never changes dimensions on tab switch.
 const MM_BODY_H    = 456;   // height below menubar (scrollable content lives here)
@@ -91,6 +91,28 @@ const CSS = `
   color: #89b4fa;
   border-color: #89b4fa;
 }
+.mm-pin-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  background: #1e1e2e;
+  color: #6c7086;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.mm-pin-btn:hover, .mm-pin-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
+.mm-pin-btn.active {
+  background: rgba(203,166,247,0.15);
+  color: #cba6f7;
+  border-color: #cba6f7;
+}
 
 /* ── Body (tab strip + content) ──────────────────────────────── */
 #mm-body {
@@ -109,7 +131,7 @@ const CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 6px 0;
+  padding: 6px 3px;
   gap: 4px;
   border-right: 2px solid #45475a;
   background: #11111b;
@@ -117,25 +139,22 @@ const CSS = `
   overflow: hidden;
 }
 .mm-tab-btn {
-  width: 42px;
-  padding: 7px 0;
+  width: 48px;
+  height: 48px;
+  padding: 0;
   border: 1px solid #45475a;
   border-radius: 6px;
   background: #1e1e2e;
   color: #cdd6f4;
-  font-size: 9px;
-  font-weight: 700;
   cursor: pointer;
   outline: none;
+  box-sizing: border-box;
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  justify-content: center;
 }
-.mm-tab-btn .mm-tab-icon { font-size: 16px; }
+.mm-tab-btn svg { pointer-events: none; }
 .mm-tab-btn:hover, .mm-tab-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
 .mm-tab-btn.active {
   background: rgba(137,180,250,0.25);
@@ -334,21 +353,19 @@ const CSS = `
 .shader-matcap .mm-if-matcap { display: block; }
 .shader-uv     .mm-if-uv     { display: block; }
 
-/* Scrollable list (many options — controller model) */
-.mm-radio-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 140px;
-  overflow-y: auto;
-  border: 1px solid #313244;
+/* Select dropdown (controller model) */
+.mm-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #45475a;
   border-radius: 5px;
-  padding: 3px;
+  background: #313244;
+  color: #cdd6f4;
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
   margin-bottom: 6px;
-}
-.mm-radio-list .mm-choice {
-  text-align: left;
-  padding: 5px 8px;
+  box-sizing: border-box;
 }
 `;
 
@@ -370,20 +387,25 @@ function buildShellHTML() {
       <button class="mm-menu-btn" data-menu="reference">Reference</button>
       <button class="mm-menu-btn" data-menu="settings">Settings</button>
       <button class="mm-menu-btn" data-menu="about">About</button>
+      <div style="flex:1"></div>
+      <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+        Pin
+      </button>
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        <button class="mm-tab-btn active" data-section="scene">
-          <span class="mm-tab-icon">🏔</span>Scene
+        <button class="mm-tab-btn active" data-section="scene" title="Scene">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
         </button>
-        <button class="mm-tab-btn" data-section="topology">
-          <span class="mm-tab-icon">🔷</span>Topo
+        <button class="mm-tab-btn" data-section="topology" title="Topology">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         </button>
-        <button class="mm-tab-btn" data-section="rendering">
-          <span class="mm-tab-icon">🎨</span>Rndng
+        <button class="mm-tab-btn" data-section="rendering" title="Rendering">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         </button>
-        <button class="mm-tab-btn" data-section="sculpting">
-          <span class="mm-tab-icon">🖌</span>Sculpt
+        <button class="mm-tab-btn" data-section="sculpting" title="Sculpting">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
         </button>
       </div>
       <div id="mm-content"></div>
@@ -494,8 +516,8 @@ function buildMenuHTML_settings(main) {
   ];
   const curWfType = main.getMesh?.()?.getWireframeType?.() ?? 1;
 
-  const ctrlRadios = ctrlModels.map((m, i) =>
-    `<button class="mm-choice${i === curCtrl ? ' active' : ''}" data-ctrl-idx="${i}">${m}</button>`
+  const ctrlOptions = ctrlModels.map((m, i) =>
+    `<option value="${i}"${i === curCtrl ? ' selected' : ''}>${m}</option>`
   ).join('');
 
   const wfTypeBtns = wfTypes.map(t =>
@@ -544,7 +566,7 @@ function buildMenuHTML_settings(main) {
     </div>
 
     <div class="mm-section-title">Controller Model</div>
-    <div class="mm-radio-list" id="mm-ctrl-list">${ctrlRadios}</div>
+    <select id="mm-ctrl-select" class="mm-select">${ctrlOptions}</select>
 
     <div class="mm-section-title">Wireframe</div>
     <div class="mm-row">
@@ -788,11 +810,69 @@ function buildSectionHTML_rendering(main) {
   `;
 }
 
-function buildSectionHTML_sculpting() {
+// Tool definitions mirrored from BrushPanel — single source of truth kept here
+// so the Sculpting tab and the BrushPanel grid stay in sync.
+const SCULPT_TOOLS = [
+  { id: Enums.Tools.BRUSH,        label: 'Brush'     },
+  { id: Enums.Tools.INFLATE,      label: 'Inflate'   },
+  { id: Enums.Tools.FLATTEN,      label: 'Flatten'   },
+  { id: Enums.Tools.PINCH,        label: 'Pinch'     },
+  { id: Enums.Tools.CREASE,       label: 'Crease'    },
+  { id: Enums.Tools.SMOOTH,       label: 'Smooth'    },
+  { id: Enums.Tools.RELAX,        label: 'Relax'     },
+  { id: Enums.Tools.PAINT,        label: 'Paint'     },
+  { id: Enums.Tools.MOVE,         label: 'Move'      },
+  { id: Enums.Tools.GRAB,         label: 'Grab'      },
+  { id: Enums.Tools.DRAG,         label: 'Drag'      },
+  { id: Enums.Tools.SLIDE,        label: 'Slide'     },
+  { id: Enums.Tools.TWIST,        label: 'Twist'     },
+  { id: Enums.Tools.TRANSFORM_VR, label: 'Transform' },
+  { id: Enums.Tools.MASKING,      label: 'Masking'   },
+];
+const MESH_TOOLS = [
+  { id: Enums.Tools.CUT_TOOL,         label: 'Cut'        },
+  { id: Enums.Tools.EXTRUDE,          label: 'Extrude'    },
+  { id: Enums.Tools.INSET,            label: 'Inset'      },
+  { id: Enums.Tools.DELETE_FACE,      label: 'Del Face'   },
+  { id: Enums.Tools.FILL_HOLE,        label: 'Fill Hole'  },
+  { id: Enums.Tools.DISSOLVE_EDGE,    label: 'Dis Edge'   },
+  { id: Enums.Tools.SPLIT_FACE,       label: 'Split Face' },
+  { id: Enums.Tools.SPIN_EDGE,        label: 'Spin Edge'  },
+  { id: Enums.Tools.COLLAPSE_EDGE,    label: 'Col Edge'   },
+  { id: Enums.Tools.DISSOLVE_VERTEX,  label: 'Dis Vert'   },
+  { id: Enums.Tools.WELD,             label: 'Weld'       },
+];
+
+function buildSectionHTML_sculpting(main) {
+  const sm  = main.getSculptManager?.() ?? main._sculptManager;
+  const cur = sm?.getToolIndex?.() ?? -1;
+  const symOn  = sm?._symmetry ?? false;
+  const contOn = sm?._continuous ?? false;
+
+  const sculptBtns = SCULPT_TOOLS.map(t =>
+    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}">${t.label}</button>`
+  ).join('');
+  const meshBtns = MESH_TOOLS.map(t =>
+    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}">${t.label}</button>`
+  ).join('');
+
   return `
-    <div class="mm-section-title">Sculpting</div>
-    <div class="mm-info">Sculpt tool settings are in the BrushPanel — open it via the wrist menu or by pressing the grip button.</div>
-    <div class="mm-info">The tool picker is also accessible from the wrist MiniPanel.</div>
+    <div class="mm-section-title">Sculpt</div>
+    <div class="mm-choice-grid cols-3">${sculptBtns}</div>
+    <div class="mm-section-title">Mesh Edit</div>
+    <div class="mm-choice-grid cols-3">${meshBtns}</div>
+    <div class="mm-section-title">Symmetry</div>
+    <button class="mm-toggle${symOn ? ' active' : ''}" id="mm-sym-toggle">
+      Mirror Symmetry ${symOn ? '✓ On' : 'Off'}
+    </button>
+    <div class="mm-row" style="gap:6px">
+      <button class="mm-action-btn" id="mm-sym-lr" style="flex:1">Symmetrize L→R</button>
+      <button class="mm-action-btn" id="mm-sym-rl" style="flex:1">Symmetrize R→L</button>
+    </div>
+    <button class="mm-toggle${contOn ? ' active' : ''}" id="mm-continuous" style="margin-top:4px">
+      Continuous ${contOn ? '✓ On' : 'Off'}
+    </button>
+    <div class="mm-info" style="margin-top:6px">Tool settings: grip button → BrushPanel</div>
   `;
 }
 
@@ -825,12 +905,13 @@ export class MainMenuPanel extends HTMLVRPanel {
     this._activeSection = 'scene'; // 'scene'|'topology'|'rendering'|'sculpting'
     this._lastContentKey = '';      // avoids redundant rebuilds
     this._startHidden   = true;
+    this._pinned        = false;
 
     this.init(scene, camera, renderer);
     this._waitForMeshThenWire(main);
   }
 
-  get pinned() { return false; }
+  get pinned() { return this._pinned; }
 
   // ── Mesh placement ─────────────────────────────────────────────────────────
 
@@ -870,6 +951,23 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
     });
 
+    // Pin button
+    const pinBtn = root.querySelector('#mm-pin-btn');
+    if (pinBtn) {
+      pinBtn.addEventListener('click', () => {
+        this._pinned = !this._pinned;
+        pinBtn.classList.toggle('active', this._pinned);
+        const label = pinBtn.querySelector('svg') ? pinBtn : null;
+        // Update text node (last child) without destroying the SVG
+        const textNode = [...pinBtn.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+        if (textNode) textNode.textContent = this._pinned ? ' Unpin' : ' Pin';
+        this._element.dispatchEvent(
+          new CustomEvent('mm-pin-change', { detail: { pinned: this._pinned }, bubbles: false })
+        );
+        this.markDirty();
+      });
+    }
+
     // Populate initial content
     this._rebuildContent();
   }
@@ -906,9 +1004,13 @@ export class MainMenuPanel extends HTMLVRPanel {
     const mesh = this._main.getMesh?.();
     const shaderType = mesh?.getShaderType?.() ?? -1;
     const meshCount  = this._main.getMeshes?.()?.length ?? 0;
+    const sm = this._main.getSculptManager?.() ?? this._main._sculptManager;
+    const curTool = sm?.getToolIndex?.() ?? -1;
+    const symOn  = sm?._symmetry  ? 1 : 0;
+    const contOn = sm?._continuous ? 1 : 0;
     const key = this._activeMenu
       ? `menu:${this._activeMenu}`
-      : `sec:${this._activeSection}:${shaderType}:${meshCount}`;
+      : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}`;
 
     if (key === this._lastContentKey) return;
     this._lastContentKey = key;
@@ -929,7 +1031,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'scene':     html = buildSectionHTML_scene(main);     break;
         case 'topology':  html = buildSectionHTML_topology(main);  break;
         case 'rendering': html = buildSectionHTML_rendering(main); break;
-        case 'sculpting': html = buildSectionHTML_sculpting();     break;
+        case 'sculpting': html = buildSectionHTML_sculpting(main);  break;
       }
     }
 
@@ -1105,21 +1207,16 @@ export class MainMenuPanel extends HTMLVRPanel {
     }, (v) => (v / 100).toFixed(1));
 
     // Controller model
-    el.querySelector('#mm-ctrl-list')?.querySelectorAll('[data-ctrl-idx]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const ctrlModels = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
-          'meta-quest-touch-pro','oculus-touch-v3','oculus-touch-v2',
-          'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
-        const idx = parseInt(btn.dataset.ctrlIdx, 10);
-        window._xrControllerOverride = ctrlModels[idx];
-        opts.saveOption('controllerModel', ctrlModels[idx]);
-        el.querySelectorAll('[data-ctrl-idx]').forEach(b =>
-          b.classList.toggle('active', b === btn));
-        if (window._reloadControllerModels) window._reloadControllerModels.call(main);
-        else main.reloadControllerModels?.();
-        main.render?.();
-        paint();
-      });
+    el.querySelector('#mm-ctrl-select')?.addEventListener('change', (e) => {
+      const ctrlModels = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
+        'meta-quest-touch-pro','oculus-touch-v3','oculus-touch-v2',
+        'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
+      const idx = parseInt(e.target.value, 10);
+      window._xrControllerOverride = ctrlModels[idx];
+      opts.saveOption('controllerModel', ctrlModels[idx]);
+      if (window._reloadControllerModels) window._reloadControllerModels.call(main);
+      else main.reloadControllerModels?.();
+      main.render?.();
     });
 
     // Wireframe
@@ -1359,6 +1456,80 @@ export class MainMenuPanel extends HTMLVRPanel {
       this._wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
         main.setExposure?.(v / 100); main.render?.();
       }, (v) => (v / 100).toFixed(2));
+
+    } else if (section === 'sculpting') {
+      const sm = main.getSculptManager?.() ?? main._sculptManager;
+
+      // Tool grid
+      el.querySelectorAll('[data-tool-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = parseInt(btn.dataset.toolId, 10);
+          sm?.setToolIndex?.(id);
+          main.render?.();
+          paint();
+        });
+      });
+
+      // Mirror Symmetry toggle
+      const symToggle = el.querySelector('#mm-sym-toggle');
+      if (symToggle && sm) {
+        symToggle.addEventListener('click', () => {
+          sm._symmetry = !sm._symmetry;
+          symToggle.classList.toggle('active', sm._symmetry);
+          symToggle.textContent = `Mirror Symmetry ${sm._symmetry ? '✓ On' : 'Off'}`;
+          main.render?.();
+          this.markDirty();
+        });
+      }
+
+      // Symmetrize L→R
+      const symLR = el.querySelector('#mm-sym-lr');
+      if (symLR) {
+        symLR.addEventListener('click', () => {
+          const mesh = main.getMesh?.();
+          if (!mesh) return;
+          const symData = mesh.getSymmetryData?.();
+          if (symData) {
+            const verts = symData.getSymmetryDestinations?.(0) ?? [];
+            if (verts.length > 0) {
+              main.getStateManager?.()?.pushStateGeometry?.(mesh);
+              main.getStateManager?.()?.pushVertices?.(verts);
+            }
+          }
+          mesh.symmetrize?.(0);
+          main.render?.();
+        });
+      }
+
+      // Symmetrize R→L
+      const symRL = el.querySelector('#mm-sym-rl');
+      if (symRL) {
+        symRL.addEventListener('click', () => {
+          const mesh = main.getMesh?.();
+          if (!mesh) return;
+          const symData = mesh.getSymmetryData?.();
+          if (symData) {
+            const verts = symData.getSymmetryDestinations?.(1) ?? [];
+            if (verts.length > 0) {
+              main.getStateManager?.()?.pushStateGeometry?.(mesh);
+              main.getStateManager?.()?.pushVertices?.(verts);
+            }
+          }
+          mesh.symmetrize?.(1);
+          main.render?.();
+        });
+      }
+
+      // Continuous toggle
+      const contBtn = el.querySelector('#mm-continuous');
+      if (contBtn && sm) {
+        contBtn.addEventListener('click', () => {
+          sm._continuous = !sm._continuous;
+          contBtn.classList.toggle('active', sm._continuous);
+          contBtn.textContent = `Continuous ${sm._continuous ? '✓ On' : 'Off'}`;
+          this.markDirty();
+        });
+      }
     }
   }
 

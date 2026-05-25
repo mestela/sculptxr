@@ -2533,6 +2533,9 @@ class Scene {
       try {
         this._mainMenuPanel = new MainMenuPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
         this._mainMenuPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        this._mainMenuPanel._element.addEventListener('mm-pin-change', (e) => {
+          this._onMainMenuPanelPinChange(e.detail.pinned);
+        });
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MainMenuPanel created', 'cyan');
 
         // Console helper: window.toggleMainMenu() to show/hide
@@ -3265,6 +3268,28 @@ class Scene {
     }
   }
 
+  _onMainMenuPanelPinChange(pinned) {
+    if (!this._mainMenuPanel || !this._mainMenuPanel.mesh || !this._scene) return;
+    this._mmDragActive = false;
+    this._mmDragHand   = null;
+    const mesh = this._mainMenuPanel.mesh;
+    if (pinned) {
+      mesh.updateWorldMatrix(true, false);
+      const worldMatrix = mesh.matrixWorld.clone();
+      if (mesh.parent) mesh.parent.remove(mesh);
+      this._scene.add(mesh);
+      mesh.matrix.copy(worldMatrix);
+      mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+      mesh.matrixAutoUpdate = true;
+    } else {
+      if (mesh.parent) mesh.parent.remove(mesh);
+      mesh.position.set(0.10, 0.10, -0.05);
+      mesh.rotation.set(-Math.PI / 2, 0, 0);
+      mesh.scale.set(1, -1, 1);
+      mesh.matrixAutoUpdate = true;
+    }
+  }
+
   /**
    * [HTMLVRPanel] Update the thin cursor dot + ray shown when a controller
    * points at the BrushPanel.  Creates the meshes lazily on first call.
@@ -3357,6 +3382,7 @@ class Scene {
     }
 
     this._isPointingAtMenu = false;
+    if (this._bpCursorDot) this._bpCursorDot.visible = false; // reset each frame; panel hit logic re-shows it
 
     const session = frame.session;
     const sources = session.inputSources;
@@ -3402,8 +3428,8 @@ class Scene {
             if (this._toolPickerPanel && this._toolPickerPanel.mesh) {
               if (this._toolPickerPanel.mesh.parent !== uiGrip) uiGrip.add(this._toolPickerPanel.mesh);
             }
-            // [HTMLVRPanel] Attach MainMenuPanel to wrist — it replaces the old GuiXR VRMenu.
-            if (this._mainMenuPanel && this._mainMenuPanel.mesh) {
+            // [HTMLVRPanel] Attach MainMenuPanel to wrist unless pinned in world space.
+            if (this._mainMenuPanel && this._mainMenuPanel.mesh && !this._mainMenuPanel.pinned) {
               if (this._mainMenuPanel.mesh.parent !== uiGrip) {
                 uiGrip.add(this._mainMenuPanel.mesh);
               }
@@ -3609,14 +3635,26 @@ class Scene {
           */
           // THUMBSTICK SCROLLING WHEN POINTING AT MENU
           const valY_NonDom = axes[3];
-          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && Math.abs(valY_NonDom) > T_PRESS && this._guiXR) {
+          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && Math.abs(valY_NonDom) > T_PRESS) {
             const domSource = this._dominantHand === 'left' ? left : right;
-            const isScrollTriggerPressed = domSource && domSource.gamepad && domSource.gamepad.buttons[0] && domSource.gamepad.buttons[0].pressed;
-            const scrollSpeed = isScrollTriggerPressed ? 4 : 24; // Default 24, slow-mo 4
+            const isSlowMod = domSource?.gamepad?.buttons[0]?.pressed ?? false;
+            const scrollSpeed = isSlowMod ? 4 : 20; // px per frame; hold trigger for fine scroll
+            const delta = (valY_NonDom > 0 ? 1 : -1) * scrollSpeed;
 
-            this._guiXR._scrollOffset += (valY_NonDom > 0 ? 1 : -1) * scrollSpeed;
-            this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
-            this._guiXR._needsRedraw = true;
+            // HTML panel mode — scroll whichever panel the ray is currently on
+            if (window._brushPanelEnabled !== false) {
+              const htmlPanel = this._mainMenuPanel?.mesh?.visible ? this._mainMenuPanel
+                : this._brushPanel?.mesh?.visible              ? this._brushPanel
+                : this._miniPanel?.mesh?.visible               ? this._miniPanel
+                : this._toolPickerPanel?.mesh?.visible         ? this._toolPickerPanel
+                : null;
+              if (htmlPanel) htmlPanel.onVRScroll(delta);
+            } else if (this._guiXR) {
+              // Legacy canvas menu
+              this._guiXR._scrollOffset += delta;
+              this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+              this._guiXR._needsRedraw = true;
+            }
           }
         }
 
@@ -3637,21 +3675,31 @@ class Scene {
           // Dynamic target rate: 30ms normally, 15ms (10x precision visually via speedModifier 0.1) when holding trigger
           const targetRateY = isSecondaryTriggerPressed ? 15 : 30;
 
-          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY && this._guiXR) {
-            const isScrollTriggerPressed = nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed;
-            const scrollSpeed = isScrollTriggerPressed ? 4 : 24; // Default 24, slow-mo 4
+          if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY) {
+            const isSlowMod = nonDomSource?.gamepad?.buttons[0]?.pressed ?? false;
+            const scrollSpeed = isSlowMod ? 4 : 20;
+            const delta = (valY > 0 ? 1 : -1) * scrollSpeed;
 
-            if (this._guiXR._overlay === 'menu') {
-              this._guiXR._scrollOffsetOverlay += (valY > 0 ? 1 : -1) * scrollSpeed;
-              this._guiXR._scrollOffsetOverlay = Math.max(0, Math.min(this._guiXR._scrollOffsetOverlay, this._guiXR._maxScrollOverlay || 0));
-              if (this._guiXR._overlayData && (this._guiXR._overlayData.tabName === 'About & Help' || this._guiXR._overlayData.tabName === 'About')) {
-                window._sculptAboutScroll = this._guiXR._scrollOffsetOverlay;
+            if (window._brushPanelEnabled !== false) {
+              const htmlPanel = this._mainMenuPanel?.mesh?.visible ? this._mainMenuPanel
+                : this._brushPanel?.mesh?.visible              ? this._brushPanel
+                : this._miniPanel?.mesh?.visible               ? this._miniPanel
+                : this._toolPickerPanel?.mesh?.visible         ? this._toolPickerPanel
+                : null;
+              if (htmlPanel) htmlPanel.onVRScroll(delta);
+            } else if (this._guiXR) {
+              if (this._guiXR._overlay === 'menu') {
+                this._guiXR._scrollOffsetOverlay += delta;
+                this._guiXR._scrollOffsetOverlay = Math.max(0, Math.min(this._guiXR._scrollOffsetOverlay, this._guiXR._maxScrollOverlay || 0));
+                if (this._guiXR._overlayData && (this._guiXR._overlayData.tabName === 'About & Help' || this._guiXR._overlayData.tabName === 'About')) {
+                  window._sculptAboutScroll = this._guiXR._scrollOffsetOverlay;
+                }
+              } else {
+                this._guiXR._scrollOffset += delta;
+                this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
               }
-            } else {
-              this._guiXR._scrollOffset += (valY > 0 ? 1 : -1) * scrollSpeed;
-              this._guiXR._scrollOffset = Math.max(0, Math.min(this._guiXR._scrollOffset, this._guiXR._maxScroll || 0));
+              this._guiXR._needsRedraw = true;
             }
-            this._guiXR._needsRedraw = true;
           } else if (isPressedY) {
             if (now - state.lastRadiusTime > targetRateY) { 
               state.lastRadiusTime = now;
@@ -5847,8 +5895,9 @@ class Scene {
             if (pointerLine) {
                 if (uiHitDist !== undefined && uiHitDist !== Infinity) {
                     pointerLine.visible = true;
-                    pointerLine.scale.set(1, 1, hitDist);
-                    // // if (doLog) console.log(`  laser scale_z: ${hitDist.toFixed(2)} [UI VISIBLE]`);
+                    // Clip beam 12 mm short of the panel face so the cylinder tip doesn't
+                    // z-fight with the panel plane (which has depthWrite:false).
+                    pointerLine.scale.set(1, 1, Math.max(0.01, hitDist - 0.012));
                 } else {
                     pointerLine.visible = false;
                 }

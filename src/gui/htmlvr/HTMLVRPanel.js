@@ -242,6 +242,36 @@ export class HTMLVRPanel {
   onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1); }
   onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0); }
 
+  /**
+   * Scroll the panel's first overflow-y scrollable descendant by `deltaPx`.
+   * Positive delta scrolls down.  Called from Scene.js thumbstick handler.
+   */
+  onVRScroll(deltaPx) {
+    if (!this.mesh || !this._element) return;
+    // Walk descendants looking for the first element with scrollable overflow.
+    const el = this._findScrollable(this._element);
+    if (!el) return;
+    el.scrollTop = Math.max(0, el.scrollTop + deltaPx);
+    this.markDirty();
+  }
+
+  _findScrollable(root) {
+    // BFS — prefer the deepest overflow:auto/scroll element
+    const queue = [root];
+    let found = null;
+    while (queue.length) {
+      const node = queue.shift();
+      if (node !== root) {
+        const style = getComputedStyle(node);
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+          found = node; // keep going to find the deepest one
+        }
+      }
+      for (let i = 0; i < node.children.length; i++) queue.push(node.children[i]);
+    }
+    return found;
+  }
+
   onVRLeave() {
     if (this._hoveredBtn) {
       this._hoveredBtn.classList.remove('hover', 'active');
