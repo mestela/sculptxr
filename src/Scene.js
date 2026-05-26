@@ -2783,8 +2783,10 @@ class Scene {
             const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8);
             lineGeometry.rotateX(-Math.PI / 2);
             lineGeometry.translate(0, 0, -0.5);
-            const lineMaterial = new THREE.MeshBasicMaterial({ 
-                color: 0xff0000, transparent: true, opacity: 0.8, depthTest: true, blending: THREE.NormalBlending 
+            const lineMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff0000, transparent: true, opacity: 0.8,
+                depthTest: true, depthWrite: false,  // depth-test so the beam is occluded by panels and geometry
+                blending: THREE.NormalBlending
             });
             const rayRoot = new THREE.Group();
             rayRoot.name = 'pointer_ray_root';
@@ -3383,6 +3385,10 @@ class Scene {
 
     this._isPointingAtMenu = false;
     if (this._bpCursorDot) this._bpCursorDot.visible = false; // reset each frame; panel hit logic re-shows it
+    this._vrUIHitDistLeft   = Infinity;  // reset each frame — prevents stale laser depth
+    this._vrUIHitDistRight  = Infinity;  // from persisting when _isPointingAtMenu is set by another source
+    this._vrUIHitSourceLeft  = null;     // debug: which panel set the left hit distance
+    this._vrUIHitSourceRight = null;     // debug: which panel set the right hit distance
 
     const session = frame.session;
     const sources = session.inputSources;
@@ -4097,8 +4103,8 @@ class Scene {
               this._isPointingAtMenu = true; // suppress sculpt tool while on panel
 
               // Hide sculpt cursor (volume sphere + ring) by pretending UI is hit
-              if (source.handedness === 'left') this._vrUIHitDistLeft  = bpHits[0].distance;
-              else                              this._vrUIHitDistRight = bpHits[0].distance;
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = bpHits[0].distance; this._vrUIHitSourceLeft  = 'BrushPanel'; }
+              else                              { this._vrUIHitDistRight = bpHits[0].distance; this._vrUIHitSourceRight = 'BrushPanel'; }
 
               // Show panel cursor dot + thin ray line
               this._updateBPCursor(bpHits[0].point, true);
@@ -4144,8 +4150,8 @@ class Scene {
               this._mpWasPressed = pressed;
               this._isPointingAtMenu = true; // suppress sculpt tool while on panel
 
-              if (source.handedness === 'left') this._vrUIHitDistLeft  = mpHits[0].distance;
-              else                              this._vrUIHitDistRight = mpHits[0].distance;
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = mpHits[0].distance; this._vrUIHitSourceLeft  = 'MiniPanel'; }
+              else                              { this._vrUIHitDistRight = mpHits[0].distance; this._vrUIHitSourceRight = 'MiniPanel'; }
 
               this._updateBPCursor(mpHits[0].point, true);
             } else {
@@ -4188,8 +4194,8 @@ class Scene {
 
               this._tpWasPressed = pressed;
               this._isPointingAtMenu = true;
-              if (source.handedness === 'left') this._vrUIHitDistLeft  = tpHits[0].distance;
-              else                              this._vrUIHitDistRight = tpHits[0].distance;
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = tpHits[0].distance; this._vrUIHitSourceLeft  = 'ToolPickerPanel'; }
+              else                              { this._vrUIHitDistRight = tpHits[0].distance; this._vrUIHitSourceRight = 'ToolPickerPanel'; }
               this._updateBPCursor(tpHits[0].point, true);
             } else {
               if (this._tpWasPressed) {
@@ -4226,8 +4232,8 @@ class Scene {
 
               this._mmWasPressed = pressed;
               this._isPointingAtMenu = true;
-              if (source.handedness === 'left') this._vrUIHitDistLeft  = mmHits[0].distance;
-              else                              this._vrUIHitDistRight = mmHits[0].distance;
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = mmHits[0].distance; this._vrUIHitSourceLeft  = 'MainMenuPanel'; }
+              else                              { this._vrUIHitDistRight = mmHits[0].distance; this._vrUIHitSourceRight = 'MainMenuPanel'; }
               this._updateBPCursor?.(mmHits[0].point, true);
             } else {
               if (this._mmWasPressed) {
@@ -4238,6 +4244,11 @@ class Scene {
             }
           }
           // ── end MainMenuPanel raycast ─────────────────────────────────────
+
+          // Periodic state sync for MainMenuPanel (keeps symmetry/tool highlight fresh).
+          // Call _rebuildContent directly so the cache key still suppresses no-op repaints.
+          this._mmSyncCounter = (this._mmSyncCounter || 0) + 1;
+          if (this._mmSyncCounter % 30 === 0) this._mainMenuPanel?._rebuildContent?.();
 
           let hit = null;
           let targetGuiXR = null;
@@ -4272,7 +4283,8 @@ class Scene {
               && !(window._brushPanelEnabled !== false
                 && (!!(this._brushPanel?.mesh?.visible)
                  || !!(this._miniPanel?.mesh?.visible)
-                 || !!(this._toolPickerPanel?.mesh?.visible)))) {
+                 || !!(this._toolPickerPanel?.mesh?.visible)
+                 || !!(this._mainMenuPanel?.mesh?.visible)))) {
             hit = this._vrMiniHUD.intersect(origin, dir);
             if (hit) targetGuiXR = this._guiMini;
           }
@@ -4346,8 +4358,9 @@ class Scene {
 
             // Calc Laser Distance (visual clamping)
             if (this._vrLaser && hit) {
-              if (source.handedness === 'left') this._vrUIHitDistLeft = hit.distance; 
-              else this._vrUIHitDistRight = hit.distance; 
+              const legacyName = targetGuiXR === this._guiXR ? 'LegacyMenu' : targetGuiXR === this._guiMini ? 'LegacyMiniHUD' : 'LegacyPopup';
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = hit.distance; this._vrUIHitSourceLeft  = legacyName; }
+              else                              { this._vrUIHitDistRight = hit.distance; this._vrUIHitSourceRight = legacyName; }
             }
 
           } else {
@@ -4360,6 +4373,25 @@ class Scene {
               else this._vrUIHitDistRight = Infinity;
             }
           }
+
+          // ── Debug: log which panel (if any) is setting the laser hit distance ──
+          if (window._vrHitDebug) {
+            const isLeft = source.handedness === 'left';
+            const dist   = isLeft ? this._vrUIHitDistLeft  : this._vrUIHitDistRight;
+            const src    = isLeft ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight;
+            const hand   = isLeft ? 'L' : 'R';
+            if (!this._vrHitDebugCounter) this._vrHitDebugCounter = 0;
+            this._vrHitDebugCounter++;
+            if (this._vrHitDebugCounter % 60 === 0) {
+              if (dist !== Infinity) {
+                console.log(`[VRHit] ${hand}: ${src} @ ${dist.toFixed(3)}m`);
+              } else {
+                console.log(`[VRHit] ${hand}: no hit`);
+              }
+            }
+          }
+          // ── end debug ─────────────────────────────────────────────────────────
+
         } else {
           // Log Failure
           if (window.screenLog && Math.random() < 0.01) {
@@ -4431,7 +4463,44 @@ class Scene {
             this._bpDragActive = false;
             this._bpDragHand   = null;
           }
-          // ── end panel grip drag ───────────────────────────────────────────
+          // ── end BrushPanel grip drag ──────────────────────────────────────
+
+          // ── MainMenuPanel grip drag (pinned) ──────────────────────────────
+          if (this._mainMenuPanel?.pinned && this._isPointingAtMenu && isGrip) {
+            const refPose = frame.getPose(source.gripSpace, refSpace);
+            if (refPose) {
+              const p = refPose.transform.position;
+              const q = refPose.transform.orientation;
+              const curPos  = new THREE.Vector3(p.x, p.y, p.z);
+              const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+
+              if (!this._mmDragActive || this._mmDragHand !== source.handedness) {
+                this._mmDragActive = true;
+                this._mmDragHand   = source.handedness;
+                this._mmDragGripStartPos  = curPos.clone();
+                this._mmDragGripStartQuat = curQuat.clone();
+                const mesh = this._mainMenuPanel.mesh;
+                mesh.updateWorldMatrix(true, false);
+                this._mmDragPanelStartPos  = mesh.position.clone();
+                this._mmDragPanelStartQuat = mesh.quaternion.clone();
+              } else {
+                const mesh = this._mainMenuPanel.mesh;
+                const deltaPos = curPos.clone().sub(this._mmDragGripStartPos);
+                mesh.position.copy(this._mmDragPanelStartPos).add(deltaPos);
+                const qDelta = curQuat.clone().multiply(
+                  this._mmDragGripStartQuat.clone().invert()
+                );
+                mesh.quaternion.copy(qDelta).multiply(this._mmDragPanelStartQuat);
+              }
+            }
+            if (source.handedness === 'left') { leftGrip = false; }
+            else                              { rightGrip = false; }
+
+          } else if (this._mmDragActive && this._mmDragHand === source.handedness && !isGrip) {
+            this._mmDragActive = false;
+            this._mmDragHand   = null;
+          }
+          // ── end MainMenuPanel grip drag ───────────────────────────────────
         }
       }
 
@@ -5895,9 +5964,10 @@ class Scene {
             if (pointerLine) {
                 if (uiHitDist !== undefined && uiHitDist !== Infinity) {
                     pointerLine.visible = true;
-                    // Clip beam 12 mm short of the panel face so the cylinder tip doesn't
-                    // z-fight with the panel plane (which has depthWrite:false).
-                    pointerLine.scale.set(1, 1, Math.max(0.01, hitDist - 0.012));
+                    // hitDist is measured from the ray origin, which is offset forward
+                    // by getStylusOffset() from the controller origin where the laser starts.
+                    // Add the offset so the beam tip lands exactly on the panel face.
+                    pointerLine.scale.set(1, 1, hitDist + this.getStylusOffset());
                 } else {
                     pointerLine.visible = false;
                 }

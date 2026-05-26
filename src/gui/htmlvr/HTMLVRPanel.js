@@ -104,12 +104,12 @@ export class HTMLVRPanel {
       new THREE.MeshBasicMaterial({
         side: THREE.DoubleSide,
         transparent: true,
-        depthWrite: false,
+        depthWrite: true,  // write depth so the laser and scene geometry are properly
+        depthTest: true,   // z-sorted against the panel — no draw-order tricks
       })
     );
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
-    this.mesh.scale.y    = -1;
-    this.mesh.renderOrder = 1000; // draw on top of sculpt scene, like existing VRMenu
+    this.mesh.scale.y = -1;
 
     // Subclasses can set this._startHidden = true before calling init()
     // to start the mesh invisible (avoids the frame where both panels are visible).

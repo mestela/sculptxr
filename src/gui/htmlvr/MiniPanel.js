@@ -22,25 +22,8 @@ import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
+import { toolTint }   from './toolTints.js';
 
-// ── Tool tints (Catppuccin Mocha-compatible dark tones) ──────────────────────
-const TOOL_TINTS = {
-  // sculpt (red-ish)
-  0:'#6b4040', 1:'#6b4040', 4:'#6b4040', 5:'#6b4040', 6:'#6b4040', 14:'#6b4040',
-  // smooth (blue)
-  3:'#404d6b', 8:'#404d6b',
-  // move / transform (green)
-  7:'#406b40', 10:'#406b40', 12:'#406b40', 15:'#406b40', 16:'#406b40', 17:'#406b40',
-  2:'#406b40', 13:'#406b40',
-  // paint (purple)
-  9:'#5a406b',
-  // masking (orange)
-  11:'#6b5440',
-  // LP tools (yellow)
-  18:'#5a5540', 19:'#5a5540', 20:'#5a5540', 21:'#5a5540', 22:'#5a5540',
-  23:'#5a5540', 24:'#5a5540', 25:'#5a5540', 29:'#5a5540', 30:'#5a5540', 31:'#5a5540',
-};
-const toolTint = (id) => TOOL_TINTS[id] ?? '#313244';
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
 const TOOL_NAMES = {

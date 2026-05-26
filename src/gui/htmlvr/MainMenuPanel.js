@@ -29,10 +29,11 @@ import Enums        from '../../misc/Enums.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
+import { toolTextTint } from './toolTints.js';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
 const MM_W         = 480;   // total DOM width  (px)
-const MM_TABS_W    = 56;    // left tab-strip width
+const MM_TABS_W    = 50;    // left tab-strip width
 const MM_MENUBAR_H = 44;    // top menubar height (px) — must match actual rendered height
 // Body height is fixed so the mesh never changes dimensions on tab switch.
 const MM_BODY_H    = 456;   // height below menubar (scrollable content lives here)
@@ -131,7 +132,7 @@ const CSS = `
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 6px 3px;
+  padding: 8px 5px;
   gap: 4px;
   border-right: 2px solid #45475a;
   background: #11111b;
@@ -139,8 +140,8 @@ const CSS = `
   overflow: hidden;
 }
 .mm-tab-btn {
-  width: 48px;
-  height: 48px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border: 1px solid #45475a;
   border-radius: 6px;
@@ -169,11 +170,17 @@ const CSS = `
   top: 0;
   left: ${MM_TABS_W}px;
   right: 0; bottom: 0;
-  overflow-y: auto;
+  overflow-y: scroll;
   overflow-x: hidden;
-  padding: 8px 10px;
+  padding: 8px 10px 8px 10px;
   box-sizing: border-box;
+  scrollbar-width: thick;
+  scrollbar-color: #585b70 #1e1e2e;
 }
+#mm-content::-webkit-scrollbar { width: 10px; background: #1e1e2e; }
+#mm-content::-webkit-scrollbar-thumb { background: #585b70; border-radius: 5px; min-height: 32px; }
+#mm-content::-webkit-scrollbar-thumb:hover { background: #7f849c; }
+#mm-content::-webkit-scrollbar-track { background: #1e1e2e; }
 
 /* ── Shared content primitives ───────────────────────────────── */
 .mm-section-title {
@@ -347,6 +354,48 @@ const CSS = `
   font-style: italic;
 }
 
+/* Storage gallery */
+.mm-storage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.mm-storage-item {
+  border: 1px solid #313244;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #181825;
+}
+.mm-storage-item img {
+  width: 100%;
+  aspect-ratio: 1;
+  display: block;
+  object-fit: cover;
+}
+.mm-storage-date {
+  display: block;
+  font-size: 8px;
+  color: #6c7086;
+  text-align: center;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-storage-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+}
+.mm-storage-btns .mm-action-btn {
+  font-size: 9px;
+  padding: 3px 4px;
+  margin-bottom: 0;
+  text-align: center;
+}
+
 /* Conditional sections (Rendering) */
 .mm-if-pbr, .mm-if-matcap, .mm-if-uv { display: none; }
 .shader-pbr    .mm-if-pbr    { display: block; }
@@ -396,16 +445,16 @@ function buildShellHTML() {
     <div id="mm-body">
       <div id="mm-tabstrip">
         <button class="mm-tab-btn active" data-section="scene" title="Scene">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
         </button>
         <button class="mm-tab-btn" data-section="topology" title="Topology">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         </button>
         <button class="mm-tab-btn" data-section="rendering" title="Rendering">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         </button>
         <button class="mm-tab-btn" data-section="sculpting" title="Sculpting">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
         </button>
       </div>
       <div id="mm-content"></div>
@@ -416,23 +465,51 @@ function buildShellHTML() {
 // ── Content builders ─────────────────────────────────────────────────────────
 
 function buildMenuHTML_files(main) {
-  const guiFiles = main.getGui?.()._ctrlFiles ?? null;
-  const exportAll  = guiFiles?._exportAll ?? true;
-  const objZbrush  = guiFiles?._objColorZbrush ?? false;
-  const objAppend  = guiFiles?._objColorAppended ?? false;
+  const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
+  const exportAll = guiFiles?._exportAll ?? true;
+  const objZbrush = guiFiles?._objColorZbrush ?? false;
+  const objAppend = guiFiles?._objColorAppended ?? false;
+  const saves     = guiFiles?._browserSaves ?? [];
+
+  // Gallery thumbnails
+  const thumbs = saves.length === 0
+    ? '<div class="mm-info">No saves yet</div>'
+    : saves.map(s => {
+        const key   = s.key ?? s.id ?? '';
+        const ts    = s.value?.timestamp ?? 0;
+        const thumb = s.value?.thumb ?? '';
+        const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
+        const img   = thumb
+          ? `<img src="${thumb}" alt="save">`
+          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px">🗿</div>`;
+        return `
+          <div class="mm-storage-item">
+            ${img}
+            <span class="mm-storage-date">${date}</span>
+            <div class="mm-storage-btns">
+              <button class="mm-action-btn mm-storage-load" data-save-key="${key}">Load</button>
+              <button class="mm-action-btn danger mm-storage-del" data-save-key="${key}">Del</button>
+            </div>
+          </div>`;
+      }).join('');
 
   return `
+    <div class="mm-section-title">Browser Storage</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-browser-save">💾 Save scene</button>
+      <button class="mm-action-btn" id="mm-storage-refresh">↻ Refresh</button>
+    </div>
+    <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
+
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj">Add mesh (obj, sgl, ply, stl)</button>
     <button class="mm-toggle${main._autoMatrix ? ' active' : ''}" id="mm-import-scale">Scale & center on import</button>
     <button class="mm-toggle${main._vertexSRGB ? ' active' : ''}" id="mm-import-srgb">sRGB vertex colour</button>
 
-    <div class="mm-section-title">Export scene</div>
+    <div class="mm-section-title">Export</div>
     <button class="mm-toggle${exportAll ? ' active' : ''}" id="mm-export-all">Export all meshes</button>
-    <button class="mm-action-btn" id="mm-export-sxr">Save .sxr (SculptXR native)</button>
-    <button class="mm-action-btn" id="mm-export-glb">Save .glb (Animation DAW)</button>
-    <button class="mm-action-btn" id="mm-browser-save">Save to browser storage</button>
-    <button class="mm-action-btn" id="mm-browser-load">Load from browser storage</button>
+    <button class="mm-action-btn" id="mm-export-sxr">Save .sxr</button>
+    <button class="mm-action-btn" id="mm-export-glb">Save .glb</button>
     <button class="mm-action-btn" id="mm-export-obj">Save .obj</button>
     <button class="mm-action-btn" id="mm-export-ply">Save .ply</button>
     <button class="mm-action-btn" id="mm-export-stl">Save .stl</button>
@@ -850,10 +927,10 @@ function buildSectionHTML_sculpting(main) {
   const contOn = sm?._continuous ?? false;
 
   const sculptBtns = SCULPT_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}">${t.label}</button>`
+    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
   const meshBtns = MESH_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}">${t.label}</button>`
+    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
 
   return `
@@ -968,6 +1045,24 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
     }
 
+    // Scrollbar — the polyfill can't route pointer events to native scrollbar chrome,
+    // so we intercept clicks in the right 10 px of #mm-content and jump scrollTop.
+    const contentEl = root.querySelector('#mm-content');
+    if (contentEl) {
+      contentEl.addEventListener('mousedown', (e) => {
+        const scrollbarW = 10;
+        const inScrollbar = e.offsetX >= contentEl.clientWidth;
+        if (!inScrollbar) return;
+        // Map click Y to scroll position
+        const ratio = e.offsetY / contentEl.clientHeight;
+        const scrollH = contentEl.scrollHeight - contentEl.clientHeight;
+        contentEl.scrollTop = ratio * scrollH;
+        this.markDirty();
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    }
+
     // Populate initial content
     this._rebuildContent();
   }
@@ -976,6 +1071,14 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _setMenu(name) {
     this._activeMenu = (this._activeMenu === name) ? null : name;
+    // Pre-load browser saves when opening Files so thumbnails are ready
+    if (this._activeMenu === 'files') {
+      const guiFiles = this._main.getGui?.()._ctrlFiles ?? null;
+      guiFiles?.refreshBrowserSaves?.().then(() => {
+        this._lastContentKey = '';
+        this._rebuildContent();
+      });
+    }
     this._rebuildContent();
   }
 
@@ -1008,8 +1111,10 @@ export class MainMenuPanel extends HTMLVRPanel {
     const curTool = sm?.getToolIndex?.() ?? -1;
     const symOn  = sm?._symmetry  ? 1 : 0;
     const contOn = sm?._continuous ? 1 : 0;
+    const guiFiles    = this._main.getGui?.()._ctrlFiles ?? null;
+    const savesCount  = guiFiles?._browserSaves?.length ?? 0;
     const key = this._activeMenu
-      ? `menu:${this._activeMenu}`
+      ? `menu:${this._activeMenu}:${savesCount}`
       : `sec:${this._activeSection}:${shaderType}:${meshCount}:${curTool}:${symOn}:${contOn}`;
 
     if (key === this._lastContentKey) return;
@@ -1081,10 +1186,43 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
       q('#mm-export-sxr')?.addEventListener('click', () => guiFiles?.saveFileAsSGL?.());
       q('#mm-export-glb')?.addEventListener('click', () => guiFiles?.saveFileAsGLB?.());
-      q('#mm-browser-save')?.addEventListener('click', () => guiFiles?.saveToBrowserStorage?.());
-      q('#mm-browser-load')?.addEventListener('click', () => guiFiles?.refreshBrowserSaves?.()
-        .then(() => main.render?.())
-      );
+      q('#mm-browser-save')?.addEventListener('click', () => {
+        guiFiles?.saveToBrowserStorage?.();
+        // Refresh gallery after a short delay to let the save complete
+        setTimeout(() => {
+          guiFiles?.refreshBrowserSaves?.().then(() => {
+            this._lastContentKey = ''; // force rebuild so thumbnails appear
+            this._rebuildContent();
+          });
+        }, 800);
+      });
+
+      q('#mm-storage-refresh')?.addEventListener('click', () => {
+        guiFiles?.refreshBrowserSaves?.().then(() => {
+          this._lastContentKey = '';
+          this._rebuildContent();
+        });
+      });
+
+      // Gallery load / delete
+      el.querySelectorAll('.mm-storage-load').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.saveKey;
+          if (key) guiFiles?.loadSpecificBrowserSave?.(key);
+        });
+      });
+      el.querySelectorAll('.mm-storage-del').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.saveKey;
+          if (key) {
+            guiFiles?.deleteBrowserSave?.(key);
+            setTimeout(() => {
+              this._lastContentKey = '';
+              this._rebuildContent();
+            }, 300);
+          }
+        });
+      });
       q('#mm-export-obj')?.addEventListener('click', () => guiFiles?.saveFileAsOBJ?.());
       q('#mm-export-ply')?.addEventListener('click', () => guiFiles?.saveFileAsPLY?.());
       q('#mm-export-stl')?.addEventListener('click', () => guiFiles?.saveFileAsSTL?.());
