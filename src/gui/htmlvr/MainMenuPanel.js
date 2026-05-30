@@ -444,7 +444,7 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        <button class="mm-tab-btn active" data-section="scene" title="Scene">
+        <button class="mm-tab-btn" data-section="scene" title="Scene">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
         </button>
         <button class="mm-tab-btn" data-section="topology" title="Topology">
@@ -453,7 +453,7 @@ function buildShellHTML() {
         <button class="mm-tab-btn" data-section="rendering" title="Rendering">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
         </button>
-        <button class="mm-tab-btn" data-section="sculpting" title="Sculpting">
+        <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
         </button>
       </div>
@@ -861,6 +861,9 @@ function buildSectionHTML_rendering(main) {
       </div>
 
       <div class="mm-section-title">Display</div>
+      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">
+        Ground Plane ${main._showGrid ? '✓ On' : 'Off'}
+      </button>
       <div class="mm-row">
         <span class="mm-lbl">Curvature</span>
         <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature * 20)}">
@@ -979,7 +982,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     this._main          = main;
     this._activeMenu    = null;     // null | 'files'|'history'|'reference'|'settings'|'about'
-    this._activeSection = 'scene'; // 'scene'|'topology'|'rendering'|'sculpting'
+    this._activeSection = 'sculpting'; // 'scene'|'topology'|'rendering'|'sculpting'
     this._lastContentKey = '';      // avoids redundant rebuilds
     this._startHidden   = true;
     this._pinned        = false;
@@ -1547,6 +1550,19 @@ export class MainMenuPanel extends HTMLVRPanel {
 
       el.querySelector('#mm-import-matcap')?.addEventListener('click', () => document.getElementById('matcapopen')?.click());
       el.querySelector('#mm-import-uv')?.addEventListener('click', () => document.getElementById('textureopen')?.click());
+
+      // Ground plane toggle
+      el.querySelector('#mm-grid-toggle')?.addEventListener('click', () => {
+        main._showGrid = !main._showGrid;
+        if (main._groundGrid) main._groundGrid.visible = main._showGrid;
+        try {
+          const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}');
+          s.grid = main._showGrid;
+          localStorage.setItem('sculptxr_settings', JSON.stringify(s));
+        } catch (_) {}
+        main.render?.();
+        paint();
+      });
 
       // Display sliders
       const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh];

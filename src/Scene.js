@@ -174,6 +174,14 @@ class Scene {
     this._isCalibratingSpectator = false; // "Move Me" Mode
     this._spectatorMode = Enums.SpectatorMode.DECOUPLED;
 
+    // Desktop canvas mode while VR is active.
+    // 0=blank(default)  1=mirror  2=desktop free camera
+    this._spectatorViewMode = 0;
+
+    // How many VR frames to skip between spectator renders.
+    // 0=every frame, 1=every 2nd, 3=every 4th (default), 7=every 8th.
+    this._spectatorFrameSkip = 3;
+
     // STATIONARY Mode variables
     this._desktopOffset = vec3.create();
     this._desktopRotation = mat4.create();
@@ -201,6 +209,16 @@ class Scene {
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
     // Fix: Y=0 put it on the floor. Y=1.2 should be chest/head height.
     this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
+
+    // Desktop spectator view control — usable from the browser console:
+    //   window.setSpectatorMode(0)  → blank canvas (default)
+    //   window.setSpectatorMode(1)  → mirror left eye to desktop canvas (~18fps throttled)
+    //   window.setSpectatorMode(2)  → desktop free camera on canvas (~18fps throttled)
+    window.setSpectatorMode = (n) => {
+      this._spectatorViewMode = n;
+      const names = ['blank', 'mirror', 'desktop free camera'];
+      console.log(`[Spectator] mode → ${names[n] ?? n}`);
+    };
 
     window.debugSpectator = () => {
       console.log("=== SPECTATOR DEBUG ===");
@@ -1304,9 +1322,31 @@ class Scene {
       if (isVR) {
           if (!window._xrFrameCount) window._xrFrameCount = 0;
           window._xrFrameCount++;
-        //   if (window._xrFrameCount % 60 === 0 && window.screenLog) {
-        //       window.screenLog("XR Frame Drawn: " + window._xrFrameCount, "cyan");
-        //   }
+
+          // ── Desktop spectator pass ────────────────────────────────────────────
+          // Capture XR camera matrices NOW (while xr is still enabled + frame active)
+          // so MIRROR mode can reuse them without re-entering the XR path.
+          //
+          // We use the ArrayCamera's own matrixWorld (headset centre pose) rather
+          // than cameras[0] (left eye with IPD offset). The left-eye pose places the
+          // virtual camera ~3 cm to the left of the headset centre, which pushes the
+          // scene noticeably off-centre on the desktop display.  The ArrayCamera gives
+          // a better-framed "what the user is looking at" view.
+          // For the projection we still take the left-eye matrix (it has a realistic
+          // single-eye FOV), then rebuild it for the canvas aspect anyway.
+          const xrArrayCam = this._renderer.xr.getCamera(this._camera.getThreeCamera());
+          if (xrArrayCam) {
+            if (!this._spectatorLeftEyeMatrix) this._spectatorLeftEyeMatrix = new THREE.Matrix4();
+            if (!this._spectatorLeftEyeProj)   this._spectatorLeftEyeProj   = new THREE.Matrix4();
+            // Headset centre pose (no IPD offset — gives centred desktop view)
+            this._spectatorLeftEyeMatrix.copy(xrArrayCam.matrixWorld);
+            // Per-eye projection for realistic FOV extraction (left eye if available)
+            const eyeCam = xrArrayCam.cameras?.[0] ?? xrArrayCam;
+            this._spectatorLeftEyeProj.copy(eyeCam.projectionMatrix);
+          }
+          this._renderSpectatorCanvas();
+          // ─────────────────────────────────────────────────────────────────────
+
           // --- CRITICAL ISOLATION FOR WEBXR ---
           // Do NOT execute ANY further legacy WebGL commands (like postRender, or depth disabling)
           // The XR Compositor requires the baseLayer framebuffer to remain bound and pristine.
@@ -1450,7 +1490,7 @@ class Scene {
     this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
     this._groundGrid.material.transparent = true;
     this._groundGrid.material.opacity = 0.5;
-    this._groundGrid.material.depthWrite = false;
+    this._groundGrid.material.depthWrite = true;  // must write depth so grid composites correctly in VR
     this._groundGrid.position.y = -0.25;
     this._groundGrid.visible = !!this._showGrid;
     this._worldGroup.add(this._groundGrid);
@@ -2119,6 +2159,12 @@ class Scene {
     vec3.copy(this._desktopCameraCache.center, this._camera._center);
     vec3.copy(this._desktopCameraCache.offset, this._camera._offset);
 
+    // Cache the worldGroup matrix as it stands at desktop time (scale=0.701, pos=0,0,0).
+    // The spectator desktop-camera formula needs this to cancel out the scale change
+    // that happens when VR starts (worldGroup gets set to vrScale=0.008 + xrWorldOffset).
+    this._worldGroup.updateMatrixWorld(true);
+    this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
+
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;
     this._renderer.xr.setReferenceSpaceType('local-floor');
@@ -2355,6 +2401,142 @@ class Scene {
 
     return fullTrans;
   }
+
+  // ─── Desktop Spectator / Mirror Pass ──────────────────────────────────────
+  //
+  // Renders the desktop canvas during a VR session so the PC screen isn't blank.
+  // Called every VR frame but does as little work as possible by default.
+  //
+  // Modes (set via window.setSpectatorMode(n) or this._spectatorViewMode):
+  //   0 = BLANK   — clear canvas to black; obvious "VR active" indicator (default)
+  //   1 = MIRROR  — render left-eye view to canvas, throttled ~18fps
+  //   2 = DESKTOP — render from cached desktop free camera, throttled ~18fps
+  //
+  _renderSpectatorCanvas() {
+    const mode = this._spectatorViewMode ?? 0;
+
+    const renderer = this._renderer;
+    if (!renderer) return;
+
+    // Render modes (1 & 2) are throttled to limit GPU cost on the desktop pass.
+    // _spectatorFrameSkip: 0=every frame, 3=every 4th (default), etc.
+    // BLANK (0) is a single clear — no throttle needed.
+    if (mode >= 1) {
+      const skip = this._spectatorFrameSkip ?? 3;
+      this._spectatorN = ((this._spectatorN || 0) + 1);
+      if (skip > 0 && (this._spectatorN % (skip + 1)) !== 0) return;
+    }
+
+    const wasXR = renderer.xr.enabled;
+    try {
+      renderer.xr.enabled = false;  // bypass XR layer so we can write to the DOM canvas
+      renderer.setRenderTarget(null);
+
+      if (mode === 0) {
+        // ── BLANK: just clear the canvas ──────────────────────────────────
+        renderer.setClearColor(0x0d0d0d, 1);
+        renderer.clear();
+        renderer.setClearColor(0x000000, 0);
+
+      } else if (mode === 1) {
+        // ── MIRROR: render from the left-eye camera, corrected to canvas aspect ──
+        if (this._spectatorLeftEyeMatrix && this._spectatorLeftEyeProj) {
+          if (!this._spectatorMirrorCam) {
+            this._spectatorMirrorCam = new THREE.PerspectiveCamera();
+            this._spectatorMirrorCam.matrixAutoUpdate = false;
+          }
+          const cam    = this._spectatorMirrorCam;
+          const canvas = renderer.domElement;
+
+          // View from left eye (captured before this call, still valid)
+          cam.matrixWorld.copy(this._spectatorLeftEyeMatrix);
+          cam.matrixWorldInverse.copy(this._spectatorLeftEyeMatrix).invert();
+          cam.matrix.copy(cam.matrixWorld);
+
+          // Rebuild projection for the CSS display size of the canvas, not the XR
+          // framebuffer resolution (canvas.width/height = per-eye XR resolution ≈ square;
+          // canvas.clientWidth/Height = actual browser window = e.g. 16:9).
+          // elements[5] of a column-major perspective matrix = cot(vFov/2).
+          const m11        = this._spectatorLeftEyeProj.elements[5];
+          const vFovDeg    = 2.0 * Math.atan(1.0 / m11) * (180 / Math.PI);
+          const dispAspect = (canvas.clientWidth || canvas.width) /
+                             (canvas.clientHeight || canvas.height) || 1;
+          cam.fov    = vFovDeg;
+          cam.aspect = dispAspect;
+          cam.near   = 0.01;
+          cam.far    = 50;
+          cam.updateProjectionMatrix();
+
+          renderer.render(this._scene, cam);
+        }
+
+      } else if (mode === 2) {
+        // ── DESKTOP FREE CAMERA ─────────────────────────────────────────────────
+        //
+        // Strategy: temporarily restore the worldGroup to its desktop-time state
+        // and render using the desktop SculptGL Three.js camera.  This is exactly
+        // equivalent to "what the user saw on the desktop" without needing to
+        // compute a complex spectator view matrix.
+        //
+        // Spacebar-to-frame also works because Camera.js updateView() always writes
+        // cache.view during VR, and we apply that here before rendering.
+        //
+        const cache      = this._desktopCameraCache;
+        const desktopCam = this._camera.getThreeCamera();
+
+        // Sync the desktop Three.js camera to the latest SculptGL camera state.
+        // Camera.js skips updating the Three.js camera matrices while in VR, so we
+        // do it manually here to pick up any camera movement (e.g. spacebar reset).
+        desktopCam.matrixWorldInverse.fromArray(cache.view);
+        desktopCam.matrixWorld.copy(desktopCam.matrixWorldInverse).invert();
+        desktopCam.matrix.copy(desktopCam.matrixWorld);
+
+        // Restore the desktop projection matrix.
+        // renderer.xr.getCamera() overwrites desktopCam.projectionMatrix with the
+        // XR stereo combined projection every VR frame (different FOV + aspect).
+        // We must restore the original desktop projection before rendering.
+        desktopCam.projectionMatrix.fromArray(cache.proj);
+        desktopCam.projectionMatrixInverse.copy(desktopCam.projectionMatrix).invert();
+
+        // Save the current VR worldGroup transform.
+        const savedPos   = this._worldGroup.position.clone();
+        const savedQuat  = this._worldGroup.quaternion.clone();
+        const savedScale = this._worldGroup.scale.clone();
+
+        // Restore worldGroup to desktop-time state.  cache.worldGroupMatrix was
+        // captured at VR-start (scale=0.701, pos/rot=(0,0,0)).
+        const wgDesktop = cache.worldGroupMatrix;
+        if (wgDesktop) {
+          const _p = new THREE.Vector3();
+          const _q = new THREE.Quaternion();
+          const _s = new THREE.Vector3();
+          wgDesktop.decompose(_p, _q, _s);
+          this._worldGroup.position.copy(_p);
+          this._worldGroup.quaternion.copy(_q);
+          this._worldGroup.scale.copy(_s);
+        } else {
+          this._worldGroup.position.set(0, 0, 0);
+          this._worldGroup.quaternion.identity();
+          this._worldGroup.scale.set(0.701, 0.701, 0.701);
+        }
+
+        renderer.render(this._scene, desktopCam);
+
+        // Restore VR worldGroup state so the next XR frame is correct.
+        this._worldGroup.position.copy(savedPos);
+        this._worldGroup.quaternion.copy(savedQuat);
+        this._worldGroup.scale.copy(savedScale);
+        this._worldGroup.updateMatrixWorld(true);
+      }
+
+    } catch (e) {
+      // Never let a spectator error disrupt the VR loop
+      console.warn('[Spectator] render error:', e);
+    } finally {
+      renderer.xr.enabled = wasXR;
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   initVRControllers() {
     // Intercept fetch to debug controller asset loads

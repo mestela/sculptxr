@@ -235,85 +235,89 @@ class GuiFiles {
     const timestamp = Date.now();
     const key = `sculpt_${timestamp}`;
 
-    // Grab thumbnail from canvas
+    // Grab thumbnail — always renders to a square 512×512 WebGLRenderTarget so the
+    // result is never squashed regardless of the canvas/VR framebuffer dimensions.
     let thumb = '';
-    const canvas = document.getElementById('canvas');
-    if (canvas && this._main._renderer) {
-      if (!this._main._renderer.xr.isPresenting) {
-        this._main._renderer.render(this._main._scene, this._main._camera._threeCamera);
-        thumb = canvas.toDataURL('image/jpeg', 0.3); 
-      } else {
-        // VR Real Screenshot: Temporarily disable XR to render a flat pass to the DOM canvas!
-        const renderer = this._main._renderer;
-        const wasXREnabled = renderer.xr.enabled;
-        
-        let camToUse = this._main._camera._threeCamera;
+    const renderer = this._main._renderer;
+    if (renderer) {
+      try {
+        const THUMB = 512;
+
+        // 1. Pick camera position: VR head pose or desktop camera
+        const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 100);
         if (renderer.xr.isPresenting) {
           const vrCam = renderer.xr.getCamera(this._main._camera._threeCamera);
-          if (vrCam && vrCam.cameras && vrCam.cameras.length > 0) {
-            camToUse = vrCam.cameras[0]; // Use left eye perspective!
-          }
+          snapCam.position.copy(vrCam.position);
+          snapCam.quaternion.copy(vrCam.quaternion);
+        } else {
+          const dc = this._main._camera._threeCamera;
+          snapCam.position.copy(dc.position);
+          snapCam.quaternion.copy(dc.quaternion);
         }
-        
-        try {
-          renderer.xr.enabled = false; // Bypass VR layer for one draw
-          renderer.setRenderTarget(null); // Force bind to DOM canvas
-          camToUse.updateMatrixWorld(true); // Ensure matrix is accurate!
-          
-          // 1. Calculate bounding box of the world group (where the sculpt lives)
-          const box = new THREE.Box3().setFromObject(this._main._worldGroup);
+        snapCam.updateMatrixWorld(true);
+
+        // 2. Auto-aim + auto-FOV toward the sculpt bounding box
+        if (this._main._worldGroup) {
+          const box    = new THREE.Box3().setFromObject(this._main._worldGroup);
           const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          const maxDim = Math.max(size.x, size.y, size.z);
-
-          // 2. Hide ALL scene children except the worldGroup and lights (Ultra clean!)
-          const activeChildren = [];
-          this._main._scene.children.forEach(child => {
-            if (child.visible) {
-              activeChildren.push(child);
-              if (child !== this._main._worldGroup && !child.isLight) {
-                child.visible = false;
-              }
-            }
-          });
-
-          // 3. Create transient camera at user's head, looking at the sculpture
-          const midCam = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
-          midCam.position.copy(renderer.xr.getCamera(this._main._camera._threeCamera).position);
-          midCam.lookAt(center); // Lock on!
-
-          // 4. Auto-FOV to fill the screen
-          const distanceToCenter = midCam.position.distanceTo(center);
-          if (distanceToCenter > 0.01 && maxDim > 0.01) {
-            const requiredFov = 2 * Math.atan(maxDim / (2 * distanceToCenter)) * (180 / Math.PI);
-            midCam.fov = Math.min(70, Math.max(5, requiredFov * 1.3)); // Soft padding clip
-            midCam.updateProjectionMatrix();
+          const maxDim = box.getSize(new THREE.Vector3()).length();
+          snapCam.lookAt(center);
+          const dist = snapCam.position.distanceTo(center);
+          if (dist > 0.01 && maxDim > 0.01) {
+            const fov = 2 * Math.atan(maxDim / (2 * dist)) * (180 / Math.PI);
+            snapCam.fov = Math.min(70, Math.max(5, fov * 1.3));
           }
-          midCam.updateMatrixWorld(true);
-
-          renderer.render(this._main._scene, midCam);
-          
-          // Capture to offscreen 2D canvas to apply color correction synchronously!
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = canvas.width;
-          tempCanvas.height = canvas.height;
-          const tempCtx = tempCanvas.getContext('2d');
-          
-          tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
-          tempCtx.drawImage(canvas, 0, 0);
-          
-          thumb = tempCanvas.toDataURL('image/jpeg', 0.2); // Compressed
-          
-          // 5. Restore UI
-          activeChildren.forEach(child => {
-            child.visible = true;
-          });
-          
-        } catch (e) {
-          console.error("Screenshot failed:", e);
-        } finally {
-          renderer.xr.enabled = wasXREnabled; // Restore VR loop immediately
+          snapCam.updateProjectionMatrix();
+          snapCam.updateMatrixWorld(true);
         }
+
+        // 3. Hide non-scene children (UI panels, controllers, etc.)
+        const hidden = [];
+        this._main._scene.children.forEach(child => {
+          if (child.visible && child !== this._main._worldGroup && !child.isLight) {
+            child.visible = false;
+            hidden.push(child);
+          }
+        });
+
+        // 4. Render into a square off-screen RenderTarget — never touches the main canvas
+        const wasXREnabled = renderer.xr.enabled;
+        renderer.xr.enabled = false;
+        const rt = new THREE.WebGLRenderTarget(THUMB, THUMB);
+        renderer.setRenderTarget(rt);
+        renderer.render(this._main._scene, snapCam);
+        renderer.setRenderTarget(null);
+        renderer.xr.enabled = wasXREnabled;
+
+        // 5. Read pixels back (WebGL origin is bottom-left, flip Y)
+        const pixels = new Uint8Array(THUMB * THUMB * 4);
+        renderer.readRenderTargetPixels(rt, 0, 0, THUMB, THUMB, pixels);
+        rt.dispose();
+
+        const flipped = new Uint8ClampedArray(THUMB * THUMB * 4);
+        for (let row = 0; row < THUMB; row++) {
+          const src = (THUMB - 1 - row) * THUMB * 4;
+          flipped.set(pixels.subarray(src, src + THUMB * 4), row * THUMB * 4);
+        }
+
+        // 6. Write raw pixels to an intermediate canvas, then apply colour correction
+        const rawCanvas = document.createElement('canvas');
+        rawCanvas.width = THUMB; rawCanvas.height = THUMB;
+        rawCanvas.getContext('2d').putImageData(new ImageData(flipped, THUMB, THUMB), 0, 0);
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = THUMB; tempCanvas.height = THUMB;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.filter = 'contrast(1.4) brightness(0.8) saturate(1.2)';
+        tempCtx.drawImage(rawCanvas, 0, 0);
+
+        thumb = tempCanvas.toDataURL('image/jpeg', 0.25);
+
+        // 7. Restore hidden children
+        hidden.forEach(child => { child.visible = true; });
+
+      } catch (e) {
+        console.error('Screenshot failed:', e);
       }
     }
 

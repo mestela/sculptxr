@@ -44,17 +44,25 @@ class GuiCamera {
     menu.addCombobox('', camera.getMode(), this.onCameraModeChange.bind(this), optionsMode);
     this._ctrlPivot = menu.addCheckbox(TR('cameraPivot'), camera.getUsePivot(), this.onPivotChange.bind(this));
 
-    // Desktop Spectator
-    menu.addTitle(TR('cameraSpectator'));
-    var optionsSpec = [];
-    optionsSpec[Enums.SpectatorMode.GOPRO] = TR('cameraSpectatorGoPro');
-    optionsSpec[Enums.SpectatorMode.DECOUPLED] = TR('cameraSpectatorDecoupled');
-    optionsSpec[Enums.SpectatorMode.TRACKED] = TR('cameraSpectatorTracked');
-    optionsSpec[Enums.SpectatorMode.STATIONARY] = TR('cameraSpectatorStationary');
+    // Desktop canvas output during VR
+    menu.addTitle('Desktop canvas (VR)');
+    var optionsCanvas = [];
+    optionsCanvas[0] = 'Blank (VR active indicator)';
+    optionsCanvas[1] = 'Mirror (headset view)';
+    optionsCanvas[2] = 'Desktop free camera';
+    var initialCanvas = typeof this._main._spectatorViewMode === 'number' ? this._main._spectatorViewMode : 0;
+    menu.addCombobox('', initialCanvas, this.onDesktopCanvasModeChange.bind(this), optionsCanvas);
 
-    // Default to DECOUPLED if not yet initialized as an integer
-    var initialMode = typeof this._main._spectatorMode === 'number' ? this._main._spectatorMode : Enums.SpectatorMode.DECOUPLED;
-    menu.addCombobox('', initialMode, this.onSpectatorModeChange.bind(this), optionsSpec);
+    // Spectator refresh rate (only relevant when mode 1 or 2 is active)
+    var optionsFPS = [];
+    optionsFPS[0] = 'Full rate';
+    optionsFPS[1] = '½ rate';
+    optionsFPS[2] = '¼ rate (default)';
+    optionsFPS[3] = '⅛ rate';
+    // _spectatorFrameSkip: 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th
+    var skipToIndex = { 0: 0, 1: 1, 3: 2, 7: 3 };
+    var initialFPS = skipToIndex[this._main._spectatorFrameSkip ?? 3] ?? 2;
+    menu.addCombobox('Spectator FPS', initialFPS, this.onSpectatorFPSChange.bind(this), optionsFPS);
 
     // TR('CameraSpeed') ...
     menu.addSlider('speed', this._main, '_cameraSpeed', 0.05, 1.0, 0.001);
@@ -65,12 +73,16 @@ class GuiCamera {
     this._main.render();
   }
 
-  onSpectatorModeChange(value) {
-    this._main._spectatorMode = parseInt(value, 10);
-    // Force immediate camera refresh to prevent Decoupled mode from rendering blank
-    this._camera.updateView();
-    this._camera.updateProjection();
-    this._main.render();
+  onDesktopCanvasModeChange(value) {
+    this._main._spectatorViewMode = parseInt(value, 10);
+    this._main._spectatorN = 0; // render next frame immediately after a mode switch
+  }
+
+  onSpectatorFPSChange(value) {
+    // Map combobox index → _spectatorFrameSkip value
+    const indexToSkip = [0, 1, 3, 7];
+    this._main._spectatorFrameSkip = indexToSkip[parseInt(value, 10)] ?? 3;
+    this._main._spectatorN = 0;
   }
 
   onCameraTypeChange(value) {
