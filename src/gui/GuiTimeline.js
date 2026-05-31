@@ -34,6 +34,7 @@ export default class GuiTimeline {
     this._activeTangentKx = 0;
     this._activeTangentKy = 0;
     this._activeTangentType = null;
+    this._activeTangentBsName = null;
     this._isPanningGraph = false;
     this._isZoomingGraph = false;
     this._panStartRy = 0;
@@ -250,22 +251,43 @@ export default class GuiTimeline {
       ctx.textBaseline = 'middle';
       ctx.fillText(labels[channel], 50, ry + 15);
     }
-    
-    // Fit View Icon (Lower Left of Gutter)
-    const iconX = 10;
-    const iconY = this._cssHeight - 30;
-    const isHovered = this._lastMouseX >= iconX && this._lastMouseX <= iconX + 24 && this._lastMouseY >= iconY && this._lastMouseY <= iconY + 24;
-    
-    ctx.strokeStyle = isHovered ? '#00ffff' : '#888888';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    ctx.save();
-    ctx.translate(iconX, iconY);
-    const fitPath = new Path2D('M 10 10 L 4 4 M 4 4 L 8 4 M 4 4 L 4 8 M 14 10 L 20 4 M 20 4 L 16 4 M 20 4 L 20 8 M 10 14 L 4 20 M 4 20 L 8 20 M 4 20 L 4 16 M 14 14 L 20 20 M 20 20 L 16 20 M 20 20 L 20 16');
-    ctx.stroke(fitPath);
-    ctx.restore();
+
+    // Blendshape channel rows
+    if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+    const bsColors = ['#ff8844', '#44ffcc', '#ffdd44', '#aa44ff', '#ff44bb', '#44bbff'];
+    if (trackForGutter && trackForGutter.blendshapeTracks) {
+      let bsIdx = 0;
+      trackForGutter.blendshapeTracks.forEach((_, name) => {
+        const rowIdx = labels.length + bsIdx;
+        const ry = gutterY + rowIdx * rowH;
+        const color = bsColors[bsIdx % bsColors.length];
+        const isVisible = window._animBsChannelVisible[name] !== false;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(5, ry + 5, 5, 20);
+
+        ctx.save();
+        ctx.translate(20, ry + 3);
+        ctx.scale(0.8, 0.8);
+        ctx.strokeStyle = isVisible ? color : '#555';
+        ctx.lineWidth = 1.5;
+        const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
+        ctx.stroke(eyePath);
+        ctx.beginPath();
+        ctx.arc(12, 12, 3, 0, Math.PI * 2);
+        ctx.fillStyle = isVisible ? color : '#555';
+        ctx.fill();
+        ctx.restore();
+
+        ctx.fillStyle = isVisible ? '#ccc' : '#666';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, 50, ry + 15);
+        bsIdx++;
+      });
+    }
+
 
     ctx.restore();
 
@@ -656,6 +678,112 @@ export default class GuiTimeline {
         }
         }
       }
+
+      // Draw blendshape weight curves
+      if (track && track.blendshapeTracks) {
+        let bsIdx = 0;
+        track.blendshapeTracks.forEach((bTrack, name) => {
+          const isVisible = window._animBsChannelVisible?.[name] !== false;
+          if (!isVisible || !bTrack.times || bTrack.times.length === 0) { bsIdx++; return; }
+          const color = bsColors[bsIdx % bsColors.length];
+
+          // Curve line — bezier segments
+          if (bTrack.times.length >= 2) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < bTrack.times.length - 1; i++) {
+              const t1 = bTrack.times[i], t2 = bTrack.times[i + 1];
+              const v1 = bTrack.values[i], v2 = bTrack.values[i + 1];
+              const dt = t2 - t1;
+              const to = bTrack.tangentOffsets;
+              const rDt = to?.[`${i}_right_dt`];
+              const rDv = to?.[`${i}_right_dv`];
+              const lDt = to?.[`${i + 1}_left_dt`];
+              const lDv = to?.[`${i + 1}_left_dv`];
+              const s0 = reg.getBsSlope(bTrack, i);
+              const s1 = reg.getBsSlope(bTrack, i + 1);
+              const dt0 = rDt !== undefined ? rDt : dt * 0.33;
+              const dt1 = lDt !== undefined ? lDt : -dt * 0.33;
+              const dv0 = rDv !== undefined ? rDv : s0 * dt0;
+              const dv1 = lDv !== undefined ? lDv : s1 * dt1;
+              const p1x = dt0 / dt, p2x = 1 + dt1 / dt;
+              const steps = 20;
+              for (let s = 0; s <= steps; s++) {
+                const alpha = s / steps;
+                const bt = TimelineHelper.getBezierT(alpha, p1x, p2x);
+                const val = TimelineHelper.evaluateBezier(bt, v1, v2, dv0, dv1);
+                const time = t1 + alpha * dt;
+                const x = tlX + ((time - loopStart) / visibleDuration) * tlW;
+                const y = this.valueToY(val);
+                if (i === 0 && s === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+              }
+            }
+            ctx.stroke();
+          }
+
+          // Keyframe diamonds
+          for (let i = 0; i < bTrack.times.length; i++) {
+            const t = bTrack.times[i];
+            const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+            const y = this.valueToY(bTrack.values[i]);
+            const isSelected = window._animSelectedKeys &&
+              window._animSelectedKeys.some(k => k.meshId === id && k.type === 'blendshape' && k.name === name && k.index === i);
+            const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
+
+            ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? '#ffffff' : color);
+            ctx.beginPath();
+            ctx.moveTo(x, y - 5);
+            ctx.lineTo(x + 5, y);
+            ctx.lineTo(x, y + 5);
+            ctx.lineTo(x - 5, y);
+            ctx.closePath();
+            ctx.fill();
+            if (isSelected) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke(); }
+          }
+
+          // Tangent handles
+          if (window._animShowTangents && bTrack.times.length >= 2) {
+            ctx.lineWidth = 1.5;
+            for (let i = 0; i < bTrack.times.length; i++) {
+              const t = bTrack.times[i];
+              const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+              const ky = this.valueToY(bTrack.values[i]);
+              const to = bTrack.tangentOffsets;
+              const rightDt = to?.[`${i}_right_dt`];
+              const rightDv = to?.[`${i}_right_dv`];
+              const leftDt  = to?.[`${i}_left_dt`];
+              const leftDv  = to?.[`${i}_left_dv`];
+              const slope    = reg.getBsSlope(bTrack, i);
+              const dtR = i < bTrack.times.length - 1 ? bTrack.times[i + 1] - bTrack.times[i] : 0.2;
+              const dtL = i > 0                        ? bTrack.times[i] - bTrack.times[i - 1] : 0.2;
+              const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+              const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dtR * 0.33) * this._zoomY;
+              const leftXOff  = leftDt  !== undefined ? (leftDt  / visibleDuration) * tlW : -25;
+              const leftYOff  = leftDv  !== undefined ? -leftDv  * this._zoomY : -slope * (leftDt  !== undefined ? leftDt  : -dtL * 0.33) * this._zoomY;
+
+              if (i < bTrack.times.length - 1) {
+                const isActive  = this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'right';
+                const isHovered = TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, this._lastMouseX, this._lastMouseY, 10);
+                ctx.strokeStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
+                ctx.beginPath(); ctx.moveTo(kx, ky); ctx.lineTo(kx + rightXOff, ky + rightYOff); ctx.stroke();
+                ctx.fillStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
+                ctx.beginPath(); ctx.arc(kx + rightXOff, ky + rightYOff, 3, 0, Math.PI * 2); ctx.fill();
+              }
+              if (i > 0) {
+                const isActive  = this._isDraggingTangent && this._activeTangentBsName === name && this._activeTangentIndex === i && this._activeTangentSide === 'left';
+                const isHovered = TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, this._lastMouseX, this._lastMouseY, 10);
+                ctx.strokeStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
+                ctx.beginPath(); ctx.moveTo(kx, ky); ctx.lineTo(kx + leftXOff, ky + leftYOff); ctx.stroke();
+                ctx.fillStyle = isActive ? '#ffff00' : isHovered ? '#00ffff' : color;
+                ctx.beginPath(); ctx.arc(kx + leftXOff, ky + leftYOff, 3, 0, Math.PI * 2); ctx.fill();
+              }
+            }
+          }
+
+          bsIdx++;
+        });
+      }
     }
 
     // Draw Transform Box in Graph Mode!
@@ -976,6 +1104,50 @@ export default class GuiTimeline {
       }
     }
 
+    // Check Blendshape Keys in Graph Mode
+    if (track.blendshapeTracks) {
+      let bsIdx = 0;
+      let found = false;
+      track.blendshapeTracks.forEach((bTrack, name) => {
+        if (found) { bsIdx++; return; }
+        if (!bTrack.times) { bsIdx++; return; }
+        for (let i = 0; i < bTrack.times.length; i++) {
+          const t = bTrack.times[i];
+          const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
+          const y = this.valueToY(bTrack.values[i]);
+          if (TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) {
+            this._isDraggingKeyframe = true;
+            this._activeKeyframeTrack = bTrack;
+            this._activeMeshId = id;
+            this._activeKeyframeIndex = i;
+            this._activeKeyframeType = 'blendshape';
+            this._activeBlendshapeName = name;
+            this._keyDragStartRx = rx;
+            this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+
+            if (window._animationRegistry) {
+              this._undoTracksBeforeMove = new Map();
+              window._animationRegistry.tracks.forEach((tr, mId) => {
+                this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
+              });
+            }
+
+            const isPartSelection = window._animSelectedKeys &&
+              window._animSelectedKeys.some(k => k.meshId === id && k.type === 'blendshape' && k.name === name && k.index === i);
+            if (!isPartSelection) {
+              window._animSelectedKeys = [{ meshId: id, type: 'blendshape', name, index: i }];
+              window._animTransformBox = null;
+            }
+            this.draw();
+            found = true;
+            return;
+          }
+        }
+        bsIdx++;
+      });
+      if (found) return;
+    }
+
     // Check Position Key Tangents
     if (track.times && window._animShowTangents) {
       const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
@@ -1091,7 +1263,55 @@ export default class GuiTimeline {
         }
       }
     }
-    
+
+    // Check Blendshape Tangents
+    if (track.blendshapeTracks && window._animShowTangents) {
+      for (const [name, bTrack] of track.blendshapeTracks) {
+        if (!bTrack.times || bTrack.times.length < 2) continue;
+        if (window._animBsChannelVisible?.[name] === false) continue;
+        for (let i = 0; i < bTrack.times.length; i++) {
+          const t = bTrack.times[i];
+          const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+          const ky = this.valueToY(bTrack.values[i]);
+          const to = bTrack.tangentOffsets;
+          const rightDt = to?.[`${i}_right_dt`];
+          const rightDv = to?.[`${i}_right_dv`];
+          const leftDt  = to?.[`${i}_left_dt`];
+          const leftDv  = to?.[`${i}_left_dv`];
+          const slope    = reg.getBsSlope(bTrack, i);
+          const dtR = i < bTrack.times.length - 1 ? bTrack.times[i + 1] - bTrack.times[i] : 0.2;
+          const dtL = i > 0                        ? bTrack.times[i] - bTrack.times[i - 1] : 0.2;
+          const rightXOff = rightDt !== undefined ? (rightDt / visibleDuration) * tlW : 25;
+          const rightYOff = rightDv !== undefined ? -rightDv * this._zoomY : -slope * (rightDt !== undefined ? rightDt : dtR * 0.33) * this._zoomY;
+          const leftXOff  = leftDt  !== undefined ? (leftDt  / visibleDuration) * tlW : -25;
+          const leftYOff  = leftDv  !== undefined ? -leftDv  * this._zoomY : -slope * (leftDt  !== undefined ? leftDt  : -dtL * 0.33) * this._zoomY;
+
+          if (i < bTrack.times.length - 1 && TimelineHelper.isKeyHovered(kx + rightXOff, ky + rightYOff, rx, ry, 10)) {
+            this._isDraggingTangent = true;
+            this._activeTangentTrack = bTrack;
+            this._activeTangentIndex = i;
+            this._activeTangentSide = 'right';
+            this._activeTangentKx = kx;
+            this._activeTangentKy = ky;
+            this._activeTangentType = 'blendshape';
+            this._activeTangentBsName = name;
+            return;
+          }
+          if (i > 0 && TimelineHelper.isKeyHovered(kx + leftXOff, ky + leftYOff, rx, ry, 10)) {
+            this._isDraggingTangent = true;
+            this._activeTangentTrack = bTrack;
+            this._activeTangentIndex = i;
+            this._activeTangentSide = 'left';
+            this._activeTangentKx = kx;
+            this._activeTangentKy = ky;
+            this._activeTangentType = 'blendshape';
+            this._activeTangentBsName = name;
+            return;
+          }
+        }
+      }
+    }
+
     this._isDraggingMarquee = true;
     this._marqueeStart = { x: rx, y: ry };
     this._marqueeEnd = { x: rx, y: ry };
@@ -1135,6 +1355,17 @@ export default class GuiTimeline {
       }
     }
 
+    if (track.blendshapeTracks) {
+      track.blendshapeTracks.forEach((bTrack, name) => {
+        if (window._animBsChannelVisible?.[name] === false) return;
+        for (let i = 0; i < bTrack.values.length; i++) {
+          const val = bTrack.values[i];
+          if (val < minVal) minVal = val;
+          if (val > maxVal) maxVal = val;
+        }
+      });
+    }
+
     if (minVal === Infinity) {
       minVal = 0;
       maxVal = 1;
@@ -1169,7 +1400,16 @@ export default class GuiTimeline {
       minT = Math.min(minT, track.shapeTimes[0]);
       maxT = Math.max(maxT, track.shapeTimes[track.shapeTimes.length - 1]);
     }
-    
+
+    if (track.blendshapeTracks) {
+      track.blendshapeTracks.forEach((bTrack) => {
+        if (bTrack.times && bTrack.times.length > 0) {
+          minT = Math.min(minT, bTrack.times[0]);
+          maxT = Math.max(maxT, bTrack.times[bTrack.times.length - 1]);
+        }
+      });
+    }
+
     if (minT !== Infinity && maxT !== Infinity) {
       const duration = maxT - minT;
       this._viewStart = Math.max(0, minT - duration * 0.1);
@@ -1212,6 +1452,24 @@ export default class GuiTimeline {
     }
 
     if (ry < 50) {
+      // Fit View button
+      const fitBtnX = this._mode === 'graph' ? 245 : 115;
+      if (rx >= fitBtnX && rx <= fitBtnX + 60) {
+        this.autoFitGraph();
+        this.draw();
+        return;
+      }
+      // Frame Timeline button — snap view to full loop range
+      const frameBtnX = fitBtnX + 68;
+      if (rx >= frameBtnX && rx <= frameBtnX + 80) {
+        const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+        const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+        const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+        this._viewStart = ls;
+        this._viewDuration = Math.max(0.1, le - ls);
+        this.draw();
+        return;
+      }
       if (rx >= 10 && rx <= 100) {
         this._mode = this._mode === 'graph' ? 'dope' : 'graph';
         if (this._mode === 'graph') {
@@ -1248,12 +1506,7 @@ export default class GuiTimeline {
     } else {
       // Gutter click for Graph Editor channels in Desktop Timeline
       if (this._mode === 'graph' && rx < 200 && ry > 50) {
-        // Fit View Icon Click
-        if (rx >= 10 && rx <= 34 && ry >= this._cssHeight - 30 && ry <= this._cssHeight - 6) {
-          this.autoFitGraph();
-          this.draw();
-          return;
-        }
+        // Fit View button moved to toolbar — handled in ry < 50 block below
 
         const gutterY = 50 + 10;
         const rowH = 30;
@@ -1263,11 +1516,24 @@ export default class GuiTimeline {
         const activeMesh = this._main.getMesh();
         const track = activeMesh ? reg.tracks.get(activeMesh.getID()) : null;
         const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
-        
+
         if (channel >= 0 && channel < maxChannels) {
           if (rx >= 5 && rx <= 150) {
             if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
             window._animChannelVisible[channel] = !window._animChannelVisible[channel];
+            this.draw();
+            return;
+          }
+        }
+
+        // Blendshape channel visibility toggle
+        const bsOffset = channel - maxChannels;
+        if (bsOffset >= 0 && track && track.blendshapeTracks && rx >= 5 && rx <= 150) {
+          if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+          const bsNames = [...track.blendshapeTracks.keys()];
+          const bsName = bsNames[bsOffset];
+          if (bsName !== undefined) {
+            window._animBsChannelVisible[bsName] = window._animBsChannelVisible[bsName] === false ? true : false;
             this.draw();
             return;
           }
@@ -1555,7 +1821,7 @@ export default class GuiTimeline {
                   this._activeKeyframeType = 'shape';
                   this._keyDragStartRx = rx;
                   this._keyDragStartTime = t;
-                  
+
                   const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'shape' && k.index === i);
                   if (isPartSelection) {
                     this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
@@ -1569,14 +1835,59 @@ export default class GuiTimeline {
                     window._animSelectedKeys = [{ meshId, type: 'shape', index: i }];
                     window._animTransformBox = null;
                   }
-                  
+
                   keyFound = true;
                   break;
                 }
               }
             }
+
           }
         });
+        // Blendshape keys render below lane centre — check outside the lane-bounds gate
+        if (!keyFound) {
+          const bsTracks = Array.from(reg.tracks.entries());
+          bsTracks.forEach(([meshId, trackObj]) => {
+            if (keyFound) return;
+            if (!trackObj.blendshapeTracks) return;
+            const laneIdx = bsTracks.findIndex(([id]) => id === meshId);
+            const ty2 = headerH + (laneIdx * trackH);
+            let bIdx = 0;
+            trackObj.blendshapeTracks.forEach((bTrack, name) => {
+              if (keyFound || !bTrack.times) { bIdx++; return; }
+              const bKy = ty2 + trackH / 2 + 20 + bIdx * 10;
+              for (let i = 0; i < bTrack.times.length; i++) {
+                const t = bTrack.times[i];
+                const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+                if (Math.abs(rx - kx) < 10 && Math.abs(ry - bKy) < 10) {
+                  this._isDraggingKeyframe = true;
+                  this._activeKeyframeTrack = bTrack;
+                  this._activeMeshId = meshId;
+                  this._activeKeyframeIndex = i;
+                  this._activeKeyframeType = 'blendshape';
+                  this._activeBlendshapeName = name;
+                  this._keyDragStartRx = rx;
+                  this._keyDragStartTime = t;
+                  if (window._animationRegistry) {
+                    this._undoTracksBeforeMove = new Map();
+                    window._animationRegistry.tracks.forEach((tr, mId) => {
+                      this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr));
+                    });
+                  }
+                  const isPartSelection = window._animSelectedKeys &&
+                    window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'blendshape' && k.name === name && k.index === i);
+                  if (!isPartSelection) {
+                    window._animSelectedKeys = [{ meshId, type: 'blendshape', name, index: i }];
+                    window._animTransformBox = null;
+                  }
+                  keyFound = true;
+                  break;
+                }
+              }
+              bIdx++;
+            });
+          });
+        }
 
         if (keyFound) return;
       }
@@ -1714,11 +2025,12 @@ export default class GuiTimeline {
             meshId: this._activeMeshId,
             type: this._activeKeyframeType,
             index: this._activeKeyframeIndex,
+            name: this._activeBlendshapeName,
             time: this._keyDragStartTime,
             channel: this._activeKeyframeChannel,
             startVal: this._keyDragStartVal
           }];
-          
+
           TimelineHelper.moveKeys(window._animationRegistry, keysToMove, dt, dVal, mDurVal, this._main);
           if (this._main.render) this._main.render();
         } else {
@@ -1726,9 +2038,10 @@ export default class GuiTimeline {
             meshId: this._activeMeshId,
             type: this._activeKeyframeType,
             index: this._activeKeyframeIndex,
+            name: this._activeBlendshapeName,
             time: this._keyDragStartTime
           }];
-          
+
           TimelineHelper.moveKeys(window._animationRegistry, keysToMove, dt, undefined, mDurVal, this._main);
         }
       }
@@ -1926,29 +2239,38 @@ export default class GuiTimeline {
     } else if (this._isDraggingKeyframe) {
       const reg = window._animationRegistry;
       if (reg) {
+        const _getKeyTime = (key, track) => {
+          if (key.type === 'transform') return track.times?.[key.index] ?? 0;
+          if (key.type === 'shape') return track.shapeTimes?.[key.index] ?? 0;
+          if (key.type === 'blendshape' && key.name) return track.blendshapeTracks?.get(key.name)?.times?.[key.index] ?? 0;
+          return 0;
+        };
+
         const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
           const track = reg.tracks.get(key.meshId);
-          const times = key.type === 'transform' ? track.times : track.shapeTimes;
-          return { ...key, time: times ? times[key.index] : 0 };
+          if (!track) return { ...key, time: 0 };
+          return { ...key, time: _getKeyTime(key, track) };
         }) : [];
 
-        reg.tracks.forEach((track, meshId) => {
-          reg.sortTrack(track);
-        });
+        reg.tracks.forEach((track) => reg.sortTrack(track));
 
         if (window._animSelectedKeys) {
           window._animSelectedKeys = selectedKeysWithTimes.map(key => {
             const track = reg.tracks.get(key.meshId);
             if (!track) return key;
+
+            if (key.type === 'blendshape' && key.name) {
+              const bTrack = track.blendshapeTracks?.get(key.name);
+              if (!bTrack) return { ...key, index: -1 };
+              const newIdx = bTrack.times.findIndex(t => Math.abs(t - key.time) < 0.005);
+              return { ...key, index: newIdx };
+            }
+
             const times = key.type === 'transform' ? track.times : track.shapeTimes;
             if (!times) return key;
-            
             let newIdx = -1;
             for (let i = 0; i < times.length; i++) {
-              if (Math.abs(times[i] - key.time) < 0.005) {
-                newIdx = i;
-                break;
-              }
+              if (Math.abs(times[i] - key.time) < 0.005) { newIdx = i; break; }
             }
             return { ...key, index: newIdx };
           }).filter(k => k.index !== -1);
@@ -2322,12 +2644,25 @@ export default class GuiTimeline {
     const laneMax = Math.floor((y2 - headerH) / trackH);
 
     const newKeys = reg.getKeysInTimeRange(tMin, tMax, laneMin, laneMax);
-    
+
+    // Add blendshape keys in the marquee time range
+    tracks.forEach(([meshId, trackObj], laneIdx) => {
+      if (laneIdx < laneMin || laneIdx > laneMax) return;
+      if (!trackObj.blendshapeTracks) return;
+      trackObj.blendshapeTracks.forEach((bTrack, name) => {
+        if (!bTrack.times) return;
+        for (let i = 0; i < bTrack.times.length; i++) {
+          const t = bTrack.times[i];
+          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'blendshape', name, index: i });
+        }
+      });
+    });
+
     newKeys.forEach(nk => {
-      const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === nk.meshId && k.type === nk.type && k.index === nk.index);
-      if (!alreadySelected) {
-        window._animSelectedKeys.push(nk);
-      }
+      const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k =>
+        k.meshId === nk.meshId && k.type === nk.type && k.index === nk.index &&
+        (nk.type !== 'blendshape' || k.name === nk.name));
+      if (!alreadySelected) window._animSelectedKeys.push(nk);
     });
 
     // Automatically create transform box around selection!
@@ -2336,11 +2671,13 @@ export default class GuiTimeline {
       let maxT = -Infinity;
       window._animSelectedKeys.forEach(k => {
         const track = reg.tracks.get(k.meshId);
-        if (track) {
-          const t = k.type === 'transform' ? track.times[k.index] : track.shapeTimes[k.index];
-          if (t < minT) minT = t;
-          if (t > maxT) maxT = t;
-        }
+        if (!track) return;
+        let t;
+        if (k.type === 'transform') t = track.times?.[k.index];
+        else if (k.type === 'shape') t = track.shapeTimes?.[k.index];
+        else if (k.type === 'blendshape' && k.name) t = track.blendshapeTracks?.get(k.name)?.times?.[k.index];
+        if (t !== undefined && t < minT) minT = t;
+        if (t !== undefined && t > maxT) maxT = t;
       });
       window._animTransformBox = { startTime: minT, endTime: maxT };
     } else {
@@ -2423,6 +2760,27 @@ export default class GuiTimeline {
       ctx.fillStyle = '#fff';
       ctx.fillText(isTied ? 'Tangents: Tied' : 'Tangents: Broken', 175, 15);
     }
+
+    // Fit View button (toolbar, always visible)
+    const fitBtnX = this._mode === 'graph' ? 245 : 115;
+    const fitHovered = this._lastMouseX >= fitBtnX && this._lastMouseX <= fitBtnX + 60 &&
+                       this._lastMouseY >= 5 && this._lastMouseY <= 25;
+    ctx.fillStyle = fitHovered ? '#666' : '#444';
+    ctx.fillRect(fitBtnX, 5, 60, 20);
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Fit View', fitBtnX + 30, 15);
+
+    // Frame Timeline button — resets view to full loop range
+    const frameBtnX = fitBtnX + 68;
+    const frameHovered = this._lastMouseX >= frameBtnX && this._lastMouseX <= frameBtnX + 80 &&
+                         this._lastMouseY >= 5 && this._lastMouseY <= 25;
+    ctx.fillStyle = frameHovered ? '#666' : '#444';
+    ctx.fillRect(frameBtnX, 5, 80, 20);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Frame Timeline', frameBtnX + 40, 15);
 
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;

@@ -276,7 +276,7 @@ export default class TimelineHelper {
 
     track.tangentOffsets[`${prefix}${activeTangent.index}_${activeTangent.side}_dt`] = dt;
     
-    if (activeTangent.type === 'shape') {
+    if (activeTangent.type === 'shape' || activeTangent.type === 'blendshape') {
       track.tangentOffsets[`${activeTangent.index}_${activeTangent.side}_dv`] = dv;
     } else {
       track.tangentOffsets[`${prefix}${activeTangent.index}_${activeTangent.side}_dv_${selChannel}`] = dv;
@@ -287,7 +287,7 @@ export default class TimelineHelper {
     if (isTied) {
       const otherSide = activeTangent.side === 'right' ? 'left' : 'right';
       track.tangentOffsets[`${prefix}${activeTangent.index}_${otherSide}_dt`] = -dt;
-      if (activeTangent.type === 'shape') {
+      if (activeTangent.type === 'shape' || activeTangent.type === 'blendshape') {
         track.tangentOffsets[`${activeTangent.index}_${otherSide}_dv`] = -dv;
       } else {
         track.tangentOffsets[`${prefix}${activeTangent.index}_${otherSide}_dv_${selChannel}`] = -dv;

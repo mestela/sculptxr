@@ -560,12 +560,12 @@ export class AnimationControlPanel extends HTMLVRPanel {
     // ── Animation section ──────────────────────────────────────────────────
 
     root.querySelector('#acp-show-timeline').addEventListener('change', (e) => {
-      main._ctrlGui?._ctrlTimeline?.setVisibility(e.target.checked);
+      main.getGui?.()._ctrlTimeline?.setVisibility(e.target.checked);
     });
 
     root.querySelector('#acp-show-transform-box').addEventListener('change', (e) => {
       window._animShowTransformBox = e.target.checked;
-      main._ctrlGui?._ctrlTimeline?.draw();
+      main.getGui?.()._ctrlTimeline?.draw();
     });
 
     const fpsInput = root.querySelector('#acp-fps');
@@ -590,7 +590,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
       window._animMasterDuration = frames / fps();
       window._animLoopEnd = window._animMasterDuration;
       root.querySelector('#acp-loop-end').value = Math.round(window._animLoopEnd * fps());
-      main._ctrlGui?._ctrlTimeline?.draw();
+      main.getGui?.()._ctrlTimeline?.draw();
       this._requestPaint();
     });
 
@@ -599,7 +599,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
       window._animLoopStart = frames / fps();
       if (window._animLoopEnd <= window._animLoopStart)
         window._animLoopEnd = window._animLoopStart + 1 / fps();
-      main._ctrlGui?._ctrlTimeline?.draw();
+      main.getGui?.()._ctrlTimeline?.draw();
       this._requestPaint();
     });
 
@@ -608,7 +608,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
       window._animLoopEnd = frames / fps();
       if (window._animLoopEnd <= (window._animLoopStart || 0))
         window._animLoopEnd = (window._animLoopStart || 0) + 1 / fps();
-      main._ctrlGui?._ctrlTimeline?.draw();
+      main.getGui?.()._ctrlTimeline?.draw();
       this._requestPaint();
     });
 
@@ -736,9 +736,12 @@ export class AnimationControlPanel extends HTMLVRPanel {
         r.addShapeKey(target, t);
       } else if (window._animKeyMode === 'blendshape') {
         const track = r.tracks.get(target.getID());
-        const name = track?.editingBlendshape;
-        if (name) {
-          const weight = r.evaluateScalarTrack?.(track.blendshapeTracks?.get(name), t);
+        const name = track?.editingBlendshape || window._lastActiveBlendshape;
+        if (name && track?.blendshapeTracks?.has(name)) {
+          const bTrack = track.blendshapeTracks.get(name);
+          const weight = bTrack.times.length > 0
+            ? r.evaluateScalarTrack(bTrack, t)
+            : (window._lastActiveBlendshapeWeight ?? 0);
           r.setBlendshapeWeight?.(target, name, weight);
         }
       } else {
@@ -798,7 +801,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
 
     root.querySelector('#acp-show-tangents').addEventListener('change', (e) => {
       window._animShowTangents = e.target.checked;
-      main._ctrlGui?._ctrlTimeline?.draw();
+      main.getGui?.()._ctrlTimeline?.draw();
     });
 
     // ── Explicit drag handler for all range inputs ────────────────────────
@@ -920,7 +923,11 @@ export class AnimationControlPanel extends HTMLVRPanel {
       };
 
       slider.addEventListener('focus', () => { startVal = parseFloat(slider.value); });
-      slider.addEventListener('input', () => applyWeight(parseFloat(slider.value)));
+      slider.addEventListener('input', () => {
+        window._lastActiveBlendshape = name;
+        window._lastActiveBlendshapeWeight = parseFloat(slider.value);
+        applyWeight(parseFloat(slider.value));
+      });
       slider.addEventListener('change', () => {
         const newVal = parseFloat(slider.value), oldVal = startVal;
         main?.getStateManager?.()?.pushStateCustom(
@@ -946,6 +953,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
 
       row.querySelector('.acp-bs-edit').addEventListener('click', () => {
         const tr = reg.tracks.get(mesh.getID());
+        window._lastActiveBlendshape = name;
         if (tr?.editingBlendshape === name) {
           reg.exitBlendshapeEditMode?.(mesh);
         } else {
@@ -992,6 +1000,8 @@ export class AnimationControlPanel extends HTMLVRPanel {
     root.querySelector('#acp-record').classList.toggle('recording',   rec);
 
     // Animation section
+    const timeline = this._main?.getGui?.()._ctrlTimeline;
+    root.querySelector('#acp-show-timeline').checked = !!(timeline?._visible);
     root.querySelector('#acp-fps').value           = f;
     root.querySelector('#acp-fps-val').textContent = f;
     const spd = window._animPlaybackSpeed || 1.0;

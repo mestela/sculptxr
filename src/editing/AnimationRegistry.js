@@ -834,24 +834,51 @@ class AnimationRegistry {
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
   }
 
+  getBsSlope(bTrack, i) {
+    const n = bTrack.times.length;
+    if (n < 2) return 0;
+    if (i === 0) return (bTrack.values[1] - bTrack.values[0]) / (bTrack.times[1] - bTrack.times[0]);
+    if (i === n - 1) return (bTrack.values[n - 1] - bTrack.values[n - 2]) / (bTrack.times[n - 1] - bTrack.times[n - 2]);
+    const dt = bTrack.times[i + 1] - bTrack.times[i - 1];
+    return dt !== 0 ? (bTrack.values[i + 1] - bTrack.values[i - 1]) / dt : 0;
+  }
+
   evaluateScalarTrack(bTrack, time) {
     if (bTrack.times.length === 0) return 0;
     if (bTrack.times.length === 1) return bTrack.values[0];
-    
+    // Constant extrapolation outside key range
+    if (time <= bTrack.times[0]) return bTrack.values[0];
+
     let idx = 0;
-    while (idx < bTrack.times.length - 1 && bTrack.times[idx + 1] < time) {
-      idx++;
-    }
-    
+    while (idx < bTrack.times.length - 1 && bTrack.times[idx + 1] < time) idx++;
+
     if (idx === bTrack.times.length - 1) return bTrack.values[idx];
-    
+
     const t1 = bTrack.times[idx];
     const t2 = bTrack.times[idx + 1];
     const v1 = bTrack.values[idx];
     const v2 = bTrack.values[idx + 1];
-    
-    const alpha = (time - t1) / (t2 - t1);
-    return v1 + (v2 - v1) * alpha;
+    const dt = t2 - t1;
+    const alpha = (time - t1) / dt;
+
+    const to = bTrack.tangentOffsets;
+    const rightDt = to?.[`${idx}_right_dt`];
+    const rightDv = to?.[`${idx}_right_dv`];
+    const leftDt  = to?.[`${idx + 1}_left_dt`];
+    const leftDv  = to?.[`${idx + 1}_left_dv`];
+
+    const slope0 = this.getBsSlope(bTrack, idx);
+    const slope1 = this.getBsSlope(bTrack, idx + 1);
+    const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
+    const dt1 = leftDt  !== undefined ? leftDt  : -dt * 0.33;
+    const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
+    const dv1 = leftDv  !== undefined ? leftDv  : slope1 * dt1;
+
+    const p1x = dt0 / dt;
+    const p2x = 1 + dt1 / dt;
+    const t = this.getBezierT(alpha, p1x, p2x);
+    const omt = 1 - t;
+    return omt*omt*omt*v1 + 3*omt*omt*t*(v1+dv0) + 3*omt*t*t*(v2+dv1) + t*t*t*v2;
   }
 
   deleteBlendshape(mesh, name) {
@@ -1336,6 +1363,17 @@ class AnimationRegistry {
       } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
         const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
         track.shapeTimes[key.index] = newTime;
+      } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {
+        const bTrack = track.blendshapeTracks.get(key.name);
+        if (bTrack && bTrack.times[key.index] !== undefined) {
+          bTrack.times[key.index] = Math.max(0, Math.min(masterDuration, key.time + dt));
+          // Keep times sorted
+          const idx = key.index;
+          while (idx > 0 && bTrack.times[idx] < bTrack.times[idx - 1]) {
+            [bTrack.times[idx], bTrack.times[idx-1]] = [bTrack.times[idx-1], bTrack.times[idx]];
+            [bTrack.values[idx], bTrack.values[idx-1]] = [bTrack.values[idx-1], bTrack.values[idx]];
+          }
+        }
       }
     });
   }
@@ -1349,6 +1387,11 @@ class AnimationRegistry {
         track.positions[key.index * 3 + key.channel] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
       } else if (key.type === 'shape' && track.shapeOutputTimes && key.index !== undefined) {
         track.shapeOutputTimes[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
+      } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {
+        const bTrack = track.blendshapeTracks.get(key.name);
+        if (bTrack && key.index !== undefined) {
+          bTrack.values[key.index] = Math.max(0, Math.min(1, (key.startVal !== undefined ? key.startVal : 0) + dVal));
+        }
       }
     });
   }

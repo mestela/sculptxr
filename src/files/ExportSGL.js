@@ -4,11 +4,12 @@ var Export = {};
 
 // versions
 // 1 initial
-// 2 + camera,shader, matcap, wire, alpha, flat 
+// 2 + camera,shader, matcap, wire, alpha, flat
 // 3 faces u32 instead of i32
 // 4 label string
 // 5 (SGL2) Multiresolution stack & Animation track caching
-Export.VERSION = 7;
+// 8 blendshape tracks (baseShape, deltas, weight keyframes, tangents)
+Export.VERSION = 8;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -73,8 +74,25 @@ Export.exportSGL = function (meshes, main) {
       nbBytes += nbTransKeys * 16; // quat
       nbBytes += nbTransKeys * 12; // scale
       nbBytes += nbTransKeys * 36; // tangents (9 floats per key)
-      
+
       nbBytes += 12 + 16 + 12; // rest pos/quat/scale
+    }
+
+    // Blendshape tracks
+    nbBytes += 4; // hasBlendshapes flag
+    var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
+    if (track && track.blendshapes && track.blendshapes.size > 0) {
+      nbBytes += 4; // hasBaseShape flag
+      if (track.baseShape) nbBytes += activeVertCount * 12; // baseShape verts
+      nbBytes += 4; // nbBlendshapes
+      track.blendshapes.forEach((delta, name) => {
+        nbBytes += 64;                 // name (16 uint32s, 2 chars each)
+        nbBytes += activeVertCount * 12; // delta verts
+        var bTrack = track.blendshapeTracks ? track.blendshapeTracks.get(name) : null;
+        var nbBsKeys = bTrack ? bTrack.times.length : 0;
+        nbBytes += 4;              // nbKeys
+        nbBytes += nbBsKeys * 28;  // per key: time, value, rightDt, rightDv, leftDt, leftDv, tied (7 floats)
+      });
     }
   }
 
@@ -307,10 +325,70 @@ Export.exportSGL = function (meshes, main) {
         var rP = track.restPos || [0,0,0];
         var rQ = track.restQuat || [0,0,0,1];
         var rS = track.restScale || [1,1,1];
-        
+
         f32a[off++] = rP[0]; f32a[off++] = rP[1]; f32a[off++] = rP[2];
         f32a[off++] = rQ[0]; f32a[off++] = rQ[1]; f32a[off++] = rQ[2]; f32a[off++] = rQ[3];
         f32a[off++] = rS[0]; f32a[off++] = rS[1]; f32a[off++] = rS[2];
+      }
+
+      // Write blendshape tracks
+      var activeVertCount = (isMulti ? mesh.getCurrentMesh() : mesh).getNbVertices();
+      var hasBlendshapes = track && track.blendshapes && track.blendshapes.size > 0 ? 1 : 0;
+      u32a[off++] = hasBlendshapes;
+
+      if (hasBlendshapes) {
+        var hasBaseShape = track.baseShape ? 1 : 0;
+        u32a[off++] = hasBaseShape;
+        if (hasBaseShape) {
+          var bsCopy = Math.min(track.baseShape.length, activeVertCount * 3);
+          f32a.set(track.baseShape.subarray(0, bsCopy), off);
+          off += bsCopy;
+          if (bsCopy < activeVertCount * 3) {
+            f32a.fill(0, off, off + (activeVertCount * 3 - bsCopy));
+            off += (activeVertCount * 3 - bsCopy);
+          }
+        }
+
+        u32a[off++] = track.blendshapes.size;
+
+        track.blendshapes.forEach((delta, name) => {
+          // Name: 16 uint32s, 2 chars each (up to 32 chars)
+          for (var n = 0; n < 16; n++) {
+            var c1 = (n * 2     < name.length) ? name.charCodeAt(n * 2)     : 0;
+            var c2 = (n * 2 + 1 < name.length) ? name.charCodeAt(n * 2 + 1) : 0;
+            u32a[off++] = (c1 << 16) | c2;
+          }
+
+          // Delta vertices
+          var dCopy = Math.min(delta.length, activeVertCount * 3);
+          f32a.set(delta.subarray(0, dCopy), off);
+          off += dCopy;
+          if (dCopy < activeVertCount * 3) {
+            f32a.fill(0, off, off + (activeVertCount * 3 - dCopy));
+            off += (activeVertCount * 3 - dCopy);
+          }
+
+          // Weight keyframes
+          var bTrack = track.blendshapeTracks ? track.blendshapeTracks.get(name) : null;
+          var nbBsKeys = bTrack ? bTrack.times.length : 0;
+          u32a[off++] = nbBsKeys;
+          for (var k = 0; k < nbBsKeys; k++) {
+            var bsDt = bTrack.times[k + 1] !== undefined ? bTrack.times[k + 1] - bTrack.times[k] : 0.2;
+            var to = bTrack.tangentOffsets;
+            var rDt = to && to[`${k}_right_dt`] !== undefined ? to[`${k}_right_dt`] : bsDt * 0.33;
+            var rDv = to && to[`${k}_right_dv`] !== undefined ? to[`${k}_right_dv`] : 0;
+            var lDt = to && to[`${k}_left_dt`]  !== undefined ? to[`${k}_left_dt`]  : -bsDt * 0.33;
+            var lDv = to && to[`${k}_left_dv`]  !== undefined ? to[`${k}_left_dv`]  : 0;
+            var tied = (!to || to[`${k}_tied`] !== false) ? 1.0 : 0.0;
+            f32a[off++] = bTrack.times[k];
+            f32a[off++] = bTrack.values[k];
+            f32a[off++] = rDt;
+            f32a[off++] = rDv;
+            f32a[off++] = lDt;
+            f32a[off++] = lDv;
+            f32a[off++] = tied;
+          }
+        });
       }
     }
 

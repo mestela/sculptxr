@@ -278,9 +278,73 @@ Import.importSGL = function (buffer, gl, main) {
         }
 
         AnimationRegistry.tracks.set(finalMesh.getID(), trackObj);
-        
+
         if (maxTime > (window._animMasterDuration || 0)) {
           window._animMasterDuration = maxTime;
+        }
+      }
+    }
+
+    // Read blendshape tracks (version 8+)
+    if (version >= 8) {
+      var hasBlendshapes = u32a[off++];
+      if (hasBlendshapes) {
+        var nbVerts = finalMesh.getNbVertices();
+        var trackObj = AnimationRegistry.tracks.get(finalMesh.getID());
+        if (!trackObj) {
+          trackObj = {
+            shapeTimes: [], shapes: [], shapeOutputTimes: [],
+            times: [], positions: [], quaternions: [], scales: [],
+            restPos: [0,0,0], restQuat: [0,0,0,1], restScale: [1,1,1],
+            playbackTime: 0, lastUpdate: performance.now()
+          };
+          AnimationRegistry.tracks.set(finalMesh.getID(), trackObj);
+        }
+
+        var hasBaseShape = u32a[off++];
+        if (hasBaseShape) {
+          trackObj.baseShape = new Float32Array(nbVerts * 3);
+          trackObj.baseShape.set(f32a.subarray(off, off + nbVerts * 3));
+          off += nbVerts * 3;
+        }
+
+        trackObj.blendshapes    = new Map();
+        trackObj.blendshapeTracks = new Map();
+
+        var nbBlendshapes = u32a[off++];
+        for (var b = 0; b < nbBlendshapes; b++) {
+          // Read name
+          var bsName = '';
+          for (var n = 0; n < 16; n++) {
+            var packed = u32a[off++];
+            var c1 = (packed >> 16) & 0xFFFF;
+            var c2 = packed & 0xFFFF;
+            if (c1) bsName += String.fromCharCode(c1);
+            if (c2) bsName += String.fromCharCode(c2);
+          }
+
+          // Read delta
+          var delta = new Float32Array(nbVerts * 3);
+          delta.set(f32a.subarray(off, off + nbVerts * 3));
+          off += nbVerts * 3;
+          trackObj.blendshapes.set(bsName, delta);
+
+          // Read weight keyframes
+          var nbBsKeys = u32a[off++];
+          var bTrack = { times: [], values: [] };
+          if (nbBsKeys > 0) {
+            bTrack.tangentOffsets = {};
+            for (var k = 0; k < nbBsKeys; k++) {
+              bTrack.times.push(f32a[off++]);
+              bTrack.values.push(f32a[off++]);
+              bTrack.tangentOffsets[`${k}_right_dt`] = f32a[off++];
+              bTrack.tangentOffsets[`${k}_right_dv`] = f32a[off++];
+              bTrack.tangentOffsets[`${k}_left_dt`]  = f32a[off++];
+              bTrack.tangentOffsets[`${k}_left_dv`]  = f32a[off++];
+              bTrack.tangentOffsets[`${k}_tied`]     = f32a[off++] > 0.5;
+            }
+          }
+          trackObj.blendshapeTracks.set(bsName, bTrack);
         }
       }
     }
