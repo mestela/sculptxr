@@ -349,15 +349,12 @@ class Scene {
           this._animPanel = new AnimationControlPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
           this._animPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
           window._animPanel = this._animPanel; // expose for console debugging
-          console.log('[AnimPanel] created — press N to toggle');
-          // toggleAnimPanel is set up in initVRControllers — this block only runs
-          // if initVRControllers hasn't run yet (rare desktop edge case).
+          console.log('[AnimPanel] created');
           if (!window.toggleAnimPanel) {
-            window.toggleAnimPanel = (visible) => {
-              const wrapper = document.getElementById('_acp_wrapper');
-              if (!wrapper) { console.warn('[AnimPanel] wrapper not ready'); return; }
-              const show = visible !== undefined ? !!visible : wrapper.style.display !== 'flex';
-              wrapper.style.display = show ? 'flex' : 'none';
+            window.toggleAnimPanel = () => {
+              const tabGroup = document.querySelector('.sidebar-tab-group');
+              tabGroup?.show?.('animation');
+              this._animPanel?.syncFromState();
             };
           }
           if (!window._animPanelKeyBound) {
@@ -3031,26 +3028,20 @@ class Scene {
         window._animPanel = this._animPanel;
         if (window.screenLog) window.screenLog('[HTMLVRPanel] AnimationControlPanel created', 'cyan');
 
-        // Build a persistent desktop overlay wrapper — #acp-root lives here permanently.
-        // We only toggle visibility, never move the element again.
-        const acpWrapper = document.createElement('div');
-        acpWrapper.id = '_acp_wrapper';
-        acpWrapper.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;align-items:center;justify-content:center;pointer-events:auto;';
+        // Embed #acp-root directly in the sidebar Animation tab.
+        const slot = document.getElementById('_acp_sidebar_panel');
         const acpSrc = document.getElementById('acp-root');
-        if (acpSrc) acpWrapper.appendChild(acpSrc);
-        document.body.appendChild(acpWrapper);
-        acpWrapper.addEventListener('click', (e) => {
-          if (e.target === acpWrapper) window.toggleAnimPanel(false);
-        });
+        if (slot && acpSrc) {
+          acpSrc.style.cssText = 'width:100%;box-sizing:border-box;border-radius:0;border:none;border-top:1px solid #313244;';
+          slot.style.cssText = 'overflow-y:auto;padding:0;';
+          slot.appendChild(acpSrc);
+        }
 
-        window.toggleAnimPanel = (visible) => {
-          const wrapper = document.getElementById('_acp_wrapper');
-          if (!wrapper) { console.warn('[AnimPanel] wrapper not found'); return; }
-          const isShown = wrapper.style.display === 'flex';
-          const show = visible !== undefined ? !!visible : !isShown;
-          wrapper.style.display = show ? 'flex' : 'none';
-          window._htmlvrOverlayOpen = show;
-          if (show) this._animPanel?.syncFromState();
+        // On desktop the panel lives in the sidebar — toggle just activates the animation tab.
+        window.toggleAnimPanel = () => {
+          const tabGroup = document.querySelector('.sidebar-tab-group');
+          tabGroup?.show?.('animation');
+          this._animPanel?.syncFromState();
         };
 
         if (!window._animPanelKeyBound) {

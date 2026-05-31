@@ -12,8 +12,6 @@ import GuiSculpting from './GuiSculpting.js';
 import GuiStates from './GuiStates.js';
 import GuiTablet from './GuiTablet.js';
 import GuiTimeline from './GuiTimeline.js';
-import GuiAnimation from './GuiAnimation.js';
-import GuiBlendshapes from './GuiBlendshapes.js';
 import ShaderContour from '../render/shaders/ShaderContour.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
@@ -292,6 +290,7 @@ class Gui {
     
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
+    animationPanel.id = '_acp_sidebar_panel';
 
     tabGroup.appendChild(renderingPanel);
     tabGroup.appendChild(topologyPanel);
@@ -313,8 +312,7 @@ class Gui {
     ctrls[idc++] = this._ctrlRendering = new GuiRendering(makeTabParent(renderingPanel), this);
     ctrls[idc++] = this._ctrlTopology = new GuiTopology(makeTabParent(topologyPanel), this);
     ctrls[idc++] = this._ctrlSculpting = new GuiSculpting(makeTabParent(sculptingPanel), this);
-    ctrls[idc++] = this._ctrlAnimation = new GuiAnimation(animationPanel, this);
-    ctrls[idc++] = this._ctrlBlendshapes = new GuiBlendshapes(this._ctrlAnimation._blendshapesContent, this);
+    // Animation tab content is provided by AnimationControlPanel (embedded by Scene.js)
 
     // Initialize custom timeline panel
     this._ctrlTimeline = new GuiTimeline(this._main);
@@ -509,7 +507,7 @@ class Gui {
     this._ctrlTopology.updateMesh();
     this._ctrlSculpting.updateMesh();
     this._ctrlScene.updateMesh();
-    if (this._ctrlBlendshapes) this._ctrlBlendshapes.updateMesh();
+    if (window._animPanel) window._animPanel.refreshBlendshapes(this._main.getMesh(), this._main);
     this.updateMeshInfo();
   }
 

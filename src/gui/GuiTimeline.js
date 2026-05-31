@@ -1470,6 +1470,22 @@ export default class GuiTimeline {
         this.draw();
         return;
       }
+      // Tangents toggle (graph mode only)
+      if (this._mode === 'graph') {
+        const tanBtnX = frameBtnX + 88;
+        if (rx >= tanBtnX && rx <= tanBtnX + 65) {
+          window._animShowTangents = !window._animShowTangents;
+          this.draw();
+          return;
+        }
+      }
+      // Transform Box toggle (both modes)
+      const tboxBtnX = frameBtnX + 88 + (this._mode === 'graph' ? 73 : 0);
+      if (rx >= tboxBtnX && rx <= tboxBtnX + 60) {
+        window._animShowTransformBox = !window._animShowTransformBox;
+        this.draw();
+        return;
+      }
       if (rx >= 10 && rx <= 100) {
         this._mode = this._mode === 'graph' ? 'dope' : 'graph';
         if (this._mode === 'graph') {
@@ -2781,6 +2797,28 @@ export default class GuiTimeline {
     ctx.fillRect(frameBtnX, 5, 80, 20);
     ctx.fillStyle = '#fff';
     ctx.fillText('Frame Timeline', frameBtnX + 40, 15);
+
+    // Tangents toggle button (graph mode only)
+    if (this._mode === 'graph') {
+      const tanBtnX = frameBtnX + 88;
+      const tanOn = !!window._animShowTangents;
+      const tanHovered = this._lastMouseX >= tanBtnX && this._lastMouseX <= tanBtnX + 65 &&
+                         this._lastMouseY >= 5 && this._lastMouseY <= 25;
+      ctx.fillStyle = tanOn ? '#4488ff' : (tanHovered ? '#666' : '#444');
+      ctx.fillRect(tanBtnX, 5, 65, 20);
+      ctx.fillStyle = '#fff';
+      ctx.fillText('Tangents', tanBtnX + 32, 15);
+    }
+
+    // Transform Box toggle (both modes)
+    const tboxBtnX = frameBtnX + 88 + (this._mode === 'graph' ? 73 : 0);
+    const tboxOn = !!window._animShowTransformBox;
+    const tboxHovered = this._lastMouseX >= tboxBtnX && this._lastMouseX <= tboxBtnX + 60 &&
+                        this._lastMouseY >= 5 && this._lastMouseY <= 25;
+    ctx.fillStyle = tboxOn ? '#4488ff' : (tboxHovered ? '#666' : '#444');
+    ctx.fillRect(tboxBtnX, 5, 60, 20);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('T.Box', tboxBtnX + 30, 15);
 
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;

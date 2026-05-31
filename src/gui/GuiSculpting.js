@@ -297,9 +297,8 @@ class GuiSculpting {
     switch (shk) {
     case Enums.KeyAction.DELETE:
       const timeline = this._ctrlGui._ctrlTimeline;
-      const animation = this._ctrlGui._ctrlAnimation;
       if (timeline && timeline._visible && timeline.isMouseOver()) {
-        if (animation) animation.deleteKey();
+        window._animPanel?.deleteKey();
       } else {
         main.deleteCurrentSelection();
       }

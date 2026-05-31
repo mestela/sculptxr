@@ -765,17 +765,13 @@ class AnimationRegistry {
           tr.blendshapes.delete(name);
           tr.blendshapeTracks.delete(name);
           this.applyBlendshapes(mesh);
-          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
-            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
-          }
+          window._animPanel?.refreshBlendshapes(mesh, window.app);
         },
         () => { // REDO
           tr.blendshapes.set(name, d);
           tr.blendshapeTracks.set(name, { times: [], values: [] });
           this.applyBlendshapes(mesh);
-          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
-            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
-          }
+          window._animPanel?.refreshBlendshapes(mesh, window.app);
         },
         false,
         "Create Blendshape"
@@ -897,17 +893,13 @@ class AnimationRegistry {
           if (delta) tr.blendshapes.set(name, delta);
           if (bTrack) tr.blendshapeTracks.set(name, bTrack);
           this.applyBlendshapes(mesh);
-          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
-            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
-          }
+          window._animPanel?.refreshBlendshapes(mesh, window.app);
         },
         () => { // REDO
           tr.blendshapes.delete(name);
           tr.blendshapeTracks.delete(name);
           this.applyBlendshapes(mesh);
-          if (window.app && window.app.getGui() && window.app.getGui()._ctrlBlendshapes) {
-            window.app.getGui()._ctrlBlendshapes.refreshList(mesh);
-          }
+          window._animPanel?.refreshBlendshapes(mesh, window.app);
         },
         false,
         "Delete Blendshape"
@@ -1516,10 +1508,9 @@ class AnimationRegistry {
 
         window._animLastDt = dt;
 
-        if (window._animMasterDuration && window._animMasterDuration > 0) {
-          const lStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-          const lEnd = (window._animLoopEnd !== undefined && window._animLoopEnd > lStart) ? window._animLoopEnd : window._animMasterDuration;
-
+        const lStart = window._animLoopStart ?? 0.0;
+        const lEnd   = window._animLoopEnd ?? window._animMasterDuration ?? 0;
+        if (lEnd > lStart) {
           if (this.globalPlaybackTime > lEnd) {
             this.globalPlaybackTime = lStart;
           } else if (this.globalPlaybackTime < lStart) {

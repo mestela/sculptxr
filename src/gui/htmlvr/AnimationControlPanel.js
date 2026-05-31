@@ -12,6 +12,7 @@
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import TimelineHelper from '../TimelineHelper.js';
 
 const CSS = `
 /* ── AnimationControlPanel — Catppuccin Mocha ───────────────────────────── */
@@ -419,17 +420,12 @@ export class AnimationControlPanel extends HTMLVRPanel {
 
   static _buildHTML() {
     return `
-      <div class="acp-timecode" id="acp-timecode">0:00.000</div>
-
       <!-- 1. Animation -->
       <div class="acp-section">
         <div class="acp-section-title">Animation</div>
         <div class="acp-stack">
           <label class="acp-check-row">
             <input type="checkbox" id="acp-show-timeline"> Show Timeline
-          </label>
-          <label class="acp-check-row">
-            <input type="checkbox" id="acp-show-transform-box"> Show Transform Box
           </label>
           <div class="acp-row">
             <span class="acp-lbl">FPS</span>
@@ -443,15 +439,15 @@ export class AnimationControlPanel extends HTMLVRPanel {
           </div>
           <div class="acp-frame-grid">
             <div class="acp-frame-cell">
-              <label>Duration (f)</label>
+              <label>Duration</label>
               <input type="number" id="acp-duration" min="1" step="1" value="48">
             </div>
             <div class="acp-frame-cell">
-              <label>Loop Start (f)</label>
+              <label>Start</label>
               <input type="number" id="acp-loop-start" min="0" step="1" value="0">
             </div>
             <div class="acp-frame-cell">
-              <label>Loop End (f)</label>
+              <label>End</label>
               <input type="number" id="acp-loop-end" min="1" step="1" value="48">
             </div>
           </div>
@@ -517,9 +513,6 @@ export class AnimationControlPanel extends HTMLVRPanel {
           <label class="acp-check-row">
             <input type="checkbox" id="acp-autokey"> Autokey
           </label>
-          <label class="acp-check-row">
-            <input type="checkbox" id="acp-show-tangents"> Show Tangents
-          </label>
         </div>
       </div>
 
@@ -555,17 +548,10 @@ export class AnimationControlPanel extends HTMLVRPanel {
       return all && all.length > 0 ? all[0] : null;
     };
 
-    // ── Timecode (updated in syncFromState, no interaction) ────────────────
-
     // ── Animation section ──────────────────────────────────────────────────
 
     root.querySelector('#acp-show-timeline').addEventListener('change', (e) => {
       main.getGui?.()._ctrlTimeline?.setVisibility(e.target.checked);
-    });
-
-    root.querySelector('#acp-show-transform-box').addEventListener('change', (e) => {
-      window._animShowTransformBox = e.target.checked;
-      main.getGui?.()._ctrlTimeline?.draw();
     });
 
     const fpsInput = root.querySelector('#acp-fps');
@@ -799,16 +785,25 @@ export class AnimationControlPanel extends HTMLVRPanel {
       window._animAutoKey = e.target.checked;
     });
 
-    root.querySelector('#acp-show-tangents').addEventListener('change', (e) => {
-      window._animShowTangents = e.target.checked;
-      main.getGui?.()._ctrlTimeline?.draw();
-    });
 
     // ── Explicit drag handler for all range inputs ────────────────────────
     // Native range-input drag can be stolen by window-level pointer handlers
     // (HTMLVRPanel desktop raycasters). Explicit capture guarantees it works
     // in the DOM overlay and in VR equally.
     this._setupRangeDrag(root);
+
+    // Initialise globals from panel HTML defaults if not already set by a
+    // previous session or loaded file.  This ensures looping works even when
+    // the user never touches these fields.
+    if (window._animMasterDuration === undefined) {
+      window._animMasterDuration = (parseInt(root.querySelector('#acp-duration').value, 10) || 48) / fps();
+    }
+    if (window._animLoopStart === undefined) {
+      window._animLoopStart = (parseInt(root.querySelector('#acp-loop-start').value, 10) || 0) / fps();
+    }
+    if (window._animLoopEnd === undefined) {
+      window._animLoopEnd = (parseInt(root.querySelector('#acp-loop-end').value, 10) || 48) / fps();
+    }
 
     // ── Blendshapes section ────────────────────────────────────────────────
 
@@ -987,13 +982,6 @@ export class AnimationControlPanel extends HTMLVRPanel {
     const f       = window._animFPS || 24;
 
     // Timecode
-    const t   = window._animCurrentTime || 0;
-    const min = Math.floor(t / 60);
-    const sec = Math.floor(t % 60);
-    const ms  = Math.round((t % 1) * 1000);
-    root.querySelector('#acp-timecode').textContent =
-      `${min}:${String(sec).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
-
     // Transport states
     root.querySelector('#acp-play-fwd').classList.toggle('active',    playFwd && !rec);
     root.querySelector('#acp-play-rev').classList.toggle('active',    playRev && !rec);
@@ -1010,7 +998,6 @@ export class AnimationControlPanel extends HTMLVRPanel {
     root.querySelector('#acp-duration').value    = Math.round((window._animMasterDuration || 2) * f);
     root.querySelector('#acp-loop-start').value  = Math.round((window._animLoopStart || 0) * f);
     root.querySelector('#acp-loop-end').value    = Math.round(((window._animLoopEnd ?? window._animMasterDuration) || 2) * f);
-    root.querySelector('#acp-show-transform-box').checked = !!window._animShowTransformBox;
 
     // Record section
     root.querySelector('#acp-count-in').checked     = !!window._animCountIn;
@@ -1027,8 +1014,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
     );
 
     // Keyframe section
-    root.querySelector('#acp-autokey').checked       = !!window._animAutoKey;
-    root.querySelector('#acp-show-tangents').checked = !!window._animShowTangents;
+    root.querySelector('#acp-autokey').checked = !!window._animAutoKey;
 
     // Blendshapes — rebuild list when mesh or blendshape count changes
     const mesh    = this._main?.getMesh?.() || this._main?._mesh;
@@ -1060,6 +1046,42 @@ export class AnimationControlPanel extends HTMLVRPanel {
   }
 
   _requestPaint() { this.markDirty(); }
+
+  deleteKey() {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    const mesh = this._main.getMesh();
+    if (!mesh) return;
+
+    const beforeState = new Map();
+    reg.tracks.forEach((track, meshId) => beforeState.set(meshId, TimelineHelper.cloneTrack(track)));
+
+    let actionName = '';
+    if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {
+      reg.deleteSelectedKeys(window._animSelectedKeys);
+      actionName = 'delete selected keys';
+    } else {
+      const t = window._animCurrentTime || 0;
+      if (window._animKeyMode === 'shape' || window._animKeyMode === 0) {
+        reg.deleteShapeKey(mesh, t);
+        actionName = 'delete shape key';
+      } else {
+        reg.deleteTransformKey(mesh, t);
+        actionName = 'delete transform key';
+      }
+    }
+    reg.update(mesh, true);
+
+    const afterState = new Map();
+    reg.tracks.forEach((track, meshId) => afterState.set(meshId, TimelineHelper.cloneTrack(track)));
+
+    const timeline = window.app?.getGui?.()?._ctrlTimeline;
+    this._main.getStateManager().pushStateCustom(
+      () => { beforeState.forEach((t, id) => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
+      () => { afterState.forEach((t, id)  => reg.tracks.set(id, TimelineHelper.cloneTrack(t))); this._main.render(); timeline?.draw(); },
+      false, actionName
+    );
+  }
 
   _onMeshCreated(_scene) {
     requestAnimationFrame(() => this.syncFromState());
