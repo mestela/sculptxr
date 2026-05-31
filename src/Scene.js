@@ -2168,8 +2168,6 @@ class Scene {
     // that happens when VR starts (worldGroup gets set to vrScale=0.008 + xrWorldOffset).
     this._worldGroup.updateMatrixWorld(true);
     this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
-    this._spectator3LogDone = false;
-    this._spectator3LogDone2 = false;
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;
@@ -2470,7 +2468,8 @@ class Scene {
           const vFovDeg    = 2.0 * Math.atan(1.0 / m11) * (180 / Math.PI);
           const dispAspect = (canvas.clientWidth || canvas.width) /
                              (canvas.clientHeight || canvas.height) || 1;
-          cam.fov    = vFovDeg;
+          if (this._mirrorFovScale === undefined) this._mirrorFovScale = 0.5;
+          cam.fov    = vFovDeg * this._mirrorFovScale;
           cam.aspect = dispAspect;
           cam.near   = 0.01;
           cam.far    = 50;
@@ -2634,12 +2633,6 @@ class Scene {
           this._worldGroup.scale.set(0.701, 0.701, 0.701);
         }
 
-        if (!this._spectator3LogDone2) {
-          this._spectator3LogDone2 = true;
-          console.log('[Spectator3] wg scale after swap:', this._worldGroup.scale.toArray().map(v=>v.toFixed(4)),
-            'pos:', this._worldGroup.position.toArray().map(v=>v.toFixed(3)));
-          console.log('[Spectator3] desktopCam.matrixWorld pos:', new THREE.Vector3().setFromMatrixPosition(desktopCam.matrixWorld).toArray().map(v=>v.toFixed(3)));
-        }
         renderer.render(this._scene, desktopCam);
 
         this._worldGroup.position.copy(savedPos3);

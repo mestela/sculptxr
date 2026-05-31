@@ -1141,6 +1141,11 @@ class SculptGL extends Scene {
       this._isWheelingIn = true;
       this._camera.start(this._mouseX, this._mouseY);
     }
+    // In VR mirror mode, mousewheel zooms the mirror FOV instead of the desktop camera.
+    if (this._renderer?.xr?.isPresenting && this._spectatorViewMode === 1) {
+      this._mirrorFovScale = Math.max(0.1, Math.min(1.0, (this._mirrorFovScale ?? 0.5) - dir * 0.05));
+      return;
+    }
     this._camera.zoom(dir * 0.02);
     Multimesh.RENDER_HINT = Multimesh.CAMERA;
     this.render();
