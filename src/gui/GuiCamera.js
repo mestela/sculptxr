@@ -50,6 +50,7 @@ class GuiCamera {
     optionsCanvas[0] = 'Blank (VR active indicator)';
     optionsCanvas[1] = 'Mirror (headset view)';
     optionsCanvas[2] = 'Desktop free camera';
+    optionsCanvas[3] = 'Spectator (rotation-coupled)';
     var initialCanvas = typeof this._main._spectatorViewMode === 'number' ? this._main._spectatorViewMode : 0;
     menu.addCombobox('', initialCanvas, this.onDesktopCanvasModeChange.bind(this), optionsCanvas);
 

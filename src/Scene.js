@@ -175,12 +175,16 @@ class Scene {
     this._spectatorMode = Enums.SpectatorMode.DECOUPLED;
 
     // Desktop canvas mode while VR is active.
-    // 0=blank(default)  1=mirror  2=desktop free camera
-    this._spectatorViewMode = 0;
+    // 0=blank  1=mirror  2=desktop free camera
+    // PC VR: default to spectator (rotation-coupled) — stable desktop view that
+    // tracks which face of the sculpt the VR user is working on.
+    // Standalone (mobile): blank to conserve the mobile GPU.
+    this._spectatorViewMode = this._isQuestStandalone ? 0 : 3;
 
     // How many VR frames to skip between spectator renders.
-    // 0=every frame, 1=every 2nd, 3=every 4th (default), 7=every 8th.
-    this._spectatorFrameSkip = 3;
+    // 0=every frame, 1=every 2nd, 3=every 4th, 7=every 8th.
+    // PC VR: full rate (desktop GPU has headroom). Standalone: every 4th.
+    this._spectatorFrameSkip = this._isQuestStandalone ? 3 : 0;
 
     // STATIONARY Mode variables
     this._desktopOffset = vec3.create();
@@ -216,7 +220,7 @@ class Scene {
     //   window.setSpectatorMode(2)  → desktop free camera on canvas (~18fps throttled)
     window.setSpectatorMode = (n) => {
       this._spectatorViewMode = n;
-      const names = ['blank', 'mirror', 'desktop free camera'];
+      const names = ['blank', 'mirror', 'desktop free camera', 'spectator (rotation-coupled)'];
       console.log(`[Spectator] mode → ${names[n] ?? n}`);
     };
 
@@ -2164,6 +2168,8 @@ class Scene {
     // that happens when VR starts (worldGroup gets set to vrScale=0.008 + xrWorldOffset).
     this._worldGroup.updateMatrixWorld(true);
     this._desktopCameraCache.worldGroupMatrix = this._worldGroup.matrixWorld.clone();
+    this._spectator3LogDone = false;
+    this._spectator3LogDone2 = false;
 
     // Enable Three.js WebXR. setReferenceSpaceType must be called before setSession.
     this._renderer.xr.enabled = true;
@@ -2408,9 +2414,12 @@ class Scene {
   // Called every VR frame but does as little work as possible by default.
   //
   // Modes (set via window.setSpectatorMode(n) or this._spectatorViewMode):
-  //   0 = BLANK   — clear canvas to black; obvious "VR active" indicator (default)
-  //   1 = MIRROR  — render left-eye view to canvas, throttled ~18fps
-  //   2 = DESKTOP — render from cached desktop free camera, throttled ~18fps
+  //   0 = BLANK    — clear canvas to black; obvious "VR active" indicator
+  //   1 = MIRROR   — headset-centre view rendered to canvas
+  //   2 = DESKTOP  — desktop free camera (stable orbit, ignores VR pose)
+  //   3 = SPECTATOR — desktop orbit distance + headset orientation relative to
+  //                   the worldGroup; tracks sculpt rotations/moves without
+  //                   inheriting positional jitter from headset movement
   //
   _renderSpectatorCanvas() {
     const mode = this._spectatorViewMode ?? 0;
@@ -2527,6 +2536,117 @@ class Scene {
         this._worldGroup.quaternion.copy(savedQuat);
         this._worldGroup.scale.copy(savedScale);
         this._worldGroup.updateMatrixWorld(true);
+
+      } else if (mode === 3) {
+        // ── SPECTATOR: rotation-coupled, position-stable ─────────────────────
+        //
+        // Inherits the headset's orientation relative to the worldGroup (sculpt
+        // space), but keeps the desktop orbit distance.  This means:
+        //   • Sculpt rotations/pans driven by dual-grip show on desktop ✓
+        //   • Head positional jitter (sway, walking) is NOT inherited ✓
+        //   • The desktop viewer always sees which "face" the VR person is
+        //     working on, without the nausea of full VR mirror
+        //
+        // R_rel = R_wg⁻¹ × R_head   (headset orientation in sculpt space)
+        // cam_pos = orbitCenter  −  headForward × orbitDist
+
+        if (!this._spectatorLeftEyeMatrix) { /* wait for first headset frame */ } else {
+        const cache      = this._desktopCameraCache;
+        const desktopCam = this._camera.getThreeCamera();
+
+        // --- Headset position in SculptGL space ---
+        // worldGroup.matrixWorld maps sculpt → VR world; its inverse maps back.
+        // This is read BEFORE the worldGroup swap below.
+        const wgInvMatrix  = this._worldGroup.matrixWorld.clone().invert();
+        const headWorldPos = new THREE.Vector3().setFromMatrixPosition(
+          this._spectatorLeftEyeMatrix
+        );
+        const headSculptPos = headWorldPos.applyMatrix4(wgInvMatrix);
+
+        // Start from the actual desktop camera world position — same source mode 2 uses,
+        // guaranteed to be correctly outside the mesh at the right orbit radius.
+        const desktopCamWorldPos = new THREE.Vector3().setFromMatrixPosition(
+          new THREE.Matrix4().fromArray(cache.view).invert()
+        );
+        const orbitCenter = new THREE.Vector3(
+          cache.center[0], cache.center[1], cache.center[2]
+        );
+
+        // Horizontal orbit radius (XZ only — we keep the desktop camera's Y/height).
+        const horizRadius = Math.sqrt(
+          (desktopCamWorldPos.x - orbitCenter.x) ** 2 +
+          (desktopCamWorldPos.z - orbitCenter.z) ** 2
+        );
+
+        // Headset XZ direction in desktop world space.
+        // headSculptPos is in VR sculpt space (wgInvMatrix scale≈125); applying
+        // cache.worldGroupMatrix (scale 0.701) converts sculpt→desktop world space.
+        const headDesktopWorld = headSculptPos.clone().applyMatrix4(cache.worldGroupMatrix);
+        const orbitDir = new THREE.Vector3(
+          headDesktopWorld.x - orbitCenter.x,
+          0,
+          headDesktopWorld.z - orbitCenter.z
+        );
+        // Safety: if headset is directly above orbit centre (degenerate XZ), use desktop direction.
+        if (orbitDir.lengthSq() < 0.001) {
+          orbitDir.set(desktopCamWorldPos.x - orbitCenter.x, 0, desktopCamWorldPos.z - orbitCenter.z);
+        }
+        orbitDir.normalize();
+
+        // Camera placed at same horizontal radius and same Y as the desktop camera,
+        // rotated to face the headset's XZ direction.
+        const camPos = new THREE.Vector3(
+          orbitCenter.x + orbitDir.x * horizRadius,
+          desktopCamWorldPos.y,
+          orbitCenter.z + orbitDir.z * horizRadius
+        );
+
+        const headUp = new THREE.Vector3(0, 1, 0);
+
+        // lookAt sets rotation only — must set position separately.
+        const camToWorld = new THREE.Matrix4().lookAt(camPos, orbitCenter, headUp);
+        camToWorld.setPosition(camPos);
+        desktopCam.matrixWorld.copy(camToWorld);
+        desktopCam.matrixWorldInverse.copy(camToWorld).invert();
+        desktopCam.matrix.copy(camToWorld);
+
+        // Restore desktop projection (overwritten each frame by renderer.xr.getCamera)
+        desktopCam.projectionMatrix.fromArray(cache.proj);
+        desktopCam.projectionMatrixInverse.copy(desktopCam.projectionMatrix).invert();
+
+        // --- Swap worldGroup to desktop state and render ---
+        const savedPos3   = this._worldGroup.position.clone();
+        const savedQuat3  = this._worldGroup.quaternion.clone();
+        const savedScale3 = this._worldGroup.scale.clone();
+
+        const wgDesktop3 = cache.worldGroupMatrix;
+        if (wgDesktop3) {
+          const _p = new THREE.Vector3();
+          const _q = new THREE.Quaternion();
+          const _s = new THREE.Vector3();
+          wgDesktop3.decompose(_p, _q, _s);
+          this._worldGroup.position.copy(_p);
+          this._worldGroup.quaternion.copy(_q);
+          this._worldGroup.scale.copy(_s);
+        } else {
+          this._worldGroup.position.set(0, 0, 0);
+          this._worldGroup.quaternion.identity();
+          this._worldGroup.scale.set(0.701, 0.701, 0.701);
+        }
+
+        if (!this._spectator3LogDone2) {
+          this._spectator3LogDone2 = true;
+          console.log('[Spectator3] wg scale after swap:', this._worldGroup.scale.toArray().map(v=>v.toFixed(4)),
+            'pos:', this._worldGroup.position.toArray().map(v=>v.toFixed(3)));
+          console.log('[Spectator3] desktopCam.matrixWorld pos:', new THREE.Vector3().setFromMatrixPosition(desktopCam.matrixWorld).toArray().map(v=>v.toFixed(3)));
+        }
+        renderer.render(this._scene, desktopCam);
+
+        this._worldGroup.position.copy(savedPos3);
+        this._worldGroup.quaternion.copy(savedQuat3);
+        this._worldGroup.scale.copy(savedScale3);
+        this._worldGroup.updateMatrixWorld(true);
+        } // end else (spectatorLeftEyeMatrix available)
       }
 
     } catch (e) {

@@ -24,6 +24,10 @@ export default defineConfig({
     host: '0.0.0.0', // Listen on all network interfaces
     port: 8080,
     https: true,
+    hmr: {
+      protocol: 'wss',
+      clientPort: 8080,
+    },
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
