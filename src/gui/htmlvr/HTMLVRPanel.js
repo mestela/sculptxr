@@ -299,7 +299,7 @@ export class HTMLVRPanel {
     this._desktopRenderer = renderer;
 
     this._desktopPointerDown = (e) => {
-      if (renderer.xr.isPresenting || !this.mesh) return;
+      if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       this._screenToRay(e.clientX, e.clientY, camera);
       const hits = this._raycaster.intersectObject(this.mesh);
       if (hits.length) {
@@ -309,7 +309,7 @@ export class HTMLVRPanel {
     };
 
     this._desktopPointerMove = (e) => {
-      if (renderer.xr.isPresenting || !this.mesh) return;
+      if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       this._screenToRay(e.clientX, e.clientY, camera);
       const hits = this._raycaster.intersectObject(this.mesh);
       if (hits.length) {
@@ -320,7 +320,7 @@ export class HTMLVRPanel {
     };
 
     this._desktopPointerUp = (e) => {
-      if (renderer.xr.isPresenting || !this.mesh) return;
+      if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       if (e.target.hasPointerCapture?.(e.pointerId)) {
         e.target.releasePointerCapture(e.pointerId);
       }

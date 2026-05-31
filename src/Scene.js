@@ -30,10 +30,11 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
-import { BrushPanel      } from './gui/htmlvr/BrushPanel.js';
-import { MiniPanel       } from './gui/htmlvr/MiniPanel.js';
-import { ToolPickerPanel } from './gui/htmlvr/ToolPickerPanel.js';
-import { MainMenuPanel   } from './gui/htmlvr/MainMenuPanel.js';
+import { BrushPanel             } from './gui/htmlvr/BrushPanel.js';
+import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
+import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
+import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
+import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -269,6 +270,7 @@ class Scene {
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
+    this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -338,6 +340,37 @@ class Scene {
     this.initWebGL();
     if (!this._gl)
       return;
+
+    // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
+    // Using a short timeout so the DOM is settled before the polyfill host canvas is created.
+    setTimeout(() => {
+      try {
+        if (!this._animPanel && this._scene && this._renderer) {
+          this._animPanel = new AnimationControlPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+          this._animPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+          window._animPanel = this._animPanel; // expose for console debugging
+          console.log('[AnimPanel] created — press N to toggle');
+          // toggleAnimPanel is set up in initVRControllers — this block only runs
+          // if initVRControllers hasn't run yet (rare desktop edge case).
+          if (!window.toggleAnimPanel) {
+            window.toggleAnimPanel = (visible) => {
+              const wrapper = document.getElementById('_acp_wrapper');
+              if (!wrapper) { console.warn('[AnimPanel] wrapper not ready'); return; }
+              const show = visible !== undefined ? !!visible : wrapper.style.display !== 'flex';
+              wrapper.style.display = show ? 'flex' : 'none';
+            };
+          }
+          if (!window._animPanelKeyBound) {
+            window._animPanelKeyBound = true;
+            window.addEventListener('keydown', (e) => {
+              if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.shiftKey) window.toggleAnimPanel?.();
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[AnimPanel] init failed:', err);
+      }
+    }, 500);
 
     this._sculptManager = new SculptManager(this);
     this._background = new Background(this._gl, this);
@@ -995,6 +1028,12 @@ class Scene {
       if (this._mainMenuPanel) {
         try { this._mainMenuPanel.update(true); } catch (_) {}
       }
+      if (this._animPanel) {
+        try {
+          this._animPanel.update(true);
+          this._animPanel.syncFromState();
+        } catch (_) {}
+      }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
@@ -1077,6 +1116,19 @@ class Scene {
         console.log(`[XR Timing] initVRControllers took ${took}ms (deferred post-frame)`);
         if (window.screenLog) window.screenLog(`[XR] Controllers init +${took}ms`, "lime");
       });
+    }
+
+    // [HTMLVRPanel] Desktop texture updates — only needed when NOT in XR.
+    // In XR the panel updates run inside the isPresenting block above.
+    // On desktop, requestPaint() fires via natural window.rAF (no drainRAF needed).
+    if (!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
+      if (this._animPanel?.mesh?.visible) {
+        try {
+          this._animPanel.update(false);
+          this._animPanel.syncFromState();
+          this._drawFullScene = true; // keep rendering while panel is visible
+        } catch (_) {}
+      }
     }
 
     // Only alter global GL state if not in WebXR
@@ -2968,6 +3020,47 @@ class Scene {
         console.log('[HTMLVRPanel] Main menu ready — ] HTML overlay, [ polyfill canvas, M 3D toggle | mmDebug() / mmShowCanvas() in console');
       } catch (err) {
         console.error('[HTMLVRPanel] MainMenuPanel init failed:', err);
+      }
+    }
+
+    // [HTMLVRPanel] Init AnimationControlPanel (also inited early in start() for desktop)
+    if (!this._animPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._animPanel = new AnimationControlPanel(this, this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._animPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        window._animPanel = this._animPanel;
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] AnimationControlPanel created', 'cyan');
+
+        // Build a persistent desktop overlay wrapper — #acp-root lives here permanently.
+        // We only toggle visibility, never move the element again.
+        const acpWrapper = document.createElement('div');
+        acpWrapper.id = '_acp_wrapper';
+        acpWrapper.style.cssText = 'display:none;position:fixed;inset:0;z-index:99999;align-items:center;justify-content:center;pointer-events:auto;';
+        const acpSrc = document.getElementById('acp-root');
+        if (acpSrc) acpWrapper.appendChild(acpSrc);
+        document.body.appendChild(acpWrapper);
+        acpWrapper.addEventListener('click', (e) => {
+          if (e.target === acpWrapper) window.toggleAnimPanel(false);
+        });
+
+        window.toggleAnimPanel = (visible) => {
+          const wrapper = document.getElementById('_acp_wrapper');
+          if (!wrapper) { console.warn('[AnimPanel] wrapper not found'); return; }
+          const isShown = wrapper.style.display === 'flex';
+          const show = visible !== undefined ? !!visible : !isShown;
+          wrapper.style.display = show ? 'flex' : 'none';
+          window._htmlvrOverlayOpen = show;
+          if (show) this._animPanel?.syncFromState();
+        };
+
+        if (!window._animPanelKeyBound) {
+          window._animPanelKeyBound = true;
+          window.addEventListener('keydown', (e) => {
+            if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.shiftKey) window.toggleAnimPanel?.();
+          });
+        }
+      } catch (err) {
+        console.error('[AnimPanel] init failed:', err);
       }
     }
 
