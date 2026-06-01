@@ -88,20 +88,10 @@ const CSS = `
 /* ── Sliders ─────────────────────────────────────────────────────────────── */
 #acp-root input[type=range] {
   flex: 1;
-  -webkit-appearance: none;
+  accent-color: #89b4fa;
   height: 4px;
-  border-radius: 2px;
-  background: #45475a;
-  outline: none;
   cursor: pointer;
-}
-#acp-root input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px; height: 16px;
-  border-radius: 50%;
-  background: #89b4fa;
-  cursor: pointer;
-  box-shadow: 0 0 0 3px rgba(137,180,250,0.2);
+  min-width: 0;
 }
 
 /* ── Number inputs ───────────────────────────────────────────────────────── */

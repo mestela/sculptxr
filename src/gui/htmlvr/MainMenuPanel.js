@@ -463,6 +463,9 @@ function buildShellHTML() {
         <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
         </button>
+        <button class="mm-tab-btn" data-section="animation" title="Animation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>
+        </button>
       </div>
       <div id="mm-content"></div>
     </div>
@@ -1030,6 +1033,53 @@ export function buildSectionHTML_sculpting(main) {
   `;
 }
 
+export function buildSectionHTML_animation() {
+  const fps      = window._animFPS          ?? 24;
+  const speed    = window._animSpeed        ?? 1.0;
+  const duration = Math.round((window._animMasterDuration ?? 2) * fps);
+  const autoKey  = window._animAutoKey      ?? false;
+  const countIn  = window._animCountIn      ?? false;
+
+  return `
+    <div class="mm-section-title">Transport</div>
+    <div class="mm-row" style="gap:4px;flex-wrap:wrap">
+      <button class="mm-action-btn" id="mm-anim-to-start"   style="flex:0 0 auto;padding:4px 8px">|◀</button>
+      <button class="mm-action-btn" id="mm-anim-prev"       style="flex:0 0 auto;padding:4px 8px">◀◀</button>
+      <button class="mm-action-btn" id="mm-anim-play-rev"   style="flex:0 0 auto;padding:4px 8px">◀</button>
+      <button class="mm-action-btn" id="mm-anim-stop"       style="flex:0 0 auto;padding:4px 8px">■</button>
+      <button class="mm-action-btn" id="mm-anim-play-fwd"   style="flex:0 0 auto;padding:4px 8px">▶</button>
+      <button class="mm-action-btn" id="mm-anim-next"       style="flex:0 0 auto;padding:4px 8px">▶▶</button>
+      <button class="mm-action-btn" id="mm-anim-to-end"     style="flex:0 0 auto;padding:4px 8px">▶|</button>
+      <button class="mm-action-btn" id="mm-anim-record"     style="flex:0 0 auto;padding:4px 8px;color:#f38ba8">●</button>
+    </div>
+
+    <div class="mm-section-title">Keyframes</div>
+    <button class="mm-action-btn" id="mm-anim-add-key">+ Add Keyframe</button>
+    <button class="mm-action-btn" id="mm-anim-copy-key">📋 Copy Key</button>
+    <button class="mm-action-btn" id="mm-anim-paste-key">📥 Paste Key</button>
+    <button class="mm-action-btn" id="mm-anim-clear-all">🗑 Clear All</button>
+
+    <div class="mm-section-title">Settings</div>
+    <div class="mm-row">
+      <span class="mm-lbl">FPS</span>
+      <input type="range" id="mm-anim-fps" min="1" max="60" step="1" value="${fps}">
+      <span class="mm-val" id="mm-anim-fps-val">${fps}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Speed</span>
+      <input type="range" id="mm-anim-speed" min="0.1" max="4.0" step="0.1" value="${speed}">
+      <span class="mm-val" id="mm-anim-speed-val">${speed.toFixed(1)}x</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Duration (frames)</span>
+      <input type="range" id="mm-anim-duration" min="1" max="500" step="1" value="${duration}">
+      <span class="mm-val" id="mm-anim-duration-val">${duration}</span>
+    </div>
+    <button class="mm-toggle${autoKey?' active':''}" id="mm-anim-autokey">AutoKey</button>
+    <button class="mm-toggle${countIn?' active':''}" id="mm-anim-countin">Count-In</button>
+  `;
+}
+
 // ── MainMenuPanel class ──────────────────────────────────────────────────────
 
 export class MainMenuPanel extends HTMLVRPanel {
@@ -1206,7 +1256,8 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'scene':     html = buildSectionHTML_scene(main);     break;
         case 'topology':  html = buildSectionHTML_topology(main);  break;
         case 'rendering': html = buildSectionHTML_rendering(main); break;
-        case 'sculpting': html = buildSectionHTML_sculpting(main);  break;
+        case 'sculpting': html = buildSectionHTML_sculpting(main); break;
+        case 'animation': html = buildSectionHTML_animation();     break;
       }
     }
 
@@ -1414,7 +1465,96 @@ export class MainMenuPanel extends HTMLVRPanel {
       wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'sculpting') {
       wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
+    } else if (section === 'animation') {
+      this._wireSectionAnimation(el, lightRepaint);
     }
+  }
+
+  _wireSectionAnimation(el, repaint) {
+    const q    = (id) => el.querySelector(id);
+    const reg  = ()  => window._animationRegistry;
+    const mesh = ()  => this._main.getMesh?.();
+    const sync = ()  => { window._animPanel?.syncFromState?.(); repaint(); };
+
+    const stepTime = (delta) => {
+      window._animCurrentTime = Math.max(0, (window._animCurrentTime || 0) + delta);
+      reg()?.update?.(mesh(), true);
+      repaint();
+    };
+
+    q('#mm-anim-to-start')?.addEventListener('click', () => {
+      window._animCurrentTime = 0; reg()?.update?.(mesh(), true); repaint();
+    });
+    q('#mm-anim-to-end')?.addEventListener('click', () => {
+      window._animCurrentTime = window._animMasterDuration ?? 2; reg()?.update?.(mesh(), true); repaint();
+    });
+    q('#mm-anim-prev')?.addEventListener('click', () => stepTime(-1 / (window._animFPS || 24)));
+    q('#mm-anim-next')?.addEventListener('click', () => stepTime(1  / (window._animFPS || 24)));
+
+    q('#mm-anim-play-rev')?.addEventListener('click', () => {
+      const r = reg();
+      if (window._animPlaying && r?.playbackDirection === -1) { window._animPlaying = false; r?.stopRecording?.(true); }
+      else { window._animPlaying = true; if (r) r.playbackDirection = -1; }
+      sync();
+    });
+    q('#mm-anim-play-fwd')?.addEventListener('click', () => {
+      const r = reg();
+      if (window._animPlaying && r?.playbackDirection !== -1) { window._animPlaying = false; r?.stopRecording?.(true); }
+      else { window._animPlaying = true; if (r) r.playbackDirection = 1; }
+      sync();
+    });
+    q('#mm-anim-stop')?.addEventListener('click', () => {
+      window._animPlaying = false; reg()?.stopRecording?.(true); sync();
+    });
+    q('#mm-anim-record')?.addEventListener('click', () => {
+      const r = reg(); if (!r) return;
+      if (r.isRecording) r.stopRecording?.();
+      else r.startRecording?.(mesh());
+      sync();
+    });
+
+    q('#mm-anim-add-key')?.addEventListener('click', () => {
+      const r = reg(); const m = mesh(); if (!r || !m) return;
+      const t = window._animCurrentTime || 0;
+      if (window._animKeyMode === 'shape') r.addShapeKey?.(m, t);
+      else r.addTransformKey?.(m, t);
+      sync();
+    });
+    q('#mm-anim-copy-key')?.addEventListener('click', () => {
+      const r = reg(); const m = mesh(); if (!r || !m) return;
+      const t = window._animCurrentTime || 0;
+      if (window._animKeyMode === 'shape') r.copyShapeKey?.(m, t);
+      else r.copyTransformKey?.(m, t);
+    });
+    q('#mm-anim-paste-key')?.addEventListener('click', () => {
+      const r = reg(); const m = mesh(); if (!r || !m) return;
+      const t = window._animCurrentTime || 0;
+      if (window._animKeyMode === 'shape' && r.clipboardShape) { r.pasteShapeKey?.(m, t); r.update(m, true); }
+      else if (r.clipboardTransform) { r.pasteTransformKey?.(m, t); r.update(m, true); }
+      sync();
+    });
+    q('#mm-anim-clear-all')?.addEventListener('click', () => {
+      const r = reg(); if (!r) return;
+      r.stopRecording?.(true); r.tracks.clear();
+      window._animCurrentTime = 0; r.globalPlaybackTime = 0; window._animPlaying = false;
+      sync();
+    });
+
+    this._wireSlider(q('#mm-anim-fps'), q('#mm-anim-fps-val'), (v) => {
+      window._animFPS = v; sync();
+    }, v => String(v));
+    this._wireSlider(q('#mm-anim-speed'), q('#mm-anim-speed-val'), (v) => {
+      window._animSpeed = v;
+    }, v => v.toFixed(1) + 'x');
+    this._wireSlider(q('#mm-anim-duration'), q('#mm-anim-duration-val'), (v) => {
+      window._animMasterDuration = v / (window._animFPS || 24); sync();
+    }, v => String(v));
+
+    const wireToggle = (id, getter, setter) => {
+      q(id)?.addEventListener('click', (e) => { setter(!getter()); e.currentTarget.classList.toggle('active', getter()); repaint(); });
+    };
+    wireToggle('#mm-anim-autokey', () => window._animAutoKey, v => { window._animAutoKey = v; });
+    wireToggle('#mm-anim-countin', () => window._animCountIn, v => { window._animCountIn = v; });
   }
 
   // ── Slider helper ──────────────────────────────────────────────────────────
