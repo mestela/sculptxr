@@ -16,7 +16,7 @@
  *   │Sculpt│                                                 │
  *   └──────┴─────────────────────────────────────────────────┘
  *
- * _activeMenu:    null | 'files'|'history'|'reference'|'settings'|'about'
+ * _activeMenu:    null | 'history'|'reference'|'settings'|'about'
  * _activeSection: 'scene'|'topology'|'rendering'|'sculpting'
  *
  * When _activeMenu is non-null, content shows the top-menu content.
@@ -31,6 +31,10 @@ import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
+import Tablet from '../../misc/Tablet.js';
+import TR from '../GuiTR.js';
+import { VERSION } from '../../Version.js';
+import releaseText from '../../../docs/releases.md?raw';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
 const MM_W         = 480;   // total DOM width  (px)
@@ -467,42 +471,14 @@ function buildShellHTML() {
 
 // ── Content builders ─────────────────────────────────────────────────────────
 
-function buildMenuHTML_files(main) {
+export function buildMenuHTML_files(main) {
   const guiFiles  = main.getGui?.()._ctrlFiles ?? null;
   const exportAll = guiFiles?._exportAll ?? true;
   const objZbrush = guiFiles?._objColorZbrush ?? false;
   const objAppend = guiFiles?._objColorAppended ?? false;
-  const saves     = guiFiles?._browserSaves ?? [];
-
-  // Gallery thumbnails
-  const thumbs = saves.length === 0
-    ? '<div class="mm-info">No saves yet</div>'
-    : saves.map(s => {
-        const key   = s.key ?? s.id ?? '';
-        const ts    = s.value?.timestamp ?? 0;
-        const thumb = s.value?.thumb ?? '';
-        const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
-        const img   = thumb
-          ? `<img src="${thumb}" alt="save">`
-          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px">🗿</div>`;
-        return `
-          <div class="mm-storage-item">
-            ${img}
-            <span class="mm-storage-date">${date}</span>
-            <div class="mm-storage-btns">
-              <button class="mm-action-btn mm-storage-load" data-save-key="${key}">Load</button>
-              <button class="mm-action-btn danger mm-storage-del" data-save-key="${key}">Del</button>
-            </div>
-          </div>`;
-      }).join('');
 
   return `
-    <div class="mm-section-title">Browser Storage</div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-browser-save">💾 Save scene</button>
-      <button class="mm-action-btn" id="mm-storage-refresh">↻ Refresh</button>
-    </div>
-    <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
+    <button class="mm-action-btn" id="mm-browser-saves">💾 Browser Saves…</button>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj">Add mesh (obj, sgl, ply, stl)</button>
@@ -533,7 +509,7 @@ function buildMenuHTML_files(main) {
   `;
 }
 
-function buildMenuHTML_history(main) {
+export function buildMenuHTML_history(main) {
   const sm  = main.getStateManager?.() ?? main._stateManager;
   const maxV = /OculusBrowser/.test(navigator.userAgent) ? 30 : 500;
   const cur  = sm?.limit ?? 50;
@@ -583,11 +559,16 @@ function buildMenuHTML_settings(main) {
   const isRaycast   = !main._vrUseVolumeIntersect;
   const isAmbi      = !!main._vrAmbidextrousCursors;
 
-  // Controller options (value = index into list)
-  const ctrlModels  = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
+  // Controller options
+  const ctrlModels = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
     'meta-quest-touch-pro','oculus-touch-v3','oculus-touch-v2',
     'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
+  const ctrlLabels = ['Auto','Quest+','Quest+ v2','Quest Pro','Touch v3','Touch v2',
+    'Index','Vive','GalaxyXR','Odyssey'];
   const curCtrl = ctrlModels.indexOf(window._xrControllerOverride ?? 'Auto');
+  const ctrlBtns = ctrlModels.map((m, i) =>
+    `<button class="mm-choice${i === curCtrl ? ' active' : ''}" data-ctrl-idx="${i}">${ctrlLabels[i]}</button>`
+  ).join('');
 
   const wfTypes = [
     { id: 1, label: 'Smooth' },
@@ -595,10 +576,6 @@ function buildMenuHTML_settings(main) {
     { id: 2, label: 'Full'   },
   ];
   const curWfType = main.getMesh?.()?.getWireframeType?.() ?? 1;
-
-  const ctrlOptions = ctrlModels.map((m, i) =>
-    `<option value="${i}"${i === curCtrl ? ' selected' : ''}>${m}</option>`
-  ).join('');
 
   const wfTypeBtns = wfTypes.map(t =>
     `<button class="mm-choice${curWfType === t.id ? ' active' : ''}" data-wf-type="${t.id}">${t.label}</button>`
@@ -646,7 +623,7 @@ function buildMenuHTML_settings(main) {
     </div>
 
     <div class="mm-section-title">Controller Model</div>
-    <select id="mm-ctrl-select" class="mm-select">${ctrlOptions}</select>
+    <div class="mm-choice-grid cols-3" id="mm-ctrl-model-grid">${ctrlBtns}</div>
 
     <div class="mm-section-title">Wireframe</div>
     <div class="mm-row">
@@ -1171,14 +1148,6 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _setMenu(name) {
     this._activeMenu = (this._activeMenu === name) ? null : name;
-    // Pre-load browser saves when opening Files so thumbnails are ready
-    if (this._activeMenu === 'files') {
-      const guiFiles = this._main.getGui?.()._ctrlFiles ?? null;
-      guiFiles?.refreshBrowserSaves?.().then(() => {
-        this._lastContentKey = '';
-        this._rebuildContent();
-      });
-    }
     this._rebuildContent();
   }
 
@@ -1225,7 +1194,8 @@ export class MainMenuPanel extends HTMLVRPanel {
     let html = '';
     if (this._activeMenu) {
       switch (this._activeMenu) {
-        case 'files':     html = buildMenuHTML_files(main);     break;
+        case 'files':         html = buildMenuHTML_files(main);     break;
+        case 'browser-saves': html = '<button class="mm-action-btn" id="mm-back-to-files" style="margin-bottom:8px">← Back to Files</button>' + buildMenuHTML_browserSaves(main); break;
         case 'history':   html = buildMenuHTML_history(main);   break;
         case 'reference': html = buildMenuHTML_reference();     break;
         case 'settings':  html = buildMenuHTML_settings(main);  break;
@@ -1264,98 +1234,15 @@ export class MainMenuPanel extends HTMLVRPanel {
     const paint = () => this.markDirty();
 
     if (menu === 'files') {
-      const guiFiles = main.getGui?.()._ctrlFiles ?? null;
-
-      q('#mm-import-obj')?.addEventListener('click', () => {
-        document.getElementById('fileopen')?.click();
+      wireMenuFiles(el, main, paint, () => {
+        this._setMenu('browser-saves');
       });
-      q('#mm-import-scale')?.addEventListener('click', () => {
-        main._autoMatrix = !main._autoMatrix;
-        q('#mm-import-scale')?.classList.toggle('active', main._autoMatrix);
-        paint();
-      });
-      q('#mm-import-srgb')?.addEventListener('click', () => {
-        main._vertexSRGB = !main._vertexSRGB;
-        q('#mm-import-srgb')?.classList.toggle('active', main._vertexSRGB);
-        paint();
-      });
-      q('#mm-export-all')?.addEventListener('click', () => {
-        if (guiFiles) { guiFiles._exportAll = !guiFiles._exportAll; }
-        q('#mm-export-all')?.classList.toggle('active', guiFiles?._exportAll ?? true);
-        paint();
-      });
-      q('#mm-export-sxr')?.addEventListener('click', () => guiFiles?.saveFileAsSGL?.());
-      q('#mm-export-glb')?.addEventListener('click', () => guiFiles?.saveFileAsGLB?.());
-      q('#mm-browser-save')?.addEventListener('click', () => {
-        guiFiles?.saveToBrowserStorage?.();
-        // Refresh gallery after a short delay to let the save complete
-        setTimeout(() => {
-          guiFiles?.refreshBrowserSaves?.().then(() => {
-            this._lastContentKey = ''; // force rebuild so thumbnails appear
-            this._rebuildContent();
-          });
-        }, 800);
-      });
-
-      q('#mm-storage-refresh')?.addEventListener('click', () => {
-        guiFiles?.refreshBrowserSaves?.().then(() => {
-          this._lastContentKey = '';
-          this._rebuildContent();
-        });
-      });
-
-      // Gallery load / delete
-      el.querySelectorAll('.mm-storage-load').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.saveKey;
-          if (key) guiFiles?.loadSpecificBrowserSave?.(key);
-        });
-      });
-      el.querySelectorAll('.mm-storage-del').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const key = btn.dataset.saveKey;
-          if (key) {
-            guiFiles?.deleteBrowserSave?.(key);
-            setTimeout(() => {
-              this._lastContentKey = '';
-              this._rebuildContent();
-            }, 300);
-          }
-        });
-      });
-      q('#mm-export-obj')?.addEventListener('click', () => guiFiles?.saveFileAsOBJ?.());
-      q('#mm-export-ply')?.addEventListener('click', () => guiFiles?.saveFileAsPLY?.());
-      q('#mm-export-stl')?.addEventListener('click', () => guiFiles?.saveFileAsSTL?.());
-
-      const texSlider = q('#mm-tex-size');
-      const texVal    = q('#mm-tex-size-val');
-      if (texSlider && texVal) {
-        texSlider.addEventListener('input', () => {
-          texVal.textContent = Math.round(Math.pow(2, texSlider.value));
-          paint();
-        });
-        texVal.textContent = Math.round(Math.pow(2, texSlider.value));
-      }
-      q('#mm-save-diffuse')?.addEventListener('click',    () => guiFiles?.saveTextureDiffuse?.());
-      q('#mm-save-roughness')?.addEventListener('click',  () => guiFiles?.saveTextureRoughness?.());
-      q('#mm-save-metalness')?.addEventListener('click',  () => guiFiles?.saveTextureMetalness?.());
+    } else if (menu === 'browser-saves') {
+      wireMenuBrowserSaves(el, main, () => { this._lastContentKey = ''; paint(); });
+      q('#mm-back-to-files')?.addEventListener('click', () => this._setMenu('files'));
 
     } else if (menu === 'history') {
-      q('#mm-undo')?.addEventListener('click', () => { main.onKeyUp?.({ keyCode: 90, ctrlKey: true }); paint(); });
-      q('#mm-redo')?.addEventListener('click', () => { main.onKeyUp?.({ keyCode: 89, ctrlKey: true }); paint(); });
-
-      const stackSlider = q('#mm-stack-size');
-      const stackVal    = q('#mm-stack-val');
-      if (stackSlider && stackVal) {
-        stackSlider.addEventListener('input', () => {
-          const v = parseInt(stackSlider.value, 10);
-          stackVal.textContent = v;
-          const sm = main.getStateManager?.() ?? main._stateManager;
-          if (sm) sm.limit = v;
-          paint();
-        });
-      }
-
+      wireMenuHistory(el, main, paint);
     } else if (menu === 'reference') {
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
@@ -1444,18 +1331,24 @@ export class MainMenuPanel extends HTMLVRPanel {
       opts.saveOption('offsetY', f, 500);
     }, (v) => (v / 100).toFixed(1));
 
-    // Controller model
-    el.querySelector('#mm-ctrl-select')?.addEventListener('change', (e) => {
+    // Controller model (choice buttons replacing the old <select>)
+    {
       const ctrlModels = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
         'meta-quest-touch-pro','oculus-touch-v3','oculus-touch-v2',
         'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
-      const idx = parseInt(e.target.value, 10);
-      window._xrControllerOverride = ctrlModels[idx];
-      opts.saveOption('controllerModel', ctrlModels[idx]);
-      if (window._reloadControllerModels) window._reloadControllerModels.call(main);
-      else main.reloadControllerModels?.();
-      main.render?.();
-    });
+      el.querySelector('#mm-ctrl-model-grid')?.querySelectorAll('[data-ctrl-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          el.querySelectorAll('[data-ctrl-idx]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const idx = parseInt(btn.dataset.ctrlIdx, 10);
+          window._xrControllerOverride = ctrlModels[idx];
+          opts.saveOption('controllerModel', ctrlModels[idx]);
+          if (window._reloadControllerModels) window._reloadControllerModels.call(main);
+          else main.reloadControllerModels?.();
+          main.render?.();
+        });
+      });
+    }
 
     // Wireframe
     this._wireSlider(q('#mm-wf-bias'), q('#mm-wf-bias-val'), (v) => {
@@ -1971,4 +1864,481 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       lightRepaintFn();
     });
   }
+}
+
+export function buildMenuHTML_browserSaves(main) {
+  const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+  const saves    = guiFiles?._browserSaves ?? [];
+
+  const thumbs = saves.length === 0
+    ? '<div class="mm-info">No saves yet</div>'
+    : saves.map(s => {
+        const key   = s.key ?? s.id ?? '';
+        const ts    = s.value?.timestamp ?? 0;
+        const thumb = s.value?.thumb ?? '';
+        const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
+        const img   = thumb
+          ? `<img src="${thumb}" alt="save">`
+          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px">🗿</div>`;
+        return `
+          <div class="mm-storage-item">
+            ${img}
+            <span class="mm-storage-date">${date}</span>
+            <div class="mm-storage-btns">
+              <button class="mm-action-btn mm-storage-load" data-save-key="${key}">Load</button>
+              <button class="mm-action-btn danger mm-storage-del" data-save-key="${key}">Del</button>
+            </div>
+          </div>`;
+      }).join('');
+
+  return `
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-browser-save">💾 Save scene</button>
+      <button class="mm-action-btn" id="mm-storage-refresh">↻ Refresh</button>
+    </div>
+    <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
+  `;
+}
+
+export function wireMenuBrowserSaves(el, main, rebuildFn) {
+  const q = (sel) => el.querySelector(sel);
+  const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+
+  q('#mm-browser-save')?.addEventListener('click', () => {
+    guiFiles?.saveToBrowserStorage?.();
+    setTimeout(() => {
+      guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+    }, 800);
+  });
+  q('#mm-storage-refresh')?.addEventListener('click', () => {
+    guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+  });
+  el.querySelectorAll('.mm-storage-load').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.saveKey;
+      if (key) guiFiles?.loadSpecificBrowserSave?.(key);
+    });
+  });
+  el.querySelectorAll('.mm-storage-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.saveKey;
+      if (key) {
+        guiFiles?.deleteBrowserSave?.(key);
+        setTimeout(() => rebuildFn(), 300);
+      }
+    });
+  });
+}
+
+export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
+  const q = (sel) => el.querySelector(sel);
+  const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+
+  q('#mm-browser-saves')?.addEventListener('click', () => onBrowserSavesOpen?.());
+
+  q('#mm-import-obj')?.addEventListener('click', () => {
+    document.getElementById('fileopen')?.click();
+  });
+  q('#mm-import-scale')?.addEventListener('click', () => {
+    main._autoMatrix = !main._autoMatrix;
+    q('#mm-import-scale')?.classList.toggle('active', main._autoMatrix);
+  });
+  q('#mm-import-srgb')?.addEventListener('click', () => {
+    main._vertexSRGB = !main._vertexSRGB;
+    q('#mm-import-srgb')?.classList.toggle('active', main._vertexSRGB);
+  });
+
+  q('#mm-export-all')?.addEventListener('click', () => {
+    if (guiFiles) guiFiles._exportAll = !guiFiles._exportAll;
+    q('#mm-export-all')?.classList.toggle('active', guiFiles?._exportAll ?? true);
+  });
+  q('#mm-export-sxr')?.addEventListener('click', () => guiFiles?.saveFileAsSGL?.());
+  q('#mm-export-glb')?.addEventListener('click', () => guiFiles?.saveFileAsGLB?.());
+  q('#mm-export-obj')?.addEventListener('click', () => guiFiles?.saveFileAsOBJ?.());
+  q('#mm-export-ply')?.addEventListener('click', () => guiFiles?.saveFileAsPLY?.());
+  q('#mm-export-stl')?.addEventListener('click', () => guiFiles?.saveFileAsSTL?.());
+
+  q('#mm-obj-zbrush')?.addEventListener('click', () => {
+    if (guiFiles) guiFiles._objColorZbrush = !guiFiles._objColorZbrush;
+    q('#mm-obj-zbrush')?.classList.toggle('active', guiFiles?._objColorZbrush ?? true);
+  });
+  q('#mm-obj-append')?.addEventListener('click', () => {
+    if (guiFiles) guiFiles._objColorAppended = !guiFiles._objColorAppended;
+    q('#mm-obj-append')?.classList.toggle('active', guiFiles?._objColorAppended ?? false);
+  });
+
+  q('#mm-browser-save')?.addEventListener('click', () => {
+    guiFiles?.saveToBrowserStorage?.();
+    setTimeout(() => {
+      guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+    }, 800);
+  });
+  q('#mm-storage-refresh')?.addEventListener('click', () => {
+    guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+  });
+
+  el.querySelectorAll('.mm-storage-load').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.saveKey;
+      if (key) guiFiles?.loadSpecificBrowserSave?.(key);
+    });
+  });
+  el.querySelectorAll('.mm-storage-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.saveKey;
+      if (key) {
+        guiFiles?.deleteBrowserSave?.(key);
+        setTimeout(() => rebuildFn(), 300);
+      }
+    });
+  });
+
+  const texSlider = q('#mm-tex-size');
+  const texVal    = q('#mm-tex-size-val');
+  if (texSlider && texVal) {
+    texSlider.addEventListener('input', () => {
+      const v = parseInt(texSlider.value, 10);
+      texVal.textContent = Math.round(Math.pow(2, v));
+      guiFiles?.onTextureSize?.(v);
+    });
+    texVal.textContent = Math.round(Math.pow(2, texSlider.value));
+    guiFiles?.onTextureSize?.(parseInt(texSlider.value, 10));
+  }
+  q('#mm-save-diffuse')?.addEventListener('click',   () => guiFiles?.saveTextureDiffuse?.());
+  q('#mm-save-roughness')?.addEventListener('click', () => guiFiles?.saveTextureRoughness?.());
+  q('#mm-save-metalness')?.addEventListener('click', () => guiFiles?.saveTextureMetalness?.());
+}
+
+export function wireMenuHistory(el, main, repaintFn) {
+  const q = (sel) => el.querySelector(sel);
+
+  q('#mm-undo')?.addEventListener('click', () => {
+    main.onKeyUp?.({ keyCode: 90, ctrlKey: true });
+    repaintFn?.();
+  });
+  q('#mm-redo')?.addEventListener('click', () => {
+    main.onKeyUp?.({ keyCode: 89, ctrlKey: true });
+    repaintFn?.();
+  });
+
+  const stackSlider = q('#mm-stack-size');
+  const stackVal    = q('#mm-stack-val');
+  if (stackSlider && stackVal) {
+    stackSlider.addEventListener('input', () => {
+      const v = parseInt(stackSlider.value, 10);
+      stackVal.textContent = v;
+      const sm = main.getStateManager?.() ?? main._stateManager;
+      if (sm) sm.limit = v;
+      repaintFn?.();
+    });
+  }
+}
+
+// ── Desktop topbar dropdown menus ─────────────────────────────────────────────
+// These build/wire functions power the new HTML topbar introduced when yagui
+// was removed.  They follow the same buildMenuHTML_* / wireMenu* pattern used
+// by the VR main menu.
+
+export function buildMenuHTML_camera(main) {
+  const camera  = main.getCamera?.() ?? main._camera;
+  const proj    = camera?.getProjectionType?.() ?? 0;
+  const fov     = camera?.getFov?.() ?? 45;
+  const mode    = camera?.getMode?.() ?? 0;
+  const pivot   = camera?.getUsePivot?.() ?? false;
+  const vmode   = main._spectatorViewMode ?? 0;
+  const skipMap = { 0: 0, 1: 1, 3: 2, 7: 3 };
+  const fps     = skipMap[main._spectatorFrameSkip ?? 3] ?? 2;
+  const speed   = main._cameraSpeed ?? 0.3;
+  return `
+    <div class="mm-section-title">Camera Reset</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-cam-center">Center</button>
+      <button class="mm-action-btn" id="mm-cam-front">Front</button>
+    </div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-cam-left">Left</button>
+      <button class="mm-action-btn" id="mm-cam-top">Top</button>
+    </div>
+    <div class="mm-section-title">Projection</div>
+    <div class="mm-row">
+      <select id="mm-cam-proj" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        <option value="0"${proj===0?' selected':''}>Perspective</option>
+        <option value="1"${proj===1?' selected':''}>Orthographic</option>
+      </select>
+    </div>
+    <div class="mm-row" id="mm-fov-row"${proj!==0?' style="display:none"':''}>
+      <span class="mm-lbl">FOV</span>
+      <input type="range" id="mm-cam-fov" min="10" max="90" step="1" value="${fov}">
+      <span class="mm-val" id="mm-cam-fov-val">${Math.round(fov)}°</span>
+    </div>
+    <div class="mm-section-title">Camera Mode</div>
+    <div class="mm-row">
+      <select id="mm-cam-mode" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        <option value="0"${mode===0?' selected':''}>Orbit</option>
+        <option value="1"${mode===1?' selected':''}>Spherical</option>
+        <option value="2"${mode===2?' selected':''}>Plane</option>
+      </select>
+    </div>
+    <button class="mm-toggle${pivot?' active':''}" id="mm-cam-pivot">Pivot</button>
+    <div class="mm-section-title">Desktop Canvas (VR)</div>
+    <div class="mm-row">
+      <select id="mm-spectator-mode" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        <option value="0"${vmode===0?' selected':''}>Blank (VR active)</option>
+        <option value="1"${vmode===1?' selected':''}>Mirror (headset)</option>
+        <option value="2"${vmode===2?' selected':''}>Desktop free camera</option>
+        <option value="3"${vmode===3?' selected':''}>Spectator (coupled)</option>
+      </select>
+    </div>
+    <div class="mm-section-title">Spectator FPS</div>
+    <div class="mm-row">
+      <select id="mm-spectator-fps" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        <option value="0"${fps===0?' selected':''}>Full rate</option>
+        <option value="1"${fps===1?' selected':''}>½ rate</option>
+        <option value="2"${fps===2?' selected':''}>¼ rate (default)</option>
+        <option value="3"${fps===3?' selected':''}>⅛ rate</option>
+      </select>
+    </div>
+    <div class="mm-section-title">Speed</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Speed</span>
+      <input type="range" id="mm-cam-speed" min="0.05" max="1" step="0.001" value="${speed}">
+      <span class="mm-val" id="mm-cam-speed-val">${speed.toFixed(2)}</span>
+    </div>
+  `;
+}
+
+export function wireMenuCamera(el, main, repaintFn) {
+  const q      = (sel) => el.querySelector(sel);
+  const camera = main.getCamera?.() ?? main._camera;
+
+  q('#mm-cam-center')?.addEventListener('click', () => { camera?.resetView?.();        main.render?.(); });
+  q('#mm-cam-front')?.addEventListener('click',  () => { camera?.toggleViewFront?.();  main.render?.(); });
+  q('#mm-cam-left')?.addEventListener('click',   () => { camera?.toggleViewLeft?.();   main.render?.(); });
+  q('#mm-cam-top')?.addEventListener('click',    () => { camera?.toggleViewTop?.();    main.render?.(); });
+
+  q('#mm-cam-proj')?.addEventListener('change', (e) => {
+    const v = parseInt(e.target.value, 10);
+    camera?.setProjectionType?.(v);
+    const fovRow = q('#mm-fov-row');
+    if (fovRow) fovRow.style.display = v === 0 ? '' : 'none';
+    main.render?.();
+  });
+
+  wireSlider(q('#mm-cam-fov'), q('#mm-cam-fov-val'),
+    (v) => { camera?.setFov?.(v); main.render?.(); },
+    v => `${Math.round(v)}°`);
+
+  q('#mm-cam-mode')?.addEventListener('change', (e) => {
+    camera?.setMode?.(parseInt(e.target.value, 10));
+    main.render?.();
+  });
+
+  q('#mm-cam-pivot')?.addEventListener('click', (e) => {
+    camera?.toggleUsePivot?.();
+    e.currentTarget.classList.toggle('active', camera?.getUsePivot?.() ?? false);
+    main.render?.();
+  });
+
+  q('#mm-spectator-mode')?.addEventListener('change', (e) => {
+    main._spectatorViewMode = parseInt(e.target.value, 10);
+    main._spectatorN = 0;
+  });
+
+  q('#mm-spectator-fps')?.addEventListener('change', (e) => {
+    const indexToSkip = [0, 1, 3, 7];
+    main._spectatorFrameSkip = indexToSkip[parseInt(e.target.value, 10)] ?? 3;
+    main._spectatorN = 0;
+  });
+
+  wireSlider(q('#mm-cam-speed'), q('#mm-cam-speed-val'),
+    (v) => { main._cameraSpeed = v; },
+    v => v.toFixed(2));
+
+  fixSliderDrag(el);
+}
+
+export function buildMenuHTML_background(main) {
+  const bg   = main.getBackground?.();
+  const type = bg?._type ?? 0;
+  const blur = bg?._blur ?? 0;
+  const fill = bg?._fill ?? false;
+  return `
+    <div class="mm-section-title">Type</div>
+    <div class="mm-row">
+      <select id="mm-bg-type" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        <option value="0"${type===0?' selected':''}>Image</option>
+        <option value="1"${type===1?' selected':''}>Environment</option>
+        <option value="2"${type===2?' selected':''}>Ambient env</option>
+      </select>
+    </div>
+    <div class="mm-row" id="mm-blur-row"${type!==1?' style="display:none"':''}>
+      <span class="mm-lbl">Blur</span>
+      <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
+      <span class="mm-val" id="mm-bg-blur-val">${blur.toFixed(2)}</span>
+    </div>
+    <div class="mm-section-title">Image</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-bg-reset">Reset</button>
+      <button class="mm-action-btn" id="mm-bg-import">Import…</button>
+    </div>
+    <button class="mm-toggle${fill?' active':''}" id="mm-bg-fill">Fill</button>
+  `;
+}
+
+export function wireMenuBackground(el, main, repaintFn) {
+  const q  = (sel) => el.querySelector(sel);
+  const bg = main.getBackground?.();
+
+  q('#mm-bg-type')?.addEventListener('change', (e) => {
+    const v = parseInt(e.target.value, 10);
+    bg?.setType?.(v);
+    main.onCanvasResize?.();
+    main.render?.();
+    const blurRow = q('#mm-blur-row');
+    if (blurRow) blurRow.style.display = v === 1 ? '' : 'none';
+  });
+
+  wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
+    (v) => { if (bg) bg._blur = v; main.render?.(); },
+    v => v.toFixed(2));
+
+  q('#mm-bg-reset')?.addEventListener('click',  () => { bg?.deleteTexture?.(); main.render?.(); });
+  q('#mm-bg-import')?.addEventListener('click', () => document.getElementById('backgroundopen')?.click());
+
+  q('#mm-bg-fill')?.addEventListener('click', (e) => {
+    if (bg) bg._fill = !bg._fill;
+    e.currentTarget.classList.toggle('active', bg?._fill ?? false);
+    main.onCanvasResize?.();
+  });
+
+  fixSliderDrag(el);
+}
+
+export function buildMenuHTML_tablet(main) {
+  const rf    = Tablet.radiusFactor ?? 0.75;
+  const ifact = Tablet.intensityFactor ?? 0.0;
+  return `
+    <div class="mm-section-title">Pen Pressure</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Radius factor</span>
+      <input type="range" id="mm-tablet-radius" min="0" max="1" step="0.01" value="${rf}">
+      <span class="mm-val" id="mm-tablet-radius-val">${rf.toFixed(2)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Intensity factor</span>
+      <input type="range" id="mm-tablet-intensity" min="0" max="1" step="0.01" value="${ifact}">
+      <span class="mm-val" id="mm-tablet-intensity-val">${ifact.toFixed(2)}</span>
+    </div>
+  `;
+}
+
+export function wireMenuTablet(el, main, repaintFn) {
+  const q = (sel) => el.querySelector(sel);
+  wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
+    (v) => { Tablet.radiusFactor    = v; }, v => v.toFixed(2));
+  wireSlider(q('#mm-tablet-intensity'), q('#mm-tablet-intensity-val'),
+    (v) => { Tablet.intensityFactor = v; }, v => v.toFixed(2));
+  fixSliderDrag(el);
+}
+
+export function buildMenuHTML_desktopSettings(main) {
+  const opts = getOptionsURL();
+
+  const langs   = Object.keys(TR.languages);
+  const langIdx = langs.indexOf(TR.select);
+
+  // Parse the first ~3 releases from releases.md for the About section
+  const releaseHTML = (() => {
+    try {
+      const lines = releaseText.split('\n');
+      let html = '';
+      let releases = 0;
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line.startsWith('# ')) {
+          if (releases >= 3) break;
+          releases++;
+          html += `<div style="color:#89b4fa;font-weight:600;font-size:12px;margin-top:6px">${line.slice(2)}</div>`;
+        } else if (line.startsWith('- ')) {
+          html += `<div style="color:#a6adc8;font-size:11px;margin:1px 0 1px 6px">• ${line.slice(2).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')}</div>`;
+        }
+      }
+      return html;
+    } catch { return ''; }
+  })();
+
+  return `
+    <div class="mm-section-title">Advanced</div>
+    <button class="mm-toggle${opts.debugMode?' active':''}" id="mm-debug-log">Show debug log</button>
+    <button class="mm-toggle" id="mm-eruda-console">Show Eruda console</button>
+    <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
+    <div class="mm-section-title">Language</div>
+    <div class="mm-row">
+      <select id="mm-language" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
+        ${langs.map((l, i) => `<option value="${i}"${i===langIdx?' selected':''}>${l}</option>`).join('')}
+      </select>
+    </div>
+    <div class="mm-section-title">About SculptXR ${VERSION}</div>
+    <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Original by Stéphane Ginier<br>VR port by Matt Estela &amp; Antigravity &amp; Claude</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-about-tokeru">tokeru.com/sculptxr</button>
+      <button class="mm-action-btn" id="mm-about-github">GitHub</button>
+    </div>
+    <div class="mm-section-title">Recent Changes</div>
+    <div id="mm-release-notes" style="max-height:200px;overflow-y:auto">${releaseHTML}</div>
+  `;
+}
+
+export function wireMenuDesktopSettings(el, main, repaintFn) {
+  const q = (sel) => el.querySelector(sel);
+
+  q('#mm-debug-log')?.addEventListener('click', (e) => {
+    const next = !e.currentTarget.classList.contains('active');
+    e.currentTarget.classList.toggle('active', next);
+    window._showDebugLog = next;
+    getOptionsURL.saveOption('debugMode', next);
+    const log = document.getElementById('log');
+    if (log) log.style.display = next ? 'block' : 'none';
+    if (next && window.screenLog) window.screenLog('Debug Log Enabled', 'lime');
+  });
+
+  q('#mm-eruda-console')?.addEventListener('click', (e) => {
+    const next = !e.currentTarget.classList.contains('active');
+    e.currentTarget.classList.toggle('active', next);
+    if (next) {
+      if (!window.eruda) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+        script.onload = () => { window.eruda.init(); window.eruda.show(); };
+        document.head.appendChild(script);
+      } else {
+        window.eruda.show();
+        const c = document.querySelector('.eruda-container');
+        c?.shadowRoot?.querySelector('.eruda-entry-btn')?.style?.setProperty('display', 'block', 'important');
+      }
+    } else {
+      window.eruda?.hide?.();
+      const c = document.querySelector('.eruda-container');
+      c?.shadowRoot?.querySelector('.eruda-entry-btn')?.style?.setProperty('display', 'none', 'important');
+    }
+  });
+
+  q('#mm-clear-log')?.addEventListener('click', () => {
+    const log = document.getElementById('log');
+    if (log) {
+      while (log.children.length > 1) log.removeChild(log.lastChild);
+      if (window.screenLog) window.screenLog('Log Cleared', 'lime');
+    }
+  });
+
+  q('#mm-language')?.addEventListener('change', (e) => {
+    const langs = Object.keys(TR.languages);
+    TR.select = langs[parseInt(e.target.value, 10)];
+    getOptionsURL.saveOption('language', TR.select);
+    main.getGui?.().initGui?.();
+  });
+
+  q('#mm-about-tokeru')?.addEventListener('click', () => window.open('https://tokeru.com/sculptxr', '_blank'));
+  q('#mm-about-github')?.addEventListener('click', () => window.open('https://github.com/mestela/sculptxr', '_blank'));
 }

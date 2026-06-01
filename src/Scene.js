@@ -34,6 +34,7 @@ import { BrushPanel             } from './gui/htmlvr/BrushPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
+import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 
 if (typeof XRRigidTransform === 'undefined') {
@@ -270,6 +271,7 @@ class Scene {
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
+    this._filesPanel      = null;   // [HTMLVRPanel] floating Files overlay
     this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
@@ -340,6 +342,24 @@ class Scene {
     this.initWebGL();
     if (!this._gl)
       return;
+
+    // Init FilesPanel early — same timing as AnimationControlPanel below.
+    setTimeout(() => {
+      try {
+        if (!this._filesPanel && this._scene && this._renderer) {
+          this._filesPanel = new FilesPanel();
+          this._filesPanel.init(this._scene, this._camera.getThreeCamera(), this._renderer);
+          this._filesPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+          this._filesPanel._element.addEventListener('fp-close', () => {});
+          window.openFilesPanel   = () => this._openFilesPanel();
+          window.openBrowserSaves = () => openBrowserSavesDOMOverlay(this);
+          window.openFilesMenu    = () => openFilesDOMOverlay(this);
+          if (window.screenLog) window.screenLog('[HTMLVRPanel] FilesPanel created', 'cyan');
+        }
+      } catch (err) {
+        console.error('[FilesPanel] init failed:', err);
+      }
+    }, 500);
 
     // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
     // Using a short timeout so the DOM is settled before the polyfill host canvas is created.
@@ -1025,6 +1045,9 @@ class Scene {
       if (this._mainMenuPanel) {
         try { this._mainMenuPanel.update(true); } catch (_) {}
       }
+      if (this._filesPanel) {
+        try { this._filesPanel.update(true); } catch (_) {}
+      }
       if (this._animPanel) {
         try {
           this._animPanel.update(true);
@@ -1124,6 +1147,12 @@ class Scene {
           this._animPanel.update(false);
           this._animPanel.syncFromState();
           this._drawFullScene = true; // keep rendering while panel is visible
+        } catch (_) {}
+      }
+      if (this._filesPanel?.mesh?.visible) {
+        try {
+          this._filesPanel.update(false);
+          this._drawFullScene = true;
         } catch (_) {}
       }
     }
@@ -2880,6 +2909,9 @@ class Scene {
         this._mainMenuPanel._element.addEventListener('mm-pin-change', (e) => {
           this._onMainMenuPanelPinChange(e.detail.pinned);
         });
+        this._mainMenuPanel._element.addEventListener('mm-browser-saves-open', () => {
+          this._openFilesPanel();
+        });
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MainMenuPanel created', 'cyan');
 
         // Console helper: window.toggleMainMenu() to show/hide
@@ -3017,6 +3049,21 @@ class Scene {
         console.log('[HTMLVRPanel] Main menu ready — ] HTML overlay, [ polyfill canvas, M 3D toggle | mmDebug() / mmShowCanvas() in console');
       } catch (err) {
         console.error('[HTMLVRPanel] MainMenuPanel init failed:', err);
+      }
+    }
+
+    // [HTMLVRPanel] Init FilesPanel (floating overlay triggered from VR Files button + desktop)
+    if (!this._filesPanel && this._scene && this._camera && this._renderer) {
+      try {
+        this._filesPanel = new FilesPanel();
+        this._filesPanel.init(this._scene, this._camera.getThreeCamera(), this._renderer);
+        this._filesPanel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+        // Desktop helper: window.openFilesPanel() — also called from GuiFiles
+        window.openFilesPanel = () => this._openFilesPanel();
+
+        if (window.screenLog) window.screenLog('[HTMLVRPanel] FilesPanel created', 'cyan');
+      } catch (err) {
+        console.error('[HTMLVRPanel] FilesPanel init failed:', err);
       }
     }
 
@@ -3646,6 +3693,25 @@ class Scene {
       mesh.rotation.set(-Math.PI / 2, 0, 0);
       mesh.scale.set(1, -1, 1);   // preserve the flipY compensation set in _createMesh
       mesh.matrixAutoUpdate = true;
+    }
+  }
+
+  _openFilesPanel() {
+    if (this._renderer?.xr?.isPresenting) {
+      // VR: floating 3D panel
+      const fp = this._filesPanel;
+      if (!fp?.mesh) return;
+      const cam = this._camera?.getThreeCamera();
+      if (cam) {
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+        fp.mesh.position.copy(cam.position).addScaledVector(fwd, 0.55);
+        fp.mesh.position.y -= 0.04;
+        fp.mesh.quaternion.copy(cam.quaternion);
+      }
+      fp.open(this);
+    } else {
+      // Desktop: DOM overlay with full files menu
+      openBrowserSavesDOMOverlay(this);
     }
   }
 
@@ -4623,6 +4689,41 @@ class Scene {
             }
           }
           // ── end MainMenuPanel raycast ─────────────────────────────────────
+
+          // ── FilesPanel raycast ────────────────────────────────────────────
+          if (this._filesPanel?.mesh?.visible) {
+            if (!this._fpRaycaster) {
+              this._fpRaycaster = new THREE.Raycaster();
+              this._fpRayOrigin = new THREE.Vector3();
+              this._fpRayDir    = new THREE.Vector3();
+            }
+            this._fpRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._fpRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._fpRaycaster.set(this._fpRayOrigin, this._fpRayDir);
+
+            const fpHits = this._fpRaycaster.intersectObject(this._filesPanel.mesh);
+            if (fpHits.length > 0) {
+              const fpUV    = fpHits[0].uv;
+              const trigger = source.gamepad?.buttons[0];
+              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+              const justDown = pressed && !this._fpWasPressed;
+              const justUp   = !pressed && this._fpWasPressed;
+
+              if (justDown)    this._filesPanel.onVRPress(fpUV);
+              else if (justUp) this._filesPanel.onVRRelease(fpUV);
+              else             this._filesPanel.onVRMove(fpUV);
+
+              this._fpWasPressed = pressed;
+              this._isPointingAtMenu = true;
+            } else {
+              if (this._fpWasPressed) {
+                this._filesPanel.onVRRelease({ x: 0.5, y: 0.5 });
+                this._fpWasPressed = false;
+              }
+              this._filesPanel.onVRLeave();
+            }
+          }
+          // ── end FilesPanel raycast ────────────────────────────────────────
 
           // Periodic state sync for MainMenuPanel (keeps symmetry/tool highlight fresh).
           // Call _rebuildContent directly so the cache key still suppresses no-op repaints.

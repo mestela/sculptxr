@@ -23,6 +23,7 @@ class GuiFiles {
     this._objColorZbrush = true;
     this._objColorAppended = false;
     this._browserSaves = []; // Cache for gallery
+    this._texSize = 1024; // default 2^10
     this.init(guiParent);
     this.refreshBrowserSaves();
   }
@@ -53,34 +54,7 @@ class GuiFiles {
   }
 
   init(guiParent) {
-    var menu = this._menu = guiParent.addMenu(TR('fileTitle'));
-
-    // import
-    menu.addTitle(TR('fileImportTitle'));
-    menu.addButton(TR('fileAdd'), this, 'addFile' /*, 'CTRL+O/I'*/ );
-    menu.addCheckbox(TR('fileAutoMatrix'), this._main, '_autoMatrix');
-    menu.addCheckbox(TR('fileVertexSRGB'), this._main, '_vertexSRGB');
-
-    // export
-    menu.addTitle(TR('fileExportSceneTitle'));
-    menu.addCheckbox(TR('fileExportAll'), this, '_exportAll');
-    menu.addButton('Export .sxr (SculptXR)', this, 'saveFileAsSGL');
-    menu.addButton('Export GLB (Anim)', this, 'saveFileAsGLB');
-    menu.addCheckbox('Bake Animation', this, '_bakeAnimation');
-    menu.addButton(TR('fileExportOBJ'), this, 'saveFileAsOBJ' /*, 'CTRL+E'*/ );
-    menu.addButton(TR('fileExportPLY'), this, 'saveFileAsPLY');
-    menu.addButton(TR('fileExportSTL'), this, 'saveFileAsSTL');
-    menu.addCheckbox('OBJ color zbrush', this, '_objColorZbrush');
-    menu.addCheckbox('OBJ color append', this, '_objColorAppended');
-    menu.addButton(TR('sketchfabTitle'), this._ctrlGui, 'exportSketchfab');
-
-    // export texture
-    menu.addTitle(TR('fileExportTextureTitle'));
-    this._guiTexSize = menu.addSlider(TR('fileExportTextureSize'), 10, this.onTextureSize.bind(this), 8, 12, 1);
-    this._guiTexSize.setValue(10);
-    menu.addButton(TR('fileExportColor'), this, 'saveColor');
-    menu.addButton(TR('fileExportRoughness'), this, 'saveRoughness');
-    menu.addButton(TR('fileExportMetalness'), this, 'saveMetalness');
+    // Gutted — desktop topbar uses buildMenuHTML_files + wireMenuFiles
   }
 
   addFile() {
@@ -105,8 +79,11 @@ class GuiFiles {
 
   onTextureSize(value) {
     this._texSize = 1 << value;
-    this._guiTexSize.domInputText.value = this._texSize;
   }
+
+  saveTextureDiffuse()  { return this.saveColor(); }
+  saveTextureRoughness() { return this.saveRoughness(); }
+  saveTextureMetalness() { return this.saveMetalness(); }
 
   _getExportMeshes() {
     if (this._exportAll) return this._main.getMeshes();
@@ -243,32 +220,51 @@ class GuiFiles {
       try {
         const THUMB = 512;
 
-        // 1. Pick camera position: VR head pose or desktop camera
-        const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 100);
+        // 1. Pick camera position and auto-frame toward the sculpt bounding box
+        const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);
         if (renderer.xr.isPresenting) {
+          // VR: start from head pose — user is naturally close to the sculpt.
           const vrCam = renderer.xr.getCamera(this._main._camera._threeCamera);
           snapCam.position.copy(vrCam.position);
           snapCam.quaternion.copy(vrCam.quaternion);
-        } else {
-          const dc = this._main._camera._threeCamera;
-          snapCam.position.copy(dc.position);
-          snapCam.quaternion.copy(dc.quaternion);
-        }
-        snapCam.updateMatrixWorld(true);
-
-        // 2. Auto-aim + auto-FOV toward the sculpt bounding box
-        if (this._main._worldGroup) {
-          const box    = new THREE.Box3().setFromObject(this._main._worldGroup);
-          const center = box.getCenter(new THREE.Vector3());
-          const maxDim = box.getSize(new THREE.Vector3()).length();
-          snapCam.lookAt(center);
-          const dist = snapCam.position.distanceTo(center);
-          if (dist > 0.01 && maxDim > 0.01) {
-            const fov = 2 * Math.atan(maxDim / (2 * dist)) * (180 / Math.PI);
-            snapCam.fov = Math.min(70, Math.max(5, fov * 1.3));
-          }
-          snapCam.updateProjectionMatrix();
           snapCam.updateMatrixWorld(true);
+          if (this._main._worldGroup) {
+            const box    = new THREE.Box3().setFromObject(this._main._worldGroup);
+            const center = box.getCenter(new THREE.Vector3());
+            const maxDim = box.getSize(new THREE.Vector3()).length();
+            snapCam.lookAt(center);
+            const dist = snapCam.position.distanceTo(center);
+            if (dist > 0.01 && maxDim > 0.01) {
+              const fov = 2 * Math.atan(maxDim / (2 * dist)) * (180 / Math.PI);
+              snapCam.fov = Math.min(70, Math.max(5, fov * 1.3));
+            }
+            snapCam.updateProjectionMatrix();
+            snapCam.updateMatrixWorld(true);
+          }
+        } else {
+          // Desktop: derive position from the bounding box so the result is
+          // independent of where the user has orbited/zoomed the viewport.
+          if (this._main._worldGroup) {
+            const box  = new THREE.Box3().setFromObject(this._main._worldGroup);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            // Use the largest single axis — avoids the 3D diagonal overestimate
+            // that makes the sculpt appear tiny in the thumbnail.
+            const span = Math.max(size.x, size.y, size.z);
+            const snapDist = span * 1.2;
+            snapCam.position.set(center.x, center.y + span * 0.1, center.z + snapDist);
+            snapCam.lookAt(center);
+            const dist = snapCam.position.distanceTo(center);
+            const fov = 2 * Math.atan(span / (2 * dist)) * (180 / Math.PI) * 1.2;
+            snapCam.fov = Math.min(65, Math.max(20, fov));
+            snapCam.updateProjectionMatrix();
+            snapCam.updateMatrixWorld(true);
+          } else {
+            const dc = this._main._camera._threeCamera;
+            snapCam.position.copy(dc.position);
+            snapCam.quaternion.copy(dc.quaternion);
+            snapCam.updateMatrixWorld(true);
+          }
         }
 
         // 3. Hide non-scene children (UI panels, controllers, etc.)

@@ -3,7 +3,7 @@
   "imports": {
     "gl-matrix": "./lib/gl-matrix-wrapper.js",
     "hammerjs": "./lib/hammer-wrapper.js",
-    "yagui": "./lib/yagui.js",
+
     "file-saver": "./lib/file-saver-wrapper.js",
     "zip": "./lib/zip-wrapper.js",
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"

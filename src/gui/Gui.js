@@ -1,23 +1,26 @@
-import yagui from 'yagui';
 import TR from './GuiTR.js';
-import GuiBackground from './GuiBackground.js';
 import GuiCamera from './GuiCamera.js';
-import GuiConfig from './GuiConfig.js';
 import GuiFiles from './GuiFiles.js';
-import GuiMesh from './GuiMesh.js';
 import GuiTopology from './GuiTopology.js';
-import GuiScene from './GuiScene.js';
 import GuiSculpting from './GuiSculpting.js';
-import GuiStates from './GuiStates.js';
-import GuiTablet from './GuiTablet.js';
 import GuiTimeline from './GuiTimeline.js';
-import ShaderContour from '../render/shaders/ShaderContour.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
-import { buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting, injectMMCSS, wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting, fixSliderDrag } from './htmlvr/MainMenuPanel.js';
+import {
+  buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting,
+  injectMMCSS,
+  wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
+  fixSliderDrag,
+  buildMenuHTML_files,    wireMenuFiles,
+  buildMenuHTML_camera,   wireMenuCamera,
+  buildMenuHTML_background, wireMenuBackground,
+  buildMenuHTML_tablet,   wireMenuTablet,
+  buildMenuHTML_desktopSettings, wireMenuDesktopSettings,
+} from './htmlvr/MainMenuPanel.js';
 
 import Export from '../files/Export.js';
+import { openBrowserSavesDOMOverlay } from './htmlvr/FilesPanel.js';
 
 // Web Awesome Imports for vertical sidebar tabs
 import '@awesome.me/webawesome/dist/styles/webawesome.css';
@@ -32,26 +35,24 @@ import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
 
+const TOPBAR_HEIGHT = 36;   // px — must match onCanvasResize top:40px allowance
+const SIDEBAR_WIDTH = 380;  // px
+
 class Gui {
 
   constructor(main) {
     this._main = main;
 
-    this._guiMain = null;
-    this._sidebar = null;
-    this._topbar = null;
+    this._topbarEl  = null;
+    this._sidebarEl = null;
+    this._dropdowns = {};
+    this._dropdownCloseHandler = null;
 
-    this._ctrlTablet = null;
-    this._ctrlFiles = null;
-    this._ctrlScene = null;
-    this._ctrlStates = null;
-    this._ctrlCamera = null;
-    this._ctrlBackground = null;
-
+    this._ctrlFiles    = null;
+    this._ctrlCamera   = null;
     this._ctrlSculpting = null;
-    this._ctrlTopology = null;
-    this._ctrlAnimation = null;
-    this._ctrlTimeline = null;
+    this._ctrlTopology  = null;
+    this._ctrlTimeline  = null;
 
     // Desktop section panel elements (for rebuild on mesh change)
     this._desktopSceneEl     = null;
@@ -60,62 +61,110 @@ class Gui {
     this._desktopSculptingEl = null;
     this._renderingFilesRemoveCb = null;
 
-    this._ctrlNotification = null;
-
-    this._ctrls = []; // list of controllers
-
-    // upload
     this._notifications = {};
     this._xhrs = {};
+
+    this._ctrls = [];
   }
 
   initGui() {
     this.deleteGui();
 
-    this._guiMain = new yagui.GuiMain(this._main.getViewport(), this._main.onCanvasResize.bind(this._main));
+    const main  = this._main;
+    const viewport = main.getViewport();
 
     var ctrls = this._ctrls;
     ctrls.length = 0;
     var idc = 0;
 
-    // Initialize the topbar
-    this._topbar = this._guiMain.addTopbar();
-    ctrls[idc++] = this._ctrlFiles = new GuiFiles(this._topbar, this);
-    // this.initPrint(this._topbar);
-    ctrls[idc++] = this._ctrlScene = new GuiScene(this._topbar, this);
-    ctrls[idc++] = this._ctrlStates = new GuiStates(this._topbar, this);
-    ctrls[idc++] = this._ctrlBackground = new GuiBackground(this._topbar, this);
-    ctrls[idc++] = this._ctrlCamera = new GuiCamera(this._topbar, this);
-    // TODO find a way to get pressure event
-    ctrls[idc++] = this._ctrlTablet = new GuiTablet(this._topbar, this);
-    ctrls[idc++] = this._ctrlConfig = new GuiConfig(this._topbar, this);
-    ctrls[idc++] = this._ctrlMesh = new GuiMesh(this._topbar, this);
+    // ── Controllers ────────────────────────────────────────────────────────────
+    ctrls[idc++] = this._ctrlFiles  = new GuiFiles(null, this);
+    ctrls[idc++] = this._ctrlCamera = new GuiCamera(null, this);
 
-    // Initialize the sidebar
-    this._sidebar = this._guiMain.addRightSidebar();
+    // Inline key handlers extracted from GuiScene (deleted)
+    const gui = this;
+    ctrls[idc++] = {
+      onKeyDown(event) {
+        if (event.handled === true) return;
+        event.stopPropagation();
+        if (!main._focusGui) event.preventDefault();
 
-    // Set a wider layout to perfectly house both the vertical tab strip and full width folders
-    this._sidebar.domSidebar.style.width = '380px';
-    this._sidebar.domResize.style.right = '380px';
+        if (event.which === 73 && !event.ctrlKey) {               // I — isolate toggle
+          event.handled = true;
+          const meshes = main.getMeshes?.() ?? [];
+          const hasHidden = meshes.some(m => !m.isVisible?.());
+          if (hasHidden) {
+            const toShow = meshes.filter(m => !m.isVisible?.());
+            toShow.forEach(m => m.setVisible?.(true));
+            const cbU = () => toShow.forEach(m => m.setVisible?.(false));
+            const cbR = () => toShow.forEach(m => m.setVisible?.(true));
+            main.getStateManager?.().pushStateCustom?.(cbU, cbR);
+          } else {
+            const selected = main.getSelectedMeshes?.() ?? [];
+            if (meshes.length >= 2 && selected.length > 0 && selected.length < meshes.length) {
+              const selSet = new Set(selected);
+              const toHide = meshes.filter(m => !selSet.has(m));
+              toHide.forEach(m => m.setVisible?.(false));
+              const cbU = () => toHide.forEach(m => m.setVisible?.(true));
+              const cbR = () => toHide.forEach(m => m.setVisible?.(false));
+              main.getStateManager?.().pushStateCustom?.(cbU, cbR);
+            }
+          }
+          main.render?.();
+          if (gui._desktopSceneEl) gui._buildDesktopScene(gui._desktopSceneEl);
+
+        } else if (event.which === 68 && event.ctrlKey) {         // Ctrl+D — duplicate
+          event.handled = true;
+          main.duplicateSelection?.();
+        }
+      }
+    };
+
+    // Inline key handlers extracted from GuiStates (deleted)
+    ctrls[idc++] = {
+      onKeyDown(event) {
+        if (event.handled === true) return;
+        event.stopPropagation();
+        if (!main._focusGui) event.preventDefault();
+        const key = event.which;
+        if (event.ctrlKey && key === 90) {                        // Ctrl+Z — undo
+          event.handled = true;
+          main._action = Enums.Action.NOTHING;
+          main.getSculptManager?.()?.end?.();
+          main.getStateManager?.().undo?.();
+          main.render?.();
+          gui.updateMesh();
+        } else if (event.ctrlKey && key === 89) {                 // Ctrl+Y — redo
+          event.handled = true;
+          main.getStateManager?.().redo?.();
+          main.render?.();
+          gui.updateMesh();
+        }
+      }
+    };
+
+    // ── Sidebar ────────────────────────────────────────────────────────────────
+    const sidebarEl = this._sidebarEl = document.createElement('div');
+    sidebarEl.id = 'gui-sidebar';
+    Object.assign(sidebarEl.style, {
+      position: 'fixed', top: TOPBAR_HEIGHT + 'px', right: '0',
+      width:  SIDEBAR_WIDTH + 'px', bottom: '0',
+      background: '#121212',
+      borderLeft: '1px solid #2d2d2d',
+      overflow: 'hidden',
+      zIndex: '1050'
+    });
+    document.body.appendChild(sidebarEl);
 
     // Create Blender-inspired vertical tab group inside the sidebar
     const tabGroup = document.createElement('wa-tab-group');
     tabGroup.setAttribute('placement', 'start');
     tabGroup.className = 'sidebar-tab-group wa-dark';
     tabGroup.style.height = '100%';
-    tabGroup.style.width = '100%';
-    
+    tabGroup.style.width  = '100%';
+
     const tabStyle = document.createElement('style');
     tabStyle.innerHTML = `
-      /* Override the default yagui sidebar overflow to prevent double scrollbars */
-      .gui-sidebar {
-        overflow: hidden !important;
-        background-color: #121212 !important;
-        padding-bottom: 0 !important;
-        border-left: 1px solid #2d2d2d !important;
-        border-right: none !important;
-      }
-      
       .sidebar-tab-group {
         --track-color: transparent;
         --indicator-color: #3b82f6;
@@ -183,10 +232,8 @@ class Gui {
         color: #fff;
         background-color: rgba(255, 255, 255, 0.05);
       }
-      .sidebar-tab-group wa-tab wa-icon {
-        font-size: 18px;
-      }
-       .sidebar-tab-group wa-tab-panel {
+      .sidebar-tab-group wa-tab wa-icon { font-size: 18px; }
+      .sidebar-tab-group wa-tab-panel {
         flex: 1;
         height: 100%;
         overflow-y: auto;
@@ -199,53 +246,26 @@ class Gui {
         box-sizing: border-box;
         overflow-x: hidden !important;
       }
-      
-      /* Hide folder headers inside the tab panels so widgets fill space beautifully */
-      .sidebar-tab-group wa-tab-panel .gui-ul > label {
-        display: none !important;
-      }
+      .sidebar-tab-group wa-tab-panel .gui-ul > label { display: none !important; }
       .sidebar-tab-group wa-tab-panel .gui-ul {
-        margin: 0 !important;
-        padding: 0 !important;
-        border: none !important;
-        background: transparent !important;
+        margin: 0 !important; padding: 0 !important;
+        border: none !important; background: transparent !important;
       }
       .sidebar-tab-group wa-tab-panel .gui-ul > li {
-        border: none !important;
-        background: transparent !important;
+        border: none !important; background: transparent !important;
       }
-
-      /* Ensure button grids and buttons inside tab-panels never cause horizontal overflows */
       .sidebar-tab-group wa-tab-panel .btn-grid {
-        display: flex;
-        gap: 4px;
-        width: 100% !important;
-        box-sizing: border-box;
+        display: flex; gap: 4px; width: 100% !important; box-sizing: border-box;
       }
-      .sidebar-tab-group wa-tab-panel .btn-grid wa-button {
-        flex: 1;
-        min-width: 0 !important;
-      }
+      .sidebar-tab-group wa-tab-panel .btn-grid wa-button { flex: 1; min-width: 0 !important; }
       .sidebar-tab-group wa-tab-panel .btn-grid wa-button::part(base) {
-        padding: 0 !important;
-        min-width: 0 !important;
+        padding: 0 !important; min-width: 0 !important;
       }
-
-      /* Premium Tool Grid Buttons */
       .grid-tool-btn::part(base) {
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        font-size: 10px;
-        letter-spacing: 0.3px;
-        border-radius: 4px;
-        height: 32px;
-        padding: 0 4px !important;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        white-space: normal !important;
-        word-break: break-word;
+        font-family: 'Inter', sans-serif; font-weight: 600; font-size: 10px;
+        letter-spacing: 0.3px; border-radius: 4px; height: 32px; padding: 0 4px !important;
+        display: flex; align-items: center; justify-content: center;
+        text-align: center; white-space: normal !important; word-break: break-word;
         line-height: 1.1;
         background-color: var(--btn-bg) !important;
         border: 1px solid var(--btn-border) !important;
@@ -253,10 +273,7 @@ class Gui {
         box-shadow: var(--btn-shadow) !important;
         transition: all 0.15s ease;
       }
-      .grid-tool-btn:hover::part(base) {
-        filter: brightness(1.2);
-        cursor: pointer;
-      }
+      .grid-tool-btn:hover::part(base) { filter: brightness(1.2); cursor: pointer; }
     `;
     tabGroup.appendChild(tabStyle);
 
@@ -265,21 +282,18 @@ class Gui {
       tab.setAttribute('slot', 'nav');
       tab.setAttribute('panel', panelName);
       tab.setAttribute('title', tooltipText);
-      
       const icon = document.createElement('wa-icon');
       icon.setAttribute('name', iconName);
       tab.appendChild(icon);
       return tab;
     };
 
-    // Create tabs for Scene, Rendering, Topology, Sculpting, Animation
     const sceneTab     = createTab('scene',     'layer-group',  'Scene');
     const renderingTab = createTab('rendering', 'camera',       TR('renderingTitle'));
     const topologyTab  = createTab('topology',  'circle-nodes', TR('topologyTitle'));
     const sculptingTab = createTab('sculpting', 'paintbrush',   TR('sculptTitle'));
     const animationTab = createTab('animation', 'bezier-curve', 'Animation');
 
-    // Sculpting is the active panel on startup
     sculptingTab.setAttribute('active', '');
 
     tabGroup.appendChild(sceneTab);
@@ -288,19 +302,10 @@ class Gui {
     tabGroup.appendChild(sculptingTab);
     tabGroup.appendChild(animationTab);
 
-    // Create corresponding tab panels
-    const scenePanel = document.createElement('wa-tab-panel');
-    scenePanel.setAttribute('name', 'scene');
-
-    const renderingPanel = document.createElement('wa-tab-panel');
-    renderingPanel.setAttribute('name', 'rendering');
-
-    const topologyPanel = document.createElement('wa-tab-panel');
-    topologyPanel.setAttribute('name', 'topology');
-
-    const sculptingPanel = document.createElement('wa-tab-panel');
-    sculptingPanel.setAttribute('name', 'sculpting');
-
+    const scenePanel     = document.createElement('wa-tab-panel'); scenePanel.setAttribute('name', 'scene');
+    const renderingPanel = document.createElement('wa-tab-panel'); renderingPanel.setAttribute('name', 'rendering');
+    const topologyPanel  = document.createElement('wa-tab-panel'); topologyPanel.setAttribute('name', 'topology');
+    const sculptingPanel = document.createElement('wa-tab-panel'); sculptingPanel.setAttribute('name', 'sculpting');
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
     animationPanel.id = '_acp_sidebar_panel';
@@ -311,11 +316,10 @@ class Gui {
     tabGroup.appendChild(sculptingPanel);
     tabGroup.appendChild(animationPanel);
 
-    this._sidebar.domSidebar.appendChild(tabGroup);
+    sidebarEl.appendChild(tabGroup);
 
-    // GuiTopology and GuiSculpting are instantiated with a detached (off-screen) parent so
-    // their operation methods, key/mouse event handlers, and GuiSculptingTools alpha comboboxes
-    // all work without adding any yagui widgets to the visible sidebar.
+    // GuiTopology and GuiSculpting use a detached container so their internals
+    // work without adding yagui widgets to the visible sidebar.
     const detachedContainer = document.createElement('div');
     const makeDetachedParent = () => ({
       domSidebar: detachedContainer,
@@ -329,32 +333,20 @@ class Gui {
     ctrls[idc++] = this._ctrlSculpting;
 
     // Keep the desktop sculpting panel in sync whenever the active tool changes.
-    //
-    // Case 1 — setValue path (VR, keyboard shortcut, desktop panel click):
-    //   addToolGrid's onChange is bound to the prototype onChangeTool at construction
-    //   time, so instance-property wrapping of onChangeTool does not intercept it.
-    //   Wrapping setValue on the returned controller object does work since callsites
-    //   reference the controller directly.
     const _ctrlSculptOrigSetValue = this._ctrlSculpting._ctrlSculpt.setValue.bind(this._ctrlSculpting._ctrlSculpt);
     this._ctrlSculpting._ctrlSculpt.setValue = (val, silent) => {
       _ctrlSculptOrigSetValue(val, silent);
       if (!silent && this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     };
 
-    // Case 2 — direct onChangeTool call from keyboard key-up (Shift/Ctrl release):
-    //   GuiSculpting.onKeyUp calls this.onChangeTool(toolOnRelease) directly.
-    //   callFunc dispatches via instance property lookup, so wrapping onKeyUp on the
-    //   instance is intercepted correctly.
     const _origOnKeyUp = this._ctrlSculpting.onKeyUp.bind(this._ctrlSculpting);
     this._ctrlSculpting.onKeyUp = (event) => {
       _origOnKeyUp(event);
       if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     };
 
-    // Ensure the mm-* CSS is in the document before injecting section HTML.
     injectMMCSS();
 
-    // Build desktop section panels from MainMenuPanel's HTML builders.
     this._desktopSceneEl     = scenePanel;
     this._desktopRenderingEl = renderingPanel;
     this._desktopTopologyEl  = topologyPanel;
@@ -365,10 +357,8 @@ class Gui {
     this._buildDesktopSculpting(sculptingPanel);
 
     // Wire file-input listeners for rendering (matcap + UV texture loading).
-    // These are registered once and persist for the lifetime of the GUI.
     const ShaderUV     = Shader[Enums.Shader.UV];
     const ShaderMatcap = Shader[Enums.Shader.MATCAP];
-    const main = this._main;
 
     const onTexLoad = (evt) => {
       ShaderUV.texture0 = undefined;
@@ -397,7 +387,6 @@ class Gui {
           const idMatcap = ShaderMatcap.matcaps.length;
           ShaderMatcap.matcaps.push({ name: file.name });
           ShaderMatcap.createTexture(main._gl, img, idMatcap);
-          // Rebuild the rendering panel so the new matcap appears in the list.
           if (this._desktopRenderingEl) this._buildDesktopRendering(this._desktopRenderingEl);
           main.render();
         };
@@ -413,17 +402,16 @@ class Gui {
       document.getElementById('matcapopen').removeEventListener('change', cbLoadMatcap, false);
     };
 
-    // Wireframe keyboard shortcut (was previously in GuiRendering.onKeyUp).
+    // Wireframe keyboard shortcut
     ctrls[idc++] = {
-      onKeyUp: (event) => {
+      onKeyUp(event) {
         if (getOptionsURL.getShortKey(event.which) === Enums.KeyAction.WIREFRAME && !event.ctrlKey) {
-          const mesh = this._main.getMesh();
+          const mesh = main.getMesh();
           if (!mesh) return;
           const next = !mesh.getShowWireframe?.();
-          this._main.getSelectedMeshes().forEach(m => m.setShowWireframe?.(next));
-          this._main.render();
-          // Sync the wireframe toggle button in the desktop rendering panel without full rebuild.
-          const wireBtn = this._desktopRenderingEl?.querySelector('#mm-wireframe');
+          main.getSelectedMeshes().forEach(m => m.setShowWireframe?.(next));
+          main.render();
+          const wireBtn = gui._desktopRenderingEl?.querySelector('#mm-wireframe');
           if (wireBtn) wireBtn.classList.toggle('active', next);
         }
       }
@@ -431,91 +419,78 @@ class Gui {
 
     // Animation tab content is provided by AnimationControlPanel (embedded by Scene.js)
 
-    // Initialize custom timeline panel
-    this._ctrlTimeline = new GuiTimeline(this._main);
+    this._ctrlTimeline = new GuiTimeline(main);
     this._ctrlTimeline.setVisibility(false);
 
-    // gui extra
-    var extra = this._topbar.addExtra();
-    // Extra : Настройка интерфейса
-    extra.addTitle(TR('contour'));
-    extra.addColor(TR('contourColor'), ShaderContour.color, this.onContourColor.bind(this));
+    // ── Topbar ─────────────────────────────────────────────────────────────────
+    this._injectTopbarCSS();
 
-    extra.addTitle(TR('resolution'));
-    extra.addSlider('', this._main._pixelRatio, this.onPixelRatio.bind(this), 0.5, 2.0, 0.02);
-
-    extra.addTitle('Voxel Settings');
-    extra.addSlider('Res', 128, this.onVoxelRes.bind(this), 32, 256, 16);
-    extra.addSlider('Rad Mult', 50.0, this.onVoxelRad.bind(this), 1.0, 100.0, 1.0);
-
-    extra.addTitle('Advanced');
-    const controllerOptions = ['Auto', 'meta-quest-touch-plus', 'meta-quest-touch-plus-v2', 'meta-quest-touch-pro', 'oculus-touch-v3', 'oculus-touch-v2', 'valve-index', 'htc-vive', 'samsung-galaxyxr', 'samsung-odyssey'];
-    let currentIndex = controllerOptions.indexOf(window._xrControllerOverride);
-    if (currentIndex === -1) currentIndex = 0;
-    
-    extra.addCombobox('Controller Model', currentIndex, (val) => {
-      window._xrControllerOverride = controllerOptions[parseInt(val, 10)];
-      if (window._scene) window._scene.render(); // Just trigger render to be safe
-    }, controllerOptions);
-    extra.addCheckbox('Force Grey Controllers', window._forceGreyControllers === true, (val) => {
-      window._forceGreyControllers = val;
+    const topbarEl = this._topbarEl = document.createElement('div');
+    topbarEl.id = 'gui-topbar';
+    Object.assign(topbarEl.style, {
+      position: 'fixed', top: '0', left: '0', right: SIDEBAR_WIDTH + 'px',
+      height: TOPBAR_HEIGHT + 'px',
+      background: '#11111b',
+      borderBottom: '1px solid #2d2d2d',
+      display: 'flex', alignItems: 'center', gap: '2px',
+      padding: '0 8px',
+      zIndex: '1100',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      boxSizing: 'border-box'
     });
-    const opts = getOptionsURL();
-    extra.addCheckbox('Show Debug Log', opts.debugMode, (val) => {
-      window._showDebugLog = val;
-      getOptionsURL.saveOption('debugMode', val);
-      const log = document.getElementById('log');
-      if (log) log.style.display = val ? 'block' : 'none';
-      if (val && window.screenLog) window.screenLog("Debug Log Enabled", "lime");
-    });
+    document.body.appendChild(topbarEl);
 
-    extra.addCheckbox('Show Eruda Console', false, (val) => {
-      if (val) {
-        if (!window.eruda) {
-          const script = document.createElement('script');
-          script.src = 'https://cdn.jsdelivr.net/npm/eruda';
-          script.onload = () => {
-            window.eruda.init();
-            window.eruda.show();
-          };
-          document.head.appendChild(script);
-        } else {
-          window.eruda.show();
-          // Force show button if it was hidden
-          const container = document.querySelector('.eruda-container');
-          if (container && container.shadowRoot) {
-            const btn = container.shadowRoot.querySelector('.eruda-entry-btn');
-            if (btn) btn.style.setProperty('display', 'block', 'important');
-          }
-        }
-      } else {
-        if (window.eruda) {
-          window.eruda.hide();
-          // Hide button
-          const container = document.querySelector('.eruda-container');
-          if (container && container.shadowRoot) {
-            const btn = container.shadowRoot.querySelector('.eruda-entry-btn');
-            if (btn) btn.style.setProperty('display', 'none', 'important');
-          }
-        }
+    // Dropdown menu definitions
+    const menuDefs = [
+      { id: 'files',      label: 'Files ▾',      buildFn: buildMenuHTML_files,      wireFn: wireMenuFiles,      extraArgs: [() => openBrowserSavesDOMOverlay(main)] },
+      { id: 'camera',     label: 'Camera ▾',     buildFn: buildMenuHTML_camera,     wireFn: wireMenuCamera },
+      { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
+      { id: 'pressure',   label: 'Pressure ▾',   buildFn: buildMenuHTML_tablet,     wireFn: wireMenuTablet },
+      { id: 'settings',   label: 'Settings ▾',   buildFn: buildMenuHTML_desktopSettings, wireFn: wireMenuDesktopSettings },
+    ];
+
+    this._dropdowns = {};
+
+    for (const def of menuDefs) {
+      const btn = document.createElement('button');
+      btn.className = 'desktop-menu-btn';
+      btn.textContent = def.label;
+
+      const dd = document.createElement('div');
+      dd.className = 'desktop-dropdown';
+      dd.style.display = 'none';
+      document.body.appendChild(dd);
+
+      btn.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        const isOpen = dd.style.display !== 'none';
+        this._closeAllDropdowns();
+        if (!isOpen) this._openDropdown(btn, dd, def);
+      });
+
+      topbarEl.appendChild(btn);
+      this._dropdowns[def.id] = { btn, dd, def };
+    }
+
+    // Mesh stats — absolutely positioned at the right end of the topbar
+    const statsSpan = document.createElement('span');
+    statsSpan.id = 'desktop-mesh-stats';
+    Object.assign(statsSpan.style, {
+      position: 'absolute', right: '12px', top: '50%',
+      transform: 'translateY(-50%)',
+      color: '#666', fontSize: '11px',
+      cursor: 'default', whiteSpace: 'nowrap',
+      pointerEvents: 'none'
+    });
+    topbarEl.appendChild(statsSpan);
+
+    // Close all dropdowns on outside click
+    this._dropdownCloseHandler = (e) => {
+      if (!e.target.closest?.('.desktop-dropdown') && !e.target.closest?.('.desktop-menu-btn')) {
+        this._closeAllDropdowns();
       }
-    });
-    
-    const log = document.getElementById('log');
-    if (log) log.style.display = opts.debugMode ? 'block' : 'none';
-
-    extra.addButton('Clear Log', () => {
-      const logContainer = document.getElementById('log');
-      if (logContainer) {
-        // Keep the first child if it's a button (the Copy Log button)
-        while (logContainer.children.length > 1) {
-          logContainer.removeChild(logContainer.lastChild);
-        }
-        if (window.screenLog) window.screenLog("Log Cleared", "lime");
-      }
-    });
-
-    this.addAboutButton();
+    };
+    document.addEventListener('mousedown', this._dropdownCloseHandler);
 
     this.updateMesh();
     this.setVisibility(true);
@@ -523,20 +498,76 @@ class Gui {
     if (window.postprocessGui) window.postprocessGui();
   }
 
+  _injectTopbarCSS() {
+    if (document.getElementById('gui-topbar-css')) return;
+    const style = document.createElement('style');
+    style.id = 'gui-topbar-css';
+    style.textContent = `
+      .desktop-menu-btn {
+        padding: 4px 10px;
+        border: 1px solid #45475a;
+        border-radius: 5px;
+        background: #1e1e2e;
+        color: #cdd6f4;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        outline: none;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .desktop-menu-btn:hover { background: #313244; }
+      .desktop-menu-btn.active { background: #45475a; color: #89b4fa; border-color: #89b4fa; }
+      .desktop-dropdown {
+        position: fixed;
+        background: #1e1e2e;
+        border: 1px solid #585b70;
+        border-radius: 8px;
+        padding: 8px;
+        min-width: 220px;
+        max-height: 80vh;
+        overflow-y: auto;
+        z-index: 1200;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  _openDropdown(btn, dd, def) {
+    const rect = btn.getBoundingClientRect();
+    dd.style.top  = (rect.bottom + 2) + 'px';
+    dd.style.left = rect.left + 'px';
+    dd.style.display = 'block';
+    btn.classList.add('active');
+
+    const main    = this._main;
+    const rebuild = () => {
+      dd.innerHTML = def.buildFn(main);
+      def.wireFn(dd, main, rebuild, ...(def.extraArgs ?? []));
+    };
+    rebuild();
+  }
+
+  _closeAllDropdowns() {
+    for (const { btn, dd } of Object.values(this._dropdowns ?? {})) {
+      dd.style.display = 'none';
+      btn.classList.remove('active');
+    }
+  }
+
   getNotification(notifName) {
     var notif = this._notifications[notifName];
     if (!notif) {
-      notif = this._topbar.addMenu();
-      notif.isVisible = function () {
-        return !this.domContainer.hidden;
-      };
-      notif.setMessage = function (msg) {
-        this.domContainer.innerHTML = msg;
-        this.setVisibility(!!msg);
-      };
+      const span = document.createElement('span');
+      span.style.cssText = 'color:red;padding:4px 8px;font-size:12px;display:none;flex-shrink:0';
+      this._topbarEl?.appendChild(span);
 
-      notif.domContainer.style.color = 'red';
-      notif.setMessage('');
+      notif = {
+        domContainer: span,
+        isVisible:    () => span.style.display !== 'none',
+        setMessage:   (msg) => { span.innerHTML = msg ?? ''; span.style.display = msg ? '' : 'none'; },
+        setVisibility:(v)   => { span.style.display = v ? '' : 'none'; }
+      };
 
       this._notifications[notifName] = notif;
       return notif;
@@ -554,14 +585,8 @@ class Gui {
     return notif;
   }
 
-  initPrint(guiParent) {
-    var menu = guiParent.addMenu('Print it!');
-    // menu.addButton('with Sculpteo', this, 'exportSculpteo');
-    menu.addButton('Go to Materialise!', this, 'exportMaterialise');
-  }
-
-  exportSculpteo() {
-    this._export('sculpteo');
+  exportSketchfab() {
+    this._export('sketchfab');
   }
 
   exportMaterialise() {
@@ -570,60 +595,19 @@ class Gui {
     }
   }
 
-  exportSketchfab() {
-    this._export('sketchfab');
-  }
-
   _export(notifName) {
     var mesh = this._main.getMesh();
     if (!mesh) return;
-
     var notif = this.getNotification(notifName);
     if (!notif) return;
-
     var fName = 'export' + notifName.charAt(0).toUpperCase() + notifName.slice(1);
     this._xhrs[notifName] = Export[fName](this._main, notif);
   }
 
-  onVoxelRes(val) {
-    if (!this._main._sculptManager) return;
-    var tool = this._main._sculptManager.getTool(13); // Enums.Tools.VOXEL = 13
-    if (tool && tool.setResolution) tool.setResolution(val);
-  }
-
-  onVoxelRad(val) {
-    if (!this._main._sculptManager) return;
-    var tool = this._main._sculptManager.getTool(13);
-    if (tool && tool.setRadiusMultiplier) tool.setRadiusMultiplier(val);
-  }
-
-  onPixelRatio(val) {
-    this._main._pixelRatio = val;
-    this._main.onCanvasResize();
-  }
-
-  onContourColor(col) {
-    ShaderContour.color[0] = col[0];
-    ShaderContour.color[1] = col[1];
-    ShaderContour.color[2] = col[2];
-    ShaderContour.color[3] = col[3];
-    this._main.render();
-  }
-
-  addAboutButton() {
-    var ctrlAbout = this._topbar.addMenu();
-    ctrlAbout.domContainer.innerHTML = TR('about');
-    ctrlAbout.domContainer.addEventListener('mousedown', function () {
-      window.open('http://stephaneginier.com', '_blank');
-    });
-  }
-
   updateMesh() {
-    if (!this._ctrlScene) return;
+    if (!this._topbarEl) return;
     this._ctrlTopology?.updateMesh();
     this._ctrlSculpting?.updateMesh();
-    this._ctrlScene.updateMesh();
-    // Rebuild desktop panels to reflect the new mesh state.
     if (this._desktopSceneEl)     this._buildDesktopScene(this._desktopSceneEl);
     if (this._desktopRenderingEl) this._buildDesktopRendering(this._desktopRenderingEl);
     if (this._desktopTopologyEl)  this._buildDesktopTopology(this._desktopTopologyEl);
@@ -633,10 +617,14 @@ class Gui {
   }
 
   updateMeshInfo() {
-    this._ctrlMesh.updateMeshInfo();
+    const statsEl = document.getElementById('desktop-mesh-stats');
+    if (!statsEl) return;
+    const mesh  = this._main.getMesh();
+    const verts = mesh ? mesh.getNbVertices() : 0;
+    const faces = mesh ? mesh.getNbFaces() : 0;
+    statsEl.textContent = `${verts.toLocaleString()} verts  ${faces.toLocaleString()} faces`;
   }
 
-  // Read display state directly from the active mesh instead of a now-removed GuiRendering widget.
   getFlatShading() {
     return this._main.getMesh()?.getFlatShading?.() ?? false;
   }
@@ -655,28 +643,46 @@ class Gui {
   }
 
   deleteGui() {
-    if (!this._guiMain || !this._guiMain.domMain.parentNode)
-      return;
+    if (!this._topbarEl?.parentNode && !this._sidebarEl?.parentNode) return;
+
     this.callFunc('removeEvents');
-    if (this._renderingFilesRemoveCb) { this._renderingFilesRemoveCb(); this._renderingFilesRemoveCb = null; }
+
+    if (this._renderingFilesRemoveCb) {
+      this._renderingFilesRemoveCb();
+      this._renderingFilesRemoveCb = null;
+    }
+
+    if (this._dropdownCloseHandler) {
+      document.removeEventListener('mousedown', this._dropdownCloseHandler);
+      this._dropdownCloseHandler = null;
+    }
+
+    for (const { dd } of Object.values(this._dropdowns ?? {})) {
+      dd.parentNode?.removeChild(dd);
+    }
+    this._dropdowns = {};
+
     this.setVisibility(false);
-    
-    if (this._ctrlTimeline && this._ctrlTimeline._container && this._ctrlTimeline._container.parentNode) {
+
+    if (this._ctrlTimeline?._container?.parentNode) {
       this._ctrlTimeline._container.parentNode.removeChild(this._ctrlTimeline._container);
     }
-    
-    this._guiMain.domMain.parentNode.removeChild(this._guiMain.domMain);
+
+    this._topbarEl?.parentNode?.removeChild(this._topbarEl);
+    this._topbarEl = null;
+    this._sidebarEl?.parentNode?.removeChild(this._sidebarEl);
+    this._sidebarEl = null;
   }
 
   setVisibility(bool) {
-    this._guiMain.setVisibility(bool);
+    if (this._topbarEl)  this._topbarEl.style.display  = bool ? '' : 'none';
+    if (this._sidebarEl) this._sidebarEl.style.display = bool ? '' : 'none';
   }
 
   callFunc(func, event) {
     for (var i = 0, ctrls = this._ctrls, nb = ctrls.length; i < nb; ++i) {
       var ct = ctrls[i];
-      if (ct && ct[func])
-        ct[func](event);
+      if (ct && ct[func]) ct[func](event);
     }
   }
 
@@ -712,6 +718,7 @@ class Gui {
     wireSectionSculpting(panelEl, main, rebuild);
     fixSliderDrag(panelEl);
   }
+
 }
 
 class WebAwesomeFolderMock {
@@ -719,37 +726,32 @@ class WebAwesomeFolderMock {
     this.name = name;
     this.panelDom = panelDom;
     this.sidebar = sidebar;
-    
+
     this.container = document.createElement('div');
     this.container.className = 'wa-stack';
     this.container.style.gap = '12px';
     this.container.style.padding = '4px 0';
     this.container.style.width = '100%';
     this.container.style.boxSizing = 'border-box';
-    
-    // Only swallow keyboard events when the user is actively typing in a text field.
-    // Using composedPath()[0] to pierce shadow DOM (e.g. wa-number-input internals).
-    // Sliders, buttons, etc. should let events pass so global hotkeys (e.g. 'W') still work.
+
     const _isTextInput = (e) => {
       const target = e.composedPath ? e.composedPath()[0] : e.target;
-      const tag = target?.tagName?.toLowerCase();
+      const tag  = target?.tagName?.toLowerCase();
       const type = target?.type?.toLowerCase();
       if (tag === 'textarea') return true;
       if (tag === 'input' && type !== 'range' && type !== 'checkbox' && type !== 'radio' && type !== 'button' && type !== 'submit') return true;
       return false;
     };
     this.container.addEventListener('keydown', (e) => { if (_isTextInput(e)) e.stopPropagation(); });
-    this.container.addEventListener('keyup', (e) => { if (_isTextInput(e)) e.stopPropagation(); });
-    
+    this.container.addEventListener('keyup',   (e) => { if (_isTextInput(e)) e.stopPropagation(); });
+
     this.panelDom.appendChild(this.container);
   }
 
   close() {}
   open() {}
 
-  setVisibility(visible) {
-    this.container.style.display = visible ? '' : 'none';
-  }
+  setVisibility(visible) { this.container.style.display = visible ? '' : 'none'; }
 
   addTitle(name) {
     const title = document.createElement('div');
@@ -763,11 +765,7 @@ class WebAwesomeFolderMock {
     title.style.paddingBottom = '4px';
     title.style.marginTop = '8px';
     this.container.appendChild(title);
-
-    return {
-      domTitle: title,
-      setVisibility: (visible) => { title.style.display = visible ? '' : 'none'; }
-    };
+    return { domTitle: title, setVisibility: (v) => { title.style.display = v ? '' : 'none'; } };
   }
 
   addSlider(name, valueOrObject, callbackOrProperty, min, max, step) {
@@ -775,42 +773,26 @@ class WebAwesomeFolderMock {
     let onChange = null;
 
     if (typeof callbackOrProperty === 'string' && typeof valueOrObject === 'object') {
-      const obj = valueOrObject;
-      const prop = callbackOrProperty;
+      const obj = valueOrObject, prop = callbackOrProperty;
       initialVal = parseFloat(obj[prop]);
-      onChange = (val) => {
-        obj[prop] = val;
-      };
+      onChange = (val) => { obj[prop] = val; };
     } else {
       initialVal = parseFloat(valueOrObject);
-      onChange = (val) => {
-        if (typeof callbackOrProperty === 'function') {
-          callbackOrProperty(val);
-        }
-      };
+      onChange = (val) => { if (typeof callbackOrProperty === 'function') callbackOrProperty(val); };
     }
 
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.flexDirection = 'column';
-    row.style.gap = '4px';
+    row.style.cssText = 'display:flex;flex-direction:column;gap:4px';
 
     const labelRow = document.createElement('div');
-    labelRow.style.display = 'flex';
-    labelRow.style.justifyContent = 'space-between';
-    labelRow.style.fontSize = '12px';
-    labelRow.style.color = '#bbb';
-
+    labelRow.style.cssText = 'display:flex;justify-content:space-between;font-size:12px;color:#bbb';
     const labelSpan = document.createElement('span');
     labelSpan.innerText = name;
-    labelRow.appendChild(labelSpan);
-
     const valSpan = document.createElement('span');
-    valSpan.style.fontWeight = 'bold';
-    valSpan.style.color = '#3b82f6';
+    valSpan.style.cssText = 'font-weight:bold;color:#3b82f6';
     valSpan.innerText = initialVal.toString();
+    labelRow.appendChild(labelSpan);
     labelRow.appendChild(valSpan);
-
     row.appendChild(labelRow);
 
     const slider = document.createElement('wa-slider');
@@ -819,38 +801,23 @@ class WebAwesomeFolderMock {
     slider.setAttribute('step', step.toString());
     slider.setAttribute('value', initialVal.toString());
     slider.style.width = '100%';
-    row.appendChild(slider);
-
-    const onInput = (e) => {
+    slider.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       valSpan.innerText = val.toString();
       onChange(val);
-    };
-    
-    slider.addEventListener('input', onInput);
-
+    });
+    row.appendChild(slider);
     this.container.appendChild(row);
 
-    const controller = {
+    return {
       domSlider: slider,
-      setValue: (val, silent) => {
-        slider.value = val;
-        valSpan.innerText = val.toString();
-        if (!silent) {
-          onChange(parseFloat(val));
-        }
-      },
+      setValue: (val, silent) => { slider.value = val; valSpan.innerText = val.toString(); if (!silent) onChange(parseFloat(val)); },
       getValue: () => parseFloat(slider.value),
       setMin: (v) => slider.setAttribute('min', v.toString()),
       setMax: (v) => slider.setAttribute('max', v.toString()),
-      setVisibility: (visible) => { row.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
-        if (enabled) slider.removeAttribute('disabled');
-        else slider.setAttribute('disabled', '');
-      }
+      setVisibility: (v) => { row.style.display = v ? '' : 'none'; },
+      setEnable: (en) => { if (en) slider.removeAttribute('disabled'); else slider.setAttribute('disabled', ''); }
     };
-
-    return controller;
   }
 
   addCheckbox(name, valueOrObject, callbackOrProperty) {
@@ -858,53 +825,30 @@ class WebAwesomeFolderMock {
     let onChange = null;
 
     if (typeof callbackOrProperty === 'string' && typeof valueOrObject === 'object') {
-      const obj = valueOrObject;
-      const prop = callbackOrProperty;
+      const obj = valueOrObject, prop = callbackOrProperty;
       isChecked = !!obj[prop];
-      onChange = (checked) => {
-        obj[prop] = checked;
-      };
+      onChange = (checked) => { obj[prop] = checked; };
     } else {
       isChecked = !!valueOrObject;
-      onChange = (checked) => {
-        if (typeof callbackOrProperty === 'function') {
-          callbackOrProperty(checked);
-        }
-      };
+      onChange = (checked) => { if (typeof callbackOrProperty === 'function') callbackOrProperty(checked); };
     }
 
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.justifyContent = 'space-between';
-    row.style.fontSize = '12px';
-
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:12px';
     const checkbox = document.createElement('wa-checkbox');
     checkbox.innerText = name;
     checkbox.checked = isChecked;
     checkbox.style.flex = '1';
+    checkbox.addEventListener('change', (e) => { onChange(e.target.checked); });
     row.appendChild(checkbox);
-
-    checkbox.addEventListener('change', (e) => {
-      onChange(e.target.checked);
-    });
-
     this.container.appendChild(row);
 
     return {
       domCheckbox: checkbox,
-      setValue: (val, silent) => {
-        checkbox.checked = !!val;
-        if (!silent) {
-          onChange(!!val);
-        }
-      },
+      setValue: (val, silent) => { checkbox.checked = !!val; if (!silent) onChange(!!val); },
       getValue: () => checkbox.checked,
-      setVisibility: (visible) => { row.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
-        if (enabled) checkbox.removeAttribute('disabled');
-        else checkbox.setAttribute('disabled', '');
-      }
+      setVisibility: (v) => { row.style.display = v ? '' : 'none'; },
+      setEnable: (en) => { if (en) checkbox.removeAttribute('disabled'); else checkbox.setAttribute('disabled', ''); }
     };
   }
 
@@ -913,12 +857,9 @@ class WebAwesomeFolderMock {
     let onChange = null;
 
     if (typeof callbackOrProperty === 'string' && typeof valueOrObject === 'object') {
-      const obj = valueOrObject;
-      const prop = callbackOrProperty;
+      const obj = valueOrObject, prop = callbackOrProperty;
       initialVal = obj[prop];
-      onChange = (val) => {
-        obj[prop] = val;
-      };
+      onChange = (val) => { obj[prop] = val; };
     } else {
       initialVal = valueOrObject;
       onChange = (val) => {
@@ -931,11 +872,7 @@ class WebAwesomeFolderMock {
     }
 
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.flexDirection = 'column';
-    row.style.gap = '4px';
-    row.style.fontSize = '12px';
-
+    row.style.cssText = 'display:flex;flex-direction:column;gap:4px;font-size:12px';
     if (name) {
       const label = document.createElement('div');
       label.innerText = name;
@@ -969,34 +906,18 @@ class WebAwesomeFolderMock {
     };
 
     populateOptions(options);
+    select.addEventListener('change', (e) => { onChange(e.target.value); });
     row.appendChild(select);
-
-    select.addEventListener('change', (e) => {
-      onChange(e.target.value);
-    });
-
     this.container.appendChild(row);
 
     return {
       domSelect: select,
-      setValue: (val, silent) => {
-        select.value = val.toString();
-        if (!silent) {
-          onChange(val.toString());
-        }
-      },
+      setValue: (val, silent) => { select.value = val.toString(); if (!silent) onChange(val.toString()); },
       getValue: () => select.value,
-      setVisibility: (visible) => { row.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
-        if (enabled) select.removeAttribute('disabled');
-        else select.setAttribute('disabled', '');
-      },
-      setOptions: (newOpts) => {
-        populateOptions(newOpts);
-      },
-      addOptions: (newOpts) => {
-        populateOptions(newOpts);
-      }
+      setVisibility: (v) => { row.style.display = v ? '' : 'none'; },
+      setEnable: (en) => { if (en) select.removeAttribute('disabled'); else select.setAttribute('disabled', ''); },
+      setOptions: (newOpts) => { populateOptions(newOpts); },
+      addOptions: (newOpts) => { populateOptions(newOpts); }
     };
   }
 
@@ -1005,12 +926,9 @@ class WebAwesomeFolderMock {
     let onChange = null;
 
     if (typeof callbackOrProperty === 'string' && typeof valueOrObject === 'object') {
-      const obj = valueOrObject;
-      const prop = callbackOrProperty;
+      const obj = valueOrObject, prop = callbackOrProperty;
       initialVal = obj[prop];
-      onChange = (val) => {
-        obj[prop] = val;
-      };
+      onChange = (val) => { obj[prop] = val; };
     } else {
       initialVal = valueOrObject;
       onChange = (val) => {
@@ -1023,75 +941,33 @@ class WebAwesomeFolderMock {
     }
 
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.flexDirection = 'column';
-    row.style.gap = '4px';
-    row.style.width = '100%';
-
+    row.style.cssText = 'display:flex;flex-direction:column;gap:4px;width:100%';
     if (name) {
       const label = document.createElement('div');
       label.innerText = name;
-      label.style.color = '#bbb';
-      label.style.fontSize = '12px';
+      label.style.cssText = 'color:#bbb;font-size:12px';
       row.appendChild(label);
     }
 
     const grid = document.createElement('div');
-    grid.style.display = 'grid';
-    grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
-    grid.style.gap = '4px';
-    grid.style.width = '100%';
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:100%';
 
     const getToolColor = (idStr) => {
       const id = parseInt(idStr, 10);
       switch (id) {
-        case 0:  // BRUSH
-        case 1:  // INFLATE
-        case 4:  // FLATTEN
-        case 5:  // PINCH
-        case 6:  // CREASE
-        case 14: // VOXEL
-          return '#ebc5c5'; // Red (bright)
-        case 3:  // SMOOTH
-        case 8:  // RELAX
-          return '#c5d3eb'; // Blue (bright)
-        case 7:  // DRAG
-        case 10: // MOVE
-        case 12: // LOCALSCALE
-        case 13: // TRANSFORM
-        case 15: // GRAB
-        case 16: // TRANSFORM_VR
-        case 17: // SLIDE
-          return '#c5ebc5'; // Green (bright)
-        case 9:  // PAINT
-          return '#dec5eb'; // Purple (bright)
-        case 11: // MASKING
-          return '#ebdcc5'; // Orange (bright)
-        
-        // Low poly tools
-        case 18: // DELETE_FACE
-        case 19: // FILL_HOLE
-        case 20: // DISSOLVE_EDGE
-        case 21: // SPLIT_FACE
-        case 22: // SPIN_EDGE
-        case 23: // COLLAPSE_EDGE
-        case 24: // DISSOLVE_VERTEX
-        case 25: // WELD
-        case 26: // SNAP_WELD_CENTER
-        case 27: // SPLIT_EDGE
-        case 28: // EDGE_CREATE
-        case 29: // CUT_TOOL
-        case 30: // EXTRUDE
-        case 31: // INSET
-          return '#dcd6a8'; // Desaturated Yellow
-
-        default:
-          return '#eeeeee';
+        case 0: case 1: case 4: case 5: case 6: case 14: return '#ebc5c5';
+        case 3: case 8:                                   return '#c5d3eb';
+        case 7: case 10: case 12: case 13: case 15: case 16: case 17: return '#c5ebc5';
+        case 9:  return '#dec5eb';
+        case 11: return '#ebdcc5';
+        case 18: case 19: case 20: case 21: case 22: case 23:
+        case 24: case 25: case 26: case 27: case 28: case 29:
+        case 30: case 31: return '#dcd6a8';
+        default: return '#eeeeee';
       }
     };
 
     const buttonsMap = {};
-
     const updateButtonStyles = (valStr, btn, isActive) => {
       const color = getToolColor(valStr);
       if (isActive) {
@@ -1108,32 +984,23 @@ class WebAwesomeFolderMock {
     };
 
     Object.entries(options).forEach(([val, text]) => {
-      if (val === '-1') return; // Hide "None"
-      
+      if (val === '-1') return;
       const btn = document.createElement('wa-button');
       btn.innerText = text;
       btn.setAttribute('size', 'small');
       btn.className = 'grid-tool-btn';
       btn.style.width = '100%';
-
       btn.addEventListener('click', () => {
         const valStr = val.toString();
-        Object.entries(buttonsMap).forEach(([k, b]) => {
-          updateButtonStyles(k, b, k === valStr);
-        });
+        Object.entries(buttonsMap).forEach(([k, b]) => updateButtonStyles(k, b, k === valStr));
         onChange(valStr);
       });
-
       buttonsMap[val] = btn;
       grid.appendChild(btn);
     });
 
-    // Set initial values
     const initialStr = initialVal.toString();
-    Object.entries(buttonsMap).forEach(([k, b]) => {
-      updateButtonStyles(k, b, k === initialStr);
-    });
-
+    Object.entries(buttonsMap).forEach(([k, b]) => updateButtonStyles(k, b, k === initialStr));
     row.appendChild(grid);
     this.container.appendChild(row);
 
@@ -1141,26 +1008,17 @@ class WebAwesomeFolderMock {
       domGrid: grid,
       setValue: (val, silent) => {
         const valStr = val ? val.toString() : '-1';
-        Object.entries(buttonsMap).forEach(([k, b]) => {
-          updateButtonStyles(k, b, k === valStr);
-        });
-        if (!silent) {
-          onChange(valStr);
-        }
+        Object.entries(buttonsMap).forEach(([k, b]) => updateButtonStyles(k, b, k === valStr));
+        if (!silent) onChange(valStr);
       },
       getValue: () => {
-        const activeKey = Object.entries(buttonsMap).find(([k, b]) => {
-          const color = getToolColor(k);
-          // Check active status by seeing if it currently has dark text on it
-          return b.style.getPropertyValue('--btn-color') === '#111';
-        });
+        const activeKey = Object.entries(buttonsMap).find(([k, b]) => b.style.getPropertyValue('--btn-color') === '#111');
         return activeKey ? activeKey[0] : '-1';
       },
-      setVisibility: (visible) => { row.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
+      setVisibility: (v) => { row.style.display = v ? '' : 'none'; },
+      setEnable: (en) => {
         Object.values(buttonsMap).forEach(b => {
-          if (enabled) b.removeAttribute('disabled');
-          else b.setAttribute('disabled', '');
+          if (en) b.removeAttribute('disabled'); else b.setAttribute('disabled', '');
         });
       }
     };
@@ -1172,7 +1030,6 @@ class WebAwesomeFolderMock {
     btn.setAttribute('variant', 'primary');
     btn.className = 'compact-btn';
     btn.style.width = '100%';
-
     btn.addEventListener('click', () => {
       if (typeof callbackOrScope === 'function') {
         callbackOrScope();
@@ -1180,127 +1037,72 @@ class WebAwesomeFolderMock {
         callbackOrScope[method]();
       }
     });
-
     this.container.appendChild(btn);
-
     return {
       domButton: btn,
-      setVisibility: (visible) => { btn.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
-        if (enabled) btn.removeAttribute('disabled');
-        else btn.setAttribute('disabled', '');
-      }
+      setVisibility: (v) => { btn.style.display = v ? '' : 'none'; },
+      setEnable: (en) => { if (en) btn.removeAttribute('disabled'); else btn.setAttribute('disabled', ''); }
     };
   }
 
   addDualButton(name1, name2, callback1, callback2, method1, method2) {
     const row = document.createElement('div');
     row.className = 'btn-grid';
-    row.style.display = 'flex';
-    row.style.gap = '4px';
-    row.style.width = '100%';
-    
-    const btn1 = document.createElement('wa-button');
-    btn1.innerText = name1;
-    btn1.setAttribute('variant', 'primary');
-    btn1.className = 'compact-btn';
-    btn1.style.flex = '1';
-    
-    const btn2 = document.createElement('wa-button');
-    btn2.innerText = name2;
-    btn2.setAttribute('variant', 'primary');
-    btn2.className = 'compact-btn';
-    btn2.style.flex = '1';
+    row.style.cssText = 'display:flex;gap:4px;width:100%';
 
     const trigger = (cb, method) => {
-      if (typeof cb === 'function') {
-        cb();
-      } else if (typeof cb === 'object' && typeof method === 'string' && typeof cb[method] === 'function') {
-        cb[method]();
-      }
+      if (typeof cb === 'function') cb();
+      else if (typeof cb === 'object' && typeof method === 'string' && typeof cb[method] === 'function') cb[method]();
     };
 
-    btn1.addEventListener('click', () => trigger(callback1, method1));
-    btn2.addEventListener('click', () => trigger(callback2, method2));
+    const makeBtn = (name, cb, method) => {
+      const btn = document.createElement('wa-button');
+      btn.innerText = name;
+      btn.setAttribute('variant', 'primary');
+      btn.className = 'compact-btn';
+      btn.style.flex = '1';
+      btn.addEventListener('click', () => trigger(cb, method));
+      row.appendChild(btn);
+      return {
+        domButton: btn,
+        setVisibility: (v) => { btn.style.display = v ? '' : 'none'; },
+        setEnable: (en) => { if (en) btn.removeAttribute('disabled'); else btn.setAttribute('disabled', ''); }
+      };
+    };
 
-    row.appendChild(btn1);
-    row.appendChild(btn2);
+    const r1 = makeBtn(name1, callback1, method1);
+    const r2 = makeBtn(name2, callback2, method2);
     this.container.appendChild(row);
-
-    return [
-      {
-        domButton: btn1,
-        setVisibility: (visible) => { btn1.style.display = visible ? '' : 'none'; },
-        setEnable: (enabled) => {
-          if (enabled) btn1.removeAttribute('disabled');
-          else btn1.setAttribute('disabled', '');
-        }
-      },
-      {
-        domButton: btn2,
-        setVisibility: (visible) => { btn2.style.display = visible ? '' : 'none'; },
-        setEnable: (enabled) => {
-          if (enabled) btn2.removeAttribute('disabled');
-          else btn2.setAttribute('disabled', '');
-        }
-      }
-    ];
+    return [r1, r2];
   }
 
   addColor(name, color, callback) {
     const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.justifyContent = 'space-between';
-    row.style.fontSize = '12px';
-
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:12px';
     const label = document.createElement('span');
     label.innerText = name;
     label.style.color = '#bbb';
     row.appendChild(label);
 
     const colorWrapper = document.createElement('div');
-    colorWrapper.style.position = 'relative';
-    colorWrapper.style.width = '48px';
-    colorWrapper.style.height = '24px';
-    colorWrapper.style.borderRadius = '4px';
-    colorWrapper.style.border = '1px solid #444';
-    colorWrapper.style.overflow = 'hidden';
-    colorWrapper.style.cursor = 'pointer';
+    colorWrapper.style.cssText = 'position:relative;width:48px;height:24px;border-radius:4px;border:1px solid #444;overflow:hidden;cursor:pointer';
 
     const colorInput = document.createElement('input');
     colorInput.setAttribute('type', 'color');
-    
+
     const rgbToHex = (rgb) => {
-      const toHex = (c) => {
-        const hex = Math.round(c * 255).toString(16);
-        return hex.length === 1 ? '0' + hex : hex;
-      };
+      const toHex = (c) => { const h = Math.round(c * 255).toString(16); return h.length === 1 ? '0' + h : h; };
       return `#${toHex(rgb[0])}${toHex(rgb[1])}${toHex(rgb[2])}`;
     };
+    const hexToRgb = (hex) => [
+      parseInt(hex.slice(1, 3), 16) / 255,
+      parseInt(hex.slice(3, 5), 16) / 255,
+      parseInt(hex.slice(5, 7), 16) / 255
+    ];
 
-    const hexToRgb = (hex) => {
-      const r = parseInt(hex.slice(1, 3), 16) / 255;
-      const g = parseInt(hex.slice(3, 5), 16) / 255;
-      const b = parseInt(hex.slice(5, 7), 16) / 255;
-      return [r, g, b];
-    };
-
-    // Use ArrayBuffer.isView to catch typed arrays (Float32Array / gl-matrix vec3)
-    // as well as plain JS arrays — both need rgbToHex conversion.
     let hexVal = (Array.isArray(color) || ArrayBuffer.isView(color)) ? rgbToHex(color) : color;
     colorInput.value = hexVal;
-    
-    colorInput.style.position = 'absolute';
-    colorInput.style.top = '-5px';
-    colorInput.style.left = '-5px';
-    colorInput.style.width = '60px';
-    colorInput.style.height = '34px';
-    colorInput.style.border = 'none';
-    colorInput.style.padding = '0';
-    colorInput.style.margin = '0';
-    colorInput.style.cursor = 'pointer';
-    colorInput.style.background = 'transparent';
+    colorInput.style.cssText = 'position:absolute;top:-5px;left:-5px;width:60px;height:34px;border:none;padding:0;margin:0;cursor:pointer;background:transparent';
 
     colorWrapper.appendChild(colorInput);
     row.appendChild(colorWrapper);
@@ -1310,32 +1112,18 @@ class WebAwesomeFolderMock {
       const hex = (Array.isArray(val) || ArrayBuffer.isView(val)) ? rgbToHex(val) : val;
       colorInput.value = hex;
       if (!silent && typeof callback === 'function') {
-        if (Array.isArray(color)) {
-          callback(hexToRgb(hex));
-        } else {
-          callback(hex);
-        }
+        callback(Array.isArray(color) ? hexToRgb(hex) : hex);
       }
     };
 
-    colorInput.addEventListener('input', (e) => {
-      updateHandler(e.target.value, false);
-    });
+    colorInput.addEventListener('input', (e) => updateHandler(e.target.value, false));
 
     return {
       domColor: colorInput,
-      setValue: (val, silent) => {
-        updateHandler(val, silent);
-      },
-      getValue: () => {
-        const hex = colorInput.value;
-        return Array.isArray(color) ? hexToRgb(hex) : hex;
-      },
-      setVisibility: (visible) => { row.style.display = visible ? '' : 'none'; },
-      setEnable: (enabled) => {
-        if (enabled) colorInput.removeAttribute('disabled');
-        else colorInput.setAttribute('disabled', '');
-      }
+      setValue: (val, silent) => updateHandler(val, silent),
+      getValue: () => { const hex = colorInput.value; return Array.isArray(color) ? hexToRgb(hex) : hex; },
+      setVisibility: (v) => { row.style.display = v ? '' : 'none'; },
+      setEnable: (en) => { if (en) colorInput.removeAttribute('disabled'); else colorInput.setAttribute('disabled', ''); }
     };
   }
 }

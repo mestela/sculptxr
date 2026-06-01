@@ -37,6 +37,7 @@
         }
 
         #log {
+            display: none;
             position: absolute;
             top: 120px; /* Moved down to avoid blocking top UI */
             left: 10px;
@@ -135,7 +136,7 @@
             const nativeLog = console.log;
             // Environment checks
             const isProd = window.location.hostname === 'tokeru.com' && !window.location.pathname.includes('beta');
-            window._showDebugLog = true; // Enable for debugging
+            window._showDebugLog = false;
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
