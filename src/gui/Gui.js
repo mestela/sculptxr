@@ -651,6 +651,7 @@ class Gui {
 
   addAlphaOptions(opts) {
     this._ctrlSculpting?.addAlphaOptions(opts);
+    if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
   }
 
   deleteGui() {

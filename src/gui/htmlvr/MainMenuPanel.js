@@ -29,6 +29,7 @@ import Enums        from '../../misc/Enums.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
+import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
@@ -974,6 +975,23 @@ export function buildSectionHTML_sculpting(main) {
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
     }
 
+    // ── Alpha brush texture selector ─────────────────────────────────
+    if (tool._idAlpha !== undefined) {
+      const alphaNames = Object.keys(Picking.ALPHAS_NAMES);
+      const currentAlpha = tool._idAlpha ?? Object.keys(Picking.ALPHAS_NAMES)[0];
+      const alphaOptions = alphaNames.map(name =>
+        `<option value="${name}"${name === currentAlpha ? ' selected' : ''}>${name}</option>`
+      ).join('');
+      brushHTML += `
+        <div class="mm-section-title">Alpha</div>
+        <div class="mm-row" style="gap:6px">
+          <select id="mm-alpha-select" style="flex:1;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:5px;padding:4px 6px;font-size:11px;cursor:pointer">
+            ${alphaOptions}
+          </select>
+          <button class="mm-action-btn" id="mm-alpha-import" style="flex-shrink:0;padding:4px 8px;font-size:11px">Import…</button>
+        </div>`;
+    }
+
     // ── Paint-specific controls ──────────────────────────────────────
     if (cur === Enums.Tools.PAINT && tool._color) {
       const hexColor  = '#' + _toHex2(tool._color[0]) + _toHex2(tool._color[1]) + _toHex2(tool._color[2]);
@@ -1839,6 +1857,26 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         tool._pickColor = !tool._pickColor;
         e.currentTarget.classList.toggle('active', tool._pickColor);
         lightRepaintFn();
+      });
+    }
+
+    // ── Alpha brush texture ───────────────────────────────────────────────────
+    if (tool._idAlpha !== undefined) {
+      el.querySelector('#mm-alpha-select')?.addEventListener('change', (e) => {
+        tool._idAlpha = e.target.value;
+        main.render?.();
+      });
+
+      el.querySelector('#mm-alpha-import')?.addEventListener('click', () => {
+        const input = document.getElementById('alphaopen');
+        if (!input) return;
+        // Wire a one-shot handler: load the alpha then rebuild this section.
+        const onAlphaLoaded = () => {
+          input.removeEventListener('change', onAlphaLoaded);
+          repaintFn(); // rebuild so the new alpha appears in the <select>
+        };
+        input.addEventListener('change', onAlphaLoaded);
+        input.click();
       });
     }
   }
