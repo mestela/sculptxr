@@ -2076,6 +2076,8 @@ class Scene {
     this._stateManager.pushStateAdd(newMeshes);
     this.setMesh(meshes[meshes.length - 1]);
     this.resetCameraMeshes(newMeshes);
+    this._camera.optimizeNearFar(this.computeBoundingBoxScene());
+    this._refreshDesktopCameraProjection();
     return newMeshes;
   }
 
@@ -2497,6 +2499,38 @@ class Scene {
   //                   the worldGroup; tracks sculpt rotations/moves without
   //                   inheriting positional jitter from headset movement
   //
+  // Recompute the desktop camera's near/far from the current scene bounds and
+  // update _desktopCameraCache.proj. Safe to call any time — no-op if no cache yet.
+  _refreshDesktopCameraProjection() {
+    const cache = this._desktopCameraCache;
+    if (!cache || !cache.view) return;
+
+    const bb = this.computeBoundingBoxScene();
+    if (!Number.isFinite(bb[0])) return;
+
+    // Extract desktop eye position from the cached view matrix.
+    const v = cache.view;
+    const ex = -(v[0] * v[12] + v[1] * v[13] + v[2] * v[14]);
+    const ey = -(v[4] * v[12] + v[5] * v[13] + v[6] * v[14]);
+    const ez = -(v[8] * v[12] + v[9] * v[13] + v[10] * v[14]);
+
+    const bcx = (bb[0] + bb[3]) * 0.5;
+    const bcy = (bb[1] + bb[4]) * 0.5;
+    const bcz = (bb[2] + bb[5]) * 0.5;
+    const dx = ex - bcx, dy = ey - bcy, dz = ez - bcz;
+    const distToBoxCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const boxRadius = 0.5 * Math.sqrt(
+      (bb[3] - bb[0]) ** 2 + (bb[4] - bb[1]) ** 2 + (bb[5] - bb[2]) ** 2
+    );
+
+    const near = Math.max(0.001, distToBoxCenter - boxRadius);
+    const far  = Math.max(near + 0.1, distToBoxCenter + boxRadius);
+
+    const cam = this._camera;
+    const aspect = cam._width / cam._height;
+    mat4.perspective(cache.proj, cam._fov * Math.PI / 180.0, aspect, near, far);
+  }
+
   _renderSpectatorCanvas() {
     const mode = this._spectatorViewMode ?? 0;
 
