@@ -419,13 +419,15 @@ const CSS = `
 `;
 
 let _mmCssInjected = false;
-function injectCSS() {
+export function injectMMCSS() {
   if (_mmCssInjected) return;
   _mmCssInjected = true;
   const s = document.createElement('style');
   s.textContent = CSS;
   document.head.appendChild(s);
 }
+// Internal alias used by the class constructor.
+function injectCSS() { injectMMCSS(); }
 
 // ── Shell HTML (static structure only; content area is filled dynamically) ──
 function buildShellHTML() {
@@ -688,7 +690,7 @@ function buildMenuHTML_about() {
 
 // ── Section content builders ─────────────────────────────────────────────────
 
-function buildSectionHTML_scene(main) {
+export function buildSectionHTML_scene(main) {
   const meshes   = main.getMeshes?.() ?? [];
   const selected = main.getSelectedMeshes?.() ?? [];
 
@@ -734,7 +736,7 @@ function buildSectionHTML_scene(main) {
   `;
 }
 
-function buildSectionHTML_topology(main) {
+export function buildSectionHTML_topology(main) {
   const mesh   = main.getMesh?.();
   const isMulti = !!(mesh?._meshes);
   const isDyn   = !!(mesh?.isDynamic);
@@ -788,7 +790,7 @@ function buildSectionHTML_topology(main) {
   `;
 }
 
-function buildSectionHTML_rendering(main) {
+export function buildSectionHTML_rendering(main) {
   const mesh = main.getMesh?.();
   if (!mesh) return '<div class="mm-info">No mesh selected</div>';
 
@@ -923,9 +925,13 @@ const MESH_TOOLS = [
   { id: Enums.Tools.WELD,             label: 'Weld'       },
 ];
 
-function buildSectionHTML_sculpting(main) {
+// Helper: encode a 0-1 rgb vec3 component as two hex digits.
+const _toHex2 = v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
+
+export function buildSectionHTML_sculpting(main) {
   const sm  = main.getSculptManager?.() ?? main._sculptManager;
   const cur = sm?.getToolIndex?.() ?? -1;
+  const tool = sm?.getCurrentTool?.();
   const symOn  = sm?._symmetry ?? false;
   const contOn = sm?._continuous ?? false;
 
@@ -936,11 +942,73 @@ function buildSectionHTML_sculpting(main) {
     `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
 
+  // ── Brush settings (radius + intensity) ─────────────────────────
+  let brushHTML = '';
+  if (tool && tool._radius !== undefined) {
+    const radius    = Math.round(tool._radius ?? 50);
+    const intensity = Math.round((tool._intensity ?? 0.5) * 100);
+    brushHTML += `
+      <div class="mm-section-title">Brush</div>
+      <div class="mm-row">
+        <span class="mm-lbl">Radius</span>
+        <input type="range" id="mm-brush-radius" min="5" max="250" step="1" value="${radius}">
+        <span class="mm-val" id="mm-brush-radius-val">${radius}</span>
+      </div>
+      <div class="mm-row">
+        <span class="mm-lbl">Intensity</span>
+        <input type="range" id="mm-brush-intensity" min="0" max="100" step="1" value="${intensity}">
+        <span class="mm-val" id="mm-brush-intensity-val">${intensity}%</span>
+      </div>`;
+
+    // ── Tool-specific toggles ────────────────────────────────────────
+    const hasNegative   = tool._negative !== undefined;
+    const hasClay       = tool._clay !== undefined;
+    const hasAccumulate = tool._accumulate !== undefined;
+
+    if (hasNegative || hasClay || hasAccumulate) {
+      const toggles = [];
+      if (hasNegative)   toggles.push(`<button class="mm-choice${tool._negative   ? ' active' : ''}" id="mm-brush-negative" >Negative  </button>`);
+      if (hasClay)       toggles.push(`<button class="mm-choice${tool._clay       ? ' active' : ''}" id="mm-brush-clay"    >Clay      </button>`);
+      if (hasAccumulate) toggles.push(`<button class="mm-choice${tool._accumulate ? ' active' : ''}" id="mm-brush-accum"   >Accumulate</button>`);
+      const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
+      brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
+    }
+
+    // ── Paint-specific controls ──────────────────────────────────────
+    if (cur === Enums.Tools.PAINT && tool._color) {
+      const hexColor  = '#' + _toHex2(tool._color[0]) + _toHex2(tool._color[1]) + _toHex2(tool._color[2]);
+      const roughness = Math.round((tool._material?.[0] ?? 0.5) * 100);
+      const metallic  = Math.round((tool._material?.[1] ?? 0.0) * 100);
+      brushHTML += `
+        <div class="mm-section-title">Paint</div>
+        <div class="mm-row">
+          <span class="mm-lbl">Color</span>
+          <input type="color" id="mm-paint-color" value="${hexColor}"
+            style="width:44px;height:22px;padding:1px 2px;border:1px solid #45475a;border-radius:4px;background:#313244;cursor:pointer;flex-shrink:0">
+        </div>
+        <div class="mm-row">
+          <span class="mm-lbl">Roughness</span>
+          <input type="range" id="mm-paint-roughness" min="0" max="100" step="1" value="${roughness}">
+          <span class="mm-val" id="mm-paint-roughness-val">${roughness}%</span>
+        </div>
+        <div class="mm-row">
+          <span class="mm-lbl">Metallic</span>
+          <input type="range" id="mm-paint-metallic" min="0" max="100" step="1" value="${metallic}">
+          <span class="mm-val" id="mm-paint-metallic-val">${metallic}%</span>
+        </div>
+        <div class="mm-choice-grid cols-2" style="margin-top:4px">
+          <button class="mm-choice${tool._writeAlbedo ? ' active' : ''}" id="mm-paint-albedo">Write Color</button>
+          <button class="mm-choice${tool._pickColor   ? ' active' : ''}" id="mm-paint-pick"  >Pick Color </button>
+        </div>`;
+    }
+  }
+
   return `
     <div class="mm-section-title">Sculpt</div>
     <div class="mm-choice-grid cols-3">${sculptBtns}</div>
     <div class="mm-section-title">Mesh Edit</div>
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
+    ${brushHTML}
     <div class="mm-section-title">Symmetry</div>
     <button class="mm-toggle${symOn ? ' active' : ''}" id="mm-sym-toggle">
       Mirror Symmetry ${symOn ? '✓ On' : 'Off'}
@@ -952,7 +1020,6 @@ function buildSectionHTML_sculpting(main) {
     <button class="mm-toggle${contOn ? ' active' : ''}" id="mm-continuous" style="margin-top:4px">
       Continuous ${contOn ? '✓ On' : 'Off'}
     </button>
-    <div class="mm-info" style="margin-top:6px">Tool settings: grip button → BrushPanel</div>
   `;
 }
 
@@ -1413,277 +1480,17 @@ export class MainMenuPanel extends HTMLVRPanel {
 
   _wireSection(section, main) {
     const el = this._element;
-    const paint = () => { this._lastContentKey = ''; this._rebuildContent(); };
+    const fullRepaint = () => { this._lastContentKey = ''; this._rebuildContent(); };
+    const lightRepaint = () => this.markDirty();
 
     if (section === 'scene') {
-      // Outliner — visibility toggles
-      el.querySelectorAll('[data-action="vis"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const mesh = this._findMeshById(btn.dataset.meshId);
-          if (!mesh) return;
-          const cur = mesh.isVisible?.() ?? true;
-          mesh.setVisible?.(!cur);
-          if (mesh.getThreeMesh?.()) mesh.getThreeMesh().visible = !cur;
-          main.render?.();
-          paint();
-        });
-      });
-
-      // Outliner — select mesh
-      el.querySelectorAll('[data-action="select"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const mesh = this._findMeshById(btn.dataset.meshId);
-          if (mesh) { main.setOrUnsetMesh?.(mesh, false); main.render?.(); paint(); }
-        });
-      });
-
-      el.querySelector('#mm-add-sphere')?.addEventListener('click', () => {
-        main.addNewMesh?.('sphere'); main.render?.(); paint();
-      });
-      el.querySelector('#mm-add-cube')?.addEventListener('click', () => {
-        main.addNewMesh?.('cube'); main.render?.(); paint();
-      });
-      el.querySelector('#mm-clear-scene')?.addEventListener('click', () => {
-        if (!main._clearSceneConfirm) {
-          main._clearSceneConfirm = true;
-          paint(); // re-render button as "Confirm"
-          setTimeout(() => { main._clearSceneConfirm = false; }, 3000);
-        } else {
-          main._clearSceneConfirm = false;
-          main.clearScene?.(); main.render?.(); paint();
-        }
-      });
-      el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
-        main.duplicateMesh?.(); main.render?.(); paint();
-      });
-      el.querySelector('#mm-delete-mesh')?.addEventListener('click', () => {
-        main.deleteMesh?.(); main.render?.(); paint();
-      });
-
+      wireSectionScene(el, main, fullRepaint);
     } else if (section === 'topology') {
-      const topo = main.getGui?.()._ctrlTopology ?? null;
-      const repaint = () => paint();
-
-      el.querySelector('#mm-level-down')?.addEventListener('click', () => {
-        const m = main.getMesh?.();
-        if (m?._meshes && m._sel > 0) { topo?.onResolutionChanged?.(m._sel); repaint(); }
-      });
-      el.querySelector('#mm-level-up')?.addEventListener('click', () => {
-        const m = main.getMesh?.();
-        if (m?._meshes && m._sel < m._meshes.length - 1) { topo?.onResolutionChanged?.(m._sel + 2); repaint(); }
-      });
-      el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { topo?.subdivide?.();    main.render?.(); repaint(); });
-      el.querySelector('#mm-reverse')?.addEventListener('click',     () => { topo?.reverse?.();      main.render?.(); repaint(); });
-      el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { topo?.deleteLower?.();  main.render?.(); repaint(); });
-      el.querySelector('#mm-del-higher')?.addEventListener('click',  () => { topo?.deleteHigher?.(); main.render?.(); repaint(); });
-
-      this._wireSlider(
-        el.querySelector('#mm-remesh-res'), el.querySelector('#mm-remesh-res-val'),
-        (v) => { Remesh.RESOLUTION = v; topo?.remeshResolution?.(v); }
-      );
-      el.querySelector('#mm-remesh-block')?.addEventListener('click', () => {
-        Remesh.BLOCK = !Remesh.BLOCK;
-        el.querySelector('#mm-remesh-block')?.classList.toggle('active', Remesh.BLOCK);
-        this.markDirty();
-      });
-      el.querySelector('#mm-remesh')?.addEventListener('click',    () => { topo?.remesh?.();   main.render?.(); repaint(); });
-      el.querySelector('#mm-remesh-mc')?.addEventListener('click', () => { topo?.remeshMC?.(); main.render?.(); repaint(); });
-      el.querySelector('#mm-remesh-smooth')?.addEventListener('click', () => {
-        Remesh.SMOOTHING = !Remesh.SMOOTHING;
-        el.querySelector('#mm-remesh-smooth')?.classList.toggle('active', Remesh.SMOOTHING);
-        this.markDirty();
-      });
-      el.querySelector('#mm-dynamic')?.addEventListener('click', () => {
-        topo?.dynamicToggleActivate?.(); main.render?.(); repaint();
-      });
-      el.querySelector('#mm-mesh-to-voxels')?.addEventListener('click', () => {
-        topo?.meshToVoxel?.(); main.render?.(); repaint();
-      });
-      el.querySelector('#mm-validate')?.addEventListener('click', () => {
-        topo?.validateMesh?.();
-      });
-      el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
-        el.querySelector('#mm-auto-heal')?.classList.toggle('active');
-        this.markDirty();
-      });
-
+      wireSectionTopology(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'rendering') {
-      const mesh = main.getMesh?.();
-      const root = el.querySelector('#mm-render-root');
-      const paint = () => this.markDirty();
-
-      // Shader choice buttons
-      el.querySelectorAll('[data-shader]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = parseInt(btn.dataset.shader, 10);
-          const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh];
-          meshes?.forEach(m => m.setShaderType?.(id));
-          main.render?.();
-          // Re-run full rebuild so conditional sections appear/disappear
-          this._lastContentKey = '';
-          this._rebuildContent();
-        });
-      });
-
-      // Environment (PBR)
-      el.querySelectorAll('[data-env]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const ShaderPBR = Shader[Enums.Shader.PBR];
-          ShaderPBR.idEnv = parseInt(btn.dataset.env, 10);
-          main.render?.();
-          el.querySelectorAll('[data-env]').forEach(b => b.classList.toggle('active', b === btn));
-          paint();
-        });
-      });
-
-      // Matcap
-      el.querySelectorAll('[data-matcap]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = parseInt(btn.dataset.matcap, 10);
-          (main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh])
-            ?.forEach(m => m.setMatcap?.(id));
-          main.render?.();
-          el.querySelectorAll('[data-matcap]').forEach(b => b.classList.toggle('active', b === btn));
-          paint();
-        });
-      });
-
-      el.querySelector('#mm-import-matcap')?.addEventListener('click', () => document.getElementById('matcapopen')?.click());
-      el.querySelector('#mm-import-uv')?.addEventListener('click', () => document.getElementById('textureopen')?.click());
-
-      // Ground plane toggle
-      el.querySelector('#mm-grid-toggle')?.addEventListener('click', () => {
-        main._showGrid = !main._showGrid;
-        if (main._groundGrid) main._groundGrid.visible = main._showGrid;
-        try {
-          const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}');
-          s.grid = main._showGrid;
-          localStorage.setItem('sculptxr_settings', JSON.stringify(s));
-        } catch (_) {}
-        main.render?.();
-        paint();
-      });
-
-      // Display sliders
-      const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh];
-      this._wireSlider(el.querySelector('#mm-curvature'), el.querySelector('#mm-curvature-val'), (v) => {
-        meshes?.forEach(m => m.setCurvature?.(v / 20)); main.render?.();
-      });
-      this._wireSlider(el.querySelector('#mm-transparency'), el.querySelector('#mm-transparency-val'), (v) => {
-        meshes?.forEach(m => m.setOpacity?.(1 - v / 100)); main.render?.();
-      }, (v) => `${v}%`);
-
-      el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {
-        const t = !mesh?.getFlatShading?.();
-        meshes?.forEach(m => m.setFlatShading?.(t));
-        main.render?.();
-        el.querySelector('#mm-flat-shading')?.classList.toggle('active', t);
-        paint();
-      });
-      el.querySelector('#mm-wireframe')?.addEventListener('click', () => {
-        const t = !mesh?.getShowWireframe?.();
-        (main.getMeshes?.() ?? meshes)?.forEach(m => m.setShowWireframe?.(t));
-        main.render?.();
-        el.querySelector('#mm-wireframe')?.classList.toggle('active', t);
-        paint();
-      });
-      el.querySelector('#mm-solid')?.addEventListener('click', () => {
-        meshes?.forEach(m => {
-          const mat = m._renderData?._threeMesh?.material;
-          if (mat) mat.visible = !mat.visible;
-        });
-        main.render?.();
-        paint();
-      });
-
-      // Tone mapping
-      el.querySelectorAll('[data-tonemap]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = parseInt(btn.dataset.tonemap, 10);
-          main.setToneMapping?.(id);
-          el.querySelectorAll('[data-tonemap]').forEach(b => b.classList.toggle('active', b === btn));
-          paint();
-        });
-      });
-
-      // Exposure
-      this._wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
-        main.setExposure?.(v / 100); main.render?.();
-      }, (v) => (v / 100).toFixed(2));
-
+      wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'sculpting') {
-      const sm = main.getSculptManager?.() ?? main._sculptManager;
-
-      // Tool grid
-      el.querySelectorAll('[data-tool-id]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const id = parseInt(btn.dataset.toolId, 10);
-          sm?.setToolIndex?.(id);
-          main.render?.();
-          paint();
-        });
-      });
-
-      // Mirror Symmetry toggle
-      const symToggle = el.querySelector('#mm-sym-toggle');
-      if (symToggle && sm) {
-        symToggle.addEventListener('click', () => {
-          sm._symmetry = !sm._symmetry;
-          symToggle.classList.toggle('active', sm._symmetry);
-          symToggle.textContent = `Mirror Symmetry ${sm._symmetry ? '✓ On' : 'Off'}`;
-          main.render?.();
-          this.markDirty();
-        });
-      }
-
-      // Symmetrize L→R
-      const symLR = el.querySelector('#mm-sym-lr');
-      if (symLR) {
-        symLR.addEventListener('click', () => {
-          const mesh = main.getMesh?.();
-          if (!mesh) return;
-          const symData = mesh.getSymmetryData?.();
-          if (symData) {
-            const verts = symData.getSymmetryDestinations?.(0) ?? [];
-            if (verts.length > 0) {
-              main.getStateManager?.()?.pushStateGeometry?.(mesh);
-              main.getStateManager?.()?.pushVertices?.(verts);
-            }
-          }
-          mesh.symmetrize?.(0);
-          main.render?.();
-        });
-      }
-
-      // Symmetrize R→L
-      const symRL = el.querySelector('#mm-sym-rl');
-      if (symRL) {
-        symRL.addEventListener('click', () => {
-          const mesh = main.getMesh?.();
-          if (!mesh) return;
-          const symData = mesh.getSymmetryData?.();
-          if (symData) {
-            const verts = symData.getSymmetryDestinations?.(1) ?? [];
-            if (verts.length > 0) {
-              main.getStateManager?.()?.pushStateGeometry?.(mesh);
-              main.getStateManager?.()?.pushVertices?.(verts);
-            }
-          }
-          mesh.symmetrize?.(1);
-          main.render?.();
-        });
-      }
-
-      // Continuous toggle
-      const contBtn = el.querySelector('#mm-continuous');
-      if (contBtn && sm) {
-        contBtn.addEventListener('click', () => {
-          sm._continuous = !sm._continuous;
-          contBtn.classList.toggle('active', sm._continuous);
-          contBtn.textContent = `Continuous ${sm._continuous ? '✓ On' : 'Off'}`;
-          this.markDirty();
-        });
-      }
+      wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
     }
   }
 
@@ -1692,17 +1499,7 @@ export class MainMenuPanel extends HTMLVRPanel {
   // formatFn(intValue) → string; default is just String(v).
 
   _wireSlider(sliderEl, valEl, cb, formatFn) {
-    if (!sliderEl) return;
-    const fmt = formatFn ?? ((v) => String(v));
-    const update = () => {
-      const v = parseFloat(sliderEl.value);
-      if (valEl) valEl.textContent = fmt(v);
-      cb(v);
-      this.markDirty();
-    };
-    sliderEl.addEventListener('input', update);
-    // Initialise display from current value
-    if (valEl) valEl.textContent = fmt(parseFloat(sliderEl.value));
+    wireSlider(sliderEl, valEl, cb, formatFn, () => this.markDirty());
   }
 
   // ── Outliner helper ────────────────────────────────────────────────────────
@@ -1747,5 +1544,331 @@ export class MainMenuPanel extends HTMLVRPanel {
         this._texture.image?.width, '×', this._texture.image?.height);
       if (window.screenLog) window.screenLog('[MainMenu] first paint ✓', 'cyan');
     }
+  }
+}
+
+// ── Module-level shared wire helpers (used by both VR MainMenuPanel and desktop Gui) ─────
+
+/**
+ * Wire an input[type=range] to a value-display span and a callback.
+ * dirtyFn is called after each input event (pass markDirty for VR, or a rebuild fn for desktop).
+ */
+export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
+  if (!sliderEl) return;
+  const fmt = formatFn ?? String;
+  sliderEl.addEventListener('input', () => {
+    const v = parseFloat(sliderEl.value);
+    if (valEl) valEl.textContent = fmt(v);
+    cb(v);
+    dirtyFn?.();
+  });
+  if (valEl) valEl.textContent = fmt(parseFloat(sliderEl.value));
+}
+
+/**
+ * Wire event handlers for the Rendering section.
+ * fullRepaintFn  — called when HTML structure needs to change (shader switch).
+ * lightRepaintFn — called for toggle buttons (defaults to fullRepaintFn).
+ * sliderDirtyFn  — called on each slider input event, e.g. markDirty for VR
+ *                  (defaults to null — desktop DOM renders itself, no rebuild on drag).
+ */
+/**
+ * Wire event handlers for the Scene/Outliner section.
+ */
+export function wireSectionScene(el, main, repaintFn) {
+  const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
+
+  el.querySelectorAll('[data-action="vis"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mesh = findMesh(btn.dataset.meshId);
+      if (!mesh) return;
+      const cur = mesh.isVisible?.() ?? true;
+      mesh.setVisible?.(!cur);
+      if (mesh.getThreeMesh?.()) mesh.getThreeMesh().visible = !cur;
+      main.render?.();
+      repaintFn();
+    });
+  });
+
+  el.querySelectorAll('[data-action="select"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mesh = findMesh(btn.dataset.meshId);
+      if (mesh) { main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn(); }
+    });
+  });
+
+  el.querySelector('#mm-add-sphere')?.addEventListener('click', () => {
+    main.addSphere?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-add-cube')?.addEventListener('click', () => {
+    main.addCube?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-clear-scene')?.addEventListener('click', () => {
+    if (!main._clearSceneConfirm) {
+      main._clearSceneConfirm = true;
+      repaintFn(); // re-render button as "Confirm"
+      setTimeout(() => { main._clearSceneConfirm = false; }, 3000);
+    } else {
+      main._clearSceneConfirm = false;
+      main.clearScene?.(); main.render?.(); repaintFn();
+    }
+  });
+  el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
+    main.duplicateSelection?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-delete-mesh')?.addEventListener('click', () => {
+    main.deleteCurrentSelection?.(); main.render?.(); repaintFn();
+  });
+}
+
+export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = fullRepaintFn, sliderDirtyFn = null) {
+  const mesh   = main.getMesh?.();
+  const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : (mesh ? [mesh] : []);
+  const ShaderPBR = Shader[Enums.Shader.PBR];
+
+  el.querySelectorAll('[data-shader]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.shader, 10);
+      const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh];
+      ms?.forEach(m => { if (m) m.setShaderType?.(id); });
+      main.render?.();
+      fullRepaintFn(); // sections appear/disappear on shader change
+    });
+  });
+
+  el.querySelectorAll('[data-env]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      ShaderPBR.idEnv = parseInt(btn.dataset.env, 10);
+      main.render?.();
+      el.querySelectorAll('[data-env]').forEach(b => b.classList.toggle('active', b === btn));
+      lightRepaintFn();
+    });
+  });
+
+  el.querySelectorAll('[data-matcap]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.matcap, 10);
+      (main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh])
+        ?.forEach(m => m.setMatcap?.(id));
+      main.render?.();
+      el.querySelectorAll('[data-matcap]').forEach(b => b.classList.toggle('active', b === btn));
+      lightRepaintFn();
+    });
+  });
+
+  el.querySelector('#mm-import-matcap')?.addEventListener('click', () => document.getElementById('matcapopen')?.click());
+  el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
+
+  el.querySelector('#mm-grid-toggle')?.addEventListener('click', () => {
+    main._showGrid = !main._showGrid;
+    if (main._groundGrid) main._groundGrid.visible = main._showGrid;
+    try {
+      const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}');
+      s.grid = main._showGrid;
+      localStorage.setItem('sculptxr_settings', JSON.stringify(s));
+    } catch (_) {}
+    main.render?.();
+    lightRepaintFn();
+  });
+
+  wireSlider(el.querySelector('#mm-curvature'), el.querySelector('#mm-curvature-val'), (v) => {
+    meshes?.forEach(m => m.setCurvature?.(v / 20)); main.render?.();
+  }, null, sliderDirtyFn);
+  wireSlider(el.querySelector('#mm-transparency'), el.querySelector('#mm-transparency-val'), (v) => {
+    meshes?.forEach(m => m.setOpacity?.(1 - v / 100)); main.render?.();
+  }, (v) => `${v}%`, sliderDirtyFn);
+
+  el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {
+    const t = !mesh?.getFlatShading?.();
+    meshes?.forEach(m => m.setFlatShading?.(t));
+    main.render?.();
+    el.querySelector('#mm-flat-shading')?.classList.toggle('active', t);
+    lightRepaintFn();
+  });
+  el.querySelector('#mm-wireframe')?.addEventListener('click', () => {
+    const t = !mesh?.getShowWireframe?.();
+    (main.getMeshes?.() ?? meshes)?.forEach(m => m.setShowWireframe?.(t));
+    main.render?.();
+    el.querySelector('#mm-wireframe')?.classList.toggle('active', t);
+    lightRepaintFn();
+  });
+  el.querySelector('#mm-solid')?.addEventListener('click', () => {
+    meshes?.forEach(m => {
+      const mat = m._renderData?._threeMesh?.material;
+      if (mat) mat.visible = !mat.visible;
+    });
+    main.render?.();
+    lightRepaintFn();
+  });
+
+  el.querySelectorAll('[data-tonemap]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      main.setToneMapping?.(parseInt(btn.dataset.tonemap, 10));
+      el.querySelectorAll('[data-tonemap]').forEach(b => b.classList.toggle('active', b === btn));
+      lightRepaintFn();
+    });
+  });
+
+  wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
+    main.setExposure?.(v / 100); main.render?.();
+  }, (v) => (v / 100).toFixed(2), sliderDirtyFn);
+}
+
+/**
+ * Wire event handlers for the Topology section.
+ */
+export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repaintFn, sliderDirtyFn = null) {
+  const topo = main.getGui?.()._ctrlTopology ?? null;
+
+  el.querySelector('#mm-level-down')?.addEventListener('click', () => {
+    const m = main.getMesh?.();
+    if (m?._meshes && m._sel > 0) { topo?.onResolutionChanged?.(m._sel); main.render?.(); repaintFn(); }
+  });
+  el.querySelector('#mm-level-up')?.addEventListener('click', () => {
+    const m = main.getMesh?.();
+    if (m?._meshes && m._sel < m._meshes.length - 1) { topo?.onResolutionChanged?.(m._sel + 2); main.render?.(); repaintFn(); }
+  });
+  el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { topo?.subdivide?.();    main.render?.(); repaintFn(); });
+  el.querySelector('#mm-reverse')?.addEventListener('click',     () => { topo?.reverse?.();      main.render?.(); repaintFn(); });
+  el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { topo?.deleteLower?.();  main.render?.(); repaintFn(); });
+  el.querySelector('#mm-del-higher')?.addEventListener('click',  () => { topo?.deleteHigher?.(); main.render?.(); repaintFn(); });
+
+  wireSlider(
+    el.querySelector('#mm-remesh-res'), el.querySelector('#mm-remesh-res-val'),
+    (v) => { Remesh.RESOLUTION = v; topo?.remeshResolution?.(v); },
+    null, sliderDirtyFn
+  );
+  el.querySelector('#mm-remesh-block')?.addEventListener('click', () => {
+    Remesh.BLOCK = !Remesh.BLOCK;
+    el.querySelector('#mm-remesh-block')?.classList.toggle('active', Remesh.BLOCK);
+    lightRepaintFn();
+  });
+  el.querySelector('#mm-remesh-smooth')?.addEventListener('click', () => {
+    Remesh.SMOOTHING = !Remesh.SMOOTHING;
+    el.querySelector('#mm-remesh-smooth')?.classList.toggle('active', Remesh.SMOOTHING);
+    lightRepaintFn();
+  });
+  el.querySelector('#mm-remesh')?.addEventListener('click',    () => { topo?.remesh?.();   main.render?.(); repaintFn(); });
+  el.querySelector('#mm-remesh-mc')?.addEventListener('click', () => { topo?.remeshMC?.(); main.render?.(); repaintFn(); });
+  el.querySelector('#mm-dynamic')?.addEventListener('click',   () => { topo?.dynamicToggleActivate?.(); main.render?.(); repaintFn(); });
+  el.querySelector('#mm-mesh-to-voxels')?.addEventListener('click', () => { topo?.meshToVoxel?.(); main.render?.(); repaintFn(); });
+  el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
+  el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
+    el.querySelector('#mm-auto-heal')?.classList.toggle('active');
+    lightRepaintFn();
+  });
+}
+
+/**
+ * Wire event handlers for the Sculpting section.
+ */
+export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repaintFn, sliderDirtyFn = null) {
+  const sm = main.getSculptManager?.() ?? main._sculptManager;
+
+  el.querySelectorAll('[data-tool-id]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = parseInt(btn.dataset.toolId, 10);
+      main.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(id);
+      main.render?.();
+      repaintFn();
+    });
+  });
+
+  // ── Brush settings ─────────────────────────────────────────────────────────
+  const tool = sm?.getCurrentTool?.();
+  if (tool) {
+    const idx = sm?.getToolIndex?.();
+
+    wireSlider(el.querySelector('#mm-brush-radius'), el.querySelector('#mm-brush-radius-val'),
+      (v) => {
+        tool._radius = v;
+        getOptionsURL.saveOption(`tool_${idx}_radius`, v, 500);
+        main.render?.();
+      }, String, sliderDirtyFn);
+
+    wireSlider(el.querySelector('#mm-brush-intensity'), el.querySelector('#mm-brush-intensity-val'),
+      (v) => {
+        tool._intensity = v / 100;
+        getOptionsURL.saveOption(`tool_${idx}_intensity`, v / 100, 500);
+        main.render?.();
+      }, (v) => `${v}%`, sliderDirtyFn);
+
+    el.querySelector('#mm-brush-negative')?.addEventListener('click', (e) => {
+      tool._negative = !tool._negative;
+      e.currentTarget.classList.toggle('active', tool._negative);
+      main.render?.();
+      lightRepaintFn();
+    });
+    el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
+      tool._clay = !tool._clay;
+      e.currentTarget.classList.toggle('active', tool._clay);
+      getOptionsURL.saveOption(`tool_${idx}_clay`, tool._clay);
+      main.render?.();
+      lightRepaintFn();
+    });
+    el.querySelector('#mm-brush-accum')?.addEventListener('click', (e) => {
+      tool._accumulate = !tool._accumulate;
+      e.currentTarget.classList.toggle('active', tool._accumulate);
+      getOptionsURL.saveOption(`tool_${idx}_accumulate`, tool._accumulate);
+      main.render?.();
+      lightRepaintFn();
+    });
+
+    // ── Paint-specific ────────────────────────────────────────────────────────
+    if (tool._color) {
+      el.querySelector('#mm-paint-color')?.addEventListener('input', (e) => {
+        const h = e.target.value;
+        tool._color[0] = parseInt(h.slice(1, 3), 16) / 255;
+        tool._color[1] = parseInt(h.slice(3, 5), 16) / 255;
+        tool._color[2] = parseInt(h.slice(5, 7), 16) / 255;
+        main.render?.();
+        sliderDirtyFn?.();
+      });
+      wireSlider(el.querySelector('#mm-paint-roughness'), el.querySelector('#mm-paint-roughness-val'),
+        (v) => { if (tool._material) tool._material[0] = v / 100; main.render?.(); },
+        (v) => `${v}%`, sliderDirtyFn);
+      wireSlider(el.querySelector('#mm-paint-metallic'), el.querySelector('#mm-paint-metallic-val'),
+        (v) => { if (tool._material) tool._material[1] = v / 100; main.render?.(); },
+        (v) => `${v}%`, sliderDirtyFn);
+      el.querySelector('#mm-paint-albedo')?.addEventListener('click', (e) => {
+        tool._writeAlbedo = !tool._writeAlbedo;
+        e.currentTarget.classList.toggle('active', tool._writeAlbedo);
+        lightRepaintFn();
+      });
+      el.querySelector('#mm-paint-pick')?.addEventListener('click', (e) => {
+        tool._pickColor = !tool._pickColor;
+        e.currentTarget.classList.toggle('active', tool._pickColor);
+        lightRepaintFn();
+      });
+    }
+  }
+
+  // ── Symmetry ────────────────────────────────────────────────────────────────
+  const symToggle = el.querySelector('#mm-sym-toggle');
+  if (symToggle && sm) {
+    symToggle.addEventListener('click', () => {
+      sm._symmetry = !sm._symmetry;
+      symToggle.classList.toggle('active', sm._symmetry);
+      symToggle.textContent = `Mirror Symmetry ${sm._symmetry ? '✓ On' : 'Off'}`;
+      main.render?.();
+      lightRepaintFn();
+    });
+  }
+
+  el.querySelector('#mm-sym-lr')?.addEventListener('click', () => {
+    main.getGui?.()._ctrlSculpting?.onSymLR?.(); main.render?.();
+  });
+  el.querySelector('#mm-sym-rl')?.addEventListener('click', () => {
+    main.getGui?.()._ctrlSculpting?.onSymRL?.(); main.render?.();
+  });
+
+  const contBtn = el.querySelector('#mm-continuous');
+  if (contBtn && sm) {
+    contBtn.addEventListener('click', () => {
+      sm._continuous = !sm._continuous;
+      contBtn.classList.toggle('active', sm._continuous);
+      contBtn.textContent = `Continuous ${sm._continuous ? '✓ On' : 'Off'}`;
+      lightRepaintFn();
+    });
   }
 }

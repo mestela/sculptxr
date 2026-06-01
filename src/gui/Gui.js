@@ -6,14 +6,16 @@ import GuiConfig from './GuiConfig.js';
 import GuiFiles from './GuiFiles.js';
 import GuiMesh from './GuiMesh.js';
 import GuiTopology from './GuiTopology.js';
-import GuiRendering from './GuiRendering.js';
 import GuiScene from './GuiScene.js';
 import GuiSculpting from './GuiSculpting.js';
 import GuiStates from './GuiStates.js';
 import GuiTablet from './GuiTablet.js';
 import GuiTimeline from './GuiTimeline.js';
 import ShaderContour from '../render/shaders/ShaderContour.js';
+import Shader from '../render/ShaderLib.js';
+import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
+import { buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting, injectMMCSS, wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting } from './htmlvr/MainMenuPanel.js';
 
 import Export from '../files/Export.js';
 
@@ -48,9 +50,15 @@ class Gui {
 
     this._ctrlSculpting = null;
     this._ctrlTopology = null;
-    this._ctrlRendering = null;
     this._ctrlAnimation = null;
     this._ctrlTimeline = null;
+
+    // Desktop section panel elements (for rebuild on mesh change)
+    this._desktopSceneEl     = null;
+    this._desktopRenderingEl = null;
+    this._desktopTopologyEl  = null;
+    this._desktopSculptingEl = null;
+    this._renderingFilesRemoveCb = null;
 
     this._ctrlNotification = null;
 
@@ -264,34 +272,40 @@ class Gui {
       return tab;
     };
 
-    // Create tabs for Rendering, Topology, Sculpting, Animation
-    const renderingTab = createTab('rendering', 'camera', TR('renderingTitle'));
-    const topologyTab = createTab('topology', 'circle-nodes', TR('topologyTitle'));
-    const sculptingTab = createTab('sculpting', 'paintbrush', TR('sculptTitle'));
+    // Create tabs for Scene, Rendering, Topology, Sculpting, Animation
+    const sceneTab     = createTab('scene',     'layer-group',  'Scene');
+    const renderingTab = createTab('rendering', 'camera',       TR('renderingTitle'));
+    const topologyTab  = createTab('topology',  'circle-nodes', TR('topologyTitle'));
+    const sculptingTab = createTab('sculpting', 'paintbrush',   TR('sculptTitle'));
     const animationTab = createTab('animation', 'bezier-curve', 'Animation');
 
     // Sculpting is the active panel on startup
     sculptingTab.setAttribute('active', '');
 
+    tabGroup.appendChild(sceneTab);
     tabGroup.appendChild(renderingTab);
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
     tabGroup.appendChild(animationTab);
 
     // Create corresponding tab panels
+    const scenePanel = document.createElement('wa-tab-panel');
+    scenePanel.setAttribute('name', 'scene');
+
     const renderingPanel = document.createElement('wa-tab-panel');
     renderingPanel.setAttribute('name', 'rendering');
-    
+
     const topologyPanel = document.createElement('wa-tab-panel');
     topologyPanel.setAttribute('name', 'topology');
-    
+
     const sculptingPanel = document.createElement('wa-tab-panel');
     sculptingPanel.setAttribute('name', 'sculpting');
-    
+
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
     animationPanel.id = '_acp_sidebar_panel';
 
+    tabGroup.appendChild(scenePanel);
     tabGroup.appendChild(renderingPanel);
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
@@ -299,19 +313,122 @@ class Gui {
 
     this._sidebar.domSidebar.appendChild(tabGroup);
 
-    // Routing helper to map widget creations dynamically to the appropriate panels using native Web Awesome controls
-    const makeTabParent = (panelDom) => {
-      return {
-        domSidebar: panelDom,
-        addMenu: (name) => {
-          return new WebAwesomeFolderMock(name, panelDom, this._sidebar);
-        }
-      };
+    // GuiTopology and GuiSculpting are instantiated with a detached (off-screen) parent so
+    // their operation methods, key/mouse event handlers, and GuiSculptingTools alpha comboboxes
+    // all work without adding any yagui widgets to the visible sidebar.
+    const detachedContainer = document.createElement('div');
+    const makeDetachedParent = () => ({
+      domSidebar: detachedContainer,
+      addMenu: (name) => new WebAwesomeFolderMock(name, detachedContainer, null)
+    });
+
+    this._ctrlTopology  = new GuiTopology(makeDetachedParent(), this);
+    this._ctrlSculpting = new GuiSculpting(makeDetachedParent(), this);
+
+    ctrls[idc++] = this._ctrlTopology;
+    ctrls[idc++] = this._ctrlSculpting;
+
+    // Keep the desktop sculpting panel in sync whenever the active tool changes.
+    //
+    // Case 1 — setValue path (VR, keyboard shortcut, desktop panel click):
+    //   addToolGrid's onChange is bound to the prototype onChangeTool at construction
+    //   time, so instance-property wrapping of onChangeTool does not intercept it.
+    //   Wrapping setValue on the returned controller object does work since callsites
+    //   reference the controller directly.
+    const _ctrlSculptOrigSetValue = this._ctrlSculpting._ctrlSculpt.setValue.bind(this._ctrlSculpting._ctrlSculpt);
+    this._ctrlSculpting._ctrlSculpt.setValue = (val, silent) => {
+      _ctrlSculptOrigSetValue(val, silent);
+      if (!silent && this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     };
 
-    ctrls[idc++] = this._ctrlRendering = new GuiRendering(makeTabParent(renderingPanel), this);
-    ctrls[idc++] = this._ctrlTopology = new GuiTopology(makeTabParent(topologyPanel), this);
-    ctrls[idc++] = this._ctrlSculpting = new GuiSculpting(makeTabParent(sculptingPanel), this);
+    // Case 2 — direct onChangeTool call from keyboard key-up (Shift/Ctrl release):
+    //   GuiSculpting.onKeyUp calls this.onChangeTool(toolOnRelease) directly.
+    //   callFunc dispatches via instance property lookup, so wrapping onKeyUp on the
+    //   instance is intercepted correctly.
+    const _origOnKeyUp = this._ctrlSculpting.onKeyUp.bind(this._ctrlSculpting);
+    this._ctrlSculpting.onKeyUp = (event) => {
+      _origOnKeyUp(event);
+      if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
+    };
+
+    // Ensure the mm-* CSS is in the document before injecting section HTML.
+    injectMMCSS();
+
+    // Build desktop section panels from MainMenuPanel's HTML builders.
+    this._desktopSceneEl     = scenePanel;
+    this._desktopRenderingEl = renderingPanel;
+    this._desktopTopologyEl  = topologyPanel;
+    this._desktopSculptingEl = sculptingPanel;
+    this._buildDesktopScene(scenePanel);
+    this._buildDesktopRendering(renderingPanel);
+    this._buildDesktopTopology(topologyPanel);
+    this._buildDesktopSculpting(sculptingPanel);
+
+    // Wire file-input listeners for rendering (matcap + UV texture loading).
+    // These are registered once and persist for the lifetime of the GUI.
+    const ShaderUV     = Shader[Enums.Shader.UV];
+    const ShaderMatcap = Shader[Enums.Shader.MATCAP];
+    const main = this._main;
+
+    const onTexLoad = (evt) => {
+      ShaderUV.texture0 = undefined;
+      ShaderUV.texPath  = evt.target.result;
+      main.render();
+    };
+    const cbLoadTex = (event) => {
+      if (!event.target.files.length) return;
+      const file = event.target.files[0];
+      if (!file.type.match('image.*')) return;
+      const reader = new FileReader();
+      reader.onload = onTexLoad;
+      document.getElementById('textureopen').value = '';
+      reader.readAsDataURL(file);
+    };
+
+    const cbLoadMatcap = (event) => {
+      if (!event.target.files.length) return;
+      const file = event.target.files[0];
+      if (!file.type.match('image.*')) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const img = new Image();
+        img.src = evt.target.result;
+        img.onload = () => {
+          const idMatcap = ShaderMatcap.matcaps.length;
+          ShaderMatcap.matcaps.push({ name: file.name });
+          ShaderMatcap.createTexture(main._gl, img, idMatcap);
+          // Rebuild the rendering panel so the new matcap appears in the list.
+          if (this._desktopRenderingEl) this._buildDesktopRendering(this._desktopRenderingEl);
+          main.render();
+        };
+      };
+      document.getElementById('matcapopen').value = '';
+      reader.readAsDataURL(file);
+    };
+
+    document.getElementById('textureopen').addEventListener('change', cbLoadTex, false);
+    document.getElementById('matcapopen').addEventListener('change', cbLoadMatcap, false);
+    this._renderingFilesRemoveCb = () => {
+      document.getElementById('textureopen').removeEventListener('change', cbLoadTex, false);
+      document.getElementById('matcapopen').removeEventListener('change', cbLoadMatcap, false);
+    };
+
+    // Wireframe keyboard shortcut (was previously in GuiRendering.onKeyUp).
+    ctrls[idc++] = {
+      onKeyUp: (event) => {
+        if (getOptionsURL.getShortKey(event.which) === Enums.KeyAction.WIREFRAME && !event.ctrlKey) {
+          const mesh = this._main.getMesh();
+          if (!mesh) return;
+          const next = !mesh.getShowWireframe?.();
+          this._main.getSelectedMeshes().forEach(m => m.setShowWireframe?.(next));
+          this._main.render();
+          // Sync the wireframe toggle button in the desktop rendering panel without full rebuild.
+          const wireBtn = this._desktopRenderingEl?.querySelector('#mm-wireframe');
+          if (wireBtn) wireBtn.classList.toggle('active', next);
+        }
+      }
+    };
+
     // Animation tab content is provided by AnimationControlPanel (embedded by Scene.js)
 
     // Initialize custom timeline panel
@@ -502,11 +619,15 @@ class Gui {
   }
 
   updateMesh() {
-    if (!this._ctrlRendering) return;
-    this._ctrlRendering.updateMesh();
-    this._ctrlTopology.updateMesh();
-    this._ctrlSculpting.updateMesh();
+    if (!this._ctrlScene) return;
+    this._ctrlTopology?.updateMesh();
+    this._ctrlSculpting?.updateMesh();
     this._ctrlScene.updateMesh();
+    // Rebuild desktop panels to reflect the new mesh state.
+    if (this._desktopSceneEl)     this._buildDesktopScene(this._desktopSceneEl);
+    if (this._desktopRenderingEl) this._buildDesktopRendering(this._desktopRenderingEl);
+    if (this._desktopTopologyEl)  this._buildDesktopTopology(this._desktopTopologyEl);
+    if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     if (window._animPanel) window._animPanel.refreshBlendshapes(this._main.getMesh(), this._main);
     this.updateMeshInfo();
   }
@@ -515,26 +636,28 @@ class Gui {
     this._ctrlMesh.updateMeshInfo();
   }
 
+  // Read display state directly from the active mesh instead of a now-removed GuiRendering widget.
   getFlatShading() {
-    return this._ctrlRendering.getFlatShading();
+    return this._main.getMesh()?.getFlatShading?.() ?? false;
   }
 
   getWireframe() {
-    return this._ctrlRendering.getWireframe();
+    return this._main.getMesh()?.getShowWireframe?.() ?? false;
   }
 
   getShaderType() {
-    return this._ctrlRendering.getShaderType();
+    return this._main.getMesh()?.getShaderType?.() ?? 0;
   }
 
   addAlphaOptions(opts) {
-    this._ctrlSculpting.addAlphaOptions(opts);
+    this._ctrlSculpting?.addAlphaOptions(opts);
   }
 
   deleteGui() {
     if (!this._guiMain || !this._guiMain.domMain.parentNode)
       return;
     this.callFunc('removeEvents');
+    if (this._renderingFilesRemoveCb) { this._renderingFilesRemoveCb(); this._renderingFilesRemoveCb = null; }
     this.setVisibility(false);
     
     if (this._ctrlTimeline && this._ctrlTimeline._container && this._ctrlTimeline._container.parentNode) {
@@ -554,6 +677,36 @@ class Gui {
       if (ct && ct[func])
         ct[func](event);
     }
+  }
+
+  // ── Desktop section panel helpers ──────────────────────────────────────────
+
+  _buildDesktopScene(panelEl) {
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_scene(main);
+    const rebuild = () => this._buildDesktopScene(panelEl);
+    wireSectionScene(panelEl, main, rebuild);
+  }
+
+  _buildDesktopRendering(panelEl) {
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_rendering(main);
+    const rebuild = () => this._buildDesktopRendering(panelEl);
+    wireSectionRendering(panelEl, main, rebuild);
+  }
+
+  _buildDesktopTopology(panelEl) {
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_topology(main);
+    const rebuild = () => this._buildDesktopTopology(panelEl);
+    wireSectionTopology(panelEl, main, rebuild);
+  }
+
+  _buildDesktopSculpting(panelEl) {
+    const main = this._main;
+    panelEl.innerHTML = buildSectionHTML_sculpting(main);
+    const rebuild = () => this._buildDesktopSculpting(panelEl);
+    wireSectionSculpting(panelEl, main, rebuild);
   }
 }
 

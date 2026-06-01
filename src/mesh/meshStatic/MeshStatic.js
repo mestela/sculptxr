@@ -83,7 +83,9 @@ class MeshStatic extends Mesh {
       return [0, 0, 0, 0, 0, 0]; // Default fall-back to avoid index zero-reading crashes
     }
     if (!rd._aabbLoose) {
-      return [0, 0, 0, 0, 0, 0]; // Catch inside render data if uninitialized
+      // Fall back to octree bounds (populated by copyData/init) rather than returning zero extent,
+      // which collapses camera near≈far and produces a thin-slice rendering artifact.
+      return this._meshData?._octree?._aabbLoose ?? [0, 0, 0, 0, 0, 0];
     }
     return rd._aabbLoose;
   }
