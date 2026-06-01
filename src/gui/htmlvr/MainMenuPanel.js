@@ -959,7 +959,12 @@ export function buildSectionHTML_sculpting(main) {
         <span class="mm-lbl">Intensity</span>
         <input type="range" id="mm-brush-intensity" min="0" max="100" step="1" value="${intensity}">
         <span class="mm-val" id="mm-brush-intensity-val">${intensity}%</span>
-      </div>`;
+      </div>${tool._hardness !== undefined ? `
+      <div class="mm-row">
+        <span class="mm-lbl">Hardness</span>
+        <input type="range" id="mm-brush-hardness" min="0" max="100" step="1" value="${Math.round(tool._hardness * 100)}">
+        <span class="mm-val" id="mm-brush-hardness-val">${Math.round(tool._hardness * 100)}%</span>
+      </div>` : ''}`;
 
     // ── Tool-specific toggles ────────────────────────────────────────
     const hasNegative   = tool._negative !== undefined;
@@ -968,7 +973,14 @@ export function buildSectionHTML_sculpting(main) {
 
     if (hasNegative || hasClay || hasAccumulate) {
       const toggles = [];
-      if (hasNegative)   toggles.push(`<button class="mm-choice${tool._negative   ? ' active' : ''}" id="mm-brush-negative" >Negative  </button>`);
+      if (hasNegative) {
+        // Masking defaults _negative=true to mean "add mask" (subtract from material).
+        // Flip label and active state so the button reads as "Erase" = remove existing mask.
+        const isMasking = cur === Enums.Tools.MASKING;
+        const negLabel  = isMasking ? 'Erase' : 'Negative';
+        const negActive = isMasking ? !tool._negative : tool._negative;
+        toggles.push(`<button class="mm-choice${negActive ? ' active' : ''}" id="mm-brush-negative">${negLabel}</button>`);
+      }
       if (hasClay)       toggles.push(`<button class="mm-choice${tool._clay       ? ' active' : ''}" id="mm-brush-clay"    >Clay      </button>`);
       if (hasAccumulate) toggles.push(`<button class="mm-choice${tool._accumulate ? ' active' : ''}" id="mm-brush-accum"   >Accumulate</button>`);
       const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
@@ -1568,6 +1580,46 @@ export class MainMenuPanel extends HTMLVRPanel {
 // ── Module-level shared wire helpers (used by both VR MainMenuPanel and desktop Gui) ─────
 
 /**
+ * Apply explicit pointer-capture drag handling to every input[type=range] inside rootEl.
+ * Native range drag breaks inside web-component shadow DOM / overflow containers — this
+ * re-implements it with pointerdown/move/up + setPointerCapture so it works reliably.
+ * Call once after injecting section HTML into a desktop panel element.
+ */
+export function fixSliderDrag(rootEl) {
+  rootEl.querySelectorAll('input[type=range]').forEach(input => {
+    let dragging = false;
+    const getVal = (clientX) => {
+      const r = input.getBoundingClientRect();
+      const t = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+      const min = parseFloat(input.min) || 0;
+      const max = parseFloat(input.max) || 100;
+      const step = parseFloat(input.step) || 1;
+      return Math.max(min, Math.min(max, Math.round((min + t * (max - min)) / step) * step));
+    };
+    input.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      input.setPointerCapture(e.pointerId);
+      input.value = getVal(e.clientX);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      e.stopPropagation();
+    });
+    input.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      input.value = getVal(e.clientX);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      e.stopPropagation();
+    });
+    input.addEventListener('pointerup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      if (input.hasPointerCapture(e.pointerId)) input.releasePointerCapture(e.pointerId);
+      e.stopPropagation();
+    });
+    input.addEventListener('lostpointercapture', () => { dragging = false; });
+  });
+}
+
+/**
  * Wire an input[type=range] to a value-display span and a callback.
  * dirtyFn is called after each input event (pass markDirty for VR, or a rebuild fn for desktop).
  */
@@ -1811,9 +1863,19 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         main.render?.();
       }, (v) => `${v}%`, sliderDirtyFn);
 
+    if (tool._hardness !== undefined) {
+      wireSlider(el.querySelector('#mm-brush-hardness'), el.querySelector('#mm-brush-hardness-val'),
+        (v) => {
+          tool._hardness = v / 100;
+          getOptionsURL.saveOption(`tool_${idx}_hardness`, v / 100, 500);
+          main.render?.();
+        }, (v) => `${v}%`, sliderDirtyFn);
+    }
+
     el.querySelector('#mm-brush-negative')?.addEventListener('click', (e) => {
       tool._negative = !tool._negative;
-      e.currentTarget.classList.toggle('active', tool._negative);
+      const isMasking = sm?.getToolIndex?.() === Enums.Tools.MASKING;
+      e.currentTarget.classList.toggle('active', isMasking ? !tool._negative : tool._negative);
       main.render?.();
       lightRepaintFn();
     });

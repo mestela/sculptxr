@@ -15,7 +15,7 @@ import ShaderContour from '../render/shaders/ShaderContour.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
-import { buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting, injectMMCSS, wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting } from './htmlvr/MainMenuPanel.js';
+import { buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting, injectMMCSS, wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting, fixSliderDrag } from './htmlvr/MainMenuPanel.js';
 
 import Export from '../files/Export.js';
 
@@ -694,6 +694,7 @@ class Gui {
     panelEl.innerHTML = buildSectionHTML_rendering(main);
     const rebuild = () => this._buildDesktopRendering(panelEl);
     wireSectionRendering(panelEl, main, rebuild);
+    fixSliderDrag(panelEl);
   }
 
   _buildDesktopTopology(panelEl) {
@@ -701,6 +702,7 @@ class Gui {
     panelEl.innerHTML = buildSectionHTML_topology(main);
     const rebuild = () => this._buildDesktopTopology(panelEl);
     wireSectionTopology(panelEl, main, rebuild);
+    fixSliderDrag(panelEl);
   }
 
   _buildDesktopSculpting(panelEl) {
@@ -708,6 +710,7 @@ class Gui {
     panelEl.innerHTML = buildSectionHTML_sculpting(main);
     const rebuild = () => this._buildDesktopSculpting(panelEl);
     wireSectionSculpting(panelEl, main, rebuild);
+    fixSliderDrag(panelEl);
   }
 }
 
