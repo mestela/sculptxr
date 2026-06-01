@@ -308,6 +308,29 @@ const CSS = `
 }
 .mm-btn-pair .mm-action-btn { margin-bottom: 0; }
 
+/* ── Custom select (VR-safe dropdown) ──────────────────────────── */
+.mm-select { width: 100%; margin-bottom: 3px; }
+.mm-select-trigger {
+  width: 100%; padding: 5px 8px; box-sizing: border-box;
+  background: #2a2a3e; color: #cdd6f4; border: 1px solid #45475a;
+  border-radius: 4px; font-size: 11px; cursor: pointer; text-align: left;
+  display: flex; justify-content: space-between; align-items: center;
+  outline: none;
+}
+.mm-select-trigger::after { content: ' ▾'; flex-shrink: 0; color: #7f849c; }
+.mm-select-trigger:hover, .mm-select-trigger.hover { border-color: #7f849c; }
+.mm-select-opts {
+  border: 1px solid #45475a; border-top: none;
+  border-radius: 0 0 4px 4px; background: #1e1e2e; overflow: hidden;
+}
+.mm-select-opt {
+  display: block; width: 100%; text-align: left; padding: 6px 12px;
+  background: transparent; color: #a6adc8; border: none; font-size: 11px;
+  cursor: pointer; box-sizing: border-box; outline: none;
+}
+.mm-select-opt:hover, .mm-select-opt.hover { background: #313244; color: #cdd6f4; }
+.mm-select-opt.active { color: #89b4fa; background: rgba(137,180,250,0.08); }
+
 /* Outliner item (scene tab) */
 .mm-outliner-row {
   display: flex;
@@ -433,6 +456,44 @@ export function injectMMCSS() {
 }
 // Internal alias used by the class constructor.
 function injectCSS() { injectMMCSS(); }
+
+// ── Custom VR-safe select helpers ──────────────────────────────────────────────
+// Replaces native <select> (which can't open inside a WebGL texture) with an
+// inline accordion list that responds to the same click/pointer events.
+
+export function buildSelectHTML(id, options, currentVal) {
+  const cur = String(currentVal);
+  const label = options.find(o => String(o.val) === cur)?.label ?? options[0]?.label ?? '';
+  const opts = options.map(o =>
+    `<button class="mm-select-opt${String(o.val) === cur ? ' active' : ''}" data-val="${o.val}">${o.label}</button>`
+  ).join('');
+  return `<div class="mm-select" id="${id}-wrap">
+    <button class="mm-select-trigger" id="${id}">${label}</button>
+    <div class="mm-select-opts" style="display:none">${opts}</div>
+  </div>`;
+}
+
+export function wireSelect(el, id, callback, repaintFn) {
+  const wrap    = el.querySelector(`#${id}-wrap`);
+  if (!wrap) return;
+  const trigger = wrap.querySelector(`#${id}`);
+  const optsEl  = wrap.querySelector('.mm-select-opts');
+
+  trigger?.addEventListener('click', () => {
+    optsEl.style.display = optsEl.style.display === 'none' ? '' : 'none';
+    repaintFn?.();
+  });
+
+  wrap.querySelectorAll('.mm-select-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (trigger) trigger.childNodes[0].textContent = btn.textContent;
+      optsEl.style.display = 'none';
+      wrap.querySelectorAll('.mm-select-opt').forEach(b => b.classList.toggle('active', b === btn));
+      callback(btn.dataset.val);
+      repaintFn?.();
+    });
+  });
+}
 
 // ── Shell HTML (static structure only; content area is filled dynamically) ──
 function buildShellHTML() {
@@ -568,10 +629,7 @@ function buildMenuHTML_settings(main) {
     'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
   const ctrlLabels = ['Auto','Quest+','Quest+ v2','Quest Pro','Touch v3','Touch v2',
     'Index','Vive','GalaxyXR','Odyssey'];
-  const curCtrl = ctrlModels.indexOf(window._xrControllerOverride ?? 'Auto');
-  const ctrlBtns = ctrlModels.map((m, i) =>
-    `<button class="mm-choice${i === curCtrl ? ' active' : ''}" data-ctrl-idx="${i}">${ctrlLabels[i]}</button>`
-  ).join('');
+  const curCtrl = Math.max(0, ctrlModels.indexOf(window._xrControllerOverride ?? 'Auto'));
 
   const wfTypes = [
     { id: 1, label: 'Smooth' },
@@ -626,7 +684,7 @@ function buildMenuHTML_settings(main) {
     </div>
 
     <div class="mm-section-title">Controller Model</div>
-    <div class="mm-choice-grid cols-3" id="mm-ctrl-model-grid">${ctrlBtns}</div>
+    ${buildSelectHTML('mm-ctrl-model', ctrlModels.map((m, i) => ({ val: i, label: ctrlLabels[i] })), curCtrl)}
 
     <div class="mm-section-title">Wireframe</div>
     <div class="mm-row">
@@ -822,6 +880,17 @@ export function buildSectionHTML_rendering(main) {
                     : shaderType === Enums.Shader.UV       ? 'shader-uv'
                     : '';
 
+  // Camera
+  const camera  = main.getCamera?.() ?? main._camera;
+  const proj    = camera?.getProjectionType?.() ?? 0;
+  const fov     = camera?.getFov?.() ?? 45;
+  const mode    = camera?.getMode?.() ?? 0;
+  const pivot   = camera?.getUsePivot?.() ?? false;
+  const vmode   = main._spectatorViewMode ?? 0;
+  const skipMap = { 0: 0, 1: 1, 3: 2, 7: 3 };
+  const fps     = skipMap[main._spectatorFrameSkip ?? 3] ?? 2;
+  const speed   = main._cameraSpeed ?? 0.3;
+
   return `
     <div id="mm-render-root" class="${shaderClass}">
       <div class="mm-section-title">Shader</div>
@@ -869,6 +938,56 @@ export function buildSectionHTML_rendering(main) {
         <input type="range" id="mm-exposure" min="0" max="300" step="5" value="${Math.round(exposure*100)}">
         <span class="mm-val" id="mm-exposure-val">${exposure.toFixed(2)}</span>
       </div>
+
+      <div class="mm-section-title">Camera Reset</div>
+      <div class="mm-btn-pair">
+        <button class="mm-action-btn" id="mm-cam-center">Center</button>
+        <button class="mm-action-btn" id="mm-cam-front">Front</button>
+      </div>
+      <div class="mm-btn-pair">
+        <button class="mm-action-btn" id="mm-cam-left">Left</button>
+        <button class="mm-action-btn" id="mm-cam-top">Top</button>
+      </div>
+
+      <div class="mm-section-title">Projection</div>
+      ${buildSelectHTML('mm-cam-proj', [
+        { val: 0, label: 'Perspective' },
+        { val: 1, label: 'Orthographic' },
+      ], proj)}
+      <div class="mm-row" id="mm-fov-row"${proj!==0?' style="display:none"':''}>
+        <span class="mm-lbl">FOV</span>
+        <input type="range" id="mm-cam-fov" min="10" max="90" step="1" value="${fov}">
+        <span class="mm-val" id="mm-cam-fov-val">${Math.round(fov)}°</span>
+      </div>
+
+      <div class="mm-section-title">Camera Mode</div>
+      ${buildSelectHTML('mm-cam-mode', [
+        { val: 0, label: 'Orbit' },
+        { val: 1, label: 'Spherical' },
+        { val: 2, label: 'Plane' },
+      ], mode)}
+      <button class="mm-toggle${pivot?' active':''}" id="mm-cam-pivot">Pivot</button>
+      <div class="mm-row">
+        <span class="mm-lbl">Speed</span>
+        <input type="range" id="mm-cam-speed" min="0.05" max="1" step="0.001" value="${speed}">
+        <span class="mm-val" id="mm-cam-speed-val">${speed.toFixed(2)}</span>
+      </div>
+
+      <div class="mm-section-title">Desktop Canvas (VR)</div>
+      ${buildSelectHTML('mm-spectator-mode', [
+        { val: 0, label: 'Blank (VR active)' },
+        { val: 1, label: 'Mirror (headset)' },
+        { val: 2, label: 'Desktop free camera' },
+        { val: 3, label: 'Spectator (coupled)' },
+      ], vmode)}
+
+      <div class="mm-section-title">Spectator FPS</div>
+      ${buildSelectHTML('mm-spectator-fps', [
+        { val: 0, label: 'Full rate' },
+        { val: 1, label: '½ rate' },
+        { val: 2, label: '¼ rate (default)' },
+        { val: 3, label: '⅛ rate' },
+      ], fps)}
     </div>
   `;
 }
@@ -970,18 +1089,11 @@ export function buildSectionHTML_sculpting(main) {
     // ── Alpha brush texture selector ─────────────────────────────────
     if (tool._idAlpha !== undefined) {
       const alphaNames = Object.keys(Picking.ALPHAS_NAMES);
-      const currentAlpha = tool._idAlpha ?? Object.keys(Picking.ALPHAS_NAMES)[0];
-      const alphaOptions = alphaNames.map(name =>
-        `<option value="${name}"${name === currentAlpha ? ' selected' : ''}>${name}</option>`
-      ).join('');
+      const currentAlpha = tool._idAlpha ?? alphaNames[0];
       brushHTML += `
         <div class="mm-section-title">Alpha</div>
-        <div class="mm-row" style="gap:6px">
-          <select id="mm-alpha-select" style="flex:1;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:5px;padding:4px 6px;font-size:11px;cursor:pointer">
-            ${alphaOptions}
-          </select>
-          <button class="mm-action-btn" id="mm-alpha-import" style="flex-shrink:0;padding:4px 8px;font-size:11px">Import…</button>
-        </div>`;
+        ${buildSelectHTML('mm-alpha-select', alphaNames.map(n => ({ val: n, label: n })), currentAlpha)}
+        <button class="mm-action-btn" id="mm-alpha-import" style="margin-top:3px">Import alpha…</button>`;
     }
 
     // ── Paint-specific controls ──────────────────────────────────────
@@ -1382,23 +1494,19 @@ export class MainMenuPanel extends HTMLVRPanel {
       opts.saveOption('offsetY', f, 500);
     }, (v) => (v / 100).toFixed(1));
 
-    // Controller model (choice buttons replacing the old <select>)
+    // Controller model
     {
       const ctrlModels = ['Auto','meta-quest-touch-plus','meta-quest-touch-plus-v2',
         'meta-quest-touch-pro','oculus-touch-v3','oculus-touch-v2',
         'valve-index','htc-vive','samsung-galaxyxr','samsung-odyssey'];
-      el.querySelector('#mm-ctrl-model-grid')?.querySelectorAll('[data-ctrl-idx]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          el.querySelectorAll('[data-ctrl-idx]').forEach(b => b.classList.remove('active'));
-          btn.classList.add('active');
-          const idx = parseInt(btn.dataset.ctrlIdx, 10);
-          window._xrControllerOverride = ctrlModels[idx];
-          opts.saveOption('controllerModel', ctrlModels[idx]);
-          if (window._reloadControllerModels) window._reloadControllerModels.call(main);
-          else main.reloadControllerModels?.();
-          main.render?.();
-        });
-      });
+      wireSelect(el, 'mm-ctrl-model', (v) => {
+        const idx = parseInt(v, 10);
+        window._xrControllerOverride = ctrlModels[idx];
+        opts.saveOption('controllerModel', ctrlModels[idx]);
+        if (window._reloadControllerModels) window._reloadControllerModels.call(main);
+        else main.reloadControllerModels?.();
+        main.render?.();
+      }, lightRepaint);
     }
 
     // Wireframe
@@ -1815,6 +1923,44 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   wireSlider(el.querySelector('#mm-exposure'), el.querySelector('#mm-exposure-val'), (v) => {
     main.setExposure?.(v / 100); main.render?.();
   }, (v) => (v / 100).toFixed(2), sliderDirtyFn);
+
+  // Camera controls
+  const camera = main.getCamera?.() ?? main._camera;
+  el.querySelector('#mm-cam-center')?.addEventListener('click', () => { camera?.resetView?.();       main.render?.(); });
+  el.querySelector('#mm-cam-front') ?.addEventListener('click', () => { camera?.toggleViewFront?.(); main.render?.(); });
+  el.querySelector('#mm-cam-left')  ?.addEventListener('click', () => { camera?.toggleViewLeft?.();  main.render?.(); });
+  el.querySelector('#mm-cam-top')   ?.addEventListener('click', () => { camera?.toggleViewTop?.();   main.render?.(); });
+
+  wireSelect(el, 'mm-cam-proj', (v) => {
+    const n = parseInt(v, 10);
+    camera?.setProjectionType?.(n);
+    const fovRow = el.querySelector('#mm-fov-row');
+    if (fovRow) fovRow.style.display = n === 0 ? '' : 'none';
+    main.render?.();
+  }, lightRepaintFn);
+  wireSlider(el.querySelector('#mm-cam-fov'), el.querySelector('#mm-cam-fov-val'),
+    (v) => { camera?.setFov?.(v); main.render?.(); },
+    v => `${Math.round(v)}°`, sliderDirtyFn);
+
+  wireSelect(el, 'mm-cam-mode', (v) => {
+    camera?.setMode?.(parseInt(v, 10)); main.render?.();
+  }, lightRepaintFn);
+  el.querySelector('#mm-cam-pivot')?.addEventListener('click', (e) => {
+    camera?.toggleUsePivot?.();
+    e.currentTarget.classList.toggle('active', camera?.getUsePivot?.() ?? false);
+    main.render?.();
+  });
+  wireSlider(el.querySelector('#mm-cam-speed'), el.querySelector('#mm-cam-speed-val'),
+    (v) => { main._cameraSpeed = v; },
+    v => v.toFixed(2), sliderDirtyFn);
+
+  const skipMap = [0, 1, 3, 7];
+  wireSelect(el, 'mm-spectator-mode', (v) => {
+    main._spectatorViewMode = parseInt(v, 10); main._spectatorN = 0;
+  }, lightRepaintFn);
+  wireSelect(el, 'mm-spectator-fps', (v) => {
+    main._spectatorFrameSkip = skipMap[parseInt(v, 10)] ?? 3; main._spectatorN = 0;
+  }, lightRepaintFn);
 }
 
 /**
@@ -1957,10 +2103,9 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
 
     // ── Alpha brush texture ───────────────────────────────────────────────────
     if (tool._idAlpha !== undefined) {
-      el.querySelector('#mm-alpha-select')?.addEventListener('change', (e) => {
-        tool._idAlpha = e.target.value;
-        main.render?.();
-      });
+      wireSelect(el, 'mm-alpha-select', (v) => {
+        tool._idAlpha = v; main.render?.();
+      }, lightRepaintFn);
 
       el.querySelector('#mm-alpha-import')?.addEventListener('click', () => {
         const input = document.getElementById('alphaopen');
@@ -1968,7 +2113,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         // Wire a one-shot handler: load the alpha then rebuild this section.
         const onAlphaLoaded = () => {
           input.removeEventListener('change', onAlphaLoaded);
-          repaintFn(); // rebuild so the new alpha appears in the <select>
+          repaintFn(); // rebuild so the new alpha appears in the buttons
         };
         input.addEventListener('change', onAlphaLoaded);
         input.click();
@@ -2179,123 +2324,6 @@ export function wireMenuHistory(el, main, repaintFn) {
 // was removed.  They follow the same buildMenuHTML_* / wireMenu* pattern used
 // by the VR main menu.
 
-export function buildMenuHTML_camera(main) {
-  const camera  = main.getCamera?.() ?? main._camera;
-  const proj    = camera?.getProjectionType?.() ?? 0;
-  const fov     = camera?.getFov?.() ?? 45;
-  const mode    = camera?.getMode?.() ?? 0;
-  const pivot   = camera?.getUsePivot?.() ?? false;
-  const vmode   = main._spectatorViewMode ?? 0;
-  const skipMap = { 0: 0, 1: 1, 3: 2, 7: 3 };
-  const fps     = skipMap[main._spectatorFrameSkip ?? 3] ?? 2;
-  const speed   = main._cameraSpeed ?? 0.3;
-  return `
-    <div class="mm-section-title">Camera Reset</div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-cam-center">Center</button>
-      <button class="mm-action-btn" id="mm-cam-front">Front</button>
-    </div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-cam-left">Left</button>
-      <button class="mm-action-btn" id="mm-cam-top">Top</button>
-    </div>
-    <div class="mm-section-title">Projection</div>
-    <div class="mm-row">
-      <select id="mm-cam-proj" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        <option value="0"${proj===0?' selected':''}>Perspective</option>
-        <option value="1"${proj===1?' selected':''}>Orthographic</option>
-      </select>
-    </div>
-    <div class="mm-row" id="mm-fov-row"${proj!==0?' style="display:none"':''}>
-      <span class="mm-lbl">FOV</span>
-      <input type="range" id="mm-cam-fov" min="10" max="90" step="1" value="${fov}">
-      <span class="mm-val" id="mm-cam-fov-val">${Math.round(fov)}°</span>
-    </div>
-    <div class="mm-section-title">Camera Mode</div>
-    <div class="mm-row">
-      <select id="mm-cam-mode" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        <option value="0"${mode===0?' selected':''}>Orbit</option>
-        <option value="1"${mode===1?' selected':''}>Spherical</option>
-        <option value="2"${mode===2?' selected':''}>Plane</option>
-      </select>
-    </div>
-    <button class="mm-toggle${pivot?' active':''}" id="mm-cam-pivot">Pivot</button>
-    <div class="mm-section-title">Desktop Canvas (VR)</div>
-    <div class="mm-row">
-      <select id="mm-spectator-mode" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        <option value="0"${vmode===0?' selected':''}>Blank (VR active)</option>
-        <option value="1"${vmode===1?' selected':''}>Mirror (headset)</option>
-        <option value="2"${vmode===2?' selected':''}>Desktop free camera</option>
-        <option value="3"${vmode===3?' selected':''}>Spectator (coupled)</option>
-      </select>
-    </div>
-    <div class="mm-section-title">Spectator FPS</div>
-    <div class="mm-row">
-      <select id="mm-spectator-fps" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        <option value="0"${fps===0?' selected':''}>Full rate</option>
-        <option value="1"${fps===1?' selected':''}>½ rate</option>
-        <option value="2"${fps===2?' selected':''}>¼ rate (default)</option>
-        <option value="3"${fps===3?' selected':''}>⅛ rate</option>
-      </select>
-    </div>
-    <div class="mm-section-title">Speed</div>
-    <div class="mm-row">
-      <span class="mm-lbl">Speed</span>
-      <input type="range" id="mm-cam-speed" min="0.05" max="1" step="0.001" value="${speed}">
-      <span class="mm-val" id="mm-cam-speed-val">${speed.toFixed(2)}</span>
-    </div>
-  `;
-}
-
-export function wireMenuCamera(el, main, repaintFn) {
-  const q      = (sel) => el.querySelector(sel);
-  const camera = main.getCamera?.() ?? main._camera;
-
-  q('#mm-cam-center')?.addEventListener('click', () => { camera?.resetView?.();        main.render?.(); });
-  q('#mm-cam-front')?.addEventListener('click',  () => { camera?.toggleViewFront?.();  main.render?.(); });
-  q('#mm-cam-left')?.addEventListener('click',   () => { camera?.toggleViewLeft?.();   main.render?.(); });
-  q('#mm-cam-top')?.addEventListener('click',    () => { camera?.toggleViewTop?.();    main.render?.(); });
-
-  q('#mm-cam-proj')?.addEventListener('change', (e) => {
-    const v = parseInt(e.target.value, 10);
-    camera?.setProjectionType?.(v);
-    const fovRow = q('#mm-fov-row');
-    if (fovRow) fovRow.style.display = v === 0 ? '' : 'none';
-    main.render?.();
-  });
-
-  wireSlider(q('#mm-cam-fov'), q('#mm-cam-fov-val'),
-    (v) => { camera?.setFov?.(v); main.render?.(); },
-    v => `${Math.round(v)}°`);
-
-  q('#mm-cam-mode')?.addEventListener('change', (e) => {
-    camera?.setMode?.(parseInt(e.target.value, 10));
-    main.render?.();
-  });
-
-  q('#mm-cam-pivot')?.addEventListener('click', (e) => {
-    camera?.toggleUsePivot?.();
-    e.currentTarget.classList.toggle('active', camera?.getUsePivot?.() ?? false);
-    main.render?.();
-  });
-
-  q('#mm-spectator-mode')?.addEventListener('change', (e) => {
-    main._spectatorViewMode = parseInt(e.target.value, 10);
-    main._spectatorN = 0;
-  });
-
-  q('#mm-spectator-fps')?.addEventListener('change', (e) => {
-    const indexToSkip = [0, 1, 3, 7];
-    main._spectatorFrameSkip = indexToSkip[parseInt(e.target.value, 10)] ?? 3;
-    main._spectatorN = 0;
-  });
-
-  wireSlider(q('#mm-cam-speed'), q('#mm-cam-speed-val'),
-    (v) => { main._cameraSpeed = v; },
-    v => v.toFixed(2));
-
-  fixSliderDrag(el);
-}
 
 export function buildMenuHTML_background(main) {
   const bg   = main.getBackground?.();
@@ -2304,13 +2332,11 @@ export function buildMenuHTML_background(main) {
   const fill = bg?._fill ?? false;
   return `
     <div class="mm-section-title">Type</div>
-    <div class="mm-row">
-      <select id="mm-bg-type" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        <option value="0"${type===0?' selected':''}>Image</option>
-        <option value="1"${type===1?' selected':''}>Environment</option>
-        <option value="2"${type===2?' selected':''}>Ambient env</option>
-      </select>
-    </div>
+    ${buildSelectHTML('mm-bg-type', [
+      { val: 0, label: 'Image' },
+      { val: 1, label: 'Environment' },
+      { val: 2, label: 'Ambient env' },
+    ], type)}
     <div class="mm-row" id="mm-blur-row"${type!==1?' style="display:none"':''}>
       <span class="mm-lbl">Blur</span>
       <input type="range" id="mm-bg-blur" min="0" max="1" step="0.01" value="${blur}">
@@ -2329,13 +2355,13 @@ export function wireMenuBackground(el, main, repaintFn) {
   const q  = (sel) => el.querySelector(sel);
   const bg = main.getBackground?.();
 
-  q('#mm-bg-type')?.addEventListener('change', (e) => {
-    const v = parseInt(e.target.value, 10);
-    bg?.setType?.(v);
+  wireSelect(el, 'mm-bg-type', (v) => {
+    const n = parseInt(v, 10);
+    bg?.setType?.(n);
     main.onCanvasResize?.();
     main.render?.();
     const blurRow = q('#mm-blur-row');
-    if (blurRow) blurRow.style.display = v === 1 ? '' : 'none';
+    if (blurRow) blurRow.style.display = n === 1 ? '' : 'none';
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
@@ -2414,11 +2440,7 @@ export function buildMenuHTML_desktopSettings(main) {
     <button class="mm-toggle" id="mm-eruda-console">Show Eruda console</button>
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
     <div class="mm-section-title">Language</div>
-    <div class="mm-row">
-      <select id="mm-language" style="flex:1;background:#2a2a3e;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:4px">
-        ${langs.map((l, i) => `<option value="${i}"${i===langIdx?' selected':''}>${l}</option>`).join('')}
-      </select>
-    </div>
+    ${buildSelectHTML('mm-language', langs.map((l, i) => ({ val: i, label: l })), langIdx)}
     <div class="mm-section-title">About SculptXR ${VERSION}</div>
     <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Original by Stéphane Ginier<br>VR port by Matt Estela &amp; Antigravity &amp; Claude</div>
     <div class="mm-btn-pair">
@@ -2472,9 +2494,9 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
     }
   });
 
-  q('#mm-language')?.addEventListener('change', (e) => {
+  wireSelect(el, 'mm-language', (v) => {
     const langs = Object.keys(TR.languages);
-    TR.select = langs[parseInt(e.target.value, 10)];
+    TR.select = langs[parseInt(v, 10)];
     getOptionsURL.saveOption('language', TR.select);
     main.getGui?.().initGui?.();
   });

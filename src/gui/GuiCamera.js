@@ -14,7 +14,7 @@ class GuiCamera {
   }
 
   init(guiParent) {
-    // Gutted — desktop topbar uses buildMenuHTML_camera + wireMenuCamera
+    // Gutted — camera controls live in the Rendering panel tab
   }
 
   onCameraModeChange(value) {

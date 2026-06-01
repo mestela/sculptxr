@@ -13,7 +13,6 @@ import {
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
   fixSliderDrag,
   buildMenuHTML_files,    wireMenuFiles,
-  buildMenuHTML_camera,   wireMenuCamera,
   buildMenuHTML_background, wireMenuBackground,
   buildMenuHTML_tablet,   wireMenuTablet,
   buildMenuHTML_desktopSettings, wireMenuDesktopSettings,
@@ -452,7 +451,6 @@ class Gui {
     // Dropdown menu definitions
     const menuDefs = [
       { id: 'files',      label: 'Files ▾',      buildFn: buildMenuHTML_files,      wireFn: wireMenuFiles,      extraArgs: [() => openBrowserSavesDOMOverlay(main)] },
-      { id: 'camera',     label: 'Camera ▾',     buildFn: buildMenuHTML_camera,     wireFn: wireMenuCamera },
       { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
       { id: 'pressure',   label: 'Pressure ▾',   buildFn: buildMenuHTML_tablet,     wireFn: wireMenuTablet },
       { id: 'settings',   label: 'Settings ▾',   buildFn: buildMenuHTML_desktopSettings, wireFn: wireMenuDesktopSettings },

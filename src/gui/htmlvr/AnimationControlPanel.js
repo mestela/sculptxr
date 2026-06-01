@@ -190,6 +190,28 @@ const CSS = `
 #acp-root .acp-btn-grid button.danger:hover,
 #acp-root .acp-btn-grid button.danger.hover { background: #3d1e2e; }
 
+/* ── Custom select ───────────────────────────────────────────────────────── */
+#acp-root .acp-select { width: 100%; }
+#acp-root .acp-select-trigger {
+  width: 100%; padding: 5px 8px; box-sizing: border-box;
+  background: #181825; color: #cdd6f4; border: 1px solid #313244;
+  border-radius: 6px; font-size: 11px; cursor: pointer; text-align: left;
+  display: flex; justify-content: space-between; align-items: center; outline: none;
+}
+#acp-root .acp-select-trigger::after { content: ' ▾'; color: #585b70; flex-shrink: 0; }
+#acp-root .acp-select-opts {
+  border: 1px solid #313244; border-top: none; border-radius: 0 0 6px 6px;
+  background: #181825; overflow: hidden;
+}
+#acp-root .acp-select-opt {
+  display: block; width: 100%; text-align: left; padding: 6px 12px;
+  background: transparent; color: #a6adc8; border: none; font-size: 11px;
+  cursor: pointer; box-sizing: border-box; outline: none;
+}
+#acp-root .acp-select-opt:hover,
+#acp-root .acp-select-opt.hover { background: #24243e; color: #cdd6f4; }
+#acp-root .acp-select-opt.active { color: #89b4fa; }
+
 /* ── Full-width button ───────────────────────────────────────────────────── */
 #acp-root .acp-btn-full {
   width: 100%;
@@ -472,14 +494,17 @@ export class AnimationControlPanel extends HTMLVRPanel {
           <label class="acp-check-row">
             <input type="checkbox" id="acp-wait-trigger"> Wait for Trigger
           </label>
-          <div class="acp-select-row">
-            <label>Bake rate</label>
-            <select id="acp-bake-rate">
-              <option value="0.033">Dense (~30 fps)</option>
-              <option value="0.1" selected>Standard (~10 fps)</option>
-              <option value="0.5">Sparse (2 fps)</option>
-              <option value="1.0">Step Key (1 fps)</option>
-            </select>
+          <div class="acp-stack" style="gap:4px">
+            <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Bake rate</label>
+            <div class="acp-select" id="acp-bake-rate-wrap">
+              <button class="acp-select-trigger" id="acp-bake-rate">Standard (~10 fps)</button>
+              <div class="acp-select-opts" style="display:none">
+                <button class="acp-select-opt" data-bakerate="0.033">Dense (~30 fps)</button>
+                <button class="acp-select-opt active" data-bakerate="0.1">Standard (~10 fps)</button>
+                <button class="acp-select-opt" data-bakerate="0.5">Sparse (2 fps)</button>
+                <button class="acp-select-opt" data-bakerate="1.0">Step Key (1 fps)</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -687,8 +712,18 @@ export class AnimationControlPanel extends HTMLVRPanel {
       this.syncFromState();
     });
 
-    root.querySelector('#acp-bake-rate').addEventListener('change', () => {
-      window._animCaptureRate = parseFloat(root.querySelector('#acp-bake-rate').value) || 0.1;
+    const brTrigger = root.querySelector('#acp-bake-rate');
+    const brOpts    = root.querySelector('#acp-bake-rate-wrap .acp-select-opts');
+    brTrigger?.addEventListener('click', () => {
+      if (brOpts) brOpts.style.display = brOpts.style.display === 'none' ? '' : 'none';
+    });
+    root.querySelectorAll('[data-bakerate]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window._animCaptureRate = parseFloat(btn.dataset.bakerate) || 0.1;
+        if (brTrigger) brTrigger.childNodes[0].textContent = btn.textContent;
+        if (brOpts) brOpts.style.display = 'none';
+        root.querySelectorAll('[data-bakerate]').forEach(b => b.classList.toggle('active', b === btn));
+      });
     });
 
     // ── Keyframes section ──────────────────────────────────────────────────
@@ -993,9 +1028,14 @@ export class AnimationControlPanel extends HTMLVRPanel {
     root.querySelector('#acp-count-in').checked     = !!window._animCountIn;
     root.querySelector('#acp-wait-trigger').checked = !!window._animWaitForTrigger;
     const bakeRate = String(window._animCaptureRate || 0.1);
-    for (const opt of root.querySelector('#acp-bake-rate').options) {
-      opt.selected = opt.value === bakeRate;
-    }
+    root.querySelectorAll('[data-bakerate]').forEach(b => {
+      const match = b.dataset.bakerate === bakeRate;
+      b.classList.toggle('active', match);
+      if (match) {
+        const trigger = root.querySelector('#acp-bake-rate');
+        if (trigger?.childNodes[0]) trigger.childNodes[0].textContent = b.textContent;
+      }
+    });
 
     // Key mode
     const mode = window._animKeyMode || 'shape';
