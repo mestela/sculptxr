@@ -12,10 +12,13 @@ import {
   injectMMCSS,
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
   fixSliderDrag,
-  buildMenuHTML_files,    wireMenuFiles,
+  buildMenuHTML_files,      wireMenuFiles,
+  buildMenuHTML_history,    wireMenuHistory,
   buildMenuHTML_background, wireMenuBackground,
-  buildMenuHTML_tablet,   wireMenuTablet,
+  buildMenuHTML_reference,  wireMenuReference,
+  buildMenuHTML_tablet,     wireMenuTablet,
   buildMenuHTML_desktopSettings, wireMenuDesktopSettings,
+  buildMenuHTML_about,    wireMenuAbout,
 } from './htmlvr/MainMenuPanel.js';
 
 import Export from '../files/Export.js';
@@ -451,9 +454,12 @@ class Gui {
     // Dropdown menu definitions
     const menuDefs = [
       { id: 'files',      label: 'Files ▾',      buildFn: buildMenuHTML_files,      wireFn: wireMenuFiles,      extraArgs: [() => openBrowserSavesDOMOverlay(main)] },
+      { id: 'history',    label: 'History ▾',    buildFn: buildMenuHTML_history,    wireFn: wireMenuHistory },
       { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
+      { id: 'reference',  label: 'Reference ▾',  buildFn: buildMenuHTML_reference,  wireFn: wireMenuReference },
       { id: 'pressure',   label: 'Pressure ▾',   buildFn: buildMenuHTML_tablet,     wireFn: wireMenuTablet },
       { id: 'settings',   label: 'Settings ▾',   buildFn: buildMenuHTML_desktopSettings, wireFn: wireMenuDesktopSettings },
+      { id: 'about',      label: 'About ▾',      buildFn: buildMenuHTML_about,      wireFn: wireMenuAbout },
     ];
 
     this._dropdowns = {};

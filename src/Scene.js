@@ -2979,47 +2979,75 @@ class Scene {
         window.mmOverlay = (show) => {
           const OVERLAY_ID = '_mm_debug_overlay';
           const existing = document.getElementById(OVERLAY_ID);
-          if (existing) { existing.remove(); if (show !== true) return; }
+          if (existing) {
+            // Restore #mm-root to the polyfill host before removing backdrop.
+            const src = document.getElementById('mm-root');
+            const host = document.getElementById('_htmlvr_host');
+            if (src && host && src.parentElement !== host) {
+              const saved = existing._savedStyle;
+              if (saved) src.setAttribute('style', saved);
+              else src.removeAttribute('style');
+              host.appendChild(src);
+            }
+            existing.remove();
+            this._mainMenuPanel?.markDirty();
+            if (show !== true) return;
+          }
           if (show === false) return;
 
           const src = document.getElementById('mm-root');
           if (!src) return console.warn('[mmOverlay] mm-root not found — panel not created yet');
+          const host = src.parentElement; // polyfill host — we restore here on close
 
           // Dark backdrop
           const backdrop = document.createElement('div');
           backdrop.id = OVERLAY_ID;
-          backdrop.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;pointer-events:auto;';
+          backdrop.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;pointer-events:none;';
 
-          // Panel clone — child element IDs are preserved so page CSS (injected by
-          // MainMenuPanel) applies to #mm-menubar, #mm-tabstrip, #mm-content, etc.
-          // We do NOT give the clone id="mm-root" to avoid duplicate-ID conflicts.
-          const panel = document.createElement('div');
-          panel.innerHTML = src.innerHTML;
-          // Apply mm-root structural CSS manually (the #mm-root selector won't hit panel)
-          Object.assign(panel.style, {
-            width:        src.offsetWidth  + 'px',
-            background:   '#1e1e2e',
-            color:        '#cdd6f4',
-            fontFamily:   'system-ui, -apple-system, sans-serif',
-            borderRadius: '12px',
-            border:       '2px solid #585b70',
-            overflow:     'hidden',
-            userSelect:   'none',
-            boxSizing:    'border-box',
-            boxShadow:    '0 16px 48px rgba(0,0,0,0.9)',
-          });
+          // Move the real #mm-root into the backdrop so all JS event listeners
+          // are preserved (a clone loses them).  Canvas DOM children never paint
+          // to screen in normal HTML rendering, so we must re-parent the element
+          // into a regular div for it to be visible.
+          const srcW = parseInt(src.style.width)  || 480;
+          const srcH = parseInt(src.style.height) || 504;
+
+          // The polyfill may stamp arbitrary inline styles (position, left, top,
+          // visibility, transform) on the element.  Save and reset them all so
+          // the element renders cleanly as a regular block inside the flex backdrop.
+          const savedStyle = src.getAttribute('style') || '';
+          backdrop._savedStyle = savedStyle;
+          src.removeAttribute('style');
+          src.style.width      = srcW + 'px';
+          src.style.height     = srcH + 'px';
+          src.style.position   = 'relative';
+          src.style.visibility = 'visible';
+          src.style.display    = 'block';
+          src.style.boxShadow    = '0 16px 48px rgba(0,0,0,0.9)';
+          src.style.pointerEvents = 'auto';
 
           // Scale to fit viewport
           const maxW = window.innerWidth  - 80;
           const maxH = window.innerHeight - 80;
-          const scale = Math.min(1, maxW / src.offsetWidth, maxH / (src.offsetHeight || 500));
-          panel.style.transform = `scale(${scale.toFixed(3)})`;
-          panel.style.transformOrigin = 'center center';
+          const scale = Math.min(1, maxW / srcW, maxH / srcH);
+          src.style.transform       = `scale(${scale.toFixed(3)})`;
+          src.style.transformOrigin = 'center center';
 
-          backdrop.appendChild(panel);
+          backdrop.appendChild(src);
           document.body.appendChild(backdrop);
-          backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
-          console.log('[mmOverlay] showing clone — click outside to dismiss, or mmOverlay(false)');
+
+          const close = () => {
+            // Restore exactly the inline styles the polyfill had stamped before.
+            if (savedStyle) src.setAttribute('style', savedStyle);
+            else src.removeAttribute('style');
+            if (host) host.appendChild(src);
+            backdrop.remove();
+            // Re-sync so the polyfill texture reflects any changes made in the overlay.
+            this._mainMenuPanel?.markDirty();
+          };
+
+          const _escClose = (e) => { if (e.key === 'Escape') { close(); window.removeEventListener('keydown', _escClose); } };
+          window.addEventListener('keydown', _escClose);
+          console.log('[mmOverlay] showing live panel — Esc or ] to dismiss, mmOverlay(false) in console');
         };
         // Texture peek: window.mmShowCanvas() — displays the raw polyfill canvas
         // so you can see exactly what the polyfill renders (independent of the mesh).
@@ -3084,6 +3112,47 @@ class Scene {
       } catch (err) {
         console.error('[HTMLVRPanel] MainMenuPanel init failed:', err);
       }
+    }
+
+    // Desktop panel preview helper — showPanel(name) floats any VR panel in front
+    // of the camera so you can inspect layout without entering VR.
+    // Usage: showPanel('mini'|'brush'|'picker'|'main')  /  showPanel() hides all.
+    if (!window.showPanel) {
+      window.showPanel = (name) => {
+        const panels = {
+          mini:   this._miniPanel,
+          brush:  this._brushPanel,
+          picker: this._toolPickerPanel,
+          main:   this._mainMenuPanel,
+        };
+        // Hide all first
+        Object.values(panels).forEach(p => { if (p?.mesh) p.mesh.visible = false; });
+        if (!name) { console.log('[showPanel] all hidden'); return; }
+
+        const p = panels[name];
+        if (!p?.mesh) { console.warn('[showPanel] panel not ready:', name); return; }
+
+        // Float 0.7 m in front of the camera, facing it.
+        const cam = this._camera?.getThreeCamera();
+        if (cam) {
+          const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+          p.mesh.position.copy(cam.position).addScaledVector(fwd, 0.7);
+          p.mesh.quaternion.copy(cam.quaternion);
+        }
+        // Re-parent to scene root so wrist-grip offset doesn't apply.
+        if (p.mesh.parent && p.mesh.parent !== this._scene) {
+          this._scene.add(p.mesh);
+        } else if (!p.mesh.parent) {
+          this._scene.add(p.mesh);
+        }
+        if (p.show) p.show(true);
+        else { p.mesh.visible = true; p.syncFromState?.(); }
+        // Polyfill paints in a rAF; trigger two renders so the texture
+        // lands before the user sees the mesh.
+        requestAnimationFrame(() => { this.render(); requestAnimationFrame(() => this.render()); });
+        console.log(`[showPanel] showing '${name}' — showPanel() to hide all`);
+      };
+      console.log('[showPanel] ready — showPanel(\'mini\'|\'brush\'|\'picker\'|\'main\') / showPanel() to hide all');
     }
 
     // [HTMLVRPanel] Init FilesPanel (floating overlay triggered from VR Files button + desktop)

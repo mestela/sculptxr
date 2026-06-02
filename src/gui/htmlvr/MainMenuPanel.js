@@ -35,6 +35,13 @@ import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import { VERSION } from '../../Version.js';
 import releaseText from '../../../docs/releases.md?raw';
+import {
+  injectAnimCSS,
+  buildAnimationSectionHTML,
+  wireAnimationSection,
+  syncAnimationSection,
+  refreshBlendshapesDOM,
+} from './AnimationControlPanel.js';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
 const MM_W         = 480;   // total DOM width  (px)
@@ -100,17 +107,14 @@ const CSS = `
 .mm-pin-btn {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 9px;
+  justify-content: center;
+  padding: 5px 7px;
   border: 1px solid #45475a;
   border-radius: 5px;
   background: #1e1e2e;
   color: #6c7086;
-  font-size: 11px;
-  font-weight: 600;
   cursor: pointer;
   outline: none;
-  white-space: nowrap;
   flex-shrink: 0;
 }
 .mm-pin-btn:hover, .mm-pin-btn.hover { background: #313244; color: #cdd6f4; border-color: #7f849c; }
@@ -295,6 +299,27 @@ const CSS = `
   margin-bottom: 3px;
   box-sizing: border-box;
 }
+.mm-transport {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+.mm-transport-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  background: #181825;
+  color: #cdd6f4;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  outline: none;
+  box-sizing: border-box;
+}
+.mm-transport-btn:hover, .mm-transport-btn.hover { background: #313244; border-color: #7f849c; }
+.mm-transport-btn:active, .mm-transport-btn.active { background: #45475a; }
+.mm-transport-btn.record { color: #f38ba8; }
 .mm-action-btn:hover, .mm-action-btn.hover { background: #313244; }
 .mm-action-btn.danger { color: #f38ba8; border-color: #f38ba8; }
 .mm-action-btn.danger:hover, .mm-action-btn.danger.hover { background: rgba(243,139,168,0.15); }
@@ -429,27 +454,13 @@ const CSS = `
 .shader-pbr    .mm-if-pbr    { display: block; }
 .shader-matcap .mm-if-matcap { display: block; }
 .shader-uv     .mm-if-uv     { display: block; }
-
-/* Select dropdown (controller model) */
-.mm-select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid #45475a;
-  border-radius: 5px;
-  background: #313244;
-  color: #cdd6f4;
-  font-size: 11px;
-  cursor: pointer;
-  outline: none;
-  margin-bottom: 6px;
-  box-sizing: border-box;
-}
 `;
 
 let _mmCssInjected = false;
 export function injectMMCSS() {
   if (_mmCssInjected) return;
   _mmCssInjected = true;
+  injectAnimCSS();
   const s = document.createElement('style');
   s.textContent = CSS;
   document.head.appendChild(s);
@@ -501,13 +512,13 @@ function buildShellHTML() {
     <div id="mm-menubar">
       <button class="mm-menu-btn" data-menu="files">Files</button>
       <button class="mm-menu-btn" data-menu="history">History</button>
+      <button class="mm-menu-btn" data-menu="background">Background</button>
       <button class="mm-menu-btn" data-menu="reference">Reference</button>
       <button class="mm-menu-btn" data-menu="settings">Settings</button>
       <button class="mm-menu-btn" data-menu="about">About</button>
       <div style="flex:1"></div>
       <button class="mm-pin-btn" id="mm-pin-btn" title="Pin panel in world space">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-        Pin
       </button>
     </div>
     <div id="mm-body">
@@ -515,11 +526,11 @@ function buildShellHTML() {
         <button class="mm-tab-btn" data-section="scene" title="Scene">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
         </button>
-        <button class="mm-tab-btn" data-section="topology" title="Topology">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-        </button>
         <button class="mm-tab-btn" data-section="rendering" title="Rendering">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </button>
+        <button class="mm-tab-btn" data-section="topology" title="Topology">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         </button>
         <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
@@ -542,7 +553,7 @@ export function buildMenuHTML_files(main) {
   const objAppend = guiFiles?._objColorAppended ?? false;
 
   return `
-    <button class="mm-action-btn" id="mm-browser-saves">💾 Browser Saves…</button>
+    <button class="mm-action-btn" id="mm-browser-saves">Browser Saves…</button>
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj">Add mesh (obj, sgl, ply, stl)</button>
@@ -593,7 +604,7 @@ export function buildMenuHTML_history(main) {
   `;
 }
 
-function buildMenuHTML_reference() {
+export function buildMenuHTML_reference() {
   return `
     <div class="mm-section-title">Reference Images</div>
     <button class="mm-action-btn" id="mm-ref-add">Add reference image…</button>
@@ -717,14 +728,42 @@ function buildMenuHTML_settings(main) {
   `;
 }
 
-function buildMenuHTML_about() {
+export function buildMenuHTML_about() {
+  const releaseHTML = (() => {
+    try {
+      const lines = releaseText.split('\n');
+      let html = '';
+      let releases = 0;
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (line.startsWith('# ')) {
+          if (releases >= 3) break;
+          releases++;
+          html += `<div style="color:#89b4fa;font-weight:600;font-size:12px;margin-top:6px">${line.slice(2)}</div>`;
+        } else if (line.startsWith('- ')) {
+          html += `<div style="color:#a6adc8;font-size:11px;margin:1px 0 1px 6px">• ${line.slice(2).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')}</div>`;
+        }
+      }
+      return html;
+    } catch { return ''; }
+  })();
+
   return `
-    <div class="mm-section-title">SculptXR</div>
-    <div class="mm-info">Version v1.0 (htmlvr)</div>
-    <div class="mm-info">WebXR sculpting tool</div>
-    <div class="mm-section-title">Credits</div>
-    <div class="mm-info">Built with Three.js + SculptGL</div>
+    <div class="mm-section-title">About SculptXR ${VERSION}</div>
+    <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Original by Stéphane Ginier<br>VR port by Matt Estela &amp; Antigravity &amp; Claude</div>
+    <div class="mm-btn-pair">
+      <button class="mm-action-btn" id="mm-about-tokeru">tokeru.com/sculptxr</button>
+      <button class="mm-action-btn" id="mm-about-github">GitHub</button>
+    </div>
+    <div class="mm-section-title">Recent Changes</div>
+    <div id="mm-release-notes" style="max-height:200px;overflow-y:auto">${releaseHTML}</div>
   `;
+}
+
+export function wireMenuAbout(el) {
+  el.querySelector('#mm-about-tokeru')?.addEventListener('click', () => window.open('https://tokeru.com/sculptxr', '_blank'));
+  el.querySelector('#mm-about-github') ?.addEventListener('click', () => window.open('https://github.com/mestela/sculptxr', '_blank'));
 }
 
 // ── Section content builders ─────────────────────────────────────────────────
@@ -1146,50 +1185,7 @@ export function buildSectionHTML_sculpting(main) {
 }
 
 export function buildSectionHTML_animation() {
-  const fps      = window._animFPS          ?? 24;
-  const speed    = window._animSpeed        ?? 1.0;
-  const duration = Math.round((window._animMasterDuration ?? 2) * fps);
-  const autoKey  = window._animAutoKey      ?? false;
-  const countIn  = window._animCountIn      ?? false;
-
-  return `
-    <div class="mm-section-title">Transport</div>
-    <div class="mm-row" style="gap:4px;flex-wrap:wrap">
-      <button class="mm-action-btn" id="mm-anim-to-start"   style="flex:0 0 auto;padding:4px 8px">|◀</button>
-      <button class="mm-action-btn" id="mm-anim-prev"       style="flex:0 0 auto;padding:4px 8px">◀◀</button>
-      <button class="mm-action-btn" id="mm-anim-play-rev"   style="flex:0 0 auto;padding:4px 8px">◀</button>
-      <button class="mm-action-btn" id="mm-anim-stop"       style="flex:0 0 auto;padding:4px 8px">■</button>
-      <button class="mm-action-btn" id="mm-anim-play-fwd"   style="flex:0 0 auto;padding:4px 8px">▶</button>
-      <button class="mm-action-btn" id="mm-anim-next"       style="flex:0 0 auto;padding:4px 8px">▶▶</button>
-      <button class="mm-action-btn" id="mm-anim-to-end"     style="flex:0 0 auto;padding:4px 8px">▶|</button>
-      <button class="mm-action-btn" id="mm-anim-record"     style="flex:0 0 auto;padding:4px 8px;color:#f38ba8">●</button>
-    </div>
-
-    <div class="mm-section-title">Keyframes</div>
-    <button class="mm-action-btn" id="mm-anim-add-key">+ Add Keyframe</button>
-    <button class="mm-action-btn" id="mm-anim-copy-key">📋 Copy Key</button>
-    <button class="mm-action-btn" id="mm-anim-paste-key">📥 Paste Key</button>
-    <button class="mm-action-btn" id="mm-anim-clear-all">🗑 Clear All</button>
-
-    <div class="mm-section-title">Settings</div>
-    <div class="mm-row">
-      <span class="mm-lbl">FPS</span>
-      <input type="range" id="mm-anim-fps" min="1" max="60" step="1" value="${fps}">
-      <span class="mm-val" id="mm-anim-fps-val">${fps}</span>
-    </div>
-    <div class="mm-row">
-      <span class="mm-lbl">Speed</span>
-      <input type="range" id="mm-anim-speed" min="0.1" max="4.0" step="0.1" value="${speed}">
-      <span class="mm-val" id="mm-anim-speed-val">${speed.toFixed(1)}x</span>
-    </div>
-    <div class="mm-row">
-      <span class="mm-lbl">Duration (frames)</span>
-      <input type="range" id="mm-anim-duration" min="1" max="500" step="1" value="${duration}">
-      <span class="mm-val" id="mm-anim-duration-val">${duration}</span>
-    </div>
-    <button class="mm-toggle${autoKey?' active':''}" id="mm-anim-autokey">AutoKey</button>
-    <button class="mm-toggle${countIn?' active':''}" id="mm-anim-countin">Count-In</button>
-  `;
+  return buildAnimationSectionHTML();
 }
 
 // ── MainMenuPanel class ──────────────────────────────────────────────────────
@@ -1273,10 +1269,6 @@ export class MainMenuPanel extends HTMLVRPanel {
       pinBtn.addEventListener('click', () => {
         this._pinned = !this._pinned;
         pinBtn.classList.toggle('active', this._pinned);
-        const label = pinBtn.querySelector('svg') ? pinBtn : null;
-        // Update text node (last child) without destroying the SVG
-        const textNode = [...pinBtn.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
-        if (textNode) textNode.textContent = this._pinned ? ' Unpin' : ' Pin';
         this._element.dispatchEvent(
           new CustomEvent('mm-pin-change', { detail: { pinned: this._pinned }, bubbles: false })
         );
@@ -1358,10 +1350,11 @@ export class MainMenuPanel extends HTMLVRPanel {
       switch (this._activeMenu) {
         case 'files':         html = buildMenuHTML_files(main);     break;
         case 'browser-saves': html = '<button class="mm-action-btn" id="mm-back-to-files" style="margin-bottom:8px">← Back to Files</button>' + buildMenuHTML_browserSaves(main); break;
-        case 'history':   html = buildMenuHTML_history(main);   break;
-        case 'reference': html = buildMenuHTML_reference();     break;
-        case 'settings':  html = buildMenuHTML_settings(main);  break;
-        case 'about':     html = buildMenuHTML_about();         break;
+        case 'history':    html = buildMenuHTML_history(main);    break;
+        case 'background': html = buildMenuHTML_background(main); break;
+        case 'reference':  html = buildMenuHTML_reference();     break;
+        case 'settings':   html = buildMenuHTML_settings(main);  break;
+        case 'about':      html = buildMenuHTML_about();         break;
       }
     } else {
       switch (this._activeSection) {
@@ -1406,6 +1399,8 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     } else if (menu === 'history') {
       wireMenuHistory(el, main, paint);
+    } else if (menu === 'background') {
+      wireMenuBackground(el, main, paint);
     } else if (menu === 'reference') {
       q('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
       q('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); paint(); });
@@ -1418,7 +1413,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       this._wireSettings(main);
 
     } else if (menu === 'about') {
-      // static, nothing to wire
+      wireMenuAbout(el);
     }
   }
 
@@ -1579,90 +1574,11 @@ export class MainMenuPanel extends HTMLVRPanel {
   }
 
   _wireSectionAnimation(el, repaint) {
-    const q    = (id) => el.querySelector(id);
-    const reg  = ()  => window._animationRegistry;
-    const mesh = ()  => this._main.getMesh?.();
-    const sync = ()  => { window._animPanel?.syncFromState?.(); repaint(); };
-
-    const stepTime = (delta) => {
-      window._animCurrentTime = Math.max(0, (window._animCurrentTime || 0) + delta);
-      reg()?.update?.(mesh(), true);
-      repaint();
-    };
-
-    q('#mm-anim-to-start')?.addEventListener('click', () => {
-      window._animCurrentTime = 0; reg()?.update?.(mesh(), true); repaint();
+    wireAnimationSection(el, this._main, {
+      repaint,
+      sync: () => { syncAnimationSection(el, this._main); repaint(); },
+      refreshBs: (mesh) => { refreshBlendshapesDOM(el, mesh, this._main, repaint); repaint(); },
     });
-    q('#mm-anim-to-end')?.addEventListener('click', () => {
-      window._animCurrentTime = window._animMasterDuration ?? 2; reg()?.update?.(mesh(), true); repaint();
-    });
-    q('#mm-anim-prev')?.addEventListener('click', () => stepTime(-1 / (window._animFPS || 24)));
-    q('#mm-anim-next')?.addEventListener('click', () => stepTime(1  / (window._animFPS || 24)));
-
-    q('#mm-anim-play-rev')?.addEventListener('click', () => {
-      const r = reg();
-      if (window._animPlaying && r?.playbackDirection === -1) { window._animPlaying = false; r?.stopRecording?.(true); }
-      else { window._animPlaying = true; if (r) r.playbackDirection = -1; }
-      sync();
-    });
-    q('#mm-anim-play-fwd')?.addEventListener('click', () => {
-      const r = reg();
-      if (window._animPlaying && r?.playbackDirection !== -1) { window._animPlaying = false; r?.stopRecording?.(true); }
-      else { window._animPlaying = true; if (r) r.playbackDirection = 1; }
-      sync();
-    });
-    q('#mm-anim-stop')?.addEventListener('click', () => {
-      window._animPlaying = false; reg()?.stopRecording?.(true); sync();
-    });
-    q('#mm-anim-record')?.addEventListener('click', () => {
-      const r = reg(); if (!r) return;
-      if (r.isRecording) r.stopRecording?.();
-      else r.startRecording?.(mesh());
-      sync();
-    });
-
-    q('#mm-anim-add-key')?.addEventListener('click', () => {
-      const r = reg(); const m = mesh(); if (!r || !m) return;
-      const t = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape') r.addShapeKey?.(m, t);
-      else r.addTransformKey?.(m, t);
-      sync();
-    });
-    q('#mm-anim-copy-key')?.addEventListener('click', () => {
-      const r = reg(); const m = mesh(); if (!r || !m) return;
-      const t = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape') r.copyShapeKey?.(m, t);
-      else r.copyTransformKey?.(m, t);
-    });
-    q('#mm-anim-paste-key')?.addEventListener('click', () => {
-      const r = reg(); const m = mesh(); if (!r || !m) return;
-      const t = window._animCurrentTime || 0;
-      if (window._animKeyMode === 'shape' && r.clipboardShape) { r.pasteShapeKey?.(m, t); r.update(m, true); }
-      else if (r.clipboardTransform) { r.pasteTransformKey?.(m, t); r.update(m, true); }
-      sync();
-    });
-    q('#mm-anim-clear-all')?.addEventListener('click', () => {
-      const r = reg(); if (!r) return;
-      r.stopRecording?.(true); r.tracks.clear();
-      window._animCurrentTime = 0; r.globalPlaybackTime = 0; window._animPlaying = false;
-      sync();
-    });
-
-    this._wireSlider(q('#mm-anim-fps'), q('#mm-anim-fps-val'), (v) => {
-      window._animFPS = v; sync();
-    }, v => String(v));
-    this._wireSlider(q('#mm-anim-speed'), q('#mm-anim-speed-val'), (v) => {
-      window._animSpeed = v;
-    }, v => v.toFixed(1) + 'x');
-    this._wireSlider(q('#mm-anim-duration'), q('#mm-anim-duration-val'), (v) => {
-      window._animMasterDuration = v / (window._animFPS || 24); sync();
-    }, v => String(v));
-
-    const wireToggle = (id, getter, setter) => {
-      q(id)?.addEventListener('click', (e) => { setter(!getter()); e.currentTarget.classList.toggle('active', getter()); repaint(); });
-    };
-    wireToggle('#mm-anim-autokey', () => window._animAutoKey, v => { window._animAutoKey = v; });
-    wireToggle('#mm-anim-countin', () => window._animCountIn, v => { window._animCountIn = v; });
   }
 
   // ── Slider helper ──────────────────────────────────────────────────────────
@@ -2178,7 +2094,7 @@ export function buildMenuHTML_browserSaves(main) {
 
   return `
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-browser-save">💾 Save scene</button>
+      <button class="mm-action-btn" id="mm-browser-save">Save scene</button>
       <button class="mm-action-btn" id="mm-storage-refresh">↻ Refresh</button>
     </div>
     <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
@@ -2319,6 +2235,12 @@ export function wireMenuHistory(el, main, repaintFn) {
   }
 }
 
+export function wireMenuReference(el, main, repaintFn) {
+  el.querySelector('#mm-ref-add')?.addEventListener('click', () => document.getElementById('referenceopen')?.click());
+  el.querySelector('#mm-ref-clear')?.addEventListener('click', () => { main.getReferenceManager?.()?.clear?.(); repaintFn?.(); });
+  el.querySelector('#mm-ref-show')?.addEventListener('click', (e) => { e.currentTarget.classList.toggle('active'); repaintFn?.(); });
+}
+
 // ── Desktop topbar dropdown menus ─────────────────────────────────────────────
 // These build/wire functions power the new HTML topbar introduced when yagui
 // was removed.  They follow the same buildMenuHTML_* / wireMenu* pattern used
@@ -2413,27 +2335,6 @@ export function buildMenuHTML_desktopSettings(main) {
   const langs   = Object.keys(TR.languages);
   const langIdx = langs.indexOf(TR.select);
 
-  // Parse the first ~3 releases from releases.md for the About section
-  const releaseHTML = (() => {
-    try {
-      const lines = releaseText.split('\n');
-      let html = '';
-      let releases = 0;
-      for (const raw of lines) {
-        const line = raw.trim();
-        if (!line) continue;
-        if (line.startsWith('# ')) {
-          if (releases >= 3) break;
-          releases++;
-          html += `<div style="color:#89b4fa;font-weight:600;font-size:12px;margin-top:6px">${line.slice(2)}</div>`;
-        } else if (line.startsWith('- ')) {
-          html += `<div style="color:#a6adc8;font-size:11px;margin:1px 0 1px 6px">• ${line.slice(2).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')}</div>`;
-        }
-      }
-      return html;
-    } catch { return ''; }
-  })();
-
   return `
     <div class="mm-section-title">Advanced</div>
     <button class="mm-toggle${opts.debugMode?' active':''}" id="mm-debug-log">Show debug log</button>
@@ -2441,14 +2342,6 @@ export function buildMenuHTML_desktopSettings(main) {
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
     <div class="mm-section-title">Language</div>
     ${buildSelectHTML('mm-language', langs.map((l, i) => ({ val: i, label: l })), langIdx)}
-    <div class="mm-section-title">About SculptXR ${VERSION}</div>
-    <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Original by Stéphane Ginier<br>VR port by Matt Estela &amp; Antigravity &amp; Claude</div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-about-tokeru">tokeru.com/sculptxr</button>
-      <button class="mm-action-btn" id="mm-about-github">GitHub</button>
-    </div>
-    <div class="mm-section-title">Recent Changes</div>
-    <div id="mm-release-notes" style="max-height:200px;overflow-y:auto">${releaseHTML}</div>
   `;
 }
 
@@ -2500,7 +2393,4 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
     getOptionsURL.saveOption('language', TR.select);
     main.getGui?.().initGui?.();
   });
-
-  q('#mm-about-tokeru')?.addEventListener('click', () => window.open('https://tokeru.com/sculptxr', '_blank'));
-  q('#mm-about-github')?.addEventListener('click', () => window.open('https://github.com/mestela/sculptxr', '_blank'));
 }
