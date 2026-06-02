@@ -1427,6 +1427,30 @@ export default class GuiTimeline {
     }
   }
 
+  // Called by Scene.js when opening the VR timeline.
+  // Sizes the canvas to a fixed 900×150 px and positions the container off-screen
+  // (but still display:block) so getBoundingClientRect() returns real values for
+  // controller hit → mouse-event coordinate mapping.
+  // We do NOT call onResize() here because it would override our width/right styles
+  // with the sidebar offset, producing a giant canvas.
+  openVRView() {
+    const VR_W = 900, VR_H = 150;
+    // Size the 2D canvas directly — no DOM display changes that could trigger
+    // a window-resize event and inadvertently call renderer.setSize() in XR mode.
+    const dpr = window.devicePixelRatio || 1;
+    this._canvas.width  = VR_W * dpr;
+    this._canvas.height = VR_H * dpr;
+    this._cssWidth  = VR_W;
+    this._cssHeight = VR_H;
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._visible = true;
+    this.draw();
+  }
+
+  closeVRView() {
+    this._visible = false;
+  }
+
   startLoop() {
     const loop = () => {
       if (this._visible) {

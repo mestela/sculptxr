@@ -273,6 +273,8 @@ class Scene {
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
     this._filesPanel      = null;   // [HTMLVRPanel] floating Files overlay
     this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
+    this._vrTimelineMesh    = null;   // Three.js Mesh — GuiTimeline canvas rendered into VR
+    this._vrTimelineTexture = null;   // THREE.CanvasTexture wrapping GuiTimeline._canvas
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -360,6 +362,21 @@ class Scene {
         console.error('[FilesPanel] init failed:', err);
       }
     }, 500);
+
+    // Wire vtl-show event unconditionally — independent of AnimPanel creation timing.
+    // The AnimPanel dispatches this when "Show Timeline" is toggled in VR mode.
+    document.addEventListener('vtl-show', (e) => {
+      if (window.screenLog) window.screenLog(`[VR Timeline] vtl-show received show=${e.detail?.show}`, 'yellow');
+      try {
+        if (e.detail?.show) this._openVRTimeline();
+        else this._closeVRTimeline();
+      } catch (err) {
+        if (window.screenLog) window.screenLog(`[VR Timeline] listener err: ${err?.message}`, 'red');
+        console.error('[VR Timeline] vtl-show handler error:', err);
+      }
+    });
+    window.openVRTimeline  = () => this._openVRTimeline();
+    window.closeVRTimeline = () => this._closeVRTimeline();
 
     // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
     // Using a short timeout so the DOM is settled before the polyfill host canvas is created.
@@ -1054,6 +1071,10 @@ class Scene {
           this._animPanel.syncFromState();
         } catch (_) {}
       }
+      // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
+      if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
+        this._vrTimelineTexture.needsUpdate = true;
+      }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
@@ -1154,6 +1175,10 @@ class Scene {
           this._filesPanel.update(false);
           this._drawFullScene = true;
         } catch (_) {}
+      }
+      if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
+        this._vrTimelineTexture.needsUpdate = true;
+        this._drawFullScene = true;
       }
     }
 
@@ -3818,6 +3843,96 @@ class Scene {
     }
   }
 
+  _openVRTimeline() {
+    if (window.screenLog) window.screenLog('[VR Timeline] _openVRTimeline start', 'yellow');
+    const tl = this.getGui()?._ctrlTimeline;
+    if (!tl) {
+      if (window.screenLog) window.screenLog('[VR Timeline] no _ctrlTimeline', 'red');
+      return;
+    }
+
+    try { tl.openVRView(); } catch (e) {
+      if (window.screenLog) window.screenLog(`[VR Timeline] openVRView err: ${e?.message}`, 'red');
+      console.error('[VR Timeline] openVRView error:', e);
+      return;
+    }
+
+    if (!this._vrTimelineMesh) {
+      const tex = new THREE.CanvasTexture(tl._canvas);
+      // flipY=true (GL default): canvas top → UV y=1 → visual top. Display is correct.
+      // Hit mapping: UV y=1 at visual top → need (1-uv.y) to get canvas y=0 (top). See _onVRTimelineHit.
+      tex.flipY = true;
+      this._vrTimelineTexture = tex;
+
+      const aspect  = (tl._cssWidth || 900) / (tl._cssHeight || 150);
+      const worldW  = 0.60;
+      const worldH  = worldW / aspect;
+      const geo = new THREE.PlaneGeometry(worldW, worldH);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true,
+        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+      });
+      this._vrTimelineMesh = new THREE.Mesh(geo, mat);
+      this._scene.add(this._vrTimelineMesh);
+      if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${worldW.toFixed(2)}×${worldH.toFixed(2)}m`, 'cyan');
+    }
+
+    // Position at the main menu's world location, facing the camera.
+    // Use cam.quaternion directly — same convention as FilesPanel which is known-correct.
+    const cam = this._camera?.getThreeCamera();
+    const mm  = this._mainMenuPanel?.mesh;
+    if (cam) {
+      if (mm) {
+        const pos = new THREE.Vector3();
+        mm.getWorldPosition(pos);
+        this._vrTimelineMesh.position.copy(pos);
+      } else {
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+        this._vrTimelineMesh.position.copy(cam.position).addScaledVector(fwd, 0.50);
+      }
+      this._vrTimelineMesh.quaternion.copy(cam.quaternion);
+    }
+    this._vrTimelineMesh.visible = true;
+    tl.draw();
+    if (this._vrTimelineTexture) this._vrTimelineTexture.needsUpdate = true;
+    if (window.screenLog) window.screenLog('[VR Timeline] open', 'lime');
+  }
+
+  _closeVRTimeline() {
+    if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
+    this.getGui()?._ctrlTimeline?.closeVRView();
+    // Uncheck "Show Timeline" checkbox wherever it lives (host canvas + desktop sidebar)
+    document.querySelectorAll('#acp-show-timeline').forEach(cb => { cb.checked = false; });
+  }
+
+  _onVRTimelineHit(uv, type, pressed) {
+    const tl = this.getGui()?._ctrlTimeline;
+    if (!tl) return;
+    const canvas = tl._canvas;
+    // Mesh uses flipY=true (GL default): canvas top → UV y=1 → visual top.
+    // So UV y=1 = canvas y=0, UV y=0 = canvas y=cssH → invert Y.
+    // X is not inverted: UV x=0 = canvas left.
+    // Container is display:none so rect={0,0}; clientX/Y are pixel offsets into the canvas.
+    const cssW = tl._cssWidth  || 900;
+    const cssH = tl._cssHeight || 150;
+    const clientX =        uv.x  * cssW;
+    const clientY = (1.0 - uv.y) * cssH;
+    const buttons = pressed ? 1 : 0;
+    if (type === 'down') {
+      canvas.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons,
+      }));
+    } else if (type === 'move') {
+      window.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons,
+      }));
+    } else if (type === 'up') {
+      window.dispatchEvent(new MouseEvent('mouseup', {
+        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 0,
+      }));
+    }
+  }
+
   _onMainMenuPanelPinChange(pinned) {
     if (!this._mainMenuPanel || !this._mainMenuPanel.mesh || !this._scene) return;
     this._mmDragActive = false;
@@ -4828,6 +4943,47 @@ class Scene {
           }
           // ── end FilesPanel raycast ────────────────────────────────────────
 
+          // ── VR Timeline canvas-mesh raycast ──────────────────────────────
+          this._vtlIsPointing = false; // reset each dominant-hand frame
+          if (this._vrTimelineMesh?.visible) {
+            if (!this._vtlRaycaster) {
+              this._vtlRaycaster = new THREE.Raycaster();
+              this._vtlRayOrigin = new THREE.Vector3();
+              this._vtlRayDir    = new THREE.Vector3();
+            }
+            this._vtlRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._vtlRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._vtlRaycaster.set(this._vtlRayOrigin, this._vtlRayDir);
+
+            const vtlHits = this._vtlRaycaster.intersectObject(this._vrTimelineMesh);
+            if (vtlHits.length > 0) {
+              this._vtlIsPointing = true;  // laser is on the timeline — used by grip-drag
+              this._isPointingAtMenu = true;
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = vtlHits[0].distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
+              else                              { this._vrUIHitDistRight = vtlHits[0].distance; this._vrUIHitSourceRight = 'VRTimeline'; }
+              this._updateBPCursor?.(vtlHits[0].point, true);
+
+              // Only dispatch click events when not grip-dragging
+              if (!this._vtlDragActive) {
+                const uv      = vtlHits[0].uv;
+                const trigger = source.gamepad?.buttons[0];
+                const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+                const justDown = pressed && !this._vtlWasPressed;
+                const justUp   = !pressed && this._vtlWasPressed;
+                if (justDown)    this._onVRTimelineHit(uv, 'down', true);
+                else if (justUp) this._onVRTimelineHit(uv, 'up', false);
+                else             this._onVRTimelineHit(uv, 'move', pressed);
+                this._vtlWasPressed = pressed;
+              }
+            } else {
+              if (this._vtlWasPressed) {
+                this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+                this._vtlWasPressed = false;
+              }
+            }
+          }
+          // ── end VR Timeline canvas-mesh raycast ───────────────────────────
+
           // Periodic state sync for MainMenuPanel (keeps symmetry/tool highlight fresh).
           // Call _rebuildContent directly so the cache key still suppresses no-op repaints.
           this._mmSyncCounter = (this._mmSyncCounter || 0) + 1;
@@ -5005,16 +5161,15 @@ class Scene {
           // ── Pinned-panel grip drag ─────────────────────────────────────────
           // When pointing at the pinned BrushPanel AND gripping, move the panel
           // instead of the world.  Uses refSpace (Three.js world space) for pose.
-          if (this._brushPanel?.pinned && this._isPointingAtMenu && isGrip) {
+          if (this._brushPanel?.pinned && this._isPointingAtMenu && isGrip && !this._vtlIsPointing) {
             const refPose = frame.getPose(source.gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
-              const curPos = new THREE.Vector3(p.x, p.y, p.z);
+              const curPos  = new THREE.Vector3(p.x, p.y, p.z);
               const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
 
               if (!this._bpDragActive || this._bpDragHand !== source.handedness) {
-                // Drag start: capture grip pose and panel world transform
                 this._bpDragActive = true;
                 this._bpDragHand   = source.handedness;
                 this._bpDragGripStartPos  = curPos.clone();
@@ -5024,16 +5179,10 @@ class Scene {
                 this._bpDragPanelStartPos  = mesh.position.clone();
                 this._bpDragPanelStartQuat = mesh.quaternion.clone();
               } else {
-                // Drag move: delta = current grip relative to start grip, applied to panel
                 const mesh = this._brushPanel.mesh;
                 const deltaPos = curPos.clone().sub(this._bpDragGripStartPos);
                 mesh.position.copy(this._bpDragPanelStartPos).add(deltaPos);
-
-                // Rotational delta: Q_delta = Q_cur * Q_start^-1
-                const qDelta = curQuat.clone().multiply(
-                  this._bpDragGripStartQuat.clone().invert()
-                );
-                // Rotate the panel around its drag-start position
+                const qDelta = curQuat.clone().multiply(this._bpDragGripStartQuat.clone().invert());
                 mesh.quaternion.copy(qDelta).multiply(this._bpDragPanelStartQuat);
               }
             }
@@ -5049,7 +5198,7 @@ class Scene {
           // ── end BrushPanel grip drag ──────────────────────────────────────
 
           // ── MainMenuPanel grip drag (pinned) ──────────────────────────────
-          if (this._mainMenuPanel?.pinned && this._isPointingAtMenu && isGrip) {
+          if (this._mainMenuPanel?.pinned && this._isPointingAtMenu && isGrip && !this._vtlIsPointing) {
             const refPose = frame.getPose(source.gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
@@ -5070,9 +5219,7 @@ class Scene {
                 const mesh = this._mainMenuPanel.mesh;
                 const deltaPos = curPos.clone().sub(this._mmDragGripStartPos);
                 mesh.position.copy(this._mmDragPanelStartPos).add(deltaPos);
-                const qDelta = curQuat.clone().multiply(
-                  this._mmDragGripStartQuat.clone().invert()
-                );
+                const qDelta = curQuat.clone().multiply(this._mmDragGripStartQuat.clone().invert());
                 mesh.quaternion.copy(qDelta).multiply(this._mmDragPanelStartQuat);
               }
             }
@@ -5084,6 +5231,44 @@ class Scene {
             this._mmDragHand   = null;
           }
           // ── end MainMenuPanel grip drag ───────────────────────────────────
+
+          // ── VR Timeline grip drag ─────────────────────────────────────────
+          // Start: laser must be specifically on the timeline (_vtlIsPointing).
+          // Continue: keep dragging as long as grip is held, regardless of laser position.
+          const canStartVtlDrag  = this._vrTimelineMesh?.visible && this._vtlIsPointing && isGrip && !this._vtlDragActive;
+          const canContinueVtlDrag = this._vtlDragActive && this._vtlDragHand === source.handedness && isGrip;
+
+          if (canStartVtlDrag || canContinueVtlDrag) {
+            const refPose = frame.getPose(source.gripSpace, refSpace);
+            if (refPose) {
+              const p = refPose.transform.position;
+              const q = refPose.transform.orientation;
+              const curPos  = new THREE.Vector3(p.x, p.y, p.z);
+              const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+
+              if (!this._vtlDragActive) {
+                this._vtlDragActive = true;
+                this._vtlDragHand   = source.handedness;
+                this._vtlDragGripStartPos  = curPos.clone();
+                this._vtlDragGripStartQuat = curQuat.clone();
+                this._vtlDragPanelStartPos  = this._vrTimelineMesh.position.clone();
+                this._vtlDragPanelStartQuat = this._vrTimelineMesh.quaternion.clone();
+              } else {
+                const deltaPos = curPos.clone().sub(this._vtlDragGripStartPos);
+                this._vrTimelineMesh.position.copy(this._vtlDragPanelStartPos).add(deltaPos);
+                const qDelta = curQuat.clone().multiply(this._vtlDragGripStartQuat.clone().invert());
+                this._vrTimelineMesh.quaternion.copy(qDelta).multiply(this._vtlDragPanelStartQuat);
+              }
+            }
+            // Suppress world navigation while dragging
+            if (source.handedness === 'left') { leftGrip = false; }
+            else                              { rightGrip = false; }
+
+          } else if (this._vtlDragActive && this._vtlDragHand === source.handedness && !isGrip) {
+            this._vtlDragActive = false;
+            this._vtlDragHand   = null;
+          }
+          // ── end VR Timeline grip drag ─────────────────────────────────────
         }
       }
 

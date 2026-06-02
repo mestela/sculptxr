@@ -630,7 +630,14 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   // ── Animation section ──────────────────────────────────────────────────────
 
   el.querySelector('#acp-show-timeline')?.addEventListener('change', (e) => {
-    main.getGui?.()._ctrlTimeline?.setVisibility(e.target.checked);
+    const show = e.target.checked;
+    const inXR = !!(window.app?._renderer?.xr?.isPresenting);
+    if (window.screenLog) window.screenLog(`[TL] show-timeline ${show} inXR=${inXR}`, 'yellow');
+    if (inXR) {
+      document.dispatchEvent(new CustomEvent('vtl-show', { detail: { show } }));
+    } else {
+      main.getGui?.()._ctrlTimeline?.setVisibility(show);
+    }
   });
 
   const fpsInput = el.querySelector('#acp-fps');
