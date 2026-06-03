@@ -2439,6 +2439,23 @@ class Scene {
       navigator.xr.addEventListener('sessiongranted', this._vrAutoRestartListener);
     }
 
+    // Restore worldGroup to desktop scale/position (it was left at VR micro-scale 0.008)
+    const wgCache = this._desktopCameraCache.worldGroupMatrix;
+    if (wgCache && this._worldGroup) {
+      const _p = new THREE.Vector3();
+      const _q = new THREE.Quaternion();
+      const _s = new THREE.Vector3();
+      wgCache.decompose(_p, _q, _s);
+      this._worldGroup.position.copy(_p);
+      this._worldGroup.quaternion.copy(_q);
+      this._worldGroup.scale.copy(_s);
+    } else if (this._worldGroup) {
+      this._worldGroup.position.set(0, 0, 0);
+      this._worldGroup.quaternion.identity();
+      this._worldGroup.scale.set(0.701, 0.701, 0.701);
+    }
+    if (this._worldGroup) this._worldGroup.updateMatrixWorld(true);
+
     // Restore the exact Desktop view from before VR
     vec3.copy(this._camera._trans, this._desktopCameraCache.trans);
     quat.copy(this._camera._quatRot, this._desktopCameraCache.quatRot);
@@ -2690,17 +2707,10 @@ class Scene {
         const cache      = this._desktopCameraCache;
         const desktopCam = this._camera.getThreeCamera();
 
-        // --- Headset position in SculptGL space ---
-        // worldGroup.matrixWorld maps sculpt → VR world; its inverse maps back.
-        // This is read BEFORE the worldGroup swap below.
-        const wgInvMatrix  = this._worldGroup.matrixWorld.clone().invert();
-        const headWorldPos = new THREE.Vector3().setFromMatrixPosition(
-          this._spectatorLeftEyeMatrix
-        );
-        const headSculptPos = headWorldPos.applyMatrix4(wgInvMatrix);
+        // wgInvMatrix: VR world → sculpt space.  Read before the worldGroup swap below.
+        const wgInvMatrix = this._worldGroup.matrixWorld.clone().invert();
 
-        // Start from the actual desktop camera world position — same source mode 2 uses,
-        // guaranteed to be correctly outside the mesh at the right orbit radius.
+        // Desktop camera position and orbit centre (both in desktop world space).
         const desktopCamWorldPos = new THREE.Vector3().setFromMatrixPosition(
           new THREE.Matrix4().fromArray(cache.view).invert()
         );
@@ -2708,36 +2718,38 @@ class Scene {
           cache.center[0], cache.center[1], cache.center[2]
         );
 
-        // Horizontal orbit radius (XZ only — we keep the desktop camera's Y/height).
-        const horizRadius = Math.sqrt(
-          (desktopCamWorldPos.x - orbitCenter.x) ** 2 +
-          (desktopCamWorldPos.z - orbitCenter.z) ** 2
-        );
+        // Full 3-D orbit distance (replaces the old XZ-only horizRadius).
+        const orbitDist = desktopCamWorldPos.distanceTo(orbitCenter);
 
-        // Headset XZ direction in desktop world space.
-        // headSculptPos is in VR sculpt space (wgInvMatrix scale≈125); applying
-        // cache.worldGroupMatrix (scale 0.701) converts sculpt→desktop world space.
-        const headDesktopWorld = headSculptPos.clone().applyMatrix4(cache.worldGroupMatrix);
-        const orbitDir = new THREE.Vector3(
-          headDesktopWorld.x - orbitCenter.x,
-          0,
-          headDesktopWorld.z - orbitCenter.z
-        );
-        // Safety: if headset is directly above orbit centre (degenerate XZ), use desktop direction.
-        if (orbitDir.lengthSq() < 0.001) {
-          orbitDir.set(desktopCamWorldPos.x - orbitCenter.x, 0, desktopCamWorldPos.z - orbitCenter.z);
-        }
-        orbitDir.normalize();
+        // --- Extract headset forward (-Z) and up (+Y) from the eye matrix ---
+        // setFromMatrixColumn(m, n) returns column n = local axis n in world space.
+        // Forward = local -Z;  Up = local +Y.
+        const headVRForward = new THREE.Vector3()
+          .setFromMatrixColumn(this._spectatorLeftEyeMatrix, 2).negate();
+        const headVRUp = new THREE.Vector3()
+          .setFromMatrixColumn(this._spectatorLeftEyeMatrix, 1);
 
-        // Camera placed at same horizontal radius and same Y as the desktop camera,
-        // rotated to face the headset's XZ direction.
-        const camPos = new THREE.Vector3(
-          orbitCenter.x + orbitDir.x * horizRadius,
-          desktopCamWorldPos.y,
-          orbitCenter.z + orbitDir.z * horizRadius
-        );
+        // Transform directions VR world → sculpt → desktop world.
+        // cache.worldGroupMatrix has identity rotation (scale 0.701 only), so
+        // transformDirection through it normalises — effectively a no-op for unit vecs.
+        const headFwd = headVRForward.clone()
+          .transformDirection(wgInvMatrix)
+          .transformDirection(cache.worldGroupMatrix);
+        const headUp = headVRUp.clone()
+          .transformDirection(wgInvMatrix)
+          .transformDirection(cache.worldGroupMatrix);
 
-        const headUp = new THREE.Vector3(0, 1, 0);
+        // Safety: degenerate transform fallbacks.
+        if (headFwd.lengthSq() < 0.001) headFwd.set(0, 0, -1);
+        if (headUp.lengthSq()  < 0.001) headUp.set(0, 1, 0);
+        headFwd.normalize();
+        headUp.normalize();
+
+        // Place spectator camera at orbitDist from orbit centre, opposite to the
+        // headset's viewing direction.  lookAt with the headset's local Y as up
+        // captures pitch (top-down, tilted) that the old world-Y up lost.
+        const camPos = new THREE.Vector3().copy(orbitCenter)
+          .addScaledVector(headFwd, -orbitDist);
 
         // lookAt sets rotation only — must set position separately.
         const camToWorld = new THREE.Matrix4().lookAt(camPos, orbitCenter, headUp);
@@ -3333,14 +3345,15 @@ class Scene {
             if (model) grip.add(model);
             this._scene.add(grip);
 
-            // Controller ray lines (attached to Target Ray Space)
-            const lineGeometry = new THREE.CylinderGeometry(0.0015, 0.0015, 1.0, 8);
+            // Controller ray — 30 cm white tube, solid for first 15 cm then fades to transparent (Virtual Desktop style)
+            const lineGeometry = new THREE.CylinderGeometry(0.001, 0.001, 0.30, 8, 1, true);
             lineGeometry.rotateX(-Math.PI / 2);
-            lineGeometry.translate(0, 0, -0.5);
-            const lineMaterial = new THREE.MeshBasicMaterial({
-                color: 0xff0000, transparent: true, opacity: 0.8,
-                depthTest: true, depthWrite: false,  // depth-test so the beam is occluded by panels and geometry
-                blending: THREE.NormalBlending
+            lineGeometry.translate(0, 0, -0.15); // base at z=0, tip at z=-0.30
+            const lineMaterial = new THREE.ShaderMaterial({
+                vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
+                transparent: true, depthTest: true, depthWrite: false,
+                blending: THREE.NormalBlending, side: THREE.DoubleSide,
             });
             const rayRoot = new THREE.Group();
             rayRoot.name = 'pointer_ray_root';
@@ -3956,8 +3969,8 @@ class Scene {
   }
 
   /**
-   * [HTMLVRPanel] Update the thin cursor dot + ray shown when a controller
-   * points at the BrushPanel.  Creates the meshes lazily on first call.
+   * [HTMLVRPanel] Update the billboard ring reticle shown when a controller
+   * points at a UI panel.  Creates the mesh lazily on first call.
    *
    * @param {THREE.Vector3|null} hitPoint  World-space hit position, or null to hide.
    * @param {boolean}            visible
@@ -3965,27 +3978,28 @@ class Scene {
   _updateBPCursor(hitPoint, visible) {
     if (!this._scene) return;
 
-    // Lazy-create a single unlit dot — no ray line (the controller's own beam handles aim)
-    if (!this._bpCursorDot) {
-      const dotGeo = new THREE.BufferGeometry();
-      dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
-      const dotMat = new THREE.PointsMaterial({
-        color: 0xffffff, size: 10, sizeAttenuation: false,
-        transparent: true, opacity: 0.5, depthTest: false,
+    if (!this._bpReticle) {
+      const geo = new THREE.CircleGeometry(0.0014, 16);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.8,
+        depthTest: false, side: THREE.DoubleSide,
       });
-      this._bpCursorDot = new THREE.Points(dotGeo, dotMat);
-      this._bpCursorDot.renderOrder = 1001;
-      this._bpCursorDot.visible = false;
-      this._scene.add(this._bpCursorDot);
+      this._bpReticle = new THREE.Mesh(geo, mat);
+      this._bpReticle.renderOrder = 1001;
+      this._bpReticle.visible = false;
+      this._scene.add(this._bpReticle);
     }
 
     if (!visible || !hitPoint) {
-      this._bpCursorDot.visible = false;
+      this._bpReticle.visible = false;
       return;
     }
 
-    this._bpCursorDot.position.copy(hitPoint);
-    this._bpCursorDot.visible = true;
+    this._bpReticle.position.copy(hitPoint);
+    // Billboard: face the viewer camera
+    const cam = this._camera && this._camera.getThreeCamera ? this._camera.getThreeCamera() : null;
+    if (cam) this._bpReticle.quaternion.copy(cam.quaternion);
+    this._bpReticle.visible = true;
   }
 
   handleXRInput(frame, refSpace) {
@@ -4047,7 +4061,8 @@ class Scene {
     }
 
     this._isPointingAtMenu = false;
-    if (this._bpCursorDot) this._bpCursorDot.visible = false; // reset each frame; panel hit logic re-shows it
+    if (this._bpCursorDot) this._bpCursorDot.visible = false; // legacy; kept for safety
+    if (this._bpReticle) this._bpReticle.visible = false; // reset each frame; panel hit logic re-shows it
     this._vrUIHitDistLeft   = Infinity;  // reset each frame — prevents stale laser depth
     this._vrUIHitDistRight  = Infinity;  // from persisting when _isPointingAtMenu is set by another source
     this._vrUIHitSourceLeft  = null;     // debug: which panel set the left hit distance
@@ -6730,15 +6745,7 @@ class Scene {
             }
 
             if (pointerLine) {
-                if (uiHitDist !== undefined && uiHitDist !== Infinity) {
-                    pointerLine.visible = true;
-                    // hitDist is measured from the ray origin, which is offset forward
-                    // by getStylusOffset() from the controller origin where the laser starts.
-                    // Add the offset so the beam tip lands exactly on the panel face.
-                    pointerLine.scale.set(1, 1, hitDist + this.getStylusOffset());
-                } else {
-                    pointerLine.visible = false;
-                }
+                pointerLine.visible = uiHitDist !== undefined && uiHitDist !== Infinity;
             }
 
             if (cursorGroup) {

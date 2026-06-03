@@ -426,12 +426,14 @@ export class HTMLVRPanel {
       drag.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    // Button hover/active visual state.
+    // Button hover/active visual state — track whether anything visual changed.
+    let changed = (type === 'pointerdown' || type === 'pointerup');
     const btn = el.closest('button');
     if (btn !== this._hoveredBtn) {
       this._hoveredBtn?.classList.remove('hover', 'active');
       this._hoveredBtn = btn;
       btn?.classList.add('hover');
+      changed = true;
     }
     if (type === 'pointerdown' && btn) btn.classList.add('active');
     if (type === 'pointerup'   && btn) btn.classList.remove('active');
@@ -449,7 +451,9 @@ export class HTMLVRPanel {
       }));
     }
 
-    // Any interaction should refresh the panel.
-    this.markDirty();
+    // Repaint only when something visual changed; pure pointermove with the same
+    // hovered element does not need a repaint and caused a full panel re-rasterize
+    // every XR frame via drainRAF(), tanking controller performance to ~10fps.
+    if (changed || drag) this.markDirty();
   }
 }
