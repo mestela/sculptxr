@@ -140,50 +140,54 @@ Import.importSGL = function (buffer, gl, main) {
     }
 
     if (isMulti && baseMesh && baseMesh._parsedLevels) {
-      var lvl0 = baseMesh._parsedLevels[0];
       var globalOptTemp = Mesh.OPTIMIZE;
-      Mesh.OPTIMIZE = false; // Enforce absolute base-class lock!
-      lvl0.allocateArrays();
-      lvl0.initTopology();
+      Mesh.OPTIMIZE = false;
 
+      // Initialise every parsed level directly from its saved data — no subdivision
+      // reconstruction.  Using addLevel() was wrong because it calls fullSubdivision
+      // which (a) calls computeTexCoords when the mesh has UV, inflating _colorsRGB
+      // beyond the saved size, and (b) creates slightly different vertex counts when
+      // the mesh has UV duplicate vertices, corrupting the colour copy.
+      var parsedLevels = baseMesh._parsedLevels;
+      for (var L = 0; L < parsedLevels.length; ++L) {
+        parsedLevels[L].allocateArrays();
+        parsedLevels[L].initTopology();
+      }
+
+      var lvl0 = parsedLevels[0];
       var mm = new Multimesh(lvl0);
       if (baseMesh._permanentStaticLabel) {
         mm._permanentStaticLabel = baseMesh._permanentStaticLabel;
       }
-      var optTemp = mm.getCurrentMesh().constructor.OPTIMIZE;
       mm.getCurrentMesh().constructor.OPTIMIZE = false;
 
-      for (var L = 1; L < baseMesh._parsedLevels.length; ++L) {
-        var parsedLvl = baseMesh._parsedLevels[L];
-        var nextLevel = mm.addLevel(); // Restores topological linkage absolutely!
-
-        // Hard drop the spatial vectors from the parsed save directly over the valid links
-        var targetVerts = nextLevel.getVertices();
-        var sourceVerts = parsedLvl.getVertices();
-        if (targetVerts && sourceVerts) {
-            targetVerts.set(sourceVerts.subarray(0, targetVerts.length));
-        }
-        nextLevel.updateGeometry();
+      // Push levels 1–N directly, sharing each parsed level's data.
+      for (var L = 1; L < parsedLevels.length; ++L) {
+        var lvlN = new MeshResolution(parsedLevels[L], true); // keepMesh=true → shares data
+        mm._meshes.push(lvlN);
+        mm._sel = L;
+        mm.setMeshData(lvlN.getMeshData());
       }
 
       Mesh.OPTIMIZE = globalOptTemp;
 
-      console.log(`[SXR] Multiresolution hierarchy loaded and synchronized natively.`);
-      
-      // CRITICAL FIX: initRender() does not create the Three.js WebGL representations! We must call initThreeMesh() on all levels!
+      // Create Three.js mesh objects for every level.
       for (let L = 0; L < mm._meshes.length; L++) {
-          if (mm._meshes[L].initThreeMesh) {
-              mm._meshes[L].initThreeMesh();
-          }
+        if (mm._meshes[L].initThreeMesh) mm._meshes[L].initThreeMesh();
       }
-      if (mm.initThreeMesh) {
-          mm.initThreeMesh();
-      }
+      if (mm.initThreeMesh) mm.initThreeMesh();
 
       mm.setSelection(activeIndex);
+      const _c = mm.getColors();
+      let _nwL = 0;
+      if (_c) { for (let _ii = 0; _ii < _c.length; _ii += 3) if (_c[_ii] < 0.99 || _c[_ii+1] < 0.99 || _c[_ii+2] < 0.99) _nwL++; }
+      console.log(`[SXR Load] after setSelection(${activeIndex}): colors.len=${_c?.length} nonWhiteVerts=${_nwL} first3=[${_c ? Array.from(_c.subarray(0,3)).map(v=>v.toFixed(3)) : 'null'}]`);
       mm.updateResolution();
       mm.initRender();
-      mm.setShowWireframe(true);
+      // Restore the wireframe state from the saved file (don't force it on).
+      const savedWireframe = parsedLevels[activeIndex] ?
+        parsedLevels[activeIndex].getRenderData()._showWireframe : false;
+      mm.setShowWireframe(!!savedWireframe);
       if (mm.updateWireframeBuffer) mm.updateWireframeBuffer();
       meshes.push(mm);
     }

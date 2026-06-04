@@ -67,8 +67,6 @@ class Multimesh extends Mesh {
     this.pushMesh(newMesh);
     this.initRender();
 
-    // console.timeEnd(strTimer);
-
     return newMesh;
   }
 

@@ -44,7 +44,7 @@ import {
 } from './AnimationControlPanel.js';
 
 // ── Dimensions ───────────────────────────────────────────────────────────────
-const MM_W         = 480;   // total DOM width  (px)
+export const MM_W  = 480;   // total DOM width  (px)
 const MM_TABS_W    = 50;    // left tab-strip width
 const MM_MENUBAR_H = 44;    // top menubar height (px) — must match actual rendered height
 // Body height is fixed so the mesh never changes dimensions on tab switch.
@@ -172,6 +172,32 @@ const CSS = `
   border-color: #89b4fa;
   font-weight: 800;
 }
+.mm-tab-btn.torn {
+  opacity: 0.3;
+  pointer-events: none;
+}
+.mm-tab-slot {
+  position: relative;
+  width: 38px;
+  flex-shrink: 0;
+}
+.mm-tab-pin {
+  position: absolute;
+  bottom: -1px; right: -1px;
+  width: 16px; height: 16px;
+  padding: 0;
+  border: 1px solid #45475a;
+  border-radius: 3px;
+  background: #11111b;
+  color: #6c7086;
+  cursor: pointer;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.mm-tab-pin:hover, .mm-tab-pin.hover { background: #313244; color: #cba6f7; border-color: #cba6f7; }
 
 /* ── Content area ────────────────────────────────────────────── */
 #mm-content {
@@ -454,6 +480,69 @@ const CSS = `
 .shader-pbr    .mm-if-pbr    { display: block; }
 .shader-matcap .mm-if-matcap { display: block; }
 .shader-uv     .mm-if-uv     { display: block; }
+
+/* ── TornOffPanel (floating section panels) ───────── */
+.mm-torn-root {
+  width: 480px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-family: system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 2px solid #cba6f7;
+  overflow: hidden;
+  user-select: none;
+  position: relative;
+}
+.mm-torn-header {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 8px;
+  background: #11111b;
+  border-bottom: 2px solid #45475a;
+  box-sizing: border-box;
+  gap: 6px;
+}
+.mm-torn-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: #cba6f7;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mm-torn-redock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  background: #1e1e2e;
+  color: #6c7086;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+.mm-torn-redock:hover, .mm-torn-redock.hover {
+  background: #313244;
+  color: #cba6f7;
+  border-color: #cba6f7;
+}
+.mm-torn-content {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  scrollbar-width: thick;
+  scrollbar-color: #585b70 #1e1e2e;
+}
+.mm-torn-content::-webkit-scrollbar { width: 10px; background: #1e1e2e; }
+.mm-torn-content::-webkit-scrollbar-thumb { background: #585b70; border-radius: 5px; }
 `;
 
 let _mmCssInjected = false;
@@ -523,21 +612,46 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        <button class="mm-tab-btn" data-section="scene" title="Scene">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
-        </button>
-        <button class="mm-tab-btn" data-section="rendering" title="Rendering">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-        </button>
-        <button class="mm-tab-btn" data-section="topology" title="Topology">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-        </button>
-        <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
-        </button>
-        <button class="mm-tab-btn" data-section="animation" title="Animation">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>
-        </button>
+        <div class="mm-tab-slot">
+          <button class="mm-tab-btn" data-section="scene" title="Scene">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
+          </button>
+          <button class="mm-tab-pin" data-section="scene" title="Float panel">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+          </button>
+        </div>
+        <div class="mm-tab-slot">
+          <button class="mm-tab-btn" data-section="rendering" title="Rendering">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          <button class="mm-tab-pin" data-section="rendering" title="Float panel">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+          </button>
+        </div>
+        <div class="mm-tab-slot">
+          <button class="mm-tab-btn" data-section="topology" title="Topology">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </button>
+          <button class="mm-tab-pin" data-section="topology" title="Float panel">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+          </button>
+        </div>
+        <div class="mm-tab-slot">
+          <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
+          </button>
+          <button class="mm-tab-pin" data-section="sculpting" title="Float panel">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+          </button>
+        </div>
+        <div class="mm-tab-slot">
+          <button class="mm-tab-btn" data-section="animation" title="Animation">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>
+          </button>
+          <button class="mm-tab-pin" data-section="animation" title="Float panel">
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
+          </button>
+        </div>
       </div>
       <div id="mm-content"></div>
     </div>
@@ -1212,18 +1326,45 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     super(root, MM_W / VR_PANEL_PX_PER_M);
 
-    this._main          = main;
+    this._main           = main;
     this._activeMenu    = null;     // null | 'files'|'history'|'reference'|'settings'|'about'
     this._activeSection = 'sculpting'; // 'scene'|'topology'|'rendering'|'sculpting'
     this._lastContentKey = '';      // avoids redundant rebuilds
     this._startHidden   = true;
     this._pinned        = false;
+    this._tornOffSections = new Set(); // sections currently floating as TornOffPanels
 
     this.init(scene, camera, renderer);
     this._waitForMeshThenWire(main);
   }
 
   get pinned() { return this._pinned; }
+
+  /** Called by Scene.js when a section has been torn off into a floating panel. */
+  notifyTearOff(sectionId) {
+    this._tornOffSections.add(sectionId);
+    // If the torn-off section is currently active, switch to the first available one.
+    if (this._activeSection === sectionId) {
+      const sections = ['scene', 'rendering', 'topology', 'sculpting', 'animation'];
+      const next = sections.find(s => !this._tornOffSections.has(s));
+      if (next) this._setSection(next);
+    }
+    this._updateTornTabStates();
+  }
+
+  /** Called by Scene.js when a floating panel is re-docked. */
+  notifyReDock(sectionId) {
+    this._tornOffSections.delete(sectionId);
+    this._updateTornTabStates();
+    this._lastContentKey = ''; // force rebuild if this section is now active again
+  }
+
+  _updateTornTabStates() {
+    this._element.querySelectorAll('.mm-tab-btn').forEach(btn => {
+      btn.classList.toggle('torn', this._tornOffSections.has(btn.dataset.section));
+    });
+    this.markDirty();
+  }
 
   // ── Mesh placement ─────────────────────────────────────────────────────────
 
@@ -1259,7 +1400,21 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Side tab strip buttons
     root.querySelectorAll('.mm-tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        this._setSection(btn.dataset.section);
+        if (!this._tornOffSections.has(btn.dataset.section)) {
+          this._setSection(btn.dataset.section);
+        }
+      });
+    });
+
+    // Tab tear-off pin buttons
+    root.querySelectorAll('.mm-tab-pin').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const section = btn.dataset.section;
+        if (!this._tornOffSections.has(section)) {
+          this._element.dispatchEvent(
+            new CustomEvent('mm-section-tearoff', { detail: { section }, bubbles: false })
+          );
+        }
       });
     });
 

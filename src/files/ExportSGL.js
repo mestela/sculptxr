@@ -155,7 +155,7 @@ Export.exportSGL = function (meshes, main) {
         var nbVertices = lvl.getNbVertices();
         u32a[off++] = nbVertices;
         
-        var vArr = (isMulti ? mesh : lvl).getVertices();
+        var vArr = lvl.getVertices();
         var copyV = Math.min(vArr ? vArr.length : 0, nbVertices * 3);
         f32a.set(vArr.subarray(0, copyV), off);
         off += copyV;
@@ -166,6 +166,11 @@ Export.exportSGL = function (meshes, main) {
 
         var cArr = lvl.getColors ? lvl.getColors() : null;
         var nbColors = cArr && cArr.length > 0 ? nbVertices : 0;
+        if (L === levels.length - 1) {
+          let _nw = 0;
+          if (cArr) { for (let _ii = 0; _ii < Math.min(cArr.length, nbVertices*3); _ii += 3) if (cArr[_ii] < 0.99 || cArr[_ii+1] < 0.99 || cArr[_ii+2] < 0.99) _nw++; }
+          console.log(`[SXR Export] L${L}: verts=${nbVertices} cArr.len=${cArr?.length} nonWhiteVerts=${_nw} first3=[${cArr ? Array.from(cArr.subarray(0,3)).map(v=>v.toFixed(3)) : 'null'}]`);
+        }
         u32a[off++] = nbColors;
         if (nbColors > 0) {
           var copyC = Math.min(cArr.length, nbVertices * 3);

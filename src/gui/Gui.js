@@ -705,14 +705,17 @@ class Gui {
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_scene(main);
     const rebuild = () => this._buildDesktopScene(panelEl);
-    wireSectionScene(panelEl, main, rebuild);
+    // Pass a no-op lightRepaintFn so wireSelect doesn't call rebuild() when
+    // toggling a dropdown open — that would replace innerHTML and immediately
+    // close the dropdown. wireSelect already updates label/active-class directly.
+    wireSectionScene(panelEl, main, rebuild, () => {});
   }
 
   _buildDesktopRendering(panelEl) {
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_rendering(main);
     const rebuild = () => this._buildDesktopRendering(panelEl);
-    wireSectionRendering(panelEl, main, rebuild);
+    wireSectionRendering(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
   }
 
@@ -720,7 +723,7 @@ class Gui {
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_topology(main);
     const rebuild = () => this._buildDesktopTopology(panelEl);
-    wireSectionTopology(panelEl, main, rebuild);
+    wireSectionTopology(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
   }
 
@@ -728,7 +731,7 @@ class Gui {
     const main = this._main;
     panelEl.innerHTML = buildSectionHTML_sculpting(main);
     const rebuild = () => this._buildDesktopSculpting(panelEl);
-    wireSectionSculpting(panelEl, main, rebuild);
+    wireSectionSculpting(panelEl, main, rebuild, () => {});
     fixSliderDrag(panelEl);
   }
 

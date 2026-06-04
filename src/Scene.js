@@ -34,8 +34,12 @@ import { BrushPanel             } from './gui/htmlvr/BrushPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
 import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
+import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
+
+// Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
+const _v3tmp = new THREE.Vector3();
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -271,6 +275,7 @@ class Scene {
     this._miniPanel       = null;   // [HTMLVRPanel] compact wrist HUD (replaces legacy canvas MiniHUD)
     this._toolPickerPanel = null;   // [HTMLVRPanel] tool-selection overlay
     this._mainMenuPanel   = null;   // [HTMLVRPanel] main menu (replaces GuiXR + VRMenu)
+    this._tornOffPanels   = new Map(); // sectionId → TornOffPanel
     this._filesPanel      = null;   // [HTMLVRPanel] floating Files overlay
     this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
     this._vrTimelineMesh    = null;   // Three.js Mesh — GuiTimeline canvas rendered into VR
@@ -1061,6 +1066,15 @@ class Scene {
       }
       if (this._mainMenuPanel) {
         try { this._mainMenuPanel.update(true); } catch (_) {}
+      }
+      if (this._tornOffPanels.size > 0) {
+        this._tornOffPanels.forEach(p => {
+          try { p.update(true); } catch (_) {}
+          if (p._pendingPlace && p.mesh) {
+            p._pendingPlace();
+            p._pendingPlace = null;
+          }
+        });
       }
       if (this._filesPanel) {
         try { this._filesPanel.update(true); } catch (_) {}
@@ -2076,7 +2090,14 @@ class Scene {
         Utils.convertArrayVec3toSRGB(mesh.getColors());
       }
 
-      mesh.init();
+      // SXR multimeshes are already fully initialized by the importer
+      // (allocateArrays, initTopology, updateResolution, initRender).
+      // Calling mesh.init() would invoke initColorsAndMaterials() which
+      // resets _colorsRGB to all-white whenever its length != nbVertices*3
+      // (which happens on UV meshes where the array is sized to nbTexCoords).
+      if (!innerMesh._meshes) {
+        mesh.init();
+      }
       mesh.initRender();
       meshes.push(mesh);
       
@@ -2983,6 +3004,9 @@ class Scene {
         this._mainMenuPanel._element.addEventListener('mm-browser-saves-open', () => {
           this._openFilesPanel();
         });
+        this._mainMenuPanel._element.addEventListener('mm-section-tearoff', (e) => {
+          this._tearOffSection(e.detail.section);
+        });
         if (window.screenLog) window.screenLog('[HTMLVRPanel] MainMenuPanel created', 'cyan');
 
         // Console helper: window.toggleMainMenu() to show/hide
@@ -3799,11 +3823,12 @@ class Scene {
     const picker = this._toolPickerPanel?.mesh;
     const main   = this._mainMenuPanel?.mesh;
     if (mini)   mini.visible   = (show === 'mini');
-    if (brush)  brush.visible  = (show === 'brush');
+    // Pinned panels are world-anchored — don't hide them when swapping to another panel.
+    if (brush)  brush.visible  = (show === 'brush') || !!this._brushPanel?.pinned;
     if (picker) picker.visible = (show === 'picker');
     if (main) {
-      if (show === 'main') {
-        // Delegate to show() so the deferred-visibility gate runs properly.
+      const keepMain = show === 'main' || !!this._mainMenuPanel?.pinned;
+      if (keepMain) {
         this._mainMenuPanel.show(true);
       } else {
         this._mainMenuPanel.show(false);
@@ -3829,11 +3854,13 @@ class Scene {
     } else {
       // Remove from pinned parent.  Reset to wrist-local defaults so handleXRInput
       // can cleanly re-parent to uiGrip next frame without inheriting world-space values.
+      // Hide it so it acts like a closed panel — user re-opens with the wrist button.
       if (mesh.parent) mesh.parent.remove(mesh);
       mesh.position.set(0.10, 0.10, -0.05);
       mesh.rotation.set(-Math.PI / 2, 0, 0);
       mesh.scale.set(1, -1, 1);   // preserve the flipY compensation set in _createMesh
       mesh.matrixAutoUpdate = true;
+      mesh.visible = false;
     }
   }
 
@@ -3965,6 +3992,7 @@ class Scene {
       mesh.rotation.set(-Math.PI / 2, 0, 0);
       mesh.scale.set(1, -1, 1);
       mesh.matrixAutoUpdate = true;
+      mesh.visible = false;
     }
   }
 
@@ -3975,6 +4003,71 @@ class Scene {
    * @param {THREE.Vector3|null} hitPoint  World-space hit position, or null to hide.
    * @param {boolean}            visible
    */
+
+  _tearOffSection(sectionId) {
+    if (this._tornOffPanels.has(sectionId)) return;
+    if (!this._scene || !this._camera || !this._renderer) return;
+
+    const main  = this;
+    const idx   = this._tornOffPanels.size;
+    const panel = new TornOffPanel(sectionId, main, this._scene, this._camera.getThreeCamera(), this._renderer);
+
+    panel._element.addEventListener('mm-section-redock', (e) => {
+      this._reDockSection(e.detail.section);
+    });
+
+    panel.bindDesktopPointers(this._renderer, this._camera.getThreeCamera());
+
+    drainRAF();
+    drainRAF();
+
+    const _placeTornPanel = () => {
+      if (!panel.mesh) return;
+      const cam = this._camera.getThreeCamera();
+      // Position: use the main panel's world position so the panel appears
+      // right where the user is already looking.
+      const mmMesh = this._mainMenuPanel?.mesh;
+      if (mmMesh) {
+        mmMesh.updateWorldMatrix(true, false);
+        const worldPos = new THREE.Vector3();
+        mmMesh.getWorldPosition(worldPos);
+        // Nudge toward the viewer slightly per panel index to avoid z-fighting.
+        const towardCam = new THREE.Vector3(0, 0, 1).applyQuaternion(cam.quaternion);
+        panel.mesh.position.copy(worldPos).addScaledVector(towardCam, 0.02 + idx * 0.015);
+      } else {
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+        panel.mesh.position.copy(cam.position).addScaledVector(forward, 0.6);
+      }
+      // Orientation: use cam.quaternion directly — same as the VR timeline.
+      // HTMLVRPanel uses flipY=false + scale.y=-1 which is net-equivalent to
+      // flipY=true + scale.y=1, so cam.quaternion produces the correct facing.
+      panel.mesh.quaternion.copy(cam.quaternion);
+      // _createMesh already adds the mesh to this._scene. Ensure it stays there,
+      // not in worldGroup (which has 125× sculpt-engine scale).
+      if (panel.mesh.parent !== this._scene && this._scene) {
+        this._scene.add(panel.mesh);
+      }
+    };
+    _placeTornPanel();
+
+    if (!panel.mesh) {
+      console.log(`[TearOff] mesh not ready, storing _pendingPlace`);
+      panel._pendingPlace = _placeTornPanel;
+    }
+
+    this._tornOffPanels.set(sectionId, panel);
+    this._mainMenuPanel?.notifyTearOff(sectionId);
+  }
+
+  _reDockSection(sectionId) {
+    const panel = this._tornOffPanels.get(sectionId);
+    if (!panel) return;
+    if (panel.mesh?.parent) panel.mesh.parent.remove(panel.mesh);
+    panel.dispose();
+    this._tornOffPanels.delete(sectionId);
+    this._mainMenuPanel?.notifyReDock(sectionId);
+  }
+
   _updateBPCursor(hitPoint, visible) {
     if (!this._scene) return;
 
@@ -4923,6 +5016,48 @@ class Scene {
           }
           // ── end MainMenuPanel raycast ─────────────────────────────────────
 
+          // ── TornOffPanel raycasts ─────────────────────────────────────────
+          if (this._tornOffPanels.size > 0) {
+            if (!this._topRaycaster) {
+              this._topRaycaster = new THREE.Raycaster();
+              this._topRayOrigin = new THREE.Vector3();
+              this._topRayDir    = new THREE.Vector3();
+            }
+            this._topRayOrigin.set(origin[0], origin[1], origin[2]);
+            this._topRayDir.set(dir[0], dir[1], dir[2]).normalize();
+            this._topRaycaster.set(this._topRayOrigin, this._topRayDir);
+
+            this._tornOffPanels.forEach((panel, sectionId) => {
+              if (!panel.mesh?.visible) return;
+              const hits = this._topRaycaster.intersectObject(panel.mesh);
+              if (hits.length > 0) {
+                const uv      = hits[0].uv;
+                const trigger = source.gamepad?.buttons[0];
+                const pressed = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
+                const key     = '_topWasPressed_' + sectionId;
+                const justDown = pressed && !this[key];
+                const justUp   = !pressed && this[key];
+
+                if (justDown)       panel.onVRPress(uv);
+                else if (justUp)    panel.onVRRelease(uv);
+                else                panel.onVRMove(uv);
+
+                this[key] = pressed;
+                this._isPointingAtMenu = true;
+
+                if (source.handedness === 'left') { this._vrUIHitDistLeft  = hits[0].distance; this._vrUIHitSourceLeft  = 'TornOff:' + sectionId; }
+                else                              { this._vrUIHitDistRight = hits[0].distance; this._vrUIHitSourceRight = 'TornOff:' + sectionId; }
+
+                this._updateBPCursor(hits[0].point, true);
+              } else {
+                const key = '_topWasPressed_' + sectionId;
+                if (this[key]) { panel.onVRRelease({ x: 0.5, y: 0.5 }); this[key] = false; }
+                panel.onVRLeave();
+              }
+            });
+          }
+          // ── end TornOffPanel raycasts ─────────────────────────────────────
+
           // ── FilesPanel raycast ────────────────────────────────────────────
           if (this._filesPanel?.mesh?.visible) {
             if (!this._fpRaycaster) {
@@ -5187,18 +5322,15 @@ class Scene {
               if (!this._bpDragActive || this._bpDragHand !== source.handedness) {
                 this._bpDragActive = true;
                 this._bpDragHand   = source.handedness;
-                this._bpDragGripStartPos  = curPos.clone();
-                this._bpDragGripStartQuat = curQuat.clone();
                 const mesh = this._brushPanel.mesh;
                 mesh.updateWorldMatrix(true, false);
-                this._bpDragPanelStartPos  = mesh.position.clone();
-                this._bpDragPanelStartQuat = mesh.quaternion.clone();
+                const invCtrlQuat = curQuat.clone().invert();
+                this._bpDragRelPos  = mesh.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
+                this._bpDragRelQuat = invCtrlQuat.clone().multiply(mesh.quaternion);
               } else {
                 const mesh = this._brushPanel.mesh;
-                const deltaPos = curPos.clone().sub(this._bpDragGripStartPos);
-                mesh.position.copy(this._bpDragPanelStartPos).add(deltaPos);
-                const qDelta = curQuat.clone().multiply(this._bpDragGripStartQuat.clone().invert());
-                mesh.quaternion.copy(qDelta).multiply(this._bpDragPanelStartQuat);
+                mesh.position.copy(curPos).add(_v3tmp.copy(this._bpDragRelPos).applyQuaternion(curQuat));
+                mesh.quaternion.copy(curQuat).multiply(this._bpDragRelQuat);
               }
             }
             // This hand is busy with panel drag — suppress world navigation for it
@@ -5224,18 +5356,15 @@ class Scene {
               if (!this._mmDragActive || this._mmDragHand !== source.handedness) {
                 this._mmDragActive = true;
                 this._mmDragHand   = source.handedness;
-                this._mmDragGripStartPos  = curPos.clone();
-                this._mmDragGripStartQuat = curQuat.clone();
                 const mesh = this._mainMenuPanel.mesh;
                 mesh.updateWorldMatrix(true, false);
-                this._mmDragPanelStartPos  = mesh.position.clone();
-                this._mmDragPanelStartQuat = mesh.quaternion.clone();
+                const invCtrlQuat = curQuat.clone().invert();
+                this._mmDragRelPos  = mesh.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
+                this._mmDragRelQuat = invCtrlQuat.clone().multiply(mesh.quaternion);
               } else {
                 const mesh = this._mainMenuPanel.mesh;
-                const deltaPos = curPos.clone().sub(this._mmDragGripStartPos);
-                mesh.position.copy(this._mmDragPanelStartPos).add(deltaPos);
-                const qDelta = curQuat.clone().multiply(this._mmDragGripStartQuat.clone().invert());
-                mesh.quaternion.copy(qDelta).multiply(this._mmDragPanelStartQuat);
+                mesh.position.copy(curPos).add(_v3tmp.copy(this._mmDragRelPos).applyQuaternion(curQuat));
+                mesh.quaternion.copy(curQuat).multiply(this._mmDragRelQuat);
               }
             }
             if (source.handedness === 'left') { leftGrip = false; }
@@ -5264,15 +5393,15 @@ class Scene {
               if (!this._vtlDragActive) {
                 this._vtlDragActive = true;
                 this._vtlDragHand   = source.handedness;
-                this._vtlDragGripStartPos  = curPos.clone();
-                this._vtlDragGripStartQuat = curQuat.clone();
-                this._vtlDragPanelStartPos  = this._vrTimelineMesh.position.clone();
-                this._vtlDragPanelStartQuat = this._vrTimelineMesh.quaternion.clone();
+                const tl = this._vrTimelineMesh;
+                tl.updateWorldMatrix(true, false);
+                const invCtrlQuat = curQuat.clone().invert();
+                this._vtlDragRelPos  = tl.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
+                this._vtlDragRelQuat = invCtrlQuat.clone().multiply(tl.quaternion);
               } else {
-                const deltaPos = curPos.clone().sub(this._vtlDragGripStartPos);
-                this._vrTimelineMesh.position.copy(this._vtlDragPanelStartPos).add(deltaPos);
-                const qDelta = curQuat.clone().multiply(this._vtlDragGripStartQuat.clone().invert());
-                this._vrTimelineMesh.quaternion.copy(qDelta).multiply(this._vtlDragPanelStartQuat);
+                const tl = this._vrTimelineMesh;
+                tl.position.copy(curPos).add(_v3tmp.copy(this._vtlDragRelPos).applyQuaternion(curQuat));
+                tl.quaternion.copy(curQuat).multiply(this._vtlDragRelQuat);
               }
             }
             // Suppress world navigation while dragging
@@ -5284,6 +5413,47 @@ class Scene {
             this._vtlDragHand   = null;
           }
           // ── end VR Timeline grip drag ─────────────────────────────────────
+
+          // ── TornOffPanel grip drags ───────────────────────────────────────
+          if (this._tornOffPanels.size > 0) {
+            const refPose = isGrip ? frame.getPose(source.gripSpace, refSpace) : null;
+            const curPos  = refPose ? new THREE.Vector3(refPose.transform.position.x, refPose.transform.position.y, refPose.transform.position.z) : null;
+            const curQuat = refPose ? new THREE.Quaternion(refPose.transform.orientation.x, refPose.transform.orientation.y, refPose.transform.orientation.z, refPose.transform.orientation.w) : null;
+
+            this._tornOffPanels.forEach((panel, sectionId) => {
+              const dragKey   = '_topDragActive_' + sectionId;
+              const handKey   = '_topDragHand_'   + sectionId;
+              const startPKey = '_topDragStartP_' + sectionId;
+              const startQKey = '_topDragStartQ_' + sectionId;
+              const panelPKey = '_topPanelStartP_' + sectionId;
+              const panelQKey = '_topPanelStartQ_' + sectionId;
+
+              const onThisPanel = this._isPointingAtMenu && (
+                (source.handedness === 'left'  && this._vrUIHitSourceLeft  === 'TornOff:' + sectionId) ||
+                (source.handedness === 'right' && this._vrUIHitSourceRight === 'TornOff:' + sectionId)
+              );
+
+              if (isGrip && onThisPanel && curPos && !this._vtlIsPointing) {
+                if (!this[dragKey] || this[handKey] !== source.handedness) {
+                  this[dragKey] = true;
+                  this[handKey] = source.handedness;
+                  panel.mesh.updateWorldMatrix(true, false);
+                  const invCtrlQuat = curQuat.clone().invert();
+                  this[startPKey] = panel.mesh.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
+                  this[startQKey] = invCtrlQuat.clone().multiply(panel.mesh.quaternion);
+                } else {
+                  panel.mesh.position.copy(curPos).add(_v3tmp.copy(this[startPKey]).applyQuaternion(curQuat));
+                  panel.mesh.quaternion.copy(curQuat).multiply(this[startQKey]);
+                }
+                if (source.handedness === 'left') leftGrip = false;
+                else                              rightGrip = false;
+              } else if (this[dragKey] && this[handKey] === source.handedness && !isGrip) {
+                this[dragKey] = false;
+                this[handKey] = null;
+              }
+            });
+          }
+          // ── end TornOffPanel grip drags ───────────────────────────────────
         }
       }
 
