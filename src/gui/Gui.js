@@ -1023,7 +1023,7 @@ class WebAwesomeFolderMock {
     return {
       domGrid: grid,
       setValue: (val, silent) => {
-        const valStr = val ? val.toString() : '-1';
+        const valStr = (val !== null && val !== undefined) ? val.toString() : '-1';
         Object.entries(buttonsMap).forEach(([k, b]) => updateButtonStyles(k, b, k === valStr));
         if (!silent) onChange(valStr);
       },

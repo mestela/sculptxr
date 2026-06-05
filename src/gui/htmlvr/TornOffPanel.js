@@ -11,6 +11,8 @@ import {
   wireSectionTopology,
   wireSectionSculpting,
   fixSliderDrag,
+  wireVRScrollbar,
+  refreshVRScrollbar,
 } from './MainMenuPanel.js';
 import {
   wireAnimationSection,
@@ -52,7 +54,8 @@ export class TornOffPanel extends HTMLVRPanel {
           </svg>
         </button>
       </div>
-      <div class="mm-torn-content" style="background:#1e1e2e;color:#cdd6f4;overflow-y:scroll;overflow-x:hidden;padding:8px 10px;box-sizing:border-box;height:456px;"></div>
+      <div class="mm-torn-content" style="background:#1e1e2e;color:#cdd6f4;overflow-y:scroll;overflow-x:hidden;padding:8px 24px 8px 10px;box-sizing:border-box;height:456px;scrollbar-width:none;"></div>
+      <div class="mm-scrollbar-track" style="position:absolute;right:2px;top:${HEADER_H + 4}px;bottom:2px;width:14px;background:#181825;border-radius:6px;z-index:20;box-sizing:border-box;"><div class="mm-scrollbar-thumb" style="position:absolute;left:3px;right:3px;min-height:32px;background:#585b70;border-radius:4px;cursor:pointer;"></div></div>
     `;
 
     super(root, MM_W / VR_PANEL_PX_PER_M);
@@ -71,6 +74,13 @@ export class TornOffPanel extends HTMLVRPanel {
       if (this.mesh) {
         this.rebuild(main);
         this._wireRedock();
+        const el = this._element;
+        wireVRScrollbar(
+          el.querySelector('.mm-torn-content'),
+          el.querySelector('.mm-scrollbar-track'),
+          el.querySelector('.mm-scrollbar-thumb'),
+          () => this.markDirty()
+        );
       } else {
         requestAnimationFrame(check);
       }
@@ -87,6 +97,7 @@ export class TornOffPanel extends HTMLVRPanel {
     contentEl.innerHTML = _buildSectionHTML(this._sectionId, main);
     this._wireSection(main);
     fixSliderDrag(contentEl);
+    refreshVRScrollbar(contentEl, this._element.querySelector('.mm-scrollbar-thumb'));
     // flushPaint forces an immediate polyfill capture so the texture is
     // populated before the mesh becomes visible — prevents VD from seeing
     // a black (unpainted) frame and keying it out as transparent.

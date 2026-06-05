@@ -4418,14 +4418,9 @@ class Scene {
             const scrollSpeed = isSlowMod ? 4 : 20; // px per frame; hold trigger for fine scroll
             const delta = (valY_NonDom > 0 ? 1 : -1) * scrollSpeed;
 
-            // HTML panel mode — scroll whichever panel the ray is currently on
+            // HTML panel mode — scroll the panel the ray was on last frame
             if (window._brushPanelEnabled !== false) {
-              const htmlPanel = this._mainMenuPanel?.mesh?.visible ? this._mainMenuPanel
-                : this._brushPanel?.mesh?.visible              ? this._brushPanel
-                : this._miniPanel?.mesh?.visible               ? this._miniPanel
-                : this._toolPickerPanel?.mesh?.visible         ? this._toolPickerPanel
-                : null;
-              if (htmlPanel) htmlPanel.onVRScroll(delta);
+              if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
             } else if (this._guiXR) {
               // Legacy canvas menu
               this._guiXR._scrollOffset += delta;
@@ -4458,12 +4453,7 @@ class Scene {
             const delta = (valY > 0 ? 1 : -1) * scrollSpeed;
 
             if (window._brushPanelEnabled !== false) {
-              const htmlPanel = this._mainMenuPanel?.mesh?.visible ? this._mainMenuPanel
-                : this._brushPanel?.mesh?.visible              ? this._brushPanel
-                : this._miniPanel?.mesh?.visible               ? this._miniPanel
-                : this._toolPickerPanel?.mesh?.visible         ? this._toolPickerPanel
-                : null;
-              if (htmlPanel) htmlPanel.onVRScroll(delta);
+              if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
             } else if (this._guiXR) {
               if (this._guiXR._overlay === 'menu') {
                 this._guiXR._scrollOffsetOverlay += delta;
@@ -4845,294 +4835,132 @@ class Scene {
         if (origin && dir) {
           // if (Math.random() < 0.02) console.log(`[Raycast] Origin/Dir Valid - Menu:${!!this._vrMenu} GuiXR:${!!this._guiXR} Vis:${this._guiXR ? this._guiXR._isVisible : false}`);
 
-          // ── [HTMLVRPanel] BrushPanel raycast (dominant hand → panel mesh) ──
-          // We reuse the gl-matrix origin/dir already computed for this source
-          // and feed them straight into a Three.js Raycaster.
-          if (this._brushPanel && this._brushPanel.mesh && window._brushPanelEnabled !== false && this._brushPanel.mesh.visible) {
-            if (!this._bpRaycaster) {
-              this._bpRaycaster = new THREE.Raycaster();
-              this._bpRayOrigin = new THREE.Vector3();
-              this._bpRayDir    = new THREE.Vector3();
-            }
-            this._bpRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._bpRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._bpRaycaster.set(this._bpRayOrigin, this._bpRayDir);
-
-            const bpHits = this._bpRaycaster.intersectObject(this._brushPanel.mesh);
-            if (bpHits.length > 0) {
-              const bpUV      = bpHits[0].uv;
-              const trigger   = source.gamepad?.buttons[0];
-              const pressed   = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-              const justDown  = pressed && !this._bpWasPressed;
-              const justUp    = !pressed && this._bpWasPressed;
-
-              if (justDown)  this._brushPanel.onVRPress(bpUV);
-              else if (justUp) this._brushPanel.onVRRelease(bpUV);
-              else             this._brushPanel.onVRMove(bpUV);
-
-              this._bpWasPressed = pressed;
-              this._isPointingAtMenu = true; // suppress sculpt tool while on panel
-
-              // Hide sculpt cursor (volume sphere + ring) by pretending UI is hit
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = bpHits[0].distance; this._vrUIHitSourceLeft  = 'BrushPanel'; }
-              else                              { this._vrUIHitDistRight = bpHits[0].distance; this._vrUIHitSourceRight = 'BrushPanel'; }
-
-              // Show panel cursor dot + thin ray line
-              this._updateBPCursor(bpHits[0].point, true);
-            } else {
-              if (this._bpWasPressed) {
-                this._brushPanel.onVRRelease({ x: 0.5, y: 0.5 });
-                this._bpWasPressed = false;
-              }
-              this._brushPanel.onVRLeave();
-              // Hide panel cursor
-              this._updateBPCursor(null, false);
-            }
-
-            // Sync state to panel ~every 30 frames
-            this._bpSyncCounter = (this._bpSyncCounter || 0) + 1;
-            if (this._bpSyncCounter % 30 === 0) this._brushPanel.syncFromState();
+          // ── Unified HTML panel raycast: collect all hits, dispatch only to nearest ──
+          // All panels share the same origin/dir — one raycaster suffices.
+          if (!this._vrSharedRaycaster) {
+            this._vrSharedRaycaster = new THREE.Raycaster();
+            this._vrSharedRayOrigin = new THREE.Vector3();
+            this._vrSharedRayDir    = new THREE.Vector3();
           }
-          // ── end BrushPanel raycast ──────────────────────────────────────
+          this._vrSharedRayOrigin.set(origin[0], origin[1], origin[2]);
+          this._vrSharedRayDir.set(dir[0], dir[1], dir[2]).normalize();
+          this._vrSharedRaycaster.set(this._vrSharedRayOrigin, this._vrSharedRayDir);
+          const _rc = this._vrSharedRaycaster;
 
-          // ── [HTMLVRPanel] MiniPanel raycast ─────────────────────────────
-          if (this._miniPanel && this._miniPanel.mesh && window._brushPanelEnabled !== false && this._miniPanel.mesh.visible) {
-            if (!this._mpRaycaster) {
-              this._mpRaycaster = new THREE.Raycaster();
-              this._mpRayOrigin = new THREE.Vector3();
-              this._mpRayDir    = new THREE.Vector3();
-            }
-            this._mpRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._mpRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._mpRaycaster.set(this._mpRayOrigin, this._mpRayDir);
-
-            const mpHits = this._mpRaycaster.intersectObject(this._miniPanel.mesh);
-            if (mpHits.length > 0) {
-              const mpUV     = mpHits[0].uv;
-              const trigger  = source.gamepad?.buttons[0];
-              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-              const justDown = pressed && !this._mpWasPressed;
-              const justUp   = !pressed && this._mpWasPressed;
-
-              if (justDown)  this._miniPanel.onVRPress(mpUV);
-              else if (justUp) this._miniPanel.onVRRelease(mpUV);
-              else             this._miniPanel.onVRMove(mpUV);
-
-              this._mpWasPressed = pressed;
-              this._isPointingAtMenu = true; // suppress sculpt tool while on panel
-
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = mpHits[0].distance; this._vrUIHitSourceLeft  = 'MiniPanel'; }
-              else                              { this._vrUIHitDistRight = mpHits[0].distance; this._vrUIHitSourceRight = 'MiniPanel'; }
-
-              this._updateBPCursor(mpHits[0].point, true);
-            } else {
-              if (this._mpWasPressed) {
-                this._miniPanel.onVRRelease({ x: 0.5, y: 0.5 });
-                this._mpWasPressed = false;
-              }
-              this._miniPanel.onVRLeave();
-              this._updateBPCursor(null, false);
-            }
-
-            // Sync state to panel ~every 30 frames
-            this._mpSyncCounter = (this._mpSyncCounter || 0) + 1;
-            if (this._mpSyncCounter % 30 === 0) this._miniPanel.syncFromState();
+          // Phase 1: collect hits — { name, panel, hit, pressKey, isTimeline }
+          const _panelHits = [];
+          if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            const h = _rc.intersectObject(this._brushPanel.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'BrushPanel', panel: this._brushPanel, hit: h[0], pressKey: '_bpWasPressed' });
           }
-          // ── end MiniPanel raycast ────────────────────────────────────────
-
-          // ── [HTMLVRPanel] ToolPickerPanel raycast ────────────────────────
-          if (this._toolPickerPanel && this._toolPickerPanel.mesh && window._brushPanelEnabled !== false && this._toolPickerPanel.mesh.visible) {
-            if (!this._tpRaycaster) {
-              this._tpRaycaster = new THREE.Raycaster();
-              this._tpRayOrigin = new THREE.Vector3();
-              this._tpRayDir    = new THREE.Vector3();
-            }
-            this._tpRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._tpRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._tpRaycaster.set(this._tpRayOrigin, this._tpRayDir);
-
-            const tpHits = this._tpRaycaster.intersectObject(this._toolPickerPanel.mesh);
-            if (tpHits.length > 0) {
-              const tpUV     = tpHits[0].uv;
-              const trigger  = source.gamepad?.buttons[0];
-              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-              const justDown = pressed && !this._tpWasPressed;
-              const justUp   = !pressed && this._tpWasPressed;
-
-              if (justDown)    this._toolPickerPanel.onVRPress(tpUV);
-              else if (justUp) this._toolPickerPanel.onVRRelease(tpUV);
-              else             this._toolPickerPanel.onVRMove(tpUV);
-
-              this._tpWasPressed = pressed;
-              this._isPointingAtMenu = true;
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = tpHits[0].distance; this._vrUIHitSourceLeft  = 'ToolPickerPanel'; }
-              else                              { this._vrUIHitDistRight = tpHits[0].distance; this._vrUIHitSourceRight = 'ToolPickerPanel'; }
-              this._updateBPCursor(tpHits[0].point, true);
-            } else {
-              if (this._tpWasPressed) {
-                this._toolPickerPanel.onVRRelease({ x: 0.5, y: 0.5 });
-                this._tpWasPressed = false;
-              }
-              this._toolPickerPanel.onVRLeave();
-            }
+          if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            const h = _rc.intersectObject(this._miniPanel.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
           }
-          // ── end ToolPickerPanel raycast ──────────────────────────────────
-
-          // ── MainMenuPanel raycast ─────────────────────────────────────────
+          if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            const h = _rc.intersectObject(this._toolPickerPanel.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, hit: h[0], pressKey: '_tpWasPressed' });
+          }
           if (this._mainMenuPanel?.mesh?.visible) {
-            if (!this._mmRaycaster) {
-              this._mmRaycaster = new THREE.Raycaster();
-              this._mmRayOrigin = new THREE.Vector3();
-              this._mmRayDir    = new THREE.Vector3();
-            }
-            this._mmRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._mmRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._mmRaycaster.set(this._mmRayOrigin, this._mmRayDir);
-
-            const mmHits = this._mmRaycaster.intersectObject(this._mainMenuPanel.mesh);
-            if (mmHits.length > 0) {
-              const mmUV    = mmHits[0].uv;
-              const trigger = source.gamepad?.buttons[0];
-              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-              const justDown = pressed && !this._mmWasPressed;
-              const justUp   = !pressed && this._mmWasPressed;
-
-              if (justDown)    this._mainMenuPanel.onVRPress(mmUV);
-              else if (justUp) this._mainMenuPanel.onVRRelease(mmUV);
-              else             this._mainMenuPanel.onVRMove(mmUV);
-
-              this._mmWasPressed = pressed;
-              this._isPointingAtMenu = true;
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = mmHits[0].distance; this._vrUIHitSourceLeft  = 'MainMenuPanel'; }
-              else                              { this._vrUIHitDistRight = mmHits[0].distance; this._vrUIHitSourceRight = 'MainMenuPanel'; }
-              this._updateBPCursor?.(mmHits[0].point, true);
-            } else {
-              if (this._mmWasPressed) {
-                this._mainMenuPanel.onVRRelease({ x: 0.5, y: 0.5 });
-                this._mmWasPressed = false;
-              }
-              this._mainMenuPanel.onVRLeave();
-            }
+            const h = _rc.intersectObject(this._mainMenuPanel.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'MainMenuPanel', panel: this._mainMenuPanel, hit: h[0], pressKey: '_mmWasPressed' });
           }
-          // ── end MainMenuPanel raycast ─────────────────────────────────────
-
-          // ── TornOffPanel raycasts ─────────────────────────────────────────
           if (this._tornOffPanels.size > 0) {
-            if (!this._topRaycaster) {
-              this._topRaycaster = new THREE.Raycaster();
-              this._topRayOrigin = new THREE.Vector3();
-              this._topRayDir    = new THREE.Vector3();
-            }
-            this._topRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._topRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._topRaycaster.set(this._topRayOrigin, this._topRayDir);
-
             this._tornOffPanels.forEach((panel, sectionId) => {
               if (!panel.mesh?.visible) return;
-              const hits = this._topRaycaster.intersectObject(panel.mesh);
-              if (hits.length > 0) {
-                const uv      = hits[0].uv;
-                const trigger = source.gamepad?.buttons[0];
-                const pressed = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-                const key     = '_topWasPressed_' + sectionId;
-                const justDown = pressed && !this[key];
-                const justUp   = !pressed && this[key];
-
-                if (justDown)       panel.onVRPress(uv);
-                else if (justUp)    panel.onVRRelease(uv);
-                else                panel.onVRMove(uv);
-
-                this[key] = pressed;
-                this._isPointingAtMenu = true;
-
-                if (source.handedness === 'left') { this._vrUIHitDistLeft  = hits[0].distance; this._vrUIHitSourceLeft  = 'TornOff:' + sectionId; }
-                else                              { this._vrUIHitDistRight = hits[0].distance; this._vrUIHitSourceRight = 'TornOff:' + sectionId; }
-
-                this._updateBPCursor(hits[0].point, true);
-              } else {
-                const key = '_topWasPressed_' + sectionId;
-                if (this[key]) { panel.onVRRelease({ x: 0.5, y: 0.5 }); this[key] = false; }
-                panel.onVRLeave();
-              }
+              const h = _rc.intersectObject(panel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'TornOff:' + sectionId, panel, hit: h[0], pressKey: '_topWasPressed_' + sectionId });
             });
           }
-          // ── end TornOffPanel raycasts ─────────────────────────────────────
-
-          // ── FilesPanel raycast ────────────────────────────────────────────
           if (this._filesPanel?.mesh?.visible) {
-            if (!this._fpRaycaster) {
-              this._fpRaycaster = new THREE.Raycaster();
-              this._fpRayOrigin = new THREE.Vector3();
-              this._fpRayDir    = new THREE.Vector3();
-            }
-            this._fpRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._fpRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._fpRaycaster.set(this._fpRayOrigin, this._fpRayDir);
-
-            const fpHits = this._fpRaycaster.intersectObject(this._filesPanel.mesh);
-            if (fpHits.length > 0) {
-              const fpUV    = fpHits[0].uv;
-              const trigger = source.gamepad?.buttons[0];
-              const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-              const justDown = pressed && !this._fpWasPressed;
-              const justUp   = !pressed && this._fpWasPressed;
-
-              if (justDown)    this._filesPanel.onVRPress(fpUV);
-              else if (justUp) this._filesPanel.onVRRelease(fpUV);
-              else             this._filesPanel.onVRMove(fpUV);
-
-              this._fpWasPressed = pressed;
-              this._isPointingAtMenu = true;
-            } else {
-              if (this._fpWasPressed) {
-                this._filesPanel.onVRRelease({ x: 0.5, y: 0.5 });
-                this._fpWasPressed = false;
-              }
-              this._filesPanel.onVRLeave();
-            }
+            const h = _rc.intersectObject(this._filesPanel.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'FilesPanel', panel: this._filesPanel, hit: h[0], pressKey: '_fpWasPressed' });
           }
-          // ── end FilesPanel raycast ────────────────────────────────────────
-
-          // ── VR Timeline canvas-mesh raycast ──────────────────────────────
-          this._vtlIsPointing = false; // reset each dominant-hand frame
+          // VRTimeline uses a different dispatch interface — included for nearest-hit ordering
+          this._vtlIsPointing = false;
           if (this._vrTimelineMesh?.visible) {
-            if (!this._vtlRaycaster) {
-              this._vtlRaycaster = new THREE.Raycaster();
-              this._vtlRayOrigin = new THREE.Vector3();
-              this._vtlRayDir    = new THREE.Vector3();
-            }
-            this._vtlRayOrigin.set(origin[0], origin[1], origin[2]);
-            this._vtlRayDir.set(dir[0], dir[1], dir[2]).normalize();
-            this._vtlRaycaster.set(this._vtlRayOrigin, this._vtlRayDir);
+            const h = _rc.intersectObject(this._vrTimelineMesh);
+            if (h.length > 0) _panelHits.push({ name: 'VRTimeline', panel: null, hit: h[0], pressKey: '_vtlWasPressed', isTimeline: true });
+          }
 
-            const vtlHits = this._vtlRaycaster.intersectObject(this._vrTimelineMesh);
-            if (vtlHits.length > 0) {
-              this._vtlIsPointing = true;  // laser is on the timeline — used by grip-drag
+          // Phase 2: nearest hit wins
+          _panelHits.sort((a, b) => a.hit.distance - b.hit.distance);
+          const _winner = _panelHits[0] ?? null;
+          const _winnerName = _winner?.name ?? null;
+          const _trigger = source.gamepad?.buttons[0];
+          const _pressed = _trigger ? (_trigger.value > 0.1 || _trigger.pressed) : false;
+
+          // Phase 3: build full visible-panel list so non-hit panels also get leave calls
+          const _allVisible = [];
+          if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false)
+            _allVisible.push({ name: 'BrushPanel', panel: this._brushPanel, pressKey: '_bpWasPressed' });
+          if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false)
+            _allVisible.push({ name: 'MiniPanel', panel: this._miniPanel, pressKey: '_mpWasPressed' });
+          if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false)
+            _allVisible.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, pressKey: '_tpWasPressed' });
+          if (this._mainMenuPanel?.mesh?.visible)
+            _allVisible.push({ name: 'MainMenuPanel', panel: this._mainMenuPanel, pressKey: '_mmWasPressed' });
+          if (this._tornOffPanels.size > 0) {
+            this._tornOffPanels.forEach((panel, sectionId) => {
+              if (panel.mesh?.visible) _allVisible.push({ name: 'TornOff:' + sectionId, panel, pressKey: '_topWasPressed_' + sectionId });
+            });
+          }
+          if (this._filesPanel?.mesh?.visible)
+            _allVisible.push({ name: 'FilesPanel', panel: this._filesPanel, pressKey: '_fpWasPressed' });
+
+          for (const v of _allVisible) {
+            if (v.name === _winnerName) {
+              const justDown = _pressed && !this[v.pressKey];
+              const justUp   = !_pressed && this[v.pressKey];
+              if (justDown)    v.panel.onVRPress(_winner.hit.uv);
+              else if (justUp) v.panel.onVRRelease(_winner.hit.uv);
+              else             v.panel.onVRMove(_winner.hit.uv);
+              this[v.pressKey] = _pressed;
               this._isPointingAtMenu = true;
-              if (source.handedness === 'left') { this._vrUIHitDistLeft  = vtlHits[0].distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
-              else                              { this._vrUIHitDistRight = vtlHits[0].distance; this._vrUIHitSourceRight = 'VRTimeline'; }
-              this._updateBPCursor?.(vtlHits[0].point, true);
-
-              // Only dispatch click events when not grip-dragging
-              if (!this._vtlDragActive) {
-                const uv      = vtlHits[0].uv;
-                const trigger = source.gamepad?.buttons[0];
-                const pressed  = trigger ? (trigger.value > 0.1 || trigger.pressed) : false;
-                const justDown = pressed && !this._vtlWasPressed;
-                const justUp   = !pressed && this._vtlWasPressed;
-                if (justDown)    this._onVRTimelineHit(uv, 'down', true);
-                else if (justUp) this._onVRTimelineHit(uv, 'up', false);
-                else             this._onVRTimelineHit(uv, 'move', pressed);
-                this._vtlWasPressed = pressed;
-              }
+              if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = _winnerName; }
+              else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = _winnerName; }
+              this._updateBPCursor?.(_winner.hit.point, true);
             } else {
-              if (this._vtlWasPressed) {
-                this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
-                this._vtlWasPressed = false;
-              }
+              if (this[v.pressKey]) { v.panel.onVRRelease({ x: 0.5, y: 0.5 }); this[v.pressKey] = false; }
+              v.panel.onVRLeave();
             }
           }
-          // ── end VR Timeline canvas-mesh raycast ───────────────────────────
+
+          // VRTimeline dispatch (separate interface, preserves _vtlDragActive gate)
+          if (_winner?.isTimeline) {
+            this._vtlIsPointing = true;
+            this._isPointingAtMenu = true;
+            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
+            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; }
+            this._updateBPCursor?.(_winner.hit.point, true);
+            if (!this._vtlDragActive) {
+              const justDown = _pressed && !this._vtlWasPressed;
+              const justUp   = !_pressed && this._vtlWasPressed;
+              if (justDown)    this._onVRTimelineHit(_winner.hit.uv, 'down', true);
+              else if (justUp) this._onVRTimelineHit(_winner.hit.uv, 'up', false);
+              else             this._onVRTimelineHit(_winner.hit.uv, 'move', _pressed);
+              this._vtlWasPressed = _pressed;
+            }
+          } else {
+            if (this._vtlWasPressed) {
+              this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+              this._vtlWasPressed = false;
+            }
+          }
+
+          // No panel hit — hide panel cursor
+          if (!_winner) this._updateBPCursor?.(null, false);
+
+          // Track for next-frame thumbstick scroll routing
+          if (_winner && !_winner.isTimeline) this._lastHtmlPanelHit = _winner.panel;
+          else if (!_winner) this._lastHtmlPanelHit = null;
+
+          // Periodic state sync (independent of hit)
+          this._bpSyncCounter = (this._bpSyncCounter || 0) + 1;
+          if (this._bpSyncCounter % 30 === 0) this._brushPanel?.syncFromState?.();
+          this._mpSyncCounter = (this._mpSyncCounter || 0) + 1;
+          if (this._mpSyncCounter % 30 === 0) this._miniPanel?.syncFromState?.();
+          // ── end unified HTML panel raycast ────────────────────────────────
 
           // Periodic state sync for MainMenuPanel (keeps symmetry/tool highlight fresh).
           // Call _rebuildContent directly so the cache key still suppresses no-op repaints.
@@ -6915,7 +6743,14 @@ class Scene {
             }
 
             if (pointerLine) {
-                pointerLine.visible = uiHitDist !== undefined && uiHitDist !== Infinity;
+                const isUIHit = uiHitDist !== undefined && uiHitDist !== Infinity;
+                pointerLine.visible = isUIHit;
+                if (isUIHit) {
+                    // uiHitDist is from ray origin (which is offset by getStylusOffset()
+                    // from the controller base where the tube starts), so add the offset back.
+                    const _stylusOff = this.getStylusOffset?.() ?? 0;
+                    pointerLine.scale.z = (uiHitDist + _stylusOff) / 0.30;
+                }
             }
 
             if (cursorGroup) {

@@ -176,46 +176,82 @@ const CSS = `
   opacity: 0.3;
   pointer-events: none;
 }
-.mm-tab-slot {
-  position: relative;
-  width: 38px;
+.mm-section-header {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  margin: -8px -10px 8px -10px;
+  padding: 0 8px;
+  background: #11111b;
+  border-bottom: 2px solid #45475a;
+  box-sizing: border-box;
+  gap: 6px;
+  position: sticky;
+  top: -8px;
+  z-index: 3;
   flex-shrink: 0;
 }
-.mm-tab-pin {
-  position: absolute;
-  bottom: -1px; right: -1px;
-  width: 16px; height: 16px;
-  padding: 0;
-  border: 1px solid #45475a;
-  border-radius: 3px;
-  background: #11111b;
-  color: #6c7086;
-  cursor: pointer;
-  outline: none;
+.mm-section-header-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: #89b4fa;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.mm-section-pin-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2;
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  background: #1e1e2e;
+  color: #6c7086;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
 }
-.mm-tab-pin:hover, .mm-tab-pin.hover { background: #313244; color: #cba6f7; border-color: #cba6f7; }
+.mm-section-pin-btn:hover, .mm-section-pin-btn.hover {
+  background: #313244;
+  color: #89b4fa;
+  border-color: #89b4fa;
+}
 
 /* ── Content area ────────────────────────────────────────────── */
 #mm-content {
   position: absolute;
   top: 0;
   left: ${MM_TABS_W}px;
-  right: 0; bottom: 0;
+  right: 14px; bottom: 0;
   overflow-y: scroll;
   overflow-x: hidden;
   padding: 8px 10px 8px 10px;
   box-sizing: border-box;
-  scrollbar-width: thick;
-  scrollbar-color: #585b70 #1e1e2e;
+  scrollbar-width: none;
 }
-#mm-content::-webkit-scrollbar { width: 10px; background: #1e1e2e; }
-#mm-content::-webkit-scrollbar-thumb { background: #585b70; border-radius: 5px; min-height: 32px; }
-#mm-content::-webkit-scrollbar-thumb:hover { background: #7f849c; }
-#mm-content::-webkit-scrollbar-track { background: #1e1e2e; }
+#mm-content::-webkit-scrollbar { display: none; }
+
+/* ── Custom scrollbar (VR-safe — native scrollbar is hidden) ─── */
+.mm-scrollbar-track {
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 14px;
+  background: #181825;
+  box-sizing: border-box;
+  z-index: 20;
+}
+.mm-scrollbar-thumb {
+  position: absolute;
+  left: 3px; right: 3px;
+  min-height: 32px;
+  background: #585b70;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.mm-scrollbar-thumb.hover, .mm-scrollbar-thumb:hover { background: #7f849c; }
 
 /* ── Shared content primitives ───────────────────────────────── */
 .mm-section-title {
@@ -537,12 +573,11 @@ const CSS = `
   overflow-y: scroll;
   overflow-x: hidden;
   padding: 8px 10px;
+  padding-right: 24px;
   box-sizing: border-box;
-  scrollbar-width: thick;
-  scrollbar-color: #585b70 #1e1e2e;
+  scrollbar-width: none;
 }
-.mm-torn-content::-webkit-scrollbar { width: 10px; background: #1e1e2e; }
-.mm-torn-content::-webkit-scrollbar-thumb { background: #585b70; border-radius: 5px; }
+.mm-torn-content::-webkit-scrollbar { display: none; }
 `;
 
 let _mmCssInjected = false;
@@ -612,48 +647,24 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        <div class="mm-tab-slot">
-          <button class="mm-tab-btn" data-section="scene" title="Scene">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
-          </button>
-          <button class="mm-tab-pin" data-section="scene" title="Float panel">
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-          </button>
-        </div>
-        <div class="mm-tab-slot">
-          <button class="mm-tab-btn" data-section="rendering" title="Rendering">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          </button>
-          <button class="mm-tab-pin" data-section="rendering" title="Float panel">
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-          </button>
-        </div>
-        <div class="mm-tab-slot">
-          <button class="mm-tab-btn" data-section="topology" title="Topology">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-          </button>
-          <button class="mm-tab-pin" data-section="topology" title="Float panel">
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-          </button>
-        </div>
-        <div class="mm-tab-slot">
-          <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
-          </button>
-          <button class="mm-tab-pin" data-section="sculpting" title="Float panel">
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-          </button>
-        </div>
-        <div class="mm-tab-slot">
-          <button class="mm-tab-btn" data-section="animation" title="Animation">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>
-          </button>
-          <button class="mm-tab-pin" data-section="animation" title="Float panel">
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>
-          </button>
-        </div>
+        <button class="mm-tab-btn" data-section="scene" title="Scene">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>
+        </button>
+        <button class="mm-tab-btn" data-section="rendering" title="Rendering">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </button>
+        <button class="mm-tab-btn" data-section="topology" title="Topology">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        </button>
+        <button class="mm-tab-btn active" data-section="sculpting" title="Sculpting">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>
+        </button>
+        <button class="mm-tab-btn" data-section="animation" title="Animation">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>
+        </button>
       </div>
       <div id="mm-content"></div>
+      <div id="mm-sbar-track" class="mm-scrollbar-track"><div id="mm-sbar-thumb" class="mm-scrollbar-thumb"></div></div>
     </div>
   `;
 }
@@ -1406,18 +1417,6 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
     });
 
-    // Tab tear-off pin buttons
-    root.querySelectorAll('.mm-tab-pin').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const section = btn.dataset.section;
-        if (!this._tornOffSections.has(section)) {
-          this._element.dispatchEvent(
-            new CustomEvent('mm-section-tearoff', { detail: { section }, bubbles: false })
-          );
-        }
-      });
-    });
-
     // Pin button
     const pinBtn = root.querySelector('#mm-pin-btn');
     if (pinBtn) {
@@ -1431,23 +1430,13 @@ export class MainMenuPanel extends HTMLVRPanel {
       });
     }
 
-    // Scrollbar — the polyfill can't route pointer events to native scrollbar chrome,
-    // so we intercept clicks in the right 10 px of #mm-content and jump scrollTop.
-    const contentEl = root.querySelector('#mm-content');
-    if (contentEl) {
-      contentEl.addEventListener('mousedown', (e) => {
-        const scrollbarW = 10;
-        const inScrollbar = e.offsetX >= contentEl.clientWidth;
-        if (!inScrollbar) return;
-        // Map click Y to scroll position
-        const ratio = e.offsetY / contentEl.clientHeight;
-        const scrollH = contentEl.scrollHeight - contentEl.clientHeight;
-        contentEl.scrollTop = ratio * scrollH;
-        this.markDirty();
-        e.stopPropagation();
-        e.preventDefault();
-      });
-    }
+    // Custom scrollbar
+    wireVRScrollbar(
+      root.querySelector('#mm-content'),
+      root.querySelector('#mm-sbar-track'),
+      root.querySelector('#mm-sbar-thumb'),
+      () => this.markDirty()
+    );
 
     // Populate initial content
     this._rebuildContent();
@@ -1519,10 +1508,32 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'sculpting': html = buildSectionHTML_sculpting(main); break;
         case 'animation': html = buildSectionHTML_animation();     break;
       }
+      const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Sculpting', animation: 'Animation' };
+      const label = SECTION_LABELS[this._activeSection] ?? this._activeSection;
+      const pinSVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17z"/></svg>`;
+      html = `<div class="mm-section-header"><span class="mm-section-header-title">${label}</span><button class="mm-section-pin-btn" id="mm-section-pin-btn" title="Float panel">${pinSVG}</button></div>` + html;
     }
 
     contentEl.innerHTML = html;
+
+    // Wire section header pin button
+    const sectionPinBtn = contentEl.querySelector('#mm-section-pin-btn');
+    if (sectionPinBtn) {
+      sectionPinBtn.addEventListener('click', () => {
+        const section = this._activeSection;
+        if (!this._tornOffSections.has(section)) {
+          this._element.dispatchEvent(
+            new CustomEvent('mm-section-tearoff', { detail: { section }, bubbles: false })
+          );
+        }
+      });
+    }
+
     this._wireContent();
+
+    // Sync custom scrollbar thumb after content changes
+    refreshVRScrollbar(this._element.querySelector('#mm-content'), this._element.querySelector('#mm-sbar-thumb'));
+
     this.markDirty();
   }
 
@@ -1829,6 +1840,74 @@ export function fixSliderDrag(rootEl) {
     });
     input.addEventListener('lostpointercapture', () => { dragging = false; });
   });
+}
+
+/**
+ * Update the custom scrollbar thumb to reflect the current scroll position.
+ * Call after any scrollTop change or content size change.
+ */
+export function refreshVRScrollbar(scrollEl, thumbEl) {
+  if (!scrollEl || !thumbEl) return;
+  const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+  if (scrollHeight <= clientHeight) { thumbEl.style.display = 'none'; return; }
+  thumbEl.style.display = '';
+  const thumbH = Math.max(32, (clientHeight / scrollHeight) * clientHeight);
+  const maxTop  = clientHeight - thumbH;
+  const ratio   = scrollTop / (scrollHeight - clientHeight);
+  thumbEl.style.height = thumbH + 'px';
+  thumbEl.style.top    = Math.round(ratio * maxTop) + 'px';
+}
+
+/**
+ * Wire a custom scrollbar track+thumb to a scroll container.
+ * Uses pointer capture for smooth drag.  dirtyFn() triggers a panel repaint.
+ */
+export function wireVRScrollbar(scrollEl, trackEl, thumbEl, dirtyFn) {
+  if (!scrollEl || !trackEl || !thumbEl) return;
+
+  const refresh = () => { refreshVRScrollbar(scrollEl, thumbEl); dirtyFn?.(); };
+
+  // Sync thumb on scroll (thumbstick or any programmatic scroll)
+  scrollEl.addEventListener('scroll', refresh);
+
+  // Click on track (outside thumb) — jump-scroll
+  trackEl.addEventListener('pointerdown', (e) => {
+    if (e.target === thumbEl) return;
+    const rect  = trackEl.getBoundingClientRect();
+    const ratio = (e.clientY - rect.top) / rect.height;
+    scrollEl.scrollTop = ratio * (scrollEl.scrollHeight - scrollEl.clientHeight);
+    refresh();
+    e.stopPropagation();
+    e.preventDefault();
+  });
+
+  // Drag thumb
+  let _dragStartY = 0, _dragStartScroll = 0, _dragging = false;
+  thumbEl.addEventListener('pointerdown', (e) => {
+    _dragging = true;
+    _dragStartY = e.clientY;
+    _dragStartScroll = scrollEl.scrollTop;
+    thumbEl.setPointerCapture(e.pointerId);
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  thumbEl.addEventListener('pointermove', (e) => {
+    if (!_dragging) return;
+    const dy = e.clientY - _dragStartY;
+    const trackH = trackEl.clientHeight;
+    const scrollRange = scrollEl.scrollHeight - scrollEl.clientHeight;
+    scrollEl.scrollTop = Math.max(0, Math.min(scrollRange, _dragStartScroll + (dy / trackH) * scrollEl.scrollHeight));
+    refresh();
+    e.stopPropagation();
+  });
+  thumbEl.addEventListener('pointerup', (e) => {
+    _dragging = false;
+    if (thumbEl.hasPointerCapture(e.pointerId)) thumbEl.releasePointerCapture(e.pointerId);
+  });
+  thumbEl.addEventListener('lostpointercapture', () => { _dragging = false; });
+
+  // Initial state
+  refresh();
 }
 
 /**
