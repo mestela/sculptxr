@@ -5137,17 +5137,23 @@ class Scene {
           if (source.handedness === 'right') { rightGrip = isGrip; rightOrigin = originBase; rightRot = rotQuat; }
 
           // ── Pinned-panel grip drag ─────────────────────────────────────────
-          // When pointing at the pinned BrushPanel AND gripping, move the panel
-          // instead of the world.  Uses refSpace (Three.js world space) for pose.
-          if (this._brushPanel?.pinned && this._isPointingAtMenu && isGrip && !this._vtlIsPointing) {
+          // Start: must be pointing at panel. Continue: latch until grip release
+          // regardless of _isPointingAtMenu, so dragging over the sculpt doesn't drop the panel.
+          const _panelDragBusy = this._hasPanelDragActive(source.handedness);
+          const _worldNavBusy  = this._vrGrip[source.handedness]?.active ?? false;
+          const _hitSrc = source.handedness === 'left' ? this._vrUIHitSourceLeft : this._vrUIHitSourceRight;
+          const bpOnPanel  = _hitSrc === 'BrushPanel';
+          const mmOnPanel  = _hitSrc === 'MainMenuPanel';
+          const bpCanStart    = this._brushPanel?.pinned && bpOnPanel && isGrip && !this._bpDragActive && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
+          const bpCanContinue = this._bpDragActive && this._bpDragHand === source.handedness && isGrip;
+          if (bpCanStart || bpCanContinue) {
             const refPose = frame.getPose(source.gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
               const curPos  = new THREE.Vector3(p.x, p.y, p.z);
               const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-
-              if (!this._bpDragActive || this._bpDragHand !== source.handedness) {
+              if (!this._bpDragActive) {
                 this._bpDragActive = true;
                 this._bpDragHand   = source.handedness;
                 const mesh = this._brushPanel.mesh;
@@ -5161,27 +5167,26 @@ class Scene {
                 mesh.quaternion.copy(curQuat).multiply(this._bpDragRelQuat);
               }
             }
-            // This hand is busy with panel drag — suppress world navigation for it
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
-
-          } else if (this._bpDragActive && this._bpDragHand === source.handedness && !isGrip) {
-            // Grip released — end panel drag
+          }
+          if (this._bpDragActive && this._bpDragHand === source.handedness && !isGrip) {
             this._bpDragActive = false;
             this._bpDragHand   = null;
           }
           // ── end BrushPanel grip drag ──────────────────────────────────────
 
           // ── MainMenuPanel grip drag (pinned) ──────────────────────────────
-          if (this._mainMenuPanel?.pinned && this._isPointingAtMenu && isGrip && !this._vtlIsPointing) {
+          const mmCanStart    = this._mainMenuPanel?.pinned && mmOnPanel && isGrip && !this._mmDragActive && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
+          const mmCanContinue = this._mmDragActive && this._mmDragHand === source.handedness && isGrip;
+          if (mmCanStart || mmCanContinue) {
             const refPose = frame.getPose(source.gripSpace, refSpace);
             if (refPose) {
               const p = refPose.transform.position;
               const q = refPose.transform.orientation;
               const curPos  = new THREE.Vector3(p.x, p.y, p.z);
               const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-
-              if (!this._mmDragActive || this._mmDragHand !== source.handedness) {
+              if (!this._mmDragActive) {
                 this._mmDragActive = true;
                 this._mmDragHand   = source.handedness;
                 const mesh = this._mainMenuPanel.mesh;
@@ -5197,8 +5202,8 @@ class Scene {
             }
             if (source.handedness === 'left') { leftGrip = false; }
             else                              { rightGrip = false; }
-
-          } else if (this._mmDragActive && this._mmDragHand === source.handedness && !isGrip) {
+          }
+          if (this._mmDragActive && this._mmDragHand === source.handedness && !isGrip) {
             this._mmDragActive = false;
             this._mmDragHand   = null;
           }
@@ -5207,7 +5212,7 @@ class Scene {
           // ── VR Timeline grip drag ─────────────────────────────────────────
           // Start: laser must be specifically on the timeline (_vtlIsPointing).
           // Continue: keep dragging as long as grip is held, regardless of laser position.
-          const canStartVtlDrag  = this._vrTimelineMesh?.visible && this._vtlIsPointing && isGrip && !this._vtlDragActive;
+          const canStartVtlDrag  = this._vrTimelineMesh?.visible && this._vtlIsPointing && isGrip && !this._vtlDragActive && !_panelDragBusy && !_worldNavBusy;
           const canContinueVtlDrag = this._vtlDragActive && this._vtlDragHand === source.handedness && isGrip;
 
           if (canStartVtlDrag || canContinueVtlDrag) {
@@ -5253,16 +5258,16 @@ class Scene {
               const handKey   = '_topDragHand_'   + sectionId;
               const startPKey = '_topDragStartP_' + sectionId;
               const startQKey = '_topDragStartQ_' + sectionId;
-              const panelPKey = '_topPanelStartP_' + sectionId;
-              const panelQKey = '_topPanelStartQ_' + sectionId;
 
               const onThisPanel = this._isPointingAtMenu && (
                 (source.handedness === 'left'  && this._vrUIHitSourceLeft  === 'TornOff:' + sectionId) ||
                 (source.handedness === 'right' && this._vrUIHitSourceRight === 'TornOff:' + sectionId)
               );
+              const topCanStart    = isGrip && onThisPanel && !this[dragKey] && !this._vtlIsPointing && !_panelDragBusy && !_worldNavBusy;
+              const topCanContinue = this[dragKey] && this[handKey] === source.handedness && isGrip;
 
-              if (isGrip && onThisPanel && curPos && !this._vtlIsPointing) {
-                if (!this[dragKey] || this[handKey] !== source.handedness) {
+              if ((topCanStart || topCanContinue) && curPos) {
+                if (!this[dragKey]) {
                   this[dragKey] = true;
                   this[handKey] = source.handedness;
                   panel.mesh.updateWorldMatrix(true, false);
@@ -5275,7 +5280,8 @@ class Scene {
                 }
                 if (source.handedness === 'left') leftGrip = false;
                 else                              rightGrip = false;
-              } else if (this[dragKey] && this[handKey] === source.handedness && !isGrip) {
+              }
+              if (this[dragKey] && this[handKey] === source.handedness && !isGrip) {
                 this[dragKey] = false;
                 this[handKey] = null;
               }
@@ -5455,6 +5461,18 @@ class Scene {
   } catch (e) {
       if (Math.random() < 0.05) console.error("[SculptXR] XR Input Error:", e);
     }
+  }
+
+  _hasPanelDragActive(handedness) {
+    if (this._bpDragActive  && this._bpDragHand  === handedness) return true;
+    if (this._mmDragActive  && this._mmDragHand  === handedness) return true;
+    if (this._vtlDragActive && this._vtlDragHand === handedness) return true;
+    if (this._tornOffPanels) {
+      for (const sectionId of this._tornOffPanels.keys()) {
+        if (this['_topDragActive_' + sectionId] && this['_topDragHand_' + sectionId] === handedness) return true;
+      }
+    }
+    return false;
   }
 
   processVRGripState(handedness, origin, rotation) {
