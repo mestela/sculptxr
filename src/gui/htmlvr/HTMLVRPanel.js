@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { getHostCanvas, registerPanel, unregisterPanel, drainRAF } from './install.js';
+import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintForced } from './install.js';
 
 /**
  * Shared pixels-per-metre ratio for all htmlvr panels.
@@ -198,25 +198,16 @@ export class HTMLVRPanel {
   // ── Per-frame update ───────────────────────────────────────────────────────
 
   /**
-   * Call once per frame.  Pass xrIsPresenting=true when inside an XR session
-   * so that pending rAF callbacks (blocked by Chrome) are drained here.
+   * Call once per frame.  Pass xrIsPresenting=true when inside an XR session.
+   * Scene.js is responsible for calling drainRAF() once after all panel
+   * updates — do not drain per-panel (that causes O(N²) rasterisations when
+   * multiple panels are dirty in the same frame).
    */
-  update(xrIsPresenting) {
+  update(_xrIsPresenting) {
     if (!this.mesh) return;
-
-    // Drain any rAF callbacks queued by the previous frame's requestPaint().
-    if (xrIsPresenting) drainRAF();
-
     if (this._dirty) {
       this._dirty = false;
-      const canvas = getHostCanvas();
-      if (canvas.requestPaint) {
-        canvas.requestPaint();
-        // Drain immediately so the polyfill rasterises in this same frame
-        // rather than waiting until the next update() call.  Without this
-        // there is a 2-frame gap between markDirty() and the texture update.
-        if (xrIsPresenting) drainRAF();
-      }
+      requestPaintOnce(getHostCanvas());
     }
   }
 
@@ -439,11 +430,21 @@ export class HTMLVRPanel {
     if (type === 'pointerup'   && btn) btn.classList.remove('active');
 
     const target = drag || el;
-    target.dispatchEvent(new PointerEvent(type, {
-      bubbles: true, cancelable: true, composed: true,
-      pointerId: 1, pointerType: 'mouse',
-      clientX: absX, clientY: absY, buttons,
-    }));
+
+    // Skip DOM pointermove dispatch when nothing visual changed and no drag is
+    // active.  Dispatching pointermove unconditionally causes the browser to
+    // synthesize pointerover/pointerout events as the UV crosses element
+    // boundaries, which activates CSS :hover rules, which the polyfill detects
+    // and responds to by calling requestPaint() from its own internal observer —
+    // bypassing our requestPaintOnce dedup and triggering a full rasterisation
+    // every XR frame.  pointerdown/pointerup always dispatch so click targets fire.
+    if (type !== 'pointermove' || changed || drag) {
+      target.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, cancelable: true, composed: true,
+        pointerId: 1, pointerType: 'mouse',
+        clientX: absX, clientY: absY, buttons,
+      }));
+    }
 
     if (type === 'pointerup') {
       target.dispatchEvent(new MouseEvent('click', {
@@ -451,9 +452,13 @@ export class HTMLVRPanel {
       }));
     }
 
-    // Repaint only when something visual changed; pure pointermove with the same
-    // hovered element does not need a repaint and caused a full panel re-rasterize
-    // every XR frame via drainRAF(), tanking controller performance to ~10fps.
-    if (changed || drag) this.markDirty();
+    if (type === 'pointerdown' || type === 'pointerup') {
+      // Immediate repaint for press/release — bypasses rate limit so active/hover
+      // class changes appear on the frame the user clicks, not 200ms later.
+      requestPaintForced(getHostCanvas());
+      this._dirty = false; // consumed by force paint
+    } else if (changed || drag) {
+      this.markDirty();
+    }
   }
 }

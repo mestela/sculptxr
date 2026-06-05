@@ -1045,45 +1045,50 @@ class Scene {
       this._logThrottle = (this._logThrottle || 0) + 1;
 
       // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
-      if (this._guiXR) this._guiXR.update();
-      if (this._guiMini) this._guiMini.update();
-      if (this._guiPopup) this._guiPopup.update();
+      if (!this._htmlPanelsHidden) {
+        if (this._guiXR) this._guiXR.update();
+        if (this._guiMini) this._guiMini.update();
+        if (this._guiPopup) this._guiPopup.update();
+      }
 
-      // [HTMLVRPanel] Drain rAF + update panel textures
-      if (this._brushPanel) {
-        try {
-          drainRAF();
-          this._brushPanel.update(true);
-        } catch (e) {
-          console.warn('[HTMLVRPanel] BrushPanel update error:', e);
-        }
-      }
-      if (this._miniPanel) {
-        try { this._miniPanel.update(true); } catch (_) {}
-      }
-      if (this._toolPickerPanel) {
-        try { this._toolPickerPanel.update(true); } catch (_) {}
-      }
-      if (this._mainMenuPanel) {
-        try { this._mainMenuPanel.update(true); } catch (_) {}
-      }
-      if (this._tornOffPanels.size > 0) {
-        this._tornOffPanels.forEach(p => {
-          try { p.update(true); } catch (_) {}
-          if (p._pendingPlace && p.mesh) {
-            p._pendingPlace();
-            p._pendingPlace = null;
+      // [HTMLVRPanel] Mark dirty panels, then drain once for all of them.
+      // Skipped entirely when Y-button hide is active so the polyfill does
+      // no rasterisation work and we can isolate its frame cost.
+      if (!this._htmlPanelsHidden) {
+        if (this._brushPanel) {
+          try { this._brushPanel.update(true); } catch (e) {
+            console.warn('[HTMLVRPanel] BrushPanel update error:', e);
           }
-        });
-      }
-      if (this._filesPanel) {
-        try { this._filesPanel.update(true); } catch (_) {}
-      }
-      if (this._animPanel) {
-        try {
-          this._animPanel.update(true);
-          this._animPanel.syncFromState();
-        } catch (_) {}
+        }
+        if (this._miniPanel) {
+          try { this._miniPanel.update(true); } catch (_) {}
+        }
+        if (this._toolPickerPanel) {
+          try { this._toolPickerPanel.update(true); } catch (_) {}
+        }
+        if (this._mainMenuPanel) {
+          try { this._mainMenuPanel.update(true); } catch (_) {}
+        }
+        if (this._tornOffPanels.size > 0) {
+          this._tornOffPanels.forEach(p => {
+            try { p.update(true); } catch (_) {}
+            if (p._pendingPlace && p.mesh) {
+              p._pendingPlace();
+              p._pendingPlace = null;
+            }
+          });
+        }
+        if (this._filesPanel) {
+          try { this._filesPanel.update(true); } catch (_) {}
+        }
+        if (this._animPanel) {
+          try {
+            this._animPanel.update(true);
+            this._animPanel.syncFromState();
+          } catch (_) {}
+        }
+        // Single drain: executes the one requestPaint callback queued above.
+        drainRAF();
       }
       // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
@@ -4150,7 +4155,7 @@ class Scene {
            || !!(this._miniPanel?.mesh?.visible)
            || !!(this._toolPickerPanel?.mesh?.visible)
            || !!(this._mainMenuPanel?.mesh?.visible));
-        this._vrMiniHUD.mesh.visible = !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
+        this._vrMiniHUD.mesh.visible = !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
     }
 
     this._isPointingAtMenu = false;
@@ -4644,6 +4649,24 @@ class Scene {
                 // Visibility was already toggled on press-down
               }
             }
+          }
+
+          // NON-DOMINANT HAND: Y/B Button (Button 5) — hide/show all HTML panels
+          // Diagnostic toggle: lets us measure frame cost of the HTML panel system.
+          if (isNonDom) {
+            const btnY = btns[5];
+            if (btnY && btnY.pressed && !this._btnYWasPressed) {
+              this._htmlPanelsHidden = !this._htmlPanelsHidden;
+              const hide = this._htmlPanelsHidden;
+              const panels = [
+                this._brushPanel, this._miniPanel, this._mainMenuPanel,
+                this._toolPickerPanel, this._filesPanel, this._animPanel,
+              ];
+              panels.forEach(p => { if (p?.mesh) p.mesh.visible = !hide; });
+              this._tornOffPanels?.forEach(p => { if (p?.mesh) p.mesh.visible = !hide; });
+              if (window.screenLog) window.screenLog(`[Y] panels ${hide ? 'HIDDEN' : 'shown'}`, hide ? 'orange' : 'lime');
+            }
+            this._btnYWasPressed = !!(btnY?.pressed);
           }
         }
       }

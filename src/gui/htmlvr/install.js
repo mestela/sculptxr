@@ -129,11 +129,44 @@ export function unregisterPanel(panel) { _panels.delete(panel); }
 let _hostCanvas = null;
 let _firstPaintFired = false;
 
+// Deduplication flag: at most one requestPaint() per drain cycle.
+let _paintScheduled = false;
+
+// Rate-limit state.  The limit is enforced by wrapping canvas.requestPaint
+// (see _wrapRequestPaint) so it fires BEFORE the polyfill queues its rAF and
+// does the expensive work (buildSvg / serializeToString / cloneNode).
+// Blocking at _onPaintEvent is too late — the costly work already ran inside
+// the rAF callback before the paint event is dispatched.
+let _lastPaintTs = 0;
+let _forcePaint  = false;
+const PAINT_MIN_MS = 200; // ~5 fps ceiling for ambient repaints
+
+/**
+ * Wrap canvas.requestPaint once so every caller — our code AND the polyfill's
+ * own MutationObserver-triggered calls — goes through the rate limit.
+ * Called lazily on first requestPaintOnce() so the polyfill has had time to
+ * install requestPaint on the canvas (it does so asynchronously via a
+ * MutationObserver on document.body after the canvas is appended).
+ */
+function _wrapRequestPaint(canvas) {
+  if (canvas._rxWrapped || !canvas.requestPaint) return;
+  canvas._rxWrapped = true;
+  const orig = canvas.requestPaint.bind(canvas);
+  canvas.requestPaint = function () {
+    const now   = performance.now();
+    const force = _forcePaint;
+    _forcePaint = false;
+    if (!force && now - _lastPaintTs < PAINT_MIN_MS) return;
+    _lastPaintTs = now;
+    orig();
+  };
+}
+
 function _onPaintEvent() {
+  _paintScheduled = false;
   if (!_firstPaintFired) {
     _firstPaintFired = true;
     console.log('[HTMLVRPanel] polyfill paint fired ✓');
-    // Defer screenLog so Scene.js has had a chance to set window.screenLog.
     _nativeRAF(() => {
       if (window.screenLog) window.screenLog('[Panel] polyfill OK ✓', 'lime');
     });
@@ -141,6 +174,26 @@ function _onPaintEvent() {
   for (const panel of _panels) {
     try { panel._onPaint(); } catch (e) { console.warn('[HTMLVRPanel] _onPaint error:', e); }
   }
+}
+
+/**
+ * Schedule a polyfill rasterisation pass for this drain cycle.
+ * No-op if one is already queued — _onPaintEvent covers all panels.
+ */
+export function requestPaintOnce(canvas) {
+  _wrapRequestPaint(canvas);
+  if (_paintScheduled || !canvas.requestPaint) return;
+  _paintScheduled = true;
+  canvas.requestPaint();
+}
+
+/**
+ * Like requestPaintOnce but bypasses the PAINT_MIN_MS rate limit.
+ * Use for immediate visual feedback on user actions (pointerdown/pointerup).
+ */
+export function requestPaintForced(canvas) {
+  _forcePaint = true;
+  requestPaintOnce(canvas);
 }
 
 export function getHostCanvas() {

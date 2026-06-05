@@ -1460,17 +1460,8 @@ export class MainMenuPanel extends HTMLVRPanel {
     const contentEl = root.querySelector('#mm-content');
     if (!contentEl) return;
 
-    // Update top menubar active state
-    root.querySelectorAll('.mm-menu-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.menu === this._activeMenu);
-    });
-
-    // Update side tab active state (tabs always visible; dim them when a menu is open)
-    root.querySelectorAll('.mm-tab-btn').forEach(btn => {
-      btn.classList.toggle('active', !this._activeMenu && btn.dataset.section === this._activeSection);
-    });
-
-    // Build a cache key to skip redundant rebuilds (e.g. repeated syncFromState calls)
+    // Build cache key first — DOM mutations below are no-ops when the key
+    // matches, so skip them entirely to avoid polyfill layout recalculations.
     const mesh = this._main.getMesh?.();
     const shaderType = mesh?.getShaderType?.() ?? -1;
     const meshCount  = this._main.getMeshes?.()?.length ?? 0;
@@ -1486,6 +1477,16 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     if (key === this._lastContentKey) return;
     this._lastContentKey = key;
+
+    // Update top menubar active state
+    root.querySelectorAll('.mm-menu-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.menu === this._activeMenu);
+    });
+
+    // Update side tab active state (tabs always visible; dim them when a menu is open)
+    root.querySelectorAll('.mm-tab-btn').forEach(btn => {
+      btn.classList.toggle('active', !this._activeMenu && btn.dataset.section === this._activeSection);
+    });
 
     // Build HTML
     const main = this._main;
