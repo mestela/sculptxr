@@ -860,9 +860,17 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   const bsNameInput = el.querySelector('#acp-bs-name');
   const _createBlendshape = () => {
-    const name = bsNameInput?.value.trim();
+    let name = bsNameInput?.value.trim();
     const mesh = _getTargetMesh();
-    if (!name || !mesh || !window._animationRegistry) return;
+    if (!mesh || !window._animationRegistry) return;
+    if (!name) {
+      // Auto-generate an unused name (registry uses .tracks, not ._tracks)
+      const track = window._animationRegistry.tracks?.get(mesh.getID?.());
+      const existing = track?.blendshapes ? [...track.blendshapes.keys()] : [];
+      let i = 1;
+      while (existing.includes(`blendshape${i}`)) i++;
+      name = `blendshape${i}`;
+    }
     window._animationRegistry.createBlendshape(mesh, name);
     if (bsNameInput) bsNameInput.value = '';
     _refreshBs(mesh);

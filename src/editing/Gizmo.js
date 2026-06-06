@@ -146,20 +146,32 @@ class Gizmo {
     this._group.name = "Transform Gizmo Group";
     this._group.visible = false; // Hide by default!
 
-    let worldGroup = null;
-    if (this._main._worldGroup) {
-      worldGroup = this._main._worldGroup;
-    } else if (this._main._scene && this._main._scene._worldGroup) {
-      worldGroup = this._main._scene._worldGroup;
-    } else if (this._main.getScene && this._main.getScene()._worldGroup) {
-      worldGroup = this._main.getScene()._worldGroup;
-    }
+    // SculptGL extends Scene, so _worldGroup lives on main directly.
+    // At constructor time, _worldGroup may not exist yet (created in Scene.initScene()).
+    // Transform.postRender() has a lazy-add that inserts _group once _worldGroup is ready.
+    let worldGroup = this._main._worldGroup || null;
+
+    // --- DEBUG ---
+    console.log('[Gizmo constructor]',
+      'main._worldGroup:', worldGroup ? worldGroup.type : 'NULL',
+      'main._scene:', main._scene ? main._scene.type : 'NULL'
+    );
+    // --- END DEBUG ---
 
     if (worldGroup) {
       worldGroup.add(this._group);
-    } else if (this._main._scene && this._main._scene._scene) {
-      this._main._scene._scene.add(this._group);
+      console.log('[Gizmo constructor] added _group to worldGroup');
+    } else {
+      // Fallback: add directly to THREE.js root scene if worldGroup isn't ready yet.
+      // The gizmo matrices are in sculpt space; the root scene is also sculpt space.
+      if (main._scene) {
+        main._scene.add(this._group);
+        console.log('[Gizmo constructor] added _group to root _scene (worldGroup was null)');
+      } else {
+        console.warn('[Gizmo constructor] NEITHER worldGroup NOR _scene available — group is parentless!');
+      }
     }
+    // If worldGroup is null here, Transform.postRender() will add it on the first frame.
 
     // activated gizmos
     this._activatedType =
@@ -480,7 +492,7 @@ class Gizmo {
       vec3.transformMat4(icenter, icenter, mesh.getMatrix());
       vec3.add(acc, acc, icenter);
     }
-    vec3.scale(center, acc, 1.0 / meshes.length);
+    if (meshes.length > 0) vec3.scale(center, acc, 1.0 / meshes.length);
     
     if (window._animationRegistry && window._animationRegistry.isRecording && window.screenLog && Math.random() < 0.05) {
       window.screenLog(`Gizmo Center: [${center[0].toFixed(2)}, ${center[1].toFixed(2)}, ${center[2].toFixed(2)}]`, "yellow");
@@ -554,75 +566,34 @@ class Gizmo {
 
     var vrScale = this._main._vrScale || 50.0;
 
-    // "Mesh Scale" Mode (User Request)
-    // Ignore _vrScale complications. Just give it a solid physical presence relative to the mesh?
-    // Or just 1.0?
-    // Let's try matching the Selected Mesh Scale if available, else 1.0.
-    var scaleFactor = 1.0;
+    // Scale the gizmo to a comfortable physical size using the same matrix-scale
+    // approach as the desktop _updateMatrices() — no vertex geometry resize needed.
+    // Previously _resize(scaleFactor) baked scale into vertices AND the matrix was
+    // [1,1,1], so the scale was applied once.  Now we skip _resize and apply via
+    // matrix only, keeping vertex geometry at unit scale.
+    //
+    // Target: proportional to mesh AABB but clamped to a comfortable arm-reach range.
+    //   vrScale ≈ 50 sculpt units per metre.
+    //   min 20 cm (10 su) → always clearly visible
+    //   max 60 cm (30 su) → never overwhelming
+    var scaleFactor = 0.30 * vrScale; // default 30 cm
     var meshes = this._main.getSelectedMeshes();
     if (meshes.length > 0) {
-      // Try to extract scale from matrix
-      var meshMat = meshes[0].getMatrix();
-      var sx = vec3.len([meshMat[0], meshMat[1], meshMat[2]]);
-
-      // Compute Mesh Radius from Octree AABB
-      var meshRadius = 1.0;
-      var mesh = meshes[0];
-      if (mesh.getOctree) {
-        var octree = mesh.getOctree();
+      var mesh0 = meshes[0];
+      if (mesh0.getOctree) {
+        var octree = mesh0.getOctree();
         if (octree && octree._aabbLoose) {
           var aabb = octree._aabbLoose;
-          // Use diagonal or max dim
-          var dx = aabb[3] - aabb[0];
-          var dy = aabb[4] - aabb[1];
-          var dz = aabb[5] - aabb[2];
-          // Use 0.5 * max dime as approximate radius equivalent
-          meshRadius = Math.max(dx, Math.max(dy, dz)) * 0.5;
+          var meshRadius = Math.max(aabb[3] - aabb[0], aabb[4] - aabb[1], aabb[5] - aabb[2]) * 0.5;
+          scaleFactor = meshRadius * 0.6; // 60 % of mesh half-extent
         }
       }
-
-      scaleFactor = sx * meshRadius;
-
-      // if (Math.random() < 0.01) console.log(`Gizmo Mesh Scale: ${sx} Radius: ${meshRadius} Final: ${scaleFactor}`);
-    } else {
-      // Default to something visible if no mesh?
-      scaleFactor = 0.25 * vrScale; // Default 25cm (Scaled by VR Scale)
     }
+    scaleFactor = Math.max(0.20 * vrScale, Math.min(0.60 * vrScale, scaleFactor));
 
-    if (window.debugGizmoAttach === 'controller') {
-      var main = this._main;
-      if (main._vrControllerPos && main._vrControllerQuat) {
-        trMesh = vec3.clone(main._vrControllerPos);
-        // Apply Offset (20cm forward)
-        var fwd = vec3.fromValues(0, 0, -1);
-        vec3.transformQuat(fwd, fwd, main._vrControllerQuat);
-        vec3.scaleAndAdd(trMesh, trMesh, fwd, 0.2 * vrScale); // 20cm in front (World Units)
-
-        // Override Scale to 0.25m (25cm)
-        scaleFactor = 0.25 * vrScale;
-      }
-    } else if (window.debugGizmoAttach === 'world') {
-      trMesh = vec3.fromValues(0, 1.0 * vrScale, 0); // 1m up (World Units)
-      scaleFactor = 0.25 * vrScale;
-    }
-
-    if (window.debugGizmoScale !== undefined) {
-      // Allow overriding the BASE scale factor too if needed, but usually we just want vertex scale.
-      // scaleFactor = window.debugGizmoScale;
-    }
-
-    if (scaleFactor < 0.0001) scaleFactor = 0.0001; // Avoid singular matrix
-
-    // USER REQUEST: Vertices scaled by 1.0 (Verified via debugGizmoScale = 1)
-    var VERTEX_SCALE = 1.0;
-    if (window.debugGizmoScale !== undefined && window.debugGizmoScale !== 0) {
-      VERTEX_SCALE = window.debugGizmoScale;
-    }
-
-    // Safety Fallback
-    if (VERTEX_SCALE === 0) VERTEX_SCALE = 1.0;
-
-    this._resize(scaleFactor * VERTEX_SCALE);
+    if (window.debugGizmoScale !== undefined && window.debugGizmoScale !== 0)
+      scaleFactor = window.debugGizmoScale;
+    if (scaleFactor < 0.0001) scaleFactor = 0.0001;
 
     var traScale = mat4.create();
     mat4.translate(traScale, traScale, trMesh);
@@ -657,8 +628,9 @@ class Gizmo {
       mat4.multiply(traScale, traScale, matRot);
     }
 
-    // Scale is 1.0 (Vertex Baked)
-    mat4.scale(traScale, traScale, [1.0, 1.0, 1.0]);
+    // Apply scaleFactor via matrix (same approach as desktop _updateMatrices).
+    // The previous code had [1.0, 1.0, 1.0] here which discarded all sizing work.
+    mat4.scale(traScale, traScale, [scaleFactor, scaleFactor, scaleFactor]);
 
     var eye = camera.computePosition();
     this._updateArcRotation(vec3.normalize(eye, vec3.sub(eye, trMesh, eye)));
@@ -1050,6 +1022,7 @@ class Gizmo {
 
     // Hide all first, Three.js handles rendering via scene graph
     if (this._group) {
+      this._group.visible = true;
       this._group.children.forEach(child => child.visible = false);
     }
 

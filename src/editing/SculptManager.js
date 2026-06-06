@@ -37,12 +37,26 @@ class SculptManager {
     if (oldTool && oldTool.clearPreview) {
       oldTool.clearPreview();
     }
+
+    // Route both transform variants to the right tool for the current context.
+    // Transform (13) has desktop mouse interaction; TransformVR (16) has controller interaction.
+    if (id === Enums.Tools.TRANSFORM || id === Enums.Tools.TRANSFORM_VR) {
+      const isVR = this._main && this._main._renderer &&
+                   this._main._renderer.xr && this._main._renderer.xr.isPresenting;
+      id = isVR ? Enums.Tools.TRANSFORM_VR : Enums.Tools.TRANSFORM;
+    }
+
     this._toolIndex = id;
 
-    // Toggle desktop Transform gizmo visibility
-    const transformTool = this._tools[Enums.Tools.TRANSFORM];
-    if (transformTool && transformTool._gizmo && transformTool._gizmo._group) {
-      transformTool._gizmo._group.visible = (id === Enums.Tools.TRANSFORM);
+    // Hide the VR gizmo when not using TransformVR, and hide the desktop gizmo
+    // when not using Transform — so switching away clears both groups.
+    const tDesktop = this._tools[Enums.Tools.TRANSFORM];
+    if (tDesktop && tDesktop._gizmo && tDesktop._gizmo._group) {
+      tDesktop._gizmo._group.visible = (id === Enums.Tools.TRANSFORM);
+    }
+    const tVR = this._tools[Enums.Tools.TRANSFORM_VR];
+    if (tVR && tVR._gizmo && tVR._gizmo._group) {
+      tVR._gizmo._group.visible = (id === Enums.Tools.TRANSFORM_VR);
     }
   }
 
@@ -1414,6 +1428,18 @@ class SculptManager {
 
   postRender() {
     const tool = this.getCurrentTool();
+    // --- DEBUG (remove once gizmo displays) ---
+    // Log the first postRender call for each distinct toolIndex so the counter
+    // never exhausts before the user switches tools.
+    if (!this._prLoggedIndexes) this._prLoggedIndexes = new Set();
+    if (!this._prLoggedIndexes.has(this._toolIndex)) {
+      this._prLoggedIndexes.add(this._toolIndex);
+      console.log('[SculptManager.postRender first for toolIndex=' + this._toolIndex + ']',
+        'toolName:', tool ? tool.constructor.name : 'null',
+        'hasPostRender:', !!(tool && tool.postRender)
+      );
+    }
+    // --- END DEBUG ---
     if (tool && tool.postRender) {
       tool.postRender(this._selection);
     }

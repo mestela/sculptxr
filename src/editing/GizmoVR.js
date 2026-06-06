@@ -117,26 +117,38 @@ class GizmoVR {
       show: () => { if (this._group) this._group.visible = true; },
       hide: () => { if (this._group) this._group.visible = false; },
       log: () => {
-         console.log("Gizmo Group:", this._group);
-         console.log("Gizmo Group Position:", this._group ? this._group.position : "N/A");
-         console.log("Gizmo Group Scale:", this._group ? this._group.scale : "N/A");
-         console.log("Gizmo Group Visible:", this._group ? this._group.visible : "N/A");
-         console.log("vrScale:", (this._main._scene && this._main._scene._vrScale) || 1.0);
-         const mesh = this._main.getMesh();
-         console.log("Current Mesh:", mesh);
-         if (mesh) {
-            console.log("Mesh Center:", mesh.getCenter());
-            const tm = mesh.getThreeMesh();
-            if (tm) {
-               console.log("Mesh Three Position:", tm.position);
-               console.log("Mesh Three Scale:", tm.scale);
-               console.log("Mesh Three MatrixWorld:", tm.matrixWorld);
-            }
-         }
+        const grp = this._group;
+        const sc = this._main._scene || this._main.getScene?.();
+        console.group('[GizmoVR debug]');
+        console.log('group.visible:', grp?.visible);
+        console.log('group.parent type:', grp?.parent?.type ?? 'NULL — not in scene!');
+        console.log('group.parent name:', grp?.parent?.name ?? 'n/a');
+        const inWorldGroup = grp?.parent === sc?._worldGroup;
+        console.log('in worldGroup:', inWorldGroup, '← should be true in VR');
+        console.log('worldGroup.scale:', sc?._worldGroup?.scale);
+        console.log('vrScale (_vrScale):', sc?._vrScale ?? this._main._vrScale ?? 'unknown');
+        console.log('_lastScale (geometry baked at):', this._lastScale);
+        console.log('geometry physical size estimate:',
+          this._lastScale * (sc?._worldGroup?.scale?.x ?? 1), 'THREE.js metres');
+        console.log('group.children count:', grp?.children?.length);
+        if (grp?.children?.length) {
+          const vis = grp.children.filter(c => c.visible).length;
+          console.log('visible children:', vis, '/', grp.children.length);
+        }
+        const mesh = this._main.getMesh();
+        console.log('current mesh:', mesh ? 'yes' : 'null');
+        if (mesh) {
+          const c = mesh.getCenter();
+          console.log('mesh center:', c);
+        }
+        console.groupEnd();
       },
-      testScale: (scale) => {
-         this._resize(scale);
-      }
+      // Resize gizmo geometry to `scale` sculpt units — multiply by worldGroup.scale
+      // to estimate physical size, e.g. testScale(50) → 50 * 0.008 = 0.4m = 40cm
+      testScale: (scale) => { this._resize(scale); this._lastScale = scale; },
+      // Override the whole group's matrix scale for quick visual testing
+      // (bypasses geometry, works instantly without recreating meshes)
+      testGroupScale: (s) => { if (this._group) this._group.scale.set(s, s, s); },
     };
 
     // Default active types
@@ -355,6 +367,7 @@ class GizmoVR {
       const threeMesh = components[i]._drawGeo.getThreeMesh();
       if (threeMesh) {
         mat4.copy(threeMesh.matrix.elements, components[i]._finalMatrix);
+        threeMesh.matrixWorldNeedsUpdate = true;
       }
       
       if (components[i]._pickGeo) {

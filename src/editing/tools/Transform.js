@@ -8,6 +8,39 @@ class Transform extends SculptBase {
     super(main);
 
     this._gizmo = new Gizmo(main);
+
+    window.debugGizmoDesktop = () => {
+      const g = this._gizmo;
+      const grp = g._group;
+      console.group('[Transform Gizmo desktop]');
+      console.log('group object:', grp);
+      console.log('group.parent:', grp?.parent?.type ?? 'NULL — not in any scene');
+      console.log('group.parent name:', grp?.parent?.name ?? 'n/a');
+      console.log('group.visible:', grp?.visible);
+      console.log('group children count:', grp?.children?.length);
+      // SculptGL extends Scene — _worldGroup is on main directly, not on main._scene
+      console.log('main._worldGroup:', main._worldGroup?.type ?? 'missing');
+      console.log('main._scene (THREE.Scene):', main._scene?.type ?? 'missing');
+      console.log('getMesh():', this.getMesh()?.getID?.() ?? 'null — gizmo render skipped!');
+      console.log('_activatedType (bitmask):', g._activatedType);
+      console.log('_currentScale:', g._currentScale);
+      if (grp?.children?.length) {
+        const vis = grp.children.filter(c => c.visible).length;
+        console.log(`visible children: ${vis} / ${grp.children.length}`);
+        if (grp.children[0]) {
+          const wp = new (grp.children[0].position.constructor)();
+          grp.children[0].getWorldPosition?.(wp);
+          console.log('first child world position:', wp);
+        }
+      }
+      // Force-show to test rendering
+      console.log('--- calling render() now to test ---');
+      if (grp) grp.visible = true;
+      g.render();
+      main.render();
+      console.groupEnd();
+      return 'see console above';
+    };
   }
 
   isIdentity(m) {
@@ -20,11 +53,9 @@ class Transform extends SculptBase {
 
   preUpdate() {
     var picking = this._main.getPicking();
-
     var mesh = picking.getMesh();
     this._gizmo.onMouseOver();
     picking._mesh = mesh;
-
     this._main.setCanvasCursor('default');
   }
 
@@ -125,9 +156,36 @@ class Transform extends SculptBase {
   }
 
   postRender() {
+    var g = this._gizmo._group;
+
+    // --- DEBUG LOG (remove once gizmo displays) ---
+    if (!this._postRenderLogged) {
+      this._postRenderLogged = true;
+      var wgDbg = this._main._worldGroup;
+      console.log('[Transform.postRender FIRST CALL]',
+        'g.parent:', g ? (g.parent ? g.parent.type + '/' + (g.parent.name || '?') : 'NULL — not in scene!') : 'no group',
+        'g.visible:', g ? g.visible : 'n/a',
+        'g.children:', g ? g.children.length : 'n/a',
+        'worldGroup:', wgDbg ? wgDbg.type : 'NULL'
+      );
+    }
+    // --- END DEBUG ---
+
+    // Lazy-insert the gizmo group into the Three.js scene.  The Gizmo constructor
+    // runs during SculptManager.init() before Scene creates its worldGroup, so
+    // the group ends up parentless.  postRender() is called every frame, so this
+    // succeeds on the first frame after the scene is ready (no-op thereafter).
+    if (g && !g.parent) {
+      // SculptGL extends Scene, so _worldGroup lives on this._main directly.
+      // this._main._scene is the THREE.Scene object which never has _worldGroup.
+      var wg = this._main._worldGroup ||
+               (this._main._scene && this._main._scene._worldGroup);
+      console.log('[Transform.postRender] lazy-add: wg=', wg ? wg.type : 'NULL');
+      if (wg) { wg.add(g); this._main.render(); }
+    }
+
     super.postRender(this._main.getSculptManager().getSelection());
-    if (this.getMesh())
-      this._gizmo.render();
+    this._gizmo.render();
   }
 
   addSculptToScene(scene) {

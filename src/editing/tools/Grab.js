@@ -28,8 +28,113 @@ class Grab extends SculptBase {
   // We might need to handle this in Scene.js or GuiVRTools.js specially?
   // OR make it a valid "Tool" that simply overrides the behavior.
 
-  start(main) {
-    // We don't need standard stroke start
+  start(ctrl) {
+    var main    = this._main;
+    var picking = main.getPicking();
+    if (!picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY))
+      return false;
+    var mesh = picking.getMesh();
+    if (!mesh || mesh._isVoxel) return false;
+    if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
+
+    this._grabbedMesh = mesh;
+    this._undoMatrix  = mat4.clone(mesh.getMatrix());
+
+    // Store the hit point's camera-space depth (linear, independent of near/far).
+    // Derived from the view matrix directly rather than cam.project() so it is
+    // stable even when optimizeNearFar() hasn't fired yet (defaults near=0.01,
+    // far=5000 give viewportZ ≈ 0.9999 which makes unproject numerically catastrophic).
+    var hitLocal = picking.getIntersectionPoint();
+    var hitWorld = vec3.transformMat4(vec3.create(), hitLocal, mesh.getMatrix());
+    var cam      = main.getCamera();
+    var view     = cam._view;
+
+    // Camera forward in world space: negated row 2 of the view matrix.
+    // gl-matrix col-major: index = row + 4*col → row-2 = indices [2, 6, 10].
+    this._grabCamForward = vec3.normalize(vec3.create(),
+      [-view[2], -view[6], -view[10]]);
+
+    // worldGroup.scale shrinks the rendered scene toward the world origin.
+    // When the camera is away from the origin this moves rendered mesh points
+    // further from the camera than their sculpt coordinates suggest — perspective
+    // division does NOT cancel the scale factor in that case.
+    //
+    // Effective depth = |view_sculpt * (scale * hitWorld)|[z] / scale
+    //                 = |scale * hitCam.z + (1-scale) * view[14]| / scale
+    // Using this as t in the ray-plane formula produces the correct 1:1 screen tracking.
+    var worldScale = (main._worldGroup ? main._worldGroup.scale.x : 1.0) || 1.0;
+    var hitCam     = vec3.transformMat4(vec3.create(), hitWorld, view);
+    var renderedZ  = worldScale * hitCam[2] + (1.0 - worldScale) * view[14]; // negative
+    this._grabEffectiveDepth = -renderedZ / worldScale; // positive
+
+    var m = mesh.getMatrix();
+    this._grabInitT = [m[12], m[13], m[14]];
+
+    // Ray-plane anchor at the effective depth.
+    var vNear   = picking.unproject(main._mouseX, main._mouseY, 0.0);
+    var vFar    = picking.unproject(main._mouseX, main._mouseY, 0.1);
+    var rayDir0 = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), vFar, vNear));
+    var eye0    = cam.computePosition();
+    var t0      = this._grabEffectiveDepth / vec3.dot(rayDir0, this._grabCamForward);
+    this._grabInitWorld = vec3.scaleAndAdd(vec3.create(), eye0, rayDir0, t0);
+
+    // --- DEBUG LOG ---
+    console.log('[Grab.start]',
+      'hitCam[2]:', hitCam[2].toFixed(3),
+      'renderedZ:', renderedZ.toFixed(3),
+      'effectiveDepth:', this._grabEffectiveDepth.toFixed(3),
+      'worldScale:', worldScale,
+      'view[14]:', view[14].toFixed(3),
+      't0:', t0.toFixed(3)
+    );
+    this._grabUpdateCount = 0;
+    // --- END DEBUG ---
+
+    return true;
+  }
+
+  update() {
+    if (!this._grabbedMesh) return;
+    var main    = this._main;
+    var picking = main.getPicking();
+    var cam     = main.getCamera();
+
+    // Ray-plane intersection: camera-perpendicular plane through the original hit point.
+    // Does NOT use screenZ, so it is immune to near=0.001 depth precision collapse.
+    var vNear  = picking.unproject(main._mouseX, main._mouseY, 0.0);
+    var vFar   = picking.unproject(main._mouseX, main._mouseY, 0.1);
+    var rayDir = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), vFar, vNear));
+    var eye    = cam.computePosition();
+
+    var denom = vec3.dot(rayDir, this._grabCamForward);
+    if (Math.abs(denom) < 1e-6) return;
+    var t = this._grabEffectiveDepth / denom;
+    if (t < 0) return;
+
+    var curWorld = vec3.scaleAndAdd(vec3.create(), eye, rayDir, t);
+    var delta    = vec3.sub(vec3.create(), curWorld, this._grabInitWorld);
+
+    // --- DEBUG LOG first 3 updates ---
+    if (this._grabUpdateCount < 3) {
+      this._grabUpdateCount++;
+      console.log('[Grab.update #' + this._grabUpdateCount + ']',
+        'effectiveDepth:', this._grabEffectiveDepth.toFixed(3), 't:', t.toFixed(3),
+        'denom:', denom.toFixed(5),
+        'curWorld:', curWorld[0].toFixed(4), curWorld[1].toFixed(4), curWorld[2].toFixed(4),
+        'delta:', delta[0].toFixed(4), delta[1].toFixed(4), delta[2].toFixed(4),
+        '|delta|:', Math.hypot(delta[0], delta[1], delta[2]).toFixed(4),
+        'mouseXY:', main._mouseX.toFixed(0), main._mouseY.toFixed(0)
+      );
+    }
+    // --- END DEBUG ---
+
+    var m = this._grabbedMesh.getMatrix();
+    m[12] = this._grabInitT[0] + delta[0];
+    m[13] = this._grabInitT[1] + delta[1];
+    m[14] = this._grabInitT[2] + delta[2];
+
+    this._grabbedMesh.updateMatrices(cam);
+    main.render();
   }
 
   end() {

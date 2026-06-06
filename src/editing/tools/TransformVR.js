@@ -491,6 +491,25 @@ class TransformVR extends SculptBase {
       this._gizmo.render(cam);
     }
   }
+
+  postRender() {
+    if (!this._gizmo) return;
+    var main  = this._main;
+    var g     = this._gizmo._group;
+
+    // Lazy-add to worldGroup (SculptGL extends Scene, _worldGroup lives on main).
+    if (g && !g.parent) {
+      var wg = main._worldGroup || (main._scene && main._scene._worldGroup);
+      if (wg) { wg.add(g); main.render(); }
+    }
+
+    // Update gizmo matrices and make it visible.
+    if (g) g.visible = true;
+    this._gizmo.update(main.getCamera());
+
+    // Selection overlay (from SculptBase).
+    super.postRender(main.getSculptManager().getSelection());
+  }
 }
 
 export default TransformVR;
