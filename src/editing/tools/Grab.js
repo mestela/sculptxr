@@ -78,17 +78,7 @@ class Grab extends SculptBase {
     var t0      = this._grabEffectiveDepth / vec3.dot(rayDir0, this._grabCamForward);
     this._grabInitWorld = vec3.scaleAndAdd(vec3.create(), eye0, rayDir0, t0);
 
-    // --- DEBUG LOG ---
-    console.log('[Grab.start]',
-      'hitCam[2]:', hitCam[2].toFixed(3),
-      'renderedZ:', renderedZ.toFixed(3),
-      'effectiveDepth:', this._grabEffectiveDepth.toFixed(3),
-      'worldScale:', worldScale,
-      'view[14]:', view[14].toFixed(3),
-      't0:', t0.toFixed(3)
-    );
     this._grabUpdateCount = 0;
-    // --- END DEBUG ---
 
     return true;
   }
@@ -114,19 +104,6 @@ class Grab extends SculptBase {
     var curWorld = vec3.scaleAndAdd(vec3.create(), eye, rayDir, t);
     var delta    = vec3.sub(vec3.create(), curWorld, this._grabInitWorld);
 
-    // --- DEBUG LOG first 3 updates ---
-    if (this._grabUpdateCount < 3) {
-      this._grabUpdateCount++;
-      console.log('[Grab.update #' + this._grabUpdateCount + ']',
-        'effectiveDepth:', this._grabEffectiveDepth.toFixed(3), 't:', t.toFixed(3),
-        'denom:', denom.toFixed(5),
-        'curWorld:', curWorld[0].toFixed(4), curWorld[1].toFixed(4), curWorld[2].toFixed(4),
-        'delta:', delta[0].toFixed(4), delta[1].toFixed(4), delta[2].toFixed(4),
-        '|delta|:', Math.hypot(delta[0], delta[1], delta[2]).toFixed(4),
-        'mouseXY:', main._mouseX.toFixed(0), main._mouseY.toFixed(0)
-      );
-    }
-    // --- END DEBUG ---
 
     var m = this._grabbedMesh.getMatrix();
     m[12] = this._grabInitT[0] + delta[0];

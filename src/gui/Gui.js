@@ -40,6 +40,63 @@ import '@awesome.me/webawesome/dist/components/slider/slider.js';
 const TOPBAR_HEIGHT = 36;   // px — must match onCanvasResize top:40px allowance
 const SIDEBAR_WIDTH = 380;  // px
 
+// ── VR-safe dialogs ────────────────────────────────────────────────────────────
+// Native confirm()/alert()/prompt() block the JS thread, killing the WebXR frame
+// loop in PCVR. These non-blocking replacements use a DOM overlay instead.
+
+window._vrConfirm = function(message, onOk, onCancel) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:999999;font-family:system-ui,sans-serif;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#1e1e1e;border:1px solid #555;border-radius:10px;padding:28px 32px;max-width:380px;width:90%;text-align:center;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.8);';
+
+  const msg = document.createElement('p');
+  msg.style.cssText = 'margin:0 0 22px;font-size:15px;line-height:1.5;';
+  msg.textContent = message;
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:12px;justify-content:center;';
+
+  const mkBtn = (label, bg, fg) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = `background:${bg};color:${fg};border:none;border-radius:6px;padding:9px 28px;font-size:14px;cursor:pointer;font-weight:600;`;
+    b.onmouseenter = () => { b.style.opacity = '0.85'; };
+    b.onmouseleave = () => { b.style.opacity = '1'; };
+    return b;
+  };
+
+  const btnCancel = mkBtn('Cancel', '#444', '#eee');
+  const btnOk     = mkBtn('Confirm', '#c0392b', '#fff');
+
+  btnRow.appendChild(btnCancel);
+  btnRow.appendChild(btnOk);
+  box.appendChild(msg);
+  box.appendChild(btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const close = () => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); };
+  btnOk.onclick     = () => { close(); onOk?.(); };
+  btnCancel.onclick = () => { close(); onCancel?.(); };
+  overlay.addEventListener('click', e => { if (e.target === overlay) { close(); onCancel?.(); } });
+  btnCancel.focus(); // default focus on safe option
+};
+
+window._vrAlert = function(message) {
+  // During XR: log to screen overlay; otherwise show a non-blocking toast
+  if (window._screenLog) { window._screenLog('⚠ ' + message, 5000); return; }
+
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:#222;border:1px solid #666;border-radius:8px;padding:14px 24px;color:#eee;font-family:system-ui,sans-serif;font-size:14px;z-index:999999;max-width:480px;box-shadow:0 4px 24px rgba(0,0,0,.7);display:flex;gap:16px;align-items:center;';
+  toast.innerHTML = `<span>⚠ ${message}</span><button style="background:#444;color:#eee;border:none;border-radius:5px;padding:4px 14px;cursor:pointer;font-size:13px;">OK</button>`;
+  document.body.appendChild(toast);
+  const close = () => { if (toast.parentNode) toast.parentNode.removeChild(toast); };
+  toast.querySelector('button').onclick = close;
+  setTimeout(close, 8000); // auto-dismiss after 8 s
+};
+
 class Gui {
 
   constructor(main) {
@@ -587,11 +644,12 @@ class Gui {
     }
 
     if (this._xhrs[notifName] && notif.isVisible()) {
-      if (window.confirm('Abort ' + notifName + ' previous upload?')) {
-        this._xhrs[notifName].abort();
-        this._xhrs[notifName].isAborted = true;
+      const xhrToAbort = this._xhrs[notifName];
+      window._vrConfirm('Abort ' + notifName + ' previous upload?', () => {
+        xhrToAbort.abort();
+        xhrToAbort.isAborted = true;
         notif.setMessage(null);
-      }
+      });
       return;
     }
 
@@ -603,9 +661,9 @@ class Gui {
   }
 
   exportMaterialise() {
-    if (window.confirm('A new webpage will be opened. Start upload?')) {
+    window._vrConfirm('A new webpage will be opened. Start upload?', () => {
       this._export('materialise');
-    }
+    });
   }
 
   _export(notifName) {

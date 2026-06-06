@@ -151,25 +151,15 @@ class Gizmo {
     // Transform.postRender() has a lazy-add that inserts _group once _worldGroup is ready.
     let worldGroup = this._main._worldGroup || null;
 
-    // --- DEBUG ---
-    console.log('[Gizmo constructor]',
-      'main._worldGroup:', worldGroup ? worldGroup.type : 'NULL',
-      'main._scene:', main._scene ? main._scene.type : 'NULL'
-    );
-    // --- END DEBUG ---
-
     if (worldGroup) {
       worldGroup.add(this._group);
-      console.log('[Gizmo constructor] added _group to worldGroup');
     } else {
       // Fallback: add directly to THREE.js root scene if worldGroup isn't ready yet.
       // The gizmo matrices are in sculpt space; the root scene is also sculpt space.
       if (main._scene) {
         main._scene.add(this._group);
-        console.log('[Gizmo constructor] added _group to root _scene (worldGroup was null)');
-      } else {
-        console.warn('[Gizmo constructor] NEITHER worldGroup NOR _scene available — group is parentless!');
       }
+      // If neither is available, Transform.postRender() will lazy-add on first frame.
     }
     // If worldGroup is null here, Transform.postRender() will add it on the first frame.
 

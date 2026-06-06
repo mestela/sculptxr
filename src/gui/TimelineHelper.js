@@ -139,13 +139,13 @@ export default class TimelineHelper {
             const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
             
-            if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
-            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan for hover
-            else ctx.fillStyle = '#888888'; // Muted Gray
-            
-            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#888888');
+            if (isSelected) ctx.fillStyle = '#ffff00';
+            else if (isHovered) ctx.fillStyle = '#00ffff';
+            else ctx.fillStyle = '#ff9944'; // Orange for transform keys
+
+            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#ff9944');
             ctx.lineWidth = 1.5;
-            
+
             ctx.beginPath();
             ctx.moveTo(kx, ky - 7);
             ctx.lineTo(kx + 7, ky);
@@ -179,20 +179,19 @@ export default class TimelineHelper {
               
               if (laneOverlap && kx >= mx1 && kx <= mx2) {
                 isInsideMarquee = true;
-                console.log(`[DopeSheet] Shape Key ${i} in track ${id} is inside marquee!`);
               }
             }
             
             const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
             
-            if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
-            else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan for hover
-            else ctx.fillStyle = '#888888'; // Muted Gray
-            
-            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#888888');
+            if (isSelected) ctx.fillStyle = '#ffff00';
+            else if (isHovered) ctx.fillStyle = '#00ffff';
+            else ctx.fillStyle = '#44aaff'; // Blue for shape keys
+
+            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#44aaff');
             ctx.lineWidth = 1.5;
-            
+
             ctx.beginPath();
             ctx.arc(kx, ky, 4, 0, Math.PI * 2);
             ctx.fill();

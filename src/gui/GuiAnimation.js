@@ -450,12 +450,12 @@ class GuiAnimation {
 
   clearAll() {
     if (!window._animationRegistry) return;
-    if (confirm('Clear all animation and reset tempo?')) {
+    window._vrConfirm('Clear all animation and reset tempo?', () => {
       window._animationRegistry.stopRecording(true);
       window._animationRegistry.tracks.clear();
       window._animCurrentTime = 0;
       window._animationRegistry.globalPlaybackTime = 0;
-    }
+    });
   }
 
   printTracks() {

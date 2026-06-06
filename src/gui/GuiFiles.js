@@ -141,7 +141,7 @@ class GuiFiles {
     }
 
     if (!mesh.getTexCoords()) {
-      window.alert('The selected mesh has no UV!');
+      (window._vrAlert || window.alert)('The selected mesh has no UV!');
       return;
     }
 

@@ -229,9 +229,9 @@ export class HTMLVRPanel {
 
   // ── VR interaction (called by Scene.js) ───────────────────────────────────
 
-  onVRMove(uv)    { if (this.mesh) this._vrDispatch('pointermove', uv, 0); }
-  onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1); }
-  onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0); }
+  onVRMove(uv)    { if (this.mesh) this._vrDispatch('pointermove', uv, 0, true); }
+  onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1, true); }
+  onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0, true); }
 
   /**
    * Scroll the panel's first overflow-y scrollable descendant by `deltaPx`.
@@ -265,7 +265,7 @@ export class HTMLVRPanel {
 
   onVRLeave() {
     if (this._hoveredBtn) {
-      this._hoveredBtn.classList.remove('hover', 'active');
+      this._hoveredBtn.classList.remove('hover'); // never strip .active — it may be the selection state
       this._hoveredBtn = null;
     }
   }
@@ -398,7 +398,7 @@ export class HTMLVRPanel {
     this._sliderDragTarget.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  _vrDispatch(type, uv, buttons) {
+  _vrDispatch(type, uv, buttons, isVR = false) {
     if (!this.mesh) return;
     const { el, absX, absY } = this._uvToElement(uv);
 
@@ -421,13 +421,19 @@ export class HTMLVRPanel {
     let changed = (type === 'pointerdown' || type === 'pointerup');
     const btn = el.closest('button');
     if (btn !== this._hoveredBtn) {
-      this._hoveredBtn?.classList.remove('hover', 'active');
+      this._hoveredBtn?.classList.remove('hover');
+      if (!isVR) this._hoveredBtn?.classList.remove('active'); // desktop: clear press state
       this._hoveredBtn = btn;
       btn?.classList.add('hover');
       changed = true;
     }
-    if (type === 'pointerdown' && btn) btn.classList.add('active');
-    if (type === 'pointerup'   && btn) btn.classList.remove('active');
+    // Desktop only: transient press-state highlight.
+    // In VR, click fires on pointerdown which can rebuild the DOM; we must not
+    // clobber the newly-set selection .active class on the rebuilt element.
+    if (!isVR) {
+      if (type === 'pointerdown' && btn) btn.classList.add('active');
+      if (type === 'pointerup'   && btn) btn.classList.remove('active');
+    }
 
     const target = drag || el;
 
@@ -446,10 +452,12 @@ export class HTMLVRPanel {
       }));
     }
 
-    if (type === 'pointerup') {
-      target.dispatchEvent(new MouseEvent('click', {
-        bubbles: true, clientX: absX, clientY: absY,
-      }));
+    // VR: fire click immediately on pointerdown (at the ~10% threshold moment, before aim drifts).
+    // Desktop: fire click on pointerup — standard mouse press-release semantics.
+    if (isVR && type === 'pointerdown' && !drag) {
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
+    } else if (!isVR && type === 'pointerup') {
+      target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: absX, clientY: absY }));
     }
 
     if (type === 'pointerdown' || type === 'pointerup') {

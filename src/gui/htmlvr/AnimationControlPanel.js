@@ -278,6 +278,11 @@ const CSS = `
   background: #181825; color: #6c7086; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0;
 }
 .acp-root .acp-bs-del:hover { color: #f38ba8; border-color: #f38ba8; background: #3d1e2e; }
+.acp-root .acp-bs-key {
+  padding: 3px 6px; border: 1px solid #313244; border-radius: 5px;
+  background: #181825; color: #6c7086; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0;
+}
+.acp-root .acp-bs-key:hover { color: #ff9944; border-color: #ff9944; background: #3a2a1e; }
 `;
 
 let _cssInjected = false;
@@ -477,6 +482,7 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
       <div class="acp-bs-header">
         <span class="acp-bs-label">${name}</span>
         <input type="number" class="acp-bs-num" min="0" max="1" step="0.01" value="${weight.toFixed(2)}">
+        <button class="acp-bs-key" title="Key this blendshape">&#9670;</button>
         <button class="acp-bs-edit${isEditing ? ' active' : ''}">${isEditing ? 'Done' : 'Edit'}</button>
         <button class="acp-bs-del" title="Delete">Del</button>
       </div>
@@ -521,6 +527,13 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
         false, 'Change Blendshape Weight'
       );
       startVal = newVal;
+    });
+
+    row.querySelector('.acp-bs-key').addEventListener('click', () => {
+      const t = window._animCurrentTime || 0;
+      const currentWeight = parseFloat(slider.value);
+      reg.setBlendshapeWeight?.(mesh, name, currentWeight);
+      repaint?.();
     });
 
     row.querySelector('.acp-bs-edit').addEventListener('click', () => {
@@ -611,7 +624,7 @@ export function syncAnimationSection(el, main) {
 // sync()       — full syncAnimationSection + repaint
 // refreshBs(mesh) — rebuild blendshape list for mesh
 
-export function wireAnimationSection(el, main, { repaint = () => {}, sync, refreshBs }) {
+export function wireAnimationSection(el, main, { repaint = () => {}, sync, refreshBs, vrPanel = null }) {
   const _sync = sync ?? (() => { syncAnimationSection(el, main); repaint(); });
   const _refreshBs = refreshBs ?? ((mesh) => refreshBlendshapesDOM(el, mesh, main, repaint));
 
@@ -745,11 +758,12 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   });
 
   el.querySelector('#acp-clear-all')?.addEventListener('click', () => {
-    if (!confirm('Clear all animation?')) return;
-    const r = reg(); if (!r) return;
-    r.stopRecording?.(true); r.tracks.clear();
-    window._animCurrentTime = 0; r.globalPlaybackTime = 0;
-    window._animPlaying = false; _sync();
+    window._vrConfirm('Clear all animation?', () => {
+      const r = reg(); if (!r) return;
+      r.stopRecording?.(true); r.tracks.clear();
+      window._animCurrentTime = 0; r.globalPlaybackTime = 0;
+      window._animPlaying = false; _sync();
+    });
   });
 
   // ── Record ─────────────────────────────────────────────────────────────────
@@ -782,12 +796,20 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   // ── Keyframes ──────────────────────────────────────────────────────────────
 
+  const _updateAddKeyLabel = () => {
+    const addKeyBtn = el.querySelector('#acp-add-key');
+    if (addKeyBtn) addKeyBtn.innerHTML = window._animKeyMode === 'blendshape'
+      ? '&#9670; Key All Blendshapes'
+      : '&#9670; Add Key';
+  };
+
   el.querySelectorAll('.acp-mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       window._animKeyMode = btn.dataset.mode;
       el.querySelectorAll('.acp-mode-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.mode === window._animKeyMode)
       );
+      _updateAddKeyLabel();
       repaint();
     });
   });
@@ -798,14 +820,15 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const t = window._animCurrentTime || 0;
     if (window._animKeyMode === 'shape') r.addShapeKey(target, t);
     else if (window._animKeyMode === 'blendshape') {
+      // Key ALL blendshapes at their current evaluated weight (including weight=0)
       const track = r.tracks.get(target.getID());
-      const name = track?.editingBlendshape || window._lastActiveBlendshape;
-      if (name && track?.blendshapeTracks?.has(name)) {
-        const bTrack = track.blendshapeTracks.get(name);
-        const weight = bTrack.times.length > 0
-          ? r.evaluateScalarTrack(bTrack, t)
-          : (window._lastActiveBlendshapeWeight ?? 0);
-        r.setBlendshapeWeight?.(target, name, weight);
+      if (track?.blendshapeTracks) {
+        track.blendshapeTracks.forEach((bTrack, name) => {
+          const weight = bTrack.times.length > 0
+            ? (r.evaluateScalarTrack?.(bTrack, t) ?? 0)
+            : 0;
+          r.setBlendshapeWeight?.(target, name, weight);
+        });
       }
     } else r.addTransformKey(target, t);
     repaint();
@@ -880,6 +903,30 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   bsNameInput?.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') _createBlendshape(); });
   bsNameInput?.addEventListener('keyup', (e) => e.stopPropagation());
 
+  // ── Numpad wiring for integer number inputs (desktop + VR) ──────────────
+  // Clicking a number field opens the numpad overlay (DOM on desktop, 3D
+  // panel in VR).  The numpad fires a synthetic 'change' event on confirm so
+  // all existing duration/loop-start/end handlers run unchanged.
+
+  const _numInputs = [
+    { id: '#acp-duration',   label: 'Duration (frames)',  min: 1 },
+    { id: '#acp-loop-start', label: 'Loop Start (frame)', min: 0 },
+    { id: '#acp-loop-end',   label: 'Loop End (frame)',   min: 1 },
+  ];
+  _numInputs.forEach(({ id, label, min }) => {
+    const input = el.querySelector(id);
+    if (!input) return;
+    input.addEventListener('click', (e) => {
+      if (!window._vrNumpad) return; // numpad not yet initialised — fall back to native input
+      e.preventDefault(); e.stopPropagation();
+      const current = parseFloat(input.value) || min;
+      window._vrNumpad.open(current, { label, integer: true, min }, (val) => {
+        input.value = val;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }, input, vrPanel);
+    });
+  });
+
   // ── Range drag + global init ───────────────────────────────────────────────
 
   setupRangeDrag(el);
@@ -934,6 +981,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
       repaint:   () => this._requestPaint(),
       sync:      () => this.syncFromState(),
       refreshBs: (mesh) => this.refreshBlendshapes(mesh, main),
+      vrPanel:   this,   // lets the numpad position itself next to this panel in VR
     });
   }
 

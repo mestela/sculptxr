@@ -37,6 +37,7 @@ import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
 import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
+import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -278,6 +279,7 @@ class Scene {
     this._tornOffPanels   = new Map(); // sectionId → TornOffPanel
     this._filesPanel      = null;   // [HTMLVRPanel] floating Files overlay
     this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
+    this._vrNumpad        = null;   // [HTMLVRPanel] floating number-pad for VR value editing
     this._vrTimelineMesh    = null;   // Three.js Mesh — GuiTimeline canvas rendered into VR
     this._vrTimelineTexture = null;   // THREE.CanvasTexture wrapping GuiTimeline._canvas
     this._vrPoseLeft = null;
@@ -408,6 +410,16 @@ class Scene {
         }
       } catch (err) {
         console.error('[AnimPanel] init failed:', err);
+      }
+
+      // Init VrNumpad early so it's available for desktop click handlers.
+      try {
+        if (!this._vrNumpad && this._scene && this._renderer) {
+          this._vrNumpad = new VrNumpad(this._scene, this._camera.getThreeCamera(), this._renderer);
+          window._vrNumpad = this._vrNumpad;
+        }
+      } catch (err) {
+        console.error('[VrNumpad] early init failed:', err);
       }
     }, 500);
 
@@ -1087,6 +1099,9 @@ class Scene {
             this._animPanel.syncFromState();
           } catch (_) {}
         }
+        if (this._vrNumpad?.mesh?.visible) {
+          try { this._vrNumpad.update(true); } catch (_) {}
+        }
         // Single drain: executes the one requestPaint callback queued above.
         drainRAF();
       }
@@ -1590,7 +1605,7 @@ class Scene {
     // Initialize underlying GL context for legacy code compatibility (temporarily)
     this._gl = this._renderer.getContext();
     if (!this._gl) {
-      window.alert('Values: WebGL context could not be retrieved.');
+      (window._vrAlert || window.alert)('Values: WebGL context could not be retrieved.');
       return;
     }
 
@@ -3271,6 +3286,16 @@ class Scene {
       }
     }
 
+    // Init VR Numpad (floating number-pad for value editing in VR)
+    if (!this._vrNumpad && this._scene && this._camera && this._renderer) {
+      try {
+        this._vrNumpad = new VrNumpad(this._scene, this._camera.getThreeCamera(), this._renderer);
+        window._vrNumpad = this._vrNumpad;
+      } catch (err) {
+        console.error('[VrNumpad] init failed:', err);
+      }
+    }
+
     // Init VR Mini-HUD System
     if (!this._guiMini) {
       this._guiMini = new GuiXR(this);
@@ -4899,6 +4924,10 @@ class Scene {
             const h = _rc.intersectObject(this._filesPanel.mesh);
             if (h.length > 0) _panelHits.push({ name: 'FilesPanel', panel: this._filesPanel, hit: h[0], pressKey: '_fpWasPressed' });
           }
+          if (this._vrNumpad?.mesh?.visible) {
+            const h = _rc.intersectObject(this._vrNumpad.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'VrNumpad', panel: this._vrNumpad, hit: h[0], pressKey: '_npWasPressed' });
+          }
           // VRTimeline uses a different dispatch interface — included for nearest-hit ordering
           this._vtlIsPointing = false;
           if (this._vrTimelineMesh?.visible) {
@@ -4930,6 +4959,8 @@ class Scene {
           }
           if (this._filesPanel?.mesh?.visible)
             _allVisible.push({ name: 'FilesPanel', panel: this._filesPanel, pressKey: '_fpWasPressed' });
+          if (this._vrNumpad?.mesh?.visible)
+            _allVisible.push({ name: 'VrNumpad', panel: this._vrNumpad, pressKey: '_npWasPressed' });
 
           for (const v of _allVisible) {
             if (v.name === _winnerName) {

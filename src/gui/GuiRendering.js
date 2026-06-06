@@ -168,7 +168,7 @@ class GuiRendering {
       if (mesh) {
         if (val === Enums.Shader.UV && !mesh.hasUV()) {
           if (!warning)
-            window.alert('No UV on the mesh.');
+            (window._vrAlert || window.alert)('No UV on the mesh.');
           warning = true;
         } else {
           mesh.setShaderType(val);

@@ -53,9 +53,9 @@ class GuiScene {
   }
 
   clearScene() {
-    if (window.confirm(TR('sceneResetConfirm'))) {
+    window._vrConfirm(TR('sceneResetConfirm'), () => {
       this._main.clearScene();
-    }
+    });
   }
 
   onOffsetSymmetry(val) {

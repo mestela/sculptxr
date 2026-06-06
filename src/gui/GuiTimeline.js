@@ -1475,6 +1475,17 @@ export default class GuiTimeline {
       return;
     }
 
+    // Ruler strip + playhead cap (y 25-50, x in timeline column).
+    // Must be checked before toolbar buttons — several buttons extend into rx >= 200
+    // but are drawn only at y 5-25, so the ruler row has priority here.
+    const _tlX = 200;
+    const _tlW = this._cssWidth - 220;
+    if (ry >= 25 && ry < 50 && rx >= _tlX && rx <= _tlX + _tlW) {
+      this._isDraggingPlayhead = true;
+      this.handleInteraction(e);
+      return;
+    }
+
     if (ry < 50) {
       // Fit View button
       const fitBtnX = this._mode === 'graph' ? 245 : 115;
@@ -1507,6 +1518,12 @@ export default class GuiTimeline {
       const tboxBtnX = frameBtnX + 88 + (this._mode === 'graph' ? 73 : 0);
       if (rx >= tboxBtnX && rx <= tboxBtnX + 60) {
         window._animShowTransformBox = !window._animShowTransformBox;
+        this.draw();
+        return;
+      }
+      const snapBtnX = tboxBtnX + 68;
+      if (rx >= snapBtnX && rx <= snapBtnX + 55) {
+        window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
         this.draw();
         return;
       }
@@ -1635,10 +1652,10 @@ export default class GuiTimeline {
             this.draw();
             return; // Don't start marquee
           } else if (rx >= 120 && rx <= 160) {
-            if (confirm(`Delete track for Object ${meshId}?`)) {
+            window._vrConfirm(`Delete track for Object ${meshId}?`, () => {
               window._animationRegistry.deleteTrack(meshId);
               this.draw();
-            }
+            });
             return; // Don't start marquee
           }
         }
@@ -2022,8 +2039,9 @@ export default class GuiTimeline {
         
         let t = (rx - tlX) / tlW;
         t = Math.max(0, Math.min(1, t));
-        const targetTime = this._viewStart + t * this._viewDuration;
-        
+        const fps = window._animFPS || 24;
+        const targetTime = Math.round((this._viewStart + t * this._viewDuration) * fps) / fps;
+
         window._animPlaying = false;
         window._animCurrentTime = targetTime;
         if (window._animationRegistry) {
@@ -2053,8 +2071,12 @@ export default class GuiTimeline {
       let t = (rx - tlX) / tlW;
       t = Math.max(0, Math.min(1, t));
       const targetTime = loopStart + t * visibleDuration;
-      
-      const dt = targetTime - this._keyDragStartTime;
+
+      let dt = targetTime - this._keyDragStartTime;
+      if (window._animSnapToFrame !== false) {
+        const fps = window._animFPS || 24;
+        dt = Math.round(dt * fps) / fps;
+      }
       
       if (window._animationRegistry) {
         if (this._mode === 'graph') {
@@ -2564,7 +2586,8 @@ export default class GuiTimeline {
         visibleDuration = this._viewDuration !== undefined ? this._viewDuration : visibleDuration;
       }
       
-      const targetTime = loopStart + t * visibleDuration;
+      const fps = window._animFPS || 24;
+      const targetTime = Math.round((loopStart + t * visibleDuration) * fps) / fps;
 
       window._animPlaying = false;
       window._animCurrentTime = targetTime;
@@ -2769,14 +2792,29 @@ export default class GuiTimeline {
     const tlX = 200; // Width allocated for track names
     const tlW = w.w - 220;
 
-    // --- 1. Draw Top Transport Header Strip (30px tall) ---
+    // --- 1. Draw Top Transport Header Strip ---
     const headerH = 50;
     ctx.fillStyle = '#222';
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
+    // Resize grip — 3 dots centred at top edge
+    ctx.fillStyle = '#555';
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(w.w / 2 + i * 8, 3, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // --- helper: draw a rounded toolbar button ---
+    const _drawBtn = (bx, by, bw, bh, fill) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 3);
+      ctx.fill();
+    };
+
     // Draw Mode Toggle Button
-    ctx.fillStyle = '#444';
-    ctx.fillRect(10, 5, 90, 20);
+    _drawBtn(10, 5, 90, 20, '#444');
     ctx.fillStyle = '#fff';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
@@ -2795,8 +2833,7 @@ export default class GuiTimeline {
         }
       }
 
-      ctx.fillStyle = singleSelected ? '#444' : '#222';
-      ctx.fillRect(120, 5, 110, 20);
+      _drawBtn(120, 5, 110, 20, singleSelected ? '#444' : '#2a2a2a');
       ctx.fillStyle = '#fff';
       ctx.fillText(isTied ? 'Tangents: Tied' : 'Tangents: Broken', 175, 15);
     }
@@ -2805,8 +2842,7 @@ export default class GuiTimeline {
     const fitBtnX = this._mode === 'graph' ? 245 : 115;
     const fitHovered = this._lastMouseX >= fitBtnX && this._lastMouseX <= fitBtnX + 60 &&
                        this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    ctx.fillStyle = fitHovered ? '#666' : '#444';
-    ctx.fillRect(fitBtnX, 5, 60, 20);
+    _drawBtn(fitBtnX, 5, 60, 20, fitHovered ? '#666' : '#444');
     ctx.fillStyle = '#fff';
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
@@ -2817,8 +2853,7 @@ export default class GuiTimeline {
     const frameBtnX = fitBtnX + 68;
     const frameHovered = this._lastMouseX >= frameBtnX && this._lastMouseX <= frameBtnX + 80 &&
                          this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    ctx.fillStyle = frameHovered ? '#666' : '#444';
-    ctx.fillRect(frameBtnX, 5, 80, 20);
+    _drawBtn(frameBtnX, 5, 80, 20, frameHovered ? '#666' : '#444');
     ctx.fillStyle = '#fff';
     ctx.fillText('Frame Timeline', frameBtnX + 40, 15);
 
@@ -2828,8 +2863,7 @@ export default class GuiTimeline {
       const tanOn = !!window._animShowTangents;
       const tanHovered = this._lastMouseX >= tanBtnX && this._lastMouseX <= tanBtnX + 65 &&
                          this._lastMouseY >= 5 && this._lastMouseY <= 25;
-      ctx.fillStyle = tanOn ? '#4488ff' : (tanHovered ? '#666' : '#444');
-      ctx.fillRect(tanBtnX, 5, 65, 20);
+      _drawBtn(tanBtnX, 5, 65, 20, tanOn ? '#4488ff' : (tanHovered ? '#666' : '#444'));
       ctx.fillStyle = '#fff';
       ctx.fillText('Tangents', tanBtnX + 32, 15);
     }
@@ -2839,25 +2873,76 @@ export default class GuiTimeline {
     const tboxOn = !!window._animShowTransformBox;
     const tboxHovered = this._lastMouseX >= tboxBtnX && this._lastMouseX <= tboxBtnX + 60 &&
                         this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    ctx.fillStyle = tboxOn ? '#4488ff' : (tboxHovered ? '#666' : '#444');
-    ctx.fillRect(tboxBtnX, 5, 60, 20);
+    _drawBtn(tboxBtnX, 5, 60, 20, tboxOn ? '#4488ff' : (tboxHovered ? '#666' : '#444'));
     ctx.fillStyle = '#fff';
     ctx.fillText('T.Box', tboxBtnX + 30, 15);
+
+    // Snap to Frames toggle (both modes, default on)
+    const snapBtnX = tboxBtnX + 68;
+    const snapOn = window._animSnapToFrame !== false;
+    const snapHovered = this._lastMouseX >= snapBtnX && this._lastMouseX <= snapBtnX + 55 &&
+                        this._lastMouseY >= 5 && this._lastMouseY <= 25;
+    _drawBtn(snapBtnX, 5, 55, 20, snapOn ? '#4488ff' : (snapHovered ? '#666' : '#444'));
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Snap', snapBtnX + 27, 15);
 
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;
     const loopStartF = Math.round(loopStart * fps);
     const loopEndF = Math.round(loopEnd * fps);
 
-    ctx.fillStyle = '#888';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`${loopStartF}f`, tlX + 5, w.y + 40);
-    ctx.textAlign = 'right';
-    ctx.fillText(`${loopEndF}f`, tlX + tlW - 5, w.y + 40);
+    // --- Frame ruler strip (y 28..50) ---
+    const rulerY = 28;
+    const rulerH = headerH - rulerY; // 22px
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);
+
+    // Adaptive tick interval based on pixels-per-frame
+    const totalFrames = visibleDuration * fps;
+    const pxPerFrame = tlW / Math.max(1, totalFrames);
+    let majorInt, minorInt;
+    if      (pxPerFrame >= 16) { majorInt = 1;        minorInt = 0; }
+    else if (pxPerFrame >= 8)  { majorInt = 5;        minorInt = 1; }
+    else if (pxPerFrame >= 4)  { majorInt = 10;       minorInt = 5; }
+    else if (pxPerFrame >= 2)  { majorInt = fps;      minorInt = Math.max(1, Math.round(fps / 4)); }
+    else if (pxPerFrame >= 0.5){ majorInt = fps * 2;  minorInt = fps; }
+    else                       { majorInt = fps * 5;  minorInt = fps; }
+
+    const fStart = Math.ceil(loopStart * fps);
+    const fEnd   = Math.floor(loopEnd   * fps);
+
+    ctx.lineWidth = 1;
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+
+    for (let f = fStart; f <= fEnd; f++) {
+      const isMajor = majorInt > 0 && (f % majorInt === 0);
+      const isMinor = minorInt > 0 && (f % minorInt === 0);
+      if (!isMajor && !isMinor) continue;
+      const rx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
+      const tickH = isMajor ? rulerH * 0.55 : rulerH * 0.28;
+      ctx.strokeStyle = isMajor ? '#666' : '#3a3a3a';
+      ctx.beginPath();
+      ctx.moveTo(rx, w.y + headerH - tickH);
+      ctx.lineTo(rx, w.y + headerH);
+      ctx.stroke();
+      if (isMajor) {
+        ctx.fillStyle = '#888';
+        ctx.fillText(`${f}`, rx, w.y + rulerY + 2);
+      }
+    }
+
+    // Ruler border line
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tlX, w.y + rulerY);
+    ctx.lineTo(tlX + tlW, w.y + rulerY);
+    ctx.stroke();
 
     // Show status or value of closest key to playhead
+    ctx.textBaseline = 'middle';
     if (reg.isCountingIn || reg.isRecording) {
       ctx.fillStyle = '#ff4444';
       ctx.font = 'bold 14px sans-serif';

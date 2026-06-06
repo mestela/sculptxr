@@ -26,10 +26,10 @@ var doExportSketchfab = function (xhr, main, key, statusWidget) {
     var res = JSON.parse(xhr.responseText);
     var uid = res.uid;
     if (!uid) {
-      window.alert(TR('sketchfabUploadError', res.detail));
+      (window._vrAlert || window.alert)(TR('sketchfabUploadError', res.detail));
       return;
     }
-    window.prompt(TR('sketchfabUploadProcessing'), 'https://sketchfab.com/models/' + uid);
+    (window._vrAlert || window.alert)(TR('sketchfabUploadProcessing') + ' https://sketchfab.com/models/' + uid);
     var check = function () {
       var xhrPoll = new XMLHttpRequest();
       var url = 'https://api.sketchfab.com/v2/models/' + uid + '/status';
@@ -44,9 +44,9 @@ var doExportSketchfab = function (xhr, main, key, statusWidget) {
       xhrPoll.onload = function () {
         var resPoll = JSON.parse(xhrPoll.responseText);
         if (resPoll.processing === 'FAILED')
-          window.alert(TR('sketchfabUploadError', resPoll.warning.generic.join('\n')));
+          (window._vrAlert || window.alert)(TR('sketchfabUploadError', resPoll.warning.generic.join('\n')));
         else if (resPoll.processing === 'SUCCEEDED')
-          window.prompt(TR('sketchfabUploadSuccess'), 'https://sketchfab.com/models/' + uid);
+          (window._vrAlert || window.alert)(TR('sketchfabUploadSuccess') + ' https://sketchfab.com/models/' + uid);
         else
           window.setTimeout(check, 5000);
       };

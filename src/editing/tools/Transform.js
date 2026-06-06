@@ -158,19 +158,6 @@ class Transform extends SculptBase {
   postRender() {
     var g = this._gizmo._group;
 
-    // --- DEBUG LOG (remove once gizmo displays) ---
-    if (!this._postRenderLogged) {
-      this._postRenderLogged = true;
-      var wgDbg = this._main._worldGroup;
-      console.log('[Transform.postRender FIRST CALL]',
-        'g.parent:', g ? (g.parent ? g.parent.type + '/' + (g.parent.name || '?') : 'NULL — not in scene!') : 'no group',
-        'g.visible:', g ? g.visible : 'n/a',
-        'g.children:', g ? g.children.length : 'n/a',
-        'worldGroup:', wgDbg ? wgDbg.type : 'NULL'
-      );
-    }
-    // --- END DEBUG ---
-
     // Lazy-insert the gizmo group into the Three.js scene.  The Gizmo constructor
     // runs during SculptManager.init() before Scene creates its worldGroup, so
     // the group ends up parentless.  postRender() is called every frame, so this
@@ -180,7 +167,6 @@ class Transform extends SculptBase {
       // this._main._scene is the THREE.Scene object which never has _worldGroup.
       var wg = this._main._worldGroup ||
                (this._main._scene && this._main._scene._worldGroup);
-      console.log('[Transform.postRender] lazy-add: wg=', wg ? wg.type : 'NULL');
       if (wg) { wg.add(g); this._main.render(); }
     }
 

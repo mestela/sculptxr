@@ -654,11 +654,11 @@ class SculptGL extends Scene {
   }
 
   onContextLost() {
-    window.alert('Oops... WebGL context lost.');
+    (window._vrAlert || window.alert)('Oops... WebGL context lost.');
   }
 
   onContextRestored() {
-    window.alert('Wow... Context is restored.');
+    (window._vrAlert || window.alert)('Wow... Context is restored.');
   }
 
   ////////////////
