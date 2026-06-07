@@ -290,6 +290,11 @@ export class HTMLVRPanel {
     this._desktopRenderer = renderer;
 
     this._desktopPointerDown = (e) => {
+      // Desktop panel interaction is mouse-only. Pen (Apple Pencil) and touch
+      // events must not go through the VR panel raycast path — doing so causes
+      // setPointerCapture + synthetic PointerEvent dispatch that fight with the
+      // sculpt pointer handler on iPad.
+      if (e.pointerType !== 'mouse') return;
       if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       this._screenToRay(e.clientX, e.clientY, camera);
       const hits = this._raycaster.intersectObject(this.mesh);
@@ -300,6 +305,7 @@ export class HTMLVRPanel {
     };
 
     this._desktopPointerMove = (e) => {
+      if (e.pointerType !== 'mouse') return;
       if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       this._screenToRay(e.clientX, e.clientY, camera);
       const hits = this._raycaster.intersectObject(this.mesh);
@@ -311,6 +317,7 @@ export class HTMLVRPanel {
     };
 
     this._desktopPointerUp = (e) => {
+      if (e.pointerType !== 'mouse') return;
       if (renderer.xr.isPresenting || !this.mesh?.visible || window._htmlvrOverlayOpen) return;
       if (e.target.hasPointerCapture?.(e.pointerId)) {
         e.target.releasePointerCapture(e.pointerId);

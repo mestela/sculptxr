@@ -231,7 +231,9 @@ class GuiSculpting {
     if (cur._ctrlRadius) {
       var rad = cur._ctrlRadius.getValue();
       this._refX -= rad;
-      this._main.getSculptManager().getSelection().setOffsetX(-rad * this._main.getPixelRatio());
+      var sel = this._main.getSculptManager().getSelection();
+      sel.setOffsetX(-rad * this._main.getPixelRatio());
+      sel.setIsEditMode(true);
       this._main.renderSelectOverRtt();
     }
   }
@@ -342,6 +344,7 @@ class GuiSculpting {
       this._modalBrushRadius = main._focusGui = false;
       var selRadius = this._main.getSculptManager().getSelection();
       selRadius.setOffsetX(0.0);
+      selRadius.setIsEditMode(false);
       event.pageX = this._lastPageX;
       event.pageY = this._lastPageY;
       main.setMousePosition(event);

@@ -29,10 +29,11 @@ Geometry.intersectionRayTriangleEdges = (function () {
   var tvec = [0.0, 0.0, 0.0];
   var qvec = [0.0, 0.0, 0.0];
   return function (orig, dir, edge1, edge2, v1, vertInter) {
-    // moller trumbore intersection algorithm
+    // moller trumbore intersection algorithm (front-face only — det must be positive)
     vec3.cross(pvec, dir, edge2);
     var det = vec3.dot(edge1, pvec);
-    if (det > -EPSILON && det < EPSILON)
+    // det < 0 means back face — skip it so raycasts never land on the far side of the mesh
+    if (det < EPSILON)
       return -1.0;
     var invDet = 1.0 / det;
     vec3.sub(tvec, orig, v1);

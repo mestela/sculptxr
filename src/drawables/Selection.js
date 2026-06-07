@@ -28,6 +28,10 @@ class Selection {
     this._offsetX = 0.0; // horizontal offset (when editing the radius)
     this._isEditMode = false;
 
+    // Cache for radius-drag edit mode — lets circle remain visible off-mesh
+    this._lastLocalRadius = null;
+    this._lastScreenRadius = null;
+
     this.init();
   }
 
@@ -167,14 +171,15 @@ class Selection {
     if (main.getXRMode && main.getXRMode()) {
       const gl = this._gl;
       if (gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null) {
-        return; 
+        return;
       }
       if (window.isUIHiddenForVR) {
         return;
       }
     }
 
-    var pickedMesh = main.getPicking().getMesh() && !this._isEditMode;
+    const inEditMode = this._isEditMode;
+    var pickedMesh = !!main.getPicking().getMesh();
 
     if (main.getXRMode && main.getXRMode() && main.getPicking()._isVRHit) {
       pickedMesh = false;
@@ -184,59 +189,85 @@ class Selection {
     const sm = main.getSculptManager();
     const curIdx = sm ? sm.getToolIndex() : -1;
     const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
-    
+
     if (window._animPlaying || isTransform) {
       pickedMesh = false;
     }
 
     if (!this._threeCircle) {
-      const geo = new THREE.RingGeometry(0.9, 1.0, 32);
-      const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
-      this._threeCircle = new THREE.Mesh(geo, mat);
-      this._threeCircle.renderOrder = 10000; // Render on top
-      
+      // LineLoop gives a true 1-px-wide circle outline, matching the original GL line look.
+      // RingGeometry creates a filled disk that appears too thick at large radii.
+      const pts = [];
+      for (let i = 0; i <= 64; i++) {
+        const a = (i / 64) * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0));
+      }
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2, depthTest: false, depthWrite: false, transparent: true });
+      this._threeCircle = new THREE.LineLoop(lineGeo, lineMat);
+      this._threeCircle.renderOrder = 10000;
+
       const dotGeo = new THREE.SphereGeometry(0.005, 8, 8);
-      this._threeDot = new THREE.Mesh(dotGeo, mat);
-      this._threeDot.renderOrder = 10000; // Render on top
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true });
+      this._threeDot = new THREE.Mesh(dotGeo, dotMat);
+      this._threeDot.renderOrder = 10000;
     }
 
     if (pickedMesh) {
       var picking = main.getPicking();
       var mesh = picking.getMesh();
       var threeMesh = mesh.getThreeMesh();
-      
+
       // Attach to the mesh if not already, so it inherits local space transforms
       if (this._threeCircle.parent !== threeMesh) {
         threeMesh.add(this._threeCircle);
         threeMesh.add(this._threeDot);
       }
-      
+
       var worldRadius = Math.sqrt(picking.computeWorldRadius2(true)); // Ignore pressure for indicator
       const m = threeMesh.matrixWorld.elements;
       const scale2 = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
       var localRadius = worldRadius / Math.sqrt(scale2);
-      
+
       var interPoint = picking.getIntersectionPoint();
-      
+
       this._threeCircle.position.fromArray(interPoint);
       this._threeCircle.scale.set(localRadius, localRadius, localRadius);
-      
+
       // Align with local normal
       var normal = picking.computePickedNormal();
       if (normal) {
         this._threeCircle.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(normal[0], normal[1], normal[2]));
       }
-      
+
       this._threeCircle.visible = true;
-      
       this._threeDot.position.fromArray(interPoint);
-      this._threeDot.visible = true;
+      this._threeDot.visible = !inEditMode; // hide centre dot during radius drag
+
+      // Cache position/radius so the circle can stay visible when cursor leaves the mesh
+      this._lastLocalRadius  = localRadius;
+      this._lastScreenRadius = sm ? sm.getCurrentTool().getScreenRadius() : localRadius;
+
+    } else if (inEditMode && this._lastLocalRadius !== null && this._threeCircle.parent) {
+      // Radius-drag mode but cursor not over mesh — keep circle at last 3D position and
+      // scale it proportionally to the current screen radius so it grows/shrinks visually.
+      const curScreenRadius = sm ? sm.getCurrentTool().getScreenRadius() : this._lastScreenRadius;
+      if (curScreenRadius && this._lastScreenRadius) {
+        const ratio = curScreenRadius / this._lastScreenRadius;
+        const newLocalRadius = this._lastLocalRadius * ratio;
+        this._threeCircle.scale.set(newLocalRadius, newLocalRadius, newLocalRadius);
+        // Update cache so next frame diffs correctly
+        this._lastLocalRadius  = newLocalRadius;
+        this._lastScreenRadius = curScreenRadius;
+      }
+      this._threeCircle.visible = true;
+      this._threeDot.visible = false;
+
     } else {
       if (this._threeCircle) this._threeCircle.visible = false;
-      if (this._threeDot) this._threeDot.visible = false;
+      if (this._threeDot)   this._threeDot.visible    = false;
     }
-
-    this._isEditMode = false;
+    // _isEditMode is managed by GuiSculpting — do NOT reset it here
   }
 
   setIsNegative(bool) {

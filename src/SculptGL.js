@@ -1,7 +1,6 @@
 import './misc/Polyfill.js';
 import { VERSION } from './Version.js';
 import { vec3, mat4, quat, mat3 } from 'gl-matrix';
-import { Manager as HammerManager, Pan, Pinch, Tap } from 'hammerjs';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
 import Utils from './misc/Utils.js';
@@ -20,6 +19,16 @@ class SculptGL extends Scene {
   constructor() {
     super();
 
+    // On iPad, Apple Pencil hover events fire with pressure=0 before a stroke begins,
+    // which bleeds into the first touch and shrinks the radius to ~25% via the pressure
+    // formula (1 + 0.75 * (0*2 - 1) = 0.25). Disable pressure scaling on touch devices.
+    const isIPad = /iPad/.test(navigator.userAgent) ||
+                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (isIPad) {
+      Tablet.radiusFactor    = 0.0;
+      Tablet.intensityFactor = 0.0;
+    }
+
     // all x and y position are canvas based
 
     // controllers stuffs
@@ -27,21 +36,39 @@ class SculptGL extends Scene {
     this._mouseY = 0;
     this._lastMouseX = 0;
     this._lastMouseY = 0;
-    this._lastScale = 0;
     this._vrMultiSelect = false; // [VR] Multi-select Mode
 
     // NOTHING, MASK_EDIT, SCULPT_EDIT, CAMERA_ZOOM, CAMERA_ROTATE, CAMERA_PAN, CAMERA_PAN_ZOOM_ALT
     this._action = Enums.Action.NOTHING;
-    this._lastNbPointers = 0;
     this._isWheelingIn = false;
 
     // masking
     this._maskX = 0;
     this._maskY = 0;
-    this._hammer = new HammerManager(this._canvas);
+
+    // Dedup guard: iPadOS Safari dispatches each pen PointerEvent twice as
+    // separate objects with identical data. _seenPtrKeys is a Map from
+    // (type+pointerId+roundedTimestamp) → time-seen, used to suppress
+    // duplicates that arrive within a short window even if other events
+    // arrive in between. _handledPtrEvents catches same-object re-routing.
+    this._handledPtrEvents = new WeakSet();
+    this._seenPtrKeys      = new Map();
+
+    // Touch gesture state (replaces Hammer.js)
+    this._fingerPointers       = new Map(); // pointerId -> {x, y}
+    this._gestureActive        = false;
+    this._gesturePinchInitDist = 0; // finger distance at gesture start (scale reference)
+    this._gesturePinchLastDist = 0; // finger distance last frame
+    this._gesturePanLastX      = 0; // 2-finger pan: center position last frame
+    this._gesturePanLastY      = 0;
+    this._doubleTapTrack       = { time: 0, x: 0, y: 0, n: 0, count: 0 };
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
     this._eventProxy = {};
+
+    // Enable touch debug logging via URL parameter ?dbgTouch
+    if (new URLSearchParams(window.location.search).has('dbgTouch'))
+      window._dbgTouch = true;
 
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
@@ -257,13 +284,7 @@ class SculptGL extends Scene {
         }
     };
 
-    this.initHammer();
-
-    this.initHammer();
-
     this._shiftKey = false; // Track shift key globally
-
-    this.initHammer();
     // this._gui.initGui(); // REMOVED: Called in Scene.start(), premature call caused crash
 
     // --- Version Checker ---
@@ -534,23 +555,34 @@ class SculptGL extends Scene {
   addEvents() {
     var canvas = this._canvas;
 
+    // Prevent the browser from handling touch gestures (scroll, pinch-zoom) on
+    // the canvas — we handle them ourselves via pointer events.
+    canvas.style.touchAction = 'none';
+
     var cbMouseWheel = this.onMouseWheel.bind(this);
     var cbOnPointer = this.onPointer.bind(this);
 
     // pointer
-    canvas.addEventListener('pointerdown', cbOnPointer, false);
-    canvas.addEventListener('pointermove', cbOnPointer, false);
-    canvas.addEventListener('pointerup', cbOnPointer, false);
+    canvas.addEventListener('pointerdown',   cbOnPointer, false);
+    canvas.addEventListener('pointermove',   cbOnPointer, false);
+    canvas.addEventListener('pointerup',     cbOnPointer, false);
+    canvas.addEventListener('pointercancel', cbOnPointer, false);
 
     // mouse
-    canvas.addEventListener('mousedown', this.onMouseDown.bind(this), false);
-    canvas.addEventListener('mouseup', this.onMouseUp.bind(this), false);
-    canvas.addEventListener('mouseout', this.onMouseOut.bind(this), false);
-    canvas.addEventListener('mouseover', this.onMouseOver.bind(this), false);
-    canvas.addEventListener('mousemove', Utils.throttle(this.onMouseMove.bind(this), 16.66), false);
+    // NOTE: on Safari/iPadOS, pen pointermove is also dispatched to mousemove/mousedown
+    // listeners (PointerEvent extends MouseEvent, so it satisfies the listener type).
+    // We filter those out here — pen and touch are handled entirely via onPointer().
+    // Only real MouseEvents (desktop mouse) should reach these handlers.
+    const mouseOnly = (fn) => (e) => { if (e.constructor === MouseEvent) fn(e); };
+    canvas.addEventListener('mousedown', mouseOnly(this.onMouseDown.bind(this)), false);
+    canvas.addEventListener('mouseup',   mouseOnly(this.onMouseUp.bind(this)),   false);
+    canvas.addEventListener('mouseout',  mouseOnly(this.onMouseOut.bind(this)),  false);
+    canvas.addEventListener('mouseover', mouseOnly(this.onMouseOver.bind(this)), false);
+    canvas.addEventListener('mousemove', mouseOnly(Utils.throttle(this.onMouseMove.bind(this), 16.66)), false);
 
     // [HOTFIX] Prevent Three.js WebXRManager from running heavy raycasts on hover
     canvas.addEventListener('pointerover', (e) => { e.stopPropagation(); }, true);
+
 
     canvas.addEventListener('mousewheel', cbMouseWheel, false);
     canvas.addEventListener('DOMMouseScroll', cbMouseWheel, false);
@@ -575,77 +607,213 @@ class SculptGL extends Scene {
   }
 
   onPointer(event) {
+    // iPadOS Safari dispatches each pen PointerEvent TWICE — two different objects
+    // with identical data (same pointerId, timeStamp, pressure, position).
+    // Use a Map keyed by (type+pointerId+roundedTimestamp) to suppress duplicates
+    // that arrive within 50ms, even if other events land in between.
+    // Also catch same-object re-routing via WeakSet (belt-and-suspenders).
+    if (this._handledPtrEvents.has(event)) {
+      if (window._dbgTouch && window.screenLog) window.screenLog(`[DEDUP same-obj] type=${event.type}`, 'red');
+      return;
+    }
+    const ptrKey = `${event.type}-${event.pointerId}-${Math.round(event.timeStamp)}`;
+    const now = performance.now();
+    const seenAt = this._seenPtrKeys.get(ptrKey);
+    if (seenAt !== undefined && (now - seenAt) < 50) {
+      if (window._dbgTouch && window.screenLog) window.screenLog(`[DEDUP data-dup] type=${event.type} ts=${event.timeStamp.toFixed(3)} age=${(now-seenAt).toFixed(1)}ms`, 'red');
+      return;
+    }
+    this._seenPtrKeys.set(ptrKey, now);
+    this._handledPtrEvents.add(event);
+    // Prune old entries to prevent unbounded growth
+    if (this._seenPtrKeys.size > 50) {
+      const cutoff = now - 200;
+      for (const [k, t] of this._seenPtrKeys) { if (t < cutoff) this._seenPtrKeys.delete(k); }
+    }
+
     Tablet.pressure = event.pressure;
-    
-    // Handle Apple Pencil (pen) directly like a mouse to enable sculpting!
-    // Finger (touch) continues to fall through to Hammer.js for orbit/pan/zoom.
+    if (window._dbgTouch === true && !(event.pointerType === 'pen' && event.pressure === 0)) console.log(`[ptr] type=${event.type} ptrType=${event.pointerType} pressure=${event.pressure.toFixed(3)} id=${event.pointerId} ts=${event.timeStamp.toFixed(3)}`);
+
     if (event.pointerType === 'pen') {
-      if (event.type === 'pointerdown') {
-        this.onMouseDown(event);
-      } else if (event.type === 'pointermove') {
-        this.onMouseMove(event);
-      } else if (event.type === 'pointerup') {
-        this.onMouseUp(event);
+      if (this._fingerPointers.size > 0 && event.pressure < 0.05) {
+        event.preventDefault();
+        return;
       }
+      event.preventDefault();
+      if (event.type === 'pointerdown') {
+        // Debounce: reject any pen pointerdown that arrives within 50ms of the
+        // previous accepted one. Catches both true simultaneous duplicates (0ms apart)
+        // AND pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
+        // which reset _action to NOTHING and bypass the onDeviceDown guard.
+        const msSinceLastDown = performance.now() - (this._lastPenDownMs || 0);
+        if (msSinceLastDown < 50) {
+          if (window._dbgTouch && window.screenLog)
+            window.screenLog(`[pen↓ BOUNCE] blocked after ${msSinceLastDown.toFixed(1)}ms`, 'orange');
+          return;
+        }
+        this._lastPenDownMs = performance.now();
+        if (window._dbgTouch && window.screenLog) window.screenLog(`[pen↓] p=${event.pressure.toFixed(2)} x=${event.clientX.toFixed(0)} y=${event.clientY.toFixed(0)} ts=${event.timeStamp.toFixed(3)}`, 'cyan');
+        this.onMouseDown(event);
+      } else if (event.type === 'pointermove') { this._lastPenMoveMs = performance.now(); this.onMouseMove(event); }
+        else if (event.type === 'pointerup')   { this.onMouseUp(event); }
+
+    } else if (event.pointerType === 'touch') {
+      if (event.type === 'pointerdown')                                      { this._onTouchDown(event); }
+      else if (event.type === 'pointermove')                                 { this._onTouchMove(event); }
+      else if (event.type === 'pointerup' || event.type === 'pointercancel') { this._onTouchUp(event); }
     }
   }
 
-  initHammer() {
-    this._hammer.options.enable = true;
-    this._initHammerRecognizers();
-    this._initHammerEvents();
+  ////////////////////////////
+  // TOUCH GESTURE ENGINE
+  // Raw Pointer Events replacement for Hammer.js.
+  // Finger pointers only — pen is handled separately in onPointer().
+  ////////////////////////////
+
+  _onTouchDown(e) {
+    try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    this._fingerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this._focusGui = false;
+    const n = this._fingerPointers.size;
+    const center = this._fingerCenter();
+    if (this._gestureActive) {
+      // Extra finger added mid-gesture — restart with new count
+      this.onDeviceUp();
+    }
+    this._startGesture(n, center, this._gestureActive);
   }
 
-  _initHammerRecognizers() {
-    var hm = this._hammer;
-    // double tap
-    hm.add(new Tap({
-      event: 'doubletap',
-      pointers: 1,
-      taps: 2,
-      time: 250, // def : 250.  Maximum press time in ms.
-      interval: 450, // def : 300. Maximum time in ms between multiple taps.
-      threshold: 5, // def : 2. While doing a tap some small movement is allowed.
-      posThreshold: 50 // def : 30. The maximum position difference between multiple taps.
-    }));
+  _onTouchMove(e) {
+    if (!this._fingerPointers.has(e.pointerId)) return;
+    this._fingerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!this._gestureActive) return;
 
-    // double tap 2 fingers
-    hm.add(new Tap({
-      event: 'doubletap2fingers',
-      pointers: 2,
-      taps: 2,
-      time: 250,
-      interval: 450,
-      threshold: 5,
-      posThreshold: 50
-    }));
+    const n = this._fingerPointers.size;
+    const center = this._fingerCenter();
 
-    // pan
-    hm.add(new Pan({
-      event: 'pan',
-      pointers: 0,
-      threshold: 0
-    }));
+    if (n === 2) {
+      // Direct 2-finger pan + zoom — bypasses onDeviceMove/Wheel to avoid
+      // camera.start() jitter from frequent zoom-direction changes during pan.
+      const dx = center.x - this._gesturePanLastX;
+      const dy = center.y - this._gesturePanLastY;
+      this._gesturePanLastX = center.x;
+      this._gesturePanLastY = center.y;
 
-    // pinch
-    hm.add(new Pinch({
-      event: 'pinch',
-      pointers: 2,
-      threshold: 0.1 // Set a minimal thresold on pinch event, to be detected after pan
-    }));
-    hm.get('pinch').recognizeWith(hm.get('pan'));
+      if (dx !== 0 || dy !== 0) {
+        const sf = this.getSpeedFactor() * 2.5;
+        if (window._dbgTouch === true) console.log(`[2finger pan] dx=${dx.toFixed(1)} dy=${dy.toFixed(1)} sf=${sf.toFixed(5)}`);
+        this._camera.translate(dx * sf, dy * sf);
+        Multimesh.RENDER_HINT = Multimesh.CAMERA;
+        this.render();
+      }
+
+      if (this._gesturePinchInitDist > 0) {
+        const dist = this._fingerPinchDist();
+        const distChange = dist - this._gesturePinchLastDist;
+        this._gesturePinchLastDist = dist;
+        if (Math.abs(distChange) >= 3) {
+          // Hammer formula: (scale - lastScale) * 25 * camera zoom factor 0.02
+          const zoom = (distChange / this._gesturePinchInitDist) * 25 * 0.02;
+          this._camera.zoom(zoom);
+          Multimesh.RENDER_HINT = Multimesh.CAMERA;
+          this.render();
+        }
+      }
+      return;
+    }
+
+    const evProxy = this._eventProxy;
+    evProxy.clientX = center.x;
+    evProxy.clientY = center.y;
+    this.onDeviceMove(evProxy);
   }
 
-  _initHammerEvents() {
-    var hm = this._hammer;
-    hm.on('panstart', this.onPanStart.bind(this));
-    hm.on('panmove', this.onPanMove.bind(this));
-    hm.on('panend pancancel', this.onPanEnd.bind(this));
+  _onTouchUp(e) {
+    if (!this._fingerPointers.has(e.pointerId)) return;
+    // Snapshot before removing so double-tap check sees the right count
+    const center = this._fingerCenter();
+    const n = this._fingerPointers.size;
+    this._fingerPointers.delete(e.pointerId);
+    const remaining = this._fingerPointers.size;
 
-    hm.on('doubletap', this.onDoubleTap.bind(this));
-    hm.on('doubletap2fingers', this.onDoubleTap2Fingers.bind(this));
-    hm.on('pinchstart', this.onPinchStart.bind(this));
-    hm.on('pinchin pinchout', this.onPinchInOut.bind(this));
+    if (remaining === 0) {
+      if (this._gestureActive) {
+        this._gestureActive = false;
+        this.onDeviceUp();
+      }
+      this._checkDoubleTap(center, n);
+    } else {
+      // One finger lifted but others remain — restart gesture
+      if (this._gestureActive) this.onDeviceUp();
+      this._startGesture(remaining, this._fingerCenter(), true);
+    }
+  }
+
+  _startGesture(n, center, wasActive) {
+    this._gestureActive = true;
+
+    if (n === 2) {
+      // 2-finger: handle pan+zoom directly without routing through the
+      // device-action state machine. This avoids camera.start() being called
+      // during pinch-while-panning, which was causing jitter.
+      this._action = Enums.Action.CAMERA_PAN;
+      this._focusGui = false;
+      this._gesturePanLastX = center.x;
+      this._gesturePanLastY = center.y;
+      const d = this._fingerPinchDist();
+      this._gesturePinchInitDist = d;
+      this._gesturePinchLastDist = d;
+      return;
+    }
+
+    const evProxy = this._eventProxy;
+    evProxy.clientX = center.x;
+    evProxy.clientY = center.y;
+    // 1 finger (fresh)      → MOUSE_LEFT   = rotate
+    // 1 finger (after 2+)   → MOUSE_RIGHT  = pan
+    // 3+ fingers            → MOUSE_RIGHT  = pan
+    if (n === 1 && wasActive)   evProxy.which = MOUSE_RIGHT;
+    else if (n >= 3)            evProxy.which = MOUSE_RIGHT;
+    else                        evProxy.which = MOUSE_LEFT;
+    this.onDeviceDown(evProxy);
+  }
+
+  _fingerCenter() {
+    let cx = 0, cy = 0;
+    for (const p of this._fingerPointers.values()) { cx += p.x; cy += p.y; }
+    const n = this._fingerPointers.size;
+    return n ? { x: cx / n, y: cy / n } : { x: 0, y: 0 };
+  }
+
+  _fingerPinchDist() {
+    if (this._fingerPointers.size < 2) return 0;
+    const [a, b] = this._fingerPointers.values();
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  _checkDoubleTap(center, n) {
+    const now = performance.now();
+    const t = this._doubleTapTrack;
+    const dt = now - t.time;
+    const dist = Math.hypot(center.x - t.x, center.y - t.y);
+
+    if (dt < 450 && dist < 50 && n === t.n) {
+      t.count++;
+      if (t.count >= 2) {
+        // Reset so a third tap doesn't re-trigger
+        t.count = 0;
+        t.time = 0;
+        if (n === 1)      this.onDoubleTap({ clientX: center.x, clientY: center.y });
+        else if (n >= 2)  this.onDoubleTap2Fingers();
+        return;
+      }
+    } else {
+      t.count = 1;
+    }
+    t.time = now;
+    t.x = center.x;
+    t.y = center.y;
+    t.n = n;
   }
 
   stopAndPrevent(event) {
@@ -691,65 +859,6 @@ class SculptGL extends Scene {
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
     this._gui.callFunc('onKeyUp', e);
-  }
-
-  ////////////////
-  // MOBILE EVENTS
-  ////////////////
-  onPanStart(e) {
-    if (e.pointerType === 'mouse')
-      return;
-    this._focusGui = false;
-    var evProxy = this._eventProxy;
-    evProxy.clientX = e.center.x;
-    evProxy.clientY = e.center.y;
-    this.onPanUpdateNbPointers(Math.min(3, e.pointers.length));
-  }
-
-  onPanMove(e) {
-    if (e.pointerType === 'mouse')
-      return;
-    var evProxy = this._eventProxy;
-    evProxy.clientX = e.center.x;
-    evProxy.clientY = e.center.y;
-
-    var nbPointers = Math.min(3, e.pointers.length);
-    if (nbPointers !== this._lastNbPointers) {
-      this.onDeviceUp();
-      this.onPanUpdateNbPointers(nbPointers);
-    }
-    this.onDeviceMove(evProxy);
-
-    if (this._isIOS()) {
-      window.clearTimeout(this._timerResetPointer);
-      this._timerResetPointer = window.setTimeout(function () {
-        this._lastNbPointers = 0;
-      }.bind(this), 60);
-    }
-  }
-
-  _isIOS() {
-    if (this._isIOS !== undefined) return this._isIOS;
-    this._isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    return this._isIOS;
-  }
-
-  onPanUpdateNbPointers(nbPointers) {
-    // called on panstart or panmove (not consistent)
-    var evProxy = this._eventProxy;
-    evProxy.which = nbPointers === 1 && this._lastNbPointers >= 1 ? 3 : nbPointers;
-    this._lastNbPointers = nbPointers;
-    this.onDeviceDown(evProxy);
-  }
-
-  onPanEnd(e) {
-    if (e.pointerType === 'mouse')
-      return;
-    this.onDeviceUp();
-    // we need to detect when all fingers are released
-    window.setTimeout(function () {
-      if (!e.pointers.length) this._lastNbPointers = 0;
-    }.bind(this), 60);
   }
 
   onDoubleTap(e) {
@@ -799,17 +908,6 @@ class SculptGL extends Scene {
   onDoubleTap2Fingers() {
     if (this._focusGui) return;
     this.resetCameraMeshes();
-  }
-
-  onPinchStart(e) {
-    this._focusGui = false;
-    this._lastScale = e.scale;
-  }
-
-  onPinchInOut(e) {
-    var dir = (e.scale - this._lastScale) * 25;
-    this._lastScale = e.scale;
-    this.onDeviceWheel(dir);
   }
 
   resetCameraMeshes(meshes) {
@@ -891,6 +989,11 @@ class SculptGL extends Scene {
     event.stopPropagation();
     event.preventDefault();
 
+    const age = performance.now() - (this._lastPenDownMs || 0);
+    const isCompatDup = event.constructor === MouseEvent && age < 50;
+    if (window._dbgTouch && window.screenLog) window.screenLog(`[mousedown] cls=${event.constructor.name} age=${age.toFixed(0)}ms BLOCKED=${isCompatDup}`, isCompatDup ? 'orange' : 'red');
+    if (isCompatDup) return;
+
     this._gui.callFunc('onMouseDown', event);
     this.onDeviceDown(event);
   }
@@ -898,6 +1001,15 @@ class SculptGL extends Scene {
   onMouseMove(event) {
     event.stopPropagation();
     event.preventDefault();
+
+    // Suppress mouse/pen-hover moves while a finger gesture is active.
+    if (this._fingerPointers.size > 0) return;
+
+    const moveAge = performance.now() - (this._lastPenMoveMs || 0);
+    const isCompatMove = event.constructor === MouseEvent && moveAge < 50;
+    // Only log mousemove when it's NOT a routine blocked hover dup — reduces noise
+    if (window._dbgTouch === true && !(isCompatMove && this._fingerPointers.size === 0)) console.log(`[mousemove] cls=${event.constructor.name} penAge=${moveAge.toFixed(1)}ms fingers=${this._fingerPointers.size} BLOCKED=${isCompatMove || this._fingerPointers.size > 0}`);
+    if (isCompatMove) return;
 
     this._gui.callFunc('onMouseMove', event);
     this.onDeviceMove(event);
@@ -1177,16 +1289,28 @@ class SculptGL extends Scene {
     // Prevent mouse-down from interfering with active VR stroke
     if (this._vrSculpting) return;
 
+    // Guard: prevent duplicate pen events from re-starting an active sculpt.
+    // Calling _sculptManager.start() while a stroke is already active picks up
+    // a stale/deformed picking state and can stamp on the wrong (back) face.
+    var button = event.which;
+    if (button === MOUSE_LEFT && this._action === Enums.Action.SCULPT_EDIT) {
+      if (window._dbgTouch && window.screenLog)
+        window.screenLog(`[deviceDown SKIP] left+SCULPT_EDIT already active`, 'orange');
+      return;
+    }
+
     this.setMousePosition(event);
 
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
-    var button = event.which;
 
     var canEdit = false;
     if (button === MOUSE_LEFT && this._sculptManager) {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
+
+    if (window._dbgTouch && window.screenLog)
+      window.screenLog(`[deviceDown] btn=${button} canEdit=${canEdit} x=${mouseX.toFixed(0)} y=${mouseY.toFixed(0)} cls=${event.constructor?.name} ptrType=${event.pointerType}`, canEdit ? 'lime' : 'yellow');
 
     if (button === MOUSE_LEFT && canEdit)
       this.setCanvasCursor('none');
