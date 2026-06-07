@@ -63,6 +63,14 @@ class SculptGL extends Scene {
     this._gesturePanLastX         = 0; // 2-finger pan: center position last frame
     this._gesturePanLastY         = 0;
     this._doubleTapTrack       = { time: 0, x: 0, y: 0, n: 0, count: 0 };
+    this._gestureStartTime     = 0;  // ms when current gesture began (for tap detection)
+    this._gestureStartCenter   = { x: 0, y: 0 }; // finger-center at gesture start
+    this._peakFingerCount      = 0;  // max simultaneous fingers since all-up (for tap detection)
+    // Tap sequence tracking — NOT reset on mid-gesture restarts (e.g. 2→1 finger),
+    // only reset when all fingers are off the screen.
+    this._tapSeqStartTime      = 0;  // time of first finger-down in this sequence
+    this._tapSeqPeakCenter     = { x: 0, y: 0 }; // multi-finger center when peak count first reached
+    this._tapSeqLiftCenter     = { x: 0, y: 0 }; // multi-finger center when first finger lifted from peak
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
     this._eventProxy = {};
@@ -653,6 +661,19 @@ class SculptGL extends Scene {
           return;
         }
         this._lastPenDownMs = performance.now();
+        // Safety: if the gesture engine is stuck (e.g. a finger pointerup was
+        // dropped by the OS), force-reset it so the pen can sculpt normally.
+        if (this._gestureActive || this._fingerPointers.size > 0) {
+          if (window._dbgTouch && window.screenLog)
+            window.screenLog(`[pen↓ GESTURE RESET] active=${this._gestureActive} fingers=${this._fingerPointers.size}`, 'orange');
+          this._fingerPointers.clear();
+          this._peakFingerCount = 0;
+          this._tapSeqStartTime = 0;
+          if (this._gestureActive) {
+            this._gestureActive = false;
+            this.onDeviceUp();
+          }
+        }
         if (window._dbgTouch && window.screenLog) window.screenLog(`[pen↓] p=${event.pressure.toFixed(2)} x=${event.clientX.toFixed(0)} y=${event.clientY.toFixed(0)} ts=${event.timeStamp.toFixed(3)}`, 'cyan');
         this.onMouseDown(event);
       } else if (event.type === 'pointermove') { this._lastPenMoveMs = performance.now(); this.onMouseMove(event); }
@@ -676,6 +697,15 @@ class SculptGL extends Scene {
     this._fingerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this._focusGui = false;
     const n = this._fingerPointers.size;
+    if (n === 1) {
+      // First finger of a new sequence — start the tap clock
+      this._tapSeqStartTime  = performance.now();
+      this._peakFingerCount  = 1;
+    } else if (n > this._peakFingerCount) {
+      // Finger count just increased — record center at this new peak
+      this._peakFingerCount  = n;
+      this._tapSeqPeakCenter = this._fingerCenter();
+    }
     const center = this._fingerCenter();
     if (this._gestureActive) {
       // Extra finger added mid-gesture — restart with new count
@@ -760,9 +790,44 @@ class SculptGL extends Scene {
         this._gestureActive = false;
         this.onDeviceUp();
       }
+      // Multi-finger tap detection: 2 fingers = undo, 3 fingers = redo.
+      // Fingers lift one at a time, so by the time remaining===0 the local `n`
+      // is always 1. We use _peakFingerCount (max simultaneous fingers) and
+      // _tapSeqStartTime / _tapSeqPeakCenter which are NOT reset on mid-gesture
+      // restarts — only here when all fingers are up.
+      // A tap = peak ≥ 2, total sequence < 250 ms, peak-center drift < 30 px.
+      const peak = this._peakFingerCount;
+      const tapDuration = performance.now() - this._tapSeqStartTime;
+      // Compare multi-finger centers: where fingers were when peak started vs.
+      // where they were when the first finger lifted. Both are averages of the
+      // same set of fingers so finger-separation doesn't inflate the distance.
+      const tapDrift    = Math.hypot(
+        this._tapSeqLiftCenter.x - this._tapSeqPeakCenter.x,
+        this._tapSeqLiftCenter.y - this._tapSeqPeakCenter.y
+      );
+      // Reset sequence state for the next gesture
+      this._peakFingerCount = 0;
+      this._tapSeqStartTime = 0;
+      // Allow more time for 3-finger taps — placing 3 fingers takes longer.
+      const tapWindow = (peak >= 3) ? 450 : 300;
+      if (peak >= 2 && tapDuration < tapWindow && tapDrift < 40) {
+        if (peak === 2 && this._stateManager) {
+          this._stateManager.undo();
+          return; // don't also fall through to the double-tap reset-view path
+        } else if (peak >= 3 && this._stateManager) {
+          this._stateManager.redo();
+          return;
+        }
+      }
       this._checkDoubleTap(center, n);
     } else {
-      // One finger lifted but others remain — restart gesture
+      // One finger lifted but others remain — restart gesture.
+      // If this is the first finger off from the peak count, snapshot the
+      // multi-finger center NOW (before deletion makes it single-finger).
+      // This gives us an apples-to-apples comparison for the drift check.
+      if (n === this._peakFingerCount) {
+        this._tapSeqLiftCenter = { x: center.x, y: center.y };
+      }
       if (this._gestureActive) this.onDeviceUp();
       this._startGesture(remaining, this._fingerCenter(), true);
     }
@@ -770,6 +835,8 @@ class SculptGL extends Scene {
 
   _startGesture(n, center, wasActive) {
     this._gestureActive = true;
+    this._gestureStartTime   = performance.now();
+    this._gestureStartCenter = { x: center.x, y: center.y };
 
     if (n === 2) {
       // 2-finger: handle pan+zoom directly without routing through the
