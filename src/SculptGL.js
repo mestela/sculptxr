@@ -57,10 +57,11 @@ class SculptGL extends Scene {
     // Touch gesture state (replaces Hammer.js)
     this._fingerPointers       = new Map(); // pointerId -> {x, y}
     this._gestureActive        = false;
-    this._gesturePinchInitDist = 0; // finger distance at gesture start (scale reference)
-    this._gesturePinchLastDist = 0; // finger distance last frame
-    this._gesturePanLastX      = 0; // 2-finger pan: center position last frame
-    this._gesturePanLastY      = 0;
+    this._gesturePinchInitDist    = 0; // finger distance at gesture start (scale reference)
+    this._gesturePinchLastDist    = 0; // finger distance last frame (smoothed)
+    this._gesturePinchSmoothed    = 0; // EMA-smoothed pinch distance
+    this._gesturePanLastX         = 0; // 2-finger pan: center position last frame
+    this._gesturePanLastY         = 0;
     this._doubleTapTrack       = { time: 0, x: 0, y: 0, n: 0, count: 0 };
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
@@ -694,30 +695,48 @@ class SculptGL extends Scene {
     if (n === 2) {
       // Direct 2-finger pan + zoom — bypasses onDeviceMove/Wheel to avoid
       // camera.start() jitter from frequent zoom-direction changes during pan.
+      let dirty = false;
+
+      // ── Pan ──────────────────────────────────────────────────────────────
+      // dx/dy are in CSS pixels. _canvasHeight is physical (clientHeight×DPR),
+      // so divide out the DPR to get a CSS-height-based speed that is consistent
+      // regardless of device pixel ratio. The ×2 tuning factor brings touch pan
+      // up to roughly 1:1 finger tracking (matches Nomad-style feel).
       const dx = center.x - this._gesturePanLastX;
       const dy = center.y - this._gesturePanLastY;
       this._gesturePanLastX = center.x;
       this._gesturePanLastY = center.y;
-
       if (dx !== 0 || dy !== 0) {
-        const sf = this.getSpeedFactor() * 2.5;
-        if (window._dbgTouch === true) console.log(`[2finger pan] dx=${dx.toFixed(1)} dy=${dy.toFixed(1)} sf=${sf.toFixed(5)}`);
+        const cssHeight = this._canvasHeight / this.getPixelRatio();
+        const sf = (this._cameraSpeed * 2) / cssHeight;
         this._camera.translate(dx * sf, dy * sf);
-        Multimesh.RENDER_HINT = Multimesh.CAMERA;
-        this.render();
+        dirty = true;
       }
 
+      // ── Zoom ─────────────────────────────────────────────────────────────
+      // EMA-smooth the raw pinch distance to absorb the transient imbalance that
+      // occurs when alternating finger events arrive: finger A updates → distance
+      // spikes briefly → finger B catches up → distance normalises. Without
+      // smoothing this produces oscillating false-zoom during any pure pan.
+      // alpha=0.2 is deliberately low so a single out-of-order event barely moves
+      // the smoothed value, but a sustained deliberate pinch registers quickly.
       if (this._gesturePinchInitDist > 0) {
-        const dist = this._fingerPinchDist();
-        const distChange = dist - this._gesturePinchLastDist;
-        this._gesturePinchLastDist = dist;
-        if (Math.abs(distChange) >= 3) {
-          // Hammer formula: (scale - lastScale) * 25 * camera zoom factor 0.02
+        const rawDist = this._fingerPinchDist();
+        const alpha   = 0.2;
+        this._gesturePinchSmoothed =
+          this._gesturePinchSmoothed * (1 - alpha) + rawDist * alpha;
+        const distChange = this._gesturePinchSmoothed - this._gesturePinchLastDist;
+        this._gesturePinchLastDist = this._gesturePinchSmoothed;
+        if (Math.abs(distChange) >= 0.5) {
           const zoom = (distChange / this._gesturePinchInitDist) * 25 * 0.02;
           this._camera.zoom(zoom);
-          Multimesh.RENDER_HINT = Multimesh.CAMERA;
-          this.render();
+          dirty = true;
         }
+      }
+
+      if (dirty) {
+        Multimesh.RENDER_HINT = Multimesh.CAMERA;
+        this.render();
       }
       return;
     }
@@ -763,6 +782,7 @@ class SculptGL extends Scene {
       const d = this._fingerPinchDist();
       this._gesturePinchInitDist = d;
       this._gesturePinchLastDist = d;
+      this._gesturePinchSmoothed = d; // EMA seed = raw dist at gesture start
       return;
     }
 
