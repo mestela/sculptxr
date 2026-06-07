@@ -404,7 +404,9 @@ export function buildAnimationSectionHTML() {
       <div class="acp-section-title">Blendshapes</div>
       <div class="acp-stack">
         <div class="acp-bs-create">
-          <input type="text" id="acp-bs-name" placeholder="New shape name...">
+          <input type="text" id="acp-bs-name" placeholder="New shape name..."
+                 autocomplete="off" autocorrect="off" autocapitalize="off"
+                 spellcheck="false" writingsuggestions="false">
           <button id="acp-bs-add">+</button>
         </div>
         <div id="acp-bs-list" class="acp-stack">

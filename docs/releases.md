@@ -1,3 +1,31 @@
+# v2.0.3
+- **Fix**: **iPad Apple Pencil / Finger Conflict**: Resolved a conflict where Apple Pencil hover events were mis-routed when fingers were also on screen. Pen hover is now suppressed when fingers are active; active pen strokes are not blocked by co-present fingers.
+- **Fix**: **iPad 2-Finger Pan Speed**: Corrected a device-pixel-ratio double-scaling bug in `getSpeedFactor()` that caused 2-finger pan to feel 50% too slow on high-DPR displays (iPad). Pan now tracks at approximately 1:1 with finger movement.
+- **Fix**: **iPad 2-Finger Zoom Oscillation**: Replaced the pinch-distance accumulator with an EMA (Exponential Moving Average, alpha=0.2) to absorb the transient distance spikes caused by alternating per-finger pointer events. Random zoom-during-pan is eliminated.
+- **Fix**: **iPad Back-Face Brush Stamping**: Changed `Geometry.intersectionRayTriangleEdges` from double-sided to front-face-only Möller-Trumbore (reject when `det < EPSILON`). Prevents a second brush stamp from landing on the back face of a deformed mesh after the octree becomes stale.
+- **Fix**: **iPad Pen Bounce / Duplicate Strokes**: Added a 50 ms debounce on Apple Pencil `pointerdown` and a Map-based dedup on `(type + pointerId + timestamp)` to absorb iPadOS's double-dispatch of identical pointer events and pen-tip physical bounce sequences.
+- **Feature**: **iPad 2-Finger Tap = Undo, 3-Finger Tap = Redo**: Added multi-finger tap detection to the touch gesture engine. A quick tap (< 300 ms, < 40 px drift) with 2 fingers fires Undo; 3 fingers fires Redo (450 ms window to allow time to place 3 fingers). Uses `_peakFingerCount` and sequence-level timing so finger-lift order does not affect detection.
+- **Fix**: **iPad Gesture Engine Stuck State**: Added a force-reset of stale gesture state on pen `pointerdown`. If a `pointerup` is dropped by the OS during rapid gestures, the pen going down now clears `_fingerPointers` and calls `onDeviceUp()` to recover.
+- **Fix**: **VR Panel Pen Event Isolation**: Added `if (e.pointerType !== 'mouse') return` guard to `HTMLVRPanel` desktop pointer handlers so Apple Pencil events no longer accidentally trigger VR panel hit-tests.
+- **Fix**: **Timeline Layout — Panel Overlap**: Fixed a `querySelector('.gui-sidebar')` vs `id="gui-sidebar"` selector mismatch that caused the timeline to always expand full-width, covering the sidebar panel. Timeline now correctly constrains its right edge to the sidebar's left edge.
+- **Fix**: **Timeline Apple Pencil / Touch Support**: Replaced mouse-only event listeners on the timeline canvas with Pointer Events (`pointerdown`/`pointermove`/`pointerup`). All timeline interactions (scrubbing, key dragging, mode toggle, graph editor) now work with Apple Pencil and finger touch. Added `touch-action: none` to prevent iPadOS Scribble and scroll interception.
+- **Fix**: **Blendshape Input Scribble Prevention**: The blendshape name input is now hidden by default, appearing only when the user taps "+". This prevents iPadOS Scribble from activating when the Apple Pencil passes near the sliders below. Added `writingsuggestions="false"` and autocomplete suppression to both the sidebar and ACP blendshape name inputs.
+
+# v2.0.0
+- **Feature**: **Complete UI Overhaul — HTML VR Panels**: Replaced the legacy yagui canvas-drawn UI with a new HTML-based panel system (`HTMLVRPanel`). Panels are rendered as live HTML surfaces in VR space, enabling standard HTML/CSS layout, scroll, and interaction. Desktop and VR UIs now share the same panel components.
+- **Feature**: **Panel Tear-Off / Docking**: Panels can be detached from the sidebar and repositioned freely in VR space, or re-docked. Tear-off state persists across interactions.
+- **Feature**: **VR Animation Timeline Panel**: The animation timeline/graph editor is now available as a separate floating panel in VR, with full feature parity with the desktop timeline.
+- **Feature**: **Blendshape Support**: Added blendshape (morph target) creation, weight sliders, and keyframe animation for shape keys. Baking blendshapes to mesh geometry is supported.
+- **Feature**: **Laser Pointer Overhaul**: Rewrote VR laser pointer with magnetic snapping to surface, correct depth ordering, and reliable hit detection across all panel types.
+- **Feature**: **Spectator Mode Improvements**: Added Tracked and Stationary (6DOF Dreams) spectator sub-modes. VR mirror, desktop-independent, tracked, and stationary modes are all selectable from Camera settings.
+- **Feature**: **GXR Performance**: Resolved GXR-specific frame-rate issues; sustained 90fps on Galaxy XR hardware.
+- **Feature**: **Animation Rebuild**: Rewrote core animation playback and recording to handle shape keys and transform keys in the same track. Added `.sxr` save/load for animation data.
+- **Feature**: **Numpad Input**: Added numpad for precise numeric entry in VR and desktop animation panels.
+- **Feature**: **Transform and Grab Tools**: Restored and improved the Transform and Grab sculpting tools with correct undo support.
+- **UI**: **Icons and Panel Parity**: Replaced text-only tool buttons with icons across desktop and VR panels. Desktop and VR animation panels brought to feature parity.
+- **Fix**: **Desktop Restoration**: Fully restored desktop sculpting mode after the VR-first UI rewrite; all desktop tools, menus, and panels functional.
+- **Fix**: **PCVR Compatibility**: Resolved controller detection and menu interaction issues specific to PCVR via Meta Link.
+
 # v1.0.224
 - **Feature**: **Graph Editor Channel Visibility in Fit View**: Updated "Fit View" in both Desktop and VR to only fit to visible channels, and included shape keys in the calculation.
 - **Feature**: **Graph Editor Time Fitting in VR**: Added horizontal time fitting to VR Graph Editor for parity with desktop.

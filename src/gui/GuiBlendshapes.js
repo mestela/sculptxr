@@ -28,45 +28,64 @@ class GuiBlendshapes {
     content.addEventListener('keyup', (e) => e.stopPropagation());
 
     // Create New Blendshape
+    // The input is hidden by default so the always-visible text field doesn't
+    // attract iPadOS Scribble when the pencil passes near the sliders below.
+    // Tapping "+" reveals it; Enter/blur hides it again.
     const createGroup = document.createElement('div');
     createGroup.style.display = 'flex';
     createGroup.style.gap = '5px';
 
     const input = document.createElement('wa-input');
     input.setAttribute('placeholder', 'New shape name...');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('writingsuggestions', 'false');
     input.className = 'compact-input';
     input.style.flex = '1';
-    createGroup.appendChild(input);
+    input.style.display = 'none'; // hidden until "+" is tapped
+
+    const commitShape = () => {
+      const name = input.value?.trim();
+      const mesh = this._main.getMesh();
+      if (name && mesh) {
+        window._animationRegistry.createBlendshape(mesh, name);
+        this.refreshList(mesh);
+      }
+      input.value = '';
+      input.style.display = 'none';
+      btnCreate.innerText = '+';
+    };
 
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const name = input.value;
-        const mesh = this._main.getMesh();
-        if (name && mesh) {
-          window._animationRegistry.createBlendshape(mesh, name);
-          input.value = ''; // Clear input
-          this.refreshList(mesh);
-        }
-      } else if (e.key === 'Escape') {
-        input.blur();
-      }
+      if (e.key === 'Enter')  { commitShape(); }
+      else if (e.key === 'Escape') { input.value = ''; input.style.display = 'none'; btnCreate.innerText = '+'; }
     });
+    input.addEventListener('blur', () => {
+      // Auto-commit if the user just tapped away
+      commitShape();
+    });
+
+    createGroup.appendChild(input);
 
     const btnCreate = document.createElement('wa-button');
     btnCreate.innerText = '+';
     btnCreate.setAttribute('variant', 'primary');
     btnCreate.className = 'compact-btn';
-    
+
     btnCreate.addEventListener('click', () => {
-      const name = input.value;
-      const mesh = this._main.getMesh();
-      if (name && mesh) {
-        window._animationRegistry.createBlendshape(mesh, name);
-        input.value = ''; // Clear input
-        this.refreshList(mesh);
+      if (input.style.display === 'none') {
+        // First tap: reveal input and focus it
+        input.style.display = '';
+        btnCreate.innerText = '✓';
+        // Use setTimeout so the element is visible before focus (needed on iOS)
+        setTimeout(() => { try { input.focus(); } catch(_) {} }, 50);
+      } else {
+        commitShape();
       }
     });
-    
+
     createGroup.appendChild(btnCreate);
     content.appendChild(createGroup);
 

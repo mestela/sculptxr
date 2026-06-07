@@ -66,20 +66,37 @@ export default class GuiTimeline {
     this._canvas = document.createElement('canvas');
     this._canvas.style.width = '100%';
     this._canvas.style.height = '100%';
+    // Prevent iPadOS from intercepting pen/touch events for Scribble or scroll.
+    // Must be on both container and canvas so no ancestor triggers system gestures.
+    this._canvas.style.touchAction    = 'none';
+    this._container.style.touchAction = 'none';
     this._container.appendChild(this._canvas);
     document.body.appendChild(this._container);
 
     this._ctx = this._canvas.getContext('2d');
 
     window.addEventListener('resize', this.onResize.bind(this));
-    
-    // Mouse interactions
-    this._canvas.addEventListener('mousedown', this.onMouseDown.bind(this));
-    window.addEventListener('mousemove', this.onMouseMove.bind(this));
-    window.addEventListener('mouseup', this.onMouseUp.bind(this));
+
+    // Use Pointer Events for all input (mouse, pen, touch) — they fire for every
+    // device type so we don't need separate mouse-vs-touch paths.  `button` and
+    // `clientX/Y` have the same meaning as on MouseEvent, so the existing
+    // onMouseDown/Move/Up handlers work without modification.
+    this._canvas.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this._canvas.setPointerCapture(e.pointerId); // keep move/up on this element
+      this._isMouseOver = true;
+      this.onMouseDown(e);
+    });
+    // Move and Up on window so drags that leave the canvas still register.
+    window.addEventListener('pointermove', (e) => { this.onMouseMove(e); });
+    window.addEventListener('pointerup',   (e) => { this.onMouseUp(e);   });
+    window.addEventListener('pointercancel', (e) => { this.onMouseUp(e); });
+
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    this._canvas.addEventListener('mouseenter', () => { this._isMouseOver = true; });
-    this._canvas.addEventListener('mouseleave', () => { this._isMouseOver = false; });
+    // hover tracking for isMouseOver() (used to block sculpt-canvas scroll while
+    // the pointer is inside the timeline).
+    this._canvas.addEventListener('pointerenter', () => { this._isMouseOver = true;  });
+    this._canvas.addEventListener('pointerleave', () => { this._isMouseOver = false; });
 
     this.onResize();
   }
@@ -89,7 +106,7 @@ export default class GuiTimeline {
   }
 
   onResize() {
-    const sidebar = document.querySelector('.gui-sidebar');
+    const sidebar = document.querySelector('#gui-sidebar');
     if (sidebar) {
       this._container.style.right = sidebar.offsetWidth + 'px';
       this._container.style.width = 'auto';
