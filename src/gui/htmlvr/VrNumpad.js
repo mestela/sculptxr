@@ -129,7 +129,7 @@ function buildPanelEl() {
     <button class="vrn-btn" data-vrn="4">4</button>
     <button class="vrn-btn" data-vrn="5">5</button>
     <button class="vrn-btn" data-vrn="6">6</button>
-    <button class="vrn-btn" id="vrn-neg">±</button>
+    <button class="vrn-btn vrn-back" id="vrn-clear">C</button>
 
     <button class="vrn-btn" data-vrn="1">1</button>
     <button class="vrn-btn" data-vrn="2">2</button>
@@ -198,12 +198,8 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
     if (!s.includes('.')) { if (!s || s === '-') s += '0'; s += '.'; setStr(s); refresh(); }
   });
 
-  el.querySelector('#vrn-neg')?.addEventListener('click', () => {
-    if (config.min !== undefined && config.min >= 0) return;
-    let s = getStr();
-    s = s.startsWith('-') ? s.slice(1) : '-' + s;
-    if (s === '-0') s = '0';
-    setStr(s); refresh();
+  el.querySelector('#vrn-clear')?.addEventListener('click', () => {
+    setStr('0'); refresh();
   });
 
   el.querySelector('#vrn-back')?.addEventListener('click', backspace);
@@ -222,8 +218,8 @@ export class VrNumpad extends HTMLVRPanel {
 
     const el = buildPanelEl();
 
-    // 260px wide → ~0.144 m in VR
-    super(el, 260 / VR_PANEL_PX_PER_M);
+    // 195px wide → ~0.108 m in VR  (25% smaller than the original 260/1800)
+    super(el, 195 / VR_PANEL_PX_PER_M);
 
     this._scene3     = scene;
     this._str        = '0';
@@ -290,12 +286,8 @@ export class VrNumpad extends HTMLVRPanel {
       this._str = s; this._refreshVR();
     });
 
-    el.querySelector('#vrn-neg')?.addEventListener('click', () => {
-      if (this._config.min !== undefined && this._config.min >= 0) return;
-      let s = this._str;
-      s = s.startsWith('-') ? s.slice(1) : '-' + s;
-      if (s === '-0') s = '0';
-      this._str = s; this._refreshVR();
+    el.querySelector('#vrn-clear')?.addEventListener('click', () => {
+      this._str = '0'; this._refreshVR();
     });
 
     el.querySelector('#vrn-back')?.addEventListener('click', backspace);
@@ -369,7 +361,6 @@ export class VrNumpad extends HTMLVRPanel {
     // Label + dim states
     panel.querySelector('#vrn-label').textContent = config.label ?? 'Value';
     panel.querySelector('#vrn-dot')?.classList.toggle('vrn-dim', !!config.integer);
-    panel.querySelector('#vrn-neg')?.classList.toggle('vrn-dim', config.min !== undefined && config.min >= 0);
 
     const dismiss = () => {
       window.removeEventListener('keydown', onKey, { capture: true });
@@ -425,7 +416,14 @@ export class VrNumpad extends HTMLVRPanel {
    * @param {HTMLVRPanel|null}      [sourcePanel]  VR panel the input lives on
    */
   open(currentValue, config = {}, onConfirm, sourceEl = null, sourcePanel = null) {
-    const inVR = !!window.app?._renderer?.xr?.isPresenting;
+    // Use the VR 3D-panel path only when XR is presenting AND the source panel
+    // mesh is actually visible in the scene.  If the panel mesh is hidden (the
+    // user is clicking the desktop sidebar while a PCVR session is active) the
+    // mesh sits at (0,0,0) and the numpad would appear at the scene origin.
+    // Falling through to the DOM overlay is the correct behaviour in that case.
+    const xrPresenting  = !!window.app?._renderer?.xr?.isPresenting;
+    const panelVisible  = sourcePanel ? !!sourcePanel.mesh?.visible : true;
+    const inVR          = xrPresenting && panelVisible;
 
     if (!inVR) {
       this._openDesktop(currentValue, config, onConfirm, sourceEl);
@@ -433,9 +431,11 @@ export class VrNumpad extends HTMLVRPanel {
     }
 
     // ── VR path ──────────────────────────────────────────────────────────────
-    this._config    = config;
-    this._onConfirm = onConfirm;
-    this._str       = _initStr(currentValue, config);
+    this._config      = config;
+    this._onConfirm   = onConfirm;
+    this._str         = _initStr(currentValue, config);
+    this._sourcePanel = sourcePanel;   // stored for per-frame tracking
+    this._sourceEl    = sourceEl;
 
     // Update the label and button dim-states in the VR element
     const label = this._element.querySelector('#vrn-label');
@@ -443,9 +443,6 @@ export class VrNumpad extends HTMLVRPanel {
 
     const dotBtn = this._element.querySelector('#vrn-dot');
     if (dotBtn) dotBtn.classList.toggle('vrn-dim', !!config.integer);
-
-    const negBtn = this._element.querySelector('#vrn-neg');
-    if (negBtn) negBtn.classList.toggle('vrn-dim', config.min !== undefined && config.min >= 0);
 
     this._refreshVR();
 
@@ -480,58 +477,112 @@ export class VrNumpad extends HTMLVRPanel {
    * controller grip or pinned to the world — no per-frame update needed.
    */
   _positionNextToPanel(sourcePanel, sourceEl) {
+    // ── Always live in the scene root ─────────────────────────────────────────
+    // _repositionIfTracking() is called every XR frame so the numpad follows
+    // even when the source panel is moving with a VR controller.
+    if (this.mesh.parent !== this._scene3) {
+      this._scene3.add(this.mesh);
+    }
+
     const animMesh = sourcePanel.mesh;
+    animMesh.updateMatrixWorld(true);
 
-    // ── Re-parent to the same parent object as the source panel ──────────────
-    // This is the key: if the panel is a child of a controller group,
-    // the numpad inherits that attachment and moves with it.
-    const targetParent = animMesh.parent ?? this._scene3;
-    if (this.mesh.parent !== targetParent) {
-      targetParent.add(this.mesh); // THREE.js removes from previous parent automatically
-    }
+    // ── Panel world position ──────────────────────────────────────────────────
+    const panelWorldPos = new THREE.Vector3();
+    animMesh.getWorldPosition(panelWorldPos);
 
-    const animW = animMesh.geometry.parameters.width;
-    const numW  = this.mesh.geometry.parameters.width;
-    const GAP   = 0.015; // 15 mm gap between panels
+    // ── Panel's true rotation (corrected for scale decomposition) ─────────────
+    // Three.js's Matrix4.decompose absorbs any negative determinant into scaleX.
+    // This happens for ALL HTMLVRPanel meshes (which all have scale.y=-1),
+    // not just pinned ones — and it corrupts the extracted quaternion by an extra
+    // R_z(180°) = Quaternion(0,0,1,0) every time.  Always correct it:
+    //   Q_true = getWorldQuaternion() · Quaternion(0,0,1,0)
+    //
+    //  • Pinned  (scale.x=-1 after decompose): getWorldQuat = R_true·Rz180 → corrected = R_true ✓
+    //  • Controller (scale.y=-1, det<0 same):  getWorldQuat = Q_ctrl·Rx(-90)·Rz180 → corrected = Q_ctrl·Rx(-90) ✓
+    //  • Torn-off (scale.y=-1):                getWorldQuat = camQuat·Rz180 → corrected = camQuat ✓
+    const panelQuat = new THREE.Quaternion();
+    animMesh.getWorldQuaternion(panelQuat);
+    panelQuat.multiply(new THREE.Quaternion(0, 0, 1, 0));
 
-    // Local axes of the source panel in the parent's coordinate space
-    const rightInParent = new THREE.Vector3(1, 0, 0).applyQuaternion(animMesh.quaternion);
-    const upInParent    = new THREE.Vector3(0, 1, 0).applyQuaternion(animMesh.quaternion);
+    // ── Panel-space axes for positioning ─────────────────────────────────────
+    // Using the panel's OWN axes (derived from panelQuat) means the offset
+    // vector co-rotates with the panel.  When the panel moves on a controller,
+    // the numpad moves as if it were rigidly attached — not spinning around its
+    // own centre the way camera-fixed axes cause.
+    const right  = new THREE.Vector3(1, 0, 0).applyQuaternion(panelQuat);
+    const up     = new THREE.Vector3(0, 1, 0).applyQuaternion(panelQuat);
+    // Panel's local +Z is its front-face normal; for a panel facing the user
+    // this points toward the user — move in this direction to float in front.
+    const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(panelQuat);
 
-    // ── Vertical alignment from sourceEl's DOM position ─────────────────────
-    // The panel uses scale.y = -1 to compensate for the polyfill texture flip.
-    // That means DOM top (y_dom=0) visually sits at geometry y = –meshH/2,
-    // which after scale.y=-1 maps to parent-space offset = +meshH/2 in the
-    // upInParent direction.  Formula: yOffset = (0.5 – relY) * meshH
-    let yOffset = 0;
+    // ── World widths ──────────────────────────────────────────────────────────
+    const animW = sourcePanel._meshWidth ?? animMesh.geometry.parameters.width;
+    const numW  = this._meshWidth;
+    const GAP   = 0.015; // 15 mm gap
+
+    // ── Field position within the panel (getBoundingClientRect is reliable) ───
+    // Places the numpad beside the edited field, not the far panel edge.
+    let yOffset = 0, xFromFieldCentre = 0;
     if (sourceEl && sourcePanel._element) {
-      const panelEl = sourcePanel._element;
-      const domH    = panelEl.offsetHeight || 300;
-      const meshH   = animMesh.geometry.parameters.height;
+      const panelEl   = sourcePanel._element;
+      const meshH     = animMesh.geometry.parameters.height;
+      const panelRect = panelEl.getBoundingClientRect();
+      const elRect    = sourceEl.getBoundingClientRect();
 
-      // Walk up the offsetParent chain to get cumulative offsetTop
-      let top = 0, cur = sourceEl;
-      while (cur && cur !== panelEl) { top += cur.offsetTop; cur = cur.offsetParent; }
-      const elCenterDomY = top + (sourceEl.offsetHeight || 20) / 2;
-      const relY = elCenterDomY / domH; // 0 = DOM top, 1 = DOM bottom
+      if (panelRect.width > 0 && panelRect.height > 0) {
+        const relX = (elRect.left + elRect.width  / 2 - panelRect.left) / panelRect.width;
+        const relY = (elRect.top  + elRect.height / 2 - panelRect.top)  / panelRect.height;
 
-      yOffset = (0.5 - relY) * meshH;
+        // Horizontal offset from panel centre to field centre in world units.
+        xFromFieldCentre = (relX - 0.5) * animW;
+
+        // Vertical: scale.y=-1 maps DOM top → visual top, so
+        //   yOffset = (0.5 - relY) * meshH  (positive = upward).
+        yOffset = (0.5 - relY) * meshH;
+      }
     }
 
-    // ── Place numpad to the right of the source panel at the input's height ──
+    // ── Place numpad beside the field, in front of the panel ─────────────────
     this.mesh.position
-      .copy(animMesh.position)
-      .addScaledVector(rightInParent, (animW + numW) / 2 + GAP)
-      .addScaledVector(upInParent, yOffset);
+      .copy(panelWorldPos)
+      .addScaledVector(right,  xFromFieldCentre + numW / 2 + GAP)
+      .addScaledVector(up,     yOffset)
+      .addScaledVector(toUser, 0.04); // 4 cm toward user (positive = in front of panel)
 
-    this.mesh.quaternion.copy(animMesh.quaternion);
+    // Inherit the panel's true rotation so the numpad tilts with the panel.
+    this.mesh.quaternion.copy(panelQuat);
   }
 
   /** Dismiss without confirming (both modes). */
   close() {
     if (this.mesh) this.mesh.visible = false;
-    this._onConfirm = null;
+    this._onConfirm   = null;
+    this._sourcePanel = null;
+    this._sourceEl    = null;
+    this._closedAt    = performance.now(); // cooldown start
     this._closeDesktop();
+  }
+
+  /**
+   * True while the numpad is open OR within 400 ms of closing.
+   * Input click handlers check this to prevent a held/bouncing trigger from
+   * immediately re-opening the numpad on the panel beneath after dismiss.
+   */
+  get isBlockingOpen() {
+    if (this.mesh?.visible) return true;
+    return (performance.now() - (this._closedAt ?? 0)) < 400;
+  }
+
+  /**
+   * Called every XR frame while the numpad is visible.
+   * Re-runs positioning so the numpad follows its source panel when that
+   * panel is attached to a moving VR controller.
+   */
+  _repositionIfTracking() {
+    if (this._sourcePanel?.mesh?.visible && this.mesh?.visible) {
+      this._positionNextToPanel(this._sourcePanel, this._sourceEl);
+    }
   }
 }
 

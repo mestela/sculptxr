@@ -1745,6 +1745,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       repaint,
       sync: () => { syncAnimationSection(el, this._main); repaint(); },
       refreshBs: (mesh) => { refreshBlendshapesDOM(el, mesh, this._main, repaint); repaint(); },
+      vrPanel: this,  // lets the numpad position itself next to this panel in VR
     });
   }
 

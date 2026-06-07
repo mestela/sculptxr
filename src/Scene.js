@@ -1101,6 +1101,11 @@ class Scene {
         }
         if (this._vrNumpad?.mesh?.visible) {
           try { this._vrNumpad.update(true); } catch (_) {}
+          // Keep numpad glued to its source panel (important when that panel
+          // is moving with a VR controller — re-parenting to the controller
+          // group caused orientation bugs with negative-scale decomposition,
+          // so instead we update the world-space position every frame here.
+          try { this._vrNumpad._repositionIfTracking(); } catch (_) {}
         }
         // Single drain: executes the one requestPaint callback queued above.
         drainRAF();
@@ -4897,32 +4902,42 @@ class Scene {
 
           // Phase 1: collect hits — { name, panel, hit, pressKey, isTimeline }
           const _panelHits = [];
-          if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
-            const h = _rc.intersectObject(this._brushPanel.mesh);
-            if (h.length > 0) _panelHits.push({ name: 'BrushPanel', panel: this._brushPanel, hit: h[0], pressKey: '_bpWasPressed' });
-          }
-          if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
-            const h = _rc.intersectObject(this._miniPanel.mesh);
-            if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
-          }
-          if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
-            const h = _rc.intersectObject(this._toolPickerPanel.mesh);
-            if (h.length > 0) _panelHits.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, hit: h[0], pressKey: '_tpWasPressed' });
-          }
-          if (this._mainMenuPanel?.mesh?.visible) {
-            const h = _rc.intersectObject(this._mainMenuPanel.mesh);
-            if (h.length > 0) _panelHits.push({ name: 'MainMenuPanel', panel: this._mainMenuPanel, hit: h[0], pressKey: '_mmWasPressed' });
-          }
-          if (this._tornOffPanels.size > 0) {
-            this._tornOffPanels.forEach((panel, sectionId) => {
-              if (!panel.mesh?.visible) return;
-              const h = _rc.intersectObject(panel.mesh);
-              if (h.length > 0) _panelHits.push({ name: 'TornOff:' + sectionId, panel, hit: h[0], pressKey: '_topWasPressed_' + sectionId });
-            });
-          }
-          if (this._filesPanel?.mesh?.visible) {
-            const h = _rc.intersectObject(this._filesPanel.mesh);
-            if (h.length > 0) _panelHits.push({ name: 'FilesPanel', panel: this._filesPanel, hit: h[0], pressKey: '_fpWasPressed' });
+          // When the VR numpad is open it is modal: skip all other panels in the
+          // hit collection so they can never win while the numpad is visible.
+          // They still appear in _allVisible and receive leave events, but no
+          // press/release events can reach them through the numpad.
+          // isBlockingOpen extends the guard for 400ms after close so that the
+          // controller's trigger-release (and any residual hit on e.g. the FPS
+          // slider behind the numpad) is absorbed during the cooldown window.
+          const _numpadOpen = !!this._vrNumpad?.mesh?.visible || !!this._vrNumpad?.isBlockingOpen;
+          if (!_numpadOpen) {
+            if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+              const h = _rc.intersectObject(this._brushPanel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'BrushPanel', panel: this._brushPanel, hit: h[0], pressKey: '_bpWasPressed' });
+            }
+            if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+              const h = _rc.intersectObject(this._miniPanel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
+            }
+            if (this._toolPickerPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+              const h = _rc.intersectObject(this._toolPickerPanel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'ToolPickerPanel', panel: this._toolPickerPanel, hit: h[0], pressKey: '_tpWasPressed' });
+            }
+            if (this._mainMenuPanel?.mesh?.visible) {
+              const h = _rc.intersectObject(this._mainMenuPanel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'MainMenuPanel', panel: this._mainMenuPanel, hit: h[0], pressKey: '_mmWasPressed' });
+            }
+            if (this._tornOffPanels.size > 0) {
+              this._tornOffPanels.forEach((panel, sectionId) => {
+                if (!panel.mesh?.visible) return;
+                const h = _rc.intersectObject(panel.mesh);
+                if (h.length > 0) _panelHits.push({ name: 'TornOff:' + sectionId, panel, hit: h[0], pressKey: '_topWasPressed_' + sectionId });
+              });
+            }
+            if (this._filesPanel?.mesh?.visible) {
+              const h = _rc.intersectObject(this._filesPanel.mesh);
+              if (h.length > 0) _panelHits.push({ name: 'FilesPanel', panel: this._filesPanel, hit: h[0], pressKey: '_fpWasPressed' });
+            }
           }
           if (this._vrNumpad?.mesh?.visible) {
             const h = _rc.intersectObject(this._vrNumpad.mesh);
@@ -4975,7 +4990,15 @@ class Scene {
               else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = _winnerName; }
               this._updateBPCursor?.(_winner.hit.point, true);
             } else {
-              if (this[v.pressKey]) { v.panel.onVRRelease({ x: 0.5, y: 0.5 }); this[v.pressKey] = false; }
+              if (this[v.pressKey]) {
+                // When the numpad is open, drop the synthetic centre-UV release
+                // rather than dispatching it — that click lands on whatever DOM
+                // element happens to be at UV(0.5,0.5), which is exactly where
+                // the FPS slider / play button live in the animation panel.
+                // Always clear the flag so the panel doesn't stay "stuck" pressed.
+                if (!_numpadOpen) v.panel.onVRRelease({ x: 0.5, y: 0.5 });
+                this[v.pressKey] = false;
+              }
               v.panel.onVRLeave();
             }
           }

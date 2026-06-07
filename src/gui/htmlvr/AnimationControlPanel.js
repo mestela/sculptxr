@@ -432,8 +432,9 @@ export function setupRangeDrag(root) {
       return Math.max(min, Math.min(max, Math.round(raw / step) * step));
     };
     input.addEventListener('pointerdown', (e) => {
+      const newVal = getVal(e.clientX);
       active = true; input.setPointerCapture(e.pointerId);
-      input.value = getVal(e.clientX);
+      input.value = newVal;
       input.dispatchEvent(new Event('input', { bubbles: true }));
       e.stopPropagation();
     });
@@ -918,6 +919,9 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     if (!input) return;
     input.addEventListener('click', (e) => {
       if (!window._vrNumpad) return; // numpad not yet initialised — fall back to native input
+      // Cooldown: suppress re-open for 400 ms after the numpad closes so a
+      // held or bouncing VR trigger can't immediately hit the panel beneath.
+      if (window._vrNumpad.isBlockingOpen) return;
       e.preventDefault(); e.stopPropagation();
       const current = parseFloat(input.value) || min;
       window._vrNumpad.open(current, { label, integer: true, min }, (val) => {

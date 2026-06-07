@@ -127,6 +127,7 @@ export class TornOffPanel extends HTMLVRPanel {
           repaint:   lightRepaint,
           sync:      () => { syncAnimationSection(el, main); lightRepaint(); },
           refreshBs: (mesh) => { refreshBlendshapesDOM(el, mesh, main, lightRepaint); lightRepaint(); },
+          vrPanel:   this,  // lets VrNumpad position itself next to this torn-off panel
         });
         break;
     }
