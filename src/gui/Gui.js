@@ -16,7 +16,6 @@ import {
   buildMenuHTML_history,    wireMenuHistory,
   buildMenuHTML_background, wireMenuBackground,
   buildMenuHTML_reference,  wireMenuReference,
-  buildMenuHTML_tablet,     wireMenuTablet,
   buildMenuHTML_desktopSettings, wireMenuDesktopSettings,
   buildMenuHTML_about,    wireMenuAbout,
 } from './htmlvr/MainMenuPanel.js';
@@ -37,7 +36,7 @@ import '@awesome.me/webawesome/dist/components/select/select.js';
 import '@awesome.me/webawesome/dist/components/option/option.js';
 import '@awesome.me/webawesome/dist/components/slider/slider.js';
 
-const TOPBAR_HEIGHT = 36;   // px — must match onCanvasResize top:40px allowance
+const TOPBAR_HEIGHT = 36;   // px — must match onCanvasResize top:36px allowance
 const SIDEBAR_WIDTH = 380;  // px
 
 // ── VR-safe dialogs ────────────────────────────────────────────────────────────
@@ -206,7 +205,7 @@ class Gui {
     const sidebarEl = this._sidebarEl = document.createElement('div');
     sidebarEl.id = 'gui-sidebar';
     Object.assign(sidebarEl.style, {
-      position: 'fixed', top: TOPBAR_HEIGHT + 'px', right: '0',
+      position: 'fixed', top: '0', right: '0',
       width:  SIDEBAR_WIDTH + 'px', bottom: '0',
       background: '#121212',
       borderLeft: '1px solid #2d2d2d',
@@ -499,7 +498,7 @@ class Gui {
       position: 'fixed', top: '0', left: '0', right: SIDEBAR_WIDTH + 'px',
       height: TOPBAR_HEIGHT + 'px',
       background: '#11111b',
-      borderBottom: '1px solid #2d2d2d',
+      borderBottom: 'none',
       display: 'flex', alignItems: 'center', gap: '2px',
       padding: '0 8px',
       zIndex: '1100',
@@ -514,7 +513,6 @@ class Gui {
       { id: 'history',    label: 'History ▾',    buildFn: buildMenuHTML_history,    wireFn: wireMenuHistory },
       { id: 'background', label: 'Background ▾', buildFn: buildMenuHTML_background, wireFn: wireMenuBackground },
       { id: 'reference',  label: 'Reference ▾',  buildFn: buildMenuHTML_reference,  wireFn: wireMenuReference },
-      { id: 'pressure',   label: 'Pressure ▾',   buildFn: buildMenuHTML_tablet,     wireFn: wireMenuTablet },
       { id: 'settings',   label: 'Settings ▾',   buildFn: buildMenuHTML_desktopSettings, wireFn: wireMenuDesktopSettings },
       { id: 'about',      label: 'About ▾',      buildFn: buildMenuHTML_about,      wireFn: wireMenuAbout },
     ];
@@ -575,8 +573,8 @@ class Gui {
     style.textContent = `
       .desktop-menu-btn {
         padding: 4px 10px;
-        border: 1px solid #45475a;
-        border-radius: 5px;
+        border: none;
+        border-radius: 0;
         background: #1e1e2e;
         color: #cdd6f4;
         font-size: 12px;
@@ -587,14 +585,14 @@ class Gui {
         flex-shrink: 0;
       }
       .desktop-menu-btn:hover { background: #313244; }
-      .desktop-menu-btn.active { background: #45475a; color: #89b4fa; border-color: #89b4fa; }
+      .desktop-menu-btn.active { background: #45475a; color: #89b4fa; }
       .desktop-dropdown {
         position: fixed;
         background: #1e1e2e;
         border: 1px solid #585b70;
         border-radius: 8px;
         padding: 8px;
-        min-width: 220px;
+        min-width: 180px;
         max-height: 80vh;
         overflow-y: auto;
         z-index: 1200;

@@ -163,7 +163,7 @@ export default class GuiTimeline {
       visibleDuration = this._viewDuration;
     }
     const tlX = 200;
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
     const headerH = 50;
     const fps = window._animFPS || 24;
     const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
@@ -203,7 +203,7 @@ export default class GuiTimeline {
     const headerH = 50;
     const graphH = this._cssHeight - headerH;
     const tlX = 200;
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
 
     const reg = window._animationRegistry;
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
@@ -833,7 +833,7 @@ export default class GuiTimeline {
           if (minT !== Infinity && maxT !== Infinity && minV !== Infinity && maxV !== Infinity) {
             const wObj = { x: 0, y: 0, w: this._cssWidth, h: this._cssHeight };
             const tBox = { startTime: minT, endTime: maxT, minV, maxV };
-            TimelineHelper.drawTransformBox(ctx, tBox, wObj, 50, 200, this._cssWidth - 220, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
+            TimelineHelper.drawTransformBox(ctx, tBox, wObj, 50, 200, this._cssWidth - 200, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
           }
         }
       }
@@ -886,7 +886,7 @@ export default class GuiTimeline {
 
     const headerH = 50;
     const tlX = 200;
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
 
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
     const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -1629,7 +1629,7 @@ export default class GuiTimeline {
           this._zoomStartPanY = this._panY;
           
           const tlX = 200;
-          const tlW = this._cssWidth - 220;
+          const tlW = this._cssWidth - 200;
           const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
           const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
           const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
@@ -1692,7 +1692,7 @@ export default class GuiTimeline {
         const visibleDuration = Math.max(0.1, loopEnd - loopStart);
         
         const tlX = 200;
-        const tlW = this._cssWidth - 220;
+        const tlW = this._cssWidth - 200;
 
         // Check if clicked on Transform Box handles!
         if (window._animShowTransformBox && window._animTransformBox) {
@@ -1997,7 +1997,7 @@ export default class GuiTimeline {
     }
 
     const tlX = 200;
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
     
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
     const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -2052,7 +2052,7 @@ export default class GuiTimeline {
         const rect = this._canvas.getBoundingClientRect();
         const rx = e.clientX - rect.left;
         const tlX = 200;
-        const tlW = this._cssWidth - 220;
+        const tlW = this._cssWidth - 200;
         
         let t = (rx - tlX) / tlW;
         t = Math.max(0, Math.min(1, t));
@@ -2166,7 +2166,7 @@ export default class GuiTimeline {
       const rx = e.clientX - rect.left;
       
       const tlX = 200;
-      const tlW = this._cssWidth - 220;
+      const tlW = this._cssWidth - 200;
       
       const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
       const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -2585,7 +2585,7 @@ export default class GuiTimeline {
     const ry = e.clientY - rect.top;
 
     const tlX = 200; // Matching the VR layout for now
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
 
     if (rx >= tlX && rx <= tlX + tlW) {
       let t = (rx - tlX) / tlW;
@@ -2657,7 +2657,7 @@ export default class GuiTimeline {
     }
     
     const tlX = 200;
-    const tlW = this._cssWidth - 220;
+    const tlW = this._cssWidth - 200;
 
     const tMin = loopStart + ((x1 - tlX) / tlW) * visibleDuration;
     const tMax = loopStart + ((x2 - tlX) / tlW) * visibleDuration;
@@ -2807,7 +2807,7 @@ export default class GuiTimeline {
     const loopEnd = loopStart + visibleDuration;
 
     const tlX = 200; // Width allocated for track names
-    const tlW = w.w - 220;
+    const tlW = w.w - 200;
 
     // --- 1. Draw Top Transport Header Strip ---
     const headerH = 50;

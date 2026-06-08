@@ -14,7 +14,8 @@ class StateManager {
     this._undos = []; // undo actions
     this._redos = []; // redo actions
     this._curUndoIndex = -1; // current index in undo
-    this.limit = /OculusBrowser/.test(navigator.userAgent) ? 15 : 50;
+    const defaultLimit = /OculusBrowser/.test(navigator.userAgent) ? 15 : 50;
+    try { const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}'); this.limit = s.maxUndo || defaultLimit; } catch (_) { this.limit = defaultLimit; }
   }
 
   pushStateCustom(undocb, redocb, squash, name) {

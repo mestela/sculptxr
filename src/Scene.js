@@ -1635,7 +1635,7 @@ class Scene {
     // Localized Geometry Base Grid (100 units wide, 25 divisions for massive 4-meter visual blocks)
     this._groundGrid = new THREE.GridHelper(100, 25, 0x888888, 0x444444);
     this._groundGrid.material.transparent = true;
-    this._groundGrid.material.opacity = 0.5;
+    this._groundGrid.material.opacity = getOptionsURL().gridOpacity ?? 0.5;
     this._groundGrid.material.depthWrite = true;  // must write depth so grid composites correctly in VR
     this._groundGrid.position.y = -0.25;
     this._groundGrid.visible = !!this._showGrid;
@@ -1788,7 +1788,7 @@ class Scene {
     
     // Force viewport to fill the area excluding top bar and sidebar
     viewport.style.position = 'absolute';
-    viewport.style.top = '40px';
+    viewport.style.top = '36px';
     viewport.style.bottom = '0px';
     viewport.style.left = '0px';
     viewport.style.right = '380px';

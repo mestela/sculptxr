@@ -1,6 +1,7 @@
 import TR from './GuiTR.js';
 import Remesh from '../editing/Remesh.js';
 import ShaderBase from '../render/shaders/ShaderBase.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 class GuiScene {
 
@@ -241,6 +242,7 @@ class GuiScene {
       main._groundGrid.material.opacity = val;
       main.render();
     }
+    getOptionsURL.saveOption('gridOpacity', val, 300);
   }
 
   onShowContour(bool) {

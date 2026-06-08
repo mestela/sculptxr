@@ -79,6 +79,13 @@ class SculptGL extends Scene {
     if (new URLSearchParams(window.location.search).has('dbgTouch'))
       window._dbgTouch = true;
 
+    // iPad multitouch routing flags — initialise from persisted opts
+    const _ipadOpts = window.getOptionsURL?.() || {};
+    if (window._ipadFingerView   === undefined) window._ipadFingerView   = _ipadOpts.ipadFingerView   ?? true;
+    if (window._ipadFingerSculpt === undefined) window._ipadFingerSculpt = _ipadOpts.ipadFingerSculpt ?? false;
+    if (window._ipadStylusView   === undefined) window._ipadStylusView   = _ipadOpts.ipadStylusView   ?? false;
+    if (window._ipadStylusSculpt === undefined) window._ipadStylusSculpt = _ipadOpts.ipadStylusSculpt ?? true;
+
     // NUCLEAR FIX: Expose instance globally to bypass scope hell
     window.sculptgl_instance = this;
     window.app = this; // Ensure 'app' is also set globally
@@ -675,14 +682,33 @@ class SculptGL extends Scene {
           }
         }
         if (window._dbgTouch && window.screenLog) window.screenLog(`[pen↓] p=${event.pressure.toFixed(2)} x=${event.clientX.toFixed(0)} y=${event.clientY.toFixed(0)} ts=${event.timeStamp.toFixed(3)}`, 'cyan');
-        this.onMouseDown(event);
-      } else if (event.type === 'pointermove') { this._lastPenMoveMs = performance.now(); this.onMouseMove(event); }
-        else if (event.type === 'pointerup')   { this.onMouseUp(event); }
+        if (window._ipadStylusSculpt !== false) this.onMouseDown(event);
+        if (window._ipadStylusView)             this._onTouchDown(event);
+      } else if (event.type === 'pointermove') {
+        this._lastPenMoveMs = performance.now();
+        if (window._ipadStylusSculpt !== false) this.onMouseMove(event);
+        if (window._ipadStylusView)             this._onTouchMove(event);
+      } else if (event.type === 'pointerup') {
+        if (window._ipadStylusSculpt !== false) this.onMouseUp(event);
+        if (window._ipadStylusView)             this._onTouchUp(event);
+      }
 
     } else if (event.pointerType === 'touch') {
-      if (event.type === 'pointerdown')                                      { this._onTouchDown(event); }
-      else if (event.type === 'pointermove')                                 { this._onTouchMove(event); }
-      else if (event.type === 'pointerup' || event.type === 'pointercancel') { this._onTouchUp(event); }
+      // Prevent Safari from generating synthetic MouseEvents from touch, which
+      // would bypass the finger/stylus routing flags and land in onMouseDown.
+      event.preventDefault();
+      if (event.type === 'pointerdown' && window.screenLog)
+        window.screenLog(`[touch↓] fingerView=${window._ipadFingerView} fingerSculpt=${window._ipadFingerSculpt}`, 'cyan');
+      if (event.type === 'pointerdown') {
+        if (window._ipadFingerView   !== false) this._onTouchDown(event);
+        if (window._ipadFingerSculpt)           this.onMouseDown(event);
+      } else if (event.type === 'pointermove') {
+        if (window._ipadFingerView   !== false) this._onTouchMove(event);
+        if (window._ipadFingerSculpt)           this.onMouseMove(event);
+      } else if (event.type === 'pointerup' || event.type === 'pointercancel') {
+        if (window._ipadFingerView   !== false) this._onTouchUp(event);
+        if (window._ipadFingerSculpt)           this.onMouseUp(event);
+      }
     }
   }
 
@@ -856,12 +882,14 @@ class SculptGL extends Scene {
     const evProxy = this._eventProxy;
     evProxy.clientX = center.x;
     evProxy.clientY = center.y;
-    // 1 finger (fresh)      → MOUSE_LEFT   = rotate
+    // 1 finger (fresh)      → MOUSE_LEFT   = rotate (or forced RIGHT if finger sculpt disabled)
     // 1 finger (after 2+)   → MOUSE_RIGHT  = pan
     // 3+ fingers            → MOUSE_RIGHT  = pan
-    if (n === 1 && wasActive)   evProxy.which = MOUSE_RIGHT;
-    else if (n >= 3)            evProxy.which = MOUSE_RIGHT;
-    else                        evProxy.which = MOUSE_LEFT;
+    if (n === 1 && wasActive)              evProxy.which = MOUSE_RIGHT;
+    else if (n >= 3)                       evProxy.which = MOUSE_RIGHT;
+    else if (!window._ipadFingerSculpt)    evProxy.which = MOUSE_RIGHT; // fingers view-only: always rotate, never sculpt
+    else                                   evProxy.which = MOUSE_LEFT;
+    if (window.screenLog) window.screenLog(`[gesture] n=${n} wasActive=${wasActive} which=${evProxy.which}`, 'yellow');
     this.onDeviceDown(evProxy);
   }
 
@@ -1412,7 +1440,7 @@ class SculptGL extends Scene {
       this._action = Enums.Action.MASK_EDIT;
     } else if ((!canEdit || button === MOUSE_RIGHT) && event.altKey)
       this._action = Enums.Action.CAMERA_PAN_ZOOM_ALT;
-    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit))
+    else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView)))
       this._action = Enums.Action.CAMERA_ROTATE;
     else
       this._action = Enums.Action.SCULPT_EDIT;

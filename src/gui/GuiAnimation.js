@@ -33,7 +33,9 @@ class GuiAnimation {
     window._animShowTangents = window._animShowTangents !== undefined ? window._animShowTangents : false;
     window._animShowTransformBox = false;
     window._animCaptureRate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
-    window._animFPS = window._animFPS || 24;
+    if (!window._animFPS) {
+      try { const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}'); window._animFPS = s.animFPS || 24; } catch (_) { window._animFPS = 24; }
+    }
     window._animPlaybackSpeed = window._animPlaybackSpeed || 1.0;
     window._animKeyMode = window._animKeyMode || 'transform';
     window._animMasterDuration = window._animMasterDuration || 2.0;

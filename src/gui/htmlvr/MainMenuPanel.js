@@ -295,6 +295,54 @@ const CSS = `
   min-width: 0;
 }
 
+/* Checkbox row: label left, custom checkbox right */
+.mm-check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 0;
+  font-size: 11px;
+  color: #a6adc8;
+  cursor: pointer;
+  user-select: none;
+  gap: 8px;
+  box-sizing: border-box;
+}
+.mm-check-row:hover { color: #cdd6f4; }
+.mm-check-row input[type=checkbox] {
+  width: 0;
+  height: 0;
+  opacity: 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+.mm-checkmark {
+  position: relative;
+  width: 13px;
+  height: 13px;
+  border: 1px solid #585b70;
+  border-radius: 3px;
+  background: #313244;
+  flex-shrink: 0;
+}
+.mm-check-row input[type=checkbox]:checked + .mm-checkmark {
+  background: #89b4fa;
+  border-color: #89b4fa;
+}
+.mm-check-row input[type=checkbox]:checked + .mm-checkmark::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 4px;
+  height: 8px;
+  border: 2px solid #1e1e2e;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
 /* Toggle (checkbox replacement) */
 .mm-toggle {
   width: 100%;
@@ -2571,10 +2619,36 @@ export function buildMenuHTML_desktopSettings(main) {
   const langs   = Object.keys(TR.languages);
   const langIdx = langs.indexOf(TR.select);
 
-  return `
+  const rf    = Tablet.radiusFactor ?? 0.75;
+  const ifact = Tablet.intensityFactor ?? 0.0;
+
+  const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const chk = (id, checked) => `<label class="mm-check-row"><span>${id}</span><input type="checkbox" id="mm-${id.toLowerCase().replace(/\s+/g,'-')}"${checked ? ' checked' : ''}><span class="mm-checkmark"></span></label>`;
+  const ipadSection = isIpad ? `
+    <div class="mm-section-title">Multitouch</div>
+    ${chk('Fingers control view',  opts.ipadFingerView)}
+    ${chk('Fingers sculpt',        opts.ipadFingerSculpt)}
+    ${chk('Stylus controls view',  opts.ipadStylusView)}
+    ${chk('Stylus sculpts',        opts.ipadStylusSculpt)}
+  ` : '';
+
+  const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
+
+  return `${ipadSection}
+    <div class="mm-section-title">Pen Pressure</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Radius factor</span>
+      <input type="range" id="mm-tablet-radius" min="0" max="1" step="0.01" value="${rf}">
+      <span class="mm-val" id="mm-tablet-radius-val">${rf.toFixed(2)}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Intensity factor</span>
+      <input type="range" id="mm-tablet-intensity" min="0" max="1" step="0.01" value="${ifact}">
+      <span class="mm-val" id="mm-tablet-intensity-val">${ifact.toFixed(2)}</span>
+    </div>
     <div class="mm-section-title">Advanced</div>
-    <button class="mm-toggle${opts.debugMode?' active':''}" id="mm-debug-log">Show debug log</button>
-    <button class="mm-toggle" id="mm-eruda-console">Show Eruda console</button>
+    <label class="mm-check-row"><span>Show debug log</span><input type="checkbox" id="mm-debug-log"${debugActive ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+    <label class="mm-check-row"><span>Show Eruda console</span><input type="checkbox" id="mm-eruda-console"><span class="mm-checkmark"></span></label>
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
     <div class="mm-section-title">Language</div>
     ${buildSelectHTML('mm-language', langs.map((l, i) => ({ val: i, label: l })), langIdx)}
@@ -2584,9 +2658,25 @@ export function buildMenuHTML_desktopSettings(main) {
 export function wireMenuDesktopSettings(el, main, repaintFn) {
   const q = (sel) => el.querySelector(sel);
 
-  q('#mm-debug-log')?.addEventListener('click', (e) => {
-    const next = !e.currentTarget.classList.contains('active');
-    e.currentTarget.classList.toggle('active', next);
+  const wireCheck = (id, optKey, windowKey) => {
+    q(id)?.addEventListener('change', (e) => {
+      window[windowKey] = e.target.checked;
+      getOptionsURL.saveOption(optKey, e.target.checked);
+    });
+  };
+  wireCheck('#mm-fingers-control-view',  'ipadFingerView',   '_ipadFingerView');
+  wireCheck('#mm-fingers-sculpt',        'ipadFingerSculpt', '_ipadFingerSculpt');
+  wireCheck('#mm-stylus-controls-view',  'ipadStylusView',   '_ipadStylusView');
+  wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
+
+  wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
+    (v) => { Tablet.radiusFactor    = v; getOptionsURL.saveOption('tabletRadiusFactor',    v, 300); }, v => v.toFixed(2));
+  wireSlider(q('#mm-tablet-intensity'), q('#mm-tablet-intensity-val'),
+    (v) => { Tablet.intensityFactor = v; getOptionsURL.saveOption('tabletIntensityFactor', v, 300); }, v => v.toFixed(2));
+  fixSliderDrag(el);
+
+  q('#mm-debug-log')?.addEventListener('change', (e) => {
+    const next = e.target.checked;
     window._showDebugLog = next;
     getOptionsURL.saveOption('debugMode', next);
     const log = document.getElementById('log');
@@ -2594,9 +2684,8 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
     if (next && window.screenLog) window.screenLog('Debug Log Enabled', 'lime');
   });
 
-  q('#mm-eruda-console')?.addEventListener('click', (e) => {
-    const next = !e.currentTarget.classList.contains('active');
-    e.currentTarget.classList.toggle('active', next);
+  q('#mm-eruda-console')?.addEventListener('change', (e) => {
+    const next = e.target.checked;
     if (next) {
       if (!window.eruda) {
         const script = document.createElement('script');

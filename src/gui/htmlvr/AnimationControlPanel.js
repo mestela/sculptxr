@@ -661,6 +661,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   fpsInput?.addEventListener('input', () => {
     window._animFPS = Math.round(parseFloat(fpsInput.value));
     if (fpsVal) fpsVal.textContent = window._animFPS;
+    window.saveOption?.('animFPS', window._animFPS);
     repaint();
   });
 

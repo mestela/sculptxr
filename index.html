@@ -101,7 +101,7 @@
     <!-- Warning Dialog if OpenXR is not detected promptly -->
     <div id="xr-warning"
         style="display: none; position: absolute; bottom: 70px; left: 20px; background: rgba(0,0,0,0.8); color: white; padding: 15px 25px; border-radius: 8px; font-family: sans-serif; text-align: center; z-index: 9999; border: 1px solid #444; cursor: pointer; opacity: 0; white-space: nowrap;">
-        <p style="margin: 0; font-size: 16px;">OpenXR not detected. Try restarting Chrome?</p>
+        <p style="margin: 0; font-size: 16px;">VR not available. Try restarting your browser?</p>
     </div>
 
     <!-- Update Available Banner -->
@@ -358,9 +358,10 @@
             const btnVR = document.getElementById('vr-button');
             const btnAR = document.getElementById('ar-button');
 
-            // Quick timeout to warn users if Chrome hasn't registered OpenXR
+            // Quick timeout to warn users if browser hasn't registered WebXR
+            const isIpad = /iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             setTimeout(() => {
-                if (btnVR && btnVR.style.display === 'none' && btnAR && btnAR.style.display === 'none') {
+                if (!isIpad && btnVR && btnVR.style.display === 'none' && btnAR && btnAR.style.display === 'none') {
                     const warning = document.getElementById('xr-warning');
                     if (warning) {
                         warning.style.display = 'block';

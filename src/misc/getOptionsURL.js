@@ -186,6 +186,28 @@ var getOptionsURL = function () {
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
+  // Input
+  options.tabletRadiusFactor    = queryNumber(getVal('tabletRadiusFactor'),    0.0, 1.0,   0.75);
+  options.tabletIntensityFactor = queryNumber(getVal('tabletIntensityFactor'), 0.0, 1.0,   0.0);
+
+  // iPad multitouch routing (defaults match existing behaviour)
+  options.ipadFingerView    = queryBool(getVal('ipadFingerView'),    true);
+  options.ipadFingerSculpt  = queryBool(getVal('ipadFingerSculpt'),  false);
+  options.ipadStylusView    = queryBool(getVal('ipadStylusView'),    false);
+  options.ipadStylusSculpt  = queryBool(getVal('ipadStylusSculpt'),  true);
+
+  // History
+  options.maxUndo = queryInteger(getVal('maxUndo'), 3, 500, 50);
+
+  // Topology
+  options.remesh_resolution = queryNumber(getVal('remesh_resolution'), 0, Infinity, 1.0);
+
+  // Animation
+  options.animFPS = queryInteger(getVal('animFPS'), 1, 120, 24);
+
+  // Scene
+  options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.5);
+
   return options;
 };
 
