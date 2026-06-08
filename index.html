@@ -140,6 +140,7 @@
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
+                if (window._fullLogBuffer) window._fullLogBuffer.push(msg);
                 console.log(msg); // Route through intercepted console.log
                 if (window.app) {
                     const scene = window.app;
@@ -213,6 +214,7 @@
                     }
                 }
 
+                if (window._fullLogBuffer) window._fullLogBuffer.push(msg);
                 if (!window._showDebugLog) {
                     cls.call(console, `[+${delta.toFixed(1)}ms]`, ...args);
                     return;
@@ -285,6 +287,9 @@
                 }
             });
 
+            // Full log buffer — unbounded, copied on demand
+            window._fullLogBuffer = [];
+
             // Add Copy Button (Ensured logic)
             const logContainer = document.getElementById('log');
             if (logContainer) {
@@ -301,19 +306,16 @@
                 btnCopy.style.padding = "2px 5px";
                 btnCopy.style.fontSize = "12px";
                 btnCopy.style.opacity = "0.7";
-                btnCopy.style.zIndex = "1001"; // High z-index
+                btnCopy.style.zIndex = "1001";
 
-                // Use textContent to avoid innerText forced reflow layout cost
                 btnCopy.onclick = () => {
-                    const text = logContainer.textContent;
+                    const text = window._fullLogBuffer.join('\n');
                     if (navigator.clipboard) {
                         navigator.clipboard.writeText(text).then(() => {
-                            const oldText = btnCopy.textContent;
                             btnCopy.textContent = "Copied!";
                             setTimeout(() => btnCopy.textContent = "Copy Log", 1000);
                         });
                     } else {
-                        // Fallback
                         const ta = document.createElement('textarea');
                         ta.value = text;
                         document.body.appendChild(ta);

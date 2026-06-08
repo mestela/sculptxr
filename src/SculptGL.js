@@ -75,10 +75,6 @@ class SculptGL extends Scene {
 
     this._eventProxy = {};
 
-    // Enable touch debug logging via URL parameter ?dbgTouch
-    if (new URLSearchParams(window.location.search).has('dbgTouch'))
-      window._dbgTouch = true;
-
     // iPad multitouch routing flags — initialise from persisted opts
     const _ipadOpts = window.getOptionsURL?.() || {};
     if (window._ipadFingerView   === undefined) window._ipadFingerView   = _ipadOpts.ipadFingerView   ?? true;
@@ -597,7 +593,96 @@ class SculptGL extends Scene {
     canvas.addEventListener('mousemove', mouseOnly(Utils.throttle(this.onMouseMove.bind(this), 16.66)), false);
 
     // [HOTFIX] Prevent Three.js WebXRManager from running heavy raycasts on hover
-    canvas.addEventListener('pointerover', (e) => { e.stopPropagation(); }, true);
+    canvas.addEventListener('pointerover', (e) => {
+      e.stopPropagation();
+      // Safari/iPad doesn't fire compat mouseover for Apple Pencil hover entry, so
+      // _focusGui (set by onMouseOut when pen left) would never clear via onMouseOver.
+      // Clear it here on pen re-entry so sculpting can resume after the pen returns.
+      if (e.pointerType === 'pen') this._focusGui = false;
+    }, true);
+
+    // Apple Pencil Touch Events fallback.
+    //
+    // Safari/iPadOS suppresses pointerdown (and all subsequent pointer events) for
+    // some Apple Pencil hover→touch transitions, causing every N-th stroke to be
+    // silently ignored. Touch Events run through a completely separate pipeline and
+    // are not affected by this suppression. We use them here as a fallback: if the
+    // first touchmove of a stylus stroke arrives while action is still NOTHING (i.e.
+    // pointerdown was never dispatched), we synthesise the stroke start ourselves.
+    //
+    // Guard: check _action === SCULPT_EDIT in touchmove rather than touchstart, so
+    // we don't race against the pointer event that may still arrive a frame later.
+    let _touchFallbackPending = null; // {x,y,force} saved at touchstart
+    let _touchFallbackActive  = false;
+
+    canvas.addEventListener('touchstart', (e) => {
+      for (const touch of e.changedTouches) {
+        if (touch.touchType !== 'stylus') continue;
+        _touchFallbackPending = { x: touch.clientX, y: touch.clientY, force: touch.force };
+        // Reset the flag — pointer events for this new touch haven't arrived yet.
+        this._ptrDownHandledThisTouch = false;
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', (e) => {
+      for (const touch of e.changedTouches) {
+        if (touch.touchType !== 'stylus') continue;
+
+        if (_touchFallbackPending && !_touchFallbackActive) {
+          // _ptrDownHandledThisTouch is set by onPointer when a real pointerdown
+          // passes the bounce debounce. If it's still false by the time the first
+          // touchmove arrives, the pointer events pipeline missed this stroke start.
+          if (!this._ptrDownHandledThisTouch) {
+            _touchFallbackActive = true;
+            const pending = _touchFallbackPending;
+            // Force-end any stuck previous stroke before starting this one.
+            if (this._action === Enums.Action.SCULPT_EDIT && !this._vrSculpting)
+              this.onDeviceUp();
+            this._lastPenDownMs = performance.now();
+            this._focusGui = false;
+            const synthDown = {
+              which: 1, pointerType: 'pen',
+              clientX: pending.x, clientY: pending.y,
+              pressure: pending.force || 0.5,
+              stopPropagation: () => {}, preventDefault: () => {}
+            };
+            if (window._ipadStylusSculpt !== false) this.onMouseDown(synthDown);
+          }
+          _touchFallbackPending = null;
+        }
+
+        if (_touchFallbackActive) {
+          e.preventDefault();
+          this._lastPenMoveMs = performance.now();
+          const synthMove = {
+            pointerType: 'pen',
+            clientX: touch.clientX, clientY: touch.clientY,
+            pressure: touch.force || 0.5,
+            stopPropagation: () => {}, preventDefault: () => {}
+          };
+          if (window._ipadStylusSculpt !== false) this.onMouseMove(synthMove);
+        }
+      }
+    }, { passive: false });
+
+    const cbTouchEndCancel = (e) => {
+      for (const touch of e.changedTouches) {
+        if (touch.touchType !== 'stylus') continue;
+        _touchFallbackPending = null;
+        if (!_touchFallbackActive) continue;
+        _touchFallbackActive = false;
+        e.preventDefault();
+        const synthUp = {
+          which: 1, pointerType: 'pen',
+          clientX: touch.clientX, clientY: touch.clientY,
+          pressure: 0,
+          stopPropagation: () => {}, preventDefault: () => {}
+        };
+        this.onMouseUp(synthUp);
+      }
+    };
+    canvas.addEventListener('touchend',    cbTouchEndCancel, { passive: false });
+    canvas.addEventListener('touchcancel', cbTouchEndCancel, { passive: false });
 
 
     canvas.addEventListener('mousewheel', cbMouseWheel, false);
@@ -629,14 +714,16 @@ class SculptGL extends Scene {
     // that arrive within 50ms, even if other events land in between.
     // Also catch same-object re-routing via WeakSet (belt-and-suspenders).
     if (this._handledPtrEvents.has(event)) {
-      if (window._dbgTouch && window.screenLog) window.screenLog(`[DEDUP same-obj] type=${event.type}`, 'red');
       return;
     }
-    const ptrKey = `${event.type}-${event.pointerId}-${Math.round(event.timeStamp)}`;
+    // Include rounded pressure so hover events (pressure=0) don't collide with
+    // touch events (pressure>0) that Safari fires at the same timestamp on pen down.
+    const ptrKey = `${event.type}-${event.pointerId}-${Math.round(event.timeStamp)}-${Math.round(event.pressure * 1000)}`;
     const now = performance.now();
     const seenAt = this._seenPtrKeys.get(ptrKey);
-    if (seenAt !== undefined && (now - seenAt) < 50) {
-      if (window._dbgTouch && window.screenLog) window.screenLog(`[DEDUP data-dup] type=${event.type} ts=${event.timeStamp.toFixed(3)} age=${(now-seenAt).toFixed(1)}ms`, 'red');
+    // Never dedup pointerup/pointercancel — missing them leaves stale entries in _fingerPointers
+    const canDedup = event.type !== 'pointerup' && event.type !== 'pointercancel';
+    if (canDedup && seenAt !== undefined && (now - seenAt) < 50) {
       return;
     }
     this._seenPtrKeys.set(ptrKey, now);
@@ -648,7 +735,6 @@ class SculptGL extends Scene {
     }
 
     Tablet.pressure = event.pressure;
-    if (window._dbgTouch === true && !(event.pointerType === 'pen' && event.pressure === 0)) console.log(`[ptr] type=${event.type} ptrType=${event.pointerType} pressure=${event.pressure.toFixed(3)} id=${event.pointerId} ts=${event.timeStamp.toFixed(3)}`);
 
     if (event.pointerType === 'pen') {
       if (this._fingerPointers.size > 0 && event.pressure < 0.05) {
@@ -662,17 +748,19 @@ class SculptGL extends Scene {
         // AND pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
         // which reset _action to NOTHING and bypass the onDeviceDown guard.
         const msSinceLastDown = performance.now() - (this._lastPenDownMs || 0);
-        if (msSinceLastDown < 50) {
-          if (window._dbgTouch && window.screenLog)
-            window.screenLog(`[pen↓ BOUNCE] blocked after ${msSinceLastDown.toFixed(1)}ms`, 'orange');
+        if (msSinceLastDown < 10) {
           return;
         }
         this._lastPenDownMs = performance.now();
+        this._ptrDownHandledThisTouch = true; // tell touch fallback pointer events are live
+        // Safety: if the previous stroke is still marked active (pointerup was suppressed),
+        // end it cleanly now. The onDeviceDown guard would otherwise block the new stroke.
+        if (this._action === Enums.Action.SCULPT_EDIT && !this._vrSculpting) {
+          this.onDeviceUp();
+        }
         // Safety: if the gesture engine is stuck (e.g. a finger pointerup was
         // dropped by the OS), force-reset it so the pen can sculpt normally.
         if (this._gestureActive || this._fingerPointers.size > 0) {
-          if (window._dbgTouch && window.screenLog)
-            window.screenLog(`[pen↓ GESTURE RESET] active=${this._gestureActive} fingers=${this._fingerPointers.size}`, 'orange');
           this._fingerPointers.clear();
           this._peakFingerCount = 0;
           this._tapSeqStartTime = 0;
@@ -681,14 +769,43 @@ class SculptGL extends Scene {
             this.onDeviceUp();
           }
         }
-        if (window._dbgTouch && window.screenLog) window.screenLog(`[pen↓] p=${event.pressure.toFixed(2)} x=${event.clientX.toFixed(0)} y=${event.clientY.toFixed(0)} ts=${event.timeStamp.toFixed(3)}`, 'cyan');
         if (window._ipadStylusSculpt !== false) this.onMouseDown(event);
         if (window._ipadStylusView)             this._onTouchDown(event);
       } else if (event.type === 'pointermove') {
         this._lastPenMoveMs = performance.now();
+
+        if (event.pressure === 0) {
+          const rect = this._canvas.getBoundingClientRect();
+          this._penHoverMouseX = this._pixelRatio * (event.clientX - rect.left);
+          this._penHoverMouseY = this._pixelRatio * (event.clientY - rect.top);
+        }
+
+        // Safari on iPadOS sometimes skips `pointerdown` when the pen transitions
+        // from hover to touch, delivering a pointermove with pressure > 0 instead.
+        // Detect the pressure 0→positive crossing and synthesise the stroke start.
+        const PRESSURE_THRESHOLD = 0.02;
+        const prevPressure = this._lastPenPressure || 0;
+        this._lastPenPressure = event.pressure;
+        if (event.pressure >= PRESSURE_THRESHOLD && prevPressure < PRESSURE_THRESHOLD
+            && this._action !== Enums.Action.SCULPT_EDIT) {
+          // Treat this like a real pointerdown: set the bounce timestamp so any
+          // real pointerdown that arrives late is ignored as a duplicate.
+          this._lastPenDownMs = performance.now();
+          // Plain object with the fields onMouseDown/onDeviceDown actually read.
+          const synthDown = {
+            which: 1, pointerType: 'pen',
+            clientX: event.clientX, clientY: event.clientY,
+            pressure: event.pressure,
+            stopPropagation: () => {}, preventDefault: () => {}
+          };
+          if (window._ipadStylusSculpt !== false) this.onMouseDown(synthDown);
+          if (window._ipadStylusView)             this._onTouchDown(synthDown);
+        }
+
         if (window._ipadStylusSculpt !== false) this.onMouseMove(event);
         if (window._ipadStylusView)             this._onTouchMove(event);
-      } else if (event.type === 'pointerup') {
+      } else if (event.type === 'pointerup' || event.type === 'pointercancel') {
+        this._lastPenPressure = 0; // reset so next stroke's hover reads as pressure=0
         if (window._ipadStylusSculpt !== false) this.onMouseUp(event);
         if (window._ipadStylusView)             this._onTouchUp(event);
       }
@@ -697,8 +814,6 @@ class SculptGL extends Scene {
       // Prevent Safari from generating synthetic MouseEvents from touch, which
       // would bypass the finger/stylus routing flags and land in onMouseDown.
       event.preventDefault();
-      if (event.type === 'pointerdown' && window.screenLog)
-        window.screenLog(`[touch↓] fingerView=${window._ipadFingerView} fingerSculpt=${window._ipadFingerSculpt}`, 'cyan');
       if (event.type === 'pointerdown') {
         if (window._ipadFingerView   !== false) this._onTouchDown(event);
         if (window._ipadFingerSculpt)           this.onMouseDown(event);
@@ -719,6 +834,11 @@ class SculptGL extends Scene {
   ////////////////////////////
 
   _onTouchDown(e) {
+    // Stale-palm guard: a touch arriving while the pen is actively sculpting would add
+    // itself to _fingerPointers and block subsequent pen moves in onMouseMove.  Ignore it.
+    if (this._action === Enums.Action.SCULPT_EDIT && e.pointerType === 'touch') {
+      return;
+    }
     try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
     this._fingerPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this._focusGui = false;
@@ -733,11 +853,15 @@ class SculptGL extends Scene {
       this._tapSeqPeakCenter = this._fingerCenter();
     }
     const center = this._fingerCenter();
-    if (this._gestureActive) {
-      // Extra finger added mid-gesture — restart with new count
+    const wasActive = this._gestureActive;
+    if (wasActive) {
+      // Extra finger added mid-gesture — end it, then restart with new count.
+      // Clear _gestureActive BEFORE calling _startGesture so n=1 re-entries don't
+      // inherit wasActive=true (which would route a fresh single finger to camera pan).
+      this._gestureActive = false;
       this.onDeviceUp();
     }
-    this._startGesture(n, center, this._gestureActive);
+    this._startGesture(n, center, wasActive);
   }
 
   _onTouchMove(e) {
@@ -1106,7 +1230,6 @@ class SculptGL extends Scene {
 
     const age = performance.now() - (this._lastPenDownMs || 0);
     const isCompatDup = event.constructor === MouseEvent && age < 50;
-    if (window._dbgTouch && window.screenLog) window.screenLog(`[mousedown] cls=${event.constructor.name} age=${age.toFixed(0)}ms BLOCKED=${isCompatDup}`, isCompatDup ? 'orange' : 'red');
     if (isCompatDup) return;
 
     this._gui.callFunc('onMouseDown', event);
@@ -1117,14 +1240,11 @@ class SculptGL extends Scene {
     event.stopPropagation();
     event.preventDefault();
 
-    // Suppress mouse/pen-hover moves while a finger gesture is active.
-    if (this._fingerPointers.size > 0) return;
-
-    const moveAge = performance.now() - (this._lastPenMoveMs || 0);
-    const isCompatMove = event.constructor === MouseEvent && moveAge < 50;
-    // Only log mousemove when it's NOT a routine blocked hover dup — reduces noise
-    if (window._dbgTouch === true && !(isCompatMove && this._fingerPointers.size === 0)) console.log(`[mousemove] cls=${event.constructor.name} penAge=${moveAge.toFixed(1)}ms fingers=${this._fingerPointers.size} BLOCKED=${isCompatMove || this._fingerPointers.size > 0}`);
-    if (isCompatMove) return;
+    // Suppress mouse moves while a finger gesture is active, but always let the pen
+    // through — a stray palm touch must not freeze an active stylus stroke.
+    if (this._fingerPointers.size > 0 && event.pointerType !== 'pen') {
+      return;
+    }
 
     this._gui.callFunc('onMouseMove', event);
     this.onDeviceMove(event);
@@ -1398,8 +1518,9 @@ class SculptGL extends Scene {
   }
 
   onDeviceDown(event) {
-    if (this._focusGui)
+    if (this._focusGui) {
       return;
+    }
 
     // Prevent mouse-down from interfering with active VR stroke
     if (this._vrSculpting) return;
@@ -1409,8 +1530,6 @@ class SculptGL extends Scene {
     // a stale/deformed picking state and can stamp on the wrong (back) face.
     var button = event.which;
     if (button === MOUSE_LEFT && this._action === Enums.Action.SCULPT_EDIT) {
-      if (window._dbgTouch && window.screenLog)
-        window.screenLog(`[deviceDown SKIP] left+SCULPT_EDIT already active`, 'orange');
       return;
     }
 
@@ -1423,9 +1542,6 @@ class SculptGL extends Scene {
     if (button === MOUSE_LEFT && this._sculptManager) {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
-
-    if (window._dbgTouch && window.screenLog)
-      window.screenLog(`[deviceDown] btn=${button} canEdit=${canEdit} x=${mouseX.toFixed(0)} y=${mouseY.toFixed(0)} cls=${event.constructor?.name} ptrType=${event.pointerType}`, canEdit ? 'lime' : 'yellow');
 
     if (button === MOUSE_LEFT && canEdit)
       this.setCanvasCursor('none');
@@ -1442,6 +1558,8 @@ class SculptGL extends Scene {
       this._action = Enums.Action.CAMERA_PAN_ZOOM_ALT;
     else if (button === MOUSE_RIGHT || (button === MOUSE_LEFT && !canEdit && (event.pointerType !== 'pen' || window._ipadStylusView)))
       this._action = Enums.Action.CAMERA_ROTATE;
+    else if (button === MOUSE_LEFT && !canEdit && event.pointerType === 'pen')
+      this._action = Enums.Action.NOTHING; // pen missed mesh — cursor tracks freely, no camera rotate
     else
       this._action = Enums.Action.SCULPT_EDIT;
 
@@ -1457,8 +1575,9 @@ class SculptGL extends Scene {
   }
 
   onDeviceMove(event) {
-    if (this._focusGui)
+    if (this._focusGui) {
       return;
+    }
 
     this.setMousePosition(event);
 

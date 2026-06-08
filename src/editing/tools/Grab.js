@@ -31,8 +31,22 @@ class Grab extends SculptBase {
   start(ctrl) {
     var main    = this._main;
     var picking = main.getPicking();
-    if (!picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY))
-      return false;
+    const mx = main._mouseX, my = main._mouseY;
+    if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my)) {
+      const lhx = main._penHoverMouseX;
+      const lhy = main._penHoverMouseY;
+      const dx = lhx !== undefined ? Math.abs(lhx - mx) : Infinity;
+      const dy = lhy !== undefined ? Math.abs(lhy - my) : Infinity;
+      if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy)) {
+        // pen hover fallback
+      } else if (picking.intersectionMouseMeshes(undefined, mx, my, true)) {
+        // backface fallback
+      } else if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy, true)) {
+        // backface hover fallback
+      } else {
+        return false;
+      }
+    }
     var mesh = picking.getMesh();
     if (!mesh || mesh._isVoxel) return false;
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
@@ -134,27 +148,10 @@ class Grab extends SculptBase {
     this._undoMatrix = null;
   }
 
-  preUpdate() {
-    // Check for VR Trigger inputs
-    // We need to access inputs directly from main or scene
+  preUpdate(canBeContinuous) {
+    super.preUpdate(canBeContinuous); // updates hover cache + cursor picking for desktop/iPad
+
     const main = this._main;
-    // const inputs = main.getPicking()._currWorld; // Controller inputs
-    // Main is SculptGL instance. Scene is accessible via main? 
-    // Usually controls are in Scene.js handles coordinates.
-    // However, Tools usually get `main` which is `SculptGL`.
-    // We need VR Gamepad data.
-
-    // Actually, `SculptGL.js` calls `tool.update(main)`
-    // We need to access the VR controllers.
-    // `main` has `_scene`? No, `main` is `SculptGL`.
-    // `Scene.js` has `_sculptgl` (main).
-    // But `SculptGL` doesn't strictly know about VR controllers unless we pass them?
-    // `Scene.js` handles `handleXRInput`. 
-    // IT already passes picking data to tools?
-    // Let's assume we can access `main.getScene().getGamepads()` if we add that accessor?
-    // Or we rely on `Picking` which might have controller data?
-    // `Picking.js` has `_controllers`.
-
     const picking = main.getPicking();
     if (!picking || !picking._controllers) return;
 

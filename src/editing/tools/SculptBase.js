@@ -51,8 +51,27 @@ class SculptBase {
     // Is this a VR controller stroke or a Desktop mouse stroke?
     if (!main._vrSculpting) {
     // Desktop: Evaluate picking using the mouse
-      if (!picking.intersectionMouseMeshes())
-        return false;
+      if (!picking.intersectionMouseMeshes()) {
+        // Fallback: pen tilt offsets the touch contact point from the hover ray by 3-15
+        // device pixels. _penHoverMouseX/Y is set from the compat mousemove that fires
+        // just before touchdown (within ~5px of the real contact position) and represents
+        // where the hover cursor was last successfully tracking.
+        const lhx = main._penHoverMouseX;
+        const lhy = main._penHoverMouseY;
+        const dx = lhx !== undefined ? Math.abs(lhx - main._mouseX) : Infinity;
+        const dy = lhy !== undefined ? Math.abs(lhy - main._mouseY) : Infinity;
+        const mx = main._mouseX, my = main._mouseY;
+        if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy)) {
+          // pen hover fallback
+        } else if (picking.intersectionMouseMeshes(undefined, mx, my, true)) {
+          // Two-sided fallback: sculpting deforms the mesh and some triangles become back-facing
+          // to the camera (visible with DoubleSide rendering but missed by front-face-only pick).
+        } else if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy, true)) {
+          // backface hover fallback
+        } else {
+          return false;
+        }
+      }
     } else {
       // VR: Evaluating using the VR Ray (already computed in handleXRInput)
       if (!picking.getMesh() && !this._allowAir) {
@@ -216,12 +235,15 @@ class SculptBase {
     var picking = main.getPicking();
     var isSculpting = main._action === Enums.Action.SCULPT_EDIT;
 
-    if (isSculpting && !canBeContinuous)
+    if (isSculpting && !canBeContinuous) {
       return;
+    }
 
     if (isSculpting) {
       var mesh = this.getMesh();
-      if (mesh) picking.intersectionMouseMesh(mesh);
+      if (mesh) {
+        picking.intersectionMouseMesh(mesh);
+      }
     } else {
       picking.intersectionMouseMeshes();
     }

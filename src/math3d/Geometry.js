@@ -28,12 +28,13 @@ Geometry.intersectionRayTriangleEdges = (function () {
   var pvec = [0.0, 0.0, 0.0];
   var tvec = [0.0, 0.0, 0.0];
   var qvec = [0.0, 0.0, 0.0];
-  return function (orig, dir, edge1, edge2, v1, vertInter) {
-    // moller trumbore intersection algorithm (front-face only — det must be positive)
+  return function (orig, dir, edge1, edge2, v1, vertInter, twoSided) {
+    // moller trumbore intersection algorithm
+    // twoSided=true allows backface hits (for stroke-start picking on deformed/inverted surfaces)
     vec3.cross(pvec, dir, edge2);
     var det = vec3.dot(edge1, pvec);
-    // det < 0 means back face — skip it so raycasts never land on the far side of the mesh
-    if (det < EPSILON)
+    // front-face only by default; two-sided only rejects near-zero (parallel) det
+    if (twoSided ? (det > -EPSILON && det < EPSILON) : det < EPSILON)
       return -1.0;
     var invDet = 1.0 / det;
     vec3.sub(tvec, orig, v1);
@@ -57,10 +58,10 @@ Geometry.intersectionRayTriangleEdges = (function () {
 Geometry.intersectionRayTriangle = (function () {
   var edge1 = [0.0, 0.0, 0.0];
   var edge2 = [0.0, 0.0, 0.0];
-  return function (orig, dir, v1, v2, v3, vertInter) {
+  return function (orig, dir, v1, v2, v3, vertInter, twoSided) {
     vec3.sub(edge1, v2, v1);
     vec3.sub(edge2, v3, v1);
-    return Geometry.intersectionRayTriangleEdges(orig, dir, edge1, edge2, v1, vertInter);
+    return Geometry.intersectionRayTriangleEdges(orig, dir, edge1, edge2, v1, vertInter, twoSided);
   };
 })();
 

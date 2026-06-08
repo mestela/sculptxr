@@ -156,7 +156,7 @@ class Picking {
   }
 
   /** Intersection between a ray the mouse position for every meshes */
-  intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY) {
+  intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY, twoSided = false) {
     if (this._main && this._main._lockSelection) {
       const activeMesh = this._main.getMesh();
       if (activeMesh) {
@@ -180,7 +180,7 @@ class Picking {
       mat4.invert(_TMP_INV, mesh.getThreeMesh().matrixWorld.elements);
       vec3.transformMat4(_TMP_NEAR_1, vNear, _TMP_INV);
       vec3.transformMat4(_TMP_FAR, vFar, _TMP_INV);
-      if (!this.intersectionRayMesh(mesh, _TMP_NEAR_1, _TMP_FAR))
+      if (!this.intersectionRayMesh(mesh, _TMP_NEAR_1, _TMP_FAR, twoSided))
         continue;
 
       var interTest = this.getIntersectionPoint();
@@ -458,7 +458,7 @@ class Picking {
   }
 
   /** Intersection between a ray and a mesh */
-  intersectionRayMesh(mesh, vNearOrig, vFarOrig) {
+  intersectionRayMesh(mesh, vNearOrig, vFarOrig, twoSided = false) {
     // resest picking
     this._mesh = null;
     this._pickedFace = -1;
@@ -495,7 +495,7 @@ class Picking {
       _TMP_V3[0] = vAr[ind3];
       _TMP_V3[1] = vAr[ind3 + 1];
       _TMP_V3[2] = vAr[ind3 + 2];
-      var hitDist = Geometry.intersectionRayTriangle(_TMP_NEAR, eyeDir, _TMP_V1, _TMP_V2, _TMP_V3, _TMP_INTER);
+      var hitDist = Geometry.intersectionRayTriangle(_TMP_NEAR, eyeDir, _TMP_V1, _TMP_V2, _TMP_V3, _TMP_INTER, twoSided);
       if (hitDist < 0.0) {
         ind2 = fAr[indFace + 3];
         if (ind2 !== Utils.TRI_INDEX) {
@@ -503,7 +503,7 @@ class Picking {
           _TMP_V2[0] = vAr[ind2];
           _TMP_V2[1] = vAr[ind2 + 1];
           _TMP_V2[2] = vAr[ind2 + 2];
-          hitDist = Geometry.intersectionRayTriangle(_TMP_NEAR, eyeDir, _TMP_V1, _TMP_V3, _TMP_V2, _TMP_INTER);
+          hitDist = Geometry.intersectionRayTriangle(_TMP_NEAR, eyeDir, _TMP_V1, _TMP_V3, _TMP_V2, _TMP_INTER, twoSided);
         }
       }
       if (hitDist >= 0.0 && hitDist < distance) {
