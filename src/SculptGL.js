@@ -71,6 +71,8 @@ class SculptGL extends Scene {
     this._tapSeqStartTime      = 0;  // time of first finger-down in this sequence
     this._tapSeqPeakCenter     = { x: 0, y: 0 }; // multi-finger center when peak count first reached
     this._tapSeqLiftCenter     = { x: 0, y: 0 }; // multi-finger center when first finger lifted from peak
+    this._tapSeqPeakPinchDist  = 0;  // finger spread when peak count first reached
+    this._tapSeqLiftPinchDist  = 0;  // finger spread when first finger lifted from peak
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
     this._eventProxy = {};
@@ -849,8 +851,9 @@ class SculptGL extends Scene {
       this._peakFingerCount  = 1;
     } else if (n > this._peakFingerCount) {
       // Finger count just increased — record center at this new peak
-      this._peakFingerCount  = n;
-      this._tapSeqPeakCenter = this._fingerCenter();
+      this._peakFingerCount      = n;
+      this._tapSeqPeakCenter     = this._fingerCenter();
+      this._tapSeqPeakPinchDist  = this._fingerPinchDist();
     }
     const center = this._fingerCenter();
     const wasActive = this._gestureActive;
@@ -908,7 +911,7 @@ class SculptGL extends Scene {
         const distChange = this._gesturePinchSmoothed - this._gesturePinchLastDist;
         this._gesturePinchLastDist = this._gesturePinchSmoothed;
         if (Math.abs(distChange) >= 0.5) {
-          const zoom = (distChange / this._gesturePinchInitDist) * 25 * 0.02;
+          const zoom = (distChange / this._gesturePinchInitDist) * 25 * 0.015;
           this._camera.zoom(zoom);
           dirty = true;
         }
@@ -931,6 +934,7 @@ class SculptGL extends Scene {
     if (!this._fingerPointers.has(e.pointerId)) return;
     // Snapshot before removing so double-tap check sees the right count
     const center = this._fingerCenter();
+    const pinchDist = this._fingerPinchDist(); // capture BEFORE delete (needs ≥2 fingers)
     const n = this._fingerPointers.size;
     this._fingerPointers.delete(e.pointerId);
     const remaining = this._fingerPointers.size;
@@ -960,7 +964,10 @@ class SculptGL extends Scene {
       this._tapSeqStartTime = 0;
       // Allow more time for 3-finger taps — placing 3 fingers takes longer.
       const tapWindow = (peak >= 3) ? 450 : 300;
-      if (peak >= 2 && tapDuration < tapWindow && tapDrift < 40) {
+      // A pinch/zoom gesture keeps finger-center stable (low drift) but spreads fingers.
+      // Gate on pinch delta so a brief zoom doesn't misfire as undo.
+      const pinchDelta = Math.abs(this._tapSeqLiftPinchDist - this._tapSeqPeakPinchDist);
+      if (peak >= 2 && tapDuration < tapWindow && tapDrift < 40 && pinchDelta < 20) {
         if (peak === 2 && this._stateManager) {
           this._stateManager.undo();
           return; // don't also fall through to the double-tap reset-view path
@@ -976,7 +983,8 @@ class SculptGL extends Scene {
       // multi-finger center NOW (before deletion makes it single-finger).
       // This gives us an apples-to-apples comparison for the drift check.
       if (n === this._peakFingerCount) {
-        this._tapSeqLiftCenter = { x: center.x, y: center.y };
+        this._tapSeqLiftCenter    = { x: center.x, y: center.y };
+        this._tapSeqLiftPinchDist = pinchDist; // captured before delete, while both fingers still in map
       }
       if (this._gestureActive) this.onDeviceUp();
       this._startGesture(remaining, this._fingerCenter(), true);

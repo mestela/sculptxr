@@ -385,10 +385,24 @@ class Camera {
 
   zoom(df) {
     var delta = [0.0, 0.0, 0.0];
-    vec3.sub(delta, this._offset, this._trans);
-    vec3.scale(delta, delta, df * this._speed / 54);
-    if (df < 0.0)
+    vec3.sub(delta, this._offset, this._trans); // unscaled: (offset - trans)
+    // NOTE: at default view, offset=[0,0,0] and trans=[0,0,~80], so delta.z ≈ -80.
+    // The sign is negative: camera is "above" the pivot in Z and looks downward.
+    if (df < 0.0) {
+      // Zoom out: delta[2] is normally negative (≈ -80). When very close to the
+      // pivot it approaches 0 and zoom-out steps vanish. Enforce a negative ceiling
+      // so the user can always escape (floor of -speed/3 ≈ -50 units at default scale).
       delta[0] = delta[1] = 0.0;
+      if (delta[2] > -this._speed / 3) delta[2] = -this._speed / 3;
+      delta[2] *= df * this._speed / 54;
+    } else {
+      // Zoom in: cap df so the step never exceeds the remaining distance.
+      // Without this, large df (small initial finger spread) overshoots the pivot
+      // and flips the camera orientation.
+      var maxDf = 54.0 / this._speed;
+      if (df > maxDf) df = maxDf;
+      vec3.scale(delta, delta, df * this._speed / 54);
+    }
     this.setTrans(vec3.add(this._trans, this._trans, delta));
 
     vec3.scale(delta, delta, 5);

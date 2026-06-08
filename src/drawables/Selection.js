@@ -242,6 +242,15 @@ class Selection {
 
       this._threeCircle.visible = true;
       this._threeDot.position.fromArray(interPoint);
+
+      // Keep the dot a fixed screen-space size regardless of zoom level.
+      // The sphere geometry has radius 0.005; we scale it so it always appears
+      // as a small fixed number of pixels. Formula: world dot radius = dotPx * worldRadius / screenRadius.
+      const screenRadius = sm ? sm.getCurrentTool().getScreenRadius() : localRadius;
+      const dotPx = 5;
+      const dotLocalRadius = (dotPx * localRadius) / (screenRadius * 0.005);
+      this._threeDot.scale.set(dotLocalRadius, dotLocalRadius, dotLocalRadius);
+
       this._threeDot.visible = !inEditMode; // hide centre dot during radius drag
 
       // Cache position/radius so the circle can stay visible when cursor leaves the mesh

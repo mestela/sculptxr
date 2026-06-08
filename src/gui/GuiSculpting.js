@@ -17,6 +17,7 @@ class GuiSculpting {
 
     this._modalBrushRadius = false; // modal brush radius change
     this._modalBrushIntensity = false; // modal brush intensity change
+    this._shiftHeld = false; // tracked from keyboard events; pointer events don't carry modifier state on iPadOS
 
     // modal stuffs (not canvas based, because no 3D picking involved)
     this._lastPageX = 0;
@@ -277,6 +278,10 @@ class GuiSculpting {
     if (event.handled === true)
       return;
 
+    // Track modifier state from keyboard events. Pointer events on iPadOS do not
+    // carry shiftKey/ctrlKey, so we cannot rely on event.shiftKey in onMouseUp.
+    this._shiftHeld = event.shiftKey;
+
     var main = this._main;
     var shk = getOptionsURL.getShortKey(event.which);
     event.stopPropagation();
@@ -328,6 +333,7 @@ class GuiSculpting {
   }
 
   onKeyUp(event) {
+    this._shiftHeld = event.shiftKey; // false when shift key is released
     var releaseTool = this._main._action === Enums.Action.NOTHING && this._toolOnRelease !== -1 && !event.ctrlKey && !event.shiftKey;
     // console.log("[GuiSculpting] onKeyUp, releaseTool:", releaseTool, "toolOnRelease:", this._toolOnRelease, "ctrl:", event.ctrlKey);
     if (!event.altKey || releaseTool)
@@ -366,7 +372,7 @@ class GuiSculpting {
   // MOUSE EVENTS
   ////////////////
   onMouseUp(event) {
-    if (this._toolOnRelease !== -1 && !event.ctrlKey && !event.shiftKey) {
+    if (this._toolOnRelease !== -1 && !event.ctrlKey && !this._shiftHeld) {
       this.releaseInvertSign();
       this._ctrlSculpt.setValue(this._toolOnRelease);
       this._toolOnRelease = -1;
