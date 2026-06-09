@@ -621,8 +621,16 @@ class SculptGL extends Scene {
       for (const touch of e.changedTouches) {
         if (touch.touchType !== 'stylus') continue;
         _touchFallbackPending = { x: touch.clientX, y: touch.clientY, force: touch.force };
-        // Reset the flag — pointer events for this new touch haven't arrived yet.
-        this._ptrDownHandledThisTouch = false;
+        // Only reset the "pointer events handled this" flag if a stroke hasn't already
+        // started. On some iPadOS versions touchstart arrives AFTER pointerdown — if we
+        // unconditionally reset here, the touch fallback sees ptrHandled:false and fires
+        // a second onMouseDown, producing double extrudes/operations.
+        if (this._action !== Enums.Action.SCULPT_EDIT) {
+          this._ptrDownHandledThisTouch = false;
+          if (window.screenLog) window.screenLog(`[dbl] touchstart stylus — ptrHandled→false (not sculpting)`, '#89dceb');
+        } else {
+          if (window.screenLog) window.screenLog(`[dbl] touchstart stylus — ptrHandled kept true (already sculpting)`, '#a6e3a1');
+        }
       }
     }, { passive: true });
 
@@ -634,6 +642,7 @@ class SculptGL extends Scene {
           // _ptrDownHandledThisTouch is set by onPointer when a real pointerdown
           // passes the bounce debounce. If it's still false by the time the first
           // touchmove arrives, the pointer events pipeline missed this stroke start.
+          if (window.screenLog) window.screenLog(`[dbl] touchmove fallback check — ptrHandled:${this._ptrDownHandledThisTouch} action:${this._action}`, '#cba6f7');
           if (!this._ptrDownHandledThisTouch) {
             _touchFallbackActive = true;
             const pending = _touchFallbackPending;
@@ -648,6 +657,7 @@ class SculptGL extends Scene {
               pressure: pending.force || 0.5,
               stopPropagation: () => {}, preventDefault: () => {}
             };
+            if (window.screenLog) window.screenLog(`[dbl] touchmove fallback FIRING onMouseDown`, '#f38ba8');
             if (window._ipadStylusSculpt !== false) this.onMouseDown(synthDown);
           }
           _touchFallbackPending = null;
@@ -745,19 +755,32 @@ class SculptGL extends Scene {
       }
       event.preventDefault();
       if (event.type === 'pointerdown') {
-        // Debounce: reject any pen pointerdown that arrives within 50ms of the
-        // previous accepted one. Catches both true simultaneous duplicates (0ms apart)
-        // AND pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
-        // which reset _action to NOTHING and bypass the onDeviceDown guard.
+        // Debounce: reject any pen pointerdown that arrives within 300ms of the
+        // previous accepted one. This catches:
+        //   - True simultaneous duplicates (0ms apart)
+        //   - Pen-tip bounce sequences (pointerdown→pointerup→pointerdown in <5ms)
+        //     which reset _action to NOTHING and bypass the onDeviceDown guard.
+        //   - The synthesis→real pointerdown pair on iPadOS: Safari delivers a
+        //     pressure>0 pointermove before the real pointerdown (15–80ms later).
+        //     We synthesise a stroke-start from the pressure crossing; the real
+        //     pointerdown arriving 15–80ms later must be treated as a duplicate,
+        //     otherwise it force-ends and restarts the stroke (double extrude, double
+        //     collapse, etc). 300ms matches the SculptManager single-action debounce
+        //     and is safe because intentional rapid re-presses are > 300ms apart.
         const msSinceLastDown = performance.now() - (this._lastPenDownMs || 0);
-        if (msSinceLastDown < 10) {
+        if (window.screenLog) window.screenLog(`[dbl] pen pointerdown ms:${Math.round(msSinceLastDown)} ptrHandled:${this._ptrDownHandledThisTouch} action:${this._action}`, '#cba6f7');
+        if (msSinceLastDown < 300) {
+          if (window.screenLog) window.screenLog(`[dbl] pen pointerdown DEBOUNCED (${Math.round(msSinceLastDown)}ms<300)`, '#f9e2af');
           return;
         }
         this._lastPenDownMs = performance.now();
         this._ptrDownHandledThisTouch = true; // tell touch fallback pointer events are live
-        // Safety: if the previous stroke is still marked active (pointerup was suppressed),
-        // end it cleanly now. The onDeviceDown guard would otherwise block the new stroke.
+        if (window.screenLog) window.screenLog(`[dbl] pen pointerdown ACCEPTED — ptrHandled→true`, '#a6e3a1');
+        // Safety: if the previous stroke is still marked active (pointerup was suppressed
+        // and more than 300ms have passed), end it cleanly so the new stroke can start.
         if (this._action === Enums.Action.SCULPT_EDIT && !this._vrSculpting) {
+          if (window.screenLog && this._sculptManager?.getToolIndex?.() === Enums.Tools.CUT_TOOL)
+            window.screenLog(`[Cut] pointerdown force-ending active stroke`, '#f38ba8');
           this.onDeviceUp();
         }
         // Safety: if the gesture engine is stuck (e.g. a finger pointerup was
@@ -792,7 +815,13 @@ class SculptGL extends Scene {
             && this._action !== Enums.Action.SCULPT_EDIT) {
           // Treat this like a real pointerdown: set the bounce timestamp so any
           // real pointerdown that arrives late is ignored as a duplicate.
+          // Also set _ptrDownHandledThisTouch so the touchmove fallback knows the
+          // pointer-events pipeline handled this stroke start and doesn't fire again.
+          if (window.screenLog && this._sculptManager?.getToolIndex?.() === Enums.Tools.CUT_TOOL)
+            window.screenLog(`[Cut] pressure-synth down p:${event.pressure.toFixed(3)}`, '#cba6f7');
           this._lastPenDownMs = performance.now();
+          this._ptrDownHandledThisTouch = true;
+          if (window.screenLog) window.screenLog(`[dbl] pressure-synth FIRING — ptrHandled→true`, '#a6e3a1');
           // Plain object with the fields onMouseDown/onDeviceDown actually read.
           const synthDown = {
             which: 1, pointerType: 'pen',

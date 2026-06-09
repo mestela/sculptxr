@@ -1131,9 +1131,7 @@ export function buildSectionHTML_rendering(main) {
       </div>
 
       <div class="mm-section-title">Display</div>
-      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">
-        Ground Plane ${main._showGrid ? '✓ On' : 'Off'}
-      </button>
+      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
       <div class="mm-row">
         <span class="mm-lbl">Curvature</span>
         <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature * 20)}">
@@ -2122,16 +2120,17 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   el.querySelector('#mm-import-matcap')?.addEventListener('click', () => document.getElementById('matcapopen')?.click());
   el.querySelector('#mm-import-uv')?.addEventListener('click',     () => document.getElementById('textureopen')?.click());
 
-  el.querySelector('#mm-grid-toggle')?.addEventListener('click', () => {
+  const gridBtn = el.querySelector('#mm-grid-toggle');
+  gridBtn?.addEventListener('click', () => {
     main._showGrid = !main._showGrid;
     if (main._groundGrid) main._groundGrid.visible = main._showGrid;
+    gridBtn.classList.toggle('active', main._showGrid);
     try {
       const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}');
       s.grid = main._showGrid;
       localStorage.setItem('sculptxr_settings', JSON.stringify(s));
     } catch (_) {}
     main.render?.();
-    lightRepaintFn();
   });
 
   wireSlider(el.querySelector('#mm-curvature'), el.querySelector('#mm-curvature-val'), (v) => {

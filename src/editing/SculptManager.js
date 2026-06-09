@@ -132,6 +132,26 @@ class SculptManager {
 
   start(ctrl) {
     var tool = this.getCurrentTool();
+
+    // iPad double-fire guard for single-action tools.
+    // On iPadOS the pressure-transition synthesis (pointermove 0→pressure) and the
+    // real pointerdown can both reach start() within 10–200ms of each other.  For
+    // tools whose entire operation runs inside start() this causes a second, spurious
+    // operation on the (now mutated) mesh with a stale picking face index.
+    // The guard is intentionally limited to tools with _continuous===false because
+    // drag-based tools need start() called once per stroke and are not affected.
+    const SINGLE_ACTION_DEBOUNCE_MS = 300;
+    if (tool._continuous === false) {
+      const now = performance.now();
+      const msSinceLast = now - (this._lastSingleActionMs || 0);
+      if (msSinceLast < SINGLE_ACTION_DEBOUNCE_MS) {
+        if (window.screenLog) window.screenLog(
+          `[SculptMgr] single-action dup blocked (${Math.round(msSinceLast)}ms) tool:${this._toolIndex}`, '#f9e2af');
+        return false;
+      }
+      this._lastSingleActionMs = now;
+    }
+
     var canEdit = tool.start(ctrl);
 
     // Push State for Undo/Redo

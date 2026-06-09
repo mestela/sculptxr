@@ -11,6 +11,7 @@ class CutTool extends SculptBase {
     this._redoPoints = [];
     this._currentFace = -1;
     this._previewMesh = null;
+    this._lastPointAddedMs = 0; // timestamp of last accepted cut point, for duplicate-start guard
   }
 
   findClosestEdgeOrVertex(picking, faceIdx) {
@@ -499,32 +500,50 @@ class CutTool extends SculptBase {
     }
     
     if (this._currentFace !== undefined && this._currentFace >= 0) {
-      
+
       const feature = this._preselectedFeature || this.findClosestEdgeOrVertex(picking, this._currentFace);
-      
+
       if (feature) {
-        // Check for double click (open path complete)
         const lastPt = this._cutPoints[this._cutPoints.length - 1];
+        const msSinceLast = performance.now() - this._lastPointAddedMs;
+
         if (lastPt && this.areFeaturesEqual(lastPt, feature)) {
+          // Same feature as last point. On iPad, the pressure-transition synthesis
+          // (pointermove 0→pressure) and the real pointerdown can both fire start()
+          // within ~10–100ms of each other, both landing on the same snapped feature.
+          // Guard: treat it as a genuine double-tap only if 300ms+ have passed.
+          if (msSinceLast < 300) {
+            if (window.screenLog) window.screenLog(`[Cut] rapid dup start ignored (${Math.round(msSinceLast)}ms) pts:${this._cutPoints.length}`, '#f9e2af');
+            return;
+          }
+          // Check for double click (open path complete)
+          if (window.screenLog) window.screenLog(`[Cut] double-tap complete (${Math.round(msSinceLast)}ms) pts:${this._cutPoints.length}`, '#a6e3a1');
           this.completeCut();
           return;
         }
-        
+
         // Check for loop closure
         const firstPt = this._cutPoints[0];
         if (firstPt && this._cutPoints.length > 2 && this.areFeaturesEqual(firstPt, feature)) {
           // Push a clone of the first point to ensure exact match!
           this._cutPoints.push(Object.assign({}, firstPt));
+          if (window.screenLog) window.screenLog(`[Cut] loop closure pts:${this._cutPoints.length}`, '#a6e3a1');
           this.completeCut();
           return;
         }
-        
+
         this._redoPoints = []; // Clear redo chain on new interaction
         this._cutPoints.push(feature);
+        this._lastPointAddedMs = performance.now();
+        if (window.screenLog) window.screenLog(`[Cut] pt added (${feature.type}) total:${this._cutPoints.length}`, '#89b4fa');
         this.updatePreviewMesh(picking.getIntersectionPoint());
-        
+
         this._preselectedFeature = null; // Clear to force fresh preselection
+      } else {
+        if (window.screenLog) window.screenLog(`[Cut] start: no feature at face ${this._currentFace}`, '#f38ba8');
       }
+    } else {
+      if (window.screenLog) window.screenLog(`[Cut] start: no face hit`, '#f38ba8');
     }
   }
 

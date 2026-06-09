@@ -259,6 +259,14 @@ class Extrude extends SculptBase {
   }
 
   startSculpt() {
+    if (window.screenLog) window.screenLog(`[dbl] Extrude.startSculpt() called — extrudedVerts:${this._extrudedVerts !== null}`, '#89b4fa');
+    // Guard: iPad synthesis + real pointerdown both fire startSculpt within ~20ms.
+    // Since _continuous=true the SculptManager debounce doesn't apply, so guard here.
+    if (this._extrudedVerts !== null) {
+      if (window.screenLog) window.screenLog('[dbl] Extrude.startSculpt BLOCKED by guard', '#f9e2af');
+      return;
+    }
+
     const main = this._main;
     const picking = main.getPicking();
     const mesh = this.getMesh();
@@ -670,6 +678,16 @@ class Extrude extends SculptBase {
       }
     }
 
+    // Build combined vert list: new (extruded) + original base verts.
+    // Used during drag so updateGeometry updates BOTH new vertex normals AND the
+    // base vertex normals that are now part of the side wall faces.
+    const baseVertsSet = new Set(this._newToOldMap.values());
+    const allAffectedArr = new Uint32Array(newVertIndices.length + baseVertsSet.size);
+    allAffectedArr.set(newVertIndices);
+    let _i = 0;
+    for (const bv of baseVertsSet) allAffectedArr[newVertIndices.length + _i++] = bv;
+    this._allAffectedVerts = allAffectedArr;
+
     activeMesh.setFaces(newFaces);
     activeMesh.setNbFaces(newNbFaces);
     activeMesh.setVertices(newVertices);
@@ -933,9 +951,63 @@ class Extrude extends SculptBase {
       }
     }
 
-    mesh.updateGeometry(mesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
+    const affVerts = this._allAffectedVerts || this._extrudedVerts;
+    mesh.updateGeometry(mesh.getFacesFromVertices(affVerts), affVerts);
+    if (this._applyHardEdgeNormals(mesh)) mesh.updateDrawArrays();
     this.updateRender();
     this.updateSelectionHighlight();
+  }
+
+  // After updateGeometry() blends all connected face normals, this overrides
+  // the vertex normals for extruded verts and base verts so that side-wall
+  // contributions are excluded.  Result: hard edges at the cap and at the
+  // extrusion base, matching the expected low-poly modelling aesthetic.
+  //
+  // - New (cap) verts → only face indices < originalNbFaces (the cap face)
+  // - Base (original) verts → only face indices < originalNbFaces (adj. mesh faces)
+  // Side walls are appended with face index >= originalNbFaces, so excluding
+  // them is a simple threshold check.
+  //
+  // Returns true when normals were modified (caller should re-propagate DA buffer).
+  _applyHardEdgeNormals(activeMesh) {
+    const originalNbFaces = this._undoSnapshot ? this._undoSnapshot.nbFaces : 0;
+    if (!originalNbFaces || !this._newToOldMap || !this._newToOldMap.size) return false;
+
+    const faceNormals = activeMesh.getFaceNormals();
+    const nAr = activeMesh.getNormals();
+    const vrfStartCount = activeMesh.getVerticesRingFaceStartCount();
+    const vertRingFace = activeMesh.getVerticesRingFace();
+
+    // Collect unique verts: new cap verts + original base verts
+    const vertsToFix = new Set();
+    for (const newV of this._newToOldMap.keys()) vertsToFix.add(newV);
+    for (const oldV of this._newToOldMap.values()) vertsToFix.add(oldV);
+
+    for (const vIdx of vertsToFix) {
+      const rStart = vrfStartCount[vIdx * 2];
+      const rCount = vrfStartCount[vIdx * 2 + 1];
+      let nx = 0, ny = 0, nz = 0, any = false;
+      for (let j = rStart; j < rStart + rCount; j++) {
+        const fIdx = vertRingFace[j];
+        if (fIdx < originalNbFaces) {
+          const id = fIdx * 3;
+          nx += faceNormals[id];
+          ny += faceNormals[id + 1];
+          nz += faceNormals[id + 2];
+          any = true;
+        }
+      }
+      if (any) {
+        const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (nLen > 1e-12) {
+          const vo = vIdx * 3;
+          nAr[vo]     = nx / nLen;
+          nAr[vo + 1] = ny / nLen;
+          nAr[vo + 2] = nz / nLen;
+        }
+      }
+    }
+    return true;
   }
 
   sculptStroke() {
@@ -997,7 +1069,9 @@ class Extrude extends SculptBase {
       vAr[ind + 2] = this._vProxy[i * 3 + 2] + normal[2] * scale;
     }
 
-    activeMesh.updateGeometry(activeMesh.getFacesFromVertices(this._extrudedVerts), this._extrudedVerts);
+    const affVerts = this._allAffectedVerts || this._extrudedVerts;
+    activeMesh.updateGeometry(activeMesh.getFacesFromVertices(affVerts), affVerts);
+    if (this._applyHardEdgeNormals(activeMesh)) activeMesh.updateDrawArrays();
     this.updateRender();
     this.updateSelectionHighlight();
   }
@@ -1007,8 +1081,10 @@ class Extrude extends SculptBase {
     
     // Retain selection after extrude! Do not clear here.
     
+    if (window.screenLog) window.screenLog(`[dbl] Extrude.end() — clearing extrudedVerts`, '#f38ba8');
     this._extrudedVerts = null;
     this._vProxy = null;
+    this._allAffectedVerts = null;
 
     const mesh = this.getMesh();
     const activeMesh = mesh ? (mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh) : null;
@@ -1016,6 +1092,19 @@ class Extrude extends SculptBase {
     if (window.repairWindingOrders) {
       window.repairWindingOrders();
     }
+
+    if (activeMesh) {
+      // Full geometry rebuild at stroke end.
+      activeMesh.updateGeometry();
+      // Hard-edge normal correction: exclude side-wall contributions so the
+      // cap and base junction keep correct flat-face appearance in smooth mode.
+      if (this._applyHardEdgeNormals(activeMesh)) activeMesh.updateDrawArrays();
+      activeMesh.updateBuffers();
+      activeMesh.initRender();
+    }
+
+    // _newToOldMap is no longer needed after end(); release it.
+    this._newToOldMap = null;
 
     if (activeMesh && this._undoSnapshot) {
       const redoSnapshot = {
