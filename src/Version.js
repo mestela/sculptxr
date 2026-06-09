@@ -1,1 +1,1 @@
-export const VERSION = 'v2.0.3 - Beta release';
+export const VERSION = 'v2.0.4 - iPad polish: hover effects, zoom, undo, shift-smooth';

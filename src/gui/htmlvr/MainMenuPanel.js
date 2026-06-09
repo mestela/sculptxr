@@ -1076,6 +1076,12 @@ export function buildSectionHTML_rendering(main) {
   const isWire      = mesh.getShowWireframe?.() ?? false;
   const isSolid     = mesh._renderData?._threeMesh?.material?.visible ?? true;
 
+  const gx       = main._guiXR ?? main.getGuiXR?.();
+  const uiS      = gx?._uiSettings ?? {};
+  const opts     = getOptionsURL;
+  const wfBias   = uiS.wireframeBias  ?? opts.wireframeBias  ?? 0.001;
+  const wfAlpha  = uiS.wireframeAlpha ?? opts.wireframeAlpha ?? 0.2;
+
   // PBR — environment list
   const envBtns = (ShaderPBR?.environments ?? []).map((env, i) =>
     `<button class="mm-choice${ShaderPBR.idEnv === i ? ' active' : ''}" data-env="${i}">${env.name}</button>`
@@ -1140,6 +1146,16 @@ export function buildSectionHTML_rendering(main) {
       </div>
       <button class="mm-toggle${isFlat  ? ' active' : ''}" id="mm-flat-shading">Flat Shading</button>
       <button class="mm-toggle${isWire  ? ' active' : ''}" id="mm-wireframe">Wireframe</button>
+      <div class="mm-row">
+        <span class="mm-lbl">WF Opacity</span>
+        <input type="range" id="mm-render-wf-alpha" min="0" max="100" step="5" value="${Math.round(wfAlpha*100)}">
+        <span class="mm-val" id="mm-render-wf-alpha-val">${Math.round(wfAlpha*100)}%</span>
+      </div>
+      <div class="mm-row">
+        <span class="mm-lbl">WF Offset</span>
+        <input type="range" id="mm-render-wf-bias" min="0" max="50" step="1" value="${Math.round(wfBias*10000)}">
+        <span class="mm-val" id="mm-render-wf-bias-val">${wfBias.toFixed(4)}</span>
+      </div>
       <button class="mm-toggle${isSolid ? ' active' : ''}" id="mm-solid">Solid Shading</button>
 
       <div class="mm-section-title">Tone Mapping</div>
@@ -2103,6 +2119,31 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     el.querySelector('#mm-wireframe')?.classList.toggle('active', t);
     lightRepaintFn();
   });
+
+  // Wireframe opacity and z-offset sliders
+  const gx  = main._guiXR ?? main.getGuiXR?.();
+  const ui  = gx?._uiSettings ?? {};
+  const opts = getOptionsURL;
+  wireSlider(el.querySelector('#mm-render-wf-alpha'), el.querySelector('#mm-render-wf-alpha-val'), (v) => {
+    const f = v / 100;
+    ui.wireframeAlpha = f;
+    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
+    if (wm?.material) { wm.material.opacity = f; main.render?.(); }
+    opts.saveOption('wireframeAlpha', f, 500);
+  }, (v) => `${v}%`, sliderDirtyFn);
+  wireSlider(el.querySelector('#mm-render-wf-bias'), el.querySelector('#mm-render-wf-bias-val'), (v) => {
+    const f = v / 10000;
+    ui.wireframeBias = f;
+    const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
+    if (wm?.material?.uniforms?.uBias) { wm.material.uniforms.uBias.value = f; main.render?.(); }
+    else {
+      // LineBasicMaterial path: rebuild wireframe buffer so bias takes effect
+      main.getMesh?.()?.updateWireframeBuffer?.();
+      main.render?.();
+    }
+    opts.saveOption('wireframeBias', f, 500);
+  }, (v) => (v / 10000).toFixed(4), sliderDirtyFn);
+
   el.querySelector('#mm-solid')?.addEventListener('click', () => {
     meshes?.forEach(m => {
       const mat = m._renderData?._threeMesh?.material;
