@@ -1294,24 +1294,60 @@ export function buildSectionHTML_sculpting(main) {
       </div>` : ''}`;
 
     // ── Tool-specific toggles ────────────────────────────────────────
-    const hasNegative   = tool._negative !== undefined;
-    const hasClay       = tool._clay !== undefined;
+    const isMasking        = cur === Enums.Tools.MASKING;
+    const isMove           = cur === Enums.Tools.MOVE;
+    const isSmooth         = cur === Enums.Tools.SMOOTH;
+    const isExtrudeOrInset = cur === Enums.Tools.EXTRUDE || cur === Enums.Tools.INSET;
+    const hasNegative   = tool._negative   !== undefined;
+    const hasClay       = tool._clay       !== undefined;
     const hasAccumulate = tool._accumulate !== undefined;
+    const hasCulling    = tool._culling    !== undefined;
+    const hasTopoCheck  = tool._topoCheck  !== undefined;
+    const hasTangent    = tool._tangent    !== undefined;
 
-    if (hasNegative || hasClay || hasAccumulate) {
+    if (hasNegative || hasClay || hasAccumulate || hasCulling || hasTopoCheck || hasTangent) {
       const toggles = [];
       if (hasNegative) {
-        // Masking defaults _negative=true to mean "add mask" (subtract from material).
-        // Flip label and active state so the button reads as "Erase" = remove existing mask.
-        const isMasking = cur === Enums.Tools.MASKING;
-        const negLabel  = isMasking ? 'Erase' : 'Negative';
+        // Masking: flip label/active so button means "Erase existing mask"
+        // Move: label as "Along Normal"
+        const negLabel  = isMasking ? 'Erase' : isMove ? 'Along Normal' : 'Negative';
         const negActive = isMasking ? !tool._negative : tool._negative;
         toggles.push(`<button class="mm-choice${negActive ? ' active' : ''}" id="mm-brush-negative">${negLabel}</button>`);
       }
       if (hasClay)       toggles.push(`<button class="mm-choice${tool._clay       ? ' active' : ''}" id="mm-brush-clay"    >Clay      </button>`);
       if (hasAccumulate) toggles.push(`<button class="mm-choice${tool._accumulate ? ' active' : ''}" id="mm-brush-accum"   >Accumulate</button>`);
+      if (hasCulling)    toggles.push(`<button class="mm-choice${tool._culling    ? ' active' : ''}" id="mm-brush-culling" >Culling   </button>`);
+      if (hasTopoCheck)  toggles.push(`<button class="mm-choice${tool._topoCheck  ? ' active' : ''}" id="mm-brush-topo"    >Topo Check</button>`);
+      if (hasTangent)    toggles.push(`<button class="mm-choice${tool._tangent    ? ' active' : ''}" id="mm-brush-tangent" >Tangential</button>`);
       const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
+    }
+
+    // ── Masking-specific: clear/invert/blur/sharpen + extract ────────
+    if (isMasking) {
+      const thickness = tool._thickness ?? 0;
+      brushHTML += `
+        <div class="mm-btn-pair" style="margin-top:4px">
+          <button class="mm-action-btn" id="mm-mask-clear"  >Clear   </button>
+          <button class="mm-action-btn" id="mm-mask-invert" >Invert  </button>
+        </div>
+        <div class="mm-btn-pair">
+          <button class="mm-action-btn" id="mm-mask-blur"   >Blur    </button>
+          <button class="mm-action-btn" id="mm-mask-sharpen">Sharpen </button>
+        </div>
+        <div class="mm-section-title">Extract</div>
+        <div class="mm-row">
+          <span class="mm-lbl">Thickness</span>
+          <input type="range" id="mm-mask-thickness" min="-500" max="500" step="1" value="${Math.round(thickness * 100)}">
+          <span class="mm-val" id="mm-mask-thickness-val">${thickness.toFixed(2)}</span>
+        </div>
+        <button class="mm-action-btn" id="mm-mask-extract" style="margin-top:3px">Extract Mesh</button>`;
+    }
+
+    // ── Extrude / Inset: keep-together option ────────────────────────
+    if (isExtrudeOrInset) {
+      const kt = !!window.keepExtrudeFacesTogether;
+      brushHTML += `<button class="mm-toggle${kt ? ' active' : ''}" id="mm-keep-together" style="margin-top:4px">Keep Together</button>`;
     }
 
     // ── Alpha brush texture selector ─────────────────────────────────
@@ -2312,6 +2348,35 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       getOptionsURL.saveOption(`tool_${idx}_accumulate`, tool._accumulate);
       main.render?.();
       lightRepaintFn();
+    });
+    el.querySelector('#mm-brush-culling')?.addEventListener('click', (e) => {
+      tool._culling = !tool._culling;
+      e.currentTarget.classList.toggle('active', tool._culling);
+      main.render?.();
+    });
+    el.querySelector('#mm-brush-topo')?.addEventListener('click', (e) => {
+      tool._topoCheck = !tool._topoCheck;
+      e.currentTarget.classList.toggle('active', tool._topoCheck);
+    });
+    el.querySelector('#mm-brush-tangent')?.addEventListener('click', (e) => {
+      tool._tangent = !tool._tangent;
+      e.currentTarget.classList.toggle('active', tool._tangent);
+    });
+
+    // ── Masking extras ────────────────────────────────────────────────────────
+    el.querySelector('#mm-mask-clear')   ?.addEventListener('click', () => { tool.clear?.();   main.render?.(); });
+    el.querySelector('#mm-mask-invert')  ?.addEventListener('click', () => { tool.invert?.();  main.render?.(); });
+    el.querySelector('#mm-mask-blur')    ?.addEventListener('click', () => { tool.blur?.();    main.render?.(); });
+    el.querySelector('#mm-mask-sharpen') ?.addEventListener('click', () => { tool.sharpen?.(); main.render?.(); });
+    wireSlider(el.querySelector('#mm-mask-thickness'), el.querySelector('#mm-mask-thickness-val'),
+      (v) => { tool._thickness = v / 100; },
+      (v) => (v / 100).toFixed(2), sliderDirtyFn);
+    el.querySelector('#mm-mask-extract') ?.addEventListener('click', () => { tool.extract?.(); main.render?.(); });
+
+    // ── Extrude / Inset keep-together ─────────────────────────────────────────
+    el.querySelector('#mm-keep-together')?.addEventListener('click', (e) => {
+      window.keepExtrudeFacesTogether = !window.keepExtrudeFacesTogether;
+      e.currentTarget.classList.toggle('active', window.keepExtrudeFacesTogether);
     });
 
     // ── Paint-specific ────────────────────────────────────────────────────────
