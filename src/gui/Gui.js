@@ -1,4 +1,5 @@
 import TR from './GuiTR.js';
+import { TAB_ICONS } from './tabIcons.js';
 import GuiCamera from './GuiCamera.js';
 import GuiFiles from './GuiFiles.js';
 import GuiTopology from './GuiTopology.js';
@@ -214,6 +215,53 @@ class Gui {
     });
     document.body.appendChild(sidebarEl);
 
+    // Resize handle — vertical 3-dot grip on the left edge of the sidebar.
+    const sidebarHandle = document.createElement('div');
+    Object.assign(sidebarHandle.style, {
+      position: 'absolute', top: '0', left: '0', bottom: '0', width: '14px',
+      cursor: 'ew-resize', zIndex: '9999', display: 'flex', touchAction: 'none',
+      flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '5px',
+    });
+    for (let i = 0; i < 3; i++) {
+      const dot = document.createElement('div');
+      Object.assign(dot.style, {
+        width: '3px', height: '3px', borderRadius: '50%',
+        background: '#555', pointerEvents: 'none', flexShrink: '0',
+      });
+      sidebarHandle.appendChild(dot);
+    }
+    sidebarEl.appendChild(sidebarHandle);
+
+    // Drag to resize — pointer events work on desktop and iPad.
+    // onResize is throttled via rAF so the canvas stays in sync without thrashing.
+    let _resizingW = 0;
+    let _resizeStartX = 0;
+    let _resizeRafPending = false;
+    sidebarHandle.addEventListener('pointerdown', (e) => {
+      _resizeStartX = e.clientX;
+      _resizingW = sidebarEl.offsetWidth;
+      sidebarHandle.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    sidebarHandle.addEventListener('pointermove', (e) => {
+      if (!_resizingW) return;
+      const newW = Math.max(240, Math.min(700, _resizingW - (e.clientX - _resizeStartX)));
+      sidebarEl.style.width = newW + 'px';
+      if (this._topbarEl) this._topbarEl.style.right = newW + 'px';
+      if (!_resizeRafPending) {
+        _resizeRafPending = true;
+        requestAnimationFrame(() => {
+          _resizeRafPending = false;
+          if (this._main?.onCanvasResize) this._main.onCanvasResize();
+        });
+      }
+    });
+    sidebarHandle.addEventListener('pointerup', () => {
+      if (!_resizingW) return;
+      _resizingW = 0;
+      if (this._main?.onCanvasResize) this._main.onCanvasResize();
+    });
+
     // Create Blender-inspired vertical tab group inside the sidebar
     const tabGroup = document.createElement('wa-tab-group');
     tabGroup.setAttribute('placement', 'start');
@@ -335,14 +383,7 @@ class Gui {
     `;
     tabGroup.appendChild(tabStyle);
 
-    // SVG paths shared with MainMenuPanel so both panels use the same icons
-    const TAB_SVGS = {
-      scene:     `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><line x1="3.27" y1="6.96" x2="12" y2="12.01"/><line x1="12" y1="12.01" x2="20.73" y2="6.96"/><line x1="12" y1="22.08" x2="12" y2="12.01"/></svg>`,
-      topology:  `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`,
-      rendering: `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`,
-      sculpting: `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18.37 2.63 14 7l-1.59-1.59a2 2 0 0 0-2.82 0L8 7l9 9 1.59-1.59a2 2 0 0 0 0-2.82L17 10l4.37-4.37a2.12 2.12 0 1 0-3-3z"/><path d="M9 8c-2 3-4 3.5-7 4l8 8c1-.5 3.5-2 4-7"/><path d="M14.5 17.5 4.5 15"/></svg>`,
-      animation: `<svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/></svg>`,
-    };
+    const TAB_SVGS = TAB_ICONS;
 
     const createTab = (panelName, tooltipText) => {
       const tab = document.createElement('wa-tab');

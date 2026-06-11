@@ -116,6 +116,33 @@ const CSS = `
   cursor: pointer;
   flex-shrink: 0;
 }
+.acp-root .acp-key-inspector {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 2px 5px;
+  padding: 3px 0;
+}
+.acp-root .acp-key-inspector .acp-frame-cell {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+.acp-root .acp-key-inspector .acp-frame-cell label {
+  font-size: 10px;
+  color: #888;
+  white-space: nowrap;
+  min-width: 10px;
+  text-align: right;
+}
+.acp-root .acp-key-inspector .acp-frame-cell input {
+  width: 54px;
+  font-size: 11px;
+  padding: 1px 3px;
+  height: 20px;
+  box-sizing: border-box;
+}
 .acp-root .acp-transport {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -339,14 +366,14 @@ export function buildAnimationSectionHTML() {
       <div class="acp-section-title">Transport</div>
       <div class="acp-stack">
         <div class="acp-transport">
-          <button id="acp-to-start"   title="Jump to start">|&#9664;</button>
-          <button id="acp-prev-frame" title="Previous frame">&#9664;&#9664;</button>
-          <button id="acp-play-rev"   title="Play backwards">&#9664;</button>
-          <button id="acp-stop"       title="Stop">&#9632;</button>
-          <button id="acp-play-fwd"   title="Play forwards">&#9654;</button>
-          <button id="acp-next-frame" title="Next frame">&#9654;&#9654;</button>
-          <button id="acp-to-end"     title="Jump to end">&#9654;|</button>
-          <button id="acp-record"     title="Record">&#9679;</button>
+          <button id="acp-to-start"   title="Jump to start"><i class="fa-solid fa-backward-step"></i></button>
+          <button id="acp-prev-frame" title="Previous frame"><i class="fa-solid fa-backward"></i></button>
+          <button id="acp-play-rev"   title="Play backwards"><i class="fa-solid fa-play" style="transform:scaleX(-1);display:inline-block"></i></button>
+          <button id="acp-stop"       title="Stop"><i class="fa-solid fa-stop"></i></button>
+          <button id="acp-play-fwd"   title="Play forwards"><i class="fa-solid fa-play"></i></button>
+          <button id="acp-next-frame" title="Next frame"><i class="fa-solid fa-forward"></i></button>
+          <button id="acp-to-end"     title="Jump to end"><i class="fa-solid fa-forward-step"></i></button>
+          <button id="acp-record"     title="Record"><i class="fa-solid fa-circle" style="color:#f38ba8"></i></button>
         </div>
         <button class="acp-btn-clear" id="acp-clear-all">Clear all animation</button>
       </div>
@@ -399,7 +426,32 @@ export function buildAnimationSectionHTML() {
       </div>
     </div>
 
-    <!-- 5. Blendshapes -->
+    <!-- 5. Selected Key Inspector -->
+    <div class="acp-section" id="acp-key-inspector-section">
+      <div class="acp-section-title">Selected Key</div>
+      <div class="acp-stack">
+        <div class="acp-key-inspector" id="acp-key-inspector">
+          <div class="acp-frame-cell">
+            <label>Fr</label>
+            <input type="text" id="acp-key-frame" inputmode="decimal" placeholder="—">
+          </div>
+          <div class="acp-frame-cell" id="acp-key-v1-cell">
+            <label id="acp-key-v1-label">X</label>
+            <input type="text" id="acp-key-v1" inputmode="decimal" placeholder="—">
+          </div>
+          <div class="acp-frame-cell" id="acp-key-v2-cell">
+            <label id="acp-key-v2-label">Y</label>
+            <input type="text" id="acp-key-v2" inputmode="decimal" placeholder="—">
+          </div>
+          <div class="acp-frame-cell" id="acp-key-v3-cell">
+            <label id="acp-key-v3-label">Z</label>
+            <input type="text" id="acp-key-v3" inputmode="decimal" placeholder="—">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Blendshapes -->
     <div class="acp-section">
       <div class="acp-section-title">Blendshapes</div>
       <div class="acp-stack">
@@ -620,6 +672,115 @@ export function syncAnimationSection(el, main) {
 
   const ak = el.querySelector('#acp-autokey');
   if (ak) ak.checked = !!window._animAutoKey;
+
+  // Selected key inspector.
+  _syncKeyInspector(el, main);
+}
+
+function _syncKeyInspector(el, main) {
+  const grid = el.querySelector('#acp-key-inspector');
+  if (!grid) return;
+
+  const reg = window._animationRegistry;
+  const sel = window._animSelectedKeys;
+  const fps = window._animFPS || 24;
+
+  const frameInput = el.querySelector('#acp-key-frame');
+  const v1Cell  = el.querySelector('#acp-key-v1-cell');
+  const v2Cell  = el.querySelector('#acp-key-v2-cell');
+  const v3Cell  = el.querySelector('#acp-key-v3-cell');
+  const v1Label = el.querySelector('#acp-key-v1-label');
+  const v2Label = el.querySelector('#acp-key-v2-label');
+  const v3Label = el.querySelector('#acp-key-v3-label');
+  const v1Input = el.querySelector('#acp-key-v1');
+  const v2Input = el.querySelector('#acp-key-v2');
+  const v3Input = el.querySelector('#acp-key-v3');
+
+  const _setOrClear = (inp, val, decimals = 3) => {
+    if (!inp || document.activeElement === inp) return;
+    inp.value = val != null ? Number(val).toFixed(decimals) : '';
+  };
+
+  // No selection → show empty disabled fields
+  if (!sel?.length || !reg) {
+    if (frameInput) { frameInput.value = ''; frameInput.disabled = true; }
+    [v1Input, v2Input, v3Input].forEach(i => { if (i) { i.value = ''; i.disabled = true; } });
+    v1Cell?.style && (v1Cell.style.display = '');
+    v2Cell?.style && (v2Cell.style.display = '');
+    v3Cell?.style && (v3Cell.style.display = '');
+    if (v1Label) v1Label.textContent = 'X';
+    if (v2Label) v2Label.textContent = 'Y';
+    if (v3Label) v3Label.textContent = 'Z';
+    return;
+  }
+
+  // Enable all inputs
+  if (frameInput) frameInput.disabled = false;
+  [v1Input, v2Input, v3Input].forEach(i => { if (i) i.disabled = false; });
+
+  const single = sel.length === 1 ? sel[0] : null;
+  const allTransform = sel.every(k => k.type === 'transform');
+  const allSameMesh  = sel.every(k => k.meshId === sel[0].meshId);
+
+  // Helper: common value across selected keys for a given accessor, or null if mixed.
+  const _common = (fn) => {
+    const vals = sel.map(fn).filter(v => v != null);
+    if (!vals.length) return null;
+    const first = vals[0];
+    return vals.every(v => Math.abs(v - first) < 0.0005) ? first : null;
+  };
+
+  if (single) {
+    // Single-key mode
+    const track = reg.tracks.get(single.meshId);
+    if (!track) return;
+    const kIdx = single.index;
+    const _tForKey = () => {
+      if (single.type === 'transform') return track.times?.[kIdx] ?? 0;
+      if (single.type === 'blendshape' && single.name)
+        return track.blendshapeTracks?.get(single.name)?.times?.[kIdx] ?? 0;
+      return track.shapeTimes?.[kIdx] ?? 0;
+    };
+    _setOrClear(frameInput, Math.round(_tForKey() * fps), 0);
+
+    if (single.type === 'transform' && track.positions) {
+      if (v1Label) v1Label.textContent = 'X'; if (v2Label) v2Label.textContent = 'Y'; if (v3Label) v3Label.textContent = 'Z';
+      v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = ''); v3Cell && (v3Cell.style.display = '');
+      _setOrClear(v1Input, track.positions[kIdx * 3 + 0] ?? 0);
+      _setOrClear(v2Input, track.positions[kIdx * 3 + 1] ?? 0);
+      _setOrClear(v3Input, track.positions[kIdx * 3 + 2] ?? 0);
+    } else if (single.type === 'blendshape' && single.name) {
+      const bt = track.blendshapeTracks?.get(single.name);
+      if (v1Label) v1Label.textContent = 'Weight';
+      v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = 'none'); v3Cell && (v3Cell.style.display = 'none');
+      _setOrClear(v1Input, bt?.values?.[kIdx] ?? 0);
+    } else if (single.type === 'shape') {
+      const t2 = _tForKey();
+      const outTime = track.shapeOutputTimes?.[kIdx] ?? t2;
+      if (v1Label) v1Label.textContent = 'Out';
+      v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = 'none'); v3Cell && (v3Cell.style.display = 'none');
+      _setOrClear(v1Input, outTime * fps, 2);
+    } else {
+      v1Cell && (v1Cell.style.display = 'none'); v2Cell && (v2Cell.style.display = 'none'); v3Cell && (v3Cell.style.display = 'none');
+    }
+  } else if (allTransform) {
+    // Multi-key transform — show common X/Y/Z values (or blank if mixed)
+    if (v1Label) v1Label.textContent = 'X'; if (v2Label) v2Label.textContent = 'Y'; if (v3Label) v3Label.textContent = 'Z';
+    v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = ''); v3Cell && (v3Cell.style.display = '');
+    if (frameInput && document.activeElement !== frameInput) frameInput.value = '';
+    const _getPos = (k, ch) => {
+      const tr = reg.tracks.get(k.meshId);
+      return tr?.positions?.[k.index * 3 + ch];
+    };
+    _setOrClear(v1Input, _common(k => _getPos(k, 0)));
+    _setOrClear(v2Input, _common(k => _getPos(k, 1)));
+    _setOrClear(v3Input, _common(k => _getPos(k, 2)));
+  } else {
+    // Mixed types — show empty fields
+    if (frameInput && document.activeElement !== frameInput) frameInput.value = '';
+    [v1Input, v2Input, v3Input].forEach(i => { if (i && document.activeElement !== i) i.value = ''; });
+    v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = ''); v3Cell && (v3Cell.style.display = '');
+  }
 }
 
 // ── Shared event wiring ───────────────────────────────────────────────────────
@@ -630,6 +791,8 @@ export function syncAnimationSection(el, main) {
 export function wireAnimationSection(el, main, { repaint = () => {}, sync, refreshBs, vrPanel = null }) {
   const _sync = sync ?? (() => { syncAnimationSection(el, main); repaint(); });
   const _refreshBs = refreshBs ?? ((mesh) => refreshBlendshapesDOM(el, mesh, main, repaint));
+  // [Step Bug1] Expose sync so GuiTimeline can refresh key inspector after selection changes.
+  window._animSyncKeyInspector = _sync;
 
   const reg    = () => window._animationRegistry;
   const fps    = () => window._animFPS || 24;
@@ -645,8 +808,16 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   // ── Animation section ──────────────────────────────────────────────────────
 
-  el.querySelector('#acp-show-timeline')?.addEventListener('change', (e) => {
-    const show = e.target.checked;
+  // [Step 3] Same synthetic-click fix applied to all panel checkboxes.
+  const _cbWire = (id, fn) => {
+    const cbEl = el.querySelector(id);
+    if (!cbEl) return;
+    cbEl.addEventListener('click', (e) => {
+      if (!e.isTrusted) cbEl.checked = !cbEl.checked;
+      fn(cbEl.checked);
+    });
+  };
+  _cbWire('#acp-show-timeline', (show) => {
     const inXR = !!(window.app?._renderer?.xr?.isPresenting);
     if (window.screenLog) window.screenLog(`[TL] show-timeline ${show} inXR=${inXR}`, 'yellow');
     if (inXR) {
@@ -766,20 +937,24 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       const r = reg(); if (!r) return;
       r.stopRecording?.(true); r.tracks.clear();
       window._animCurrentTime = 0; r.globalPlaybackTime = 0;
-      window._animPlaying = false; _sync();
+      window._animPlaying = false;
+      window._animSelectedKeys = [];
+      // [Step Bug2] Reset timeline view so playhead is visible at t=0.
+      window._animOnClearAll?.();
+      _sync();
     });
   });
 
   // ── Record ─────────────────────────────────────────────────────────────────
 
-  el.querySelector('#acp-count-in')?.addEventListener('change', (e) => {
-    window._animCountIn = e.target.checked;
+  _cbWire('#acp-count-in', (v) => {
+    window._animCountIn = v;
     if (window._animCountIn) window._animWaitForTrigger = false;
     _sync();
   });
 
-  el.querySelector('#acp-wait-trigger')?.addEventListener('change', (e) => {
-    window._animWaitForTrigger = e.target.checked;
+  _cbWire('#acp-wait-trigger', (v) => {
+    window._animWaitForTrigger = v;
     if (window._animWaitForTrigger) window._animCountIn = false;
     _sync();
   });
@@ -879,9 +1054,98 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     repaint();
   });
 
-  el.querySelector('#acp-autokey')?.addEventListener('change', (e) => {
-    window._animAutoKey = e.target.checked;
-  });
+  // [Step 3] Use 'click' not 'change': VR dispatches synthetic MouseEvent('click')
+  // which is not isTrusted, so browsers don't toggle checkbox.checked and 'change'
+  // never fires. Manually toggle when untrusted so VR and desktop both work.
+  const _akEl = el.querySelector('#acp-autokey');
+  if (_akEl) {
+    _akEl.addEventListener('click', (e) => {
+      if (!e.isTrusted) _akEl.checked = !_akEl.checked;
+      window._animAutoKey = _akEl.checked;
+    });
+  }
+
+  // ── Selected Key Inspector ─────────────────────────────────────────────────
+  // [Expr] Evaluate a value expression against currentVal.
+  // Supports +=N, -=N, *=N, /=N, and plain numbers.
+  const _parseExpr = (raw, currentVal) => {
+    const s = String(raw ?? '').trim();
+    const op = s.slice(0, 2);
+    const n  = parseFloat(s.slice(2));
+    if (op === '+=' && !isNaN(n)) return currentVal + n;
+    if (op === '-=' && !isNaN(n)) return currentVal - n;
+    if (op === '*=' && !isNaN(n)) return currentVal * n;
+    if (op === '/=' && !isNaN(n) && n !== 0) return currentVal / n;
+    const direct = parseFloat(s);
+    return isNaN(direct) ? null : direct;
+  };
+
+  const _applyKeyFrame = () => {
+    const fps = window._animFPS || 24;
+    const rawVal = el.querySelector('#acp-key-frame')?.value ?? '';
+    const sel = window._animSelectedKeys;
+    if (!sel?.length) return;
+    const r = reg(); if (!r) return;
+    const mDur = (window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const single = sel[0];
+    const track = r.tracks.get(single.meshId); if (!track) return;
+    const origTime = single.type === 'transform' ? (track.times?.[single.index] ?? 0) : (track.shapeTimes?.[single.index] ?? 0);
+    const currentFrame = Math.round(origTime * fps);
+    const newFrame = _parseExpr(rawVal, currentFrame);
+    if (newFrame == null) return;
+    const dt = (newFrame / fps) - origTime;
+    if (Math.abs(dt) < 0.0001) return;
+    TimelineHelper.moveKeys(r, [{ ...single, time: origTime }], dt, undefined, mDur, main);
+    r.sortTrack(track);
+    const newTime = origTime + dt;
+    const times = single.type === 'transform' ? track.times : track.shapeTimes;
+    const newIdx = times?.findIndex(t => Math.abs(t - newTime) < 0.005) ?? -1;
+    if (newIdx !== -1) window._animSelectedKeys = [{ ...single, index: newIdx }];
+    _sync();
+  };
+
+  // [Step Multi] Apply a value expression to ALL selected keys for channel ch.
+  const _applyKeyVal = (ch) => {
+    const ids = ['#acp-key-v1', '#acp-key-v2', '#acp-key-v3'];
+    const rawVal = el.querySelector(ids[ch])?.value ?? '';
+    const sel = window._animSelectedKeys;
+    if (!sel?.length) return;
+    const r = reg(); if (!r) return;
+    const f = window._animFPS || 24;
+    sel.forEach(k => {
+      const track = r.tracks.get(k.meshId); if (!track) return;
+      const kIdx = k.index;
+      if (k.type === 'transform' && track.positions) {
+        const cur = track.positions[kIdx * 3 + ch] ?? 0;
+        const nv  = _parseExpr(rawVal, cur);
+        if (nv != null && kIdx * 3 + ch < track.positions.length)
+          track.positions[kIdx * 3 + ch] = nv;
+      } else if (k.type === 'blendshape' && k.name && ch === 0) {
+        const bt = track.blendshapeTracks?.get(k.name);
+        const cur = bt?.values?.[kIdx] ?? 0;
+        const nv  = _parseExpr(rawVal, cur);
+        if (nv != null && bt?.values && kIdx < bt.values.length) bt.values[kIdx] = nv;
+      } else if (k.type === 'shape' && ch === 0) {
+        if (!track.shapeOutputTimes) track.shapeOutputTimes = [...(track.shapeTimes ?? [])];
+        const cur = (track.shapeOutputTimes[kIdx] ?? track.shapeTimes?.[kIdx] ?? 0) * f;
+        const nv  = _parseExpr(rawVal, cur);
+        if (nv != null && kIdx < track.shapeOutputTimes.length)
+          track.shapeOutputTimes[kIdx] = nv / f;
+      }
+    });
+    if (main?.render) main.render();
+    _sync();
+  };
+
+  const _wireKeyInput = (sel, fn) => {
+    const inp = el.querySelector(sel); if (!inp) return;
+    inp.addEventListener('change', fn);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  };
+  _wireKeyInput('#acp-key-frame', _applyKeyFrame);
+  _wireKeyInput('#acp-key-v1',    () => _applyKeyVal(0));
+  _wireKeyInput('#acp-key-v2',    () => _applyKeyVal(1));
+  _wireKeyInput('#acp-key-v3',    () => _applyKeyVal(2));
 
   // ── Blendshapes ────────────────────────────────────────────────────────────
 

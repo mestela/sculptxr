@@ -1786,12 +1786,15 @@ class Scene {
   onCanvasResize() {
     var viewport = this._viewport;
     
-    // Force viewport to fill the area excluding top bar and sidebar
+    // Force viewport to fill the area excluding top bar and sidebar.
+    // Read sidebar width dynamically so resize drag stays in sync.
+    const sidebarEl = document.getElementById('gui-sidebar');
+    const sidebarW = sidebarEl ? sidebarEl.offsetWidth : 380;
     viewport.style.position = 'absolute';
     viewport.style.top = '36px';
     viewport.style.bottom = '0px';
     viewport.style.left = '0px';
-    viewport.style.right = '380px';
+    viewport.style.right = sidebarW + 'px';
 
     var newWidth = viewport.clientWidth * this._pixelRatio;
     var newHeight = viewport.clientHeight * this._pixelRatio;

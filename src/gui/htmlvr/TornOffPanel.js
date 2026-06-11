@@ -1,4 +1,5 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { ICON_DOCK } from '../tabIcons.js';
 import {
   MM_W, injectMMCSS,
   buildSectionHTML_scene,
@@ -49,9 +50,7 @@ export class TornOffPanel extends HTMLVRPanel {
       <div class="mm-torn-header" style="display:flex;align-items:center;height:${HEADER_H}px;padding:0 8px;background:#11111b;border-bottom:2px solid #45475a;box-sizing:border-box;gap:6px;">
         <span class="mm-torn-title" style="flex:1;font-size:12px;font-weight:700;color:#cba6f7;text-transform:uppercase;letter-spacing:0.06em;">${SECTION_LABELS[sectionId] ?? sectionId}</span>
         <button class="mm-torn-redock" title="Return to main panel" style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid #45475a;border-radius:5px;background:#1e1e2e;color:#6c7086;cursor:pointer;outline:none;flex-shrink:0;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>
-          </svg>
+          ${ICON_DOCK}
         </button>
       </div>
       <div class="mm-torn-content" style="background:#1e1e2e;color:#cdd6f4;overflow-y:scroll;overflow-x:hidden;padding:8px 24px 8px 10px;box-sizing:border-box;height:456px;scrollbar-width:none;"></div>

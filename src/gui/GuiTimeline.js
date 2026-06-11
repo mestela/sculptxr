@@ -42,6 +42,14 @@ export default class GuiTimeline {
     this._zoomStartRy = 0;
     this._zoomStartScaleY = 100.0;
     this._isResizingPanel = false;
+    this._touchMap = new Map(); // [Step 1] pointerId → {x,y} for multi-touch scroll
+    this._isTouchScrolling = false;
+    // Gutter scroll (graph editor channel list)
+    this._gutterScrollY = 0;
+    this._gutterMaxScroll = 0;
+    this._isDraggingGutter = false;
+    this._gutterDragStartY = 0;
+    this._gutterDragStartScroll = 0;
     this._lastMouseX = -1;
     this._lastMouseY = -1;
     this._isMouseOver = false;
@@ -85,6 +93,17 @@ export default class GuiTimeline {
       e.preventDefault();
       this._canvas.setPointerCapture(e.pointerId); // keep move/up on this element
       this._isMouseOver = true;
+      // [Step 1] Track touch pointers for 2-finger scroll/zoom.
+      if (e.pointerType === 'touch') {
+        this._touchMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this._touchMap.size === 2) {
+          this._cancelActiveAction();
+          this._isTouchScrolling = true;
+          this._touchScrollPrev = this._getTouchCentroidAndDist();
+          return; // don't pass 2nd finger down to onMouseDown
+        }
+        if (this._isTouchScrolling) return; // already scroll mode
+      }
       this.onMouseDown(e);
     });
     // Move and Up on window so drags that leave the canvas still register.
@@ -97,6 +116,50 @@ export default class GuiTimeline {
     // the pointer is inside the timeline).
     this._canvas.addEventListener('pointerenter', () => { this._isMouseOver = true;  });
     this._canvas.addEventListener('pointerleave', () => { this._isMouseOver = false; });
+
+    // [Step 1] Trackpad / mouse-wheel scroll: pan time axis (X) and value axis (Y in graph mode).
+    // ctrlKey=true is sent by the OS for pinch-to-zoom gestures on trackpad.
+    this._canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this._ensureViewInit();
+      const tlX = 200;
+      const tlW = this._cssWidth - tlX;
+      if (e.ctrlKey) {
+        // Pinch-to-zoom: zoom time axis around cursor pivot.
+        const rect = this._canvas.getBoundingClientRect();
+        const rx = e.clientX - rect.left;
+        const pivotT = this._viewStart + ((rx - tlX) / tlW) * this._viewDuration;
+        const factor = Math.pow(1.004, e.deltaY);
+        const newDuration = Math.max(0.01, this._viewDuration * factor);
+        this._viewStart = pivotT - (pivotT - this._viewStart) * (newDuration / this._viewDuration);
+        this._viewDuration = newDuration;
+      } else {
+        // Horizontal scroll → pan time.
+        const secsPerPx = this._viewDuration / tlW;
+        this._viewStart += e.deltaX * secsPerPx;
+        // Vertical scroll: gutter if cursor is in gutter column, else value/time axis.
+        const wheelRx = e.clientX - this._canvas.getBoundingClientRect().left;
+        if (this._mode === 'graph' && wheelRx < 200) {
+          this._gutterScrollY = Math.max(0, Math.min(this._gutterMaxScroll, this._gutterScrollY + e.deltaY));
+        } else if (this._mode === 'graph') {
+          this._panY += e.deltaY;
+        } else {
+          this._viewStart += e.deltaY * secsPerPx;
+        }
+      }
+      this.draw();
+    }, { passive: false });
+
+    // Toolbar tooltip element — shown on button hover.
+    this._tooltip = document.createElement('div');
+    Object.assign(this._tooltip.style, {
+      position: 'absolute', background: '#111', color: '#ddd',
+      padding: '3px 8px', borderRadius: '3px', font: '11px sans-serif',
+      pointerEvents: 'none', display: 'none', zIndex: '30', whiteSpace: 'nowrap',
+      border: '1px solid #555', bottom: '100%', marginBottom: '4px', transform: 'translateX(-50%)',
+    });
+    this._container.appendChild(this._tooltip);
+
 
     this.onResize();
   }
@@ -172,15 +235,19 @@ export default class GuiTimeline {
     const playheadX = tlX + playheadAlpha * tlW;
 
     if (playheadX >= tlX && playheadX <= tlX + tlW) {
-      ctx.strokeStyle = '#4488ff';
-      ctx.lineWidth = 2;
+      const capStartY = 25;
+      const phHovered = Math.abs(this._lastMouseX - playheadX) < 10
+                     && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
+      const phColor = phHovered ? '#88bbff' : '#4488ff';
+
+      ctx.strokeStyle = phColor;
+      ctx.lineWidth = phHovered ? 2.5 : 2;
       ctx.beginPath();
       ctx.moveTo(playheadX, headerH);
       ctx.lineTo(playheadX, this._cssHeight);
       ctx.stroke();
 
-      const capStartY = 25;
-      ctx.fillStyle = '#4488ff';
+      ctx.fillStyle = phColor;
       ctx.beginPath();
       ctx.moveTo(playheadX - 8, capStartY);
       ctx.lineTo(playheadX + 8, capStartY);
@@ -204,6 +271,7 @@ export default class GuiTimeline {
     const graphH = this._cssHeight - headerH;
     const tlX = 200;
     const tlW = this._cssWidth - 200;
+    const fps = window._animFPS || 24;
 
     const reg = window._animationRegistry;
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
@@ -222,89 +290,92 @@ export default class GuiTimeline {
 
     // Draw Gutter Content (Channel List) for Graph Editor
     ctx.save();
-    const gutterY = headerH + 10;
-    const rowH = 30;
+    const gutterY = headerH + 4;
+    const rowH = 22; // 25% smaller than original 30
     const colors = ['#ff4444', '#44ff44', '#4444ff'];
-    const labels = ['X Location', 'Y Location', 'Z Location'];
-    
+    const labels = ['X', 'Y', 'Z'];
+
     const activeMeshForGutter = this._main.getMesh();
     const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
     const trackForGutter = idForGutter ? reg.tracks.get(idForGutter) : null;
-    
+
     if (trackForGutter && trackForGutter.shapeTimes && trackForGutter.shapeTimes.length >= 2) {
       colors.push('#ff00ff');
-      labels.push('ShotSculpt');
+      labels.push('Shot');
     }
-    
-    if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
 
-    for (let channel = 0; channel < labels.length; channel++) {
-      const ry = gutterY + channel * rowH;
-      
-      // Color bar
-      ctx.fillStyle = colors[channel];
-      ctx.fillRect(5, ry + 5, 5, 20);
-      
-      // Eye Icon
-      const isVisible = window._animChannelVisible[channel];
-      
+    if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+    if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+    const bsColors = ['#ff8844', '#44ffcc', '#ffdd44', '#aa44ff', '#ff44bb', '#44bbff'];
+    const bsCount = trackForGutter?.blendshapeTracks?.size ?? 0;
+    const totalRows = labels.length + bsCount;
+    const visibleGutterH = this._cssHeight - headerH;
+    this._gutterMaxScroll = Math.max(0, totalRows * rowH - visibleGutterH + 8);
+    this._gutterScrollY = Math.min(this._gutterScrollY, this._gutterMaxScroll);
+
+    // Clip to gutter column so scrolled rows don't bleed into header or outside
+    ctx.beginPath();
+    ctx.rect(0, headerH, 200, visibleGutterH);
+    ctx.clip();
+
+    // Helper: draw one gutter row
+    const _drawRow = (rowIdx, label, color, isVisible) => {
+      const ry = gutterY + rowIdx * rowH - this._gutterScrollY;
+      if (ry + rowH < headerH || ry > this._cssHeight) return; // culled
+
+      // Color bar (4 × 14 px)
+      ctx.fillStyle = color;
+      ctx.fillRect(4, ry + 4, 4, 14);
+
+      // Eye icon at 60% scale
       ctx.save();
-      ctx.translate(20, ry + 3);
-      ctx.scale(0.8, 0.8); // Scale down a bit
-      ctx.strokeStyle = isVisible ? '#00ffff' : '#555';
+      ctx.translate(16, ry + 2);
+      ctx.scale(0.6, 0.6);
+      ctx.strokeStyle = isVisible ? color : '#555';
       ctx.lineWidth = 1.5;
       const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
       ctx.stroke(eyePath);
       ctx.beginPath();
       ctx.arc(12, 12, 3, 0, Math.PI * 2);
-      ctx.fillStyle = isVisible ? '#00ffff' : '#555';
+      ctx.fillStyle = isVisible ? color : '#555';
       ctx.fill();
       ctx.restore();
-      
-      // Label
-      ctx.fillStyle = isVisible ? '#ccc' : '#666';
-      ctx.font = '14px sans-serif';
+
+      ctx.fillStyle = isVisible ? '#ccc' : '#555';
+      ctx.font = '10px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(labels[channel], 50, ry + 15);
+      ctx.fillText(label, 36, ry + rowH / 2);
+    };
+
+    for (let ch = 0; ch < labels.length; ch++) {
+      _drawRow(ch, labels[ch], colors[ch], window._animChannelVisible[ch] !== false);
     }
 
-    // Blendshape channel rows
-    if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
-    const bsColors = ['#ff8844', '#44ffcc', '#ffdd44', '#aa44ff', '#ff44bb', '#44bbff'];
-    if (trackForGutter && trackForGutter.blendshapeTracks) {
+    if (trackForGutter?.blendshapeTracks) {
       let bsIdx = 0;
       trackForGutter.blendshapeTracks.forEach((_, name) => {
-        const rowIdx = labels.length + bsIdx;
-        const ry = gutterY + rowIdx * rowH;
         const color = bsColors[bsIdx % bsColors.length];
-        const isVisible = window._animBsChannelVisible[name] !== false;
-
-        ctx.fillStyle = color;
-        ctx.fillRect(5, ry + 5, 5, 20);
-
-        ctx.save();
-        ctx.translate(20, ry + 3);
-        ctx.scale(0.8, 0.8);
-        ctx.strokeStyle = isVisible ? color : '#555';
-        ctx.lineWidth = 1.5;
-        const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
-        ctx.stroke(eyePath);
-        ctx.beginPath();
-        ctx.arc(12, 12, 3, 0, Math.PI * 2);
-        ctx.fillStyle = isVisible ? color : '#555';
-        ctx.fill();
-        ctx.restore();
-
-        ctx.fillStyle = isVisible ? '#ccc' : '#666';
-        ctx.font = '14px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(name, 50, ry + 15);
+        _drawRow(labels.length + bsIdx, name, color, window._animBsChannelVisible[name] !== false);
         bsIdx++;
       });
     }
 
+    // Scroll indicator bar
+    if (this._gutterMaxScroll > 0) {
+      const barW = 13;
+      const barX = 200 - barW - 1;
+      const barH = Math.max(20, visibleGutterH * visibleGutterH / (totalRows * rowH));
+      const barY = headerH + (this._gutterScrollY / this._gutterMaxScroll) * (visibleGutterH - barH);
+      // Cache for hover hit test
+      this._gutterBarRect = { x: barX, y: barY, w: barW, h: barH };
+      const hovered = this._lastMouseX >= barX && this._lastMouseX <= barX + barW
+                   && this._lastMouseY >= barY && this._lastMouseY <= barY + barH;
+      ctx.fillStyle = hovered ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.20)';
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, barW, barH, 3);
+      ctx.fill();
+    }
 
     ctx.restore();
 
@@ -313,23 +384,72 @@ export default class GuiTimeline {
     ctx.rect(tlX, headerH, tlW, this._cssHeight - headerH);
     ctx.clip();
 
-    // 1. Draw Vertical Grid Lines (Time)
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    const totalSeconds = Math.ceil(mDurVal);
-    for (let s = 0; s <= totalSeconds; s++) {
-      if (s >= loopStart && s <= loopEnd) {
-        const gridX = tlX + ((s - loopStart) / visibleDuration) * tlW;
+    // [Step 4] Draw vertical grid lines — density matches ruler tick logic.
+    {
+      const totalFrames = visibleDuration * fps;
+      const pxPerFrame = tlW / Math.max(1, totalFrames);
+      let gridMajorInt, gridMinorInt;
+      if      (pxPerFrame >= 16) { gridMajorInt = 1;        gridMinorInt = 0; }
+      else if (pxPerFrame >= 8)  { gridMajorInt = 5;        gridMinorInt = 1; }
+      else if (pxPerFrame >= 4)  { gridMajorInt = 10;       gridMinorInt = 5; }
+      else if (pxPerFrame >= 2)  { gridMajorInt = fps;      gridMinorInt = Math.max(1, Math.round(fps / 4)); }
+      else if (pxPerFrame >= 0.5){ gridMajorInt = fps * 2;  gridMinorInt = fps; }
+      else                       { gridMajorInt = fps * 5;  gridMinorInt = fps; }
+      const fStart = Math.ceil(loopStart * fps);
+      const fEnd   = Math.floor(loopEnd   * fps);
+      ctx.lineWidth = 1;
+      for (let f = fStart; f <= fEnd; f++) {
+        const isMajor = gridMajorInt > 0 && (f % gridMajorInt === 0);
+        const isMinor = gridMinorInt > 0 && (f % gridMinorInt === 0);
+        if (!isMajor && !isMinor) continue;
+        const gx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
+        ctx.strokeStyle = isMajor ? '#2e2e2e' : '#222';
         ctx.beginPath();
-        ctx.moveTo(gridX, headerH);
-        ctx.lineTo(gridX, this._cssHeight);
+        ctx.moveTo(gx, headerH);
+        ctx.lineTo(gx, this._cssHeight);
         ctx.stroke();
       }
     }
 
+    // [Step 4] Horizontal value grid lines in graph mode.
+    {
+      const graphH = this._cssHeight - headerH;
+      const pxPerUnit = this._zoomY;
+      // Pick a round value interval that gives roughly 30-80px spacing.
+      const rawInterval = 60 / Math.max(1, pxPerUnit);
+      const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(0.0001, rawInterval))));
+      const normalised = rawInterval / magnitude;
+      const niceStep = normalised < 1.5 ? 1 : normalised < 3.5 ? 2 : normalised < 7.5 ? 5 : 10;
+      const valueStep = niceStep * magnitude;
+      const topVal    = this.yToValue(headerH);
+      const botVal    = this.yToValue(this._cssHeight);
+      const vMin = Math.min(topVal, botVal);
+      const vMax = Math.max(topVal, botVal);
+      const vStart = Math.ceil(vMin / valueStep) * valueStep;
+      ctx.lineWidth = 1;
+      for (let v = vStart; v <= vMax + 1e-9; v += valueStep) {
+        const gy = this.valueToY(v);
+        if (gy < headerH || gy > this._cssHeight) continue;
+        const isZero = Math.abs(v) < valueStep * 0.01;
+        ctx.strokeStyle = isZero ? '#555' : '#252525';
+        ctx.lineWidth = isZero ? 2 : 1;
+        ctx.beginPath();
+        ctx.moveTo(tlX, gy);
+        ctx.lineTo(tlX + tlW, gy);
+        ctx.stroke();
+        // Value label on left edge of grid area
+        if (!isZero) {
+          ctx.fillStyle = '#484848';
+          ctx.font = '9px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(v.toPrecision(3).replace(/\.?0+$/, ''), tlX + 4, gy);
+        }
+      }
+      ctx.lineWidth = 1;
+    }
 
-
-    // 3. Draw Zero Axis
+    // Draw Zero Axis (kept as slightly stronger line, drawn after grid)
     const zeroY = this.valueToY(0);
     if (zeroY >= headerH && zeroY <= this._cssHeight) {
       ctx.strokeStyle = '#666';
@@ -1469,6 +1589,12 @@ export default class GuiTimeline {
   }
 
   startLoop() {
+    // [Step Bug2] Let external code (ACP Clear All) reset the view to time 0.
+    window._animOnClearAll = () => {
+      this._viewStart = undefined;
+      this._viewDuration = undefined;
+      this._gutterScrollY = 0;
+    };
     const loop = () => {
       if (this._visible) {
         this.draw();
@@ -1478,7 +1604,114 @@ export default class GuiTimeline {
     loop();
   }
 
+  // [Step 1] Helpers for 2-finger scroll and wheel zoom.
+  _ensureViewInit() {
+    if (this._viewDuration !== undefined) return;
+    const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+    const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+    this._viewStart = ls;
+    this._viewDuration = Math.max(0.1, le - ls);
+  }
 
+  _getTouchCentroidAndDist() {
+    const pts = [...this._touchMap.values()];
+    const cx = (pts[0].x + pts[1].x) / 2;
+    const cy = (pts[0].y + pts[1].y) / 2;
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    return { cx, cy, dist: Math.sqrt(dx * dx + dy * dy) };
+  }
+
+  // [Step 2] Ensure the first selected key's channel is visible in the graph gutter.
+  // Called each draw in graph mode — cheap, idempotent.
+  _followSelectedKeyChannel() {
+    const sel = window._animSelectedKeys;
+    if (!sel || sel.length === 0) return;
+    const key = sel[0];
+    if (key.type === 'transform') {
+      if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+      if (key.channel !== undefined && !window._animChannelVisible[key.channel]) {
+        window._animChannelVisible[key.channel] = true;
+      }
+    } else if (key.type === 'shape') {
+      if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
+      if (!window._animChannelVisible[3]) window._animChannelVisible[3] = true;
+    } else if (key.type === 'blendshape' && key.name) {
+      if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+      if (window._animBsChannelVisible[key.name] === false) {
+        window._animBsChannelVisible[key.name] = true;
+      }
+    }
+  }
+
+  _cancelActiveAction() {
+    this._isDraggingPlayhead = false;
+    this._isDraggingKeyframe = false;
+    this._isDraggingMarquee = false;
+    this._isDraggingTangent = false;
+    this._isPanningGraph = false;
+    this._isZoomingGraph = false;
+    this._isResizingPanel = false;
+    this._activeTransformHandle = null;
+    this._activeKeyframeTrack = null;
+    this._undoTracksBeforeMove = null;
+  }
+
+  // Returns toolbar button definitions — shared by draw() and onMouseDown().
+  _toolbarBtnDefs() {
+    const isGraph = this._mode === 'graph';
+    const tanOn  = !!window._animShowTangents;
+    const tboxOn = !!window._animShowTransformBox;
+    const snapOn = window._animSnapToFrame !== false;
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    const single = sel && sel.length === 1 ? sel[0] : null;
+    let isTied = true;
+    if (single && reg) {
+      const tr = reg.tracks.get(single.meshId);
+      if (tr?.tangentOffsets) {
+        const pfx = single.type === 'transform' ? 'trans_' : '';
+        isTied = tr.tangentOffsets[`${pfx}${single.index}_tied`] !== false;
+      }
+    }
+    const marqOn = !!window._animMarqueeMode;
+    const btns = [];
+    let bx = 10;
+    // Mode toggle — two FA icons
+    btns.push({ id: 'mode', x: bx, y: 5, w: 46, h: 20, icon: 'mode', tooltip: 'Toggle Dopesheet / Graph' });
+    bx += 54;
+    // Drag vs Marquee toggle (icon drawn programmatically in draw())
+    btns.push({ id: 'marquee', x: bx, y: 5, w: 28, h: 20, active: marqOn, tooltip: marqOn ? 'Marquee Selection on — click for Drag mode' : 'Drag Mode on — click for Marquee Selection' });
+    bx += 36;
+    // Tied tangents (graph only, text)
+    if (isGraph) {
+      btns.push({ id: 'tangents-tied', x: bx, y: 5, w: 105, h: 20,
+        label: isTied ? 'Tangents: Tied' : 'Tangents: Free',
+        disabled: !single, tooltip: 'Toggle tied / free tangents' });
+      bx += 113;
+    }
+    // Fit All
+    btns.push({ id: 'fit', x: bx, y: 5, w: 28, h: 20, icon: '', tooltip: 'Fit All (X + Y)' });
+    bx += 36;
+    // Tangents show/hide (graph only, text)
+    if (isGraph) {
+      btns.push({ id: 'tangents', x: bx, y: 5, w: 70, h: 20,
+        label: 'Tangents', active: tanOn, tooltip: 'Show tangent handles' });
+      bx += 78;
+    }
+    // T.Box
+    btns.push({ id: 'tbox', x: bx, y: 5, w: 28, h: 20, icon: '', active: tboxOn, tooltip: 'Transform Box' });
+    bx += 36;
+    // Snap
+    btns.push({ id: 'snap', x: bx, y: 5, w: 28, h: 20, icon: '', active: snapOn, tooltip: 'Snap to Frames' });
+    return btns;
+  }
+
+  // [Step F] Compute infobar state for the selected key.
+  // Returns { frame, keyType, vals[], labels[], label, hasSelection }
+  // keyType: 'transform' | 'blendshape' | 'shape' | null
+  // vals / labels: parallel arrays for v1/v2/v3 inputs
 
   onMouseDown(e) {
     const rect = this._canvas.getBoundingClientRect();
@@ -1504,88 +1737,75 @@ export default class GuiTimeline {
     }
 
     if (ry < 50) {
-      // Fit View button
-      const fitBtnX = this._mode === 'graph' ? 245 : 115;
-      if (rx >= fitBtnX && rx <= fitBtnX + 60) {
-        this.autoFitGraph();
-        this.draw();
-        return;
-      }
-      // Frame Timeline button — snap view to full loop range
-      const frameBtnX = fitBtnX + 68;
-      if (rx >= frameBtnX && rx <= frameBtnX + 80) {
-        const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-        const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-        const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
-        this._viewStart = ls;
-        this._viewDuration = Math.max(0.1, le - ls);
-        this.draw();
-        return;
-      }
-      // Tangents toggle (graph mode only)
-      if (this._mode === 'graph') {
-        const tanBtnX = frameBtnX + 88;
-        if (rx >= tanBtnX && rx <= tanBtnX + 65) {
-          window._animShowTangents = !window._animShowTangents;
-          this.draw();
-          return;
-        }
-      }
-      // Transform Box toggle (both modes)
-      const tboxBtnX = frameBtnX + 88 + (this._mode === 'graph' ? 73 : 0);
-      if (rx >= tboxBtnX && rx <= tboxBtnX + 60) {
-        window._animShowTransformBox = !window._animShowTransformBox;
-        this.draw();
-        return;
-      }
-      const snapBtnX = tboxBtnX + 68;
-      if (rx >= snapBtnX && rx <= snapBtnX + 55) {
-        window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
-        this.draw();
-        return;
-      }
-      if (rx >= 10 && rx <= 100) {
-        this._mode = this._mode === 'graph' ? 'dope' : 'graph';
-        if (this._mode === 'graph') {
-          this.autoFitGraph();
-          if (this._viewDuration === undefined) {
-            const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-            const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-            const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-            this._viewStart = loopStart;
-            this._viewDuration = Math.max(0.1, loopEnd - loopStart);
+      // Dispatch toolbar clicks via _toolbarBtnDefs() so positions stay in sync with draw().
+      const tbBtns = this._toolbarBtnDefs();
+      const hit = tbBtns.find(b => !b.disabled && rx >= b.x && rx <= b.x + b.w && ry >= b.y && ry <= b.y + b.h);
+      if (hit) {
+        switch (hit.id) {
+          case 'mode': {
+            this._mode = this._mode === 'graph' ? 'dope' : 'graph';
+            if (this._mode === 'graph') {
+              this.autoFitGraph();
+              if (this._viewDuration === undefined) {
+                const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+                const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+                const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+                this._viewStart = loopStart;
+                this._viewDuration = Math.max(0.1, loopEnd - loopStart);
+              }
+            }
+            break;
           }
+          case 'tangents-tied': {
+            const reg = window._animationRegistry;
+            const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
+            if (singleSelected) {
+              const track = reg.tracks.get(singleSelected.meshId);
+              if (track) {
+                if (!track.tangentOffsets) track.tangentOffsets = {};
+                const prefix = singleSelected.type === 'transform' ? 'trans_' : '';
+                const key = `${prefix}${singleSelected.index}_tied`;
+                const cur = track.tangentOffsets[key] !== false;
+                track.tangentOffsets[key] = !cur;
+              }
+            }
+            break;
+          }
+          case 'fit': {
+            // Fit All: auto-fit Y + reset X to loop range.
+            this.autoFitGraph();
+            const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+            const ls = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+            const le = window._animLoopEnd !== undefined ? window._animLoopEnd : mDur;
+            this._viewStart = ls;
+            this._viewDuration = Math.max(0.1, le - ls);
+            break;
+          }
+          case 'tangents':
+            window._animShowTangents = !window._animShowTangents;
+            break;
+          case 'tbox':
+            window._animShowTransformBox = !window._animShowTransformBox;
+            break;
+          case 'snap':
+            window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
+            break;
+          case 'marquee':
+            window._animMarqueeMode = !window._animMarqueeMode;
+            break;
         }
         this.draw();
-        return;
-      }
-      if (rx >= 120 && rx <= 230) {
-        const reg = window._animationRegistry;
-        const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-        if (singleSelected) {
-          const track = reg.tracks.get(singleSelected.meshId);
-          if (track) {
-            if (!track.tangentOffsets) track.tangentOffsets = {};
-            const prefix = singleSelected.type === 'transform' ? 'trans_' : '';
-            const key = `${prefix}${singleSelected.index}_tied`;
-            const cur = track.tangentOffsets[key] !== false;
-            track.tangentOffsets[key] = !cur;
-            this.draw();
-          }
-        }
         return;
       }
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
     } else {
-      // Gutter click for Graph Editor channels in Desktop Timeline
+      // Gutter click/drag for Graph Editor channels in Desktop Timeline
       if (this._mode === 'graph' && rx < 200 && ry > 50) {
-        // Fit View button moved to toolbar — handled in ry < 50 block below
+        const gutterY = 50 + 4;
+        const rowH = 22;
+        const channel = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
 
-        const gutterY = 50 + 10;
-        const rowH = 30;
-        const channel = Math.floor((ry - gutterY) / rowH);
-        
         const reg = window._animationRegistry;
         const activeMesh = this._main.getMesh();
         const track = activeMesh ? reg.tracks.get(activeMesh.getID()) : null;
@@ -1612,6 +1832,12 @@ export default class GuiTimeline {
             return;
           }
         }
+
+        // No toggle hit — start a gutter scroll drag
+        this._isDraggingGutter = true;
+        this._gutterDragStartY = ry;
+        this._gutterDragStartScroll = this._gutterScrollY;
+        return;
       }
 
       if (this._mode === 'graph') {
@@ -1687,10 +1913,16 @@ export default class GuiTimeline {
         const trackH = laneAreaH / totalSlots;
 
         const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-        const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-        const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-        const visibleDuration = Math.max(0.1, loopEnd - loopStart);
-        
+        const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
+        const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
+        // [Step Bug3] Use _viewStart/_viewDuration when defined so hit test matches draw.
+        let loopStart = loopStartReal;
+        let visibleDuration = Math.max(0.1, loopEndReal - loopStartReal);
+        if (this._viewDuration !== undefined) {
+          loopStart = this._viewStart;
+          visibleDuration = this._viewDuration;
+        }
+
         const tlX = 200;
         const tlW = this._cssWidth - 200;
 
@@ -1796,16 +2028,25 @@ export default class GuiTimeline {
 
         let keyFound = false;
 
+        // In marquee mode, skip key-drag detection — always start marquee.
+        if (window._animMarqueeMode) {
+          this._isDraggingMarquee = true;
+          this._marqueeStart = { x: rx, y: ry };
+          this._marqueeEnd   = { x: rx, y: ry };
+          return;
+        }
+
         tracks.forEach(([meshId, trackObj], laneIdx) => {
           const ty = headerH + (laneIdx * trackH);
-          const ky = ty + trackH / 2;
-          
+          const kyTransform = ty + trackH / 2 - 10; // matches drawDopeSheet offset
+          const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
+
           if (ry >= ty && ry <= ty + trackH) {
             if (trackObj.times) {
               for (let i = 0; i < trackObj.times.length; i++) {
                 const t = trackObj.times[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-                if (Math.abs(rx - kx) < 10 && Math.abs(ry - ky) < 10) {
+                if (Math.abs(rx - kx) < 12 && Math.abs(ry - kyTransform) < 12) {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
@@ -1843,39 +2084,38 @@ export default class GuiTimeline {
             }
             // Check Shape Key Tangents in Dopesheet
             if (!keyFound && trackObj.shapeTimes && window._animShowTangents) {
-              const ky = ty + trackH / 2;
               for (let i = 0; i < trackObj.shapeTimes.length; i++) {
                 const t = trackObj.shapeTimes[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-                
+
                 const rightVal = trackObj.tangentOffsets ? trackObj.tangentOffsets[`${i}_right`] : undefined;
                 const leftVal = trackObj.tangentOffsets ? trackObj.tangentOffsets[`${i}_left`] : undefined;
                 const rightXOff = rightVal !== undefined ? rightVal : 25;
                 const leftXOff = leftVal !== undefined ? leftVal : -25;
-                
+
                 // Check right handle
                 if (i < trackObj.shapeTimes.length - 1) {
-                  if (Math.abs(rx - (kx + rightXOff)) < 10 && Math.abs(ry - ky) < 10) {
+                  if (Math.abs(rx - (kx + rightXOff)) < 12 && Math.abs(ry - kyShape) < 12) {
                     this._isDraggingTangent = true;
                     this._activeTangentTrack = trackObj;
                     this._activeTangentIndex = i;
                     this._activeTangentSide = 'right';
                     this._activeTangentKx = kx;
-                    this._activeTangentKy = ky;
+                    this._activeTangentKy = kyShape;
                     this._activeTangentType = 'shape';
                     return;
                   }
                 }
-                
+
                 // Check left handle
                 if (i > 0) {
-                  if (Math.abs(rx - (kx + leftXOff)) < 10 && Math.abs(ry - ky) < 10) {
+                  if (Math.abs(rx - (kx + leftXOff)) < 12 && Math.abs(ry - kyShape) < 12) {
                     this._isDraggingTangent = true;
                     this._activeTangentTrack = trackObj;
                     this._activeTangentIndex = i;
                     this._activeTangentSide = 'left';
                     this._activeTangentKx = kx;
-                    this._activeTangentKy = ky;
+                    this._activeTangentKy = kyShape;
                     this._activeTangentType = 'shape';
                     return;
                   }
@@ -1887,7 +2127,7 @@ export default class GuiTimeline {
               for (let i = 0; i < trackObj.shapeTimes.length; i++) {
                 const t = trackObj.shapeTimes[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-                if (Math.abs(rx - kx) < 10 && Math.abs(ry - ky) < 10) {
+                if (Math.abs(rx - kx) < 12 && Math.abs(ry - kyShape) < 12) {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
@@ -1973,15 +2213,56 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    // [Step 1] 2-finger touch scroll — update stored position and compute pan/zoom.
+    if (e.pointerType === 'touch' && this._touchMap.has(e.pointerId)) {
+      this._touchMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this._isTouchScrolling && this._touchMap.size === 2) {
+        const cur = this._getTouchCentroidAndDist();
+        const prev = this._touchScrollPrev;
+        this._ensureViewInit();
+        const tlX = 200;
+        const tlW = this._cssWidth - tlX;
+        // Pan: centroid delta → time/value shift.
+        const secsPerPx = this._viewDuration / tlW;
+        this._viewStart -= (cur.cx - prev.cx) * secsPerPx;
+        if (this._mode === 'graph') {
+          this._panY -= (cur.cy - prev.cy);
+        }
+        // Zoom: distance ratio → scale time axis around centroid.
+        if (prev.dist > 1) {
+          const pivotT = this._viewStart + ((prev.cx - tlX) / tlW) * this._viewDuration;
+          const factor = prev.dist / cur.dist;
+          const newDuration = Math.max(0.01, this._viewDuration * factor);
+          this._viewStart = pivotT - (pivotT - this._viewStart) * (newDuration / this._viewDuration);
+          this._viewDuration = newDuration;
+        }
+        this._touchScrollPrev = cur;
+        this.draw();
+        return;
+      }
+    }
+
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
-    
+
     this._lastMouseX = rx;
     this._lastMouseY = ry;
-    
 
-    
+    // Update toolbar tooltip.
+    if (this._tooltip && ry >= 5 && ry <= 25) {
+      const hovered = this._toolbarBtnDefs().find(b => rx >= b.x && rx <= b.x + b.w);
+      if (hovered?.tooltip) {
+        this._tooltip.textContent = hovered.tooltip;
+        this._tooltip.style.left = (hovered.x + hovered.w / 2) + 'px';
+        this._tooltip.style.display = 'block';
+      } else {
+        this._tooltip.style.display = 'none';
+      }
+    } else if (this._tooltip) {
+      this._tooltip.style.display = 'none';
+    }
+
     if (ry < 5 && !this._isDraggingKeyframe && !this._isDraggingTangent && !this._isPanningGraph && !this._isZoomingGraph) {
       this._canvas.style.cursor = 'ns-resize';
     } else {
@@ -2047,6 +2328,13 @@ export default class GuiTimeline {
       return;
     }
 
+    if (this._isDraggingGutter) {
+      const dy = ry - this._gutterDragStartY;
+      this._gutterScrollY = Math.max(0, Math.min(this._gutterMaxScroll, this._gutterDragStartScroll + dy));
+      this.draw();
+      return;
+    }
+
     if (this._isDraggingPlayhead) {
       if (this._mode === 'graph') {
         const rect = this._canvas.getBoundingClientRect();
@@ -2075,15 +2363,10 @@ export default class GuiTimeline {
       }
       this.handleInteraction(e);
     } else if (this._isDraggingKeyframe) {
-      let loopStart = this._viewStart;
-      let visibleDuration = this._viewDuration;
-      
-      if (this._mode === 'dope') {
-        loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-        const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-        const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-        visibleDuration = Math.max(0.1, loopEnd - loopStart);
-      }
+      // [Step Bug3] Use the same view window as draw() — loopStart/visibleDuration
+      // already resolved above via _viewStart/_viewDuration.
+      const loopStart = this._viewStart;
+      const visibleDuration = this._viewDuration;
 
       let t = (rx - tlX) / tlW;
       t = Math.max(0, Math.min(1, t));
@@ -2313,6 +2596,16 @@ export default class GuiTimeline {
   }
 
   onMouseUp(e) {
+    // [Step 1] 2-finger touch scroll cleanup.
+    if (e.pointerType === 'touch') {
+      this._touchMap.delete(e.pointerId);
+      if (this._touchMap.size < 2) {
+        this._isTouchScrolling = false;
+        this._touchScrollPrev = null;
+      }
+      if (this._isTouchScrolling) return; // still scrolling with remaining finger
+    }
+
     if (this._isDraggingMarquee) {
       this.finalizeMarquee(e);
     } else if (this._isDraggingKeyframe) {
@@ -2576,6 +2869,9 @@ export default class GuiTimeline {
     this._isPanningGraph = false;
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
+    this._isDraggingGutter = false;
+    // [Step Bug1] Notify ACP to sync key inspector after any interaction.
+    window._animSyncKeyInspector?.();
     this.draw();
   }
 
@@ -2803,6 +3099,12 @@ export default class GuiTimeline {
       }
       loopStart = this._viewStart;
       visibleDuration = this._viewDuration;
+      // [Step 2] Follow selected key: ensure the selected key's channel is visible.
+      this._followSelectedKeyChannel();
+    } else if (this._viewDuration !== undefined) {
+      // Dope sheet with user scroll/zoom applied — honour the view window.
+      loopStart = this._viewStart;
+      visibleDuration = this._viewDuration;
     }
     const loopEnd = loopStart + visibleDuration;
 
@@ -2830,78 +3132,65 @@ export default class GuiTimeline {
       ctx.fill();
     };
 
-    // Draw Mode Toggle Button
-    _drawBtn(10, 5, 90, 20, '#444');
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(this._mode === 'graph' ? 'Mode: Graph' : 'Mode: Dope', 55, 15);
-
-    // Tied Tangents Toggle
-    if (this._mode === 'graph') {
-      const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-      let isTied = true;
-      if (singleSelected) {
-        const track = reg.tracks.get(singleSelected.meshId);
-        if (track && track.tangentOffsets) {
-          const prefix = singleSelected.type === 'transform' ? 'trans_' : '';
-          isTied = track.tangentOffsets[`${prefix}${singleSelected.index}_tied`] !== false;
+    // Toolbar buttons — driven by _toolbarBtnDefs() so draw and hit-test stay in sync.
+    const _faReady = document.fonts.check('900 12px "Font Awesome 6 Free"');
+    const _tbBtns = this._toolbarBtnDefs();
+    _tbBtns.forEach(btn => {
+      const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
+               && this._lastMouseY >= 5    && this._lastMouseY <= 25;
+      const fill = btn.disabled ? '#282828'
+                 : btn.active   ? '#4488ff'
+                 : hov          ? '#555'
+                                : '#3a3a3a';
+      _drawBtn(btn.x, btn.y, btn.w, btn.h, fill);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const cy = btn.y + btn.h / 2;
+      if (btn.id === 'marquee') {
+        // Dashed-rectangle selection-box icon — drawn directly, no font needed.
+        const ic = btn.active ? '#fff' : '#999';
+        ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 1.5]);
+        const ix = btn.x + btn.w / 2 - 7, iy = cy - 4;
+        ctx.strokeRect(ix, iy, 14, 9);
+        ctx.setLineDash([]);
+        [[0, 0], [14, 0], [0, 9], [14, 9]].forEach(([dx, dy]) => {
+          ctx.beginPath(); ctx.arc(ix + dx, iy + dy, 1.5, 0, Math.PI * 2); ctx.fill();
+        });
+      } else if (btn.id === 'mode') {
+        // Two icons: chart-column (flipped V) = dopesheet, bezier-curve = graph.
+        const dopeActive = this._mode === 'dope';
+        const graphActive = this._mode === 'graph';
+        if (_faReady) {
+          ctx.font = '900 11px "Font Awesome 6 Free"';
+          // Chart-column flipped vertically.
+          ctx.save();
+          ctx.fillStyle = dopeActive ? '#fff' : '#777';
+          ctx.translate(btn.x + 13, cy);
+          ctx.scale(1, -1);
+          ctx.fillText('', 0, 0);
+          ctx.restore();
+          ctx.fillStyle = graphActive ? '#fff' : '#777';
+          ctx.fillText('', btn.x + 33, cy);
+        } else {
+          ctx.font = '11px sans-serif'; ctx.fillStyle = '#fff';
+          ctx.fillText('D/G', btn.x + btn.w / 2, cy);
         }
+      } else if (btn.icon) {
+        ctx.fillStyle = btn.disabled ? '#555' : '#ddd';
+        if (_faReady) {
+          ctx.font = '900 12px "Font Awesome 6 Free"';
+          ctx.fillText(btn.icon, btn.x + btn.w / 2, cy);
+        } else {
+          ctx.font = '10px sans-serif';
+          ctx.fillText(btn.id[0].toUpperCase(), btn.x + btn.w / 2, cy);
+        }
+      } else {
+        ctx.fillStyle = btn.disabled ? '#555' : '#ccc';
+        ctx.font = '11px sans-serif';
+        ctx.fillText(btn.label, btn.x + btn.w / 2, cy);
       }
-
-      _drawBtn(120, 5, 110, 20, singleSelected ? '#444' : '#2a2a2a');
-      ctx.fillStyle = '#fff';
-      ctx.fillText(isTied ? 'Tangents: Tied' : 'Tangents: Broken', 175, 15);
-    }
-
-    // Fit View button (toolbar, always visible)
-    const fitBtnX = this._mode === 'graph' ? 245 : 115;
-    const fitHovered = this._lastMouseX >= fitBtnX && this._lastMouseX <= fitBtnX + 60 &&
-                       this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    _drawBtn(fitBtnX, 5, 60, 20, fitHovered ? '#666' : '#444');
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Fit View', fitBtnX + 30, 15);
-
-    // Frame Timeline button — resets view to full loop range
-    const frameBtnX = fitBtnX + 68;
-    const frameHovered = this._lastMouseX >= frameBtnX && this._lastMouseX <= frameBtnX + 80 &&
-                         this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    _drawBtn(frameBtnX, 5, 80, 20, frameHovered ? '#666' : '#444');
-    ctx.fillStyle = '#fff';
-    ctx.fillText('Frame Timeline', frameBtnX + 40, 15);
-
-    // Tangents toggle button (graph mode only)
-    if (this._mode === 'graph') {
-      const tanBtnX = frameBtnX + 88;
-      const tanOn = !!window._animShowTangents;
-      const tanHovered = this._lastMouseX >= tanBtnX && this._lastMouseX <= tanBtnX + 65 &&
-                         this._lastMouseY >= 5 && this._lastMouseY <= 25;
-      _drawBtn(tanBtnX, 5, 65, 20, tanOn ? '#4488ff' : (tanHovered ? '#666' : '#444'));
-      ctx.fillStyle = '#fff';
-      ctx.fillText('Tangents', tanBtnX + 32, 15);
-    }
-
-    // Transform Box toggle (both modes)
-    const tboxBtnX = frameBtnX + 88 + (this._mode === 'graph' ? 73 : 0);
-    const tboxOn = !!window._animShowTransformBox;
-    const tboxHovered = this._lastMouseX >= tboxBtnX && this._lastMouseX <= tboxBtnX + 60 &&
-                        this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    _drawBtn(tboxBtnX, 5, 60, 20, tboxOn ? '#4488ff' : (tboxHovered ? '#666' : '#444'));
-    ctx.fillStyle = '#fff';
-    ctx.fillText('T.Box', tboxBtnX + 30, 15);
-
-    // Snap to Frames toggle (both modes, default on)
-    const snapBtnX = tboxBtnX + 68;
-    const snapOn = window._animSnapToFrame !== false;
-    const snapHovered = this._lastMouseX >= snapBtnX && this._lastMouseX <= snapBtnX + 55 &&
-                        this._lastMouseY >= 5 && this._lastMouseY <= 25;
-    _drawBtn(snapBtnX, 5, 55, 20, snapOn ? '#4488ff' : (snapHovered ? '#666' : '#444'));
-    ctx.fillStyle = '#fff';
-    ctx.fillText('Snap', snapBtnX + 27, 15);
+    });
 
     const fps = window._animFPS || 24;
     const curT = window._animCurrentTime ? Math.round(window._animCurrentTime * fps) : 0;
@@ -2965,106 +3254,6 @@ export default class GuiTimeline {
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(window._animStatusText || '', w.w / 2, w.y + 40);
-    } else {
-      const activeMesh = this._main.getMesh();
-      if (activeMesh) {
-        const id = activeMesh.getID();
-        const track = reg.tracks.get(id);
-        if (track) {
-          const fps = window._animFPS || 24;
-          const curTime = window._animCurrentTime || 0;
-          const snappedTime = Math.round(curTime * fps) / fps;
-          
-          // Check if a SINGLE key is selected!
-          const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
-          
-          if (singleSelected && singleSelected.meshId === id) {
-            const kIdx = singleSelected.index;
-            const t = singleSelected.type === 'transform' ? track.times[kIdx] : track.shapeTimes[kIdx];
-            const frame = Math.round(t * fps);
-            
-            if (singleSelected.type === 'shape') {
-              const outTime = track.shapeOutputTimes ? track.shapeOutputTimes[kIdx] : t;
-              ctx.fillStyle = '#ffcc00';
-              ctx.font = '12px sans-serif';
-              ctx.textAlign = 'center';
-              ctx.fillText(`key ${frame}: Output Frame = ${(outTime * fps).toFixed(2)}`, w.w / 2, w.y + headerH / 2);
-            } else {
-              let px = 0, py = 0, pz = 0;
-              if (singleSelected.type === 'transform' && track.positions && (kIdx * 3 + 2) < track.positions.length) {
-                px = track.positions[kIdx * 3];
-                py = track.positions[kIdx * 3 + 1];
-                pz = track.positions[kIdx * 3 + 2];
-              }
-              px = px || 0;
-              py = py || 0;
-              pz = pz || 0;
-              ctx.fillStyle = '#ffcc00';
-              ctx.font = '12px sans-serif';
-              ctx.textAlign = 'center';
-              ctx.fillText(`key ${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
-            }
-          } else {
-            // No key selected, show interpolated value at playhead!
-            const frame = Math.round(curTime * fps);
-            
-            if (this._mode === 'graph' && track.shapeTimes && track.shapeTimes.length > 0) {
-              // Calculate warpedTime just like in AnimationRegistry.update!
-              let warpedTime = curTime;
-              if (track.shapeOutputTimes && track.shapeOutputTimes.length >= 2) {
-                let idx = 0;
-                while (idx < track.shapeTimes.length - 2 && track.shapeTimes[idx + 1] < curTime) {
-                  idx++;
-                }
-                const t1 = track.shapeTimes[idx];
-                const t2 = track.shapeTimes[idx + 1];
-                const dt = t2 - t1;
-                const v1 = (track.shapeOutputTimes && idx < track.shapeOutputTimes.length) ? track.shapeOutputTimes[idx] : t1;
-                const v2 = (track.shapeOutputTimes && (idx + 1) < track.shapeOutputTimes.length) ? track.shapeOutputTimes[idx + 1] : t2;
-                
-                let alpha = dt > 0 ? (curTime - t1) / dt : 0;
-                
-                if (window._animShowTangents && track.tangentOffsets) {
-                  const rightDt = track.tangentOffsets[`${idx}_right_dt`];
-                  const rightDv = track.tangentOffsets[`${idx}_right_dv`];
-                  const leftDt = track.tangentOffsets[`${idx + 1}_left_dt`];
-                  const leftDv = track.tangentOffsets[`${idx + 1}_left_dv`];
-                  
-                  const dt0 = rightDt !== undefined ? rightDt : dt * 0.33;
-                  const dt1 = leftDt !== undefined ? leftDt : -dt * 0.33;
-                  const slope = dt > 0 ? (v2 - v1) / dt : 0;
-                  const dv0 = rightDv !== undefined ? rightDv : slope * dt0;
-                  const dv1 = leftDv !== undefined ? leftDv : slope * dt1;
-                  
-                  const p1x = dt0 / dt;
-                  const p2x = 1 + dt1 / dt;
-                  
-                  const t_bez = reg.getBezierT(alpha, p1x, p2x);
-                  
-                  warpedTime = TimelineHelper.evaluateBezier(t_bez, v1, v2, dv0, dv1);
-                } else {
-                  warpedTime = v1 + (v2 - v1) * alpha;
-                }
-                const minTime = track.shapeTimes[0];
-                const maxTime = track.shapeTimes[track.shapeTimes.length - 1];
-                warpedTime = Math.max(minTime, Math.min(maxTime, warpedTime));
-              }
-              
-              ctx.fillStyle = '#ffcc00';
-              ctx.font = '12px sans-serif';
-              ctx.textAlign = 'center';
-              ctx.fillText(`frame ${frame}: Output Frame = ${(warpedTime * fps).toFixed(2)}`, w.w / 2, w.y + headerH / 2);
-            } else {
-              const [px, py, pz] = reg.getInterpolatedPosition(track, snappedTime);
-              
-              ctx.fillStyle = '#ffcc00';
-              ctx.font = '12px sans-serif';
-              ctx.textAlign = 'center';
-              ctx.fillText(`${frame}: (${px.toFixed(2)}, ${py.toFixed(2)}, ${pz.toFixed(2)})`, w.w / 2, w.y + headerH / 2);
-            }
-          }
-        }
-      }
     }
 
     if (this._mode === 'graph') {
@@ -3072,16 +3261,29 @@ export default class GuiTimeline {
       return;
     }
 
-    // 2. Draw Vertical Grid Lines
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    const totalSeconds = Math.ceil(mDurVal);
-    for (let s = 0; s <= totalSeconds; s++) {
-      if (s >= loopStart && s <= loopEnd) {
-        const gridX = tlX + ((s - loopStart) / visibleDuration) * tlW;
+    // [Step 4] Vertical grid lines — density matches ruler tick logic.
+    {
+      const totalFrames2 = visibleDuration * fps;
+      const pxPerFrame2 = tlW / Math.max(1, totalFrames2);
+      let gMajor, gMinor;
+      if      (pxPerFrame2 >= 16) { gMajor = 1;        gMinor = 0; }
+      else if (pxPerFrame2 >= 8)  { gMajor = 5;        gMinor = 1; }
+      else if (pxPerFrame2 >= 4)  { gMajor = 10;       gMinor = 5; }
+      else if (pxPerFrame2 >= 2)  { gMajor = fps;      gMinor = Math.max(1, Math.round(fps / 4)); }
+      else if (pxPerFrame2 >= 0.5){ gMajor = fps * 2;  gMinor = fps; }
+      else                        { gMajor = fps * 5;  gMinor = fps; }
+      const fS2 = Math.ceil(loopStart * fps);
+      const fE2 = Math.floor((loopStart + visibleDuration) * fps);
+      ctx.lineWidth = 1;
+      for (let f = fS2; f <= fE2; f++) {
+        const isMaj = gMajor > 0 && (f % gMajor === 0);
+        const isMin = gMinor > 0 && (f % gMinor === 0);
+        if (!isMaj && !isMin) continue;
+        const gx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
+        ctx.strokeStyle = isMaj ? '#2e2e2e' : '#222';
         ctx.beginPath();
-        ctx.moveTo(gridX, w.y + headerH);
-        ctx.lineTo(gridX, w.y + w.h);
+        ctx.moveTo(gx, w.y + headerH);
+        ctx.lineTo(gx, w.y + w.h);
         ctx.stroke();
       }
     }

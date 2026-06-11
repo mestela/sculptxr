@@ -5,16 +5,17 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v2.0.4</title>
+    <title>SculptXR v2.0.5</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v2.0.4 - iPad polish: hover effects, zoom, undo, shift-smooth
+                                                              VERSION: v2.0.5 - iPad polish: hover effects, zoom, undo, shift-smooth
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
     <meta property="og:title" content="SculptXR v2.0.3">
     <link rel='stylesheet' href='app/css/yagui.css' type='text/css' />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
         body {
             margin: 0;
@@ -90,6 +91,21 @@
     </style>
 
     <script type="module" src="./src/main.js"></script>
+
+    <!-- Apple Pencil: disable Scribble on number inputs, prevent hover-scroll on sliders -->
+    <style>
+      input[type=range]  { touch-action: none; }
+      input[type=number] { touch-action: none; }
+    </style>
+    <script>
+      // Stamp inputmode="numeric" on every number input as panels are dynamically created.
+      const _patchInput = (el) => {
+        if (el.matches?.('input[type=number]')) el.setAttribute('inputmode', 'none');
+        el.querySelectorAll?.('input[type=number]').forEach(i => i.setAttribute('inputmode', 'none'));
+      };
+      new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(_patchInput)))
+        .observe(document.body, { childList: true, subtree: true });
+    </script>
 </head>
 
 <body>
