@@ -260,10 +260,10 @@ const CSS = `
 .acp-root .acp-btn-autokey {
   flex: 1;
   padding: 9px 6px;
-  border: 1px solid #94e2d5;
+  border: 1px solid #757575;
   border-radius: 6px;
-  background: #181825;
-  color: #94e2d5;
+  background: #141414;
+  color: #757575;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -272,7 +272,7 @@ const CSS = `
   transition: background 0.1s, color 0.1s;
 }
 .acp-root .acp-btn-autokey:hover,
-.acp-root .acp-btn-autokey.hover { background: #1a302e; }
+.acp-root .acp-btn-autokey.hover { background: #1e1e1e; }
 .acp-root .acp-btn-autokey.active { background: #94e2d5; color: #1e1e2e; border-color: #94e2d5; }
 .acp-root .acp-mode-row {
   display: flex;
@@ -319,33 +319,58 @@ const CSS = `
   border: 1px solid #313244; border-radius: 7px; padding: 7px 9px; background: #181825;
 }
 .acp-root .acp-bs-row.editing { border-color: #a6e3a1; background: #131d18; }
-.acp-root .acp-bs-header { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
-.acp-root .acp-bs-label {
-  flex: 1; font-size: 12px; color: #cdd6f4;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.acp-root .acp-bs-base {
+  border: 1px solid #45475a; border-radius: 7px; padding: 6px 9px; background: #1e1e2e;
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
 }
+.acp-root .acp-bs-base:hover { border-color: #585b70; }
+.acp-root .acp-bs-base.editing { border-color: #a6e3a1; background: #131d18; }
+.acp-root .acp-bs-base .acp-bs-edit { flex-shrink: 0; }
+.acp-root .acp-bs-base .acp-bs-label { color: #585b70; font-style: italic; cursor: pointer; }
+.acp-root .acp-bs-base.editing .acp-bs-label { color: #a6e3a1; font-style: normal; }
+.acp-root .acp-bs-header { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
 .acp-root .acp-bs-num {
   width: 52px; padding: 3px 5px; background: #1e1e2e; border: 1px solid #313244;
   border-radius: 5px; color: #89b4fa; font-size: 11px; font-variant-numeric: tabular-nums;
   text-align: right; outline: none; flex-shrink: 0;
 }
 .acp-root .acp-bs-num:focus { border-color: #89b4fa; }
+.acp-root .acp-bs-rename-input {
+  flex: 1; min-width: 0; padding: 1px 4px; font-size: 12px; font-family: inherit;
+  background: #1e1e2e; color: #cdd6f4; border: 1px solid #89b4fa; border-radius: 3px; outline: none;
+}
+.acp-root .acp-bs-label {
+  flex: 1; font-size: 12px; color: #cdd6f4; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.acp-root .acp-bs-label:hover { color: #fff; }
+.acp-root .acp-bs-row.editing .acp-bs-label { color: #a6e3a1; }
 .acp-root .acp-bs-edit {
-  padding: 3px 8px; border: 1px solid #313244; border-radius: 5px;
-  background: #181825; color: #a6adc8; font-size: 10px; cursor: pointer;
-  outline: none; flex-shrink: 0;
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid #45475a;
+  background: transparent; cursor: pointer; outline: none; flex-shrink: 0; padding: 0;
+  transition: border-color 0.1s, background 0.1s;
 }
-.acp-root .acp-bs-edit.active { color: #a6e3a1; border-color: #a6e3a1; background: #1e3a2a; }
-.acp-root .acp-bs-del {
-  padding: 3px 6px; border: 1px solid #313244; border-radius: 5px;
-  background: #181825; color: #6c7086; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0;
+.acp-root .acp-bs-edit.active { border-color: #a6e3a1; background: #a6e3a1; }
+.acp-root .acp-bs-toolbar {
+  display: flex; gap: 4px; align-items: center;
 }
-.acp-root .acp-bs-del:hover { color: #f38ba8; border-color: #f38ba8; background: #3d1e2e; }
-.acp-root .acp-bs-key {
-  padding: 3px 6px; border: 1px solid #313244; border-radius: 5px;
-  background: #181825; color: #6c7086; font-size: 11px; cursor: pointer; outline: none; flex-shrink: 0;
+.acp-root .acp-bs-toolbar button {
+  flex: 1; padding: 5px 4px; border: 1px solid #313244; border-radius: 6px;
+  background: #181825; color: #a6adc8; font-size: 11px; cursor: pointer; outline: none;
+  transition: background 0.1s, color 0.1s;
 }
+.acp-root .acp-bs-toolbar button:hover { background: #24243e; color: #cdd6f4; }
+.acp-root #acp-bs-del-btn { color: #6c7086; }
+.acp-root #acp-bs-del-btn:hover { color: #f38ba8; border-color: #f38ba8; background: #3d1e2e; }
 .acp-root .acp-bs-key:hover { color: #ff9944; border-color: #ff9944; background: #3a2a1e; }
+.acp-root .acp-bs-mode { display: flex; border: 1px solid #45475a; border-radius: 5px; overflow: hidden; flex-shrink: 0; }
+.acp-root .acp-bs-mode button {
+  flex: none; padding: 4px 9px; font-size: 11px; background: transparent; border: none;
+  color: #6c7086; cursor: pointer; outline: none; transition: background 0.1s, color 0.1s;
+}
+.acp-root .acp-bs-mode button:hover { color: #cdd6f4; }
+.acp-root .acp-bs-mode button.active { background: #313244; color: #cdd6f4; }
+.acp-root .acp-bs-slider:disabled, .acp-root .acp-bs-num:disabled { opacity: 0.3; pointer-events: none; }
 `;
 
 let _cssInjected = false;
@@ -490,10 +515,18 @@ export function buildAnimationSectionHTML() {
       <div class="acp-section-title">Blendshapes</div>
       <div class="acp-stack">
         <div class="acp-bs-create">
-          <input type="text" id="acp-bs-name" placeholder="New shape name..."
+          <input type="text" id="acp-bs-name" placeholder="New layer name..."
                  autocomplete="off" autocorrect="off" autocapitalize="off"
                  spellcheck="false" writingsuggestions="false">
           <button id="acp-bs-add">+</button>
+        </div>
+        <div class="acp-bs-toolbar">
+          <div class="acp-bs-mode">
+            <button id="acp-bs-mode-blend">Blend</button>
+            <button id="acp-bs-mode-edit">Edit</button>
+          </div>
+          <button id="acp-bs-key-btn" title="Key selected layer's current weight">&#9670; Key</button>
+          <button id="acp-bs-del-btn" title="Delete selected layer">Del</button>
         </div>
         <div id="acp-bs-list" class="acp-stack">
           <span class="acp-placeholder">No blendshapes on current mesh</span>
@@ -548,34 +581,47 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
   if (!list) return;
   list.innerHTML = '';
 
+  const mode  = window._bsMode ?? 'blend';
+  el.querySelector('#acp-bs-mode-blend')?.classList.toggle('active', mode === 'blend');
+  el.querySelector('#acp-bs-mode-edit') ?.classList.toggle('active', mode === 'edit');
+
   const reg   = window._animationRegistry;
   const track = reg?.tracks.get(mesh?.getID());
 
   if (!track?.blendshapes?.size) {
-    list.innerHTML = '<span class="acp-placeholder">No blendshapes on current mesh</span>';
+    // No blendshapes yet — just show the base layer.
+    const baseRow = document.createElement('div');
+    baseRow.className = 'acp-bs-base editing';
+    baseRow.innerHTML = `<button class="acp-bs-edit active"></button><span class="acp-bs-label">Base</span>`;
+    list.appendChild(baseRow);
     repaint?.();
     return;
   }
 
-  track.blendshapes.forEach((_, name) => {
+  // Layers in reverse insertion order (most recent at top), Base at bottom.
+  const layerEntries = [...track.blendshapes.keys()].reverse();
+  layerEntries.forEach((name) => {
     const bTrack = track.blendshapeTracks?.get(name);
     const weight = bTrack?.times?.length
       ? (reg.evaluateScalarTrack?.(bTrack, track.playbackTime) ?? 0)
       : 0;
-    const isEditing = track.editingBlendshape === name;
+    const isEditing = mode === 'edit' && track.editingBlendshape === name;
+    // In edit mode, disable controls for all layers except the active one.
+    const isLocked  = mode === 'edit' && !isEditing;
 
     const row = document.createElement('div');
     row.className = 'acp-bs-row' + (isEditing ? ' editing' : '');
     row.dataset.bsName = name;
     row.innerHTML = `
       <div class="acp-bs-header">
+        <button class="acp-bs-edit${isEditing ? ' active' : ''}"
+          title="${mode === 'edit' ? (isEditing ? 'Deselect layer' : 'Select layer for sculpting') : ''}"></button>
         <span class="acp-bs-label">${name}</span>
-        <input type="number" class="acp-bs-num" min="0" max="1" step="0.01" value="${weight.toFixed(2)}">
-        <button class="acp-bs-key" title="Key this blendshape">&#9670;</button>
-        <button class="acp-bs-edit${isEditing ? ' active' : ''}">${isEditing ? 'Done' : 'Edit'}</button>
-        <button class="acp-bs-del" title="Delete">Del</button>
+        <input type="number" class="acp-bs-num" min="0" max="1" step="0.01"
+          value="${weight.toFixed(2)}"${isLocked ? ' disabled' : ''}>
       </div>
-      <input type="range" class="acp-bs-slider" min="0" max="1" step="0.01" value="${weight}">
+      <input type="range" class="acp-bs-slider" min="0" max="1" step="0.01"
+        value="${weight}"${isLocked ? ' disabled' : ''}>
     `;
 
     const slider   = row.querySelector('.acp-bs-slider');
@@ -618,14 +664,8 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
       startVal = newVal;
     });
 
-    row.querySelector('.acp-bs-key').addEventListener('click', () => {
-      const t = window._animCurrentTime || 0;
-      const currentWeight = parseFloat(slider.value);
-      reg.setBlendshapeWeight?.(mesh, name, currentWeight);
-      repaint?.();
-    });
-
-    row.querySelector('.acp-bs-edit').addEventListener('click', () => {
+    const _toggleLayer = () => {
+      if (mode !== 'edit') return;
       const tr = reg.tracks.get(mesh.getID());
       window._lastActiveBlendshape = name;
       if (tr?.editingBlendshape === name) reg.exitBlendshapeEditMode?.(mesh);
@@ -634,16 +674,70 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
         reg.enterBlendshapeEditMode?.(mesh, name);
       }
       refreshBlendshapesDOM(el, mesh, main, repaint);
-    });
+    };
+    const editBtn = row.querySelector('.acp-bs-edit');
+    editBtn.style.opacity = mode === 'edit' ? '' : '0.3';
+    editBtn.style.pointerEvents = mode === 'edit' ? '' : 'none';
+    editBtn.addEventListener('click', _toggleLayer);
 
-    row.querySelector('.acp-bs-del').addEventListener('click', () => {
-      reg.deleteBlendshape?.(mesh, name);
-      refreshBlendshapesDOM(el, mesh, main, repaint);
+    // Single click on label = toggle layer; double-click = rename inline.
+    const _label = row.querySelector('.acp-bs-label');
+    let _clickTimer = null;
+    _label.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; return; }
+      _clickTimer = setTimeout(() => { _clickTimer = null; _toggleLayer(); }, 250);
+    });
+    _label.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = name;
+      input.className = 'acp-bs-rename-input';
+      _label.replaceWith(input);
+      input.select();
+      let _committed = false;
+      const _commit = () => {
+        if (_committed) return; _committed = true;
+        const newName = input.value.trim();
+        if (newName && newName !== name) {
+          reg.renameBlendshape?.(mesh, name, newName);
+          refreshBlendshapesDOM(el, mesh, main, repaint);
+        } else {
+          input.replaceWith(_label);
+        }
+      };
+      const _cancel = () => {
+        if (_committed) return; _committed = true;
+        input.replaceWith(_label);
+      };
+      input.addEventListener('blur', _commit);
+      input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { input.blur(); }
+        else if (e.key === 'Escape') { input.removeEventListener('blur', _commit); _cancel(); }
+      });
+      input.focus();
     });
 
     setupRangeDrag(row);
     list.appendChild(row);
   });
+
+  // Base layer always at the bottom.
+  const baseIsActive = mode === 'edit' && !track?.editingBlendshape;
+  const baseRow = document.createElement('div');
+  baseRow.className = 'acp-bs-base' + (baseIsActive ? ' editing' : '');
+  baseRow.innerHTML = `<button class="acp-bs-edit${baseIsActive ? ' active' : ''}"
+    style="${mode !== 'edit' ? 'opacity:0.3;pointer-events:none' : ''}"></button>
+    <span class="acp-bs-label">Base</span>`;
+  if (mode === 'edit') {
+    baseRow.addEventListener('click', () => {
+      if (track?.editingBlendshape) reg.exitBlendshapeEditMode?.(mesh);
+      refreshBlendshapesDOM(el, mesh, main, repaint);
+    });
+  }
+  list.appendChild(baseRow);
 
   repaint?.();
 }
@@ -1211,14 +1305,55 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       while (existing.includes(`blendshape${i}`)) i++;
       name = `blendshape${i}`;
     }
-    window._animationRegistry.createBlendshape(mesh, name);
+    const reg = window._animationRegistry;
+    reg.createBlendshape(mesh, name);
+    // Auto-activate at 100% — new layer is immediately ready to sculpt into.
+    reg.setBlendshapeWeight(mesh, name, 1.0);
+    if (reg.tracks.get(mesh.getID())?.editingBlendshape) reg.exitBlendshapeEditMode(mesh);
+    reg.enterBlendshapeEditMode(mesh, name);
     if (bsNameInput) bsNameInput.value = '';
     _refreshBs(mesh);
     repaint();
   };
+  el.querySelector('#acp-bs-mode-blend')?.addEventListener('click', () => {
+    window._bsMode = 'blend';
+    const mesh = _getTargetMesh();
+    const reg  = window._animationRegistry;
+    if (mesh && reg?.tracks?.get(mesh.getID?.())?.editingBlendshape)
+      reg.exitBlendshapeEditMode(mesh);
+    _refreshBs(mesh);
+    repaint?.();
+  });
+  el.querySelector('#acp-bs-mode-edit')?.addEventListener('click', () => {
+    window._bsMode = 'edit';
+    _refreshBs(_getTargetMesh());
+    repaint?.();
+  });
+
   el.querySelector('#acp-bs-add')?.addEventListener('click', _createBlendshape);
   bsNameInput?.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') _createBlendshape(); });
   bsNameInput?.addEventListener('keyup', (e) => e.stopPropagation());
+
+  el.querySelector('#acp-bs-key-btn')?.addEventListener('click', () => {
+    const mesh = _getTargetMesh();
+    const reg  = window._animationRegistry;
+    const name = reg?.tracks?.get(mesh?.getID?.())?.editingBlendshape;
+    if (!mesh || !reg || !name) return;
+    const slider = el.querySelector(`[data-bs-name="${name}"] .acp-bs-slider`);
+    const weight = slider ? parseFloat(slider.value) : 1.0;
+    reg.setBlendshapeWeight(mesh, name, weight);
+    repaint?.();
+  });
+
+  el.querySelector('#acp-bs-del-btn')?.addEventListener('click', () => {
+    const mesh = _getTargetMesh();
+    const reg  = window._animationRegistry;
+    const name = reg?.tracks?.get(mesh?.getID?.())?.editingBlendshape;
+    if (!mesh || !reg || !name) return;
+    reg.deleteBlendshape?.(mesh, name);
+    _refreshBs(mesh);
+    repaint?.();
+  });
 
   // ── Numpad wiring for integer number inputs (desktop + VR) ──────────────
   // Clicking a number field opens the numpad overlay (DOM on desktop, 3D
@@ -1241,6 +1376,35 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       e.preventDefault(); e.stopPropagation();
       const current = parseFloat(input.value) || min;
       window._vrNumpad.open(current, { label, integer: true, min }, (val) => {
+        input.value = val;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }, input, vrPanel);
+    });
+  });
+
+  // ── Keyframe editor inputs ────────────────────────────────────────────────
+  // Frame number is integer; value fields (v1-v3) are floats.
+  [
+    { id: '#acp-key-frame', labelId: null,               integer: true  },
+    { id: '#acp-key-v1',    labelId: '#acp-key-v1-label', integer: false },
+    { id: '#acp-key-v2',    labelId: '#acp-key-v2-label', integer: false },
+    { id: '#acp-key-v3',    labelId: '#acp-key-v3-label', integer: false },
+  ].forEach(({ id, labelId, integer }) => {
+    const input = el.querySelector(id);
+    if (!input) return;
+    input.addEventListener('click', (e) => {
+      if (!window._vrNumpad) return;
+      if (window._vrNumpad.isBlockingOpen) return;
+      // Frame input: only open when a single key is selected (frame is ambiguous for multi)
+      if (id === '#acp-key-frame' && (!input.value || input.value === '—')) return;
+      // Value inputs: only block if nothing is selected at all (disabled inputs)
+      if (id !== '#acp-key-frame' && !window._animSelectedKeys?.length) return;
+      e.preventDefault(); e.stopPropagation();
+      // Empty when multi-select has mixed values — start from 0
+      const current = parseFloat(input.value) || 0;
+      const labelEl = labelId ? el.querySelector(labelId) : null;
+      const label   = id === '#acp-key-frame' ? 'Frame' : (labelEl?.textContent || '');
+      window._vrNumpad.open(current, { label, integer, min: integer ? 0 : undefined }, (val) => {
         input.value = val;
         input.dispatchEvent(new Event('change', { bubbles: true }));
       }, input, vrPanel);

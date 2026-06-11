@@ -739,16 +739,23 @@ class AnimationRegistry {
     if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
     
     const v = mesh.getVertices();
-    
+
     if (!track.baseShape) {
-      track.baseShape = new Float32Array(v); // Save current as base
+      // First blendshape ever — snapshot the current mesh as the base.
+      // Temporarily clear any active edit so baseShape captures the true base.
+      const wasEditing = track.editingBlendshape;
+      if (wasEditing) {
+        track.editingBlendshape = null;
+        this.applyBlendshapes(mesh);
+        track.editingBlendshape = wasEditing;
+      }
+      track.baseShape = new Float32Array(mesh.getVertices());
     }
-    
-    const delta = new Float32Array(v.length);
-    for (let i = 0; i < v.length; i++) {
-      delta[i] = v[i] - track.baseShape[i];
-    }
-    
+
+    // New layers always start with a zero delta — they are empty relative to
+    // the base cage. The user sculpts into them after creation.
+    const delta = new Float32Array(track.baseShape.length);
+
     track.blendshapes.set(name, delta);
     track.blendshapeTracks.set(name, { times: [], values: [] });
     
@@ -805,29 +812,38 @@ class AnimationRegistry {
   applyBlendshapes(mesh, baseVerts) {
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes) return;
-    
+
     const v = mesh.getVertices();
     if (baseVerts) {
       v.set(baseVerts);
     } else if (track.baseShape) {
       v.set(track.baseShape);
     }
-    
+
+    // When a layer is being edited, isolate: active=1, all others=0.
+    // This keeps undo stable and the delta computation simple (no weight correction).
+    const editing = track.editingBlendshape;
     track.blendshapes.forEach((delta, name) => {
       const bTrack = track.blendshapeTracks.get(name);
       if (!bTrack || bTrack.times.length === 0) return;
-      
-      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
-      
+
+      const weight = editing
+        ? (name === editing ? 1.0 : 0.0)
+        : this.evaluateScalarTrack(bTrack, track.playbackTime);
+
       if (weight !== 0) {
         for (let i = 0; i < v.length; i++) {
           v[i] += delta[i] * weight;
         }
       }
     });
-    
+
+    // Guard: prevent the updateGeometry intercept from treating this recomposition
+    // as a sculpt stroke and incorrectly rebasing baseShape or layer deltas.
+    track._applyingBS = true;
     if (mesh.updateGeometry) mesh.updateGeometry();
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+    track._applyingBS = false;
   }
 
   getBsSlope(bTrack, i) {
@@ -908,68 +924,70 @@ class AnimationRegistry {
     
     if (track.blendshapes) track.blendshapes.delete(name);
     if (track.blendshapeTracks) track.blendshapeTracks.delete(name);
-    
+
     this.applyBlendshapes(mesh);
   }
+
+  renameBlendshape(mesh, oldName, newName) {
+    if (!mesh || !oldName || !newName || oldName === newName) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track?.blendshapes?.has(oldName)) return;
+    if (track.blendshapes.has(newName)) return;
+
+    // Rebuild both maps preserving insertion order.
+    const newBS = new Map();
+    track.blendshapes.forEach((d, n) => newBS.set(n === oldName ? newName : n, d));
+    track.blendshapes = newBS;
+
+    if (track.blendshapeTracks) {
+      const newBT = new Map();
+      track.blendshapeTracks.forEach((bt, n) => newBT.set(n === oldName ? newName : n, bt));
+      track.blendshapeTracks = newBT;
+    }
+
+    if (track.editingBlendshape === oldName) track.editingBlendshape = newName;
+  }
+
 
   enterBlendshapeEditMode(mesh, name) {
     if (!mesh || !name) return;
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !track.blendshapes.has(name)) return;
-    
     track.editingBlendshape = name;
-    
-    const v = mesh.getVertices();
-    v.set(track.baseShape);
-    const delta = track.blendshapes.get(name);
-    for (let i = 0; i < v.length; i++) {
-      v[i] += delta[i];
-    }
-    
-    if (mesh.updateGeometry) mesh.updateGeometry();
-    if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
-    
-    console.log(`[Animation] Entered edit mode for blendshape ${name}`);
+    // Snapshot the delta at session start so exit can build a correct undo pair.
+    // The live delta is maintained by Mesh.updateGeometry() on every stroke, so
+    // we must NOT recompute from verts on exit (weight may be ≠1 at that point).
+    const currentDelta = track.blendshapes.get(name);
+    track.editingBlendshapeOriginalDelta = currentDelta ? new Float32Array(currentDelta) : null;
+    // Show current weighted composition — slider is free to move at any value.
+    this.applyBlendshapes(mesh);
   }
 
   exitBlendshapeEditMode(mesh) {
     if (!mesh) return;
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.editingBlendshape) return;
-    
-    const name = track.editingBlendshape;
-    const v = mesh.getVertices();
-    
-    const newDelta = new Float32Array(v.length);
-    for (let i = 0; i < v.length; i++) {
-      newDelta[i] = v[i] - track.baseShape[i];
-    }
-    
-    const oldDelta = track.blendshapes.get(name);
-    
+
+    const name     = track.editingBlendshape;
+    // The delta has been kept live by the updateGeometry intercept — use it directly.
+    const newDelta = track.blendshapes.get(name);
+    const oldDelta = track.editingBlendshapeOriginalDelta;
+
     if (window.app && window.app.getStateManager()) {
       const tr = track;
-      
+      const savedNew = newDelta ? new Float32Array(newDelta) : null;
+      const savedOld = oldDelta ? new Float32Array(oldDelta) : null;
       window.app.getStateManager().pushStateCustom(
-        () => { // UNDO
-          if (oldDelta) tr.blendshapes.set(name, oldDelta);
-          this.applyBlendshapes(mesh);
-        },
-        () => { // REDO
-          tr.blendshapes.set(name, newDelta);
-          this.applyBlendshapes(mesh);
-        },
+        () => { if (savedOld) tr.blendshapes.set(name, savedOld); this.applyBlendshapes(mesh); },
+        () => { if (savedNew) tr.blendshapes.set(name, savedNew); this.applyBlendshapes(mesh); },
         false,
-        "Edit Blendshape Geometry"
+        'Edit Blendshape Geometry'
       );
     }
-    
-    track.blendshapes.set(name, newDelta);
+
     track.editingBlendshape = null;
-    
+    track.editingBlendshapeOriginalDelta = null;
     this.applyBlendshapes(mesh);
-    
-    console.log(`[Animation] Exited edit mode for blendshape ${name}`);
   }
 
   addTransformKey(mesh, time) {

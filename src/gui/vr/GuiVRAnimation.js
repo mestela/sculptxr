@@ -288,7 +288,12 @@ export default function getAnimationWidgets(main, Enums) {
 
   y += btnH + gapBtn;
 
-  window._animKeyMode = window._animKeyMode || 'shape';
+  // Desktop GUI defaults to 'transform', but VR sculpting needs 'shape'.
+  // On first VR entry only, override to 'shape' so sculpt autokey works out-of-the-box.
+  if (!window._animKeyModeVRInitDone) {
+    window._animKeyMode = 'shape';
+    window._animKeyModeVRInitDone = true;
+  }
 
   const showFeedback = (text) => {
     window._animFeedbackText = text;

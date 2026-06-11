@@ -41,6 +41,25 @@
  */
 
 import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
+import faSolidUrl from '@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2?url';
+
+// Pre-fetch the FA Solid woff2 and inject it as a base64 @font-face <style> so
+// the polyfill's SVG foreignObject renderer always has the font available without
+// needing a network fetch at render time (which fails on Quest in immersive mode).
+// Production builds already inline fonts via assetsInlineLimit; this covers dev.
+fetch(faSolidUrl)
+  .then(r => r.blob())
+  .then(blob => new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  }))
+  .then(dataUri => {
+    const style = document.createElement('style');
+    style.textContent = `@font-face{font-family:'Font Awesome 6 Free';font-style:normal;font-weight:900;src:url('${dataUri}') format('woff2');}`;
+    document.head.insertBefore(style, document.head.firstChild);
+  })
+  .catch(err => console.warn('[SculptXR] FA font preload failed:', err));
 
 // ── 1. rAF intercept (must run before polyfill install) ─────────────────────
 export const _nativeRAF  = window.requestAnimationFrame.bind(window);

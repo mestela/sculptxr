@@ -1113,6 +1113,19 @@ class Scene {
       // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
         this._vrTimelineTexture.needsUpdate = true;
+        // Keep resize handle anchored to bottom-right corner as mesh moves/scales.
+        if (this._vrResizeHandle) {
+          const tl = this._vrTimelineMesh;
+          const hw = tl.geometry.parameters.width  * 0.5;
+          const hh = tl.geometry.parameters.height * 0.5;
+          this._vrResizeHandle.position.copy(tl.position)
+            .add(new THREE.Vector3(hw - 0.014, -hh + 0.014, 0.002).applyQuaternion(tl.quaternion));
+          // Coplanar with timeline — inherit its orientation so the flat icon faces forward.
+          this._vrResizeHandle.quaternion.copy(tl.quaternion);
+          this._vrResizeHandle.visible = true;
+        }
+      } else if (this._vrResizeHandle?.visible) {
+        this._vrResizeHandle.visible = false;
       }
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
@@ -3935,6 +3948,12 @@ class Scene {
       return;
     }
 
+    // Always reset stale interaction flags from a previous session.
+    this._vtlDragActive = false;   this._vtlDragHand = null;
+    this._vtlWasPressed = false;
+    this._vtlResizeActive = false; this._vtlResizeHand = null;
+    this._vtlResizeWasPressed = false;
+
     if (!this._vrTimelineMesh) {
       const tex = new THREE.CanvasTexture(tl._canvas);
       // flipY=true (GL default): canvas top → UV y=1 → visual top. Display is correct.
@@ -3952,7 +3971,40 @@ class Scene {
       });
       this._vrTimelineMesh = new THREE.Mesh(geo, mat);
       this._scene.add(this._vrTimelineMesh);
+
+      // Resize handle: flat 2D corner-grip quad at the bottom-right corner.
+      const hSize = 0.028; // 28mm square
+      const hGeo = new THREE.PlaneGeometry(hSize, hSize);
+      // Draw a corner-grip icon (3 diagonal tick lines) onto a canvas texture.
+      const hCanvas = document.createElement('canvas');
+      hCanvas.width = 64; hCanvas.height = 64;
+      const hCtx = hCanvas.getContext('2d');
+      hCtx.clearRect(0, 0, 64, 64);
+      hCtx.strokeStyle = '#89dceb';
+      hCtx.lineWidth = 4;
+      hCtx.lineCap = 'round';
+      // Three parallel diagonal lines from bottom-left to top-right of the corner area
+      const lines = [[16, 56, 56, 16], [28, 56, 56, 28], [40, 56, 56, 40]];
+      for (const [x1, y1, x2, y2] of lines) {
+        hCtx.beginPath(); hCtx.moveTo(x1, y1); hCtx.lineTo(x2, y2); hCtx.stroke();
+      }
+      const hTex = new THREE.CanvasTexture(hCanvas);
+      const hMat = new THREE.MeshBasicMaterial({
+        map: hTex, transparent: true, side: THREE.DoubleSide,
+        depthTest: true, depthWrite: false,
+      });
+      this._vrResizeHandle = new THREE.Mesh(hGeo, hMat);
+      this._vrResizeHandle.visible = false;
+      this._scene.add(this._vrResizeHandle);
+
       if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${worldW.toFixed(2)}×${worldH.toFixed(2)}m`, 'cyan');
+    } else {
+      // Reopen — reset geometry to match current canvas dimensions, clear any leftover scale.
+      this._vrTimelineMesh.scale.set(1, 1, 1);
+      const worldW = (tl._cssWidth  || 900) / 1500;
+      const worldH = (tl._cssHeight || 150) / 1500;
+      this._vrTimelineMesh.geometry.dispose();
+      this._vrTimelineMesh.geometry = new THREE.PlaneGeometry(worldW, worldH);
     }
 
     // Position at the main menu's world location, facing the camera.
@@ -3973,17 +4025,19 @@ class Scene {
     this._vrTimelineMesh.visible = true;
     tl.draw();
     if (this._vrTimelineTexture) this._vrTimelineTexture.needsUpdate = true;
+    this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.add('tl-on');
     if (window.screenLog) window.screenLog('[VR Timeline] open', 'lime');
   }
 
   _closeVRTimeline() {
     if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
+    if (this._vrResizeHandle) this._vrResizeHandle.visible = false;
     this.getGui()?._ctrlTimeline?.closeVRView();
-    // Uncheck "Show Timeline" checkbox wherever it lives (host canvas + desktop sidebar)
     document.querySelectorAll('#acp-show-timeline').forEach(cb => { cb.checked = false; });
+    this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.remove('tl-on');
   }
 
-  _onVRTimelineHit(uv, type, pressed) {
+  _onVRTimelineHit(uv, type, pressed, shiftKey = false) {
     const tl = this.getGui()?._ctrlTimeline;
     if (!tl) return;
     const canvas = tl._canvas;
@@ -3995,18 +4049,27 @@ class Scene {
     const cssH = tl._cssHeight || 150;
     const clientX =        uv.x  * cssW;
     const clientY = (1.0 - uv.y) * cssH;
+    // GuiTimeline uses PointerEvents (pointerdown/move/up) not MouseEvents.
+    // Use a fixed pointerId so setPointerCapture(1) on down routes move/up correctly.
+    // shiftKey=true activates additive marquee mode (non-dominant trigger held).
     const buttons = pressed ? 1 : 0;
     if (type === 'down') {
-      canvas.dispatchEvent(new MouseEvent('mousedown', {
-        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons,
+      canvas.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, clientX, clientY,
+        button: 0, buttons: 1, pointerId: 1, isPrimary: true, pointerType: 'mouse',
+        shiftKey,
       }));
     } else if (type === 'move') {
-      window.dispatchEvent(new MouseEvent('mousemove', {
-        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons,
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, clientX, clientY,
+        button: -1, buttons, pointerId: 1, isPrimary: true, pointerType: 'mouse',
+        shiftKey,
       }));
     } else if (type === 'up') {
-      window.dispatchEvent(new MouseEvent('mouseup', {
-        bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 0,
+      window.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, clientX, clientY,
+        button: 0, buttons: 0, pointerId: 1, isPrimary: true, pointerType: 'mouse',
+        shiftKey,
       }));
     }
   }
@@ -4948,6 +5011,10 @@ class Scene {
           }
           // VRTimeline uses a different dispatch interface — included for nearest-hit ordering
           this._vtlIsPointing = false;
+          if (this._vrResizeHandle?.visible) {
+            const h = _rc.intersectObject(this._vrResizeHandle);
+            if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
+          }
           if (this._vrTimelineMesh?.visible) {
             const h = _rc.intersectObject(this._vrTimelineMesh);
             if (h.length > 0) _panelHits.push({ name: 'VRTimeline', panel: null, hit: h[0], pressKey: '_vtlWasPressed', isTimeline: true });
@@ -5014,11 +5081,13 @@ class Scene {
             else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; }
             this._updateBPCursor?.(_winner.hit.point, true);
             if (!this._vtlDragActive) {
-              const justDown = _pressed && !this._vtlWasPressed;
-              const justUp   = !_pressed && this._vtlWasPressed;
-              if (justDown)    this._onVRTimelineHit(_winner.hit.uv, 'down', true);
-              else if (justUp) this._onVRTimelineHit(_winner.hit.uv, 'up', false);
-              else             this._onVRTimelineHit(_winner.hit.uv, 'move', _pressed);
+              const justDown  = _pressed && !this._vtlWasPressed;
+              const justUp    = !_pressed && this._vtlWasPressed;
+              // Non-dominant trigger held = additive marquee (Shift-equivalent in VR)
+              const _addShift = !!this._vrSecondaryTriggerPressed;
+              if (justDown)    this._onVRTimelineHit(_winner.hit.uv, 'down', true,     _addShift);
+              else if (justUp) this._onVRTimelineHit(_winner.hit.uv, 'up',   false,    _addShift);
+              else             this._onVRTimelineHit(_winner.hit.uv, 'move', _pressed, _addShift);
               this._vtlWasPressed = _pressed;
             }
           } else {
@@ -5028,11 +5097,75 @@ class Scene {
             }
           }
 
+          // VRTimeline resize handle — trigger starts a resize drag tracked via ray-plane intersection
+          if (_winner?.isTimelineResize) {
+            this._vtlIsPointing = true;
+            this._isPointingAtMenu = true;
+            this._updateBPCursor?.(_winner.hit.point, true);
+            const justDown = _pressed && !this._vtlResizeWasPressed;
+            if (justDown && !this._vtlResizeActive) {
+              const tl = this._vrTimelineMesh;
+              const q  = tl.quaternion;
+              // Mesh axes in world space (scale is always 1 for timeline mesh)
+              const meshRight = new THREE.Vector3(1,  0, 0).applyQuaternion(q);
+              const meshDown  = new THREE.Vector3(0, -1, 0).applyQuaternion(q);
+              const geoW = tl.geometry.parameters.width;
+              const geoH = tl.geometry.parameters.height;
+              // Fixed corner = top-left = center - right*(w/2) - down*(h/2)
+              this._vtlResizeFixedCorner = tl.position.clone()
+                .addScaledVector(meshRight, -geoW / 2)
+                .addScaledVector(meshDown,  -geoH / 2);
+              this._vtlResizeMeshRight = meshRight;
+              this._vtlResizeMeshDown  = meshDown;
+              // Plane aligned with mesh face for ray intersection
+              const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+              this._vtlResizePlane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, tl.position);
+              this._vtlResizeActive = true;
+              this._vtlResizeHand   = source.handedness;
+            }
+            if (!_pressed) { this._vtlResizeActive = false; this._vtlResizeHand = null; }
+            this._vtlResizeWasPressed = _pressed;
+          } else {
+            if (this._vtlResizeWasPressed) this._vtlResizeWasPressed = false;
+          }
+
+          // Apply resize every frame while drag is active using ray-plane intersection
+          if (this._vtlResizeActive && this._vtlResizeHand === source.handedness
+              && this._vtlResizePlane && !this._vtlDragActive) {
+            const hitPoint = new THREE.Vector3();
+            if (_rc.ray.intersectPlane(this._vtlResizePlane, hitPoint)) {
+              const delta   = hitPoint.clone().sub(this._vtlResizeFixedCorner);
+              const newWorldW = Math.max(0.20, Math.min(1.60, delta.dot(this._vtlResizeMeshRight)));
+              const newWorldH = Math.max(0.05, Math.min(0.40, delta.dot(this._vtlResizeMeshDown)));
+              const newCssW   = Math.round(newWorldW * 1500);
+              const newCssH   = Math.round(newWorldH * 1500);
+              const timeline  = this.getGui()?._ctrlTimeline;
+              const tl        = this._vrTimelineMesh;
+              if (timeline && tl) {
+                timeline.resizeVRCanvas(newCssW, newCssH);
+                // dispose() clears Three.js's cached GL texture size so the re-upload
+                // uses the new canvas dimensions rather than stretching the old allocation.
+                if (this._vrTimelineTexture) {
+                  this._vrTimelineTexture.dispose();
+                  this._vrTimelineTexture.needsUpdate = true;
+                }
+                tl.geometry.dispose();
+                tl.geometry = new THREE.PlaneGeometry(newWorldW, newWorldH);
+                tl.scale.set(1, 1, 1);
+                // Reposition so the top-left corner stays fixed
+                tl.position.copy(this._vtlResizeFixedCorner)
+                  .addScaledVector(this._vtlResizeMeshRight, newWorldW / 2)
+                  .addScaledVector(this._vtlResizeMeshDown,  newWorldH / 2);
+              }
+            }
+            if (!_pressed) { this._vtlResizeActive = false; this._vtlResizeHand = null; }
+          }
+
           // No panel hit — hide panel cursor
           if (!_winner) this._updateBPCursor?.(null, false);
 
           // Track for next-frame thumbstick scroll routing
-          if (_winner && !_winner.isTimeline) this._lastHtmlPanelHit = _winner.panel;
+          if (_winner && !_winner.isTimeline && !_winner.isTimelineResize) this._lastHtmlPanelHit = _winner.panel;
           else if (!_winner) this._lastHtmlPanelHit = null;
 
           // Periodic state sync (independent of hit)
@@ -6166,6 +6299,7 @@ class Scene {
 
 
 
+        this._vrSculptMesh = this._picking.getMesh() || this.getMesh(); // capture at stroke start
         this._sculptManager.start(this._vrMultiSelect);
         this._action = Enums.Action.SCULPT_EDIT;
       }
@@ -6181,8 +6315,11 @@ class Scene {
         this._vrTriggerReleaseTime = 0;
         this._eyedropperStartColor = null;
 
-        const currentMesh = this.getMesh();
-        
+        // Prefer the mesh captured at stroke start (most reliable — picking may
+        // already be cleared by the time the trigger releases).
+        const currentMesh = this._vrSculptMesh || this._picking.getMesh() || this.getMesh();
+        this._vrSculptMesh = null;
+
         function captureTrackState(mesh) {
           if (!window._animationRegistry) return null;
           const id = mesh.getID();

@@ -177,6 +177,8 @@ const CSS = `
   opacity: 0.3;
   pointer-events: none;
 }
+.mm-tl-btn { margin-top: auto; border-top: 1px solid #313244; }
+.mm-tl-btn.tl-on { background: rgba(137,220,235,0.2); color: #89dceb; border-color: #89dceb; }
 .mm-section-header {
   display: flex;
   align-items: center;
@@ -697,6 +699,7 @@ function buildShellHTML() {
         ${['scene','rendering','topology','sculpting','animation'].map((s, i) =>
           `<button class="mm-tab-btn${i === 3 ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
         ).join('\n        ')}
+        <button class="mm-tab-btn mm-tl-btn" id="mm-tl-btn" title="Timeline">${TAB_ICONS.timeline}</button>
       </div>
       <div id="mm-content"></div>
       <div id="mm-sbar-track" class="mm-scrollbar-track"><div id="mm-sbar-thumb" class="mm-scrollbar-thumb"></div></div>
@@ -741,6 +744,8 @@ export function buildMenuHTML_files(main) {
       <button class="mm-action-btn" id="mm-save-roughness">Roughness</button>
     </div>
     <button class="mm-action-btn" id="mm-save-metalness">Metalness</button>
+
+    <button class="mm-action-btn danger" id="mm-exit-vr">Exit VR</button>
   `;
 }
 
@@ -1495,11 +1500,21 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     // Side tab strip buttons
     root.querySelectorAll('.mm-tab-btn').forEach(btn => {
+      if (btn.id === 'mm-tl-btn') return; // handled separately below
       btn.addEventListener('click', () => {
         if (!this._tornOffSections.has(btn.dataset.section)) {
           this._setSection(btn.dataset.section);
         }
       });
+    });
+
+    // Timeline tab — toggles the VR timeline mesh, does not switch panel content
+    root.querySelector('#mm-tl-btn')?.addEventListener('click', () => {
+      const tlBtn = root.querySelector('#mm-tl-btn');
+      const show = !tlBtn.classList.contains('tl-on');
+      tlBtn.classList.toggle('tl-on', show);
+      document.dispatchEvent(new CustomEvent('vtl-show', { detail: { show } }));
+      this.markDirty();
     });
 
     // Pin button
@@ -2511,6 +2526,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
 
+  q('#mm-exit-vr')?.addEventListener('click', () => { main._xrSession?.end(); });
   q('#mm-browser-saves')?.addEventListener('click', () => onBrowserSavesOpen?.());
 
   q('#mm-import-obj')?.addEventListener('click', () => {

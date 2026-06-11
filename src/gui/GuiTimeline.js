@@ -91,7 +91,7 @@ export default class GuiTimeline {
     // onMouseDown/Move/Up handlers work without modification.
     this._canvas.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      this._canvas.setPointerCapture(e.pointerId); // keep move/up on this element
+      try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {} // keep move/up on this element
       this._isMouseOver = true;
       // [Step 1] Track touch pointers for 2-finger scroll/zoom.
       if (e.pointerType === 'touch') {
@@ -1581,6 +1581,16 @@ export default class GuiTimeline {
     this._cssHeight = VR_H;
     this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._visible = true;
+    this.draw();
+  }
+
+  resizeVRCanvas(newCssW, newCssH) {
+    const dpr = window.devicePixelRatio || 1;
+    this._canvas.width  = Math.round(newCssW) * dpr;
+    this._canvas.height = Math.round(newCssH) * dpr;
+    this._cssWidth  = Math.round(newCssW);
+    this._cssHeight = Math.round(newCssH);
+    this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.draw();
   }
 

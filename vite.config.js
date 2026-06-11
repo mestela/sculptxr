@@ -20,6 +20,13 @@ export default defineConfig({
   worker: {
     format: 'es'
   },
+  build: {
+    // Inline font files up to 300 KB as base64 data URIs in the CSS bundle.
+    // Required for Font Awesome icons to render inside the html-in-canvas polyfill's
+    // SVG foreignObject path (used in WebXR immersive mode on Meta Quest), where
+    // external font fetches are blocked.
+    assetsInlineLimit: 300000,
+  },
   server: {
     host: '0.0.0.0', // Listen on all network interfaces
     port: 8080,

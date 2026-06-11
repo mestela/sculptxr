@@ -480,6 +480,32 @@ class Mesh {
   }
 
   updateGeometry(iFaces, iVerts) {
+    // Layer sculpting intercept — two cases:
+    //  A) A blendshape layer is active: keep its delta live.
+    // Both are skipped during applyBlendshapes() recomposition (_applyingBS flag).
+    const _reg = window._animationRegistry;
+    const _track = _reg?.tracks?.get(this.getID?.());
+    if (_track?.editingBlendshape && _track.baseShape && !_track._applyingBS) {
+      // Blendshape layer editing: applyBlendshapes() isolates the active layer at
+      // weight=1, all others at 0. So the mesh always shows base + active_delta,
+      // and the delta is simply verts - base. No weight math needed.
+      const _name = _track.editingBlendshape;
+      const _v    = this.getVertices();
+      let _delta  = _track.blendshapes?.get(_name);
+      if (!_delta || _delta.length !== _v.length) {
+        _delta = new Float32Array(_v.length);
+        _track.blendshapes.set(_name, _delta);
+      }
+      for (let _j = 0; _j < _v.length; _j++)
+        _delta[_j] = _v[_j] - _track.baseShape[_j];
+    } else if (_track?.baseShape && !_track._applyingBS) {
+      // Base layer active: update baseShape to the new sculpted state.
+      // Deltas are offsets, not absolute positions — they apply on top of whatever
+      // baseShape is, so they need no rebasing. A vertex with delta=0 stays exactly
+      // at the new base; a vertex with a smile offset gets that offset from the new base.
+      _track.baseShape.set(this.getVertices());
+    }
+
     this.updateFacesAabbAndNormal(iFaces);
     this.updateVerticesNormal(iVerts);
     
