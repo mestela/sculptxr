@@ -338,6 +338,10 @@ class Gui {
         color: #fff;
         background-color: rgba(255, 255, 255, 0.05);
       }
+      .sidebar-tab-group wa-tab.tl-on::part(base) {
+        color: #94e2d5;
+        background-color: rgba(148, 226, 213, 0.12);
+      }
       .sidebar-tab-group wa-tab .tab-icon { width: 18px; height: 18px; display: block; }
       .sidebar-tab-group wa-tab-panel {
         flex: 1;
@@ -401,6 +405,7 @@ class Gui {
     const topologyTab  = createTab('topology',  TR('topologyTitle'));
     const sculptingTab = createTab('sculpting', TR('sculptTitle'));
     const animationTab = createTab('animation', 'Animation');
+    const timelineTab  = createTab('timeline',  'Timeline');
 
     sculptingTab.setAttribute('active', '');
 
@@ -409,6 +414,7 @@ class Gui {
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
     tabGroup.appendChild(animationTab);
+    tabGroup.appendChild(timelineTab);
 
     const scenePanel     = document.createElement('wa-tab-panel'); scenePanel.setAttribute('name', 'scene');
     const renderingPanel = document.createElement('wa-tab-panel'); renderingPanel.setAttribute('name', 'rendering');
@@ -417,14 +423,41 @@ class Gui {
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
     animationPanel.id = '_acp_sidebar_panel';
+    // Timeline tab has no panel content — it's a pure toggle for the timeline overlay.
+    const timelinePanel  = document.createElement('wa-tab-panel');
+    timelinePanel.setAttribute('name', 'timeline');
 
     tabGroup.appendChild(scenePanel);
     tabGroup.appendChild(renderingPanel);
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
     tabGroup.appendChild(animationPanel);
+    tabGroup.appendChild(timelinePanel);
 
     sidebarEl.appendChild(tabGroup);
+
+    // Timeline tab toggles the timeline overlay without switching panel content.
+    // Intercept in capture phase before wa-tab-group's own listener processes it.
+    // Store ref globally so ACP syncAnimationSection can keep both in sync.
+    window._animTimelineTabEl = timelineTab;
+    let _prevActivePanel = 'sculpting';
+    tabGroup.addEventListener('wa-tab-show', (e) => {
+      if (e.detail?.name !== 'timeline') {
+        _prevActivePanel = e.detail?.name ?? _prevActivePanel;
+      }
+    });
+    timelineTab.addEventListener('click', (e) => {
+      e.stopImmediatePropagation();
+      const tl = this._ctrlTimeline;
+      if (!tl) return;
+      const nowVisible = !tl._visible;
+      tl.setVisibility(nowVisible);
+      timelineTab.classList.toggle('tl-on', nowVisible);
+      // Keep the ACP button in sync.
+      document.querySelector('#acp-show-timeline-btn')?.classList.toggle('active', nowVisible);
+      // Switch back to the previous content panel so the sidebar doesn't go blank.
+      if (!nowVisible) tabGroup.show(_prevActivePanel);
+    }, true);
 
     // GuiTopology and GuiSculpting use a detached container so their internals
     // work without adding yagui widgets to the visible sidebar.

@@ -3144,8 +3144,11 @@ export default class GuiTimeline {
                                 : '#3a3a3a';
       _drawBtn(btn.x, btn.y, btn.w, btn.h, fill);
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const cy = btn.y + btn.h / 2;
+      // cy: integer pixel center for geometry and FA glyphs (textBaseline:'middle', even px = integer midpoint).
+      // ty: alphabetic baseline snapped to whole pixel for plain-text labels (avoids subpixel blur on 1x displays).
+      const cy = Math.round(btn.y + btn.h / 2);
+      const ty = Math.round(btn.y + btn.h * 0.68);
+      const cx = Math.round(btn.x + btn.w / 2);
       if (btn.id === 'marquee') {
         // Dashed-rectangle selection-box icon — drawn directly, no font needed.
         const ic = btn.active ? '#fff' : '#999';
@@ -3159,36 +3162,40 @@ export default class GuiTimeline {
         });
       } else if (btn.id === 'mode') {
         // Two icons: chart-column (flipped V) = dopesheet, bezier-curve = graph.
+        ctx.textBaseline = 'middle';
         const dopeActive = this._mode === 'dope';
         const graphActive = this._mode === 'graph';
         if (_faReady) {
-          ctx.font = '900 11px "Font Awesome 6 Free"';
+          ctx.font = '900 12px "Font Awesome 6 Free"';
           // Chart-column flipped vertically.
           ctx.save();
           ctx.fillStyle = dopeActive ? '#fff' : '#777';
-          ctx.translate(btn.x + 13, cy);
+          ctx.translate(Math.round(btn.x + 13), cy);
           ctx.scale(1, -1);
           ctx.fillText('', 0, 0);
           ctx.restore();
           ctx.fillStyle = graphActive ? '#fff' : '#777';
-          ctx.fillText('', btn.x + 33, cy);
+          ctx.fillText('', Math.round(btn.x + 33), cy);
         } else {
-          ctx.font = '11px sans-serif'; ctx.fillStyle = '#fff';
-          ctx.fillText('D/G', btn.x + btn.w / 2, cy);
+          ctx.textBaseline = 'alphabetic'; ctx.font = '13px sans-serif'; ctx.fillStyle = '#fff';
+          ctx.fillText('D/G', cx, ty);
         }
       } else if (btn.icon) {
         ctx.fillStyle = btn.disabled ? '#555' : '#ddd';
         if (_faReady) {
+          ctx.textBaseline = 'middle';
           ctx.font = '900 12px "Font Awesome 6 Free"';
-          ctx.fillText(btn.icon, btn.x + btn.w / 2, cy);
+          ctx.fillText(btn.icon, cx, cy);
         } else {
-          ctx.font = '10px sans-serif';
-          ctx.fillText(btn.id[0].toUpperCase(), btn.x + btn.w / 2, cy);
+          ctx.textBaseline = 'alphabetic';
+          ctx.font = '13px sans-serif';
+          ctx.fillText(btn.id[0].toUpperCase(), cx, ty);
         }
       } else {
+        ctx.textBaseline = 'alphabetic';
         ctx.fillStyle = btn.disabled ? '#555' : '#ccc';
-        ctx.font = '11px sans-serif';
-        ctx.fillText(btn.label, btn.x + btn.w / 2, cy);
+        ctx.font = '13px sans-serif';
+        ctx.fillText(btn.label, cx, ty);
       }
     });
 

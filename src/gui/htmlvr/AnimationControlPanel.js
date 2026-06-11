@@ -238,6 +238,42 @@ const CSS = `
 }
 .acp-root .acp-btn-clear:hover,
 .acp-root .acp-btn-clear.hover { background: #3d1e2e; color: #f38ba8; border-color: #f38ba8; }
+.acp-root .acp-btn-timeline {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #89b4fa;
+  border-radius: 6px;
+  background: #181825;
+  color: #89b4fa;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  outline: none;
+  transition: background 0.1s, color 0.1s;
+}
+.acp-root .acp-btn-timeline:hover,
+.acp-root .acp-btn-timeline.hover { background: #1a2040; }
+.acp-root .acp-btn-timeline.active { background: #1e2d5a; color: #cdd6f4; border-color: #89b4fa; box-shadow: 0 0 0 1px #89b4fa; }
+.acp-root .acp-addkey-row { display: flex; gap: 6px; align-items: stretch; }
+.acp-root .acp-addkey-row .acp-btn-full { flex: 3; width: auto; }
+.acp-root .acp-btn-autokey {
+  flex: 1;
+  padding: 9px 6px;
+  border: 1px solid #94e2d5;
+  border-radius: 6px;
+  background: #181825;
+  color: #94e2d5;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  outline: none;
+  transition: background 0.1s, color 0.1s;
+}
+.acp-root .acp-btn-autokey:hover,
+.acp-root .acp-btn-autokey.hover { background: #1a302e; }
+.acp-root .acp-btn-autokey.active { background: #94e2d5; color: #1e1e2e; border-color: #94e2d5; }
 .acp-root .acp-mode-row {
   display: flex;
   gap: 0;
@@ -331,9 +367,7 @@ export function buildAnimationSectionHTML() {
     <div class="acp-section">
       <div class="acp-section-title">Animation</div>
       <div class="acp-stack">
-        <label class="acp-check-row">
-          <input type="checkbox" id="acp-show-timeline"> Show Timeline
-        </label>
+        <button class="acp-btn-timeline" id="acp-show-timeline-btn">Timeline</button>
         <div class="acp-row">
           <span class="acp-lbl">FPS</span>
           <input type="range" id="acp-fps" min="1" max="60" step="1" value="24">
@@ -413,16 +447,16 @@ export function buildAnimationSectionHTML() {
           <button class="acp-mode-btn" data-mode="transform">Transform</button>
           <button class="acp-mode-btn" data-mode="blendshape">Blendshape</button>
         </div>
-        <button class="acp-btn-full" id="acp-add-key">&#9670; Add Key</button>
+        <div class="acp-addkey-row">
+          <button class="acp-btn-full" id="acp-add-key">&#9670; Add Key</button>
+          <button class="acp-btn-autokey" id="acp-autokey-btn">Autokey</button>
+        </div>
         <div class="acp-btn-grid">
           <button id="acp-copy-key">Copy</button>
           <button id="acp-paste-key">Paste</button>
           <button id="acp-cut-key">Cut</button>
           <button id="acp-del-key" class="danger">Delete</button>
         </div>
-        <label class="acp-check-row">
-          <input type="checkbox" id="acp-autokey"> Autokey
-        </label>
       </div>
     </div>
 
@@ -629,8 +663,10 @@ export function syncAnimationSection(el, main) {
   el.querySelector('#acp-record')  ?.classList.toggle('recording', rec);
 
   const timeline = main?.getGui?.()._ctrlTimeline;
-  const showTl = el.querySelector('#acp-show-timeline');
-  if (showTl) showTl.checked = !!(timeline?._visible);
+  const tlVisible = !!(timeline?._visible);
+  const showTl = el.querySelector('#acp-show-timeline-btn');
+  if (showTl) showTl.classList.toggle('active', tlVisible);
+  if (window._animTimelineTabEl) window._animTimelineTabEl.classList.toggle('tl-on', tlVisible);
 
   const fpsInput = el.querySelector('#acp-fps');
   const fpsVal   = el.querySelector('#acp-fps-val');
@@ -670,8 +706,8 @@ export function syncAnimationSection(el, main) {
     b.classList.toggle('active', b.dataset.mode === mode)
   );
 
-  const ak = el.querySelector('#acp-autokey');
-  if (ak) ak.checked = !!window._animAutoKey;
+  const ak = el.querySelector('#acp-autokey-btn');
+  if (ak) ak.classList.toggle('active', !!window._animAutoKey);
 
   // Selected key inspector.
   _syncKeyInspector(el, main);
@@ -775,6 +811,16 @@ function _syncKeyInspector(el, main) {
     _setOrClear(v1Input, _common(k => _getPos(k, 0)));
     _setOrClear(v2Input, _common(k => _getPos(k, 1)));
     _setOrClear(v3Input, _common(k => _getPos(k, 2)));
+  } else if (sel.every(k => k.type === 'blendshape')) {
+    // Multi-key blendshape — show common Weight value (or blank if mixed)
+    if (v1Label) v1Label.textContent = 'Weight';
+    v1Cell && (v1Cell.style.display = ''); v2Cell && (v2Cell.style.display = 'none'); v3Cell && (v3Cell.style.display = 'none');
+    if (frameInput && document.activeElement !== frameInput) frameInput.value = '';
+    const _getWeight = (k) => {
+      const tr = reg.tracks.get(k.meshId);
+      return tr?.blendshapeTracks?.get(k.name)?.values?.[k.index];
+    };
+    _setOrClear(v1Input, _common(k => _getWeight(k)));
   } else {
     // Mixed types — show empty fields
     if (frameInput && document.activeElement !== frameInput) frameInput.value = '';
@@ -817,7 +863,10 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       fn(cbEl.checked);
     });
   };
-  _cbWire('#acp-show-timeline', (show) => {
+  el.querySelector('#acp-show-timeline-btn')?.addEventListener('click', () => {
+    const btn = el.querySelector('#acp-show-timeline-btn');
+    const show = !btn.classList.contains('active');
+    btn.classList.toggle('active', show);
     const inXR = !!(window.app?._renderer?.xr?.isPresenting);
     if (window.screenLog) window.screenLog(`[TL] show-timeline ${show} inXR=${inXR}`, 'yellow');
     if (inXR) {
@@ -1057,11 +1106,11 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   // [Step 3] Use 'click' not 'change': VR dispatches synthetic MouseEvent('click')
   // which is not isTrusted, so browsers don't toggle checkbox.checked and 'change'
   // never fires. Manually toggle when untrusted so VR and desktop both work.
-  const _akEl = el.querySelector('#acp-autokey');
+  const _akEl = el.querySelector('#acp-autokey-btn');
   if (_akEl) {
-    _akEl.addEventListener('click', (e) => {
-      if (!e.isTrusted) _akEl.checked = !_akEl.checked;
-      window._animAutoKey = _akEl.checked;
+    _akEl.addEventListener('click', () => {
+      window._animAutoKey = !window._animAutoKey;
+      _akEl.classList.toggle('active', !!window._animAutoKey);
     });
   }
 

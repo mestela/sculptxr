@@ -329,7 +329,22 @@ export default class TimelineHelper {
         }
       }
     }
-    
+
+    if (track && track.blendshapeTracks) {
+      track.blendshapeTracks.forEach((bTrack, name) => {
+        if (!bTrack.times || !bTrack.values) return;
+        for (let i = 0; i < bTrack.times.length; i++) {
+          const t = bTrack.times[i];
+          if (t >= tMin && t <= tMax) {
+            const val = bTrack.values[i];
+            if (val >= vMin && val <= vMax) {
+              newKeys.push({ meshId: trackId, type: 'blendshape', name, index: i, time: t });
+            }
+          }
+        }
+      });
+    }
+
     return newKeys;
   }
 

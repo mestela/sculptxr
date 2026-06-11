@@ -381,7 +381,7 @@ const CSS = `
   border-radius: 5px;
   background: #313244;
   color: #a6adc8;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   text-align: center;
