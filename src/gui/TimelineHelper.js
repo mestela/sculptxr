@@ -368,6 +368,17 @@ export default class TimelineHelper {
     if (track.restPos) cloned.restPos = [...track.restPos];
     if (track.restQuat) cloned.restQuat = [...track.restQuat];
     if (track.restScale) cloned.restScale = [...track.restScale];
+    // Clone blendshape tracks (Map<string, {times, values, tangentOffsets}>)
+    if (track.blendshapeTracks) {
+      cloned.blendshapeTracks = new Map();
+      track.blendshapeTracks.forEach((bt, name) => {
+        cloned.blendshapeTracks.set(name, {
+          times: bt.times ? [...bt.times] : [],
+          values: bt.values ? [...bt.values] : [],
+          tangentOffsets: bt.tangentOffsets ? JSON.parse(JSON.stringify(bt.tangentOffsets)) : undefined
+        });
+      });
+    }
     return cloned;
   }
 
@@ -382,15 +393,20 @@ export default class TimelineHelper {
     }
     
     initialKeys.forEach(sk => {
-      if (sk.type === 'transform') {
-        const initialVal = sk.val;
-        let newVal = 0;
-        if (handle === 'top') {
-          newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
-        } else {
-          newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
-        }
+      const initialVal = sk.val ?? 0;
+      let newVal = 0;
+      if (handle === 'top') {
+        newVal = initialBox.minV + (initialVal - initialBox.minV) * factor;
+      } else {
+        newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
+      }
+      if (sk.type === 'transform' && track.positions) {
         track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
+      } else if (sk.type === 'shape' && track.shapeOutputTimes) {
+        track.shapeOutputTimes[sk.index] = newVal;
+      } else if (sk.type === 'blendshape') {
+        const bt = track.blendshapeTracks?.get(sk.name);
+        if (bt?.values) bt.values[sk.index] = Math.max(0, Math.min(1, newVal));
       }
     });
     

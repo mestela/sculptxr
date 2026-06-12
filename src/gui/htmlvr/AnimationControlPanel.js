@@ -628,11 +628,21 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
     const numInput = row.querySelector('.acp-bs-num');
     let startVal   = weight;
 
+    // RAF-throttle the expensive vertex computation (applyBlendshapes + GPU upload).
+    // The slider UI updates immediately so there's no perceived lag, but the 3D mesh
+    // recompute is deferred to at most once per display frame.
+    let _rafId  = null;
+    let _rafVal = weight;
     const applyWeight = (val) => {
-      reg.setBlendshapeWeight?.(mesh, name, val);
+      _rafVal        = val;
       slider.value   = val;
       numInput.value = val.toFixed(2);
-      repaint?.();
+      if (_rafId !== null) return;
+      _rafId = requestAnimationFrame(() => {
+        _rafId = null;
+        reg.setBlendshapeWeight?.(mesh, name, _rafVal);
+        repaint?.();
+      });
     };
 
     slider.addEventListener('focus', () => { startVal = parseFloat(slider.value); });
@@ -1476,11 +1486,18 @@ export class AnimationControlPanel extends HTMLVRPanel {
   syncFromState() {
     syncAnimationSection(this._element, this._main);
 
-    // Blendshape list: rebuild only when mesh or count changes
-    const mesh   = this._main?.getMesh?.() || this._main?._mesh;
-    const meshId = mesh?.getID?.();
-    const reg    = window._animationRegistry;
-    const track  = reg?.tracks.get(meshId);
+    // Blendshape list: rebuild only when mesh or count changes.
+    // getMesh() returns the UI-selected mesh, which may be null in VR (no
+    // click-to-select).  Fall back to scanning all loaded meshes for one that
+    // has blendshape tracks — same set playback already iterates.
+    const reg = window._animationRegistry;
+    let mesh = this._main?.getMesh?.() || this._main?._mesh;
+    if (!mesh || !(reg?.tracks.get(mesh.getID())?.blendshapes?.size)) {
+      const all = this._main?._meshes ?? [];
+      mesh = all.find(m => reg?.tracks.get(m.getID())?.blendshapes?.size > 0) ?? mesh;
+    }
+    const meshId  = mesh?.getID?.();
+    const track   = reg?.tracks.get(meshId);
     const bsCount = track?.blendshapes?.size ?? 0;
 
     if (meshId !== this._lastBsMeshId || bsCount !== this._lastBsCount) {

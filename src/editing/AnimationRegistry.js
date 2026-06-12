@@ -27,6 +27,53 @@ class AnimationRegistry {
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
   }
 
+  // Deep-clones the timing and keyframe data of a track so it can be pushed as
+  // an undo/redo snapshot.  Blendshape tracks and shape buffers are also cloned.
+  _snapshotTrack(track) {
+    if (!track) return null;
+    const snap = {
+      times:            track.times            ? track.times.slice()                              : [],
+      positions:        track.positions        ? track.positions.slice()                          : [],
+      quaternions:      track.quaternions      ? track.quaternions.slice()                        : [],
+      scales:           track.scales           ? track.scales.slice()                             : [],
+      shapeTimes:       track.shapeTimes       ? track.shapeTimes.slice()                         : [],
+      shapes:           track.shapes           ? track.shapes.map(s => new Float32Array(s))       : [],
+      shapeOutputTimes: track.shapeOutputTimes ? track.shapeOutputTimes.slice()                   : [],
+      tangentOffsets:   track.tangentOffsets   ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined,
+    };
+    if (track.blendshapeTracks) {
+      snap.blendshapeTracks = new Map();
+      track.blendshapeTracks.forEach((bt, name) => {
+        snap.blendshapeTracks.set(name, { times: bt.times.slice(), values: bt.values.slice() });
+      });
+    }
+    return snap;
+  }
+
+  // Restores a track's timing and keyframe data from a snapshot produced by
+  // _snapshotTrack, then re-evaluates the animation for the given mesh.
+  _restoreTrack(track, snap, mesh) {
+    if (!track || !snap) return;
+    track.times            = snap.times.slice();
+    track.positions        = snap.positions.slice();
+    track.quaternions      = snap.quaternions.slice();
+    track.scales           = snap.scales.slice();
+    track.shapeTimes       = snap.shapeTimes.slice();
+    track.shapes           = snap.shapes.map(s => new Float32Array(s));
+    track.shapeOutputTimes = snap.shapeOutputTimes.slice();
+    track.tangentOffsets   = snap.tangentOffsets ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
+    if (snap.blendshapeTracks) {
+      if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
+      snap.blendshapeTracks.forEach((bSnap, name) => {
+        const bt = track.blendshapeTracks.get(name);
+        if (bt) { bt.times = bSnap.times.slice(); bt.values = bSnap.values.slice(); }
+      });
+    }
+    this.sortTrack(track);
+    if (mesh) this.update(mesh, true);
+    if (window.app?.render) window.app.render();
+  }
+
   startRecording(mesh) {
     if (!mesh || !window._animArmed) return;
     
@@ -555,21 +602,26 @@ class AnimationRegistry {
       console.error("[Animation] Attempted to add shape key at NaN time!");
       return;
     }
+
+    // Snapshot track state BEFORE insertion for undo.
+    const _snapBefore = this._snapshotTrack(track);
+    const _meshId = id;
+
     const v = mesh.getVertices();
     const copy = new Float32Array(v);
-    
+
     let idx = 0;
     while (idx < track.shapeTimes.length && track.shapeTimes[idx] < time) {
       idx++;
     }
-    
+
     if (idx < track.shapeTimes.length && Math.abs(track.shapeTimes[idx] - time) < 0.005) {
       track.shapes[idx] = copy;
     } else {
       track.shapeTimes.splice(idx, 0, time);
       track.shapeOutputTimes.splice(idx, 0, time); // Default output time is input time
       track.shapes.splice(idx, 0, copy);
-      
+
       // Shift tangent offsets up for keys after idx
       if (track.tangentOffsets) {
         const newOffsets = {};
@@ -591,15 +643,35 @@ class AnimationRegistry {
         track.tangentOffsets = newOffsets;
       }
     }
-    
+
     if (time > (window._animMasterDuration || 0)) {
       window._animMasterDuration = time;
     }
-    
+
     // Always snap the active playback marker to the newly created keyframe so it previews instantly!
     window._animCurrentTime = time;
     this.globalPlaybackTime = time;
-    
+
+    // Push atomic undo entry.
+    const _snapAfter = this._snapshotTrack(track);
+    if (window.app?.getStateManager?.()) {
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          const tr = this.tracks.get(_meshId);
+          if (!tr) return;
+          const msh = window.app?.getMesh?.();
+          this._restoreTrack(tr, _snapBefore, msh?.getID?.() === _meshId ? msh : null);
+        },
+        () => { // REDO
+          const tr = this.tracks.get(_meshId);
+          if (!tr) return;
+          const msh = window.app?.getMesh?.();
+          this._restoreTrack(tr, _snapAfter, msh?.getID?.() === _meshId ? msh : null);
+        },
+        false,
+        'Add Shape Key'
+      );
+    }
   }
 
   copyShapeKey(mesh, time) {
@@ -790,14 +862,21 @@ class AnimationRegistry {
     if (!mesh || !name) return;
     const track = this.tracks.get(mesh.getID());
     if (!track || !track.blendshapes || !track.blendshapes.has(name)) return;
-    
-    const time = track.playbackTime;
+
+    // Quantize to the current FPS grid so keyframes always land on whole-frame
+    // boundaries regardless of where the playhead happened to stop.
+    const fps  = window._animFPS || 24;
+    const time = Math.round((track.playbackTime || 0) * fps) / fps;
     const bTrack = track.blendshapeTracks.get(name);
-    
-    let idx = 0;
-    while (idx < bTrack.times.length && bTrack.times[idx] < time) {
-      idx++;
+
+    // Binary search for insertion point — O(log n) vs O(n) linear scan.
+    // Matters when tracks have many keys (e.g. recorded at 60 fps).
+    let lo = 0, hi = bTrack.times.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (bTrack.times[mid] < time) lo = mid + 1; else hi = mid;
     }
+    let idx = lo;
     
     if (idx < bTrack.times.length && Math.abs(bTrack.times[idx] - time) < 0.005) {
       bTrack.values[idx] = value;
@@ -861,8 +940,13 @@ class AnimationRegistry {
     // Constant extrapolation outside key range
     if (time <= bTrack.times[0]) return bTrack.values[0];
 
-    let idx = 0;
-    while (idx < bTrack.times.length - 1 && bTrack.times[idx + 1] < time) idx++;
+    // Binary search for the segment containing `time` — O(log n).
+    let lo = 0, hi = bTrack.times.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >>> 1;
+      if (bTrack.times[mid] <= time) lo = mid; else hi = mid;
+    }
+    let idx = lo;
 
     if (idx === bTrack.times.length - 1) return bTrack.values[idx];
 
@@ -1035,6 +1119,10 @@ class AnimationRegistry {
       qx /= ql; qy /= ql; qz /= ql; qw /= ql;
     }
 
+    // Snapshot track state BEFORE insertion for undo.
+    const _snapBeforeTK = this._snapshotTrack(track);
+    const _meshIdTK = id;
+
     let idx = 0;
     while (idx < track.times.length && track.times[idx] < time) idx++;
 
@@ -1047,7 +1135,7 @@ class AnimationRegistry {
       track.positions.splice(idx*3, 0, px, py, pz);
       track.quaternions.splice(idx*4, 0, qx, qy, qz, qw);
       track.scales.splice(idx*3, 0, sx, sy, sz);
-      
+
       // Shift tangent offsets up for keys after idx
       if (track.tangentOffsets) {
         const newOffsets = {};
@@ -1072,6 +1160,27 @@ class AnimationRegistry {
     if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
     window._animCurrentTime = time;
     this.globalPlaybackTime = time;
+
+    // Push atomic undo entry.
+    const _snapAfterTK = this._snapshotTrack(track);
+    if (window.app?.getStateManager?.()) {
+      window.app.getStateManager().pushStateCustom(
+        () => { // UNDO
+          const tr = this.tracks.get(_meshIdTK);
+          if (!tr) return;
+          const msh = window.app?.getMesh?.();
+          this._restoreTrack(tr, _snapBeforeTK, msh?.getID?.() === _meshIdTK ? msh : null);
+        },
+        () => { // REDO
+          const tr = this.tracks.get(_meshIdTK);
+          if (!tr) return;
+          const msh = window.app?.getMesh?.();
+          this._restoreTrack(tr, _snapAfterTK, msh?.getID?.() === _meshIdTK ? msh : null);
+        },
+        false,
+        'Add Transform Key'
+      );
+    }
   }
 
   copyTransformKey(mesh, time) {

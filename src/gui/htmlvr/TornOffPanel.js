@@ -121,14 +121,23 @@ export class TornOffPanel extends HTMLVRPanel {
       case 'sculpting':
         wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
         break;
-      case 'animation':
+      case 'animation': {
         wireAnimationSection(el, main, {
           repaint:   lightRepaint,
           sync:      () => { syncAnimationSection(el, main); lightRepaint(); },
           refreshBs: (mesh) => { refreshBlendshapesDOM(el, mesh, main, lightRepaint); lightRepaint(); },
           vrPanel:   this,  // lets VrNumpad position itself next to this torn-off panel
         });
+        // Populate blendshape list immediately — wireAnimationSection only registers
+        // the refreshBs callback for future interactions, it doesn't call it on setup.
+        // Without this, the list stays empty (showing the placeholder) until a
+        // blendshape add/remove action is taken.
+        const _bsMesh = main?.getMesh?.() || main?._mesh
+          || main?._meshes?.find?.(m => window._animationRegistry?.tracks.get(m.getID())?.blendshapes?.size > 0);
+        refreshBlendshapesDOM(el, _bsMesh, main, lightRepaint);
+        lightRepaint();
         break;
+      }
     }
   }
 

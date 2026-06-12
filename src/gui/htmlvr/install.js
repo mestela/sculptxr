@@ -58,6 +58,10 @@ fetch(faSolidUrl)
     const style = document.createElement('style');
     style.textContent = `@font-face{font-family:'Font Awesome 6 Free';font-style:normal;font-weight:900;src:url('${dataUri}') format('woff2');}`;
     document.head.insertBefore(style, document.head.firstChild);
+    // Bypass the paint rate-limit and repaint all registered panels so icons
+    // appear immediately even if panels already painted before this resolved.
+    _forcePaint = true;
+    _panels.forEach(p => p.markDirty?.());
   })
   .catch(err => console.warn('[SculptXR] FA font preload failed:', err));
 

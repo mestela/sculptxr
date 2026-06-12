@@ -1847,6 +1847,12 @@ export class MainMenuPanel extends HTMLVRPanel {
       refreshBs: (mesh) => { refreshBlendshapesDOM(el, mesh, this._main, repaint); repaint(); },
       vrPanel: this,  // lets the numpad position itself next to this panel in VR
     });
+    // Populate blendshape list immediately after wiring — wireAnimationSection only
+    // registers the callback, it doesn't call it on setup.
+    const _bsMesh = this._main?.getMesh?.() || this._main?._mesh
+      || this._main?._meshes?.find?.(m => window._animationRegistry?.tracks.get(m.getID())?.blendshapes?.size > 0);
+    refreshBlendshapesDOM(el, _bsMesh, this._main, repaint);
+    repaint();
   }
 
   // ── Slider helper ──────────────────────────────────────────────────────────

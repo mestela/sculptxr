@@ -5022,10 +5022,46 @@ class Scene {
 
           // Phase 2: nearest hit wins
           _panelHits.sort((a, b) => a.hit.distance - b.hit.distance);
-          const _winner = _panelHits[0] ?? null;
-          const _winnerName = _winner?.name ?? null;
+          let _winner = _panelHits[0] ?? null;
+          let _winnerName = _winner?.name ?? null;
           const _trigger = source.gamepad?.buttons[0];
           const _pressed = _trigger ? (_trigger.value > 0.1 || _trigger.pressed) : false;
+
+          // Phase 2b: Drag lock — keep routing to whichever panel has an active
+          // slider drag even after the controller ray exits its bounds.
+          // Project the ray onto the panel plane to get a (possibly out-of-bounds)
+          // UV; _sliderValueFromAbsX clamps the result, so the slider pegs at its
+          // min/max rather than jumping when the cursor strays off the edge.
+          {
+            const _dragCandidates = [
+              { name: 'MainMenuPanel',   panel: this._mainMenuPanel,      pressKey: '_mmWasPressed' },
+              { name: 'FilesPanel',      panel: this._filesPanel,         pressKey: '_fpWasPressed' },
+              { name: 'BrushPanel',      panel: this._brushPanel,         pressKey: '_bpWasPressed' },
+              { name: 'MiniPanel',       panel: this._miniPanel,          pressKey: '_mpWasPressed' },
+              { name: 'ToolPickerPanel', panel: this._toolPickerPanel,    pressKey: '_tpWasPressed' },
+              { name: 'VrNumpad',        panel: this._vrNumpad,           pressKey: '_npWasPressed' },
+            ];
+            this._tornOffPanels?.forEach((panel, sectionId) => {
+              _dragCandidates.push({ name: 'TornOff:' + sectionId, panel, pressKey: '_topWasPressed_' + sectionId });
+            });
+            const _locked = _dragCandidates.find(v => v.panel?._sliderDragTarget && v.panel?.mesh);
+            if (_locked) {
+              const pm = _locked.panel.mesh;
+              const _planeNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(pm.quaternion);
+              const _plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_planeNormal, pm.position);
+              const _hit = new THREE.Vector3();
+              if (_rc.ray.intersectPlane(_plane, _hit)) {
+                const _local = pm.worldToLocal(_hit.clone());
+                const _hw = (pm.geometry.parameters?.width  ?? 0.3) * 0.5;
+                const _hh = (pm.geometry.parameters?.height ?? 0.4) * 0.5;
+                _winner = { ..._locked, hit: { uv: {
+                  x:       (_local.x + _hw) / (_hw * 2),
+                  y: 1.0 - (_local.y + _hh) / (_hh * 2),
+                }, distance: 0 } };
+                _winnerName = _locked.name;
+              }
+            }
+          }
 
           // Phase 3: build full visible-panel list so non-hit panels also get leave calls
           const _allVisible = [];

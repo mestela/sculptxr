@@ -205,7 +205,14 @@ export class HTMLVRPanel {
    */
   update(_xrIsPresenting) {
     if (!this.mesh) return;
-    if (this._dirty) {
+    // Suppress panel rasterisation during an active slider drag.  The mesh
+    // deformation (applyBlendshapes) still runs every frame so the user sees
+    // the sculpt change in real time; the panel texture catching up 200 ms late
+    // is imperceptible compared to the dropped-frame cost of SVG rasterising
+    // (the polyfill re-serialises the *entire* host-canvas DOM tree) at 5 fps.
+    // pointerup already calls requestPaintForced + clears _dirty, so the final
+    // slider position appears exactly one frame after release.
+    if (this._dirty && !this._sliderDragTarget) {
       this._dirty = false;
       requestPaintOnce(getHostCanvas());
     }
@@ -422,6 +429,11 @@ export class HTMLVRPanel {
     if (drag && (type === 'pointerdown' || type === 'pointermove')) {
       drag.value = this._sliderValueFromAbsX(drag, absX);
       drag.dispatchEvent(new Event('input', { bubbles: true }));
+      // On pointermove, we've fully handled the slider — return early so the
+      // PointerEvent below never fires.  If it did, setupRangeDrag's pointermove
+      // listener would call applyBlendshapes a second time per frame, doubling
+      // the vertex computation + GPU upload cost.
+      if (type === 'pointermove') return;
     }
 
     // Button hover/active visual state — track whether anything visual changed.
