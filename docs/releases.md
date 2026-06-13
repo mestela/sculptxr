@@ -1,4 +1,4 @@
-# v2.0.5
+# v2.0.6
 Timeline & animation editor overhaul — graph editing, VR ergonomics, and persistence.
 
 ### Graph editor

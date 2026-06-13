@@ -1,4 +1,4 @@
-# SculptXR (v2.0.5)
+# SculptXR (v2.0.6)
 
 WebXR Sculpting
 
@@ -12,7 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
-*   **v2.0.5**: **Feature**: Timeline & animation editor overhaul — graph-editor transform box for all key types, curve-click select + hover highlight, header Frame/Value fields with relative expressions, channel solo, two-handed VR zoom, VR numpad with +/−/= , blendshape overshoot, and persisted panel size / mode.
+*   **v2.0.6**: **Feature**: Timeline & animation editor overhaul — graph-editor transform box for all key types, curve-click select + hover highlight, header Frame/Value fields with relative expressions, channel solo, two-handed VR zoom, VR numpad with +/−/= , blendshape overshoot, and persisted panel size / mode.
 *   **v2.0.4**: **Fix**: SpinEdge lock-up after repeated spins, Extrude double-fire on iPad, and hard-edge normals after extrude in smooth shading.
 *   **v2.0.3**: **Fix**: iPad Apple Pencil / touch overhaul — pan speed, zoom stability, back-face stamping, 2/3-finger undo/redo gestures, timeline layout, Scribble prevention.
 *   **v2.0.0**: **Feature**: Complete UI overhaul — HTML VR panels replacing yagui, panel tear-off, VR timeline panel, blendshapes, animation rebuild, laser pointer rewrite.
