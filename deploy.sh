@@ -21,24 +21,12 @@ if [ -f "$LAST_VERSION_FILE" ]; then
     LAST_VERSION=$(cat "$LAST_VERSION_FILE")
     if [ "$CURRENT_VERSION" == "$LAST_VERSION" ]; then
         echo "⚠️  Version $CURRENT_VERSION was already deployed."
-        echo "   Auto-incrementing patch version..."
-        
-        # Extract major, minor, patch
-        MAJOR=$(echo $CURRENT_VERSION | cut -d. -f1)
-        MINOR=$(echo $CURRENT_VERSION | cut -d. -f2)
-        PATCH=$(echo $CURRENT_VERSION | cut -d. -f3)
-        
-        # Increment patch
-        PATCH=$((PATCH + 1))
-        NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-        
-        echo "   -> Updating index.html to $NEW_VERSION"
-        # Update index.html (works on both macOS and Linux sed)
-        sed -i.bak "s/$CURRENT_VERSION/$NEW_VERSION/g" index.html
-        rm index.html.bak
-        
-        # Update CURRENT_VERSION for the rest of the script
-        CURRENT_VERSION=$NEW_VERSION
+        echo "   Auto-incrementing patch version (safety net)..."
+        # Bump via the single source of truth so package.json / Version.js /
+        # index.html all stay in sync (no divergence).
+        node bump.mjs patch
+        CURRENT_VERSION=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' index.html | head -n 1)
+        echo "   -> $CURRENT_VERSION"
     fi
 fi
 echo "Current Version: $CURRENT_VERSION"

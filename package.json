@@ -8,7 +8,7 @@
     "sketchfab-oauth2-1.2.0": "./lib/sketchfab-wrapper.js"
   },
   "name": "sculptxr",
-  "version": "1.0.1",
+  "version": "2.1.0",
   "description": "WebXR Sculpting",
   "main": "main.js",
   "directories": {
@@ -19,6 +19,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "bump:patch": "node bump.mjs patch",
+    "bump:minor": "node bump.mjs minor",
+    "bump:major": "node bump.mjs major",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test_glb": "node scratch/test_glb.js"
   },
