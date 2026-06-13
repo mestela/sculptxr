@@ -102,6 +102,27 @@ const CSS = `
   cursor: default;
   pointer-events: none;
 }
+.vrn-signrow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-bottom: 10px;
+}
+.vrn-sign {
+  background: #313244;
+  border: none;
+  border-radius: 7px;
+  color: #cdd6f4;
+  font-size: 18px;
+  font-weight: 600;
+  height: 38px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vrn-sign:hover  { background: #45475a; }
+.vrn-sign.active { background: #40a02b; color: #fff; }
 `;
 
 let _cssInjected = false;
@@ -120,6 +141,11 @@ function buildPanelEl() {
   wrap.innerHTML = `<div class="vrn-root">
   <div class="vrn-label" id="vrn-label">Value</div>
   <div class="vrn-display" id="vrn-display">0</div>
+  <div class="vrn-signrow" id="vrn-signrow" style="display:none">
+    <button class="vrn-sign" id="vrn-plus">+</button>
+    <button class="vrn-sign" id="vrn-minus">&minus;</button>
+    <button class="vrn-sign active" id="vrn-abs">=</button>
+  </div>
   <div class="vrn-grid">
     <button class="vrn-btn" data-vrn="7">7</button>
     <button class="vrn-btn" data-vrn="8">8</button>
@@ -148,17 +174,30 @@ function buildPanelEl() {
 // ── Shared button logic (works on any .vrn-root element) ─────────────────────
 
 function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
+  // Relative-sign mode: '' = absolute, '+'/'-' = shift expression (when config.relativeExpr).
+  let signMode = '';
+  const signRow = el.querySelector('#vrn-signrow');
+  if (signRow) signRow.style.display = config.relativeExpr ? 'grid' : 'none';
+  const updateSignBtns = () => {
+    el.querySelector('#vrn-plus') ?.classList.toggle('active', signMode === '+');
+    el.querySelector('#vrn-minus')?.classList.toggle('active', signMode === '-');
+    el.querySelector('#vrn-abs')  ?.classList.toggle('active', signMode === '');
+  };
+
   const refresh = () => {
     const disp = el.querySelector('#vrn-display');
     if (!disp) return;
     const str = getStr();
-    disp.textContent = str || '0';
+    const prefix = signMode === '+' ? '+' : signMode === '-' ? '-' : '';
+    disp.textContent = prefix + (str || '0');
     const val = parseFloat(str);
-    const valid = !isNaN(val)
+    const valid = signMode ? true : (!isNaN(val)
       && (config.min === undefined || val >= config.min)
-      && (config.max === undefined || val <= config.max);
+      && (config.max === undefined || val <= config.max));
     disp.classList.toggle('vrn-invalid', !valid);
   };
+
+  const setSign = (m) => { signMode = m; setStr('0'); updateSignBtns(); refresh(); };
 
   const press = (d) => {
     let s = getStr();
@@ -180,6 +219,8 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
   };
 
   const confirm = () => {
+    // Relative shift expression (e.g. "+=10") → pass the string for the caller to apply.
+    if (config.relativeExpr && signMode) { onConfirm(signMode + '=' + (getStr() || '0')); return; }
     let val = parseFloat(getStr());
     if (isNaN(val)) return;
     if (config.integer) val = Math.round(val);
@@ -187,6 +228,11 @@ function wireNumpadEl(el, config, getStr, setStr, onConfirm, onCancel) {
     if (config.max !== undefined) val = Math.min(config.max, val);
     onConfirm(val);
   };
+
+  el.querySelector('#vrn-plus') ?.addEventListener('click', () => setSign('+'));
+  el.querySelector('#vrn-minus')?.addEventListener('click', () => setSign('-'));
+  el.querySelector('#vrn-abs')  ?.addEventListener('click', () => setSign(''));
+  updateSignBtns();
 
   el.querySelectorAll('[data-vrn]').forEach(btn =>
     btn.addEventListener('click', () => press(btn.dataset.vrn))
@@ -223,6 +269,7 @@ export class VrNumpad extends HTMLVRPanel {
 
     this._scene3     = scene;
     this._str        = '0';
+    this._signMode   = '';   // '' = absolute, '+'/'-' = relative shift (when config.relativeExpr)
     this._config     = {};
     this._onConfirm  = null;
     this._desktopEl  = null; // DOM overlay element when open on desktop
@@ -264,16 +311,28 @@ export class VrNumpad extends HTMLVRPanel {
     };
 
     const confirm = () => {
+      const cfg = this._config;
+      const cb = this._onConfirm;
+      // Relative shift expression (e.g. "+=10") → pass the string for the caller to apply.
+      if (cfg.relativeExpr && this._signMode) {
+        const expr = this._signMode + '=' + (this._str || '0');
+        this.close();
+        cb?.(expr);
+        return;
+      }
       let val = parseFloat(this._str);
       if (isNaN(val)) return;
-      const cfg = this._config;
       if (cfg.integer) val = Math.round(val);
       if (cfg.min !== undefined) val = Math.max(cfg.min, val);
       if (cfg.max !== undefined) val = Math.min(cfg.max, val);
-      const cb = this._onConfirm;
       this.close();
       cb?.(val);
     };
+
+    const setSign = (m) => { this._signMode = m; this._str = '0'; this._refreshVR(); };
+    el.querySelector('#vrn-plus') ?.addEventListener('click', () => setSign('+'));
+    el.querySelector('#vrn-minus')?.addEventListener('click', () => setSign('-'));
+    el.querySelector('#vrn-abs')  ?.addEventListener('click', () => setSign(''));
 
     el.querySelectorAll('[data-vrn]').forEach(btn =>
       btn.addEventListener('click', () => press(btn.dataset.vrn))
@@ -296,15 +355,20 @@ export class VrNumpad extends HTMLVRPanel {
   }
 
   _refreshVR() {
-    const disp = this._element.querySelector('#vrn-display');
+    const el = this._element;
+    const disp = el.querySelector('#vrn-display');
     if (!disp) return;
-    disp.textContent = this._str || '0';
+    const prefix = this._signMode === '+' ? '+' : this._signMode === '-' ? '-' : '';
+    disp.textContent = prefix + (this._str || '0');
     const val = parseFloat(this._str);
     const cfg = this._config;
-    const valid = !isNaN(val)
+    const valid = this._signMode ? true : (!isNaN(val)
       && (cfg.min === undefined || val >= cfg.min)
-      && (cfg.max === undefined || val <= cfg.max);
+      && (cfg.max === undefined || val <= cfg.max));
     disp.classList.toggle('vrn-invalid', !valid);
+    el.querySelector('#vrn-plus') ?.classList.toggle('active', this._signMode === '+');
+    el.querySelector('#vrn-minus')?.classList.toggle('active', this._signMode === '-');
+    el.querySelector('#vrn-abs')  ?.classList.toggle('active', this._signMode === '');
     this.markDirty();
   }
 
@@ -382,6 +446,9 @@ export class VrNumpad extends HTMLVRPanel {
       else if (e.key === 'Enter')        { confirm(); }
       else if (e.key === 'Escape')       { dismiss(); }
       else if (e.key === '.')            { panel.querySelector('#vrn-dot')?.click(); }
+      else if (config.relativeExpr && e.key === '+') { panel.querySelector('#vrn-plus')?.click(); }
+      else if (config.relativeExpr && e.key === '-') { panel.querySelector('#vrn-minus')?.click(); }
+      else if (config.relativeExpr && e.key === '=') { panel.querySelector('#vrn-abs')?.click(); }
       else return;
       e.preventDefault(); e.stopPropagation();
     };
@@ -414,8 +481,12 @@ export class VrNumpad extends HTMLVRPanel {
    * @param {(value: number) => void} onConfirm
    * @param {HTMLElement|null}      [sourceEl]     DOM input — desktop anchor / VR vertical hint
    * @param {HTMLVRPanel|null}      [sourcePanel]  VR panel the input lives on
+   * @param {THREE.Mesh|null}       [anchorMesh]   Plain mesh to match in VR (e.g. the
+   *                                               canvas-textured timeline) — the numpad
+   *                                               copies its transform and floats toward
+   *                                               the camera. Used when there is no panel.
    */
-  open(currentValue, config = {}, onConfirm, sourceEl = null, sourcePanel = null) {
+  open(currentValue, config = {}, onConfirm, sourceEl = null, sourcePanel = null, anchorMesh = null) {
     // Use the VR 3D-panel path only when XR is presenting AND the source panel
     // mesh is actually visible in the scene.  If the panel mesh is hidden (the
     // user is clicking the desktop sidebar while a PCVR session is active) the
@@ -436,6 +507,7 @@ export class VrNumpad extends HTMLVRPanel {
     this._str         = _initStr(currentValue, config);
     this._sourcePanel = sourcePanel;   // stored for per-frame tracking
     this._sourceEl    = sourceEl;
+    this._anchorMesh  = anchorMesh;    // plain-mesh anchor (timeline) for per-frame tracking
 
     // Update the label and button dim-states in the VR element
     const label = this._element.querySelector('#vrn-label');
@@ -444,12 +516,24 @@ export class VrNumpad extends HTMLVRPanel {
     const dotBtn = this._element.querySelector('#vrn-dot');
     if (dotBtn) dotBtn.classList.toggle('vrn-dim', !!config.integer);
 
+    // Show the +/-/= sign row only for fields that accept relative shifts.
+    this._signMode = '';
+    const signRow = this._element.querySelector('#vrn-signrow');
+    if (signRow) signRow.style.display = config.relativeExpr ? 'grid' : 'none';
+
     this._refreshVR();
 
     if (!this.mesh) return;
 
+    // The sign row changes the panel height — rebuild the mesh geometry to match
+    // it NOW (synchronously; offsetHeight is valid after the display change), so a
+    // second open can't race a stale rAF and leave the panel doubled/mismatched.
+    this.resizeMesh?.();
+
     if (sourcePanel?.mesh) {
       this._positionNextToPanel(sourcePanel, sourceEl);
+    } else if (anchorMesh) {
+      this._positionAtMesh(anchorMesh);
     } else {
       // Fallback: float 0.65 m in front of the VR camera
       const cam = window.app?._camera?.getThreeCamera?.();
@@ -554,12 +638,38 @@ export class VrNumpad extends HTMLVRPanel {
     this.mesh.quaternion.copy(panelQuat);
   }
 
+  /**
+   * Position the numpad to match a plain (non-HTMLVRPanel) anchor mesh — e.g.
+   * the canvas-textured VR timeline — copying its world position and rotation,
+   * then floating it slightly toward the camera so it sits in front of the panel.
+   *
+   * Unlike HTMLVRPanel meshes (scale.y=-1, needing the Rz180 decomposition fix),
+   * the timeline mesh has a clean transform whose local +Z faces the user, so we
+   * use its world quaternion directly.
+   */
+  _positionAtMesh(anchorMesh) {
+    if (!this.mesh || !anchorMesh) return;
+    if (this.mesh.parent !== this._scene3) this._scene3?.add(this.mesh);
+
+    anchorMesh.updateMatrixWorld(true);
+    const pos  = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    anchorMesh.getWorldPosition(pos);
+    anchorMesh.getWorldQuaternion(quat);
+
+    // Panel front-face normal (local +Z) points toward the user; float along it.
+    const toUser = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+    this.mesh.position.copy(pos).addScaledVector(toUser, 0.08); // 8 cm toward camera (clearly in front)
+    this.mesh.quaternion.copy(quat);
+  }
+
   /** Dismiss without confirming (both modes). */
   close() {
     if (this.mesh) this.mesh.visible = false;
     this._onConfirm   = null;
     this._sourcePanel = null;
     this._sourceEl    = null;
+    this._anchorMesh  = null;
     this._closedAt    = performance.now(); // cooldown start
     this._closeDesktop();
   }
@@ -575,6 +685,18 @@ export class VrNumpad extends HTMLVRPanel {
   }
 
   /**
+   * Whether numeric inputs should route to the numpad instead of native entry.
+   * Always true in VR (no physical keyboard). Outside VR there is no reliable
+   * way to detect a connected keyboard, so this honors the user's
+   * 'always use numpad' preference (default off) — handy on keyboard-less
+   * tablets, annoying with a keyboard, hence opt-in.
+   */
+  shouldUse() {
+    if (window.app?._renderer?.xr?.isPresenting) return true;
+    return !!window.getOptionsURL?.().alwaysNumpad;
+  }
+
+  /**
    * Called every XR frame while the numpad is visible.
    * Re-runs positioning so the numpad follows its source panel when that
    * panel is attached to a moving VR controller.
@@ -582,6 +704,8 @@ export class VrNumpad extends HTMLVRPanel {
   _repositionIfTracking() {
     if (this._sourcePanel?.mesh?.visible && this.mesh?.visible) {
       this._positionNextToPanel(this._sourcePanel, this._sourceEl);
+    } else if (this._anchorMesh?.visible && this.mesh?.visible) {
+      this._positionAtMesh(this._anchorMesh);
     }
   }
 }

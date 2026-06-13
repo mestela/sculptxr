@@ -196,6 +196,17 @@ var getOptionsURL = function () {
   options.ipadStylusView    = queryBool(getVal('ipadStylusView'),    false);
   options.ipadStylusSculpt  = queryBool(getVal('ipadStylusSculpt'),  true);
 
+  // Numeric entry: force the on-screen numpad outside VR (useful on
+  // keyboard-less tablets). In VR the numpad is always used regardless.
+  options.alwaysNumpad      = queryBool(getVal('alwaysNumpad'),      false);
+
+  // VR timeline panel size in metres (persisted so a resize sticks across
+  // sessions). H = 0 means "derive from canvas aspect" on first open.
+  options.vrTimelineW       = queryNumber(getVal('vrTimelineW'), 0.20, 1.60, 0.90);
+  options.vrTimelineH       = queryNumber(getVal('vrTimelineH'), 0.00, 0.40, 0.00);
+  // VR timeline dope/graph mode (persisted): 'dope' | 'graph'.
+  options.vrTimelineMode    = (getVal('vrTimelineMode') === 'dope') ? 'dope' : (getVal('vrTimelineMode') === 'graph' ? 'graph' : null);
+
   // History
   options.maxUndo = queryInteger(getVal('maxUndo'), 3, 500, 50);
 

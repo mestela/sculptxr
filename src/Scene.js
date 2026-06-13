@@ -3942,7 +3942,17 @@ class Scene {
       return;
     }
 
-    try { tl.openVRView(); } catch (e) {
+    // Resolve the persisted panel size (or defaults) and size the canvas to match
+    // it BEFORE building/updating the mesh, so the texture is crisp and unstretched
+    // on first open and reopen alike.
+    const _opts   = window.getOptionsURL?.() || {};
+    const _defAsp = 900 / 150;
+    const _worldW = _opts.vrTimelineW > 0 ? _opts.vrTimelineW : 0.90;
+    const _worldH = _opts.vrTimelineH > 0 ? _opts.vrTimelineH : _worldW / _defAsp;
+    const _cssW   = Math.round(_worldW * 1500);
+    const _cssH   = Math.round(_worldH * 1500);
+
+    try { tl.openVRView(_cssW, _cssH); } catch (e) {
       if (window.screenLog) window.screenLog(`[VR Timeline] openVRView err: ${e?.message}`, 'red');
       console.error('[VR Timeline] openVRView error:', e);
       return;
@@ -3953,6 +3963,7 @@ class Scene {
     this._vtlWasPressed = false;
     this._vtlResizeActive = false; this._vtlResizeHand = null;
     this._vtlResizeWasPressed = false;
+    this._endVtlZoom(tl);
 
     if (!this._vrTimelineMesh) {
       const tex = new THREE.CanvasTexture(tl._canvas);
@@ -3961,10 +3972,7 @@ class Scene {
       tex.flipY = true;
       this._vrTimelineTexture = tex;
 
-      const aspect  = (tl._cssWidth || 900) / (tl._cssHeight || 150);
-      const worldW  = 0.60;
-      const worldH  = worldW / aspect;
-      const geo = new THREE.PlaneGeometry(worldW, worldH);
+      const geo = new THREE.PlaneGeometry(_worldW, _worldH);
       const mat = new THREE.MeshBasicMaterial({
         map: tex, transparent: true,
         side: THREE.DoubleSide, depthWrite: true, depthTest: true,
@@ -3997,18 +4005,22 @@ class Scene {
       this._vrResizeHandle.visible = false;
       this._scene.add(this._vrResizeHandle);
 
-      if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${worldW.toFixed(2)}×${worldH.toFixed(2)}m`, 'cyan');
+      if (window.screenLog) window.screenLog(`[VR Timeline] mesh created ${_worldW.toFixed(2)}×${_worldH.toFixed(2)}m`, 'cyan');
     } else {
-      // Reopen — reset geometry to match current canvas dimensions, clear any leftover scale.
+      // Reopen — apply the persisted size to geometry, clear any leftover scale,
+      // and force the texture to re-upload at the new canvas resolution.
       this._vrTimelineMesh.scale.set(1, 1, 1);
-      const worldW = (tl._cssWidth  || 900) / 1500;
-      const worldH = (tl._cssHeight || 150) / 1500;
       this._vrTimelineMesh.geometry.dispose();
-      this._vrTimelineMesh.geometry = new THREE.PlaneGeometry(worldW, worldH);
+      this._vrTimelineMesh.geometry = new THREE.PlaneGeometry(_worldW, _worldH);
+      if (this._vrTimelineTexture) {
+        this._vrTimelineTexture.dispose();
+        this._vrTimelineTexture.needsUpdate = true;
+      }
     }
 
-    // Position at the main menu's world location, facing the camera.
-    // Use cam.quaternion directly — same convention as FilesPanel which is known-correct.
+    // Position at the main menu's world location, facing the camera (default
+    // placement near the attached panel). Size is persisted; pose is not — a
+    // saved world pose tended to reopen far from the user.
     const cam = this._camera?.getThreeCamera();
     const mm  = this._mainMenuPanel?.mesh;
     if (cam) {
@@ -4032,9 +4044,108 @@ class Scene {
   _closeVRTimeline() {
     if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
     if (this._vrResizeHandle) this._vrResizeHandle.visible = false;
+    if (this._vtlSecLaser) this._vtlSecLaser.visible = false;
     this.getGui()?._ctrlTimeline?.closeVRView();
     document.querySelectorAll('#acp-show-timeline').forEach(cb => { cb.checked = false; });
     this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.remove('tl-on');
+  }
+
+  // Compute a controller's picking ray (origin/dir) from its Three.js object —
+  // same offset/tilt convention as the dominant-hand panel raycast.
+  _controllerRay(ctrl3D) {
+    if (!ctrl3D) return null;
+    ctrl3D.updateMatrixWorld(true);
+    const off  = this.getStylusOffset();
+    const tilt = this.getStylusTilt() * Math.PI / 180.0;
+    const origin = new THREE.Vector3(0, 0, -off).applyMatrix4(ctrl3D.matrixWorld);
+    const dir    = new THREE.Vector3(0, Math.sin(tilt), -Math.cos(tilt)).transformDirection(ctrl3D.matrixWorld).normalize();
+    return { origin, dir };
+  }
+
+  _raycastTimeline(ray, mesh) {
+    if (!ray || !mesh) return null;
+    if (!this._vtlZoomRC) this._vtlZoomRC = new THREE.Raycaster();
+    this._vtlZoomRC.set(ray.origin, ray.dir);
+    const h = this._vtlZoomRC.intersectObject(mesh);
+    return h.length ? h[0] : null;
+  }
+
+  _endVtlZoom(tl) {
+    if (this._vtlZoomActive) { tl?.endTwoPointerZoom?.(); this._vtlZoomActive = false; }
+  }
+
+
+  // Show a white laser from the NON-dominant controller when it aims at the
+  // timeline (the dominant hand already has VRLaser). Uses a dedicated cylinder
+  // mesh we position from the controller to the hit point — independent of the
+  // built-in per-controller ray, which may be hidden for the non-dominant hand.
+  _updateSecondaryTimelineLaser() {
+    const mesh = this._vrTimelineMesh;
+    if (!this._vtlSecLaser) {
+      // Match the primary controller ray (pointer_ray_root): a 1 m unit tube along
+      // -Z with the same white fade shader, scaled to the hit distance each frame.
+      const g = new THREE.CylinderGeometry(0.001, 0.001, 1, 8, 1, true);
+      g.rotateX(-Math.PI / 2);   // cylinder Y-axis → -Z
+      g.translate(0, 0, -0.5);   // base at z=0, tip at z=-1
+      const m = new THREE.ShaderMaterial({
+        vertexShader: `varying float vFade; void main() { vFade = 1.0 - clamp((uv.y - 0.5) * 2.0, 0.0, 1.0); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `varying float vFade; void main() { gl_FragColor = vec4(1.0, 1.0, 1.0, vFade * 0.85); }`,
+        transparent: true, depthTest: true, depthWrite: false,
+        blending: THREE.NormalBlending, side: THREE.DoubleSide,
+      });
+      this._vtlSecLaser = new THREE.Mesh(g, m);
+      this._vtlSecLaser.visible = false;
+      this._vtlSecLaser.renderOrder = 999;
+      this._scene.add(this._vtlSecLaser);
+    }
+    const laser = this._vtlSecLaser;
+    const nonDom = this._dominantHand === 'right' ? this._vrControllerLeft : this._vrControllerRight;
+    if (!mesh || !mesh.visible || !nonDom) { laser.visible = false; return; }
+
+    const ray = this._controllerRay(nonDom);
+    const hit = this._raycastTimeline(ray, mesh);
+    if (!ray || !hit) { laser.visible = false; return; }
+
+    laser.position.copy(ray.origin);
+    laser.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), ray.dir);
+    laser.scale.set(1, 1, Math.max(0.01, hit.distance));
+    laser.visible = true;
+  }
+
+  // Two-handed VR zoom: when BOTH controllers point at empty timeline graph space
+  // with triggers held, controller separation drives non-linear zoom (horizontal →
+  // time, vertical → value). Runs once per frame, before the dominant-hand dispatch
+  // so it can suppress the single-hand pan.
+  _updateVRTimelineZoom(leftSrc, rightSrc) {
+    // Keep the non-dominant controller's aim laser in sync every frame.
+    this._updateSecondaryTimelineLaser();
+
+    const tl = this.getGui()?._ctrlTimeline;
+    const mesh = this._vrTimelineMesh;
+    if (!tl || !mesh || !mesh.visible || this._vtlResizeActive) { this._endVtlZoom(tl); return; }
+
+    const pressed = (s) => !!(s?.gamepad?.buttons?.[0]) && (s.gamepad.buttons[0].pressed || s.gamepad.buttons[0].value > 0.1);
+    if (!pressed(leftSrc) || !pressed(rightSrc)) { this._endVtlZoom(tl); return; }
+
+    const hitL = this._raycastTimeline(this._controllerRay(this._vrControllerLeft),  mesh);
+    const hitR = this._raycastTimeline(this._controllerRay(this._vrControllerRight), mesh);
+    if (!hitL || !hitR) { this._endVtlZoom(tl); return; }
+
+    const cssW = tl._cssWidth, cssH = tl._cssHeight;
+    const pL = { cx: hitL.uv.x * cssW, cy: (1 - hitL.uv.y) * cssH };
+    const pR = { cx: hitR.uv.x * cssW, cy: (1 - hitR.uv.y) * cssH };
+
+    if (!this._vtlZoomActive) {
+      // Both controllers must be over empty graph space to START the gesture.
+      if (!tl.isEmptyGraphSpaceAt(pL.cx, pL.cy) || !tl.isEmptyGraphSpaceAt(pR.cx, pR.cy)) return;
+      // Cancel any single-hand pan that may have begun, then capture the anchors.
+      this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+      tl._cancelActiveAction?.();
+      tl.beginTwoPointerZoom(pL.cx, pL.cy, pR.cx, pR.cy);
+      this._vtlZoomActive = true;
+    } else {
+      tl.updateTwoPointerZoom(pL.cx, pL.cy, pR.cx, pR.cy);
+    }
   }
 
   _onVRTimelineHit(uv, type, pressed, shiftKey = false) {
@@ -4340,6 +4451,10 @@ class Scene {
 
     const nonDomSource = this._dominantHand === 'left' ? right : left;
     this._vrSecondaryTriggerPressed = !!(nonDomSource && nonDomSource.gamepad && nonDomSource.gamepad.buttons[0] && nonDomSource.gamepad.buttons[0].pressed);
+
+    // Two-handed VR timeline zoom — evaluated before the per-controller dispatch
+    // so an active gesture suppresses the dominant hand's single-pointer pan.
+    try { this._updateVRTimelineZoom(left, right); } catch (_) {}
 
     // Reset Menu Pointing State (Per Frame)
     this._isPointingAtMenu = false;
@@ -5009,15 +5124,19 @@ class Scene {
             const h = _rc.intersectObject(this._vrNumpad.mesh);
             if (h.length > 0) _panelHits.push({ name: 'VrNumpad', panel: this._vrNumpad, hit: h[0], pressKey: '_npWasPressed' });
           }
-          // VRTimeline uses a different dispatch interface — included for nearest-hit ordering
+          // VRTimeline uses a different dispatch interface — included for nearest-hit ordering.
+          // Skipped while the numpad is modal-open: the numpad floats just in front of
+          // the timeline, so without this the ray could also strike the panel behind it.
           this._vtlIsPointing = false;
-          if (this._vrResizeHandle?.visible) {
-            const h = _rc.intersectObject(this._vrResizeHandle);
-            if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
-          }
-          if (this._vrTimelineMesh?.visible) {
-            const h = _rc.intersectObject(this._vrTimelineMesh);
-            if (h.length > 0) _panelHits.push({ name: 'VRTimeline', panel: null, hit: h[0], pressKey: '_vtlWasPressed', isTimeline: true });
+          if (!_numpadOpen) {
+            if (this._vrResizeHandle?.visible) {
+              const h = _rc.intersectObject(this._vrResizeHandle);
+              if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
+            }
+            if (this._vrTimelineMesh?.visible) {
+              const h = _rc.intersectObject(this._vrTimelineMesh);
+              if (h.length > 0) _panelHits.push({ name: 'VRTimeline', panel: null, hit: h[0], pressKey: '_vtlWasPressed', isTimeline: true });
+            }
           }
 
           // Phase 2: nearest hit wins
@@ -5116,7 +5235,11 @@ class Scene {
             if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRTimeline'; }
             else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRTimeline'; }
             this._updateBPCursor?.(_winner.hit.point, true);
-            if (!this._vtlDragActive) {
+            // While the two-handed zoom gesture owns input, don't also pan/select
+            // with the dominant hand — just keep the press latch in sync.
+            if (this._vtlZoomActive) {
+              this._vtlWasPressed = _pressed;
+            } else if (!this._vtlDragActive) {
               const justDown  = _pressed && !this._vtlWasPressed;
               const justUp    = !_pressed && this._vtlWasPressed;
               // Non-dominant trigger held = additive marquee (Shift-equivalent in VR)
@@ -5192,6 +5315,15 @@ class Scene {
                 tl.position.copy(this._vtlResizeFixedCorner)
                   .addScaledVector(this._vtlResizeMeshRight, newWorldW / 2)
                   .addScaledVector(this._vtlResizeMeshDown,  newWorldH / 2);
+                // Persist the chosen size so it survives reload; show a live
+                // readout (throttled) so the ideal dimensions can be reported.
+                window.saveOption?.('vrTimelineW', +newWorldW.toFixed(3), 400);
+                window.saveOption?.('vrTimelineH', +newWorldH.toFixed(3), 400);
+
+                this._vtlSizeLogCount = (this._vtlSizeLogCount || 0) + 1;
+                if (window.screenLog && this._vtlSizeLogCount % 6 === 0) {
+                  window.screenLog(`[VR Timeline] size ${newWorldW.toFixed(2)}×${newWorldH.toFixed(2)} m (${newCssW}×${newCssH}px)`, 'cyan');
+                }
               }
             }
             if (!_pressed) { this._vtlResizeActive = false; this._vtlResizeHand = null; }

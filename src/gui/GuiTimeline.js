@@ -22,7 +22,8 @@ export default class GuiTimeline {
     this._transformStartRx = 0;
     this._animTransformInitialBox = null;
 
-    this._mode = 'dope'; // 'dope' or 'graph'
+    // 'dope' or 'graph' — restored from the persisted preference if set.
+    this._mode = (window.getOptionsURL?.().vrTimelineMode) || 'dope';
     this._panY = 0;
     this._zoomY = 100.0; // Default scale: 1 unit = 100 pixels
     this._activeKeyframeChannel = null;
@@ -175,19 +176,24 @@ export default class GuiTimeline {
     this._container.appendChild(this._tooltip);
 
     // ── Numeric entry input for gutter value badges ──
+    // type=text (not number) so no up/down spinner buttons; narrow + right
+    // aligned since values are at most a few digits (blendshape weights 0–1).
     this._valInput = document.createElement('input');
-    this._valInput.type = 'number';
-    this._valInput.step = 'any';
+    this._valInput.type = 'text';
+    this._valInput.inputMode = 'decimal';
     Object.assign(this._valInput.style, {
-      position: 'absolute', left: '108px', width: '73px',
-      font: '9px monospace', padding: '1px 4px',
+      position: 'absolute', left: '144px', width: '30px',
+      font: '9px monospace', padding: '1px 4px', textAlign: 'right',
       background: '#1a2a1a', border: '1px solid #446644', color: '#88ddaa',
       borderRadius: '2px', outline: 'none', display: 'none', zIndex: '50',
     });
     this._valInputChannel = null; // null | 'bs:<name>'
+    this._editingBsName = null;   // blendshape channel currently being edited (bold + scrolled-to)
+    this._lastSelBsSig = null;    // signature of selected blendshape channels (auto-scroll guard)
+    this._hoverCurve = null;      // graph-mode curve under the cursor (hover highlight)
     this._valInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { this._commitValInput(); this._valInput.style.display = 'none'; }
-      if (e.key === 'Escape') { this._valInput.style.display = 'none'; this._valInputChannel = null; }
+      if (e.key === 'Escape') { this._valInput.style.display = 'none'; this._valInputChannel = null; this._editingBsName = null; this.draw(); }
       e.stopPropagation();
     });
     this._valInput.addEventListener('blur', () => {
@@ -196,24 +202,328 @@ export default class GuiTimeline {
     });
     this._container.appendChild(this._valInput);
 
+    // ── Frame-number entry for the toolbar field (set/shift selected key time) ──
+    // type=text so expressions like "+=10" / "-=5" work for shifting a multi-selection.
+    this._frameInput = document.createElement('input');
+    this._frameInput.type = 'text';
+    this._frameInput.inputMode = 'numeric';
+    Object.assign(this._frameInput.style, {
+      position: 'absolute', height: '18px', font: '10px monospace',
+      padding: '1px 4px', textAlign: 'right',
+      background: '#1a2a1a', border: '1px solid #446644', color: '#88ddaa',
+      borderRadius: '3px', outline: 'none', display: 'none', zIndex: '50',
+    });
+    this._frameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { this._applyFrameExpr(this._frameInput.value); this._frameInput.style.display = 'none'; }
+      if (e.key === 'Escape') { this._frameInput.style.display = 'none'; }
+      e.stopPropagation();
+    });
+    this._frameInput.addEventListener('blur', () => {
+      if (this._frameInput.style.display !== 'none') {
+        this._applyFrameExpr(this._frameInput.value);
+        this._frameInput.style.display = 'none';
+      }
+    });
+    this._container.appendChild(this._frameInput);
+
+    // ── Value entry for the toolbar value field (set/shift selected key values) ──
+    this._valueInput = document.createElement('input');
+    this._valueInput.type = 'text';
+    this._valueInput.inputMode = 'decimal';
+    Object.assign(this._valueInput.style, {
+      position: 'absolute', height: '18px', font: '10px monospace',
+      padding: '1px 4px', textAlign: 'right',
+      background: '#1a2a1a', border: '1px solid #446644', color: '#88ddaa',
+      borderRadius: '3px', outline: 'none', display: 'none', zIndex: '50',
+    });
+    this._valueInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { this._applyValueExpr(this._valueInput.value); this._valueInput.style.display = 'none'; }
+      if (e.key === 'Escape') { this._valueInput.style.display = 'none'; }
+      e.stopPropagation();
+    });
+    this._valueInput.addEventListener('blur', () => {
+      if (this._valueInput.style.display !== 'none') {
+        this._applyValueExpr(this._valueInput.value);
+        this._valueInput.style.display = 'none';
+      }
+    });
+    this._container.appendChild(this._valueInput);
+
     this.onResize();
   }
 
   // Apply a numeric value typed into the gutter value badge input.
   _commitValInput() {
-    if (!this._valInputChannel) return;
+    const _done = () => { this._valInputChannel = null; this._editingBsName = null; };
+    if (!this._valInputChannel) { _done(); return; }
     const v = parseFloat(this._valInput.value);
-    if (isNaN(v)) { this._valInputChannel = null; return; }
+    if (isNaN(v)) { _done(); return; }
     const reg  = window._animationRegistry;
     const mesh = this._main?.getMesh?.();
-    if (!reg || !mesh) { this._valInputChannel = null; return; }
+    if (!reg || !mesh) { _done(); return; }
 
     if (this._valInputChannel.startsWith('bs:')) {
       const bsName = this._valInputChannel.slice(3);
-      reg.setBlendshapeWeight(mesh, bsName, Math.max(0, Math.min(1, v)));
+      // Typed entry is NOT clamped — overshoot (e.g. 5.0, -1) is allowed.
+      reg.setBlendshapeWeight(mesh, bsName, v);
       if (window.app?.render) window.app.render();
     }
-    this._valInputChannel = null;
+    _done();
+  }
+
+  // Scroll the gutter (if needed) so the given absolute row index is fully
+  // visible. Used to bring the channel being edited into view (desktop + VR).
+  _ensureGutterRowVisible(rowIdx) {
+    const headerH = 50;
+    const gutterY = headerH + 4;
+    const rowH    = 22;
+    const rowTopAbs = gutterY + rowIdx * rowH;
+    const maxScroll = rowTopAbs - headerH;                       // keep row top below header
+    const minScroll = rowTopAbs + rowH - this._cssHeight;        // keep row bottom above edge
+    let s = this._gutterScrollY;
+    if (s > maxScroll) s = maxScroll;
+    if (s < minScroll) s = minScroll;
+    this._gutterScrollY = Math.max(0, Math.min(this._gutterMaxScroll || 0, s));
+  }
+
+  // Blend a #rrggbb color toward white (for hovered-curve highlight).
+  _lightenHex(hex) {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+    if (!m) return '#ffffff';
+    const n = parseInt(m[1], 16);
+    const mix = (c) => Math.round(c + (255 - c) * 0.55);
+    return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
+  }
+
+  // Solo a channel (hide all others). Shift-click an eye icon. Re-soloing the
+  // already-soloed channel restores full visibility.
+  _soloChannel(target) {
+    const reg = window._animationRegistry;
+    const mesh = this._main?.getMesh?.();
+    const track = mesh ? reg?.tracks.get(mesh.getID()) : null;
+    const maxCh = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
+    if (!window._animChannelVisible) window._animChannelVisible = [true, true, true, true];
+    if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+    const bsNames = track?.blendshapeTracks ? [...track.blendshapeTracks.keys()] : [];
+
+    const isTargetCh = (i) => target.kind === 'shape' ? (i === 3)
+                            : target.kind === 'transform' ? (i === target.channel) : false;
+    const isTargetBs = (n) => target.kind === 'blendshape' && n === target.name;
+
+    // Already soloed to target? (target visible, everything else hidden)
+    let othersHidden = true, targetVisible = true;
+    for (let i = 0; i < maxCh; i++) {
+      const vis = window._animChannelVisible[i] !== false;
+      if (isTargetCh(i)) { if (!vis) targetVisible = false; }
+      else if (vis) othersHidden = false;
+    }
+    bsNames.forEach(n => {
+      const vis = window._animBsChannelVisible[n] !== false;
+      if (isTargetBs(n)) { if (!vis) targetVisible = false; }
+      else if (vis) othersHidden = false;
+    });
+    const restore = targetVisible && othersHidden; // toggle solo off → show all
+
+    for (let i = 0; i < maxCh; i++) window._animChannelVisible[i] = restore ? true : isTargetCh(i);
+    bsNames.forEach(n => { window._animBsChannelVisible[n] = restore ? true : isTargetBs(n); });
+    this._pruneSelectionToVisible();
+    this.draw();
+  }
+
+  // Drop any selected keys whose channel is now hidden, so hidden channels can't
+  // be edited via the value/frame fields or the transform box.
+  _pruneSelectionToVisible() {
+    const sel = window._animSelectedKeys;
+    if (!sel?.length) return;
+    const chVis = window._animChannelVisible || [true, true, true, true];
+    const bsVis = window._animBsChannelVisible || {};
+    const kept = sel.filter(k => {
+      if (k.type === 'transform') return chVis[k.channel ?? 0] !== false;
+      if (k.type === 'shape')     return chVis[3] !== false;
+      if (k.type === 'blendshape') return bsVis[k.name] !== false;
+      return true;
+    });
+    if (kept.length !== sel.length) {
+      window._animSelectedKeys = kept;
+      if (kept.length <= 1) window._animTransformBox = null;
+    }
+  }
+
+  // Toolbar frame field rect (right-aligned in the toolbar row).
+  _frameFieldRect() {
+    const w = 64, h = 20, margin = 10;
+    return { x: Math.round(this._cssWidth - w - margin), y: 5, w, h };
+  }
+
+  // Snapshot all tracks (for undo). Deep-copies keyframe arrays via cloneTrack.
+  _snapshotTracks() {
+    const m = new Map();
+    window._animationRegistry?.tracks.forEach((tr, id) => m.set(id, TimelineHelper.cloneTrack(tr)));
+    return m;
+  }
+
+  // Restore tracks IN PLACE from a snapshot — mutates the live track's keyframe
+  // arrays rather than replacing the track object, so each track's live
+  // `blendshapes` vertex-delta Map (too large to snapshot) is preserved.
+  _restoreTracksInPlace(stateMap) {
+    const reg = window._animationRegistry;
+    if (!reg) return;
+    stateMap.forEach((snap, mId) => {
+      const live = reg.tracks.get(mId);
+      if (!live) return;
+      live.times            = snap.times            ? [...snap.times]            : [];
+      live.positions        = snap.positions        ? [...snap.positions]        : [];
+      live.quaternions      = snap.quaternions      ? [...snap.quaternions]      : [];
+      live.scales           = snap.scales           ? [...snap.scales]           : [];
+      live.shapeTimes       = snap.shapeTimes       ? [...snap.shapeTimes]       : [];
+      live.shapes           = snap.shapes           ? snap.shapes.map(s => new Float32Array(s)) : [];
+      live.shapeOutputTimes = snap.shapeOutputTimes ? [...snap.shapeOutputTimes] : [];
+      live.tangentOffsets   = snap.tangentOffsets   ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
+      if (snap.blendshapeTracks) {
+        if (!live.blendshapeTracks) live.blendshapeTracks = new Map();
+        live.blendshapeTracks.clear();
+        snap.blendshapeTracks.forEach((bt, name) => {
+          live.blendshapeTracks.set(name, {
+            times: bt.times ? [...bt.times] : [],
+            values: bt.values ? [...bt.values] : [],
+            tangentOffsets: bt.tangentOffsets ? JSON.parse(JSON.stringify(bt.tangentOffsets)) : undefined
+          });
+        });
+      }
+    });
+    const m = this._main?.getMesh?.();
+    if (m) reg.update(m, true);
+    if (this._main?.render) this._main.render();
+    this.draw();
+  }
+
+  // Apply a frame expression to the selected key(s) from the toolbar field.
+  //   plain number → set the reference key to that whole frame; others shift rigidly.
+  //   += / -= / *= / /= → shift ALL selected keys by the resulting frame delta
+  //                       (preserving their relative spacing/offsets).
+  _applyFrameExpr(rawVal) {
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    if (!reg || !sel?.length) return;
+    const fps  = window._animFPS || 24;
+    const mDur = (window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+    const s = String(rawVal ?? '').trim();
+    if (!s) return;
+
+    const keyTime  = (k, tr) => k.type === 'transform' ? (tr.times?.[k.index] ?? 0)
+                            : k.type === 'shape'     ? (tr.shapeTimes?.[k.index] ?? 0)
+                            : (tr.blendshapeTracks?.get(k.name)?.times?.[k.index] ?? 0);
+    const keyTimes = (k, tr) => k.type === 'transform' ? tr.times
+                            : k.type === 'shape'     ? tr.shapeTimes
+                            : tr.blendshapeTracks?.get(k.name)?.times;
+    const parseExpr = (raw, cur) => {
+      const op = raw.slice(0, 2); const n = parseFloat(raw.slice(2));
+      if (op === '+=' && !isNaN(n)) return cur + n;
+      if (op === '-=' && !isNaN(n)) return cur - n;
+      if (op === '*=' && !isNaN(n)) return cur * n;
+      if (op === '/=' && !isNaN(n) && n !== 0) return cur / n;
+      const d = parseFloat(raw); return isNaN(d) ? null : d;
+    };
+
+    const ref = sel[0];
+    const refTrack = reg.tracks.get(ref.meshId); if (!refTrack) return;
+    const refTime  = keyTime(ref, refTrack);
+    const refFrame = Math.round(refTime * fps);
+    const newFrame = parseExpr(s, refFrame);
+    if (newFrame == null) return;
+    const isRel = /^[+\-*/]=/.test(s);
+    const dt = isRel ? (newFrame - refFrame) / fps : (Math.round(newFrame) / fps) - refTime;
+    if (Math.abs(dt) < 0.0001) return;
+
+    const before = this._snapshotTracks();
+    const moves = sel.map(k => { const tr = reg.tracks.get(k.meshId); return tr ? { ...k, time: keyTime(k, tr) } : null; }).filter(Boolean);
+    TimelineHelper.moveKeys(reg, moves, dt, undefined, mDur, this._main);
+    const touched = new Set(moves.map(m => m.meshId));
+    touched.forEach(id => { const tr = reg.tracks.get(id); if (tr) reg.sortTrack(tr); });
+    window._animSelectedKeys = moves.map(m => {
+      const tr = reg.tracks.get(m.meshId); if (!tr) return m;
+      const times = keyTimes(m, tr);
+      const want  = m.time + dt;
+      const idx   = times?.findIndex(t => Math.abs(t - want) < 0.005) ?? -1;
+      const { time: _drop, ...rest } = m;
+      return idx !== -1 ? { ...rest, index: idx } : rest;
+    });
+    const after = this._snapshotTracks();
+    this._main.getStateManager().pushStateCustom(
+      () => { window._animSelectedKeys = []; this._restoreTracksInPlace(before); },
+      () => { window._animSelectedKeys = []; this._restoreTracksInPlace(after); },
+      false, 'Set Keyframe Time'
+    );
+    const m = this._main?.getMesh?.();
+    if (m) reg.update(m, true);
+    if (this._main?.render) this._main.render();
+    this.draw();
+  }
+
+  // The edited value of a key (transform → position channel, shape → output time,
+  // blendshape → weight). undefined if not resolvable.
+  _keyValue(k, tr) {
+    if (!tr) return undefined;
+    if (k.type === 'transform')  return tr.positions?.[k.index * 3 + (k.channel ?? 0)];
+    if (k.type === 'shape')      return tr.shapeOutputTimes?.[k.index];
+    if (k.type === 'blendshape') return tr.blendshapeTracks?.get(k.name)?.values?.[k.index];
+    return undefined;
+  }
+
+  // Toolbar value field rect — sits just left of the frame field.
+  _valueFieldRect() {
+    const fr = this._frameFieldRect();
+    const w = 64, gap = 6;
+    return { x: fr.x - w - gap, y: 5, w, h: 20 };
+  }
+
+  // Apply a value expression to the selected key(s) from the toolbar value field.
+  //   plain number → set EVERY selected key's value to it (e.g. "0" zeroes them all).
+  //   += / -= / *= / /= → adjust each key's value by the expression. No clamping.
+  _applyValueExpr(rawVal) {
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    if (!reg || !sel?.length) return;
+    const s = String(rawVal ?? '').trim();
+    if (!s) return;
+    const parseExpr = (raw, cur) => {
+      const op = raw.slice(0, 2); const n = parseFloat(raw.slice(2));
+      if (op === '+=' && !isNaN(n)) return cur + n;
+      if (op === '-=' && !isNaN(n)) return cur - n;
+      if (op === '*=' && !isNaN(n)) return cur * n;
+      if (op === '/=' && !isNaN(n) && n !== 0) return cur / n;
+      const d = parseFloat(raw); return isNaN(d) ? null : d;
+    };
+    const before = this._snapshotTracks();
+    let changed = false;
+    sel.forEach(k => {
+      const tr = reg.tracks.get(k.meshId); if (!tr) return;
+      const cur = this._keyValue(k, tr) ?? 0;
+      const nv = parseExpr(s, cur);
+      if (nv == null) return;
+      if (k.type === 'transform' && tr.positions) {
+        tr.positions[k.index * 3 + (k.channel ?? 0)] = nv;
+      } else if (k.type === 'shape') {
+        if (!tr.shapeOutputTimes) tr.shapeOutputTimes = [...(tr.shapeTimes || [])];
+        tr.shapeOutputTimes[k.index] = nv;
+      } else if (k.type === 'blendshape') {
+        const bt = tr.blendshapeTracks?.get(k.name);
+        if (bt?.values) bt.values[k.index] = nv; // no clamp
+      }
+      changed = true;
+    });
+    if (!changed) return;
+    const after = this._snapshotTracks();
+    const selSnap = sel.map(k => ({ ...k }));
+    this._main.getStateManager().pushStateCustom(
+      () => { window._animSelectedKeys = selSnap.map(k => ({ ...k })); this._restoreTracksInPlace(before); },
+      () => { window._animSelectedKeys = selSnap.map(k => ({ ...k })); this._restoreTracksInPlace(after); },
+      false, 'Set Keyframe Value'
+    );
+    const m = this._main?.getMesh?.();
+    if (m) reg.update(m, true);
+    if (this._main?.render) this._main.render();
+    this.draw();
   }
 
   isMouseOver() {
@@ -372,9 +682,15 @@ export default class GuiTimeline {
 
     // Helper: draw one gutter row.  valStr (optional) is shown as a right-aligned
     // numeric badge; editable = true marks the badge as click-to-edit.
-    const _drawRow = (rowIdx, label, color, isVisible, valStr = null, editable = false) => {
+    const _drawRow = (rowIdx, label, color, isVisible, valStr = null, editable = false, highlight = false) => {
       const ry = gutterY + rowIdx * rowH - this._gutterScrollY;
       if (ry + rowH < headerH || ry > this._cssHeight) return; // culled
+
+      // Highlight a channel that is selected in the graph editor or being edited.
+      if (highlight) {
+        ctx.fillStyle = 'rgba(80,150,100,0.20)';
+        ctx.fillRect(0, ry, 200, rowH);
+      }
 
       // Color bar (4 × 14 px)
       ctx.fillStyle = color;
@@ -394,16 +710,16 @@ export default class GuiTimeline {
       ctx.fill();
       ctx.restore();
 
-      ctx.fillStyle = isVisible ? '#ccc' : '#555';
-      ctx.font = '10px sans-serif';
+      ctx.fillStyle = highlight ? '#fff' : (isVisible ? '#ccc' : '#555');
+      ctx.font = highlight ? 'bold 10px sans-serif' : '10px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       // Truncate label so it doesn't bleed into the value badge
       ctx.fillText(label, 36, ry + rowH / 2);
 
-      // Numeric value badge (right-aligned, x:108-185)
+      // Numeric value badge (right-aligned, x:140-184) — narrow, values are ≤4 chars
       if (valStr !== null) {
-        const vx = 108, vw = 77, vh = rowH - 6;
+        const vx = 140, vw = 44, vh = rowH - 6;
         const vy = Math.round(ry + 3);
         const hovVal = this._lastMouseX >= vx && this._lastMouseX <= vx + vw
                     && this._lastMouseY >= vy && this._lastMouseY <= vy + vh;
@@ -424,12 +740,46 @@ export default class GuiTimeline {
       }
     };
 
+    // Which channels are selected in the graph editor → highlight them in the
+    // gutter (bold + row tint), plus the channel being edited. Transform keys
+    // map to channel rows 0-2, shape keys to the 'Shot' row, blendshape by name.
+    const _sel = window._animSelectedKeys || [];
+    const selBsNames = new Set();
+    const selXfCh = new Set();
+    let selHasShape = false;
+    for (const k of _sel) {
+      if (k.type === 'blendshape' && k.name) selBsNames.add(k.name);
+      else if (k.type === 'transform' && k.channel !== undefined) selXfCh.add(k.channel);
+      else if (k.type === 'shape') selHasShape = true;
+    }
+    if (this._editingBsName) selBsNames.add(this._editingBsName);
+
+    // When the set of selected channels changes, pan the gutter to reveal the
+    // first selected blendshape (it may be scrolled out of view). Guarded by a
+    // signature so manual scrolling isn't fought on every frame.
+    const _selSig = [...selBsNames].sort().join('|');
+    if (_selSig !== this._lastSelBsSig) {
+      this._lastSelBsSig = _selSig;
+      if (selBsNames.size && trackForGutter?.blendshapeTracks) {
+        const _bsKeys = [...trackForGutter.blendshapeTracks.keys()];
+        for (let i = 0; i < _bsKeys.length; i++) {
+          if (selBsNames.has(_bsKeys[i])) { this._ensureGutterRowVisible(labels.length + i); break; }
+        }
+      }
+    }
+
+    // Hovered curve also highlights its gutter row (added AFTER the auto-scroll
+    // signature so hovering doesn't pan the gutter — only selection does).
+    const _hc = this._hoverCurve;
+
     // Current-time values for display — read from mesh matrix (already animated by reg.update)
     const _gMatrix = activeMeshForGutter?.getMatrix?.();
     const _gPosVals = _gMatrix ? [_gMatrix[12], _gMatrix[13], _gMatrix[14]] : null;
     for (let ch = 0; ch < labels.length; ch++) {
       const _gVal = ch < 3 && _gPosVals ? _gPosVals[ch].toFixed(2) : null;
-      _drawRow(ch, labels[ch], colors[ch], window._animChannelVisible[ch] !== false, _gVal, false);
+      const _hl = (ch < 3 ? selXfCh.has(ch) : selHasShape)
+               || (_hc && (ch < 3 ? (_hc.kind === 'transform' && _hc.channel === ch) : _hc.kind === 'shape'));
+      _drawRow(ch, labels[ch], colors[ch], window._animChannelVisible[ch] !== false, _gVal, false, _hl);
     }
 
     if (trackForGutter?.blendshapeTracks) {
@@ -440,12 +790,13 @@ export default class GuiTimeline {
         // Evaluate current weight for display in the value badge
         const _bsW = window._animationRegistry?.evaluateScalarTrack?.(bTrack, trackForGutter.playbackTime || 0) ?? 0;
         const _bsValStr = this._bsScrubName === name ? _bsW.toFixed(2) : _bsW.toFixed(2);
-        _drawRow(labels.length + bsIdx, name, color, isVisible, _bsValStr, true);
+        const _bsHl = selBsNames.has(name) || (_hc && _hc.kind === 'blendshape' && _hc.name === name);
+        _drawRow(labels.length + bsIdx, name, color, isVisible, _bsValStr, true, _bsHl);
 
-        // Scrub hint overlay (↔) — shown when hovering the scrub zone (x:32-108)
+        // Scrub hint overlay (↔) — shown when hovering the scrub zone (x:32-140)
         const rowIdxAbs = labels.length + bsIdx;
         const ry2 = gutterY + rowIdxAbs * rowH - this._gutterScrollY;
-        const mouseOverScrub = this._lastMouseX >= 32 && this._lastMouseX < 108
+        const mouseOverScrub = this._lastMouseX >= 32 && this._lastMouseX < 140
                             && this._lastMouseY >= ry2 && this._lastMouseY < ry2 + rowH;
         if (mouseOverScrub || this._bsScrubName === name) {
           ctx.save();
@@ -574,9 +925,10 @@ export default class GuiTimeline {
         for (let channel = 0; channel < 3; channel++) {
           const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
           if (!isVisible) continue;
-          
-          ctx.strokeStyle = colors[channel];
-          ctx.lineWidth = 2;
+
+          const _hovC = this._hoverCurve?.kind === 'transform' && this._hoverCurve.channel === channel;
+          ctx.strokeStyle = _hovC ? this._lightenHex(colors[channel]) : colors[channel];
+          ctx.lineWidth = _hovC ? 3.5 : 2;
           ctx.beginPath();
           
           for (let i = 0; i < track.times.length - 1; i++) {
@@ -774,8 +1126,9 @@ export default class GuiTimeline {
         if (track.shapeTimes.length >= 2) {
           const isVisible = window._animChannelVisible ? window._animChannelVisible[3] !== false : true;
           if (isVisible) {
-            ctx.strokeStyle = '#ff00ff'; // Magenta for Time Curve
-          ctx.lineWidth = 2;
+            const _hovS = this._hoverCurve?.kind === 'shape';
+            ctx.strokeStyle = _hovS ? this._lightenHex('#ff00ff') : '#ff00ff'; // Magenta for Time Curve
+          ctx.lineWidth = _hovS ? 3.5 : 2;
           
           for (let i = 0; i < track.shapeTimes.length - 1; i++) {
             const t1 = track.shapeTimes[i];
@@ -925,8 +1278,9 @@ export default class GuiTimeline {
 
           // Curve line — bezier segments
           if (bTrack.times.length >= 2) {
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
+            const _hovBs = this._hoverCurve?.kind === 'blendshape' && this._hoverCurve.name === name;
+            ctx.strokeStyle = _hovBs ? this._lightenHex(color) : color;
+            ctx.lineWidth = _hovBs ? 3.5 : 2;
             ctx.beginPath();
             for (let i = 0; i < bTrack.times.length - 1; i++) {
               const t1 = bTrack.times[i], t2 = bTrack.times[i + 1];
@@ -1055,7 +1409,12 @@ export default class GuiTimeline {
 
           if (minT !== Infinity && maxT !== -Infinity) {
             // If all values are identical (flat selection), give a small padding so box is visible
-            if (minV === maxV) { minV -= 0.05; maxV += 0.05; }
+            {
+        // Minimum on-screen box height (~60px) so vertical handles stay usable even
+        // when all selected keys share one value (e.g. all 0) — lets you drag them.
+        const _minHalf = 30 / Math.max(1, this._zoomY);
+        if ((maxV - minV) / 2 < _minHalf) { const _c = (minV + maxV) / 2; minV = _c - _minHalf; maxV = _c + _minHalf; }
+      }
             const wObj = { x: 0, y: 0, w: this._cssWidth, h: this._cssHeight };
             const tBox = { startTime: minT, endTime: maxT, minV, maxV };
             TimelineHelper.drawTransformBox(ctx, tBox, wObj, 50, 200, this._cssWidth - 200, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
@@ -1117,6 +1476,116 @@ export default class GuiTimeline {
     });
   }
 
+  // Hit-test the graph curves (straight segments between keys) at (rx,ry).
+  // Returns a channel descriptor { kind:'transform', channel } | { kind:'shape' }
+  // | { kind:'blendshape', name }, or null. Shared by curve-click and hover.
+  _hitTestCurve(rx, ry) {
+    const reg = window._animationRegistry;
+    const mesh = this._main?.getMesh?.();
+    if (!reg || !mesh) return null;
+    const track = reg.tracks.get(mesh.getID());
+    if (!track) return null;
+    const tlX = 200, tlW = this._cssWidth - 200;
+    if (rx <= tlX || ry <= 50) return null;
+    this._ensureViewInit();
+    const loopStart = this._viewStart, visibleDuration = this._viewDuration;
+    const xOf = (t) => tlX + ((t - loopStart) / visibleDuration) * tlW;
+    const vis = window._animChannelVisible || [true, true, true, true];
+    const TH = 6;
+    const dSeg = (px, py, ax, ay, bx, by) => {
+      const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+      let u = l2 ? ((px - ax) * dx + (py - ay) * dy) / l2 : 0; u = Math.max(0, Math.min(1, u));
+      return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
+    };
+    const test = (pts) => {
+      if (pts.length === 1) return Math.hypot(rx - xOf(pts[0].t), ry - this.valueToY(pts[0].v)) <= TH;
+      for (let i = 0; i + 1 < pts.length; i++)
+        if (dSeg(rx, ry, xOf(pts[i].t), this.valueToY(pts[i].v), xOf(pts[i + 1].t), this.valueToY(pts[i + 1].v)) <= TH) return true;
+      return false;
+    };
+    if (track.times && track.positions) {
+      for (let c = 0; c < 3; c++) {
+        if (!vis[c]) continue;
+        if (test(track.times.map((t, i) => ({ t, v: track.positions[i * 3 + c] })))) return { kind: 'transform', channel: c };
+      }
+    }
+    if (track.shapeTimes && track.shapeOutputTimes && vis[3]) {
+      if (test(track.shapeTimes.map((t, i) => ({ t, v: track.shapeOutputTimes[i] })))) return { kind: 'shape' };
+    }
+    if (track.blendshapeTracks) {
+      for (const [name, bt] of track.blendshapeTracks) {
+        if (window._animBsChannelVisible?.[name] === false || !bt.times) continue;
+        if (test(bt.times.map((t, i) => ({ t, v: bt.values[i] })))) return { kind: 'blendshape', name };
+      }
+    }
+    return null;
+  }
+
+  // Expand a channel descriptor into the full set of selectable keys for it.
+  _channelKeys(desc, id, track) {
+    if (desc.kind === 'transform') return track.times.map((_, i) => ({ meshId: id, type: 'transform', index: i, channel: desc.channel }));
+    if (desc.kind === 'shape')     return track.shapeTimes.map((_, i) => ({ meshId: id, type: 'shape', index: i }));
+    if (desc.kind === 'blendshape') {
+      const bt = track.blendshapeTracks.get(desc.name);
+      return bt ? bt.times.map((_, i) => ({ meshId: id, type: 'blendshape', name: desc.name, index: i })) : [];
+    }
+    return [];
+  }
+
+  // True when (cx,cy) in canvas px is open graph background — not the gutter,
+  // not the header, and not on a curve. Used by the VR two-handed zoom gesture
+  // to require both controllers to point at empty space.
+  isEmptyGraphSpaceAt(cx, cy) {
+    if (this._mode !== 'graph') return false;
+    if (cx < 200 || cy < 50) return false;
+    return !this._hitTestCurve(cx, cy);
+  }
+
+  // ── Two-pointer zoom (VR, both controllers in empty space) ──────────────────
+  // Horizontal controller separation → time (X) zoom; vertical → value (Y) zoom;
+  // both pivot around the midpoint between the controllers.
+  beginTwoPointerZoom(cx1, cy1, cx2, cy2) {
+    this._ensureViewInit();
+    const tlX = 200, tlW = this._cssWidth - 200;
+    const midCx = (cx1 + cx2) / 2, midCy = (cy1 + cy2) / 2;
+    this._tpZoom = {
+      viewDuration: this._viewDuration,
+      zoomY: this._zoomY,
+      // SIGNED initial separations (controller-1 minus controller-2) — using the
+      // signed value (not abs) means crossing the hands over doesn't bounce the
+      // zoom back up; the factor just pins at its floor.
+      dx0: cx1 - cx2,
+      dy0: cy1 - cy2,
+      pivotT: this._viewStart + ((midCx - tlX) / tlW) * this._viewDuration,
+      pivotVal: this.yToValue(midCy),
+    };
+  }
+
+  updateTwoPointerZoom(cx1, cy1, cx2, cy2) {
+    const z = this._tpZoom; if (!z) return;
+    const tlX = 200, tlW = this._cssWidth - 200;
+    const midCx = (cx1 + cx2) / 2, midCy = (cy1 + cy2) / 2;
+    const dx = cx1 - cx2, dy = cy1 - cy2;
+    // An axis only zooms if the controllers started with real separation on it
+    // (otherwise the ratio is undefined); the midpoint still pans either way.
+    // No upper clamp — graph values can span any range; only a tiny floor to
+    // avoid degenerate (zero/negative) scales.
+    if (Math.abs(z.dx0) > 20) {
+      const fx = Math.max(0.02, dx / z.dx0); // wider apart → fx>1 → zoom in (shorter)
+      this._viewDuration = Math.max(1e-4, z.viewDuration / fx);
+    }
+    this._viewStart = z.pivotT - ((midCx - tlX) / tlW) * this._viewDuration;
+    if (Math.abs(z.dy0) > 20) {
+      const fy = Math.max(0.02, dy / z.dy0); // taller apart → fy>1 → larger zoomY (zoom in)
+      this._zoomY = Math.max(1e-4, z.zoomY * fy);
+    }
+    const graphH = this._cssHeight - 50;
+    this._panY = (50 + graphH / 2 - midCy) - z.pivotVal * this._zoomY;
+    this.draw();
+  }
+
+  endTwoPointerZoom() { this._tpZoom = null; }
+
   handleGraphMouseDown(rx, ry) {
     const reg = window._animationRegistry;
     if (!reg) return;
@@ -1175,7 +1644,12 @@ export default class GuiTimeline {
         if (val != null && val < minV) minV = val;
         if (val != null && val > maxV) maxV = val;
       });
-      if (minV === maxV) { minV -= 0.05; maxV += 0.05; }
+      {
+        // Minimum on-screen box height (~60px) so vertical handles stay usable even
+        // when all selected keys share one value (e.g. all 0) — lets you drag them.
+        const _minHalf = 30 / Math.max(1, this._zoomY);
+        if ((maxV - minV) / 2 < _minHalf) { const _c = (minV + maxV) / 2; minV = _c - _minHalf; maxV = _c + _minHalf; }
+      }
 
       if (minT !== Infinity && maxT !== -Infinity) {
         const kxLeft = tlX + ((minT - loopStart) / visibleDuration) * tlW;
@@ -1242,11 +1716,13 @@ export default class GuiTimeline {
     }
 
     if (track.times && track.positions) {
+      const _chVis = window._animChannelVisible || [true, true, true, true];
       for (let i = 0; i < track.times.length; i++) {
         const t = track.times[i];
         const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
 
         for (let c = 0; c < 3; c++) {
+          if (_chVis[c] === false) continue; // hidden channel — not selectable
           const val = track.positions[i * 3 + c];
           const y = this.valueToY(val);
 
@@ -1308,7 +1784,7 @@ export default class GuiTimeline {
     }
 
     // Check Shape Keys in Graph Mode
-    if (track.shapeTimes && track.shapeOutputTimes) {
+    if (track.shapeTimes && track.shapeOutputTimes && (window._animChannelVisible?.[3] !== false)) {
       for (let i = 0; i < track.shapeTimes.length; i++) {
         const t = track.shapeTimes[i];
         const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -1375,7 +1851,7 @@ export default class GuiTimeline {
       let found = false;
       track.blendshapeTracks.forEach((bTrack, name) => {
         if (found) { bsIdx++; return; }
-        if (!bTrack.times) { bsIdx++; return; }
+        if (!bTrack.times || window._animBsChannelVisible?.[name] === false) { bsIdx++; return; } // hidden — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
           const t = bTrack.times[i];
           const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -1577,6 +2053,26 @@ export default class GuiTimeline {
       }
     }
 
+    // Curve click — select a whole channel by clicking its line (not just a key),
+    // so the gutter highlight/scroll updates.
+    {
+      const desc = this._hitTestCurve(rx, ry);
+      const picked = desc ? this._channelKeys(desc, id, track) : null;
+      if (picked && picked.length) {
+        const before = window._animSelectedKeys ? window._animSelectedKeys.map(k => ({ ...k })) : [];
+        window._animSelectedKeys = picked;
+        window._animTransformBox = null;
+        const after = [...picked];
+        this._main.getStateManager().pushStateCustom(
+          () => { window._animSelectedKeys = before; this.draw(); },
+          () => { window._animSelectedKeys = after;  this.draw(); },
+          false, 'Select Channel'
+        );
+        this.draw();
+        return;
+      }
+    }
+
     // Nothing hit — pan by default; fall back to marquee when the marquee toggle is on.
     if (window._animMarqueeMode) {
       this._isDraggingMarquee = true;
@@ -1713,15 +2209,16 @@ export default class GuiTimeline {
   // controller hit → mouse-event coordinate mapping.
   // We do NOT call onResize() here because it would override our width/right styles
   // with the sidebar offset, producing a giant canvas.
-  openVRView() {
-    const VR_W = 900, VR_H = 150;
+  openVRView(cssW = 900, cssH = 150) {
     // Size the 2D canvas directly — no DOM display changes that could trigger
     // a window-resize event and inadvertently call renderer.setSize() in XR mode.
+    // cssW/cssH come from the persisted panel size so the texture matches the
+    // mesh geometry (no stretching / low-res on first open or reopen).
     const dpr = window.devicePixelRatio || 1;
-    this._canvas.width  = VR_W * dpr;
-    this._canvas.height = VR_H * dpr;
-    this._cssWidth  = VR_W;
-    this._cssHeight = VR_H;
+    this._canvas.width  = Math.round(cssW) * dpr;
+    this._canvas.height = Math.round(cssH) * dpr;
+    this._cssWidth  = Math.round(cssW);
+    this._cssHeight = Math.round(cssH);
     this._ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._visible = true;
     this.draw();
@@ -1779,23 +2276,10 @@ export default class GuiTimeline {
   // [Step 2] Ensure the first selected key's channel is visible in the graph gutter.
   // Called each draw in graph mode — cheap, idempotent.
   _followSelectedKeyChannel() {
-    const sel = window._animSelectedKeys;
-    if (!sel || sel.length === 0) return;
-    const key = sel[0];
-    if (key.type === 'transform') {
-      if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
-      if (key.channel !== undefined && !window._animChannelVisible[key.channel]) {
-        window._animChannelVisible[key.channel] = true;
-      }
-    } else if (key.type === 'shape') {
-      if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
-      if (!window._animChannelVisible[3]) window._animChannelVisible[3] = true;
-    } else if (key.type === 'blendshape' && key.name) {
-      if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
-      if (window._animBsChannelVisible[key.name] === false) {
-        window._animBsChannelVisible[key.name] = true;
-      }
-    }
+    // Intentionally a no-op: previously this force-revealed the selected key's
+    // channel every frame, which fought solo/hide (a stale selection on a hidden
+    // channel would make it pop back into view). Visibility is now purely
+    // user-controlled; selection can't target hidden channels in the first place.
   }
 
   _cancelActiveAction() {
@@ -1915,6 +2399,25 @@ export default class GuiTimeline {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
+
+    // Any new pointer interaction dismisses an open value-entry field and its
+    // channel highlight (click elsewhere = lose focus). The value-badge handler
+    // below re-sets the highlight for a freshly clicked channel.
+    if (this._valInput && this._valInput.style.display !== 'none') {
+      this._commitValInput();
+      this._valInput.style.display = 'none';
+    }
+    if (this._frameInput && this._frameInput.style.display !== 'none') {
+      this._applyFrameExpr(this._frameInput.value);
+      this._frameInput.style.display = 'none';
+    }
+    if (this._valueInput && this._valueInput.style.display !== 'none') {
+      this._applyValueExpr(this._valueInput.value);
+      this._valueInput.style.display = 'none';
+    }
+    const _hadEdit = this._editingBsName != null;
+    this._editingBsName = null;
+    if (_hadEdit) this.draw();
 
     if (ry < 5) {
       this._isResizingPanel = true;
@@ -2078,6 +2581,72 @@ export default class GuiTimeline {
           return;
         }
       }
+      // Frame field (right-aligned toolbar badge) — set/shift the selected key frame(s).
+      {
+        const fr = this._frameFieldRect();
+        if (rx >= fr.x && rx <= fr.x + fr.w && ry >= fr.y && ry <= fr.y + fr.h) {
+          const sel = window._animSelectedKeys || [];
+          if (!sel.length) return; // nothing selected — no-op
+          const reg2 = window._animationRegistry;
+          const fps  = window._animFPS || 24;
+          const k0   = sel[0];
+          const tr0  = reg2?.tracks.get(k0.meshId);
+          const t0   = tr0 ? (k0.type === 'transform' ? tr0.times?.[k0.index]
+                            : k0.type === 'shape'     ? tr0.shapeTimes?.[k0.index]
+                            : tr0.blendshapeTracks?.get(k0.name)?.times?.[k0.index]) : undefined;
+          const curFrame = (t0 !== undefined) ? Math.round(t0 * fps) : 0;
+
+          // VR / numpad preference → numpad (digits only, so absolute frame set).
+          if (window._vrNumpad && window._vrNumpad.shouldUse()) {
+            if (window._vrNumpad.isBlockingOpen) return;
+            window._vrNumpad.open(curFrame, { label: sel.length > 1 ? 'Frame (all)' : 'Frame', integer: true, relativeExpr: true }, (val) => {
+              this._applyFrameExpr(String(val));
+              this.draw();
+            }, null, null, this._main?._vrTimelineMesh || null);
+            return;
+          }
+          // Desktop: typed entry — supports "+=10" / "-=5" to shift a multi-selection.
+          this._frameInput.style.left  = Math.round(fr.x) + 'px';
+          this._frameInput.style.top   = Math.round(fr.y) + 'px';
+          this._frameInput.style.width = (fr.w - 10) + 'px';
+          this._frameInput.style.display = 'block';
+          this._frameInput.value = sel.length > 1 ? '' : String(curFrame);
+          this._frameInput.placeholder = sel.length > 1 ? '+=N' : '';
+          this._frameInput.focus();
+          this._frameInput.select();
+          return;
+        }
+      }
+      // Value field (left of the frame field) — set/shift the selected key value(s).
+      {
+        const vr2 = this._valueFieldRect();
+        if (rx >= vr2.x && rx <= vr2.x + vr2.w && ry >= vr2.y && ry <= vr2.y + vr2.h) {
+          const sel = window._animSelectedKeys || [];
+          if (!sel.length) return;
+          const reg2 = window._animationRegistry;
+          const cur0 = this._keyValue(sel[0], reg2?.tracks.get(sel[0].meshId));
+          const curVal = (cur0 !== undefined) ? Math.round(cur0 * 1000) / 1000 : 0;
+
+          if (window._vrNumpad && window._vrNumpad.shouldUse()) {
+            if (window._vrNumpad.isBlockingOpen) return;
+            // No min/max → no clamp; relativeExpr enables += / -= for shifting.
+            window._vrNumpad.open(curVal, { label: sel.length > 1 ? 'Value (all)' : 'Value', integer: false, relativeExpr: true }, (val) => {
+              this._applyValueExpr(String(val));
+              this.draw();
+            }, null, null, this._main?._vrTimelineMesh || null);
+            return;
+          }
+          this._valueInput.style.left  = Math.round(vr2.x) + 'px';
+          this._valueInput.style.top   = Math.round(vr2.y) + 'px';
+          this._valueInput.style.width = (vr2.w - 10) + 'px';
+          this._valueInput.style.display = 'block';
+          this._valueInput.value = sel.length > 1 ? '' : String(curVal);
+          this._valueInput.placeholder = sel.length > 1 ? '0 or +=N' : '';
+          this._valueInput.focus();
+          this._valueInput.select();
+          return;
+        }
+      }
       // Dispatch toolbar clicks via _toolbarBtnDefs() so positions stay in sync with draw().
       // Transport buttons are positioned with a safe left-margin (see _toolbarBtnDefs) so
       // they never overlap the left-side buttons — a single find() is sufficient.
@@ -2088,6 +2657,7 @@ export default class GuiTimeline {
         switch (hit.id) {
           case 'mode': {
             this._mode = this._mode === 'graph' ? 'dope' : 'graph';
+            window.saveOption?.('vrTimelineMode', this._mode);
             if (this._mode === 'graph') {
               this.autoFitGraph();
               if (this._viewDuration === undefined) {
@@ -2208,10 +2778,15 @@ export default class GuiTimeline {
         const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
 
         if (channel >= 0 && channel < maxChannels) {
-          if (rx >= 4 && rx < 32) { // eye icon zone only
+          if (rx < 36) { // eye icon zone (widened for VR — easier to hit)
             if (window._animChannelVisible === undefined) window._animChannelVisible = [true, true, true, true];
-            window._animChannelVisible[channel] = !window._animChannelVisible[channel];
-            this.draw();
+            if (e.shiftKey) {
+              this._soloChannel({ kind: channel === 3 ? 'shape' : 'transform', channel });
+            } else {
+              window._animChannelVisible[channel] = !window._animChannelVisible[channel];
+              this._pruneSelectionToVisible();
+              this.draw();
+            }
             return;
           }
         }
@@ -2224,32 +2799,57 @@ export default class GuiTimeline {
           const bsNames = [...track.blendshapeTracks.keys()];
           const bsName = bsNames[bsOffset];
           if (bsName !== undefined) {
-            if (rx < 32) {
-              // Eye icon zone: defer decision to mouseup.
-              // click (no drag) → toggle visibility; drag → do nothing.
-              this._bsScrubName    = bsName;
-              this._bsScrubMesh    = activeMesh;
-              this._bsScrubZone    = 'eye';
-              this._bsScrubActive  = false;
-              this._bsScrubStartX  = rx;
+            if (rx < 36) {
+              // Eye icon zone (widened for VR). Toggle immediately on press — no
+              // click-vs-drag deferral, which was impossible to satisfy with a
+              // jittery VR controller. Shift (secondary trigger) → solo.
+              if (!window._animBsChannelVisible) window._animBsChannelVisible = {};
+              if (e.shiftKey) {
+                this._soloChannel({ kind: 'blendshape', name: bsName });
+              } else {
+                window._animBsChannelVisible[bsName] = window._animBsChannelVisible[bsName] === false ? true : false;
+                this._pruneSelectionToVisible();
+                this.draw();
+              }
               return;
             }
-            // Value badge zone (x:108-185): show numeric input for direct entry.
-            if (rx >= 108 && rx <= 185) {
+            // Value badge zone (x:140-185): enter a weight directly.
+            if (rx >= 140 && rx <= 185) {
               const bTrack = track.blendshapeTracks.get(bsName);
               const curW = reg.evaluateScalarTrack(bTrack, track.playbackTime || 0);
-              // Row y in canvas CSS coords: gutterY + (transform channels + bs index) * rowH − scroll
-              const _gutterRowTop = (50 + 4) + (maxChannels + bsOffset) * rowH - this._gutterScrollY;
+              // Mark this channel as being edited: bold name + scroll it into view
+              // (rendered on the shared canvas, so it shows on desktop and in VR).
+              this._editingBsName = bsName;
+              this._ensureGutterRowVisible(channel);
+              // VR (no keyboard) or the 'always use numpad' preference → bring up
+              // the floating numpad instead of the DOM input overlay.
+              if (window._vrNumpad && window._vrNumpad.shouldUse()) {
+                if (window._vrNumpad.isBlockingOpen) { this._editingBsName = null; return; }
+                this.draw();
+                // No min/max → numpad does not clamp; typing 5.0 keeps 5.0.
+                window._vrNumpad.open(curW, { label: bsName, integer: false }, (val) => {
+                  reg.setBlendshapeWeight(activeMesh, bsName, val);
+                  if (window.app?.render) window.app.render();
+                  this._editingBsName = null;
+                  this.draw();
+                }, null, null, this._main?._vrTimelineMesh || null);
+                return;
+              }
+              // Desktop: inline numeric input overlay, right-aligned in the badge.
+              // Row y in canvas CSS coords: gutterY + abs-row-index * rowH − scroll
+              // (computed after _ensureGutterRowVisible may have adjusted scroll).
+              const _gutterRowTop = (50 + 4) + channel * rowH - this._gutterScrollY;
               this._valInput.style.top  = Math.round(_gutterRowTop + 3) + 'px';
               this._valInput.style.display = 'block';
-              this._valInput.value = curW.toFixed(3);
+              this._valInput.value = curW.toFixed(2);
               this._valInputChannel = 'bs:' + bsName;
               this._valInput.focus();
               this._valInput.select();
+              this.draw();
               return;
             }
-            if (rx >= 32 && rx < 108) {
-              // Scrub zone (x:32-107): defer decision to mouseup.
+            if (rx >= 32 && rx < 140) {
+              // Scrub zone (x:32-139): defer decision to mouseup.
               // drag → scrub weight; click (no drag) → do nothing.
               const bTrack = track.blendshapeTracks.get(bsName);
               this._bsScrubName        = bsName;
@@ -2835,7 +3435,23 @@ export default class GuiTimeline {
       let dt = targetTime - this._keyDragStartTime;
       if (window._animSnapToFrame !== false) {
         const fps = window._animFPS || 24;
-        dt = Math.round(dt * fps) / fps;
+        // Snap the GRABBED key's resulting time to a whole frame (not the raw
+        // delta) — a key at 6.2 moves to 7.0, not 7.2. Other selected keys shift
+        // rigidly by the same dt so their relative spacing is preserved.
+        // grabbedBase = the time moveKeys uses as the grabbed key's origin:
+        // its exact initial time when a multi-selection snapshot exists, else
+        // the drag-start time (which is also moveKeys' base for a lone key).
+        let grabbedBase = this._keyDragStartTime;
+        const inits = this._animSelectedKeysInitialTimes;
+        if (inits && inits.length) {
+          const g = inits.find(k =>
+            k.type === this._activeKeyframeType &&
+            k.index === this._activeKeyframeIndex &&
+            (this._activeKeyframeType !== 'transform' || k.channel === this._activeKeyframeChannel) &&
+            (this._activeKeyframeType !== 'blendshape' || k.name === this._activeBlendshapeName));
+          if (g && g.time !== undefined) grabbedBase = g.time;
+        }
+        dt = (Math.round((grabbedBase + dt) * fps) / fps) - grabbedBase;
       }
       
       if (window._animationRegistry) {
@@ -2912,9 +3528,13 @@ export default class GuiTimeline {
       const tlW = this._cssWidth - 200;
 
       const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-      const loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-      const visibleDuration = Math.max(0.1, loopEnd - loopStart);
+      // Use the SAME time→x mapping as the hit-test and draw (the graph view
+      // window, not the raw loop range) — otherwise, after any zoom/pan, the
+      // horizontal (left/right) and center moves compute against the wrong scale
+      // and appear not to work, while top/bottom (value-based) still do.
+      this._ensureViewInit();
+      const loopStart = this._viewStart;
+      const visibleDuration = this._viewDuration;
 
       const vDur = visibleDuration;
 
@@ -2937,7 +3557,8 @@ export default class GuiTimeline {
           track.shapeOutputTimes[initKey.index] = newVal;
         } else if (initKey.type === 'blendshape') {
           const bt = track.blendshapeTracks?.get(initKey.name);
-          if (bt?.values) bt.values[initKey.index] = Math.max(0, Math.min(1, newVal));
+          // No 0..1 clamp — overshoot is intentionally allowed.
+          if (bt?.values) bt.values[initKey.index] = newVal;
         }
       };
       
@@ -3060,7 +3681,13 @@ export default class GuiTimeline {
       this._marqueeEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
       this.draw();
     }
-    
+
+    // Curve hover highlight (graph mode, idle) — shows which curve a click selects.
+    const _idle = !this._isDraggingKeyframe && !this._isDraggingMarquee && !this._isDraggingTangent
+               && !this._isPanningGraph && !this._isPanningGraphXY && !this._isZoomingGraph
+               && !this._activeTransformHandle && !this._isDraggingGutter && !this._isDraggingPlayhead;
+    this._hoverCurve = (this._mode === 'graph' && _idle) ? this._hitTestCurve(rx, ry) : null;
+
     if (rx >= tlX && rx <= tlX + tlW && ry >= 50) {
       this.draw();
     }
@@ -3564,7 +4191,7 @@ export default class GuiTimeline {
       if (laneIdx < laneMin || laneIdx > laneMax) return;
       if (!trackObj.blendshapeTracks) return;
       trackObj.blendshapeTracks.forEach((bTrack, name) => {
-        if (!bTrack.times) return;
+        if (!bTrack.times || window._animBsChannelVisible?.[name] === false) return; // hidden — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
           const t = bTrack.times[i];
           if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'blendshape', name, index: i });
@@ -3845,6 +4472,58 @@ export default class GuiTimeline {
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(window._animStatusText || '', w.w / 2, w.y + 40);
+    }
+
+    // Frame field (right-aligned in toolbar): shows the selected key's frame and
+    // is click-to-edit. Drawn here (shared by both modes, before the mode branch).
+    {
+      const fr = this._frameFieldRect();
+      const sel = window._animSelectedKeys || [];
+      let label = '—';
+      if (sel.length === 1) {
+        const k = sel[0]; const tr = reg.tracks.get(k.meshId);
+        const t = tr ? (k.type === 'transform' ? tr.times?.[k.index]
+                     : k.type === 'shape'     ? tr.shapeTimes?.[k.index]
+                     : tr.blendshapeTracks?.get(k.name)?.times?.[k.index]) : undefined;
+        if (t !== undefined) label = String(Math.round(t * fps));
+      } else if (sel.length > 1) {
+        label = `${sel.length} keys`;
+      }
+      const hasSel = sel.length > 0;
+      const hovF = this._lastMouseX >= fr.x && this._lastMouseX <= fr.x + fr.w
+                && this._lastMouseY >= fr.y && this._lastMouseY <= fr.y + fr.h;
+      ctx.fillStyle = !hasSel ? '#282828' : (hovF ? '#3a4a3a' : '#252525');
+      ctx.beginPath(); ctx.roundRect(fr.x, fr.y, fr.w, fr.h, 3); ctx.fill();
+      ctx.strokeStyle = hasSel ? (hovF ? '#446644' : '#3a3a3a') : '#333';
+      ctx.lineWidth = 0.5; ctx.stroke();
+      ctx.fillStyle = '#777'; ctx.font = '9px sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText('F', fr.x + 5, fr.y + fr.h / 2 + 0.5);
+      ctx.fillStyle = hasSel ? (hovF ? '#88ddaa' : '#bbb') : '#555';
+      ctx.font = '10px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(label, fr.x + fr.w - 5, fr.y + fr.h / 2 + 0.5);
+
+      // Value field — just left of the frame field. Sets/shifts selected key values.
+      const vr2 = this._valueFieldRect();
+      let vlabel = '—';
+      if (sel.length === 1) {
+        const v = this._keyValue(sel[0], reg.tracks.get(sel[0].meshId));
+        if (v !== undefined) vlabel = String(Math.round(v * 1000) / 1000);
+      } else if (sel.length > 1) {
+        vlabel = `${sel.length} keys`;
+      }
+      const hovV = this._lastMouseX >= vr2.x && this._lastMouseX <= vr2.x + vr2.w
+                && this._lastMouseY >= vr2.y && this._lastMouseY <= vr2.y + vr2.h;
+      ctx.fillStyle = !hasSel ? '#282828' : (hovV ? '#3a4a3a' : '#252525');
+      ctx.beginPath(); ctx.roundRect(vr2.x, vr2.y, vr2.w, vr2.h, 3); ctx.fill();
+      ctx.strokeStyle = hasSel ? (hovV ? '#446644' : '#3a3a3a') : '#333';
+      ctx.lineWidth = 0.5; ctx.stroke();
+      ctx.fillStyle = '#777'; ctx.font = '9px sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText('V', vr2.x + 5, vr2.y + vr2.h / 2 + 0.5);
+      ctx.fillStyle = hasSel ? (hovV ? '#88ddaa' : '#bbb') : '#555';
+      ctx.font = '10px monospace'; ctx.textAlign = 'right';
+      ctx.fillText(vlabel, vr2.x + vr2.w - 5, vr2.y + vr2.h / 2 + 0.5);
     }
 
     if (this._mode === 'graph') {

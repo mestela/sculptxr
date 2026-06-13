@@ -333,6 +333,7 @@ export default class TimelineHelper {
     if (track && track.blendshapeTracks) {
       track.blendshapeTracks.forEach((bTrack, name) => {
         if (!bTrack.times || !bTrack.values) return;
+        if (window._animBsChannelVisible?.[name] === false) return; // hidden — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
           const t = bTrack.times[i];
           if (t >= tMin && t <= tMax) {
@@ -406,7 +407,8 @@ export default class TimelineHelper {
         track.shapeOutputTimes[sk.index] = newVal;
       } else if (sk.type === 'blendshape') {
         const bt = track.blendshapeTracks?.get(sk.name);
-        if (bt?.values) bt.values[sk.index] = Math.max(0, Math.min(1, newVal));
+        // No 0..1 clamp — overshoot (below 0 / above 1) is intentionally allowed.
+        if (bt?.values) bt.values[sk.index] = newVal;
       }
     });
     

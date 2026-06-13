@@ -1233,27 +1233,62 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     return isNaN(direct) ? null : direct;
   };
 
+  // Exact keyframe time (seconds) for any key type.
+  const _keyTime = (k, tr) => {
+    if (k.type === 'transform')  return tr.times?.[k.index] ?? 0;
+    if (k.type === 'shape')      return tr.shapeTimes?.[k.index] ?? 0;
+    if (k.type === 'blendshape') return tr.blendshapeTracks?.get(k.name)?.times?.[k.index] ?? 0;
+    return 0;
+  };
+  const _keyTimes = (k, tr) => {
+    if (k.type === 'transform')  return tr.times;
+    if (k.type === 'shape')      return tr.shapeTimes;
+    if (k.type === 'blendshape') return tr.blendshapeTracks?.get(k.name)?.times;
+    return null;
+  };
+
   const _applyKeyFrame = () => {
     const fps = window._animFPS || 24;
-    const rawVal = el.querySelector('#acp-key-frame')?.value ?? '';
+    const rawVal = (el.querySelector('#acp-key-frame')?.value ?? '').trim();
     const sel = window._animSelectedKeys;
     if (!sel?.length) return;
     const r = reg(); if (!r) return;
     const mDur = (window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
-    const single = sel[0];
-    const track = r.tracks.get(single.meshId); if (!track) return;
-    const origTime = single.type === 'transform' ? (track.times?.[single.index] ?? 0) : (track.shapeTimes?.[single.index] ?? 0);
-    const currentFrame = Math.round(origTime * fps);
-    const newFrame = _parseExpr(rawVal, currentFrame);
+
+    // Reference = first selected key; the expression evaluates against its frame.
+    const ref = sel[0];
+    const refTrack = r.tracks.get(ref.meshId); if (!refTrack) return;
+    const refTime  = _keyTime(ref, refTrack);
+    const refFrame = Math.round(refTime * fps);
+    const newFrame = _parseExpr(rawVal, refFrame);
     if (newFrame == null) return;
-    const dt = (newFrame / fps) - origTime;
+
+    // Relative (+=, -=, *=, /=) → shift ALL selected keys by the frame delta,
+    // preserving their spacing/offsets. Absolute number → set the reference key
+    // to that whole frame and shift the rest rigidly by the same dt.
+    const isRel = /^[+\-*/]=/.test(rawVal);
+    const dt = isRel ? (newFrame - refFrame) / fps
+                     : (Math.round(newFrame) / fps) - refTime;
     if (Math.abs(dt) < 0.0001) return;
-    TimelineHelper.moveKeys(r, [{ ...single, time: origTime }], dt, undefined, mDur, main);
-    r.sortTrack(track);
-    const newTime = origTime + dt;
-    const times = single.type === 'transform' ? track.times : track.shapeTimes;
-    const newIdx = times?.findIndex(t => Math.abs(t - newTime) < 0.005) ?? -1;
-    if (newIdx !== -1) window._animSelectedKeys = [{ ...single, index: newIdx }];
+
+    // Snapshot each selected key's exact time, shift all by dt.
+    const moves = sel.map(k => {
+      const tr = r.tracks.get(k.meshId);
+      return tr ? { ...k, time: _keyTime(k, tr) } : null;
+    }).filter(Boolean);
+    TimelineHelper.moveKeys(r, moves, dt, undefined, mDur, main);
+
+    // Re-sort touched tracks and re-resolve each key's index by its new time.
+    const touched = new Set(moves.map(m => m.meshId));
+    touched.forEach(id => { const tr = r.tracks.get(id); if (tr) r.sortTrack(tr); });
+    window._animSelectedKeys = moves.map(m => {
+      const tr = r.tracks.get(m.meshId); if (!tr) return m;
+      const times = _keyTimes(m, tr);
+      const want  = m.time + dt;
+      const idx   = times?.findIndex(t => Math.abs(t - want) < 0.005) ?? -1;
+      const { time: _drop, ...rest } = m;
+      return idx !== -1 ? { ...rest, index: idx } : rest;
+    });
     _sync();
   };
 
@@ -1379,7 +1414,9 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const input = el.querySelector(id);
     if (!input) return;
     input.addEventListener('click', (e) => {
-      if (!window._vrNumpad) return; // numpad not yet initialised — fall back to native input
+      // Outside VR, only intercept when the user opted into the numpad;
+      // otherwise let the native input accept keyboard typing.
+      if (!window._vrNumpad || !window._vrNumpad.shouldUse()) return;
       // Cooldown: suppress re-open for 400 ms after the numpad closes so a
       // held or bouncing VR trigger can't immediately hit the panel beneath.
       if (window._vrNumpad.isBlockingOpen) return;
@@ -1403,7 +1440,9 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const input = el.querySelector(id);
     if (!input) return;
     input.addEventListener('click', (e) => {
-      if (!window._vrNumpad) return;
+      // Outside VR, only intercept when the user opted into the numpad;
+      // otherwise let the native input accept keyboard typing.
+      if (!window._vrNumpad || !window._vrNumpad.shouldUse()) return;
       if (window._vrNumpad.isBlockingOpen) return;
       // Frame input: only open when a single key is selected (frame is ambiguous for multi)
       if (id === '#acp-key-frame' && (!input.value || input.value === '—')) return;

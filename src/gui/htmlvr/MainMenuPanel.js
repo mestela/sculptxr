@@ -2749,6 +2749,8 @@ export function buildMenuHTML_desktopSettings(main) {
   const debugActive = !!document.getElementById('log')?.style.display && document.getElementById('log').style.display !== 'none';
 
   return `${ipadSection}
+    <div class="mm-section-title">Numeric Input</div>
+    ${chk('Always show numpad', opts.alwaysNumpad)}
     <div class="mm-section-title">Pen Pressure</div>
     <div class="mm-row">
       <span class="mm-lbl">Radius factor</span>
@@ -2782,6 +2784,7 @@ export function wireMenuDesktopSettings(el, main, repaintFn) {
   wireCheck('#mm-fingers-sculpt',        'ipadFingerSculpt', '_ipadFingerSculpt');
   wireCheck('#mm-stylus-controls-view',  'ipadStylusView',   '_ipadStylusView');
   wireCheck('#mm-stylus-sculpts',        'ipadStylusSculpt', '_ipadStylusSculpt');
+  wireCheck('#mm-always-show-numpad',    'alwaysNumpad',     '_alwaysNumpad');
 
   wireSlider(q('#mm-tablet-radius'),    q('#mm-tablet-radius-val'),
     (v) => { Tablet.radiusFactor    = v; getOptionsURL.saveOption('tabletRadiusFactor',    v, 300); }, v => v.toFixed(2));

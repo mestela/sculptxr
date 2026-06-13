@@ -1508,8 +1508,9 @@ class AnimationRegistry {
         track.shapeOutputTimes[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
       } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {
         const bTrack = track.blendshapeTracks.get(key.name);
+        // No 0..1 clamp — overshoot (below 0 / above 1) is intentionally allowed.
         if (bTrack && key.index !== undefined) {
-          bTrack.values[key.index] = Math.max(0, Math.min(1, (key.startVal !== undefined ? key.startVal : 0) + dVal));
+          bTrack.values[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
         }
       }
     });
