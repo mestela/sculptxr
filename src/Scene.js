@@ -1099,13 +1099,17 @@ class Scene {
             this._animPanel.syncFromState();
           } catch (_) {}
         }
-        if (this._vrNumpad?.mesh?.visible) {
+        if (this._vrNumpad?.mesh) {
+          // Always call update() so the numpad unmounts itself from the host
+          // canvas while closed (otherwise it keeps getting re-rasterised).
           try { this._vrNumpad.update(true); } catch (_) {}
-          // Keep numpad glued to its source panel (important when that panel
-          // is moving with a VR controller — re-parenting to the controller
-          // group caused orientation bugs with negative-scale decomposition,
-          // so instead we update the world-space position every frame here.
-          try { this._vrNumpad._repositionIfTracking(); } catch (_) {}
+          if (this._vrNumpad.mesh.visible) {
+            // Keep numpad glued to its source panel (important when that panel
+            // is moving with a VR controller — re-parenting to the controller
+            // group caused orientation bugs with negative-scale decomposition,
+            // so instead we update the world-space position every frame here.
+            try { this._vrNumpad._repositionIfTracking(); } catch (_) {}
+          }
         }
         // Single drain: executes the one requestPaint callback queued above.
         drainRAF();
@@ -3866,8 +3870,13 @@ class Scene {
   _swapHtmlPanels(show) {
     // Sync + flush the incoming panel's texture BEFORE making it visible so
     // the mesh never appears with stale content even for a single frame.
-    if (show === 'mini') this._miniPanel?.syncFromState();
-    if (show === 'main') this._mainMenuPanel?.syncFromState();
+    // Mount it into the host canvas first (it may have been unmounted while
+    // hidden) so the flush actually rasterises it.
+    const _prep = (p) => { if (!p) return; p._setHostMounted?.(true); p.syncFromState?.(); p.flushPaint?.(); };
+    if (show === 'mini')   _prep(this._miniPanel);
+    if (show === 'main')   _prep(this._mainMenuPanel);
+    if (show === 'brush')  _prep(this._brushPanel);
+    if (show === 'picker') _prep(this._toolPickerPanel);
 
     const mini   = this._miniPanel?.mesh;
     const brush  = this._brushPanel?.mesh;
@@ -4631,8 +4640,8 @@ class Scene {
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && Math.abs(valY_NonDom) > T_PRESS) {
             const domSource = this._dominantHand === 'left' ? left : right;
             const isSlowMod = domSource?.gamepad?.buttons[0]?.pressed ?? false;
-            const scrollSpeed = isSlowMod ? 4 : 20; // px per frame; hold trigger for fine scroll
-            const delta = (valY_NonDom > 0 ? 1 : -1) * scrollSpeed;
+            const scrollSpeed = isSlowMod ? 12 : 55; // px per frame at full push; hold trigger for fine scroll
+            const delta = valY_NonDom * scrollSpeed; // proportional to stick deflection
 
             // HTML panel mode — scroll the panel the ray was on last frame
             if (window._brushPanelEnabled !== false) {
@@ -4665,8 +4674,8 @@ class Scene {
 
           if ((this._isPointingAtMenu || this._wasPointingAtMenu) && isPressedY) {
             const isSlowMod = nonDomSource?.gamepad?.buttons[0]?.pressed ?? false;
-            const scrollSpeed = isSlowMod ? 4 : 20;
-            const delta = (valY > 0 ? 1 : -1) * scrollSpeed;
+            const scrollSpeed = isSlowMod ? 12 : 55;
+            const delta = valY * scrollSpeed; // proportional to stick deflection
 
             if (window._brushPanelEnabled !== false) {
               if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
@@ -5166,8 +5175,18 @@ class Scene {
             const _locked = _dragCandidates.find(v => v.panel?._sliderDragTarget && v.panel?.mesh);
             if (_locked) {
               const pm = _locked.panel.mesh;
-              const _planeNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(pm.quaternion);
-              const _plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_planeNormal, pm.position);
+              // Use the panel's WORLD transform — the wrist panels (mini/brush) are
+              // parented to the controller grip, so pm.position/quaternion are local.
+              // Building the plane from local coords put it in the wrong place and
+              // froze the projected UV (sliders locked). worldToLocal() below already
+              // uses matrixWorld, so it just needs a correctly-placed world plane.
+              pm.updateWorldMatrix(true, false);
+              const _pw = new THREE.Vector3();
+              const _pq = new THREE.Quaternion();
+              pm.getWorldPosition(_pw);
+              pm.getWorldQuaternion(_pq);
+              const _planeNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(_pq);
+              const _plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_planeNormal, _pw);
               const _hit = new THREE.Vector3();
               if (_rc.ray.intersectPlane(_plane, _hit)) {
                 const _local = pm.worldToLocal(_hit.clone());

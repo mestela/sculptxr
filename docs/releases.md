@@ -1,3 +1,14 @@
+# v2.3.0
+VR UI performance & interaction polish — HTML panels, sliders, and scrolling.
+
+- **Fix**: **VR Slider Dragging (wrist panels)**: Radius/intensity sliders on the wrist-mounted panels were pegging to their minimum on touch. During a slider drag the ray was projected onto a plane built from the panel mesh's *local* transform, but those panels are parented to the controller grip — so the plane was placed in the wrong space and the projected UV collapsed. Now built from the panel's world transform; sliders track correctly. Same root-cause fix applied to the value-entry hit-tests.
+- **Feature**: **HTML Panel Performance — Idle Freeze**: The HTML-in-canvas panels re-serialised their entire DOM to SVG several times a second even when nothing changed, dropping VR framerate. Added per-panel change-detection (BrushPanel/MiniPanel) so static panels stop rasterising when idle, and **unmount hidden panels from the shared host canvas** so each paint only rasterises what's actually visible (the polyfill re-rasterises every mounted child per paint). Idle and slider-drag framerate is dramatically improved.
+- **Fix**: **Panel Swap Flash**: Switching panels (e.g. tool button → tool selection) no longer flashes/blanks — the remount no longer force-disposes the texture; geometry only rebuilds when content size actually changes.
+- **Feature**: **Scrollable Panel Performance**: Scrolling long panels (Files, settings, torn-off sections) re-rasterised the whole panel on every step. Now the re-rasterisation is throttled during a continuous scroll (with a sharp snap on release), keeping the framerate up while scrolling.
+- **Fix**: **Custom Scrollbars in VR**: The custom scrollbar thumb now tracks the scroll position (the native `scroll` event doesn't fire for the offscreen programmatic scroll), and the scrollbar is **draggable** — grab the thumb or track and the ray's vertical position scrubs the list.
+- **Tweak**: **Thumbstick Scroll Speed**: Panel scrolling is now proportional to stick deflection and ~2.5× faster at full push (hold the trigger for fine control).
+- **Internal**: Consistent semantic versioning via `bump.mjs` (patch on test builds, minor on push, major on request); `dist/` build output removed from git tracking.
+
 # v2.0.6
 Timeline & animation editor overhaul — graph editing, VR ergonomics, and persistence.
 

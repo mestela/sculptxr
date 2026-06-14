@@ -62,9 +62,29 @@ export class HTMLVRPanel {
 
     // Append to the shared layoutsubtree canvas so the polyfill tracks layout.
     getHostCanvas().appendChild(element);
+    this._hostMounted = true; // whether our DOM is currently in the host canvas
 
     // Register for onpaint notifications.
     registerPanel(this);
+  }
+
+  // Mount/unmount our DOM in the shared host canvas. The polyfill re-rasterises
+  // EVERY child of the host canvas on every paint (requestPaint dirties them all),
+  // so keeping hidden panels out of it makes each paint proportional to what's
+  // actually visible — a big saving when several panels are registered but hidden.
+  _setHostMounted(want) {
+    if (want === this._hostMounted) return;
+    this._hostMounted = want;
+    const host = getHostCanvas();
+    if (want) {
+      host.appendChild(this._element);
+      // No forced _needsResize here — the panel's size is unchanged while hidden,
+      // and forcing a resize disposes the texture (a blank frame = visible flash on
+      // swap). syncFromState() sets _needsResize itself when content size changes.
+      this.markDirty();
+    } else {
+      try { host.removeChild(this._element); } catch (_) {}
+    }
   }
 
   dispose() {
@@ -145,7 +165,7 @@ export class HTMLVRPanel {
   // ── Texture (called by install.js canvas.onpaint) ─────────────────────────
 
   _onPaint() {
-    if (!this.mesh) return;
+    if (!this.mesh || !this._hostMounted) return; // unmounted (hidden) → no snapshot to capture
     try {
       const bitmap = getHostCanvas().captureElementImage(this._element);
       if (!bitmap) return;
@@ -205,6 +225,10 @@ export class HTMLVRPanel {
    */
   update(_xrIsPresenting) {
     if (!this.mesh) return;
+    // Keep our host-canvas membership in sync with visibility — hidden panels are
+    // unmounted so they don't get re-rasterised on every paint.
+    this._setHostMounted(!!this.mesh.visible);
+    if (!this._hostMounted) { this._dirty = false; return; }
     // Suppress panel rasterisation during an active slider drag.  The mesh
     // deformation (applyBlendshapes) still runs every frame so the user sees
     // the sculpt change in real time; the panel texture catching up 200 ms late
@@ -249,8 +273,37 @@ export class HTMLVRPanel {
     // Walk descendants looking for the first element with scrollable overflow.
     const el = this._findScrollable(this._element);
     if (!el) return;
+    // Move the scroll position immediately (keeps the DOM/hit-test correct), but
+    // THROTTLE the expensive re-rasterisation during a continuous scroll so it
+    // doesn't tank the VR framerate. A debounced "final" repaint snaps the texture
+    // sharp once scrolling stops.
     el.scrollTop = Math.max(0, el.scrollTop + deltaPx);
-    this.markDirty();
+    // Update the custom scrollbar thumb directly — the panels wire it to the DOM
+    // 'scroll' event, which doesn't fire for this offscreen programmatic scroll.
+    this._updateScrollThumb(el);
+    const now = performance.now();
+    if (now - (this._scrollRasterTs || 0) > 300) {
+      this._scrollRasterTs = now;
+      this.markDirty();
+    }
+    clearTimeout(this._scrollStopTimer);
+    this._scrollStopTimer = setTimeout(() => { this.markDirty(); }, 150);
+  }
+
+  // Position the custom scrollbar thumb to reflect a scroll container's position.
+  _updateScrollThumb(scrollEl) {
+    const thumb = this._element.querySelector('.mm-scrollbar-thumb');
+    if (!thumb || !scrollEl) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+    if (scrollHeight > clientHeight) {
+      thumb.style.display = '';
+      const thumbH = Math.max(32, (clientHeight / scrollHeight) * clientHeight);
+      const ratio  = scrollTop / (scrollHeight - clientHeight);
+      thumb.style.height = thumbH + 'px';
+      thumb.style.top    = Math.round(ratio * (clientHeight - thumbH)) + 'px';
+    } else {
+      thumb.style.display = 'none';
+    }
   }
 
   _findScrollable(root) {
@@ -433,6 +486,28 @@ export class HTMLVRPanel {
       // PointerEvent below never fires.  If it did, setupRangeDrag's pointermove
       // listener would call applyBlendshapes a second time per frame, doubling
       // the vertex computation + GPU upload cost.
+      if (type === 'pointermove') return;
+    }
+
+    // Custom scrollbar drag — the thumb/track use pointer-capture which _vrDispatch
+    // doesn't honour, so scroll directly from the ray's Y over the track.
+    if (type === 'pointerdown') {
+      const sbThumb = el.closest?.('.mm-scrollbar-thumb');
+      const sbTrack = (sbThumb && sbThumb.closest('.mm-scrollbar-track')) || el.closest?.('.mm-scrollbar-track');
+      if (sbTrack) {
+        const scrollEl = this._findScrollable(this._element);
+        if (scrollEl) this._scrollDrag = { track: sbTrack, scrollEl };
+      }
+    }
+    if (type === 'pointerup' && this._scrollDrag) { this._scrollDrag = null; this.markDirty(); }
+    if (this._scrollDrag && (type === 'pointerdown' || type === 'pointermove')) {
+      const { track, scrollEl } = this._scrollDrag;
+      const tr = track.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (absY - tr.top) / Math.max(1, tr.height)));
+      scrollEl.scrollTop = ratio * Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+      this._updateScrollThumb(scrollEl);
+      const now = performance.now();
+      if (now - (this._scrollRasterTs || 0) > 120) { this._scrollRasterTs = now; this.markDirty(); }
       if (type === 'pointermove') return;
     }
 

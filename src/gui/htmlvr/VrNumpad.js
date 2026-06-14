@@ -502,6 +502,7 @@ export class VrNumpad extends HTMLVRPanel {
     }
 
     // ── VR path ──────────────────────────────────────────────────────────────
+    this._setHostMounted(true); // remount into the host canvas before flushPaint() below
     this._config      = config;
     this._onConfirm   = onConfirm;
     this._str         = _initStr(currentValue, config);
