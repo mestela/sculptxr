@@ -1,3 +1,10 @@
+# v2.4.2
+Panel design tokens, VR hover fix, and a FontAwesome icon-load fix.
+
+- **Refactor**: **Design tokens** (`uiTokens.js`): single source of truth for the panel visual language — semantic CSS custom properties (`--ui-panel-bg`, `--ui-btn-bg-hover`, `--ui-danger-bg`, `--ui-radius`, …) plus a matching `UI_PALETTE` JS export for canvas surfaces. VrConfirm fully adopts it; broader adoption is incremental.
+- **Fix**: **VR button hover**: there is no CSS `:hover` in a headset (panels are rasterised textures) — the ray dispatch adds a `.hover` class instead. VrConfirm styled only `:hover`, so its buttons were dead in VR. Now styles both `:hover` and `.hover` (+ active states); same fix applied to VrNumpad.
+- **Fix**: **Icons intermittently blank on cold load** (`fontReady.js`): the SVG-foreignObject rasteriser only bakes FontAwesome glyphs if the web-font is loaded at paint time; a panel rasterising before the woff2 arrived left icons blank until a dev-server restart. Now explicitly loads the FA faces and force-repaints all panels once fonts are ready (and on later `loadingdone`). Manual escape hatch: `window._repaintAllPanels()`.
+
 # v2.4.0
 Timeline & VR-dialog fixes — confirm dialogs, edge-drag, gutter cleanup.
 

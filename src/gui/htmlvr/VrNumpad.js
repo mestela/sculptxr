@@ -78,25 +78,25 @@ const CSS = `
   justify-content: center;
   transition: background 0.07s;
 }
-.vrn-btn:hover  { background: #45475a; }
+.vrn-btn:hover, .vrn-btn.hover  { background: #45475a; }
 .vrn-btn.active { background: #585b70; }
 .vrn-btn.vrn-ok {
   background: #40a02b;
   color: #fff;
   font-size: 20px;
 }
-.vrn-btn.vrn-ok:hover { background: #4ec33a; }
+.vrn-btn.vrn-ok:hover, .vrn-btn.vrn-ok.hover { background: #4ec33a; }
 .vrn-btn.vrn-cancel {
   background: #e64553;
   color: #fff;
   font-size: 20px;
 }
-.vrn-btn.vrn-cancel:hover { background: #f05e6c; }
+.vrn-btn.vrn-cancel:hover, .vrn-btn.vrn-cancel.hover { background: #f05e6c; }
 .vrn-btn.vrn-back {
   background: #3d2e40;
   color: #f5c2e7;
 }
-.vrn-btn.vrn-back:hover { background: #5a3d5e; }
+.vrn-btn.vrn-back:hover, .vrn-btn.vrn-back.hover { background: #5a3d5e; }
 .vrn-btn.vrn-dim {
   opacity: 0.3;
   cursor: default;
@@ -121,7 +121,7 @@ const CSS = `
   align-items: center;
   justify-content: center;
 }
-.vrn-sign:hover  { background: #45475a; }
+.vrn-sign:hover, .vrn-sign.hover  { background: #45475a; }
 .vrn-sign.active { background: #40a02b; color: #fff; }
 `;
 

@@ -14,15 +14,19 @@
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { injectUITokens } from './uiTokens.js';
 import * as THREE from 'three';
 
 // ── CSS ─────────────────────────────────────────────────────────────────────
+// Colours/radii/transition come from the shared design tokens (uiTokens.js).
+// Buttons style both :hover AND .hover — the VR ray dispatch toggles the .hover
+// class since there is no real :hover in a headset.
 const CSS = `
 .vrc-root {
   width: 320px;
-  background: #1e1e2e;
-  border-radius: 12px;
-  border: 1px solid #45475a;
+  background: var(--ui-panel-bg);
+  border-radius: var(--ui-radius-lg);
+  border: 1px solid var(--ui-panel-border);
   padding: 22px 22px 18px;
   box-sizing: border-box;
   font-family: system-ui, sans-serif;
@@ -30,7 +34,7 @@ const CSS = `
   text-align: center;
 }
 .vrc-msg {
-  color: #cdd6f4;
+  color: var(--ui-text);
   font-size: 16px;
   line-height: 1.45;
   margin-bottom: 20px;
@@ -43,7 +47,7 @@ const CSS = `
 }
 .vrc-btn {
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ui-radius);
   font-size: 16px;
   font-weight: 600;
   height: 48px;
@@ -51,18 +55,21 @@ const CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.07s;
+  transition: var(--ui-transition);
 }
-.vrc-btn.vrc-cancel { background: #313244; color: #cdd6f4; }
-.vrc-btn.vrc-cancel:hover { background: #45475a; }
-.vrc-btn.vrc-ok { background: #e64553; color: #fff; }
-.vrc-btn.vrc-ok:hover { background: #f17585; }
+.vrc-btn.vrc-cancel { background: var(--ui-btn-bg); color: var(--ui-text); }
+.vrc-btn.vrc-cancel:hover, .vrc-btn.vrc-cancel.hover  { background: var(--ui-btn-bg-hover); }
+.vrc-btn.vrc-cancel:active, .vrc-btn.vrc-cancel.active { background: var(--ui-btn-bg-active); }
+.vrc-btn.vrc-ok { background: var(--ui-danger-bg); color: #fff; }
+.vrc-btn.vrc-ok:hover, .vrc-btn.vrc-ok.hover   { background: var(--ui-danger-bg-hover); }
+.vrc-btn.vrc-ok:active, .vrc-btn.vrc-ok.active { filter: brightness(1.12); }
 `;
 
 let _cssInjected = false;
 function injectCss() {
   if (_cssInjected) return;
   _cssInjected = true;
+  injectUITokens();
   const s = document.createElement('style');
   s.textContent = CSS;
   document.head.appendChild(s);
