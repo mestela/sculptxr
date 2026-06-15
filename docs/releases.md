@@ -1,3 +1,9 @@
+# v2.4.6
+iPad QA polish — icon spacing and graph-editor default.
+
+- **Polish**: Spacing between FontAwesome icons and labels on action buttons (undo/redo/refresh).
+- **Tweak**: The timeline now defaults to the **graph editor** on all platforms (was dopesheet on desktop/iPad); the persisted preference still overrides.
+
 # v2.4.5
 iPad QA round 1 (Stéphane Ginier) — undo fixes, icon cleanup, Safari touch suppression.
 

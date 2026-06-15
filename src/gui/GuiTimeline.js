@@ -23,7 +23,9 @@ export default class GuiTimeline {
     this._animTransformInitialBox = null;
 
     // 'dope' or 'graph' — restored from the persisted preference if set.
-    this._mode = (window.getOptionsURL?.().vrTimelineMode) || 'dope';
+    // Default to the graph editor on all platforms (VR already preferred it);
+    // the persisted vrTimelineMode pref still overrides if the user picked dope.
+    this._mode = (window.getOptionsURL?.().vrTimelineMode) || 'graph';
     this._panY = 0;
     this._zoomY = 100.0; // Default scale: 1 unit = 100 pixels
     this._activeKeyframeChannel = null;

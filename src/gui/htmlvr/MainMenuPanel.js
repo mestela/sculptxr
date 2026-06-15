@@ -412,6 +412,8 @@ const CSS = `
   margin-bottom: 3px;
   box-sizing: border-box;
 }
+/* Spacing between a leading FontAwesome icon and the button label. */
+.mm-action-btn i { margin-right: 6px; }
 .mm-transport {
   display: flex;
   gap: 3px;
