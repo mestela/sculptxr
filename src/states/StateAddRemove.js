@@ -18,14 +18,22 @@ class StateAddRemove {
     var i, l;
 
     if (addMeshes && addMeshes.length) {
-      for (i = 0, l = addMeshes.length; i < l; ++i)
+      for (i = 0, l = addMeshes.length; i < l; ++i) {
         meshesMain.splice(main.getIndexMesh(addMeshes[i]), 1);
+        // Keep the three.js scene graph in sync — otherwise undoing an "add"
+        // leaves an orphaned visible mesh.
+        if (main.detachMeshThree) main.detachMeshThree(addMeshes[i]);
+      }
     }
 
     var remMeshes = this._removedMeshes;
     if (remMeshes && remMeshes.length) {
-      for (i = 0, l = remMeshes.length; i < l; ++i)
+      for (i = 0, l = remMeshes.length; i < l; ++i) {
         meshesMain.push(remMeshes[i]);
+        // Re-add to the render scene — its absence is why "delete → undo" did
+        // nothing (the mesh returned to _meshes but never to _worldGroup).
+        if (main.attachMeshThree) main.attachMeshThree(remMeshes[i]);
+      }
     }
 
     for (i = 0, l = meshesMain.length; i < l; ++i) {

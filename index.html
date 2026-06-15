@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v2.4.2</title>
+    <title>SculptXR v2.4.5</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v2.4.2
+                                                              VERSION: v2.4.5
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -26,6 +26,18 @@
             width: 100%;
             height: 100%;
             display: block;
+            /* iPad/Safari: let the app own all touch gestures and suppress the
+               double-tap-zoom + text-selection "glass" loupe on drag. */
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #viewport {
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
         }
 
         #vr-button {

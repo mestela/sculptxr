@@ -196,15 +196,10 @@ class Gui {
         if (event.ctrlKey && key === 90) {                        // Ctrl+Z — undo
           event.handled = true;
           main._action = Enums.Action.NOTHING;
-          main.getSculptManager?.()?.end?.();
-          main.getStateManager?.().undo?.();
-          main.render?.();
-          gui.updateMesh();
+          main.undo?.();
         } else if (event.ctrlKey && key === 89) {                 // Ctrl+Y — redo
           event.handled = true;
-          main.getStateManager?.().redo?.();
-          main.render?.();
-          gui.updateMesh();
+          main.redo?.();
         }
       }
     };

@@ -757,8 +757,8 @@ export function buildMenuHTML_history(main) {
   return `
     <div class="mm-section-title">History</div>
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-undo">↩ Undo</button>
-      <button class="mm-action-btn" id="mm-redo">↪ Redo</button>
+      <button class="mm-action-btn" id="mm-undo"><i class="fa-solid fa-rotate-left"></i> Undo</button>
+      <button class="mm-action-btn" id="mm-redo"><i class="fa-solid fa-rotate-right"></i> Redo</button>
     </div>
     <div class="mm-section-title">Settings</div>
     <div class="mm-row">
@@ -953,7 +953,7 @@ export function buildSectionHTML_scene(main) {
     meshRows += `
       <div class="mm-outliner-row">
         <button class="mm-vis-btn${vis ? '' : ' hidden'}" data-mesh-id="${m._permanentStaticId}" data-action="vis">
-          ${vis ? '👁' : '·'}
+          <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"></i>
         </button>
         <button class="mm-mesh-btn${isSel ? ' active' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select">
           ${m._permanentStaticLabel}
@@ -2477,7 +2477,7 @@ export function buildMenuHTML_browserSaves(main) {
         const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
         const img   = thumb
           ? `<img src="${thumb}" alt="save">`
-          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px">🗿</div>`;
+          : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px;color:#6c7086"><i class="fa-solid fa-cube"></i></div>`;
         return `
           <div class="mm-storage-item">
             ${img}
@@ -2492,7 +2492,7 @@ export function buildMenuHTML_browserSaves(main) {
   return `
     <div class="mm-btn-pair">
       <button class="mm-action-btn" id="mm-browser-save">Save scene</button>
-      <button class="mm-action-btn" id="mm-storage-refresh">↻ Refresh</button>
+      <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
     </div>
     <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
   `;
@@ -2612,11 +2612,11 @@ export function wireMenuHistory(el, main, repaintFn) {
   const q = (sel) => el.querySelector(sel);
 
   q('#mm-undo')?.addEventListener('click', () => {
-    main.onKeyUp?.({ keyCode: 90, ctrlKey: true });
+    main.undo?.();
     repaintFn?.();
   });
   q('#mm-redo')?.addEventListener('click', () => {
-    main.onKeyUp?.({ keyCode: 89, ctrlKey: true });
+    main.redo?.();
     repaintFn?.();
   });
 

@@ -513,8 +513,15 @@ class Scene {
     this.onCanvasResize();
 
     var modelURL = getOptionsURL().modelurl;
-    if (modelURL) this.addModelURL(modelURL);
-    else this.addSphere(); // Return default mesh to multires sculpting sphere
+    if (modelURL) {
+      this.addModelURL(modelURL); // async — resets the undo stack itself via loadScene()
+    } else {
+      this.addSphere(); // Return default mesh to multires sculpting sphere
+      // The startup mesh must not be undoable: undoing it empties the scene and
+      // breaks sculpting (no mesh → no BVH). Clear the stack so it's the baseline,
+      // mirroring loadScene() which resets after loading.
+      this.getStateManager().reset();
+    }
 
     // [DEBUG] Visualize Sphere Lift Target
     // this.updateDebugPivot([0, 1.3, -0.5], true);
@@ -910,6 +917,23 @@ class Scene {
 
   getStateManager() {
     return this._stateManager;
+  }
+
+  // Canonical undo/redo — ends any in-progress stroke, applies the state, then
+  // re-renders and refreshes the GUI. Single source of truth for the keyboard
+  // shortcut, the on-screen buttons, and the iPad multi-finger-tap gesture
+  // (which previously called _stateManager directly and skipped the refresh).
+  undo() {
+    this.getSculptManager?.()?.end?.();
+    this.getStateManager().undo();
+    this.render?.();
+    this.getGui?.()?.updateMesh?.();
+  }
+
+  redo() {
+    this.getStateManager().redo();
+    this.render?.();
+    this.getGui?.()?.updateMesh?.();
   }
 
   setMesh(mesh) {
@@ -2072,14 +2096,27 @@ class Scene {
     Subdivision.LINEAR = false;
   }
 
+  // Add/remove a mesh's three.js object to/from the render scene graph. Kept as
+  // helpers so the add/remove paths AND undo/redo (StateAddRemove) stay in sync —
+  // forgetting the scene-graph re-add on undo is why "delete → undo" did nothing.
+  attachMeshThree(mesh) {
+    var t = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
+    if (t && this._worldGroup) this._worldGroup.add(t);
+  }
+
+  detachMeshThree(mesh) {
+    var t = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
+    if (!t) return;
+    var target = this._worldGroup || this._scene;
+    if (target) target.remove(t);
+  }
+
   addNewMesh(mesh) {
     this._meshes.push(mesh);
     if (!mesh._permanentStaticLabel) {
       mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + this._meshes.length;
     }
-    if (this._worldGroup && mesh.getThreeMesh()) {
-      this._worldGroup.add(mesh.getThreeMesh());
-    }
+    this.attachMeshThree(mesh);
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
 
@@ -2221,10 +2258,7 @@ class Scene {
     for (var i = 0; i < rm.length; ++i) {
       var idx = this.getIndexMesh(rm[i]);
       if (idx >= 0) {
-        var target = this._worldGroup || this._scene;
-        if (target && meshes[idx].getThreeMesh()) {
-          target.remove(meshes[idx].getThreeMesh());
-        }
+        this.detachMeshThree(meshes[idx]);
         meshes.splice(idx, 1);
       }
     }

@@ -998,10 +998,10 @@ class SculptGL extends Scene {
       const pinchDelta = Math.abs(this._tapSeqLiftPinchDist - this._tapSeqPeakPinchDist);
       if (peak >= 2 && tapDuration < tapWindow && tapDrift < 40 && pinchDelta < 20) {
         if (peak === 2 && this._stateManager) {
-          this._stateManager.undo();
+          this.undo(); // canonical path — also re-renders + refreshes the GUI
           return; // don't also fall through to the double-tap reset-view path
         } else if (peak >= 3 && this._stateManager) {
-          this._stateManager.redo();
+          this.redo();
           return;
         }
       }

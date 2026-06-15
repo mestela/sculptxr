@@ -1,3 +1,12 @@
+# v2.4.5
+iPad QA round 1 (Stéphane Ginier) — undo fixes, icon cleanup, Safari touch suppression.
+
+- **Fix**: **Undo at launch no longer breaks sculpting**. The startup mesh's "add" state was undoable — undoing it emptied the scene and killed the BVH. The undo stack is now reset after the default mesh (mirroring `loadScene`), so it's the baseline.
+- **Fix**: **Delete → undo restores the mesh**. `StateAddRemove` returned the mesh to the array but never re-added its three.js object to the scene graph (a WebGL→three.js regression). Added shared `attach/detachMeshThree` helpers used by add, remove, and undo/redo.
+- **Fix**: **Undo/redo UI buttons work**. They were synthesising a key event the handler never matched. Added a canonical `undo()`/`redo()` on the app; the keyboard shortcut, on-screen buttons, and the iPad 2/3-finger-tap gesture now all route through it (the gesture also gets the render + GUI refresh it was skipping).
+- **Cleanup**: Replaced emoji/unicode-glyph buttons (undo/redo/visibility/refresh/save placeholder) with **FontAwesome icons**; codified "FA icons or plain text, never emoji" going forward.
+- **Fix (iPad)**: Suppressed the Safari double-tap-drag **glass magnifier / text-selection** on the canvas (`touch-action:none` + `user-select`/`-webkit-touch-callout:none`); also stops Safari intercepting touch gestures before the app.
+
 # v2.4.2
 Panel design tokens, VR hover fix, and a FontAwesome icon-load fix.
 
