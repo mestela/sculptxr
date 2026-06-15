@@ -793,20 +793,6 @@ export default class GuiTimeline {
         const _bsHl = selBsNames.has(name) || (_hc && _hc.kind === 'blendshape' && _hc.name === name);
         _drawRow(labels.length + bsIdx, name, color, isVisible, _bsValStr, true, _bsHl);
 
-        // Scrub hint overlay (↔) — shown when hovering the scrub zone (x:32-140)
-        const rowIdxAbs = labels.length + bsIdx;
-        const ry2 = gutterY + rowIdxAbs * rowH - this._gutterScrollY;
-        const mouseOverScrub = this._lastMouseX >= 32 && this._lastMouseX < 140
-                            && this._lastMouseY >= ry2 && this._lastMouseY < ry2 + rowH;
-        if (mouseOverScrub || this._bsScrubName === name) {
-          ctx.save();
-          ctx.fillStyle = this._bsScrubName === name ? '#4af' : '#666';
-          ctx.font = '9px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('↔', 70, ry2 + rowH / 2);
-          ctx.restore();
-        }
         bsIdx++;
       });
     }

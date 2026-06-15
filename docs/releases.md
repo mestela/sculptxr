@@ -1,3 +1,10 @@
+# v2.4.0
+Timeline & VR-dialog fixes — confirm dialogs, edge-drag, gutter cleanup.
+
+- **Feature**: **VR-native confirm dialog**: "Clear all animation" (and any other `_vrConfirm` caller) previously popped a flat DOM overlay that's invisible/uninteractable inside a headset. Added an in-scene `VrConfirm` panel (sibling to VrNumpad): ray-interactable, modal, floats just in front of the active panel inheriting its rotation (with the `scale.y=-1` decompose correction so it isn't flipped), and uses standard depth compositing. `window._vrConfirm` routes to it when an XR session is presenting; desktop keeps the DOM overlay.
+- **Fix**: **Timeline edge-drag latch**: dragging a blendshape weight in the timeline gutter dropped the moment the ray left the panel, making it easy to reach 1.0 but nearly impossible to reach 0.0 (the left edge is close). The drag now latches: while the trigger is held, the ray is projected onto the timeline plane and `move` events keep flowing past the panel edge (unclamped, since the gutter scrub is relative). Release commits at the dragged position. Respects the two-handed zoom and grip-move gestures.
+- **Tweak**: **Blendshape gutter cleanup**: removed the faint `↔` scrub-hint glyph that appeared on hover over blendshape names.
+
 # v2.3.0
 VR UI performance & interaction polish — HTML panels, sliders, and scrolling.
 

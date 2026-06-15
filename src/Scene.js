@@ -38,6 +38,7 @@ import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
+import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -417,6 +418,10 @@ class Scene {
         if (!this._vrNumpad && this._scene && this._renderer) {
           this._vrNumpad = new VrNumpad(this._scene, this._camera.getThreeCamera(), this._renderer);
           window._vrNumpad = this._vrNumpad;
+        }
+        if (!this._vrConfirm && this._scene && this._renderer) {
+          this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
+          window._vrConfirmPanel = this._vrConfirm;
         }
       } catch (err) {
         console.error('[VrNumpad] early init failed:', err);
@@ -1109,6 +1114,15 @@ class Scene {
             // group caused orientation bugs with negative-scale decomposition,
             // so instead we update the world-space position every frame here.
             try { this._vrNumpad._repositionIfTracking(); } catch (_) {}
+          }
+        }
+        if (this._vrConfirm?.mesh) {
+          // Same as the numpad: update() unmounts it from the host canvas while
+          // closed so it isn't re-rasterised every paint.
+          try { this._vrConfirm.update(true); } catch (_) {}
+          if (this._vrConfirm.mesh.visible) {
+            // Follow the anchor panel (which may be attached to a moving controller).
+            try { this._vrConfirm._repositionIfTracking(); } catch (_) {}
           }
         }
         // Single drain: executes the one requestPaint callback queued above.
@@ -3320,6 +3334,14 @@ class Scene {
         console.error('[VrNumpad] init failed:', err);
       }
     }
+    if (!this._vrConfirm && this._scene && this._camera && this._renderer) {
+      try {
+        this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
+        window._vrConfirmPanel = this._vrConfirm;
+      } catch (err) {
+        console.error('[VrConfirm] init failed:', err);
+      }
+    }
 
     // Init VR Mini-HUD System
     if (!this._guiMini) {
@@ -3969,7 +3991,7 @@ class Scene {
 
     // Always reset stale interaction flags from a previous session.
     this._vtlDragActive = false;   this._vtlDragHand = null;
-    this._vtlWasPressed = false;
+    this._vtlWasPressed = false;   this._vtlLastDragUV = null;
     this._vtlResizeActive = false; this._vtlResizeHand = null;
     this._vtlResizeWasPressed = false;
     this._endVtlZoom(tl);
@@ -5099,7 +5121,8 @@ class Scene {
           // isBlockingOpen extends the guard for 400ms after close so that the
           // controller's trigger-release (and any residual hit on e.g. the FPS
           // slider behind the numpad) is absorbed during the cooldown window.
-          const _numpadOpen = !!this._vrNumpad?.mesh?.visible || !!this._vrNumpad?.isBlockingOpen;
+          const _numpadOpen = !!this._vrNumpad?.mesh?.visible || !!this._vrNumpad?.isBlockingOpen
+                            || !!this._vrConfirm?.mesh?.visible || !!this._vrConfirm?.isBlockingOpen;
           if (!_numpadOpen) {
             if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
               const h = _rc.intersectObject(this._brushPanel.mesh);
@@ -5132,6 +5155,10 @@ class Scene {
           if (this._vrNumpad?.mesh?.visible) {
             const h = _rc.intersectObject(this._vrNumpad.mesh);
             if (h.length > 0) _panelHits.push({ name: 'VrNumpad', panel: this._vrNumpad, hit: h[0], pressKey: '_npWasPressed' });
+          }
+          if (this._vrConfirm?.mesh?.visible) {
+            const h = _rc.intersectObject(this._vrConfirm.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'VrConfirm', panel: this._vrConfirm, hit: h[0], pressKey: '_vcWasPressed' });
           }
           // VRTimeline uses a different dispatch interface — included for nearest-hit ordering.
           // Skipped while the numpad is modal-open: the numpad floats just in front of
@@ -5220,6 +5247,8 @@ class Scene {
             _allVisible.push({ name: 'FilesPanel', panel: this._filesPanel, pressKey: '_fpWasPressed' });
           if (this._vrNumpad?.mesh?.visible)
             _allVisible.push({ name: 'VrNumpad', panel: this._vrNumpad, pressKey: '_npWasPressed' });
+          if (this._vrConfirm?.mesh?.visible)
+            _allVisible.push({ name: 'VrConfirm', panel: this._vrConfirm, pressKey: '_vcWasPressed' });
 
           for (const v of _allVisible) {
             if (v.name === _winnerName) {
@@ -5266,12 +5295,52 @@ class Scene {
               if (justDown)    this._onVRTimelineHit(_winner.hit.uv, 'down', true,     _addShift);
               else if (justUp) this._onVRTimelineHit(_winner.hit.uv, 'up',   false,    _addShift);
               else             this._onVRTimelineHit(_winner.hit.uv, 'move', _pressed, _addShift);
+              this._vtlLastDragUV = _winner.hit.uv;   // remember for off-panel release
               this._vtlWasPressed = _pressed;
+            }
+          } else if (this._vtlWasPressed && _pressed && !this._vtlZoomActive && !this._vtlDragActive) {
+            // Edge-drag latch: the trigger is still held but the ray has left the
+            // timeline mesh — easy to do when dragging a blendshape value toward 0
+            // past the panel's left edge. Project the ray onto the timeline plane,
+            // clamp to the panel, and keep feeding 'move' so the drag continues
+            // off-panel (pointer-capture semantics). GuiTimeline dispatches
+            // pointermove/up on window, so off-panel moves still apply.
+            const tlm = this._vrTimelineMesh;
+            let _luv = null;
+            if (tlm) {
+              tlm.updateWorldMatrix(true, false);
+              const _pw = new THREE.Vector3(), _pq = new THREE.Quaternion();
+              tlm.getWorldPosition(_pw); tlm.getWorldQuaternion(_pq);
+              const _n = new THREE.Vector3(0, 0, 1).applyQuaternion(_pq);
+              const _plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_n, _pw);
+              const _hit = new THREE.Vector3();
+              if (_rc.ray.intersectPlane(_plane, _hit)) {
+                const _local = tlm.worldToLocal(_hit.clone());
+                const _hw = (tlm.geometry.parameters?.width  ?? 1) * 0.5;
+                const _hh = (tlm.geometry.parameters?.height ?? 1) * 0.5;
+                // Deliberately UNclamped: the gutter weight-scrub is relative
+                // (newW = startW + dx/200), so the cursor must be allowed to run
+                // past the panel edge for dx to grow enough to reach 0.0 / 1.0.
+                // GuiTimeline clamps the resulting value itself.
+                _luv = {
+                  x: (_local.x + _hw) / (_hw * 2),
+                  y: (_local.y + _hh) / (_hh * 2),
+                };
+              }
+            }
+            if (_luv) {
+              this._vtlLastDragUV = _luv;
+              this._onVRTimelineHit(_luv, 'move', true, !!this._vrSecondaryTriggerPressed);
+              this._vtlIsPointing = true;
+              this._isPointingAtMenu = true;
             }
           } else {
             if (this._vtlWasPressed) {
-              this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);
+              // Release: use the last drag UV so an off-panel release commits at the
+              // dragged position rather than the panel centre.
+              this._onVRTimelineHit(this._vtlLastDragUV || { x: 0.5, y: 0.5 }, 'up', false);
               this._vtlWasPressed = false;
+              this._vtlLastDragUV = null;
             }
           }
 

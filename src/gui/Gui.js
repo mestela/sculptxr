@@ -45,6 +45,13 @@ const SIDEBAR_WIDTH = 380;  // px
 // loop in PCVR. These non-blocking replacements use a DOM overlay instead.
 
 window._vrConfirm = function(message, onOk, onCancel) {
+  // In a headset the flat DOM overlay is invisible/uninteractable — route to the
+  // in-scene VrConfirm panel (ray-interactable) instead.
+  if (window._vrConfirmPanel && window.app?._renderer?.xr?.isPresenting) {
+    window._vrConfirmPanel.open(message, onOk, onCancel);
+    return;
+  }
+
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:999999;font-family:system-ui,sans-serif;';
 
