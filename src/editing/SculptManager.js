@@ -49,6 +49,23 @@ class SculptManager {
 
     this._toolIndex = id;
 
+    // Low-poly / topology edit tools (DELETE_FACE..INSET) auto-show wireframe so
+    // you can see the edges you're editing; restore the prior state on leaving.
+    {
+      const isLowPoly = id >= Enums.Tools.DELETE_FACE;
+      const meshes = this._main.getMeshes?.() ?? [];
+      if (isLowPoly && !this._wfForcedByEdit) {
+        this._wfSavedState = !!this._main.getMesh?.()?.getShowWireframe?.();
+        this._wfForcedByEdit = true;
+        meshes.forEach(m => m.setShowWireframe?.(true));
+        this._main.render?.();
+      } else if (!isLowPoly && this._wfForcedByEdit) {
+        this._wfForcedByEdit = false;
+        meshes.forEach(m => m.setShowWireframe?.(this._wfSavedState));
+        this._main.render?.();
+      }
+    }
+
     // Hide the VR gizmo when not using TransformVR, and hide the desktop gizmo
     // when not using Transform — so switching away clears both groups.
     const tDesktop = this._tools[Enums.Tools.TRANSFORM];

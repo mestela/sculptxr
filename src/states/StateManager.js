@@ -95,6 +95,13 @@ class StateManager {
     return this._undos[this._curUndoIndex];
   }
 
+  // For the History UI: how many steps can be undone / redone, and whether either
+  // is currently possible.
+  undoCount() { return Math.max(0, this._curUndoIndex + 1); }
+  redoCount() { return this._redos.length; }
+  canUndo()   { return this._undos.length > 0 && this._curUndoIndex >= 0; }
+  canRedo()   { return this._redos.length > 0; }
+
   pushVertices(iVerts) {
     if (iVerts && iVerts.length > 0)
       this.getCurrentState().pushVertices(iVerts);

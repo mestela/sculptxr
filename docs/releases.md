@@ -1,3 +1,11 @@
+# v2.4.25
+More iPad/QA polish.
+
+- **Feature**: Undo/Redo buttons show the count and disable when there's nothing to undo/redo.
+- **UX**: Selecting a low-poly/topology edit tool (delFace, extrude, inset, …) auto-shows wireframe and restores your previous setting when you leave it.
+- **Fix**: The blue xray brush sphere no longer flashes at the world origin during startup (and is no longer force-shown, unpositioned, on desktop).
+- **Tweak**: Brush tool defaults to Clay on.
+
 # v2.4.21
 iPad QA polish batch (Stéphane notes).
 

@@ -1419,12 +1419,14 @@ class Scene {
     const curIdx = sm ? sm.getToolIndex() : -1;
     const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
 
-    // In VR, _updateVRCursors manages cursor visibility per-hand (offhand is hidden there).
-    // Only force-set visibility on desktop where _updateVRCursors doesn't run.
+    // In VR, _updateVRCursors positions + shows these per-hand. On desktop they're
+    // never positioned, so they'd just sit (full size) at the world origin — the
+    // blue xray sphere that flashed at startup before the sculpt rendered over it.
+    // Keep them hidden on desktop.
     const isVRPresenting = this._renderer && this._renderer.xr && this._renderer.xr.isPresenting;
     if (!isVRPresenting) {
-      if (this._vrCursorLeft) this._vrCursorLeft.visible = !window._animPlaying && !isTransform;
-      if (this._vrCursorRight) this._vrCursorRight.visible = !window._animPlaying && !isTransform;
+      if (this._vrCursorLeft) this._vrCursorLeft.visible = false;
+      if (this._vrCursorRight) this._vrCursorRight.visible = false;
     }
 
     // ── MINIMAL VR TEST MODE ─────────────────────────────────────────────────
@@ -3651,6 +3653,11 @@ class Scene {
 
           this._vrCursorLeft = createVRCursor();
           this._vrCursorRight = createVRCursor();
+          // Start hidden — otherwise they sit (full size) at the world origin during
+          // startup until the per-frame VR loop positions them. The loop re-enables
+          // them once tracking a controller.
+          this._vrCursorLeft.visible = false;
+          this._vrCursorRight.visible = false;
           this._scene.add(this._vrCursorLeft);
           this._scene.add(this._vrCursorRight);
         }

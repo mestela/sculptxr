@@ -415,6 +415,7 @@ const CSS = `
 }
 /* Spacing between a leading FontAwesome icon and the button label. */
 .mm-action-btn i { margin-right: 6px; }
+.mm-action-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
 .mm-transport {
   display: flex;
   gap: 3px;
@@ -764,11 +765,13 @@ export function buildMenuHTML_history(main) {
   const maxV = /OculusBrowser/.test(navigator.userAgent) ? 30 : 500;
   const cur  = sm?.limit ?? 50;
   const pct  = Math.max(0, Math.min(100, ((cur - 3) / (maxV - 3)) * 100));
+  const uC   = sm?.undoCount?.() ?? 0;
+  const rC   = sm?.redoCount?.() ?? 0;
   return `
     <div class="mm-section-title">History</div>
     <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-undo"><i class="fa-solid fa-rotate-left"></i> Undo</button>
-      <button class="mm-action-btn" id="mm-redo"><i class="fa-solid fa-rotate-right"></i> Redo</button>
+      <button class="mm-action-btn" id="mm-undo"${uC ? '' : ' disabled'}><i class="fa-solid fa-rotate-left"></i> Undo${uC ? ` (${uC})` : ''}</button>
+      <button class="mm-action-btn" id="mm-redo"${rC ? '' : ' disabled'}><i class="fa-solid fa-rotate-right"></i> Redo${rC ? ` (${rC})` : ''}</button>
     </div>
     <div class="mm-section-title">Settings</div>
     <div class="mm-row">

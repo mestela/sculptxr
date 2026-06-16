@@ -11,7 +11,7 @@ class Brush extends SculptBase {
     this._radius = 25;
     this._intensity = 0.5;
     this._negative = false;
-    this._clay = false;
+    this._clay = true; // Clay on by default for the Brush (matt's preference)
     this._culling = false;
     this._accumulate = true; // if we ignore the proxy
     this._useInitNormal = true;
