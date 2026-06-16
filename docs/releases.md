@@ -1,3 +1,11 @@
+# v2.4.14
+iPad mesh-edit & finger-gesture overhaul (Stéphane QA, cluster B).
+
+- **Fix**: **Mesh-edit tools work on touch**. Single-action tools (delFace, dissolve, weld, split, …) read the picked face/verts in `start()` but never refreshed the pick — on a touch tap (no hover) they hit a stale pick and did nothing, then fired late. `SculptManager.start` now refreshes the pick at the pointer position for these tools.
+- **Design**: **Finger = camera / pencil = edit** stays the model. With *Finger Sculpt off* (default) fingers never sculpt/edit — 1-finger rotates (even zoomed in), 2-finger pans/zooms, **2→1 finger = rotate** (also fixes "going back to one finger does nothing"). Editing with fingers requires enabling Finger Sculpt.
+- **Fix**: **Finger-sculpt disambiguation** (Finger Sculpt on). The first of two fingers no longer misfires a sculpt/extrude: the sculpt start is deferred a short window (~90 ms / 6 px) so a 2nd finger (camera) or a quick tap cancels it; a real drag or brief hold commits it. The 2-finger camera gesture and the 2→1 rotate now work while finger-sculpting (the pointerup dispatch order was also fixed so the rotate isn't clobbered by `onDeviceUp`).
+- **Fix**: **No 0-height extrude on camera release**. `SculptManager.end()` now only commits when a stroke actually started, so lifting fingers over the mesh during a camera gesture can't fire a spurious `extrude.end()`.
+
 # v2.4.6
 iPad QA polish — icon spacing and graph-editor default.
 

@@ -8,7 +8,7 @@ class Extrude extends SculptBase {
   constructor(main) {
     super(main);
     this._continuous = true;
-    this._extrudedVerts = null; 
+    this._extrudedVerts = null;
     this._vProxy = null;
     this._lastVRPos = null;
     this._lastVRQuat = quat.create();

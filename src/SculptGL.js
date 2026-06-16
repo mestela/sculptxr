@@ -73,6 +73,11 @@ class SculptGL extends Scene {
     this._tapSeqLiftCenter     = { x: 0, y: 0 }; // multi-finger center when first finger lifted from peak
     this._tapSeqPeakPinchDist  = 0;  // finger spread when peak count first reached
     this._tapSeqLiftPinchDist  = 0;  // finger spread when first finger lifted from peak
+    // Finger-sculpt disambiguation: defer starting a finger sculpt/edit briefly so
+    // a 2nd finger (camera gesture) or a quick tap can cancel it before any geometry
+    // changes — otherwise the 1st of two fingers misfires an extrude/inset etc.
+    this._pendingSculpt        = null; // { x, y } landing point while deferred, else null
+    this._pendingSculptTimer   = 0;    // setTimeout handle for the deferred start
     this.handleXRInput = this.handleXRInput.bind(this); // Wire up VR input
 
     this._eventProxy = {};
@@ -847,13 +852,23 @@ class SculptGL extends Scene {
       event.preventDefault();
       if (event.type === 'pointerdown') {
         if (window._ipadFingerView   !== false) this._onTouchDown(event);
-        if (window._ipadFingerSculpt)           this.onMouseDown(event);
+        // Finger sculpt: DON'T start the sculpt immediately. Defer it so a quickly
+        // following 2nd finger (camera gesture) or a quick tap can cancel it before
+        // any geometry changes — otherwise the 1st of two fingers misfires a
+        // sculpt/extrude. A 2nd finger already down means this is camera, not sculpt.
+        if (window._ipadFingerSculpt) {
+          if (this._fingerPointers.size >= 2) this._cancelDeferredSculpt();
+          else                                this._scheduleDeferredSculpt(event.clientX, event.clientY);
+        }
       } else if (event.type === 'pointermove') {
         if (window._ipadFingerView   !== false) this._onTouchMove(event);
         if (window._ipadFingerSculpt)           this.onMouseMove(event);
       } else if (event.type === 'pointerup' || event.type === 'pointercancel') {
-        if (window._ipadFingerView   !== false) this._onTouchUp(event);
+        // onMouseUp FIRST: it ends any finger sculpt and resets _action to NOTHING.
+        // _onTouchUp runs AFTER so its camera decision (e.g. the 2→1 rotate, which
+        // sets _action) isn't immediately clobbered by onDeviceUp's reset.
         if (window._ipadFingerSculpt)           this.onMouseUp(event);
+        if (window._ipadFingerView   !== false) this._onTouchUp(event);
       }
     }
   }
@@ -865,9 +880,11 @@ class SculptGL extends Scene {
   ////////////////////////////
 
   _onTouchDown(e) {
-    // Stale-palm guard: a touch arriving while the pen is actively sculpting would add
-    // itself to _fingerPointers and block subsequent pen moves in onMouseMove.  Ignore it.
-    if (this._action === Enums.Action.SCULPT_EDIT && e.pointerType === 'touch') {
+    // Stale-palm guard: a touch arriving while the PEN is actively sculpting would
+    // add itself to _fingerPointers and block subsequent pen moves. Only reject when
+    // Finger Sculpt is OFF (so any active SCULPT_EDIT must be pen-driven). With Finger
+    // Sculpt ON a 2nd finger is legitimate (it switches to a camera gesture), so allow it.
+    if (this._action === Enums.Action.SCULPT_EDIT && e.pointerType === 'touch' && !window._ipadFingerSculpt) {
       return;
     }
     try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
@@ -953,6 +970,16 @@ class SculptGL extends Scene {
       return;
     }
 
+    // Deferred finger-sculpt: a real drag (>6px from the landing point) commits it
+    // immediately so the stroke feels responsive; smaller jitter keeps waiting for
+    // the timer / a possible 2nd finger.
+    if (this._pendingSculpt) {
+      const ddx = center.x - this._pendingSculpt.x;
+      const ddy = center.y - this._pendingSculpt.y;
+      if (ddx * ddx + ddy * ddy > 36) this._commitDeferredSculpt();
+      else return;
+    }
+
     const evProxy = this._eventProxy;
     evProxy.clientX = center.x;
     evProxy.clientY = center.y;
@@ -969,6 +996,10 @@ class SculptGL extends Scene {
     const remaining = this._fingerPointers.size;
 
     if (remaining === 0) {
+      // Finger lifted before the safe window elapsed and no 2nd finger arrived → a
+      // quick tap. Cancel the deferred sculpt so a tap never edits (matches the
+      // finger-off model and avoids zero-height extrude/inset on a stray tap).
+      this._cancelDeferredSculpt();
       if (this._gestureActive) {
         this._gestureActive = false;
         this.onDeviceUp();
@@ -1016,7 +1047,27 @@ class SculptGL extends Scene {
         this._tapSeqLiftPinchDist = pinchDist; // captured before delete, while both fingers still in map
       }
       if (this._gestureActive) this.onDeviceUp();
-      this._startGesture(remaining, this._fingerCenter(), true);
+      if (remaining === 1) {
+        // Nomad-style camera scheme: dropping from 2+ fingers down to 1 always
+        // starts a CAMERA ROTATE — a reliable way to orbit even when zoomed in
+        // with no empty space to grab, and regardless of the Finger Sculpt pref
+        // or active tool. (Forced explicitly rather than via _startGesture's
+        // ambiguous which=MOUSE_RIGHT mapping.)
+        const c = this._fingerCenter();
+        this._gestureActive      = true;
+        this._gestureStartTime   = performance.now();
+        this._gestureStartCenter = { x: c.x, y: c.y };
+        const ev = this._eventProxy;
+        ev.clientX = c.x;
+        ev.clientY = c.y;
+        this.setMousePosition(ev);
+        this._action = Enums.Action.CAMERA_ROTATE;
+        this._camera.start(this._mouseX, this._mouseY);
+        this._lastMouseX = this._mouseX;
+        this._lastMouseY = this._mouseY;
+      } else {
+        this._startGesture(remaining, this._fingerCenter(), true);
+      }
     }
   }
 
@@ -1051,7 +1102,41 @@ class SculptGL extends Scene {
     else if (!window._ipadFingerSculpt)    evProxy.which = MOUSE_RIGHT; // fingers view-only: always rotate, never sculpt
     else                                   evProxy.which = MOUSE_LEFT;
     if (window.screenLog) window.screenLog(`[gesture] n=${n} wasActive=${wasActive} which=${evProxy.which}`, 'yellow');
+
+    // which===MOUSE_LEFT only happens for a fresh single finger with Finger Sculpt
+    // ON — and the sculpt is driven by the deferred onMouse path (see the touch
+    // dispatch). _onTouch* only handles the camera here, so don't also start a
+    // sculpt. Camera actions (MOUSE_RIGHT) go through onDeviceDown as normal.
+    if (evProxy.which === MOUSE_LEFT) return;
     this.onDeviceDown(evProxy);
+  }
+
+  // ── Deferred finger-sculpt (disambiguation "safe window") ──────────────────
+  _scheduleDeferredSculpt(x, y) {
+    this._cancelDeferredSculpt();
+    this._pendingSculpt = { x, y };
+    this._pendingSculptTimer = window.setTimeout(() => this._commitDeferredSculpt(), 90);
+  }
+
+  _commitDeferredSculpt() {
+    if (!this._pendingSculpt) return;
+    const p = this._pendingSculpt;
+    this._cancelDeferredSculpt();
+    // Start the sculpt at the landing point via the device path (single finger
+    // confirmed — no 2nd finger arrived, and either the hold window elapsed or the
+    // finger moved past the drag threshold).
+    const ev = this._eventProxy;
+    ev.clientX = p.x;
+    ev.clientY = p.y;
+    ev.which = MOUSE_LEFT;
+    ev.pointerType = 'touch';
+    ev.shiftKey = !!this._shiftKey;
+    this.onDeviceDown(ev);
+  }
+
+  _cancelDeferredSculpt() {
+    if (this._pendingSculptTimer) { clearTimeout(this._pendingSculptTimer); this._pendingSculptTimer = 0; }
+    this._pendingSculpt = null;
   }
 
   _fingerCenter() {

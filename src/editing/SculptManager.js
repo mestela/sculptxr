@@ -23,6 +23,7 @@ class SculptManager {
     // continuous stuffs
     this._continuous = false; // continuous sculpting
     this._sculptTimer = -1; // continuous interval timer
+    this._strokeActive = false; // true between a successful start() and its end()
 
     this._selection = new Selection(main._gl); // the selection geometry (red hover circle)
     
@@ -150,9 +151,24 @@ class SculptManager {
         return false;
       }
       this._lastSingleActionMs = now;
+
+      // Touch has no hover, so the picking ray is stale when these single-action
+      // mesh-edit tools read getPickedFace()/getPickedVertices() in start() — most
+      // override start() without calling super.start() or intersecting themselves,
+      // so on iPad the tap landed on a stale/empty pick and did nothing (then a
+      // later interaction fired the deferred edit). Refresh the pick at the current
+      // pointer position. Not in VR (its ray pick is computed in handleXRInput).
+      if (!this._main._vrSculpting) {
+        this._main.getPicking().intersectionMouseMeshes();
+      }
     }
 
     var canEdit = tool.start(ctrl);
+    // Mark a stroke active only when the tool actually engaged. end() is otherwise
+    // a no-op, so a camera-gesture release (which never calls start()) can't fire a
+    // spurious tool.end() — that was committing a 0-height extrude on release when a
+    // finger happened to be over the mesh.
+    this._strokeActive = !!canEdit;
 
     // Push State for Undo/Redo
     if (this._main.getStateManager()) {
@@ -176,11 +192,15 @@ class SculptManager {
   }
 
   end() {
-    this.getCurrentTool().end();
+    // Always clear the continuous timer (cleanup), but only commit the tool when a
+    // stroke actually started — a camera-gesture release must not fire tool.end().
     if (this._sculptTimer !== -1) {
       clearInterval(this._sculptTimer);
       this._sculptTimer = -1;
     }
+    if (!this._strokeActive) return;
+    this._strokeActive = false;
+    this.getCurrentTool().end();
   }
 
   preUpdate() {
