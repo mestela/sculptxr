@@ -1,5 +1,18 @@
+# v2.5.0
+iPad parity & QA pass (Stéphane Ginier feedback) — undo, gestures, background, references.
+
+Headline items (see the v2.4.x entries below for detail):
+- **Undo/redo**: fixed launch-undo bricking sculpting and delete→undo; the on-screen buttons work and show counts (disabled when unavailable).
+- **iPad touch**: full mesh-edit + finger-gesture overhaul (tap-to-edit, finger=camera/pencil=edit, 2→1 rotate, finger-sculpt disambiguation, no stray extrude on release); iOS loupe suppressed; page pinch-zoom blocked; number fields editable via the numpad.
+- **Background**: reimplemented for three.js — imported image, plus the built-in HDRIs as a skybox (ported LogLUV octahedral panorama decode + SH), with per-HDRI × rendering-slider exposure and blur. Default grey.
+- **Reference images**: first-class meshes — appear in the outliner, select/transform (real-time)/hide/show, undoable; textured planes sized to the model.
+- **Desktop cleanup**: VR-only menus and the voxel-bounds box no longer appear at the world origin; the blue brush sphere no longer flashes on load.
+- **Misc**: graph editor is the default timeline mode; Brush defaults to Clay; emoji buttons → FontAwesome; language selector hidden (real localization pending).
+
 # v2.4.38
 Background, environment skybox & reference images (three.js port).
+
+- **Update**: Reference images are now first-class meshes (`MeshReference` via `addNewMesh`): they show in the outliner, can be selected / transformed in real-time / hidden, and are undoable. Removed the separate references subsection.
 
 - **Feature**: **Background reimplemented for three.js**. Import an image (flat backdrop), or pick **Environment** / **Ambient env**. The built-in HDRIs now render as a skybox again — ported SculptGL's fullscreen LogLUV octahedral panorama decode (`texturePanoramaLod`) + SH evaluation into a three.js shader; no new assets. Per-HDRI exposure × the rendering-panel exposure slider drives brightness; blur uses the prefiltered mips. Default grey. Scoped to non-XR.
 - **Feature**: **Reference images work again**. Add reference → an unlit textured plane at the model centre, sized ~1.3× the model with the image's aspect. (The old MeshReference was WebGL-only and never rendered after the migration.)

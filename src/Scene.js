@@ -859,6 +859,10 @@ class Scene {
     return this._background;
   }
 
+  getReferenceManager() {
+    return this._referenceManager;
+  }
+
   getViewport() {
     return this._viewport;
   }

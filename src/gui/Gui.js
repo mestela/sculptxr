@@ -444,9 +444,13 @@ class Gui {
     window._animTimelineTabEl = timelineTab;
     let _prevActivePanel = 'sculpting';
     tabGroup.addEventListener('wa-tab-show', (e) => {
-      if (e.detail?.name !== 'timeline') {
-        _prevActivePanel = e.detail?.name ?? _prevActivePanel;
+      const name = e.detail?.name;
+      if (name !== 'timeline') {
+        _prevActivePanel = name ?? _prevActivePanel;
       }
+      // Rebuild the Scene outliner on show so it reflects the current meshes /
+      // references (it's otherwise built once and goes stale when you add either).
+      if (name === 'scene' && this._desktopSceneEl) this._buildDesktopScene(this._desktopSceneEl);
     });
     timelineTab.addEventListener('click', (e) => {
       e.stopImmediatePropagation();

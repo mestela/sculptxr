@@ -1,4 +1,4 @@
-# SculptXR (v2.4.0)
+# SculptXR (v2.5.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v2.5.0**: **iPad parity & QA** (Stéphane Ginier feedback): undo fixes (launch/delete/buttons/counts), full iPad mesh-edit + finger-gesture overhaul, background reimplemented (image + HDRI skybox + ambient, exposure/blur), reference images as first-class outliner meshes (transform/hide/show/undo), and broad desktop/iPad cleanup.
 *   **v2.4.0**: **Fix**: VR-native confirm dialog (Clear All Animation now interactable in-headset), timeline edge-drag latch (blendshape weights reach 0.0 past the panel edge), and removed the blendshape-name scrub hint.
 *   **v2.3.0**: **Perf**: VR UI performance & interaction polish — hidden HTML panels no longer re-rasterise (smooth idle + slider drags), fixed wrist-panel slider dragging, flicker-free panel swaps, throttled scrolling with working draggable scrollbars, and faster thumbstick scroll.
 *   **v2.0.6**: **Feature**: Timeline & animation editor overhaul — graph-editor transform box for all key types, curve-click select + hover highlight, header Frame/Value fields with relative expressions, channel solo, two-handed VR zoom, VR numpad with +/−/= , blendshape overshoot, and persisted panel size / mode.

@@ -2,6 +2,7 @@ import MeshStatic from './meshStatic/MeshStatic.js';
 import RenderData from './RenderData.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
+import { mat4 } from 'gl-matrix';
 
 class MeshReference extends MeshStatic {
 
@@ -170,6 +171,22 @@ class MeshReference extends MeshStatic {
 
   optimize() {
     // No optimization for reference images
+  }
+
+  // Rigid reference plane: fold the in-progress edit matrix into the three.js
+  // transform each frame so Transform updates live (our MeshBasicMaterial doesn't
+  // apply the edit matrix in a shader like sculpt meshes do, so it would otherwise
+  // only move on mouse release).
+  updateMatrices(camera) {
+    super.updateMatrices(camera);
+    const rd = this._renderData;
+    if (rd && rd._threeMesh && this._transformData) {
+      const m = mat4.create();
+      mat4.mul(m, this._transformData._matrix, this.getEditMatrix());
+      rd._threeMesh.matrixAutoUpdate = false;
+      rd._threeMesh.matrix.fromArray(m);
+      rd._threeMesh.updateMatrixWorld(true);
+    }
   }
 }
 
