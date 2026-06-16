@@ -33,6 +33,7 @@ import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
+import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { TAB_ICONS, ICON_PIN, ICON_DOCK } from '../tabIcons.js';
 import { VERSION } from '../../Version.js';
 import releaseText from '../../../docs/releases.md?raw';
@@ -435,9 +436,16 @@ const CSS = `
 .mm-transport-btn:hover, .mm-transport-btn.hover { background: #313244; border-color: #7f849c; }
 .mm-transport-btn:active, .mm-transport-btn.active { background: #45475a; }
 .mm-transport-btn.record { color: #f38ba8; }
-.mm-action-btn:hover, .mm-action-btn.hover { background: #313244; }
+.mm-action-btn.hover { background: #313244; }
 .mm-action-btn.danger { color: #f38ba8; border-color: #f38ba8; }
-.mm-action-btn.danger:hover, .mm-action-btn.danger.hover { background: rgba(243,139,168,0.15); }
+.mm-action-btn.danger.hover { background: rgba(243,139,168,0.15); }
+/* Mouse :hover only on hover-capable devices — on iPad/touch the :hover state
+   sticks after a tap (looked like an action button stayed "selected"). The VR
+   ray uses the .hover class above, which is unaffected. */
+@media (hover: hover) {
+  .mm-action-btn:hover        { background: #313244; }
+  .mm-action-btn.danger:hover { background: rgba(243,139,168,0.15); }
+}
 
 /* Two-button row */
 .mm-btn-pair {
@@ -2273,6 +2281,15 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
     (v) => { Remesh.RESOLUTION = v; topo?.remeshResolution?.(v); },
     null, sliderDirtyFn
   );
+  // Keep the voxel-density preview overlay visible for the whole time the slider
+  // is held (not just while moving) — capture phase so fixSliderDrag can't swallow
+  // the events. The element is fresh each rebuild, so listeners don't leak.
+  const _resSlider = el.querySelector('#mm-remesh-res');
+  if (_resSlider) {
+    _resSlider.addEventListener('pointerdown',  () => VoxelDensityOverlay.holdOpen(), true);
+    _resSlider.addEventListener('pointerup',     () => VoxelDensityOverlay.release(),  true);
+    _resSlider.addEventListener('pointercancel', () => VoxelDensityOverlay.release(),  true);
+  }
   el.querySelector('#mm-remesh-block')?.addEventListener('click', () => {
     Remesh.BLOCK = !Remesh.BLOCK;
     el.querySelector('#mm-remesh-block')?.classList.toggle('active', Remesh.BLOCK);
@@ -2627,12 +2644,19 @@ export function wireMenuHistory(el, main, repaintFn) {
   if (stackSlider && stackVal) {
     stackSlider.addEventListener('input', () => {
       const v = parseInt(stackSlider.value, 10);
-      stackVal.textContent = v;
+      stackVal.textContent = v; // live value display — no rebuild needed
       const sm = main.getStateManager?.() ?? main._stateManager;
       if (sm) sm.limit = v;
-      repaintFn?.();
+      // NOTE: do NOT call repaintFn() here. On the desktop dropdown it rebuilds the
+      // whole menu (innerHTML), destroying the slider mid-drag → drag died, only the
+      // initial click registered. VR re-rasters via its own slider-drag dispatch.
     });
   }
+
+  // Native range inputs have touch-action:none (anti Pencil-scroll), which breaks
+  // finger-drag on iPad → tap-only. fixSliderDrag adds the pointer-based drag the
+  // other menus use. (This menu was the only one not calling it.)
+  fixSliderDrag(el);
 }
 
 export function wireMenuReference(el, main, repaintFn) {
@@ -2768,9 +2792,11 @@ export function buildMenuHTML_desktopSettings(main) {
     <label class="mm-check-row"><span>Show debug log</span><input type="checkbox" id="mm-debug-log"${debugActive ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <label class="mm-check-row"><span>Show Eruda console</span><input type="checkbox" id="mm-eruda-console"><span class="mm-checkmark"></span></label>
     <button class="mm-action-btn" id="mm-clear-log">Clear log</button>
-    <div class="mm-section-title">Language</div>
-    ${buildSelectHTML('mm-language', langs.map((l, i) => ({ val: i, label: l })), langIdx)}
   `;
+  // Language selector hidden: the legacy TR(key) translations only cover the old
+  // yagui UI, while the current HTML panels are hardcoded English and don't consult
+  // TR — so switching language did nothing. Re-enable once the UI is retrofitted
+  // with TR keys (+ re-render) and the 10 language files are filled in for it.
 }
 
 export function wireMenuDesktopSettings(el, main, repaintFn) {

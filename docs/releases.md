@@ -1,3 +1,15 @@
+# v2.4.21
+iPad QA polish batch (Stéphane notes).
+
+- **Fix**: Action buttons no longer stay "selected" after a tap on touch — mouse `:hover` gated behind `@media (hover: hover)`.
+- **Fix**: Files menu no longer blows out to a huge width (bounded `max-width`).
+- **Fix**: Number fields are editable on iPad — the numpad now opens on touch-primary devices (the iOS keyboard is suppressed, so it was the only editor). Fixes "animation duration can't be edited" and all numpad-wired fields.
+- **Change**: Language selector hidden (legacy translations only cover the removed yagui UI; the current HTML UI is English-only with no re-render — real localization is a future task).
+- **Fix**: Pinch-zoom on a panel no longer zooms/reflows the whole page ("grey bar"); Safari page pinch-zoom is blocked globally (the viewport handles its own 2-finger camera via pointer events).
+- **Change**: Starting a sculpt/edit stroke now stops animation playback (you can still orbit during playback).
+- **Fix**: "Max undo steps" slider can be dragged (not just tapped) on touch.
+- **Fix**: Voxel-resolution preview overlay stays visible while the slider is held (was auto-hiding ~250 ms after the last move).
+
 # v2.4.14
 iPad mesh-edit & finger-gesture overhaul (Stéphane QA, cluster B).
 

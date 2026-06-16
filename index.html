@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v2.4.14</title>
+    <title>SculptXR v2.4.21</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v2.4.14
+                                                              VERSION: v2.4.21
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -116,6 +116,14 @@
       };
       new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(_patchInput)))
         .observe(document.body, { childList: true, subtree: true });
+
+      // Disable Safari's page pinch-zoom everywhere. iPadOS ignores
+      // user-scalable=no, so pinching a panel zoomed/reflowed the whole page (the
+      // "grey bar at the bottom" + broken fixed-width layout). The 3D viewport
+      // handles its own 2-finger camera via Pointer Events (not these Gesture
+      // events), so blocking them doesn't affect camera control.
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
+        document.addEventListener(t, e => e.preventDefault(), { passive: false }));
     </script>
 </head>
 

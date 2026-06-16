@@ -669,6 +669,8 @@ class Gui {
         border-radius: 8px;
         padding: 8px;
         min-width: 180px;
+        max-width: min(340px, 92vw);
+        box-sizing: border-box;
         max-height: 80vh;
         overflow-y: auto;
         z-index: 1200;

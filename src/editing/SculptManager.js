@@ -170,6 +170,15 @@ class SculptManager {
     // finger happened to be over the mesh.
     this._strokeActive = !!canEdit;
 
+    // Sculpting interrupts animation playback (you can orbit during playback, but a
+    // sculpt/edit stops it). Refresh the timeline + transport UI to match.
+    if (canEdit && window._animPlaying) {
+      window._animPlaying = false;
+      if (window._animationRegistry) window._animationRegistry.lastGlobalTime = null;
+      this._main.getGui?.()?._ctrlTimeline?.draw?.();
+      window._animSyncKeyInspector?.();
+    }
+
     // Push State for Undo/Redo
     if (this._main.getStateManager()) {
       if (tool.constructor.name === 'SculptVoxel') {

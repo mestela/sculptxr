@@ -6,6 +6,19 @@ class VoxelDensityOverlay {
     this._overlayMaterial = this.createShaderMaterial();
     this._activeMesh = null;
     this._timer = null;
+    this._held = false; // true while a slider is held down — suppresses auto-hide
+  }
+
+  // Keep the preview visible until release() — used while a resolution slider is
+  // held, so pausing the drag (no input events) doesn't auto-hide it.
+  holdOpen() {
+    this._held = true;
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+  }
+
+  release() {
+    this._held = false;
+    this.disable();
   }
 
   createShaderMaterial() {
@@ -91,10 +104,14 @@ class VoxelDensityOverlay {
   poke(mesh, resolution, worldExtentOverride = null) {
     this.enable(mesh, resolution, worldExtentOverride);
 
+    // While a slider is held, stay visible until release() — don't arm the
+    // auto-hide timer (otherwise pausing the drag hides the preview).
+    if (this._held) return;
+
     if (this._timer) clearTimeout(this._timer);
     this._timer = setTimeout(() => {
       this.disable();
-    }, 250); // Release detection time
+    }, 250); // Release detection time (fallback for callers without hold/release)
   }
 }
 

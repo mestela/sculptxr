@@ -687,14 +687,18 @@ export class VrNumpad extends HTMLVRPanel {
 
   /**
    * Whether numeric inputs should route to the numpad instead of native entry.
-   * Always true in VR (no physical keyboard). Outside VR there is no reliable
-   * way to detect a connected keyboard, so this honors the user's
-   * 'always use numpad' preference (default off) — handy on keyboard-less
-   * tablets, annoying with a keyboard, hence opt-in.
+   * Always true in VR (no physical keyboard). On touch-primary devices (iPad) the
+   * numpad is the ONLY way to edit numbers — we suppress the iOS keyboard via
+   * inputmode="none" on number inputs, so without this they'd be uneditable.
+   * Otherwise honor the user's 'always use numpad' preference (default off).
    */
   shouldUse() {
     if (window.app?._renderer?.xr?.isPresenting) return true;
-    return !!window.getOptionsURL?.().alwaysNumpad;
+    if (window.getOptionsURL?.().alwaysNumpad) return true;
+    try {
+      if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return true;
+    } catch (_) {}
+    return false;
   }
 
   /**
