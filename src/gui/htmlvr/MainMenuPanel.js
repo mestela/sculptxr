@@ -2121,6 +2121,7 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   el.querySelectorAll('[data-env]').forEach(btn => {
     btn.addEventListener('click', () => {
       ShaderPBR.idEnv = parseInt(btn.dataset.env, 10);
+      main.getBackground?.()?._applyBackground?.(); // refresh if background shows the env
       main.render?.();
       el.querySelectorAll('[data-env]').forEach(b => b.classList.toggle('active', b === btn));
       lightRepaintFn();
@@ -2714,7 +2715,7 @@ export function wireMenuBackground(el, main, repaintFn) {
   });
 
   wireSlider(q('#mm-bg-blur'), q('#mm-bg-blur-val'),
-    (v) => { if (bg) bg._blur = v; main.render?.(); },
+    (v) => { if (bg) { bg._blur = v; bg._applyBackground?.(); } main.render?.(); },
     v => v.toFixed(2));
 
   q('#mm-bg-reset')?.addEventListener('click',  () => { bg?.deleteTexture?.(); main.render?.(); });

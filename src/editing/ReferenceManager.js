@@ -1,5 +1,4 @@
-import MeshReference from '../mesh/MeshReference.js';
-import Utils from '../misc/Utils.js';
+import * as THREE from 'three';
 
 class ReferenceManager {
 
@@ -47,39 +46,57 @@ class ReferenceManager {
   }
 
   addReference(img) {
-    var gl = this._main._gl;
-    var mesh = new MeshReference(gl);
-    mesh.loadTexture(img);
+    // A reference is just an unlit textured plane in the scene. (The old
+    // MeshReference was a WebGL-only mesh with no three.js object, so it never
+    // rendered after the migration.)
+    const tex = new THREE.Texture(img);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
 
-    // Add to Scene Meshes
-    this._main.getMeshes().push(mesh);
-    this._references.push(mesh);
+    // Size: a little bigger than the current model, with the image's aspect ratio.
+    // Use the model's WORLD bounding box converted into worldGroup-local space (the
+    // raw geometry bbox is tiny before the mesh's own transform — that's why it
+    // appeared minuscule).
+    const aspect = (img.width || 1) / (img.height || 1);
+    const parent = this._main._worldGroup || this._main._scene;
+    let h = 70;                              // fallback (worldGroup-local units)
+    let center = new THREE.Vector3(0, 0, 0); // centre of the world
+    const mesh = this._main.getMesh?.();
+    const tm = mesh && mesh.getThreeMesh && mesh.getThreeMesh();
+    if (tm && parent) {
+      const box = new THREE.Box3().setFromObject(tm); // world space
+      if (!box.isEmpty()) {
+        parent.updateWorldMatrix(true, false);
+        box.applyMatrix4(new THREE.Matrix4().copy(parent.matrixWorld).invert()); // → worldGroup-local
+        const size = new THREE.Vector3(); box.getSize(size);
+        box.getCenter(center);
+        h = Math.max(1, size.y) * 1.3;
+      }
+    }
 
-    // Explicitly force render to ensure texture is uploaded?
-    this._main.render();
+    const geo = new THREE.PlaneGeometry(h * aspect, h);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, toneMapped: false });
+    const card = new THREE.Mesh(geo, mat);
+    card.position.copy(center);
+    card._isReference = true;
 
-    // Position in front of camera?
-    // Default creation is at 0,0,0 usually? MeshStatic default.
-    // Maybe move it slightly up?
-    // mat4.translate(mesh.getMatrix(), mesh.getMatrix(), [0, 1.2, -0.5]); // Near head?
-    // Let's rely on standard spawn logic if any, or just 0,0,0.
+    if (parent) parent.add(card);
+    this._references.push(card);
 
-    this._main.render();
+    this._main.render?.();
     if (window.screenLog) window.screenLog('Reference Added', 'lime');
   }
 
   clear() {
-    // Remove all references from scene
-    var meshes = this._main.getMeshes();
+    const parent = this._main._worldGroup || this._main._scene;
     for (var i = 0; i < this._references.length; ++i) {
-      var ref = this._references[i];
-      var idx = meshes.indexOf(ref);
-      if (idx !== -1) meshes.splice(idx, 1);
-      // Delete texture?
-      // ref.deleteTexture(); // if method exists
+      var card = this._references[i];
+      if (parent) parent.remove(card);
+      card.geometry?.dispose?.();
+      if (card.material) { card.material.map?.dispose?.(); card.material.dispose?.(); }
     }
     this._references = [];
-    this._main.render();
+    this._main.render?.();
   }
 }
 

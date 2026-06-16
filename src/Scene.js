@@ -1673,7 +1673,10 @@ class Scene {
 
     // Initialize Three.js Scene Components
     this._scene = new THREE.Scene();
-    
+    // Apply the default background (grey, or a previously-loaded image) now that the
+    // three.js scene exists. Background was constructed earlier (no scene yet).
+    if (this._background && this._background._applyBackground) this._background._applyBackground();
+
     // WebXR offset tracking container: WebXR forces physical poses relative to the `Scene` root.
     // If we want the mesh to be down in front of the user (like on a desk), we put meshes in a _worldGroup
     // and move/scale the _worldGroup, while the headset roams the root scene freely.
@@ -2536,6 +2539,9 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
+
+    // Restore the desktop background (and env backdrop quad) hidden during XR.
+    if (this._background && this._background._applyBackground) this._background._applyBackground();
 
     // Auto-restart: re-enter immersive mode when the XR device grants a session back
     // to this page (e.g. user puts headset back on after removing it).
@@ -4412,16 +4418,19 @@ class Scene {
 
 
 
-    // 1. Synchronize UI Mesh Visibility with Application State
+    // 1. Synchronize UI Mesh Visibility with Application State.
+    // These are VR canvas menus parented near a controller — they must never show
+    // on desktop/iPad (where they'd sit at the world origin). Gate on the XR session.
+    const _xrOn = !!(this._renderer && this._renderer.xr && this._renderer.xr.isPresenting);
     if (this._vrMenu && this._guiXR) {
         // In HTML panel mode the old canvas VRMenu is always hidden; the
         // MainMenuPanel on the wrist replaces it.
-        this._vrMenu.mesh.visible = window._brushPanelEnabled !== false
+        this._vrMenu.mesh.visible = _xrOn && (window._brushPanelEnabled !== false
           ? false
-          : !!this._guiXR._isVisible;
+          : !!this._guiXR._isVisible);
     }
     if (this._vrPopup && this._guiPopup) {
-        this._vrPopup.mesh.visible = !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
+        this._vrPopup.mesh.visible = _xrOn && !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
     }
     if (this._vrMiniHUD && this._guiMini) {
         // Hide MiniHUD if the old legacy Main Menu or Popup is visible.
@@ -4434,7 +4443,7 @@ class Scene {
            || !!(this._miniPanel?.mesh?.visible)
            || !!(this._toolPickerPanel?.mesh?.visible)
            || !!(this._mainMenuPanel?.mesh?.visible));
-        this._vrMiniHUD.mesh.visible = !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
+        this._vrMiniHUD.mesh.visible = _xrOn && !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
     }
 
     this._isPointingAtMenu = false;

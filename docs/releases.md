@@ -1,3 +1,10 @@
+# v2.4.38
+Background, environment skybox & reference images (three.js port).
+
+- **Feature**: **Background reimplemented for three.js**. Import an image (flat backdrop), or pick **Environment** / **Ambient env**. The built-in HDRIs now render as a skybox again — ported SculptGL's fullscreen LogLUV octahedral panorama decode (`texturePanoramaLod`) + SH evaluation into a three.js shader; no new assets. Per-HDRI exposure × the rendering-panel exposure slider drives brightness; blur uses the prefiltered mips. Default grey. Scoped to non-XR.
+- **Feature**: **Reference images work again**. Add reference → an unlit textured plane at the model centre, sized ~1.3× the model with the image's aspect. (The old MeshReference was WebGL-only and never rendered after the migration.)
+- **Fix**: Desktop no longer shows VR-only elements at the world origin — the **VR canvas menus** (mini-HUD/menu/popup) default hidden and are gated to XR, and the green **voxel-bounds box** defaults hidden (shown only during voxel modeling).
+
 # v2.4.25
 More iPad/QA polish.
 

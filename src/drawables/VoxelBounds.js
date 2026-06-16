@@ -43,7 +43,7 @@ class VoxelBounds {
 
     this._threeMesh = new THREE.LineSegments(geometry, material);
     this._threeMesh.frustumCulled = false;
-    this._threeMesh.visible = true;
+    this._threeMesh.visible = false; // shown only while voxel modeling is active (render/setVisible)
 
     if (main && main._worldGroup) {
       main._worldGroup.add(this._threeMesh);
