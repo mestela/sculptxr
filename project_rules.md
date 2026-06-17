@@ -14,8 +14,8 @@ MANDATORY: You MUST read `overview.md` (repo root) and `docs/code_summary.md` fo
     *   **Rule**: Do NOT add features to the desktop UI unless explicitly requested. If there is ANY ambiguity, ALWAYS assume the target is the VR side (e.g. `GuiVRTools.js` / VR menu).
 4.  **No Unprompted Git Commits/Pushes**:
     *   **Rule**: NEVER `git commit` or `git push` to github unless explicitly asked to do so by the user. Do not assume a task list check-off means it's ready to push.
-5.  **Deployment Protocol [DISABLED & FORBIDDEN]**:
-    *   **Rule**: NEVER run `./deploy_beta.sh` or `./deploy.sh`. This is strictly forbidden under any circumstances. Rely entirely on the local Vite server (`npm run dev`).
+5.  **Deployment Protocol [ASK-FIRST GATE]**:
+    *   **Rule**: NEVER self-initiate a deploy — do not run `./deploy_beta.sh` or `./deploy.sh` on your own judgement. But DO run the appropriate script when the user **explicitly asks** to deploy (clarified 2026-06-13; supersedes the old absolute ban). Default to the local Vite server (`npm run dev`) for all iteration. `deploy_beta.sh` → beta channel; `deploy.sh` → production (extra caution — see Deployment Details: must be user `tokeruadmin`, requires a physical security-key tap).
 6.  **Debug Visibility**:
     *   `VERSION` MUST be visible in VR/Screen Log on startup.
 
@@ -39,13 +39,13 @@ MANDATORY: You MUST read `overview.md` (repo root) and `docs/code_summary.md` fo
 ## Workflow Rules (STRICT ADHERENCE)
 1. **PLANNING MODE IS SACRED**: When in "Planning Mode" or asked to "Plan", **NO CODE EDITS** are permitted. Analysis and reading only.
 2. **VITE FIRST**: ALL code testing must be done locally via Vite.
-3. **PRODUCTION LOCK**: Production deployment (`sculptvr`) is **FORBIDDEN**.
+3. **PRODUCTION**: Never deploy to production (`sculptvr`) on your own. A production deploy happens **only** when the user explicitly requests one.
 4. **VR VERIFICATION**: You may request VR testing locally.
 5. **ROLLBACK CAUTION**: Do not perform blind rollbacks. Stop and Plan.
 6. **MANUAL COMMIT**:
     *   **NEVER automatically commit changes.** Wait for explicit user request/approval.
-    *   **NEVER automatically deploy to PRODUCTION.**
-    *   **Beta Deployment is currently disabled.**
+    *   **NEVER automatically deploy** (beta or production).
+    *   **Beta/Prod deploys run only on explicit user request** — never self-initiated.
 7. **ATOMIC EDITS FOR LOGS**:
     *   **Rule**: Never use wide multi-line replacements to delete a single `console.log`. Use surgical replacements targeting *only* the log line.
 8. **VISUAL DIFF VERIFICATION**:
