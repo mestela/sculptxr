@@ -1,3 +1,8 @@
+# v2.6.0
+Sculpting stability — fix accumulating "blocky" brush artifacts (octree froze mid-stroke).
+
+- **Fix**: Standard mesh brushes (Brush/Clay, Flatten, Crease, Inflate, …) no longer build up blocky / terraced artifacts when you work over the same area, and large brushes flatten evenly instead of leaving raised shoulders. Root cause: the mesh octree was effectively frozen for the duration of a stroke. An earlier voxel optimization had reduced `Mesh.updateOctree(iFaces)` to a no-op `build()` call, so as vertices moved under the brush the spatial sphere-query that gathers the affected vertices went stale and intermittently dropped most of them (observed 840 → 81), flattening only part of the brushed region. Reconnected the incremental octree update (move modified faces between cells + refresh bounds each substroke — the path `MeshSafe` already used). The voxel remesh path still does a full rebuild, so voxel performance is unchanged. Bonus: sculpting also feels more stable and fluid in VR (the freeze was platform-agnostic).
+
 # v2.5.0
 iPad parity & QA pass (Stéphane Ginier feedback) — undo, gestures, background, references.
 

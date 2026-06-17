@@ -1851,17 +1851,20 @@ class Mesh {
 
   /** Update Octree */
   updateOctree(iFaces) {
-    if (iFaces) { // Update EXISTING octree with new faces?
-      // For now we don't support partial update of Octree from scratch in this method often.
-      // Usually we rebuild.
-      // But if we do partial... we need to access the octree.
-      // This path is rarely used in Voxel.
-      if (!this._meshData._octree) this._meshData._octree = OctreeCell.getFree();
+    // Incremental update for standard sculpt strokes: move the modified faces between
+    // octree cells and refresh loose AABBs so the sphere query stays accurate mid-stroke.
+    // (Previously this called octree.build(this, iFaces), which is a no-op on an already
+    // -subdivided tree -> the octree froze at stroke-start positions, so big-brush strokes
+    // lost most of their picked vertices and produced blocky/uneven flattening.
+    // The no-arg path that voxel remeshing uses still does a full computeOctree.)
+    if (iFaces) {
+      if (this._meshData._octree)
+        this.updateOctreeAdd(this.updateOctreeRemove(iFaces));
+      else
+        this.computeOctree();
     } else {
-      if (this._meshData._octree) this._meshData._octree.release();
-      this._meshData._octree = OctreeCell.getFree();
+      this.computeOctree();
     }
-    this._meshData._octree.build(this, iFaces);
   }
 
   computeAabb() {
