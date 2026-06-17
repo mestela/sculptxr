@@ -554,16 +554,22 @@ class SculptBase {
     var rWorld = Math.sqrt(picking._rWorld2);
     if (rWorld < 1e-5) rWorld = main._vrLastPickingRadius || 0.05; // Fallback if previous frame missed
 
-    var minSpacing = 0.02 * rWorld;
+    var spacingFactor = (typeof window._vrStrokeSpacing === 'number') ? window._vrStrokeSpacing : 0.02;
+    var minSpacing = spacingFactor * rWorld;
     if (minSpacing < 0.001) minSpacing = 0.001; // Safety minimum
 
-    // Commenting out minSpacing threshold for testing smooth slow movement
-    /*
-    if (dist <= minSpacing && !this._forceNextStroke) {
-
+    // FRAMERATE INVARIANCE: apply the stroke per unit of controller/surface travel, not
+    // once per frame. This gate was previously disabled, so holding the trigger stamped the
+    // brush every frame -> at 90fps strokes accumulated ~3x faster than at 30fps (crease
+    // spikes on press, runaway ridges, generally too-strong VR deformation). _lastVRPos is
+    // only advanced when we actually apply (below), so distance accumulates across skipped
+    // frames; the first stroke of a press still fires via _forceNextStroke. The default
+    // spacing (0.02 * worldRadius) is very fine, so moving strokes stay smooth — only the
+    // at-rest over-accumulation is removed. window._vrStrokeThrottle = false restores the
+    // old per-frame behavior for A/B comparison.
+    if (window._vrStrokeThrottle !== false && dist <= minSpacing && !this._forceNextStroke) {
       return;
     }
-    */
 
     this._forceNextStroke = false;
 

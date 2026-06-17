@@ -6441,7 +6441,42 @@ class Scene {
         vec3.scale(volumeEnginePos, volumeEnginePos, invScale);
 
         const paddedRadius = pickingRadius * (toolIndex === Enums.Tools.MOVE ? 1.25 : 1.0);
-        picked = this._picking.intersectionSphereMeshes(targetMeshes, volumeEnginePos, paddedRadius);
+
+        // SURFACE-WALKING ANCHOR (Crease only). Re-projecting the raw controller tip every
+        // frame makes the brush centre jump when the tip drifts off-surface (gallop above,
+        // waves below). Instead keep an on-surface anchor, advance it by the controller's
+        // motion, and let the surface projection inside intersectionSphereMeshes discard the
+        // depth (normal) component each frame -> the brush walks the surface laterally and
+        // ignores how far above/below the tip is (the depth-independence desktop gets free
+        // from screen-ray picking). _vrSculpting here is last frame's value: false on the
+        // first stroke frame (anchor = contact point), true mid-stroke (walk).
+        let pickCenter = volumeEnginePos;
+        const isCreaseWalk = (toolIndex === Enums.Tools.CREASE);
+        if (isCreaseWalk) {
+          if (this._vrSculpting && this._vrCreaseAnchor) {
+            const wDelta = vec3.create();
+            vec3.subtract(wDelta, volumeEnginePos, this._vrCreaseLastTip);
+            pickCenter = vec3.create();
+            vec3.add(pickCenter, this._vrCreaseAnchor, wDelta); // advance; committed only if the pick succeeds
+          } else {
+            this._vrCreaseAnchor = vec3.clone(volumeEnginePos); // stroke start / hover: anchor at the tip
+            pickCenter = this._vrCreaseAnchor;
+          }
+          this._vrCreaseLastTip = vec3.clone(volumeEnginePos);
+        }
+
+        picked = this._picking.intersectionSphereMeshes(targetMeshes, pickCenter, paddedRadius);
+
+        if (isCreaseWalk && picked) {
+          // Re-snap the anchor onto the surface so the depth component is dropped each frame.
+          // Pure depth motion snaps back to ~the same point; lateral motion walks it along.
+          const cMesh = this._picking.getMesh();
+          if (cMesh) {
+            const interEngine = vec3.create();
+            vec3.transformMat4(interEngine, this._picking.getIntersectionPoint(), cMesh.getMatrix());
+            this._vrCreaseAnchor = interEngine;
+          }
+        }
       } else {
         picked = this._picking.intersectionRayMeshes(targetMeshes, rayOrigin, engineDir);
         this._picking._isVRHit = picked;

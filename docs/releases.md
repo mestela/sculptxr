@@ -1,3 +1,11 @@
+# v2.7.0
+VR Crease overhaul — depth-independent surface tracking + framerate-invariant strokes.
+
+- **Fix**: **VR Crease no longer wobbles / gallops / waves.** The instability was in the brush *centre*, not the crease math: in VR the centre was re-derived each frame as the nearest surface point to the controller tip, so holding the tip even ~1cm off-surface fed back into the deforming geometry (jitter below, intermittent pick dropouts above). Crease now uses a **surface-walking anchor** — it anchors to the contact point and advances by the controller's lateral motion, letting the per-frame surface re-snap discard the depth component. The brush walks the surface and ignores how far above/below the tip drifts (the depth-independence desktop gets for free from screen-ray picking). Scoped to the Crease tool in volume-intersect mode; other tools unchanged.
+- **Change**: **VR strokes are now framerate-invariant.** The per-distance spacing throttle in the VR stroke path had been disabled, so holding the trigger stamped the brush every frame — at 90fps deformation accumulated ~3x faster than at 30fps (crease spikes on press, generally too-strong VR sculpting). Restored the throttle so deformation tracks distance travelled, not frame count. The spacing is very fine, so moving strokes stay smooth; only the at-rest over-accumulation is removed. Affects the standard stroke brushes (Brush, Inflate, Smooth, Flatten, Pinch, Crease, Masking, LocalScale).
+- **Tweak**: Crease default intensity lowered to 0.4. It's a pinch tool, so very high intensity drags groove triangles toward zero area and folds the mesh (no dyntopo to relieve the bunching); ~0.4 is the sweet spot and the slider still goes higher.
+- **Fix**: An inline `<head>` script ran `MutationObserver.observe(document.body, …)` before `<body>` existed, throwing on every load and aborting the rest of the block. This silently disabled two iPad fixes — `inputmode` stamping (forces the VR numpad over the iOS keyboard) and Safari page pinch-zoom suppression ("grey bar"). Now observes `document.documentElement`.
+
 # v2.6.0
 Sculpting stability — fix accumulating "blocky" brush artifacts (octree froze mid-stroke).
 

@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v2.6.0</title>
+    <title>SculptXR v2.7.0</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v2.6.0
+                                                              VERSION: v2.7.0
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -114,8 +114,12 @@
         if (el.matches?.('input[type=number]')) el.setAttribute('inputmode', 'none');
         el.querySelectorAll?.('input[type=number]').forEach(i => i.setAttribute('inputmode', 'none'));
       };
+      // Observe documentElement (<html>), not document.body: this script runs in <head>
+      // before <body> exists, so document.body is null here and observe() would throw —
+      // which also aborted the gesture-suppression listeners below. subtree:true still
+      // catches number inputs added anywhere later.
       new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(_patchInput)))
-        .observe(document.body, { childList: true, subtree: true });
+        .observe(document.documentElement, { childList: true, subtree: true });
 
       // Disable Safari's page pinch-zoom everywhere. iPadOS ignores
       // user-scalable=no, so pinching a panel zoomed/reflowed the whole page (the
