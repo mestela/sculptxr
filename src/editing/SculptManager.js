@@ -148,8 +148,34 @@ class SculptManager {
     return this._continuous && this.canBeContinuous();
   }
 
+  // True when sculpting is permitted given the active blendshape layer (if any).
+  // No active layer → always allowed (normal base sculpting is unaffected).
+  // Active layer → must be visible (not muted) and at weight 1, so the delta
+  // capture in Mesh.updateGeometry stays correct.
+  _canSculptActiveBlendshapeLayer() {
+    const reg = window._animationRegistry;
+    const mesh = this._main.getMesh?.();
+    if (!reg || !mesh) return true;
+    const track = reg.tracks.get(mesh.getID());
+    const name = track?.editingBlendshape;
+    if (!name) return true;
+    if (track.blendshapeMuted?.has?.(name)) return false;
+    const bTrack = track.blendshapeTracks?.get(name);
+    const w = bTrack ? reg.evaluateScalarTrack(bTrack, track.playbackTime || 0) : 0;
+    return Math.abs(w - 1) < 1e-3;
+  }
+
   start(ctrl) {
     var tool = this.getCurrentTool();
+
+    // Blendshape layer gate (desktop + VR both route through here): when a layer is
+    // active for editing, all mesh deformation is captured into that layer's delta
+    // — which is only correct while the layer is visible and held at weight 1. If
+    // not, block the stroke and flash the blendshape palette so the user sees why.
+    if (!this._canSculptActiveBlendshapeLayer()) {
+      window._blendshapeStackPanel?.flash?.();
+      return false;
+    }
 
     // iPad double-fire guard for single-action tools.
     // On iPadOS the pressure-transition synthesis (pointermove 0→pressure) and the

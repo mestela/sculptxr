@@ -1,73 +1,53 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Low-poly tool bug-fix session complete. v2.0.5 deployed to beta.
+**Project Status**: VR Crease overhaul + blocky-brush fix shipped (v2.7.0, deployed to beta). Next task: build a **canvas-2D blendshape "layer stack" panel** (Nomad-style). Design is locked; no code written yet for it.
 **Current Working Directory**: `/Users/mattestela/sculptxr`
 **Branch**: `feature/html-in-vr`
-**Checkpoint**: v2.0.4 committed to git (3dc052cd), deployed as v2.0.5 by deploy script.
+**Checkpoint**: clean working tree at v2.7.0 (committed `489c86e2` + docs `1e143266` + deploy record `4dc0ea6e`, all pushed to `origin/feature/html-in-vr`).
 
-## MANDATORY reading
-You MUST read `overview.md` and `docs/releases.md` for context before responding. NO EXCEPTIONS.
+## MANDATORY reading (before responding)
+You MUST read `overview.md` (repo root) and `docs/code_summary.md` for project context. Also read `project_rules.md` (the repo constitution — Step Id prefix, no auto-commit/deploy, no emoji, VR rules). NO EXCEPTIONS. The auto-memory (`MEMORY.md` + the `project_sculptxr_*` files) loads automatically and carries the full backlog + this task's design.
 
 ## Deployed Version
-- **Beta**: v2.0.5
-- **Prod**: v2.0.2 (not updated this session)
+- **Beta**: v2.7.0
+- **Prod**: not updated this session
 
 ## Interactive Debugging
-- **Preference**: Use browser console for immediate state inspection.
-- **Workflow**: Provide copy-pasteable snippets.
-- **iPad**: Use Safari remote debug or `window.screenLog()` for on-device logging.
+- **Preference**: browser console for state inspection; provide copy-pasteable snippets. matt uses an ADB remote Chrome console in VR (standard `console.log` is copyable there). `window.screenLog(msg, color)` for on-device HUD.
+- Run `npm run bump:patch` yourself on every test handoff (HMR is live; no build event otherwise) so the in-app VERSION updates.
 
-## What was fixed this session (shipped as v2.0.4/v2.0.5)
-See `docs/releases.md` # v2.0.4 for full detail. Summary:
+## THE TASK: canvas-2D blendshape layer-stack panel
 
-### SpinEdge lock-up fix (`src/editing/tools/SpinEdge.js`)
-SpinEdge locked after 2–3 spins because the winding of the produced triangles
-alternated each spin, making them back-facing and invisible to the face picker.
-Fixed by a cross-product winding consistency check before writing the new face
-data — if the proposed triangle faces away from the original, `vC`/`vD` are
-swapped. `vC`/`vD` changed from `const` to `let` to allow the swap.
-Spinning now works indefinitely.
+**Why** (decided 2026-06-17): the existing HTML blendshape UI (`AnimationControlPanel.js` Section 6) has the irreducible HTML-in-WebXR per-paint cost (DOM→SVG→rasterize→GPU upload) on every weight-slider drag. We first tried a "pure split" (strip sliders from the panel, mix weights on the timeline) — matt found it **confusing** (separates "what layers exist" from "how much each is on"), so it was **reverted**. New direction: a **canvas-2D layer stack with sliders** (Photoshop/Nomad-style). A canvas redraw is cheap, so it gives the elegant single-place UX *and* the speed, and sidesteps the HTML raster cost for the one genuinely continuous-interaction panel.
 
-### Extrude double-fire on iPad (`src/SculptGL.js`)
-iPad fires events in order `pointerdown` → `touchstart` → `touchmove`.
-`touchstart` was unconditionally resetting `_ptrDownHandledThisTouch = false`
-*after* `pointerdown` had already set it to `true`, causing the `touchmove`
-fallback to fire a second `onMouseDown`. Fixed: `touchstart` only resets the
-flag when `_action !== SCULPT_EDIT`.
+**Per-row design (matt's pick — FULLER):** each layer row = active/select dot (tap → sculpt that layer) · name · weight slider · numeric value · **visibility/mute** (zero its contribution without losing the stored weight) · **solo** (isolate at 1.0). Base layer pinned at the bottom. Toolbar: New, Del; rename via double-click/long-press. **Icons must be vector/FontAwesome drawn on the canvas — NO emoji/unicode glyphs** (recurring matt rule).
 
-### Extrude normals — hard-edge correction (`src/editing/tools/Extrude.js`)
-After extrude, `updateVerticesNormal()` blended side-wall face normals into the
-cap vertices and original base vertices, making the extrusion look soft/rounded
-in smooth shaded mode. Added `_applyHardEdgeNormals(activeMesh)`:
-- Runs after every `updateGeometry()` in `sculptStroke`, `sculptStrokeXR`, and `end()`
-- Re-computes vertex normals for cap verts and base verts using **only face
-  indices < `originalNbFaces`** (pre-extrude face count). Side walls are always
-  appended at index >= originalNbFaces, so they're cleanly excluded.
-- Calls `updateDrawArrays()` after to propagate corrected normals into the DA buffer
-- Result: hard edges at cap boundary and base junction in smooth mode, matching
-  expected low-poly hard-surface look.
-- Also clears `_newToOldMap` in `end()` (was a memory leak).
+**Both platforms are the target; build desktop-first for iteration speed.**
 
-## Key files touched this session
-- `src/editing/tools/SpinEdge.js` — winding-flip detection, vC/vD swap
-- `src/editing/tools/Extrude.js` — `_applyHardEdgeNormals()`, double-fire guard, `_allAffectedVerts`
-- `src/SculptGL.js` — `touchstart` conditional reset, pen debounce tuning, `[dbl]` screenLog
-- `src/editing/SculptManager.js` — supporting changes
-- `src/editing/tools/CutTool.js` — supporting changes
-- `src/gui/htmlvr/MainMenuPanel.js` — supporting changes
-- `docs/releases.md` — v2.0.4 entry added
+### Build order (increments — each testable)
+1. **Desktop canvas panel** — new module (suggest `src/gui/BlendshapeStackPanel.js`). Mirror `GuiTimeline.js`: `document.createElement('canvas')` + `getContext('2d')` + imperative `draw()`; `pointerdown` on the canvas with `setPointerCapture`, `pointermove`/`pointerup` on window; redraw only on interaction/state change. Hit-test rows for: select-dot, slider track (drag → live weight), buttons. Wire to `AnimationRegistry`. Mount into a new **"Blendshapes" tab** in the desktop sidebar (see `MainMenuPanel.js` tab plumbing). Get the UX right here first.
+2. **Solo + mute/visibility** — NEW registry support (not present yet): add per-layer `muted` state + a `soloed` layer, and apply them during `applyBlendshapes`/evaluation (muted → weight treated as 0; solo → isolate that layer). Then draw + wire the row icons.
+3. **VR mount** — render the canvas to a texture on a panel mesh (reuse the VR timeline's canvas→texture pattern in `Scene.js`: search `_vrTimelineMesh` / `_vrTimelineTexture`; note `texture.dispose()` before `needsUpdate` on resize, r183 quirk). Map the VR ray → canvas x/y and hit-test directly (simpler than the HTML UV→DOM path). Add `'blendshapes'` to the VR main-menu tab strip (`MainMenuPanel.js` sections array ~line 710) + a `TAB_ICON` in `src/gui/tabIcons.js`.
+4. **Retire** the old HTML blendshape Section 6 in `AnimationControlPanel.js` once the canvas panel is proven on both platforms.
 
-## Next session priorities
+### Key reference files
+- `src/gui/GuiTimeline.js` — the canvas pattern to mirror (canvas ~L91, getContext ~L101, pointer handlers ~L109–135, imperative `draw()`).
+- `src/editing/AnimationRegistry.js` — blendshape API (all present): `createBlendshape` ~L798, `setBlendshapeWeight` ~L861, `deleteBlendshape` ~L980, `renameBlendshape` ~L1015, `enterBlendshapeEditMode` ~L1036, `exitBlendshapeEditMode` ~L1050. For increment 2, find `applyBlendshapes`/evaluate and add the mute/solo hook there.
+- `src/gui/htmlvr/AnimationControlPanel.js` — current HTML blendshape Section 6 + `refreshBlendshapesDOM` (reference for behavior: rename-on-dblclick, enter/exit edit mode, create/delete, Base row). This is what's being replaced.
+- `src/gui/htmlvr/MainMenuPanel.js` — tab strip (sections array ~L710), how the Animation tab embeds `#acp-root`, how to add a tab.
+- `src/Scene.js` — VR timeline canvas→texture mounting + resize handle (`_vrTimelineMesh`).
 
-### Timeline polish (only remaining item)
-- Timeline canvas scroll gesture (2-finger scroll within panel)
-- Graph editor: follow selected keying mode (blendshape vs transform)
-- Autokey toggle not working — check `window._animAutoKey` binding
-- Timeline icons and grid polish
+### Gotcha
+VR text entry for naming new layers: no VR keyboard exists yet. Default-name new layers ("Layer N") and rename later, or lean on the **ARKit name-library** backlog item (`eyeBlinkLeft`, `jawOpen`, …).
 
-## Workflow rules (non-negotiable)
-- NO auto-commit — always ask before committing
-- VR-first design: all features must work in WebXR before desktop polish
-- Step Id prefix on all code changes (e.g. `// [Step 3]`)
-- Use `window.screenLog(msg, color)` for on-device debug logging
-- Low-poly tools follow `docs/low_poly_tools_standards.md` undo/snapshot pattern
+## Workflow rules (non-negotiable — see `project_rules.md`)
+- **Step Id prefix** on every chat response (`Step Id: {n}`, increment from the user's last).
+- **NO auto-commit / NO auto-deploy** — only when matt explicitly asks. `deploy_beta.sh`/`deploy.sh` are an ask-first gate (run when asked; never self-initiate).
+- `npm run bump:patch` per test handoff; `node bump.mjs minor` before a deliberate push; release notes → top of `docs/releases.md` + README (latest entries).
+- **No emoji/unicode-glyph buttons** anywhere — FontAwesome or plain text/vector only.
+- VR is the priority surface; `Scene.js` is the sole VR input handler.
+- Syntax-check edits with `node --check <file>` (esbuild may not be cached). "Count braces" before deep debugging.
+
+## Recently shipped (context, see `docs/releases.md`)
+- **v2.7.0**: VR Crease surface-walking anchor (depth-independent — fixed wobble/gallop/waves) + framerate-invariant VR strokes + `<head>` load-order fix. See [[sculptxr-crease-vr-hypothesis]] memory.
+- **v2.6.0**: blocky-brush fix — reconnected the incremental octree update that a voxel optimization had frozen mid-stroke. See [[sculptxr-blocky-brush-fix]] memory.

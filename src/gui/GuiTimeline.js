@@ -763,7 +763,7 @@ export default class GuiTimeline {
     if (_selSig !== this._lastSelBsSig) {
       this._lastSelBsSig = _selSig;
       if (selBsNames.size && trackForGutter?.blendshapeTracks) {
-        const _bsKeys = [...trackForGutter.blendshapeTracks.keys()];
+        const _bsKeys = TimelineHelper.bsNames(trackForGutter);
         for (let i = 0; i < _bsKeys.length; i++) {
           if (selBsNames.has(_bsKeys[i])) { this._ensureGutterRowVisible(labels.length + i); break; }
         }
@@ -786,7 +786,7 @@ export default class GuiTimeline {
 
     if (trackForGutter?.blendshapeTracks) {
       let bsIdx = 0;
-      trackForGutter.blendshapeTracks.forEach((bTrack, name) => {
+      TimelineHelper.bsEntries(trackForGutter).forEach(([name, bTrack]) => {
         const color     = bsColors[bsIdx % bsColors.length];
         const isVisible = window._animBsChannelVisible[name] !== false;
         // Evaluate current weight for display in the value badge
@@ -1256,10 +1256,10 @@ export default class GuiTimeline {
         }
       }
 
-      // Draw blendshape weight curves
+      // Draw blendshape weight curves (newest-first, shared order)
       if (track && track.blendshapeTracks) {
         let bsIdx = 0;
-        track.blendshapeTracks.forEach((bTrack, name) => {
+        TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
           const isVisible = window._animBsChannelVisible?.[name] !== false;
           if (!isVisible || !bTrack.times || bTrack.times.length === 0) { bsIdx++; return; }
           const color = bsColors[bsIdx % bsColors.length];
@@ -1833,11 +1833,11 @@ export default class GuiTimeline {
       }
     }
 
-    // Check Blendshape Keys in Graph Mode
+    // Check Blendshape Keys in Graph Mode (newest-first, shared order)
     if (track.blendshapeTracks) {
       let bsIdx = 0;
       let found = false;
-      track.blendshapeTracks.forEach((bTrack, name) => {
+      TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
         if (found) { bsIdx++; return; }
         if (!bTrack.times || window._animBsChannelVisible?.[name] === false) { bsIdx++; return; } // hidden — not selectable
         for (let i = 0; i < bTrack.times.length; i++) {
@@ -2784,7 +2784,7 @@ export default class GuiTimeline {
         // Blendshape row: left zone (rx < 150) = visibility toggle, right zone = weight scrub.
         const bsOffset = channel - maxChannels;
         if (bsOffset >= 0 && track && track.blendshapeTracks && rx >= 5) {
-          const bsNames = [...track.blendshapeTracks.keys()];
+          const bsNames = TimelineHelper.bsNames(track);
           const bsName = bsNames[bsOffset];
           if (bsName !== undefined) {
             if (rx < 36) {
@@ -3188,7 +3188,7 @@ export default class GuiTimeline {
             const laneIdx = bsTracks.findIndex(([id]) => id === meshId);
             const ty2 = headerH + (laneIdx * trackH);
             let bIdx = 0;
-            trackObj.blendshapeTracks.forEach((bTrack, name) => {
+            TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
               if (keyFound || !bTrack.times) { bIdx++; return; }
               const bKy = ty2 + trackH / 2 + 20 + bIdx * 10;
               for (let i = 0; i < bTrack.times.length; i++) {

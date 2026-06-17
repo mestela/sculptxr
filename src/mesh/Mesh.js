@@ -486,9 +486,13 @@ class Mesh {
     const _reg = window._animationRegistry;
     const _track = _reg?.tracks?.get(this.getID?.());
     if (_track?.editingBlendshape && _track.baseShape && !_track._applyingBS) {
-      // Blendshape layer editing: applyBlendshapes() isolates the active layer at
-      // weight=1, all others at 0. So the mesh always shows base + active_delta,
-      // and the delta is simply verts - base. No weight math needed.
+      // Blendshape layer editing. The active layer is held at weight 1 while
+      // sculpting (the SculptManager gate blocks strokes otherwise), but the live
+      // view is now the FULL weighted composition, not an isolated layer — so the
+      // mesh may also carry other layers' contributions. Subtract those so the
+      // captured delta is purely this layer:
+      //   verts = base + activeDelta*1 + others  →  activeDelta = verts - base - others
+      // otherLayersOffset() returns null when nothing else contributes (fast path).
       const _name = _track.editingBlendshape;
       const _v    = this.getVertices();
       let _delta  = _track.blendshapes?.get(_name);
@@ -496,8 +500,14 @@ class Mesh {
         _delta = new Float32Array(_v.length);
         _track.blendshapes.set(_name, _delta);
       }
-      for (let _j = 0; _j < _v.length; _j++)
-        _delta[_j] = _v[_j] - _track.baseShape[_j];
+      const _others = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, _name) : null;
+      if (_others) {
+        for (let _j = 0; _j < _v.length; _j++)
+          _delta[_j] = _v[_j] - _track.baseShape[_j] - _others[_j];
+      } else {
+        for (let _j = 0; _j < _v.length; _j++)
+          _delta[_j] = _v[_j] - _track.baseShape[_j];
+      }
     } else if (_track?.baseShape && !_track._applyingBS) {
       // Base layer active: update baseShape to the new sculpted state.
       // Deltas are offsets, not absolute positions — they apply on top of whatever

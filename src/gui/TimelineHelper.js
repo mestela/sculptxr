@@ -1,5 +1,20 @@
 export default class TimelineHelper {
-  
+
+  // Canonical blendshape display order, shared by the timeline and the canvas
+  // BlendshapeStackPanel: Photoshop order — newest layer first (top). Every place
+  // that lays out blendshape rows / maps a row index back to a name MUST go
+  // through this so draw, hit-test, colour and scroll all agree. (When
+  // drag-to-reorder lands, this becomes an explicit stored order array.)
+  static bsNames(track) {
+    if (!track?.blendshapeTracks) return [];
+    return [...track.blendshapeTracks.keys()].reverse();
+  }
+
+  static bsEntries(track) {
+    if (!track?.blendshapeTracks) return [];
+    return [...track.blendshapeTracks].reverse();
+  }
+
   static getBezierT(targetAlpha, p1x, p2x) {
     let low = 0;
     let high = 1;
@@ -200,10 +215,10 @@ export default class TimelineHelper {
         }
       }
 
-      // Draw Blendshape Keys (Squares)
+      // Draw Blendshape Keys (Squares). Newest-first row order (shared with hit-test).
       if (track && track.blendshapeTracks) {
         let bIdx = 0;
-        track.blendshapeTracks.forEach((bTrack, name) => {
+        TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
           if (bTrack && bTrack.times) {
             for (let i = 0; i < bTrack.times.length; i++) {
               const bt = bTrack.times[i];

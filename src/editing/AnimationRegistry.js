@@ -899,17 +899,19 @@ class AnimationRegistry {
       v.set(track.baseShape);
     }
 
-    // When a layer is being edited, isolate: active=1, all others=0.
-    // This keeps undo stable and the delta computation simple (no weight correction).
-    const editing = track.editingBlendshape;
+    // Always show the true weighted composition so every weight slider is live,
+    // regardless of which layer is active for editing. (We used to isolate the
+    // active layer at 1.0 and zero the rest, which made the sliders look dead
+    // while a layer was selected.) A muted layer contributes 0. Correct delta
+    // capture while editing a non-isolated view is handled by otherLayersOffset()
+    // in Mesh.updateGeometry, which subtracts these other-layer contributions.
+    const muted = track.blendshapeMuted;
     track.blendshapes.forEach((delta, name) => {
       const bTrack = track.blendshapeTracks.get(name);
       if (!bTrack || bTrack.times.length === 0) return;
+      if (muted && muted.has(name)) return;
 
-      const weight = editing
-        ? (name === editing ? 1.0 : 0.0)
-        : this.evaluateScalarTrack(bTrack, track.playbackTime);
-
+      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
       if (weight !== 0) {
         for (let i = 0; i < v.length; i++) {
           v[i] += delta[i] * weight;
@@ -923,6 +925,46 @@ class AnimationRegistry {
     if (mesh.updateGeometry) mesh.updateGeometry();
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
     track._applyingBS = false;
+  }
+
+  // Per-layer visibility: a muted layer keeps its stored weight but contributes 0
+  // to the composition (applyBlendshapes / otherLayersOffset skip it) and cannot be
+  // sculpted into (SculptManager gate). Toggleable, non-destructive.
+  isBlendshapeMuted(mesh, name) {
+    return !!this.tracks.get(mesh.getID())?.blendshapeMuted?.has(name);
+  }
+
+  toggleBlendshapeMute(mesh, name) {
+    if (!mesh || !name) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track) return;
+    if (!track.blendshapeMuted) track.blendshapeMuted = new Set();
+    if (track.blendshapeMuted.has(name)) track.blendshapeMuted.delete(name);
+    else track.blendshapeMuted.add(name);
+    this.applyBlendshapes(mesh);
+  }
+
+  // Sum of every layer's contribution EXCEPT `activeName` (and except muted ones),
+  // at their current evaluated weights. Used by Mesh.updateGeometry to recover the
+  // active layer's pure delta when the live view is the full weighted composition
+  // (verts = base + activeDelta*1 + others). Returns null when nothing else
+  // contributes (the common one-layer-at-a-time case → zero overhead, plain
+  // verts - base capture).
+  otherLayersOffset(track, activeName) {
+    if (!track?.blendshapes) return null;
+    const muted = track.blendshapeMuted;
+    let out = null;
+    track.blendshapes.forEach((delta, name) => {
+      if (name === activeName) return;
+      if (muted && muted.has(name)) return;
+      const bTrack = track.blendshapeTracks.get(name);
+      if (!bTrack || bTrack.times.length === 0) return;
+      const weight = this.evaluateScalarTrack(bTrack, track.playbackTime);
+      if (weight === 0) return;
+      if (!out) out = new Float32Array(delta.length);
+      for (let i = 0; i < out.length; i++) out[i] += delta[i] * weight;
+    });
+    return out;
   }
 
   getBsSlope(bTrack, i) {

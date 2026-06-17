@@ -9,5 +9,6 @@ export const TAB_ICONS = {
   topology:  _fa(''),
   sculpting: _fa(''),
   animation: _fa(''),
+  blendshapes: _fa(''), // fa-layer-group
   timeline:  _fa(''), // fa-bezier-curve — same as graph editor
 };

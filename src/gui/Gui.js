@@ -5,6 +5,7 @@ import GuiFiles from './GuiFiles.js';
 import GuiTopology from './GuiTopology.js';
 import GuiSculpting from './GuiSculpting.js';
 import GuiTimeline from './GuiTimeline.js';
+import BlendshapeStackPanel from './BlendshapeStackPanel.js';
 import Shader from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
@@ -386,6 +387,12 @@ class Gui {
         transition: all 0.15s ease;
       }
       .grid-tool-btn:hover::part(base) { filter: brightness(1.2); cursor: pointer; }
+      @keyframes bsTabFlash {
+        0%   { background-color: rgba(255,77,77,0.0); }
+        15%  { background-color: rgba(255,77,77,0.6); }
+        100% { background-color: rgba(255,77,77,0.0); }
+      }
+      .sidebar-tab-group wa-tab.bs-flash { animation: bsTabFlash 0.45s ease-out; border-radius: 6px; }
     `;
     tabGroup.appendChild(tabStyle);
 
@@ -407,6 +414,7 @@ class Gui {
     const topologyTab  = createTab('topology',  TR('topologyTitle'));
     const sculptingTab = createTab('sculpting', TR('sculptTitle'));
     const animationTab = createTab('animation', 'Animation');
+    const blendshapesTab = createTab('blendshapes', 'Blendshapes');
     const timelineTab  = createTab('timeline',  'Timeline');
 
     sculptingTab.setAttribute('active', '');
@@ -416,6 +424,7 @@ class Gui {
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
     tabGroup.appendChild(animationTab);
+    tabGroup.appendChild(blendshapesTab);
     tabGroup.appendChild(timelineTab);
 
     const scenePanel     = document.createElement('wa-tab-panel'); scenePanel.setAttribute('name', 'scene');
@@ -425,6 +434,8 @@ class Gui {
     const animationPanel = document.createElement('wa-tab-panel');
     animationPanel.setAttribute('name', 'animation');
     animationPanel.id = '_acp_sidebar_panel';
+    const blendshapesPanel = document.createElement('wa-tab-panel');
+    blendshapesPanel.setAttribute('name', 'blendshapes');
     // Timeline tab has no panel content — it's a pure toggle for the timeline overlay.
     const timelinePanel  = document.createElement('wa-tab-panel');
     timelinePanel.setAttribute('name', 'timeline');
@@ -434,7 +445,13 @@ class Gui {
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
     tabGroup.appendChild(animationPanel);
+    tabGroup.appendChild(blendshapesPanel);
     tabGroup.appendChild(timelinePanel);
+
+    // Canvas-2D blendshape layer-stack panel (replaces the HTML blendshape UI).
+    this._ctrlBlendshapes = new BlendshapeStackPanel(this._main).mount(blendshapesPanel);
+    // Tab ref so a blocked sculpt can pulse the icon when the panel isn't visible.
+    this._ctrlBlendshapes._tabEl = blendshapesTab;
 
     sidebarEl.appendChild(tabGroup);
 
@@ -451,6 +468,7 @@ class Gui {
       // Rebuild the Scene outliner on show so it reflects the current meshes /
       // references (it's otherwise built once and goes stale when you add either).
       if (name === 'scene' && this._desktopSceneEl) this._buildDesktopScene(this._desktopSceneEl);
+      if (name === 'blendshapes') this._ctrlBlendshapes?.onShow();
     });
     timelineTab.addEventListener('click', (e) => {
       e.stopImmediatePropagation();
@@ -764,6 +782,7 @@ class Gui {
     if (this._desktopTopologyEl)  this._buildDesktopTopology(this._desktopTopologyEl);
     if (this._desktopSculptingEl) this._buildDesktopSculpting(this._desktopSculptingEl);
     if (window._animPanel) window._animPanel.refreshBlendshapes(this._main.getMesh(), this._main);
+    this._ctrlBlendshapes?.onShow();
     this.updateMeshInfo();
   }
 
