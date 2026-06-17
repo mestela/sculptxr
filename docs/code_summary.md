@@ -46,6 +46,14 @@ These tools inherit from `SculptBase` but set `_continuous = false` and do not i
 
 ---
 
+## VR Brush Centre & Stroke Pacing
+
+*   **Brush centre (volume mode)**: In VR volume-intersect mode the brush centre is the **nearest surface point to the controller tip** (`Picking.intersectionSphereMeshes`, called from `Scene.processVRSculpting`). This jitters when the tip is held off-surface, which feeds back into pinch-style tools.
+*   **Surface-walking anchor (Crease only, v2.7.0)**: Crease keeps an on-surface anchor, advances it by the controller's per-frame motion, and **re-snaps it to the surface each frame** — the re-snap discards the depth (normal) component, so the brush walks the surface laterally and ignores how far above/below the tip drifts (depth-independence, like desktop's screen-ray pick). Lives in `Scene.processVRSculpting`, gated on `toolIndex === Enums.Tools.CREASE`; other tools use the raw tip projection. Fixed the long-standing crease wobble/gallop/waves.
+*   **Framerate-invariant strokes**: `SculptBase.sculptStrokeXR` gates application on **per-distance spacing** (`minSpacing = 0.02 * worldRadius`), so VR deformation tracks distance travelled, not frame count — without it, holding the trigger stamped the brush every frame (~3x over-accumulation at 90 vs 30 fps). Runtime toggles: `window._vrStrokeThrottle` (false = old per-frame), `window._vrStrokeSpacing`. Affects the standard stroke brushes (Brush, Inflate, Smooth, Flatten, Pinch, Crease, Masking, LocalScale); tools that override `updateXR` (Move, Drag, Twist, Grab, Slide, Paint, Voxel, Extrude, Inset, Cut) are unaffected.
+
+---
+
 ## Persistence & Options Subsystem
 
 SculptXR manages state and settings across sessions using a combination of URL parameters, Local Storage, and IndexedDB:
@@ -133,6 +141,7 @@ Unlike standard mesh brushes, the `Voxel` tool operates as a multi-mode sub-engi
 *   **Key Logic**:
     *   **Three.js Integration**: Constructs `THREE.Mesh` and implements a custom wireframe shader using `gl_FragDepth` to stop depth fighting.
     *   **Matrix Sync**: Disables Three.js `matrixAutoUpdate` and manually pushes engine transforms to ensure WebXR alignment.
+    *   **Octree (spatial pick)**: `updateGeometry(iFaces, iVerts)` calls `updateOctree(iFaces)`, which does an **incremental** remove/add of the moved faces each substroke (`updateOctreeRemove`/`updateOctreeAdd`) so the sphere-query (`intersectSphere`, used by every brush's vertex pick) stays accurate while sculpting. The no-arg path rebuilds fully via `computeOctree` (voxel remesh). Leaf split/prune is deferred to `balanceOctree()` at stroke end. **Caution**: this incremental path was once replaced with a no-op `octree.build()` during a voxel optimization, freezing the octree mid-stroke and producing blocky/uneven brush buildup (the picked-vertex set collapsed as faces moved) — restored in v2.6.0. `MeshSafe.js` keeps a parallel correct copy.
 
 ### Voxel & Topology Pipeline: `GeometryWorker.js`
 *   **Role**: Asynchronous engine for heavy geometry operations.
