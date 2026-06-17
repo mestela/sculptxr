@@ -1,3 +1,9 @@
+# v2.8.1
+Blendshape data-safety hardening.
+
+- **Fix**: **Corruption backstop at the delta write.** The delta capture only works when the active layer is at weight 1; some stroke paths reached it at weight ≠ 1 (the `SculptManager.start()` gate has a hole), writing a corrupt delta you couldn't undo. `Mesh.updateGeometry` now re-checks the active layer's evaluated weight at the actual write and **refuses it** if it isn't ~1 (or the layer is muted) — flashing the panel and recomposing to discard the stray nudge. Independent of the start() gate, so it catches every path.
+- **Feature**: **Backup / Restore Shapes** buttons in the VR Settings menu (wired to `bsBackup`/`bsRestore`, with on-device confirmation) — the undo-independent blendshape safety net is now reachable in standalone VR, not just the console.
+
 # v2.8.0
 Blendshape "layer stack" panel — a Photoshop/Nomad-style canvas UI for blendshapes, on desktop and in VR.
 

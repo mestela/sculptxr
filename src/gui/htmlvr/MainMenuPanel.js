@@ -901,6 +901,10 @@ function buildMenuHTML_settings(main) {
       <span class="mm-val" id="mm-menu-sat-val">${Math.round(menuSat*100)}%</span>
     </div>
 
+    <div class="mm-section-title">Blendshapes</div>
+    <button class="mm-action-btn" id="mm-bs-backup">Backup Shapes</button>
+    <button class="mm-action-btn" id="mm-bs-restore">Restore Shapes</button>
+
     <div class="mm-section-title">Debug</div>
     <button class="mm-toggle${debugMode ? ' active' : ''}" id="mm-debug-mode">Debug Mode (HUD Logs)</button>
     <button class="mm-action-btn" id="mm-perf-profile">Log Perf Profile (120f)</button>
@@ -1841,6 +1845,18 @@ export class MainMenuPanel extends HTMLVRPanel {
       paint();
     });
     q('#mm-perf-profile')?.addEventListener('click', () => window.debugProfile?.(120));
+
+    // Blendshape safety net — snapshot/restore all layer deltas + base (undo-
+    // independent). Console helpers aren't reachable in standalone VR, so surface
+    // them here. screenLog gives on-device confirmation.
+    q('#mm-bs-backup')?.addEventListener('click', () => {
+      window.bsBackup?.();
+      window.screenLog?.('Blendshapes backed up', 'lime');
+    });
+    q('#mm-bs-restore')?.addEventListener('click', () => {
+      window.bsRestore?.();
+      window.screenLog?.('Blendshapes restored from backup', 'cyan');
+    });
   }
 
   // ── Section event wiring ───────────────────────────────────────────────────

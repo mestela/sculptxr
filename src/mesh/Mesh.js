@@ -494,6 +494,21 @@ class Mesh {
       //   verts = base + activeDelta*1 + others  →  activeDelta = verts - base - others
       // otherLayersOffset() returns null when nothing else contributes (fast path).
       const _name = _track.editingBlendshape;
+      // HARD GUARD: the capture below assumes the active layer is at weight 1
+      // (delta = verts - base - others). If it isn't — e.g. the playhead is on a
+      // keyframe where this layer evaluates ≠ 1, or a stroke slipped past the
+      // SculptManager start() gate — writing that delta CORRUPTS the layer. So
+      // refuse the write entirely; the moved verts are transient and get cleaned up
+      // by the next applyBlendshapes recompose. This is the corruption backstop that
+      // does not depend on the start() gate firing.
+      const _bt = _track.blendshapeTracks?.get(_name);
+      const _w  = _bt ? _reg.evaluateScalarTrack(_bt, _track.playbackTime || 0) : 0;
+      if (Math.abs(_w - 1) > 1e-3 || (_track.blendshapeMuted && _track.blendshapeMuted.has(_name))) {
+        if (window._blendshapeStackPanel?.flash) window._blendshapeStackPanel.flash();
+        if (window._blendshapeStackPanelVR?.flash) window._blendshapeStackPanelVR.flash();
+        _reg.applyBlendshapes(this); // discards the transient nudge + does a full geometry update
+        return;
+      }
       const _v    = this.getVertices();
       let _delta  = _track.blendshapes?.get(_name);
       if (!_delta || _delta.length !== _v.length) {
