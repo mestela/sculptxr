@@ -509,11 +509,26 @@ class Mesh {
           _delta[_j] = _v[_j] - _track.baseShape[_j];
       }
     } else if (_track?.baseShape && !_track._applyingBS) {
-      // Base layer active: update baseShape to the new sculpted state.
-      // Deltas are offsets, not absolute positions — they apply on top of whatever
-      // baseShape is, so they need no rebasing. A vertex with delta=0 stays exactly
-      // at the new base; a vertex with a smile offset gets that offset from the new base.
-      _track.baseShape.set(this.getVertices());
+      // Base layer active: rebase baseShape to the new neutral.
+      //
+      // CRITICAL: the displayed mesh may carry active blendshape contributions —
+      // either because the user is sculpting the base while some layers are on, or
+      // because updateGeometry() fired incidentally (not via applyBlendshapes) while
+      // a composed/animated pose is showing. Naively doing baseShape.set(verts) bakes
+      // that composition into the base, corrupting EVERY layer's delta (the symptom:
+      // sculpt a few layers, animate, and one comes back wrong). So subtract all
+      // (non-muted) layer contributions to recover the true base:
+      //   verts = base + Σ(layer*w)  →  base = verts - Σ(layer*w)
+      // When nothing contributes (mesh already equals base) the offset is null and
+      // this is just the old set() — and an incidental call now recomputes the SAME
+      // base instead of poisoning it.
+      const _v   = this.getVertices();
+      const _all = _reg.otherLayersOffset ? _reg.otherLayersOffset(_track, null) : null;
+      if (_all) {
+        for (let _j = 0; _j < _v.length; _j++) _track.baseShape[_j] = _v[_j] - _all[_j];
+      } else {
+        _track.baseShape.set(_v);
+      }
     }
 
     this.updateFacesAabbAndNormal(iFaces);

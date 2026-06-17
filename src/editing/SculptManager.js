@@ -173,7 +173,8 @@ class SculptManager {
     // — which is only correct while the layer is visible and held at weight 1. If
     // not, block the stroke and flash the blendshape palette so the user sees why.
     if (!this._canSculptActiveBlendshapeLayer()) {
-      window._blendshapeStackPanel?.flash?.();
+      window._blendshapeStackPanel?.flash?.();   // desktop panel
+      window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh
       return false;
     }
 

@@ -710,6 +710,7 @@ function buildShellHTML() {
         ${['scene','rendering','topology','sculpting','animation'].map((s, i) =>
           `<button class="mm-tab-btn${i === 3 ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
         ).join('\n        ')}
+        <button class="mm-tab-btn mm-tl-btn" id="mm-bs-btn" title="Blendshapes">${TAB_ICONS.blendshapes}</button>
         <button class="mm-tab-btn mm-tl-btn" id="mm-tl-btn" title="Timeline">${TAB_ICONS.timeline}</button>
       </div>
       <div id="mm-content"></div>
@@ -1513,7 +1514,7 @@ export class MainMenuPanel extends HTMLVRPanel {
 
     // Side tab strip buttons
     root.querySelectorAll('.mm-tab-btn').forEach(btn => {
-      if (btn.id === 'mm-tl-btn') return; // handled separately below
+      if (btn.id === 'mm-tl-btn' || btn.id === 'mm-bs-btn') return; // handled separately below
       btn.addEventListener('click', () => {
         if (!this._tornOffSections.has(btn.dataset.section)) {
           this._setSection(btn.dataset.section);
@@ -1527,6 +1528,15 @@ export class MainMenuPanel extends HTMLVRPanel {
       const show = !tlBtn.classList.contains('tl-on');
       tlBtn.classList.toggle('tl-on', show);
       document.dispatchEvent(new CustomEvent('vtl-show', { detail: { show } }));
+      this.markDirty();
+    });
+
+    // Blendshapes tab — toggles the VR blendshape layer-stack mesh (canvas panel)
+    root.querySelector('#mm-bs-btn')?.addEventListener('click', () => {
+      const bsBtn = root.querySelector('#mm-bs-btn');
+      const show = !bsBtn.classList.contains('tl-on');
+      bsBtn.classList.toggle('tl-on', show);
+      document.dispatchEvent(new CustomEvent('vbs-show', { detail: { show } }));
       this.markDirty();
     });
 

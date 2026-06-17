@@ -22,6 +22,7 @@
 const FA = {
   plus:  '\uf067', // fa-plus
   trash: '\uf1f8', // fa-trash-can
+  close:    '\uf00d', // fa-xmark (close VR panel)
   eye:      '\uf06e', // fa-eye (visible)
   eyeSlash: '\uf070', // fa-eye-slash (muted)
 };
@@ -80,8 +81,8 @@ export default class BlendshapeStackPanel {
     // the canvas still tracks.
     this._canvas.addEventListener('pointerdown', (e) => this._onDown(e));
     window.addEventListener('pointermove', (e) => this._onMove(e));
-    window.addEventListener('pointerup',   (e) => this._onUp(e));
-    window.addEventListener('pointercancel', (e) => this._onUp(e));
+    window.addEventListener('pointerup',   ()  => this._pointerUp());
+    window.addEventListener('pointercancel', () => this._pointerUp());
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // Re-layout when the sidebar/panel changes width.
@@ -101,6 +102,29 @@ export default class BlendshapeStackPanel {
     this._relayout();
   }
 
+  // VR mount: build a standalone (non-DOM) canvas at a fixed size for rendering to
+  // a texture on a VR panel mesh. Input arrives via vrPointer() in canvas coords;
+  // Scene drives texture.needsUpdate. Returns the canvas for the CanvasTexture.
+  mountVR(cssW, cssH) {
+    this._vrMode = true;
+    this._host   = null;
+    this._cssW   = cssW;
+    this._cssH   = cssH;
+    this._canvas = document.createElement('canvas');
+    this._canvas.width  = cssW;
+    this._canvas.height = cssH;
+    this._ctx = this._canvas.getContext('2d');
+    this._ctx.setTransform(1, 0, 0, 1, 0, 0);
+    window._blendshapeStackPanelVR = this;
+    this._startSyncLoop();
+    this.draw();
+    return this._canvas;
+  }
+
+  // Scene calls this when the VR panel mesh is shown/hidden so the sync loop knows
+  // to keep redrawing.
+  setVRVisible(v) { this._vrVisible = v; if (v) this.draw(); }
+
   // Keep the panel in lock-step with the timeline: a slider here writes a keyframe
   // at the current playback time, and scrubbing / editing keys in the timeline
   // changes the evaluated weight — so the slider IS the animated value. This loop
@@ -108,7 +132,9 @@ export default class BlendshapeStackPanel {
   // it costs nothing on other tabs).
   _startSyncLoop() {
     const loop = () => {
-      if (this._host && this._host.offsetParent !== null && !this._dragName) {
+      const visible = this._vrMode ? this._vrVisible
+                                   : (this._host && this._host.offsetParent !== null);
+      if (visible && !this._dragName) {
         const sig = this._stateSignature();
         if (sig !== this._lastSig) { this._lastSig = sig; this.draw(); }
       }
@@ -230,6 +256,8 @@ export default class BlendshapeStackPanel {
     this._drawIconBtn(ctx, newBtn, FA.plus,  '#3b82f6');
     const canDel = !!this._track()?.editingBlendshape;
     this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : '#555');
+    // VR close is a corner mesh owned by Scene (same style as the timeline), not an
+    // on-canvas button — see Scene._vrBlendCloseBtn.
   }
 
   _drawIconBtn(ctx, b, glyph, color) {
@@ -261,15 +289,17 @@ export default class BlendshapeStackPanel {
     ctx.moveTo(0, top + h - 0.5); ctx.lineTo(W, top + h - 0.5);
     ctx.stroke();
 
-    const muted = !isBase && (this._track()?.blendshapeMuted?.has(name) || false);
+    const track  = this._track();
+    const muted  = !isBase && (track?.blendshapeMuted?.has(name) || false);
+    const soloed = !isBase && track?.blendshapeSolo === name;
 
-    // Visibility (mute) toggle — eye / eye-slash on the LEFT of the header line.
-    // (Base is always visible, so no eye.)
+    // Visibility eye on the LEFT of the header line: amber when this layer is
+    // soloed, red-slash when muted, grey when plainly visible. (Base = no eye.)
     const eyeCx = NAME_X + 7;
     const eyeCy = top + 16;
     const nameStart = isBase ? NAME_X : NAME_X + 24;
     if (!isBase) {
-      ctx.fillStyle = muted ? '#e06c6c' : '#9aa';
+      ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : '#9aa');
       ctx.font = '900 13px "Font Awesome 6 Free"';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -356,24 +386,41 @@ export default class BlendshapeStackPanel {
     return this._rows.find(r => p.y >= r.top && p.y < r.top + r.h) || null;
   }
 
+  // ── DOM event wrappers ───────────────────────────────────────────────────────
   _onDown(e) {
     e.preventDefault();
     try { this._canvas.setPointerCapture(e.pointerId); } catch (_) {}
-    const p = this._local(e);
+    this._pointerDown(this._local(e), e.altKey);
+  }
+  _onMove(e) { this._pointerMove(this._local(e)); }
 
+  // VR entry point: canvas-space coords + a `solo` modifier (secondary trigger).
+  // phase ∈ 'down' | 'move' | 'up'.
+  vrPointer(x, y, phase, solo = false) {
+    if (phase === 'down')      this._pointerDown({ x, y }, solo);
+    else if (phase === 'move') this._pointerMove({ x, y });
+    else                       this._pointerUp();
+  }
+
+  // ── Point-based core (shared by mouse/pen/touch and VR ray) ──────────────────
+  _pointerDown(p, solo = false) {
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
 
     const row = this._hitRow(p);
     if (!row) return;
 
-    // Visibility toggle (eye, left of the name) → mute/unmute this layer
-    // (keeps its stored weight; disables its contribution).
+    // Eye, left of the name: plain click → mute/unmute this layer; modifier
+    // (Alt on desktop / secondary trigger in VR) → solo (isolate it; again
+    // restores the prior visibility of all).
     if (!row.isBase && row.eye &&
         p.x >= row.eye.x0 && p.x <= row.eye.x1 &&
         p.y >= row.eye.y0 && p.y <= row.eye.y1) {
       const mesh = this._mesh();
-      if (mesh) window._animationRegistry.toggleBlendshapeMute(mesh, row.name);
+      if (mesh) {
+        if (solo) window._animationRegistry.toggleBlendshapeSolo(mesh, row.name);
+        else      window._animationRegistry.toggleBlendshapeMute(mesh, row.name);
+      }
       this.draw();
       return;
     }
@@ -389,25 +436,20 @@ export default class BlendshapeStackPanel {
     }
 
     // Click anywhere else on the row → make it the active sculpt layer (Base row
-    // deactivates). Double-tap the name to rename.
+    // deactivates). Double-tap the name to rename (desktop only).
     this._selectLayer(row.isBase ? null : row.name);
-    this._handleTapForRename(row);
-    return;
-
-    // Tap on the name area → rename on double-tap.
     this._handleTapForRename(row);
   }
 
-  _onMove(e) {
+  _pointerMove(p) {
     if (!this._dragName) return;
-    const p = this._local(e);
     const row = this._rows.find(r => r.name === this._dragName);
     if (!row) return;
     this._dragMoved = true;
     this._applyWeightFromX(row, p.x);
   }
 
-  _onUp() {
+  _pointerUp() {
     if (!this._dragName) return;
     const name = this._dragName;
     const oldW = this._dragStartW;
@@ -447,14 +489,21 @@ export default class BlendshapeStackPanel {
       while (existing.includes(`Layer ${i}`)) i++;
       const name = `Layer ${i}`;
       reg.createBlendshape(mesh, name);
-      this._relayout();      // row count changed → resize canvas
-      this._selectLayer(name); // make it active + sculptable (weight 1) immediately
+      this._afterStructureChange(); // row count changed → resize canvas (desktop)
+      this._selectLayer(name);      // make it active + sculptable (weight 1) immediately
     } else if (id === 'del') {
       const name = track_editing(reg, mesh);
       if (!name) return;
       reg.deleteBlendshape(mesh, name);
-      this._relayout();
+      this._afterStructureChange();
     }
+  }
+
+  // Layer count changed: desktop resizes the canvas to the new row count (which
+  // redraws); VR has a fixed-size canvas, so just redraw.
+  _afterStructureChange() {
+    if (this._vrMode) this.draw();
+    else this._relayout();
   }
 
   _selectLayer(name) {
@@ -482,13 +531,13 @@ export default class BlendshapeStackPanel {
   // text to translate. Called from the SculptManager gate when a stroke is
   // rejected (and the app reverts to a camera move).
   flash() {
-    if (!this._host) return;
     this._flashName  = this._track()?.editingBlendshape || null;
     if (!this._flashName) return;
 
-    // If the Blendshapes tab isn't the visible panel, the name flash can't be seen
-    // — pulse the sidebar tab icon red instead so the user still gets feedback.
-    if (this._host.offsetParent === null && this._tabEl) {
+    // Desktop only: if the Blendshapes tab isn't the visible panel, the name flash
+    // can't be seen — pulse the sidebar tab icon red instead. (In VR the name
+    // flash on the mesh is always visible, so fall through to it.)
+    if (!this._vrMode && this._host && this._host.offsetParent === null && this._tabEl) {
       this._tabEl.classList.remove('bs-flash');
       void this._tabEl.offsetWidth; // restart the CSS animation
       this._tabEl.classList.add('bs-flash');
@@ -519,7 +568,7 @@ export default class BlendshapeStackPanel {
   }
 
   _handleTapForRename(row) {
-    if (row.isBase) return;
+    if (row.isBase || this._vrMode) return; // no DOM input / VR keyboard yet
     const now = performance.now();
     if (this._lastTapName === row.name && now - this._lastTapTime < 350) {
       this._beginRename(row);

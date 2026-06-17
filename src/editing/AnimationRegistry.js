@@ -941,6 +941,39 @@ class AnimationRegistry {
     if (!track.blendshapeMuted) track.blendshapeMuted = new Set();
     if (track.blendshapeMuted.has(name)) track.blendshapeMuted.delete(name);
     else track.blendshapeMuted.add(name);
+    // A manual mute change breaks the solo invariant; drop the solo marker but keep
+    // the new visibility as-is (don't restore the snapshot).
+    track.blendshapeSolo = null;
+    track._mutedBeforeSolo = null;
+    this.applyBlendshapes(mesh);
+  }
+
+  isBlendshapeSoloed(mesh, name) {
+    return this.tracks.get(mesh.getID())?.blendshapeSolo === name;
+  }
+
+  // Solo: isolate one layer (it visible, all others muted). Toggling the same
+  // layer again restores the exact visibility state from before the solo. Soloing
+  // a different layer while one is already soloed just switches the target and
+  // keeps the original pre-solo snapshot for the eventual restore.
+  toggleBlendshapeSolo(mesh, name) {
+    if (!mesh || !name) return;
+    const track = this.tracks.get(mesh.getID());
+    if (!track?.blendshapes) return;
+    if (!track.blendshapeMuted) track.blendshapeMuted = new Set();
+
+    if (track.blendshapeSolo === name) {
+      // Un-solo → restore the snapshot taken when solo began.
+      track.blendshapeMuted = track._mutedBeforeSolo ? new Set(track._mutedBeforeSolo) : new Set();
+      track.blendshapeSolo = null;
+      track._mutedBeforeSolo = null;
+    } else {
+      if (track.blendshapeSolo === null) {
+        track._mutedBeforeSolo = new Set(track.blendshapeMuted); // snapshot once
+      }
+      track.blendshapeSolo = name;
+      track.blendshapeMuted = new Set([...track.blendshapes.keys()].filter((n) => n !== name));
+    }
     this.applyBlendshapes(mesh);
   }
 
@@ -1956,5 +1989,39 @@ class AnimationRegistry {
 
 const globalRegistry = new AnimationRegistry();
 window._animationRegistry = globalRegistry;
+
+// Manual safety net for blendshape work — snapshot/restore ALL layer deltas + the
+// base for the active mesh. Use before risky sequences; recover if a delta ever
+// looks corrupt. Independent of the undo stack (which doesn't cover every path).
+//   window.bsBackup()   → take a snapshot
+//   window.bsRestore()  → restore the last snapshot
+window.bsBackup = () => {
+  const reg = window._animationRegistry;
+  const mesh = window.app?.getMesh?.();
+  const track = mesh ? reg.tracks.get(mesh.getID()) : null;
+  if (!track) { console.warn('[Blendshapes] bsBackup: no active mesh/track'); return; }
+  const snap = { base: track.baseShape ? new Float32Array(track.baseShape) : null, layers: new Map() };
+  track.blendshapes?.forEach((d, n) => snap.layers.set(n, new Float32Array(d)));
+  reg._bsBackup = snap;
+  console.log(`[Blendshapes] bsBackup: ${snap.layers.size} layer(s) + base saved`);
+};
+window.bsRestore = () => {
+  const reg = window._animationRegistry;
+  const mesh = window.app?.getMesh?.();
+  const track = mesh ? reg.tracks.get(mesh.getID()) : null;
+  const snap = reg._bsBackup;
+  if (!track || !snap) { console.warn('[Blendshapes] bsRestore: no backup or no active mesh'); return; }
+  if (snap.base) {
+    if (!track.baseShape || track.baseShape.length !== snap.base.length) track.baseShape = new Float32Array(snap.base);
+    else track.baseShape.set(snap.base);
+  }
+  snap.layers.forEach((d, n) => {
+    const cur = track.blendshapes?.get(n);
+    if (cur && cur.length === d.length) cur.set(d);
+    else track.blendshapes?.set(n, new Float32Array(d));
+  });
+  reg.applyBlendshapes(mesh);
+  console.log(`[Blendshapes] bsRestore: ${snap.layers.size} layer(s) + base restored`);
+};
 
 export default globalRegistry;

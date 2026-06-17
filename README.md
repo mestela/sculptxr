@@ -1,4 +1,4 @@
-# SculptXR (v2.7.0)
+# SculptXR (v2.8.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v2.8.0**: **Blendshape layer-stack panel**: a Photoshop/Nomad-style canvas UI for blendshapes (desktop sidebar tab + VR floating panel), replacing the old HTML section. Click-to-activate rows, always-live weight sliders, per-layer mute (eye) and solo, correct multi-layer delta capture, and panel↔timeline sync. Hardened blendshape data safety (base-rebase corruption guard + `bsBackup`/`bsRestore`). VR panels are grip-movable with hover-highlighted corner close buttons.
 *   **v2.7.0**: **VR Crease overhaul**: depth-independent surface-walking anchor fixes the long-standing crease wobble/gallop/waves (the brush now walks the surface and ignores how far off-surface the controller tip drifts), VR strokes are framerate-invariant again (per-distance, not per-frame), and crease default intensity lowered to 0.4. Also fixes a `<head>` script load-order bug that was silently disabling two iPad fixes.
 *   **v2.6.0**: **Fix**: Sculpting stability — standard brushes no longer accumulate blocky/terraced artifacts (and large brushes stay even). An earlier voxel optimization had frozen the mesh octree during a stroke, so the brush's vertex query went stale and dropped most of its vertices; reconnected the incremental octree update. Also steadier in VR.
 *   **v2.5.0**: **iPad parity & QA** (Stéphane Ginier feedback): undo fixes (launch/delete/buttons/counts), full iPad mesh-edit + finger-gesture overhaul, background reimplemented (image + HDRI skybox + ambient, exposure/blur), reference images as first-class outliner meshes (transform/hide/show/undo), and broad desktop/iPad cleanup.

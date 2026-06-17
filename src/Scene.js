@@ -37,6 +37,7 @@ import { MainMenuPanel          } from './gui/htmlvr/MainMenuPanel.js';
 import { TornOffPanel           } from './gui/htmlvr/TornOffPanel.js';
 import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './gui/htmlvr/FilesPanel.js';
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
+import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 
@@ -283,6 +284,13 @@ class Scene {
     this._vrNumpad        = null;   // [HTMLVRPanel] floating number-pad for VR value editing
     this._vrTimelineMesh    = null;   // Three.js Mesh — GuiTimeline canvas rendered into VR
     this._vrTimelineTexture = null;   // THREE.CanvasTexture wrapping GuiTimeline._canvas
+    this._vrBlendMesh       = null;   // Three.js Mesh — BlendshapeStackPanel canvas in VR
+    this._vrBlendTexture    = null;   // THREE.CanvasTexture wrapping the VR blend canvas
+    this._vrBlendPanel      = null;   // VR BlendshapeStackPanel instance
+    this._vbsWasPressed     = false;  // dominant-hand trigger latch for the blend panel
+    this._vbsIsPointing     = false;  // dominant hand currently aims at the blend panel
+    this._vbsDragActive     = false;  // grip-drag (move) in progress
+    this._vbsDragHand       = null;
     this._vrPoseLeft = null;
     this._vrPoseRight = null;
     this._handJointSpheres = null;
@@ -385,6 +393,19 @@ class Scene {
     });
     window.openVRTimeline  = () => this._openVRTimeline();
     window.closeVRTimeline = () => this._closeVRTimeline();
+
+    // Blendshape layer-stack panel toggle (canvas → texture mesh in VR).
+    document.addEventListener('vbs-show', (e) => {
+      try {
+        if (e.detail?.show) this._openVRBlendshapes();
+        else this._closeVRBlendshapes();
+      } catch (err) {
+        if (window.screenLog) window.screenLog(`[VR Blendshapes] vbs-show err: ${err?.message}`, 'red');
+        console.error('[VR Blendshapes] vbs-show handler error:', err);
+      }
+    });
+    window.openVRBlendshapes  = () => this._openVRBlendshapes();
+    window.closeVRBlendshapes = () => this._closeVRBlendshapes();
 
     // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
     // Using a short timeout so the DOM is settled before the polyfill host canvas is created.
@@ -1157,6 +1178,9 @@ class Scene {
         drainRAF();
       }
       // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
+      if (this._vrBlendMesh?.visible && this._vrBlendTexture) {
+        this._vrBlendTexture.needsUpdate = true;
+      }
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
         this._vrTimelineTexture.needsUpdate = true;
         // Keep resize handle anchored to bottom-right corner as mesh moves/scales.
@@ -1173,6 +1197,9 @@ class Scene {
       } else if (this._vrResizeHandle?.visible) {
         this._vrResizeHandle.visible = false;
       }
+      // Close-button hover highlights (brighten + grow while pointed at).
+      this._applyCloseBtnHover(this._vrTimelineCloseBtn, '_vtlClosePointed');
+      this._applyCloseBtnHover(this._vrBlendCloseBtn, '_vbsClosePointed');
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
@@ -1273,6 +1300,9 @@ class Scene {
           this._filesPanel.update(false);
           this._drawFullScene = true;
         } catch (_) {}
+      }
+      if (this._vrBlendMesh?.visible && this._vrBlendTexture) {
+        this._vrBlendTexture.needsUpdate = true;
       }
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
         this._vrTimelineTexture.needsUpdate = true;
@@ -4117,6 +4147,10 @@ class Scene {
       this._vrTimelineMesh.quaternion.copy(cam.quaternion);
     }
     this._vrTimelineMesh.visible = true;
+    if (!this._vrTimelineCloseBtn) this._vrTimelineCloseBtn = this._makeVRCloseBtn();
+    if (this._vrTimelineCloseBtn.parent !== this._vrTimelineMesh) this._vrTimelineMesh.add(this._vrTimelineCloseBtn);
+    this._layoutTimelineCloseBtn();
+    this._vrTimelineCloseBtn.visible = true;
     tl.draw();
     if (this._vrTimelineTexture) this._vrTimelineTexture.needsUpdate = true;
     this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.add('tl-on');
@@ -4125,11 +4159,133 @@ class Scene {
 
   _closeVRTimeline() {
     if (this._vrTimelineMesh) this._vrTimelineMesh.visible = false;
+    if (this._vrTimelineCloseBtn) this._vrTimelineCloseBtn.visible = false;
     if (this._vrResizeHandle) this._vrResizeHandle.visible = false;
     if (this._vtlSecLaser) this._vtlSecLaser.visible = false;
     this.getGui()?._ctrlTimeline?.closeVRView();
     document.querySelectorAll('#acp-show-timeline').forEach(cb => { cb.checked = false; });
     this._mainMenuPanel?._element?.querySelector('#mm-tl-btn')?.classList.remove('tl-on');
+  }
+
+  // ── VR Blendshape layer-stack panel ───────────────────────────────────────────
+  // Mounts the canvas BlendshapeStackPanel as a textured plane in VR (mirrors the
+  // VR timeline canvas→texture pattern). Portrait panel; point + dominant trigger
+  // to interact, secondary trigger + eye = solo.
+  _openVRBlendshapes() {
+    const _worldW = 0.34, _worldH = 0.46;       // portrait layer stack
+    const _cssW   = Math.round(_worldW * 1500); // 510
+    const _cssH   = Math.round(_worldH * 1500); // 690
+
+    if (!this._vrBlendPanel) {
+      // VR instance shares all state via window._animationRegistry; getMesh() comes
+      // from the Scene so it tracks the active mesh.
+      this._vrBlendPanel = new BlendshapeStackPanel({ getMesh: () => this.getMesh() });
+      const canvas = this._vrBlendPanel.mountVR(_cssW, _cssH);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.flipY = true; // canvas top → UV y=1 → visual top (hit map inverts Y)
+      this._vrBlendTexture = tex;
+
+      const geo = new THREE.PlaneGeometry(_worldW, _worldH);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true,
+        side: THREE.DoubleSide, depthWrite: true, depthTest: true,
+      });
+      this._vrBlendMesh = new THREE.Mesh(geo, mat);
+      this._scene.add(this._vrBlendMesh);
+      if (window.screenLog) window.screenLog(`[VR Blendshapes] mesh created ${_worldW}×${_worldH}m`, 'cyan');
+    }
+
+    // Spawn beside the wrist menu (reachable) but ALWAYS orient to face the camera
+    // — same as the VR timeline. Copying the menu's own quaternion span-flips the
+    // panel 180° in-plane (upside-down + mirrored), because the menu's up/facing
+    // convention differs from a camera-facing plane. Offset along camera-right so
+    // it sits next to the menu from the user's viewpoint.
+    const mm  = this._mainMenuPanel?.mesh;
+    const cam = this._camera?.getThreeCamera();
+    if (cam) {
+      const camRight = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
+      if (mm) {
+        const mPos = new THREE.Vector3(); mm.getWorldPosition(mPos);
+        const menuHalfW = (mm.geometry?.parameters?.width ?? 0.30) * 0.5;
+        mPos.addScaledVector(camRight, menuHalfW + _worldW / 2 + 0.02); // beside, small gap
+        this._vrBlendMesh.position.copy(mPos);
+      } else {
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+        this._vrBlendMesh.position.copy(cam.position).addScaledVector(fwd, 0.4);
+      }
+      this._vrBlendMesh.quaternion.copy(cam.quaternion);
+    }
+    this._vrBlendMesh.visible = true;
+    // Corner close button (same style as the timeline), parented to the panel mesh.
+    if (!this._vrBlendCloseBtn) this._vrBlendCloseBtn = this._makeVRCloseBtn();
+    if (this._vrBlendCloseBtn.parent !== this._vrBlendMesh) this._vrBlendMesh.add(this._vrBlendCloseBtn);
+    this._layoutCloseBtn(this._vrBlendCloseBtn, this._vrBlendMesh);
+    this._vrBlendCloseBtn.visible = true;
+    this._vrBlendPanel.setVRVisible(true);
+    if (this._vrBlendTexture) this._vrBlendTexture.needsUpdate = true;
+    this._mainMenuPanel?._element?.querySelector('#mm-bs-btn')?.classList.add('tl-on');
+    if (window.screenLog) window.screenLog('[VR Blendshapes] open', 'lime');
+  }
+
+  _closeVRBlendshapes() {
+    if (this._vrBlendMesh) this._vrBlendMesh.visible = false;
+    if (this._vrBlendCloseBtn) this._vrBlendCloseBtn.visible = false;
+    this._vrBlendPanel?.setVRVisible(false);
+    this._mainMenuPanel?._element?.querySelector('#mm-bs-btn')?.classList.remove('tl-on');
+  }
+
+  // Map a UV hit on the blend mesh to canvas coords and dispatch to the panel.
+  _onVRBlendshapesHit(uv, phase, solo = false) {
+    const panel = this._vrBlendPanel;
+    if (!panel) return;
+    const x =        uv.x  * panel._cssW;
+    const y = (1.0 - uv.y) * panel._cssH; // flipY=true → invert Y
+    panel.vrPointer(x, y, phase, solo);
+    if (this._vrBlendTexture) this._vrBlendTexture.needsUpdate = true;
+  }
+
+  // A small corner "X" close button mesh for a floating VR panel (the canvas blend
+  // panel draws its own close icon; the timeline — whose canvas we don't touch —
+  // uses this). Returned unparented; the caller adds it as a CHILD of the panel
+  // mesh so it rides the panel's transform rigidly (no per-frame re-constraining,
+  // no trailing when the panel is grip-dragged).
+  _makeVRCloseBtn() {
+    const size = 0.030;
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const x = c.getContext('2d');
+    x.fillStyle = 'rgba(28,28,38,0.92)';
+    x.beginPath(); x.arc(32, 32, 29, 0, Math.PI * 2); x.fill();
+    x.strokeStyle = '#f38ba8'; x.lineWidth = 7; x.lineCap = 'round';
+    x.beginPath(); x.moveTo(22, 22); x.lineTo(42, 42); x.moveTo(42, 22); x.lineTo(22, 42); x.stroke();
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthTest: true, depthWrite: false });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    m.renderOrder = 1000;
+    return m;
+  }
+
+  // Place a close button just OUTSIDE the top-right corner of its panel, in the
+  // panel's LOCAL space (it's a child of the panel mesh). Re-run when the panel's
+  // half-extents change. Sitting just past the edge keeps it off the content.
+  _layoutCloseBtn(btn, panelMesh) {
+    if (!btn || !panelMesh) return;
+    const hw = panelMesh.geometry.parameters.width  * 0.5;
+    const hh = panelMesh.geometry.parameters.height * 0.5;
+    btn.position.set(hw + 0.012, hh + 0.012, 0.001);
+    btn.quaternion.identity(); // local to parent
+  }
+  _layoutTimelineCloseBtn() { this._layoutCloseBtn(this._vrTimelineCloseBtn, this._vrTimelineMesh); }
+
+  // Hover feedback for a corner close button: brighten + grow while pointed at.
+  // `flagKey` is set true by the input dispatch and consumed (reset) here.
+  _applyCloseBtnHover(btn, flagKey) {
+    if (!btn) return;
+    const hov = this[flagKey];
+    btn.scale.setScalar(hov ? 1.25 : 1.0);
+    btn.material.color.setHex(hov ? 0xffffff : 0xc8c8c8);
+    this[flagKey] = false;
   }
 
   // Compute a controller's picking ray (origin/dir) from its Three.js object —
@@ -5218,14 +5374,34 @@ class Scene {
           // Skipped while the numpad is modal-open: the numpad floats just in front of
           // the timeline, so without this the ray could also strike the panel behind it.
           this._vtlIsPointing = false;
+          this._vbsIsPointing = false;
           if (!_numpadOpen) {
             if (this._vrResizeHandle?.visible) {
               const h = _rc.intersectObject(this._vrResizeHandle);
               if (h.length > 0) _panelHits.push({ name: 'VRTimelineResize', panel: null, hit: h[0], pressKey: '_vtlResizeWasPressed', isTimelineResize: true });
             }
             if (this._vrTimelineMesh?.visible) {
-              const h = _rc.intersectObject(this._vrTimelineMesh);
+              // NON-recursive: the close button is a child of this mesh; a recursive
+              // raycast would also hit it and tag it as the timeline panel, stealing
+              // the hit from its own dedicated close test below.
+              const h = _rc.intersectObject(this._vrTimelineMesh, false);
               if (h.length > 0) _panelHits.push({ name: 'VRTimeline', panel: null, hit: h[0], pressKey: '_vtlWasPressed', isTimeline: true });
+            }
+            if (this._vrBlendMesh?.visible) {
+              const h = _rc.intersectObject(this._vrBlendMesh, false);
+              if (h.length > 0) _panelHits.push({ name: 'VRBlendshapes', panel: null, hit: h[0], pressKey: '_vbsWasPressed', isBlendshapes: true });
+            }
+            if (this._vrTimelineCloseBtn?.visible) {
+              // Child of the timeline mesh — sync its world matrix so the collision
+              // geometry matches where it's drawn (esp. after a grip-drag).
+              this._vrTimelineCloseBtn.updateWorldMatrix(true, false);
+              const h = _rc.intersectObject(this._vrTimelineCloseBtn, false);
+              if (h.length > 0) _panelHits.push({ name: 'VRTimelineClose', panel: null, hit: h[0], pressKey: '_vtlCloseWasPressed', isTimelineClose: true });
+            }
+            if (this._vrBlendCloseBtn?.visible) {
+              this._vrBlendCloseBtn.updateWorldMatrix(true, false);
+              const h = _rc.intersectObject(this._vrBlendCloseBtn, false);
+              if (h.length > 0) _panelHits.push({ name: 'VRBlendClose', panel: null, hit: h[0], pressKey: '_vbsCloseWasPressed', isBlendClose: true });
             }
           }
 
@@ -5398,6 +5574,74 @@ class Scene {
             }
           }
 
+          // VRBlendshapes dispatch (canvas panel; secondary trigger = solo modifier)
+          if (_winner?.isBlendshapes) {
+            this._isPointingAtMenu = true;
+            this._vbsIsPointing    = true;
+            if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRBlendshapes'; }
+            else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRBlendshapes'; }
+            this._updateBPCursor?.(_winner.hit.point, true);
+            const _solo     = !!this._vrSecondaryTriggerPressed;
+            const _justDown = _pressed && !this._vbsWasPressed;
+            const _justUp   = !_pressed && this._vbsWasPressed;
+            if (_justDown)    this._onVRBlendshapesHit(_winner.hit.uv, 'down', _solo);
+            else if (_justUp) this._onVRBlendshapesHit(_winner.hit.uv, 'up',   _solo);
+            else              this._onVRBlendshapesHit(_winner.hit.uv, 'move', _solo);
+            this._vbsLastUV     = _winner.hit.uv;
+            this._vbsWasPressed = _pressed;
+          } else if (this._vbsWasPressed && _pressed && this._vrBlendMesh?.visible) {
+            // Edge-drag latch: trigger still held but the ray left the panel (dragging
+            // a weight slider past its edge). Project onto the panel plane, unclamped,
+            // and keep feeding 'move' — the panel clamps the resulting weight to [0,1].
+            const bm = this._vrBlendMesh;
+            bm.updateWorldMatrix(true, false);
+            const _pw = new THREE.Vector3(), _pq = new THREE.Quaternion();
+            bm.getWorldPosition(_pw); bm.getWorldQuaternion(_pq);
+            const _n = new THREE.Vector3(0, 0, 1).applyQuaternion(_pq);
+            const _plane = new THREE.Plane().setFromNormalAndCoplanarPoint(_n, _pw);
+            const _hit = new THREE.Vector3();
+            if (_rc.ray.intersectPlane(_plane, _hit)) {
+              const _local = bm.worldToLocal(_hit.clone());
+              const _hw = (bm.geometry.parameters?.width  ?? 1) * 0.5;
+              const _hh = (bm.geometry.parameters?.height ?? 1) * 0.5;
+              const _uv = { x: (_local.x + _hw) / (_hw * 2), y: (_local.y + _hh) / (_hh * 2) };
+              this._vbsLastUV = _uv;
+              this._onVRBlendshapesHit(_uv, 'move', !!this._vrSecondaryTriggerPressed);
+              this._isPointingAtMenu = true;
+              this._vbsIsPointing    = true;
+            }
+          } else if (this._vbsWasPressed) {
+            this._onVRBlendshapesHit(this._vbsLastUV || { x: 0.5, y: 0.5 }, 'up', false);
+            this._vbsWasPressed = false;
+            this._vbsLastUV = null;
+          }
+
+          // VRTimeline corner close button — trigger press hides the timeline panel.
+          if (_winner?.isTimelineClose) {
+            this._isPointingAtMenu = true;
+            this._vtlClosePointed  = true; // drives the hover highlight (applied in render loop)
+            this._updateBPCursor?.(_winner.hit.point, true);
+            if (_pressed && !this._vtlCloseWasPressed) {
+              document.dispatchEvent(new CustomEvent('vtl-show', { detail: { show: false } }));
+            }
+            this._vtlCloseWasPressed = _pressed;
+          } else if (this._vtlCloseWasPressed) {
+            this._vtlCloseWasPressed = false;
+          }
+
+          // VRBlendshapes corner close button — same behaviour as the timeline's.
+          if (_winner?.isBlendClose) {
+            this._isPointingAtMenu = true;
+            this._vbsClosePointed  = true;
+            this._updateBPCursor?.(_winner.hit.point, true);
+            if (_pressed && !this._vbsCloseWasPressed) {
+              document.dispatchEvent(new CustomEvent('vbs-show', { detail: { show: false } }));
+            }
+            this._vbsCloseWasPressed = _pressed;
+          } else if (this._vbsCloseWasPressed) {
+            this._vbsCloseWasPressed = false;
+          }
+
           // VRTimeline resize handle — trigger starts a resize drag tracked via ray-plane intersection
           if (_winner?.isTimelineResize) {
             this._vtlIsPointing = true;
@@ -5453,6 +5697,8 @@ class Scene {
                 tl.geometry.dispose();
                 tl.geometry = new THREE.PlaneGeometry(newWorldW, newWorldH);
                 tl.scale.set(1, 1, 1);
+                this._layoutTimelineCloseBtn(); // half-extents changed → re-place child
+
                 // Reposition so the top-left corner stays fixed
                 tl.position.copy(this._vtlResizeFixedCorner)
                   .addScaledVector(this._vtlResizeMeshRight, newWorldW / 2)
@@ -5769,6 +6015,36 @@ class Scene {
             this._vtlDragHand   = null;
           }
           // ── end VR Timeline grip drag ─────────────────────────────────────
+
+          // ── VR Blendshapes grip drag (point at panel + grip to move it) ───
+          const canStartVbsDrag    = this._vrBlendMesh?.visible && this._vbsIsPointing && isGrip && !this._vbsDragActive && !_panelDragBusy && !_worldNavBusy;
+          const canContinueVbsDrag = this._vbsDragActive && this._vbsDragHand === source.handedness && isGrip;
+          if (canStartVbsDrag || canContinueVbsDrag) {
+            const refPose = frame.getPose(source.gripSpace, refSpace);
+            if (refPose) {
+              const p = refPose.transform.position;
+              const q = refPose.transform.orientation;
+              const curPos  = new THREE.Vector3(p.x, p.y, p.z);
+              const curQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+              const bm = this._vrBlendMesh;
+              if (!this._vbsDragActive) {
+                this._vbsDragActive = true;
+                this._vbsDragHand   = source.handedness;
+                bm.updateWorldMatrix(true, false);
+                const invCtrlQuat = curQuat.clone().invert();
+                this._vbsDragRelPos  = bm.position.clone().sub(curPos).applyQuaternion(invCtrlQuat);
+                this._vbsDragRelQuat = invCtrlQuat.clone().multiply(bm.quaternion);
+              } else {
+                bm.position.copy(curPos).add(_v3tmp.copy(this._vbsDragRelPos).applyQuaternion(curQuat));
+                bm.quaternion.copy(curQuat).multiply(this._vbsDragRelQuat);
+              }
+            }
+            if (source.handedness === 'left') { leftGrip = false; } else { rightGrip = false; }
+          } else if (this._vbsDragActive && this._vbsDragHand === source.handedness && !isGrip) {
+            this._vbsDragActive = false;
+            this._vbsDragHand   = null;
+          }
+          // ── end VR Blendshapes grip drag ──────────────────────────────────
 
           // ── TornOffPanel grip drags ───────────────────────────────────────
           if (this._tornOffPanels.size > 0) {

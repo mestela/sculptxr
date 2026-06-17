@@ -1,3 +1,13 @@
+# v2.8.0
+Blendshape "layer stack" panel — a Photoshop/Nomad-style canvas UI for blendshapes, on desktop and in VR.
+
+- **Feature**: **New canvas-2D blendshape layer-stack panel** (`src/gui/BlendshapeStackPanel.js`), replacing the old HTML blendshape section. It's drawn imperatively to a `<canvas>` (the `GuiTimeline` pattern) rather than HTML, so a weight-slider drag is a cheap 2D redraw instead of the HTML-in-WebXR DOM→SVG→raster→GPU upload — the elegant single-place "what layers exist + how much each is on" UX *and* the speed. Desktop: a new **Blendshapes** sidebar tab. VR: a floating panel toggled from the main-menu strip.
+- **Feature**: **Per-row controls** — click a row to make it the active sculpt layer (blue highlight), weight slider (live at all times), numeric value, an **eye** to mute (zero a layer's contribution without losing its stored weight), and **solo** (Alt-click the eye on desktop / secondary-trigger + eye in VR — isolates one layer; toggling restores the prior visibility of all). New / Delete toolbar; double-click a name to rename (desktop). Base layer pinned at the bottom. Icons are vector/FontAwesome on the canvas, no emoji.
+- **Change**: **Sliders are always live** — the panel shows the true weighted composition instead of force-isolating the active layer (which used to make the sliders look dead). Sculpting into a layer is gated to "visible + weight 1"; a blocked stroke flashes the layer name red (and pulses the tab icon if the panel is hidden). Multi-layer delta capture is correct: the sculpted layer's delta subtracts the other active layers' contributions, so stacking layers doesn't bleed between them.
+- **Fix**: **Blendshape-corruption guard.** The base-layer rebase wrote `baseShape = currentVerts` on any `updateGeometry`, so if it fired while a composed/animated pose was showing, that pose got baked into the neutral and every layer's delta corrupted. It now subtracts all active layer contributions (`verts − Σ(layer·weight)`), recovering the true base — incidental rebases become harmless. Added `window.bsBackup()` / `window.bsRestore()` console helpers as an undo-independent safety net.
+- **Change**: The desktop panel and the VR floating panel stay in lock-step with the timeline (scrub/keyframe ↔ slider), and both share one newest-first (Photoshop) layer order across the panel, the timeline gutter, and the dopesheet.
+- **VR**: both the blendshape and timeline floating panels are grip-movable and have a corner **close button** (child mesh, hover-highlighted) so they no longer have to be dismissed from the menu.
+
 # v2.7.0
 VR Crease overhaul — depth-independent surface tracking + framerate-invariant strokes.
 

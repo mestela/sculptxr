@@ -510,29 +510,11 @@ export function buildAnimationSectionHTML() {
       </div>
     </div>
 
-    <!-- 6. Blendshapes -->
-    <div class="acp-section">
-      <div class="acp-section-title">Blendshapes</div>
-      <div class="acp-stack">
-        <div class="acp-bs-create">
-          <input type="text" id="acp-bs-name" placeholder="New layer name..."
-                 autocomplete="off" autocorrect="off" autocapitalize="off"
-                 spellcheck="false" writingsuggestions="false">
-          <button id="acp-bs-add">+</button>
-        </div>
-        <div class="acp-bs-toolbar">
-          <div class="acp-bs-mode">
-            <button id="acp-bs-mode-blend">Blend</button>
-            <button id="acp-bs-mode-edit">Edit</button>
-          </div>
-          <button id="acp-bs-key-btn" title="Key selected layer's current weight">&#9670; Key</button>
-          <button id="acp-bs-del-btn" title="Delete selected layer">Del</button>
-        </div>
-        <div id="acp-bs-list" class="acp-stack">
-          <span class="acp-placeholder">No blendshapes on current mesh</span>
-        </div>
-      </div>
-    </div>
+    <!-- 6. Blendshapes — moved to the dedicated canvas BlendshapeStackPanel
+         ("Blendshapes" sidebar tab on desktop; VR mount pending). The blendshape
+         keyframe mode in the Keyframes section above is unaffected. The shared
+         refreshBlendshapesDOM / acp-bs-* wiring below now no-ops (it guards on the
+         absent #acp-bs-list) and stays for its other importers. -->
   </div>`;
 }
 
