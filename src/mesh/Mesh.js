@@ -1842,7 +1842,19 @@ class Mesh {
       // Set the local matrix from the sculptor's math.
       this._renderData._threeMesh.matrixAutoUpdate = false;
       this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
-      
+
+      // Wireframe live-transform preview: the solid mesh previews a gizmo drag via
+      // its shader (uEM * vertex), but the wireframe is a plain LineSegments with no
+      // uEM. As a child of the threeMesh it inherits _matrix; give it the editMatrix
+      // as its LOCAL matrix so its world transform becomes _matrix * editMatrix —
+      // exactly matching the solid's shader preview. Identity when not transforming.
+      const _wf = this._renderData._wireframeMesh;
+      if (_wf && _wf.parent === this._renderData._threeMesh) {
+        _wf.matrixAutoUpdate = false;
+        _wf.matrix.fromArray(this._transformData._editMatrix);
+        _wf.matrixWorldNeedsUpdate = true;
+      }
+
       // CRITICAL FIX: Do NOT blindly copy 'matrix' to 'matrixWorld'
       // WebXR requires objects to inherit transforms from their parents (like 'worldGroup' or the Scene itself).
       // By calling updateMatrixWorld(true), Three.js correctly calculates the final world position
