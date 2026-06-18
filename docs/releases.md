@@ -1,3 +1,9 @@
+# v2.9.9
+Eye-rig foundation (scene-hierarchy Phase 0) + transform/gizmo fixes.
+
+- **Fix**: **Duplicate "ghost" transform gizmo in VR.** There are two gizmo systems (desktop `Gizmo.js`, VR `GizmoVR.js`); the desktop one's visibility was sticky from the desktop-only `postRender` and was never hidden in VR, so it lingered overlapping the VR gizmo (a small second gizmo near the object's old position). Now force-hidden every VR frame, plus a tool-switch hide so a deselected transform gizmo can't linger on either platform.
+- **Foundation (scene hierarchy / eye rig, Phase 0):** picking and the VR transform tools are now **parent-aware**, so a mesh parented under another sculpts/moves/gizmos correctly (composed world transform instead of assuming flat). `Mesh.getModelSpaceMatrix/getModelSpaceScale` (read) + `setModelSpaceMatrix` (write); wired into `intersectionRayMeshes`/`intersectionSphereMeshes`, Grab, the VR gizmo, and the gizmo anchor. No-op for unparented meshes. `window.setMeshParent(childId, parentId)` console helper for testing. See `implementation_plan_eye_rig.md`.
+
 # v2.9.0
 Blendshape panel: layer lock, hover highlights, smaller VR panel.
 

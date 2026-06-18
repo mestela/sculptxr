@@ -407,6 +407,27 @@ class Scene {
     window.openVRBlendshapes  = () => this._openVRBlendshapes();
     window.closeVRBlendshapes = () => this._closeVRBlendshapes();
 
+    // [Eye rig Phase 0/1] Parent one mesh under another (or null → back to worldGroup),
+    // preserving its world position. THREE.attach() recomputes the local matrix to keep
+    // the world transform; we copy that local back into SculptXR's _matrix (the source
+    // of truth the render sync reads). Picking is parent-aware via getModelSpaceMatrix().
+    //   window.setMeshParent(childId, parentId|null)
+    window.setMeshParent = (childId, parentId) => {
+      const child  = this._meshes.find((m) => m.getID() === childId);
+      if (!child) { console.warn('[parent] no child', childId); return; }
+      const parent = (parentId == null) ? null : this._meshes.find((m) => m.getID() === parentId);
+      const childTM = child.getThreeMesh();
+      const dstTM   = parent ? parent.getThreeMesh() : this._worldGroup;
+      childTM.updateWorldMatrix(true, false);
+      dstTM.updateWorldMatrix(true, false);
+      dstTM.attach(childTM);                 // reparent, preserve world transform
+      child.setMatrix(childTM.matrix.elements); // new local-to-parent → SculptXR matrix
+      childTM.matrixAutoUpdate = false;
+      child._parentMesh = parent || null;
+      this.render();
+      console.log(`[parent] mesh ${childId} → ${parent ? 'mesh ' + parentId : 'worldGroup'}`);
+    };
+
     // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
     // Using a short timeout so the DOM is settled before the polyfill host canvas is created.
     setTimeout(() => {
@@ -1531,9 +1552,19 @@ class Scene {
         }
       }
 
+      // The desktop transform gizmo (Gizmo.js) must never render in VR. Its visible
+      // flag is sticky from desktop (set in the desktop-only postRender), and no VR
+      // hook reliably hides it, so it lingers as a ghost gizmo overlapping the VR one.
+      // Force it hidden every VR frame, right before the render. (TransformVR's own
+      // GizmoVR group is separate and is shown when that tool is active.)
+      if (isVR && this._sculptManager) {
+        const _gT = this._sculptManager.getTool?.(Enums.Tools.TRANSFORM)?._gizmo?._group;
+        if (_gT && _gT.visible) _gT.visible = false;
+      }
+
       // Three.js clears depth on its own, so we render over the top
       this._renderer.render(this._scene, this._camera.getThreeCamera());
-      
+
       if (!isVR) {
         // CRITICAL FIX: Unbind the active WebGL VAO (Vertex Array Object).
         // Three.js leaves the sculpt mesh's VAO bound after rendering. 
@@ -1722,6 +1753,9 @@ class Scene {
     this._worldGroup.quaternion.set(0, 0, 0, 1);
     this._worldGroup.scale.set(0.701, 0.701, 0.701);
     this._scene.add(this._worldGroup);
+    // Exposed for Mesh.getModelSpaceMatrix() — picking composes the parent chain
+    // relative to this group (meshes live under it).
+    window._sxrWorldGroup = this._worldGroup;
     
     // Add basic lighting since we are using MeshStandardMaterial
     this._scene.add(new THREE.AmbientLight(0x404040, 2.0)); // soft white light

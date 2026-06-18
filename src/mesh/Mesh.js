@@ -9,6 +9,10 @@ import * as THREE from 'three';
 import ShaderManager from '../render/ShaderManager.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 
+// Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
+const _MS_INV = mat4.create();
+const _MS_OUT = mat4.create();
+
 /*
 Basic usage:
 var mesh = new MeshStatic(gl); // provide gl only if we need to render the mesh
@@ -366,6 +370,49 @@ class Mesh {
 
   setMatrix(mat) {
     mat4.copy(this._transformData._matrix, mat);
+  }
+
+  // The mesh's transform in MODEL space (relative to `_worldGroup`) — i.e. the
+  // composed parent chain up to but excluding the worldGroup. This is the space the
+  // VR ray/sphere picking operates in. For a top-level (flat) mesh the local matrix
+  // already IS model space, so we return it exactly (no inverse round-trip, no float
+  // drift) — making the parent-aware picking a pure no-op until parenting exists.
+  getModelSpaceMatrix(out) {
+    out = out || mat4.create();
+    const tm = this.getThreeMesh();
+    const wg = window._sxrWorldGroup;
+    if (!tm || !wg || tm.parent === wg) { mat4.copy(out, this._transformData._matrix); return out; }
+    tm.updateWorldMatrix(true, false);
+    mat4.invert(_MS_INV, wg.matrixWorld.elements);
+    mat4.multiply(out, _MS_INV, tm.matrixWorld.elements);
+    return out;
+  }
+
+  // Write side of getModelSpaceMatrix: given a desired MODEL-space transform, store
+  // the correct LOCAL `_matrix` (converting through the parent). For a top-level mesh
+  // model space IS local, so this is exactly setMatrix() — no behaviour change for
+  // flat meshes. Transform tools (Grab/Move/gizmo) should read getModelSpaceMatrix()
+  // and write setModelSpaceMatrix() so they keep working once a mesh is parented.
+  setModelSpaceMatrix(modelMat) {
+    const tm = this.getThreeMesh();
+    const wg = window._sxrWorldGroup;
+    if (!tm || !wg || tm.parent === wg) { mat4.copy(this._transformData._matrix, modelMat); return; }
+    tm.parent.updateWorldMatrix(true, false);
+    // parent model-space = inverse(worldGroup.matrixWorld) * parent.matrixWorld
+    mat4.invert(_MS_INV, wg.matrixWorld.elements);
+    mat4.multiply(_MS_OUT, _MS_INV, tm.parent.matrixWorld.elements);
+    // local = inverse(parent model-space) * modelMat
+    mat4.invert(_MS_INV, _MS_OUT);
+    mat4.multiply(this._transformData._matrix, _MS_INV, modelMat);
+  }
+
+  // Uniform scale of the model-space matrix (matches getScale()'s basis-length form).
+  getModelSpaceScale() {
+    const tm = this.getThreeMesh();
+    const wg = window._sxrWorldGroup;
+    if (!tm || !wg || tm.parent === wg) return this.getScale();
+    const m = this.getModelSpaceMatrix(_MS_OUT);
+    return Math.sqrt(m[0] * m[0] + m[4] * m[4] + m[8] * m[8]);
   }
 
   getSymmetryOrigin() {

@@ -90,6 +90,11 @@ class TransformVR extends SculptBase {
     }
 
     if (this._gizmo) {
+      // Every VR frame this tool is active: hide BOTH transform gizmos (clears the
+      // stale desktop Gizmo.js group that lingers in VR), then re-show only the VR
+      // one. postRender() — the old place that set this visible — is desktop-only.
+      this._main.getSculptManager?.()?._hideTransformGizmos?.();
+      if (this._gizmo._group) this._gizmo._group.visible = true;
       this._gizmo.update(this._main.getCamera());
 
       // 1. Hover Logic (Only if not dragging AND not in grace period)
@@ -184,7 +189,11 @@ class TransformVR extends SculptBase {
 
       vec3.copy(this._startControllerPos, main._vrControllerPos);
       quat.copy(this._startControllerQuat, main._vrControllerQuat);
-      mat4.copy(this._startMeshMatrix, mesh.getMatrix());
+      // Gizmo math runs in MODEL space (world-equivalent), so a parented child is
+      // driven in the right frame; _applyMatrix() writes back via setModelSpaceMatrix.
+      // For a top-level mesh this is exactly getMatrix() (no change).
+      if (mesh.getModelSpaceMatrix) mesh.getModelSpaceMatrix(this._startMeshMatrix);
+      else mat4.copy(this._startMeshMatrix, mesh.getMatrix());
 
       // Robust TRS extraction for non-uniform scale (Cached for all modes)
       this._startMeshPos = vec3.create();
@@ -482,7 +491,10 @@ class TransformVR extends SculptBase {
 
   _applyMatrix(mesh, mat) {
     if (!mesh) return;
-    mat4.copy(mesh.getMatrix(), mat);
+    // `mat` is a MODEL-space transform; convert back to local-to-parent (== setMatrix
+    // for a top-level mesh) so parented children transform correctly.
+    if (mesh.setModelSpaceMatrix) mesh.setModelSpaceMatrix(mat);
+    else mat4.copy(mesh.getMatrix(), mat);
     this._main.render();
   }
 

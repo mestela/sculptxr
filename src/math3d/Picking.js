@@ -9,6 +9,7 @@ var _TMP_NEAR_1 = [0.0, 0.0, 0.0];
 var _TMP_FAR = [0.0, 0.0, 0.0];
 var _TMP_FAR_1 = [0.0, 0.0, 0.0];
 var _TMP_INV = mat4.create();
+var _TMP_MS = mat4.create(); // model-space (worldGroup-relative) mesh matrix
 var _TMP_INTER = [0.0, 0.0, 0.0];
 var _TMP_INTER_1 = [0.0, 0.0, 0.0];
 var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
@@ -227,7 +228,8 @@ class Picking {
       var mesh = meshes[i];
       if (!mesh.isVisible()) continue;
 
-      mat4.invert(_TMP_INV, mesh.getMatrix());
+      mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
+      mat4.invert(_TMP_INV, _TMP_MS);
       vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
       vec3.transformMat4(_TMP_FAR, _TMP_FAR_1, _TMP_INV);
 
@@ -238,7 +240,7 @@ class Picking {
       // intersectionRayMesh sets _interPoint in LOCAL space
 
       // Transform local intersection to world to measure distance from origin
-      vec3.transformMat4(_TMP_V1, interTest, mesh.getMatrix());
+      vec3.transformMat4(_TMP_V1, interTest, _TMP_MS);
       var testDistance = vec3.dist(origin, _TMP_V1);
 
       if (testDistance < nearDistance) {
@@ -291,10 +293,11 @@ class Picking {
       var mesh = meshes[i];
       if (!mesh.isVisible() || mesh.isPickable === false) continue;
 
-      mat4.invert(_TMP_INV, mesh.getMatrix());
+      mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
+      mat4.invert(_TMP_INV, _TMP_MS);
       vec3.transformMat4(localCenter, worldCenter, _TMP_INV);
 
-      var scale = mesh.getScale();
+      var scale = mesh.getModelSpaceScale();
       var localRadiusSq = worldRadiusSq / (scale * scale);
 
       // Silenced continuous console noise

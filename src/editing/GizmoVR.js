@@ -264,7 +264,10 @@ class GizmoVR {
       for (let i = 0; i < meshes.length; ++i) {
         const mesh = meshes[i];
         vec3.transformMat4(icenter, mesh.getCenter(), mesh.getEditMatrix());
-        vec3.transformMat4(icenter, icenter, mesh.getMatrix());
+        // Anchor in MODEL space (== getMatrix() for a top-level mesh) so the gizmo
+        // sits on a parented child instead of landing tiny near the world origin.
+        const _mm = mesh.getModelSpaceMatrix ? mesh.getModelSpaceMatrix() : mesh.getMatrix();
+        vec3.transformMat4(icenter, icenter, _mm);
         vec3.add(acc, acc, icenter);
       }
       vec3.scale(center, acc, 1.0 / meshes.length);
@@ -510,6 +513,7 @@ class GizmoVR {
       ARROW_CONE_THICK * 0.4
     );
     tra._pickGeo._gizmo = tra;
+    { const _pm = tra._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; } // CPU pick-only; don't render the stray copy at origin
 
     tra._drawGeo = Primitives.createArrow(
       this._gl,
@@ -542,6 +546,7 @@ class GizmoVR {
     // Planes need to be scaled
     pla._pickGeo = Primitives.createPlane(this._gl, 0, 0, 0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._pickGeo._gizmo = pla;
+    { const _pm = pla._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
 
     pla._drawGeo = Primitives.createPlane(this._gl, 0, 0, 0, wx * scale, wy * scale, wz * scale, hx * scale, hy * scale, hz * scale);
     pla._drawGeo.setShaderType(Enums.Shader.FLAT);
@@ -596,6 +601,7 @@ class GizmoVR {
       64
     );
     rot._pickGeo._gizmo = rot;
+    { const _pm = rot._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
 
     rot._drawGeo = Primitives.createTorus(this._gl, radius * scale, THICKNESS * mthick * scale, rad, 6, 64);
     rot._drawGeo.setShaderType(Enums.Shader.FLAT);
@@ -628,6 +634,7 @@ class GizmoVR {
 
     sca._pickGeo = Primitives.createCube(this._gl, CUBE_SIDE_PICK * scale);
     sca._pickGeo._gizmo = sca;
+    { const _pm = sca._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
 
     sca._drawGeo = Primitives.createCube(this._gl, CUBE_SIDE * scale);
     sca._drawGeo.setShaderType(Enums.Shader.FLAT);

@@ -33,6 +33,14 @@ class SculptManager {
     this.init();
   }
 
+  // Hide both transform gizmo groups (Transform → Gizmo.js, TransformVR → GizmoVR.js).
+  _hideTransformGizmos() {
+    const a = this.getTool(Enums.Tools.TRANSFORM)?._gizmo?._group;
+    const b = this.getTool(Enums.Tools.TRANSFORM_VR)?._gizmo?._group;
+    if (a) a.visible = false;
+    if (b) b.visible = false;
+  }
+
   setToolIndex(id) {
     const oldTool = this.getCurrentTool();
     if (oldTool && oldTool.clearPreview) {
@@ -48,6 +56,12 @@ class SculptManager {
     }
 
     this._toolIndex = id;
+
+    // Tool switch: hide BOTH transform gizmos so a deselected one can't linger (the
+    // gizmos only ever turn themselves on). The active transform tool re-shows its
+    // own each frame (desktop: postRender; VR: TransformVR.updateXR). Runs in both
+    // platforms, so it also clears a stale desktop gizmo when entering VR.
+    this._hideTransformGizmos();
 
     // Low-poly / topology edit tools (DELETE_FACE..INSET) auto-show wireframe so
     // you can see the edges you're editing; restore the prior state on leaving.
@@ -1527,6 +1541,11 @@ class SculptManager {
 
   postRender() {
     const tool = this.getCurrentTool();
+
+    // Desktop: hide both transform gizmos; the active tool's postRender re-shows its
+    // own. (VR uses setToolIndex + TransformVR.updateXR — postRender doesn't run there.)
+    this._hideTransformGizmos();
+
     // --- DEBUG (remove once gizmo displays) ---
     // Log the first postRender call for each distinct toolIndex so the counter
     // never exhausts before the user switches tools.

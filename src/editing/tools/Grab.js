@@ -400,11 +400,17 @@ class Grab extends SculptBase {
 
             for (let i = 0; i < targets.length; ++i) {
               const m = targets[i];
-              const meshMat = m.getMatrix();
+              // Operate in MODEL space so the controller-space delta is applied in the
+              // right frame, then convert back to the mesh's local-to-parent. For a
+              // top-level mesh these are exactly getMatrix()/setMatrix() (no change);
+              // for a parented child this is what stops it bolting away from the hand.
+              const meshMat = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : m.getMatrix();
               const newMat = mat4.create();
               mat4.multiply(newMat, delta, meshMat);
 
-              if (m.setMatrix) {
+              if (m.setModelSpaceMatrix) {
+                m.setModelSpaceMatrix(newMat);
+              } else if (m.setMatrix) {
                 m.setMatrix(newMat);
               } else {
                 var tData = m.getTransformData();
