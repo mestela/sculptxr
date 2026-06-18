@@ -688,9 +688,17 @@ export default class GuiTimeline {
       const ry = gutterY + rowIdx * rowH - this._gutterScrollY;
       if (ry + rowH < headerH || ry > this._cssHeight) return; // culled
 
-      // Highlight a channel that is selected in the graph editor or being edited.
+      // Gutter-row hover: cursor (mouse or VR ray) over the left gutter band of this
+      // row. Highlights the channel name + visibility eye.
+      const rowHov = this._lastMouseX >= 0 && this._lastMouseX < 200
+                  && this._lastMouseY >= ry && this._lastMouseY <= ry + rowH;
+
+      // Highlight a channel that is selected/being edited (green) or hovered (white).
       if (highlight) {
         ctx.fillStyle = 'rgba(80,150,100,0.20)';
+        ctx.fillRect(0, ry, 200, rowH);
+      } else if (rowHov) {
+        ctx.fillStyle = 'rgba(255,255,255,0.07)';
         ctx.fillRect(0, ry, 200, rowH);
       }
 
@@ -698,22 +706,23 @@ export default class GuiTimeline {
       ctx.fillStyle = color;
       ctx.fillRect(4, ry + 4, 4, 14);
 
-      // Eye icon at 60% scale
+      // Eye icon at 60% scale (brightens on hover)
+      const eyeCol = rowHov ? '#fff' : (isVisible ? color : '#555');
       ctx.save();
       ctx.translate(16, ry + 2);
       ctx.scale(0.6, 0.6);
-      ctx.strokeStyle = isVisible ? color : '#555';
+      ctx.strokeStyle = eyeCol;
       ctx.lineWidth = 1.5;
       const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
       ctx.stroke(eyePath);
       ctx.beginPath();
       ctx.arc(12, 12, 3, 0, Math.PI * 2);
-      ctx.fillStyle = isVisible ? color : '#555';
+      ctx.fillStyle = eyeCol;
       ctx.fill();
       ctx.restore();
 
-      ctx.fillStyle = highlight ? '#fff' : (isVisible ? '#ccc' : '#555');
-      ctx.font = highlight ? 'bold 10px sans-serif' : '10px sans-serif';
+      ctx.fillStyle = (highlight || rowHov) ? '#fff' : (isVisible ? '#ccc' : '#555');
+      ctx.font = (highlight || rowHov) ? 'bold 10px sans-serif' : '10px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       // Truncate label so it doesn't bleed into the value badge

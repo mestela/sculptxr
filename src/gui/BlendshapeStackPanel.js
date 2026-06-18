@@ -25,6 +25,8 @@ const FA = {
   close:    '\uf00d', // fa-xmark (close VR panel)
   eye:      '\uf06e', // fa-eye (visible)
   eyeSlash: '\uf070', // fa-eye-slash (muted)
+  lock:     '\uf023', // fa-lock
+  lockOpen: '\uf3c1', // fa-lock-open
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -62,6 +64,9 @@ export default class BlendshapeStackPanel {
     // Track last tap for manual dblclick detection (pointer events don't give it).
     this._lastTapName    = null;
     this._lastTapTime    = 0;
+
+    // Hovered element { name, part } for hover highlights ('row'|'eye'|'lock'|'slider').
+    this._hover = null;
   }
 
   // Mount the canvas into a host DOM element (a wa-tab-panel for desktop).
@@ -83,6 +88,7 @@ export default class BlendshapeStackPanel {
     window.addEventListener('pointermove', (e) => this._onMove(e));
     window.addEventListener('pointerup',   ()  => this._pointerUp());
     window.addEventListener('pointercancel', () => this._pointerUp());
+    this._canvas.addEventListener('pointerleave', () => this.clearHover());
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // Re-layout when the sidebar/panel changes width.
@@ -253,15 +259,15 @@ export default class BlendshapeStackPanel {
     const delBtn = { id: 'del', x: PAD + bw + 6, y: by, w: bw, h: bh };
     this._toolbarBtns.push(newBtn, delBtn);
 
-    this._drawIconBtn(ctx, newBtn, FA.plus,  '#3b82f6');
+    this._drawIconBtn(ctx, newBtn, FA.plus,  '#3b82f6', this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
-    this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : '#555');
+    this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : '#555', this._hover?.btn === 'del');
     // VR close is a corner mesh owned by Scene (same style as the timeline), not an
     // on-canvas button — see Scene._vrBlendCloseBtn.
   }
 
-  _drawIconBtn(ctx, b, glyph, color) {
-    ctx.fillStyle = '#2c2c2c';
+  _drawIconBtn(ctx, b, glyph, color, hot = false) {
+    ctx.fillStyle = hot ? '#3a3a3a' : '#2c2c2c';
     this._roundRect(ctx, b.x, b.y, b.w, b.h, 4);
     ctx.fill();
     ctx.fillStyle = color;
@@ -274,62 +280,65 @@ export default class BlendshapeStackPanel {
 
   _drawRow(ctx, W, top, name, weight, isActive, isBase) {
     const h = isBase ? BASE_H : ROW_H;
-
-    // Whole-row highlight is the only "active" signal (click anywhere to activate).
-    if (isActive) {
-      ctx.fillStyle = 'rgba(59,130,246,0.16)';
-      ctx.fillRect(0, top, W, h);
-      // Left accent bar.
-      ctx.fillStyle = '#3b82f6';
-      ctx.fillRect(0, top, 3, h);
-    }
-    // Row separator.
-    ctx.strokeStyle = '#262626';
-    ctx.beginPath();
-    ctx.moveTo(0, top + h - 0.5); ctx.lineTo(W, top + h - 0.5);
-    ctx.stroke();
-
     const track  = this._track();
     const muted  = !isBase && (track?.blendshapeMuted?.has(name) || false);
     const soloed = !isBase && track?.blendshapeSolo === name;
+    const locked = isBase ? !!track?.baseLocked : !!track?.blendshapeLocked?.has(name);
+    const hov    = (this._hover && this._hover.name === name) ? this._hover.part : null;
 
-    // Visibility eye on the LEFT of the header line: amber when this layer is
-    // soloed, red-slash when muted, grey when plainly visible. (Base = no eye.)
-    const eyeCx = NAME_X + 7;
-    const eyeCy = top + 16;
-    const nameStart = isBase ? NAME_X : NAME_X + 24;
+    // Row background: active (blue) wins; otherwise a faint hover tint.
+    if (isActive) {
+      ctx.fillStyle = 'rgba(59,130,246,0.16)'; ctx.fillRect(0, top, W, h);
+      ctx.fillStyle = '#3b82f6';               ctx.fillRect(0, top, 3, h); // accent bar
+    } else if (hov) {
+      ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(0, top, W, h);
+    }
+    ctx.strokeStyle = '#262626';
+    ctx.beginPath(); ctx.moveTo(0, top + h - 0.5); ctx.lineTo(W, top + h - 0.5); ctx.stroke();
+
+    const iconCy = isBase ? top + h / 2 : top + 16;
+    const r = this._rowRect(name, top, isBase);
+    ctx.textBaseline = 'middle';
+
+    // Eye (non-base only) — soloed=amber, muted=red-slash, else grey (white on hover).
     if (!isBase) {
-      ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : '#9aa');
+      const eyeHot = hov === 'eye';
+      ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : (eyeHot ? '#fff' : '#9aa'));
       ctx.font = '900 13px "Font Awesome 6 Free"';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(muted ? FA.eyeSlash : FA.eye, eyeCx, eyeCy + 0.5);
-      ctx.textAlign = 'left';
+      ctx.fillText(muted ? FA.eyeSlash : FA.eye, NAME_X + 7, iconCy + 0.5);
+      r.eye = { x0: 0, x1: NAME_X + 16, y0: top, y1: top + 26 };
     }
+    // Lock (all rows) — locked=amber, unlocked=dim open-lock (brighten on hover).
+    const lockCx  = isBase ? NAME_X + 7 : NAME_X + 25;
+    const lockHot = hov === 'lock';
+    ctx.fillStyle = locked ? (lockHot ? '#ffd9a0' : '#f2b53c') : (lockHot ? '#bbb' : '#4a4a4a');
+    ctx.font = '900 12px "Font Awesome 6 Free"';
+    ctx.textAlign = 'center';
+    ctx.fillText(locked ? FA.lock : FA.lockOpen, lockCx, iconCy + 0.5);
+    r.lock = isBase ? { x0: 0, x1: NAME_X + 18, y0: top, y1: top + h }
+                    : { x0: NAME_X + 16, x1: NAME_X + 36, y0: top, y1: top + 26 };
+    ctx.textAlign = 'left';
 
-    // Name (dimmed when muted).
-    ctx.fillStyle = isBase ? '#888' : (muted ? '#666' : (isActive ? '#fff' : '#ddd'));
+    const nameStart = isBase ? NAME_X + 24 : NAME_X + 40;
+
+    // Name (brightens on row hover; dim when muted/locked-base).
+    const nameHot = hov === 'row';
+    ctx.fillStyle = isBase ? (locked ? '#9a9' : '#888')
+                          : (muted ? '#666' : (isActive || nameHot ? '#fff' : '#ddd'));
     ctx.font = (isActive ? '600 ' : '') + '12px sans-serif';
-    ctx.textBaseline = 'middle';
-    const valW = 40;
+    const valW = isBase ? PAD : 36;
     const nameMaxX = W - PAD - valW;
     const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart);
     const nameY = isBase ? h / 2 + top : top + 16;
     ctx.fillText(nameText, nameStart, nameY);
-    // Sculpt-lockout flash: paint the name red on top, fading out.
     const fa = isBase ? 0 : this._flashAlpha(name);
     if (fa > 0) {
-      ctx.save();
-      ctx.globalAlpha = fa;
-      ctx.fillStyle = '#ff4d4d';
-      ctx.fillText(nameText, nameStart, nameY);
-      ctx.restore();
+      ctx.save(); ctx.globalAlpha = fa; ctx.fillStyle = '#ff4d4d';
+      ctx.fillText(nameText, nameStart, nameY); ctx.restore();
     }
 
-    if (isBase) {
-      this._rows.push(this._rowRect(name, top, true));
-      return;
-    }
+    if (isBase) { this._rows.push(r); return; }
 
     // Numeric value (right-aligned).
     ctx.fillStyle = muted ? '#666' : '#9aa';
@@ -338,33 +347,34 @@ export default class BlendshapeStackPanel {
     ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
     ctx.textAlign = 'left';
 
-    // Slider track + fill + handle (second line).
-    const trackX0 = TRACK_X0;
-    const trackX1 = W - PAD;
-    const trackY  = top + 33;
+    // Slider (second line) — thicker/white thumb on hover.
+    const trackX0 = TRACK_X0, trackX1 = W - PAD, trackY = top + 33;
     const tw = trackX1 - trackX0;
     const w01 = Math.max(0, Math.min(1, weight));
-
-    ctx.fillStyle = '#333';
-    this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2);
-    ctx.fill();
+    const sliderHot = hov === 'slider';
+    ctx.fillStyle = sliderHot ? '#3d3d3d' : '#333';
+    this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2); ctx.fill();
     ctx.fillStyle = '#3b82f6';
-    this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2);
-    ctx.fill();
-
+    this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2); ctx.fill();
     const hx = trackX0 + tw * w01;
-    ctx.beginPath();
-    ctx.arc(hx, trackY, 7, 0, Math.PI * 2);
-    ctx.fillStyle = '#e6e6e6';
-    ctx.fill();
-    ctx.strokeStyle = '#3b82f6';
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, trackY, sliderHot ? 8 : 7, 0, Math.PI * 2);
+    ctx.fillStyle = sliderHot ? '#fff' : '#e6e6e6'; ctx.fill();
+    ctx.strokeStyle = '#3b82f6'; ctx.stroke();
 
-    const r = this._rowRect(name, top, false);
     r.trackX0 = trackX0; r.trackX1 = trackX1; r.trackY = trackY;
-    // Generous rectangular hit zone covering the eye on the header line.
-    r.eye = { x0: 0, x1: nameStart - 2, y0: top, y1: top + 26 };
     this._rows.push(r);
+  }
+
+  // Which sub-element of a row a point lands on: 'lock' | 'eye' | 'slider' | 'row'.
+  _classifyHit(p) {
+    const row = this._hitRow(p);
+    if (!row) return { row: null, part: null };
+    const inRect = (z) => z && p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1;
+    if (inRect(row.lock)) return { row, part: 'lock' };
+    if (inRect(row.eye))  return { row, part: 'eye' };
+    if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
+      return { row, part: 'slider' };
+    return { row, part: 'row' };
   }
 
   _rowRect(name, top, isBase) {
@@ -407,47 +417,65 @@ export default class BlendshapeStackPanel {
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
 
-    const row = this._hitRow(p);
+    const { row, part } = this._classifyHit(p);
     if (!row) return;
+    const mesh = this._mesh();
+    const reg  = window._animationRegistry;
 
-    // Eye, left of the name: plain click → mute/unmute this layer; modifier
-    // (Alt on desktop / secondary trigger in VR) → solo (isolate it; again
-    // restores the prior visibility of all).
-    if (!row.isBase && row.eye &&
-        p.x >= row.eye.x0 && p.x <= row.eye.x1 &&
-        p.y >= row.eye.y0 && p.y <= row.eye.y1) {
-      const mesh = this._mesh();
-      if (mesh) {
-        if (solo) window._animationRegistry.toggleBlendshapeSolo(mesh, row.name);
-        else      window._animationRegistry.toggleBlendshapeMute(mesh, row.name);
-      }
+    // Lock toggle (all rows incl. Base) — a locked layer/cage can't be sculpted.
+    if (part === 'lock') {
+      if (mesh) reg.toggleBlendshapeLock(mesh, row.isBase ? 'Base' : row.name);
       this.draw();
       return;
     }
-
-    // Slider band (lower line) → begin weight drag. Slider works on ANY layer at
-    // any time, regardless of which layer is active.
-    if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12) {
+    // Eye (non-base): plain → mute/unmute; modifier (Alt / secondary trigger) → solo.
+    if (part === 'eye' && !row.isBase) {
+      if (mesh) (solo ? reg.toggleBlendshapeSolo : reg.toggleBlendshapeMute).call(reg, mesh, row.name);
+      this.draw();
+      return;
+    }
+    // Slider band → begin weight drag (works on any layer regardless of active).
+    if (part === 'slider' && !row.isBase) {
       this._dragName   = row.name;
       this._dragStartW = this._weightOf(row.name);
       this._dragMoved  = false;
       this._applyWeightFromX(row, p.x);
       return;
     }
-
-    // Click anywhere else on the row → make it the active sculpt layer (Base row
-    // deactivates). Double-tap the name to rename (desktop only).
+    // Row body → make it the active sculpt layer (Base deactivates). Double-tap → rename.
     this._selectLayer(row.isBase ? null : row.name);
     this._handleTapForRename(row);
   }
 
   _pointerMove(p) {
-    if (!this._dragName) return;
-    const row = this._rows.find(r => r.name === this._dragName);
-    if (!row) return;
-    this._dragMoved = true;
-    this._applyWeightFromX(row, p.x);
+    if (this._dragName) {
+      const row = this._rows.find(r => r.name === this._dragName);
+      if (!row) return;
+      this._dragMoved = true;
+      this._applyWeightFromX(row, p.x);
+      return;
+    }
+    // Not dragging → hover feedback. Redraw only when the hovered element changes.
+    let h;
+    const btn = this._hitToolbar(p);
+    if (btn) {
+      h = { btn: btn.id };
+    } else {
+      const { row, part } = this._classifyHit(p);
+      h = row ? { name: row.name, part } : null;
+    }
+    if (this._hoverChanged(h)) { this._hover = h; this.draw(); }
   }
+
+  _hoverChanged(h) {
+    const a = this._hover;
+    if (!a && !h) return false;
+    if (!a || !h) return true;
+    return a.btn !== h.btn || a.name !== h.name || a.part !== h.part;
+  }
+
+  // Clear hover (DOM pointerleave, or VR ray leaving the panel — called by Scene).
+  clearHover() { if (this._hover) { this._hover = null; this.draw(); } }
 
   _pointerUp() {
     if (!this._dragName) return;

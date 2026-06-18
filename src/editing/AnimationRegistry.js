@@ -822,6 +822,9 @@ class AnimationRegistry {
         track.editingBlendshape = wasEditing;
       }
       track.baseShape = new Float32Array(mesh.getVertices());
+      // Protect the cage by default once blendshapes exist — accidental base
+      // sculpting is otherwise easy and corrupts every layer's reference.
+      if (track.baseLocked === undefined) track.baseLocked = true;
     }
 
     // New layers always start with a zero delta — they are empty relative to
@@ -925,6 +928,26 @@ class AnimationRegistry {
     if (mesh.updateGeometry) mesh.updateGeometry();
     if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
     track._applyingBS = false;
+  }
+
+  // Per-layer LOCK (Photoshop-style): a locked layer (or the Base cage) can't be
+  // sculpted into — the SculptManager gate blocks it. The Base is locked by default
+  // (set when baseShape is first snapshotted) so it's hard to wreck the cage by
+  // accident. name === null / 'Base' targets the base lock. Non-destructive.
+  isBlendshapeLocked(mesh, name) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track) return false;
+    if (!name || name === 'Base') return !!track.baseLocked;
+    return !!track.blendshapeLocked?.has(name);
+  }
+
+  toggleBlendshapeLock(mesh, name) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track) return;
+    if (!name || name === 'Base') { track.baseLocked = !track.baseLocked; return; }
+    if (!track.blendshapeLocked) track.blendshapeLocked = new Set();
+    if (track.blendshapeLocked.has(name)) track.blendshapeLocked.delete(name);
+    else track.blendshapeLocked.add(name);
   }
 
   // Per-layer visibility: a muted layer keeps its stored weight but contributes 0

@@ -1,3 +1,10 @@
+# v2.9.0
+Blendshape panel: layer lock, hover highlights, smaller VR panel.
+
+- **Feature**: **Per-layer lock (Photoshop-style) + Base cage locked by default.** A lock icon on every row (amber = locked); the Base is locked automatically once blendshapes exist, because it was too easy to accidentally select Base and sculpt — corrupting every layer's reference. The sculpt gate refuses to sculpt a locked layer or the locked cage (flashes); click the lock open to deliberately edit it. Applies on desktop and in VR.
+- **Feature**: **Hover highlights.** Blendshape panel rows tint on hover and brighten the specific element under the cursor (name / eye / lock / slider thumb), plus the New/Del toolbar buttons. The timeline gutter highlights the channel name + visibility eye on hover. Works with the VR ray and the desktop mouse.
+- **Change**: **VR blendshape panel is half size.** Both the canvas pixels and the world plane were halved by the same factor, so the UI elements stay the same physical size to the user — the panel is just physically smaller and shows fewer rows at once (not a content scale).
+
 # v2.8.1
 Blendshape data-safety hardening.
 

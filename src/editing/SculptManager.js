@@ -157,9 +157,15 @@ class SculptManager {
     const mesh = this._main.getMesh?.();
     if (!reg || !mesh) return true;
     const track = reg.tracks.get(mesh.getID());
-    const name = track?.editingBlendshape;
-    if (!name) return true;
-    if (track.blendshapeMuted?.has?.(name)) return false;
+    if (!track) return true;
+    const name = track.editingBlendshape;
+    if (!name) {
+      // Base cage is active. Block when it's locked (default once blendshapes exist)
+      // so the cage isn't wrecked by accident. No baseShape yet → normal sculpting.
+      return !(track.baseShape && track.baseLocked);
+    }
+    if (track.blendshapeLocked?.has?.(name)) return false; // locked layer
+    if (track.blendshapeMuted?.has?.(name)) return false;  // hidden layer
     const bTrack = track.blendshapeTracks?.get(name);
     const w = bTrack ? reg.evaluateScalarTrack(bTrack, track.playbackTime || 0) : 0;
     return Math.abs(w - 1) < 1e-3;

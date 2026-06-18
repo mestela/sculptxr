@@ -1200,6 +1200,9 @@ class Scene {
       // Close-button hover highlights (brighten + grow while pointed at).
       this._applyCloseBtnHover(this._vrTimelineCloseBtn, '_vtlClosePointed');
       this._applyCloseBtnHover(this._vrBlendCloseBtn, '_vbsClosePointed');
+      // Clear the blendshape panel's row hover when the ray isn't on it this frame.
+      if (this._vrBlendPanel && !this._vbsPanelPointed) this._vrBlendPanel.clearHover();
+      this._vbsPanelPointed = false;
 
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
@@ -4172,9 +4175,12 @@ class Scene {
   // VR timeline canvas→texture pattern). Portrait panel; point + dominant trigger
   // to interact, secondary trigger + eye = solo.
   _openVRBlendshapes() {
-    const _worldW = 0.34, _worldH = 0.46;       // portrait layer stack
-    const _cssW   = Math.round(_worldW * 1500); // 510
-    const _cssH   = Math.round(_worldH * 1500); // 690
+    // Half the previous size. Both the canvas px AND the world plane shrink by the
+    // same factor (1500 px/m kept), so UI elements stay the same physical size to
+    // the user — the panel just shows less at once, it doesn't scale the content.
+    const _worldW = 0.17, _worldH = 0.23;       // portrait layer stack (was 0.34×0.46)
+    const _cssW   = Math.round(_worldW * 1500); // 255
+    const _cssH   = Math.round(_worldH * 1500); // 345
 
     if (!this._vrBlendPanel) {
       // VR instance shares all state via window._animationRegistry; getMesh() comes
@@ -5578,6 +5584,7 @@ class Scene {
           if (_winner?.isBlendshapes) {
             this._isPointingAtMenu = true;
             this._vbsIsPointing    = true;
+            this._vbsPanelPointed  = true; // for hover-clear in the render loop
             if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = 'VRBlendshapes'; }
             else                              { this._vrUIHitDistRight = _winner.hit.distance; this._vrUIHitSourceRight = 'VRBlendshapes'; }
             this._updateBPCursor?.(_winner.hit.point, true);

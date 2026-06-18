@@ -1,4 +1,4 @@
-# SculptXR (v2.8.1)
+# SculptXR (v2.9.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v2.9.0**: **Blendshape panel polish**: per-layer lock (Photoshop-style) with the Base cage locked by default (can't accidentally sculpt/corrupt the cage), hover highlights across the panel rows + timeline channel gutter, and a half-size VR panel (canvas px + plane both halved, so elements stay the same physical size).
 *   **v2.8.1**: **Blendshape data-safety**: a corruption backstop that refuses to write a layer's delta unless it's at weight 1 (catches stroke paths the start() gate misses), plus Backup/Restore Shapes buttons in the VR Settings menu (undo-independent safety net, now reachable standalone).
 *   **v2.8.0**: **Blendshape layer-stack panel**: a Photoshop/Nomad-style canvas UI for blendshapes (desktop sidebar tab + VR floating panel), replacing the old HTML section. Click-to-activate rows, always-live weight sliders, per-layer mute (eye) and solo, correct multi-layer delta capture, and panel↔timeline sync. Hardened blendshape data safety (base-rebase corruption guard + `bsBackup`/`bsRestore`). VR panels are grip-movable with hover-highlighted corner close buttons.
 *   **v2.7.0**: **VR Crease overhaul**: depth-independent surface-walking anchor fixes the long-standing crease wobble/gallop/waves (the brush now walks the surface and ignores how far off-surface the controller tip drifts), VR strokes are framerate-invariant again (per-distance, not per-frame), and crease default intensity lowered to 0.4. Also fixes a `<head>` script load-order bug that was silently disabling two iPad fixes.
