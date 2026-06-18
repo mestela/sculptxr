@@ -413,21 +413,10 @@ class Scene {
     // preserving its world position. THREE.attach() recomputes the local matrix to keep
     // the world transform; we copy that local back into SculptXR's _matrix (the source
     // of truth the render sync reads). Picking is parent-aware via getModelSpaceMatrix().
-    //   window.setMeshParent(childId, parentId|null)
+    //   window.setMeshParent(childId, parentId|null)  — delegates to the method.
     window.setMeshParent = (childId, parentId) => {
-      const child  = this._meshes.find((m) => m.getID() === childId);
-      if (!child) { console.warn('[parent] no child', childId); return; }
-      const parent = (parentId == null) ? null : this._meshes.find((m) => m.getID() === parentId);
-      const childTM = child.getThreeMesh();
-      const dstTM   = parent ? parent.getThreeMesh() : this._worldGroup;
-      childTM.updateWorldMatrix(true, false);
-      dstTM.updateWorldMatrix(true, false);
-      dstTM.attach(childTM);                 // reparent, preserve world transform
-      child.setMatrix(childTM.matrix.elements); // new local-to-parent → SculptXR matrix
-      childTM.matrixAutoUpdate = false;
-      child._parentMesh = parent || null;
-      this.render();
-      console.log(`[parent] mesh ${childId} → ${parent ? 'mesh ' + parentId : 'worldGroup'}`);
+      this.setMeshParent(childId, parentId);
+      console.log(`[parent] mesh ${childId} → ${parentId == null ? 'worldGroup' : 'mesh ' + parentId}`);
     };
 
     // [Eye rig Phase 1] Create a null/locator and select it. window.addNull()
@@ -436,15 +425,10 @@ class Scene {
     // [Eye rig Phase 1] Look-at constraint: make a mesh aim its local -Z at a target.
     //   window.setLookAt(eyeId, targetId)   window.clearLookAt(eyeId)
     window.setLookAt = (eyeId, targetId) => {
-      const eye = this._meshes.find((m) => m.getID() === eyeId);
-      if (!eye) { console.warn('[lookAt] no eye', eyeId); return; }
-      eye._lookAtTargetId = targetId;
+      this.setLookAt(eyeId, targetId);
       console.log(`[lookAt] mesh ${eyeId} → target ${targetId}`);
     };
-    window.clearLookAt = (eyeId) => {
-      const eye = this._meshes.find((m) => m.getID() === eyeId);
-      if (eye) eye._lookAtTargetId = null;
-    };
+    window.clearLookAt = (eyeId) => this.clearLookAt(eyeId);
 
     // [Eye rig Phase 1] Live mirror across X=0. window.mirrorMesh(sourceId)
     window.mirrorMesh = (sourceId) => this.mirrorMesh(sourceId);
@@ -452,10 +436,7 @@ class Scene {
     // [Eye rig Phase 1] Procedural saccades on a look-at eye.
     //   window.saccades(eyeId, true/false, amplitude?)
     window.saccades = (eyeId, on = true, amp) => {
-      const eye = this._meshes.find((m) => m.getID() === eyeId);
-      if (!eye) return;
-      eye._saccades = !!on;
-      if (amp != null) eye._saccadeAmp = amp;
+      this.setSaccades(eyeId, on, amp);
       console.log(`[saccades] mesh ${eyeId} → ${on}${amp != null ? ' amp ' + amp : ''}`);
     };
 
@@ -2245,6 +2226,90 @@ class Scene {
     this._mirrors.push({ mesh, sourceId });
     console.log('[mirror] created mirror of mesh', sourceId);
     return mesh;
+  }
+
+  // ── [Eye rig] GUI-facing rig operations ─────────────────────────────────────
+  // These are the single source of truth for look-at / saccades / mirror / parent;
+  // the window.* console helpers (set up in the constructor) delegate to them.
+
+  setLookAt(eyeId, targetId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    if (!eye) return;
+    eye._lookAtTargetId = (targetId == null) ? null : targetId;
+  }
+
+  clearLookAt(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    if (eye) eye._lookAtTargetId = null;
+  }
+
+  getLookAt(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    return eye ? (eye._lookAtTargetId ?? null) : null;
+  }
+
+  setSaccades(eyeId, on = true, amp) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    if (!eye) return;
+    eye._saccades = !!on;
+    if (amp != null) eye._saccadeAmp = amp;
+  }
+
+  isSaccading(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    return !!(eye && eye._saccades);
+  }
+
+  getSaccadeAmp(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    return eye ? (eye._saccadeAmp ?? 5) : 5;
+  }
+
+  isMirrored(sourceId) {
+    return !!(this._mirrors && this._mirrors.some((x) => x.sourceId === sourceId));
+  }
+
+  removeMirror(sourceId) {
+    if (!this._mirrors) return;
+    for (let i = this._mirrors.length - 1; i >= 0; i--) {
+      if (this._mirrors[i].sourceId === sourceId) {
+        const mir = this._mirrors[i];
+        if (mir.mesh && mir.mesh.parent) mir.mesh.parent.remove(mir.mesh);
+        this._mirrors.splice(i, 1);
+      }
+    }
+  }
+
+  // Toggle a live mirror on/off for a source mesh. Returns the new state.
+  toggleMirror(sourceId) {
+    if (this.isMirrored(sourceId)) { this.removeMirror(sourceId); return false; }
+    this.mirrorMesh(sourceId);
+    return true;
+  }
+
+  // Reparent childId under parentId (or null → worldGroup), preserving world transform.
+  setMeshParent(childId, parentId) {
+    const child = this._meshes.find((m) => m.getID() === childId);
+    if (!child) { console.warn('[parent] no child', childId); return; }
+    const parent = (parentId == null) ? null : this._meshes.find((m) => m.getID() === parentId);
+    // Reject cycles: walk parent's ancestor chain — if child is up there, refuse.
+    for (let p = parent; p; p = p._parentMesh) {
+      if (p === child) { console.warn('[parent] refused (would create a cycle)'); return; }
+    }
+    const childTM = child.getThreeMesh();
+    const dstTM   = parent ? parent.getThreeMesh() : this._worldGroup;
+    childTM.updateWorldMatrix(true, false);
+    dstTM.updateWorldMatrix(true, false);
+    dstTM.attach(childTM);                       // reparent, preserve world transform
+    child.setMatrix(childTM.matrix.elements);    // new local-to-parent → SculptXR matrix
+    childTM.matrixAutoUpdate = false;
+    child._parentMesh = parent || null;
+    this.render();
+  }
+
+  getParentMesh(childId) {
+    const child = this._meshes.find((m) => m.getID() === childId);
+    return (child && child._parentMesh) || null;
   }
 
   addGrid3x3() {

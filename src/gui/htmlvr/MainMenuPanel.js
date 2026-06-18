@@ -348,19 +348,22 @@ const CSS = `
 }
 
 /* Toggle (checkbox replacement) */
+/* Toggles share the action-button resting look (single button language); the
+   only difference is the .active highlight for genuine on/off toggles. */
 .mm-toggle {
   width: 100%;
-  padding: 6px 10px;
+  padding: 7px 10px;
   border: 1px solid #45475a;
   border-radius: 5px;
-  background: #313244;
-  color: #a6adc8;
+  background: #181825;
+  color: #cdd6f4;
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
   text-align: left;
   outline: none;
   margin-bottom: 3px;
+  box-sizing: border-box;
 }
 .mm-toggle:hover, .mm-toggle.hover { filter: brightness(1.2); }
 .mm-toggle.active {
@@ -481,12 +484,21 @@ const CSS = `
 .mm-select-opt.active { color: #89b4fa; background: rgba(137,180,250,0.08); }
 
 /* Outliner item (scene tab) */
+/* Scrollable, bordered object list — starts tall enough for ~8 rows. */
+.mm-outliner-list {
+  border: 1px solid #45475a;
+  border-radius: 5px;
+  height: 248px;
+  overflow-y: auto;
+  padding: 3px 5px;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
 .mm-outliner-row {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 3px 0;
-  border-bottom: 1px solid #313244;
 }
 .mm-vis-btn {
   width: 24px;
@@ -507,6 +519,10 @@ const CSS = `
 .mm-vis-btn.hidden { color: #45475a; }
 .mm-mesh-btn {
   flex: 1;
+  min-width: 0;                /* allow ellipsis inside the flex row */
+  display: flex;              /* override WebAwesome's centered button base */
+  align-items: center;
+  justify-content: flex-start;
   padding: 4px 6px;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -516,12 +532,37 @@ const CSS = `
   cursor: pointer;
   text-align: left;
   outline: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.mm-node-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-rename-input {
+  flex: 1; min-width: 0;
+  background: #11111b; color: #cdd6f4;
+  border: 1px solid #89b4fa; border-radius: 4px;
+  font-size: 11px; padding: 3px 5px; outline: none;
 }
 .mm-mesh-btn:hover, .mm-mesh-btn.hover { background: #313244; color: #cdd6f4; }
-.mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); border-color: rgba(137,180,250,0.2); }
+.mm-mesh-btn.active { color: #89b4fa; background: rgba(137,180,250,0.1); }
+.mm-node-icon { display: inline-block; width: 14px; text-align: center; margin-right: 6px; color: #6c7086; }
+.mm-mesh-btn.is-null .mm-node-icon { color: #66e0ff; }
+.mm-mesh-btn.active .mm-node-icon { color: #89b4fa; }
+.mm-rig-label { font-size: 10px; color: #a6adc8; text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 3px; }
+/* Outliner toolbar — icon-only copy/delete buttons. */
+.mm-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+.mm-tool-btn {
+  width: 32px; height: 28px; flex-shrink: 0;
+  border: 1px solid #45475a; border-radius: 5px;
+  background: #181825; color: #cdd6f4; font-size: 12px;
+  cursor: pointer; outline: none; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+}
+.mm-tool-btn:hover, .mm-tool-btn.hover { background: #313244; }
+.mm-tool-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+/* Add-object buttons side by side. */
+.mm-add-row { display: flex; gap: 3px; }
+.mm-add-row .mm-action-btn { flex: 1; text-align: center; }
+/* During a pending pick, dim the subject row and tint pickable targets (no border). */
+.mm-outliner-row.rig-target .mm-mesh-btn { background: rgba(249,226,175,0.1); }
+.mm-outliner-row.rig-subject { opacity: 0.5; }
 
 /* Info / placeholder */
 .mm-info {
@@ -757,6 +798,11 @@ export function buildMenuHTML_files(main) {
     </div>
     <button class="mm-action-btn" id="mm-save-metalness">Metalness</button>
 
+    <div class="mm-section-title">Scene</div>
+    <button class="mm-action-btn danger" id="mm-clear-scene">
+      ${main._clearSceneConfirm ? 'Confirm clear (no undo)' : 'Clear scene…'}
+    </button>
+
     <button class="mm-action-btn danger" id="mm-exit-vr">Exit VR</button>
   `;
 }
@@ -955,7 +1001,9 @@ export function buildSectionHTML_scene(main) {
   const meshes   = main.getMeshes?.() ?? [];
   const selected = main.getSelectedMeshes?.() ?? [];
 
-  let meshRows = '';
+  // Assign stable label/id to every outliner-visible node, and gather them so the
+  // tree renderer and the Rig dropdowns share one source of truth.
+  const nodes = [];
   let count = 0;
   for (const m of meshes) {
     if (m._isVoxelChunk) continue;
@@ -966,35 +1014,103 @@ export function buildSectionHTML_scene(main) {
     if (!m._permanentStaticId) {
       m._permanentStaticId = 'm_' + Math.random().toString(36).slice(2, 9);
     }
+    nodes.push(m);
+  }
+
+  // Stable outliner order: sort by creation id (getID is monotonic). This keeps
+  // rows from shuffling when selection state changes — only parenting nests them.
+  nodes.sort((a, b) => a.getID() - b.getID());
+
+  // Two-step rig assignment state (lives on main so it survives panel rebuilds):
+  //   _rigPendingMode = 'parent' | 'lookat' | null,  _rigPendingSubject = mesh id
+  const pendingMode = main._rigPendingMode || null;
+
+  // Render the outliner as a tree: top-level nodes (no _parentMesh) first, each
+  // followed by its children indented one level deeper.
+  const childrenOf = (parent) => nodes.filter((m) => (m._parentMesh || null) === parent);
+  const renderRow = (m, depth) => {
     const vis   = m.isVisible?.() ?? true;
     const isSel = selected.includes(m);
-    meshRows += `
-      <div class="mm-outliner-row">
+    const isNull = !!m._isNull;
+    const typeIcon = isNull ? 'fa-asterisk' : 'fa-cube';
+    // During a pending pick, rows read as targets (and the subject can't pick itself).
+    const isSubject = pendingMode && m.getID() === main._rigPendingSubject;
+    const pickCls = pendingMode ? (isSubject ? ' rig-subject' : ' rig-target') : '';
+    // Indent the NAME (not the row) so the vis-eye column stays vertically aligned.
+    return `
+      <div class="mm-outliner-row${pickCls}">
         <button class="mm-vis-btn${vis ? '' : ' hidden'}" data-mesh-id="${m._permanentStaticId}" data-action="vis">
           <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"></i>
         </button>
-        <button class="mm-mesh-btn${isSel ? ' active' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select">
-          ${m._permanentStaticLabel}
+        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" style="margin-left:${depth * 14}px" title="Double-click to rename">
+          <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>
         </button>
       </div>`;
-  }
-
+  };
+  const renderTree = (parent, depth) => {
+    let html = '';
+    for (const m of childrenOf(parent)) {
+      html += renderRow(m, depth);
+      html += renderTree(m, depth + 1);
+    }
+    return html;
+  };
+  let meshRows = renderTree(null, 0);
   if (!meshRows) meshRows = '<div class="mm-info">No meshes in scene</div>';
 
-  const isConfirming = !!main._clearSceneConfirm;
+  // ── Rig section — shown when exactly one node is selected ──────────────────
+  let rigHTML = '';
+  if (selected.length === 1) {
+    const sel    = selected[0];
+    const selId  = sel.getID();
+    const lookAtId = main.getLookAt?.(selId) ?? null;
+    const parent   = main.getParentMesh?.(selId) ?? null;
+    const lookTgt  = (lookAtId != null) ? nodes.find((m) => m.getID() === lookAtId) : null;
+    const mirrored = !!main.isMirrored?.(selId);
+    const saccading = !!main.isSaccading?.(selId);
+    const sacAmp   = main.getSaccadeAmp?.(selId) ?? 5;
+
+    rigHTML = `
+      <div class="mm-section-title">Rig — ${sel._permanentStaticLabel}</div>
+
+      <div class="mm-rig-label">Parent</div>
+      <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
+        ${pendingMode === 'parent' ? 'Select parent…  (cancel)' : 'Set parent…'}
+      </button>
+      ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
+
+      <div class="mm-rig-label">Aim</div>
+      <button class="mm-toggle${pendingMode === 'lookat' ? ' active' : ''}" data-rig="set-aim">
+        ${pendingMode === 'lookat' ? 'Select aim target…  (cancel)' : 'Aim at…'}
+      </button>
+      ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
+
+      <div class="mm-rig-label">Eye</div>
+      <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror">Mirror across X</button>
+      <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
+      <div class="mm-row" id="mm-rig-sac-amp-row" style="${saccading ? '' : 'display:none'}">
+        <span class="mm-lbl">Amplitude</span>
+        <input type="range" id="mm-rig-sac-amp" min="0" max="20" step="0.5" value="${sacAmp}">
+        <span class="mm-val" id="mm-rig-sac-amp-val">${sacAmp}</span>
+      </div>
+    `;
+  }
+
+  const hasSel = selected.length > 0;
   return `
     <div class="mm-section-title">Outliner</div>
-    ${meshRows}
-    <div class="mm-section-title">Scene</div>
-    <button class="mm-action-btn" id="mm-add-sphere">Add sphere</button>
-    <button class="mm-action-btn" id="mm-add-cube">Add cube</button>
-    <button class="mm-action-btn" id="mm-add-null">Add null</button>
-    <button class="mm-action-btn danger" id="mm-clear-scene">
-      ${isConfirming ? 'Confirm clear (no undo)' : 'Clear scene…'}
-    </button>
-    <div class="mm-section-title">Mesh</div>
-    <button class="mm-action-btn" id="mm-duplicate">Duplicate selected</button>
-    <button class="mm-action-btn danger" id="mm-delete-mesh">Delete selected</button>
+    <div class="mm-toolbar">
+      <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
+      <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-trash"></i></button>
+    </div>
+    <div class="mm-outliner-list">${meshRows}</div>
+    ${rigHTML}
+    <div class="mm-section-title">Add Object</div>
+    <div class="mm-add-row">
+      <button class="mm-action-btn" id="mm-add-cube">Cube</button>
+      <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
+      <button class="mm-action-btn" id="mm-add-null">Null</button>
+    </div>
   `;
 }
 
@@ -2099,37 +2215,132 @@ export function wireSectionScene(el, main, repaintFn) {
     });
   });
 
+  // Complete a pending two-step rig assignment (parent / aim) against `target`.
+  const completeRigPending = (target) => {
+    const mode   = main._rigPendingMode;
+    const subjId = main._rigPendingSubject;
+    main._rigPendingMode = null;
+    main._rigPendingSubject = null;
+    if (target && target.getID() !== subjId) {
+      if (mode === 'parent')      main.setMeshParent?.(subjId, target.getID());
+      else if (mode === 'lookat') main.setLookAt?.(subjId, target.getID());
+    }
+    main.render?.(); repaintFn();
+  };
+
+  // Inline rename editor. Replaces the row's label with a text input; commits on
+  // Enter/blur, cancels on Escape. (Each click repaints, so the double-click is
+  // detected via timestamps stored on `main`, and we re-query the fresh button.)
+  const beginRename = (btn, mesh) => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'mm-rename-input';
+    input.value = mesh._permanentStaticLabel ?? '';
+    btn.replaceChildren(input);
+    input.focus(); input.select();
+    let done = false;
+    const commit = (save) => {
+      if (done) return; done = true;
+      if (save) {
+        const v = input.value.trim();
+        if (v) { mesh._permanentStaticLabel = v; mesh.uiName = v; }
+      }
+      repaintFn();
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation(); // keep app shortcuts from firing while typing
+      if (e.key === 'Enter')  { e.preventDefault(); commit(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
+    });
+    input.addEventListener('blur', () => commit(true));
+  };
+
   el.querySelectorAll('[data-action="select"]').forEach(btn => {
     btn.addEventListener('click', () => {
       const mesh = findMesh(btn.dataset.meshId);
-      if (mesh) { main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn(); }
+      if (!mesh) return;
+      // Step 2 of a rig assignment: this click picks the target, not a selection.
+      if (main._rigPendingMode) { completeRigPending(mesh); return; }
+      const id = btn.dataset.meshId;
+      const now = Date.now();
+      const prev = main._lastOutlinerClick;
+      const isDouble = prev && prev.id === id && (now - prev.t) < 350;
+      main._lastOutlinerClick = { id, t: now };
+      main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn();
+      // After the repaint, the button is a fresh element — find it and edit.
+      if (isDouble) {
+        const fresh = el.querySelector(`[data-action="select"][data-mesh-id="${id}"]`);
+        if (fresh) beginRename(fresh, mesh);
+      }
     });
   });
 
+  // Any scene-add action cancels an in-progress pick to avoid a stale subject.
+  const cancelPending = () => { main._rigPendingMode = null; main._rigPendingSubject = null; };
+
   el.querySelector('#mm-add-sphere')?.addEventListener('click', () => {
-    main.addSphere?.(); main.render?.(); repaintFn();
+    cancelPending(); main.addSphere?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-add-cube')?.addEventListener('click', () => {
-    main.addCube?.(); main.render?.(); repaintFn();
+    cancelPending(); main.addCube?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-add-null')?.addEventListener('click', () => {
-    main.addNull?.(); main.render?.(); repaintFn();
-  });
-  el.querySelector('#mm-clear-scene')?.addEventListener('click', () => {
-    if (!main._clearSceneConfirm) {
-      main._clearSceneConfirm = true;
-      repaintFn(); // re-render button as "Confirm"
-      setTimeout(() => { main._clearSceneConfirm = false; }, 3000);
-    } else {
-      main._clearSceneConfirm = false;
-      main.clearScene?.(); main.render?.(); repaintFn();
-    }
+    cancelPending(); main.addNull?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
     main.duplicateSelection?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-delete-mesh')?.addEventListener('click', () => {
     main.deleteCurrentSelection?.(); main.render?.(); repaintFn();
+  });
+
+  // ── Rig controls (parent / look-at / mirror / saccades) ─────────────────────
+  const selOne = () => {
+    const s = main.getSelectedMeshes?.() ?? [];
+    return s.length === 1 ? s[0] : null;
+  };
+
+  // Two-step assignment: arm a pending mode, then the next outliner click is the target.
+  // Pressing the same button again cancels.
+  el.querySelector('[data-rig="set-parent"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    if (main._rigPendingMode === 'parent') cancelPending();
+    else { main._rigPendingMode = 'parent'; main._rigPendingSubject = sel.getID(); }
+    repaintFn();
+  });
+  el.querySelector('[data-rig="set-aim"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    if (main._rigPendingMode === 'lookat') cancelPending();
+    else { main._rigPendingMode = 'lookat'; main._rigPendingSubject = sel.getID(); }
+    repaintFn();
+  });
+  el.querySelector('[data-rig="clear-parent"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.setMeshParent?.(sel.getID(), null);
+    main.render?.(); repaintFn();
+  });
+  el.querySelector('[data-rig="clear-aim"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.clearLookAt?.(sel.getID());
+    main.render?.(); repaintFn();
+  });
+
+  el.querySelector('[data-rig="mirror"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.toggleMirror?.(sel.getID());
+    main.render?.(); repaintFn();
+  });
+
+  el.querySelector('[data-rig="saccades"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    const on = !main.isSaccading?.(sel.getID());
+    main.setSaccades?.(sel.getID(), on);
+    main.render?.(); repaintFn();
+  });
+
+  wireSlider(el.querySelector('#mm-rig-sac-amp'), el.querySelector('#mm-rig-sac-amp-val'), (v) => {
+    const sel = selOne(); if (!sel) return;
+    main.setSaccades?.(sel.getID(), true, v);
   });
 }
 
@@ -2587,6 +2798,17 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
 
   q('#mm-exit-vr')?.addEventListener('click', () => { main._xrSession?.end(); });
   q('#mm-browser-saves')?.addEventListener('click', () => onBrowserSavesOpen?.());
+
+  q('#mm-clear-scene')?.addEventListener('click', () => {
+    if (!main._clearSceneConfirm) {
+      main._clearSceneConfirm = true;
+      rebuildFn(); // re-render button as "Confirm"
+      setTimeout(() => { main._clearSceneConfirm = false; }, 3000);
+    } else {
+      main._clearSceneConfirm = false;
+      main.clearScene?.(); main.render?.(); rebuildFn();
+    }
+  });
 
   q('#mm-import-obj')?.addEventListener('click', () => {
     document.getElementById('fileopen')?.click();
