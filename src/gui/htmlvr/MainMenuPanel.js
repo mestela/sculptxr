@@ -988,6 +988,7 @@ export function buildSectionHTML_scene(main) {
     <div class="mm-section-title">Scene</div>
     <button class="mm-action-btn" id="mm-add-sphere">Add sphere</button>
     <button class="mm-action-btn" id="mm-add-cube">Add cube</button>
+    <button class="mm-action-btn" id="mm-add-null">Add null</button>
     <button class="mm-action-btn danger" id="mm-clear-scene">
       ${isConfirming ? 'Confirm clear (no undo)' : 'Clear scene…'}
     </button>
@@ -2110,6 +2111,9 @@ export function wireSectionScene(el, main, repaintFn) {
   });
   el.querySelector('#mm-add-cube')?.addEventListener('click', () => {
     main.addCube?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-add-null')?.addEventListener('click', () => {
+    main.addNull?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-clear-scene')?.addEventListener('click', () => {
     if (!main._clearSceneConfirm) {

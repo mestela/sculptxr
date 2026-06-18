@@ -1839,7 +1839,7 @@ class Mesh {
     
     // Sync to Three.js Mesh
     if (this._renderData && this._renderData._threeMesh) {
-      // Set the local matrix from the sculptor's math
+      // Set the local matrix from the sculptor's math.
       this._renderData._threeMesh.matrixAutoUpdate = false;
       this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
       

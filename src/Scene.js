@@ -43,6 +43,8 @@ import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
+// Up vector for the look-at constraint.
+const _SXR_UP = new THREE.Vector3(0, 1, 0);
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -426,6 +428,35 @@ class Scene {
       child._parentMesh = parent || null;
       this.render();
       console.log(`[parent] mesh ${childId} → ${parent ? 'mesh ' + parentId : 'worldGroup'}`);
+    };
+
+    // [Eye rig Phase 1] Create a null/locator and select it. window.addNull()
+    window.addNull = () => { const n = this.addNull(); console.log('[null] created id', n.getID()); return n.getID(); };
+
+    // [Eye rig Phase 1] Look-at constraint: make a mesh aim its local -Z at a target.
+    //   window.setLookAt(eyeId, targetId)   window.clearLookAt(eyeId)
+    window.setLookAt = (eyeId, targetId) => {
+      const eye = this._meshes.find((m) => m.getID() === eyeId);
+      if (!eye) { console.warn('[lookAt] no eye', eyeId); return; }
+      eye._lookAtTargetId = targetId;
+      console.log(`[lookAt] mesh ${eyeId} → target ${targetId}`);
+    };
+    window.clearLookAt = (eyeId) => {
+      const eye = this._meshes.find((m) => m.getID() === eyeId);
+      if (eye) eye._lookAtTargetId = null;
+    };
+
+    // [Eye rig Phase 1] Live mirror across X=0. window.mirrorMesh(sourceId)
+    window.mirrorMesh = (sourceId) => this.mirrorMesh(sourceId);
+
+    // [Eye rig Phase 1] Procedural saccades on a look-at eye.
+    //   window.saccades(eyeId, true/false, amplitude?)
+    window.saccades = (eyeId, on = true, amp) => {
+      const eye = this._meshes.find((m) => m.getID() === eyeId);
+      if (!eye) return;
+      eye._saccades = !!on;
+      if (amp != null) eye._saccadeAmp = amp;
+      console.log(`[saccades] mesh ${eyeId} → ${on}${amp != null ? ' amp ' + amp : ''}`);
     };
 
     // Init AnimationControlPanel early — scene/renderer guaranteed ready after initWebGL.
@@ -1552,6 +1583,9 @@ class Scene {
         }
       }
 
+      // Eye-rig constraints (look-at) — applied each frame before render.
+      this._evaluateConstraints();
+
       // The desktop transform gizmo (Gizmo.js) must never render in VR. Its visible
       // flag is sticky from desktop (set in the desktop-only postRender), and no VR
       // hook reliably hides it, so it lingers as a ghost gizmo overlapping the VR one.
@@ -2070,6 +2104,146 @@ class Scene {
     mesh._typeName = "Sphere";
     mesh.isQuad = true; // Sphere is quads (subdivided cube)
     this.addNewMesh(mesh);
+    return mesh;
+  }
+
+  // [Eye rig Phase 1] A NULL / locator — a transform-only node (look-at target,
+  // group parent). Implemented as a small non-sculptable locator mesh so it slots
+  // into the existing selection / gizmo / outliner / transform-animation machinery
+  // for free. isPickable=false makes the sculpt brush skip it (Picking.js:294) while
+  // VR ray-select still picks it (Picking.js:229 ignores isPickable). Not a true
+  // geometry-less node yet — fine for the rig; can be refined later.
+  addNull() {
+    // Pick/transform target: a tiny sphere (kept small so it's just a centre dot).
+    var mesh = new Multimesh(Primitives.createSphere(this._gl, 0.5, 8, 8));
+    mesh.normalizeSize();
+    mat4.scale(mesh.getMatrix(), mesh.getMatrix(), [0.03, 0.03, 0.03]);
+    mesh.setShaderType(Enums.Shader.FLAT);
+    mesh._typeName    = "Null";
+    mesh._isNull      = true;   // transform-only locator (rig nodes look for this)
+    mesh.isPickable   = false;  // sculpt brush skips it; still VR-ray-selectable
+    this.addNewMesh(mesh);
+
+    // Standard null look: a 3D line cruciform (X/Y/Z) parented to the locator's
+    // threeMesh, so it rides the transform. cross.scale enlarges it relative to the
+    // tiny pick dot (dot ≈0.015, cross half-length ≈0.12 world).
+    const tm = mesh.getThreeMesh();
+    if (tm) {
+      // The pick-sphere is only for ray-selection/transform (lines aren't
+      // ray-pickable). Render it invisibly — a private no-draw material (colorWrite
+      // off), so no centre dot and no effect on shared materials. CPU pick is
+      // unaffected (it uses the mesh geometry, not the material).
+      tm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+
+      // The visible null: a 3D line cruciform (X/Y/Z), child of the locator's
+      // threeMesh so it rides the transform. cross.scale sets the world half-length.
+      const pts = new Float32Array([-1,0,0, 1,0,0,  0,-1,0, 0,1,0,  0,0,-1, 0,0,1]);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+      const cross = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x66e0ff, depthWrite: false }));
+      cross.name = 'null_cruciform';
+      cross.frustumCulled = false;
+      cross.scale.setScalar(4);
+      tm.add(cross);
+    }
+    return mesh;
+  }
+
+  // [Eye rig Phase 1] Look-at constraint pass — runs every frame before render. For
+  // each mesh carrying `_lookAtTargetId`, aim its local -Z at the target's position
+  // (keeping its own position + scale). Works in MODEL space so parented eyes (under
+  // a mirror group) aim correctly; writes back via setModelSpaceMatrix.
+  _evaluateConstraints() {
+    const ms = this._meshes;
+    if (!ms || ms.length === 0) return;
+    const now = performance.now();
+    for (let i = 0; i < ms.length; i++) {
+      const m = ms[i];
+      const tid = m._lookAtTargetId;
+      if (tid == null) continue;
+      const target = ms.find((x) => x.getID() === tid);
+      if (!target || target === m) continue;
+      const em = m.getModelSpaceMatrix();
+      const tm = target.getModelSpaceMatrix();
+      const P = new THREE.Vector3(em[12], em[13], em[14]);
+      const T = new THREE.Vector3(tm[12], tm[13], tm[14]);
+      const scale = Math.hypot(em[0], em[1], em[2]) || 1;
+
+      // Procedural saccades: hold a random offset on the aim point, jump every
+      // 150–650ms (a saccade is a fast flick with a hold). Toggle via m._saccades.
+      if (m._saccades) {
+        if (!m._sacNext || now > m._sacNext) {
+          const a = (m._saccadeAmp ?? 5);
+          m._sacOff = new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, 0);
+          m._sacNext = now + 150 + Math.random() * 500;
+        }
+        if (m._sacOff) T.add(m._sacOff);
+      }
+
+      if (P.distanceToSquared(T) < 1e-10) continue;
+      // Aim the eye's +Z at the target (the NEGATED axis — THREE's lookAt points -Z,
+      // which faced the wrong way). Achieved by looking at the point opposite the
+      // target so -Z faces away and +Z faces the target.
+      const _dir = new THREE.Vector3().subVectors(T, P).normalize();
+      const _awayTarget = new THREE.Vector3().copy(P).sub(_dir);
+      const lookM = new THREE.Matrix4().lookAt(P, _awayTarget, _SXR_UP);
+      const q = new THREE.Quaternion().setFromRotationMatrix(lookM);
+      const out = new THREE.Matrix4().compose(P, q, new THREE.Vector3(scale, scale, scale));
+      m.setModelSpaceMatrix(out.elements);
+    }
+
+    // Mirror instances (live): POSITIONAL mirror across X=0 (negate position.x), but
+    // the mirror eye computes its OWN aim at the source's look-at target rather than
+    // copying the source's rotation. So a near null makes the pair cross-eyed and a
+    // far null makes them parallel — real convergence. (No look-at on the source →
+    // fall back to copying its orientation.) Geometry is shared, so sculpting the
+    // source updates the mirror for free.
+    if (this._mirrors && this._mirrors.length) {
+      for (let i = 0; i < this._mirrors.length; i++) {
+        const mir = this._mirrors[i];
+        const src = ms.find((x) => x.getID() === mir.sourceId);
+        if (!src || !mir.mesh) continue;
+        const sm = src.getModelSpaceMatrix();
+        const M = new THREE.Matrix4().fromArray(sm);
+        const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+        M.decompose(pos, quat, scl);
+        pos.x = -pos.x; // mirrored socket position
+
+        let mq = quat; // fallback: copy source orientation when it has no look-at
+        const tid = src._lookAtTargetId;
+        if (tid != null) {
+          const target = ms.find((x) => x.getID() === tid);
+          if (target) {
+            const tmw = target.getModelSpaceMatrix();
+            const T = new THREE.Vector3(tmw[12], tmw[13], tmw[14]);
+            if (src._saccades && src._sacOff) T.add(src._sacOff); // conjugate (both eyes dart together)
+            const _d = new THREE.Vector3().subVectors(T, pos).normalize();
+            const _away = new THREE.Vector3().copy(pos).sub(_d); // aim +Z (negated, matches the eye)
+            mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(pos, _away, _SXR_UP));
+          }
+        }
+        mir.mesh.matrixAutoUpdate = false;
+        mir.mesh.matrix.copy(new THREE.Matrix4().compose(pos, mq, scl));
+        mir.mesh.matrixWorldNeedsUpdate = true;
+        mir.mesh.visible = src.isVisible ? src.isVisible() : true;
+      }
+    }
+  }
+
+  // [Eye rig Phase 1] Live mirror instance of a mesh across X=0. Shares the source's
+  // geometry+material (so sculpting the source updates the mirror), positioned each
+  // frame by _evaluateConstraints. Returns the THREE.Mesh.
+  mirrorMesh(sourceId) {
+    const src = this._meshes.find((m) => m.getID() === sourceId);
+    const stm = src && src.getThreeMesh && src.getThreeMesh();
+    if (!stm) { console.warn('[mirror] no source/threeMesh', sourceId); return null; }
+    if (!this._mirrors) this._mirrors = [];
+    const mesh = new THREE.Mesh(stm.geometry, stm.material); // SHARED geometry → live
+    mesh.name = 'mirror_of_' + sourceId;
+    mesh.frustumCulled = false;
+    this._worldGroup.add(mesh);
+    this._mirrors.push({ mesh, sourceId });
+    console.log('[mirror] created mirror of mesh', sourceId);
     return mesh;
   }
 
