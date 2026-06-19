@@ -27,6 +27,10 @@ var CUBE_SIDE = 0.35;
 var CUBE_SIDE_PICK = CUBE_SIDE * 1.2;
 
 var _TMP_QUAT = quat.create();
+// Scratch for the mesh model-space matrix (parentChain * _matrix). The gizmo math
+// works in model/world space, so parented meshes must use this rather than the raw
+// local _matrix (getMatrix) — otherwise the gizmo anchors in parent-local space.
+var _TMP_MAT = mat4.create();
 
 var createGizmo = function (type, nbAxis = -1) {
   return {
@@ -479,7 +483,7 @@ class Gizmo {
     for (var i = 0; i < meshes.length; ++i) {
       var mesh = meshes[i];
       vec3.transformMat4(icenter, mesh.getCenter(), mesh.getEditMatrix());
-      vec3.transformMat4(icenter, icenter, mesh.getMatrix());
+      vec3.transformMat4(icenter, icenter, mesh.getModelSpaceMatrix(_TMP_MAT));
       vec3.add(acc, acc, icenter);
     }
     if (meshes.length > 0) vec3.scale(center, acc, 1.0 / meshes.length);
@@ -719,8 +723,12 @@ class Gizmo {
       this._editLocalInv[i] = mat4.create();
       this._editScaleRotInv[i] = mat4.create();
 
-      // mesh local matrix
-      mat4.copy(this._editLocal[i], meshes[i].getMatrix());
+      // mesh MODEL matrix (parentChain * _matrix). Using the model matrix as the
+      // edit frame means the conjugation editLocalInv * worldEdit * editLocal yields
+      // a mesh-LOCAL delta, so Transform.end's local commit (_matrix * editMatrix)
+      // reproduces the world-space transform even for a parented child. Reduces to
+      // getMatrix() for an unparented mesh.
+      meshes[i].getModelSpaceMatrix(this._editLocal[i]);
 
       // rotation + scale part
       mat4.copy(this._editScaleRot[i], this._editLocal[i]);
