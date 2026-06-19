@@ -7029,7 +7029,7 @@ class Scene {
           const cMesh = this._picking.getMesh();
           if (cMesh) {
             const interEngine = vec3.create();
-            vec3.transformMat4(interEngine, this._picking.getIntersectionPoint(), cMesh.getMatrix());
+            vec3.transformMat4(interEngine, this._picking.getIntersectionPoint(), cMesh.getModelSpaceMatrix()); // parent-aware
             this._vrCreaseAnchor = interEngine;
           }
         }
@@ -7822,7 +7822,7 @@ class Scene {
                     const pickedMesh = this._picking.getMesh();
                     if (pickedMesh) {
                         const nEngine = vec3.create();
-                        const matMesh = pickedMesh.getMatrix();
+                        const matMesh = pickedMesh.getModelSpaceMatrix(); // parent-aware (== getMatrix unparented)
                         const mat3Mesh = mat3.create();
                         mat3.fromMat4(mat3Mesh, matMesh);
                         vec3.transformMat3(nEngine, nFace, mat3Mesh);
@@ -7843,7 +7843,7 @@ class Scene {
                     // distance in engine space
                     const localHit = this._picking.getIntersectionPoint();
                     const engineHit = vec3.create();
-                    vec3.transformMat4(engineHit, localHit, pickedMesh.getMatrix());
+                    vec3.transformMat4(engineHit, localHit, pickedMesh.getModelSpaceMatrix()); // parent-aware
                     hitDist = vec3.distance(originEngine, engineHit) * (this._vrScale || 1.0);
 
                     // wInter in Scene Space is just origin + dir * hitDist
@@ -7857,7 +7857,7 @@ class Scene {
                     
                     if (pNormal && pNormal.length >= 3) {
                         const nMat = mat3.create();
-                        mat3.normalFromMat4(nMat, pickedMesh.getMatrix());
+                        mat3.normalFromMat4(nMat, pickedMesh.getModelSpaceMatrix()); // parent-aware
                         vec3.transformMat3(sceneNormal, pNormal, nMat); // Now in Engine Space
                         
                         if (this._xrWorldOffset) {
