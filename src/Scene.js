@@ -7133,10 +7133,14 @@ class Scene {
       // OVERRIDE: Ray picking usually uses screen-projected radius. We must force VR Physical Radius.
       this._picking._rWorld2 = pickingRadius * pickingRadius;
 
-      // Sync local radius
+      // Sync local radius — parent-aware: divide world radius by the composed MODEL
+      // scale (parentChain * _matrix), not the raw local getScale2(). For a parented
+      // child these differ by the parent's scale; using local blows the brush up by
+      // ~scale² and it engulfs the whole mesh.
       const mesh = this._picking.getMesh() || this.getMesh();
       if (mesh) {
-        this._picking._rLocal2 = this._picking._rWorld2 / mesh.getScale2();
+        const _msc = mesh.getModelSpaceScale ? mesh.getModelSpaceScale() : mesh.getScale();
+        this._picking._rLocal2 = this._picking._rWorld2 / (_msc * _msc);
       }
 
       // DEBUG: Verify Mesh Hit

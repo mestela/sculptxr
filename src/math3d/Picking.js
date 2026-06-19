@@ -663,7 +663,7 @@ class Picking {
   updateLocalAndWorldRadius2() {
     if (!this._mesh) return;
     this._rWorld2 = this.computeWorldRadius2();
-    
+
     const m = this._mesh.getThreeMesh().matrixWorld.elements;
     const scale2 = m[0] * m[0] + m[4] * m[4] + m[8] * m[8];
     this._rLocal2 = this._rWorld2 / scale2;
@@ -994,7 +994,12 @@ class Picking {
       const vrScale = this._main._vrScale || 50.0;
       const pickingRadius = physicalRadius / vrScale;
       this._rWorld2 = pickingRadius * pickingRadius;
-      this._rLocal2 = this._rWorld2 / nearMesh.getScale2();
+      // Parent-aware: convert world radius to LOCAL using the composed MODEL scale
+      // (parentChain * _matrix), not the raw local getScale2(). For a parented child
+      // these differ by the parent's scale — using local blows the radius up ~scale²
+      // and the brush engulfs the whole mesh.
+      const _msc = nearMesh.getModelSpaceScale ? nearMesh.getModelSpaceScale() : nearMesh.getScale();
+      this._rLocal2 = this._rWorld2 / (_msc * _msc);
     } else {
       this._rLocal2 = 0.0;
     }
