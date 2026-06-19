@@ -84,43 +84,37 @@ class Transform extends SculptBase {
   end() {
     this._gizmo.onMouseUp();
 
-    if (!this.getMesh() || this.isIdentity(this.getMesh().getEditMatrix()))
-      return;
-
     var meshes = this._main.getSelectedMeshes();
     const main = this._main;
+    // The gizmo wrote the real _matrix live during the drag (editMatrix stays
+    // identity). Undo/redo therefore compares the drag-start snapshot (_startLocal)
+    // against the current, already-moved matrix.
+    const starts = this._gizmo._startLocal;
+    if (!meshes.length || !starts) return;
 
     for (var i = 0; i < meshes.length; ++i) {
       const mesh = meshes[i];
-      const em = mesh.getEditMatrix();
-      
-      const oldMat = mat4.clone(mesh.getMatrix());
-      
-      const newMat = mat4.create();
-      mat4.mul(newMat, oldMat, em);
-      
+      const before = starts[i];
+      if (!before) continue;
+      const after = mat4.clone(mesh.getMatrix());
+      if (mat4.exactEquals(before, after)) continue; // no real change → no undo step
+
+      const beforeC = mat4.clone(before);
       main.getStateManager().pushStateCustom(() => {
-        // UNDO
-        mat4.copy(mesh.getMatrix(), oldMat);
+        mat4.copy(mesh.getMatrix(), beforeC);
         mesh.updateMatrices(main.getCamera());
         main.render();
       }, () => {
-        // REDO
-        mat4.copy(mesh.getMatrix(), newMat);
+        mat4.copy(mesh.getMatrix(), after);
         mesh.updateMatrices(main.getCamera());
         main.render();
       });
-
-      // Apply to current state
-      mat4.copy(mesh.getMatrix(), newMat);
-      mat4.identity(em);
-      mesh.updateMatrices(main.getCamera());
     }
-    
+
     if (window._animationRegistry && window._animationRegistry.isRecording) {
       window._animationRegistry.stopRecording();
     }
-    
+
     main.render();
   }
 

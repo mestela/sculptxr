@@ -12,15 +12,6 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 // Scratch for getModelSpaceMatrix (worldGroup-relative composed transform).
 const _MS_INV = mat4.create();
 const _MS_OUT = mat4.create();
-// Scratch + helper for the child live-preview path (parent mid-gizmo-drag).
-const _RS_CHILD = mat4.create();
-function _isIdentityMat4(m) {
-  return m[0] === 1 && m[5] === 1 && m[10] === 1 && m[15] === 1 &&
-         m[1] === 0 && m[2] === 0 && m[3] === 0 &&
-         m[4] === 0 && m[6] === 0 && m[7] === 0 &&
-         m[8] === 0 && m[9] === 0 && m[11] === 0 &&
-         m[12] === 0 && m[13] === 0 && m[14] === 0;
-}
 
 /*
 Basic usage:
@@ -1848,34 +1839,11 @@ class Mesh {
     
     // Sync to Three.js Mesh
     if (this._renderData && this._renderData._threeMesh) {
-      // Set the local matrix from the sculptor's math.
+      // Set the local matrix from the sculptor's math. The desktop gizmo writes the
+      // real _matrix live during a drag, so parented children and the wireframe
+      // follow through the native scene graph — no editMatrix preview fold needed.
       this._renderData._threeMesh.matrixAutoUpdate = false;
-      // Child live-preview: if this mesh's PARENT is mid-gizmo-drag, fold the
-      // parent's (parent-local) editMatrix into our local matrix so we follow the
-      // parent's live transform. The parent previews itself via its shader (uEM),
-      // so we must NOT put editMatrix on the parent's own matrix — only push it
-      // down here: childWorld = worldGroup * _parent * editMatrixParent * _child.
-      // Identity (normal sync) when no ancestor is being transformed.
-      const _pm = this._parentMesh;
-      const _pEdit = _pm && _pm._transformData && _pm._transformData._editMatrix;
-      if (_pEdit && !_isIdentityMat4(_pEdit)) {
-        mat4.mul(_RS_CHILD, _pEdit, this._transformData._matrix);
-        this._renderData._threeMesh.matrix.fromArray(_RS_CHILD);
-      } else {
-        this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
-      }
-
-      // Wireframe live-transform preview: the solid mesh previews a gizmo drag via
-      // its shader (uEM * vertex), but the wireframe is a plain LineSegments with no
-      // uEM. As a child of the threeMesh it inherits _matrix; give it the editMatrix
-      // as its LOCAL matrix so its world transform becomes _matrix * editMatrix —
-      // exactly matching the solid's shader preview. Identity when not transforming.
-      const _wf = this._renderData._wireframeMesh;
-      if (_wf && _wf.parent === this._renderData._threeMesh) {
-        _wf.matrixAutoUpdate = false;
-        _wf.matrix.fromArray(this._transformData._editMatrix);
-        _wf.matrixWorldNeedsUpdate = true;
-      }
+      this._renderData._threeMesh.matrix.fromArray(this._transformData._matrix);
 
       // CRITICAL FIX: Do NOT blindly copy 'matrix' to 'matrixWorld'
       // WebXR requires objects to inherit transforms from their parents (like 'worldGroup' or the Scene itself).

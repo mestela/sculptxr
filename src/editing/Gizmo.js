@@ -27,6 +27,7 @@ var CUBE_SIDE = 0.35;
 var CUBE_SIDE_PICK = CUBE_SIDE * 1.2;
 
 var _TMP_QUAT = quat.create();
+var _TMP_LIVE = mat4.create();
 // Scratch for the mesh model-space matrix (parentChain * _matrix). The gizmo math
 // works in model/world space, so parented meshes must use this rather than the raw
 // local _matrix (getMatrix) — otherwise the gizmo anchors in parent-local space.
@@ -218,6 +219,11 @@ class Gizmo {
     this._editLocalInv = [];
     this._editTransInv = mat4.create();
     this._editScaleRotInv = [];
+
+    // local _matrix of each mesh at drag start — the gizmo writes the real transform
+    // live each frame (newLocal = startLocal * editMatrix), so children/wireframe
+    // follow through the native scene graph instead of an editMatrix shader preview.
+    this._startLocal = [];
 
     // this._initTranslate();
     // this._initRotate();
@@ -723,6 +729,9 @@ class Gizmo {
       this._editLocalInv[i] = mat4.create();
       this._editScaleRotInv[i] = mat4.create();
 
+      // Snapshot the LOCAL matrix at drag start; live writes are startLocal * editMatrix.
+      this._startLocal[i] = mat4.clone(meshes[i].getMatrix());
+
       // mesh MODEL matrix (parentChain * _matrix). Using the model matrix as the
       // edit frame means the conjugation editLocalInv * worldEdit * editLocal yields
       // a mesh-LOCAL delta, so Transform.end's local commit (_matrix * editMatrix)
@@ -843,8 +852,6 @@ class Gizmo {
 
       this._scaleRotateEditMatrix(mrot, i);
     }
-
-    main.render();
   }
 
   _updateTranslateEdit() {
@@ -882,8 +889,6 @@ class Gizmo {
     inter[this._selected._nbAxis] = (a01 * b0 - b1) / det;
 
     this._updateMatrixTranslate(inter);
-
-    main.render();
   }
 
   _updatePlaneEdit() {
@@ -923,8 +928,6 @@ class Gizmo {
     inter[2] = near[2] + (far[2] - near[2]) * val;
 
     this._updateMatrixTranslate(inter);
-
-    main.render();
   }
 
   _updateMatrixTranslate(inter) {
@@ -981,8 +984,6 @@ class Gizmo {
 
       this._scaleRotateEditMatrix(edim, i);
     }
-
-    main.render();
   }
 
   _scaleRotateEditMatrix(edit, i) {
@@ -1075,6 +1076,21 @@ class Gizmo {
     // if (this._isEditing) this._lineHelper.render(this._main);
   }
 
+  // Consume each mesh's freshly-built editMatrix delta into its real _matrix
+  // (newLocal = startLocal * editMatrix) and reset editMatrix to identity. The
+  // object then moves through the scene graph natively — children and the
+  // wireframe follow for free, and the shader's uEM preview is a no-op.
+  _applyEditLive() {
+    var meshes = this._main.getSelectedMeshes();
+    for (var i = 0; i < meshes.length; ++i) {
+      if (!this._startLocal[i]) continue;
+      var em = meshes[i].getEditMatrix();
+      mat4.mul(_TMP_LIVE, this._startLocal[i], em);
+      meshes[i].setMatrix(_TMP_LIVE);
+      mat4.identity(em);
+    }
+  }
+
   onMouseOver() {
     if (this._isEditing) {
       var type = this._selected._type;
@@ -1083,6 +1099,8 @@ class Gizmo {
       else if (type & PLANE_XYZ) this._updatePlaneEdit();
       else if (type & SCALE_XYZW) this._updateScaleEdit();
 
+      this._applyEditLive();   // editMatrix delta → real _matrix, live
+      this._main.render();
       return true;
     }
 
