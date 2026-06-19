@@ -137,15 +137,18 @@ class Selection {
 
     var mesh = picking.getMesh();
     var constRadius = DOT_RADIUS * (worldRadius / screenRadius);
+    // Parent-aware model-space matrix (== getMatrix unparented) so the surface
+    // circle/dot is placed in MODEL space, correct for a parented child.
+    var _mm = mesh.getModelSpaceMatrix();
 
     vec3.copy(_TMP_AXIS, picking.computePickedNormal());
-    vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
+    vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, _mm));
     vec3.normalize(_TMP_AXIS, _TMP_AXIS);
     var rad = Math.acos(vec3.dot(_BASE, _TMP_AXIS));
     vec3.cross(_TMP_AXIS, _BASE, _TMP_AXIS);
 
     mat4.identity(_TMP_MAT);
-    mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, picking.getIntersectionPoint(), mesh.getMatrix()));
+    mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, picking.getIntersectionPoint(), _mm));
     mat4.rotate(_TMP_MAT, _TMP_MAT, rad, _TMP_AXIS);
 
     mat4.mul(_TMP_MATPV, camera.getProjection(), camera.getView());
@@ -157,7 +160,7 @@ class Selection {
     mat4.scale(this._cacheDotMVP, _TMP_MAT, vec3.set(_TMP_VEC, constRadius, constRadius, constRadius));
     mat4.mul(this._cacheDotMVP, _TMP_MATPV, this._cacheDotMVP);
     // symmetry mvp
-    vec3.transformMat4(_TMP_VEC, pickingSym.getIntersectionPoint(), mesh.getMatrix());
+    vec3.transformMat4(_TMP_VEC, pickingSym.getIntersectionPoint(), _mm);
     mat4.identity(_TMP_MAT);
     mat4.translate(_TMP_MAT, _TMP_MAT, _TMP_VEC);
     mat4.rotate(_TMP_MAT, _TMP_MAT, rad, _TMP_AXIS);
@@ -338,6 +341,10 @@ class Selection {
   _updateMatricesMeshVR(camera, main, worldRadius, useSym) {
     var picking = main.getPicking();
     var mesh = picking.getMesh();
+    // Parent-aware model-space matrix (== getMatrix unparented) — the local interPoint
+    // must be lifted to MODEL space to place the surface circle/dot correctly; the raw
+    // local matrix mis-places it (parent-local) for a parented child.
+    var _mm = mesh.getModelSpaceMatrix();
 
     // 1. Get Surface Normal
     var pNormal = picking.getPickedNormal();
@@ -347,7 +354,7 @@ class Selection {
       vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
     }
 
-    var nm = mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix());
+    var nm = mat3.normalFromMat4(_TMP_MAT, _mm);
     if (nm) {
       vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, nm);
     } else {
@@ -366,7 +373,7 @@ class Selection {
 
     // 3. Build Model Matrix
     mat4.identity(_TMP_MAT);
-    mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, picking.getIntersectionPoint(), mesh.getMatrix()));
+    mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, picking.getIntersectionPoint(), _mm));
     mat4.rotate(_TMP_MAT, _TMP_MAT, rad, _TMP_AXIS);
 
     // 4. Compute MVP
@@ -392,7 +399,7 @@ class Selection {
         } else {
           vec3.set(_TMP_AXIS, 0, 1, 0); // Fallback
         }
-        vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, mesh.getMatrix()));
+        vec3.transformMat3(_TMP_AXIS, _TMP_AXIS, mat3.normalFromMat4(_TMP_MAT, _mm));
         vec3.normalize(_TMP_AXIS, _TMP_AXIS);
 
         rad = Math.acos(vec3.dot(_BASE, _TMP_AXIS));
@@ -401,7 +408,7 @@ class Selection {
 
         // Sym Model
         mat4.identity(_TMP_MAT);
-        mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, pickingSym.getIntersectionPoint(), mesh.getMatrix()));
+        mat4.translate(_TMP_MAT, _TMP_MAT, vec3.transformMat4(_TMP_VEC, pickingSym.getIntersectionPoint(), _mm));
         mat4.rotate(_TMP_MAT, _TMP_MAT, rad, _TMP_AXIS);
 
         // Sym Dot MVP
