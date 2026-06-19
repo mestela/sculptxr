@@ -484,12 +484,15 @@ const CSS = `
 .mm-select-opt.active { color: #89b4fa; background: rgba(137,180,250,0.08); }
 
 /* Outliner item (scene tab) */
-/* Scrollable, bordered object list — starts tall enough for ~8 rows. */
+/* Bordered object list — tall enough for ~8 rows, then FLOWS (grows) rather than
+   making its own scroll container. A nested scrollable fought the panel's own scroll
+   in VR (the thumbstick targeted the deepest scrollable, this list, so the controls
+   below were unreachable). With the list flowing, the panel is the single scroll
+   surface on both desktop and VR. */
 .mm-outliner-list {
   border: 1px solid #45475a;
   border-radius: 5px;
-  height: 248px;
-  overflow-y: auto;
+  min-height: 248px;
   padding: 3px 5px;
   margin-bottom: 6px;
   box-sizing: border-box;

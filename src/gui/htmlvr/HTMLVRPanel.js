@@ -307,20 +307,22 @@ export class HTMLVRPanel {
   }
 
   _findScrollable(root) {
-    // BFS — prefer the deepest overflow:auto/scroll element
+    // BFS — return the OUTERMOST (shallowest) overflow:auto/scroll element, i.e. the
+    // panel's own scroll body. Thumbstick scroll should move the whole panel, not a
+    // nested list (e.g. the outliner's .mm-outliner-list), which would otherwise win
+    // as the deepest match and leave the controls below it unreachable.
     const queue = [root];
-    let found = null;
     while (queue.length) {
       const node = queue.shift();
       if (node !== root) {
         const style = getComputedStyle(node);
         if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
-          found = node; // keep going to find the deepest one
+          return node;
         }
       }
       for (let i = 0; i < node.children.length; i++) queue.push(node.children[i]);
     }
-    return found;
+    return null;
   }
 
   onVRLeave() {
