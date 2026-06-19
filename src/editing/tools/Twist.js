@@ -137,7 +137,7 @@ class Twist extends SculptBase {
 
     var mesh = this.getMesh();
     var invMat = mat4.create();
-    mat4.invert(invMat, mesh.getMatrix());
+    mat4.invert(invMat, mesh.getModelSpaceMatrix()); // parent-aware (== getMatrix unparented)
 
     // 1. Center of Rotation (Controller Tip in Local Space)
     var center = vec3.create();

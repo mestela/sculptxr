@@ -134,8 +134,9 @@ class Slide extends SculptBase {
     var mesh = this.getMesh();
     if (!mesh) return;
 
+    var _mm = mesh.getModelSpaceMatrix(); // parent-aware (== getMatrix unparented)
     var invMat = mat4.create();
-    mat4.invert(invMat, mesh.getMatrix());
+    mat4.invert(invMat, _mm);
 
     // Vector transformation (ignore translation by doing head - zero)
     var zero = vec3.create();
@@ -147,7 +148,7 @@ class Slide extends SculptBase {
 
     // VR 6DOF ROTATION LOGIC
     var qMesh = quat.create();
-    mat4.getRotation(qMesh, mesh.getMatrix());
+    mat4.getRotation(qMesh, _mm);
     var qMeshInv = quat.create();
     quat.invert(qMeshInv, qMesh);
 
@@ -613,7 +614,7 @@ class Slide extends SculptBase {
     var vNear = picking.unproject(mouseX, mouseY, 0.0);
     var vFar = picking.unproject(mouseX, mouseY, 0.1);
     var matInverse = mat4.create();
-    mat4.invert(matInverse, mesh.getMatrix());
+    mat4.invert(matInverse, mesh.getModelSpaceMatrix()); // parent-aware
     vec3.transformMat4(vNear, vNear, matInverse);
     vec3.transformMat4(vFar, vFar, matInverse);
     var dir = this._dragDir;

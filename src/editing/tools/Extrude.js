@@ -827,8 +827,9 @@ class Extrude extends SculptBase {
     const mesh = this.getMesh();
     if (!mesh) return;
 
+    const _mm = mesh.getModelSpaceMatrix(); // parent-aware (== getMatrix unparented)
     const mInv = mat4.create();
-    mat4.invert(mInv, mesh.getMatrix());
+    mat4.invert(mInv, _mm);
 
     // Get deltas in local space
     const vStartLocal = vec3.clone(this._lastVRPos);
@@ -849,7 +850,7 @@ class Extrude extends SculptBase {
     }
 
     const qMesh = quat.create();
-    mat4.getRotation(qMesh, mesh.getMatrix());
+    mat4.getRotation(qMesh, _mm);
     const qMeshInv = quat.create();
     quat.invert(qMeshInv, qMesh);
 

@@ -57,10 +57,11 @@ class Move extends SculptBase {
         var nPlane = mesh.getSymmetryNormal();
         Geometry.mirrorPoint(localPos, ptPlane, nPlane);
 
-        // Convert mirrored point back to World space for the intersection sphere test
+        // Convert mirrored point back to (model) World space for the sphere test —
+        // parent-aware so a parented child mirrors correctly.
         var worldPos = vec3.clone(localPos);
-        vec3.transformMat4(worldPos, worldPos, mesh.getMatrix());
-          
+        vec3.transformMat4(worldPos, worldPos, mesh.getModelSpaceMatrix());
+
           pickingSym.intersectionSphereMeshes([mesh], worldPos, picking.getWorldRadius());
           if (pickingSym.getMesh()) {
             pickingSym.setLocalRadius2(picking.getLocalRadius2());
@@ -507,8 +508,11 @@ class Move extends SculptBase {
 
 
 
+    // Parent-aware: model-space matrix (== getMatrix unparented) so controller
+    // world->local and the mesh rotation are correct for a parented child too.
+    var _mm = mesh.getModelSpaceMatrix();
     var mInv = mat4.create();
-    mat4.invert(mInv, mesh.getMatrix());
+    mat4.invert(mInv, _mm);
 
     // Calculate Local Space Pos Delta
     var vStartLocal = vec3.clone(this._lastVRPos);
@@ -535,7 +539,7 @@ class Move extends SculptBase {
 
     // Mesh Rotation Quat
     var qMesh = quat.create();
-    mat4.getRotation(qMesh, mesh.getMatrix());
+    mat4.getRotation(qMesh, _mm);
     var qMeshInv = quat.create();
     quat.invert(qMeshInv, qMesh);
 

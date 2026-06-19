@@ -45,9 +45,10 @@ class Drag extends SculptBase {
     var mesh = this.getMesh();
     if (!mesh) return;
 
-    // Use getMatrix() just like Move.js
+    // Parent-aware: model-space matrix (== getMatrix for unparented) so the
+    // controller world->local conversion is correct for a parented child too.
     var mInv = mat4.create();
-    mat4.invert(mInv, mesh.getMatrix());
+    mat4.invert(mInv, mesh.getModelSpaceMatrix());
 
     var vPrevLocal = vec3.clone(this._lastVRPos);
     vec3.transformMat4(vPrevLocal, vPrevLocal, mInv);

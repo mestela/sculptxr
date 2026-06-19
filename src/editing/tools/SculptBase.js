@@ -626,16 +626,20 @@ class SculptBase {
     if (pickingSym && this._main.getSculptManager().getSymmetry()) {
       const main = this._main;
       if (main._vrControllerPos) {
+        // Parent-aware model-space matrix (== getMatrix unparented) so the
+        // world<->local symmetry conversion is correct for a parented child.
+        var _mm = mesh.getModelSpaceMatrix();
+
         // Mirror World Pos
         var worldPos = vec3.clone(main._vrControllerPos);
 
         // If using Aim Mode, the true 'position' is the intersection point, not the controller
         if (!main._vrUseVolumeIntersect && picking.getMesh()) {
-          vec3.transformMat4(worldPos, picking.getIntersectionPoint(), mesh.getMatrix());
+          vec3.transformMat4(worldPos, picking.getIntersectionPoint(), _mm);
         }
 
         var matInv = mat4.create();
-        mat4.invert(matInv, mesh.getMatrix());
+        mat4.invert(matInv, _mm);
 
         // World -> Local
         var localPos = vec3.create();
@@ -648,7 +652,7 @@ class SculptBase {
 
         // Local -> World
         var symWorldPos = vec3.create();
-        vec3.transformMat4(symWorldPos, localPos, mesh.getMatrix());
+        vec3.transformMat4(symWorldPos, localPos, _mm);
 
         // LOGGING FOR DIRECTION SKEW AND LAG
         if (!this._lastWorldPos_Dbg) this._lastWorldPos_Dbg = vec3.clone(worldPos);
