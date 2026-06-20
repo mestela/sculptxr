@@ -118,6 +118,10 @@ class Twist extends SculptBase {
       if (pickingSym) {
         // We need to sync local radius?
         pickingSym.setLocalRadius2(picking.getLocalRadius2());
+        // Hand the symmetry pass the MAIN surface contact point; strokeXR mirrors it
+        // across the symmetry plane to get the symmetric centre. (pickingSym has no
+        // pick of its own, so its intersection point would otherwise be stale.)
+        pickingSym.setIntersectionPoint(picking.getIntersectionPoint());
         this.strokeXR(pickingSym, true, origin, dir);
       }
     }
@@ -139,9 +143,10 @@ class Twist extends SculptBase {
     var invMat = mat4.create();
     mat4.invert(invMat, mesh.getModelSpaceMatrix()); // parent-aware (== getMatrix unparented)
 
-    // 1. Center of Rotation (Controller Tip in Local Space)
-    var center = vec3.create();
-    vec3.transformMat4(center, origin, invMat);
+    // 1. Center of Rotation = the SURFACE contact point (local space), as found by the
+    // pick. Using the raw controller position instead put the center ~off the surface,
+    // so the radius search selected zero vertices and Twist did nothing.
+    var center = vec3.clone(picking.getIntersectionPoint());
 
     // 2. Axis of Rotation (Controller Dir in Local Space)
     // Transform direction (ignore translation)
