@@ -254,11 +254,12 @@ class CutTool extends SculptBase {
           snapPos = [(pA[0] + pB[0]) / 2, (pA[1] + pB[1]) / 2, (pA[2] + pB[2]) / 2];
         }
         
-        // Transform to world coordinates
+        // Transform to model/world coordinates (preview lives under _worldGroup).
+        // Parent-aware so the highlight sphere lands correctly on a parented child.
         const worldPos = [0, 0, 0];
-        const mat = activeMesh.getMatrix();
+        const mat = mesh.getModelSpaceMatrix(); // top-level mesh carries the threeMesh (parent chain)
         vec3.transformMat4(worldPos, snapPos, mat);
-        
+
         this.updateHighlightSphere(worldPos);
         return;
       }
@@ -332,8 +333,8 @@ class CutTool extends SculptBase {
     const mesh = this.getMesh();
     const activeMesh = mesh.getCurrentMesh ? mesh.getCurrentMesh() : mesh;
     const vertices = activeMesh.getVertices();
-    const mat = activeMesh.getMatrix();
-    
+    const mat = mesh.getModelSpaceMatrix(); // parent-aware (top-level carries threeMesh); preview lives under _worldGroup
+
     const points = [];
     
     for (const cp of this._cutPoints) {
