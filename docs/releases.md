@@ -1,3 +1,21 @@
+# v3.0.0
+Rigging & performance-capture foundations — a full ARKit blendshape pipeline, an eye rig, freeze-transform tools, and a live transform inspector, all built on the parent-aware scene hierarchy.
+
+## ARKit blendshape pipeline
+- **Feature**: **ARKit name library** (`src/editing/ArkitBlendshapes.js`). The blendshape **New** button now opens a picker grouped by face region, seeded with the ARKit 52 — shown as **34 entries**, because the 14 true mirror pairs collapse into one symmetric shape you sculpt once with X-symmetry. Categories are colour-dotted: **symmetric** (splits L/R), **center** (sculpt as-is), **directional** (`jawLeft` etc — look like pairs but aren't). A "+ Blank layer" quick option is kept; already-created names show dimmed/checked (selecting, not duplicating). Scrolls via mouse-wheel + drag on desktop and the **thumbstick in VR**.
+- **Feature**: **Split a symmetric shape into its ARKit L/R halves.** Sculpt `eyeBlink` once in symmetry, then split into `eyeBlinkLeft` + `eyeBlinkRight` — the delta is feathered across the symmetry plane with a soft midline band (`left + right` at weight 1 reproduce the original). Saves hand-splitting every shape.
+- **Feature**: **Combine the halves back** into the single symmetric shape, to keep editing in symmetry. The split↔combine round-trip is lossless.
+
+## Eye rig
+- **Feature**: per-eye **look-at** (near target → cross-eyed, far → parallel), **saccades** (amplitude + speed, working with or without an aim constraint), and a **mirror** socket that reflects across the head's centreline and tracks the head as it rotates. Built on the parent-aware per-frame constraint pass; look-at roll uses the head's local up.
+
+## Transform tools
+- **Feature**: **Outliner transform inspector** — Pos/Rot/Scale fields (3 per row, numpad on click, local space) that **track gizmo/grab manipulation live**. Set-parent / aim-at / lock share a row; lock makes an object unselectable in the viewport.
+- **Feature**: **Bake / freeze transforms.** "Bake scale" freezes the mesh's scale into the geometry (Scale → 1, like Maya freeze / Blender apply — the default sphere's internal 57.735 becomes 1); "Apply all" freezes translation + rotation + scale (matrix → identity). Bakes across all multires levels and blendshape base/deltas; sculpting still works at the new size (dyntopo/remesh are mesh-relative).
+
+## Cleanup
+- **Change**: **Retired the legacy canvas VR menu's reappearance.** The old `GuiXR` main menu + mini-HUD could be toggled back on (the "old menus reappear" glitch); that toggle is gone — the HTML panels are now the only menu — and dead `GuiScene.js` was deleted. Full removal of `GuiXR` awaits migrating brush/settings state + the remaining popups to HTML (tracked).
+
 # v2.9.40 – v2.9.63
 Transform plumbing through the Three.js scene graph, and the whole sculpt/transform toolset made parent-aware (sculpting/posing parented objects — eyes-on-a-head, etc.).
 
