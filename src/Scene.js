@@ -1726,6 +1726,11 @@ class Scene {
 
     if (this._meshPreview) this._meshPreview.updateMatrices(cam);
     if (this._grid) this._grid.updateMatrices(cam);
+
+    // Keep the outliner transform fields in sync with live manipulation (gizmo/grab),
+    // throttled to every few frames to avoid per-frame DOM churn.
+    this._xfSyncTick = (this._xfSyncTick || 0) + 1;
+    if (this._xfSyncTick % 4 === 0) this._syncOutlinerTransformFields();
   }
 
   initWebGL() {
@@ -2405,6 +2410,27 @@ class Scene {
     const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
     const R2D = 180 / Math.PI;
     return { t: [p.x, p.y, p.z], r: [e.x * R2D, e.y * R2D, e.z * R2D], s: [s.x, s.y, s.z] };
+  }
+
+  // Live-refresh the outliner transform fields (.mm-xf) from the selected mesh, so they
+  // track gizmo/grab manipulation. Skips a field being typed into; marks the VR panel
+  // dirty only when a value actually changed. Throttled by the caller.
+  _syncOutlinerTransformFields() {
+    const inputs = document.querySelectorAll('.mm-xf');
+    if (!inputs.length) return;
+    const sel = this.getSelectedMeshes ? this.getSelectedMeshes() : [];
+    if (sel.length !== 1) return;
+    const trs = this.getTransformTRS(sel[0].getID());
+    if (!trs) return;
+    let changed = false;
+    inputs.forEach((inp) => {
+      if (inp === document.activeElement) return; // don't clobber typing
+      const t = inp.dataset.xf, a = +inp.dataset.axis;
+      if (!trs[t]) return;
+      const val = Math.round(trs[t][a] * 1000) / 1000;
+      if (parseFloat(inp.value) !== val) { inp.value = val; changed = true; }
+    });
+    if (changed && this._mainMenuPanel && this._mainMenuPanel.markDirty) this._mainMenuPanel.markDirty();
   }
 
   // Set one local-transform component. type: 't'|'r'|'s', axis: 0|1|2.
