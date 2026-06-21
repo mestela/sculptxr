@@ -3556,30 +3556,18 @@ class Scene {
         // Start visible, attached to wrist (parented in handleXRInput once grips are known).
         if (window.screenLog) window.screenLog('[HTMLVRPanel] BrushPanel created', 'cyan');
 
-        // ── Console toggle: window.toggleBrushPanel() ─────────────────────
-        // Switch between the new HTML panel (default) and the legacy GuiXR Tools tab.
-        //   window.toggleBrushPanel()        — flip
-        //   window.toggleBrushPanel(true)    — force new panel on
-        //   window.toggleBrushPanel(false)   — force old GuiXR menu on
+        // The legacy GuiXR main menu + mini-HUD are RETIRED (#40 Tier 1) — the HTML
+        // panels (MainMenuPanel/MiniPanel/BrushPanel/ToolPicker) are the only path.
+        // _brushPanelEnabled is now permanently true; the old toggle is kept as a no-op
+        // so any stray caller can't resurface the canvas menu. (Popups — _guiPopup —
+        // are a separate system and unaffected; their HTML migration is Tier 2.)
         window._brushPanelEnabled = true;
-        window.toggleBrushPanel = (enable) => {
-          const panel = this._brushPanel;
-          if (!panel) { console.warn('[HTMLVRPanel] BrushPanel not ready yet'); return; }
-          window._brushPanelEnabled = (enable === undefined) ? !window._brushPanelEnabled : !!enable;
-          if (window._brushPanelEnabled) {
-            // Enable HTML panel mode: MiniPanel visible, BrushPanel hidden (default wrist view)
-            this._swapHtmlPanels('mini');
-          } else {
-            // Disable HTML panel mode: hide both HTML panels
-            if (panel.mesh) panel.mesh.visible = false;
-            if (this._miniPanel?.mesh) this._miniPanel.mesh.visible = false;
-          }
-          // MiniHUD visibility is gated on _brushPanelEnabled in handleXRInput — no extra call needed.
-          const state = window._brushPanelEnabled ? 'NEW (HTML MiniPanel+BrushPanel, MiniHUD hidden)' : 'OLD (GuiXR canvas + MiniHUD)';
-          console.log(`[HTMLVRPanel] Switched to ${state}`);
-          if (window.screenLog) window.screenLog(`Menu: ${state}`, window._brushPanelEnabled ? 'cyan' : 'orange');
+        window.toggleBrushPanel = () => {
+          window._brushPanelEnabled = true;
+          this._swapHtmlPanels('mini');
+          console.log('[HTMLVRPanel] Legacy GuiXR menu is retired — HTML panels are always on.');
+          if (window.screenLog) window.screenLog('Menu: HTML (legacy retired)', 'cyan');
         };
-        console.log('[HTMLVRPanel] Menu toggle ready — call window.toggleBrushPanel() to switch');
       } catch (err) {
         console.error('[HTMLVRPanel] BrushPanel init failed:', err);
       }
