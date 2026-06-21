@@ -18,7 +18,7 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
-import { arkitByRegion } from '../editing/ArkitBlendshapes.js';
+import { arkitByRegion, arkitEntry } from '../editing/ArkitBlendshapes.js';
 
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
@@ -29,6 +29,7 @@ const FA = {
   eyeSlash: '\uf070', // fa-eye-slash (muted)
   lock:     '\uf023', // fa-lock
   lockOpen: '\uf3c1', // fa-lock-open
+  split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -362,12 +363,26 @@ export default class BlendshapeStackPanel {
 
     if (isBase) { this._rows.push(r); return; }
 
-    // Numeric value (right-aligned).
-    ctx.fillStyle = muted ? '#666' : '#9aa';
-    ctx.font = '11px ui-monospace, monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
-    ctx.textAlign = 'left';
+    // Symmetric ARKit shapes get a split button (→ L/R halves) in the right slot,
+    // replacing the numeric readout (the weight is already shown by the slider).
+    // Non-symmetric rows keep the numeric value.
+    const sym = arkitEntry(name)?.category === 'symmetric';
+    if (sym) {
+      const splitHot = hov === 'split';
+      const sx = W - PAD - 10;
+      ctx.fillStyle = splitHot ? '#cfe1ff' : '#5b6b86';
+      ctx.font = '900 13px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center';
+      ctx.fillText(FA.split, sx, top + 16 + 0.5);
+      ctx.textAlign = 'left';
+      r.split = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
+    } else {
+      ctx.fillStyle = muted ? '#666' : '#9aa';
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
+      ctx.textAlign = 'left';
+    }
 
     // Slider (second line) — thicker/white thumb on hover.
     const trackX0 = TRACK_X0, trackX1 = W - PAD, trackY = top + 33;
@@ -392,8 +407,9 @@ export default class BlendshapeStackPanel {
     const row = this._hitRow(p);
     if (!row) return { row: null, part: null };
     const inRect = (z) => z && p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1;
-    if (inRect(row.lock)) return { row, part: 'lock' };
-    if (inRect(row.eye))  return { row, part: 'eye' };
+    if (inRect(row.lock))  return { row, part: 'lock' };
+    if (inRect(row.eye))   return { row, part: 'eye' };
+    if (inRect(row.split)) return { row, part: 'split' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };
     return { row, part: 'row' };
@@ -455,6 +471,15 @@ export default class BlendshapeStackPanel {
     if (part === 'eye' && !row.isBase) {
       if (mesh) (solo ? reg.toggleBlendshapeSolo : reg.toggleBlendshapeMute).call(reg, mesh, row.name);
       this.draw();
+      return;
+    }
+    // Split (symmetric layers) → generate the two ARKit L/R halves, replacing this layer.
+    if (part === 'split' && !row.isBase) {
+      if (mesh) {
+        const ok = reg.splitBlendshapeLR(mesh, row.name);
+        if (ok) this._afterStructureChange();
+        else this.flash();
+      }
       return;
     }
     // Slider band → begin weight drag (works on any layer regardless of active).

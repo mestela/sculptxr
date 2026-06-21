@@ -1,4 +1,5 @@
 import { quat, mat4 } from 'gl-matrix';
+import { arkitEntry, arkitSplitTargets } from './ArkitBlendshapes.js';
 
 class AnimationRegistry {
   constructor() {
@@ -859,6 +860,93 @@ class AnimationRegistry {
         "Create Blendshape"
       );
     }
+  }
+
+  _refreshBlendPanels(mesh) {
+    window._animPanel?.refreshBlendshapes?.(mesh, window.app);
+    window._blendshapeStackPanel?._afterStructureChange?.();
+    window._blendshapeStackPanelVR?._afterStructureChange?.();
+  }
+
+  // Split a sculpted SYMMETRIC blendshape (e.g. eyeBlink) into its two ARKit halves
+  // (eyeBlinkLeft + eyeBlinkRight) by blending the delta across the symmetry plane
+  // (local x = 0). left+right at weight 1 reproduce the original. The symmetric source
+  // layer is replaced by the pair. Convention: x < 0 → Left (call again / flip if the
+  // mesh faces the other way and L/R come out swapped).
+  splitBlendshapeLR(mesh, name) {
+    if (!mesh || !name) return false;
+    const entry = arkitEntry(name);
+    const targets = arkitSplitTargets(name);
+    if (!entry || entry.category !== 'symmetric' || !targets || targets.length !== 2) return false;
+    const [leftName, rightName] = targets;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes || !track.blendshapes.has(name) || !track.baseShape) return false;
+
+    const base = track.baseShape;
+    const delta = track.blendshapes.get(name);
+    const n = delta.length;
+
+    // Smooth falloff band around the midline so there's no hard seam at x = 0.
+    let xMin = Infinity, xMax = -Infinity;
+    for (let i = 0; i < n; i += 3) { const x = base[i]; if (x < xMin) xMin = x; if (x > xMax) xMax = x; }
+    const band = Math.max((xMax - xMin) * 0.01, 1e-4);
+    const leftWeight = (x) => {
+      if (x <= -band) return 1;
+      if (x >= band) return 0;
+      const t = (band - x) / (2 * band); // 1 at -band, 0 at +band
+      return t * t * (3 - 2 * t);
+    };
+
+    const leftDelta = new Float32Array(n), rightDelta = new Float32Array(n);
+    for (let i = 0; i < n; i += 3) {
+      const lw = leftWeight(base[i]), rw = 1 - lw;
+      leftDelta[i] = delta[i] * lw;       rightDelta[i] = delta[i] * rw;
+      leftDelta[i + 1] = delta[i + 1] * lw; rightDelta[i + 1] = delta[i + 1] * rw;
+      leftDelta[i + 2] = delta[i + 2] * lw; rightDelta[i + 2] = delta[i + 2] * rw;
+    }
+
+    // Snapshot for undo: the source layer + anything already occupying the target names.
+    const prevSource = delta;
+    const prevLeft = track.blendshapes.get(leftName) || null;
+    const prevRight = track.blendshapes.get(rightName) || null;
+    const wasEditing = track.editingBlendshape;
+
+    const removeLayer = (nm) => {
+      track.blendshapes.delete(nm);
+      track.blendshapeTracks?.delete(nm);
+      track.blendshapeMuted?.delete(nm);
+      track.blendshapeLocked?.delete(nm);
+      if (track.blendshapeSolo === nm) track.blendshapeSolo = null;
+      if (track.editingBlendshape === nm) track.editingBlendshape = null;
+    };
+    const addLayer = (nm, d) => {
+      track.blendshapes.set(nm, d);
+      if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
+      if (!track.blendshapeTracks.has(nm)) track.blendshapeTracks.set(nm, { times: [], values: [] });
+    };
+
+    const apply = () => {
+      removeLayer(name);
+      addLayer(leftName, leftDelta);
+      addLayer(rightName, rightDelta);
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+    };
+    const revert = () => {
+      removeLayer(leftName); removeLayer(rightName);
+      if (prevLeft) addLayer(leftName, prevLeft);
+      if (prevRight) addLayer(rightName, prevRight);
+      addLayer(name, prevSource);
+      track.editingBlendshape = wasEditing;
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+    };
+
+    apply();
+    if (window.app && window.app.getStateManager()) {
+      window.app.getStateManager().pushStateCustom(revert, apply, false, 'Split Blendshape L/R');
+    }
+    return true;
   }
 
   setBlendshapeWeight(mesh, name, value) {
