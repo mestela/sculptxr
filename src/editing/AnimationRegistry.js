@@ -1,5 +1,5 @@
 import { quat, mat4 } from 'gl-matrix';
-import { arkitEntry, arkitSplitTargets } from './ArkitBlendshapes.js';
+import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 
 class AnimationRegistry {
   constructor() {
@@ -948,6 +948,68 @@ class AnimationRegistry {
     apply();
     if (window.app && window.app.getStateManager()) {
       window.app.getStateManager().pushStateCustom(revert, apply, false, 'Split Blendshape L/R');
+    }
+    return true;
+  }
+
+  // Inverse of splitBlendshapeLR: recombine an ARKit L/R pair (eyeBlinkLeft +
+  // eyeBlinkRight) back into the single symmetric shape (eyeBlink) so it can be sculpted
+  // in symmetry again. Combined delta = leftDelta + rightDelta (reconstructs the original
+  // when unedited; sums whatever's there otherwise). `name` is either half. One undo step.
+  combineBlendshapeLR(mesh, name) {
+    if (!mesh || !name) return false;
+    const info = arkitUnifiedFor(name);
+    if (!info) return false;
+    const { unified, left, right } = info;
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes) return false;
+
+    const dL = track.blendshapes.get(left) || null;
+    const dR = track.blendshapes.get(right) || null;
+    if (!dL && !dR) return false;
+
+    const len = (dL || dR).length;
+    const combined = new Float32Array(len);
+    if (dL) for (let i = 0; i < len; i++) combined[i] += dL[i];
+    if (dR) for (let i = 0; i < len; i++) combined[i] += dR[i];
+
+    const prevL = dL, prevR = dR;
+    const prevUnified = track.blendshapes.get(unified) || null;
+    const wasEditing = track.editingBlendshape;
+
+    const removeLayer = (nm) => {
+      track.blendshapes.delete(nm);
+      track.blendshapeTracks?.delete(nm);
+      track.blendshapeMuted?.delete(nm);
+      track.blendshapeLocked?.delete(nm);
+      if (track.blendshapeSolo === nm) track.blendshapeSolo = null;
+      if (track.editingBlendshape === nm) track.editingBlendshape = null;
+    };
+    const addLayer = (nm, d) => {
+      track.blendshapes.set(nm, d);
+      if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
+      if (!track.blendshapeTracks.has(nm)) track.blendshapeTracks.set(nm, { times: [], values: [] });
+    };
+
+    const apply = () => {
+      removeLayer(left); removeLayer(right);
+      addLayer(unified, combined);
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+    };
+    const revert = () => {
+      removeLayer(unified);
+      if (prevUnified) addLayer(unified, prevUnified);
+      if (prevL) addLayer(left, prevL);
+      if (prevR) addLayer(right, prevR);
+      track.editingBlendshape = wasEditing;
+      this.applyBlendshapes(mesh);
+      this._refreshBlendPanels(mesh);
+    };
+
+    apply();
+    if (window.app && window.app.getStateManager()) {
+      window.app.getStateManager().pushStateCustom(revert, apply, false, 'Combine Blendshape L/R');
     }
     return true;
   }

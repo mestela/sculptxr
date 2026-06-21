@@ -83,6 +83,17 @@ export function arkitEntry(name) {
   return ARKIT_BLENDSHAPES.find((e) => e.name === name) || null;
 }
 
+// Reverse lookup: given an ARKit half name (e.g. 'eyeBlinkLeft'), return the symmetric
+// entry it belongs to so the pair can be recombined. null for non-half names.
+export function arkitUnifiedFor(halfName) {
+  for (const e of ARKIT_BLENDSHAPES) {
+    if (e.category === 'symmetric' && (e.arkit.left === halfName || e.arkit.right === halfName)) {
+      return { unified: e.name, left: e.arkit.left, right: e.arkit.right };
+    }
+  }
+  return null;
+}
+
 // The ARKit export target names a sculpted shape splits into.
 //   symmetric   → ['<name>Left', '<name>Right']  (split the delta along the symmetry plane)
 //   directional → ['<self>', '<opposite>']       (self + its mirror)

@@ -18,7 +18,7 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
-import { arkitByRegion, arkitEntry } from '../editing/ArkitBlendshapes.js';
+import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
 
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
@@ -30,6 +30,7 @@ const FA = {
   lock:     '\uf023', // fa-lock
   lockOpen: '\uf3c1', // fa-lock-open
   split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
+  combine:  '\uf387', // fa-code-merge (combine L/R halves back into one symmetric shape)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -363,19 +364,26 @@ export default class BlendshapeStackPanel {
 
     if (isBase) { this._rows.push(r); return; }
 
-    // Symmetric ARKit shapes get a split button (→ L/R halves) in the right slot,
-    // replacing the numeric readout (the weight is already shown by the slider).
-    // Non-symmetric rows keep the numeric value.
-    const sym = arkitEntry(name)?.category === 'symmetric';
+    // Right slot: symmetric ARKit shapes get a split button (→ L/R); a recognised L/R
+    // half gets a combine button (→ back to one symmetric shape); everything else keeps
+    // the numeric readout (the weight is already shown by the slider).
+    const sym  = arkitEntry(name)?.category === 'symmetric';
+    const half = !sym ? arkitUnifiedFor(name) : null;
+    const sx = W - PAD - 10;
     if (sym) {
-      const splitHot = hov === 'split';
-      const sx = W - PAD - 10;
-      ctx.fillStyle = splitHot ? '#cfe1ff' : '#5b6b86';
-      ctx.font = '900 13px "Font Awesome 6 Free"';
-      ctx.textAlign = 'center';
+      const hot = hov === 'split';
+      ctx.fillStyle = hot ? '#cfe1ff' : '#5b6b86';
+      ctx.font = '900 13px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
       ctx.fillText(FA.split, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
       r.split = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
+    } else if (half) {
+      const hot = hov === 'combine';
+      ctx.fillStyle = hot ? '#d6ffcf' : '#6b865b';
+      ctx.font = '900 13px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
+      ctx.fillText(FA.combine, sx, top + 16 + 0.5);
+      ctx.textAlign = 'left';
+      r.combine = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
     } else {
       ctx.fillStyle = muted ? '#666' : '#9aa';
       ctx.font = '11px ui-monospace, monospace';
@@ -409,7 +417,8 @@ export default class BlendshapeStackPanel {
     const inRect = (z) => z && p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1;
     if (inRect(row.lock))  return { row, part: 'lock' };
     if (inRect(row.eye))   return { row, part: 'eye' };
-    if (inRect(row.split)) return { row, part: 'split' };
+    if (inRect(row.split))   return { row, part: 'split' };
+    if (inRect(row.combine)) return { row, part: 'combine' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };
     return { row, part: 'row' };
@@ -477,6 +486,15 @@ export default class BlendshapeStackPanel {
     if (part === 'split' && !row.isBase) {
       if (mesh) {
         const ok = reg.splitBlendshapeLR(mesh, row.name);
+        if (ok) this._afterStructureChange();
+        else this.flash();
+      }
+      return;
+    }
+    // Combine (L/R half) → merge the pair back into one symmetric shape.
+    if (part === 'combine' && !row.isBase) {
+      if (mesh) {
+        const ok = reg.combineBlendshapeLR(mesh, row.name);
         if (ok) this._afterStructureChange();
         else this.flash();
       }
