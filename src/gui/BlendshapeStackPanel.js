@@ -600,6 +600,15 @@ export default class BlendshapeStackPanel {
     if (this._host) this._relayout(); else this.draw(); // desktop: restore content height
   }
 
+  // VR thumbstick scroll — Scene routes here when the ray is on this panel. Drives the
+  // picker overlay's internal scroll when open (matches the mouse-wheel path).
+  onVRScroll(delta) {
+    const pk = this._picker;
+    if (!pk) return;
+    pk.scroll = Math.max(0, Math.min(pk.maxScroll, pk.scroll + delta));
+    this.draw();
+  }
+
   // Build the scrollable content list (content-space y). Marks already-created names.
   _buildPickerItems() {
     const pk = this._picker;

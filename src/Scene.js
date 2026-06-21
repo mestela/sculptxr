@@ -5369,8 +5369,11 @@ class Scene {
             const scrollSpeed = isSlowMod ? 12 : 55; // px per frame at full push; hold trigger for fine scroll
             const delta = valY_NonDom * scrollSpeed; // proportional to stick deflection
 
-            // HTML panel mode — scroll the panel the ray was on last frame
-            if (window._brushPanelEnabled !== false) {
+            // Canvas BlendshapeStackPanel (ARKit picker) — when the ray is on it.
+            if ((this._vbsPanelPointed || this._wasVbsPanelPointed) && this._vrBlendPanel) {
+              this._vrBlendPanel.onVRScroll(delta);
+            } else if (window._brushPanelEnabled !== false) {
+              // HTML panel mode — scroll the panel the ray was on last frame
               if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
             } else if (this._guiXR) {
               // Legacy canvas menu
@@ -5403,7 +5406,9 @@ class Scene {
             const scrollSpeed = isSlowMod ? 12 : 55;
             const delta = valY * scrollSpeed; // proportional to stick deflection
 
-            if (window._brushPanelEnabled !== false) {
+            if ((this._vbsPanelPointed || this._wasVbsPanelPointed) && this._vrBlendPanel) {
+              this._vrBlendPanel.onVRScroll(delta);
+            } else if (window._brushPanelEnabled !== false) {
               if (this._lastHtmlPanelHit) this._lastHtmlPanelHit.onVRScroll(delta);
             } else if (this._guiXR) {
               if (this._guiXR._overlay === 'menu') {
@@ -6752,6 +6757,7 @@ class Scene {
 
     // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
     this._wasPointingAtMenu = this._isPointingAtMenu;
+    this._wasVbsPanelPointed = this._vbsPanelPointed; // same one-frame buffer for the blend panel
   } catch (e) {
       if (Math.random() < 0.05) console.error("[SculptXR] XR Input Error:", e);
     }

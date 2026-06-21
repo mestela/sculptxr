@@ -886,10 +886,13 @@ class AnimationRegistry {
     const delta = track.blendshapes.get(name);
     const n = delta.length;
 
-    // Smooth falloff band around the midline so there's no hard seam at x = 0.
+    // Smooth falloff band on EACH side of the midline so the two halves feather into
+    // each other instead of seaming at x = 0. Width = bleedFrac of the mesh x-extent;
+    // live-tunable via window._bsSplitBleed (default 0.06 ≈ 6% each side).
     let xMin = Infinity, xMax = -Infinity;
     for (let i = 0; i < n; i += 3) { const x = base[i]; if (x < xMin) xMin = x; if (x > xMax) xMax = x; }
-    const band = Math.max((xMax - xMin) * 0.01, 1e-4);
+    const bleedFrac = (typeof window !== 'undefined' && window._bsSplitBleed != null) ? window._bsSplitBleed : 0.06;
+    const band = Math.max((xMax - xMin) * bleedFrac, 1e-4);
     const leftWeight = (x) => {
       if (x <= -band) return 1;
       if (x >= band) return 0;
