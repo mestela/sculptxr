@@ -549,6 +549,19 @@ const CSS = `
 .mm-mesh-btn.is-null .mm-node-icon { color: #66e0ff; }
 .mm-mesh-btn.active .mm-node-icon { color: #89b4fa; }
 .mm-rig-label { font-size: 10px; color: #a6adc8; text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 3px; }
+.mm-rig-btn-row { display: flex; gap: 3px; margin-top: 4px; }
+.mm-rig-btn-row .mm-toggle { flex: 1; text-align: center; }
+/* Transform fields: a label + 3 numeric inputs (X/Y/Z) per row. */
+.mm-xform-row { display: flex; align-items: center; gap: 3px; margin-bottom: 3px; }
+.mm-xf-lbl { width: 38px; flex-shrink: 0; font-size: 11px; color: #a6adc8; }
+.mm-xf {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: #11111b; color: #cdd6f4;
+  border: 1px solid #45475a; border-radius: 4px;
+  font-size: 11px; padding: 4px 5px; outline: none; text-align: right;
+}
+.mm-xf:focus, .mm-xf.hover { border-color: #89b4fa; }
+.mm-xf::-webkit-inner-spin-button, .mm-xf::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 /* Outliner toolbar — icon-only copy/delete buttons. */
 .mm-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
 .mm-tool-btn {
@@ -1072,20 +1085,33 @@ export function buildSectionHTML_scene(main) {
     const mirrored = !!main.isMirrored?.(selId);
     const saccading = !!main.isSaccading?.(selId);
     const sacAmp   = main.getSaccadeAmp?.(selId) ?? 5;
+    const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
 
+    const locked = !!main.isSelectLocked?.(selId);
+    const trs = main.getTransformTRS?.(selId) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
+    const _f = (n) => (Math.round(n * 1000) / 1000);
+    const _xfRow = (type, label, vals, step) => `
+      <div class="mm-xform-row">
+        <span class="mm-xf-lbl">${label}</span>
+        <input type="number" class="mm-xf" data-xf="${type}" data-axis="0" step="${step}" value="${_f(vals[0])}">
+        <input type="number" class="mm-xf" data-xf="${type}" data-axis="1" step="${step}" value="${_f(vals[1])}">
+        <input type="number" class="mm-xf" data-xf="${type}" data-axis="2" step="${step}" value="${_f(vals[2])}">
+      </div>`;
     rigHTML = `
-      <div class="mm-section-title">Rig — ${sel._permanentStaticLabel}</div>
+      ${_xfRow('t', 'Pos', trs.t, '0.01')}
+      ${_xfRow('r', 'Rot', trs.r, '1')}
+      ${_xfRow('s', 'Scale', trs.s, '0.01')}
 
-      <div class="mm-rig-label">Parent</div>
-      <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
-        ${pendingMode === 'parent' ? 'Select parent…  (cancel)' : 'Set parent…'}
-      </button>
+      <div class="mm-rig-btn-row">
+        <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
+          ${pendingMode === 'parent' ? 'Select parent…' : 'Set parent…'}
+        </button>
+        <button class="mm-toggle${pendingMode === 'lookat' ? ' active' : ''}" data-rig="set-aim">
+          ${pendingMode === 'lookat' ? 'Select aim…' : 'Aim at…'}
+        </button>
+        <button class="mm-toggle${locked ? ' active' : ''}" data-rig="lock" title="Unselectable in the viewport when on">Lock</button>
+      </div>
       ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
-
-      <div class="mm-rig-label">Aim</div>
-      <button class="mm-toggle${pendingMode === 'lookat' ? ' active' : ''}" data-rig="set-aim">
-        ${pendingMode === 'lookat' ? 'Select aim target…  (cancel)' : 'Aim at…'}
-      </button>
       ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
 
       <div class="mm-rig-label">Eye</div>
@@ -1095,6 +1121,11 @@ export function buildSectionHTML_scene(main) {
         <span class="mm-lbl">Amplitude</span>
         <input type="range" id="mm-rig-sac-amp" min="0" max="20" step="0.5" value="${sacAmp}">
         <span class="mm-val" id="mm-rig-sac-amp-val">${sacAmp}</span>
+      </div>
+      <div class="mm-row" id="mm-rig-sac-speed-row" style="${saccading ? '' : 'display:none'}">
+        <span class="mm-lbl">Speed</span>
+        <input type="range" id="mm-rig-sac-speed" min="0.1" max="3" step="0.1" value="${sacSpeed}">
+        <span class="mm-val" id="mm-rig-sac-speed-val">${sacSpeed}</span>
       </div>
     `;
   }
@@ -2327,6 +2358,11 @@ export function wireSectionScene(el, main, repaintFn) {
     main.clearLookAt?.(sel.getID());
     main.render?.(); repaintFn();
   });
+  el.querySelector('[data-rig="lock"]')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.toggleSelectLock?.(sel.getID());
+    main.render?.(); repaintFn();
+  });
 
   el.querySelector('[data-rig="mirror"]')?.addEventListener('click', () => {
     const sel = selOne(); if (!sel) return;
@@ -2344,6 +2380,34 @@ export function wireSectionScene(el, main, repaintFn) {
   wireSlider(el.querySelector('#mm-rig-sac-amp'), el.querySelector('#mm-rig-sac-amp-val'), (v) => {
     const sel = selOne(); if (!sel) return;
     main.setSaccades?.(sel.getID(), true, v);
+  });
+  wireSlider(el.querySelector('#mm-rig-sac-speed'), el.querySelector('#mm-rig-sac-speed-val'), (v) => {
+    const sel = selOne(); if (!sel) return;
+    main.setSaccadeSpeed?.(sel.getID(), v);
+  });
+
+  // Transform fields (local Pos/Rot/Scale). Edit writes the one component; clicking a
+  // field opens the VR numpad (same pattern as the animation panel).
+  const _xfNames = { t: 'Position', r: 'Rotation', s: 'Scale' };
+  el.querySelectorAll('.mm-xf').forEach((input) => {
+    const type = input.dataset.xf;
+    const axis = parseInt(input.dataset.axis, 10);
+    input.addEventListener('change', () => {
+      const sel = selOne(); if (!sel) return;
+      main.setTransformComponent?.(sel.getID(), type, axis, parseFloat(input.value));
+      // no repaint — keep focus; the field already shows the entered value
+    });
+    input.addEventListener('click', (e) => {
+      if (!window._vrNumpad || !window._vrNumpad.shouldUse()) return;
+      if (window._vrNumpad.isBlockingOpen) return;
+      e.preventDefault(); e.stopPropagation();
+      const current = parseFloat(input.value) || 0;
+      const label = `${_xfNames[type] || ''} ${['X', 'Y', 'Z'][axis]}`;
+      window._vrNumpad.open(current, { label, integer: false }, (val) => {
+        input.value = val;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }, input);
+    });
   });
 }
 

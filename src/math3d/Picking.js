@@ -174,7 +174,7 @@ class Picking {
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
-      if (!mesh.isVisible() || mesh.isPickable === false)
+      if (!mesh.isVisible() || mesh.isPickable === false || mesh._selectLocked)
         continue;
 
       mesh.getThreeMesh().updateMatrixWorld(true);
@@ -226,7 +226,7 @@ class Picking {
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
-      if (!mesh.isVisible()) continue;
+      if (!mesh.isVisible() || mesh._selectLocked) continue;
 
       mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
       mat4.invert(_TMP_INV, _TMP_MS);
@@ -291,7 +291,7 @@ class Picking {
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
-      if (!mesh.isVisible() || mesh.isPickable === false) continue;
+      if (!mesh.isVisible() || mesh.isPickable === false || mesh._selectLocked) continue;
 
       mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
       mat4.invert(_TMP_INV, _TMP_MS);

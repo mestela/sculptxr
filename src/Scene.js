@@ -2134,6 +2134,16 @@ class Scene {
   // each mesh carrying `_lookAtTargetId`, aim its local -Z at the target's position
   // (keeping its own position + scale). Works in MODEL space so parented eyes (under
   // a mirror group) aim correctly; writes back via setModelSpaceMatrix.
+  // Up reference for a look-at eye: the PARENT (head) local +Y in model space, so the
+  // eye rolls WITH the head when it tilts. World up only when the eye has no parent.
+  _constraintUp(mesh) {
+    const p = mesh._parentMesh;
+    if (!p) return _SXR_UP;
+    const pm = p.getModelSpaceMatrix();
+    const up = new THREE.Vector3(pm[4], pm[5], pm[6]);
+    return up.lengthSq() > 1e-12 ? up.normalize() : _SXR_UP;
+  }
+
   _evaluateConstraints() {
     const ms = this._meshes;
     if (!ms || ms.length === 0) return;
@@ -2141,36 +2151,60 @@ class Scene {
     for (let i = 0; i < ms.length; i++) {
       const m = ms[i];
       const tid = m._lookAtTargetId;
-      if (tid == null) continue;
-      const target = ms.find((x) => x.getID() === tid);
-      if (!target || target === m) continue;
+      const hasAim = (tid != null);
+      if (!hasAim && !m._saccades) continue; // nothing drives this mesh
+
       const em = m.getModelSpaceMatrix();
-      const tm = target.getModelSpaceMatrix();
       const P = new THREE.Vector3(em[12], em[13], em[14]);
-      const T = new THREE.Vector3(tm[12], tm[13], tm[14]);
       const scale = Math.hypot(em[0], em[1], em[2]) || 1;
 
-      // Procedural saccades: hold a random offset on the aim point, jump every
-      // 150–650ms (a saccade is a fast flick with a hold). Toggle via m._saccades.
+      // Advance the saccade offset on its timer (shared by both modes): a fast flick
+      // with a hold, every (150–650ms)/speed. Toggle via m._saccades.
       if (m._saccades) {
         if (!m._sacNext || now > m._sacNext) {
           const a = (m._saccadeAmp ?? 5);
+          const spd = (m._saccadeSpeed ?? 1); // higher → darts more often
           m._sacOff = new THREE.Vector3((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, 0);
-          m._sacNext = now + 150 + Math.random() * 500;
+          m._sacNext = now + (150 + Math.random() * 500) / spd;
         }
-        if (m._sacOff) T.add(m._sacOff);
+      } else {
+        m._sacOff = null;
       }
 
-      if (P.distanceToSquared(T) < 1e-10) continue;
-      // Aim the eye's +Z at the target (the NEGATED axis — THREE's lookAt points -Z,
-      // which faced the wrong way). Achieved by looking at the point opposite the
-      // target so -Z faces away and +Z faces the target.
-      const _dir = new THREE.Vector3().subVectors(T, P).normalize();
-      const _awayTarget = new THREE.Vector3().copy(P).sub(_dir);
-      const lookM = new THREE.Matrix4().lookAt(P, _awayTarget, _SXR_UP);
-      const q = new THREE.Quaternion().setFromRotationMatrix(lookM);
-      const out = new THREE.Matrix4().compose(P, q, new THREE.Vector3(scale, scale, scale));
-      m.setModelSpaceMatrix(out.elements);
+      if (hasAim) {
+        const target = ms.find((x) => x.getID() === tid);
+        if (!target || target === m) continue;
+        const tm = target.getModelSpaceMatrix();
+        const T = new THREE.Vector3(tm[12], tm[13], tm[14]);
+        if (m._sacOff) T.add(m._sacOff); // saccade jitters the aim point
+        if (P.distanceToSquared(T) < 1e-10) continue;
+        // Aim the eye's +Z at the target (negated axis — THREE's lookAt points -Z).
+        const _dir = new THREE.Vector3().subVectors(T, P).normalize();
+        const _awayTarget = new THREE.Vector3().copy(P).sub(_dir);
+        const lookM = new THREE.Matrix4().lookAt(P, _awayTarget, this._constraintUp(m));
+        const q = new THREE.Quaternion().setFromRotationMatrix(lookM);
+        const out = new THREE.Matrix4().compose(P, q, new THREE.Vector3(scale, scale, scale));
+        m.setModelSpaceMatrix(out.elements);
+      } else {
+        // Saccade WITHOUT an aim: jitter the eye's REST orientation by a small random
+        // yaw/pitch (offset components read as degrees). Rest captured once here and
+        // restored + cleared on disable (in setSaccades) so the eye returns to rest.
+        if (!m._sacRestQuat) {
+          // decompose (NOT setFromRotationMatrix) so the model-space scale is removed
+          // — otherwise a scaled matrix yields a non-unit quat that compose() squares
+          // into a huge scale.
+          const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
+          new THREE.Matrix4().fromArray(em).decompose(_p, _q, _s);
+          m._sacRestQuat = _q;
+        }
+        const q = m._sacRestQuat.clone();
+        if (m._sacOff) {
+          const e = new THREE.Euler(m._sacOff.y * Math.PI / 180, m._sacOff.x * Math.PI / 180, 0, 'YXZ');
+          q.multiply(new THREE.Quaternion().setFromEuler(e));
+        }
+        const out = new THREE.Matrix4().compose(P, q, new THREE.Vector3(scale, scale, scale));
+        m.setModelSpaceMatrix(out.elements);
+      }
     }
 
     // Mirror instances (live): POSITIONAL mirror across X=0 (negate position.x), but
@@ -2188,7 +2222,19 @@ class Scene {
         const M = new THREE.Matrix4().fromArray(sm);
         const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
         M.decompose(pos, quat, scl);
-        pos.x = -pos.x; // mirrored socket position
+        // Mirror the socket position across the PARENT's centerline (head-local X=0),
+        // not world X=0 — so the mirror tracks the head when it moves/rotates. Reflect
+        // in parent-local space, then compose back to model space. (Unparented → world X=0.)
+        const _mp = src._parentMesh;
+        if (_mp) {
+          const _pm = new THREE.Matrix4().fromArray(_mp.getModelSpaceMatrix());
+          const _pmInv = new THREE.Matrix4().copy(_pm).invert();
+          pos.applyMatrix4(_pmInv); // → head-local
+          pos.x = -pos.x;           // reflect across head centerline
+          pos.applyMatrix4(_pm);    // → back to model space
+        } else {
+          pos.x = -pos.x;
+        }
 
         let mq = quat; // fallback: copy source orientation when it has no look-at
         const tid = src._lookAtTargetId;
@@ -2200,7 +2246,7 @@ class Scene {
             if (src._saccades && src._sacOff) T.add(src._sacOff); // conjugate (both eyes dart together)
             const _d = new THREE.Vector3().subVectors(T, pos).normalize();
             const _away = new THREE.Vector3().copy(pos).sub(_d); // aim +Z (negated, matches the eye)
-            mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(pos, _away, _SXR_UP));
+            mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(pos, _away, this._constraintUp(src)));
           }
         }
         mir.mesh.matrixAutoUpdate = false;
@@ -2238,6 +2284,18 @@ class Scene {
     eye._lookAtTargetId = (targetId == null) ? null : targetId;
   }
 
+  // Selection lock: a locked mesh can't be picked/selected/sculpted in the viewport
+  // (the picking scans skip it); it can still be selected from the outliner.
+  isSelectLocked(id) {
+    const m = this._meshes.find((x) => x.getID() === id);
+    return !!(m && m._selectLocked);
+  }
+
+  toggleSelectLock(id) {
+    const m = this._meshes.find((x) => x.getID() === id);
+    if (m) m._selectLocked = !m._selectLocked;
+  }
+
   clearLookAt(eyeId) {
     const eye = this._meshes.find((m) => m.getID() === eyeId);
     if (eye) eye._lookAtTargetId = null;
@@ -2251,8 +2309,21 @@ class Scene {
   setSaccades(eyeId, on = true, amp) {
     const eye = this._meshes.find((m) => m.getID() === eyeId);
     if (!eye) return;
+    const wasOn = !!eye._saccades;
     eye._saccades = !!on;
     if (amp != null) eye._saccadeAmp = amp;
+    // Turning OFF a no-aim saccade: restore the captured rest orientation so the eye
+    // doesn't freeze mid-dart, then clear the cache so re-enabling recaptures.
+    if (!on && wasOn && eye._sacRestQuat && eye._lookAtTargetId == null) {
+      const em = eye.getModelSpaceMatrix();
+      const P = new THREE.Vector3(em[12], em[13], em[14]);
+      const s = Math.hypot(em[0], em[1], em[2]) || 1;
+      const out = new THREE.Matrix4().compose(P, eye._sacRestQuat, new THREE.Vector3(s, s, s));
+      eye.setModelSpaceMatrix(out.elements);
+      eye.updateMatrices(this._camera);
+      this.render();
+    }
+    if (!on) eye._sacRestQuat = null;
   }
 
   isSaccading(eyeId) {
@@ -2263,6 +2334,17 @@ class Scene {
   getSaccadeAmp(eyeId) {
     const eye = this._meshes.find((m) => m.getID() === eyeId);
     return eye ? (eye._saccadeAmp ?? 5) : 5;
+  }
+
+  // Saccade speed: scales how often the eye darts (higher = more frequent flicks).
+  setSaccadeSpeed(eyeId, speed) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    if (eye) eye._saccadeSpeed = Math.max(0.01, speed);
+  }
+
+  getSaccadeSpeed(eyeId) {
+    const eye = this._meshes.find((m) => m.getID() === eyeId);
+    return eye ? (eye._saccadeSpeed ?? 1) : 1;
   }
 
   isMirrored(sourceId) {
@@ -2310,6 +2392,37 @@ class Scene {
   getParentMesh(childId) {
     const child = this._meshes.find((m) => m.getID() === childId);
     return (child && child._parentMesh) || null;
+  }
+
+  // ── Outliner transform fields (LOCAL transform, relative to parent) ──────────
+  // Returns the selected object's local Translate / Rotate(°) / Scale, or null.
+  getTransformTRS(id) {
+    const m = this._meshes.find((x) => x.getID() === id);
+    if (!m) return null;
+    const M = new THREE.Matrix4().fromArray(m.getMatrix());
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    M.decompose(p, q, s);
+    const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+    const R2D = 180 / Math.PI;
+    return { t: [p.x, p.y, p.z], r: [e.x * R2D, e.y * R2D, e.z * R2D], s: [s.x, s.y, s.z] };
+  }
+
+  // Set one local-transform component. type: 't'|'r'|'s', axis: 0|1|2.
+  setTransformComponent(id, type, axis, value) {
+    const m = this._meshes.find((x) => x.getID() === id);
+    if (!m) return;
+    const trs = this.getTransformTRS(id);
+    if (!trs) return;
+    if (!(type in trs) || axis < 0 || axis > 2 || !Number.isFinite(value)) return;
+    trs[type][axis] = value;
+    const D2R = Math.PI / 180;
+    const p = new THREE.Vector3(trs.t[0], trs.t[1], trs.t[2]);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(trs.r[0] * D2R, trs.r[1] * D2R, trs.r[2] * D2R, 'XYZ'));
+    const sx = trs.s[0] || 1e-4, sy = trs.s[1] || 1e-4, sz = trs.s[2] || 1e-4; // avoid zero scale (degenerate matrix)
+    const M = new THREE.Matrix4().compose(p, q, new THREE.Vector3(sx, sy, sz));
+    m.setMatrix(M.elements);
+    m.updateMatrices(this._camera);
+    this.render();
   }
 
   addGrid3x3() {
