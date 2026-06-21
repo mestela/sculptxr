@@ -2425,42 +2425,90 @@ class Scene {
     this.render();
   }
 
-  // Bake (freeze) the LOCAL scale into the vertex positions: the mesh looks identical
-  // but its Scale becomes 1 (translation + rotation kept in the matrix). PROTOTYPE:
-  // active mesh-level only; does NOT yet transform blendshape deltas, so don't bake a
-  // mesh that has shapes. Undo is the inverse scale (no full vertex snapshot).
+  // Bake (freeze) the LOCAL scale into the geometry: the mesh looks identical but its
+  // Scale becomes 1 (translation + rotation kept in the matrix). Maya "freeze scale".
   bakeScale(id) {
     const mesh = this._meshes.find((x) => x.getID() === id);
     if (!mesh) return;
-    const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
     const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
-    M.decompose(t, q, s);
+    new THREE.Matrix4().fromArray(mesh.getMatrix()).decompose(t, q, s);
     if (Math.abs(s.x - 1) < 1e-6 && Math.abs(s.y - 1) < 1e-6 && Math.abs(s.z - 1) < 1e-6) return;
+    const B = new THREE.Matrix4().compose(new THREE.Vector3(), new THREE.Quaternion(), s); // bake scale
+    const K = new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1));               // keep T·R
+    this._bakeTransform(mesh, B, K);
+  }
 
+  // Apply ALL local transforms (translation + rotation + scale) into the geometry,
+  // leaving the matrix identity. Note: baking rotation can misalign the local
+  // symmetry plane (it stays local x=0); bake while upright.
+  bakeAllTransforms(id) {
+    const mesh = this._meshes.find((x) => x.getID() === id);
+    if (!mesh) return;
+    const B = new THREE.Matrix4().fromArray(mesh.getMatrix());
+    const ident = new THREE.Matrix4();
+    if (B.equals(ident)) return;
+    this._bakeTransform(mesh, B, ident);
+  }
+
+  // Bake matrix B into the geometry (all multires levels + blendshape base/deltas) and
+  // set the LOCAL matrix to K (where K·B == the old matrix, so the mesh looks identical).
+  // Undo applies B⁻¹ and restores the old matrix — no full vertex snapshot.
+  _bakeTransform(mesh, B, K) {
     const Mold = mesh.getMatrix().slice();
-    const Mnew = new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1)).elements;
+    const Binv = new THREE.Matrix4().copy(B).invert();
+    const cam = this._camera;
 
-    const applyScale = (sx, sy, sz, matElems) => {
-      const vAr = mesh.getVertices();
-      for (let i = 0; i < vAr.length; i += 3) { vAr[i] *= sx; vAr[i + 1] *= sy; vAr[i + 2] *= sz; }
-      const c = mesh.getCenter();
-      c[0] *= sx; c[1] *= sy; c[2] *= sz;
+    const apply = (Bmat, matElems) => {
+      const lin = new THREE.Matrix3().setFromMatrix4(Bmat); // linear part (for delta VECTORS)
+      const v = new THREE.Vector3();
+      const xformPositions = (arr) => {
+        for (let i = 0; i < arr.length; i += 3) {
+          v.set(arr[i], arr[i + 1], arr[i + 2]).applyMatrix4(Bmat);
+          arr[i] = v.x; arr[i + 1] = v.y; arr[i + 2] = v.z;
+        }
+      };
+      const xformVectors = (arr) => {
+        for (let i = 0; i < arr.length; i += 3) {
+          v.set(arr[i], arr[i + 1], arr[i + 2]).applyMatrix3(lin);
+          arr[i] = v.x; arr[i + 1] = v.y; arr[i + 2] = v.z;
+        }
+      };
+
+      const levels = mesh._meshes && mesh._meshes.length ? mesh._meshes : [mesh];
+      for (const lvl of levels) xformPositions(lvl.getVertices());
+
+      // Blendshapes: base is positions, deltas are vectors (translation cancels).
+      const tr = window._animationRegistry && window._animationRegistry.tracks
+        && window._animationRegistry.tracks.get(mesh.getID());
+      if (tr) {
+        if (tr.baseShape) xformPositions(tr.baseShape);
+        if (tr.blendshapes) for (const d of tr.blendshapes.values()) xformVectors(d);
+      }
+
       mesh.setMatrix(matElems);
-      mesh.updateGeometry();   // rebuild octree / normals / bbox + draw arrays
-      // Push the new positions to the THREE BufferGeometry (updateGeometry alone does
-      // NOT — the sculpt path does this via updateMeshBuffers).
+      // Skip the updateGeometry blendshape interception — we handled the deltas above.
+      const prevApplying = tr && tr._applyingBS;
+      if (tr) tr._applyingBS = true;
+      const lv = mesh._meshes && mesh._meshes.length ? mesh._meshes : [mesh];
+      for (const lvl of lv) lvl.updateGeometry();
+      if (tr) tr._applyingBS = prevApplying;
+
+      // Recompute the center from the baked geometry bounds (don't transform it by hand
+      // — the wrapper + level share the array, so manual baking double-applies). This is
+      // the center the gizmo/picking anchor to.
+      if (mesh.updateCenter) mesh.updateCenter();
       if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
-      mesh.updateMatrices(this._camera);
+      mesh.updateMatrices(cam);
     };
 
-    applyScale(s.x, s.y, s.z, Mnew);
+    apply(B, K.elements);
     this.render();
 
     const sm = this.getStateManager && this.getStateManager();
     if (sm && sm.pushStateCustom) {
       sm.pushStateCustom(
-        () => { applyScale(1 / s.x, 1 / s.y, 1 / s.z, Mold); this.render(); },
-        () => { applyScale(s.x, s.y, s.z, Mnew); this.render(); }
+        () => { apply(Binv, Mold); this.render(); },
+        () => { apply(B, K.elements); this.render(); }
       );
     }
   }

@@ -1101,7 +1101,10 @@ export function buildSectionHTML_scene(main) {
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
-      <button class="mm-action-btn" id="mm-bake-scale" title="Freeze scale into the geometry (Scale → 1)">Bake scale</button>
+      <div class="mm-btn-pair">
+        <button class="mm-action-btn" id="mm-bake-scale" title="Freeze scale into the geometry (Scale → 1)">Bake scale</button>
+        <button class="mm-action-btn" id="mm-bake-all" title="Freeze all transforms into the geometry (matrix → identity)">Apply all</button>
+      </div>
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
@@ -2391,6 +2394,11 @@ export function wireSectionScene(el, main, repaintFn) {
     const sel = selOne(); if (!sel) return;
     main.bakeScale?.(sel.getID());
     main.render?.(); repaintFn(); // refresh the Scale fields (now 1)
+  });
+  el.querySelector('#mm-bake-all')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.bakeAllTransforms?.(sel.getID());
+    main.render?.(); repaintFn(); // Pos/Rot/Scale now identity
   });
 
   // Transform fields (local Pos/Rot/Scale). Edit writes the one component; clicking a
