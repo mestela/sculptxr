@@ -2425,6 +2425,46 @@ class Scene {
     this.render();
   }
 
+  // Bake (freeze) the LOCAL scale into the vertex positions: the mesh looks identical
+  // but its Scale becomes 1 (translation + rotation kept in the matrix). PROTOTYPE:
+  // active mesh-level only; does NOT yet transform blendshape deltas, so don't bake a
+  // mesh that has shapes. Undo is the inverse scale (no full vertex snapshot).
+  bakeScale(id) {
+    const mesh = this._meshes.find((x) => x.getID() === id);
+    if (!mesh) return;
+    const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
+    const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    M.decompose(t, q, s);
+    if (Math.abs(s.x - 1) < 1e-6 && Math.abs(s.y - 1) < 1e-6 && Math.abs(s.z - 1) < 1e-6) return;
+
+    const Mold = mesh.getMatrix().slice();
+    const Mnew = new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1)).elements;
+
+    const applyScale = (sx, sy, sz, matElems) => {
+      const vAr = mesh.getVertices();
+      for (let i = 0; i < vAr.length; i += 3) { vAr[i] *= sx; vAr[i + 1] *= sy; vAr[i + 2] *= sz; }
+      const c = mesh.getCenter();
+      c[0] *= sx; c[1] *= sy; c[2] *= sz;
+      mesh.setMatrix(matElems);
+      mesh.updateGeometry();   // rebuild octree / normals / bbox + draw arrays
+      // Push the new positions to the THREE BufferGeometry (updateGeometry alone does
+      // NOT — the sculpt path does this via updateMeshBuffers).
+      if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+      mesh.updateMatrices(this._camera);
+    };
+
+    applyScale(s.x, s.y, s.z, Mnew);
+    this.render();
+
+    const sm = this.getStateManager && this.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      sm.pushStateCustom(
+        () => { applyScale(1 / s.x, 1 / s.y, 1 / s.z, Mold); this.render(); },
+        () => { applyScale(s.x, s.y, s.z, Mnew); this.render(); }
+      );
+    }
+  }
+
   addGrid3x3() {
     var mesh = new Multimesh(Primitives.createPlaneGrid(this._gl, 3, 3));
     mesh.normalizeSize();

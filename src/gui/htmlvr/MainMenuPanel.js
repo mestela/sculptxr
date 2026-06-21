@@ -1101,6 +1101,7 @@ export function buildSectionHTML_scene(main) {
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
+      <button class="mm-action-btn" id="mm-bake-scale" title="Freeze scale into the geometry (Scale → 1)">Bake scale</button>
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
@@ -2384,6 +2385,12 @@ export function wireSectionScene(el, main, repaintFn) {
   wireSlider(el.querySelector('#mm-rig-sac-speed'), el.querySelector('#mm-rig-sac-speed-val'), (v) => {
     const sel = selOne(); if (!sel) return;
     main.setSaccadeSpeed?.(sel.getID(), v);
+  });
+
+  el.querySelector('#mm-bake-scale')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.bakeScale?.(sel.getID());
+    main.render?.(); repaintFn(); // refresh the Scale fields (now 1)
   });
 
   // Transform fields (local Pos/Rot/Scale). Edit writes the one component; clicking a
