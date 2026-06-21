@@ -18,6 +18,8 @@
 // setBlendshapeWeight, deleteBlendshape, renameBlendshape, enter/exit edit mode)
 // against the active mesh (main.getMesh()).
 
+import { arkitByRegion } from '../editing/ArkitBlendshapes.js';
+
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
   plus:  '\uf067', // fa-plus
@@ -67,6 +69,9 @@ export default class BlendshapeStackPanel {
 
     // Hovered element { name, part } for hover highlights ('row'|'eye'|'lock'|'slider').
     this._hover = null;
+
+    // ARKit name picker overlay (null = closed). When open it captures all input.
+    this._picker = null;
   }
 
   // Mount the canvas into a host DOM element (a wa-tab-panel for desktop).
@@ -90,6 +95,14 @@ export default class BlendshapeStackPanel {
     window.addEventListener('pointercancel', () => this._pointerUp());
     this._canvas.addEventListener('pointerleave', () => this.clearHover());
     this._canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Mouse wheel scrolls the ARKit picker overlay (otherwise it scrolls the sidebar).
+    this._canvas.addEventListener('wheel', (e) => {
+      if (!this._picker) return;
+      e.preventDefault();
+      const pk = this._picker;
+      pk.scroll = Math.max(0, Math.min(pk.maxScroll, pk.scroll + e.deltaY));
+      this.draw();
+    }, { passive: false });
 
     // Re-layout when the sidebar/panel changes width.
     this._ro = new ResizeObserver(() => this._relayout());
@@ -168,18 +181,25 @@ export default class BlendshapeStackPanel {
     return TOOLBAR_H + n * ROW_H + BASE_H + PAD;
   }
 
-  _relayout() {
-    if (!this._host) return;
-    const w = this._host.clientWidth || 280;
-    this._cssW = w;
-    this._cssH = this._contentHeight();
-    this._dpr  = window.devicePixelRatio || 1;
+  // Desktop canvas height while the picker overlay is open (it needs room to show the
+  // list; the layer-stack content height is far too short when there are few layers).
+  _pickerCanvasH() {
+    return Math.min(440, Math.max(220, Math.floor((window.innerHeight || 800) * 0.6)));
+  }
 
-    this._canvas.style.height = this._cssH + 'px';
+  _applyCanvasSize(cssH) {
+    this._cssH = cssH;
+    this._dpr  = window.devicePixelRatio || 1;
+    this._canvas.style.height = cssH + 'px';
     this._canvas.width  = Math.round(this._cssW * this._dpr);
     this._canvas.height = Math.round(this._cssH * this._dpr);
     this._ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
+  }
 
+  _relayout() {
+    if (!this._host) return;
+    this._cssW = this._host.clientWidth || 280;
+    this._applyCanvasSize(this._picker ? this._pickerCanvasH() : this._contentHeight());
     this.draw();
   }
 
@@ -244,6 +264,8 @@ export default class BlendshapeStackPanel {
 
     // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
     this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
+
+    if (this._picker) this._drawPicker(ctx, W, H);
   }
 
   _drawToolbar(ctx, W) {
@@ -414,6 +436,7 @@ export default class BlendshapeStackPanel {
 
   // ── Point-based core (shared by mouse/pen/touch and VR ray) ──────────────────
   _pointerDown(p, solo = false) {
+    if (this._picker) { this._pickerDown(p); return; }
     const btn = this._hitToolbar(p);
     if (btn) { this._onToolbar(btn.id); return; }
 
@@ -448,6 +471,7 @@ export default class BlendshapeStackPanel {
   }
 
   _pointerMove(p) {
+    if (this._picker) { this._pickerMove(p); return; }
     if (this._dragName) {
       const row = this._rows.find(r => r.name === this._dragName);
       if (!row) return;
@@ -478,6 +502,7 @@ export default class BlendshapeStackPanel {
   clearHover() { if (this._hover) { this._hover = null; this.draw(); } }
 
   _pointerUp() {
+    if (this._picker) { this._pickerUp(); return; }
     if (!this._dragName) return;
     const name = this._dragName;
     const oldW = this._dragStartW;
@@ -510,21 +535,188 @@ export default class BlendshapeStackPanel {
     if (!mesh) return;
     const reg = window._animationRegistry;
     if (id === 'new') {
-      // No VR keyboard yet — default-name, rename later (dblclick).
-      const track = reg.tracks.get(mesh.getID());
-      const existing = track?.blendshapes ? [...track.blendshapes.keys()] : [];
-      let i = existing.length + 1;
-      while (existing.includes(`Layer ${i}`)) i++;
-      const name = `Layer ${i}`;
-      reg.createBlendshape(mesh, name);
-      this._afterStructureChange(); // row count changed → resize canvas (desktop)
-      this._selectLayer(name);      // make it active + sculptable (weight 1) immediately
+      this._openPicker();           // ARKit name picker (with a Blank-layer quick option)
     } else if (id === 'del') {
       const name = track_editing(reg, mesh);
       if (!name) return;
       reg.deleteBlendshape(mesh, name);
       this._afterStructureChange();
     }
+  }
+
+  // ── ARKit name picker ─────────────────────────────────────────────────────────
+  // Create an unnamed "Layer N" (the old quick-new behaviour); user renames via dblclick.
+  _createBlankLayer() {
+    const mesh = this._mesh();
+    if (!mesh) return null;
+    const reg = window._animationRegistry;
+    const track = reg.tracks.get(mesh.getID());
+    const existing = track?.blendshapes ? [...track.blendshapes.keys()] : [];
+    let i = existing.length + 1;
+    while (existing.includes(`Layer ${i}`)) i++;
+    const name = `Layer ${i}`;
+    reg.createBlendshape(mesh, name);
+    this._afterStructureChange();
+    this._selectLayer(name);
+    return name;
+  }
+
+  _openPicker() {
+    if (!this._mesh()) return;
+    this._picker = { scroll: 0, items: [], contentH: 0, maxScroll: 0, listTop: 0,
+                     pressActive: false, pressItem: null, pressY: 0, scrollStart: 0,
+                     dragMoved: false, closeHit: false, hover: null };
+    this._buildPickerItems();
+    if (this._host) this._relayout(); else this.draw(); // desktop: grow canvas to fit list
+  }
+
+  _closePicker() {
+    this._picker = null;
+    if (this._host) this._relayout(); else this.draw(); // desktop: restore content height
+  }
+
+  // Build the scrollable content list (content-space y). Marks already-created names.
+  _buildPickerItems() {
+    const pk = this._picker;
+    const track = this._track();
+    const have = new Set(track?.blendshapes ? track.blendshapes.keys() : []);
+    const HEAD = 20, ENT = 24;
+    const items = [];
+    let cy = 0;
+    items.push({ kind: 'blank', label: '+  Blank layer', cy0: cy, cy1: cy + ENT }); cy += ENT + 4;
+    for (const { region, entries } of arkitByRegion()) {
+      items.push({ kind: 'header', label: region, cy0: cy, cy1: cy + HEAD }); cy += HEAD;
+      for (const e of entries) {
+        items.push({ kind: 'entry', name: e.name, category: e.category,
+                     exists: have.has(e.name), cy0: cy, cy1: cy + ENT }); cy += ENT;
+      }
+    }
+    pk.items = items;
+    pk.contentH = cy;
+  }
+
+  _drawPicker(ctx, W, H) {
+    const pk = this._picker;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
+
+    const TITLE_H = 28;
+    ctx.fillStyle = '#252525'; ctx.fillRect(0, 0, W, TITLE_H);
+    ctx.fillStyle = '#e6e6e6'; ctx.font = '600 13px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('Add shape', PAD, TITLE_H / 2);
+    ctx.fillStyle = pk.hover === 'close' ? '#fff' : '#bbb';
+    ctx.font = '900 14px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
+    ctx.fillText(FA.close, W - PAD - 8, TITLE_H / 2 + 0.5);
+    pk.closeRect = { x0: W - PAD - 22, x1: W, y0: 0, y1: TITLE_H };
+    ctx.textAlign = 'left';
+
+    const listTop = TITLE_H;
+    pk.listTop = listTop;
+    const viewH = H - listTop;
+    pk.maxScroll = Math.max(0, pk.contentH - viewH);
+    pk.scroll = Math.max(0, Math.min(pk.scroll, pk.maxScroll));
+
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, listTop, W, viewH); ctx.clip();
+    ctx.fillStyle = '#1c1c1c'; ctx.fillRect(0, listTop, W, viewH);
+
+    const catColor = { symmetric: '#3b82f6', center: '#888', directional: '#f2b53c' };
+    for (const it of pk.items) {
+      const y0 = listTop + it.cy0 - pk.scroll;
+      const y1 = listTop + it.cy1 - pk.scroll;
+      if (y1 < listTop || y0 > H) continue;
+      const midY = (y0 + y1) / 2;
+      if (it.kind === 'header') {
+        ctx.fillStyle = '#0f0f0f'; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
+        ctx.fillStyle = '#7a8aa0'; ctx.font = '700 10px sans-serif';
+        ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ctx.fillText(it.label.toUpperCase(), PAD, midY);
+        continue;
+      }
+      if (pk.pressItem === it && !pk.dragMoved) {
+        ctx.fillStyle = 'rgba(59,130,246,0.18)'; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
+      }
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      if (it.kind === 'blank') {
+        ctx.fillStyle = '#cfe1ff'; ctx.font = '600 12px sans-serif';
+        ctx.fillText(it.label, PAD, midY);
+        continue;
+      }
+      const col = catColor[it.category] || '#888';
+      ctx.fillStyle = it.exists ? '#3a3a3a' : col;
+      ctx.beginPath(); ctx.arc(PAD + 3, midY, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = it.exists ? '#5a5a5a' : '#ddd';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(it.name, PAD + 14, midY);
+      if (it.exists) {
+        ctx.fillStyle = '#5a9a5a'; ctx.font = '900 11px "Font Awesome 6 Free"';
+        ctx.textAlign = 'right'; ctx.fillText('', W - PAD, midY + 0.5);
+        ctx.textAlign = 'left';
+      }
+    }
+    ctx.restore();
+
+    if (pk.maxScroll > 0) {
+      const trackH = viewH;
+      const thumbH = Math.max(24, trackH * viewH / pk.contentH);
+      const thumbY = listTop + (trackH - thumbH) * (pk.scroll / pk.maxScroll);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      this._roundRect(ctx, W - 5, thumbY, 3, thumbH, 1.5); ctx.fill();
+    }
+  }
+
+  _pickerItemAt(p) {
+    const pk = this._picker;
+    const cr = pk.closeRect;
+    if (cr && p.x >= cr.x0 && p.x <= cr.x1 && p.y >= cr.y0 && p.y <= cr.y1) return { kind: 'close' };
+    if (p.y < pk.listTop) return null;
+    const contentY = p.y - pk.listTop + pk.scroll;
+    return pk.items.find(it => it.kind !== 'header' && contentY >= it.cy0 && contentY < it.cy1) || null;
+  }
+
+  _pickerDown(p) {
+    const pk = this._picker;
+    const it = this._pickerItemAt(p);
+    pk.closeHit  = !!(it && it.kind === 'close');
+    pk.pressItem = (it && it.kind !== 'close') ? it : null;
+    pk.pressActive = true; pk.pressY = p.y; pk.scrollStart = pk.scroll; pk.dragMoved = false;
+    this.draw();
+  }
+
+  _pickerMove(p) {
+    const pk = this._picker;
+    if (pk.pressActive) {
+      const dy = p.y - pk.pressY;
+      if (Math.abs(dy) > 6) pk.dragMoved = true;
+      if (pk.dragMoved && pk.maxScroll > 0) pk.scroll = Math.max(0, Math.min(pk.maxScroll, pk.scrollStart - dy));
+      this.draw();
+    } else {
+      const it = this._pickerItemAt(p);
+      const h = it ? (it.kind === 'close' ? 'close' : null) : null;
+      if (h !== pk.hover) { pk.hover = h; this.draw(); }
+    }
+  }
+
+  _pickerUp() {
+    const pk = this._picker;
+    const wasDrag = pk.dragMoved, closeHit = pk.closeHit, item = pk.pressItem;
+    pk.pressActive = false; pk.pressItem = null; pk.closeHit = false;
+    if (wasDrag) { this.draw(); return; }
+    if (closeHit) { this._closePicker(); return; }
+    if (item) { this._pickerActivate(item); return; }
+    this.draw();
+  }
+
+  _pickerActivate(it) {
+    const mesh = this._mesh();
+    if (!mesh) { this._closePicker(); return; }
+    if (it.kind === 'blank') { this._createBlankLayer(); this._closePicker(); return; }
+    // ARKit entry — if it already exists just select it, else create it.
+    if (it.exists) { this._selectLayer(it.name); this._closePicker(); return; }
+    window._animationRegistry.createBlendshape(mesh, it.name);
+    this._afterStructureChange();
+    this._selectLayer(it.name);
+    this._closePicker();
   }
 
   // Layer count changed: desktop resizes the canvas to the new row count (which
