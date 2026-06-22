@@ -25,6 +25,7 @@ import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
 import Remesh from './editing/Remesh.js';
 import './editing/Geodesic.js'; // registers window._geoViz test harness; posing/rigging uses computeGeodesicField
+import './editing/GeodesicPose.js'; // POC #2a geodesic deform — window._poseArm()
 import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
