@@ -24,6 +24,7 @@ import MeshStatic from './mesh/meshStatic/MeshStatic.js';
 import WebGLCaps from './render/WebGLCaps.js';
 import GuiXR from './gui/GuiXR.js';
 import Remesh from './editing/Remesh.js';
+import './editing/Geodesic.js'; // registers window._geoViz test harness; posing/rigging uses computeGeodesicField
 import VRMenu from './drawables/VRMenu.js';
 import VRLaser from './drawables/VRLaser.js';
 import GazeTooltip from './drawables/GazeTooltip.js';
