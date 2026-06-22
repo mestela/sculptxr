@@ -32,6 +32,7 @@ import EdgeCreate from './EdgeCreate.js';
 import CutTool from './CutTool.js';
 import Extrude from './Extrude.js';
 import Inset from './Inset.js';
+import GeodesicPoseTool from './GeodesicPoseTool.js';
 
 var Tools = [];
 
@@ -67,6 +68,7 @@ Tools[Enums.Tools.CUT_TOOL] = CutTool;
 Tools[Enums.Tools.SLIDE] = Slide;
 Tools[Enums.Tools.EXTRUDE] = Extrude;
 Tools[Enums.Tools.INSET] = Inset;
+Tools[Enums.Tools.GEODESIC_POSE] = GeodesicPoseTool;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -100,5 +102,6 @@ Tools[Enums.Tools.CUT_TOOL].uiName = 'sculptCutTool';
 Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 Tools[Enums.Tools.EXTRUDE].uiName = 'sculptExtrude';
 Tools[Enums.Tools.INSET].uiName = 'sculptInset';
+Tools[Enums.Tools.GEODESIC_POSE].uiName = 'sculptGeodesicPose';
 
 export default Tools;

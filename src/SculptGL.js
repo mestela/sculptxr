@@ -1644,9 +1644,6 @@ class SculptGL extends Scene {
       return;
     }
 
-    // Geodesic pose POC takes over pointer input while armed (window._poseArm()).
-    if (window._poseArmed) return;
-
     // Prevent mouse-down from interfering with active VR stroke
     if (this._vrSculpting) return;
 

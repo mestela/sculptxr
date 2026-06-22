@@ -31,6 +31,7 @@ import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
+import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
@@ -1385,37 +1386,6 @@ export function buildSectionHTML_rendering(main) {
 
 // Tool definitions mirrored from BrushPanel — single source of truth kept here
 // so the Sculpting tab and the BrushPanel grid stay in sync.
-const SCULPT_TOOLS = [
-  { id: Enums.Tools.BRUSH,        label: 'Brush'     },
-  { id: Enums.Tools.INFLATE,      label: 'Inflate'   },
-  { id: Enums.Tools.FLATTEN,      label: 'Flatten'   },
-  { id: Enums.Tools.PINCH,        label: 'Pinch'     },
-  { id: Enums.Tools.CREASE,       label: 'Crease'    },
-  { id: Enums.Tools.SMOOTH,       label: 'Smooth'    },
-  { id: Enums.Tools.RELAX,        label: 'Relax'     },
-  { id: Enums.Tools.PAINT,        label: 'Paint'     },
-  { id: Enums.Tools.MOVE,         label: 'Move'      },
-  { id: Enums.Tools.GRAB,         label: 'Grab'      },
-  { id: Enums.Tools.DRAG,         label: 'Drag'      },
-  { id: Enums.Tools.SLIDE,        label: 'Slide'     },
-  { id: Enums.Tools.TWIST,        label: 'Twist'     },
-  { id: Enums.Tools.TRANSFORM_VR, label: 'Transform' },
-  { id: Enums.Tools.MASKING,      label: 'Masking'   },
-];
-const MESH_TOOLS = [
-  { id: Enums.Tools.CUT_TOOL,         label: 'Cut'        },
-  { id: Enums.Tools.EXTRUDE,          label: 'Extrude'    },
-  { id: Enums.Tools.INSET,            label: 'Inset'      },
-  { id: Enums.Tools.DELETE_FACE,      label: 'Del Face'   },
-  { id: Enums.Tools.FILL_HOLE,        label: 'Fill Hole'  },
-  { id: Enums.Tools.DISSOLVE_EDGE,    label: 'Dis Edge'   },
-  { id: Enums.Tools.SPLIT_FACE,       label: 'Split Face' },
-  { id: Enums.Tools.SPIN_EDGE,        label: 'Spin Edge'  },
-  { id: Enums.Tools.COLLAPSE_EDGE,    label: 'Col Edge'   },
-  { id: Enums.Tools.DISSOLVE_VERTEX,  label: 'Dis Vert'   },
-  { id: Enums.Tools.WELD,             label: 'Weld'       },
-];
-
 // Helper: encode a 0-1 rgb vec3 component as two hex digits.
 const _toHex2 = v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0');
 

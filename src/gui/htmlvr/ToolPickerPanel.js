@@ -13,6 +13,7 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import Enums from '../../misc/Enums.js';
+import { SCULPT_TOOLS } from './toolLists.js';
 
 // ── Tool data ────────────────────────────────────────────────────────────────
 const TOOL_TINTS = {
@@ -25,23 +26,6 @@ const TOOL_TINTS = {
 };
 const toolTint = (id) => TOOL_TINTS[id] ?? '#313244';
 
-const SCULPT_TOOLS = [
-  { id: Enums.Tools.BRUSH,        label: 'Brush'     },
-  { id: Enums.Tools.INFLATE,      label: 'Inflate'   },
-  { id: Enums.Tools.FLATTEN,      label: 'Flatten'   },
-  { id: Enums.Tools.PINCH,        label: 'Pinch'     },
-  { id: Enums.Tools.CREASE,       label: 'Crease'    },
-  { id: Enums.Tools.SMOOTH,       label: 'Smooth'    },
-  { id: Enums.Tools.RELAX,        label: 'Relax'     },
-  { id: Enums.Tools.PAINT,        label: 'Paint'     },
-  { id: Enums.Tools.MOVE,         label: 'Move'      },
-  { id: Enums.Tools.GRAB,         label: 'Grab'      },
-  { id: Enums.Tools.DRAG,         label: 'Drag'      },
-  { id: Enums.Tools.SLIDE,        label: 'Slide'     },
-  { id: Enums.Tools.TWIST,        label: 'Twist'     },
-  { id: Enums.Tools.TRANSFORM_VR, label: 'Transform' },
-  { id: Enums.Tools.MASKING,      label: 'Masking'   },
-];
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `

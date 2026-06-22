@@ -66,7 +66,7 @@ class SculptManager {
     // Low-poly / topology edit tools (DELETE_FACE..INSET) auto-show wireframe so
     // you can see the edges you're editing; restore the prior state on leaving.
     {
-      const isLowPoly = id >= Enums.Tools.DELETE_FACE;
+      const isLowPoly = id >= Enums.Tools.DELETE_FACE && id <= Enums.Tools.INSET;
       const meshes = this._main.getMeshes?.() ?? [];
       if (isLowPoly && !this._wfForcedByEdit) {
         this._wfSavedState = !!this._main.getMesh?.()?.getShowWireframe?.();
