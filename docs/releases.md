@@ -1,3 +1,15 @@
+# v3.1.0
+Posing in VR — a new **Pose** tool that bends a limb with two anchors and a 6DOF controller grab, built on a new on-mesh geodesic engine. First step of the rigging/posing track (rigless posing before skeletons).
+
+## Pose tool
+- **Feature**: **Geodesic Pose tool** (`src/editing/tools/GeodesicPoseTool.js`). Drop two anchors on the surface — **A** (where the falloff starts / the locked side) and **B** (where it ends / the moved side) — and the band of surface between them deforms with a smooth geodesic falloff. Distances are measured *across the mesh surface* (geodesic), not through space, so the falloff follows the form instead of leaking across gaps.
+- **Feature**: **VR 6DOF grab.** Trigger-press to place A, then press-and-hold on B and **move/twist the controller** — the band follows your hand as a single bone (linear-blend skinning): behind A stays locked, beyond B rides rigidly with the hand, the middle blends. Aimed with the laser like the Transform tool. Desktop drives the same corridor via a click-A / click-drag-B bend.
+- **Feature**: **Symmetry.** With X-symmetry on, the A/B corridor is mirrored across the mesh plane and the matching mirrored motion is applied to the other side — pose both shoulders at once.
+- **Change**: **Lateral falloff limit.** A short corridor at a junction (e.g. a shoulder) no longer floods the whole side of the body; the influence is bounded to the limb around the A→B line, with the width auto-scaling to the corridor length.
+
+## Geodesic engine
+- **Foundation**: **On-surface geodesic distance field** (`src/editing/Geodesic.js`) — Dijkstra over the mesh surface, the substrate for the Pose tool's falloff and reused toward auto skin-weights in the rigging phase.
+
 # v3.0.0
 Rigging & performance-capture foundations — a full ARKit blendshape pipeline, an eye rig, freeze-transform tools, and a live transform inspector, all built on the parent-aware scene hierarchy.
 

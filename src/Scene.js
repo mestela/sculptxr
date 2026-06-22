@@ -7199,8 +7199,8 @@ class Scene {
       const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
       if (toolIndex === Enums.Tools.MOVE) {
         useVolume = true;
-      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL) {
-        useVolume = false;
+      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL || toolIndex === Enums.Tools.GEODESIC_POSE) {
+        useVolume = false; // pose tool aims A/B with the laser, like Transform
       }
 
       if (useVolume) {

@@ -1,4 +1,4 @@
-# SculptXR (v2.9.9)
+# SculptXR (v3.1.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,8 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.1.0**: **Posing in VR**: a new **Pose** tool — drop two anchors on the surface (A locked, B moved) and bend the band between them with a 6DOF controller grab (the limb rides your hand as a single bone). Built on a new on-mesh geodesic distance engine; supports X-symmetry and bounds a short corridor to the limb instead of flooding the whole side. First step of the rigging/posing track.
+*   **v3.0.0**: **Rigging & performance-capture foundations**: a full ARKit blendshape pipeline (52-shape name library, symmetric split/combine), an eye rig (look-at + saccades + mirror socket), bake/freeze transforms, and a live outliner transform inspector — all on the parent-aware scene hierarchy.
 *   **v2.9.9**: **Eye-rig foundation + fixes**: scene-hierarchy Phase 0 — meshes can be parented and still sculpt/move/gizmo correctly in VR (parent-aware picking + transform tools). Also fixes a long-standing duplicate "ghost" transform gizmo in VR.
 *   **v2.9.0**: **Blendshape panel polish**: per-layer lock (Photoshop-style) with the Base cage locked by default (can't accidentally sculpt/corrupt the cage), hover highlights across the panel rows + timeline channel gutter, and a half-size VR panel (canvas px + plane both halved, so elements stay the same physical size).
 *   **v2.8.1**: **Blendshape data-safety**: a corruption backstop that refuses to write a layer's delta unless it's at weight 1 (catches stroke paths the start() gate misses), plus Backup/Restore Shapes buttons in the VR Settings menu (undo-independent safety net, now reachable standalone).

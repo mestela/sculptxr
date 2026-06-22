@@ -145,6 +145,7 @@ var TR = {
   sculptSnapWeldCenter: 'Snap & Weld to Center',
   sculptExtrude: 'Extrude',
   sculptInset: 'Inset',
+  sculptGeodesicPose: 'Pose',
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',
