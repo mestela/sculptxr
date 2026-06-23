@@ -1,4 +1,4 @@
-# SculptXR (v3.2.0)
+# SculptXR (v3.3.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.3.0**: **Outliner overhaul**: a density + interaction pass on the Scene-tab outliner (desktop + VR) — the mesh list flows compactly instead of reserving a big block, lock moved to a toolbar padlock and mirror folded into the rig row, per-component bake buttons inline with each Pos/Rot/Scale row, typed transform edits are now undoable, the VR numpad parents to the panel, and deleting an object no longer blanks the controls.
 *   **v3.2.0**: **Detailing at scale**: a sweep of fixes for working zoomed-in on fine detail in VR — brushes no longer over-reach their radius, the cursor/strokes stay on the surface and depth precision tracks the grip-scale, matcap shading is fixed under non-uniform scale and no longer flips/shimmers when rotating, and the brush cursor stops flipping depth. Plus a maintain-length mode for the Pose tool (A button) and a clean-up of mirror-eye deletion.
 *   **v3.1.0**: **Posing in VR**: a new **Pose** tool — drop two anchors on the surface (A locked, B moved) and bend the band between them with a 6DOF controller grab (the limb rides your hand as a single bone). Built on a new on-mesh geodesic distance engine; supports X-symmetry and bounds a short corridor to the limb instead of flooding the whole side. First step of the rigging/posing track.
 *   **v3.0.0**: **Rigging & performance-capture foundations**: a full ARKit blendshape pipeline (52-shape name library, symmetric split/combine), an eye rig (look-at + saccades + mirror socket), bake/freeze transforms, and a live outliner transform inspector — all on the parent-aware scene hierarchy.

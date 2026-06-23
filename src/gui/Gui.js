@@ -865,7 +865,7 @@ class Gui {
     // Pass a no-op lightRepaintFn so wireSelect doesn't call rebuild() when
     // toggling a dropdown open — that would replace innerHTML and immediately
     // close the dropdown. wireSelect already updates label/active-class directly.
-    wireSectionScene(panelEl, main, rebuild, () => {});
+    wireSectionScene(panelEl, main, rebuild, null); // desktop sidebar: no VR panel → numpad uses the DOM overlay
   }
 
   _buildDesktopRendering(panelEl) {

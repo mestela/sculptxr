@@ -1,3 +1,18 @@
+# v3.3.0
+Outliner overhaul — a density + interaction pass on the Scene-tab outliner (desktop + VR), so more fits on screen and the transform/rig controls are quicker to reach.
+
+## Layout & density
+- **Change**: **Compacted the outliner.** The mesh list no longer reserves a big fixed block (was a 248px floor) — it flows at content height, so the transform and rig controls sit right under it instead of after a gap. Tighter rows, and the "Eye" / "Add Object" section titles were dropped to recover vertical space.
+- **Change**: **Lock moved to the toolbar** as a padlock icon beside copy/delete (amber when locked), and **Mirror** folded into the rig button row (`Set parent / Aim at / Mirror X`) — saving another row.
+
+## Transform / bake
+- **Feature**: **Per-component bake buttons inline with the values.** Each Pos/Rot/Scale row ends with a small bake (cake) icon that freezes just that component into the geometry (position→0 / rotation→0 / scale→1). Replaces the old "Bake scale / Apply all" pair — clicking all three equals the old "Apply all". Added `bakeTranslate` / `bakeRotate` alongside `bakeScale`; all bake across multires levels + blendshapes with undo.
+- **Fix**: **Typed transform edits are undoable.** Entering a Pos/Rot/Scale value (typed field or VR numpad) now pushes a matrix snapshot, so undo/redo reverts it and refreshes the fields.
+
+## VR fixes
+- **Fix**: **The VR numpad parents to the outliner panel** and floats beside the field, like every other numpad — it was missing the source-panel reference and floating in front of the camera instead.
+- **Fix**: **Deleting an object no longer blanks the panel.** Delete now re-selects a remaining mesh, so its transform/rig controls stay visible (was clearing the selection, which hid most of the panel).
+
 # v3.2.0
 Detailing at scale — a sweep of fixes for working zoomed-in on fine detail (eyes, faces) in VR, where grip-scaling the world up exposed a cluster of picking, shading, and cursor bugs. Plus a maintain-length mode for the Pose tool.
 

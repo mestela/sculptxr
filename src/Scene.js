@@ -2441,15 +2441,26 @@ class Scene {
     const trs = this.getTransformTRS(id);
     if (!trs) return;
     if (!(type in trs) || axis < 0 || axis > 2 || !Number.isFinite(value)) return;
+    const Mold = m.getMatrix().slice(); // snapshot for undo before mutating
     trs[type][axis] = value;
     const D2R = Math.PI / 180;
     const p = new THREE.Vector3(trs.t[0], trs.t[1], trs.t[2]);
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(trs.r[0] * D2R, trs.r[1] * D2R, trs.r[2] * D2R, 'XYZ'));
     const sx = trs.s[0] || 1e-4, sy = trs.s[1] || 1e-4, sz = trs.s[2] || 1e-4; // avoid zero scale (degenerate matrix)
     const M = new THREE.Matrix4().compose(p, q, new THREE.Vector3(sx, sy, sz));
+    const Mnew = M.elements.slice();
     m.setMatrix(M.elements);
     m.updateMatrices(this._camera);
     this.render();
+
+    // Typed-field (and VR numpad) edits weren't undoable — push a matrix snapshot. The outliner
+    // fields re-sync from the matrix each frame (_syncOutlinerTransformFields), so undo/redo also
+    // refreshes the displayed values.
+    const sm = this.getStateManager && this.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      const applyM = (elems) => { m.setMatrix(elems); m.updateMatrices(this._camera); this.render(); };
+      sm.pushStateCustom(() => applyM(Mold), () => applyM(Mnew));
+    }
   }
 
   // Bake (freeze) the LOCAL scale into the geometry: the mesh looks identical but its
@@ -2462,6 +2473,36 @@ class Scene {
     if (Math.abs(s.x - 1) < 1e-6 && Math.abs(s.y - 1) < 1e-6 && Math.abs(s.z - 1) < 1e-6) return;
     const B = new THREE.Matrix4().compose(new THREE.Vector3(), new THREE.Quaternion(), s); // bake scale
     const K = new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1));               // keep T·R
+    this._bakeTransform(mesh, B, K);
+  }
+
+  // Bake (freeze) the LOCAL translation into the geometry: the mesh looks identical but its
+  // local position becomes 0 (rotation + scale kept). General rule: keep matrix K (the kept
+  // components), bake B = K⁻¹·M into the verts so K·B == M (unchanged appearance).
+  bakeTranslate(id) {
+    const mesh = this._meshes.find((x) => x.getID() === id);
+    if (!mesh) return;
+    const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
+    const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    M.decompose(t, q, s);
+    if (t.lengthSq() < 1e-12) return; // nothing to bake
+    const K = new THREE.Matrix4().compose(new THREE.Vector3(), q, s); // drop translation
+    const B = new THREE.Matrix4().copy(K).invert().multiply(M);       // K⁻¹·M
+    this._bakeTransform(mesh, B, K);
+  }
+
+  // Bake (freeze) the LOCAL rotation into the geometry: local rotation becomes identity
+  // (translation + scale kept). Caveat: this rotates the geometry, so the local symmetry
+  // plane (stays at local x=0) can end up misaligned — bake while upright.
+  bakeRotate(id) {
+    const mesh = this._meshes.find((x) => x.getID() === id);
+    if (!mesh) return;
+    const M = new THREE.Matrix4().fromArray(mesh.getMatrix());
+    const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    M.decompose(t, q, s);
+    if (Math.abs(q.x) < 1e-7 && Math.abs(q.y) < 1e-7 && Math.abs(q.z) < 1e-7) return; // ~identity rotation
+    const K = new THREE.Matrix4().compose(t, new THREE.Quaternion(), s); // drop rotation
+    const B = new THREE.Matrix4().copy(K).invert().multiply(M);          // K⁻¹·M
     this._bakeTransform(mesh, B, K);
   }
 
@@ -2804,7 +2845,10 @@ class Scene {
     this.removeMeshes(this._selectMeshes);
     this._stateManager.pushStateRemove(this._selectMeshes.slice());
     this._selectMeshes.length = 0;
-    this.setMesh(null);
+    // Re-select a remaining mesh so the outliner keeps showing its transform/rig controls —
+    // an empty selection blanks most of the panel (those only render for a single selection).
+    // Null when the scene is now empty.
+    this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
   }
 
   removeMeshes(rm) {

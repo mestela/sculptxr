@@ -110,7 +110,7 @@ export class TornOffPanel extends HTMLVRPanel {
 
     switch (this._sectionId) {
       case 'scene':
-        wireSectionScene(el, main, fullRepaint);
+        wireSectionScene(el, main, fullRepaint, this); // numpad anchors to this torn-off panel
         break;
       case 'rendering':
         wireSectionRendering(el, main, fullRepaint, lightRepaint, lightRepaint);

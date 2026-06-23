@@ -265,9 +265,9 @@ const CSS = `
   color: #6c7086;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  padding: 8px 0 4px;
+  padding: 5px 0 3px;
   border-bottom: 1px solid #313244;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 .mm-section-title:first-child { padding-top: 0; }
 
@@ -493,16 +493,19 @@ const CSS = `
 .mm-outliner-list {
   border: 1px solid #45475a;
   border-radius: 5px;
-  min-height: 248px;
-  padding: 3px 5px;
-  margin-bottom: 6px;
+  /* Flow at content height (single panel scroll surface). The floor used to be 248px,
+     which reserved a big empty block for a 2–3 mesh scene and pushed the transform/rig
+     controls off-screen — now just enough to not collapse when empty. */
+  min-height: 52px;
+  padding: 2px 4px;
+  margin-bottom: 5px;
   box-sizing: border-box;
 }
 .mm-outliner-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 0;
+  padding: 1px 0;
 }
 .mm-vis-btn {
   width: 24px;
@@ -563,6 +566,15 @@ const CSS = `
 }
 .mm-xf:focus, .mm-xf.hover { border-color: #89b4fa; }
 .mm-xf::-webkit-inner-spin-button, .mm-xf::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+/* Per-row bake button (freeze that component into the geometry), sits after the X/Y/Z fields. */
+.mm-xf-bake {
+  width: 24px; height: 24px; flex-shrink: 0;
+  border: 1px solid #45475a; border-radius: 4px;
+  background: #181825; color: #cdd6f4; font-size: 11px;
+  cursor: pointer; outline: none; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.mm-xf-bake:hover, .mm-xf-bake.hover { background: #313244; color: #f9e2af; }
 /* Outliner toolbar — icon-only copy/delete buttons. */
 .mm-toolbar { display: flex; gap: 4px; margin-bottom: 6px; }
 .mm-tool-btn {
@@ -574,8 +586,9 @@ const CSS = `
 }
 .mm-tool-btn:hover, .mm-tool-btn.hover { background: #313244; }
 .mm-tool-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
-/* Add-object buttons side by side. */
-.mm-add-row { display: flex; gap: 3px; }
+.mm-tool-btn.active { background: rgba(249,226,175,0.15); color: #f9e2af; border-color: #f9e2af; } /* locked */
+/* Add-object buttons side by side (the "Add Object" title was dropped → small gap above). */
+.mm-add-row { display: flex; gap: 3px; margin-top: 5px; }
 .mm-add-row .mm-action-btn { flex: 1; text-align: center; }
 /* During a pending pick, dim the subject row and tint pickable targets (no border). */
 .mm-outliner-row.rig-target .mm-mesh-btn { background: rgba(249,226,175,0.1); }
@@ -1088,24 +1101,24 @@ export function buildSectionHTML_scene(main) {
     const sacAmp   = main.getSaccadeAmp?.(selId) ?? 5;
     const sacSpeed = main.getSaccadeSpeed?.(selId) ?? 1;
 
-    const locked = !!main.isSelectLocked?.(selId);
     const trs = main.getTransformTRS?.(selId) || { t: [0, 0, 0], r: [0, 0, 0], s: [1, 1, 1] };
     const _f = (n) => (Math.round(n * 1000) / 1000);
+    // Per-row bake button (freezes that component into the geometry, right next to its values).
+    const _bake = { t: ['mm-bake-t', 'Bake translation into geometry (position → 0)'],
+                    r: ['mm-bake-r', 'Bake rotation into geometry (rotation → 0; may misalign symmetry)'],
+                    s: ['mm-bake-s', 'Bake scale into geometry (scale → 1)'] };
     const _xfRow = (type, label, vals, step) => `
       <div class="mm-xform-row">
         <span class="mm-xf-lbl">${label}</span>
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="0" step="${step}" value="${_f(vals[0])}">
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="1" step="${step}" value="${_f(vals[1])}">
         <input type="number" class="mm-xf" data-xf="${type}" data-axis="2" step="${step}" value="${_f(vals[2])}">
+        <button class="mm-xf-bake" id="${_bake[type][0]}" title="${_bake[type][1]}"><i class="fa-solid fa-cake-candles"></i></button>
       </div>`;
     rigHTML = `
       ${_xfRow('t', 'Pos', trs.t, '0.01')}
       ${_xfRow('r', 'Rot', trs.r, '1')}
       ${_xfRow('s', 'Scale', trs.s, '0.01')}
-      <div class="mm-btn-pair">
-        <button class="mm-action-btn" id="mm-bake-scale" title="Freeze scale into the geometry (Scale → 1)">Bake scale</button>
-        <button class="mm-action-btn" id="mm-bake-all" title="Freeze all transforms into the geometry (matrix → identity)">Apply all</button>
-      </div>
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
@@ -1114,13 +1127,11 @@ export function buildSectionHTML_scene(main) {
         <button class="mm-toggle${pendingMode === 'lookat' ? ' active' : ''}" data-rig="set-aim">
           ${pendingMode === 'lookat' ? 'Select aim…' : 'Aim at…'}
         </button>
-        <button class="mm-toggle${locked ? ' active' : ''}" data-rig="lock" title="Unselectable in the viewport when on">Lock</button>
+        <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Mirror across X (eye rig)">Mirror X</button>
       </div>
       ${parent ? `<button class="mm-action-btn" data-rig="clear-parent">Clear parent</button>` : ''}
       ${lookTgt ? `<button class="mm-action-btn" data-rig="clear-aim">Clear aim</button>` : ''}
 
-      <div class="mm-rig-label">Eye</div>
-      <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror">Mirror across X</button>
       <button class="mm-toggle${saccading ? ' active' : ''}" data-rig="saccades">Saccades</button>
       <div class="mm-row" id="mm-rig-sac-amp-row" style="${saccading ? '' : 'display:none'}">
         <span class="mm-lbl">Amplitude</span>
@@ -1136,15 +1147,18 @@ export function buildSectionHTML_scene(main) {
   }
 
   const hasSel = selected.length > 0;
+  // Lock lives in the toolbar (padlock) and acts on the single selected mesh.
+  const singleSel = selected.length === 1 ? selected[0] : null;
+  const tbLocked  = singleSel ? !!main.isSelectLocked?.(singleSel.getID()) : false;
   return `
     <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
       <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-trash"></i></button>
+      <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}><i class="fa-solid ${tbLocked ? 'fa-lock' : 'fa-lock-open'}"></i></button>
     </div>
     <div class="mm-outliner-list">${meshRows}</div>
     ${rigHTML}
-    <div class="mm-section-title">Add Object</div>
     <div class="mm-add-row">
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
@@ -1992,7 +2006,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     const lightRepaint = () => this.markDirty();
 
     if (section === 'scene') {
-      wireSectionScene(el, main, fullRepaint);
+      wireSectionScene(el, main, fullRepaint, this); // this = the VR panel, so the numpad anchors to it
     } else if (section === 'topology') {
       wireSectionTopology(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'rendering') {
@@ -2208,7 +2222,7 @@ export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
 /**
  * Wire event handlers for the Scene/Outliner section.
  */
-export function wireSectionScene(el, main, repaintFn) {
+export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
   el.querySelectorAll('[data-action="vis"]').forEach(btn => {
@@ -2360,15 +2374,20 @@ export function wireSectionScene(el, main, repaintFn) {
     main.setSaccadeSpeed?.(sel.getID(), v);
   });
 
-  el.querySelector('#mm-bake-scale')?.addEventListener('click', () => {
+  el.querySelector('#mm-bake-t')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.bakeTranslate?.(sel.getID());
+    main.render?.(); repaintFn(); // Pos fields now 0
+  });
+  el.querySelector('#mm-bake-r')?.addEventListener('click', () => {
+    const sel = selOne(); if (!sel) return;
+    main.bakeRotate?.(sel.getID());
+    main.render?.(); repaintFn(); // Rot fields now 0
+  });
+  el.querySelector('#mm-bake-s')?.addEventListener('click', () => {
     const sel = selOne(); if (!sel) return;
     main.bakeScale?.(sel.getID());
-    main.render?.(); repaintFn(); // refresh the Scale fields (now 1)
-  });
-  el.querySelector('#mm-bake-all')?.addEventListener('click', () => {
-    const sel = selOne(); if (!sel) return;
-    main.bakeAllTransforms?.(sel.getID());
-    main.render?.(); repaintFn(); // Pos/Rot/Scale now identity
+    main.render?.(); repaintFn(); // Scale fields now 1
   });
 
   // Transform fields (local Pos/Rot/Scale). Edit writes the one component; clicking a
@@ -2391,7 +2410,7 @@ export function wireSectionScene(el, main, repaintFn) {
       window._vrNumpad.open(current, { label, integer: false }, (val) => {
         input.value = val;
         input.dispatchEvent(new Event('change', { bubbles: true }));
-      }, input);
+      }, input, vrPanel); // sourcePanel → numpad parents to & floats beside this panel (was missing → floated at camera)
     });
   });
 }
