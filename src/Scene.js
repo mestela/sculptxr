@@ -2777,6 +2777,17 @@ class Scene {
     }
     
     this.getMeshes().length = 0;
+
+    // Eye-rig mirrors are bare THREE.Meshes parented to _worldGroup (not in _meshes), so the
+    // loop above misses them — remove them explicitly or a mirrored eye is left behind.
+    if (this._mirrors) {
+      for (var k = this._mirrors.length - 1; k >= 0; --k) {
+        var mk = this._mirrors[k];
+        if (mk.mesh && mk.mesh.parent) mk.mesh.parent.remove(mk.mesh);
+      }
+      this._mirrors.length = 0;
+    }
+
     this.getCamera().resetView();
     this.setMesh(null);
     this._action = Enums.Action.NOTHING;
@@ -2801,6 +2812,9 @@ class Scene {
     for (var i = 0; i < rm.length; ++i) {
       var idx = this.getIndexMesh(rm[i]);
       if (idx >= 0) {
+        // Drop any eye-rig mirror of this mesh — it lives in _worldGroup, not _meshes, so
+        // deleting the source otherwise leaves the mirrored copy behind.
+        this.removeMirror(meshes[idx].getID());
         this.detachMeshThree(meshes[idx]);
         meshes.splice(idx, 1);
       }
@@ -4180,6 +4194,13 @@ class Scene {
             ringLine.add(centerDot);
 
             group.visible = false;
+            // Pin the whole cursor to render AFTER the sculpt meshes. The sculpt material is
+            // transparent, so it shares Three's depth-sorted transparent queue with the cursor;
+            // as the camera moves their sort order swaps and the ring/volume flip between drawing
+            // on top and being covered. renderOrder takes precedence over distance sorting, so a
+            // high value keeps the cursor's draw order stable (ring/dot stay on top via their
+            // depthTest:false; the volume sphere still depth-tests against the final mesh depth).
+            group.traverse(function (o) { o.renderOrder = 999; });
             return group;
           };
 
@@ -8068,9 +8089,20 @@ class Scene {
                     vec3.transformMat4(engineHit, localHit, pickedMesh.getModelSpaceMatrix()); // parent-aware
                     hitDist = vec3.distance(originEngine, engineHit) * (this._vrScale || 1.0);
 
-                    // wInter in Scene Space is just origin + dir * hitDist
+                    // Surface point in scene space. The old reconstruction (origin + dir*hitDist)
+                    // only landed on the surface for RAY picks; for contact/volume picks the hit
+                    // is the nearest surface point (off the ray axis), so the ring floated above
+                    // the surface and the gap grew with world scale. Transform the engine-space
+                    // hit by the worldGroup matrix — it carries vrScale + the world offset (see
+                    // updateVRWorldTransform), so the ring lands exactly on the surface at any scale.
                     wInter = vec3.create();
-                    vec3.scaleAndAdd(wInter, origin, dir, hitDist);
+                    const _wg = window._sxrWorldGroup;
+                    if (_wg) {
+                        const _eh = new THREE.Vector3(engineHit[0], engineHit[1], engineHit[2]).applyMatrix4(_wg.matrixWorld);
+                        vec3.set(wInter, _eh.x, _eh.y, _eh.z);
+                    } else {
+                        vec3.scaleAndAdd(wInter, origin, dir, hitDist); // fallback (no worldGroup)
+                    }
 
                     // // if (doLog) console.log(`  hitDist: ${hitDist.toFixed(3)} wInt: ${wInter.map(x=>x.toFixed(2))}`);
 

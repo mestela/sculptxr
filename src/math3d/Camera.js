@@ -18,6 +18,7 @@ var DELAY_MOVE_TO = 200;
 var _TMP_VEC2 = [0.0, 0.0];
 var _TMP_VEC3 = [0.0, 0.0, 0.0];
 var _TMP_VEC3_2 = [0.0, 0.0, 0.0];
+var _TMP_T3 = new THREE.Vector3(); // VR near/far: sculpt centre in physical space
 var _UP = [0.0, 1.0, 0.0];
 var _TMP_QUAT = [0.0, 0.0, 0.0, 1.0];
 var _TMP_MAT = mat4.create();
@@ -304,8 +305,32 @@ class Camera {
         // WebXR inherently recalculates the projection matrices, but it pulls the near/far planes
         // from the root Scene Camera. If we squash the near clip plane to be past the controller,
         // the controllers will be completely clipped out of existence.
-        this._near = 0.01;
-        this._far = 50.0;
+        //
+        // A fixed near=0.01 / far=50 is a 5000:1 ratio — very little depth precision, which shows
+        // up as z-fighting on near-coincident surfaces (eyelids over the eyeball) and the brush
+        // cursor failing the depth test against the surface, worse once the world is scaled up.
+        //
+        // Scale-aware frustum: derive far/near from the sculpt's PHYSICAL size and distance, which
+        // tracks the dual-grip world scale (worldGroup.matrixWorld carries vrScale). Far hugs the
+        // far edge of the sculpt instead of sitting at 50m; near hugs the front but stays ≤ ~0.08m
+        // so hands/controllers/menus never clip. window._vrNear / _vrFar still hard-override.
+        var vNear = 0.02, vFar = 50.0;
+        var wg = window._sxrWorldGroup;
+        var xr = this._main && this._main._renderer && this._main._renderer.xr;
+        var xrCam = xr && xr.getCamera && xr.getCamera();
+        if (!bb) bb = this._lastBBox;
+        if (wg && xrCam && bb && Number.isFinite(bb[0])) {
+          var e = wg.matrixWorld.elements;
+          var wgScale = Math.hypot(e[0], e[1], e[2]) || 1; // uniform worldGroup scale (= vrScale)
+          var rPhys = 0.5 * Math.hypot(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]) * wgScale;
+          _TMP_T3.set((bb[0] + bb[3]) * 0.5, (bb[1] + bb[4]) * 0.5, (bb[2] + bb[5]) * 0.5).applyMatrix4(wg.matrixWorld);
+          var d = xrCam.position.distanceTo(_TMP_T3); // head → sculpt centre, metres
+          vFar = Math.min(50.0, d + rPhys + Math.max(0.5, rPhys * 0.5)); // far edge + margin
+          vNear = Math.min(0.08, Math.max(0.02, d - rPhys));             // front edge, hands-safe
+          if (vFar < vNear + 0.1) vFar = vNear + 0.1;
+        }
+        this._near = window._vrNear ?? vNear;
+        this._far = window._vrFar ?? vFar;
         if (this._threeCamera) {
              this._threeCamera.near = this._near;
              this._threeCamera.far = this._far;

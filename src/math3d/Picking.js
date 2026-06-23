@@ -310,7 +310,23 @@ class Picking {
       var dz = bound[5] - bound[2];
       var meshLocalSize = Math.hypot(dx, dy, dz);
 
-      var safeMinRadius = meshLocalSize * 0.05;
+      // Floor for the contact-search radius so a sub-face brush still catches a face. The old
+      // floor was 5% of the WHOLE mesh's bounding box — scale-blind, so when zoomed in with a
+      // small brush the search accepted the nearest face within 5% of the entire head. On flat
+      // areas that region is ~coplanar (fine), but near concave detail (eye sockets / surface
+      // tucked under proud eyeballs) it snapped to a face BENEATH the aimed surface → the cursor
+      // drew under the mesh and jumped around. Tie the floor to local resolution (a few average
+      // face-spacings) instead, capped at the old 5% so it can only ever tighten, never widen.
+      var nbFaces = mesh.getNbFaces ? mesh.getNbFaces() : 0;
+      var avgFaceSpacing = nbFaces > 0 ? meshLocalSize / Math.sqrt(nbFaces) : meshLocalSize * 0.05;
+      var minFaceSpan = (window._contactMinFaces ?? 2.5); // floor = this many avg face-spacings
+      // CRITICAL: also cap the floor in PHYSICAL terms. The floor is in local/engine units, so
+      // as the world is grip-scaled up its real-world reach grows with it — the pick then snaps
+      // to surface metres away from the controller tip (cursor under the mesh, sculpt offset from
+      // the stylus, smooth reaching ~2x radius). Cap at a few cm of physical reach. Tunable: _contactMaxReach.
+      var vrScaleNow = (this._main && this._main._vrScale) ? this._main._vrScale : 1.0;
+      var physReachLocal = (window._contactMaxReach ?? 0.04) / (vrScaleNow * scale); // ~4cm physical → local units
+      var safeMinRadius = Math.min(meshLocalSize * 0.05, avgFaceSpacing * minFaceSpan, physReachLocal);
       var safeMinRadiusSq = safeMinRadius * safeMinRadius;
 
       var maxLocalRadiusSq = Math.max(localRadiusSq, safeMinRadiusSq);
@@ -420,7 +436,10 @@ class Picking {
       this._pickedFace = nearFace;
       // FIX for VR: Use the passed physical radius, DO NOT re-project to screen (which updateLocalAndWorldRadius2 does)
       this._rWorld2 = worldRadius * worldRadius;
-      this._rLocal2 = maxLocalRadiusSq;
+      // Selection/deform radius = the ACTUAL brush radius, not the floored SEARCH radius
+      // (maxLocalRadiusSq). The floor only widens the surface FIND so a sub-face brush still
+      // catches a face; letting it become the deform radius made tools over-reach (smooth ~2x).
+      this._rLocal2 = localRadiusSq;
       return true;
     }
 
@@ -548,6 +567,14 @@ class Picking {
     var iVerts = mesh.getVerticesFromFaces(iFacesInCells);
     var nbVerts = iVerts.length;
 
+    // The widened searchRadiusSq is only to over-FETCH candidate faces (bridge stale-octree
+    // gaps when the brush is tiny). Accept verts against the ACTUAL brush radius — using the
+    // floored radius here made the selection grab a fixed 2.5%-of-mesh bubble regardless of
+    // brush size, so tools over-reached (smooth past its ring; clay flattening a region far
+    // larger than its buildup ceiling → "no effect" when scaled up). Empty result is fine:
+    // dynamicTopology falls back to the picked face and subdivides for fine detail.
+    var acceptRadiusSq = rLocal2 > 0 ? rLocal2 : searchRadiusSq;
+
     var sculptFlag = ++Utils.SCULPT_FLAG;
     var pickedVertices = new Uint32Array(Utils.getMemory(4 * nbVerts), 0, nbVerts);
     var acc = 0;
@@ -561,7 +588,7 @@ class Picking {
       var ddx = itx - vAr[j];
       var ddy = ity - vAr[j + 1];
       var ddz = itz - vAr[j + 2];
-      if ((ddx * ddx + ddy * ddy + ddz * ddz) < searchRadiusSq) {
+      if ((ddx * ddx + ddy * ddy + ddz * ddz) < acceptRadiusSq) {
         vertSculptFlags[ind] = sculptFlag;
         pickedVertices[acc++] = ind;
       }

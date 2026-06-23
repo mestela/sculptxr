@@ -1,3 +1,25 @@
+# v3.2.0
+Detailing at scale — a sweep of fixes for working zoomed-in on fine detail (eyes, faces) in VR, where grip-scaling the world up exposed a cluster of picking, shading, and cursor bugs. Plus a maintain-length mode for the Pose tool.
+
+## VR sculpting when scaled up
+- **Fix**: **Brushes no longer over-reach their radius.** The vertex selection floored its radius at 2.5% of the whole mesh, so when the brush was small relative to the model (zoomed in) it grabbed a fixed bubble far larger than the brush — smooth reached past its ring, and clay flattened a region far bigger than its buildup ceiling so it appeared to do nothing. Selection now respects the actual brush radius at any scale (the widened radius is kept only to fetch candidate faces).
+- **Fix**: **Cursor and strokes stay on the surface at high scale.** The contact pick's minimum search radius was in mesh-units only, so as the world scaled up its real-world reach grew with it and the pick snapped to surface metres from the controller tip — cursor under the mesh, sculpt offset from the stylus, crease reacting to a depth below the surface. The search reach is now capped in physical space (tunable: `window._contactMaxReach`).
+- **Fix**: **Surface ring tracks the real hit point.** It was reconstructed along the controller ray (only correct for ray picks); contact/volume picks land off-axis, so the ring floated above the surface and drifted with scale. Now placed at the actual hit transformed by the world matrix.
+- **Fix**: **Depth precision is scale-aware.** VR near/far were pinned at 0.01/50 m (a 5000:1 ratio) → z-fighting (eyelids over eyeball) and the cursor losing the depth test. Near/far now derive from the sculpt's physical size and distance, which track the grip-scale, keeping precision matched to the working scale.
+
+## Shading & cursor
+- **Fix**: **Matcap normals correct under non-uniform scale.** The matcap and PBR shaders transformed normals with the model-view 3×3 instead of the normal matrix (inverse-transpose), so any non-uniformly-scaled mesh (a stretched eyeball) shaded wrong until baked. Now uses the proper normal matrix.
+- **Fix**: **Matcap no longer flips/shimmers** when grip-rotating the world or working on an off-centre mesh. The billboard stabilization aimed from the camera at the mesh *origin*, which swung wildly for a long character at scale; it now aims along the camera's view direction (mesh-position independent), while still keeping the lighting world-upright.
+- **Fix**: **Matcap shading no longer snaps** as you move with multiple objects — all matcap meshes share one material, so the per-mesh orientation uniform is now force-re-uploaded per draw instead of inheriting the first-drawn mesh's.
+- **Fix**: **Brush cursor stops flipping in front of / behind the mesh.** The transparent sculpt material shares Three's depth-sorted queue with the cursor; the cursor is now pinned to render last so its draw order can't swap.
+
+## Pose tool & eye rig
+- **Feature**: **Maintain-length mode** for the Pose tool (toggle with the **A** button). Keeps only the controller's rotation about the anchor, so the limb bends without stretching — the iPad/desktop feel, in 6DOF.
+- **Fix**: **Mirror eyes delete cleanly.** A live-mirror eye is parented outside the mesh list, so Clear Scene and deleting the source left the mirror behind; both paths now remove it.
+
+## Brush feel
+- **Change**: **Clay buildup raised** (default ceiling 0.1 → 0.3) — the old default felt dead when detailing. Live tuning knobs added for smooth strength and crease pinch/push balance (`window._smoothScale`, `_creasePinchScale`, `_creasePushScale`).
+
 # v3.1.0
 Posing in VR — a new **Pose** tool that bends a limb with two anchors and a 6DOF controller grab, built on a new on-mesh geodesic engine. First step of the rigging/posing track (rigless posing before skeletons).
 

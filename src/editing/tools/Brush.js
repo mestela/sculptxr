@@ -48,7 +48,9 @@ class Brush extends SculptBase {
       if (!aNormal)
         return;
       var aCenter = this._lockPosition ? picking.getIntersectionPoint() : this.areaCenter(iVertsFront);
-      var off = Math.sqrt(r2) * 0.1;
+      // Clay buildup ceiling = this fraction of the radius (matt-tuned default 0.3; 0.1 felt
+      // dead when zoomed in on detail). Tune live with window._clayHeight.
+      var off = Math.sqrt(r2) * (window._clayHeight ?? 0.3);
       vec3.scaleAndAdd(aCenter, aCenter, aNormal, this._negative ? -off : off);
       Flatten.prototype.flatten.call(this, iVertsInRadius, aNormal, aCenter, picking.getIntersectionPoint(), r2, intensity, picking);
     }

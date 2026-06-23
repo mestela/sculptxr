@@ -313,20 +313,13 @@ ShaderManager.onBeforeRenderMatCap = function(mesh, camera) {
   // Inverse view is camera.matrixWorld elements (View -> World)
   const viewInv = camera.matrixWorld.elements;
   
-  // Account for mesh world position (if mesh is shifted from origin)
-  threeMesh.getWorldPosition(_meshWorldPos);
-  
-  const cx = viewInv[12] - _meshWorldPos.x;
-  const cy = viewInv[13] - _meshWorldPos.y;
-  const cz = viewInv[14] - _meshWorldPos.z;
-  let len = Math.sqrt(cx * cx + cy * cy + cz * cz);
-  let bx, by, bz;
-  
-  if (len < 0.001) {
-    bx = viewInv[8]; by = viewInv[9]; bz = viewInv[10];
-  } else {
-    bx = cx / len; by = cy / len; bz = cz / len;
-  }
+  // Back = the camera's view direction (its +Z axis in world space), NOT the camera→mesh-origin
+  // vector. The old mesh-relative aim swung wildly for an off-centre mesh (a long character) and
+  // at high scale, spinning the stabilization frame as you grip-rotated the world → shading flip
+  // + L/R shimmer. The view axis is mesh-position-independent, so the matcap frame stays stable.
+  let bx = viewInv[8], by = viewInv[9], bz = viewInv[10];
+  let len = Math.sqrt(bx * bx + by * by + bz * bz);
+  if (len > 1e-6) { bx /= len; by /= len; bz /= len; }
   
   // Right = Cross(Up, Back)
   let srx = bz;
@@ -357,9 +350,20 @@ ShaderManager.onBeforeRenderMatCap = function(mesh, camera) {
   const ST = mat3.create();
   mat3.transpose(ST, S); // Safe transpose (not in place)
   mat3.mul(mats.corrMat, ST, C);
-  
+
+  // A/B diagnostic: window._matcapNoStable=true disables the billboard stabilization (identity
+  // correction → plain view-space matcap that rolls with the head). Lets us tell whether any
+  // residual shimmer comes from the stabilization or the base matcap.
+  if (window._matcapNoStable) mat3.identity(mats.corrMat);
+
   if (unifs.uRotCorrection) {
       unifs.uRotCorrection.value.fromArray(mats.corrMat);
+      // All matcap meshes share ONE cached material, so Three.js skips re-uploading its
+      // uniforms for meshes drawn after the first with the same material id. Without this
+      // flag every matcap mesh would render with the first-drawn mesh's rotation correction,
+      // and because the material is transparent (depth-sorted), that "first" mesh changes as
+      // you move — the whole scene's matcap orientation snaps. Force a per-draw re-upload.
+      mat.uniformsNeedUpdate = true;
   }
 };
 

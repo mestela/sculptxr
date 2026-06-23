@@ -18,7 +18,9 @@ class Smooth extends SculptBase {
 
   stroke(picking) {
     var iVertsInRadius = picking.getPickedVertices();
-    var intensity = this._intensity * Tablet.getPressureIntensity();
+    // Smooth moves a fixed fraction toward the neighbour average — no radius term — so it feels
+    // disproportionately strong when zoomed in on fine detail. Tune live with _smoothScale.
+    var intensity = this._intensity * Tablet.getPressureIntensity() * (window._smoothScale ?? 1.0);
 
     // undo-redo
     this._main.getStateManager().pushVertices(iVertsInRadius);

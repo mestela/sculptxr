@@ -63,7 +63,11 @@ class Crease extends SculptBase {
     var any = aNormal[1];
     var anz = aNormal[2];
     var deformIntensity = intensity * 0.07;
-    var brushFactor = deformIntensity * radius;
+    // Crease mixes a radius-INDEPENDENT pinch (pinchK, toward the groove centre) with a
+    // radius-scaled push (brushFactor, along the normal). When zoomed in the push shrinks but
+    // the pinch doesn't, so it over-pinches. Tune the balance live: _creasePinchScale / _creasePushScale.
+    var brushFactor = deformIntensity * radius * (window._creasePushScale ?? 1.0);
+    var pinchK = 2.0 * (window._creasePinchScale ?? 1.0);
 
     // FIX v0.8.159: Centerline Symmetry Over-Accumulation
     // Symmetrical brushes overlap at the center, doubling the force application (200%).
@@ -111,9 +115,9 @@ class Crease extends SculptBase {
       var pinchDy = gy - vy;
       var pinchDz = gz - vz;
 
-      var nx = vx + pinchDx * fallOff * 2.0 + anx * brushModifier;
-      var ny = vy + pinchDy * fallOff * 2.0 + any * brushModifier;
-      var nz = vz + pinchDz * fallOff * 2.0 + anz * brushModifier;
+      var nx = vx + pinchDx * fallOff * pinchK + anx * brushModifier;
+      var ny = vy + pinchDy * fallOff * pinchK + any * brushModifier;
+      var nz = vz + pinchDz * fallOff * pinchK + anz * brushModifier;
 
       if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(nz)) {
         vAr[ind] = nx;

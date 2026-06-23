@@ -14,6 +14,7 @@ const _qMesh = new THREE.Quaternion(), _qMeshInv = new THREE.Quaternion();
 const _oneVec = new THREE.Vector3(1, 1, 1);
 const _ctrlPos = new THREE.Vector3(), _ctrlQuat = new THREE.Quaternion();
 const _mCtrlWorld = new THREE.Matrix4();
+const _dPos = new THREE.Vector3(), _dQuat = new THREE.Quaternion(), _dScl = new THREE.Vector3();
 
 class GeodesicPoseTool extends SculptBase {
   constructor(main) {
@@ -37,6 +38,8 @@ class GeodesicPoseTool extends SculptBase {
     // VR (POC 2b muscle): trigger-edge place A→B, then 6DOF controller grab deforms the band.
     this._wasXRPressed = false;
     this._xrGrabbing = false;
+    this._maintainLength = false; // A-button toggle: keep only the controller's rotation
+    this._wasAPressed = false;
     this._invModel = new THREE.Matrix4(); // mesh engine→local, captured at grab start
     this._cl0Inv = new THREE.Matrix4();   // inverse of the controller's local frame at grab start
   }
@@ -339,6 +342,16 @@ class GeodesicPoseTool extends SculptBase {
     const up = !isPressed && this._wasXRPressed;
     this._wasXRPressed = isPressed;
 
+    // A button (dominant hand) toggles maintain-length: keep only the controller's rotation
+    // about the anchor (no stretch), matching the desktop bend. Off = full 6DOF.
+    const aPressed = this._readAButton(options);
+    if (aPressed && !this._wasAPressed) {
+      this._maintainLength = !this._maintainLength;
+      console.log('[Pose] maintain-length:', this._maintainLength ? 'ON' : 'OFF');
+      if (window.screenLog) window.screenLog('Pose: maintain length ' + (this._maintainLength ? 'ON' : 'OFF'), 'cyan');
+    }
+    this._wasAPressed = aPressed;
+
     if (down) {
       const hit = this._pickXR(picking);
       if (this._phase === 'A') {
@@ -368,7 +381,8 @@ class GeodesicPoseTool extends SculptBase {
 
     if (isPressed && this._xrGrabbing && origin && q) {
       // delta = controllerLocalNow · inv(controllerLocalRest)
-      const delta = this._controllerLocalMatrix(origin, q).multiply(this._cl0Inv);
+      let delta = this._controllerLocalMatrix(origin, q).multiply(this._cl0Inv);
+      if (this._maintainLength) delta = this._rotationAboutPivot(delta);
       this._deformXR(delta);
       this.updateRender();
     } else if (!isPressed && this._phase === 'B' && !this._xrGrabbing) {
@@ -396,6 +410,30 @@ class GeodesicPoseTool extends SculptBase {
     const fv = [fAr[f], fAr[f + 1], fAr[f + 2]];
     if (fAr[f + 3] < nbV) fv.push(fAr[f + 3]);
     return { mesh: m, src: nearestVertexInFace(m, inter, fv), inter: [inter[0], inter[1], inter[2]] };
+  }
+
+  // Dominant-hand A button (buttons[4]) from the per-controller gamepad state in options.
+  _readAButton(options) {
+    const ctrls = options && options.controllers;
+    if (!ctrls) return false;
+    const hand = options.handedness;
+    for (let i = 0; i < ctrls.length; i++) {
+      const c = ctrls[i];
+      if (c.handedness === hand && c.buttons && c.buttons[4]) return !!c.buttons[4].pressed;
+    }
+    return false;
+  }
+
+  // Strip the translation from a controller delta, keeping its rotation pivoted about the
+  // A/B midpoint: T(p)·R·T(-p). Vertices stay at their rest distance from the pivot, so the
+  // band bends without stretching (the desktop behaviour, driven by 6DOF wrist rotation).
+  _rotationAboutPivot(m) {
+    m.decompose(_dPos, _dQuat, _dScl);
+    const r = new THREE.Matrix4().makeRotationFromQuaternion(_dQuat);
+    const p = this._pivot;
+    const rp = _dPos.set(p[0], p[1], p[2]).applyMatrix4(r); // R·p (reusing _dPos as scratch)
+    r.setPosition(p[0] - rp.x, p[1] - rp.y, p[2] - rp.z);
+    return r;
   }
 
   // Controller engine-space pose (origin + quat) expressed in mesh-local space.

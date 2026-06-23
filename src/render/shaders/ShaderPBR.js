@@ -73,7 +73,7 @@ ShaderPBR.vertex = [
   '  vMetallic = uMetallic >= 0.0 ? uMetallic : aMaterial.y;',
   '  vMasking = aMaterial.z;',
   '  vNormal = mix(aNormal, uEN * aNormal, vMasking);',
-  '  vNormal = normalize(mat3(uMV) * vNormal);',
+  '  vNormal = normalize(uN * vNormal);', // uN = normalMatrix (inverse-transpose) — correct under non-uniform/world scale; mat3(uMV) skewed normals when scaled
   '  vec4 vertex4 = vec4(aVertex, 1.0);',
   '  vertex4 = mix(vertex4, uEM * vertex4, vMasking);',
   '  vVertex = vec3(uMV * vertex4);',
