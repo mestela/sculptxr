@@ -1,3 +1,6 @@
+# v3.3.1
+- **Fix (prod perf)**: **VR menus were extremely slow in production** (not dev). The build inlined all fonts as base64 into the CSS bundle (`assetsInlineLimit: 300000` → ~2.5 MB CSS), and the html-in-canvas panel rasterizer inlines the whole page CSS into every panel SVG on every repaint — so each menu paint serialized/decoded ~2.5 MB. Lowered `assetsInlineLimit` to the Vite default; prod CSS is now ~180 KB. FontAwesome in panels stays covered by `install.js`'s runtime font injection. Dev was unaffected (fonts served as separate files), which is why it only showed up once deployed.
+
 # v3.3.0
 Outliner overhaul — a density + interaction pass on the Scene-tab outliner (desktop + VR), so more fits on screen and the transform/rig controls are quicker to reach.
 

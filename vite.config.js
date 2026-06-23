@@ -21,11 +21,16 @@ export default defineConfig({
     format: 'es'
   },
   build: {
-    // Inline font files up to 300 KB as base64 data URIs in the CSS bundle.
-    // Required for Font Awesome icons to render inside the html-in-canvas polyfill's
-    // SVG foreignObject path (used in WebXR immersive mode on Meta Quest), where
-    // external font fetches are blocked.
-    assetsInlineLimit: 300000,
+    // assetsInlineLimit was 300000 to inline fonts as base64 in the CSS bundle so Font
+    // Awesome would render inside the html-in-canvas polyfill's SVG foreignObject (Quest
+    // immersive mode blocks external font fetches). But that ballooned the prod CSS to ~2.5 MB,
+    // and the polyfill inlines the WHOLE page CSS into EVERY panel SVG on every repaint — so
+    // each menu paint serialized/decoded 2.5 MB (huge buildSvg + set-src + style-recalc; tanked
+    // the GalaxyXR). It's also redundant: install.js already injects the FA Solid woff2 as a
+    // base64 @font-face at runtime for the polyfill. Back to the Vite default so fonts ship as
+    // separate files and the inlined per-paint CSS is small. (Dev was unaffected — it serves
+    // fonts as url() files — which is why prod alone was slow.)
+    assetsInlineLimit: 4096,
   },
   server: {
     host: '0.0.0.0', // Listen on all network interfaces
