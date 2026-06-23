@@ -91,6 +91,7 @@ export default class GuiXR {
       triggerCurve: opts.triggerCurve,
       menuBrightness: opts.menuBrightness,
       menuSaturation: opts.menuSaturation,
+      menuGamma: opts.menuGamma,
       wireframeAlpha: opts.wireframeAlpha,
       wireframeBias: opts.wireframeBias,
       offsetY: opts.offsetY,

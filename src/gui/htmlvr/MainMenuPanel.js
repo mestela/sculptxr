@@ -24,7 +24,7 @@
  * The panel is fixed height — content scrolls inside the body.
  */
 
-import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
+import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade } from './HTMLVRPanel.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
@@ -881,8 +881,9 @@ function buildMenuHTML_settings(main) {
   const offsetY       = ui.offsetY         ?? opts.offsetY         ?? -1.2;
   const wfBias        = ui.wireframeBias   ?? opts.wireframeBias   ?? 0.001;
   const wfAlpha       = ui.wireframeAlpha  ?? opts.wireframeAlpha  ?? 0.2;
-  const menuBright    = ui.menuBrightness  ?? 0.5;
-  const menuSat       = ui.menuSaturation  ?? 0.5;
+  const menuBright    = ui.menuBrightness  ?? 0.65;
+  const menuSat       = ui.menuSaturation  ?? 0.55;
+  const menuGamma     = ui.menuGamma       ?? 0.0;
   const debugMode     = ui.debugMode       ?? false;
 
   const isLeft      = main._dominantHand === 'left';
@@ -975,6 +976,11 @@ function buildMenuHTML_settings(main) {
       <span class="mm-lbl">Saturation</span>
       <input type="range" id="mm-menu-sat" min="0" max="100" step="5" value="${Math.round(menuSat*100)}">
       <span class="mm-val" id="mm-menu-sat-val">${Math.round(menuSat*100)}%</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Gamma</span>
+      <input type="range" id="mm-menu-gamma" min="0" max="100" step="5" value="${Math.round(menuGamma*100)}">
+      <span class="mm-val" id="mm-menu-gamma-val">${Math.round(menuGamma*100)}%</span>
     </div>
 
     <div class="mm-section-title">Blendshapes</div>
@@ -1934,7 +1940,8 @@ export class MainMenuPanel extends HTMLVRPanel {
         if (window._reloadControllerModels) window._reloadControllerModels.call(main);
         else main.reloadControllerModels?.();
         main.render?.();
-      }, lightRepaint);
+      }, paint); // was `lightRepaint` (undefined in this method) → threw ReferenceError, aborting
+                 // _wireSettings before the controller-model/wireframe/menu sliders got wired.
     }
 
     // Wireframe
@@ -1969,11 +1976,19 @@ export class MainMenuPanel extends HTMLVRPanel {
       const f = v / 100;
       if (ui) ui.menuBrightness = f;
       opts.saveOption('menuBrightness', f, 500);
+      setMenuColorGrade(f, ui?.menuSaturation ?? 0.5, ui?.menuGamma ?? 0.5);
     }, (v) => `${v}%`);
     this._wireSlider(q('#mm-menu-sat'), q('#mm-menu-sat-val'), (v) => {
       const f = v / 100;
       if (ui) ui.menuSaturation = f;
       opts.saveOption('menuSaturation', f, 500);
+      setMenuColorGrade(ui?.menuBrightness ?? 0.5, f, ui?.menuGamma ?? 0.5);
+    }, (v) => `${v}%`);
+    this._wireSlider(q('#mm-menu-gamma'), q('#mm-menu-gamma-val'), (v) => {
+      const f = v / 100;
+      if (ui) ui.menuGamma = f;
+      opts.saveOption('menuGamma', f, 500);
+      setMenuColorGrade(ui?.menuBrightness ?? 0.5, ui?.menuSaturation ?? 0.5, f);
     }, (v) => `${v}%`);
 
     // Debug

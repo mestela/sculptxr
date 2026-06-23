@@ -174,8 +174,9 @@ var getOptionsURL = function () {
   options.triggerCurve = queryNumber(getVal('triggerCurve'), 0.0, 1.0, 0.5);
   options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);
   options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.25);
-  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.25);
-  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 1.0);
+  options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.65); // matt-tuned menu look
+  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.55);
+  options.menuGamma      = queryNumber(getVal('menuGamma'),      0.0, 1.0, 0.0);  // (0.5 = neutral γ 1.0)
   options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
   const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
   options.wireframeType = queryNumber(getVal('wireframeType'), 0, 2, 2); // Force 2 (Full Mode) for spatial topology tests

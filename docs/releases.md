@@ -1,3 +1,9 @@
+# v3.4.0
+Menu colour controls — the Settings → Menu **Brightness** and **Saturation** sliders work again (they'd been dead since the move from the canvas GUI), plus a new **Gamma** slider.
+
+- **Feature**: **Menu Brightness / Saturation / Gamma.** Applied as a GPU colour-grade on the VR panel texture (brightness multiply → saturation around luminance → gamma `pow()`), so adjusting is cheap (no panel re-rasterise). Values persist and apply on load. New defaults: brightness 65 / saturation 55 / gamma 0.
+- **Fix**: **Brightness/Saturation were dead in VR.** Two reasons: (1) nothing consumed the slider values after the canvas→HTML-panel migration (the old GUI recoloured each draw; the textured panels had no equivalent) — now driven by the grade above; (2) `_wireSettings` threw a `ReferenceError` partway through (an out-of-scope `lightRepaint`), which aborted wiring before the menu sliders — so they never got their listeners. Fixing that also restores the **controller-model dropdown** and the **wireframe bias/opacity sliders**, which were silently dead from the same throw.
+
 # v3.3.1
 - **Fix (prod perf)**: **VR menus were extremely slow in production** (not dev). The build inlined all fonts as base64 into the CSS bundle (`assetsInlineLimit: 300000` → ~2.5 MB CSS), and the html-in-canvas panel rasterizer inlines the whole page CSS into every panel SVG on every repaint — so each menu paint serialized/decoded ~2.5 MB. Lowered `assetsInlineLimit` to the Vite default; prod CSS is now ~180 KB. FontAwesome in panels stays covered by `install.js`'s runtime font injection. Dev was unaffected (fonts served as separate files), which is why it only showed up once deployed.
 

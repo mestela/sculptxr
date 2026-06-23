@@ -18,6 +18,44 @@
 
 import * as THREE from 'three';
 import { getHostCanvas, registerPanel, unregisterPanel, drainRAF, requestPaintOnce, requestPaintForced } from './install.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
+
+// ── Menu color grade (brightness / saturation) ──────────────────────────────
+// Applied on the GPU to the rasterised panel texture (a brightness multiply + a
+// saturation mix around luminance, injected into every panel material), so it costs
+// nothing to change — no re-rasterise. Restores the Settings menu brightness/saturation
+// sliders that did this in the old canvas GUI (GuiXR.parseColor). Slider values are 0..1
+// with 0.5 = neutral; the mapping below matches the legacy behaviour exactly.
+const _gradeMats = new Set();
+function _gradeFactors(b01, s01, g01) {
+  const bright = (b01 ?? 0.5) * 2.0;                                  // 0.5 → 1.0 (neutral)
+  const s = (s01 ?? 0.5);
+  const sat = s <= 0.5 ? s * 2.0 : (s - 0.5) * 8.0 + 1.0;             // 0.5 → 1.0; up to 5.0
+  const gamma = Math.pow(2.0, (0.5 - (g01 ?? 0.5)) * 2.0);           // 0.5 → 1.0; up=brighter (0.5), down=darker (2.0)
+  return { bright, sat, gamma };
+}
+let _grade = (() => { const o = getOptionsURL(); return _gradeFactors(o.menuBrightness, o.menuSaturation, o.menuGamma); })();
+
+// Set the menu brightness/saturation from the Settings sliders (0..1 each).
+let _gradeRecompileTimer = null;
+export function setMenuColorGrade(b01, s01, g01) {
+  _grade = _gradeFactors(b01, s01, g01);
+  for (const m of _gradeMats) {
+    const sh = m.userData.gradeShader;
+    if (sh) {
+      sh.uniforms.uPanelBright.value = _grade.bright;
+      sh.uniforms.uPanelSat.value   = _grade.sat;
+      sh.uniforms.uPanelGamma.value = _grade.gamma;
+    }
+  }
+  // Custom onBeforeCompile uniforms on a built-in material don't reliably re-upload after the
+  // first compile (Three only does it when the material's program is "refreshed"), so the in-place
+  // value write above can silently no-op. Force a recompile — onBeforeCompile re-reads _grade, the
+  // same path that works on load. Debounced so a continuous slider drag coalesces to one recompile
+  // (per-input recompile would stutter in VR).
+  clearTimeout(_gradeRecompileTimer);
+  _gradeRecompileTimer = setTimeout(() => { for (const m of _gradeMats) m.needsUpdate = true; }, 60);
+}
 
 /**
  * Shared pixels-per-metre ratio for all htmlvr panels.
@@ -91,6 +129,7 @@ export class HTMLVRPanel {
     unregisterPanel(this);
     this.unbindDesktopPointers();
     if (this.mesh) {
+      _gradeMats.delete(this.mesh.material);
       this.mesh.geometry.dispose();
       this.mesh.material.dispose();
       if (this._texture) this._texture.dispose();
@@ -119,15 +158,30 @@ export class HTMLVRPanel {
     const aspect = w / h;
     const meshH  = this._meshWidth / aspect;
 
-    this.mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(this._meshWidth, meshH),
-      new THREE.MeshBasicMaterial({
-        side: THREE.DoubleSide,
-        transparent: true,
-        depthWrite: true,  // write depth so the laser and scene geometry are properly
-        depthTest: true,   // z-sorted against the panel — no draw-order tricks
-      })
-    );
+    const _mat = new THREE.MeshBasicMaterial({
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthWrite: true,  // write depth so the laser and scene geometry are properly
+      depthTest: true,   // z-sorted against the panel — no draw-order tricks
+    });
+    // Brightness/saturation grade (Settings sliders). Injected into the basic-material
+    // fragment after the texture sample; uniforms updated live by setMenuColorGrade.
+    _mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uPanelBright = { value: _grade.bright };
+      shader.uniforms.uPanelSat    = { value: _grade.sat };
+      shader.uniforms.uPanelGamma  = { value: _grade.gamma };
+      shader.fragmentShader =
+        'uniform float uPanelBright;\nuniform float uPanelSat;\nuniform float uPanelGamma;\n' +
+        shader.fragmentShader.replace('#include <dithering_fragment>',
+          'vec3 _pc = gl_FragColor.rgb * uPanelBright;\n' +
+          'float _plum = dot(_pc, vec3(0.299, 0.587, 0.114));\n' +
+          '_pc = clamp(vec3(_plum) + (_pc - vec3(_plum)) * uPanelSat, 0.0, 1.0);\n' +
+          'gl_FragColor.rgb = pow(_pc, vec3(uPanelGamma));\n' +
+          '#include <dithering_fragment>');
+      _mat.userData.gradeShader = shader;
+    };
+    _gradeMats.add(_mat);
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;
 
