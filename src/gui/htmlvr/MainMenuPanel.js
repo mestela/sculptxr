@@ -882,7 +882,7 @@ function buildMenuHTML_settings(main) {
   const wfBias        = ui.wireframeBias   ?? opts.wireframeBias   ?? 0.001;
   const wfAlpha       = ui.wireframeAlpha  ?? opts.wireframeAlpha  ?? 0.2;
   const menuBright    = ui.menuBrightness  ?? 0.65;
-  const menuSat       = ui.menuSaturation  ?? 0.55;
+  const menuSat       = ui.menuSaturation  ?? 0.50;
   const menuGamma     = ui.menuGamma       ?? 0.0;
   const debugMode     = ui.debugMode       ?? false;
 

@@ -1,4 +1,5 @@
 import TimelineHelper from './TimelineHelper.js';
+import { Theme } from './theme.js';
 
 export default class GuiTimeline {
   constructor(main) {
@@ -83,10 +84,10 @@ export default class GuiTimeline {
     this._container.style.bottom = '0';
     this._container.style.left = '0';
     this._container.style.height = '150px'; // Slightly shorter for desktop
-    this._container.style.backgroundColor = '#181818';
+    this._container.style.backgroundColor = Theme.base;
     this._container.style.zIndex = '2000'; // High z-index to be on top
     this._container.style.display = 'none'; // Hidden by default
-    this._container.style.borderTop = '2px solid #444';
+    this._container.style.borderTop = '2px solid #45475a';
 
     this._canvas = document.createElement('canvas');
     this._canvas.style.width = '100%';
@@ -170,10 +171,10 @@ export default class GuiTimeline {
     // Toolbar tooltip element — shown on button hover.
     this._tooltip = document.createElement('div');
     Object.assign(this._tooltip.style, {
-      position: 'absolute', background: '#111', color: '#ddd',
+      position: 'absolute', background: Theme.crust, color: Theme.text,
       padding: '3px 8px', borderRadius: '3px', font: '11px sans-serif',
       pointerEvents: 'none', display: 'none', zIndex: '30', whiteSpace: 'nowrap',
-      border: '1px solid #555', bottom: '100%', marginBottom: '4px', transform: 'translateX(-50%)',
+      border: '1px solid #45475a', bottom: '100%', marginBottom: '4px', transform: 'translateX(-50%)',
     });
     this._container.appendChild(this._tooltip);
 
@@ -291,7 +292,7 @@ export default class GuiTimeline {
   // Blend a #rrggbb color toward white (for hovered-curve highlight).
   _lightenHex(hex) {
     const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
-    if (!m) return '#ffffff';
+    if (!m) return Theme.text;
     const n = parseInt(m[1], 16);
     const mix = (c) => Math.round(c + (255 - c) * 0.55);
     return `rgb(${mix((n >> 16) & 255)},${mix((n >> 8) & 255)},${mix(n & 255)})`;
@@ -602,7 +603,7 @@ export default class GuiTimeline {
       const capStartY = 25;
       const phHovered = Math.abs(this._lastMouseX - playheadX) < 10
                      && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
-      const phColor = phHovered ? '#88bbff' : '#4488ff';
+      const phColor = phHovered ? '#88bbff' : Theme.blue;
 
       ctx.strokeStyle = phColor;
       ctx.lineWidth = phHovered ? 2.5 : 2;
@@ -622,7 +623,7 @@ export default class GuiTimeline {
       ctx.fill();
 
       const curT = Math.round(currentTimeVal * fps);
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = Theme.text;
       ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -707,7 +708,7 @@ export default class GuiTimeline {
       ctx.fillRect(4, ry + 4, 4, 14);
 
       // Eye icon at 60% scale (brightens on hover)
-      const eyeCol = rowHov ? '#fff' : (isVisible ? color : '#555');
+      const eyeCol = rowHov ? Theme.text : (isVisible ? color : Theme.surface1);
       ctx.save();
       ctx.translate(16, ry + 2);
       ctx.scale(0.6, 0.6);
@@ -721,7 +722,7 @@ export default class GuiTimeline {
       ctx.fill();
       ctx.restore();
 
-      ctx.fillStyle = (highlight || rowHov) ? '#fff' : (isVisible ? '#ccc' : '#555');
+      ctx.fillStyle = (highlight || rowHov) ? Theme.text : (isVisible ? Theme.text : Theme.surface1);
       ctx.font = (highlight || rowHov) ? 'bold 10px sans-serif' : '10px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
@@ -734,17 +735,17 @@ export default class GuiTimeline {
         const vy = Math.round(ry + 3);
         const hovVal = this._lastMouseX >= vx && this._lastMouseX <= vx + vw
                     && this._lastMouseY >= vy && this._lastMouseY <= vy + vh;
-        ctx.fillStyle = hovVal && editable ? '#3a4a3a' : '#252525';
+        ctx.fillStyle = hovVal && editable ? '#3a4a3a' : Theme.surface0;
         ctx.beginPath();
         ctx.roundRect(vx, vy, vw, vh, 2);
         ctx.fill();
-        ctx.fillStyle = hovVal && editable ? '#88ddaa' : '#888';
+        ctx.fillStyle = hovVal && editable ? '#88ddaa' : Theme.subtext;
         ctx.font = '9px monospace';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
         ctx.fillText(valStr, vx + vw - 4, vy + vh / 2);
         if (editable) {
-          ctx.strokeStyle = hovVal ? '#446644' : '#333';
+          ctx.strokeStyle = hovVal ? '#446644' : Theme.surface0;
           ctx.lineWidth = 0.5;
           ctx.stroke();
         }
@@ -850,7 +851,7 @@ export default class GuiTimeline {
         const isMinor = gridMinorInt > 0 && (f % gridMinorInt === 0);
         if (!isMajor && !isMinor) continue;
         const gx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
-        ctx.strokeStyle = isMajor ? '#2e2e2e' : '#222';
+        ctx.strokeStyle = isMajor ? Theme.surface0 : Theme.mantle;
         ctx.beginPath();
         ctx.moveTo(gx, headerH);
         ctx.lineTo(gx, this._cssHeight);
@@ -878,7 +879,7 @@ export default class GuiTimeline {
         const gy = this.valueToY(v);
         if (gy < headerH || gy > this._cssHeight) continue;
         const isZero = Math.abs(v) < valueStep * 0.01;
-        ctx.strokeStyle = isZero ? '#555' : '#252525';
+        ctx.strokeStyle = isZero ? Theme.surface1 : Theme.surface0;
         ctx.lineWidth = isZero ? 2 : 1;
         ctx.beginPath();
         ctx.moveTo(tlX, gy);
@@ -886,7 +887,7 @@ export default class GuiTimeline {
         ctx.stroke();
         // Value label on left edge of grid area
         if (!isZero) {
-          ctx.fillStyle = '#484848';
+          ctx.fillStyle = Theme.surface1;
           ctx.font = '9px sans-serif';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
@@ -899,7 +900,7 @@ export default class GuiTimeline {
     // Draw Zero Axis (kept as slightly stronger line, drawn after grid)
     const zeroY = this.valueToY(0);
     if (zeroY >= headerH && zeroY <= this._cssHeight) {
-      ctx.strokeStyle = '#666';
+      ctx.strokeStyle = Theme.overlay0;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(tlX, zeroY);
@@ -1034,7 +1035,7 @@ export default class GuiTimeline {
 
             if (isSelected || isInsideMarquee) ctx.fillStyle = '#ffff00'; // Yellow
             else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
-            else ctx.fillStyle = '#888888'; // Gray
+            else ctx.fillStyle = Theme.subtext; // Gray
 
             const isTied = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_tied`] !== false : true;
             ctx.beginPath();
@@ -1052,7 +1053,7 @@ export default class GuiTimeline {
           const singleSelected = window._animSelectedKeys && window._animSelectedKeys.length === 1 ? window._animSelectedKeys[0] : null;
           const selChannel = (singleSelected && singleSelected.type === 'transform') ? (singleSelected.channel !== undefined ? singleSelected.channel : 0) : 0;
 
-          ctx.strokeStyle = '#888888'; // Revert to gray!
+          ctx.strokeStyle = Theme.subtext; // Revert to gray!
           ctx.lineWidth = 1.5;
 
           for (let i = 0; i < track.times.length; i++) {
@@ -1089,7 +1090,7 @@ export default class GuiTimeline {
 
               if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
               else if (isRightHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = '#888888'; // Gray
+              else ctx.fillStyle = Theme.subtext; // Gray
               
               ctx.beginPath();
               ctx.arc(kx + rightXOff, ky + rightYOff, 2.5, 0, Math.PI * 2);
@@ -1108,7 +1109,7 @@ export default class GuiTimeline {
 
               if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
               else if (isLeftHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = '#888888'; // Gray
+              else ctx.fillStyle = Theme.subtext; // Gray
               
               ctx.beginPath();
               ctx.arc(kx + leftXOff, ky + leftYOff, 2.5, 0, Math.PI * 2);
@@ -1179,7 +1180,7 @@ export default class GuiTimeline {
             
             // Draw Tangent Handles
             if (window._animShowTangents) {
-              ctx.strokeStyle = '#888888';
+              ctx.strokeStyle = Theme.subtext;
               ctx.lineWidth = 1;
               
               const kx1 = tlX + ((t1 - loopStart) / visibleDuration) * tlW;
@@ -1202,7 +1203,7 @@ export default class GuiTimeline {
               
               if (isRightActive) ctx.fillStyle = '#ffff00'; // Yellow
               else if (isRightHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = '#888888'; // Gray
+              else ctx.fillStyle = Theme.subtext; // Gray
               
               ctx.beginPath();
               ctx.arc(kx1 + rightXOff, ky1 + rightYOff, 2.5, 0, Math.PI * 2);
@@ -1219,7 +1220,7 @@ export default class GuiTimeline {
               
               if (isLeftActive) ctx.fillStyle = '#ffff00'; // Yellow
               else if (isLeftHovered) ctx.fillStyle = '#00ffff'; // Cyan
-              else ctx.fillStyle = '#888888'; // Gray
+              else ctx.fillStyle = Theme.subtext; // Gray
               
               ctx.beginPath();
               ctx.arc(kx2 + leftXOff, ky2 + leftYOff, 2.5, 0, Math.PI * 2);
@@ -1257,7 +1258,7 @@ export default class GuiTimeline {
           ctx.fill();
           
           if (isSelected || isInsideMarquee) {
-            ctx.strokeStyle = '#ffffff';
+            ctx.strokeStyle = Theme.text;
             ctx.lineWidth = 1;
             ctx.stroke();
           }
@@ -1318,7 +1319,7 @@ export default class GuiTimeline {
               window._animSelectedKeys.some(k => k.meshId === id && k.type === 'blendshape' && k.name === name && k.index === i);
             const isHovered = TimelineHelper.isKeyHovered(x, y, this._lastMouseX, this._lastMouseY, 10);
 
-            ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? '#ffffff' : color);
+            ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? Theme.text : color);
             ctx.beginPath();
             ctx.moveTo(x, y - 5);
             ctx.lineTo(x + 5, y);
@@ -1326,7 +1327,7 @@ export default class GuiTimeline {
             ctx.lineTo(x - 5, y);
             ctx.closePath();
             ctx.fill();
-            if (isSelected) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.stroke(); }
+            if (isSelected) { ctx.strokeStyle = Theme.text; ctx.lineWidth = 1; ctx.stroke(); }
           }
 
           // Tangent handles
@@ -4233,11 +4234,11 @@ export default class GuiTimeline {
     };
 
     // 1. Dark Graph Container
-    ctx.fillStyle = '#181818';
+    ctx.fillStyle = Theme.base; // match the HTML menu panel base (graded the same in VR)
     ctx.fillRect(w.x, w.y, w.w, w.h);
     
     if (!window._animationRegistry) {
-      ctx.fillStyle = '#aaa';
+      ctx.fillStyle = Theme.subtext;
       ctx.font = '24px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('No Animation Registry found.', w.w / 2, w.h / 2);
@@ -4275,11 +4276,11 @@ export default class GuiTimeline {
 
     // --- 1. Draw Top Transport Header Strip ---
     const headerH = 50;
-    ctx.fillStyle = '#222';
+    ctx.fillStyle = Theme.mantle;
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
     // Resize grip — 3 dots centred at top edge
-    ctx.fillStyle = '#555';
+    ctx.fillStyle = Theme.surface1;
     for (let i = -1; i <= 1; i++) {
       ctx.beginPath();
       ctx.arc(w.w / 2 + i * 8, 3, 2, 0, Math.PI * 2);
@@ -4300,11 +4301,11 @@ export default class GuiTimeline {
     _tbBtns.forEach(btn => {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
                && this._lastMouseY >= 5    && this._lastMouseY <= 25;
-      const fill = btn.disabled  ? '#282828'
+      const fill = btn.disabled  ? Theme.surface0
                  : btn.id === 'record' && btn.active ? '#cc2244'  // record armed → red
-                 : btn.active   ? '#4488ff'
-                 : hov          ? '#555'
-                                : '#3a3a3a';
+                 : btn.active   ? Theme.blue
+                 : hov          ? Theme.surface1
+                                : Theme.surface1;
       _drawBtn(btn.x, btn.y, btn.w, btn.h, fill);
       ctx.textAlign = 'center';
       // cy: integer pixel center for geometry and FA glyphs (textBaseline:'middle', even px = integer midpoint).
@@ -4314,7 +4315,7 @@ export default class GuiTimeline {
       const cx = Math.round(btn.x + btn.w / 2);
       if (btn.id === 'marquee') {
         // Dashed-rectangle selection-box icon — drawn directly, no font needed.
-        const ic = btn.active ? '#fff' : '#999';
+        const ic = btn.active ? Theme.text : Theme.subtext;
         ctx.strokeStyle = ic; ctx.fillStyle = ic; ctx.lineWidth = 1.5;
         ctx.setLineDash([2, 1.5]);
         const ix = btn.x + btn.w / 2 - 7, iy = cy - 4;
@@ -4332,19 +4333,19 @@ export default class GuiTimeline {
           ctx.font = '900 12px "Font Awesome 6 Free"';
           // Chart-column flipped vertically.
           ctx.save();
-          ctx.fillStyle = dopeActive ? '#fff' : '#777';
+          ctx.fillStyle = dopeActive ? Theme.text : Theme.overlay0;
           ctx.translate(Math.round(btn.x + 13), cy);
           ctx.scale(1, -1);
           ctx.fillText('', 0, 0);
           ctx.restore();
-          ctx.fillStyle = graphActive ? '#fff' : '#777';
+          ctx.fillStyle = graphActive ? Theme.text : Theme.overlay0;
           ctx.fillText('', Math.round(btn.x + 33), cy);
         } else {
-          ctx.textBaseline = 'alphabetic'; ctx.font = '13px sans-serif'; ctx.fillStyle = '#fff';
+          ctx.textBaseline = 'alphabetic'; ctx.font = '13px sans-serif'; ctx.fillStyle = Theme.text;
           ctx.fillText('D/G', cx, ty);
         }
       } else if (btn.icon) {
-        ctx.fillStyle = btn.disabled ? '#555' : '#ddd';
+        ctx.fillStyle = btn.disabled ? Theme.surface1 : Theme.text;
         if (_faReady) {
           ctx.textBaseline = 'middle';
           // Wide transport buttons (w ≥ 40) get a larger icon.
@@ -4358,7 +4359,7 @@ export default class GuiTimeline {
         }
       } else {
         ctx.textBaseline = 'alphabetic';
-        ctx.fillStyle = btn.disabled ? '#555' : '#ccc';
+        ctx.fillStyle = btn.disabled ? Theme.surface1 : Theme.text;
         ctx.font = '13px sans-serif';
         ctx.fillText(btn.label, cx, ty);
       }
@@ -4374,10 +4375,10 @@ export default class GuiTimeline {
     _gbBtns.forEach(btn => {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
                && this._lastMouseY >= btn.y && this._lastMouseY <= btn.y + btn.h;
-      const fill = btn.disabled ? '#282828'
-                 : btn.active   ? '#4488ff'
-                 : hov          ? '#555'
-                                : '#3a3a3a';
+      const fill = btn.disabled ? Theme.surface0
+                 : btn.active   ? Theme.blue
+                 : hov          ? Theme.surface1
+                                : Theme.surface1;
       ctx.fillStyle = fill;
       ctx.beginPath();
       ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 3);
@@ -4385,7 +4386,7 @@ export default class GuiTimeline {
       const cx = Math.round(btn.x + btn.w / 2);
       const cy = Math.round(btn.y + btn.h / 2);
       if (btn.icon) {
-        ctx.fillStyle = btn.disabled ? '#555' : '#ddd';
+        ctx.fillStyle = btn.disabled ? Theme.surface1 : Theme.text;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         if (_faReady) {
@@ -4398,7 +4399,7 @@ export default class GuiTimeline {
           ctx.fillText(btn.id[0].toUpperCase(), cx, cy);
         }
       } else if (btn.label) {
-        ctx.fillStyle = btn.disabled ? '#555' : (btn.active ? '#fff' : '#ccc');
+        ctx.fillStyle = btn.disabled ? Theme.surface1 : (btn.active ? Theme.text : Theme.text);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = 'bold 9px sans-serif';
@@ -4415,7 +4416,7 @@ export default class GuiTimeline {
     // --- Frame ruler strip (y 28..50) ---
     const rulerY = 28;
     const rulerH = headerH - rulerY; // 22px
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = Theme.mantle;
     ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);
 
     // Adaptive tick interval based on pixels-per-frame
@@ -4443,19 +4444,19 @@ export default class GuiTimeline {
       if (!isMajor && !isMinor) continue;
       const rx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
       const tickH = isMajor ? rulerH * 0.55 : rulerH * 0.28;
-      ctx.strokeStyle = isMajor ? '#666' : '#3a3a3a';
+      ctx.strokeStyle = isMajor ? Theme.overlay0 : Theme.surface1;
       ctx.beginPath();
       ctx.moveTo(rx, w.y + headerH - tickH);
       ctx.lineTo(rx, w.y + headerH);
       ctx.stroke();
       if (isMajor) {
-        ctx.fillStyle = '#888';
+        ctx.fillStyle = Theme.subtext;
         ctx.fillText(`${f}`, rx, w.y + rulerY + 2);
       }
     }
 
     // Ruler border line
-    ctx.strokeStyle = '#444';
+    ctx.strokeStyle = Theme.surface1;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(tlX, w.y + rulerY);
@@ -4489,14 +4490,14 @@ export default class GuiTimeline {
       const hasSel = sel.length > 0;
       const hovF = this._lastMouseX >= fr.x && this._lastMouseX <= fr.x + fr.w
                 && this._lastMouseY >= fr.y && this._lastMouseY <= fr.y + fr.h;
-      ctx.fillStyle = !hasSel ? '#282828' : (hovF ? '#3a4a3a' : '#252525');
+      ctx.fillStyle = !hasSel ? Theme.surface0 : (hovF ? '#3a4a3a' : Theme.surface0);
       ctx.beginPath(); ctx.roundRect(fr.x, fr.y, fr.w, fr.h, 3); ctx.fill();
-      ctx.strokeStyle = hasSel ? (hovF ? '#446644' : '#3a3a3a') : '#333';
+      ctx.strokeStyle = hasSel ? (hovF ? '#446644' : Theme.surface1) : Theme.surface0;
       ctx.lineWidth = 0.5; ctx.stroke();
-      ctx.fillStyle = '#777'; ctx.font = '9px sans-serif';
+      ctx.fillStyle = Theme.overlay0; ctx.font = '9px sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText('F', fr.x + 5, fr.y + fr.h / 2 + 0.5);
-      ctx.fillStyle = hasSel ? (hovF ? '#88ddaa' : '#bbb') : '#555';
+      ctx.fillStyle = hasSel ? (hovF ? '#88ddaa' : Theme.subtext) : Theme.surface1;
       ctx.font = '10px monospace'; ctx.textAlign = 'right';
       ctx.fillText(label, fr.x + fr.w - 5, fr.y + fr.h / 2 + 0.5);
 
@@ -4511,14 +4512,14 @@ export default class GuiTimeline {
       }
       const hovV = this._lastMouseX >= vr2.x && this._lastMouseX <= vr2.x + vr2.w
                 && this._lastMouseY >= vr2.y && this._lastMouseY <= vr2.y + vr2.h;
-      ctx.fillStyle = !hasSel ? '#282828' : (hovV ? '#3a4a3a' : '#252525');
+      ctx.fillStyle = !hasSel ? Theme.surface0 : (hovV ? '#3a4a3a' : Theme.surface0);
       ctx.beginPath(); ctx.roundRect(vr2.x, vr2.y, vr2.w, vr2.h, 3); ctx.fill();
-      ctx.strokeStyle = hasSel ? (hovV ? '#446644' : '#3a3a3a') : '#333';
+      ctx.strokeStyle = hasSel ? (hovV ? '#446644' : Theme.surface1) : Theme.surface0;
       ctx.lineWidth = 0.5; ctx.stroke();
-      ctx.fillStyle = '#777'; ctx.font = '9px sans-serif';
+      ctx.fillStyle = Theme.overlay0; ctx.font = '9px sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText('V', vr2.x + 5, vr2.y + vr2.h / 2 + 0.5);
-      ctx.fillStyle = hasSel ? (hovV ? '#88ddaa' : '#bbb') : '#555';
+      ctx.fillStyle = hasSel ? (hovV ? '#88ddaa' : Theme.subtext) : Theme.surface1;
       ctx.font = '10px monospace'; ctx.textAlign = 'right';
       ctx.fillText(vlabel, vr2.x + vr2.w - 5, vr2.y + vr2.h / 2 + 0.5);
     }
@@ -4547,7 +4548,7 @@ export default class GuiTimeline {
         const isMin = gMinor > 0 && (f % gMinor === 0);
         if (!isMaj && !isMin) continue;
         const gx = tlX + ((f / fps - loopStart) / visibleDuration) * tlW;
-        ctx.strokeStyle = isMaj ? '#2e2e2e' : '#222';
+        ctx.strokeStyle = isMaj ? Theme.surface0 : Theme.mantle;
         ctx.beginPath();
         ctx.moveTo(gx, w.y + headerH);
         ctx.lineTo(gx, w.y + w.h);
@@ -4556,7 +4557,7 @@ export default class GuiTimeline {
     }
 
     // Track Column Border
-    ctx.strokeStyle = '#666';
+    ctx.strokeStyle = Theme.overlay0;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(tlX, w.y + headerH);

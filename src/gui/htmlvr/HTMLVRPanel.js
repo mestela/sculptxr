@@ -36,6 +36,37 @@ function _gradeFactors(b01, s01, g01) {
 }
 let _grade = (() => { const o = getOptionsURL(); return _gradeFactors(o.menuBrightness, o.menuSaturation, o.menuGamma); })();
 
+// Inject the brightness/saturation/gamma grade into a MeshBasicMaterial's fragment (after the
+// texture sample) and register it so setMenuColorGrade can update it. Used by HTMLVRPanel's own
+// material and by registerGradeMaterial() for external canvas panels (timeline / blendshapes).
+function _installGrade(mat) {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uPanelBright = { value: _grade.bright };
+    shader.uniforms.uPanelSat    = { value: _grade.sat };
+    shader.uniforms.uPanelGamma  = { value: _grade.gamma };
+    shader.fragmentShader =
+      'uniform float uPanelBright;\nuniform float uPanelSat;\nuniform float uPanelGamma;\n' +
+      shader.fragmentShader.replace('#include <dithering_fragment>',
+        'vec3 _pc = gl_FragColor.rgb * uPanelBright;\n' +
+        'float _plum = dot(_pc, vec3(0.299, 0.587, 0.114));\n' +
+        '_pc = clamp(vec3(_plum) + (_pc - vec3(_plum)) * uPanelSat, 0.0, 1.0);\n' +
+        'gl_FragColor.rgb = pow(_pc, vec3(uPanelGamma));\n' +
+        '#include <dithering_fragment>');
+    mat.userData.gradeShader = shader;
+  };
+  _gradeMats.add(mat);
+  return mat;
+}
+
+// Apply the menu colour grade to a non-HTMLVRPanel material (the canvas-textured timeline and
+// blendshape panels live as their own meshes in Scene.js, so they don't get it automatically).
+export function registerGradeMaterial(mat) {
+  if (!mat || mat.userData?.gradeShader || _gradeMats.has(mat)) return mat;
+  _installGrade(mat);
+  mat.needsUpdate = true;
+  return mat;
+}
+
 // Set the menu brightness/saturation from the Settings sliders (0..1 each).
 let _gradeRecompileTimer = null;
 export function setMenuColorGrade(b01, s01, g01) {
@@ -164,23 +195,7 @@ export class HTMLVRPanel {
       depthWrite: true,  // write depth so the laser and scene geometry are properly
       depthTest: true,   // z-sorted against the panel — no draw-order tricks
     });
-    // Brightness/saturation grade (Settings sliders). Injected into the basic-material
-    // fragment after the texture sample; uniforms updated live by setMenuColorGrade.
-    _mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uPanelBright = { value: _grade.bright };
-      shader.uniforms.uPanelSat    = { value: _grade.sat };
-      shader.uniforms.uPanelGamma  = { value: _grade.gamma };
-      shader.fragmentShader =
-        'uniform float uPanelBright;\nuniform float uPanelSat;\nuniform float uPanelGamma;\n' +
-        shader.fragmentShader.replace('#include <dithering_fragment>',
-          'vec3 _pc = gl_FragColor.rgb * uPanelBright;\n' +
-          'float _plum = dot(_pc, vec3(0.299, 0.587, 0.114));\n' +
-          '_pc = clamp(vec3(_plum) + (_pc - vec3(_plum)) * uPanelSat, 0.0, 1.0);\n' +
-          'gl_FragColor.rgb = pow(_pc, vec3(uPanelGamma));\n' +
-          '#include <dithering_fragment>');
-      _mat.userData.gradeShader = shader;
-    };
-    _gradeMats.add(_mat);
+    _installGrade(_mat); // brightness/saturation/gamma grade from the Settings sliders
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(this._meshWidth, meshH), _mat);
     // scale.y = -1 compensates for flipY=false in the polyfill-rasterised texture.
     this.mesh.scale.y = -1;

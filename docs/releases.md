@@ -1,3 +1,10 @@
+# v3.5.0
+Unified menu theme — the canvas panels (timeline + blendshape stack) now match the HTML menus.
+
+- **Change**: **Menu colour grade applies to the canvas panels too.** The Settings Brightness/Saturation/Gamma sliders now affect the timeline and blendshape panel (they're canvas-textured meshes, so they weren't getting the grade before). Values persist and update live, same as the HTML panels.
+- **Change**: **Shared theme palette.** New `src/gui/theme.js` (Catppuccin Mocha — the colours the HTML CSS already uses) is the single source of truth; the timeline and blendshape panels now reference it for all chrome (backgrounds, headers, gridlines, borders, text), so the neutral grays become the menu's blue-tinted palette and read as one theme. Semantic colours (keyframe types, channel colours, status) are unchanged.
+- **Change**: **Default menu saturation 55 → 50.** A one-time migration re-applies the menu defaults (brightness 65 / saturation 50 / gamma 0) to existing installs.
+
 # v3.4.1
 - **Fix**: **Panel icons showed as placeholders in immersive on GalaxyXR** (desktop was fine). The v3.3.1 perf fix stopped inlining fonts into the CSS bundle, so Font Awesome glyphs were no longer embedded — and the panel rasteriser can't fetch `url()` fonts at paint time in immersive. FA Solid is now injected as a single base64 `@font-face` synchronously at startup (committed `faSolidBase64.js`), before the rasteriser caches stylesheets. CSS stays lean (~180 KB); per-paint adds one ~210 KB font copy.
 - **Fix**: **New menu-colour defaults didn't apply to existing installs.** The brightness/saturation sliders were dead until v3.4.0, so saved values are stale old-defaults (e.g. 100% saturation) that overrode the new 65/55/0. A one-time migration forces 65/55/0 once, then respects user changes.

@@ -175,7 +175,7 @@ var getOptionsURL = function () {
   options.wireframeBias = queryNumber(getVal('wireframeBias'), 0.0, 0.005, 0.0001);
   options.wireframeAlpha = queryNumber(getVal('wireframeAlpha'), 0.0, 1.0, 0.25);
   options.menuBrightness = queryNumber(getVal('menuBrightness'), 0.0, 1.0, 0.65); // matt-tuned menu look
-  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.55);
+  options.menuSaturation = queryNumber(getVal('menuSaturation'), 0.0, 1.0, 0.50);
   options.menuGamma      = queryNumber(getVal('menuGamma'),      0.0, 1.0, 0.0);  // (0.5 = neutral γ 1.0)
   options.offsetY = queryNumber(getVal('offsetY'), -2.0, 0.0, -1.2);
   const isMobileVR = typeof navigator !== 'undefined' && /OculusBrowser|Mobile VR|Mobile|Android/i.test(navigator.userAgent);
@@ -224,10 +224,10 @@ var getOptionsURL = function () {
   // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
   // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.
   try {
-    if (typeof localStorage !== 'undefined' && !localStorage.getItem('menuGradeDefaultsV1')) {
-      localStorage.setItem('menuGradeDefaultsV1', '1');
+    if (typeof localStorage !== 'undefined' && !localStorage.getItem('menuGradeDefaultsV2')) {
+      localStorage.setItem('menuGradeDefaultsV2', '1');
       options.menuBrightness = 0.65; getOptionsURL.saveOption('menuBrightness', 0.65, 0);
-      options.menuSaturation = 0.55; getOptionsURL.saveOption('menuSaturation', 0.55, 0);
+      options.menuSaturation = 0.50; getOptionsURL.saveOption('menuSaturation', 0.50, 0);
       options.menuGamma      = 0.0;  getOptionsURL.saveOption('menuGamma',      0.0,  0);
     }
   } catch (e) { /* localStorage unavailable — fall through with read defaults */ }

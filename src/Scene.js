@@ -31,6 +31,7 @@ import GazeTooltip from './drawables/GazeTooltip.js';
 // [HTMLVRPanel] rAF intercept + polyfill installed as a side-effect of this import.
 // Must appear before any three-html-render usage.
 import { drainRAF } from './gui/htmlvr/install.js';
+import { registerGradeMaterial } from './gui/htmlvr/HTMLVRPanel.js';
 import { BrushPanel             } from './gui/htmlvr/BrushPanel.js';
 import { MiniPanel              } from './gui/htmlvr/MiniPanel.js';
 import { ToolPickerPanel        } from './gui/htmlvr/ToolPickerPanel.js';
@@ -4646,6 +4647,7 @@ class Scene {
         map: tex, transparent: true,
         side: THREE.DoubleSide, depthWrite: true, depthTest: true,
       });
+      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
       this._vrTimelineMesh = new THREE.Mesh(geo, mat);
       this._scene.add(this._vrTimelineMesh);
 
@@ -4751,6 +4753,7 @@ class Scene {
         map: tex, transparent: true,
         side: THREE.DoubleSide, depthWrite: true, depthTest: true,
       });
+      registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
       this._vrBlendMesh = new THREE.Mesh(geo, mat);
       this._scene.add(this._vrBlendMesh);
       if (window.screenLog) window.screenLog(`[VR Blendshapes] mesh created ${_worldW}×${_worldH}m`, 'cyan');

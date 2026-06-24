@@ -19,6 +19,7 @@
 // against the active mesh (main.getMesh()).
 
 import { arkitByRegion, arkitEntry, arkitUnifiedFor } from '../editing/ArkitBlendshapes.js';
+import { Theme } from './theme.js';
 
 // FontAwesome 6 Free (Solid, weight 900) glyphs — drawn on the canvas, never emoji.
 const FA = {
@@ -237,7 +238,7 @@ export default class BlendshapeStackPanel {
     const W = this._cssW, H = this._cssH;
 
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = Theme.base; // match the HTML menu panel base (graded the same in VR)
     ctx.fillRect(0, 0, W, H);
 
     this._rows = [];
@@ -247,7 +248,7 @@ export default class BlendshapeStackPanel {
 
     const mesh = this._mesh();
     if (!mesh) {
-      ctx.fillStyle = '#777';
+      ctx.fillStyle = Theme.overlay0;
       ctx.font = '12px sans-serif';
       ctx.textBaseline = 'middle';
       ctx.fillText('No mesh selected', PAD, TOOLBAR_H + 20);
@@ -271,9 +272,9 @@ export default class BlendshapeStackPanel {
   }
 
   _drawToolbar(ctx, W) {
-    ctx.fillStyle = '#222';
+    ctx.fillStyle = Theme.mantle;
     ctx.fillRect(0, 0, W, TOOLBAR_H);
-    ctx.strokeStyle = '#2d2d2d';
+    ctx.strokeStyle = Theme.surface0;
     ctx.beginPath();
     ctx.moveTo(0, TOOLBAR_H - 0.5); ctx.lineTo(W, TOOLBAR_H - 0.5);
     ctx.stroke();
@@ -283,15 +284,15 @@ export default class BlendshapeStackPanel {
     const delBtn = { id: 'del', x: PAD + bw + 6, y: by, w: bw, h: bh };
     this._toolbarBtns.push(newBtn, delBtn);
 
-    this._drawIconBtn(ctx, newBtn, FA.plus,  '#3b82f6', this._hover?.btn === 'new');
+    this._drawIconBtn(ctx, newBtn, FA.plus,  Theme.blue, this._hover?.btn === 'new');
     const canDel = !!this._track()?.editingBlendshape;
-    this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : '#555', this._hover?.btn === 'del');
+    this._drawIconBtn(ctx, delBtn, FA.trash, canDel ? '#e06c6c' : Theme.surface2, this._hover?.btn === 'del');
     // VR close is a corner mesh owned by Scene (same style as the timeline), not an
     // on-canvas button — see Scene._vrBlendCloseBtn.
   }
 
   _drawIconBtn(ctx, b, glyph, color, hot = false) {
-    ctx.fillStyle = hot ? '#3a3a3a' : '#2c2c2c';
+    ctx.fillStyle = hot ? Theme.surface1 : Theme.surface0;
     this._roundRect(ctx, b.x, b.y, b.w, b.h, 4);
     ctx.fill();
     ctx.fillStyle = color;
@@ -312,12 +313,12 @@ export default class BlendshapeStackPanel {
 
     // Row background: active (blue) wins; otherwise a faint hover tint.
     if (isActive) {
-      ctx.fillStyle = 'rgba(59,130,246,0.16)'; ctx.fillRect(0, top, W, h);
-      ctx.fillStyle = '#3b82f6';               ctx.fillRect(0, top, 3, h); // accent bar
+      ctx.fillStyle = 'rgba(137,180,250,0.16)'; ctx.fillRect(0, top, W, h);
+      ctx.fillStyle = Theme.blue;               ctx.fillRect(0, top, 3, h); // accent bar
     } else if (hov) {
       ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(0, top, W, h);
     }
-    ctx.strokeStyle = '#262626';
+    ctx.strokeStyle = Theme.surface0;
     ctx.beginPath(); ctx.moveTo(0, top + h - 0.5); ctx.lineTo(W, top + h - 0.5); ctx.stroke();
 
     const iconCy = isBase ? top + h / 2 : top + 16;
@@ -327,7 +328,7 @@ export default class BlendshapeStackPanel {
     // Eye (non-base only) — soloed=amber, muted=red-slash, else grey (white on hover).
     if (!isBase) {
       const eyeHot = hov === 'eye';
-      ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : (eyeHot ? '#fff' : '#9aa'));
+      ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : (eyeHot ? Theme.text : Theme.overlay1));
       ctx.font = '900 13px "Font Awesome 6 Free"';
       ctx.textAlign = 'center';
       ctx.fillText(muted ? FA.eyeSlash : FA.eye, NAME_X + 7, iconCy + 0.5);
@@ -336,7 +337,7 @@ export default class BlendshapeStackPanel {
     // Lock (all rows) — locked=amber, unlocked=dim open-lock (brighten on hover).
     const lockCx  = isBase ? NAME_X + 7 : NAME_X + 25;
     const lockHot = hov === 'lock';
-    ctx.fillStyle = locked ? (lockHot ? '#ffd9a0' : '#f2b53c') : (lockHot ? '#bbb' : '#4a4a4a');
+    ctx.fillStyle = locked ? (lockHot ? '#ffd9a0' : '#f2b53c') : (lockHot ? Theme.subtext : Theme.surface1);
     ctx.font = '900 12px "Font Awesome 6 Free"';
     ctx.textAlign = 'center';
     ctx.fillText(locked ? FA.lock : FA.lockOpen, lockCx, iconCy + 0.5);
@@ -348,8 +349,8 @@ export default class BlendshapeStackPanel {
 
     // Name (brightens on row hover; dim when muted/locked-base).
     const nameHot = hov === 'row';
-    ctx.fillStyle = isBase ? (locked ? '#9a9' : '#888')
-                          : (muted ? '#666' : (isActive || nameHot ? '#fff' : '#ddd'));
+    ctx.fillStyle = isBase ? (locked ? Theme.subtext : Theme.subtext)
+                          : (muted ? Theme.overlay0 : (isActive || nameHot ? Theme.text : Theme.text));
     ctx.font = (isActive ? '600 ' : '') + '12px sans-serif';
     const valW = isBase ? PAD : 36;
     const nameMaxX = W - PAD - valW;
@@ -372,7 +373,7 @@ export default class BlendshapeStackPanel {
     const sx = W - PAD - 10;
     if (sym) {
       const hot = hov === 'split';
-      ctx.fillStyle = hot ? '#cfe1ff' : '#5b6b86';
+      ctx.fillStyle = hot ? '#cfe1ff' : Theme.surface2;
       ctx.font = '900 13px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
       ctx.fillText(FA.split, sx, top + 16 + 0.5);
       ctx.textAlign = 'left';
@@ -385,7 +386,7 @@ export default class BlendshapeStackPanel {
       ctx.textAlign = 'left';
       r.combine = { x0: W - PAD - 34, x1: W, y0: top, y1: top + 26 };
     } else {
-      ctx.fillStyle = muted ? '#666' : '#9aa';
+      ctx.fillStyle = muted ? Theme.overlay0 : Theme.overlay1;
       ctx.font = '11px ui-monospace, monospace';
       ctx.textAlign = 'right';
       ctx.fillText(weight.toFixed(2), W - PAD, top + 16);
@@ -397,14 +398,14 @@ export default class BlendshapeStackPanel {
     const tw = trackX1 - trackX0;
     const w01 = Math.max(0, Math.min(1, weight));
     const sliderHot = hov === 'slider';
-    ctx.fillStyle = sliderHot ? '#3d3d3d' : '#333';
+    ctx.fillStyle = sliderHot ? Theme.surface1 : Theme.surface0;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw, TRACK_H, TRACK_H / 2); ctx.fill();
-    ctx.fillStyle = '#3b82f6';
+    ctx.fillStyle = Theme.blue;
     this._roundRect(ctx, trackX0, trackY - TRACK_H / 2, tw * w01, TRACK_H, TRACK_H / 2); ctx.fill();
     const hx = trackX0 + tw * w01;
     ctx.beginPath(); ctx.arc(hx, trackY, sliderHot ? 8 : 7, 0, Math.PI * 2);
-    ctx.fillStyle = sliderHot ? '#fff' : '#e6e6e6'; ctx.fill();
-    ctx.strokeStyle = '#3b82f6'; ctx.stroke();
+    ctx.fillStyle = sliderHot ? Theme.text : Theme.text; ctx.fill();
+    ctx.strokeStyle = Theme.blue; ctx.stroke();
 
     r.trackX0 = trackX0; r.trackX1 = trackX1; r.trackY = trackY;
     this._rows.push(r);
@@ -652,11 +653,11 @@ export default class BlendshapeStackPanel {
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, H);
 
     const TITLE_H = 28;
-    ctx.fillStyle = '#252525'; ctx.fillRect(0, 0, W, TITLE_H);
-    ctx.fillStyle = '#e6e6e6'; ctx.font = '600 13px sans-serif';
+    ctx.fillStyle = Theme.surface0; ctx.fillRect(0, 0, W, TITLE_H);
+    ctx.fillStyle = Theme.text; ctx.font = '600 13px sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText('Add shape', PAD, TITLE_H / 2);
-    ctx.fillStyle = pk.hover === 'close' ? '#fff' : '#bbb';
+    ctx.fillStyle = pk.hover === 'close' ? Theme.text : Theme.subtext;
     ctx.font = '900 14px "Font Awesome 6 Free"'; ctx.textAlign = 'center';
     ctx.fillText(FA.close, W - PAD - 8, TITLE_H / 2 + 0.5);
     pk.closeRect = { x0: W - PAD - 22, x1: W, y0: 0, y1: TITLE_H };
@@ -670,23 +671,23 @@ export default class BlendshapeStackPanel {
 
     ctx.save();
     ctx.beginPath(); ctx.rect(0, listTop, W, viewH); ctx.clip();
-    ctx.fillStyle = '#1c1c1c'; ctx.fillRect(0, listTop, W, viewH);
+    ctx.fillStyle = Theme.mantle; ctx.fillRect(0, listTop, W, viewH);
 
-    const catColor = { symmetric: '#3b82f6', center: '#888', directional: '#f2b53c' };
+    const catColor = { symmetric: Theme.blue, center: Theme.subtext, directional: '#f2b53c' };
     for (const it of pk.items) {
       const y0 = listTop + it.cy0 - pk.scroll;
       const y1 = listTop + it.cy1 - pk.scroll;
       if (y1 < listTop || y0 > H) continue;
       const midY = (y0 + y1) / 2;
       if (it.kind === 'header') {
-        ctx.fillStyle = '#0f0f0f'; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
-        ctx.fillStyle = '#7a8aa0'; ctx.font = '700 10px sans-serif';
+        ctx.fillStyle = Theme.crust; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
+        ctx.fillStyle = Theme.overlay1; ctx.font = '700 10px sans-serif';
         ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
         ctx.fillText(it.label.toUpperCase(), PAD, midY);
         continue;
       }
       if (pk.pressItem === it && !pk.dragMoved) {
-        ctx.fillStyle = 'rgba(59,130,246,0.18)'; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
+        ctx.fillStyle = 'rgba(137,180,250,0.18)'; ctx.fillRect(0, y0, W, it.cy1 - it.cy0);
       }
       ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
       if (it.kind === 'blank') {
@@ -694,10 +695,10 @@ export default class BlendshapeStackPanel {
         ctx.fillText(it.label, PAD, midY);
         continue;
       }
-      const col = catColor[it.category] || '#888';
-      ctx.fillStyle = it.exists ? '#3a3a3a' : col;
+      const col = catColor[it.category] || Theme.subtext;
+      ctx.fillStyle = it.exists ? Theme.surface1 : col;
       ctx.beginPath(); ctx.arc(PAD + 3, midY, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = it.exists ? '#5a5a5a' : '#ddd';
+      ctx.fillStyle = it.exists ? Theme.surface2 : Theme.text;
       ctx.font = '12px sans-serif';
       ctx.fillText(it.name, PAD + 14, midY);
       if (it.exists) {
@@ -860,8 +861,8 @@ export default class BlendshapeStackPanel {
       position: 'absolute', left: (TRACK_X0) + 'px',
       top: (this._canvas.offsetTop + row.top + 4) + 'px',
       width: (this._cssW - TRACK_X0 - PAD) + 'px', height: '20px',
-      font: '12px sans-serif', background: '#111', color: '#fff',
-      border: '1px solid #3b82f6', borderRadius: '3px', zIndex: '50', padding: '0 4px',
+      font: '12px sans-serif', background: Theme.crust, color: Theme.text,
+      border: '1px solid #89b4fa', borderRadius: '3px', zIndex: '50', padding: '0 4px',
       boxSizing: 'border-box',
     });
     input.setAttribute('autocomplete', 'off');
