@@ -1,1 +1,1 @@
-export const VERSION = 'v3.4.1';
+export const VERSION = 'v3.4.1 - Immersive icon fix + menu-default migration';
