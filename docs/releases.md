@@ -1,3 +1,7 @@
+# v3.4.1
+- **Fix**: **Panel icons showed as placeholders in immersive on GalaxyXR** (desktop was fine). The v3.3.1 perf fix stopped inlining fonts into the CSS bundle, so Font Awesome glyphs were no longer embedded — and the panel rasteriser can't fetch `url()` fonts at paint time in immersive. FA Solid is now injected as a single base64 `@font-face` synchronously at startup (committed `faSolidBase64.js`), before the rasteriser caches stylesheets. CSS stays lean (~180 KB); per-paint adds one ~210 KB font copy.
+- **Fix**: **New menu-colour defaults didn't apply to existing installs.** The brightness/saturation sliders were dead until v3.4.0, so saved values are stale old-defaults (e.g. 100% saturation) that overrode the new 65/55/0. A one-time migration forces 65/55/0 once, then respects user changes.
+
 # v3.4.0
 Menu colour controls — the Settings → Menu **Brightness** and **Saturation** sliders work again (they'd been dead since the move from the canvas GUI), plus a new **Gamma** slider.
 

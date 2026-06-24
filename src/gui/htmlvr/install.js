@@ -41,29 +41,23 @@
  */
 
 import { installHtmlInCanvasPolyfill } from 'three-html-render/polyfill';
-import faSolidUrl from '@fortawesome/fontawesome-free/webfonts/fa-solid-900.woff2?url';
+// Base64 data URL of FA Solid (committed, generated from the package woff2). Imported as a
+// plain string so we can inject it SYNCHRONOUSLY below — no runtime fetch, no build-inlining
+// into the CSS (which kept the bundle lean and avoided duplicate copies).
+import faSolidInline from './faSolidBase64.js';
 
-// Pre-fetch the FA Solid woff2 and inject it as a base64 @font-face <style> so
-// the polyfill's SVG foreignObject renderer always has the font available without
-// needing a network fetch at render time (which fails on Quest in immersive mode).
-// Production builds already inline fonts via assetsInlineLimit; this covers dev.
-fetch(faSolidUrl)
-  .then(r => r.blob())
-  .then(blob => new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(blob);
-  }))
-  .then(dataUri => {
-    const style = document.createElement('style');
-    style.textContent = `@font-face{font-family:'Font Awesome 6 Free';font-style:normal;font-weight:900;src:url('${dataUri}') format('woff2');}`;
-    document.head.insertBefore(style, document.head.firstChild);
-    // Bypass the paint rate-limit and repaint all registered panels so icons
-    // appear immediately even if panels already painted before this resolved.
-    _forcePaint = true;
-    _panels.forEach(p => p.markDirty?.());
-  })
-  .catch(err => console.warn('[SculptXR] FA font preload failed:', err));
+// Inject FA Solid as a base64 @font-face SYNCHRONOUSLY at module load — i.e. before the polyfill
+// caches document.styleSheets and before any panel first paints. The panel rasteriser leaves
+// url() fonts unfetched inside its SVG (Quest/GalaxyXR immersive can't fetch them at paint time),
+// so the glyph data must already be a data: URL in a stylesheet. The old version did this via an
+// async fetch().then(), which in production resolved AFTER the polyfill had cached → icons showed
+// as placeholders in immersive. ?inline gives the base64 at build time, so this is synchronous.
+try {
+  const _faStyle = document.createElement('style');
+  _faStyle.textContent = `@font-face{font-family:'Font Awesome 6 Free';font-style:normal;font-weight:900;src:url('${faSolidInline}') format('woff2');}`;
+  const _head = document.head || document.documentElement;
+  _head.insertBefore(_faStyle, _head.firstChild);
+} catch (err) { console.warn('[SculptXR] FA font inject failed:', err); }
 
 // ── 1. rAF intercept (must run before polyfill install) ─────────────────────
 export const _nativeRAF  = window.requestAnimationFrame.bind(window);

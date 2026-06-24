@@ -220,6 +220,18 @@ var getOptionsURL = function () {
   // Scene
   options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.5);
 
+  // One-time migration to the new menu-colour defaults (v3.4.x). The brightness/saturation
+  // sliders were dead from the canvas→HTML migration until v3.4.0, so any *saved* values are
+  // stale old-defaults (e.g. saturation 100%). Force 65/55/0 once, then respect user changes.
+  try {
+    if (typeof localStorage !== 'undefined' && !localStorage.getItem('menuGradeDefaultsV1')) {
+      localStorage.setItem('menuGradeDefaultsV1', '1');
+      options.menuBrightness = 0.65; getOptionsURL.saveOption('menuBrightness', 0.65, 0);
+      options.menuSaturation = 0.55; getOptionsURL.saveOption('menuSaturation', 0.55, 0);
+      options.menuGamma      = 0.0;  getOptionsURL.saveOption('menuGamma',      0.0,  0);
+    }
+  } catch (e) { /* localStorage unavailable — fall through with read defaults */ }
+
   return options;
 };
 
