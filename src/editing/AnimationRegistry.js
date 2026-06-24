@@ -1263,6 +1263,30 @@ class AnimationRegistry {
     this.applyBlendshapes(mesh);
   }
 
+  // Re-order the blendshape layers. `displayNames` is the desired top-to-bottom
+  // (newest-first) order shown in the stack panel / timeline. We rebuild the
+  // backing Maps in place so every consumer that reads `[...keys].reverse()`
+  // (panel _layerNames, TimelineHelper.bsNames/bsEntries) picks it up, and
+  // save/load preserves it for free (Export/Import iterate Map order). Maps are
+  // oldest-first, so the stored order is the reverse of the display order.
+  setBlendshapeOrder(mesh, displayNames) {
+    const track = this.tracks.get(mesh.getID());
+    if (!track || !track.blendshapes) return;
+    const desired = [...displayNames].reverse();
+    const reorder = (map) => {
+      if (!map) return;
+      const ordered = [];
+      for (const n of desired) if (map.has(n)) ordered.push(n);
+      // Any names not in displayNames (defensive) keep their relative position up top.
+      for (const n of map.keys()) if (!ordered.includes(n)) ordered.unshift(n);
+      const saved = ordered.map(n => [n, map.get(n)]);
+      map.clear();
+      for (const [n, v] of saved) map.set(n, v);
+    };
+    reorder(track.blendshapes);
+    reorder(track.blendshapeTracks);
+  }
+
   renameBlendshape(mesh, oldName, newName) {
     if (!mesh || !oldName || !newName || oldName === newName) return;
     const track = this.tracks.get(mesh.getID());

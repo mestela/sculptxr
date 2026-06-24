@@ -32,6 +32,7 @@ const FA = {
   lockOpen: '\uf3c1', // fa-lock-open
   split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
   combine:  '\uf387', // fa-code-merge (combine L/R halves back into one symmetric shape)
+  grip:     '\uf7a4', // fa-grip-lines (drag handle for reordering layers)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -61,6 +62,12 @@ export default class BlendshapeStackPanel {
     this._dragName       = null;
     this._dragStartW     = 0;
     this._dragMoved      = false;
+
+    // Row reorder drag state (vertical drag of a layer to a new slot).
+    this._reorderName    = null;
+    this._reorderStartY  = 0;
+    this._reorderCurY    = 0;
+    this._reorderActive  = false; // true once dragged past the threshold
 
     // dblclick → rename: a floating <input> overlaid on the row.
     this._renameInput    = null;
@@ -156,7 +163,7 @@ export default class BlendshapeStackPanel {
     const loop = () => {
       const visible = this._vrMode ? this._vrVisible
                                    : (this._host && this._host.offsetParent !== null);
-      if (visible && !this._dragName) {
+      if (visible && !this._dragName && !this._reorderActive) {
         const sig = this._stateSignature();
         if (sig !== this._lastSig) { this._lastSig = sig; this.draw(); }
       }
@@ -215,9 +222,9 @@ export default class BlendshapeStackPanel {
   }
 
   // Photoshop order: newest layer on top. The timeline mirrors this same order
-  // (see GuiTimeline._bsOrderedNames). Base is drawn separately, pinned at the
-  // bottom. (When drag-to-reorder lands, this becomes an explicit shared order
-  // array that both the panel and the timeline read from.)
+  // (see TimelineHelper.bsNames). Base is drawn separately, pinned at the bottom.
+  // Drag-to-reorder rewrites the backing Map order (AnimationRegistry
+  // .setBlendshapeOrder), so this reverse() reflects the user's chosen order.
   _layerNames() {
     const track = this._track();
     if (!track?.blendshapes) return [];
@@ -267,6 +274,8 @@ export default class BlendshapeStackPanel {
 
     // Base layer pinned at the bottom (no slider; its "select dot" exits edit mode).
     this._drawRow(ctx, W, y, 'Base', 1, editing === null, true);
+
+    if (this._reorderActive && this._reorderName) this._drawReorderHint(ctx, W, names);
 
     if (this._picker) this._drawPicker(ctx, W, H);
   }
@@ -325,27 +334,36 @@ export default class BlendshapeStackPanel {
     const r = this._rowRect(name, top, isBase);
     ctx.textBaseline = 'middle';
 
+    // Grip handle (non-base only) — drag to reorder. Dim grey, brightens on hover.
+    if (!isBase) {
+      const gripHot = hov === 'grip';
+      ctx.fillStyle = gripHot ? Theme.subtext : Theme.surface2;
+      ctx.font = '900 12px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center';
+      ctx.fillText(FA.grip, NAME_X + 7, iconCy + 0.5);
+      r.grip = { x0: 0, x1: NAME_X + 16, y0: top, y1: top + 26 };
+    }
     // Eye (non-base only) — soloed=amber, muted=red-slash, else grey (white on hover).
     if (!isBase) {
       const eyeHot = hov === 'eye';
       ctx.fillStyle = soloed ? '#f2b53c' : (muted ? '#e06c6c' : (eyeHot ? Theme.text : Theme.overlay1));
       ctx.font = '900 13px "Font Awesome 6 Free"';
       ctx.textAlign = 'center';
-      ctx.fillText(muted ? FA.eyeSlash : FA.eye, NAME_X + 7, iconCy + 0.5);
-      r.eye = { x0: 0, x1: NAME_X + 16, y0: top, y1: top + 26 };
+      ctx.fillText(muted ? FA.eyeSlash : FA.eye, NAME_X + 25, iconCy + 0.5);
+      r.eye = { x0: NAME_X + 16, x1: NAME_X + 34, y0: top, y1: top + 26 };
     }
     // Lock (all rows) — locked=amber, unlocked=dim open-lock (brighten on hover).
-    const lockCx  = isBase ? NAME_X + 7 : NAME_X + 25;
+    const lockCx  = isBase ? NAME_X + 7 : NAME_X + 43;
     const lockHot = hov === 'lock';
     ctx.fillStyle = locked ? (lockHot ? '#ffd9a0' : '#f2b53c') : (lockHot ? Theme.subtext : Theme.surface1);
     ctx.font = '900 12px "Font Awesome 6 Free"';
     ctx.textAlign = 'center';
     ctx.fillText(locked ? FA.lock : FA.lockOpen, lockCx, iconCy + 0.5);
     r.lock = isBase ? { x0: 0, x1: NAME_X + 18, y0: top, y1: top + h }
-                    : { x0: NAME_X + 16, x1: NAME_X + 36, y0: top, y1: top + 26 };
+                    : { x0: NAME_X + 34, x1: NAME_X + 54, y0: top, y1: top + 26 };
     ctx.textAlign = 'left';
 
-    const nameStart = isBase ? NAME_X + 24 : NAME_X + 40;
+    const nameStart = isBase ? NAME_X + 24 : NAME_X + 58;
 
     // Name (brightens on row hover; dim when muted/locked-base).
     const nameHot = hov === 'row';
@@ -416,6 +434,7 @@ export default class BlendshapeStackPanel {
     const row = this._hitRow(p);
     if (!row) return { row: null, part: null };
     const inRect = (z) => z && p.x >= z.x0 && p.x <= z.x1 && p.y >= z.y0 && p.y <= z.y1;
+    if (inRect(row.grip))  return { row, part: 'grip' };
     if (inRect(row.lock))  return { row, part: 'lock' };
     if (inRect(row.eye))   return { row, part: 'eye' };
     if (inRect(row.split))   return { row, part: 'split' };
@@ -471,6 +490,15 @@ export default class BlendshapeStackPanel {
     const mesh = this._mesh();
     const reg  = window._animationRegistry;
 
+    // Grip handle → begin a reorder drag. Does NOT select/snap the layer, so you can
+    // shuffle order without disturbing the active layer or its weight.
+    if (part === 'grip' && !row.isBase) {
+      this._reorderName   = row.name;
+      this._reorderStartY = p.y;
+      this._reorderCurY   = p.y;
+      this._reorderActive = false;
+      return;
+    }
     // Lock toggle (all rows incl. Base) — a locked layer/cage can't be sculpted.
     if (part === 'lock') {
       if (mesh) reg.toggleBlendshapeLock(mesh, row.isBase ? 'Base' : row.name);
@@ -516,6 +544,15 @@ export default class BlendshapeStackPanel {
 
   _pointerMove(p) {
     if (this._picker) { this._pickerMove(p); return; }
+    if (this._reorderName) {
+      this._reorderCurY = p.y;
+      if (!this._reorderActive && Math.abs(p.y - this._reorderStartY) > 6) {
+        this._reorderActive = true;
+        if (!this._vrMode && this._canvas) this._canvas.style.cursor = 'grabbing';
+      }
+      if (this._reorderActive) this.draw();
+      return;
+    }
     if (this._dragName) {
       const row = this._rows.find(r => r.name === this._dragName);
       if (!row) return;
@@ -532,6 +569,9 @@ export default class BlendshapeStackPanel {
       const { row, part } = this._classifyHit(p);
       h = row ? { name: row.name, part } : null;
     }
+    if (!this._vrMode && this._canvas) {
+      this._canvas.style.cursor = (h && h.part === 'grip') ? 'grab' : 'default';
+    }
     if (this._hoverChanged(h)) { this._hover = h; this.draw(); }
   }
 
@@ -547,6 +587,18 @@ export default class BlendshapeStackPanel {
 
   _pointerUp() {
     if (this._picker) { this._pickerUp(); return; }
+    if (this._reorderName) {
+      const dragged = this._reorderActive;
+      const name    = this._reorderName;
+      const dropY   = this._reorderCurY;
+      this._reorderName   = null;
+      this._reorderActive = false;
+      if (!this._vrMode && this._canvas) this._canvas.style.cursor = 'grab';
+      // A real drag commits the new order; a bare click on the handle does nothing.
+      if (dragged) this._commitReorder(name, dropY);
+      else this.draw();
+      return;
+    }
     if (!this._dragName) return;
     const name = this._dragName;
     const oldW = this._dragStartW;
@@ -563,6 +615,57 @@ export default class BlendshapeStackPanel {
         'Change Blendshape Weight'
       );
     }
+  }
+
+  // Drop a dragged layer at the slot under `dropY`. Reorders the backing maps via
+  // the registry (single undo step) so the panel + timeline + saves all follow.
+  _commitReorder(name, dropY) {
+    const names = this._layerNames();
+    const from  = names.indexOf(name);
+    if (from < 0) { this.draw(); return; }
+    let to = Math.floor((dropY - TOOLBAR_H) / ROW_H);
+    to = Math.max(0, Math.min(names.length - 1, to));
+    if (to === from) { this.draw(); return; }
+
+    const before = names.slice();
+    const after  = names.slice();
+    after.splice(from, 1);
+    after.splice(to, 0, name);
+
+    const mesh = this._mesh();
+    const reg  = window._animationRegistry;
+    const apply = (order) => { reg.setBlendshapeOrder(mesh, order); this._afterStructureChange(); };
+    apply(after);
+
+    if (window.app?.getStateManager) {
+      window.app.getStateManager().pushStateCustom(
+        () => apply(before),
+        () => apply(after),
+        false,
+        'Reorder Blendshape'
+      );
+    }
+  }
+
+  // Insertion line + floating label shown while a row is being dragged to reorder.
+  _drawReorderHint(ctx, W, names) {
+    const n = names.length;
+    let to = Math.floor((this._reorderCurY - TOOLBAR_H) / ROW_H);
+    to = Math.max(0, Math.min(n - 1, to));
+
+    const lineY = TOOLBAR_H + to * ROW_H;
+    ctx.strokeStyle = Theme.blue; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, lineY); ctx.lineTo(W, lineY); ctx.stroke();
+    ctx.lineWidth = 1;
+
+    const ty = Math.max(TOOLBAR_H + 11, Math.min(TOOLBAR_H + n * ROW_H - 11, this._reorderCurY));
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = Theme.surface1;
+    this._roundRect(ctx, PAD, ty - 11, W - PAD * 2, 22, 4); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = Theme.text; ctx.font = '600 12px sans-serif';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(this._ellipsize(ctx, this._reorderName, W - PAD * 2 - 12), PAD + 6, ty);
   }
 
   _applyWeightFromX(row, x) {

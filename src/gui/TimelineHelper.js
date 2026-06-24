@@ -3,8 +3,9 @@ export default class TimelineHelper {
   // Canonical blendshape display order, shared by the timeline and the canvas
   // BlendshapeStackPanel: Photoshop order — newest layer first (top). Every place
   // that lays out blendshape rows / maps a row index back to a name MUST go
-  // through this so draw, hit-test, colour and scroll all agree. (When
-  // drag-to-reorder lands, this becomes an explicit stored order array.)
+  // through this so draw, hit-test, colour and scroll all agree. Drag-to-reorder
+  // (AnimationRegistry.setBlendshapeOrder) reorders the backing Map itself, so this
+  // reverse() naturally reflects the user's order.
   static bsNames(track) {
     if (!track?.blendshapeTracks) return [];
     return [...track.blendshapeTracks.keys()].reverse();
