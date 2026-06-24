@@ -1,3 +1,11 @@
+# v3.7.0
+Blendshape layer reordering plus a batch of VR navigation/ergonomics improvements.
+
+- **Feature**: **Drag-to-reorder blendshape layers.** Each layer row now has a grip handle (left of the eye) — drag it up/down to reorder the stack. The row body still selects / double-click-renames and the weight slider keeps its left/right drag, so there's no conflict. Order persists in saves.
+- **Feature**: **Navigation inertia (VR).** Releasing a single-grip world move now keeps gliding with momentum — both position and rotation — and eases to a stop, instead of dead-stopping. Any new grip, two-handed move, or sculpt stroke cancels it.
+- **Feature**: **Quick tool-swap (VR).** Click the left thumbstick to toggle between your two most-recent tools (Alt-Tab style; Smooth is excluded so dipping into it won't break your pair). A tool-name label briefly floats above the right controller.
+- **Feature**: **Controller button labels (VR).** A short cheat-sheet of the current button assignments floats beside each controller for the first few seconds of a session, then hides. Toggle anytime from the console with `toggleVrButtonLabels()`.
+
 # v3.6.0
 Voxel sculpting restored — the voxel options lost in the GUI migration are back in the menus, plus fixes to the box-mode brush cursor.
 

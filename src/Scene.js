@@ -6,6 +6,7 @@ import Enums from './misc/Enums.js';
 import { VERSION } from './Version.js';
 import Utils from './misc/Utils.js';
 import SculptManager from './editing/SculptManager.js';
+import { SCULPT_TOOLS } from './gui/htmlvr/toolLists.js';
 import Subdivision from './editing/Subdivision.js';
 import Import from './files/Import.js';
 import Gui from './gui/Gui.js';
@@ -47,6 +48,8 @@ import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 const _v3tmp = new THREE.Vector3();
 // Up vector for the look-at constraint.
 const _SXR_UP = new THREE.Vector3(0, 1, 0);
+// Identity quaternion (gl-matrix) — slerp target for rotational nav-glide decay (#19).
+const QUAT_IDENTITY = quat.create();
 
 if (typeof XRRigidTransform === 'undefined') {
     console.log('Polyfilling XRRigidTransform for iOS/Safari');
@@ -223,6 +226,22 @@ class Scene {
       right: { active: false, startPoint: vec3.create(), startRotation: quat.create() }
     };
 
+    // #19 Navigation inertia: after a single-grip world move is released, keep
+    // gliding with decaying momentum. `vel` is the smoothed per-frame translation
+    // (base-space metres) captured while gripping; `gliding` runs the decay.
+    this._navGlide = { vel: vec3.create(), rotVel: quat.create(), pivot: vec3.create(), gliding: false, wasActive: false };
+
+    // #29 Quick tool-swap (left thumbstick click) — toggles between the two most
+    // recent non-Smooth tools (Alt-Tab style), with a floating tool-name toast.
+    this._leftStickClickPrev = false;
+    this._toolToast = null;      // lazy { mesh, canvas, ctx, tex }
+    this._toolToastUntil = 0;    // performance.now() ms when the toast hides
+    this._toolHistory = [];      // [mostRecent, prev] distinct non-Smooth tool ids
+    this._lastSeenTool = -1;     // for change detection while tracking history
+
+    // #23 Floating controller button labels (toggle: window._vrShowButtonLabels).
+    this._btnLabels = null;      // lazy { left, right } text planes
+
     // Initial World Offset (Camera pulled back 55cm, Lifted 1.2m)
     // Fix: Y=0 put it on the floor. Y=1.2 should be chest/head height.
     this._xrWorldOffset = new XRRigidTransform({ x: 0, y: 1.2, z: -0.55 });
@@ -235,6 +254,13 @@ class Scene {
       this._spectatorViewMode = n;
       const names = ['blank', 'mirror', 'desktop free camera', 'spectator (rotation-coupled)'];
       console.log(`[Spectator] mode → ${names[n] ?? n}`);
+    };
+
+    // #23 Toggle the floating controller button labels (disables the entry auto-hide).
+    window.toggleVrButtonLabels = () => {
+      window._vrShowButtonLabels = !window._vrShowButtonLabels;
+      this._btnLabelsAutoHideAt = 0;
+      return window._vrShowButtonLabels;
     };
 
     window.debugSpectator = () => {
@@ -2971,6 +2997,14 @@ class Scene {
     if (window.screenLog) window.screenLog("[XR] Session Start Triggered", "green");
     this._xrSession = session;
 
+    // #23 Briefly show the controller button labels on session entry so the mapping
+    // is discoverable, then auto-hide. Toggle anytime with window.toggleVrButtonLabels().
+    window._vrShowButtonLabels = true;
+    this._btnLabelsAutoHideAt = performance.now() + 5000;
+    // #29 Reset the recent-tool history for this session.
+    this._toolHistory = [];
+    this._lastSeenTool = -1;
+
     session.addEventListener('end', this.onXREnd.bind(this));
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
@@ -3136,6 +3170,11 @@ class Scene {
     this._xrSession = null;
     this._xrRefSpace = null;
     this._preventRender = false;
+
+    // Hide VR floaters (#23 labels, #29 toast) so they don't linger in the scene.
+    if (this._toolToast) this._toolToast.mesh.visible = false;
+    if (this._btnLabels) { this._btnLabels.left.mesh.visible = false; this._btnLabels.right.mesh.visible = false; }
+    window._vrShowButtonLabels = false;
 
     // Restore the desktop background (and env backdrop quad) hidden during XR.
     if (this._background && this._background._applyBackground) this._background._applyBackground();
@@ -5688,6 +5727,13 @@ class Scene {
             }
             this._btnYWasPressed = !!(btnY?.pressed);
           }
+
+          // #29 Quick tool-swap — click the LEFT thumbstick to cycle sculpt tools.
+          if (source.handedness === 'left' && btns[3]) {
+            const stickDown = !!btns[3].pressed;
+            if (stickDown && !this._leftStickClickPrev) this._quickSwapTool();
+            this._leftStickClickPrev = stickDown;
+          }
         }
       }
 
@@ -6821,6 +6867,16 @@ class Scene {
 
 
 
+    // #19 Navigation inertia — continue any post-release world glide (after grip
+    // dispatch so the per-hand active flags reflect this frame).
+    this._updateNavGlide();
+
+    // #29 — keep the recent-tool history current for quick-swap.
+    this._trackToolHistory();
+
+    // #23/#29 — position the floating button labels and tool-swap toast.
+    this._updateVrFloaters();
+
     // Update Three.js Laser Pointer Visual Lengths and Cursors
     this._updateVRCursors(frame, refSpace, sources);
 
@@ -6830,6 +6886,180 @@ class Scene {
   } catch (e) {
       if (Math.random() < 0.05) console.error("[SculptXR] XR Input Error:", e);
     }
+  }
+
+  // #19 Navigation inertia: called once per frame after grip dispatch. While a
+  // single-grip world move (or two-handed nav) is active, the world is driven
+  // directly and no glide runs. On release, if there was enough residual velocity,
+  // keep moving the world with exponential decay until it slows to a stop. Any new
+  // grip, two-handed nav, or a sculpt stroke cancels the glide.
+  _updateNavGlide() {
+    const g = this._navGlide;
+    const navActive = this._vrGrip.left.active || this._vrGrip.right.active || this._vrTwoHanded.active;
+    if (navActive || this._vrSculpting) {
+      g.gliding = false;
+      g.wasActive = navActive;
+      return;
+    }
+    const rotAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3]))); // radians/frame
+    if (g.wasActive) {
+      g.wasActive = false;
+      // Launch if translation OR rotation had enough momentum at release.
+      g.gliding = vec3.length(g.vel) > 0.002 || rotAngle(g.rotVel) > 0.004;
+    }
+    if (g.gliding) {
+      this.moveWorld([g.vel[0], g.vel[1], g.vel[2]]);
+      if (rotAngle(g.rotVel) > 1e-5) this.rotateWorld(g.rotVel, g.pivot);
+      vec3.scale(g.vel, g.vel, 0.92);                       // translational friction
+      quat.slerp(g.rotVel, g.rotVel, QUAT_IDENTITY, 0.08);  // rotational friction
+      if (vec3.length(g.vel) < 0.0005 && rotAngle(g.rotVel) < 0.0008) g.gliding = false;
+    }
+  }
+
+  // Per-frame placement/billboarding for the floating tool toast (#29) and the
+  // controller button labels (#23). Both hover above their controller and face the head.
+  _updateVrFloaters() {
+    if (!this._toolToast && !window._vrShowButtonLabels && !this._btnLabels) return;
+    const cam = this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
+    if (!cam) return;
+    const tmp = this._fTmpVec || (this._fTmpVec = new THREE.Vector3());
+    const headQ = this._fTmpQuat || (this._fTmpQuat = new THREE.Quaternion());
+    cam.getWorldQuaternion(headQ);
+    const now = performance.now();
+
+    // #29 toast — above the right controller, auto-hide after its window.
+    if (this._toolToast) {
+      const m = this._toolToast.mesh;
+      if (now > this._toolToastUntil || !this._vrControllerRightGrip) {
+        m.visible = false;
+      } else {
+        this._vrControllerRightGrip.getWorldPosition(tmp);
+        m.position.copy(tmp); m.position.y += 0.11;
+        m.quaternion.copy(headQ);
+        m.visible = true;
+      }
+    }
+
+    // #23 button labels — auto-shown briefly on session entry, then off; toggle anytime.
+    if (this._btnLabelsAutoHideAt && now > this._btnLabelsAutoHideAt) {
+      window._vrShowButtonLabels = false;
+      this._btnLabelsAutoHideAt = 0;
+    }
+    if (window._vrShowButtonLabels) {
+      this._ensureButtonLabels();
+      // Offset each label to the OUTSIDE of its controller along the head's right
+      // axis (left label → left of left controller, right label → right of right).
+      const right = this._fTmpVec2 || (this._fTmpVec2 = new THREE.Vector3());
+      right.set(1, 0, 0).applyQuaternion(headQ);
+      const place = (o, grip, sign) => {
+        if (!o || !grip) { if (o) o.mesh.visible = false; return; }
+        grip.getWorldPosition(tmp);
+        tmp.addScaledVector(right, sign * 0.13); // sideways, clear of the controller
+        tmp.y += 0.02;
+        o.mesh.position.copy(tmp);
+        o.mesh.quaternion.copy(headQ);
+        o.mesh.visible = true;
+      };
+      place(this._btnLabels.left, this._vrControllerLeftGrip, -1);
+      place(this._btnLabels.right, this._vrControllerRightGrip, +1);
+    } else if (this._btnLabels) {
+      this._btnLabels.left.mesh.visible = false;
+      this._btnLabels.right.mesh.visible = false;
+    }
+  }
+
+  // Shared VR text-on-plane helper (used by the tool-swap toast and button labels).
+  // Returns a scene-added, billboard-positioned plane with a 2D canvas to draw into.
+  _makeVrTextPlane(canvasW, canvasH, planeW) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasW; canvas.height = canvasH;
+    const ctx = canvas.getContext('2d');
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const planeH = planeW * canvasH / canvasW;
+    const geo = new THREE.PlaneGeometry(planeW, planeH);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 1000;
+    mesh.visible = false;
+    this._scene.add(mesh);
+    return { mesh, canvas, ctx, tex };
+  }
+
+  // Observe tool changes from any source (menu, picker, swap) to keep a 2-deep
+  // history of distinct non-Smooth tools, so the quick-swap can Alt-Tab between them.
+  _trackToolHistory() {
+    const sm = this._sculptManager;
+    if (!sm) return;
+    const id = sm.getToolIndex();
+    if (id === this._lastSeenTool) return;
+    this._lastSeenTool = id;
+    if (id === Enums.Tools.SMOOTH) return;          // Smooth is excluded from the pair
+    if (this._toolHistory[0] === id) return;
+    this._toolHistory.unshift(id);
+    if (this._toolHistory.length > 2) this._toolHistory.length = 2;
+  }
+
+  // #29 Quick tool-swap: toggle to the OTHER of the two most-recent non-Smooth tools,
+  // mirroring the ToolPicker side effects, and show a brief floating name toast.
+  _quickSwapTool() {
+    const sm = this._sculptManager;
+    if (!sm) return;
+    this._trackToolHistory();
+    const h = this._toolHistory;
+    const cur = sm.getToolIndex();
+    const labelOf = (id) => SCULPT_TOOLS.find(t => t.id === id)?.label || 'Tool';
+    if (h.length < 2) { this._showToolToast(labelOf(cur)); return; } // nothing to swap to yet
+    const target = (cur === h[0]) ? h[1] : h[0];
+    sm.setToolIndex(target);
+    try { this.getGui?.()._ctrlSculpting?._ctrlSculpt?.setValue(target); } catch (_) {}
+    try { this._toolPickerPanel?.syncFromState?.(); } catch (_) {}
+    this._showToolToast(labelOf(target));
+  }
+
+  _showToolToast(label) {
+    if (!this._toolToast) this._toolToast = this._makeVrTextPlane(384, 128, 0.11);
+    const { ctx, canvas, tex } = this._toolToast;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(30,30,46,0.85)'; // Catppuccin base
+    const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
+    rr(6, 6, canvas.width - 12, canvas.height - 12, 18); ctx.fill();
+    ctx.strokeStyle = '#89b4fa'; ctx.lineWidth = 3; ctx.stroke(); // blue accent
+    ctx.fillStyle = '#cdd6f4'; ctx.font = '600 54px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 2);
+    tex.needsUpdate = true;
+    this._toolToast.mesh.visible = true;
+    this._toolToastUntil = performance.now() + 1500;
+  }
+
+  // #23 Floating controller button labels — built once, content reflects the current
+  // VR button map. Shown only while window._vrShowButtonLabels is true.
+  _ensureButtonLabels() {
+    if (this._btnLabels) return;
+    const make = (lines) => {
+      const o = this._makeVrTextPlane(320, 320, 0.085);
+      const { ctx, canvas, tex } = o;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'rgba(30,30,46,0.78)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      let y = 30;
+      for (const [key, desc] of lines) {
+        ctx.fillStyle = '#89b4fa'; ctx.font = '700 26px sans-serif';
+        ctx.fillText(key, 16, y);
+        ctx.fillStyle = '#cdd6f4'; ctx.font = '400 24px sans-serif';
+        ctx.fillText(desc, 120, y);
+        y += 40;
+      }
+      tex.needsUpdate = true;
+      return o;
+    };
+    // Mapping mirrors the handlers in handleXRInput (face button 4, grip, trigger, stick).
+    this._btnLabels = {
+      left: make([['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick', 'Tool swap'], ['Stick Y', 'Scroll menu'], ['X', 'Menu']]),
+      right: make([['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick Y', 'Radius'], ['Stick X', 'Intensity'], ['A', 'Subtract / swap']]),
+    };
   }
 
   _hasPanelDragActive(handedness) {
@@ -6850,6 +7080,9 @@ class Scene {
       gState.active = true;
       vec3.copy(gState.startPoint, origin);
       quat.copy(gState.startRotation, rotation);
+      vec3.set(this._navGlide.vel, 0, 0, 0); // fresh grab — drop any stale momentum
+      quat.identity(this._navGlide.rotVel);
+      vec3.copy(this._navGlide.pivot, origin);
     } else {
       // Delta in Base Space approx World Space delta if orientation aligned
       const delta = vec3.create();
@@ -6859,6 +7092,11 @@ class Scene {
       if (vec3.length(delta) > 0.0001) {
         this.moveWorld([delta[0], delta[1], delta[2]]);
         vec3.copy(gState.startPoint, origin);
+        // #19: smooth the per-frame motion into the glide velocity (EMA).
+        vec3.lerp(this._navGlide.vel, this._navGlide.vel, delta, 0.4);
+      } else {
+        // Stationary frame — bleed velocity so a pause-then-release won't fling.
+        vec3.scale(this._navGlide.vel, this._navGlide.vel, 0.6);
       }
 
       // Rotation Delta
@@ -6872,8 +7110,12 @@ class Scene {
         if (Math.abs(qDelta[3] - 1.0) > 0.000001) {
           this.rotateWorld(qDelta, origin); // Pivot around HAND (origin)
           quat.copy(gState.startRotation, rotation);
+          quat.slerp(this._navGlide.rotVel, this._navGlide.rotVel, qDelta, 0.4); // #19 angular EMA
+        } else {
+          quat.slerp(this._navGlide.rotVel, this._navGlide.rotVel, QUAT_IDENTITY, 0.4); // bleed when still
         }
       }
+      vec3.copy(this._navGlide.pivot, origin); // glide pivot = latest hand position
     }
   }
 
