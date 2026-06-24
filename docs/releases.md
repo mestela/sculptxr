@@ -1,3 +1,11 @@
+# v3.6.0
+Voxel sculpting restored — the voxel options lost in the GUI migration are back in the menus, plus fixes to the box-mode brush cursor.
+
+- **Feature**: **Voxel menu restored.** Add Object → Voxel creates a voxel object, and the voxel extras panel re-exposes every option that had been stranded in the old VR GUI: brush modes (Add/Sub/Smooth/Move/Inflate/Deflate), Shape (Sphere/Box), Align-to-hand, Build Up, Flat/Wire display, a Resolution slider with live density preview, Resample, and Convert to Mesh.
+- **Fix**: **Box cursor was tilted in world-align mode.** With Box + Align-to-hand off, the stamped voxels were correctly grid-aligned but the preview cube on the controller leaned by the world rotation. The cursor now matches the grid the stamp actually lands on.
+- **Fix**: **Voxel brush cursor size drifted when you grip-scaled.** The preview cube/sphere only matched the real brush at the default world scale; after scaling it diverged. The preview now tracks the world scale so it stays accurate at any zoom.
+- **Change**: **Surface ring hidden in voxel mode.** The thin circle cursor was mis-sized and not useful for voxels — the volume sphere/cube is now the sole brush indicator there.
+
 # v3.5.0
 Unified menu theme — the canvas panels (timeline + blendshape stack) now match the HTML menus.
 

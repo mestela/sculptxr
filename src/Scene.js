@@ -8226,8 +8226,9 @@ class Scene {
                 cursorGroup.quaternion.identity();
                 cursorGroup.scale.set(1, 1, 1);
 
-                // 1. Position Surface Ring (if hitting mesh)
-                if (hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                // 1. Position Surface Ring (if hitting mesh) — not useful for voxels (and mis-sized),
+                // so hide it entirely in voxel mode; the volume sphere/cube is the brush indicator there.
+                if (!isVoxelTool && hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
                     // // if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
                     
                     if (ringLine) {
@@ -8246,14 +8247,28 @@ class Scene {
                     activeVol.position.set(tipPhys[0], tipPhys[1], tipPhys[2]);
                     
                     if (isCubeShape && tool._alignToController === false) {
-                        activeVol.quaternion.identity(); // World aligned
+                        // World-aligned stamp: brushRotation is null, so the box lands on the
+                        // voxel grid (model) axes, not the tracking-space axes. The cursor shares
+                        // the scene as its parent with _worldGroup, so copy the worldGroup
+                        // orientation to match the grid (identity here would tilt by the world rotation).
+                        activeVol.quaternion.copy(this._worldGroup.quaternion);
                     } else {
                         // Inherit Controller Rotation natively (approximating from direction if needed, or simply copy VR controller orientation)
                         const ctrl3D = isLeft ? this._vrControllerLeft : this._vrControllerRight;
                         if (ctrl3D) activeVol.quaternion.copy(ctrl3D.quaternion);
                     }
 
-                    activeVol.scale.set(physicalRadius, physicalRadius, physicalRadius);
+                    if (isVoxelTool) {
+                        // Voxel stamps use a fixed model-space radius (grid units), so the stamp's
+                        // physical size scales with the world (vrScale) while physicalRadius does not.
+                        // Track vrScale, normalised to the default world scale where the preview is
+                        // calibrated, so the cube/sphere matches the stamp at every grip-scale.
+                        const refScale = 0.008; // default _vrScale (see init) — preview is correct here
+                        const voxScale = physicalRadius * ((this._vrScale || refScale) / refScale);
+                        activeVol.scale.set(voxScale, voxScale, voxScale);
+                    } else {
+                        activeVol.scale.set(physicalRadius, physicalRadius, physicalRadius);
+                    }
                 } else if (activeVol) {
                     // Hide volume if pointing at UI menu
                     activeVol.visible = false;

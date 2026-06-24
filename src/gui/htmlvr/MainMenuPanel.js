@@ -1169,6 +1169,7 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-action-btn" id="mm-add-cube">Cube</button>
       <button class="mm-action-btn" id="mm-add-sphere">Sphere</button>
       <button class="mm-action-btn" id="mm-add-null">Null</button>
+      <button class="mm-action-btn" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
     </div>
   `;
 }
@@ -2323,6 +2324,9 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
   el.querySelector('#mm-add-null')?.addEventListener('click', () => {
     cancelPending(); main.addNull?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-add-voxel')?.addEventListener('click', () => {
+    cancelPending(); main.addVoxelObject?.(); main.render?.(); repaintFn(); // empty voxel space + Voxel tool
   });
   el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
     main.duplicateSelection?.(); main.render?.(); repaintFn();

@@ -23,6 +23,7 @@ import Enums          from '../../misc/Enums.js';
 import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
+import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -791,17 +792,49 @@ export class MiniPanel extends HTMLVRPanel {
     if (idx === Enums.Tools.VOXEL) {
       extras.querySelectorAll('.mp-voxel-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-          const mode = parseInt(btn.dataset.voxelMode, 10);
-          const neg  = btn.dataset.voxelNeg === 'true';
-          const t    = sm?.getCurrentTool?.();
+          const t = sm?.getCurrentTool?.();
           if (t) {
-            t._mode     = mode;
-            t._negative = neg;
+            if (btn.dataset.voxelShape !== undefined) {
+              t._shape = parseInt(btn.dataset.voxelShape, 10); // sphere / box
+            } else if (btn.dataset.voxelAlign !== undefined) {
+              t._alignToController = !t._alignToController; // box follows controller rotation
+            } else if (btn.dataset.voxelBake !== undefined) {
+              t.bakeToMesh?.(); // convert voxel object → editable poly mesh
+            } else if (btn.dataset.voxelBuildup !== undefined) {
+              t._buildUp = !t._buildUp;
+              getOptionsURL.saveOption(`tool_${idx}_buildUp`, t._buildUp);
+            } else if (btn.dataset.voxelFlat !== undefined) {
+              const m = t._voxelMesh; if (m) m.setFlatShading?.(!m.getFlatShading?.());
+            } else if (btn.dataset.voxelWire !== undefined) {
+              const m = t._voxelMesh; if (m) m.setShowWireframe?.(!m.getShowWireframe?.());
+            } else if (btn.dataset.voxelResample !== undefined) {
+              t.applyResolution?.(); // re-voxelize at _pendingRes
+            } else {
+              t._mode     = parseInt(btn.dataset.voxelMode, 10);
+              t._negative = btn.dataset.voxelNeg === 'true';
+            }
             main.render?.();
           }
           this.syncFromState();
         });
       });
+      // Resolution slider: live preview (density overlay) on drag, re-voxelize on release.
+      const resSlider = extras.querySelector('#mp-voxel-res');
+      if (resSlider) {
+        resSlider.addEventListener('input', () => {
+          const v = parseInt(resSlider.value, 10);
+          const valEl = extras.querySelector('#mp-voxel-res-val'); if (valEl) valEl.textContent = v;
+          const t = sm?.getCurrentTool?.();
+          t?.setResolutionPreview?.(v);
+          if (t?._voxelMesh) VoxelDensityOverlay.enable(t._voxelMesh, v);
+          getOptionsURL.saveOption(`tool_${Enums.Tools.VOXEL}_resolution`, v, 500);
+        });
+        resSlider.addEventListener('change', () => {
+          VoxelDensityOverlay.disable();
+          sm?.getCurrentTool?.()?.applyResolution?.();
+          main.render?.();
+        });
+      }
     }
 
     // ── Extrude / Inset extras ─────────────────────────────────────────────
@@ -863,6 +896,23 @@ export class MiniPanel extends HTMLVRPanel {
         else if (bMode === 1 && !bNeg) active = curMode === 1 || (curMode === 0 && curNeg);
         else                           active = bMode === curMode && bNeg === curNeg;
         btn.classList.toggle('active', active);
+      });
+      const curShape = tool._shape ?? 0;
+      extrasEl.querySelectorAll('[data-voxel-shape]').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.voxelShape, 10) === curShape);
+      });
+      extrasEl.querySelectorAll('[data-voxel-align]').forEach(btn => {
+        btn.classList.toggle('active', !!(tool._alignToController));
+      });
+      extrasEl.querySelectorAll('[data-voxel-buildup]').forEach(btn => {
+        btn.classList.toggle('active', !!(tool._buildUp));
+      });
+      const vm = tool._voxelMesh;
+      extrasEl.querySelectorAll('[data-voxel-flat]').forEach(btn => {
+        btn.classList.toggle('active', !!(vm?.getFlatShading?.()));
+      });
+      extrasEl.querySelectorAll('[data-voxel-wire]').forEach(btn => {
+        btn.classList.toggle('active', !!(vm?.getShowWireframe?.()));
       });
 
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
@@ -980,6 +1030,13 @@ export class MiniPanel extends HTMLVRPanel {
       const t       = sm.getCurrentTool?.();
       const curMode = t?._mode ?? 0;
       const curNeg  = t?._negative ?? false;
+      const curShape = t?._shape ?? 0; // 0=Sphere, 1=Box (brush volume shape)
+      const curAlign = t?._alignToController ?? false; // Box brush follows controller rotation
+      const vmesh    = t?._voxelMesh;                  // flat/wireframe live on the mesh
+      const curBuildup = t?._buildUp ?? false;
+      const curFlat    = vmesh?.getFlatShading?.() ?? false;
+      const curWire    = vmesh?.getShowWireframe?.() ?? false;
+      const curRes     = t?._pendingRes ?? t?._res ?? 128;
 
       // mode 0=Add, 1=Sub, 2=Inflate/Deflate, 3=Smooth, 4=Move
       const modes = [
@@ -1001,9 +1058,30 @@ export class MiniPanel extends HTMLVRPanel {
         `<button class="mp-voxel-btn${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`
       ).join('');
 
+      // Brush volume shape (sphere / box) — restored from the old VR menu.
+      const shapeBtns = [{ shape: 0, label: 'Sphere' }, { shape: 1, label: 'Box' }].map(s =>
+        `<button class="mp-voxel-btn${curShape === s.shape ? ' active' : ''}" data-voxel-shape="${s.shape}">${s.label}</button>`
+      ).join('');
+
       return `
         <hr class="mp-divider">
         <div class="mp-voxel-grid">${btns}</div>
+        <div class="mp-voxel-grid">${shapeBtns}</div>
+        <div class="mp-voxel-grid"><button class="mp-voxel-btn${curAlign ? ' active' : ''}" data-voxel-align="1" title="Box brush follows controller rotation (Box shape only)">Align to hand</button></div>
+        <div class="mp-voxel-grid">
+          <button class="mp-voxel-btn${curBuildup ? ' active' : ''}" data-voxel-buildup="1" title="Tapered build-up (gradual stroke accumulation)">Build Up</button>
+          <button class="mp-voxel-btn${curFlat ? ' active' : ''}" data-voxel-flat="1" title="Flat shading">Flat</button>
+          <button class="mp-voxel-btn${curWire ? ' active' : ''}" data-voxel-wire="1" title="Show wireframe">Wire</button>
+        </div>
+        <div class="mp-row">
+          <span class="mp-lbl">Resolution</span>
+          <input type="range" id="mp-voxel-res" min="16" max="256" step="16" value="${curRes}">
+          <span class="mp-val" id="mp-voxel-res-val">${curRes}</span>
+        </div>
+        <div class="mp-voxel-grid">
+          <button class="mp-voxel-btn" data-voxel-resample="1" title="Re-voxelize at the chosen resolution (no undo)">Resample</button>
+          <button class="mp-voxel-btn" data-voxel-bake="1" title="Convert this voxel object into an editable poly mesh">Convert to Mesh</button>
+        </div>
       `;
     }
 
