@@ -674,10 +674,19 @@ class SculptVoxel extends SculptBase {
     tm.updateMatrixWorld(true);
     const mw = tm.matrixWorld.elements;
 
+    const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0; // cell→world scale
+
     // Plane: world-locked → frozen basis; else live camera-facing.
     const plane = (this._planeWorldLocked && this._lockedPlane)
       ? this._lockedPlane : this._computeCameraPlane(picking, mw);
-    const gc = plane.point, normal = plane.normal, right = plane.right, up = plane.up;
+    const normal = plane.normal, right = plane.right, up = plane.up;
+
+    // Apply the depth offset: shift the plane centre along its normal. _planeDepthOffset
+    // is in CELLS (grid-relative), converted to world via the cell→world scale.
+    const depthW = (this._planeDepthOffset || 0) * ms;
+    const gc = [plane.point[0] + normal[0] * depthW,
+                plane.point[1] + normal[1] * depthW,
+                plane.point[2] + normal[2] * depthW];
 
     // The mouse ray to intersect with that plane.
     const nP = picking.unproject(this._main._mouseX, this._main._mouseY, 0.0);
@@ -689,16 +698,18 @@ class SculptVoxel extends SculptBase {
     mat4.invert(invMW, mw);
     const cellPos = vec3.create();
     vec3.transformMat4(cellPos, hit, invMW);
+    // Plane centre in cell space (for placing the grid coplanar with the deposits).
+    const centerCell = vec3.create();
+    vec3.transformMat4(centerCell, gc, invMW);
 
     // Radius in cells — a FIXED world size from the slider in BOTH plane modes (voxels
     // are world-space; the brush keeps a constant world radius regardless of camera/zoom).
-    const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0; // cell→world scale
     const radiusCells = (this._radius || 25) * 0.1;
 
     return {
       cellPos, radiusCells, worldHit: hit,
-      // For visualizing the draw plane (three-world): centre, basis, world extent.
-      planePoint: [gc[0], gc[1], gc[2]],
+      // For visualizing the draw plane: centre in CELL space + basis (three-world).
+      planeCenterCell: [centerCell[0], centerCell[1], centerCell[2]],
       planeNormal: [normal[0], normal[1], normal[2]],
       planeRight: [right[0], right[1], right[2]],
       planeUp: [up[0], up[1], up[2]],

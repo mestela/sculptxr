@@ -279,6 +279,7 @@ class Selection {
         this._threeVoxelSphere.visible = false;
         if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
       }
+      this._showDepthRail(main, vtool);
 
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
@@ -286,6 +287,7 @@ class Selection {
     }
     if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
     if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
+    if (this._depthRail) this._depthRail.style.display = 'none';
 
     if (pickedMesh) {
       var picking = main.getPicking();
@@ -361,9 +363,11 @@ class Selection {
   _showDrawPlane(main, tm, cur) {
     if (!cur || !tm) { if (this._threeDrawPlane) this._threeDrawPlane.visible = false; return; }
     if (!this._threeDrawPlane) {
-      const g = new THREE.GridHelper(1, 24, 0x89b4fa, 0x3a4a66);
+      // Fewer divisions + lower opacity so the grid reads as a light depth reference and
+      // doesn't compete with the strokes. (WebGL ignores line width, so we can't thicken.)
+      const g = new THREE.GridHelper(1, 12, 0x89b4fa, 0x5566aa);
       g.material.transparent = true;
-      g.material.opacity = 0.35;
+      g.material.opacity = 0.22;
       g.material.depthWrite = false;
       g.renderOrder = 9998;
       this._threeDrawPlane = g;
@@ -372,8 +376,9 @@ class Selection {
     if (g.parent !== tm) tm.add(g);
 
     const res = cur.res || 128;
-    // Centre + size in CELL units (the grid spans the whole voxel grid).
-    g.position.set(res * 0.5, res * 0.5, res * 0.5);
+    // Centre (cell space, includes the depth offset) + size in CELL units.
+    if (cur.planeCenterCell) g.position.fromArray(cur.planeCenterCell);
+    else g.position.set(res * 0.5, res * 0.5, res * 0.5);
     g.scale.set(res, res, res);
 
     // Desired world orientation (screen-aligned). GridHelper plane is local XZ with
@@ -391,6 +396,60 @@ class Selection {
     tm.getWorldQuaternion(pq);
     g.quaternion.copy(pq).invert().multiply(wq);
     g.visible = true;
+  }
+
+  // In-viewport depth control (1b step 4): a vertical slider docked to the right edge
+  // that pushes the draw plane along its normal (tool._planeDepthOffset, in CELLS,
+  // grid-relative). Created lazily; shown only while the voxel tool is active.
+  _showDepthRail(main, vtool) {
+    if (!vtool) { if (this._depthRail) this._depthRail.style.display = 'none'; return; }
+    if (!this._depthRail) {
+      if (!document.getElementById('vx-depth-css')) {
+        const st = document.createElement('style');
+        st.id = 'vx-depth-css';
+        // Thin track + round blue dot thumb (replaces the wide default box).
+        st.textContent =
+          '.vx-depth{-webkit-appearance:none;appearance:none;background:transparent;}' +
+          '.vx-depth::-webkit-slider-runnable-track{width:3px;border-radius:2px;background:#585b70;}' +
+          '.vx-depth::-moz-range-track{width:3px;border-radius:2px;background:#585b70;}' +
+          '.vx-depth::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:#89b4fa;border:none;margin-left:-5px;}' +
+          '.vx-depth::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:#89b4fa;border:none;}';
+        document.head.appendChild(st);
+      }
+      const wrap = document.createElement('div');
+      // Left edge — the right side is covered by the 380px desktop sidebar.
+      wrap.style.cssText = 'position:fixed;left:14px;top:50%;transform:translateY(-50%);' +
+        'z-index:200;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:auto;' +
+        'background:rgba(30,30,46,0.6);padding:8px 6px;border-radius:8px;';
+      const label = document.createElement('div');
+      label.textContent = 'Depth';
+      label.style.cssText = 'color:#cdd6f4;font:11px sans-serif;opacity:0.75;';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.value = '0';
+      slider.className = 'vx-depth';
+      slider.style.cssText = 'writing-mode:vertical-lr;direction:rtl;width:13px;height:220px;cursor:ns-resize;';
+      slider.addEventListener('input', () => {
+        if (this._depthRailTool) {
+          this._depthRailTool._planeDepthOffset = parseFloat(slider.value);
+          main.render && main.render();
+        }
+      });
+      // Double-click resets depth to the grid centre.
+      slider.addEventListener('dblclick', () => {
+        slider.value = '0';
+        if (this._depthRailTool) { this._depthRailTool._planeDepthOffset = 0; main.render && main.render(); }
+      });
+      wrap.appendChild(label); wrap.appendChild(slider);
+      document.body.appendChild(wrap);
+      this._depthRail = wrap; this._depthRailSlider = slider;
+    }
+    const res = vtool._res || 128;
+    this._depthRailSlider.min = String(-res / 2);
+    this._depthRailSlider.max = String(res / 2);
+    this._depthRailSlider.step = '1';
+    this._depthRailTool = vtool;
+    this._depthRail.style.display = 'flex';
   }
 
   setIsNegative(bool) {

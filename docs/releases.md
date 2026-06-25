@@ -1,3 +1,11 @@
+# v3.8.0
+Desktop voxel sculpting — the voxel toolset now works on desktop, including drawing into empty space on a movable work plane.
+
+- **Feature**: **Voxel tools on desktop.** The voxel options (Add/Sub/Smooth/Inflate/Deflate, Sphere/Box, Build Up, Flat/Wire, Resolution + Resample, Convert to Mesh) are exposed in the Sculpting tab when a voxel object is active, and strokes deposit correctly with a fixed world-space brush size, an xray sphere cursor, and per-stroke undo.
+- **Feature**: **Plane drawing (sketch into empty space).** Add Object → Voxel makes an empty object you can draw into: strokes land on a draw plane shown as a faint grid. The plane can be **Camera-locked** (follows the view) or **World-locked** (frozen in space so you can orbit around your drawing), toggled in the voxel panel.
+- **Feature**: **Plane depth control.** A vertical depth slider (left edge) pushes the draw plane in/out along its normal, so you can build up volume in slices. Double-click resets to centre.
+- **Change**: **Right-drag orbits** the camera (the browser context menu is suppressed on the canvas), so you can rotate the view while the cursor is over the infinite draw plane.
+
 # v3.7.0
 Blendshape layer reordering plus a batch of VR navigation/ergonomics improvements.
 
