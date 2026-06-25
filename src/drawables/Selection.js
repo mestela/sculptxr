@@ -216,6 +216,83 @@ class Selection {
       this._threeDot.renderOrder = 10000;
     }
 
+    // Voxel brush is a 3D volume, so it gets a translucent sphere (radius 1, scaled
+    // per-frame) instead of the flat surface circle. Separate guard so it's created
+    // even on an existing Selection instance (e.g. after HMR) that already has the circle.
+    if (!this._threeVoxelSphere) {
+      const vsGeo = new THREE.SphereGeometry(1, 24, 16);
+      // Fresnel "xray" material — same look as the VR volume cursor (additive rim glow).
+      const vsMat = new THREE.ShaderMaterial({
+        uniforms: { color: { value: new THREE.Color(0x4488ff) } },
+        vertexShader: `
+          varying vec3 vNormal;
+          varying vec3 vPositionNormal;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vPositionNormal = normalize((modelViewMatrix * vec4(position, 1.0)).xyz);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }`,
+        fragmentShader: `
+          uniform vec3 color;
+          varying vec3 vNormal;
+          varying vec3 vPositionNormal;
+          void main() {
+            float fresnel = pow(1.0 - abs(dot(vNormal, vPositionNormal)), 3.0);
+            gl_FragColor = vec4(color * fresnel, fresnel);
+          }`,
+        transparent: true, depthTest: true, depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+        blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      });
+      this._threeVoxelSphere = new THREE.Mesh(vsGeo, vsMat);
+      this._threeVoxelSphere.renderOrder = 10000;
+    }
+
+    const _curTool = sm ? sm.getCurrentTool() : null;
+    const _pkMesh = main.getPicking() ? main.getPicking().getMesh() : null;
+    // Treat it as voxel context if the Voxel tool is active OR the hovered mesh is a
+    // voxel object — so the volume cursor shows whenever you're over voxels.
+    const isVoxel = (_pkMesh && _pkMesh._isVoxel) ||
+                    curIdx === Enums.Tools.VOXEL ||
+                    (_curTool && _curTool.constructor && _curTool.constructor.name === 'SculptVoxel');
+
+    if (window._voxelCursorDebug && (this._dbgN = (this._dbgN || 0) + 1) % 30 === 0) {
+      const pk = main.getPicking();
+      console.log('[VoxelCursor] isVoxel=%s pickedMesh=%s sphereObj=%s curIdx=%s tool=%s interPt=%s',
+        isVoxel, pickedMesh, !!this._threeVoxelSphere, curIdx,
+        _curTool && _curTool.constructor && _curTool.constructor.name,
+        pk && pk.getMesh && pk.getMesh() ? JSON.stringify(Array.from(pk.getIntersectionPoint()).map(n=>+n.toFixed(1))) : 'none');
+    }
+
+    if (pickedMesh && isVoxel && this._threeVoxelSphere) {
+      // Voxel: show the volumetric sphere at the cursor, hide the flat circle/dot.
+      var picking = main.getPicking();
+      var mesh = picking.getMesh();
+      var threeMesh = mesh.getThreeMesh();
+      if (this._threeVoxelSphere.parent !== threeMesh) threeMesh.add(this._threeVoxelSphere);
+
+      // Same size convention as the flat brush circle: the standard world radius
+      // converted to the mesh's local/model space. SculptVoxel.stroke deposits at the
+      // same world radius, so the indicator and the actual edit stay locked together.
+      var worldRadius = Math.sqrt(picking.computeWorldRadius2(true));
+      const m = threeMesh.matrixWorld.elements;
+      const s = Math.sqrt(m[0] * m[0] + m[4] * m[4] + m[8] * m[8]) || 1;
+      const localR = Math.max(1e-4, worldRadius / s);
+      this._threeVoxelSphere.position.fromArray(picking.getIntersectionPoint());
+      this._threeVoxelSphere.scale.set(localR, localR, localR);
+
+      // Tint red for carve modes (Sub / Deflate / negative), blue otherwise.
+      const vtool = (sm.getTool ? sm.getTool(Enums.Tools.VOXEL) : null) || sm.getCurrentTool();
+      const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
+      this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
+      this._threeVoxelSphere.visible = true;
+
+      if (this._threeCircle) this._threeCircle.visible = false;
+      if (this._threeDot)   this._threeDot.visible    = false;
+      return;
+    }
+    if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
+
     if (pickedMesh) {
       var picking = main.getPicking();
       var mesh = picking.getMesh();

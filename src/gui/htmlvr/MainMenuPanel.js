@@ -1451,6 +1451,7 @@ export function buildSectionHTML_sculpting(main) {
     const isMasking        = cur === Enums.Tools.MASKING;
     const isMove           = cur === Enums.Tools.MOVE;
     const isSmooth         = cur === Enums.Tools.SMOOTH;
+    const isVoxel          = cur === Enums.Tools.VOXEL;
     const isExtrudeOrInset = cur === Enums.Tools.EXTRUDE || cur === Enums.Tools.INSET;
     const hasNegative   = tool._negative   !== undefined;
     const hasClay       = tool._clay       !== undefined;
@@ -1459,7 +1460,9 @@ export function buildSectionHTML_sculpting(main) {
     const hasTopoCheck  = tool._topoCheck  !== undefined;
     const hasTangent    = tool._tangent    !== undefined;
 
-    if (hasNegative || hasClay || hasAccumulate || hasCulling || hasTopoCheck || hasTangent) {
+    // Voxel uses its own mode grid (Add/Sub/Inflate/Deflate) instead of the generic
+    // negative/clay/etc. toggles, so suppress those here.
+    if (!isVoxel && (hasNegative || hasClay || hasAccumulate || hasCulling || hasTopoCheck || hasTangent)) {
       const toggles = [];
       if (hasNegative) {
         // Masking: flip label/active so button means "Erase existing mask"
@@ -1475,6 +1478,58 @@ export function buildSectionHTML_sculpting(main) {
       if (hasTangent)    toggles.push(`<button class="mm-choice${tool._tangent    ? ' active' : ''}" id="mm-brush-tangent" >Tangential</button>`);
       const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
+    }
+
+    // ── Voxel-specific controls (ported from the VR MiniPanel; align-to-hand omitted) ──
+    if (isVoxel) {
+      const curMode    = tool._mode ?? 0;
+      const curNeg     = tool._negative ?? false;
+      const curShape   = tool._shape ?? 0; // 0=Sphere, 1=Box
+      const vmesh      = tool._voxelMesh;
+      const curBuildup = tool._buildUp ?? false;
+      const curFlat    = vmesh?.getFlatShading?.() ?? false;
+      const curWire    = vmesh?.getShowWireframe?.() ?? false;
+      const curRes     = tool._pendingRes ?? tool._res ?? 128;
+
+      // Move (mode 4) is VR-only for now — not wired in the desktop stroke path — so
+      // it's omitted from the desktop voxel modes.
+      const modes = [
+        { mode: 0, neg: false, label: 'Add'     },
+        { mode: 1, neg: false, label: 'Sub'     },
+        { mode: 3, neg: false, label: 'Smooth'  },
+        { mode: 2, neg: false, label: 'Inflate' },
+        { mode: 2, neg: true,  label: 'Deflate' },
+      ];
+      const isActiveMode = (m) => {
+        if (m.mode === 0 && !m.neg) return curMode === 0 && !curNeg;
+        if (m.mode === 1 && !m.neg) return curMode === 1 || (curMode === 0 && curNeg);
+        return m.mode === curMode && m.neg === curNeg;
+      };
+      const modeBtns = modes.map(m =>
+        `<button class="mm-choice${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`
+      ).join('');
+      const shapeBtns = [{ shape: 0, label: 'Sphere' }, { shape: 1, label: 'Box' }].map(s =>
+        `<button class="mm-choice${curShape === s.shape ? ' active' : ''}" data-voxel-shape="${s.shape}">${s.label}</button>`
+      ).join('');
+
+      brushHTML += `
+        <div class="mm-section-title">Voxel Mode</div>
+        <div class="mm-choice-grid cols-3">${modeBtns}</div>
+        <div class="mm-choice-grid cols-2" style="margin-top:4px">${shapeBtns}</div>
+        <div class="mm-choice-grid cols-3" style="margin-top:4px">
+          <button class="mm-choice${curBuildup ? ' active' : ''}" data-voxel-buildup="1">Build Up</button>
+          <button class="mm-choice${curFlat ? ' active' : ''}" data-voxel-flat="1">Flat</button>
+          <button class="mm-choice${curWire ? ' active' : ''}" data-voxel-wire="1">Wire</button>
+        </div>
+        <div class="mm-row">
+          <span class="mm-lbl">Resolution</span>
+          <input type="range" id="mm-voxel-res" min="16" max="256" step="16" value="${curRes}">
+          <span class="mm-val" id="mm-voxel-res-val">${curRes}</span>
+        </div>
+        <div class="mm-btn-pair" style="margin-top:4px">
+          <button class="mm-action-btn" data-voxel-resample="1">Resample</button>
+          <button class="mm-action-btn" data-voxel-bake="1">Convert to Mesh</button>
+        </div>`;
     }
 
     // ── Masking-specific: clear/invert/blur/sharpen + extract ────────
@@ -2766,6 +2821,47 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
         e.currentTarget.classList.toggle('active', tool._pickColor);
         lightRepaintFn();
       });
+    }
+
+    // ── Voxel-specific ────────────────────────────────────────────────────────
+    if (idx === Enums.Tools.VOXEL) {
+      el.querySelectorAll('[data-voxel-mode],[data-voxel-shape],[data-voxel-buildup],[data-voxel-flat],[data-voxel-wire],[data-voxel-resample],[data-voxel-bake]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (btn.dataset.voxelShape !== undefined) {
+            tool._shape = parseInt(btn.dataset.voxelShape, 10);
+          } else if (btn.dataset.voxelBake !== undefined) {
+            tool.bakeToMesh?.();                       // convert voxel object → poly mesh
+          } else if (btn.dataset.voxelBuildup !== undefined) {
+            tool._buildUp = !tool._buildUp;
+            getOptionsURL.saveOption(`tool_${idx}_buildUp`, tool._buildUp);
+          } else if (btn.dataset.voxelFlat !== undefined) {
+            const m = tool._voxelMesh; if (m) m.setFlatShading?.(!m.getFlatShading?.());
+          } else if (btn.dataset.voxelWire !== undefined) {
+            const m = tool._voxelMesh; if (m) m.setShowWireframe?.(!m.getShowWireframe?.());
+          } else if (btn.dataset.voxelResample !== undefined) {
+            tool.applyResolution?.();                  // re-voxelize at the chosen resolution
+          } else {
+            tool._mode     = parseInt(btn.dataset.voxelMode, 10);
+            tool._negative = btn.dataset.voxelNeg === 'true';
+          }
+          main.render?.();
+          repaintFn();
+        });
+      });
+      // Resolution: live density-overlay preview on drag, re-voxelize on release.
+      wireSlider(el.querySelector('#mm-voxel-res'), el.querySelector('#mm-voxel-res-val'),
+        (v) => {
+          tool.setResolutionPreview?.(v);
+          if (tool._voxelMesh) VoxelDensityOverlay.enable(tool._voxelMesh, v);
+          getOptionsURL.saveOption(`tool_${idx}_resolution`, v, 500);
+        }, String, sliderDirtyFn);
+      const _vres = el.querySelector('#mm-voxel-res');
+      if (_vres) {
+        const onRelease = () => { VoxelDensityOverlay.disable(); tool.applyResolution?.(); main.render?.(); };
+        _vres.addEventListener('change', onRelease);
+        _vres.addEventListener('pointerup', onRelease, true);
+        _vres.addEventListener('pointercancel', onRelease, true);
+      }
     }
 
     // ── Alpha brush texture ───────────────────────────────────────────────────

@@ -541,8 +541,9 @@ class SculptVoxel extends SculptBase {
     // Refresh Global Reference
     window.voxelTool = this;
 
-    // Force pickable just in case
-    this._debugCube.isPickable = true;
+    // Ensure the voxel surface mesh is pickable so desktop ray-casts hit it.
+    // (_debugCube is legacy/removed — its creation is commented out — so don't touch it.)
+    if (this._voxelMesh) this._voxelMesh.isPickable = true;
 
     // Create Test Triangle - REMOVED (Confusing picking)
     // this.createDebugTriangle();
@@ -551,6 +552,13 @@ class SculptVoxel extends SculptBase {
     this.forceInit();
 
     const res = super.start(ctrl);
+
+    // Desktop: snapshot the pre-stroke voxel state so this stroke is undoable
+    // (the VR path snapshots in updateXR; desktop never did, so Undo had nothing
+    // to revert to). One SNAPSHOT per stroke start = one undo step per stroke.
+    if (!this._main._xrSession && this._worker) {
+      this._worker.postMessage({ type: 'SNAPSHOT' });
+    }
 
     // Desktop: Lock Plane for Stroke (Prevent Accumulation)
     if (!this._main._xrSession) {
@@ -607,33 +615,53 @@ class SculptVoxel extends SculptBase {
         this._voxelBounds.render(this._main, this._size, this._identityMatrix);
       }
     }
+    // Base postRender draws the brush indicator each frame (the desktop voxel cursor
+    // sphere lives in Selection.render). This override previously skipped it, so the
+    // cursor never appeared on hover. Restore it.
+    if (selection) selection.render(this._main);
   }
 
   stroke(picking) {
-    let inter = picking.getIntersectionPoint();
+    let cellPos = picking.getIntersectionPoint();   // mesh-LOCAL = grid CELL coords
 
-    // Desktop Plane Lock Override
+    // Depth lock (desktop): after the first contact, deposit on a fixed view-facing
+    // plane at the initial contact depth instead of re-raycasting the (growing) surface.
+    // Without this, ADD strokes keep hitting the freshly-raised surface and march toward
+    // the camera — a runaway spike. _planePoint/_planeNormal are set in start() (world).
     if (this._planePoint && this._planeNormal && !this._main._xrSession) {
-      const mouseX = this._main._mouseX;
-      const mouseY = this._main._mouseY;
-      const vNear = picking.unproject(mouseX, mouseY, 0.0);
-      const vFar = picking.unproject(mouseX, mouseY, 0.1);
+      const vNear = picking.unproject(this._main._mouseX, this._main._mouseY, 0.0);
+      const vFar  = picking.unproject(this._main._mouseX, this._main._mouseY, 0.1);
       const lockInter = vec3.create();
-      const hit = Geometry.intersectLinePlane(vNear, vFar, this._planePoint, this._planeNormal, lockInter);
-      if (hit) inter = lockInter;
+      if (Geometry.intersectLinePlane(vNear, vFar, this._planePoint, this._planeNormal, lockInter)) {
+        const mesh = picking.getMesh();
+        if (mesh) {
+          const invM = mat4.create();
+          mat4.invert(invM, mesh.getMatrix());      // world -> mesh-local (cell)
+          cellPos = vec3.create();
+          vec3.transformMat4(cellPos, lockInter, invM);
+        }
+      }
     }
 
-    if (!inter) {
+    if (!cellPos) {
       if (window.screenLog && Math.random() < 0.05) window.screenLog("Voxel Stroke: No Intersection", "red");
       return;
     }
 
-    // Revert to Legacy Math (Identity Transform)
-    // User reports "Min + Grid*Step" causes misalignment.
-    // This implies 'inter' might already be in the space 'addSphere' expects,
-    // or 'invGridMatrix' handles it (even if Identity).
-    const localPos = vec3.create();
-    vec3.transformMat4(localPos, inter, this._invGridMatrix);
+    // Coordinate spaces (ground truth):
+    //  - The raycast hit (mesh-local) is in CELL coords [0..res] (SurfaceNets emits
+    //    vertices as cell indices).
+    //  - The worker grid is CENTERED at the origin: _min = -size/2, step = size/(res-1),
+    //    and editSphere's centre is in that centered model space.
+    // So convert cell -> centered model: model = cell*step - size/2.
+    const _res  = this._res || 128;
+    const _sw   = this._size / (_res - 1);   // worker step (size/(res-1))
+    const _half = this._size * 0.5;
+    const worldPos = vec3.fromValues(
+      cellPos[0] * _sw - _half,
+      cellPos[1] * _sw - _half,
+      cellPos[2] * _sw - _half
+    );
 
     if (window.screenLog && Math.random() < 0.1) {
       const mesh = picking.getMesh();
@@ -654,17 +682,15 @@ class SculptVoxel extends SculptBase {
     }
     */
 
-    // Brush Radius (in Voxel Space)
-    // Default to a smaller, more reasonable starting size.
-    var radius = (this._radius !== undefined && this._radius > 0.1) ? this._radius : 2.5;
-
-    // Fix for "Wait, why 20.0?": Gui might be initializing it to 20 or similar.
-    // Let's cap the desktop radius if it's unreasonably large for voxel sculpting on start.
-    if (radius > 10.0 && !this._radiusRefined) {
-      radius = 3.0; // Force reasonable default
-      this._radius = 3.0;
-      this._radiusRefined = true;
-    }
+    // Brush radius. The on-screen indicator (Selection.js) shows worldRadius/meshScale
+    // CELLS; convert that to the worker's model units (× step) so deposit == indicator.
+    var _wr = Math.sqrt(picking.computeWorldRadius2 ? picking.computeWorldRadius2(true) : 1.0);
+    var _pmesh = picking.getMesh();
+    var _tm = _pmesh && _pmesh.getThreeMesh ? _pmesh.getThreeMesh() : null;
+    var _ms = 1.0;
+    if (_tm) { var _e = _tm.matrixWorld.elements; _ms = Math.sqrt(_e[0] * _e[0] + _e[4] * _e[4] + _e[8] * _e[8]) || 1.0; }
+    var _radiusCells = _wr / _ms;
+    var radius = Math.max(_sw, _radiusCells * _sw);
 
     // Add Sphere
     const color = [0.7, 0.65, 0.6];
@@ -703,8 +729,10 @@ class SculptVoxel extends SculptBase {
     // Default to Add (0). If shift, force Sub (1).
     // If Inflate (2), then ignore shift? Or Shift=Deflate?
 
-    var mode = (this._mode !== undefined) ? this._mode : 0; // 0=Add, 1=Sub, 2=Inflate, 3=Smooth
-    if (isNegative && mode !== 3) mode = 3; // Shift/Secondary overrides to Smooth
+    // 0=Add, 1=Sub, 2=Inflate, 3=Smooth. The explicit mode (from the desktop voxel
+    // UI) wins; Shift maps to "carve" (handled via isNegative in the ADD/SUB branch
+    // below and as Deflate for Inflate), so don't override the chosen mode here.
+    var mode = (this._mode !== undefined) ? this._mode : 0;
 
     // INTENSITY MODULATION
     // Base Strength (0..1)
@@ -758,14 +786,14 @@ class SculptVoxel extends SculptBase {
         // INFLATE
         // Strength should be adjustable? Default 0.5?
         // Shift could invert strength to Deflate?
-        var strength = (this._strength !== undefined) ? this._strength : 0.5;
+        var strength = (this._intensity !== undefined) ? this._intensity : ((this._strength !== undefined) ? this._strength : 0.5);
         if (isNegative) strength = -strength;
         var shape = (this._shape !== undefined) ? this._shape : 0;
         console.log("VoxelTool INFLATE - sending shape: " + shape);
 
         this._worker.postMessage({
           type: 'INFLATE',
-          center: [localPos[0], localPos[1], localPos[2]],
+          center: [worldPos[0], worldPos[1], worldPos[2]],
           radius: radius,
           strength: strength,
           shape: shape,
@@ -773,26 +801,26 @@ class SculptVoxel extends SculptBase {
         });
       } else if (mode === 3) {
         // SMOOTH
-        var strength = (this._strength !== undefined) ? this._strength : 0.5;
+        var strength = (this._intensity !== undefined) ? this._intensity : ((this._strength !== undefined) ? this._strength : 0.5);
         var shape = (this._shape !== undefined) ? this._shape : 0;
         console.log("VoxelTool SMOOTH - sending shape: " + shape);
 
         this._worker.postMessage({
           type: 'SMOOTH_SPHERE',
-          center: [localPos[0], localPos[1], localPos[2]],
+          center: [worldPos[0], worldPos[1], worldPos[2]],
           radius: radius,
           strength: strength,
           shape: shape,
           returnMesh: returnMesh
         });
       } else {
-        // ADD / SUB
-        var isSub = (mode === 1);
+        // ADD / SUB (Sub button, or Add + Shift/negative = carve)
+        var isSub = (mode === 1) || (mode === 0 && isNegative);
         var shape = (this._shape !== undefined) ? this._shape : 0;
         console.log("VoxelTool EDIT_SPHERE - sending shape: " + shape);
         this._worker.postMessage({
           type: 'EDIT_SPHERE',
-          center: [localPos[0], localPos[1], localPos[2]],
+          center: [worldPos[0], worldPos[1], worldPos[2]],
           radius: radius,
           color: color,
           isNegative: isSub,
