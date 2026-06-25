@@ -633,30 +633,51 @@ class SculptVoxel extends SculptBase {
     if (selection) selection.render(this._main);
   }
 
-  // Desktop 1b: project the current mouse onto the camera-facing draw plane through the
-  // grid centre, all in THREE-WORLD (threeMesh.matrixWorld, includes the worldGroup) to
-  // match unproject. Returns the hit in mesh-local CELL coords + the brush radius in
-  // CELLS (computed like Picking.computeWorldRadius2 so it matches the on-screen size).
-  // Shared by stroke() and the Selection hover indicator so they always agree.
+  // Compute the camera-facing draw plane (three-world): grid centre + a basis from the
+  // screen centre (forward/right/up). Used live in camera-lock mode, and captured once
+  // when switching to world-lock mode. All vec3 arrays.
+  _computeCameraPlane(picking, mw) {
+    const res = this._res || 128;
+    const gc = vec3.fromValues(res * 0.5, res * 0.5, res * 0.5);
+    vec3.transformMat4(gc, gc, mw);
+    const cam = this._main.getCamera();
+    const scx = cam._width * 0.5, scy = cam._height * 0.5;
+    const cN = picking.unproject(scx, scy, 0.0);
+    const cF = picking.unproject(scx, scy, 1.0);
+    const normal = vec3.create(); vec3.sub(normal, cN, cF); vec3.normalize(normal, normal);
+    const cR = picking.unproject(scx + 50, scy, 0.0);
+    const cU = picking.unproject(scx, scy - 50, 0.0);
+    const right = vec3.create(); vec3.sub(right, cR, cN); vec3.normalize(right, right);
+    const up    = vec3.create(); vec3.sub(up, cU, cN);    vec3.normalize(up, up);
+    return { point: [gc[0], gc[1], gc[2]], normal: [normal[0], normal[1], normal[2]],
+             right: [right[0], right[1], right[2]], up: [up[0], up[1], up[2]] };
+  }
+
+  // Toggle the draw plane between camera-locked (always faces the view) and world-locked
+  // (frozen in world space so you can orbit around your drawing). Capture the current
+  // camera plane when freezing.
+  setPlaneWorldLock(locked) {
+    this._planeWorldLocked = !!locked;
+    if (locked) {
+      const tm = this._voxelMesh && this._voxelMesh.getThreeMesh ? this._voxelMesh.getThreeMesh() : null;
+      if (tm) { tm.updateMatrixWorld(true); this._lockedPlane = this._computeCameraPlane(this._main.getPicking(), tm.matrixWorld.elements); }
+    }
+  }
+
+  // Desktop 1b: project the current mouse onto the draw plane, all in THREE-WORLD
+  // (threeMesh.matrixWorld, includes the worldGroup) to match unproject. Returns the hit
+  // in mesh-local CELL coords + brush radius in CELLS (computeWorldRadius2-style) + the
+  // plane basis for visualization. Shared by stroke() and the Selection hover indicator.
   getDesktopCursor(picking) {
     const tm = this._voxelMesh && this._voxelMesh.getThreeMesh ? this._voxelMesh.getThreeMesh() : null;
     if (!tm) return null;
     tm.updateMatrixWorld(true);
     const mw = tm.matrixWorld.elements;
 
-    // Draw plane: grid centre (three-world) + a FIXED camera-forward normal (from the
-    // screen centre, not the cursor ray) so the plane is one flat sheet perpendicular to
-    // the view — otherwise off-centre cursors hit a per-ray plane far from the origin and
-    // only the screen centre worked.
-    const res = this._res || 128;
-    const gc = vec3.fromValues(res * 0.5, res * 0.5, res * 0.5);
-    vec3.transformMat4(gc, gc, mw);
-    const cam = this._main.getCamera();
-    const cN = picking.unproject(cam._width * 0.5, cam._height * 0.5, 0.0);
-    const cF = picking.unproject(cam._width * 0.5, cam._height * 0.5, 1.0);
-    const normal = vec3.create();
-    vec3.sub(normal, cN, cF);
-    vec3.normalize(normal, normal);
+    // Plane: world-locked → frozen basis; else live camera-facing.
+    const plane = (this._planeWorldLocked && this._lockedPlane)
+      ? this._lockedPlane : this._computeCameraPlane(picking, mw);
+    const gc = plane.point, normal = plane.normal, right = plane.right, up = plane.up;
 
     // The mouse ray to intersect with that plane.
     const nP = picking.unproject(this._main._mouseX, this._main._mouseY, 0.0);
@@ -669,15 +690,21 @@ class SculptVoxel extends SculptBase {
     const cellPos = vec3.create();
     vec3.transformMat4(cellPos, hit, invMW);
 
-    // Radius in cells: project the hit, offset by the screen radius, unproject, measure.
-    const screenRadius = this.getScreenRadius();
-    const sp = picking.project(hit);
-    const offW = picking.unproject(sp[0] + screenRadius, sp[1], sp[2]);
-    const worldR = Math.sqrt(vec3.sqrDist(hit, offW));
-    const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0;
-    const radiusCells = worldR / ms;
+    // Radius in cells — a FIXED world size from the slider in BOTH plane modes (voxels
+    // are world-space; the brush keeps a constant world radius regardless of camera/zoom).
+    const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0; // cell→world scale
+    const radiusCells = (this._radius || 25) * 0.1;
 
-    return { cellPos, radiusCells, worldHit: hit };
+    return {
+      cellPos, radiusCells, worldHit: hit,
+      // For visualizing the draw plane (three-world): centre, basis, world extent.
+      planePoint: [gc[0], gc[1], gc[2]],
+      planeNormal: [normal[0], normal[1], normal[2]],
+      planeRight: [right[0], right[1], right[2]],
+      planeUp: [up[0], up[1], up[2]],
+      gridWorldSize: (this._res || 128) * ms,
+      res: this._res || 128,
+    };
   }
 
   stroke(picking) {

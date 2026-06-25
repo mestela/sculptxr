@@ -274,8 +274,10 @@ class Selection {
         const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
         this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
         this._threeVoxelSphere.visible = true;
+        this._showDrawPlane(main, tm, cur);
       } else {
         this._threeVoxelSphere.visible = false;
+        if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
       }
 
       if (this._threeCircle) this._threeCircle.visible = false;
@@ -283,6 +285,7 @@ class Selection {
       return;
     }
     if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
+    if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
 
     if (pickedMesh) {
       var picking = main.getPicking();
@@ -348,6 +351,46 @@ class Selection {
       if (this._threeDot)   this._threeDot.visible    = false;
     }
     // _isEditMode is managed by GuiSculpting — do NOT reset it here
+  }
+
+  // Faint grid showing the voxel draw plane (1b). Parented to the voxel mesh and placed
+  // in CELL space — the exact same frame the strokes deposit in — so the grid and the
+  // strokes are guaranteed coplanar (a scene-root/three-world copy drifted from them).
+  // The plane basis (right/normal/up) is in three-world, so convert to the mesh's local
+  // frame via the parent world quaternion.
+  _showDrawPlane(main, tm, cur) {
+    if (!cur || !tm) { if (this._threeDrawPlane) this._threeDrawPlane.visible = false; return; }
+    if (!this._threeDrawPlane) {
+      const g = new THREE.GridHelper(1, 24, 0x89b4fa, 0x3a4a66);
+      g.material.transparent = true;
+      g.material.opacity = 0.35;
+      g.material.depthWrite = false;
+      g.renderOrder = 9998;
+      this._threeDrawPlane = g;
+    }
+    const g = this._threeDrawPlane;
+    if (g.parent !== tm) tm.add(g);
+
+    const res = cur.res || 128;
+    // Centre + size in CELL units (the grid spans the whole voxel grid).
+    g.position.set(res * 0.5, res * 0.5, res * 0.5);
+    g.scale.set(res, res, res);
+
+    // Desired world orientation (screen-aligned). GridHelper plane is local XZ with
+    // normal +Y, so local Y → camera forward, local X → screen-right, local Z → X×Y.
+    // (Passing screen-up as Z gives a LEFT-handed basis → setFromRotationMatrix yields a
+    // garbage quaternion, which was the unpredictable roll / world-looking orientation.)
+    tm.updateMatrixWorld(true);
+    const rx = (this._tmpR || (this._tmpR = new THREE.Vector3())).fromArray(cur.planeRight);
+    const ny = (this._tmpN || (this._tmpN = new THREE.Vector3())).fromArray(cur.planeNormal);
+    const zz = (this._tmpU || (this._tmpU = new THREE.Vector3())).crossVectors(rx, ny).normalize();
+    const m  = (this._tmpM || (this._tmpM = new THREE.Matrix4())).makeBasis(rx, ny, zz);
+    const wq = (this._tmpQ || (this._tmpQ = new THREE.Quaternion())).setFromRotationMatrix(m);
+    // grid is a child of tm: local = inverse(parentWorldQuat) * desiredWorldQuat.
+    const pq = (this._tmpPQ || (this._tmpPQ = new THREE.Quaternion()));
+    tm.getWorldQuaternion(pq);
+    g.quaternion.copy(pq).invert().multiply(wq);
+    g.visible = true;
   }
 
   setIsNegative(bool) {
