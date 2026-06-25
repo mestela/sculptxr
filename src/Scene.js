@@ -2647,16 +2647,35 @@ class Scene {
         newMesh.setID(MeshStatic.ID++);
         newMesh._typeName = "Voxel";
         newMesh.isQuad = true;
-        
+
         newMesh.allocateArrays();
         newMesh.initThreeMesh();
-        
+
         voxelTool._voxelMesh = newMesh;
         this.addNewMesh(newMesh);
       }
-      
+
+      // 1b: give the empty grid a real coordinate frame so we can sketch into it.
+      // Grid CENTERED at the world origin (offset = -size/2) and the worker matches
+      // (VoxelState uses _min = -size/2, step = size/(res-1)). With this, the worker
+      // edit centre == the world point we project a stroke onto. mesh.getMatrix() is
+      // the cell->world grid matrix (translate(offset) * scale(step)).
+      const RES = 128, SIZE = 200;
+      const stepW = SIZE / (RES - 1);
+      const half  = SIZE * 0.5;
+      voxelTool._res  = RES;
+      voxelTool._size = SIZE;
+      voxelTool._step = stepW;
+      voxelTool._min  = vec3.fromValues(-half, -half, -half);
+      voxelTool._max  = vec3.fromValues(half, half, half);
+      mat4.identity(voxelTool._gridMatrix);
+      voxelTool._gridMatrix[0] = stepW; voxelTool._gridMatrix[5] = stepW; voxelTool._gridMatrix[10] = stepW;
+      voxelTool._gridMatrix[12] = -half; voxelTool._gridMatrix[13] = -half; voxelTool._gridMatrix[14] = -half;
+      mat4.invert(voxelTool._invGridMatrix, voxelTool._gridMatrix);
+      if (voxelTool._voxelMesh) mat4.copy(voxelTool._voxelMesh.getMatrix(), voxelTool._gridMatrix);
+
       if (voxelTool._worker) {
-        voxelTool._worker.postMessage({ type: 'CLEAR' });
+        voxelTool._worker.postMessage({ type: 'INIT', res: RES, size: SIZE, min: [-half, -half, -half] });
       }
     }
     

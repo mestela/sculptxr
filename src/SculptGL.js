@@ -595,6 +595,10 @@ class SculptGL extends Scene {
     const mouseOnly = (fn) => (e) => { if (e.constructor === MouseEvent) fn(e); };
     canvas.addEventListener('mousedown', mouseOnly(this.onMouseDown.bind(this)), false);
     canvas.addEventListener('mouseup',   mouseOnly(this.onMouseUp.bind(this)),   false);
+    // Suppress the browser context menu so right-click can orbit the camera (right-drag
+    // → CAMERA_ROTATE in onDeviceDown). Needed especially for voxel plane drawing, where
+    // left-click always lands on the infinite draw plane and never frees up to orbit.
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault(), false);
     canvas.addEventListener('mouseout',  mouseOnly(this.onMouseOut.bind(this)),  false);
     canvas.addEventListener('mouseover', mouseOnly(this.onMouseOver.bind(this)), false);
     canvas.addEventListener('mousemove', mouseOnly(Utils.throttle(this.onMouseMove.bind(this), 16.66)), false);

@@ -560,27 +560,13 @@ class SculptVoxel extends SculptBase {
       this._worker.postMessage({ type: 'SNAPSHOT' });
     }
 
-    // Desktop: Lock Plane for Stroke (Prevent Accumulation)
+    // Desktop 1b: every stroke draws on the camera-facing plane through the grid centre
+    // (computed per-frame in getDesktopCursor). Just allow the stroke to engage without
+    // a surface pick and reset the stroke-spacing tracker.
+    let allowAir = false;
     if (!this._main._xrSession) {
-      const picking = this._main.getPicking();
-      const inter = picking.getIntersectionPoint();
-      const mesh = picking.getMesh();
-
-      if (inter && mesh) {
-        // inter is LOCAL. Convert to WORLD for Plane Lock.
-        const realWorldPos = vec3.create();
-        vec3.transformMat4(realWorldPos, inter, mesh.getMatrix());
-
-        this._planePoint = vec3.clone(realWorldPos);
-        const cam = this._main.getCamera();
-        const eye = cam.computePosition();
-        this._planeNormal = vec3.create();
-        vec3.sub(this._planeNormal, eye, realWorldPos);
-        vec3.normalize(this._planeNormal, this._planeNormal);
-      } else {
-        this._planePoint = null;
-        this._planeNormal = null;
-      }
+      this._deskStrokeStarted = false;
+      allowAir = true;
     }
 
     // Debug Picking Failure
@@ -605,7 +591,33 @@ class SculptVoxel extends SculptBase {
       }
       */
     }
-    return res;
+    // Allow the stroke to engage even with no surface pick, so we can draw into
+    // empty space on the draw plane (1b). super.start returns false on a miss.
+    return res || allowAir;
+  }
+
+  // Desktop stroke dispatch. The base makeStroke only fires on a surface pick, which
+  // blocks drawing into empty space; so when there's no voxel surface under the cursor
+  // we run our own throttled stroke that projects onto the draw plane (1b). Surface
+  // hits fall through to the base behaviour (unchanged).
+  update(continuous) {
+    if (this._main._xrSession) return; // VR handled by updateXR
+    const main = this._main;
+    const picking = main.getPicking();
+    picking.intersectionMouseMeshes(); // refresh pick (gives surface radius if over geometry)
+
+    // 1b: always draw on the plane (no surface swap yet) — throttle by screen spacing.
+    if (!this._voxelMesh) return;
+    const minSpacing = Math.max(2, 0.15 * (this._radius || 25) * main.getPixelRatio());
+    if (this._deskStrokeStarted) {
+      const dx = main._mouseX - this._lastDeskX;
+      const dy = main._mouseY - this._lastDeskY;
+      if (Math.sqrt(dx * dx + dy * dy) < minSpacing) return;
+    }
+    this._deskStrokeStarted = true;
+    this._lastDeskX = main._mouseX;
+    this._lastDeskY = main._mouseY;
+    this.stroke(picking);
   }
 
   postRender(selection) {
@@ -621,41 +633,65 @@ class SculptVoxel extends SculptBase {
     if (selection) selection.render(this._main);
   }
 
+  // Desktop 1b: project the current mouse onto the camera-facing draw plane through the
+  // grid centre, all in THREE-WORLD (threeMesh.matrixWorld, includes the worldGroup) to
+  // match unproject. Returns the hit in mesh-local CELL coords + the brush radius in
+  // CELLS (computed like Picking.computeWorldRadius2 so it matches the on-screen size).
+  // Shared by stroke() and the Selection hover indicator so they always agree.
+  getDesktopCursor(picking) {
+    const tm = this._voxelMesh && this._voxelMesh.getThreeMesh ? this._voxelMesh.getThreeMesh() : null;
+    if (!tm) return null;
+    tm.updateMatrixWorld(true);
+    const mw = tm.matrixWorld.elements;
+
+    // Draw plane: grid centre (three-world) + a FIXED camera-forward normal (from the
+    // screen centre, not the cursor ray) so the plane is one flat sheet perpendicular to
+    // the view — otherwise off-centre cursors hit a per-ray plane far from the origin and
+    // only the screen centre worked.
+    const res = this._res || 128;
+    const gc = vec3.fromValues(res * 0.5, res * 0.5, res * 0.5);
+    vec3.transformMat4(gc, gc, mw);
+    const cam = this._main.getCamera();
+    const cN = picking.unproject(cam._width * 0.5, cam._height * 0.5, 0.0);
+    const cF = picking.unproject(cam._width * 0.5, cam._height * 0.5, 1.0);
+    const normal = vec3.create();
+    vec3.sub(normal, cN, cF);
+    vec3.normalize(normal, normal);
+
+    // The mouse ray to intersect with that plane.
+    const nP = picking.unproject(this._main._mouseX, this._main._mouseY, 0.0);
+    const fP = picking.unproject(this._main._mouseX, this._main._mouseY, 1.0);
+    const hit = vec3.create();
+    if (!Geometry.intersectLinePlane(nP, fP, gc, normal, hit)) return null;
+
+    const invMW = mat4.create();
+    mat4.invert(invMW, mw);
+    const cellPos = vec3.create();
+    vec3.transformMat4(cellPos, hit, invMW);
+
+    // Radius in cells: project the hit, offset by the screen radius, unproject, measure.
+    const screenRadius = this.getScreenRadius();
+    const sp = picking.project(hit);
+    const offW = picking.unproject(sp[0] + screenRadius, sp[1], sp[2]);
+    const worldR = Math.sqrt(vec3.sqrDist(hit, offW));
+    const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0;
+    const radiusCells = worldR / ms;
+
+    return { cellPos, radiusCells, worldHit: hit };
+  }
+
   stroke(picking) {
-    let cellPos = picking.getIntersectionPoint();   // mesh-LOCAL = grid CELL coords
-
-    // Depth lock (desktop): after the first contact, deposit on a fixed view-facing
-    // plane at the initial contact depth instead of re-raycasting the (growing) surface.
-    // Without this, ADD strokes keep hitting the freshly-raised surface and march toward
-    // the camera — a runaway spike. _planePoint/_planeNormal are set in start() (world).
-    if (this._planePoint && this._planeNormal && !this._main._xrSession) {
-      const vNear = picking.unproject(this._main._mouseX, this._main._mouseY, 0.0);
-      const vFar  = picking.unproject(this._main._mouseX, this._main._mouseY, 0.1);
-      const lockInter = vec3.create();
-      if (Geometry.intersectLinePlane(vNear, vFar, this._planePoint, this._planeNormal, lockInter)) {
-        const mesh = picking.getMesh();
-        if (mesh) {
-          const invM = mat4.create();
-          mat4.invert(invM, mesh.getMatrix());      // world -> mesh-local (cell)
-          cellPos = vec3.create();
-          vec3.transformMat4(cellPos, lockInter, invM);
-        }
-      }
-    }
-
-    if (!cellPos) {
+    const cur = this.getDesktopCursor(picking);
+    if (!cur) {
       if (window.screenLog && Math.random() < 0.05) window.screenLog("Voxel Stroke: No Intersection", "red");
       return;
     }
+    const cellPos = cur.cellPos;
 
-    // Coordinate spaces (ground truth):
-    //  - The raycast hit (mesh-local) is in CELL coords [0..res] (SurfaceNets emits
-    //    vertices as cell indices).
-    //  - The worker grid is CENTERED at the origin: _min = -size/2, step = size/(res-1),
-    //    and editSphere's centre is in that centered model space.
-    // So convert cell -> centered model: model = cell*step - size/2.
+    // Convert cell -> the worker's centered-model space: model = cell*step - size/2
+    // (worker grid is centered at origin; step = size/(res-1)).
     const _res  = this._res || 128;
-    const _sw   = this._size / (_res - 1);   // worker step (size/(res-1))
+    const _sw   = this._size / (_res - 1);
     const _half = this._size * 0.5;
     const worldPos = vec3.fromValues(
       cellPos[0] * _sw - _half,
@@ -663,34 +699,7 @@ class SculptVoxel extends SculptBase {
       cellPos[2] * _sw - _half
     );
 
-    if (window.screenLog && Math.random() < 0.1) {
-      const mesh = picking.getMesh();
-      const meshID = mesh ? mesh.getID() : "Null";
-      // Log Grid vs Result to debug "Fine" vs "Offset"
-      // if (this._voxelState && window.screenLog && Math.random() < 0.01) {
-      //    const inter = this._picking.getIntersectionPoint();
-      //    window.screenLog(`Strk(Desk): I[${inter[0].toFixed(1)}]`, "grey");
-      // }
-    }
-
-    /*
-    if (window.screenLog && Math.random() < 0.1) {
-      const mesh = picking.getMesh();
-      const meshID = mesh ? mesh.getID() : "Null";
-      // Log Grid pos vs Physical pos
-      // window.screenLog(`Strk: G[${inter[0].toFixed(1)}] -> P[${localPos[0].toFixed(1)}]`, "cyan");
-    }
-    */
-
-    // Brush radius. The on-screen indicator (Selection.js) shows worldRadius/meshScale
-    // CELLS; convert that to the worker's model units (× step) so deposit == indicator.
-    var _wr = Math.sqrt(picking.computeWorldRadius2 ? picking.computeWorldRadius2(true) : 1.0);
-    var _pmesh = picking.getMesh();
-    var _tm = _pmesh && _pmesh.getThreeMesh ? _pmesh.getThreeMesh() : null;
-    var _ms = 1.0;
-    if (_tm) { var _e = _tm.matrixWorld.elements; _ms = Math.sqrt(_e[0] * _e[0] + _e[4] * _e[4] + _e[8] * _e[8]) || 1.0; }
-    var _radiusCells = _wr / _ms;
-    var radius = Math.max(_sw, _radiusCells * _sw);
+    const radius = Math.max(_sw, cur.radiusCells * _sw);
 
     // Add Sphere
     const color = [0.7, 0.65, 0.6];

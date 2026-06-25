@@ -256,36 +256,27 @@ class Selection {
                     curIdx === Enums.Tools.VOXEL ||
                     (_curTool && _curTool.constructor && _curTool.constructor.name === 'SculptVoxel');
 
-    if (window._voxelCursorDebug && (this._dbgN = (this._dbgN || 0) + 1) % 30 === 0) {
-      const pk = main.getPicking();
-      console.log('[VoxelCursor] isVoxel=%s pickedMesh=%s sphereObj=%s curIdx=%s tool=%s interPt=%s',
-        isVoxel, pickedMesh, !!this._threeVoxelSphere, curIdx,
-        _curTool && _curTool.constructor && _curTool.constructor.name,
-        pk && pk.getMesh && pk.getMesh() ? JSON.stringify(Array.from(pk.getIntersectionPoint()).map(n=>+n.toFixed(1))) : 'none');
-    }
+    if (isVoxel && this._threeVoxelSphere) {
+      // Voxel: show the volumetric sphere where the stroke will land — on the DRAW PLANE
+      // (even over empty space), via the same projection the stroke uses, so the cursor
+      // and the deposit always agree. Hide the flat circle/dot.
+      const vtool = (sm && sm.getTool ? sm.getTool(Enums.Tools.VOXEL) : null) ||
+                    (sm && sm.getCurrentTool ? sm.getCurrentTool() : null);
+      const tm = vtool && vtool._voxelMesh && vtool._voxelMesh.getThreeMesh
+        ? vtool._voxelMesh.getThreeMesh() : null;
+      const cur = (vtool && vtool.getDesktopCursor) ? vtool.getDesktopCursor(main.getPicking()) : null;
 
-    if (pickedMesh && isVoxel && this._threeVoxelSphere) {
-      // Voxel: show the volumetric sphere at the cursor, hide the flat circle/dot.
-      var picking = main.getPicking();
-      var mesh = picking.getMesh();
-      var threeMesh = mesh.getThreeMesh();
-      if (this._threeVoxelSphere.parent !== threeMesh) threeMesh.add(this._threeVoxelSphere);
-
-      // Same size convention as the flat brush circle: the standard world radius
-      // converted to the mesh's local/model space. SculptVoxel.stroke deposits at the
-      // same world radius, so the indicator and the actual edit stay locked together.
-      var worldRadius = Math.sqrt(picking.computeWorldRadius2(true));
-      const m = threeMesh.matrixWorld.elements;
-      const s = Math.sqrt(m[0] * m[0] + m[4] * m[4] + m[8] * m[8]) || 1;
-      const localR = Math.max(1e-4, worldRadius / s);
-      this._threeVoxelSphere.position.fromArray(picking.getIntersectionPoint());
-      this._threeVoxelSphere.scale.set(localR, localR, localR);
-
-      // Tint red for carve modes (Sub / Deflate / negative), blue otherwise.
-      const vtool = (sm.getTool ? sm.getTool(Enums.Tools.VOXEL) : null) || sm.getCurrentTool();
-      const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
-      this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
-      this._threeVoxelSphere.visible = true;
+      if (tm && cur) {
+        if (this._threeVoxelSphere.parent !== tm) tm.add(this._threeVoxelSphere);
+        this._threeVoxelSphere.position.fromArray(cur.cellPos);
+        const r = Math.max(1e-4, cur.radiusCells);
+        this._threeVoxelSphere.scale.set(r, r, r);
+        const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
+        this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
+        this._threeVoxelSphere.visible = true;
+      } else {
+        this._threeVoxelSphere.visible = false;
+      }
 
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
