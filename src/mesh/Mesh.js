@@ -2582,6 +2582,21 @@ class Mesh {
       // Revert to pure quad edge rendering using THREE.LineSegments to suppress diagonal triangulation
       var edgeIndices = this.getWireframe();
 
+      // Fallback: derive edges from the render geometry's triangle index. The app-side
+      // edge list isn't built for some meshes (e.g. the voxel SurfaceNets output), which
+      // left their wireframe empty; the render geometry index is always current.
+      const _g = this._renderData._geometry;
+      if ((!edgeIndices || edgeIndices.length === 0) && _g && _g.index) {
+        const idx = _g.index.array;
+        const e = new Uint32Array(Math.floor(idx.length / 3) * 6);
+        let o = 0;
+        for (let t = 0; t + 2 < idx.length; t += 3) {
+          const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+          e[o++] = a; e[o++] = b; e[o++] = b; e[o++] = c; e[o++] = c; e[o++] = a;
+        }
+        edgeIndices = e;
+      }
+
       if (edgeIndices && edgeIndices.length > 0) {
           if (!this._renderData._wireframeMesh) {
               var lineMaterial = new THREE.LineBasicMaterial({
@@ -2594,19 +2609,22 @@ class Mesh {
                   polygonOffsetUnits: -2.0
               });
               var lineGeom = new THREE.BufferGeometry();
-              lineGeom.setAttribute('position', this._renderData._geometry.getAttribute('position'));
               this._renderData._wireframeMesh = new THREE.LineSegments(lineGeom, lineMaterial);
               this._renderData._wireframeMesh.frustumCulled = false;
               this._renderData._wireframeMesh.renderOrder = 1;
-              
+
               if (this._renderData._threeMesh) {
                   this._renderData._threeMesh.add(this._renderData._wireframeMesh);
               } else {
                   console.warn("[SXR Wireframe] Failed to find _threeMesh parent to attach wireframe!");
               }
           }
-          
+
           const geom = this._renderData._wireframeMesh.geometry;
+          // Always rebind position to the CURRENT geometry — the voxel mesh replaces its
+          // BufferGeometry on every edit, which would otherwise leave the wireframe stale.
+          const pos = _g && _g.getAttribute('position');
+          if (pos && geom.getAttribute('position') !== pos) geom.setAttribute('position', pos);
           if (!geom.index || geom.index.array !== edgeIndices) {
               geom.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
           }

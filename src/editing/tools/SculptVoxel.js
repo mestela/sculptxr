@@ -2029,6 +2029,10 @@ class SculptVoxel extends SculptBase {
     // CRITICAL FIX: Upload all buffers to GPU (Vertices, Normals, Colors, Indices)
     // This fixes the "Black Artifacts" (missing normals) and potentially "Insufficient buffer size" (sync).
     this._voxelMesh.updateBuffers();
+    // Keep the wireframe overlay in sync — the geometry is replaced each edit.
+    if (this._voxelMesh.getShowWireframe && this._voxelMesh.getShowWireframe()) {
+      this._voxelMesh.updateWireframeBuffer?.();
+    }
     this._pendingMeshUpdate = false;
 
     // Ensure Proxy is visually active and selected

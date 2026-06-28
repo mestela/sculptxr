@@ -1,3 +1,7 @@
+# v3.9.5
+- **Fix**: **Wireframe now works on voxel objects** — both the W shortcut and the Rendering panel toggle. The W shortcut falls back to the active mesh (a voxel object isn't in the selection list), and the wireframe overlay rebuilds from current geometry + rebinds on each voxel edit (it was empty/stale before).
+- **Fix**: the update-banner Reload now confirms first (no accidental loss of unsaved work).
+
 # v3.9.2
 - **Fix**: **Stale-build detection.** The app now compares its baked version against the live `version.json` and shows a "New version available — Reload" banner when a cached old build is loaded; the reload cache-busts the URL. Also added cache-control headers (no-cache on `index.html`/`version.json`) so updated builds are picked up on refresh instead of serving a stale cache.
 

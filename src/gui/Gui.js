@@ -574,7 +574,10 @@ class Gui {
           const mesh = main.getMesh();
           if (!mesh) return;
           const next = !mesh.getShowWireframe?.();
-          main.getSelectedMeshes().forEach(m => m.setShowWireframe?.(next));
+          // Apply to the selection, falling back to the active mesh — a voxel object is
+          // the active mesh but isn't in the selection list, so it was being skipped.
+          const sel = main.getSelectedMeshes?.() ?? [];
+          (sel.length ? sel : [mesh]).forEach(m => m.setShowWireframe?.(next));
           main.render();
           const wireBtn = gui._desktopRenderingEl?.querySelector('#mm-wireframe');
           if (wireBtn) wireBtn.classList.toggle('active', next);
