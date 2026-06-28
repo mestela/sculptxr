@@ -1,0 +1,12 @@
+# Don't cache the entry HTML or the version marker — they reference the hashed JS/CSS
+# bundle, so a cached index.html keeps loading an old build (the stale-version problem).
+# Hashed assets (assets/*) are content-addressed and safe to cache normally.
+# Guarded by IfModule so it's a no-op if mod_headers isn't available (and ignored
+# entirely on non-Apache hosts — set equivalent headers in the server config there).
+<IfModule mod_headers.c>
+  <FilesMatch "(index\.html|version\.json)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+</IfModule>

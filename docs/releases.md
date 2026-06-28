@@ -1,3 +1,6 @@
+# v3.9.2
+- **Fix**: **Stale-build detection.** The app now compares its baked version against the live `version.json` and shows a "New version available — Reload" banner when a cached old build is loaded; the reload cache-busts the URL. Also added cache-control headers (no-cache on `index.html`/`version.json`) so updated builds are picked up on refresh instead of serving a stale cache.
+
 # v3.9.1
 - **Fix**: **VR navigation inertia now fires on Galaxy XR** (and other runtimes that damp controller motion at release). The throw launches from the strongest recent velocity sample rather than the final frame, so a flick-and-release glides reliably.
 
