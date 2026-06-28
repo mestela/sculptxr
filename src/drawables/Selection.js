@@ -266,6 +266,7 @@ class Selection {
         ? vtool._voxelMesh.getThreeMesh() : null;
       const cur = (vtool && vtool.getDesktopCursor) ? vtool.getDesktopCursor(main.getPicking()) : null;
 
+      const surfaceMode = !!(vtool && vtool._surfaceMode);
       if (tm && cur) {
         if (this._threeVoxelSphere.parent !== tm) tm.add(this._threeVoxelSphere);
         this._threeVoxelSphere.position.fromArray(cur.cellPos);
@@ -274,12 +275,15 @@ class Selection {
         const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
         this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
         this._threeVoxelSphere.visible = true;
-        this._showDrawPlane(main, tm, cur);
+        // Grid + depth rail are plane-mode only; hide them in surface mode.
+        if (!surfaceMode) this._showDrawPlane(main, tm, cur);
+        else if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
       } else {
         this._threeVoxelSphere.visible = false;
         if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
       }
-      this._showDepthRail(main, vtool);
+      if (!surfaceMode) this._showDepthRail(main, vtool);
+      else if (this._depthRail) this._depthRail.style.display = 'none';
 
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
@@ -363,13 +367,23 @@ class Selection {
   _showDrawPlane(main, tm, cur) {
     if (!cur || !tm) { if (this._threeDrawPlane) this._threeDrawPlane.visible = false; return; }
     if (!this._threeDrawPlane) {
-      // Fewer divisions + lower opacity so the grid reads as a light depth reference and
-      // doesn't compete with the strokes. (WebGL ignores line width, so we can't thicken.)
-      const g = new THREE.GridHelper(1, 12, 0x89b4fa, 0x5566aa);
+      // WebGL ignores line width, so thin grid lines are nearly invisible (esp. on
+      // retina/iPad). Pair the grid with a translucent filled sheet so the plane reads
+      // clearly as a surface, with the lines on top for orientation/depth reference.
+      const g = new THREE.GridHelper(1, 12, 0x89b4fa, 0x6f86c9);
       g.material.transparent = true;
-      g.material.opacity = 0.22;
+      g.material.opacity = 0.6;
       g.material.depthWrite = false;
       g.renderOrder = 9998;
+      // Filled sheet (PlaneGeometry is XY/normal+Z; rotate to the grid's XZ plane).
+      const quad = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.12,
+          depthWrite: false, side: THREE.DoubleSide })
+      );
+      quad.rotation.x = -Math.PI / 2;
+      quad.renderOrder = 9997;
+      g.add(quad);
       this._threeDrawPlane = g;
     }
     const g = this._threeDrawPlane;
@@ -441,8 +455,45 @@ class Selection {
         if (this._depthRailTool) { this._depthRailTool._planeDepthOffset = 0; main.render && main.render(); }
       });
       wrap.appendChild(label); wrap.appendChild(slider);
+
+      // Tilt pad (world-locked only): drag to rotate the plane normal — horizontal = yaw,
+      // vertical = pitch. Double-tap resets. Shown/hidden in the update below.
+      const tlabel = document.createElement('div');
+      tlabel.textContent = 'Tilt';
+      tlabel.style.cssText = 'color:#cdd6f4;font:11px sans-serif;opacity:0.75;margin-top:6px;';
+      const pad = document.createElement('div');
+      pad.style.cssText = 'width:64px;height:64px;border-radius:8px;background:rgba(69,71,90,0.6);' +
+        'border:1px solid #585b70;position:relative;cursor:grab;touch-action:none;';
+      const dot = document.createElement('div');
+      dot.style.cssText = 'position:absolute;left:50%;top:50%;width:10px;height:10px;border-radius:50%;' +
+        'background:#89b4fa;transform:translate(-50%,-50%);';
+      pad.appendChild(dot);
+      let dragging = false, lastX = 0, lastY = 0;
+      pad.addEventListener('pointerdown', (e) => {
+        dragging = true; lastX = e.clientX; lastY = e.clientY;
+        try { pad.setPointerCapture(e.pointerId); } catch (_) {}
+        e.preventDefault();
+      });
+      pad.addEventListener('pointermove', (e) => {
+        if (!dragging || !this._depthRailTool) return;
+        const t = this._depthRailTool;
+        t._planeTiltYaw   = (t._planeTiltYaw   || 0) + (e.clientX - lastX) * 0.01;
+        t._planeTiltPitch = (t._planeTiltPitch || 0) + (e.clientY - lastY) * 0.01;
+        lastX = e.clientX; lastY = e.clientY;
+        main.render && main.render();
+      });
+      pad.addEventListener('pointerup', () => { dragging = false; });
+      pad.addEventListener('dblclick', () => {
+        if (this._depthRailTool) {
+          this._depthRailTool._planeTiltYaw = 0; this._depthRailTool._planeTiltPitch = 0;
+          main.render && main.render();
+        }
+      });
+      wrap.appendChild(tlabel); wrap.appendChild(pad);
+
       document.body.appendChild(wrap);
       this._depthRail = wrap; this._depthRailSlider = slider;
+      this._tiltPad = pad; this._tiltLabel = tlabel;
     }
     const res = vtool._res || 128;
     this._depthRailSlider.min = String(-res / 2);
@@ -450,6 +501,9 @@ class Selection {
     this._depthRailSlider.step = '1';
     this._depthRailTool = vtool;
     this._depthRail.style.display = 'flex';
+    // Tilt applies in both camera and world modes.
+    this._tiltPad.style.display = 'block';
+    this._tiltLabel.style.display = 'block';
   }
 
   setIsNegative(bool) {

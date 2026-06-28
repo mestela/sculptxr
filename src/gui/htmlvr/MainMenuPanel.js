@@ -1526,8 +1526,9 @@ export function buildSectionHTML_sculpting(main) {
           <input type="range" id="mm-voxel-res" min="16" max="256" step="16" value="${curRes}">
           <span class="mm-val" id="mm-voxel-res-val">${curRes}</span>
         </div>
-        <div class="mm-choice-grid cols-1" style="margin-top:4px">
-          <button class="mm-choice${tool._planeWorldLocked ? ' active' : ''}" data-voxel-planelock="1" title="Draw plane: camera-locked (follows view) vs world-locked (fixed so you can orbit around your drawing)">Draw plane: ${tool._planeWorldLocked ? 'World-locked' : 'Camera'}</button>
+        <div class="mm-choice-grid cols-2" style="margin-top:4px">
+          <button class="mm-choice${!tool._surfaceMode ? ' active' : ''}" data-voxel-planelock="1" title="Draw plane: camera-locked (follows view) vs world-locked (fixed so you can orbit around your drawing). Click to toggle.">Plane: ${tool._planeWorldLocked ? 'World' : 'Camera'}</button>
+          <button class="mm-choice${tool._surfaceMode ? ' active' : ''}" data-voxel-surface="1" title="Surface mode: strokes track the existing voxel surface instead of the draw plane">Surface</button>
         </div>
         <div class="mm-btn-pair" style="margin-top:4px">
           <button class="mm-action-btn" data-voxel-resample="1">Resample</button>
@@ -2828,10 +2829,13 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
 
     // ── Voxel-specific ────────────────────────────────────────────────────────
     if (idx === Enums.Tools.VOXEL) {
-      el.querySelectorAll('[data-voxel-mode],[data-voxel-shape],[data-voxel-buildup],[data-voxel-flat],[data-voxel-wire],[data-voxel-resample],[data-voxel-bake],[data-voxel-planelock]').forEach(btn => {
+      el.querySelectorAll('[data-voxel-mode],[data-voxel-shape],[data-voxel-buildup],[data-voxel-flat],[data-voxel-wire],[data-voxel-resample],[data-voxel-bake],[data-voxel-planelock],[data-voxel-surface]').forEach(btn => {
         btn.addEventListener('click', () => {
-          if (btn.dataset.voxelPlanelock !== undefined) {
-            tool.setPlaneWorldLock?.(!tool._planeWorldLocked); // camera ↔ world plane lock
+          if (btn.dataset.voxelSurface !== undefined) {
+            tool._surfaceMode = !tool._surfaceMode;       // strokes track the surface
+          } else if (btn.dataset.voxelPlanelock !== undefined) {
+            if (tool._surfaceMode) tool._surfaceMode = false;        // surface → plane mode
+            else tool.setPlaneWorldLock?.(!tool._planeWorldLocked);  // toggle camera/world lock
           } else if (btn.dataset.voxelShape !== undefined) {
             tool._shape = parseInt(btn.dataset.voxelShape, 10);
           } else if (btn.dataset.voxelBake !== undefined) {

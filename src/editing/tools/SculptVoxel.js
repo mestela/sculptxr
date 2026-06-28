@@ -661,6 +661,8 @@ class SculptVoxel extends SculptBase {
     if (locked) {
       const tm = this._voxelMesh && this._voxelMesh.getThreeMesh ? this._voxelMesh.getThreeMesh() : null;
       if (tm) { tm.updateMatrixWorld(true); this._lockedPlane = this._computeCameraPlane(this._main.getPicking(), tm.matrixWorld.elements); }
+      // Tilt carries over (it applies in both modes), so the plane looks continuous
+      // across the toggle. Double-tap the tilt pad to reset.
     }
   }
 
@@ -675,11 +677,38 @@ class SculptVoxel extends SculptBase {
     const mw = tm.matrixWorld.elements;
 
     const ms = Math.sqrt(mw[0] * mw[0] + mw[4] * mw[4] + mw[8] * mw[8]) || 1.0; // cell→world scale
+    const radiusCells = (this._radius || 25) * 0.1; // FIXED world brush size (cells)
+
+    // Surface mode: raycast the voxel surface and place the cursor/deposit at the hit
+    // (tracks the surface) instead of the draw plane. No deposit when off the surface.
+    if (this._surfaceMode) {
+      picking.intersectionMouseMeshes();
+      const pm = picking.getMesh();
+      if (!pm || !pm._isVoxel) return null;
+      const ip = picking.getIntersectionPoint();
+      const worldHit = vec3.create();
+      vec3.transformMat4(worldHit, ip, mw);
+      return { cellPos: [ip[0], ip[1], ip[2]], radiusCells, worldHit,
+               surfaceMode: true, res: this._res || 128 };
+    }
 
     // Plane: world-locked → frozen basis; else live camera-facing.
     const plane = (this._planeWorldLocked && this._lockedPlane)
       ? this._lockedPlane : this._computeCameraPlane(picking, mw);
-    const normal = plane.normal, right = plane.right, up = plane.up;
+    let normal = plane.normal, right = plane.right, up = plane.up;
+
+    // Free tilt (both modes): rotate the plane basis — yaw about its up axis, pitch about
+    // its right axis. In camera mode it angles the plane relative to the view (and stays
+    // angled as you orbit); in world mode it angles the frozen plane.
+    if (this._planeTiltYaw || this._planeTiltPitch) {
+      const q = quat.create();
+      quat.multiply(q,
+        quat.setAxisAngle(quat.create(), up, this._planeTiltYaw || 0),
+        quat.setAxisAngle(quat.create(), right, this._planeTiltPitch || 0));
+      normal = vec3.transformQuat(vec3.create(), normal, q);
+      right  = vec3.transformQuat(vec3.create(), right, q);
+      up     = vec3.transformQuat(vec3.create(), up, q);
+    }
 
     // Apply the depth offset: shift the plane centre along its normal. _planeDepthOffset
     // is in CELLS (grid-relative), converted to world via the cell→world scale.
@@ -701,10 +730,6 @@ class SculptVoxel extends SculptBase {
     // Plane centre in cell space (for placing the grid coplanar with the deposits).
     const centerCell = vec3.create();
     vec3.transformMat4(centerCell, gc, invMW);
-
-    // Radius in cells — a FIXED world size from the slider in BOTH plane modes (voxels
-    // are world-space; the brush keeps a constant world radius regardless of camera/zoom).
-    const radiusCells = (this._radius || 25) * 0.1;
 
     return {
       cellPos, radiusCells, worldHit: hit,

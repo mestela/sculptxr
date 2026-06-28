@@ -1,3 +1,10 @@
+# v3.9.0
+Voxel draw-plane controls — surface mode, a movable/tiltable work plane, and clearer plane visuals.
+
+- **Feature**: **Surface mode.** A new toggle in the voxel panel switches strokes between the draw plane and tracking the existing voxel surface (sculpt detail on what you've made). Brush stays a fixed world size in both.
+- **Feature**: **Plane depth + tilt handles.** A left-edge depth slider pushes the draw plane along its normal (build up in slices; double-click to centre), and a tilt pad angles the plane (yaw/pitch; double-tap to reset) — both available in Camera and World-locked modes.
+- **Change**: **Clearer draw plane.** The plane now shows as a translucent filled sheet plus a grid (line width can't be increased in WebGL), so it reads clearly on desktop and iPad.
+
 # v3.8.0
 Desktop voxel sculpting — the voxel toolset now works on desktop, including drawing into empty space on a movable work plane.
 
