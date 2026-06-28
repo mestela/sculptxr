@@ -15,28 +15,36 @@ installFontReadyRepaint();
 // show a banner prompting a reload. (This only helps once a user is on a build that
 // CONTAINS this check; a one-off hard refresh is still needed to escape an older
 // cached build. The proper root fix is no-cache headers on index.html / version.json.)
+let _updateDismissed = false;
 function showUpdateBanner(deployed) {
+  if (_updateDismissed) return;                          // user dismissed this session
   if (document.getElementById('sxr-update-banner')) return;
+  // Small pill, bottom-centre — out of the way of the topbar + right sidebar so it never
+  // blocks mid-flow actions (save, menus). Manual + dismissible; never auto-reloads.
   const bar = document.createElement('div');
   bar.id = 'sxr-update-banner';
   bar.style.cssText =
-    'position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;align-items:center;' +
-    'justify-content:center;gap:12px;padding:8px 12px;background:#89b4fa;color:#11111b;' +
-    'font:600 13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+    'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:99999;' +
+    'display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:9px;' +
+    'background:rgba(30,30,46,0.94);color:#cdd6f4;font:500 12px sans-serif;' +
+    'box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:92vw;pointer-events:auto;';
   const msg = document.createElement('span');
-  msg.textContent = `New version ${deployed} available (you have ${VERSION}).`;
-  const btn = document.createElement('button');
-  btn.textContent = 'Reload';
-  btn.style.cssText = 'padding:4px 12px;border:none;border-radius:4px;background:#1e1e2e;' +
-    'color:#cdd6f4;font:600 13px sans-serif;cursor:pointer;';
-  // Manual reload only (never automatic — never interrupts a sculpt). Confirm first so
-  // an accidental click can't discard unsaved work; cache-bust the URL so the host
-  // serves a fresh index.html.
-  btn.addEventListener('click', () => {
+  msg.textContent = `New version ${deployed} available`;
+  const reload = document.createElement('button');
+  reload.textContent = 'Reload';
+  reload.style.cssText = 'padding:3px 10px;border:none;border-radius:5px;background:#89b4fa;' +
+    'color:#11111b;font:600 12px sans-serif;cursor:pointer;';
+  // Confirm first (accidental click); cache-bust the URL so a fresh index.html is served.
+  reload.addEventListener('click', () => {
     if (!window.confirm('Reload to update? Any unsaved changes will be lost.')) return;
     location.href = location.pathname + '?v=' + encodeURIComponent(deployed);
   });
-  bar.appendChild(msg); bar.appendChild(btn);
+  const dismiss = document.createElement('button');
+  dismiss.textContent = 'Dismiss';
+  dismiss.style.cssText = 'padding:3px 8px;border:none;border-radius:5px;background:transparent;' +
+    'color:#a6adc8;font:500 12px sans-serif;cursor:pointer;';
+  dismiss.addEventListener('click', () => { _updateDismissed = true; bar.remove(); });
+  bar.appendChild(msg); bar.appendChild(reload); bar.appendChild(dismiss);
   document.body.appendChild(bar);
 }
 

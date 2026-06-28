@@ -1,3 +1,6 @@
+# v3.9.6
+- **Change**: the "new version available" notice is now a small dismissible pill at the bottom-centre instead of a full-width top bar, so it never blocks the toolbar / mid-flow actions.
+
 # v3.9.5
 - **Fix**: **Wireframe now works on voxel objects** — both the W shortcut and the Rendering panel toggle. The W shortcut falls back to the active mesh (a voxel object isn't in the selection list), and the wireframe overlay rebuilds from current geometry + rebinds on each voxel edit (it was empty/stale before).
 - **Fix**: the update-banner Reload now confirms first (no accidental loss of unsaved work).
