@@ -1,3 +1,6 @@
+# v3.9.1
+- **Fix**: **VR navigation inertia now fires on Galaxy XR** (and other runtimes that damp controller motion at release). The throw launches from the strongest recent velocity sample rather than the final frame, so a flick-and-release glides reliably.
+
 # v3.9.0
 Voxel draw-plane controls — surface mode, a movable/tiltable work plane, and clearer plane visuals.
 

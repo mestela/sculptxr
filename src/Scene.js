@@ -6915,14 +6915,32 @@ class Scene {
   _updateNavGlide() {
     const g = this._navGlide;
     const navActive = this._vrGrip.left.active || this._vrGrip.right.active || this._vrTwoHanded.active;
+    const rotAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3]))); // radians/frame
     if (navActive || this._vrSculpting) {
       g.gliding = false;
+      if (navActive) {
+        // Buffer recent velocities so the throw launches from motion just BEFORE release,
+        // not the final frame — some runtimes (e.g. Galaxy XR) damp controller motion at
+        // release, which otherwise zeroes the throw.
+        (g.velHist = g.velHist || []).push([g.vel[0], g.vel[1], g.vel[2]]);
+        (g.rotHist = g.rotHist || []).push([g.rotVel[0], g.rotVel[1], g.rotVel[2], g.rotVel[3]]);
+        if (g.velHist.length > 6) { g.velHist.shift(); g.rotHist.shift(); }
+      }
       g.wasActive = navActive;
       return;
     }
-    const rotAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3]))); // radians/frame
     if (g.wasActive) {
       g.wasActive = false;
+      // Use the strongest recent sample (ignores a damped final frame at release).
+      if (g.velHist) {
+        let best = vec3.length(g.vel);
+        for (const v of g.velHist) { const l = vec3.length(v); if (l > best) { best = l; vec3.set(g.vel, v[0], v[1], v[2]); } }
+      }
+      if (g.rotHist) {
+        let bestA = rotAngle(g.rotVel);
+        for (const q of g.rotHist) { const a = rotAngle(q); if (a > bestA) { bestA = a; quat.set(g.rotVel, q[0], q[1], q[2], q[3]); } }
+      }
+      g.velHist = null; g.rotHist = null;
       // Launch if translation OR rotation had enough momentum at release.
       g.gliding = vec3.length(g.vel) > 0.002 || rotAngle(g.rotVel) > 0.004;
     }
@@ -7114,8 +7132,10 @@ class Scene {
         // #19: smooth the per-frame motion into the glide velocity (EMA).
         vec3.lerp(this._navGlide.vel, this._navGlide.vel, delta, 0.4);
       } else {
-        // Stationary frame — bleed velocity so a pause-then-release won't fling.
-        vec3.scale(this._navGlide.vel, this._navGlide.vel, 0.6);
+        // Stationary frame — bleed velocity gently so a real pause-then-release won't
+        // fling, while the recent-velocity history still recovers a genuine throw even if
+        // the runtime reports the last frame(s) as stationary.
+        vec3.scale(this._navGlide.vel, this._navGlide.vel, 0.85);
       }
 
       // Rotation Delta
