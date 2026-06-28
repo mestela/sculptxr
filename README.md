@@ -1,4 +1,4 @@
-# SculptXR (v3.5.0)
+# SculptXR (v3.10.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.10.0**: **Frame-by-frame voxel animation**: draw a voxel object frame by frame and play it back from the timeline dopesheet — time-keyed held frames (New/Dup/Delete in the gutter), retime/reorder by dragging keys, onion skinning (with a loop-aware option), and on-frame sculpt gating; works in VR and desktop. Frames save with the `.sxr`. Plus a desktop voxel Move tool with live preview, and a reworked browser-saves panel (thumbnail grid + Load/Import/Delete).
 *   **v3.5.0**: **Unified menu theme**: the canvas panels (timeline + blendshape stack) now match the HTML menus — they pick up the Settings brightness/saturation/gamma grade, and a shared Catppuccin palette (`theme.js`) re-tints their chrome (headers, gridlines, text) to the menu's blue, while keeping semantic colours. Default saturation 55→50.
 *   **v3.4.1**: **Immersive icon fix + menu defaults**: panel icons no longer show as placeholders in immersive on GalaxyXR (FA Solid injected as a synchronous base64 @font-face), and a migration applies the new menu-colour defaults.
 *   **v3.4.0**: **Menu colour controls**: the Settings → Menu Brightness/Saturation sliders work again (dead since the canvas-GUI migration) plus a new Gamma slider — applied as a cheap GPU colour-grade on the VR panels. The same wiring fix also revives the controller-model dropdown and wireframe sliders.

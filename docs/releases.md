@@ -1,3 +1,15 @@
+# v3.10.0
+**Frame-by-frame (cel) voxel animation** — draw a voxel object frame by frame and play it back, edited directly in the timeline dopesheet.
+
+- **Feature**: **Frames in the dopesheet.** With a voxel object selected and the voxel tool active, the dopesheet gutter swaps to **New / Dup / Delete** — laying down time-keyed frames at the playhead (Dup copies the held frame, New is blank). Frames are *held* keys: the one shown is the latest at or before the playhead. Scrub or play the timeline to flip through them.
+- **Feature**: **Retime in the dopesheet.** Frame ticks are full keys — click-drag to retime, drag past a neighbour to reorder, marquee-select and drag many, and the transform box to scale timing. Undoable.
+- **Feature**: **Onion skinning** — ghost the neighbouring frames (blue = previous, red = next) while you draw, with a **loop-aware** option that wraps around the ends for cyclic animations. Off during playback.
+- **Feature**: **Sculpting is gated to on-frame** — strokes only register when the playhead sits exactly on a frame, so an edit is never ambiguous. Works in VR (commit + gate wired into the VR stroke path) as well as desktop.
+- **Feature**: **Desktop voxel Move tool** with a live drag preview (was VR-only).
+- **Persistence**: frame sequences save and reload with the `.sxr` file.
+- **Fixes**: empty voxel objects no longer flicker stale geometry or hide the draw plane; the wireframe no longer spams warnings on an empty voxel; VR animation-panel checkboxes are now clickable.
+- **Change**: the browser-saves panel is now a thumbnail grid with a Load / Import / Delete toolbar (Load replaces the scene; Import appends).
+
 # v3.9.6
 - **Change**: the "new version available" notice is now a small dismissible pill at the bottom-centre instead of a full-width top bar, so it never blocks the toolbar / mid-flow actions.
 

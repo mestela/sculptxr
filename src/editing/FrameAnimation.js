@@ -441,6 +441,7 @@ class FrameAnimationManager {
     const a = this.getActiveSeq(); if (a) this._updateOnion(a);
     this._redraw();
   }
+  isOnionOn() { const s = this.getActiveSeq(); return s ? !!s.onion : true; }
 
   // ------------------------------------------------------------- onion skin
   _clearGhosts() {

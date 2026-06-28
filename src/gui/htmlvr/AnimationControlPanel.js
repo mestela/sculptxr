@@ -954,6 +954,19 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       if (!e.isTrusted) cbEl.checked = !cbEl.checked;
       fn(cbEl.checked);
     });
+    // In VR the synthetic click lands on the row/label (not the tiny box) and an
+    // untrusted click on a wrapping <label> does NOT forward to the <input>, so the
+    // handler above never fires. Catch the row click too. Desktop label clicks are
+    // trusted (they natively toggle the input), and an input-targeted click bubbles
+    // up with target===cbEl — skip both to avoid double-toggling.
+    const row = cbEl.closest('.acp-check-row');
+    if (row && row !== cbEl) {
+      row.addEventListener('click', (e) => {
+        if (e.isTrusted || e.target === cbEl) return;
+        cbEl.checked = !cbEl.checked;
+        fn(cbEl.checked);
+      });
+    }
   };
   el.querySelector('#acp-show-timeline-btn')?.addEventListener('click', () => {
     const btn = el.querySelector('#acp-show-timeline-btn');
