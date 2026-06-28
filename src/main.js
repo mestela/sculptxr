@@ -29,8 +29,11 @@ function showUpdateBanner(deployed) {
   btn.textContent = 'Reload';
   btn.style.cssText = 'padding:4px 12px;border:none;border-radius:4px;background:#1e1e2e;' +
     'color:#cdd6f4;font:600 13px sans-serif;cursor:pointer;';
-  // Cache-bust the URL so the host serves a fresh index.html.
+  // Manual reload only (never automatic — never interrupts a sculpt). Confirm first so
+  // an accidental click can't discard unsaved work; cache-bust the URL so the host
+  // serves a fresh index.html.
   btn.addEventListener('click', () => {
+    if (!window.confirm('Reload to update? Any unsaved changes will be lost.')) return;
     location.href = location.pathname + '?v=' + encodeURIComponent(deployed);
   });
   bar.appendChild(msg); bar.appendChild(btn);
