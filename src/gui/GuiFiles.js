@@ -334,14 +334,16 @@ class GuiFiles {
     this.loadSpecificBrowserSave('active_mesh'); // Legacy fallback
   }
 
-  loadSpecificBrowserSave(key) {
-    if (window.screenLog) window.screenLog(`Loading ${key}...`, 'cyan');
+  // replace=true clears the current scene first (Load); replace=false appends the
+  // save's meshes to the current scene (Import). loadScene itself always appends.
+  loadSpecificBrowserSave(key, replace = false) {
+    if (window.screenLog) window.screenLog(`${replace ? 'Loading' : 'Importing'} ${key}...`, 'cyan');
     StorageDB.get(key).then(data => {
       if (!data) {
         if (window.screenLog) window.screenLog('No saved model found!', 'yellow');
         return;
       }
-      
+
       const blob = data.blob || data; // Handle legacy unboxed blobs vs new structured values
       if (typeof blob.arrayBuffer === 'function') {
         return blob.arrayBuffer();
@@ -351,6 +353,7 @@ class GuiFiles {
       }
     }).then(buf => {
       if (buf) {
+        if (replace) this._main.clearScene();
         this._main.loadScene(buf, 'sgl');
         if (window.screenLog) window.screenLog('Loaded from browser storage!', 'lime');
       }

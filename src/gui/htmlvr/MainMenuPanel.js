@@ -614,6 +614,21 @@ const CSS = `
   border-radius: 5px;
   overflow: hidden;
   background: #181825;
+  cursor: pointer;
+}
+.mm-storage-item.selected {
+  border-color: #89b4fa;
+  box-shadow: 0 0 0 1px #89b4fa inset;
+}
+.mm-storage-toolbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.mm-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .mm-storage-item img {
   width: 100%;
@@ -1491,14 +1506,15 @@ export function buildSectionHTML_sculpting(main) {
       const curWire    = vmesh?.getShowWireframe?.() ?? false;
       const curRes     = tool._pendingRes ?? tool._res ?? 128;
 
-      // Move (mode 4) is VR-only for now — not wired in the desktop stroke path — so
-      // it's omitted from the desktop voxel modes.
+      // Move (mode 4) advects voxels by the cursor delta; desktop bakes the warp on
+      // mouse-up (SculptVoxel start/stroke/end), no live preview yet.
       const modes = [
         { mode: 0, neg: false, label: 'Add'     },
         { mode: 1, neg: false, label: 'Sub'     },
         { mode: 3, neg: false, label: 'Smooth'  },
         { mode: 2, neg: false, label: 'Inflate' },
         { mode: 2, neg: true,  label: 'Deflate' },
+        { mode: 4, neg: false, label: 'Move'    },
       ];
       const isActiveMode = (m) => {
         if (m.mode === 0 && !m.neg) return curMode === 0 && !curNeg;
@@ -2926,6 +2942,10 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
 export function buildMenuHTML_browserSaves(main) {
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const saves    = guiFiles?._browserSaves ?? [];
+  const selKey   = guiFiles?._selectedSaveKey ?? null;
+  // Drop a stale selection (e.g. after a delete) so the toolbar disables again.
+  const hasSel   = saves.some(s => (s.key ?? s.id ?? '') === selKey);
+  const disabled = hasSel ? '' : 'disabled';
 
   const thumbs = saves.length === 0
     ? '<div class="mm-info">No saves yet</div>'
@@ -2934,21 +2954,23 @@ export function buildMenuHTML_browserSaves(main) {
         const ts    = s.value?.timestamp ?? 0;
         const thumb = s.value?.thumb ?? '';
         const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
+        const sel   = key === selKey ? ' selected' : '';
         const img   = thumb
           ? `<img src="${thumb}" alt="save">`
           : `<div style="width:100%;aspect-ratio:1;background:#313244;display:flex;align-items:center;justify-content:center;font-size:20px;color:#6c7086"><i class="fa-solid fa-cube"></i></div>`;
         return `
-          <div class="mm-storage-item">
+          <div class="mm-storage-item${sel}" data-save-key="${key}">
             ${img}
             <span class="mm-storage-date">${date}</span>
-            <div class="mm-storage-btns">
-              <button class="mm-action-btn mm-storage-load" data-save-key="${key}">Load</button>
-              <button class="mm-action-btn danger mm-storage-del" data-save-key="${key}">Del</button>
-            </div>
           </div>`;
       }).join('');
 
   return `
+    <div class="mm-storage-toolbar">
+      <button class="mm-action-btn" id="mm-storage-load" ${disabled}>Load</button>
+      <button class="mm-action-btn" id="mm-storage-import" ${disabled}>Import</button>
+      <button class="mm-action-btn danger" id="mm-storage-delete" ${disabled}>Delete</button>
+    </div>
     <div class="mm-btn-pair">
       <button class="mm-action-btn" id="mm-browser-save">Save scene</button>
       <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
@@ -2960,6 +2982,7 @@ export function buildMenuHTML_browserSaves(main) {
 export function wireMenuBrowserSaves(el, main, rebuildFn) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+  const selKey = () => guiFiles?._selectedSaveKey ?? null;
 
   q('#mm-browser-save')?.addEventListener('click', () => {
     guiFiles?.saveToBrowserStorage?.();
@@ -2970,20 +2993,30 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
   });
-  el.querySelectorAll('.mm-storage-load').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.saveKey;
-      if (key) guiFiles?.loadSpecificBrowserSave?.(key);
+
+  // Select a save by clicking its thumbnail; the toolbar acts on the selection.
+  el.querySelectorAll('.mm-storage-item').forEach(item => {
+    item.addEventListener('click', () => {
+      if (guiFiles) guiFiles._selectedSaveKey = item.dataset.saveKey;
+      rebuildFn();
     });
   });
-  el.querySelectorAll('.mm-storage-del').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.saveKey;
-      if (key) {
-        guiFiles?.deleteBrowserSave?.(key);
-        setTimeout(() => rebuildFn(), 300);
-      }
-    });
+
+  // Load = replace the current scene; Import = append to it.
+  q('#mm-storage-load')?.addEventListener('click', () => {
+    const key = selKey();
+    if (key) guiFiles?.loadSpecificBrowserSave?.(key, true);
+  });
+  q('#mm-storage-import')?.addEventListener('click', () => {
+    const key = selKey();
+    if (key) guiFiles?.loadSpecificBrowserSave?.(key, false);
+  });
+  q('#mm-storage-delete')?.addEventListener('click', () => {
+    const key = selKey();
+    if (!key) return;
+    guiFiles?.deleteBrowserSave?.(key);
+    if (guiFiles) guiFiles._selectedSaveKey = null;
+    setTimeout(() => guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn()), 300);
   });
 }
 

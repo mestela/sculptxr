@@ -2572,6 +2572,12 @@ class Mesh {
 
   updateWireframeBuffer() {
     if (this.getShowWireframe()) {
+      // An empty mesh (fresh/blank voxel object) has nothing to outline. Skip the
+      // edge rebuild + warning that would otherwise fire on every buffer update.
+      if (this.getNbVertices() === 0) {
+        if (this._renderData._wireframeMesh) this._renderData._wireframeMesh.visible = false;
+        return;
+      }
       if (!this.getEdges() || this.getEdges().length === 0) {
         this.allocateArrays();
         this.initFaceRings();
@@ -2629,8 +2635,9 @@ class Mesh {
               geom.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
           }
           this._renderData._wireframeMesh.visible = true;
-      } else {
-          console.warn("[SXR Wireframe] Aborted rendering: edgeIndices array is empty or undefined.");
+      } else if (this._renderData._wireframeMesh) {
+          // No derivable edges — hide any stale wireframe instead of spamming.
+          this._renderData._wireframeMesh.visible = false;
       }
     } else {
       if (this._renderData._wireframeMesh) {

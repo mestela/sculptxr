@@ -262,11 +262,47 @@ export default class TimelineHelper {
           bIdx++;
         });
       }
+
+      // Frame-by-frame (cel) markers. One vertical tick per drawn frame at i/fps;
+      // the frame currently shown is highlighted. Read straight from the frame
+      // manager (keyed by the same mesh id) so there's no data duplication.
+      const fseq = (typeof window !== 'undefined' && window._frameAnim)
+        ? window._frameAnim.sequences.get(id) : null;
+      if (fseq && fseq.frames.length > 0) {
+        const fy = ty + trackH / 2;
+        const curIdx = (fseq._dispIdx != null) ? fseq._dispIdx : fseq.current;
+        for (let i = 0; i < fseq.frames.length; i++) {
+          const ft = fseq.frames[i].time || 0; // frames are keyed at explicit times
+          if (ft < loopStart || ft > loopEnd) continue;
+          const fx = w.x + tlX + ((ft - loopStart) / visibleDuration) * tlW;
+          const isCur = (i === curIdx);
+          const isSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'frame' && k.index === i);
+          let inMarquee = false;
+          if (uiState._marqueeStart && uiState._marqueeEnd) {
+            const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+            const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+            const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+            const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+            if (my1 <= tyBottom && my2 >= ty && fx >= mx1 && fx <= mx2) inMarquee = true;
+          }
+          const sel = isSel || inMarquee;
+          ctx.fillStyle = sel ? '#ffff00' : (isCur ? '#ffd166' : '#b07a33');
+          ctx.fillRect(fx - 2, fy - 8, 4, 16);
+          if (isCur || sel) {
+            ctx.strokeStyle = sel ? '#ffff00' : '#ffe7a8';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(fx - 2.5, fy - 8.5, 5, 17);
+          }
+        }
+      }
     });
   }
 
   static moveKeys(reg, keys, dt, dVal, mDurVal, main) {
-    reg.moveSelectedKeys(keys, dt, mDurVal);
+    reg.moveSelectedKeys(keys, dt, mDurVal); // ignores 'frame' keys
+    if (typeof window !== 'undefined' && window._frameAnim) {
+      window._frameAnim.moveFrameKeys(keys, dt, mDurVal); // cel frame keys
+    }
     if (dVal !== undefined) {
       reg.moveSelectedKeysValue(keys, dVal);
     }

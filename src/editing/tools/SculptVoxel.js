@@ -126,6 +126,9 @@ class SculptVoxel extends SculptBase {
         
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
+        // A tagged capture response (forCommit) deterministically stores this
+        // settled mesh into the specific frame recorded at stroke end.
+        if (msg.forCommit && window._frameAnim) window._frameAnim.captureCommit();
 
         // If an update was requested while we were busy, request it now
         if (this._meshRequested) {
@@ -321,6 +324,26 @@ class SculptVoxel extends SculptBase {
 
   getMesh() {
     return this._voxelMesh || super.getMesh();
+  }
+
+  // --- Frame-by-frame animation: distance-field snapshots in the worker ---
+  // Slots are integer ids owned by FrameAnimationManager. Storing/loading the
+  // full field is the per-frame "save the drawing" primitive for voxel frames.
+  frameStoreField(slot) {
+    if (this._worker) this._worker.postMessage({ type: 'FRAME_STORE', slot });
+  }
+  frameLoadField(slot) {
+    // Worker re-extracts and posts MESH_UPDATE, repainting _voxelMesh to match.
+    if (this._worker) this._worker.postMessage({ type: 'FRAME_LOAD', slot });
+  }
+  frameCopyField(srcSlot, dstSlot) {
+    if (this._worker) this._worker.postMessage({ type: 'FRAME_COPY', srcSlot, dstSlot });
+  }
+  frameBlankField(slot) {
+    if (this._worker) this._worker.postMessage({ type: 'FRAME_BLANK', slot });
+  }
+  frameDeleteField(slot) {
+    if (this._worker) this._worker.postMessage({ type: 'FRAME_DELETE', slot });
   }
 
   setRadius(val) {
@@ -538,6 +561,13 @@ class SculptVoxel extends SculptBase {
     // IGNORE start() in VR (handled by updateXR)
     if (this._main._xrSession) return;
 
+    // Frame-mode gate: block the stroke (and its undo snapshot) unless the
+    // playhead is parked on a frame. See FrameAnimation.canSculptActive.
+    if (window._frameAnim && !window._frameAnim.canSculptActive()) {
+      if (window.screenLog) window.screenLog('Move the playhead onto a frame to sculpt', 'yellow');
+      return false;
+    }
+
     // Refresh Global Reference
     window.voxelTool = this;
 
@@ -566,6 +596,7 @@ class SculptVoxel extends SculptBase {
     let allowAir = false;
     if (!this._main._xrSession) {
       this._deskStrokeStarted = false;
+      this._moveProxyActive = false; // reset the move-proxy (mode 4) each new stroke
       allowAir = true;
     }
 
@@ -744,6 +775,8 @@ class SculptVoxel extends SculptBase {
   }
 
   stroke(picking) {
+    // Frame-mode gate: only deposit when the playhead is exactly on a frame.
+    if (window._frameAnim && !window._frameAnim.canSculptActive()) return;
     const cur = this.getDesktopCursor(picking);
     if (!cur) {
       if (window.screenLog && Math.random() < 0.05) window.screenLog("Voxel Stroke: No Intersection", "red");
@@ -840,6 +873,73 @@ class SculptVoxel extends SculptBase {
       //
     }
 
+    // MOVE (mode 4): advect voxels by the cursor delta. Deform the displayed mesh
+    // live during the drag (a proxy of the captured original verts), then bake the
+    // real field warp with one WARP_SPHERE on mouse-up (see end()). Mirrors the VR
+    // move proxy; desktop has no roll/symmetry so those are dropped.
+    if (mode === 4) {
+      if (!this._moveProxyActive) {
+        // First frame: capture proxy center, original verts, and the verts inside
+        // the brush radius (grid/cell space) to deform.
+        this._moveProxyActive = true;
+        this._moveStartModelPos = vec3.clone(worldPos);
+        this._moveProxyCenter = vec3.clone(worldPos);
+        this._moveProxyRadius = radius;
+        this._moveProxyLastTranslation = vec3.create();
+        this._moveProxyLastQuat = quat.create();
+        this._moveProxyIVerts = [];
+        if (this._voxelMesh) {
+          const v0 = this._voxelMesh.getVertices();
+          this._moveProxyVAr = v0 ? new Float32Array(v0) : null;
+          const cgx = cellPos[0], cgy = cellPos[1], cgz = cellPos[2];
+          const rGrid = radius / this._step, r2 = rGrid * rGrid;
+          if (v0) for (let i = 0; i < v0.length; i += 3) {
+            const ax = v0[i] - cgx, ay = v0[i + 1] - cgy, az = v0[i + 2] - cgz;
+            if (ax * ax + ay * ay + az * az < r2) this._moveProxyIVerts.push(i);
+          }
+        }
+        return;
+      }
+      // Subsequent frames: recompute the deformation from the original verts so it
+      // stays idempotent, push the vertex buffer, and render the live preview.
+      vec3.sub(this._moveProxyLastTranslation, worldPos, this._moveStartModelPos);
+      if (this._voxelMesh && this._moveProxyVAr) {
+        const vAr = this._voxelMesh.getVertices();
+        const orig = this._moveProxyVAr, st = this._step;
+        const tx = this._moveProxyLastTranslation[0] / st;
+        const ty = this._moveProxyLastTranslation[1] / st;
+        const tz = this._moveProxyLastTranslation[2] / st;
+        const cxs = (this._moveStartModelPos[0] - this._min[0]) / st;
+        const cys = (this._moveStartModelPos[1] - this._min[1]) / st;
+        const czs = (this._moveStartModelPos[2] - this._min[2]) / st;
+        const pr = this._moveProxyRadius / st;
+        const trLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+        let nSteps = Math.ceil(trLen / (pr * 0.15));
+        if (nSteps < 1) nSteps = 1; if (nSteps > 20) nSteps = 20;
+        const sx = tx / nSteps, sy = ty / nSteps, sz = tz / nSteps;
+        for (let k = 0; k < this._moveProxyIVerts.length; k++) {
+          const idx = this._moveProxyIVerts[k];
+          let px = orig[idx], py = orig[idx + 1], pz = orig[idx + 2];
+          let ccx = cxs, ccy = cys, ccz = czs;
+          for (let s = 0; s < nSteps; s++) {
+            const dx = px - ccx, dy = py - ccy, dz = pz - ccz;
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz) / pr;
+            if (d < 1.0) {
+              let f = d * d;
+              f = 3.0 * f * f - 4.0 * f * d + 1.0;
+              px += sx * f; py += sy * f; pz += sz * f;
+            }
+            ccx += sx; ccy += sy; ccz += sz;
+          }
+          vAr[idx] = px; vAr[idx + 1] = py; vAr[idx + 2] = pz;
+        }
+        if (this._voxelMesh.isUsingDrawArrays()) this._voxelMesh.updateDrawArrays();
+        this._voxelMesh.updateGeometryBuffers();
+        this._main.render();
+      }
+      return;
+    }
+
     var changed = false;
     if (this._worker) {
       const now = Date.now();
@@ -907,6 +1007,38 @@ class SculptVoxel extends SculptBase {
     } else {
        if (window.screenLog) window.screenLog("Voxel FAIL: No Worker Alive!", "red");
     }
+  }
+
+  end() {
+    // Desktop Move (mode 4): bake the accumulated advection on mouse-up. The VR
+    // path bakes inside updateXR; desktop strokes finish through SculptBase.end().
+    if (!this._main._xrSession && this._mode === 4 && this._moveProxyActive && this._worker) {
+      var t = this._moveProxyLastTranslation || [0, 0, 0];
+      var dist = Math.sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+      var pr = this._moveProxyRadius || 1.0;
+      var steps = Math.min(20, Math.max(1, Math.ceil(dist / (pr * 0.15))));
+      this._worker.postMessage({
+        type: 'WARP_SPHERE',
+        center: Array.from(this._moveProxyCenter),
+        radius: this._moveProxyRadius,
+        translation: Array.from(t),
+        rotation: Array.from(this._moveProxyLastQuat || [0, 0, 0, 1]),
+        steps: steps,
+        returnMesh: true
+      });
+      this._moveProxyActive = false;
+    }
+    // Frame mode: capture this stroke into the current frame so playback shows it.
+    // Records the target frame, then requests a tagged mesh whose response commits.
+    if (!this._main._xrSession && window._frameAnim && window._frameAnim.requestActiveFrameCommit) {
+      window._frameAnim.requestActiveFrameCommit();
+    }
+    return super.end();
+  }
+
+  // Post a tagged mesh request; its forCommit response triggers the frame capture.
+  frameRequestCommit() {
+    if (this._worker) this._worker.postMessage({ type: 'GET_MESH', forCommit: true });
   }
 
   flipWinding() {
@@ -1119,6 +1251,12 @@ class SculptVoxel extends SculptBase {
           this._moveProxyActive = false;
         }
 
+        // Frame mode: a VR stroke just ended — capture it into the current frame
+        // (same deterministic commit path as desktop end()).
+        if (this._xrStrokeActive && window._frameAnim && window._frameAnim.requestActiveFrameCommit) {
+          window._frameAnim.requestActiveFrameCommit();
+        }
+
         this._lastXRPos = null; // Reset stroke
         this._xrStrokeActive = false;
         return;
@@ -1126,6 +1264,11 @@ class SculptVoxel extends SculptBase {
 
       // Detect Start of Stroke (VR)
       if (!this._xrStrokeActive) {
+        // Frame-mode gate: only engage a stroke when the playhead is on a frame.
+        if (window._frameAnim && !window._frameAnim.canSculptActive()) {
+          if (window.screenLog) window.screenLog('Move the playhead onto a frame to sculpt', 'yellow');
+          return;
+        }
         this._xrStrokeActive = true;
         this._strokeDistance = 0.0; 
         this._strokeStartTime = performance.now(); // Reset for temporal build-up
@@ -1792,6 +1935,13 @@ class SculptVoxel extends SculptBase {
     if (res.vertices.length === 0) {
       if (this._voxelMesh) {
         this._voxelMesh.setVisible(false);
+        // setVisible only sets an internal flag; the Three renderer draws the
+        // threeMesh's geometry. Clear the drawn triangles (empty index) rather
+        // than hiding the whole object — the draw plane + cursor are CHILDREN of
+        // this threeMesh and must keep rendering over an empty voxel object.
+        // A later stroke rebuilds the index via updateIndexBuffer.
+        const tm = this._voxelMesh.getThreeMesh && this._voxelMesh.getThreeMesh();
+        if (tm && tm.geometry) tm.geometry.setIndex([]);
       }
       this._pendingMeshUpdate = false;
       return;
@@ -1898,8 +2048,10 @@ class SculptVoxel extends SculptBase {
       newMesh.initThreeMesh();
     }
 
-    newMesh.updateBuffers(); // PUSH TO GPU!
+    newMesh.updateBuffers(); // PUSH TO GPU! (rebuilds the index, restoring a
+                             // previously-cleared empty frame)
     newMesh.initRender();
+    newMesh.setVisible(true);
 
     // Copy states from old mesh before swap
     if (!isFirstRun) {

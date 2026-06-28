@@ -1314,6 +1314,24 @@ class Scene {
       }
     }
 
+    // Frame-by-frame (cel) animation. When the timeline is playing OR being
+    // scrubbed, drive the displayed frame from the shared playhead clock so cel
+    // frames line up with the dopesheet. Otherwise fall back to the frame panel's
+    // own Play clock (and idle = manual frame nav stays put).
+    if (this._frameAnim) {
+      const tl = this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
+      const scrubbing = !!(tl && tl._isDraggingPlayhead);
+      if (window._animPlaying || scrubbing) {
+        const reg = window._animationRegistry;
+        this._frameAnim.syncToTime(reg ? (reg.globalPlaybackTime || 0) : 0);
+      } else {
+        this._frameAnim.tick();
+        // Playback just stopped → restore onion ghosts for the landed frame.
+        if (this._frameWasPlaying) this._frameAnim.refreshOnion();
+      }
+      this._frameWasPlaying = !!window._animPlaying;
+    }
+
     if (this._renderer && this._renderer.xr) {
       if (this._renderer.xr.isPresenting && !window._loggedXRRender) {
          // console.log("WebXR isPresenting - forcing _drawScene()");

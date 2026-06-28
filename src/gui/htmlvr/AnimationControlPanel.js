@@ -417,6 +417,12 @@ export function buildAnimationSectionHTML() {
             <input type="number" id="acp-loop-end" min="1" step="1" value="48">
           </div>
         </div>
+        <label class="acp-check-row">
+          <input type="checkbox" id="acp-onion" checked> Onion skin (frames)
+        </label>
+        <label class="acp-check-row">
+          <input type="checkbox" id="acp-onion-loop"> Loop-aware onion
+        </label>
       </div>
     </div>
 
@@ -1093,6 +1099,11 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     if (window._animWaitForTrigger) window._animCountIn = false;
     _sync();
   });
+
+  // Onion skinning for frame-by-frame (cel) animation — ghost the neighbour frames.
+  _cbWire('#acp-onion', (v) => { window._frameAnim?.setOnion?.(v); });
+  // Loop-aware: wrap the neighbour ghosts around the ends of the sequence.
+  _cbWire('#acp-onion-loop', (v) => { window._frameAnim?.setOnionLoop?.(v); });
 
   const brTrigger = el.querySelector('#acp-bake-rate');
   const brOpts    = el.querySelector('#acp-bake-rate-wrap .acp-select-opts');

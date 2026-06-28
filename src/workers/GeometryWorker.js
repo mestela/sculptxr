@@ -16,6 +16,45 @@ let snapshotCounter = 0;
 const MAX_HISTORY = 20; // Limit memory usage
 let isDirty = false; // Tracks if the current snapshot has been modified
 
+// Frame-by-frame animation: named distance-field snapshots, one per drawn frame.
+// Keyed by an integer slot id assigned on the main thread. POC stores the full
+// Float32Array distance field per slot (no compression). Colours are NOT stored
+// here yet (matches undo history); the display mesh keeps per-frame colour.
+const frameFields = {};
+
+function frameStore(slot) {
+  if (!voxelState) return;
+  frameFields[slot] = new Float32Array(voxelState.getDistanceField());
+}
+
+function frameLoad(slot) {
+  if (!voxelState) return;
+  const f = frameFields[slot];
+  if (!f) return;
+  voxelState.setDistanceField(f);
+  isDirty = false;
+  postMesh();
+}
+
+function frameCopy(srcSlot, dstSlot) {
+  const f = frameFields[srcSlot];
+  frameFields[dstSlot] = f ? new Float32Array(f) : null;
+}
+
+function frameBlank(slot) {
+  console.log('[VoxelWorker] FRAME_BLANK slot=' + slot + ' (frame handlers active)');
+  if (!voxelState) return;
+  const empty = new Float32Array(voxelState.getDistanceField().length).fill(10000.0);
+  frameFields[slot] = empty;
+  voxelState.setDistanceField(empty);
+  isDirty = false;
+  postMesh();
+}
+
+function frameDelete(slot) {
+  delete frameFields[slot];
+}
+
 // Async Init to catch import errors
 (async function () {
   try {
@@ -157,7 +196,22 @@ self.onmessage = function (e) {
         setSmooth(msg.value);
         break;
       case 'GET_MESH':
-        postMesh();
+        postMesh(msg.forCommit);
+        break;
+      case 'FRAME_STORE':
+        frameStore(msg.slot);
+        break;
+      case 'FRAME_LOAD':
+        frameLoad(msg.slot);
+        break;
+      case 'FRAME_COPY':
+        frameCopy(msg.srcSlot, msg.dstSlot);
+        break;
+      case 'FRAME_BLANK':
+        frameBlank(msg.slot);
+        break;
+      case 'FRAME_DELETE':
+        frameDelete(msg.slot);
         break;
       case 'CLEAR':
         if (voxelState) {
@@ -428,7 +482,7 @@ function warpSphere(center, radius, translation, rotation, steps, stepRotation, 
   if (returnMesh) postMesh();
 }
 
-function postMesh() {
+function postMesh(forCommit) {
   if (!voxelState) return;
 
   // self.postMessage({ type: 'LOG', data: `VoxelWorker postMesh Start: extracting surface...` });
@@ -479,9 +533,10 @@ function postMesh() {
   if (res.materials && res.materials.buffer) transfer.push(res.materials.buffer);
   if (res.normals && res.normals.buffer) transfer.push(res.normals.buffer);
 
-  self.postMessage({ 
-    type: 'MESH_UPDATE', 
-    data: res, 
+  self.postMessage({
+    type: 'MESH_UPDATE',
+    data: res,
+    forCommit: !!forCommit,
     computeTime: (t1 - t0),
     isWASM: res.isWASM
   }, transfer);

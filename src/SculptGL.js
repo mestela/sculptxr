@@ -12,6 +12,7 @@ var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
 
 import ReferenceManager from './editing/ReferenceManager.js';
+import FrameAnimationManager from './editing/FrameAnimation.js';
 
 // Manage events
 class SculptGL extends Scene {
@@ -94,6 +95,12 @@ class SculptGL extends Scene {
     window.app = this; // Ensure 'app' is also set globally
     window.sculptgl = this; // Alias for user convenience
     this._referenceManager = new ReferenceManager(this);
+
+    // Frame-by-frame animation (Quill-style cel workflow). UI builds lazily on
+    // first enable. Console: window._frameAnim.enableForActive() etc.
+    this._frameAnim = new FrameAnimationManager(this);
+    window._frameAnim = this._frameAnim;
+
     window.validateMesh = () => {
       var mesh = this.getMesh();
       if (!mesh) {

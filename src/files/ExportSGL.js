@@ -398,7 +398,19 @@ Export.exportSGL = function (meshes, main) {
     }
 
     var data = new DataView(buffer, 0, off * 4);
-    return new Blob([data], { type: 'application/octet-stream' });
+
+    // Frame-by-frame (cel) animation: append an independent, footer-located block
+    // after the mesh data. Old importers stop after the mesh data and ignore it.
+    var parts = [data];
+    try {
+      if (main && main._frameAnim) {
+        var frameBuf = main._frameAnim.serialize(meshes);
+        if (frameBuf && frameBuf.byteLength) parts.push(frameBuf);
+      }
+    } catch (e) {
+      console.error('[FrameAnim] export append failed', e);
+    }
+    return new Blob(parts, { type: 'application/octet-stream' });
   } catch (e) {
     if (window.screenLog) {
       window.screenLog('[SXR Crash] ' + e.name + ': ' + e.message, 'red');

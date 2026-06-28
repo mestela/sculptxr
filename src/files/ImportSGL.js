@@ -354,6 +354,14 @@ Import.importSGL = function (buffer, gl, main) {
     }
   }
 
+  // Restore any appended frame-by-frame (cel) animation block. Keyed by mesh
+  // order; harmless no-op on files without it.
+  try {
+    if (main && main._frameAnim) main._frameAnim.deserialize(buffer, meshes);
+  } catch (e) {
+    console.error('[FrameAnim] import restore failed', e);
+  }
+
   return meshes;
 };
 
