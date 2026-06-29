@@ -102,6 +102,13 @@ const CSS = `
   outline: none;
 }
 .acp-root .acp-frame-cell input[type=number]:focus { border-color: #89b4fa; }
+.acp-root .acp-row input[type=number] {
+  flex: 1; min-width: 0; padding: 5px 8px;
+  background: #181825; border: 1px solid #313244; border-radius: 6px;
+  color: #cdd6f4; font-size: 13px; font-variant-numeric: tabular-nums;
+  box-sizing: border-box; outline: none;
+}
+.acp-root .acp-row input[type=number]:focus { border-color: #89b4fa; }
 .acp-root .acp-check-row {
   display: flex;
   align-items: center;
@@ -395,13 +402,11 @@ export function buildAnimationSectionHTML() {
         <button class="acp-btn-timeline" id="acp-show-timeline-btn">Timeline</button>
         <div class="acp-row">
           <span class="acp-lbl">FPS</span>
-          <input type="range" id="acp-fps" min="1" max="60" step="1" value="24">
-          <span class="acp-val" id="acp-fps-val">24</span>
+          <input type="number" id="acp-fps" min="1" max="60" step="1" value="24">
         </div>
         <div class="acp-row">
           <span class="acp-lbl">Speed</span>
-          <input type="range" id="acp-speed" min="0.1" max="4.0" step="0.1" value="1.0">
-          <span class="acp-val" id="acp-speed-val">1.0x</span>
+          <input type="number" id="acp-speed" min="0.1" max="4" step="0.1" value="1">
         </div>
         <div class="acp-frame-grid">
           <div class="acp-frame-cell">
@@ -981,20 +986,27 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     }
   });
 
+  // FPS/Speed are type-in number fields (not sliders) — a slider is far too easy to nudge
+  // into an oddball value in VR, and FPS feeds the frame↔seconds math (a stray nudge
+  // desyncs Duration/loop). Guard + clamp; 'change' fires on confirm (incl. the numpad).
   const fpsInput = el.querySelector('#acp-fps');
-  const fpsVal   = el.querySelector('#acp-fps-val');
-  fpsInput?.addEventListener('input', () => {
-    window._animFPS = Math.round(parseFloat(fpsInput.value));
-    if (fpsVal) fpsVal.textContent = window._animFPS;
+  fpsInput?.addEventListener('change', () => {
+    let v = Math.round(parseFloat(fpsInput.value));
+    if (!v || v < 1) v = window._animFPS || 24;
+    v = Math.min(60, Math.max(1, v));
+    window._animFPS = v;
+    fpsInput.value = v;
     window.saveOption?.('animFPS', window._animFPS);
     repaint();
   });
 
   const speedInput = el.querySelector('#acp-speed');
-  const speedVal   = el.querySelector('#acp-speed-val');
-  speedInput?.addEventListener('input', () => {
-    window._animPlaybackSpeed = parseFloat(speedInput.value);
-    if (speedVal) speedVal.textContent = window._animPlaybackSpeed.toFixed(1) + 'x';
+  speedInput?.addEventListener('change', () => {
+    let v = parseFloat(speedInput.value);
+    if (!(v > 0)) v = window._animPlaybackSpeed || 1;
+    v = Math.min(4, Math.max(0.1, v));
+    window._animPlaybackSpeed = v;
+    speedInput.value = v;
     repaint();
   });
 
@@ -1431,8 +1443,10 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     { id: '#acp-duration',   label: 'Duration (frames)',  min: 1 },
     { id: '#acp-loop-start', label: 'Loop Start (frame)', min: 0 },
     { id: '#acp-loop-end',   label: 'Loop End (frame)',   min: 1 },
+    { id: '#acp-fps',        label: 'FPS',                min: 1,   max: 60 },
+    { id: '#acp-speed',      label: 'Playback speed',     min: 0.1, max: 4, integer: false },
   ];
-  _numInputs.forEach(({ id, label, min }) => {
+  _numInputs.forEach(({ id, label, min, max, integer = true }) => {
     const input = el.querySelector(id);
     if (!input) return;
     input.addEventListener('click', (e) => {
@@ -1444,7 +1458,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       if (window._vrNumpad.isBlockingOpen) return;
       e.preventDefault(); e.stopPropagation();
       const current = parseFloat(input.value) || min;
-      window._vrNumpad.open(current, { label, integer: true, min }, (val) => {
+      window._vrNumpad.open(current, { label, integer, min, max }, (val) => {
         input.value = val;
         input.dispatchEvent(new Event('change', { bubbles: true }));
       }, input, vrPanel);
