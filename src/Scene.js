@@ -5759,9 +5759,10 @@ class Scene {
             }
           }
 
-          // NON-DOMINANT HAND: Y/B Button (Button 5) — hide/show all HTML panels
-          // Diagnostic toggle: lets us measure frame cost of the HTML panel system.
-          if (isNonDom) {
+          // NON-DOMINANT HAND: Y/B Button (Button 5) — hide/show all HTML panels.
+          // Debug-only (measures HTML-panel frame cost) and an easy fat-finger, so it's
+          // gated off by default; set window._vrDebugPanelToggle=true to re-enable.
+          if (isNonDom && window._vrDebugPanelToggle) {
             const btnY = btns[5];
             if (btnY && btnY.pressed && !this._btnYWasPressed) {
               this._htmlPanelsHidden = !this._htmlPanelsHidden;
@@ -5770,18 +5771,30 @@ class Scene {
                 this._brushPanel, this._miniPanel, this._mainMenuPanel,
                 this._toolPickerPanel, this._filesPanel, this._animPanel,
               ];
-              panels.forEach(p => { if (p?.mesh) p.mesh.visible = !hide; });
-              this._tornOffPanels?.forEach(p => { if (p?.mesh) p.mesh.visible = !hide; });
+              if (hide) {
+                // Snapshot current visibility so SHOW restores exactly. Naively setting every
+                // panel visible=true brought back the mutually-exclusive Mini + Main menus at
+                // once (the "Y shows both menus" bug).
+                this._htmlPanelVisSnapshot = panels.map(p => !!p?.mesh?.visible);
+                panels.forEach(p => { if (p?.mesh) p.mesh.visible = false; });
+                this._tornOffPanels?.forEach(p => { if (p?.mesh) p.mesh.visible = false; });
+              } else {
+                const snap = this._htmlPanelVisSnapshot;
+                panels.forEach((p, i) => { if (p?.mesh) p.mesh.visible = snap ? !!snap[i] : false; });
+                this._tornOffPanels?.forEach(p => { if (p?.mesh) p.mesh.visible = true; });
+              }
               if (window.screenLog) window.screenLog(`[Y] panels ${hide ? 'HIDDEN' : 'shown'}`, hide ? 'orange' : 'lime');
             }
             this._btnYWasPressed = !!(btnY?.pressed);
           }
 
-          // #29 Quick tool-swap — click the LEFT thumbstick to cycle sculpt tools.
-          if (source.handedness === 'left' && btns[3]) {
+          // #29 Quick tool-swap — click the NON-DOMINANT thumbstick to cycle sculpt tools.
+          // Bound to the role (non-dominant), not a physical side, so it follows a dominant-
+          // hand change (and matches the SECONDARY guide panel).
+          if (isNonDom && btns[3]) {
             const stickDown = !!btns[3].pressed;
-            if (stickDown && !this._leftStickClickPrev) this._quickSwapTool();
-            this._leftStickClickPrev = stickDown;
+            if (stickDown && !this._nonDomStickClickPrev) this._quickSwapTool();
+            this._nonDomStickClickPrev = stickDown;
           }
         }
       }
@@ -7105,39 +7118,49 @@ class Scene {
   _ensureButtonLabels() {
     if (this._btnLabels) return;
     const make = (title, lines) => {
-      const o = this._makeVrTextPlane(320, 320, 0.085);
+      const o = this._makeVrTextPlane(384, 384, 0.1);
       const { ctx, canvas, tex } = o;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'rgba(30,30,46,0.78)';
+      ctx.fillStyle = 'rgba(30,30,46,0.82)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       // Title (which hand + role) — makes the two panels unmistakably per-controller.
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = '#f9e2af'; ctx.font = '700 30px sans-serif';
-      ctx.fillText(title, canvas.width / 2, 28);
+      ctx.fillText(title, canvas.width / 2, 26);
       ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(16, 52); ctx.lineTo(canvas.width - 16, 52); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(16, 48); ctx.lineTo(canvas.width - 16, 48); ctx.stroke();
       ctx.textAlign = 'left';
-      let y = 84;
+      let y = 78;
       for (const [key, desc] of lines) {
-        ctx.fillStyle = '#89b4fa'; ctx.font = '700 26px sans-serif';
+        // Flow desc right after key (key widths vary a lot: "Grip" vs "Stick Left/Right").
+        ctx.font = '700 24px sans-serif'; ctx.fillStyle = '#89b4fa';
         ctx.fillText(key, 16, y);
-        ctx.fillStyle = '#cdd6f4'; ctx.font = '400 24px sans-serif';
-        ctx.fillText(desc, 120, y);
-        y += 40;
+        const kw = ctx.measureText(key).width;
+        ctx.font = '400 22px sans-serif'; ctx.fillStyle = '#cdd6f4';
+        ctx.fillText(desc, 16 + kw + 12, y);
+        y += 38;
       }
       tex.needsUpdate = true;
       return o;
     };
-    // Functionality is assigned by DOMINANT vs NON-DOMINANT hand (not physical L/R), so
-    // the labels follow this._dominantHand — otherwise a left-dominant user sees the wrong
-    // actions on each stick. Face button stays physical (X = left, A = right). The title
-    // names the hand + which is dominant so the two panels read as distinct.
-    const dom = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick Y', 'Radius'], ['Stick X', 'Intensity'], [face, 'Subtract / swap']];
-    const non = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick', 'Tool swap'], ['Stick Y', 'Scroll menu'], [face, 'Menu']];
+    // Bindings traced from the live input handler (Scene.js ~5410–5785), NOT a cheat-sheet.
+    // PRIMARY = dominant hand (sculpts); SECONDARY = non-dominant (owns meta: smooth, undo,
+    // menu, tool-swap). Lower face button is physical: X (left) / A (right). The Y/B "hide UI"
+    // toggle is debug-only, so it's left out of the guide.
+    const dom = (face) => [
+      ['Trigger', 'Sculpt'], ['Grip', 'Move world'],
+      ['Stick Up/Down', 'Radius'], ['Stick Left/Right', 'Intensity'],
+      [face, 'Subtract'],
+    ];
+    const non = (face) => [
+      ['Trigger', 'Smooth'], ['Grip', 'Move world'],
+      ['Stick Up/Down', 'Scroll menu'], ['Stick Left/Right', 'Undo / Redo'],
+      ['Stick click', 'Tool swap'], [face, 'Menu'],
+    ];
     const domLeft = this._dominantHand === 'left';
     this._btnLabels = {
-      left:  make(domLeft ? 'LEFT · main' : 'LEFT',  domLeft ? dom('X') : non('X')),
-      right: make(domLeft ? 'RIGHT' : 'RIGHT · main', domLeft ? non('A') : dom('A')),
+      left:  make(domLeft ? 'PRIMARY' : 'SECONDARY', domLeft ? dom('X') : non('X')),
+      right: make(domLeft ? 'SECONDARY' : 'PRIMARY', domLeft ? non('A') : dom('A')),
     };
   }
 

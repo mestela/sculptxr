@@ -19,23 +19,6 @@ export default function getSettingsWidgets(main) {
   const HEADER_H = 30;
   const GAP = 5;
 
-  // Relaunch the floating controller button labels (the intro guide). #45. Clearing
-  // _btnLabels forces a rebuild with the CURRENT dominant hand (so toggling Left Hand
-  // Mode below then re-showing reflects it).
-  widgets.push({
-    type: 'button', id: 'show_controls', label: 'Show Controller Guide', x: 20, y: y, w: menuW - 40, h: ITEM_H,
-    onInteract: () => {
-      if (main._btnLabels) {
-        main._btnLabels.left?.mesh?.removeFromParent?.();
-        main._btnLabels.right?.mesh?.removeFromParent?.();
-        main._btnLabels = null;
-      }
-      window._vrShowButtonLabels = true;
-      main._btnLabelsAutoHideAt = performance.now() + 8000;
-    }
-  });
-  y += ITEM_H + GAP;
-
   // --- INPUT ---
   widgets.push({ type: 'header', label: 'Input', x: 20, y: y, w: menuW - 40, h: HEADER_H, header: true });
   y += HEADER_H + GAP;

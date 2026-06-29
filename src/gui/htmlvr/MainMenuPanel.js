@@ -821,15 +821,19 @@ export function buildMenuHTML_files(main) {
     <button class="mm-toggle${main._autoMatrix ? ' active' : ''}" id="mm-import-scale">Scale & center on import</button>
     <button class="mm-toggle${main._vertexSRGB ? ' active' : ''}" id="mm-import-srgb">sRGB vertex colour</button>
 
-    <div class="mm-section-title">Export</div>
+    <div class="mm-section-title">Save</div>
     <button class="mm-toggle${exportAll ? ' active' : ''}" id="mm-export-all">Export all meshes</button>
-    <button class="mm-action-btn" id="mm-export-sxr">Save .sxr</button>
-    <button class="mm-action-btn" id="mm-export-glb">Save .glb</button>
-    <button class="mm-action-btn" id="mm-export-obj">Save .obj</button>
-    <button class="mm-action-btn" id="mm-export-ply">Save .ply</button>
-    <button class="mm-action-btn" id="mm-export-stl">Save .stl</button>
-    <button class="mm-toggle${objZbrush ? ' active' : ''}" id="mm-obj-zbrush">OBJ colour ZBrush mode</button>
-    <button class="mm-toggle${objAppend ? ' active' : ''}" id="mm-obj-append">OBJ colour append mode</button>
+    <div class="mm-choice-grid cols-5">
+      <button class="mm-choice" id="mm-export-sxr">sxr</button>
+      <button class="mm-choice" id="mm-export-glb">glb</button>
+      <button class="mm-choice" id="mm-export-obj">obj</button>
+      <button class="mm-choice" id="mm-export-ply">ply</button>
+      <button class="mm-choice" id="mm-export-stl">stl</button>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice${objZbrush ? ' active' : ''}" id="mm-obj-zbrush">OBJ ZBrush</button>
+      <button class="mm-choice${objAppend ? ' active' : ''}" id="mm-obj-append">OBJ append</button>
+    </div>
 
     <div class="mm-section-title">Export textures</div>
     <div class="mm-row">
@@ -837,11 +841,11 @@ export function buildMenuHTML_files(main) {
       <input type="range" id="mm-tex-size" min="8" max="13" step="1" value="10">
       <span class="mm-val" id="mm-tex-size-val">1024</span>
     </div>
-    <div class="mm-btn-pair">
-      <button class="mm-action-btn" id="mm-save-diffuse">Diffuse</button>
-      <button class="mm-action-btn" id="mm-save-roughness">Roughness</button>
+    <div class="mm-choice-grid cols-3">
+      <button class="mm-choice" id="mm-save-diffuse">Diffuse</button>
+      <button class="mm-choice" id="mm-save-roughness">Roughness</button>
+      <button class="mm-choice" id="mm-save-metalness">Metalness</button>
     </div>
-    <button class="mm-action-btn" id="mm-save-metalness">Metalness</button>
 
     <div class="mm-section-title">Scene</div>
     <button class="mm-action-btn danger" id="mm-clear-scene">
@@ -925,6 +929,7 @@ function buildMenuHTML_settings(main) {
   ).join('');
 
   return `
+    <button class="mm-action-btn" id="mm-show-ctrl-guide">Show Controller Guide</button>
     <div class="mm-section-title">Input</div>
     <button class="mm-toggle${isLeft    ? ' active' : ''}" id="mm-left-hand">Left Hand Mode</button>
     <button class="mm-toggle${isRaycast ? ' active' : ''}" id="mm-raycast">Aim Picking (Raycast)</button>
@@ -1939,6 +1944,19 @@ export class MainMenuPanel extends HTMLVRPanel {
     const ui   = gx?._uiSettings ?? {};
     const opts = getOptionsURL;
     const paint = () => this.markDirty();
+
+    // Relaunch the floating controller-button guide. Clearing _btnLabels forces a
+    // rebuild with the CURRENT dominant hand (so toggling Left Hand Mode then re-showing
+    // reflects it). #45.
+    q('#mm-show-ctrl-guide')?.addEventListener('click', () => {
+      if (main._btnLabels) {
+        main._btnLabels.left?.mesh?.removeFromParent?.();
+        main._btnLabels.right?.mesh?.removeFromParent?.();
+        main._btnLabels = null;
+      }
+      window._vrShowButtonLabels = true;
+      main._btnLabelsAutoHideAt = performance.now() + 8000;
+    });
 
     // Input toggles
     q('#mm-left-hand')?.addEventListener('click', () => {
