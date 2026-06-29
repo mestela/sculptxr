@@ -1,6 +1,10 @@
 import TimelineHelper from './TimelineHelper.js';
 import { Theme } from './theme.js';
 
+// Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
+// and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
+const TL_ACCENT = '#3b82f6';
+
 export default class GuiTimeline {
   constructor(main) {
     this._main = main;
@@ -603,7 +607,7 @@ export default class GuiTimeline {
       const capStartY = 25;
       const phHovered = Math.abs(this._lastMouseX - playheadX) < 10
                      && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
-      const phColor = phHovered ? '#88bbff' : Theme.blue;
+      const phColor = phHovered ? '#88bbff' : TL_ACCENT;
 
       ctx.strokeStyle = phColor;
       ctx.lineWidth = phHovered ? 2.5 : 2;
@@ -4406,12 +4410,15 @@ export default class GuiTimeline {
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
-    // Resize grip — 3 dots centred at top edge
-    ctx.fillStyle = Theme.surface1;
-    for (let i = -1; i <= 1; i++) {
-      ctx.beginPath();
-      ctx.arc(w.w / 2 + i * 8, 3, 2, 0, Math.PI * 2);
-      ctx.fill();
+    // Resize grip — 3 dots centred at top edge. Desktop only: in VR it sits under the
+    // transport bar and wedges the timeline if grabbed (VR resizes via _vrResizeHandle).
+    if (!this._main?._renderer?.xr?.isPresenting) {
+      ctx.fillStyle = Theme.surface1;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.arc(w.w / 2 + i * 8, 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // --- helper: draw a rounded toolbar button ---
@@ -4430,7 +4437,7 @@ export default class GuiTimeline {
                && this._lastMouseY >= 5    && this._lastMouseY <= 25;
       const fill = btn.disabled  ? Theme.surface0
                  : btn.id === 'record' && btn.active ? '#cc2244'  // record armed → red
-                 : btn.active   ? Theme.blue
+                 : btn.active   ? TL_ACCENT
                  : hov          ? Theme.surface1
                                 : Theme.surface1;
       _drawBtn(btn.x, btn.y, btn.w, btn.h, fill);
@@ -4503,7 +4510,7 @@ export default class GuiTimeline {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
                && this._lastMouseY >= btn.y && this._lastMouseY <= btn.y + btn.h;
       const fill = btn.disabled ? Theme.surface0
-                 : btn.active   ? Theme.blue
+                 : btn.active   ? TL_ACCENT
                  : hov          ? Theme.surface1
                                 : Theme.surface1;
       ctx.fillStyle = fill;

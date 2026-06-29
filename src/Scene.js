@@ -1211,6 +1211,14 @@ class Scene {
         if (this._animPanel) {
           try {
             this._animPanel.update(true);
+            // A static voxel sculpt becomes frame 0 the moment the anim panel is open, so
+            // it's animatable from the start (the user can delete it later) rather than a
+            // sculpt that lives in no keyframe. Fires once — enableForActive no-ops if a
+            // sequence already exists.
+            if (this._animPanel.mesh?.visible && this._frameAnim && !this._frameAnim.getActiveSeq()) {
+              const _m = this.getMesh?.();
+              if (_m && _m._isVoxel) this._frameAnim.enableForActive();
+            }
             this._animPanel.syncFromState();
           } catch (_) {}
         }
@@ -5037,6 +5045,10 @@ class Scene {
     const cssH = tl._cssHeight || 150;
     const clientX =        uv.x  * cssW;
     const clientY = (1.0 - uv.y) * cssH;
+    // The top resize grip (canvas y < 5) is a desktop-only affordance — it sits right
+    // under the transport bar and wedges the timeline if grabbed in VR (the resize needs
+    // mouse-move deltas it never gets here). VR resizes via _vrResizeHandle instead.
+    if (type === 'down' && clientY < 6) return;
     // GuiTimeline uses PointerEvents (pointerdown/move/up) not MouseEvents.
     // Use a fixed pointerId so setPointerCapture(1) on down routes move/up correctly.
     // shiftKey=true activates additive marquee mode (non-dominant trigger held).

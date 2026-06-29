@@ -130,6 +130,11 @@ class FrameAnimationManager {
     seq.frames.push({ geom: this._captureGeom(m), slot, time: 0 });
     this.sequences.set(id, seq);
     this._ensureRegistryTrack(m); // so the object shows as a timeline/dopesheet row
+    // Register the frame-0 key on the registry track so the dopesheet draws it
+    // immediately. The dopesheet reads track.shapeTimes; without this the frame exists in
+    // the sequence but no key marker shows until the next add. Same call the per-frame
+    // voxel commit uses.
+    if (window._animationRegistry?.addShapeKey) window._animationRegistry.addShapeKey(m, 0);
 
     this._ensureUI();
     this._refreshUI();

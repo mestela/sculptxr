@@ -173,8 +173,9 @@ function _wrapRequestPaint(canvas) {
     const now   = performance.now();
     const force = _forcePaint;
     _forcePaint = false;
-    if (!force && now - _lastPaintTs < PAINT_MIN_MS) return;
+    if (!force && now - _lastPaintTs < PAINT_MIN_MS) return; // dropped — _paintScheduled untouched
     _lastPaintTs = now;
+    _paintScheduled = true; // set ONLY when a paint is genuinely queued (not pre-emptively)
     orig();
   };
 }
@@ -199,9 +200,10 @@ function _onPaintEvent() {
  */
 export function requestPaintOnce(canvas) {
   _wrapRequestPaint(canvas);
-  if (_paintScheduled || !canvas.requestPaint) return;
-  _paintScheduled = true;
-  canvas.requestPaint();
+  if (!canvas.requestPaint) return false;
+  if (_paintScheduled) return true;     // a paint is already queued — covers all panels
+  canvas.requestPaint();                // sets _paintScheduled iff it passes the rate limit
+  return _paintScheduled;               // false ⇒ rate-limited away (caller should stay dirty)
 }
 
 /**

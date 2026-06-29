@@ -306,8 +306,10 @@ export class HTMLVRPanel {
     // pointerup already calls requestPaintForced + clears _dirty, so the final
     // slider position appears exactly one frame after release.
     if (this._dirty && !this._sliderDragTarget) {
-      this._dirty = false;
-      requestPaintOnce(getHostCanvas());
+      // Clear dirty only if a paint was actually scheduled. If it was rate-limited away,
+      // stay dirty and retry next frame — otherwise the change is lost until the next edit
+      // (the bug behind "the menu freezes until you click the other one").
+      if (requestPaintOnce(getHostCanvas())) this._dirty = false;
     }
   }
 
@@ -399,6 +401,11 @@ export class HTMLVRPanel {
       this._hoveredBtn.classList.remove('hover'); // never strip .active — it may be the selection state
       this._hoveredBtn = null;
     }
+    // End any in-progress drag when the ray leaves — otherwise an overshot release
+    // (or a release while the numpad is open) leaves _sliderDragTarget stuck, which
+    // suppresses repaint (update() skips paint while dragging) and captures input.
+    if (this._sliderDragTarget) { this._sliderDragTarget = null; this.markDirty(); }
+    if (this._scrollDrag) this._scrollDrag = null;
   }
 
   /**
