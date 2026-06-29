@@ -399,14 +399,15 @@ export function buildAnimationSectionHTML() {
     <div class="acp-section">
       <div class="acp-section-title">Animation</div>
       <div class="acp-stack">
-        <button class="acp-btn-timeline" id="acp-show-timeline-btn">Timeline</button>
-        <div class="acp-row">
-          <span class="acp-lbl">FPS</span>
-          <input type="number" id="acp-fps" min="1" max="60" step="1" value="24">
-        </div>
-        <div class="acp-row">
-          <span class="acp-lbl">Speed</span>
-          <input type="number" id="acp-speed" min="0.1" max="4" step="0.1" value="1">
+        <div class="acp-frame-grid" style="grid-template-columns:repeat(2,1fr)">
+          <div class="acp-frame-cell">
+            <label>FPS</label>
+            <input type="number" id="acp-fps" min="1" max="60" step="1" value="24">
+          </div>
+          <div class="acp-frame-cell">
+            <label>Speed</label>
+            <input type="number" id="acp-speed" min="0.1" max="4" step="0.1" value="1">
+          </div>
         </div>
         <div class="acp-frame-grid">
           <div class="acp-frame-cell">

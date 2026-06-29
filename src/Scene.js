@@ -7104,14 +7104,20 @@ class Scene {
   // VR button map. Shown only while window._vrShowButtonLabels is true.
   _ensureButtonLabels() {
     if (this._btnLabels) return;
-    const make = (lines) => {
+    const make = (title, lines) => {
       const o = this._makeVrTextPlane(320, 320, 0.085);
       const { ctx, canvas, tex } = o;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = 'rgba(30,30,46,0.78)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      let y = 30;
+      // Title (which hand + role) — makes the two panels unmistakably per-controller.
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#f9e2af'; ctx.font = '700 30px sans-serif';
+      ctx.fillText(title, canvas.width / 2, 28);
+      ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(16, 52); ctx.lineTo(canvas.width - 16, 52); ctx.stroke();
+      ctx.textAlign = 'left';
+      let y = 84;
       for (const [key, desc] of lines) {
         ctx.fillStyle = '#89b4fa'; ctx.font = '700 26px sans-serif';
         ctx.fillText(key, 16, y);
@@ -7123,14 +7129,15 @@ class Scene {
       return o;
     };
     // Functionality is assigned by DOMINANT vs NON-DOMINANT hand (not physical L/R), so
-    // the labels must follow this._dominantHand — otherwise a left-dominant user sees the
-    // wrong actions on each stick. Face button stays physical (X = left, A = right).
+    // the labels follow this._dominantHand — otherwise a left-dominant user sees the wrong
+    // actions on each stick. Face button stays physical (X = left, A = right). The title
+    // names the hand + which is dominant so the two panels read as distinct.
     const dom = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick Y', 'Radius'], ['Stick X', 'Intensity'], [face, 'Subtract / swap']];
     const non = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick', 'Tool swap'], ['Stick Y', 'Scroll menu'], [face, 'Menu']];
     const domLeft = this._dominantHand === 'left';
     this._btnLabels = {
-      left:  make(domLeft ? dom('X') : non('X')),
-      right: make(domLeft ? non('A') : dom('A')),
+      left:  make(domLeft ? 'LEFT · main' : 'LEFT',  domLeft ? dom('X') : non('X')),
+      right: make(domLeft ? 'RIGHT' : 'RIGHT · main', domLeft ? non('A') : dom('A')),
     };
   }
 
