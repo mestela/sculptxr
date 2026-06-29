@@ -417,7 +417,7 @@ export function buildAnimationSectionHTML() {
             <input type="number" id="acp-loop-end" min="1" step="1" value="48">
           </div>
         </div>
-        <label class="acp-check-row">
+        <label class="acp-check-row" style="margin-top:16px">
           <input type="checkbox" id="acp-onion" checked> Onion skin (frames)
         </label>
         <label class="acp-check-row">
@@ -999,13 +999,29 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   });
 
   el.querySelector('#acp-duration')?.addEventListener('change', () => {
-    const frames = parseInt(el.querySelector('#acp-duration').value, 10) || 1;
-    window._animMasterDuration = frames / fps();
-    window._animLoopEnd = window._animMasterDuration;
-    const le = el.querySelector('#acp-loop-end');
-    if (le) le.value = Math.round(window._animLoopEnd * fps());
-    main.getGui?.()._ctrlTimeline?.draw();
-    repaint();
+    const inputEl = el.querySelector('#acp-duration');
+    const frames = parseInt(inputEl.value, 10);
+    // Guard degenerate/empty input (a stray VR click can fire `change` with a junk value
+    // — the "it keeps resetting to 2" report). Restore the displayed value, change nothing.
+    if (!frames || frames < 1) {
+      inputEl.value = Math.round((window._animMasterDuration || 2) * fps());
+      return;
+    }
+    // Duration ONLY moves the loop boundary — it never touches keyframes. Make it undoable
+    // so a misclick is always recoverable (snapshot the loop vars; the keyframes are intact).
+    const prevDur = window._animMasterDuration, prevEnd = window._animLoopEnd;
+    const apply = (dur, end) => {
+      window._animMasterDuration = dur;
+      window._animLoopEnd = end;
+      const di = el.querySelector('#acp-duration'); if (di) di.value = Math.round((dur || 2) * fps());
+      const le = el.querySelector('#acp-loop-end'); if (le) le.value = Math.round((end ?? dur ?? 2) * fps());
+      main.getGui?.()._ctrlTimeline?.draw();
+      repaint();
+    };
+    const newDur = frames / fps();
+    apply(newDur, newDur);
+    const sm = main.getStateManager?.();
+    if (sm?.pushStateCustom) sm.pushStateCustom(() => apply(prevDur, prevEnd), () => apply(newDur, newDur), false, 'Change loop duration');
   });
 
   el.querySelector('#acp-loop-start')?.addEventListener('change', () => {

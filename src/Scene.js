@@ -7122,10 +7122,15 @@ class Scene {
       tex.needsUpdate = true;
       return o;
     };
-    // Mapping mirrors the handlers in handleXRInput (face button 4, grip, trigger, stick).
+    // Functionality is assigned by DOMINANT vs NON-DOMINANT hand (not physical L/R), so
+    // the labels must follow this._dominantHand — otherwise a left-dominant user sees the
+    // wrong actions on each stick. Face button stays physical (X = left, A = right).
+    const dom = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick Y', 'Radius'], ['Stick X', 'Intensity'], [face, 'Subtract / swap']];
+    const non = (face) => [['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick', 'Tool swap'], ['Stick Y', 'Scroll menu'], [face, 'Menu']];
+    const domLeft = this._dominantHand === 'left';
     this._btnLabels = {
-      left: make([['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick', 'Tool swap'], ['Stick Y', 'Scroll menu'], ['X', 'Menu']]),
-      right: make([['Trigger', 'Sculpt'], ['Grip', 'Move world'], ['Stick Y', 'Radius'], ['Stick X', 'Intensity'], ['A', 'Subtract / swap']]),
+      left:  make(domLeft ? dom('X') : non('X')),
+      right: make(domLeft ? non('A') : dom('A')),
     };
   }
 
