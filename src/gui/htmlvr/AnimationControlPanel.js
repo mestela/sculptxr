@@ -694,12 +694,14 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
     });
     _label.addEventListener('dblclick', (e) => {
       e.stopPropagation();
+      const _useVrKb = !!window._vrKeyboard?.shouldUse?.();
       const input = document.createElement('input');
       input.type = 'text';
       input.value = name;
       input.className = 'acp-bs-rename-input';
+      if (_useVrKb) input.inputMode = 'none'; // suppress the Quest system keyboard
       _label.replaceWith(input);
-      input.select();
+      if (!_useVrKb) input.select();
       let _committed = false;
       const _commit = () => {
         if (_committed) return; _committed = true;
@@ -715,13 +717,23 @@ export function refreshBlendshapesDOM(el, mesh, main, repaint) {
         if (_committed) return; _committed = true;
         input.replaceWith(_label);
       };
-      input.addEventListener('blur', _commit);
       input.addEventListener('keydown', (e) => {
         e.stopPropagation();
         if (e.key === 'Enter') { input.blur(); }
         else if (e.key === 'Escape') { input.removeEventListener('blur', _commit); _cancel(); }
       });
-      input.focus();
+      // VR: no physical keyboard — drive commit/cancel from the on-screen keyboard and
+      // skip blur-commit (it would fire the stale value the moment the keyboard opens).
+      if (_useVrKb) {
+        window._vrKeyboard.open(input.value, { label: 'Rename layer', maxLength: 40, onCancel: _cancel }, (text) => {
+          const v = (text ?? '').trim();
+          if (v) input.value = v;
+          _commit();
+        }, input, null);
+      } else {
+        input.addEventListener('blur', _commit);
+        input.focus(); // focus triggers the Quest system keyboard — skip it in VR
+      }
     });
 
     setupRangeDrag(row);

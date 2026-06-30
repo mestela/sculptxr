@@ -198,13 +198,13 @@ class GuiFiles {
     this._saveTexture('metalness');
   }
 
-  saveFileAsSGL() {
+  saveFileAsSGL(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportSGL(meshes, this._main), this._getTimestampedFileName('yourMesh', 'sxr'));
+    this._save(Export.exportSGL(meshes, this._main), this._exportFileName(baseName, 'sxr'));
   }
 
-  saveToBrowserStorage() {
+  saveToBrowserStorage(saveName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
     
@@ -320,7 +320,7 @@ class GuiFiles {
     StorageDB.set(key, { 
       blob: blob, 
       thumb: thumb, 
-      name: this._getTimestampedFileName('browser', '').replace('.', ''), // Clean name without extension
+      name: (saveName || '').trim() || this._getTimestampedFileName('browser', '').replace('.', ''), // user-named, else timestamped
       timestamp: timestamp 
     }).then(() => {
       if (window.screenLog) window.screenLog(`SUCCESS: Stashed sculpt ${key}`, 'lime');
@@ -374,28 +374,35 @@ class GuiFiles {
     });
   }
 
-  saveFileAsGLB() {
+  saveFileAsGLB(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation }), this._getTimestampedFileName('yourMesh', 'glb'));
+    this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation }), this._exportFileName(baseName, 'glb'));
   }
 
-  saveFileAsOBJ() {
+  saveFileAsOBJ(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportOBJ(meshes, this._objColorZbrush, this._objColorAppended), this._getTimestampedFileName('yourMesh', 'obj'));
+    this._save(Export.exportOBJ(meshes, this._objColorZbrush, this._objColorAppended), this._exportFileName(baseName, 'obj'));
   }
 
-  saveFileAsPLY() {
+  saveFileAsPLY(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportBinaryPLY(meshes), this._getTimestampedFileName('yourMesh', 'ply'));
+    this._save(Export.exportBinaryPLY(meshes), this._exportFileName(baseName, 'ply'));
   }
 
-  saveFileAsSTL() {
+  saveFileAsSTL(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportBinarySTL(meshes), this._getTimestampedFileName('yourMesh', 'stl'));
+    this._save(Export.exportBinarySTL(meshes), this._exportFileName(baseName, 'stl'));
+  }
+
+  // Use the caller-supplied name (from the VR/desktop keyboard) when given, else fall back
+  // to the timestamped default so a bare click still produces a unique file.
+  _exportFileName(baseName, ext) {
+    const b = (baseName || '').trim();
+    return b ? `${b}.${ext}` : this._getTimestampedFileName('yourMesh', ext);
   }
 
   _getTimestampedFileName(baseName, ext) {

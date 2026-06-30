@@ -42,6 +42,7 @@ import { FilesPanel, openFilesDOMOverlay, openBrowserSavesDOMOverlay } from './g
 import { AnimationControlPanel  } from './gui/htmlvr/AnimationControlPanel.js';
 import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
+import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
@@ -312,6 +313,7 @@ class Scene {
     this._filesPanel      = null;   // [HTMLVRPanel] floating Files overlay
     this._animPanel       = null;   // [HTMLVRPanel] animation transport + keyframe controls
     this._vrNumpad        = null;   // [HTMLVRPanel] floating number-pad for VR value editing
+    this._vrKeyboard      = null;   // [HTMLVRPanel] floating QWERTY keyboard for VR text editing
     this._vrTimelineMesh    = null;   // Three.js Mesh — GuiTimeline canvas rendered into VR
     this._vrTimelineTexture = null;   // THREE.CanvasTexture wrapping GuiTimeline._canvas
     this._vrBlendMesh       = null;   // Three.js Mesh — BlendshapeStackPanel canvas in VR
@@ -500,6 +502,10 @@ class Scene {
         if (!this._vrNumpad && this._scene && this._renderer) {
           this._vrNumpad = new VrNumpad(this._scene, this._camera.getThreeCamera(), this._renderer);
           window._vrNumpad = this._vrNumpad;
+        }
+        if (!this._vrKeyboard && this._scene && this._renderer) {
+          this._vrKeyboard = new VrKeyboard(this._scene, this._camera.getThreeCamera(), this._renderer);
+          window._vrKeyboard = this._vrKeyboard;
         }
         if (!this._vrConfirm && this._scene && this._renderer) {
           this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
@@ -1232,6 +1238,14 @@ class Scene {
             // group caused orientation bugs with negative-scale decomposition,
             // so instead we update the world-space position every frame here.
             try { this._vrNumpad._repositionIfTracking(); } catch (_) {}
+          }
+        }
+        if (this._vrKeyboard?.mesh) {
+          // Per-frame update() flushes dirty repaints — this is what makes the typed
+          // text appear live in the display (without it markDirty never flushes).
+          try { this._vrKeyboard.update(true); } catch (_) {}
+          if (this._vrKeyboard.mesh.visible) {
+            try { this._vrKeyboard._repositionIfTracking(); } catch (_) {}
           }
         }
         if (this._vrConfirm?.mesh) {
@@ -4045,6 +4059,14 @@ class Scene {
         console.error('[VrNumpad] init failed:', err);
       }
     }
+    if (!this._vrKeyboard && this._scene && this._camera && this._renderer) {
+      try {
+        this._vrKeyboard = new VrKeyboard(this._scene, this._camera.getThreeCamera(), this._renderer);
+        window._vrKeyboard = this._vrKeyboard;
+      } catch (err) {
+        console.error('[VrKeyboard] init failed:', err);
+      }
+    }
     if (!this._vrConfirm && this._scene && this._camera && this._renderer) {
       try {
         this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
@@ -4839,6 +4861,7 @@ class Scene {
       });
       registerGradeMaterial(mat); // share the Settings menu brightness/saturation/gamma grade
       this._vrBlendMesh = new THREE.Mesh(geo, mat);
+      this._vrBlendPanel._vrMesh = this._vrBlendMesh; // so the panel can anchor the keyboard to itself
       this._scene.add(this._vrBlendMesh);
       if (window.screenLog) window.screenLog(`[VR Blendshapes] mesh created ${_worldW}×${_worldH}m`, 'cyan');
     }
@@ -6042,6 +6065,10 @@ class Scene {
             const h = _rc.intersectObject(this._vrNumpad.mesh);
             if (h.length > 0) _panelHits.push({ name: 'VrNumpad', panel: this._vrNumpad, hit: h[0], pressKey: '_npWasPressed' });
           }
+          if (this._vrKeyboard?.mesh?.visible) {
+            const h = _rc.intersectObject(this._vrKeyboard.mesh);
+            if (h.length > 0) _panelHits.push({ name: 'VrKeyboard', panel: this._vrKeyboard, hit: h[0], pressKey: '_kbWasPressed' });
+          }
           if (this._vrConfirm?.mesh?.visible) {
             const h = _rc.intersectObject(this._vrConfirm.mesh);
             if (h.length > 0) _panelHits.push({ name: 'VrConfirm', panel: this._vrConfirm, hit: h[0], pressKey: '_vcWasPressed' });
@@ -6101,6 +6128,7 @@ class Scene {
               { name: 'MiniPanel',       panel: this._miniPanel,          pressKey: '_mpWasPressed' },
               { name: 'ToolPickerPanel', panel: this._toolPickerPanel,    pressKey: '_tpWasPressed' },
               { name: 'VrNumpad',        panel: this._vrNumpad,           pressKey: '_npWasPressed' },
+              { name: 'VrKeyboard',      panel: this._vrKeyboard,         pressKey: '_kbWasPressed' },
             ];
             this._tornOffPanels?.forEach((panel, sectionId) => {
               _dragCandidates.push({ name: 'TornOff:' + sectionId, panel, pressKey: '_topWasPressed_' + sectionId });
@@ -6153,6 +6181,8 @@ class Scene {
             _allVisible.push({ name: 'FilesPanel', panel: this._filesPanel, pressKey: '_fpWasPressed' });
           if (this._vrNumpad?.mesh?.visible)
             _allVisible.push({ name: 'VrNumpad', panel: this._vrNumpad, pressKey: '_npWasPressed' });
+          if (this._vrKeyboard?.mesh?.visible)
+            _allVisible.push({ name: 'VrKeyboard', panel: this._vrKeyboard, pressKey: '_kbWasPressed' });
           if (this._vrConfirm?.mesh?.visible)
             _allVisible.push({ name: 'VrConfirm', panel: this._vrConfirm, pressKey: '_vcWasPressed' });
 
@@ -7823,6 +7853,9 @@ class Scene {
     if (canSculpt) {
       if (!this._vrSculpting) {
         this._vrSculpting = true;
+        // Starting a stroke dismisses the blendshape name picker (you've decided to sculpt
+        // the pending default layer rather than pick a name first).
+        this._vrBlendPanel?.notifySculptStarted?.();
         this._vrLockedHand = source.handedness; // LOCK HAND
         this._vrTriggerReleaseTime = 0; // Reset Timer
 

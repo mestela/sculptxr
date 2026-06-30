@@ -33,6 +33,7 @@ const FA = {
   split:    '\uf337', // fa-arrows-left-right (split symmetric shape into L/R)
   combine:  '\uf387', // fa-code-merge (combine L/R halves back into one symmetric shape)
   grip:     '\uf7a4', // fa-grip-lines (drag handle for reordering layers)
+  pen:      '\uf304', // fa-pen (rename \u2014 VR-friendly alternative to double-tap)
 };
 
 // Layout constants (CSS px). Two-line rows: header (dot/name/value) + slider.
@@ -82,6 +83,7 @@ export default class BlendshapeStackPanel {
 
     // ARKit name picker overlay (null = closed). When open it captures all input.
     this._picker = null;
+    this._pendingNewName = null; // default layer pre-created by 'New', awaiting a picker rename
   }
 
   // Mount the canvas into a host DOM element (a wa-tab-panel for desktop).
@@ -372,13 +374,27 @@ export default class BlendshapeStackPanel {
     ctx.font = (isActive ? '600 ' : '') + '12px sans-serif';
     const valW = isBase ? PAD : 36;
     const nameMaxX = W - PAD - valW;
-    const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart);
+    // Non-base rows reserve ~20px at the name's right edge for the rename pencil.
+    const nameText = this._ellipsize(ctx, name, nameMaxX - nameStart - (isBase ? 0 : 20));
     const nameY = isBase ? h / 2 + top : top + 16;
     ctx.fillText(nameText, nameStart, nameY);
     const fa = isBase ? 0 : this._flashAlpha(name);
     if (fa > 0) {
       ctx.save(); ctx.globalAlpha = fa; ctx.fillStyle = '#ff4d4d';
       ctx.fillText(nameText, nameStart, nameY); ctx.restore();
+    }
+
+    // Rename pencil (non-base) — VR-friendly alternative to double-tap. Sits in the gap
+    // between the name and the right slot (split/combine/readout).
+    if (!isBase) {
+      const penCx  = nameMaxX - 8;
+      const penHot = hov === 'rename';
+      ctx.fillStyle = penHot ? Theme.text : Theme.surface2;
+      ctx.font = '900 11px "Font Awesome 6 Free"';
+      ctx.textAlign = 'center';
+      ctx.fillText(FA.pen, penCx, iconCy + 0.5);
+      ctx.textAlign = 'left';
+      r.rename = { x0: penCx - 11, x1: penCx + 11, y0: top, y1: top + 26 };
     }
 
     if (isBase) { this._rows.push(r); return; }
@@ -439,6 +455,7 @@ export default class BlendshapeStackPanel {
     if (inRect(row.eye))   return { row, part: 'eye' };
     if (inRect(row.split))   return { row, part: 'split' };
     if (inRect(row.combine)) return { row, part: 'combine' };
+    if (inRect(row.rename))  return { row, part: 'rename' };
     if (!row.isBase && row.trackX0 != null && p.y >= row.trackY - 12 && p.y <= row.trackY + 12)
       return { row, part: 'slider' };
     return { row, part: 'row' };
@@ -537,6 +554,8 @@ export default class BlendshapeStackPanel {
       this._applyWeightFromX(row, p.x);
       return;
     }
+    // Pencil → rename (VR-friendly; double-tap still works too).
+    if (part === 'rename' && !row.isBase) { this._beginRename(row); return; }
     // Row body → make it the active sculpt layer (Base deactivates). Double-tap → rename.
     this._selectLayer(row.isBase ? null : row.name);
     this._handleTapForRename(row);
@@ -682,6 +701,10 @@ export default class BlendshapeStackPanel {
     if (!mesh) return;
     const reg = window._animationRegistry;
     if (id === 'new') {
+      // Create + activate a default layer IMMEDIATELY so the Base is protected (and locked
+      // per #39) — otherwise sculpting while the picker is open silently edits the Base and
+      // can't be undone. The picker then just renames this pending layer.
+      this._pendingNewName = this._createBlankLayer();
       this._openPicker();           // ARKit name picker (with a Blank-layer quick option)
     } else if (id === 'del') {
       const name = track_editing(reg, mesh);
@@ -718,6 +741,9 @@ export default class BlendshapeStackPanel {
   }
 
   _closePicker() {
+    // Cancelling the picker keeps the pending default layer (already created + active) so
+    // the user can sculpt it straight away — just drop the rename reference.
+    this._pendingNewName = null;
     this._picker = null;
     if (this._host) this._relayout(); else this.draw(); // desktop: restore content height
   }
@@ -866,13 +892,37 @@ export default class BlendshapeStackPanel {
   _pickerActivate(it) {
     const mesh = this._mesh();
     if (!mesh) { this._closePicker(); return; }
-    if (it.kind === 'blank') { this._createBlankLayer(); this._closePicker(); return; }
-    // ARKit entry — if it already exists just select it, else create it.
-    if (it.exists) { this._selectLayer(it.name); this._closePicker(); return; }
-    window._animationRegistry.createBlendshape(mesh, it.name);
+    const reg = window._animationRegistry;
+    // 'New' pre-created a default layer (this._pendingNewName) to protect the Base; the
+    // picker renames it rather than creating a second shape.
+    const pending = this._pendingNewName;
+    this._pendingNewName = null;
+
+    if (it.kind === 'blank') {
+      // Keep the already-created default layer as-is.
+      this._closePicker();
+      return;
+    }
+    if (it.exists) {
+      // Picked an existing shape — drop the empty pending default and edit the existing one.
+      if (pending) reg.deleteBlendshape(mesh, pending);
+      this._afterStructureChange();
+      this._selectLayer(it.name);
+      this._closePicker();
+      return;
+    }
+    // New ARKit name → rename the pending default to it (no second shape), else create.
+    if (pending) reg.renameBlendshape(mesh, pending, it.name);
+    else         reg.createBlendshape(mesh, it.name);
     this._afterStructureChange();
     this._selectLayer(it.name);
     this._closePicker();
+  }
+
+  // A sculpt stroke started — if the ARKit name picker is still open, close it (the user
+  // chose to sculpt the pending default layer instead of picking a name first).
+  notifySculptStarted() {
+    if (this._picker) this._closePicker();
   }
 
   // Layer count changed: desktop resizes the canvas to the new row count (which
@@ -888,6 +938,11 @@ export default class BlendshapeStackPanel {
     if (!mesh) return;
     const track = reg.tracks.get(mesh.getID());
     const cur = track?.editingBlendshape || null;
+
+    // Clicking the already-active layer keeps it selected (no toggle-off — that read as
+    // "deselected / selected Base" and was confusing). Switching layers or clicking Base
+    // (name === null) still works.
+    if (name && name === cur) return;
 
     if (cur) reg.exitBlendshapeEditMode(mesh);
     if (name && name !== cur) {
@@ -957,6 +1012,20 @@ export default class BlendshapeStackPanel {
 
   _beginRename(row) {
     if (this._renameInput) this._endRename(false);
+    // VR: the panel is a canvas texture with no visible DOM input — drive the rename
+    // through the floating 3D keyboard instead.
+    if (window._vrKeyboard?.shouldUse?.()) {
+      const oldName = row.name;
+      window._vrKeyboard.open(oldName, { label: 'Rename layer', maxLength: 40 }, (text) => {
+        const newName = (text ?? '').trim();
+        const mesh = this._mesh();
+        if (newName && newName !== oldName && mesh) {
+          window._animationRegistry.renameBlendshape(mesh, oldName, newName);
+          this._afterStructureChange();
+        }
+      }, null, null, this._vrMesh); // anchorMesh → keyboard floats above THIS panel
+      return;
+    }
     const input = document.createElement('input');
     input.type = 'text';
     input.value = row.name;

@@ -524,6 +524,13 @@ const CSS = `
   padding: 0;
 }
 .mm-vis-btn.hidden { color: #45475a; }
+.mm-rename-btn {
+  width: 24px; height: 24px; flex-shrink: 0;
+  border: 1px solid #45475a; border-radius: 4px; background: #313244;
+  color: #6c7086; font-size: 11px; cursor: pointer; outline: none;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.mm-rename-btn:hover, .mm-rename-btn.hover { background: #45475a; color: #cdd6f4; }
 .mm-mesh-btn {
   flex: 1;
   min-width: 0;                /* allow ellipsis inside the flex row */
@@ -1098,8 +1105,11 @@ export function buildSectionHTML_scene(main) {
         <button class="mm-vis-btn${vis ? '' : ' hidden'}" data-mesh-id="${m._permanentStaticId}" data-action="vis">
           <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"></i>
         </button>
-        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" style="margin-left:${depth * 14}px" title="Double-click to rename">
+        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" style="margin-left:${depth * 14}px" title="Rename with the pencil, or double-click">
           <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>
+        </button>
+        <button class="mm-rename-btn" data-mesh-id="${m._permanentStaticId}" data-action="rename" title="Rename">
+          <i class="fa-solid fa-pen"></i>
         </button>
       </div>`;
   };
@@ -2363,12 +2373,16 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // Enter/blur, cancels on Escape. (Each click repaints, so the double-click is
   // detected via timestamps stored on `main`, and we re-query the fresh button.)
   const beginRename = (btn, mesh) => {
+    const _useVrKb = !!window._vrKeyboard?.shouldUse?.();
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'mm-rename-input';
     input.value = mesh._permanentStaticLabel ?? '';
+    if (_useVrKb) input.inputMode = 'none'; // suppress the Quest system keyboard
     btn.replaceChildren(input);
-    input.focus(); input.select();
+    // Focusing the input is what triggers the Quest's native keyboard — skip it in VR so
+    // only our on-screen keyboard shows.
+    if (!_useVrKb) { input.focus(); input.select(); }
     let done = false;
     const commit = (save) => {
       if (done) return; done = true;
@@ -2383,8 +2397,30 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       if (e.key === 'Enter')  { e.preventDefault(); commit(true); }
       else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
     });
-    input.addEventListener('blur', () => commit(true));
+    // VR: no physical keyboard — drive the rename from the on-screen keyboard and skip
+    // the blur-commit (opening the keyboard can blur the field and commit the stale value
+    // first). Desktop keeps blur-to-commit.
+    if (_useVrKb) {
+      window._vrKeyboard.open(input.value, { label: 'Rename mesh', maxLength: 40 }, (text) => {
+        const v = (text ?? '').trim();
+        if (v) input.value = v;
+        commit(!!v);
+      }, input, vrPanel);
+    } else {
+      input.addEventListener('blur', () => commit(true));
+    }
   };
+
+  // Pencil button → rename (double-click still works, but it's awkward in VR).
+  el.querySelectorAll('[data-action="rename"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mesh = findMesh(btn.dataset.meshId);
+      if (!mesh) return;
+      const nameBtn = el.querySelector(`[data-action="select"][data-mesh-id="${btn.dataset.meshId}"]`);
+      if (nameBtn) beginRename(nameBtn, mesh);
+    });
+  });
 
   el.querySelectorAll('[data-action="select"]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3003,10 +3039,12 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
 
   q('#mm-browser-save')?.addEventListener('click', () => {
-    guiFiles?.saveToBrowserStorage?.();
-    setTimeout(() => {
-      guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
-    }, 800);
+    promptSaveName('Save scene as', 'scene', (n) => {
+      guiFiles?.saveToBrowserStorage?.(n);
+      setTimeout(() => {
+        guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+      }, 800);
+    });
   });
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
@@ -3036,6 +3074,21 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
     if (guiFiles) guiFiles._selectedSaveKey = null;
     setTimeout(() => guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn()), 300);
   });
+}
+
+// Open the keyboard (VR 3D panel, or DOM overlay on desktop) to collect a save name, then
+// run cb(name). Cancel → no save; the field is pre-filled so a bare confirm still saves.
+function promptSaveName(label, defaultName, cb) {
+  // VR → our 3D keyboard; desktop (and anywhere with a real keyboard) → native prompt.
+  if (window._vrKeyboard?.shouldUse?.()) {
+    window._vrKeyboard.open(defaultName ?? '', { label, maxLength: 60 }, (name) => {
+      const n = (name ?? '').trim();
+      if (n) cb(n);
+    });
+  } else {
+    const n = (window.prompt(label, defaultName ?? '') ?? '').trim();
+    if (n) cb(n);
+  }
 }
 
 export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
@@ -3072,11 +3125,11 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     if (guiFiles) guiFiles._exportAll = !guiFiles._exportAll;
     q('#mm-export-all')?.classList.toggle('active', guiFiles?._exportAll ?? true);
   });
-  q('#mm-export-sxr')?.addEventListener('click', () => guiFiles?.saveFileAsSGL?.());
-  q('#mm-export-glb')?.addEventListener('click', () => guiFiles?.saveFileAsGLB?.());
-  q('#mm-export-obj')?.addEventListener('click', () => guiFiles?.saveFileAsOBJ?.());
-  q('#mm-export-ply')?.addEventListener('click', () => guiFiles?.saveFileAsPLY?.());
-  q('#mm-export-stl')?.addEventListener('click', () => guiFiles?.saveFileAsSTL?.());
+  q('#mm-export-sxr')?.addEventListener('click', () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n)));
+  q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', 'sculpt', n => guiFiles?.saveFileAsGLB?.(n)));
+  q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', 'sculpt', n => guiFiles?.saveFileAsOBJ?.(n)));
+  q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', 'sculpt', n => guiFiles?.saveFileAsPLY?.(n)));
+  q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', 'sculpt', n => guiFiles?.saveFileAsSTL?.(n)));
 
   q('#mm-obj-zbrush')?.addEventListener('click', () => {
     if (guiFiles) guiFiles._objColorZbrush = !guiFiles._objColorZbrush;
@@ -3088,10 +3141,12 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   });
 
   q('#mm-browser-save')?.addEventListener('click', () => {
-    guiFiles?.saveToBrowserStorage?.();
-    setTimeout(() => {
-      guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
-    }, 800);
+    promptSaveName('Save scene as', 'scene', (n) => {
+      guiFiles?.saveToBrowserStorage?.(n);
+      setTimeout(() => {
+        guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
+      }, 800);
+    });
   });
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
