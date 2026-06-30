@@ -837,6 +837,8 @@ export function buildMenuHTML_files(main) {
       <button class="mm-choice" id="mm-export-ply">ply</button>
       <button class="mm-choice" id="mm-export-stl">stl</button>
     </div>
+    <button class="mm-toggle" id="mm-export-objseq"
+      title="Export the frame-by-frame animation as a zipped per-frame OBJ sequence (anim.0000.obj …) — importable as a mesh sequence in any DCC.">Export OBJ sequence (.zip)</button>
     <div class="mm-choice-grid cols-2">
       <button class="mm-choice${objZbrush ? ' active' : ''}" id="mm-obj-zbrush">OBJ ZBrush</button>
       <button class="mm-choice${objAppend ? ' active' : ''}" id="mm-obj-append">OBJ append</button>
@@ -3179,6 +3181,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', 'sculpt', n => guiFiles?.saveFileAsOBJ?.(n)));
   q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', 'sculpt', n => guiFiles?.saveFileAsPLY?.(n)));
   q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', 'sculpt', n => guiFiles?.saveFileAsSTL?.(n)));
+  q('#mm-export-objseq')?.addEventListener('click', () => promptSaveName('OBJ sequence name', 'anim', n => guiFiles?.saveObjSequence?.(n)));
 
   q('#mm-obj-zbrush')?.addEventListener('click', () => {
     if (guiFiles) guiFiles._objColorZbrush = !guiFiles._objColorZbrush;

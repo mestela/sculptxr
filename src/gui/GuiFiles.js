@@ -1,7 +1,9 @@
 import TR from './GuiTR.js';
 import { saveAs } from 'file-saver';
 import { zip } from 'zip';
+import { zipSync, strToU8 } from 'fflate';
 import Export from '../files/Export.js';
+import ExportOBJ from '../files/ExportOBJ.js';
 import StorageDB from '../misc/StorageDB.js';
 import * as THREE from 'three';
 
@@ -384,6 +386,78 @@ class GuiFiles {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
     this._save(Export.exportOBJ(meshes, this._objColorZbrush, this._objColorAppended), this._exportFileName(baseName, 'obj'));
+  }
+
+  // Low-brow universal animation export: a per-FRAME OBJ sequence (anim.0000.obj,
+  // anim.0001.obj, …) zipped. Samples the HELD geometry of every frame-by-frame cel
+  // sequence (voxel OR baked) at each sampled timeline frame, so any DCC can import it
+  // as a mesh/stop-motion sequence — sidestepping glTF's lack of a per-frame mesh-swap
+  // channel. No bake needed: reads the stored per-frame geom (voxel surfaces included).
+  // World-space (each frame's geom is baked through its object matrix). Static
+  // (non-animated) meshes are NOT included — export those separately.
+  saveObjSequence(baseName) {
+    const fa = window._frameAnim;
+    const seqs = fa ? [...fa.sequences.values()].filter(s => s.frames && s.frames.length) : [];
+    if (!seqs.length) {
+      if (window.screenLog) window.screenLog('[OBJ seq] No frame-by-frame animation to export', '#f9e2af');
+      return;
+    }
+
+    const fps = Math.max(1, Math.round(window._animFPS || 24));
+    const loopStart = window._animLoopStart || 0;
+    let loopEnd = window._animLoopEnd ?? window._animMasterDuration;
+    if (!(loopEnd > loopStart)) {
+      // No explicit range → span the latest keyed frame, plus one frame of trailing hold.
+      loopEnd = loopStart;
+      seqs.forEach(s => { const last = s.frames[s.frames.length - 1]; if (last && last.time > loopEnd) loopEnd = last.time; });
+      loopEnd += 1 / fps;
+    }
+    let nFrames = Math.max(1, Math.round((loopEnd - loopStart) * fps));
+    const CAP = 3000;
+    if (nFrames > CAP) {
+      if (window.screenLog) window.screenLog(`[OBJ seq] ${nFrames} frames clamped to ${CAP}`, '#f9e2af');
+      nFrames = CAP;
+    }
+
+    const base = (baseName || '').trim() || 'anim';
+    const colZ = this._objColorZbrush, colA = this._objColorAppended;
+
+    // Minimal mesh adapter so ExportOBJ.addMesh can read a stored geom snapshot.
+    const adapt = (geom, matrix) => {
+      const nv = geom.vertices ? geom.vertices.length / 3 : 0;
+      return {
+        getVertices: () => geom.vertices,
+        getColors: () => geom.colors || new Float32Array(nv * 3).fill(1),
+        getMaterials: () => geom.materials || new Float32Array(nv * 3),
+        getFaces: () => geom.faces,
+        getNbVertices: () => nv,
+        getNbFaces: () => (geom.faces ? geom.faces.length / 4 : 0),
+        getNbTexCoords: () => 0,
+        getMatrix: () => matrix,
+        getFacesTexCoord: () => null,
+        getTexCoords: () => null,
+        hasUV: () => false,
+      };
+    };
+
+    const files = {};
+    for (let f = 0; f < nFrames; f++) {
+      const t = loopStart + f / fps;
+      let data = 's 0\n';
+      const offsets = [1, 1];
+      let mi = 0;
+      seqs.forEach(seq => {
+        const geom = seq.frames[fa.frameIndexAtTime(seq, t)]?.geom;
+        if (!geom || !geom.vertices || geom.vertices.length === 0) return; // blank/held-empty frame
+        data += 'o mesh_' + (mi++) + '\n';
+        data = ExportOBJ.addMesh(adapt(geom, seq.mesh.getMatrix()), data, offsets, colZ, colA);
+      });
+      files[`${base}.${String(f).padStart(4, '0')}.obj`] = strToU8(data);
+    }
+
+    const zipped = zipSync(files);
+    saveAs(new Blob([zipped], { type: 'application/zip' }), `${base}_objseq.zip`);
+    if (window.screenLog) window.screenLog(`[OBJ seq] Exported ${nFrames} frames @ ${fps}fps`, '#a6e3a1');
   }
 
   saveFileAsPLY(baseName) {
