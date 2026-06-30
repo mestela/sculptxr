@@ -192,9 +192,24 @@ class SculptManager {
     // active for editing, all mesh deformation is captured into that layer's delta
     // — which is only correct while the layer is visible and held at weight 1. If
     // not, block the stroke and flash the blendshape palette so the user sees why.
-    if (!this._canSculptActiveBlendshapeLayer()) {
+    // EXCEPT the transform tools: they move the object's matrix, not vertex deltas,
+    // so the delta-capture concern doesn't apply. Gating them locked out E-key
+    // transform/keying entirely once an object had blendshapes (Base is locked by
+    // default), which only flashed the palette instead of letting the object move.
+    const _isTransform = this._toolIndex === Enums.Tools.TRANSFORM
+                      || this._toolIndex === Enums.Tools.TRANSFORM_VR;
+    if (!_isTransform && !this._canSculptActiveBlendshapeLayer()) {
       window._blendshapeStackPanel?.flash?.();   // desktop panel
       window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh
+      return false;
+    }
+
+    // Frame (cel) animation gate: an object with a frame sequence can only be edited
+    // when the playhead is parked exactly on a frame — off-frame edits are ambiguous
+    // (modify which frame?). The voxel tool enforces this internally; this covers the
+    // regular brushes editing a baked (non-voxel) mesh-frame anim. Transform exempt.
+    if (!_isTransform && window._frameAnim && !window._frameAnim.canSculptActive()) {
+      if (window.screenLog) window.screenLog('Park the playhead on a frame to edit it', '#f9e2af');
       return false;
     }
 
@@ -274,6 +289,11 @@ class SculptManager {
     if (!this._strokeActive) return;
     this._strokeActive = false;
     this.getCurrentTool().end();
+
+    // Capture the finished stroke back into the active non-voxel cel frame so edits
+    // persist across scrubbing (no-op for voxel — that commits via the worker, and
+    // for objects without a frame sequence).
+    window._frameAnim?.captureActiveMeshEdit?.();
   }
 
   preUpdate() {

@@ -23,6 +23,20 @@ class StateManager {
     st.squash = squash;
     st.name = name;
     this.pushState(st);
+    return st;
+  }
+
+  // Called when a state is permanently dropped from the COMMITTED (undo) side — i.e.
+  // it can never be undone back to. A state may carry an optional `_disposeCommitted`
+  // to free external resources its undo path was holding alive (e.g. the bake-voxel
+  // state keeps the source voxel's worker distance-field slots so undo can restore an
+  // editable voxel; once it's purged the voxel is gone for good, so free those slots).
+  // NOT called on the reverted (redo-cleared / truncated) side: there the original
+  // object is live again and must keep its resources.
+  _discardCommitted(state) {
+    if (state && typeof state._disposeCommitted === 'function') {
+      try { state._disposeCommitted(); } catch (e) { console.error('[StateManager] dispose failed', e); }
+    }
   }
 
   pushStateAddRemove(addMesh, remMesh, squash) {
@@ -66,6 +80,7 @@ class StateManager {
     var undos = this._undos;
     var redos = this._redos;
     while (this._curUndoIndex >= maxStack) {
+      this._discardCommitted(undos[0]);
       undos.shift();
       --this._curUndoIndex;
     }
@@ -81,6 +96,7 @@ class StateManager {
 
     if (this._curUndoIndex === -1) undos.length = 0;
     else if (undos.length >= this.limit) {
+      this._discardCommitted(undos[0]);
       undos.shift();
       --this._curUndoIndex;
     }

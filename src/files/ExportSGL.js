@@ -9,7 +9,8 @@ var Export = {};
 // 4 label string
 // 5 (SGL2) Multiresolution stack & Animation track caching
 // 8 blendshape tracks (baseShape, deltas, weight keyframes, tangents)
-Export.VERSION = 8;
+// 9 blendshape lock/active-layer state (baseLocked, active editing layer, per-layer lock/mute)
+Export.VERSION = 9;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -93,6 +94,9 @@ Export.exportSGL = function (meshes, main) {
         nbBytes += 4;              // nbKeys
         nbBytes += nbBsKeys * 28;  // per key: time, value, rightDt, rightDv, leftDt, leftDv, tied (7 floats)
       });
+      // v9: baseLocked + activeLayerIdx + per-layer (locked, muted)
+      nbBytes += 8;
+      nbBytes += track.blendshapes.size * 8;
     }
   }
 
@@ -394,6 +398,20 @@ Export.exportSGL = function (meshes, main) {
             f32a[off++] = tied;
           }
         });
+
+        // v9: lock + active-layer state, so a reloaded rig restores Base-locked
+        // and the previously-active editing layer instead of coming back neutral.
+        // Written AFTER all layers (insertion order = import read order, so the
+        // activeLayerIdx + per-layer flags line up by index on load).
+        var _bsNames = Array.from(track.blendshapes.keys());
+        u32a[off++] = track.baseLocked ? 1 : 0;
+        var _activeIdx = (track.editingBlendshape == null)
+          ? -1 : _bsNames.indexOf(track.editingBlendshape);
+        u32a[off++] = _activeIdx < 0 ? 0xFFFFFFFF : _activeIdx;  // 0xFFFFFFFF = Base/none
+        for (var _bi = 0; _bi < _bsNames.length; _bi++) {
+          u32a[off++] = (track.blendshapeLocked && track.blendshapeLocked.has(_bsNames[_bi])) ? 1 : 0;
+          u32a[off++] = (track.blendshapeMuted  && track.blendshapeMuted.has(_bsNames[_bi]))  ? 1 : 0;
+        }
       }
     }
 

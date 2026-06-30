@@ -447,6 +447,8 @@ export function buildAnimationSectionHTML() {
           <button id="acp-record"     title="Record"><i class="fa-solid fa-circle" style="color:#f38ba8"></i></button>
         </div>
         <button class="acp-btn-clear" id="acp-clear-all">Clear all animation</button>
+        <button class="acp-btn-full" id="acp-bake-voxel" style="display:none"
+          title="Voxel frame animations can't be saved to .sxr (the voxel field is runtime-only). Bake to a plain mesh-frame animation that saves and reloads. Undoable.">Bake voxel anim &rarr; mesh frames</button>
       </div>
     </div>
 
@@ -801,6 +803,10 @@ export function syncAnimationSection(el, main) {
   const wt = el.querySelector('#acp-wait-trigger');
   if (wt) wt.checked = !!window._animWaitForTrigger;
 
+  // Bake affordance only appears when there's a voxel cel anim (= unsavable data).
+  const bakeBtn = el.querySelector('#acp-bake-voxel');
+  if (bakeBtn) bakeBtn.style.display = window._frameAnim?.hasVoxelSequences?.() ? '' : 'none';
+
   const bakeRate = String(window._animCaptureRate || 0.1);
   el.querySelectorAll('[data-bakerate]').forEach(b => {
     const match = b.dataset.bakerate === bakeRate;
@@ -1138,6 +1144,11 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       window._animOnClearAll?.();
       _sync();
     });
+  });
+
+  el.querySelector('#acp-bake-voxel')?.addEventListener('click', () => {
+    window._frameAnim?.bakeActiveVoxelToMesh?.();
+    _sync();
   });
 
   // ── Record ─────────────────────────────────────────────────────────────────

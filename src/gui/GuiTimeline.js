@@ -2382,7 +2382,7 @@ export default class GuiTimeline {
     // Modal swap: for a voxel object in frame mode, the key-op/mode buttons become
     // cel-frame ops (New/Dup/Delete) that act at the playhead. See FrameAnimation.
     const frameCtx = (typeof window !== 'undefined') && window._frameAnim
-      && window._frameAnim.activeIsVoxelFrameCtx && window._frameAnim.activeIsVoxelFrameCtx();
+      && window._frameAnim.activeIsFrameCtx && window._frameAnim.activeIsFrameCtx();
     if (frameCtx) {
       const fDefs = [
         { id: 'frame_new', label: 'New', tooltip: 'New blank frame at playhead' },
@@ -3026,6 +3026,10 @@ export default class GuiTimeline {
             this._transformStartRx = rx;
             this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
             if (window._animSelectedKeys) {
+              // The drag retimes via _animTransformBoxInitialKeys (handles every key
+              // type incl. 'frame'); _animTransformBoxInitialTimes feeds the
+              // transform/shape undo-command builder only.
+              this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
               this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                 const tr = reg.tracks.get(sk.meshId);
                 const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
@@ -3038,6 +3042,7 @@ export default class GuiTimeline {
             this._transformStartRx = rx;
             this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
             if (window._animSelectedKeys) {
+              this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
               this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                 const tr = reg.tracks.get(sk.meshId);
                 const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
@@ -3081,6 +3086,7 @@ export default class GuiTimeline {
               this._transformStartRx = rx;
               this._animTransformInitialBox = { startTime: tBox.startTime, endTime: tBox.endTime };
               if (window._animSelectedKeys) {
+                this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
                 this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                   const tr = reg.tracks.get(sk.meshId);
                   const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];

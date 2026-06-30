@@ -398,6 +398,9 @@ GuiTools[Enums.Tools.VOXEL] = {
     this._ctrls.push(fold.addButton("Resample (No Undo)", function () {
       if (tool.applyResolution) tool.applyResolution();
     }));
+    // Brush radius — registers widget._ctrlRadius so the 'x' modal radius shortcut
+    // works for the voxel brush like every other tool (it was previously absent).
+    this._ctrls.push(addCtrlRadius(tool, fold, this, main));
     // Let's use a combobox or similar.
     var options = { 'Add': 0, 'Subtract': 1, 'Inflate': 2 };
     var ctrlMode = fold.addCombobox('Mode', tool, '_mode', options);

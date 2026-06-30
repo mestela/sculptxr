@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
+import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
+import Multimesh from '../mesh/multiresolution/Multimesh.js';
 
 // Frame-by-frame (cel) animation, Quill-style.
 //
@@ -169,6 +171,118 @@ class FrameAnimationManager {
     this._redraw();
   }
 
+  // True when there's at least one voxel cel sequence in the scene — i.e. animation
+  // data that WON'T survive save/reload (voxel fields are worker-only runtime state).
+  // Drives the save-time warning and the panel's Bake affordance.
+  hasVoxelSequences() {
+    for (const seq of this.sequences.values()) if (seq.isVoxel && seq.frames.length) return true;
+    return false;
+  }
+
+  // Build a fully-sculptable Multimesh from a captured frame geom snapshot. Mirrors
+  // the importer's single-level path (ImportSGL): a MeshStatic with full topology
+  // (init() → initTopology → initVertexRings/initEdges, the adjacency the sculpt
+  // brushes expand through), wrapped in a Multimesh (the sculptable object type).
+  // A bare MeshStatic with only face rings made Move grab one vertex — no rings.
+  _meshFromGeom(geom) {
+    const lvl0 = new MeshStatic(this._main._gl);
+    lvl0.setID(MeshStatic.ID++);
+    lvl0.setVertices(this._cloneTyped(geom.vertices));
+    lvl0.setFaces(this._cloneTyped(geom.faces));
+    if (geom.colors)    lvl0.setColors(this._cloneTyped(geom.colors));
+    if (geom.materials) lvl0.setMaterials(this._cloneTyped(geom.materials));
+    if (geom.normals)   lvl0.setNormals(this._cloneTyped(geom.normals));
+    lvl0.init(); // initColorsAndMaterials + allocateArrays + initTopology + updateGeometry + updateCenter + initThreeMesh
+    const mm = new Multimesh(lvl0);
+    mm.initThreeMesh();
+    return mm;
+  }
+
+  // Bake the active voxel cel sequence into a NON-voxel mesh-frame sequence that
+  // SURVIVES save/reload. Voxel per-frame distance-fields are worker-only runtime
+  // state and can't be serialized, but the per-frame surface geom we already capture
+  // renders fine on a plain mesh (varying topology = frame REPLACEMENT, no worker).
+  // Undoable + non-destructive: the voxel object, its sequence and its worker field
+  // slots are kept intact (just lifted out of the scene), so one undo restores the
+  // editable voxel anim exactly.
+  // Bake every voxel cel sequence in the scene (used by the save-time warning).
+  bakeAllVoxelSequences() {
+    let n = 0;
+    // Snapshot first: baking mutates this.sequences (delete voxel, add baked).
+    const voxelSeqs = [...this.sequences.values()].filter(s => s.isVoxel && s.frames.length);
+    voxelSeqs.forEach(s => { if (this.bakeActiveVoxelToMesh(s)) n++; });
+    return n;
+  }
+
+  bakeActiveVoxelToMesh(seqArg) {
+    const seq = seqArg || this.getActiveSeq();
+    if (!seq || !seq.isVoxel || !seq.frames.length) {
+      if (window.screenLog) window.screenLog('[Bake] Active object is not a voxel animation', '#f9e2af');
+      return null;
+    }
+    const main = this._main;
+    const reg = (typeof window !== 'undefined') ? window._animationRegistry : null;
+    const voxelMesh = seq.mesh;
+    const voxelId = seq.meshId;
+    const voxelTrack = reg ? reg.tracks.get(voxelId) : null;
+
+    // Baked display mesh = the current frame's surface; placement copies the voxel
+    // grid matrix so the world position is preserved.
+    const baseGeom = (seq.frames[seq.current] || seq.frames[0]).geom;
+    const baked = this._meshFromGeom(baseGeom);
+    baked._typeName = (voxelMesh._typeName || 'Voxel') + ' baked';
+    if (voxelMesh.getMatrix) baked.getMatrix().set(voxelMesh.getMatrix());
+
+    // Non-voxel sequence reusing the captured per-frame geom (slot -1 = no field).
+    const bakedFrames = seq.frames.map(fr => ({ geom: this._cloneGeom(fr.geom), slot: -1, time: fr.time }));
+    const bakedSeq = {
+      meshId: baked.getID(), mesh: baked, isVoxel: false, frames: bakedFrames,
+      current: Math.min(seq.current, bakedFrames.length - 1),
+      mode: seq.mode, fps: seq.fps, onion: seq.onion, timeOffset: 0,
+    };
+
+    const applyBake = () => {
+      main.removeMeshes([voxelMesh]);
+      if (reg) reg.tracks.delete(voxelId);
+      this.sequences.delete(voxelId);
+      main._meshes.push(baked);
+      if (!baked._permanentStaticLabel) baked._permanentStaticLabel = baked._typeName;
+      main.attachMeshThree(baked);
+      this.sequences.set(baked.getID(), bakedSeq);
+      this._ensureRegistryTrack(baked);
+      main.setMesh(baked);
+      this._loadFrame(bakedSeq, bakedSeq.current);
+      this._refreshUI(); this._redraw();
+    };
+    const undoBake = () => {
+      main.removeMeshes([baked]);
+      this.sequences.delete(baked.getID());
+      if (reg) reg.tracks.delete(baked.getID());
+      main._meshes.push(voxelMesh);
+      main.attachMeshThree(voxelMesh);
+      if (reg && voxelTrack) reg.tracks.set(voxelId, voxelTrack);
+      this.sequences.set(voxelId, seq);
+      main.setMesh(voxelMesh);
+      this._refreshUI(); this._redraw();
+    };
+
+    applyBake();
+    const sm = main.getStateManager && main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      const st = sm.pushStateCustom(undoBake, applyBake, false, 'bake voxel anim to mesh');
+      // When this undo state is purged from the committed side, the source voxel is
+      // gone for good — free its worker distance-field slots (kept alive only so undo
+      // could restore an editable voxel). Reverted-side drops don't call this, so a
+      // baked anim that's been undone keeps the now-live voxel's slots intact.
+      if (st) st._disposeCommitted = () => {
+        const vt = this._voxelTool();
+        if (vt) seq.frames.forEach(f => { if (f.slot >= 0) vt.frameDeleteField(f.slot); });
+      };
+    }
+    if (window.screenLog) window.screenLog(`[Bake] Voxel anim → mesh frames (${bakedFrames.length})`, '#a6e3a1');
+    return baked;
+  }
+
   // Save the live display (and voxel field) back into the current frame.
   _commitCurrent(seq) {
     const fr = seq.frames[seq.current];
@@ -183,12 +297,25 @@ class FrameAnimationManager {
     seq.current = idx;
     seq._dispIdx = idx; // keep the dopesheet highlight in sync with DOM-panel nav
     const fr = seq.frames[idx];
-    if (seq.isVoxel && loadField && this._voxelTool()) {
+    if (seq.isVoxel && loadField && fr.slot >= 0 && this._voxelTool()) {
       // Worker repaints _voxelMesh via MESH_UPDATE; geom display also set for
       // immediate feedback before the async repaint lands.
+      // slot < 0 = a frame restored from .sxr: the worker distance-field is runtime-
+      // only and wasn't serialized, so there is no field to load. Asking the worker
+      // for the missing slot would async-repaint _voxelMesh with garbage and clobber
+      // the saved surface geom below — so skip it and display geom directly. (Loaded
+      // voxel frames are display/playback-only until re-voxelised for editing.)
       this._voxelTool().frameLoadField(fr.slot);
     }
     this._applyGeom(seq.mesh, fr.geom);
+    // Non-voxel frames: rebuild the editable topology (vertex rings + edges) for the
+    // landed geom so the sculpt brushes expand through it. _applyGeom (also the
+    // playback hot path) only does face rings; the rings the brushes walk need full
+    // initTopology — fine here since _loadFrame is discrete nav, not per-tick playback.
+    if (!seq.isVoxel && !this._isEmptyGeom(fr.geom)) {
+      const cm = seq.mesh?.getCurrentMesh ? seq.mesh.getCurrentMesh() : seq.mesh;
+      cm?.initTopology?.();
+    }
     this._updateOnion(seq);
     // Voxels repaint async from the worker (matrix settles a frame later); rebuild
     // ghosts next frame so they pick up the final transform/geometry.
@@ -345,6 +472,35 @@ class FrameAnimationManager {
     this._redraw();
   }
 
+  // Capture a regular-brush edit back into the active NON-voxel cel frame, so a
+  // sculpt sticks when you scrub away and back (voxel frames go through the worker
+  // commit above instead). Called from SculptManager.end() after a stroke. The
+  // sculpt gate already guarantees the playhead is parked on a frame.
+  captureActiveMeshEdit() {
+    const seq = this.getActiveSeq();
+    if (!seq || seq.isVoxel) return;
+    const t = (typeof window !== 'undefined') ? (window._animCurrentTime || 0) : 0;
+    const idx = this._frameAtTime(seq, t);
+    if (idx < 0) return; // off-frame: nothing to capture
+    const before = seq.frames[idx].geom;           // pre-stroke (matches the just-pushed StateGeometry before-image)
+    const after  = this._captureGeom(seq.mesh);     // post-stroke
+    if (before === after) return;
+    seq.frames[idx].geom = after;
+    this._updateOnion(seq);
+    // The stroke already pushed a StateGeometry that reverts the LIVE mesh on undo.
+    // Push a squashed custom state so the FRAME STORE reverts in the same undo step —
+    // squash chains it with that StateGeometry, so one undo/redo moves both together
+    // and a scrub-away-and-back can't resurrect an undone edit.
+    const sm = this._main.getStateManager && this._main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      sm.pushStateCustom(
+        () => { seq.frames[idx].geom = before; },
+        () => { seq.frames[idx].geom = after;  },
+        true, 'frame edit'
+      );
+    }
+  }
+
   // Sculpting is only allowed when the playhead sits exactly on a frame key.
   // Off-frame (held between keys) it's blocked, so an edit is never ambiguous
   // (no "does this make a new frame / modify the dup" decision). Objects without
@@ -417,6 +573,17 @@ class FrameAnimationManager {
     if (!m || !m._isVoxel) return false;
     const sm = this._main.getSculptManager && this._main.getSculptManager();
     return !!(sm && sm.getToolIndex && sm.getToolIndex() === Enums.Tools.VOXEL);
+  }
+
+  // True when the timeline's modal frame New/Dup/Delete buttons should show. Check the
+  // voxel context FIRST: a voxel in voxel-tool context qualifies even before the first
+  // frame exists, which is how you START a voxel animation (don't gate on a sequence,
+  // or there's no way in). Otherwise, any object that already has a non-voxel cel
+  // sequence (e.g. a baked mesh-frame anim) so its frames stay authorable.
+  activeIsFrameCtx() {
+    if (this.activeIsVoxelFrameCtx()) return true;
+    const seq = this.getActiveSeq();
+    return !!(seq && !seq.isVoxel);
   }
 
   // -------------------------------------------------------------- settings

@@ -316,6 +316,7 @@ Import.importSGL = function (buffer, gl, main) {
         trackObj.blendshapeTracks = new Map();
 
         var nbBlendshapes = u32a[off++];
+        var _bsNames = [];
         for (var b = 0; b < nbBlendshapes; b++) {
           // Read name
           var bsName = '';
@@ -332,6 +333,7 @@ Import.importSGL = function (buffer, gl, main) {
           delta.set(f32a.subarray(off, off + nbVerts * 3));
           off += nbVerts * 3;
           trackObj.blendshapes.set(bsName, delta);
+          _bsNames.push(bsName);
 
           // Read weight keyframes
           var nbBsKeys = u32a[off++];
@@ -349,6 +351,27 @@ Import.importSGL = function (buffer, gl, main) {
             }
           }
           trackObj.blendshapeTracks.set(bsName, bTrack);
+        }
+
+        // v9: restore lock + active-layer state (written after all layers, indexed
+        // by the same insertion order we just read). Older files default to base
+        // locked once blendshapes exist (matches the runtime default in #39).
+        trackObj.blendshapeLocked = new Set();
+        trackObj.blendshapeMuted  = new Set();
+        if (version >= 9) {
+          trackObj.baseLocked = u32a[off++] > 0;
+          var _activeIdx = u32a[off++];
+          trackObj.editingBlendshape = (_activeIdx === 0xFFFFFFFF || _activeIdx >= _bsNames.length)
+            ? null : _bsNames[_activeIdx];
+          for (var _bi = 0; _bi < nbBlendshapes; _bi++) {
+            if (u32a[off++] > 0) trackObj.blendshapeLocked.add(_bsNames[_bi]);
+            if (u32a[off++] > 0) trackObj.blendshapeMuted.add(_bsNames[_bi]);
+          }
+        } else {
+          // Pre-v9 file: no stored state. Lock Base by default (it's the runtime
+          // default once a rig exists) and leave no layer active.
+          trackObj.baseLocked = nbBlendshapes > 0;
+          trackObj.editingBlendshape = null;
         }
       }
     }

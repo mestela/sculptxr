@@ -2431,14 +2431,19 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       const id = btn.dataset.meshId;
       const now = Date.now();
       const prev = main._lastOutlinerClick;
-      const isDouble = prev && prev.id === id && (now - prev.t) < 350;
+      const isDouble = prev && prev.id === id && (now - prev.t) < 500;
       main._lastOutlinerClick = { id, t: now };
-      main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn();
-      // After the repaint, the button is a fresh element — find it and edit.
+      // Double-click → rename. Short-circuit BEFORE the select repaint: `btn` is the
+      // live (already-selected) row element from the first click's repaint, so we can
+      // edit it directly. Repainting first would destroy it mid-gesture, which is why
+      // the rename used to need several taps to "wake up". Reset the timestamp so a
+      // third click doesn't immediately re-trigger.
       if (isDouble) {
-        const fresh = el.querySelector(`[data-action="select"][data-mesh-id="${id}"]`);
-        if (fresh) beginRename(fresh, mesh);
+        main._lastOutlinerClick = null;
+        beginRename(btn, mesh);
+        return;
       }
+      main.setOrUnsetMesh?.(mesh, false); main.render?.(); repaintFn();
     });
   });
 
@@ -3039,12 +3044,12 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
 
   q('#mm-browser-save')?.addEventListener('click', () => {
-    promptSaveName('Save scene as', 'scene', (n) => {
+    warnVoxelThenSave(main, () => promptSaveName('Save scene as', 'scene', (n) => {
       guiFiles?.saveToBrowserStorage?.(n);
       setTimeout(() => {
         guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
       }, 800);
-    });
+    }));
   });
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
@@ -3091,6 +3096,50 @@ function promptSaveName(label, defaultName, cb) {
   }
 }
 
+// Voxel cel animation can't be serialized (the per-frame voxel field is worker-only
+// runtime state). Before an .sxr / browser save that would silently drop it, warn
+// and offer to bake it to a mesh-frame animation first (which DOES persist). Desktop
+// gets a 3-button dialog; VR routes to the 2-way ray-interactable confirm.
+function warnVoxelThenSave(main, proceed) {
+  const fa = window._frameAnim;
+  if (!fa?.hasVoxelSequences?.()) { proceed(); return; }
+  const bakeThen = () => { fa.bakeAllVoxelSequences?.(); main.render?.(); proceed(); };
+  const msg = "This scene has voxel frame animation, which can't be saved (the voxel "
+    + "field is runtime-only). Bake it to mesh frames so it saves and reloads?";
+
+  // VR → 2-way confirm panel: Confirm = bake & save, Cancel = save as-is.
+  if (window._vrConfirmPanel && window.app?._renderer?.xr?.isPresenting) {
+    window._vrConfirm(msg, bakeThen, proceed);
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:999999;font-family:system-ui,sans-serif;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#1e1e1e;border:1px solid #555;border-radius:10px;padding:26px 30px;max-width:420px;width:90%;text-align:center;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.8);';
+  const p = document.createElement('p');
+  p.style.cssText = 'margin:0 0 22px;font-size:14px;line-height:1.5;';
+  p.textContent = msg;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;';
+  const mk = (label, bg, fg) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = `background:${bg};color:${fg};border:none;border-radius:6px;padding:9px 18px;font-size:13px;cursor:pointer;font-weight:600;`;
+    return b;
+  };
+  const bBake = mk('Bake & save', '#1e6b3a', '#fff');
+  const bRaw  = mk('Save without it', '#444', '#eee');
+  const bCancel = mk('Cancel', '#2a2a2a', '#aaa');
+  row.append(bBake, bRaw, bCancel);
+  box.append(p, row); overlay.append(box); document.body.append(overlay);
+  const close = () => overlay.remove();
+  bBake.onclick = () => { close(); bakeThen(); };
+  bRaw.onclick  = () => { close(); proceed(); };
+  bCancel.onclick = () => close();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+}
+
 export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
@@ -3125,7 +3174,7 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     if (guiFiles) guiFiles._exportAll = !guiFiles._exportAll;
     q('#mm-export-all')?.classList.toggle('active', guiFiles?._exportAll ?? true);
   });
-  q('#mm-export-sxr')?.addEventListener('click', () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n)));
+  q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n))));
   q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', 'sculpt', n => guiFiles?.saveFileAsGLB?.(n)));
   q('#mm-export-obj')?.addEventListener('click', () => promptSaveName('Save .obj as', 'sculpt', n => guiFiles?.saveFileAsOBJ?.(n)));
   q('#mm-export-ply')?.addEventListener('click', () => promptSaveName('Save .ply as', 'sculpt', n => guiFiles?.saveFileAsPLY?.(n)));
@@ -3141,12 +3190,12 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   });
 
   q('#mm-browser-save')?.addEventListener('click', () => {
-    promptSaveName('Save scene as', 'scene', (n) => {
+    warnVoxelThenSave(main, () => promptSaveName('Save scene as', 'scene', (n) => {
       guiFiles?.saveToBrowserStorage?.(n);
       setTimeout(() => {
         guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
       }, 800);
-    });
+    }));
   });
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
