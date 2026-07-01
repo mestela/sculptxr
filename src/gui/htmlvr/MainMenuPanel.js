@@ -524,6 +524,18 @@ const CSS = `
   padding: 0;
 }
 .mm-vis-btn.hidden { color: #45475a; }
+/* Keyframe-driven visibility: orange eye (bright = shown, dark = hidden) so it reads
+   as "timeline controls this" vs a normal manual eye. */
+.mm-vis-btn.keyed { color: #fab387; }
+.mm-vis-btn.keyed.hidden { color: #8a4b1e; }
+.mm-collapse-btn {
+  width: 16px; height: 24px; flex-shrink: 0; padding: 0;
+  border: none; background: none; color: #9399b2; font-size: 10px;
+  cursor: pointer; outline: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.mm-collapse-btn:hover, .mm-collapse-btn.hover { color: #cdd6f4; }
+.mm-collapse-spacer { width: 16px; flex-shrink: 0; display: inline-block; }
 .mm-rename-btn {
   width: 24px; height: 24px; flex-shrink: 0;
   border: 1px solid #45475a; border-radius: 4px; background: #313244;
@@ -1095,6 +1107,9 @@ export function buildSectionHTML_scene(main) {
   const childrenOf = (parent) => nodes.filter((m) => (m._parentMesh || null) === parent);
   const renderRow = (m, depth) => {
     const vis   = m.isVisible?.() ?? true;
+    const hasVisKeys = !!window._animationRegistry?.hasVisibilityKeys?.(m);
+    const hasKids = childrenOf(m).length > 0;
+    const collapsed = !!m._outlinerCollapsed;
     const isSel = selected.includes(m);
     const isNull = !!m._isNull;
     const typeIcon = isNull ? 'fa-asterisk' : 'fa-cube';
@@ -1104,10 +1119,13 @@ export function buildSectionHTML_scene(main) {
     // Indent the NAME (not the row) so the vis-eye column stays vertically aligned.
     return `
       <div class="mm-outliner-row${pickCls}">
-        <button class="mm-vis-btn${vis ? '' : ' hidden'}" data-mesh-id="${m._permanentStaticId}" data-action="vis">
-          <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"></i>
+        <button class="mm-vis-btn${vis ? '' : ' hidden'}${hasVisKeys ? ' keyed' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="vis" title="${hasVisKeys ? 'Visibility is keyframe-driven (timeline controls it)' : 'Toggle visibility'}">
+          <i class="fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}"${hasVisKeys ? ` style="color:${vis ? '#fab387' : '#8a4b1e'}"` : ''}></i>
         </button>
-        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" style="margin-left:${depth * 14}px" title="Rename with the pencil, or double-click">
+        ${hasKids
+          ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}"><i class="fa-solid ${collapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></button>`
+          : `<span class="mm-collapse-spacer" style="margin-left:${depth * 14}px"></span>`}
+        <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Rename with the pencil, or double-click">
           <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>
         </button>
         <button class="mm-rename-btn" data-mesh-id="${m._permanentStaticId}" data-action="rename" title="Rename">
@@ -1119,7 +1137,7 @@ export function buildSectionHTML_scene(main) {
     let html = '';
     for (const m of childrenOf(parent)) {
       html += renderRow(m, depth);
-      html += renderTree(m, depth + 1);
+      if (!m._outlinerCollapsed) html += renderTree(m, depth + 1);
     }
     return html;
   };
@@ -2343,6 +2361,29 @@ export function wireSlider(sliderEl, valEl, cb, formatFn, dirtyFn) {
 /**
  * Wire event handlers for the Scene/Outliner section.
  */
+// Lightweight in-place refresh of the outliner eye icons (icon + orange keyed
+// colour) to match current visibility — cheap enough to call every animation frame,
+// unlike a full outliner rebuild. Used so the eye state tracks the timeline live.
+export function updateOutlinerVisIcons(main) {
+  const reg = window._animationRegistry;
+  const meshes = main.getMeshes?.() ?? [];
+  document.querySelectorAll('[data-action="vis"]').forEach((btn) => {
+    const mesh = meshes.find((m) => m._permanentStaticId === btn.dataset.meshId);
+    if (!mesh) return;
+    const vis = mesh.isVisible?.() ?? true;
+    const keyed = !!reg?.hasVisibilityKeys?.(mesh);
+    btn.classList.toggle('hidden', !vis);
+    btn.classList.toggle('keyed', keyed);
+    const i = btn.querySelector('i');
+    if (i) {
+      const want = `fa-solid ${vis ? 'fa-eye' : 'fa-eye-slash'}`;
+      if (i.className !== want) i.className = want;
+      const col = keyed ? (vis ? '#fab387' : '#8a4b1e') : '';
+      if (i.style.color !== col) i.style.color = col;
+    }
+  });
+}
+
 export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   const findMesh = id => (main.getMeshes?.() ?? []).find(m => m._permanentStaticId === id) ?? null;
 
@@ -2357,6 +2398,19 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
       repaintFn();
     });
   });
+
+  // Chevron → expand/collapse a parent's children in the outliner (frame groups,
+  // rigs, any parented hierarchy). State lives on the mesh so it survives repaints.
+  el.querySelectorAll('[data-action="collapse"]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mesh = findMesh(btn.dataset.meshId);
+      if (!mesh) return;
+      mesh._outlinerCollapsed = !mesh._outlinerCollapsed;
+      repaintFn();
+    });
+  });
+
 
   // Complete a pending two-step rig assignment (parent / aim) against `target`.
   const completeRigPending = (target) => {

@@ -40,6 +40,8 @@ class AnimationRegistry {
       shapeTimes:       track.shapeTimes       ? track.shapeTimes.slice()                         : [],
       shapes:           track.shapes           ? track.shapes.map(s => new Float32Array(s))       : [],
       shapeOutputTimes: track.shapeOutputTimes ? track.shapeOutputTimes.slice()                   : [],
+      visTimes:         track.visTimes         ? track.visTimes.slice()                           : [],
+      visValues:        track.visValues        ? track.visValues.slice()                          : [],
       tangentOffsets:   track.tangentOffsets   ? JSON.parse(JSON.stringify(track.tangentOffsets)) : undefined,
     };
     if (track.blendshapeTracks) {
@@ -62,6 +64,8 @@ class AnimationRegistry {
     track.shapeTimes       = snap.shapeTimes.slice();
     track.shapes           = snap.shapes.map(s => new Float32Array(s));
     track.shapeOutputTimes = snap.shapeOutputTimes.slice();
+    track.visTimes         = snap.visTimes  ? snap.visTimes.slice()  : [];
+    track.visValues        = snap.visValues ? snap.visValues.slice() : [];
     track.tangentOffsets   = snap.tangentOffsets ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
     if (snap.blendshapeTracks) {
       if (!track.blendshapeTracks) track.blendshapeTracks = new Map();
@@ -673,6 +677,84 @@ class AnimationRegistry {
         'Add Shape Key'
       );
     }
+  }
+
+  // ---- Visibility track (step-held boolean per object) ----------------------
+  // Drives which object is shown at a given time. Step function, BOTH ends
+  // clamped (before the first key holds the first value, after the last holds
+  // the last). No keys → returns null: the object isn't vis-animated, so the
+  // caller leaves its manual/static visibility untouched.
+  evaluateVisibility(track, t) {
+    const times = track && track.visTimes;
+    if (!times || times.length === 0) return null;
+    if (t <= times[0]) return track.visValues[0] > 0.5;
+    let idx = 0;
+    for (let i = 0; i < times.length; i++) {
+      if (times[i] <= t + 1e-6) idx = i; else break;
+    }
+    return track.visValues[idx] > 0.5;
+  }
+
+  hasVisibilityKeys(mesh) {
+    const tr = mesh && this.tracks.get(mesh.getID());
+    return !!(tr && tr.visTimes && tr.visTimes.length);
+  }
+
+  // Insert/replace a visibility keyframe (value truthy = shown). Undoable via the
+  // same snapshot/restore path as the other key types.
+  setVisibilityKey(mesh, time, value) {
+    if (!mesh || isNaN(time)) return;
+    const id = mesh.getID();
+    const _meshId = id;
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, {
+        times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], shapeOutputTimes: [],
+        visTimes: [], visValues: [],
+        playbackTime: 0, lastUpdate: performance.now(),
+      });
+    }
+    const track = this.tracks.get(id);
+    if (!track.visTimes)  track.visTimes = [];
+    if (!track.visValues) track.visValues = [];
+
+    const v = value ? 1 : 0;
+    const _snapBefore = this._snapshotTrack(track);
+
+    let idx = 0;
+    while (idx < track.visTimes.length && track.visTimes[idx] < time) idx++;
+    if (idx < track.visTimes.length && Math.abs(track.visTimes[idx] - time) < 0.005) {
+      track.visValues[idx] = v;
+    } else {
+      track.visTimes.splice(idx, 0, time);
+      track.visValues.splice(idx, 0, v);
+    }
+
+    if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+
+    const _snapAfter = this._snapshotTrack(track);
+    if (window.app?.getStateManager?.()) {
+      window.app.getStateManager().pushStateCustom(
+        () => { const tr = this.tracks.get(_meshId); if (!tr) return; const msh = window.app?.getMesh?.(); this._restoreTrack(tr, _snapBefore, msh?.getID?.() === _meshId ? msh : null); },
+        () => { const tr = this.tracks.get(_meshId); if (!tr) return; const msh = window.app?.getMesh?.(); this._restoreTrack(tr, _snapAfter,  msh?.getID?.() === _meshId ? msh : null); },
+        false, 'Set Visibility Key'
+      );
+    }
+    this.update(mesh, true);
+    if (window.app?.render) window.app.render();
+  }
+
+  // Convenience: read the current keyed visibility of a mesh at the playhead, flip
+  // it, and write a key there (used by a keyframable outliner eye).
+  toggleVisibilityKeyAtPlayhead(mesh) {
+    if (!mesh) return;
+    const t = window._animCurrentTime || 0;
+    const track = this.tracks.get(mesh.getID());
+    const cur = this.evaluateVisibility(track, t);
+    // First key records the object's CURRENT visibility (so it doesn't vanish on the
+    // first click); later clicks flip whatever is keyed at the playhead.
+    const next = (cur === null) ? (mesh.isVisible?.() ?? true) : !cur;
+    this.setVisibilityKey(mesh, t, next);
   }
 
   copyShapeKey(mesh, time) {
@@ -1951,6 +2033,21 @@ class AnimationRegistry {
     }
 
     track.playbackTime = this.globalPlaybackTime || 0;
+
+    // Visibility track: drive the object's shown/hidden state from its keyed
+    // timeline. Step-held, both ends clamped. Null = not vis-animated → leave the
+    // object's manual/static visibility alone. This is what makes a frame group's
+    // "only one child visible at a time" fall out of a general per-object primitive.
+    {
+      const vis = this.evaluateVisibility(track, track.playbackTime);
+      if (vis !== null && mesh.setVisible) {
+        mesh.setVisible(vis);
+        // setVisible only flips an internal flag — the Three renderer still draws the
+        // threeMesh unless we also toggle its .visible (same as the manual eye toggle).
+        const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+        if (tm) tm.visible = vis;
+      }
+    }
 
     if (track.times && track.times.length >= 2) {
       let frameIdx = 0;

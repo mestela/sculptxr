@@ -375,6 +375,29 @@ Import.importSGL = function (buffer, gl, main) {
         }
       }
     }
+
+    // v10: per-object visibility track. Written for EVERY mesh (0 keys when absent),
+    // so read the count unconditionally to keep the byte offset aligned.
+    if (version >= 10) {
+      var nbVisKeys = u32a[off++];
+      if (nbVisKeys > 0) {
+        var visTrack = AnimationRegistry.tracks.get(finalMesh.getID());
+        if (!visTrack) {
+          visTrack = {
+            times: [], positions: [], quaternions: [], scales: [],
+            shapeTimes: [], shapes: [], shapeOutputTimes: [],
+            playbackTime: 0, lastUpdate: performance.now(),
+          };
+          AnimationRegistry.tracks.set(finalMesh.getID(), visTrack);
+        }
+        visTrack.visTimes = [];
+        visTrack.visValues = [];
+        for (var _vi = 0; _vi < nbVisKeys; _vi++) {
+          visTrack.visTimes.push(f32a[off++]);
+          visTrack.visValues.push(u32a[off++] > 0 ? 1 : 0);
+        }
+      }
+    }
   }
 
   // Restore any appended frame-by-frame (cel) animation block. Keyed by mesh

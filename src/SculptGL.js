@@ -13,6 +13,7 @@ var MOUSE_RIGHT = 3;
 
 import ReferenceManager from './editing/ReferenceManager.js';
 import FrameAnimationManager from './editing/FrameAnimation.js';
+import { FrameGroup } from './editing/FrameGroup.js';
 
 // Manage events
 class SculptGL extends Scene {
@@ -100,6 +101,10 @@ class SculptGL extends Scene {
     // first enable. Console: window._frameAnim.enableForActive() etc.
     this._frameAnim = new FrameAnimationManager(this);
     window._frameAnim = this._frameAnim;
+
+    // Shape-replacement (SR) frame animation as real outliner objects + keyframed vis.
+    this._frameGroup = new FrameGroup(this);
+    window._frameGroup = this._frameGroup;
 
     window.validateMesh = () => {
       var mesh = this.getMesh();

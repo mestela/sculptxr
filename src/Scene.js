@@ -1351,10 +1351,14 @@ class Scene {
       if (window._animPlaying || scrubbing) {
         const reg = window._animationRegistry;
         this._frameAnim.syncToTime(reg ? (reg.globalPlaybackTime || 0) : 0);
+        // Keep the outliner eye icons tracking the keyframed visibility live (cheap
+        // in-place recolour; only during play/scrub, not every idle frame).
+        window._updateOutlinerVisIcons?.();
       } else {
         this._frameAnim.tick();
         // Playback just stopped → restore onion ghosts for the landed frame.
         if (this._frameWasPlaying) this._frameAnim.refreshOnion();
+        if (this._frameWasPlaying) window._updateOutlinerVisIcons?.(); // final state on stop
       }
       this._frameWasPlaying = !!window._animPlaying;
     }

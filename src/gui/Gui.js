@@ -13,6 +13,7 @@ import {
   buildSectionHTML_scene, buildSectionHTML_rendering, buildSectionHTML_topology, buildSectionHTML_sculpting,
   injectMMCSS,
   wireSectionScene, wireSectionRendering, wireSectionTopology, wireSectionSculpting,
+  updateOutlinerVisIcons,
   fixSliderDrag,
   buildMenuHTML_files,      wireMenuFiles,
   buildMenuHTML_history,    wireMenuHistory,
@@ -517,6 +518,8 @@ class Gui {
     this._desktopTopologyEl  = topologyPanel;
     this._desktopSculptingEl = sculptingPanel;
     this._buildDesktopScene(scenePanel);
+    // Global hook so the animation loop can live-refresh the outliner eye icons.
+    window._updateOutlinerVisIcons = () => updateOutlinerVisIcons(this._main);
     this._buildDesktopRendering(renderingPanel);
     this._buildDesktopTopology(topologyPanel);
     this._buildDesktopSculpting(sculptingPanel);

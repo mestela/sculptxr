@@ -2395,12 +2395,28 @@ export default class GuiTimeline {
       fDefs.forEach(def => { btns.push({ ...def, x: fbx, y: by, w: fw, h: bh }); fbx += fw + fgap; });
       return btns;
     }
+    // Shape-replacement (SR) keymode: New/Dup/Delete real child-object frames, plus an
+    // active SR toggle to exit. See FrameGroup.
+    if (mode === 'shaperep') {
+      const sDefs = [
+        { id: 'sr_new', label: 'New', w: 40, tooltip: 'New blank frame at playhead' },
+        { id: 'sr_dup', label: 'Dup', w: 40, tooltip: 'Duplicate the held frame at playhead' },
+        { id: 'sr_del', label: 'Del', w: 40, tooltip: 'Delete the frame at the playhead' },
+        { id: 'keymode_shaperep', label: 'SR', w: 28, active: true, tooltip: 'Exit shape-replacement mode' },
+      ];
+      const sgap = 6;
+      const stotal = sDefs.reduce((a, d) => a + d.w, 0) + (sDefs.length - 1) * sgap;
+      let sbx = Math.round((GUTTER_W - stotal) / 2);
+      sDefs.forEach(def => { btns.push({ ...def, x: sbx, y: by, h: bh }); sbx += def.w + sgap; });
+      return btns;
+    }
     const r2Defs = [
       { id: 'addkey',             icon: '',  disabled: false,                                       tooltip: 'Add key at playhead' },
       { id: 'delkey',             icon: '',  disabled: !hasSel,                                     tooltip: 'Delete selected key(s)' },
       { id: 'keymode_transform',  label: 'XF', active: mode === 'transform' || mode === 'vrtransform',            tooltip: 'Key mode: transform' },
       { id: 'keymode_shape',      label: 'SH', active: mode === 'shape',                                          tooltip: 'Key mode: shape' },
       { id: 'keymode_blendshape', label: 'BS', active: mode === 'blendshape',                                     tooltip: 'Key mode: blendshape' },
+      { id: 'keymode_shaperep',   label: 'SR', active: mode === 'shaperep',                                       tooltip: 'Key mode: shape replacement' },
     ];
     const total = r2Defs.length * r2BtnW + (r2Defs.length - 1) * r2Gap;
     let bx = Math.round((GUTTER_W - total) / 2);
@@ -2478,6 +2494,18 @@ export default class GuiTimeline {
               return;
             case 'frame_del':
               window._frameAnim?.deleteFrameAt?.(t);
+              this.draw();
+              return;
+            case 'sr_new':
+              window._frameGroup?.addFrame?.(false); // blank frame
+              this.draw();
+              return;
+            case 'sr_dup':
+              window._frameGroup?.addFrame?.(true);  // duplicate held frame
+              this.draw();
+              return;
+            case 'sr_del':
+              window._frameGroup?.deleteFrame?.();
               this.draw();
               return;
             case 'addkey':
@@ -2607,7 +2635,10 @@ export default class GuiTimeline {
             }
             default:
               if (gbHit.id.startsWith('keymode_')) {
-                window._animKeyMode = gbHit.id.replace('keymode_', '');
+                const km = gbHit.id.replace('keymode_', '');
+                // SR is a toggle: re-clicking the active SR button exits back to
+                // transform (its New/Dup/Del row otherwise hides the other keymodes).
+                window._animKeyMode = (km === 'shaperep' && window._animKeyMode === 'shaperep') ? 'transform' : km;
               }
           }
           this.draw();

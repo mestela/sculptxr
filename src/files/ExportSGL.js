@@ -10,7 +10,8 @@ var Export = {};
 // 5 (SGL2) Multiresolution stack & Animation track caching
 // 8 blendshape tracks (baseShape, deltas, weight keyframes, tangents)
 // 9 blendshape lock/active-layer state (baseLocked, active editing layer, per-layer lock/mute)
-Export.VERSION = 9;
+// 10 per-object visibility track (step-held vis keyframes)
+Export.VERSION = 10;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -412,6 +413,15 @@ Export.exportSGL = function (meshes, main) {
           u32a[off++] = (track.blendshapeLocked && track.blendshapeLocked.has(_bsNames[_bi])) ? 1 : 0;
           u32a[off++] = (track.blendshapeMuted  && track.blendshapeMuted.has(_bsNames[_bi]))  ? 1 : 0;
         }
+      }
+
+      // v10: per-object visibility track (step-held). Independent block, always
+      // written (0 keys when the object isn't vis-animated).
+      var nbVisKeys = (track && track.visTimes) ? track.visTimes.length : 0;
+      u32a[off++] = nbVisKeys;
+      for (var _vi = 0; _vi < nbVisKeys; _vi++) {
+        f32a[off++] = track.visTimes[_vi];
+        u32a[off++] = track.visValues[_vi] ? 1 : 0;
       }
     }
 
