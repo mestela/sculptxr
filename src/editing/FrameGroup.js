@@ -38,6 +38,16 @@ export class FrameGroup {
 
   activeGroup() { return this.groupOf(this._main.getMesh && this._main.getMesh()); }
 
+  // Remove a child frame mesh cleanly. SR children are reparented UNDER the group's
+  // Three mesh, so removeMeshes (which only detaches from the world group) leaves the
+  // Three mesh rendering — detach it from its actual parent too.
+  _removeChild(v) {
+    this._main.removeMeshes([v]);
+    const t = v.getThreeMesh && v.getThreeMesh();
+    if (t && t.parent) t.parent.remove(t);
+    this._reg()?.tracks.delete(v.getID());
+  }
+
   // Children of a group, ordered by their frame time.
   children(group) {
     if (!group) return [];
@@ -122,7 +132,17 @@ export class FrameGroup {
     });
     // Restore vis tracks.
     const reg = this._reg();
-    if (reg) snap.vis.forEach((s, id) => { const tr = reg.tracks.get(id); if (tr) { tr.visTimes = s.t.slice(); tr.visValues = s.v.slice(); reg.tracks.get(id); } });
+    if (reg) snap.vis.forEach((s, id) => {
+      let tr = reg.tracks.get(id);
+      // Recreate the track if it was deleted (e.g. by a frame delete we're now undoing),
+      // else the restored frame has no vis keys and doubles up.
+      if (!tr) {
+        tr = { times: [], positions: [], quaternions: [], scales: [], shapeTimes: [], shapes: [], shapeOutputTimes: [], playbackTime: 0, lastUpdate: performance.now() };
+        reg.tracks.set(id, tr);
+      }
+      tr.visTimes = s.t.slice();
+      tr.visValues = s.v.slice();
+    });
     if (snap.selected) main.setMesh(snap.selected);
     if (reg) main.getMeshes().forEach(m => reg.update(m, true));
     main.render?.();
@@ -188,8 +208,10 @@ export class FrameGroup {
     if (dup && cur) {
       child = this._dupMesh(cur);
     } else {
-      child = new MeshStatic(main._gl);   // blank/empty frame
-      child._typeName = 'Frame';
+      child = new MeshStatic(main._gl);   // blank/empty frame — a "beat of nothing"
+      child._typeName = 'blank';
+      child._permanentStaticLabel = 'blank'; // reads clearly as an intentional empty
+      // frame; replaced by the primitive's name when one is added to fill it.
     }
     child._srFrameTime = time;
     main._meshes.push(child);
@@ -218,10 +240,7 @@ export class FrameGroup {
     const before = this._snapshot();
     // Replace the frame already at this time (the blank "New" slot).
     const existing = this.children(group).find(c => c !== mesh && Math.abs((c._srFrameTime || 0) - time) < 0.005);
-    if (existing) {
-      main.removeMeshes([existing]);
-      this._reg()?.tracks.delete(existing.getID());
-    }
+    if (existing) this._removeChild(existing);
     mesh._srFrameTime = time;
     // Sync the Three matrix from _matrix before reparenting, or setMeshParent's
     // world-preservation reads a stale identity and flattens the primitive to scale 1.
@@ -235,6 +254,31 @@ export class FrameGroup {
     return true;
   }
 
+  // Delete a set of frames by their child mesh ids (from dopesheet selection). Keeps
+  // at least one frame per group. One undo step.
+  deleteFramesByChildIds(ids) {
+    const main = this._main;
+    const idSet = new Set(ids);
+    const victims = main.getMeshes().filter(m => idSet.has(m.getID()) && m._parentMesh && m._parentMesh._isFrameGroup);
+    if (!victims.length) return;
+    const byGroup = new Map();
+    victims.forEach(v => { const g = v._parentMesh; if (!byGroup.has(g)) byGroup.set(g, []); byGroup.get(g).push(v); });
+    const before = this._snapshot();
+    let changed = false;
+    byGroup.forEach((vics, group) => {
+      const total = this.children(group).length;
+      const toRemove = (vics.length >= total) ? vics.slice(0, total - 1) : vics; // never empty a group
+      toRemove.forEach(v => { this._removeChild(v); changed = true; });
+      this._rebuildVis(group);
+    });
+    if (changed) {
+      main.setMesh(main.getMeshes()[main.getMeshes().length - 1] || null);
+      this._commit(before, 'SR delete frames');
+      this._refreshOutliner();
+      main.render?.();
+    }
+  }
+
   // Delete the frame held at the playhead (its child + keys). Keeps ≥1 frame.
   deleteFrame() {
     const main = this._main;
@@ -246,9 +290,7 @@ export class FrameGroup {
     const victim = this.visibleChild(group, time);
     if (!victim) return;
     const before = this._snapshot();
-    main.removeMeshes([victim]);
-    const reg = this._reg();
-    if (reg) reg.tracks.delete(victim.getID());
+    this._removeChild(victim);
     this._rebuildVis(group);
     main.setMesh(this.visibleChild(group, time) || this.children(group)[0] || group);
     this._commit(before, 'SR delete frame');

@@ -1623,6 +1623,16 @@ export class AnimationControlPanel extends HTMLVRPanel {
   _requestPaint() { this.markDirty(); }
 
   deleteKey() {
+    // SR frame-group markers → delete their real child objects via FrameGroup, then
+    // fall through for any other selected key types.
+    const srKeys = (window._animSelectedKeys || []).filter(k => k.type === 'sr');
+    if (srKeys.length && window._frameGroup) {
+      window._frameGroup.deleteFramesByChildIds(srKeys.map(k => k.childId));
+      window._animSelectedKeys = (window._animSelectedKeys || []).filter(k => k.type !== 'sr');
+      window.app?.getGui?.()?._ctrlTimeline?.draw?.();
+      if (!window._animSelectedKeys.length) return;
+    }
+
     const reg = window._animationRegistry;
     if (!reg) return;
     const mesh = this._main.getMesh();

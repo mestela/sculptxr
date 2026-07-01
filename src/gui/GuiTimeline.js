@@ -3342,7 +3342,22 @@ export default class GuiTimeline {
                   const t = kids[i]._srFrameTime || 0;
                   const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
                   if (Math.abs(rx - kx) < 12 && Math.abs(ry - fy) < 12) {
-                    this._srDrag = { child: kids[i], group: grp, startRx: rx, startTime: t, moved: false, before: window._frameGroup._snapshot() };
+                    const cid = kids[i].getID();
+                    const already = window._animSelectedKeys?.some(k => k.type === 'sr' && k.childId === cid);
+                    const skey = { meshId, type: 'sr', childId: cid };
+                    if (e.shiftKey) {
+                      window._animSelectedKeys = window._animSelectedKeys || [];
+                      if (!already) window._animSelectedKeys.push(skey);
+                    } else if (!already) {
+                      // Fresh single-select. Re-clicking an already-selected marker keeps the
+                      // multi-selection so a drag moves all of them.
+                      window._animSelectedKeys = [skey];
+                      window._animTransformBox = null;
+                    }
+                    // Capture every selected SR marker + its start time for a group drag.
+                    const selIds = new Set((window._animSelectedKeys || []).filter(k => k.type === 'sr').map(k => k.childId));
+                    const items = this._main._meshes.filter(m => selIds.has(m.getID())).map(c => ({ child: c, startTime: c._srFrameTime || 0 }));
+                    this._srDrag = { child: kids[i], group: grp, startRx: rx, startTime: t, moved: false, before: window._frameGroup._snapshot(), items };
                     keyFound = true;
                     break;
                   }
@@ -3407,8 +3422,8 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
-    // SR frame marker drag → retime the child frame (live marker move; sort + vis
-    // rebuild happen on release).
+    // SR frame marker drag → retime the grabbed frame AND every other selected marker
+    // by the same delta (live; sort + vis rebuild happen on release).
     if (this._srDrag) {
       const rect = this._canvas.getBoundingClientRect();
       const rx = e.clientX - rect.left;
@@ -3419,7 +3434,10 @@ export default class GuiTimeline {
       t = Math.max(0, t);
       if (window._animSnapToFrame !== false) { const fps = window._animFPS || 24; t = Math.round(t * fps) / fps; }
       if (Math.abs(rx - this._srDrag.startRx) > 3) this._srDrag.moved = true;
-      if (this._srDrag.moved) this._srDrag.child._srFrameTime = t;
+      if (this._srDrag.moved) {
+        const dt = t - this._srDrag.startTime;
+        this._srDrag.items.forEach(it => { it.child._srFrameTime = Math.max(0, it.startTime + dt); });
+      }
       this.draw();
       return;
     }
@@ -3887,7 +3905,8 @@ export default class GuiTimeline {
       this._srDrag = null;
       const fg = window._frameGroup;
       if (!d.moved) {
-        this._setPlayhead(d.startTime);
+        // Click (no drag) = select only (already done on mousedown). No playhead jump.
+        this.draw();
       } else if (fg) {
         fg._rebuildVis(d.group);
         fg._refreshOutliner?.();
@@ -4457,9 +4476,23 @@ export default class GuiTimeline {
       });
     }
 
+    // Add SR frame-group markers in range (keyed by child id — stable across retime resort).
+    if (window._frameGroup) {
+      tracks.forEach(([meshId], laneIdx) => {
+        if (laneIdx < laneMin || laneIdx > laneMax) return;
+        const grp = this._main._meshes?.find(m => m.getID() === meshId && m._isFrameGroup);
+        if (!grp) return;
+        window._frameGroup.children(grp).forEach(child => {
+          const t = child._srFrameTime || 0;
+          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'sr', childId: child.getID() });
+        });
+      });
+    }
+
     newKeys.forEach(nk => {
       const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k =>
-        k.meshId === nk.meshId && k.type === nk.type && k.index === nk.index &&
+        k.meshId === nk.meshId && k.type === nk.type &&
+        (nk.type === 'sr' ? k.childId === nk.childId : k.index === nk.index) &&
         (nk.type !== 'blendshape' || k.name === nk.name));
       if (!alreadySelected) window._animSelectedKeys.push(nk);
     });

@@ -304,15 +304,18 @@ export default class TimelineHelper {
       if (_grp) {
         const kids = _fg.children(_grp);
         const fy = ty + trackH / 2;
-        ctx.fillStyle = '#89dceb';
+        const selKeys = (typeof window !== 'undefined' && window._animSelectedKeys) || [];
         for (let i = 0; i < kids.length; i++) {
           const ft = kids[i]._srFrameTime || 0;
           if (ft < loopStart || ft > loopEnd) continue;
           const fx = w.x + tlX + ((ft - loopStart) / visibleDuration) * tlW;
+          const isSel = selKeys.some(k => k.type === 'sr' && k.childId === kids[i].getID());
           ctx.save();
           ctx.translate(fx, fy);
           ctx.rotate(Math.PI / 4);
+          ctx.fillStyle = isSel ? '#f9e2af' : '#89dceb';
           ctx.fillRect(-5, -5, 10, 10);
+          if (isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(-6.5, -6.5, 13, 13); }
           ctx.restore();
         }
       }
