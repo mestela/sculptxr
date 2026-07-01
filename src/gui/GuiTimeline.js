@@ -635,6 +635,42 @@ export default class GuiTimeline {
     }
   }
 
+  // Track entries [meshId, track] for the dopesheet/graph lanes, EXCLUDING shape-
+  // replacement (SR) group child frames — those are real objects with vis tracks but
+  // are authored via the collapsed group + New/Dup/Del, not as individual rows.
+  // Used everywhere lane layout matters so draw and hit-test stay aligned.
+  _dopesheetTracks() {
+    const reg = window._animationRegistry;
+    if (!reg) return [];
+    const meshes = this._main.getMeshes?.() || [];
+    const srChildIds = new Set(
+      meshes.filter(m => m._parentMesh && m._parentMesh._isFrameGroup).map(m => m.getID())
+    );
+    let entries = Array.from(reg.tracks.entries()).filter(([id]) => !srChildIds.has(id));
+    // One synthetic row per frame GROUP (the whole flipbook on a single lane), unless
+    // it already has a real track (e.g. group transform animation). drawDopeSheet draws
+    // its frame markers from the children's _srFrameTime.
+    meshes.filter(m => m._isFrameGroup).forEach(g => {
+      if (!entries.some(([id]) => id === g.getID())) entries.push([g.getID(), { _srGroupRow: true }]);
+    });
+    return entries;
+  }
+
+  // Move the playhead to an explicit time and apply it (stop playback, re-evaluate
+  // every mesh so visibility/transform tracks update, refresh outliner eyes).
+  _setPlayhead(t) {
+    window._animPlaying = false;
+    window._animCurrentTime = t;
+    const reg = window._animationRegistry;
+    if (reg) {
+      reg.globalPlaybackTime = t;
+      if (this._main && this._main._meshes) this._main._meshes.forEach(m => reg.update(m, true));
+    }
+    if (this._main.render) this._main.render();
+    window._updateOutlinerVisIcons?.();
+    this.draw();
+  }
+
   drawGraph(ctx) {
     const headerH = 50;
     const graphH = this._cssHeight - headerH;
@@ -2978,7 +3014,7 @@ export default class GuiTimeline {
       // Check if clicked on Mute or Delete!
       const reg = window._animationRegistry;
       if (reg) {
-        const tracks = Array.from(reg.tracks.entries());
+        const tracks = this._dopesheetTracks();
         const headerH = 50;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
@@ -3003,7 +3039,7 @@ export default class GuiTimeline {
 
       // Check if clicked on a key!
       if (reg) {
-        const tracks = Array.from(reg.tracks.entries());
+        const tracks = this._dopesheetTracks();
         const headerH = 50;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
@@ -3295,11 +3331,30 @@ export default class GuiTimeline {
               }
             }
 
+            // SR frame-group markers — uniform diamonds; click jumps the playhead to
+            // that frame, drag retimes it. Mirrors the cel keys above.
+            if (!keyFound && window._frameGroup && this._main._meshes) {
+              const grp = this._main._meshes.find(m => m.getID() === meshId && m._isFrameGroup);
+              if (grp) {
+                const kids = window._frameGroup.children(grp);
+                const fy = ty + trackH / 2;
+                for (let i = 0; i < kids.length; i++) {
+                  const t = kids[i]._srFrameTime || 0;
+                  const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+                  if (Math.abs(rx - kx) < 12 && Math.abs(ry - fy) < 12) {
+                    this._srDrag = { child: kids[i], group: grp, startRx: rx, startTime: t, moved: false, before: window._frameGroup._snapshot() };
+                    keyFound = true;
+                    break;
+                  }
+                }
+              }
+            }
+
           }
         });
         // Blendshape keys render below lane centre — check outside the lane-bounds gate
         if (!keyFound) {
-          const bsTracks = Array.from(reg.tracks.entries());
+          const bsTracks = this._dopesheetTracks();
           bsTracks.forEach(([meshId, trackObj]) => {
             if (keyFound) return;
             if (!trackObj.blendshapeTracks) return;
@@ -3352,6 +3407,23 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    // SR frame marker drag → retime the child frame (live marker move; sort + vis
+    // rebuild happen on release).
+    if (this._srDrag) {
+      const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      const tlX = 200, tlW = this._cssWidth - 200;
+      const loopStart = this._viewStart ?? 0;
+      const visibleDuration = this._viewDuration ?? 1;
+      let t = loopStart + ((rx - tlX) / tlW) * visibleDuration;
+      t = Math.max(0, t);
+      if (window._animSnapToFrame !== false) { const fps = window._animFPS || 24; t = Math.round(t * fps) / fps; }
+      if (Math.abs(rx - this._srDrag.startRx) > 3) this._srDrag.moved = true;
+      if (this._srDrag.moved) this._srDrag.child._srFrameTime = t;
+      this.draw();
+      return;
+    }
+
     // [Step 1] 2-finger touch scroll — update stored position and compute pan/zoom.
     if (e.pointerType === 'touch' && this._touchMap.has(e.pointerId)) {
       this._touchMap.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -3808,6 +3880,27 @@ export default class GuiTimeline {
   }
 
   onMouseUp(e) {
+    // SR frame marker release: no-move = click → jump playhead to that frame; moved =
+    // retime → sort children + rebuild the flipbook vis, as one undo step.
+    if (this._srDrag) {
+      const d = this._srDrag;
+      this._srDrag = null;
+      const fg = window._frameGroup;
+      if (!d.moved) {
+        this._setPlayhead(d.startTime);
+      } else if (fg) {
+        fg._rebuildVis(d.group);
+        fg._refreshOutliner?.();
+        const after = fg._snapshot();
+        const sm = this._main.getStateManager && this._main.getStateManager();
+        if (sm && sm.pushStateCustom) {
+          sm.pushStateCustom(() => fg._restore(d.before), () => fg._restore(after), false, 'SR retime frame');
+        }
+        this.draw();
+      }
+      return;
+    }
+
     // [Step 1] 2-finger touch scroll cleanup.
     if (e.pointerType === 'touch') {
       this._touchMap.delete(e.pointerId);
@@ -4326,7 +4419,7 @@ export default class GuiTimeline {
       this.draw();
       return;
     }
-    const tracks = Array.from(reg.tracks.entries());
+    const tracks = this._dopesheetTracks();
     const laneAreaH = this._cssHeight - headerH;
     const totalSlots = Math.max(4, tracks.length);
     const trackH = laneAreaH / totalSlots;
@@ -4414,7 +4507,7 @@ export default class GuiTimeline {
     }
 
     const reg = window._animationRegistry;
-    const tracks = Array.from(reg.tracks.entries());
+    const tracks = this._dopesheetTracks();
     
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
     const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;

@@ -206,6 +206,35 @@ export class FrameGroup {
     this._refreshOutliner();
   }
 
+  // Adopt a freshly-added mesh (e.g. a primitive) into `group` as the frame at the
+  // playhead — replacing whatever frame already sits there (typically the blank one
+  // from a "New"), else adding a new frame. This is the "New → add a primitive to
+  // fill the empty slot" flow. Returns true if adopted.
+  adoptAsFrame(mesh, group) {
+    group = group || this.activeGroup();
+    if (!group || !mesh || mesh._isFrameGroup || mesh._isNull) return false;
+    const main = this._main;
+    const time = this._now();
+    const before = this._snapshot();
+    // Replace the frame already at this time (the blank "New" slot).
+    const existing = this.children(group).find(c => c !== mesh && Math.abs((c._srFrameTime || 0) - time) < 0.005);
+    if (existing) {
+      main.removeMeshes([existing]);
+      this._reg()?.tracks.delete(existing.getID());
+    }
+    mesh._srFrameTime = time;
+    // Sync the Three matrix from _matrix before reparenting, or setMeshParent's
+    // world-preservation reads a stale identity and flattens the primitive to scale 1.
+    const tm = mesh.getThreeMesh && mesh.getThreeMesh();
+    if (tm) { tm.matrix.fromArray(mesh.getMatrix()); tm.matrixAutoUpdate = false; tm.updateMatrixWorld(true); }
+    main.setMeshParent(mesh.getID(), group.getID());
+    this._rebuildVis(group);
+    main.setMesh(mesh);
+    this._commit(before, 'SR add primitive frame');
+    this._refreshOutliner();
+    return true;
+  }
+
   // Delete the frame held at the playhead (its child + keys). Keeps ≥1 frame.
   deleteFrame() {
     const main = this._main;

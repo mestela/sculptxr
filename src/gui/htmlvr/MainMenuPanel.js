@@ -2506,12 +2506,22 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   // Any scene-add action cancels an in-progress pick to avoid a stale subject.
   const cancelPending = () => { main._rigPendingMode = null; main._rigPendingSubject = null; };
 
-  el.querySelector('#mm-add-sphere')?.addEventListener('click', () => {
-    cancelPending(); main.addSphere?.(); main.render?.(); repaintFn();
-  });
-  el.querySelector('#mm-add-cube')?.addEventListener('click', () => {
-    cancelPending(); main.addCube?.(); main.render?.(); repaintFn();
-  });
+  // When an SR frame group is the active context, a newly-added primitive is adopted
+  // as the frame at the playhead (fills a blank "New" slot) instead of a stray object.
+  const addPrimitive = (make) => {
+    cancelPending();
+    // Only adopt into an SR frame group while you're actively in SR mode with the
+    // timeline open — otherwise it's a normal standalone object (e.g. after you close
+    // the timeline / leave SR mode to build regular geometry).
+    const tlVisible = !!main.getGui?.()?._ctrlTimeline?._visible;
+    const inSR = tlVisible && window._animKeyMode === 'shaperep';
+    const grp = inSR ? window._frameGroup?.activeGroup?.() : null;
+    const m = make();
+    if (grp && m) window._frameGroup.adoptAsFrame(m, grp);
+    main.render?.(); repaintFn();
+  };
+  el.querySelector('#mm-add-sphere')?.addEventListener('click', () => addPrimitive(() => main.addSphere?.()));
+  el.querySelector('#mm-add-cube')?.addEventListener('click', () => addPrimitive(() => main.addCube?.()));
   el.querySelector('#mm-add-null')?.addEventListener('click', () => {
     cancelPending(); main.addNull?.(); main.render?.(); repaintFn();
   });

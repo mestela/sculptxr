@@ -295,6 +295,27 @@ export default class TimelineHelper {
           }
         }
       }
+
+      // SR frame-group markers: one uniform diamond per child frame at its
+      // _srFrameTime. One row = the whole flipbook. No active/dim state — the playhead
+      // already shows which frame is live, so per-key highlighting is just clutter.
+      const _fg = (typeof window !== 'undefined') ? window._frameGroup : null;
+      const _grp = (_fg && main && main._meshes) ? main._meshes.find(m => m.getID() === id && m._isFrameGroup) : null;
+      if (_grp) {
+        const kids = _fg.children(_grp);
+        const fy = ty + trackH / 2;
+        ctx.fillStyle = '#89dceb';
+        for (let i = 0; i < kids.length; i++) {
+          const ft = kids[i]._srFrameTime || 0;
+          if (ft < loopStart || ft > loopEnd) continue;
+          const fx = w.x + tlX + ((ft - loopStart) / visibleDuration) * tlW;
+          ctx.save();
+          ctx.translate(fx, fy);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillRect(-5, -5, 10, 10);
+          ctx.restore();
+        }
+      }
     });
   }
 
