@@ -44,6 +44,7 @@ import BlendshapeStackPanel from './gui/BlendshapeStackPanel.js';
 import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
+import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -510,6 +511,10 @@ class Scene {
         if (!this._vrConfirm && this._scene && this._renderer) {
           this._vrConfirm = new VrConfirm(this._scene, this._camera.getThreeCamera(), this._renderer, this);
           window._vrConfirmPanel = this._vrConfirm;
+        }
+        if (!this._vrRadial && this._scene) {
+          this._vrRadial = new VrRadialMenu(this._scene);
+          window._vrRadial = this._vrRadial;
         }
       } catch (err) {
         console.error('[VrNumpad] early init failed:', err);
@@ -5940,6 +5945,19 @@ class Scene {
         }
       }
 
+      // Radial context menu — hold the dominant B button (btns[5]), move the
+      // controller to pick a sector, release to commit; center dead-zone cancels.
+      // Suppressed while a modal VR widget is up. See VrRadialMenu.
+      if (source.handedness === this._dominantHand && this._vrRadial && worldPose) {
+        const _modalUp = this._vrNumpad?.mesh?.visible
+          || this._vrKeyboard?.mesh?.visible
+          || window._vrConfirmPanel?.isBlockingOpen;
+        const _bBtn = activeGamepad?.buttons?.[5];
+        const _bDown = !_modalUp && !!(_bBtn && (_bBtn.pressed || _bBtn.value > 0.5));
+        const _pp = worldPose.transform.position;
+        this._vrRadial.handleInput(_bDown, [_pp.x, _pp.y, _pp.z], () => this._resolveRadialCommands());
+      }
+
       // Keep Legacy _vrRightRayMatrix for now (for old Menu Logic, until Step 4)
 
       // Keep Legacy _vrRightRayMatrix for now if needed?
@@ -7112,6 +7130,21 @@ class Scene {
 
   // #29 Quick tool-swap: toggle to the OTHER of the two most-recent non-Smooth tools,
   // mirroring the ToolPicker side effects, and show a brief floating name toast.
+  // Command set fed to the VR radial menu (and later the desktop/iPad "…" menu).
+  // PROTOTYPE: the timeline-key context — Delete is real, the rest are stubs so the
+  // full 6-wedge wheel can be felt before the clipboard/instancing backend lands.
+  _resolveRadialCommands() {
+    const stub = (name) => () => { if (window.screenLog) window.screenLog(`[radial] ${name} (stub)`, '#89b4fa'); };
+    return [
+      { label: 'Copy',        run: stub('Copy') },
+      { label: 'Paste',       run: stub('Paste') },
+      { label: 'Paste Link',  run: stub('Paste Linked') },
+      { label: 'Dup',         run: stub('Dup') },
+      { label: 'Make Uniq',   run: stub('Make Unique') },
+      { label: 'Delete',      run: () => window._animPanel?.deleteKey?.() },
+    ];
+  }
+
   _quickSwapTool() {
     const sm = this._sculptManager;
     if (!sm) return;
