@@ -489,6 +489,10 @@ class SculptBase {
       mesh.updateBuffers();
     else
       mesh.updateGeometryBuffers();
+    // Live-propagate the in-progress edit to any linked instances sharing this geometry
+    // (they share _meshData, so just re-upload their buffers). end() is the catch-all for
+    // tools that override this method (Paint/Masking).
+    this._main.refreshLinkedSiblings?.(mesh);
   }
 
   updateContinuous() {

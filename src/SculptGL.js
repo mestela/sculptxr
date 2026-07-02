@@ -1433,7 +1433,10 @@ class SculptGL extends Scene {
     const currentMesh = this.getMesh();
     if (window._animAutoKey && window._animationRegistry && currentMesh && this._action === Enums.Action.SCULPT_EDIT) {
       const sm = this._sculptManager;
-      const isMove = sm && (sm._toolIndex === Enums.Tools.TRANSFORM);
+      // Grab is a transform tool (moves the object matrix, stores _undoMatrix) just
+      // like the gizmo — so it autokeys a transform key too. The VR path already
+      // treats both TRANSFORM_VR and GRAB as a move.
+      const isMove = sm && (sm._toolIndex === Enums.Tools.TRANSFORM || sm._toolIndex === Enums.Tools.GRAB);
       const fps = window._animFPS || 24;
       const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
       window._animCurrentTime = targetTime;

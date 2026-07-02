@@ -3026,6 +3026,64 @@ class Scene {
     this.setMesh(mesh);
   }
 
+  // Linked instance of the current selection: each new node SHARES its source's geometry
+  // (_meshData) but has its own transform + render buffers. Editing any occurrence updates
+  // them all (refreshLinkedSiblings). Break a link with makeUniqueSelection().
+  instanceSelection() {
+    const meshes = this._selectMeshes.slice();
+    let last = null;
+    for (const mesh of meshes) {
+      const inst = new MeshStatic(mesh.getGL());
+      inst.shareData(mesh);
+      this.addNewMesh(inst);
+      last = inst;
+    }
+    if (last) this.setMesh(last);
+    this._refreshLinkOutliner();
+    this.render();
+  }
+
+  // Give each selected linked node its own private copy of the geometry (break the link).
+  makeUniqueSelection() {
+    const meshes = this._selectMeshes.slice();
+    for (const mesh of meshes) {
+      if (this.isLinked(mesh) && typeof mesh.makeUnique === 'function') mesh.makeUnique();
+    }
+    this._refreshLinkOutliner();
+    this.render();
+  }
+
+  // Meshes that share this mesh's geometry data (its linked instances). Identity of the
+  // shared _meshData object IS the link — no separate bookkeeping.
+  _linkedSiblings(mesh) {
+    const md = mesh && mesh.getMeshData && mesh.getMeshData();
+    if (!md) return [];
+    return this.getMeshes().filter(m => m !== mesh && m.getMeshData && m.getMeshData() === md);
+  }
+
+  isLinked(mesh) {
+    return this._linkedSiblings(mesh).length > 0;
+  }
+
+  // After an edit to a linked node, re-sync every sibling's GPU buffers from the shared
+  // data so the change shows on all occurrences.
+  refreshLinkedSiblings(mesh) {
+    const sibs = this._linkedSiblings(mesh);
+    if (!sibs.length) return;
+    // Re-upload the shared geometry AND colour/material so both sculpt and paint sync.
+    for (const s of sibs) {
+      if (s.isDynamic) { s.updateBuffers?.(); }
+      else { s.updateGeometryBuffers?.(); s.updateColorBuffer?.(); s.updateMaterialBuffer?.(); }
+    }
+    this.render?.();
+  }
+
+  _refreshLinkOutliner() {
+    const gui = this.getGui && this.getGui();
+    if (gui && gui._desktopSceneEl && gui._buildDesktopScene) gui._buildDesktopScene(gui._desktopSceneEl);
+    this._mainMenuPanel?.markDirty?.();
+  }
+
   onLoadAlphaImage(img, name, tool) {
     var can = document.createElement('canvas');
     can.width = img.width;

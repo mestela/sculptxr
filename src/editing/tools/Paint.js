@@ -88,6 +88,8 @@ class Paint extends SculptBase {
       mesh.updateColorBuffer();
       mesh.updateMaterialBuffer();
     }
+    // Live-propagate paint to linked instances (they share _meshData).
+    this._main.refreshLinkedSiblings?.(mesh);
   }
 
   updatePickColor() {

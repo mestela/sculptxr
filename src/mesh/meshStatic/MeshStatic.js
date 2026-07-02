@@ -90,6 +90,44 @@ class MeshStatic extends Mesh {
     return rd._aabbLoose;
   }
 
+  // Linked instance: SHARE the source's geometry (_meshData — verts/faces/colors/octree/
+  // rings) while keeping our own transform + render buffers. Editing either occurrence
+  // mutates the shared data; each re-syncs its own GPU buffers on stroke end (see
+  // Scene.refreshLinkedSiblings). Break the link with makeUnique().
+  shareData(mesh) {
+    this.setMeshData(mesh.getMeshData()); // share the geometry — no slice
+    this._isVoxel = mesh._isVoxel;
+    // init() builds our OWN threeMesh (initThreeMesh) + uploads geometry (updateGeometry)
+    // from the shared data. allocateArrays/initTopology are idempotent on already-built
+    // shared data (they no-op when arrays are the right size), so the source is untouched.
+    this.init();
+    this.initRender();
+    this.copyTransformData(mesh);
+    this.copyRenderConfig(mesh);
+  }
+
+  // Break a data link: deep-copy the (currently shared) geometry into our own arrays so
+  // future edits no longer touch the other occurrences. Safe even when not linked — it
+  // just makes a private copy. Transform + render config are already ours, kept as-is.
+  makeUnique() {
+    const v = this.getVertices().slice();
+    const f = this.getFaces().slice();
+    const c = this.getColors().slice();
+    const m = this.getMaterials().slice();
+    const hadUV = this.hasUV();
+    const t   = hadUV ? this.getTexCoords().slice() : null;
+    const fuv = hadUV ? this.getFacesTexCoord().slice() : null;
+    this.setMeshData(new MeshData()); // fresh, unshared
+    this.setVertices(v);
+    this.setFaces(f);
+    this.setColors(c);
+    this.setMaterials(m);
+    if (hadUV) this.initTexCoordsDataFromOBJData(t, fuv);
+    this.init();
+    this.initRender();
+    this.updateBuffers();
+  }
+
 }
 
 export default MeshStatic;

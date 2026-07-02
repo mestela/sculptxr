@@ -5,6 +5,11 @@ import { Theme } from './theme.js';
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
 const TL_ACCENT = '#3b82f6';
 
+// Timeline header height (toolbar row + gutter key-mode row + frame ruler). Single
+// source of truth — referenced everywhere the lanes/ruler/hit-tests offset from the
+// header. Bump this alone to resize the header.
+const HEADER_H = 64;
+
 export default class GuiTimeline {
   constructor(main) {
     this._main = main;
@@ -281,7 +286,7 @@ export default class GuiTimeline {
   // Scroll the gutter (if needed) so the given absolute row index is fully
   // visible. Used to bring the channel being edited into view (desktop + VR).
   _ensureGutterRowVisible(rowIdx) {
-    const headerH = 50;
+    const headerH = HEADER_H;
     const gutterY = headerH + 4;
     const rowH    = 22;
     const rowTopAbs = gutterY + rowIdx * rowH;
@@ -569,11 +574,11 @@ export default class GuiTimeline {
   }
 
   valueToY(val) {
-    return TimelineHelper.valueToY(val, this._cssHeight, 50, this._zoomY, this._panY);
+    return TimelineHelper.valueToY(val, this._cssHeight, HEADER_H, this._zoomY, this._panY);
   }
 
   yToValue(y) {
-    return TimelineHelper.yToValue(y, this._cssHeight, 50, this._zoomY, this._panY);
+    return TimelineHelper.yToValue(y, this._cssHeight, HEADER_H, this._zoomY, this._panY);
   }
 
   drawPlayhead(ctx) {
@@ -596,7 +601,7 @@ export default class GuiTimeline {
     }
     const tlX = 200;
     const tlW = this._cssWidth - 200;
-    const headerH = 50;
+    const headerH = HEADER_H;
     const fps = window._animFPS || 24;
     const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
     const snappedTime = Math.round(currentTimeVal * fps) / fps;
@@ -675,7 +680,7 @@ export default class GuiTimeline {
   }
 
   drawGraph(ctx) {
-    const headerH = 50;
+    const headerH = HEADER_H;
     const graphH = this._cssHeight - headerH;
     const tlX = 200;
     const tlW = this._cssWidth - 200;
@@ -1458,7 +1463,7 @@ export default class GuiTimeline {
       }
             const wObj = { x: 0, y: 0, w: this._cssWidth, h: this._cssHeight };
             const tBox = { startTime: minT, endTime: maxT, minV, maxV };
-            TimelineHelper.drawTransformBox(ctx, tBox, wObj, 50, 200, this._cssWidth - 200, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
+            TimelineHelper.drawTransformBox(ctx, tBox, wObj, HEADER_H, 200, this._cssWidth - 200, this._viewStart, this._viewDuration, (val) => this.valueToY(val));
           }
         }
       }
@@ -1530,7 +1535,7 @@ export default class GuiTimeline {
     const track = reg.tracks.get(mesh.getID());
     if (!track) return null;
     const tlX = 200, tlW = this._cssWidth - 200;
-    if (rx <= tlX || ry <= 50) return null;
+    if (rx <= tlX || ry <= HEADER_H) return null;
     this._ensureViewInit();
     const loopStart = this._viewStart, visibleDuration = this._viewDuration;
     const xOf = (t) => tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -1581,7 +1586,7 @@ export default class GuiTimeline {
   // to require both controllers to point at empty space.
   isEmptyGraphSpaceAt(cx, cy) {
     if (this._mode !== 'graph') return false;
-    if (cx < 200 || cy < 50) return false;
+    if (cx < 200 || cy < HEADER_H) return false;
     return !this._hitTestCurve(cx, cy);
   }
 
@@ -1624,7 +1629,7 @@ export default class GuiTimeline {
       this._zoomY = Math.max(1e-4, z.zoomY * fy);
     }
     const graphH = this._cssHeight - 50;
-    this._panY = (50 + graphH / 2 - midCy) - z.pivotVal * this._zoomY;
+    this._panY = (HEADER_H + graphH / 2 - midCy) - z.pivotVal * this._zoomY;
     this.draw();
   }
 
@@ -1640,7 +1645,7 @@ export default class GuiTimeline {
     const track = reg.tracks.get(id);
     if (!track) return;
 
-    const headerH = 50;
+    const headerH = HEADER_H;
     const tlX = 200;
     const tlW = this._cssWidth - 200;
 
@@ -2187,7 +2192,7 @@ export default class GuiTimeline {
     }
 
     const range = maxVal - minVal;
-    const headerH = 50;
+    const headerH = HEADER_H;
     const graphH = this._cssHeight - headerH;
 
     const midVal = (minVal + maxVal) / 2;
@@ -2387,9 +2392,14 @@ export default class GuiTimeline {
     bx += 36;
     // Snap
     btns.push({ id: 'snap', x: bx, y: 5, w: 28, h: 20, icon: '', active: snapOn, tooltip: 'Snap to Frames' });
+    bx += 36;
+    // Autokey — a mirror of the AnimationControlPanel toggle so it's reachable while
+    // working in the dopesheet. Global flag (window._animAutoKey); keys on sculpt-end
+    // (see SculptGL.js / Scene.js autokey blocks).
+    btns.push({ id: 'autokey', x: bx, y: 5, w: 40, h: 20, label: 'Auto', active: !!window._animAutoKey, tooltip: 'Autokey: auto-key the active object on edit' });
     // Transport — centered but guaranteed not to overlap the left-side buttons.
-    // _leftSafeEnd = right edge of snap (bx+28) plus a 12px breathing room.
-    const _leftSafeEnd = bx + 28 + 12;
+    // _leftSafeEnd = right edge of autokey (bx+40) plus a 12px breathing room.
+    const _leftSafeEnd = bx + 40 + 12;
     const playing = !!window._animPlaying;
     const armed   = !!window._animArmed;
     const _tbDefs = [
@@ -2452,11 +2462,25 @@ export default class GuiTimeline {
       btns.push({ id: 'addkey', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Add key at playhead' }); x += bw + gap;
       btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh, disabled: !hasSel, tooltip: 'Delete selected key(s)' }); x += bw + gap;
     }
-    x += 6; // group separator
+    // XF/SH/BS/SR are TALLER split buttons: top 60% = keying state (which mode the
+    // +/New adds — a radio, one active), bottom 40% = visibility (is this key-type
+    // drawn in the sheet). The keyed mode is always visible (its strip is locked on).
+    // Click top of the already-keyed mode → SOLO (hide all others). Click a bottom
+    // strip → toggle that type's visibility (no-op on the keyed mode).
+    // RIGHT-aligned to the gutter so they hold position when the left-aligned add-ops
+    // change count (SR = New/Dup/Del, others = add/del key).
+    const modeBtnH = 34;
+    const GUTTER_CLIP = 196;
+    const modeCount = 4;
+    let mx = GUTTER_CLIP - (modeCount * bw + (modeCount - 1) * gap) - 2;
     [['keymode_transform', 'XF', 'transform'], ['keymode_shape', 'SH', 'shape'], ['keymode_blendshape', 'BS', 'blendshape'], ['keymode_shaperep', 'SR', 'shaperep']].forEach(([id, label, type]) => {
-      btns.push({ id, label, x, y: by, w: bw, h: bh, shown: !!show[type], active: mode === type,
-        tooltip: label + ': ' + (show[type] ? 'shown' : 'hidden') + (mode === type ? ' - active (+ adds this)' : '') });
-      x += bw + gap;
+      const isActive = mode === type;
+      const isShown = isActive || !!show[type]; // keyed mode is implicitly always visible
+      btns.push({ id, label, x: mx, y: by, w: bw, h: modeBtnH, split: true, shown: isShown, active: isActive,
+        tooltip: isActive
+          ? label + ' - keyed (+/New adds this; click top again to solo)'
+          : label + ' - top: key this / bottom: ' + (isShown ? 'shown (click to hide)' : 'hidden (click to show)') });
+      mx += bw + gap;
     });
     return btns;
   }
@@ -2497,18 +2521,18 @@ export default class GuiTimeline {
       return;
     }
 
-    // Ruler strip + playhead cap (y 25-50, x in timeline column).
+    // Ruler strip + playhead cap (y 25-HEADER_H, x in timeline column).
     // Must be checked before toolbar buttons — several buttons extend into rx >= 200
     // but are drawn only at y 5-25, so the ruler row has priority here.
     const _tlX = 200;
     const _tlW = this._cssWidth - 220;
-    if (ry >= 25 && ry < 50 && rx >= _tlX && rx <= _tlX + _tlW) {
+    if (ry >= 25 && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
       return;
     }
 
-    if (ry < 50) {
+    if (ry < HEADER_H) {
       // Gutter header buttons (x:0-195, y:27-47) — key ops + mode.
       if (rx < 196) {
         const gbBtns = this._gutterBtnDefs();
@@ -2671,16 +2695,20 @@ export default class GuiTimeline {
               if (gbHit.id.startsWith('keymode_')) {
                 const type = gbHit.id.replace('keymode_', '');
                 const show = window._animKeyShow || (window._animKeyShow = { transform: true, shape: true, blendshape: true, shaperep: true });
-                // Tri-state: hidden → show + make active; shown-not-active → make
-                // active (stays shown); shown-active → hide (active hops to another
-                // shown type). So display is a filter, the active one is the "+" target.
-                if (show[type] && window._animKeyMode === type) {
-                  show[type] = false;
-                  const other = ['transform', 'shape', 'blendshape', 'shaperep'].find(t => t !== type && show[t]);
-                  if (other) window._animKeyMode = other;
+                const types = ['transform', 'shape', 'blendshape', 'shaperep'];
+                // Split button: top 60% = keying state, bottom 40% = visibility.
+                const inTop = (ry - gbHit.y) < gbHit.h * 0.60;
+                if (inTop) {
+                  if (window._animKeyMode === type) {
+                    // Already the keyed mode → SOLO: hide every other type.
+                    types.forEach(t => { if (t !== type) show[t] = false; });
+                  } else {
+                    window._animKeyMode = type; // make it the keyed mode (always visible)
+                    show[type] = true;
+                  }
                 } else {
-                  show[type] = true;
-                  window._animKeyMode = type;
+                  // Bottom strip = visibility toggle; the keyed mode can't be hidden.
+                  if (window._animKeyMode !== type) show[type] = !show[type];
                 }
               }
           }
@@ -2813,6 +2841,13 @@ export default class GuiTimeline {
           case 'snap':
             window._animSnapToFrame = window._animSnapToFrame === false ? true : false;
             break;
+          case 'autokey': {
+            window._animAutoKey = !window._animAutoKey;
+            // Keep the AnimationControlPanel's Autokey button in sync (same global).
+            const _ak = document.querySelector('#acp-autokey-btn');
+            if (_ak) _ak.classList.toggle('active', !!window._animAutoKey);
+            break;
+          }
           case 'marquee':
             window._animMarqueeMode = !window._animMarqueeMode;
             break;
@@ -2874,8 +2909,8 @@ export default class GuiTimeline {
       this.handleInteraction(e);
     } else {
       // Gutter click/drag for Graph Editor channels in Desktop Timeline
-      if (this._mode === 'graph' && rx < 200 && ry > 50) {
-        const gutterY = 50 + 4;
+      if (this._mode === 'graph' && rx < 200 && ry > HEADER_H) {
+        const gutterY = HEADER_H + 4;
         const rowH = 22;
         const channel = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
 
@@ -2945,7 +2980,7 @@ export default class GuiTimeline {
               // Desktop: inline numeric input overlay, right-aligned in the badge.
               // Row y in canvas CSS coords: gutterY + abs-row-index * rowH − scroll
               // (computed after _ensureGutterRowVisible may have adjusted scroll).
-              const _gutterRowTop = (50 + 4) + channel * rowH - this._gutterScrollY;
+              const _gutterRowTop = (HEADER_H + 4) + channel * rowH - this._gutterScrollY;
               this._valInput.style.top  = Math.round(_gutterRowTop + 3) + 'px';
               this._valInput.style.display = 'block';
               this._valInput.value = curW.toFixed(2);
@@ -3022,7 +3057,7 @@ export default class GuiTimeline {
       const reg = window._animationRegistry;
       if (reg) {
         const tracks = this._dopesheetTracks();
-        const headerH = 50;
+        const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
@@ -3044,7 +3079,7 @@ export default class GuiTimeline {
       // Check if clicked on a key!
       if (reg) {
         const tracks = this._dopesheetTracks();
-        const headerH = 50;
+        const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
@@ -3899,7 +3934,7 @@ export default class GuiTimeline {
                && !this._activeTransformHandle && !this._isDraggingGutter && !this._isDraggingPlayhead;
     this._hoverCurve = (this._mode === 'graph' && _idle) ? this._hitTestCurve(rx, ry) : null;
 
-    if (rx >= tlX && rx <= tlX + tlW && ry >= 50) {
+    if (rx >= tlX && rx <= tlX + tlW && ry >= HEADER_H) {
       this.draw();
     }
   }
@@ -4367,7 +4402,7 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
     
-    const headerH = 50;
+    const headerH = HEADER_H;
 
     const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
     const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -4576,7 +4611,7 @@ export default class GuiTimeline {
     const tlW = w.w - 200;
 
     // --- 1. Draw Top Transport Header Strip ---
-    const headerH = 50;
+    const headerH = HEADER_H;
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(w.x, w.y, w.w, headerH);
 
@@ -4679,6 +4714,30 @@ export default class GuiTimeline {
     _gbBtns.forEach(btn => {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
                && this._lastMouseY >= btn.y && this._lastMouseY <= btn.y + btn.h;
+      // Split mode/vis button (XF/SH/BS/SR): top 75% = keying state (accent when this
+      // is the keyed mode), bottom 25% = a visibility strip (green = shown / dark =
+      // hidden; the keyed mode is always shown so its strip stays lit).
+      if (btn.split) {
+        const topH = Math.round(btn.h * 0.60);
+        const cx2 = Math.round(btn.x + btn.w / 2);
+        // Top zone (keying)
+        ctx.fillStyle = btn.active ? TL_ACCENT : (hov ? Theme.surface0 : Theme.surface1);
+        ctx.beginPath();
+        ctx.roundRect(btn.x, btn.y, btn.w, topH, [3, 3, 0, 0]);
+        ctx.fill();
+        // Bottom zone (visibility)
+        ctx.fillStyle = btn.shown ? Theme.green : Theme.mantle;
+        ctx.beginPath();
+        ctx.roundRect(btn.x, btn.y + topH, btn.w, btn.h - topH, [0, 0, 3, 3]);
+        ctx.fill();
+        // Label in the top zone (dark on the accent fill for contrast).
+        ctx.fillStyle = btn.active ? Theme.base : Theme.text;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillText(btn.label, cx2, Math.round(btn.y + topH / 2));
+        return;
+      }
       // Display toggles (XF/SH/BS/SR) carry a `shown` flag → three visual states:
       // active add-type = accent, shown = normal, hidden = dim.
       const isToggle = btn.shown !== undefined;

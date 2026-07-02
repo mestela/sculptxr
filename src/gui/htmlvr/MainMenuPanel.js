@@ -1126,7 +1126,7 @@ export function buildSectionHTML_scene(main) {
           ? `<button class="mm-collapse-btn" data-mesh-id="${m._permanentStaticId}" data-action="collapse" style="margin-left:${depth * 14}px" title="${collapsed ? 'Expand' : 'Collapse'}"><i class="fa-solid ${collapsed ? 'fa-chevron-right' : 'fa-chevron-down'}"></i></button>`
           : `<span class="mm-collapse-spacer" style="margin-left:${depth * 14}px"></span>`}
         <button class="mm-mesh-btn${isSel ? ' active' : ''}${isNull ? ' is-null' : ''}" data-mesh-id="${m._permanentStaticId}" data-action="select" title="Rename with the pencil, or double-click">
-          <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>
+          <i class="fa-solid ${typeIcon} mm-node-icon"></i><span class="mm-node-name">${m._permanentStaticLabel}</span>${main.isLinked?.(m) ? '<i class="fa-solid fa-link" style="margin-left:5px;font-size:10px;color:#89dceb" title="Linked instance — shares geometry; edits affect all occurrences"></i>' : ''}
         </button>
         <button class="mm-rename-btn" data-mesh-id="${m._permanentStaticId}" data-action="rename" title="Rename">
           <i class="fa-solid fa-pen"></i>
@@ -1209,7 +1209,9 @@ export function buildSectionHTML_scene(main) {
   return `
     <div class="mm-section-title">Outliner</div>
     <div class="mm-toolbar">
-      <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
+      <button class="mm-tool-btn" id="mm-duplicate" title="Duplicate selected (independent copy)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-copy"></i></button>
+      <button class="mm-tool-btn" id="mm-instance" title="Instance selected (linked — shares geometry, edits affect all)"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-link"></i></button>
+      <button class="mm-tool-btn" id="mm-make-unique" title="Make unique (break the link — private copy)"${(singleSel && main.isLinked?.(singleSel)) ? '' : ' disabled'}><i class="fa-solid fa-link-slash"></i></button>
       <button class="mm-tool-btn" id="mm-delete-mesh" title="Delete selected"${hasSel ? '' : ' disabled'}><i class="fa-solid fa-trash"></i></button>
       <button class="mm-tool-btn${tbLocked ? ' active' : ''}" data-rig="lock" title="Lock — unselectable in the viewport when on"${singleSel ? '' : ' disabled'}><i class="fa-solid ${tbLocked ? 'fa-lock' : 'fa-lock-open'}"></i></button>
     </div>
@@ -2530,6 +2532,12 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
   el.querySelector('#mm-duplicate')?.addEventListener('click', () => {
     main.duplicateSelection?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-instance')?.addEventListener('click', () => {
+    main.instanceSelection?.(); main.render?.(); repaintFn();
+  });
+  el.querySelector('#mm-make-unique')?.addEventListener('click', () => {
+    main.makeUniqueSelection?.(); main.render?.(); repaintFn();
   });
   el.querySelector('#mm-delete-mesh')?.addEventListener('click', () => {
     main.deleteCurrentSelection?.(); main.render?.(); repaintFn();

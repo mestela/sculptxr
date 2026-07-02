@@ -294,6 +294,10 @@ class SculptManager {
     // persist across scrubbing (no-op for voxel — that commits via the worker, and
     // for objects without a frame sequence).
     window._frameAnim?.captureActiveMeshEdit?.();
+
+    // Linked instances share geometry (_meshData); after an edit, re-sync every sibling's
+    // GPU buffers so the change shows on all occurrences.
+    this._main.refreshLinkedSiblings?.(this._main.getMesh?.());
   }
 
   preUpdate() {
