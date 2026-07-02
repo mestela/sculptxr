@@ -643,10 +643,13 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return [];
     const meshes = this._main.getMeshes?.() || [];
+    const liveIds = new Set(meshes.map(m => m.getID()));
     const srChildIds = new Set(
       meshes.filter(m => m._parentMesh && m._parentMesh._isFrameGroup).map(m => m.getID())
     );
-    let entries = Array.from(reg.tracks.entries()).filter(([id]) => !srChildIds.has(id));
+    // Only show tracks for meshes still IN the scene — a deleted mesh's track lingers
+    // in the registry (kept so undo can restore it) but must not draw a phantom row.
+    let entries = Array.from(reg.tracks.entries()).filter(([id]) => liveIds.has(id) && !srChildIds.has(id));
     // One synthetic row per frame GROUP (the whole flipbook on a single lane), unless
     // it already has a real track (e.g. group transform animation). drawDopeSheet draws
     // its frame markers from the children's _srFrameTime.
@@ -2431,34 +2434,29 @@ export default class GuiTimeline {
       fDefs.forEach(def => { btns.push({ ...def, x: fbx, y: by, w: fw, h: bh }); fbx += fw + fgap; });
       return btns;
     }
-    // Shape-replacement (SR) keymode: New/Dup/Delete real child-object frames, plus an
-    // active SR toggle to exit. See FrameGroup.
+    // XF/SH/BS/SR are DISPLAY toggles (multi-select): each shows/hides that key type
+    // in the sheet. The active add-type (last-activated, drawn brightest) is what the
+    // "+" adds; when SR is active the "+" is replaced by New/Dup/Del. This row sits
+    // above the lanes so it can span wider than the 196px gutter.
+    const show = window._animKeyShow || (window._animKeyShow = { transform: true, shape: true, blendshape: true, shaperep: true });
+    // Compact layout so all 7 buttons (SR mode) fit inside the gutter clip.
+    let x = 4;
+    const gap = 2, bw = 24;
     if (mode === 'shaperep') {
-      const sDefs = [
-        { id: 'sr_new', label: 'New', w: 40, tooltip: 'New blank frame at playhead' },
-        { id: 'sr_dup', label: 'Dup', w: 40, tooltip: 'Duplicate the held frame at playhead' },
-        { id: 'sr_del', label: 'Del', w: 40, tooltip: 'Delete the frame at the playhead' },
-        { id: 'keymode_shaperep', label: 'SR', w: 28, active: true, tooltip: 'Exit shape-replacement mode' },
-      ];
-      const sgap = 6;
-      const stotal = sDefs.reduce((a, d) => a + d.w, 0) + (sDefs.length - 1) * sgap;
-      let sbx = Math.round((GUTTER_W - stotal) / 2);
-      sDefs.forEach(def => { btns.push({ ...def, x: sbx, y: by, h: bh }); sbx += def.w + sgap; });
-      return btns;
+      // Consistent with the other modes: + = new, trash = delete. 'Dup' stays text so
+      // it isn't confused with the copy/paste workflow coming next.
+      btns.push({ id: 'sr_new', icon: '', x, y: by, w: bw, h: bh, tooltip: 'New blank frame' }); x += bw + gap;
+      btns.push({ id: 'sr_dup', label: 'Dup', x, y: by, w: bw, h: bh, tooltip: 'Duplicate frame' }); x += bw + gap;
+      btns.push({ id: 'sr_del', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Delete frame' }); x += bw + gap;
+    } else {
+      btns.push({ id: 'addkey', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Add key at playhead' }); x += bw + gap;
+      btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh, disabled: !hasSel, tooltip: 'Delete selected key(s)' }); x += bw + gap;
     }
-    const r2Defs = [
-      { id: 'addkey',             icon: '',  disabled: false,                                       tooltip: 'Add key at playhead' },
-      { id: 'delkey',             icon: '',  disabled: !hasSel,                                     tooltip: 'Delete selected key(s)' },
-      { id: 'keymode_transform',  label: 'XF', active: mode === 'transform' || mode === 'vrtransform',            tooltip: 'Key mode: transform' },
-      { id: 'keymode_shape',      label: 'SH', active: mode === 'shape',                                          tooltip: 'Key mode: shape' },
-      { id: 'keymode_blendshape', label: 'BS', active: mode === 'blendshape',                                     tooltip: 'Key mode: blendshape' },
-      { id: 'keymode_shaperep',   label: 'SR', active: mode === 'shaperep',                                       tooltip: 'Key mode: shape replacement' },
-    ];
-    const total = r2Defs.length * r2BtnW + (r2Defs.length - 1) * r2Gap;
-    let bx = Math.round((GUTTER_W - total) / 2);
-    r2Defs.forEach(def => {
-      btns.push({ ...def, x: bx, y: by, w: r2BtnW, h: bh });
-      bx += r2BtnW + r2Gap;
+    x += 6; // group separator
+    [['keymode_transform', 'XF', 'transform'], ['keymode_shape', 'SH', 'shape'], ['keymode_blendshape', 'BS', 'blendshape'], ['keymode_shaperep', 'SR', 'shaperep']].forEach(([id, label, type]) => {
+      btns.push({ id, label, x, y: by, w: bw, h: bh, shown: !!show[type], active: mode === type,
+        tooltip: label + ': ' + (show[type] ? 'shown' : 'hidden') + (mode === type ? ' - active (+ adds this)' : '') });
+      x += bw + gap;
     });
     return btns;
   }
@@ -2671,10 +2669,19 @@ export default class GuiTimeline {
             }
             default:
               if (gbHit.id.startsWith('keymode_')) {
-                const km = gbHit.id.replace('keymode_', '');
-                // SR is a toggle: re-clicking the active SR button exits back to
-                // transform (its New/Dup/Del row otherwise hides the other keymodes).
-                window._animKeyMode = (km === 'shaperep' && window._animKeyMode === 'shaperep') ? 'transform' : km;
+                const type = gbHit.id.replace('keymode_', '');
+                const show = window._animKeyShow || (window._animKeyShow = { transform: true, shape: true, blendshape: true, shaperep: true });
+                // Tri-state: hidden → show + make active; shown-not-active → make
+                // active (stays shown); shown-active → hide (active hops to another
+                // shown type). So display is a filter, the active one is the "+" target.
+                if (show[type] && window._animKeyMode === type) {
+                  show[type] = false;
+                  const other = ['transform', 'shape', 'blendshape', 'shaperep'].find(t => t !== type && show[t]);
+                  if (other) window._animKeyMode = other;
+                } else {
+                  show[type] = true;
+                  window._animKeyMode = type;
+                }
               }
           }
           this.draw();
@@ -3023,15 +3030,12 @@ export default class GuiTimeline {
 
         if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
           const [meshId, trackObj] = tracks[clickedLaneIdx];
-          if (rx >= 80 && rx < 120) {
+          const laneMesh = this._main._meshes?.find(m => m.getID() === meshId);
+          // Right-aligned "M" mute toggle (not on SR group rows). Trash removed —
+          // select keys + Delete is the safe way to remove them.
+          if (rx >= 176 && rx < 200 && !(laneMesh && laneMesh._isFrameGroup)) {
             trackObj.muted = !trackObj.muted;
             this.draw();
-            return; // Don't start marquee
-          } else if (rx >= 120 && rx <= 160) {
-            window._vrConfirm(`Delete track for Object ${meshId}?`, () => {
-              window._animationRegistry.deleteTrack(meshId);
-              this.draw();
-            });
             return; // Don't start marquee
           }
         }
@@ -3177,7 +3181,7 @@ export default class GuiTimeline {
 
         tracks.forEach(([meshId, trackObj], laneIdx) => {
           const ty = headerH + (laneIdx * trackH);
-          const kyTransform = ty + trackH / 2 - 10; // matches drawDopeSheet offset
+          const kyTransform = ty + trackH / 2; // centred (matches drawDopeSheet)
           const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
 
           if (ry >= ty && ry <= ty + trackH) {
@@ -3736,7 +3740,10 @@ export default class GuiTimeline {
 
       // Helpers — write time/value back to the correct array for any key type.
       const _setKeyTime = (track, initKey, newTime) => {
-        const t = Math.max(0, Math.min(mDurVal, newTime));
+        let t = Math.max(0, Math.min(mDurVal, newTime));
+        // Respect snap-to-integer for the WHOLE transform box (edge/center/scale) —
+        // the single-key drag already snapped, the box math didn't.
+        if (window._animSnapToFrame !== false) { const fps = window._animFPS || 24; t = Math.round(t * fps) / fps; }
         if (initKey.type === 'transform' && track.times) {
           track.times[initKey.index] = t;
         } else if (initKey.type === 'shape' && track.shapeTimes) {
@@ -4672,8 +4679,13 @@ export default class GuiTimeline {
     _gbBtns.forEach(btn => {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
                && this._lastMouseY >= btn.y && this._lastMouseY <= btn.y + btn.h;
+      // Display toggles (XF/SH/BS/SR) carry a `shown` flag → three visual states:
+      // active add-type = accent, shown = normal, hidden = dim.
+      const isToggle = btn.shown !== undefined;
+      const dimHidden = isToggle && !btn.shown && !btn.active;
       const fill = btn.disabled ? Theme.surface0
                  : btn.active   ? TL_ACCENT
+                 : dimHidden    ? Theme.surface0
                  : hov          ? Theme.surface1
                                 : Theme.surface1;
       ctx.fillStyle = fill;
@@ -4696,7 +4708,7 @@ export default class GuiTimeline {
           ctx.fillText(btn.id[0].toUpperCase(), cx, cy);
         }
       } else if (btn.label) {
-        ctx.fillStyle = btn.disabled ? Theme.surface1 : (btn.active ? Theme.text : Theme.text);
+        ctx.fillStyle = btn.disabled ? Theme.surface1 : (dimHidden ? Theme.subtext : Theme.text);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = 'bold 9px sans-serif';

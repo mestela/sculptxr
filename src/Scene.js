@@ -1361,6 +1361,12 @@ class Scene {
         if (this._frameWasPlaying) window._updateOutlinerVisIcons?.(); // final state on stop
       }
       this._frameWasPlaying = !!window._animPlaying;
+
+      // SR onion skin: ghost neighbour frames when parked/scrubbing, hide during play.
+      if (this._frameGroup) {
+        if (window._animPlaying) this._frameGroup.clearOnion();
+        else this._frameGroup.refreshOnion();
+      }
     }
 
     if (this._renderer && this._renderer.xr) {

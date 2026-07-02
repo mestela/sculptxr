@@ -63,7 +63,10 @@ export default class TimelineHelper {
     
     if (tracks.length === 0) return;
 
-    const totalAvailableSlots = Math.max(4, tracks.length); 
+    // Per-type display filters (XF/SH/BS/SR toggles). Default all-on.
+    const show = (typeof window !== 'undefined' && window._animKeyShow) || { transform: true, shape: true, blendshape: true, shaperep: true };
+
+    const totalAvailableSlots = Math.max(4, tracks.length);
     const trackH = laneAreaH / totalAvailableSlots;
 
     tracks.forEach(([id, track], idx) => {
@@ -76,65 +79,44 @@ export default class TimelineHelper {
         ctx.fillRect(w.x, ty, w.w, trackH);
       }
 
-      // Lane Label
-      ctx.fillStyle = '#aaa';
+      let laneName = `Track ${id}`;
+      let laneMesh = null;
+      if (main && main._meshes) {
+        laneMesh = main._meshes.find(m => m.getID() === id);
+        if (laneMesh) laneName = laneMesh._permanentStaticLabel || `Object ${id}`;
+      }
+      const isGroupRow = !!(laneMesh && laneMesh._isFrameGroup);
+
+      // Lane label — clipped so it never runs under the mute toggle.
+      const nameRight = w.x + 176;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(w.x, ty, nameRight - w.x, trackH);
+      ctx.clip();
+      ctx.fillStyle = track.muted ? '#6c7086' : '#cdd6f4';
       ctx.font = '12px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      let laneName = `Track ${id}`;
-      if (main && main._meshes) {
-        const found = main._meshes.find(m => m.getID() === id);
-        if (found) {
-          laneName = found._permanentStaticLabel || `Object ${id}`;
-        }
-      }
       ctx.fillText(laneName, w.x + 10, ty + trackH / 2);
-
-      // Draw Eye Icon (Mute)
-      const eyeX = w.x + 100;
-      ctx.save();
-      ctx.translate(eyeX - 12, ty + trackH / 2 - 12);
-      ctx.strokeStyle = track.muted ? '#888888' : '#00ffcc';
-      ctx.lineWidth = 2;
-      const eyePath = new Path2D('M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z');
-      ctx.stroke(eyePath);
-      
-      ctx.fillStyle = track.muted ? '#888888' : '#00ffcc';
-      ctx.beginPath();
-      ctx.arc(12, 12, 3, 0, Math.PI * 2);
-      ctx.fill();
       ctx.restore();
 
-      // Draw Trash Icon (Delete)
-      const trashX = w.x + 140;
-      ctx.save();
-      ctx.translate(trashX, ty + trackH / 2 - 6);
-      ctx.strokeStyle = '#ff4444';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      // Lid
-      ctx.moveTo(0, 2);
-      ctx.lineTo(12, 2);
-      // Handle
-      ctx.moveTo(4, 2);
-      ctx.lineTo(4, 0);
-      ctx.lineTo(8, 0);
-      ctx.lineTo(8, 2);
-      // Body
-      ctx.moveTo(2, 2);
-      ctx.lineTo(3, 12);
-      ctx.lineTo(9, 12);
-      ctx.lineTo(10, 2);
-      ctx.stroke();
-      ctx.restore();
+      // Mute toggle — right-aligned "M"; mutes this object's animation in playback.
+      // Not shown for SR group rows (their visibility is keyframe-driven, not muted).
+      if (!isGroupRow) {
+        ctx.fillStyle = track.muted ? '#f38ba8' : '#585b70';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('M', w.x + 186, ty + trackH / 2);
+      }
 
       // Transform Data Visualization
-      if (track && track.times && track.times.length > 0) {
+      if (show.transform && track && track.times && track.times.length > 0) {
         for (let i = 0; i < track.times.length; i++) {
           const t = track.times[i];
           if (t >= loopStart && t <= loopEnd) {
             const kx = w.x + tlX + ((t - loopStart) / visibleDuration) * tlW;
-            const ky = ty + trackH / 2 - 10; // Offset higher to avoid overlap with shape keys
+            const ky = ty + trackH / 2; // centred on the lane (aligned with ruler/SR markers)
             
             const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === id && k.type === 'transform' && k.index === i);
             let isInsideMarquee = false;
@@ -175,7 +157,7 @@ export default class TimelineHelper {
       }
 
       // Draw Shape Keys (Circles)
-      if (track && track.shapeTimes) {
+      if (show.shape && track && track.shapeTimes) {
         for (let i = 0; i < track.shapeTimes.length; i++) {
           const st = track.shapeTimes[i];
           if (st >= loopStart && st <= loopEnd) {
@@ -217,7 +199,7 @@ export default class TimelineHelper {
       }
 
       // Draw Blendshape Keys (Squares). Newest-first row order (shared with hit-test).
-      if (track && track.blendshapeTracks) {
+      if (show.blendshape && track && track.blendshapeTracks) {
         let bIdx = 0;
         TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
           if (bTrack && bTrack.times) {
@@ -301,7 +283,7 @@ export default class TimelineHelper {
       // already shows which frame is live, so per-key highlighting is just clutter.
       const _fg = (typeof window !== 'undefined') ? window._frameGroup : null;
       const _grp = (_fg && main && main._meshes) ? main._meshes.find(m => m.getID() === id && m._isFrameGroup) : null;
-      if (_grp) {
+      if (_grp && show.shaperep) {
         const kids = _fg.children(_grp);
         const fy = ty + trackH / 2;
         const selKeys = (typeof window !== 'undefined' && window._animSelectedKeys) || [];
@@ -508,65 +490,67 @@ export default class TimelineHelper {
     ctx.strokeRect(x, y, w, h);
   }
 
+  // Multi-key manipulator. One consistent palette (accent blue), distinct handle
+  // SHAPES matched to their hit zones: solid edge bars = resize (±10px), centre
+  // square = scale-from-centre (±20px), faint body fill = move (grab anywhere),
+  // top/bottom bars = value scale (graph only).
   static drawTransformBox(ctx, tBox, w, headerH, tlX, tlW, loopStart, visibleDuration, valueToYFunc = null) {
     const kxLeft = tlX + ((tBox.startTime - loopStart) / visibleDuration) * tlW;
     const kxRight = tlX + ((tBox.endTime - loopStart) / visibleDuration) * tlW;
-    
+
     let kyTop = w.y + headerH;
     let kyBottom = w.y + w.h;
-    
-    if (valueToYFunc && tBox.minV !== undefined && tBox.maxV !== undefined) {
-      kyTop = valueToYFunc(tBox.maxV);
-      kyBottom = valueToYFunc(tBox.minV);
-      
-      // Draw top/bottom handles for graph mode
-      ctx.fillStyle = '#ffff00';
-      const kxMid = (kxLeft + kxRight) / 2;
-      ctx.fillRect(kxMid - 10, kyTop - 5, 20, 5);
-      ctx.fillRect(kxMid - 10, kyBottom, 20, 5);
-    }
+    const graph = !!(valueToYFunc && tBox.minV !== undefined && tBox.maxV !== undefined);
+    if (graph) { kyTop = valueToYFunc(tBox.maxV); kyBottom = valueToYFunc(tBox.minV); }
+
+    const kxMid = (kxLeft + kxRight) / 2;
+    const kyMid = (kyTop + kyBottom) / 2;
+    const ACCENT = '#89b4fa', INK = '#11111b';
 
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+
+    // Body — faint fill (grab anywhere to MOVE).
+    ctx.fillStyle = 'rgba(137,180,250,0.10)';
     ctx.fillRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
 
-    ctx.strokeStyle = '#ffff00';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 4]);
+    // Bounds — subtle dashed outline.
+    ctx.strokeStyle = 'rgba(137,180,250,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
     ctx.strokeRect(kxLeft, kyTop, kxRight - kxLeft, kyBottom - kyTop);
-
     ctx.setLineDash([]);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#ffff00';
 
-    // Left edge handle
-    ctx.beginPath();
-    ctx.moveTo(kxLeft, kyTop);
-    ctx.lineTo(kxLeft, kyBottom);
-    ctx.stroke();
+    // Left/right RESIZE handles — solid grip bars (±10px hit zone).
+    const gw = 8;
+    ctx.fillStyle = ACCENT;
+    ctx.fillRect(kxLeft - gw / 2, kyTop, gw, kyBottom - kyTop);
+    ctx.fillRect(kxRight - gw / 2, kyTop, gw, kyBottom - kyTop);
+    // grip ticks so the bars read as grabbable
+    ctx.strokeStyle = 'rgba(17,17,27,0.5)';
+    ctx.lineWidth = 1;
+    [kxLeft, kxRight].forEach(gx => {
+      for (let o = -5; o <= 5; o += 5) { ctx.beginPath(); ctx.moveTo(gx - 2, kyMid + o); ctx.lineTo(gx + 2, kyMid + o); ctx.stroke(); }
+    });
 
-    // Right edge handle
-    ctx.beginPath();
-    ctx.moveTo(kxRight, kyTop);
-    ctx.lineTo(kxRight, kyBottom);
-    ctx.stroke();
-
-    // Center line
-    ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
+    // Centre SCALE handle — filled square with outward arrows (±20px hit zone).
+    const cs = 24;
+    ctx.fillStyle = ACCENT;
+    ctx.strokeStyle = INK;
     ctx.lineWidth = 2;
-    const kxMid = (kxLeft + kxRight) / 2;
-    ctx.beginPath();
-    ctx.moveTo(kxMid, kyTop);
-    ctx.lineTo(kxMid, kyBottom);
+    ctx.fillRect(kxMid - cs / 2, kyMid - cs / 2, cs, cs);
+    ctx.strokeRect(kxMid - cs / 2, kyMid - cs / 2, cs, cs);
+    ctx.beginPath(); // ⤢ diagonal scale arrows
+    ctx.moveTo(kxMid - 7, kyMid - 7); ctx.lineTo(kxMid + 7, kyMid + 7);
+    ctx.moveTo(kxMid - 7, kyMid - 3); ctx.lineTo(kxMid - 7, kyMid - 7); ctx.lineTo(kxMid - 3, kyMid - 7);
+    ctx.moveTo(kxMid + 3, kyMid + 7); ctx.lineTo(kxMid + 7, kyMid + 7); ctx.lineTo(kxMid + 7, kyMid + 3);
     ctx.stroke();
 
-    // Center box handle
-    const boxSize = 40;
-    const bx = kxMid - boxSize / 2;
-    const by = kyTop + (kyBottom - kyTop) / 2 - boxSize / 2;
-    ctx.strokeStyle = '#ffff00';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(bx, by, boxSize, boxSize);
+    // Value (top/bottom) handles — graph mode only.
+    if (graph) {
+      ctx.fillStyle = ACCENT;
+      ctx.fillRect(kxMid - 12, kyTop - gw / 2, 24, gw);
+      ctx.fillRect(kxMid - 12, kyBottom - gw / 2, 24, gw);
+    }
 
     ctx.restore();
   }

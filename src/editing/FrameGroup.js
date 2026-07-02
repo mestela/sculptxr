@@ -11,10 +11,17 @@
  * child's visibility keys so one shows per frame, re-run whenever frames change.
  */
 
+import * as THREE from 'three';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 
 export class FrameGroup {
-  constructor(main) { this._main = main; }
+  constructor(main) {
+    this._main = main;
+    this._ghosts = [];       // onion-skin THREE.Mesh ghosts
+    this._onion = true;      // global toggle (shares the ACP onion checkbox)
+    this._onionLoop = false; // wrap neighbours around the ends
+    this._lastOnionKey = null;
+  }
 
   _reg() { return window._animationRegistry; }
   _now() { return (typeof window !== 'undefined') ? (window._animCurrentTime || 0) : 0; }
@@ -295,5 +302,65 @@ export class FrameGroup {
     main.setMesh(this.visibleChild(group, time) || this.children(group)[0] || group);
     this._commit(before, 'SR delete frame');
     this._refreshOutliner();
+  }
+
+  // ---- Onion skin -----------------------------------------------------------
+  // Ghost the neighbouring frames (prev = blue, next = red) at low opacity when
+  // parked on a frame, so you can pose against the surrounding frames.
+  setOnion(on) { this._onion = !!on; this._lastOnionKey = null; this.refreshOnion(); }
+  setOnionLoop(on) { this._onionLoop = !!on; this._lastOnionKey = null; this.refreshOnion(); }
+  isOnionOn() { return this._onion; }
+
+  clearOnion() {
+    for (const g of this._ghosts) {
+      if (g.parent) g.parent.remove(g);
+      if (g.geometry) g.geometry.dispose();
+      if (g.material) g.material.dispose();
+    }
+    this._ghosts.length = 0;
+    this._lastOnionKey = null;
+  }
+
+  // Cheap to call every frame — only rebuilds when the visible frame actually changes.
+  refreshOnion() {
+    const group = this.activeGroup();
+    if (!group || !this._onion) { if (this._ghosts.length) this.clearOnion(); return; }
+    const cur = this.visibleChild(group, this._now());
+    const key = cur ? cur.getID() : -1;
+    if (key === this._lastOnionKey) return;
+    this._lastOnionKey = key;
+    this._buildGhosts(group, cur);
+  }
+
+  _buildGhosts(group, cur) {
+    for (const g of this._ghosts) { if (g.parent) g.parent.remove(g); g.geometry?.dispose(); g.material?.dispose(); }
+    this._ghosts.length = 0;
+    const kids = this.children(group);
+    if (kids.length < 2 || !cur) return;
+    const i = kids.indexOf(cur);
+    if (i < 0) return;
+    const n = kids.length;
+    const prevIdx = this._onionLoop ? ((i - 1 + n) % n) : (i - 1);
+    const nextIdx = this._onionLoop ? ((i + 1) % n) : (i + 1);
+    const prev = kids[prevIdx];
+    const next = (nextIdx !== prevIdx) ? kids[nextIdx] : null;
+    if (prev && prev !== cur) this._makeGhost(prev, 0x4aa3ff);
+    if (next && next !== cur) this._makeGhost(next, 0xff6a4a);
+  }
+
+  // Clone the child's already-triangulated render geometry into a transparent ghost,
+  // as a sibling of the child (same parent + local matrix → same world position).
+  _makeGhost(child, color) {
+    const tm = child.getThreeMesh && child.getThreeMesh();
+    if (!tm || !tm.geometry) return;
+    const geo = tm.geometry.clone();
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+    const ghost = new THREE.Mesh(geo, mat);
+    ghost.matrixAutoUpdate = false;
+    ghost.matrix.copy(tm.matrix);
+    ghost.renderOrder = -1;
+    ghost.frustumCulled = false;
+    (tm.parent || this._main._scene).add(ghost);
+    this._ghosts.push(ghost);
   }
 }

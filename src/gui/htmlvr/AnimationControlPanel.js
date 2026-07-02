@@ -1165,10 +1165,10 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     _sync();
   });
 
-  // Onion skinning for frame-by-frame (cel) animation — ghost the neighbour frames.
-  _cbWire('#acp-onion', (v) => { window._frameAnim?.setOnion?.(v); });
+  // Onion skinning — ghost neighbour frames. Shared by cel (voxel) AND SR groups.
+  _cbWire('#acp-onion', (v) => { window._frameAnim?.setOnion?.(v); window._frameGroup?.setOnion?.(v); });
   // Loop-aware: wrap the neighbour ghosts around the ends of the sequence.
-  _cbWire('#acp-onion-loop', (v) => { window._frameAnim?.setOnionLoop?.(v); });
+  _cbWire('#acp-onion-loop', (v) => { window._frameAnim?.setOnionLoop?.(v); window._frameGroup?.setOnionLoop?.(v); });
 
   const brTrigger = el.querySelector('#acp-bake-rate');
   const brOpts    = el.querySelector('#acp-bake-rate-wrap .acp-select-opts');
