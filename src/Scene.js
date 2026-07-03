@@ -2905,6 +2905,13 @@ class Scene {
       this.normalizeAndCenterMeshes(newMeshes);
     }
 
+    // Reconstruct frame-group structure (SR + voxel frames) now that the meshes are in
+    // the scene — deserialize needs them in _meshes for setMeshParent/getMeshes.
+    if (fileType === 'sgl' && this._frameGroup) {
+      try { this._frameGroup.deserialize(fileData, newMeshes); }
+      catch (e) { console.error('[FrameGroup] import restore failed', e); }
+    }
+
     this._stateManager.pushStateAdd(newMeshes);
     this.setMesh(meshes[meshes.length - 1]);
     this.resetCameraMeshes(newMeshes);

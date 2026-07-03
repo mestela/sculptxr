@@ -237,7 +237,9 @@ Export.exportSGL = function (meshes, main) {
           }
         }
 
-        let labelStr = lvl._permanentStaticLabel || ("Mesh " + (i + 1));
+        // The label lives on the Multimesh (`mesh`), not its levels (`lvl` is a bare
+        // MeshResolution) — so read it from `mesh` first or multi-meshes save "Mesh N".
+        let labelStr = mesh._permanentStaticLabel || lvl._permanentStaticLabel || ("Mesh " + (i + 1));
         for (let k = 0; k < 16; k++) {
           let char1 = (k * 2 < labelStr.length) ? labelStr.charCodeAt(k * 2) : 0;
           let char2 = (k * 2 + 1 < labelStr.length) ? labelStr.charCodeAt(k * 2 + 1) : 0;
@@ -437,6 +439,16 @@ Export.exportSGL = function (meshes, main) {
       }
     } catch (e) {
       console.error('[FrameAnim] export append failed', e);
+    }
+    // Frame-group structure (SR + voxel frames): outermost footer block. Appended AFTER
+    // FANM so it's located first on import; the two don't coexist in practice.
+    try {
+      if (main && main._frameGroup) {
+        var fgrpBuf = main._frameGroup.serialize(meshes);
+        if (fgrpBuf && fgrpBuf.byteLength) parts.push(fgrpBuf);
+      }
+    } catch (e) {
+      console.error('[FrameGroup] export append failed', e);
     }
     return new Blob(parts, { type: 'application/octet-stream' });
   } catch (e) {

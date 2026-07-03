@@ -15,6 +15,9 @@ import * as THREE from 'three';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Enums from '../misc/Enums.js';
 
+// Magic for the persisted frame-group structure block (see serialize/deserialize).
+const FGRP_MAGIC = 0x46475250; // 'FGRP'
+
 export class FrameGroup {
   constructor(main) {
     this._main = main;
@@ -484,5 +487,101 @@ export class FrameGroup {
     ghost.frustumCulled = false;
     (tm.parent || this._main._scene).add(ghost);
     this._ghosts.push(ghost);
+  }
+
+  // ---- Persistence ----------------------------------------------------------
+  // Frame-group STRUCTURE is not covered by the core .sxr mesh format (no hierarchy,
+  // no _srFrameTime, no group flags). Save it as an independent footer-located block
+  // appended after the mesh data (same decoupled pattern as FrameAnimation's FANM), so
+  // old importers ignore it and the fragile core byte-math is untouched. Keyed by mesh
+  // INDEX in the exported `meshes` list (import recreates meshes in the same order).
+  // NOTE: 3a persists structure only; voxel field bytes are added in 3b (voxFlag is
+  // written now so the format is forward-stable).
+  serialize(meshes) {
+    if (!meshes || !meshes.length) return null;
+    const idxOf = (m) => meshes.indexOf(m);
+    const nameOf = (m) => (m && m._permanentStaticLabel) || '';
+    const entries = meshes.filter(m => m && m._isFrameGroup).map(g => ({
+      gi: idxOf(g), gname: nameOf(g),
+      kids: this.children(g)
+        .map(c => ({ ci: idxOf(c), t: c._srFrameTime || 0, vox: c._isVoxel ? 1 : 0, name: nameOf(c) }))
+        .filter(k => k.ci >= 0),
+    })).filter(e => e.gi >= 0 && e.kids.length);
+    if (!entries.length) return null;
+
+    // Names (v2): stored as UTF-16 code units, length-prefixed. 1 slot len + N slots.
+    const strSlots = (s) => 1 + s.length;
+    let slots = 3; // magic, version, nbGroups
+    for (const e of entries) {
+      slots += 1 + strSlots(e.gname) + 1; // gi + gname + nbKids
+      for (const k of e.kids) slots += 3 + strSlots(k.name); // ci, t, vox + name
+    }
+    const buf = new ArrayBuffer((slots + 2) * 4); // + 2-slot footer
+    const u = new Uint32Array(buf); const f = new Float32Array(buf);
+    let o = 0;
+    const writeStr = (s) => { u[o++] = s.length; for (let i = 0; i < s.length; i++) u[o++] = s.charCodeAt(i); };
+    u[o++] = FGRP_MAGIC; u[o++] = 2; u[o++] = entries.length;
+    for (const e of entries) {
+      u[o++] = e.gi; writeStr(e.gname); u[o++] = e.kids.length;
+      for (const k of e.kids) { u[o++] = k.ci; f[o++] = k.t; u[o++] = k.vox; writeStr(k.name); }
+    }
+    u[o++] = FGRP_MAGIC; u[o++] = slots * 4; // footer: magic + block byte length
+    return buf;
+  }
+
+  deserialize(buffer, meshes) {
+    try {
+      const bytes = buffer.byteLength;
+      if (bytes < 8 || !meshes) return;
+      const foot = new Uint32Array(buffer, bytes - 8, 2);
+      if (foot[0] !== FGRP_MAGIC) return; // no frame-group block in this file
+      const blockLen = foot[1];
+      const start = bytes - 8 - blockLen;
+      if (start < 0 || (start & 3)) return;
+      const u = new Uint32Array(buffer, start, blockLen / 4);
+      const f = new Float32Array(buffer, start, blockLen / 4);
+      let o = 0;
+      if (u[o++] !== FGRP_MAGIC) return;
+      const ver = u[o++]; const nbGroups = u[o++];
+      const readStr = () => { const n = u[o++]; let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(u[o++]); return s; };
+      const main = this._main;
+      for (let gi = 0; gi < nbGroups; gi++) {
+        const groupIdx = u[o++];
+        const gname = ver >= 2 ? readStr() : '';
+        const nbKids = u[o++];
+        const kids = [];
+        for (let k = 0; k < nbKids; k++) {
+          const mesh = meshes[u[o++]]; const t = f[o++]; const vox = u[o++] === 1;
+          const name = ver >= 2 ? readStr() : '';
+          kids.push({ mesh, t, vox, name });
+        }
+        const group = meshes[groupIdx];
+        if (!group) continue;
+        // Restore the group container (mirrors _enable's group setup).
+        group._isFrameGroup = true;
+        group._isNull = true;               // it's a null/locator → gnomon icon, not a cube
+        group._typeName = 'FrameGroup';
+        group._outlinerCollapsed = true;
+        if (gname) group._permanentStaticLabel = gname;
+        group.getMatrix().set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+        const gtm = group.getThreeMesh && group.getThreeMesh();
+        if (gtm) { gtm.matrix.identity(); gtm.matrixAutoUpdate = false; gtm.updateMatrixWorld(true); gtm.children.forEach(c => { c.visible = false; }); }
+        for (const kd of kids) {
+          if (!kd.mesh) continue;
+          kd.mesh._srFrameTime = kd.t;
+          if (kd.vox) kd.mesh._isVoxel = true;
+          if (kd.name) kd.mesh._permanentStaticLabel = kd.name;
+          // Sync the child's Three matrix from its loaded _matrix BEFORE reparenting, so
+          // setMeshParent's world-preservation (attach) reads the real world transform —
+          // otherwise it preserves a stale identity and the children collapse to origin.
+          const ctm = kd.mesh.getThreeMesh && kd.mesh.getThreeMesh();
+          if (ctm) { ctm.matrix.fromArray(kd.mesh.getMatrix()); ctm.matrixAutoUpdate = false; ctm.updateMatrixWorld(true); }
+          if ((kd.mesh._parentMesh || null) !== group) main.setMeshParent(kd.mesh.getID(), group.getID());
+        }
+        this._rebuildVis(group); // re-derive step-held visibility from the restored times
+      }
+      main.render?.();
+      this._refreshOutliner();
+    } catch (e) { console.error('[FrameGroup] deserialize failed', e); }
   }
 }

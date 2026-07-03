@@ -408,6 +408,9 @@ Import.importSGL = function (buffer, gl, main) {
     console.error('[FrameAnim] import restore failed', e);
   }
 
+  // NOTE: FrameGroup structure is reconstructed by Scene.loadScene AFTER these meshes are
+  // added to the scene — setMeshParent/getMeshes need them in main._meshes first.
+
   return meshes;
 };
 
