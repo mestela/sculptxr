@@ -1212,6 +1212,18 @@ class SculptGL extends Scene {
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
 
+    // Timeline key clipboard (desktop): Ctrl/Cmd+C copy selected key(s), Ctrl/Cmd+V paste
+    // at the playhead, +Shift = paste-linked (reserved for frame keys). Skipped while
+    // typing in a field so it doesn't hijack normal text copy/paste.
+    const _ae = document.activeElement;
+    const _typing = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable);
+    if (!_typing && (e.ctrlKey || e.metaKey)) {
+      const _tl = this._gui?._ctrlTimeline;
+      const _kc = (e.key || '').toLowerCase();
+      if (_tl && _kc === 'c' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.copySelectedKeys(); return; }
+      if (_tl && _kc === 'v' && window._animKeyClipboard?.keys?.length) { e.preventDefault(); _tl.pasteKeys(e.shiftKey); return; }
+    }
+
     // [SPECTATOR MATRIX] Cycle Modes
     if (e.which === 68) { // 'D'
       this._spectatorMode = (this._spectatorMode + 1) % 4;
@@ -1221,7 +1233,7 @@ class SculptGL extends Scene {
     }
 
     // [CALIBRATION] Toggle Calibration Mode
-    if (e.which === 67) { // 'C'
+    if (e.which === 67 && !e.ctrlKey && !e.metaKey) { // 'C' (bare — Ctrl+C is key-copy)
       if (this._spectatorMode !== Enums.SpectatorMode.STATIONARY) {
         if (window.screenLog) window.screenLog(`Calibration requires STATIONARY mode.`, "orange");
       } else {

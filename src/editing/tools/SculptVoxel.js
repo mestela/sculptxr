@@ -346,6 +346,45 @@ class SculptVoxel extends SculptBase {
     if (this._worker) this._worker.postMessage({ type: 'FRAME_DELETE', slot });
   }
 
+  // --- FrameGroup voxel frames (field-is-truth model) ---------------------------
+  // Make `child` (a FrameGroup child mesh) the live voxel edit target: persist the
+  // outgoing frame's field, point _voxelMesh at this child so the worker's extraction
+  // (updateVoxelMesh) writes into it, and load this frame's field into the live grid.
+  beginVoxelFrame(child, slot, skipStore) {
+    if (this._activeVoxelSlot === slot && this._voxelMesh === child) return; // already live
+    if (!skipStore && this._activeVoxelSlot != null && this._activeVoxelSlot !== slot) {
+      this.frameStoreField(this._activeVoxelSlot); // persist the frame we're leaving
+    }
+    this._voxelMesh = child;
+    this._activeVoxelSlot = slot;
+    this._applyGridMatrixIfBlank(child);
+    this.frameLoadField(slot); // worker re-extracts → MESH_UPDATE → writes into `child`
+  }
+
+  // Point the live voxel mesh at `child` for hover/cursor WITHOUT touching the worker
+  // field (used while scrubbing — the field loads on stroke start via beginVoxelFrame).
+  setActiveVoxelMesh(child) {
+    this._voxelMesh = child;
+    this._applyGridMatrixIfBlank(child);
+  }
+
+  // A blank frame (no verts yet) never received the grid matrix from updateVoxelMesh — so
+  // apply it so the draw plane + cursor (which parent to this threeMesh) attach at the
+  // grid rather than the origin. Frames WITH geometry are already positioned; don't touch
+  // them (the current grid matrix may differ if bounds have grown).
+  _applyGridMatrixIfBlank(child) {
+    if (!this._gridMatrix || !child.getMatrix) return;
+    if (child.getNbVertices && child.getNbVertices() > 0) return;
+    mat4.copy(child.getMatrix(), this._gridMatrix);
+    const tm = child.getThreeMesh && child.getThreeMesh();
+    if (tm) { tm.matrix.fromArray(child.getMatrix()); tm.matrixAutoUpdate = false; tm.updateMatrixWorld(true); }
+  }
+
+  // Persist the live field back into the active frame's slot (called on stroke end).
+  storeActiveVoxelFrame() {
+    if (this._activeVoxelSlot != null) this.frameStoreField(this._activeVoxelSlot);
+  }
+
   setRadius(val) {
     super.setRadius(val);
     //
@@ -560,6 +599,10 @@ class SculptVoxel extends SculptBase {
   start(ctrl) {
     // IGNORE start() in VR (handled by updateXR)
     if (this._main._xrSession) return;
+
+    // FrameGroup voxel frames (field-is-truth): bind the held frame's field to the live
+    // grid before sculpting, so the stroke edits THAT frame's slot and its child mesh.
+    if (window._frameGroup?.prepareVoxelSculpt) window._frameGroup.prepareVoxelSculpt();
 
     // Frame-mode gate: block the stroke (and its undo snapshot) unless the
     // playhead is parked on a frame. See FrameAnimation.canSculptActive.
@@ -1032,6 +1075,11 @@ class SculptVoxel extends SculptBase {
     // Records the target frame, then requests a tagged mesh whose response commits.
     if (!this._main._xrSession && window._frameAnim && window._frameAnim.requestActiveFrameCommit) {
       window._frameAnim.requestActiveFrameCommit();
+    }
+    // FrameGroup voxel frame: persist the field to the active frame's slot (the child
+    // mesh surface is already live — it IS _voxelMesh — so only the field needs storing).
+    if (!this._main._xrSession && window._frameGroup?.activeVoxelGroup?.()) {
+      this.storeActiveVoxelFrame();
     }
     return super.end();
   }

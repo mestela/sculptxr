@@ -472,6 +472,145 @@ export default class GuiTimeline {
     this.draw();
   }
 
+  // ── Key clipboard (desktop Ctrl-C / Ctrl-V) ────────────────────────────────
+  // Copy the current key selection (any mix of transform/shape/blendshape) into
+  // window._animKeyClipboard, capturing each key's VALUE payload + its time. The
+  // clipboard anchor = the earliest copied time, so paste lands the earliest key at
+  // the playhead and preserves the others' relative offsets.
+  copySelectedKeys() {
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    if (!reg || !sel?.length) return;
+    const keys = [];
+    for (const k of sel) {
+      if (k.type === 'sr') {
+        // Frame (shape-replacement): the "key" is a child mesh of a FrameGroup — no reg
+        // track. Keep a reference: paste duplicates its geometry, paste-linked shares it.
+        const child = this._main.getMeshes?.().find(m => m.getID() === k.childId);
+        if (!child || !child._parentMesh?._isFrameGroup) continue;
+        keys.push({ type: 'sr', childId: k.childId, time: child._srFrameTime || 0, srMesh: child });
+        continue;
+      }
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr) continue;
+      if (k.type === 'transform') {
+        const t = tr.times?.[k.index]; if (t === undefined) continue;
+        keys.push({ meshId: k.meshId, type: 'transform', time: t, payload: {
+          pos:   tr.positions.slice(k.index * 3, k.index * 3 + 3),
+          quat:  tr.quaternions.slice(k.index * 4, k.index * 4 + 4),
+          scale: tr.scales.slice(k.index * 3, k.index * 3 + 3),
+        } });
+      } else if (k.type === 'shape') {
+        const t = tr.shapeTimes?.[k.index]; if (t === undefined) continue;
+        keys.push({ meshId: k.meshId, type: 'shape', time: t, payload: {
+          verts: new Float32Array(tr.shapes[k.index]),
+          outDelta: (tr.shapeOutputTimes?.[k.index] ?? t) - t,
+        } });
+      } else if (k.type === 'blendshape') {
+        const bt = tr.blendshapeTracks?.get(k.name); const t = bt?.times?.[k.index];
+        if (t === undefined) continue;
+        keys.push({ meshId: k.meshId, type: 'blendshape', name: k.name, time: t, payload: { value: bt.values[k.index] } });
+      }
+    }
+    if (!keys.length) return;
+    const anchor = Math.min(...keys.map(k => k.time));
+    window._animKeyClipboard = { anchor, keys };
+    window.screenLog?.(`Copied ${keys.length} key${keys.length > 1 ? 's' : ''}`, '#a6e3a1');
+  }
+
+  // Paste the clipboard at the playhead: earliest key lands on the playhead, the rest
+  // keep their relative offsets. Keys go back onto their ORIGINAL mesh/track/name.
+  // `linked` is reserved for frame (shape-replacement) keys — for scalar keyframes a
+  // paste is always a value copy, so it's currently a no-op distinction here.
+  pasteKeys(linked = false) {
+    const reg = window._animationRegistry;
+    const clip = window._animKeyClipboard;
+    if (!reg || !clip?.keys?.length) return;
+    const playhead = window._animCurrentTime || 0;
+    const fps = window._animFPS || 24;
+    const snap = (t) => (window._animSnapToFrame !== false) ? Math.round(t * fps) / fps : t;
+
+    const before = this._snapshotTracks();
+    const targets = []; // scalar keys — for the scalar undo + selection rebuild
+    let srCount = 0;
+    for (const k of clip.keys) {
+      const time = snap(playhead + (k.time - clip.anchor));
+      if (k.type === 'sr') {
+        // Frame (shape-replacement): paste a new frame. linked=true → shared-data
+        // instance (reuse a phoneme). FrameGroup.pasteFrame handles its own undo.
+        if (window._frameGroup?.pasteFrame?.(k.srMesh, time, linked)) srCount++;
+        continue;
+      }
+      const tr = reg.tracks.get(k.meshId);
+      if (!tr) continue; // paste requires the source track to still exist
+      if (k.type === 'transform')      this._insertTransformKeyAt(tr, time, k.payload);
+      else if (k.type === 'shape')     this._insertShapeKeyAt(tr, time, k.payload);
+      else if (k.type === 'blendshape') this._insertBlendshapeKeyAt(tr, k.name, time, k.payload.value);
+      else continue;
+      if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
+      targets.push({ meshId: k.meshId, type: k.type, name: k.name, time });
+    }
+
+    // Scalar keys: one undo entry + rebuild the selection onto them. (SR frames carry
+    // their own undo via FrameGroup, so they're excluded here.)
+    if (targets.length) {
+      window._animSelectedKeys = targets.map(t => {
+        const tr = reg.tracks.get(t.meshId);
+        const times = t.type === 'transform' ? tr.times
+                    : t.type === 'shape'     ? tr.shapeTimes
+                    : tr.blendshapeTracks?.get(t.name)?.times;
+        const idx = times?.findIndex(x => Math.abs(x - t.time) < 0.005) ?? -1;
+        return idx < 0 ? null : (t.type === 'blendshape'
+          ? { meshId: t.meshId, type: 'blendshape', name: t.name, index: idx }
+          : { meshId: t.meshId, type: t.type, index: idx });
+      }).filter(Boolean);
+      const after = this._snapshotTracks();
+      this._main.getStateManager().pushStateCustom(
+        () => { window._animSelectedKeys = []; this._restoreTracksInPlace(before); },
+        () => { window._animSelectedKeys = []; this._restoreTracksInPlace(after); },
+        false, 'Paste Keyframe'
+      );
+    }
+    const m = this._main?.getMesh?.();
+    if (m) reg.update(m, true);
+    this._main?.render?.();
+    this.draw();
+    const n = targets.length + srCount;
+    window.screenLog?.(`Pasted ${n} ${linked && srCount ? 'linked ' : ''}key${n > 1 ? 's' : ''}`, '#a6e3a1');
+  }
+
+  // Insert a key with EXPLICIT copied values (not captured from the live mesh), replacing
+  // any key already within an epsilon of `time`. Parallel-array splice, sorted by time.
+  _insertTransformKeyAt(tr, time, { pos, quat, scale }) {
+    tr.times = tr.times || []; tr.positions = tr.positions || []; tr.quaternions = tr.quaternions || []; tr.scales = tr.scales || [];
+    let idx = 0; while (idx < tr.times.length && tr.times[idx] < time) idx++;
+    if (idx < tr.times.length && Math.abs(tr.times[idx] - time) < 0.005) {
+      tr.positions.splice(idx * 3, 3, ...pos); tr.quaternions.splice(idx * 4, 4, ...quat); tr.scales.splice(idx * 3, 3, ...scale);
+    } else {
+      tr.times.splice(idx, 0, time); tr.positions.splice(idx * 3, 0, ...pos); tr.quaternions.splice(idx * 4, 0, ...quat); tr.scales.splice(idx * 3, 0, ...scale);
+    }
+  }
+
+  _insertShapeKeyAt(tr, time, { verts, outDelta }) {
+    tr.shapeTimes = tr.shapeTimes || []; tr.shapes = tr.shapes || []; tr.shapeOutputTimes = tr.shapeOutputTimes || [];
+    const copy = new Float32Array(verts);
+    let idx = 0; while (idx < tr.shapeTimes.length && tr.shapeTimes[idx] < time) idx++;
+    if (idx < tr.shapeTimes.length && Math.abs(tr.shapeTimes[idx] - time) < 0.005) {
+      tr.shapes[idx] = copy; tr.shapeOutputTimes[idx] = time + (outDelta || 0);
+    } else {
+      tr.shapeTimes.splice(idx, 0, time); tr.shapes.splice(idx, 0, copy); tr.shapeOutputTimes.splice(idx, 0, time + (outDelta || 0));
+    }
+  }
+
+  _insertBlendshapeKeyAt(tr, name, time, value) {
+    const bt = tr.blendshapeTracks?.get(name);
+    if (!bt) return; // the target mesh must already have this blendshape
+    bt.times = bt.times || []; bt.values = bt.values || [];
+    let idx = 0; while (idx < bt.times.length && bt.times[idx] < time) idx++;
+    if (idx < bt.times.length && Math.abs(bt.times[idx] - time) < 0.005) bt.values[idx] = value;
+    else { bt.times.splice(idx, 0, time); bt.values.splice(idx, 0, value); }
+  }
+
   // The edited value of a key (transform → position channel, shape → output time,
   // blendshape → weight). undefined if not resolvable.
   _keyValue(k, tr) {
@@ -2430,8 +2569,14 @@ export default class GuiTimeline {
     const r2BtnW = 28, r2Gap = 4;
     // Modal swap: for a voxel object in frame mode, the key-op/mode buttons become
     // cel-frame ops (New/Dup/Delete) that act at the playhead. See FrameAnimation.
+    // Voxel objects route to the new FrameGroup SR path by default (the convergence):
+    // suppress the legacy FrameAnimation cel buttons for a voxel object so the
+    // XF/SH/BS/SR row shows instead. Escape hatch: window._voxelSR = false reverts to
+    // the old cel path. (Non-voxel baked cel seqs keep the old path until migrated.)
+    const _amesh = this._main?.getMesh?.();
     const frameCtx = (typeof window !== 'undefined') && window._frameAnim
-      && window._frameAnim.activeIsFrameCtx && window._frameAnim.activeIsFrameCtx();
+      && window._frameAnim.activeIsFrameCtx && window._frameAnim.activeIsFrameCtx()
+      && !(window._voxelSR !== false && _amesh && _amesh._isVoxel);
     if (frameCtx) {
       const fDefs = [
         { id: 'frame_new', label: 'New', tooltip: 'New blank frame at playhead' },
@@ -3205,6 +3350,9 @@ export default class GuiTimeline {
         }
 
         let keyFound = false;
+        // Hidden key types (bottom-strip visibility off) are not selectable — a hidden
+        // key must not be picked/marqueed alongside a visible one at the same time.
+        const _keyShow = window._animKeyShow || { transform: true, shape: true, blendshape: true, shaperep: true };
 
         // In marquee mode, skip key-drag detection — always start marquee.
         if (window._animMarqueeMode) {
@@ -3220,7 +3368,7 @@ export default class GuiTimeline {
           const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
 
           if (ry >= ty && ry <= ty + trackH) {
-            if (trackObj.times) {
+            if (_keyShow.transform !== false && trackObj.times) {
               for (let i = 0; i < trackObj.times.length; i++) {
                 const t = trackObj.times[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -3261,7 +3409,7 @@ export default class GuiTimeline {
               }
             }
             // Check Shape Key Tangents in Dopesheet
-            if (!keyFound && trackObj.shapeTimes && window._animShowTangents) {
+            if (!keyFound && _keyShow.shape !== false && trackObj.shapeTimes && window._animShowTangents) {
               for (let i = 0; i < trackObj.shapeTimes.length; i++) {
                 const t = trackObj.shapeTimes[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -3301,7 +3449,7 @@ export default class GuiTimeline {
               }
             }
 
-            if (!keyFound && trackObj.shapeTimes) {
+            if (!keyFound && _keyShow.shape !== false && trackObj.shapeTimes) {
               for (let i = 0; i < trackObj.shapeTimes.length; i++) {
                 const t = trackObj.shapeTimes[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
@@ -3416,7 +3564,7 @@ export default class GuiTimeline {
             const ty2 = headerH + (laneIdx * trackH);
             let bIdx = 0;
             TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
-              if (keyFound || !bTrack.times) { bIdx++; return; }
+              if (keyFound || !bTrack.times || _keyShow.blendshape === false) { bIdx++; return; }
               const bKy = ty2 + trackH / 2 + 20 + bIdx * 10;
               for (let i = 0; i < bTrack.times.length; i++) {
                 const t = bTrack.times[i];
@@ -4531,7 +4679,16 @@ export default class GuiTimeline {
       });
     }
 
+    // Hidden key types (bottom-strip visibility off) are not marquee-selectable — a
+    // hidden transform/shape/etc. key must not be swept up alongside a visible one.
+    const _mShow = window._animKeyShow || { transform: true, shape: true, blendshape: true, shaperep: true };
+    const _typeVisible = (t) => t === 'transform' ? _mShow.transform !== false
+                             : t === 'shape'     ? _mShow.shape !== false
+                             : t === 'blendshape' ? _mShow.blendshape !== false
+                             : t === 'sr'        ? _mShow.shaperep !== false
+                             : true; // 'frame' (voxel cel) has no filter yet
     newKeys.forEach(nk => {
+      if (!_typeVisible(nk.type)) return;
       const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k =>
         k.meshId === nk.meshId && k.type === nk.type &&
         (nk.type === 'sr' ? k.childId === nk.childId : k.index === nk.index) &&

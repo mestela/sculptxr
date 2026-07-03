@@ -1365,7 +1365,12 @@ class Scene {
       // SR onion skin: ghost neighbour frames when parked/scrubbing, hide during play.
       if (this._frameGroup) {
         if (window._animPlaying) this._frameGroup.clearOnion();
-        else this._frameGroup.refreshOnion();
+        else {
+          this._frameGroup.refreshOnion();
+          // Keep the live voxel mesh (and thus the hover cursor + draw plane) tracking the
+          // held frame as the playhead moves, so any frame is immediately editable.
+          this._frameGroup.syncActiveVoxelFrame();
+        }
       }
     }
 

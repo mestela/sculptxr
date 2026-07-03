@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
+import Enums from '../misc/Enums.js';
 
 export class FrameGroup {
   constructor(main) {
@@ -25,6 +26,52 @@ export class FrameGroup {
 
   _reg() { return window._animationRegistry; }
   _now() { return (typeof window !== 'undefined') ? (window._animCurrentTime || 0) : 0; }
+
+  // --- Voxel frames (field-is-truth) ------------------------------------------
+  // A voxel frame is a normal FrameGroup child whose surface mesh is the DISPLAY
+  // cache; the truth is a worker distance-field slot (child._voxelSlot). The active
+  // frame's child IS the voxel tool's live _voxelMesh; parked frames are cached
+  // surfaces shown via the visibility track (same as any SR frame).
+  _voxelTool() {
+    const sm = this._main.getSculptManager && this._main.getSculptManager();
+    return sm ? sm.getTool(Enums.Tools.VOXEL) : null;
+  }
+  // Disjoint slot range so we never collide with FrameAnimation's slots during the
+  // transition (it allocates from 0).
+  _newVoxelSlot() { this._voxelSlotSeq = (this._voxelSlotSeq || 1000000) + 1; return this._voxelSlotSeq; }
+
+  // The active group iff it's a voxel frame group (its children carry field slots).
+  activeVoxelGroup() {
+    const g = this.activeGroup();
+    return (g && this.children(g).some(c => c._isVoxel)) ? g : null;
+  }
+
+  // Keep the voxel tool's live _voxelMesh pointed at the HELD frame's child as the
+  // playhead moves, so the hover cursor + draw plane (which parent to _voxelMesh) follow
+  // the scrub and any frame is instantly editable. Cheap: no field load (that happens
+  // lazily on stroke start via prepareVoxelSculpt). Called every parked frame.
+  syncActiveVoxelFrame() {
+    const group = this.activeVoxelGroup();
+    if (!group) return;
+    const child = this.visibleChild(group, this._now());
+    const vt = this._voxelTool();
+    if (child && vt && vt._voxelMesh !== child && vt.setActiveVoxelMesh) {
+      vt.setActiveVoxelMesh(child);
+    }
+  }
+
+  // Before a voxel stroke: bind the held frame's field to the live grid so the stroke
+  // edits that frame's slot + child. No-op when the active object isn't a voxel group.
+  prepareVoxelSculpt() {
+    const group = this.activeVoxelGroup();
+    if (!group) return;
+    const child = this.visibleChild(group, this._now());
+    const vt = this._voxelTool();
+    if (child && vt && child._voxelSlot != null) {
+      vt.beginVoxelFrame(child, child._voxelSlot);
+      if (this._main.getMesh() !== child) this._main.setMesh(child);
+    }
+  }
 
   // Rebuild the outliner (desktop sidebar + VR panel) so new groups/frames + the
   // keyframe-driven eye colours show immediately after an SR op.
@@ -53,6 +100,8 @@ export class FrameGroup {
     const t = v.getThreeMesh && v.getThreeMesh();
     if (t && t.parent) t.parent.remove(t);
     this._reg()?.tracks.delete(v.getID());
+    // Free the worker field slot for a deleted voxel frame.
+    if (v._isVoxel && v._voxelSlot != null) { const vt = this._voxelTool(); if (vt) vt.frameDeleteField(v._voxelSlot); }
   }
 
   // Children of a group, ordered by their frame time.
@@ -89,6 +138,11 @@ export class FrameGroup {
     if (!reg) return;
     const kids = this.children(group);
     const times = kids.map(k => k._srFrameTime || 0);
+    // Evaluate visibility at the current playhead so exactly ONE child shows the instant
+    // a frame op finishes. reg.update() applies vis at reg.globalPlaybackTime; if that had
+    // drifted from the playhead (e.g. paste via keyboard without a fresh scrub), two frames
+    // could briefly show. Pin it to the playhead here (parked only — don't fight playback).
+    if (!window._animPlaying) reg.globalPlaybackTime = this._now();
     kids.forEach((child, i) => {
       const id = child.getID();
       let tr = reg.tracks.get(id);
@@ -105,6 +159,7 @@ export class FrameGroup {
     const maxT = times.length ? times[times.length - 1] : 0;
     if (maxT > (window._animMasterDuration || 0)) window._animMasterDuration = maxT;
     this._main.getGui?.()?._ctrlTimeline?.draw?.();
+    this._main.render?.(); // repaint immediately so corrected visibility shows this frame
   }
 
   // Snapshot enough scene state to make a group op one undo step: the meshes list,
@@ -188,6 +243,13 @@ export class FrameGroup {
     group._permanentStaticLabel = (seed._permanentStaticLabel || seed._typeName || 'Shape') + '_animSR';
     main.setMeshParent(seed.getID(), group.getID());
     seed._srFrameTime = time;
+    // Voxel seed → frame 0 owns a field slot; the seed stays the live _voxelMesh.
+    if (seed._isVoxel) {
+      const vt = this._voxelTool();
+      const slot = this._newVoxelSlot();
+      seed._voxelSlot = slot;
+      if (vt) { vt.frameStoreField(slot); vt._activeVoxelSlot = slot; }
+    }
     this._rebuildVis(group);
     main.setMesh(seed);
     return group;
@@ -211,8 +273,25 @@ export class FrameGroup {
     }
 
     const cur = this.visibleChild(group, time);
-    let child;
-    if (dup && cur) {
+    const isVoxel = !!(cur && cur._isVoxel);
+    const vt = isVoxel ? this._voxelTool() : null;
+    let child, voxelSlot = null;
+    if (isVoxel) {
+      // Sync the live field to the frame we're branching from (scrub is lazy, so the live
+      // field can lag the playhead) and PERSIST it BEFORE allocating the new slot —
+      // frameBlankField clobbers the live field, so a store after it would save blank over
+      // the frame we came from.
+      if (vt && cur && cur._voxelSlot != null) { vt.beginVoxelFrame(cur, cur._voxelSlot); vt.storeActiveVoxelFrame(); }
+      // Allocate the new slot: Dup copies the source frame's field, New blanks it. The
+      // child surface is a display cache (a copy of `cur` for Dup, empty for New) that
+      // beginVoxelFrame() refreshes from the loaded field below.
+      voxelSlot = this._newVoxelSlot();
+      if (dup && cur) { child = this._dupMesh(cur); if (vt) vt.frameCopyField(cur._voxelSlot, voxelSlot); }
+      else            { child = new MeshStatic(main._gl); if (vt) vt.frameBlankField(voxelSlot); }
+      child._isVoxel = true;
+      child._voxelSlot = voxelSlot;
+      child._typeName = 'VoxelFrame';
+    } else if (dup && cur) {
       child = this._dupMesh(cur);
     } else {
       child = new MeshStatic(main._gl);   // blank/empty frame — a "beat of nothing"
@@ -231,8 +310,51 @@ export class FrameGroup {
     main.setMeshParent(child.getID(), group.getID());
     this._rebuildVis(group);
     main.setMesh(child);
+    // Make the new voxel frame the live edit target (loads its slot into the grid). Skip
+    // the outgoing-store — we already persisted it above, and the live field is now the
+    // new frame's (blanked/copied), so storing would clobber the source frame.
+    if (isVoxel && vt) vt.beginVoxelFrame(child, voxelSlot, true);
     this._commit(before, dup ? 'SR dup frame' : 'SR new frame');
     this._refreshOutliner();
+  }
+
+  // Paste a copied frame (its source child mesh `src`) into a group at `time`.
+  // linked=true makes a LINKED instance sharing src's geometry (_meshData) — editing any
+  // occurrence updates them all (the "reuse a phoneme" case); else an independent copy.
+  // Replaces any frame already sitting at `time`. Returns the new child (or null).
+  pasteFrame(src, time, linked) {
+    const main = this._main;
+    if (!src) return null;
+    // Target the source's own group if it's still live, else the active group.
+    let group = (src._parentMesh && src._parentMesh._isFrameGroup && main.getMeshes().includes(src._parentMesh))
+      ? src._parentMesh : this.activeGroup();
+    if (!group) return null;
+    const before = this._snapshot();
+    let child;
+    if (linked) {
+      child = new MeshStatic(main._gl);
+      child.shareData(src);          // linked instance — shares _meshData
+      child._typeName = src._typeName;
+    } else {
+      child = this._dupMesh(src);    // independent copy
+    }
+    child._srFrameTime = time;
+    main._meshes.push(child);
+    if (child.initThreeMesh) child.initThreeMesh();
+    main.attachMeshThree?.(child);
+    // Sync the Three matrix from _matrix BEFORE reparenting (setMeshParent's world-
+    // preservation reads a stale identity otherwise and shrinks the frame).
+    const ctm = child.getThreeMesh && child.getThreeMesh();
+    if (ctm) { ctm.matrix.fromArray(child.getMatrix()); ctm.matrixAutoUpdate = false; ctm.updateMatrixWorld(true); }
+    main.setMeshParent(child.getID(), group.getID());
+    // Paste over any frame already at this time.
+    const existing = this.children(group).find(c => c !== child && Math.abs((c._srFrameTime || 0) - time) < 0.005);
+    if (existing) this._removeChild(existing);
+    this._rebuildVis(group);
+    main.setMesh(child);
+    this._commit(before, linked ? 'SR paste linked frame' : 'SR paste frame');
+    this._refreshOutliner();
+    return child;
   }
 
   // Adopt a freshly-added mesh (e.g. a primitive) into `group` as the frame at the

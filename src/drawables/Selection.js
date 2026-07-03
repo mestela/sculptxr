@@ -256,6 +256,17 @@ class Selection {
                     curIdx === Enums.Tools.VOXEL ||
                     (_curTool && _curTool.constructor && _curTool.constructor.name === 'SculptVoxel');
 
+    // During playback, suppress the voxel cursor + draw plane entirely (like onion skin) —
+    // it's a flipbook, not an edit surface. Avoids the snap grid flashing per frame.
+    if (isVoxel && window._animPlaying) {
+      if (this._threeVoxelSphere) this._threeVoxelSphere.visible = false;
+      if (this._threeDrawPlane) this._threeDrawPlane.visible = false;
+      if (this._depthRail) this._depthRail.style.display = 'none';
+      if (this._threeCircle) this._threeCircle.visible = false;
+      if (this._threeDot) this._threeDot.visible = false;
+      return;
+    }
+
     if (isVoxel && this._threeVoxelSphere) {
       // Voxel: show the volumetric sphere where the stroke will land — on the DRAW PLANE
       // (even over empty space), via the same projection the stroke uses, so the cursor
