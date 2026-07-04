@@ -3160,10 +3160,13 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
 function promptSaveName(label, defaultName, cb) {
   // VR → our 3D keyboard; desktop (and anywhere with a real keyboard) → native prompt.
   if (window._vrKeyboard?.shouldUse?.()) {
+    // Anchor the keyboard to the main menu panel (the Files menu lives on it) so it pops
+    // up in front of the panel rather than at the world origin.
+    const panel = window.app?._mainMenuPanel || null;
     window._vrKeyboard.open(defaultName ?? '', { label, maxLength: 60 }, (name) => {
       const n = (name ?? '').trim();
       if (n) cb(n);
-    });
+    }, null, panel);
   } else {
     const n = (window.prompt(label, defaultName ?? '') ?? '').trim();
     if (n) cb(n);

@@ -1,3 +1,17 @@
+# v3.11.0
+**Unified frame-by-frame animation + persistence.** Voxel and mesh cel animation now live on one platform — each frame is a real object in the outliner driven by keyframed visibility — and voxel animations fully save and reload.
+
+- **Feature**: **Frame animation as real objects.** Frames are children of a frame group in the outliner (collapsed by default), driven by a keyframed visibility track — one frame shows at a time. Works the same for voxel and mesh frames. Lay frames with **New / Dup / Delete** in the dopesheet SR row; scrub or play to flip through them.
+- **Feature**: **Voxel animation saves and reloads.** Per-frame distance fields are stored in the `.sxr` (compressed), so a saved voxel animation reloads fully re-sculptable — no bake step. Surfaces, group structure, frame timing, and names all round-trip.
+- **Feature**: **Frame copy / paste.** Select frame markers and **Ctrl+C / Ctrl+V** to copy them to the playhead (earliest lands on the playhead, spacing preserved). **Ctrl+Shift+V** pastes a **linked instance** — sculpt one and every linked copy updates (reuse a phoneme once). "Make unique" breaks the link. Also on the VR radial menu.
+- **Feature**: **Linked instancing.** Duplicate an object as a linked instance that shares geometry — edits (sculpt and paint) propagate live to all occurrences; a chain glyph marks linked objects; make-unique breaks the link. Instance links persist through save/reload.
+- **Feature**: **Autokey button** added to the timeline toolbar (mirrors the animation panel), and the desktop **Grab** tool now autokeys like the transform gizmo.
+- **Feature**: **Split key-mode buttons.** The XF / SH / BS / SR row is now two-part: the top selects the keyed mode, the bottom toggles that type's visibility in the sheet; click the keyed mode again to solo it.
+- **Persistence**: `.sxr` now also saves **mesh names** (fixed — multi-resolution meshes were saving as "Mesh N") and the **camera framing**, so a reload restores your viewpoint.
+- **Fix**: keyframe selection respects the visibility filter — hidden key types can't be picked or marquee-selected (so copy/paste never drags along a hidden key).
+- **Fix**: the VR save-name keyboard now appears in front of the menu panel instead of at the world origin.
+- **Change**: the old cel-animation system was retired in favour of this unified platform; voxel animation no longer needs the "bake before saving" step.
+
 # v3.10.0
 **Frame-by-frame (cel) voxel animation** — draw a voxel object frame by frame and play it back, edited directly in the timeline dopesheet.
 

@@ -103,8 +103,12 @@ export class FrameGroup {
     const t = v.getThreeMesh && v.getThreeMesh();
     if (t && t.parent) t.parent.remove(t);
     this._reg()?.tracks.delete(v.getID());
-    // Free the worker field slot for a deleted voxel frame.
-    if (v._isVoxel && v._voxelSlot != null) { const vt = this._voxelTool(); if (vt) vt.frameDeleteField(v._voxelSlot); }
+    // Free the worker field slot — but only if no OTHER live frame still shares it (a
+    // linked voxel frame shares its source's slot). v is already out of _meshes here.
+    if (v._isVoxel && v._voxelSlot != null) {
+      const stillUsed = this._main.getMeshes().some(m => m._voxelSlot === v._voxelSlot);
+      if (!stillUsed) { const vt = this._voxelTool(); if (vt) vt.frameDeleteField(v._voxelSlot); }
+    }
   }
 
   // Children of a group, ordered by their frame time.
@@ -333,13 +337,25 @@ export class FrameGroup {
       ? src._parentMesh : this.activeGroup();
     if (!group) return null;
     const before = this._snapshot();
+    const isVox = !!src._isVoxel;
+    const vt = isVox ? this._voxelTool() : null;
     let child;
     if (linked) {
       child = new MeshStatic(main._gl);
-      child.shareData(src);          // linked instance — shares _meshData
+      child.shareData(src);          // linked instance — shares _meshData (surface)
       child._typeName = src._typeName;
+      // Linked voxel frame shares the SAME field slot (edit one → both update — the
+      // phoneme-reuse case). _removeChild only frees a slot no live child still references.
+      if (isVox) { child._isVoxel = true; child._voxelSlot = src._voxelSlot; }
     } else {
       child = this._dupMesh(src);    // independent copy
+      // Independent voxel frame gets its own field slot (a copy of the source's field).
+      if (isVox && vt && src._voxelSlot != null) {
+        const slot = this._newVoxelSlot();
+        vt.frameCopyField(src._voxelSlot, slot);
+        child._isVoxel = true;
+        child._voxelSlot = slot;
+      }
     }
     child._srFrameTime = time;
     main._meshes.push(child);
@@ -355,6 +371,9 @@ export class FrameGroup {
     if (existing) this._removeChild(existing);
     this._rebuildVis(group);
     main.setMesh(child);
+    // Bind the pasted voxel frame's field as the live edit target (loads its slot + grid),
+    // so it's a proper voxel frame and holds up on scrub — same as addFrame.
+    if (isVox && vt && child._voxelSlot != null) vt.beginVoxelFrame(child, child._voxelSlot, true);
     this._commit(before, linked ? 'SR paste linked frame' : 'SR paste frame');
     this._refreshOutliner();
     return child;

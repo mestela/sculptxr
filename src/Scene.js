@@ -7211,13 +7211,13 @@ class Scene {
   // PROTOTYPE: the timeline-key context — Delete is real, the rest are stubs so the
   // full 6-wedge wheel can be felt before the clipboard/instancing backend lands.
   _resolveRadialCommands() {
-    const stub = (name) => () => { if (window.screenLog) window.screenLog(`[radial] ${name} (stub)`, '#89b4fa'); };
+    const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
     return [
-      { label: 'Copy',        run: stub('Copy') },
-      { label: 'Paste',       run: stub('Paste') },
-      { label: 'Paste Link',  run: stub('Paste Linked') },
-      { label: 'Dup',         run: stub('Dup') },
-      { label: 'Make Uniq',   run: stub('Make Unique') },
+      { label: 'Copy',        run: () => tl()?.copySelectedKeys?.() },     // selected key(s)/frame(s)
+      { label: 'Paste',       run: () => tl()?.pasteKeys?.(false) },       // at the playhead
+      { label: 'Paste Link',  run: () => tl()?.pasteKeys?.(true) },        // linked instance
+      { label: 'Dup',         run: () => this.duplicateSelection?.() },    // duplicate the object
+      { label: 'Make Uniq',   run: () => this.makeUniqueSelection?.() },   // break an instance link
       { label: 'Delete',      run: () => window._animPanel?.deleteKey?.() },
     ];
   }
