@@ -2533,9 +2533,14 @@ export default class GuiTimeline {
     // working in the dopesheet. Global flag (window._animAutoKey); keys on sculpt-end
     // (see SculptGL.js / Scene.js autokey blocks).
     btns.push({ id: 'autokey', x: bx, y: 5, w: 40, h: 20, label: 'Auto', active: !!window._animAutoKey, tooltip: 'Autokey: auto-key the active object on edit' });
+    bx += 48;
+    // "…" context menu — the flatscreen (desktop/iPad) skin of the VR radial's command
+    // model (Scene._resolveRadialCommands): Copy / Paste / Paste Link / Dup / Make Unique
+    // / Delete on the current key/frame selection. Opens a DOM popup on click.
+    btns.push({ id: 'ctxmenu', x: bx, y: 5, w: 28, h: 20, label: '...', tooltip: 'More: Copy / Paste / Paste Link / Dup / Make Unique / Delete' });
     // Transport — centered but guaranteed not to overlap the left-side buttons.
-    // _leftSafeEnd = right edge of autokey (bx+40) plus a 12px breathing room.
-    const _leftSafeEnd = bx + 40 + 12;
+    // _leftSafeEnd = right edge of the "…" button plus a 12px breathing room.
+    const _leftSafeEnd = bx + 28 + 12;
     const playing = !!window._animPlaying;
     const armed   = !!window._animArmed;
     const _tbDefs = [
@@ -2554,6 +2559,73 @@ export default class GuiTimeline {
       _tbX += _tbBtnW + _tbBtnGap;
     });
     return btns;
+  }
+
+  // Flatscreen "…" context menu — the desktop/iPad skin of the VR radial. Reads the same
+  // command model (Scene._resolveRadialCommands) and shows it as a DOM popup anchored under
+  // the toolbar button. VR uses the radial; this is the flatscreen counterpart.
+  _openContextMenu(btn) {
+    // Toggle: a re-click on the button is caught by the outside-dismiss listener (which
+    // closes + timestamps), so debounce a reopen from that same click.
+    if (performance.now() - (this._ctxMenuClosedAt || 0) < 200) return;
+    const main = this._main;
+    const cmds = main?._resolveRadialCommands?.() || [];
+    if (!cmds.length) return;
+
+    const menu = document.createElement('div');
+    Object.assign(menu.style, {
+      position: 'fixed', zIndex: '100000', minWidth: '176px',
+      background: '#1e1e2e', border: '1px solid #45475a', borderRadius: '8px',
+      padding: '4px', boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+      font: '13px system-ui, sans-serif', userSelect: 'none',
+    });
+    cmds.forEach((cmd) => {
+      const disabled = cmd.enabled === false;
+      const item = document.createElement('button');
+      item.textContent = cmd.label;
+      Object.assign(item.style, {
+        display: 'block', width: '100%', padding: '8px 12px', border: 'none',
+        background: 'none', borderRadius: '5px', textAlign: 'left',
+        color: disabled ? '#6c7086' : '#cdd6f4',
+        cursor: disabled ? 'default' : 'pointer', boxSizing: 'border-box',
+        opacity: disabled ? '0.6' : '1',
+      });
+      if (!disabled) {
+        item.addEventListener('pointerenter', () => { item.style.background = '#313244'; });
+        item.addEventListener('pointerleave', () => { item.style.background = 'none'; });
+        item.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          cleanup();
+          try { cmd.run?.(); } catch (e) { console.error('[TL ctxmenu] command failed', e); }
+          this.draw();
+        });
+      }
+      menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+    // Anchor under the toolbar button (button coords are CSS-space on the canvas).
+    const rect = this._canvas.getBoundingClientRect();
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let left = rect.left + btn.x;
+    let top  = rect.top + btn.y + btn.h + 4;
+    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+    if (top + mh > window.innerHeight - 8) top = rect.top + btn.y - mh - 4;
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top  = Math.max(8, top) + 'px';
+
+    const onDown = (ev) => { if (!menu.contains(ev.target)) cleanup(); };
+    const onKey  = (ev) => { if (ev.key === 'Escape') cleanup(); };
+    const cleanup = () => {
+      this._ctxMenuClosedAt = performance.now();
+      window.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+      menu.remove();
+    };
+    setTimeout(() => { // defer so this opening click doesn't self-dismiss
+      window.addEventListener('pointerdown', onDown, true);
+      window.addEventListener('keydown', onKey, true);
+    }, 0);
   }
 
   // ── Gutter header buttons (key ops + mode) — single row, y:27-47 ──
@@ -2958,6 +3030,9 @@ export default class GuiTimeline {
           }
           case 'marquee':
             window._animMarqueeMode = !window._animMarqueeMode;
+            break;
+          case 'ctxmenu':
+            this._openContextMenu(hit);
             break;
           case 'rewind': {
             const _reg = window._animationRegistry;

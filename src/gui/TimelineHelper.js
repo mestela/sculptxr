@@ -254,17 +254,58 @@ export default class TimelineHelper {
         const kids = _fg.children(_grp);
         const fy = ty + trackH / 2;
         const selKeys = (typeof window !== 'undefined' && window._animSelectedKeys) || [];
+        // Collect each visible frame's screen X plus its shared-data identity so that,
+        // when a linked (instanced) frame is SELECTED, we can arc to its siblings — the
+        // frames sharing that _meshData that an edit would also change.
+        const pts = [];
         for (let i = 0; i < kids.length; i++) {
           const ft = kids[i]._srFrameTime || 0;
           if (ft < loopStart || ft > loopEnd) continue;
           const fx = w.x + tlX + ((ft - loopStart) / visibleDuration) * tlW;
-          const isSel = selKeys.some(k => k.type === 'sr' && k.childId === kids[i].getID());
+          const md = kids[i].getMeshData && kids[i].getMeshData();
+          pts.push({ x: fx, md, isSel: selKeys.some(k => k.type === 'sr' && k.childId === kids[i].getID()) });
+        }
+        // Dashed arcs only for the link set(s) of the SELECTED frame(s): highlight exactly
+        // the other keys that editing the selection would also affect. Different instance
+        // sets stay visually independent (no shared tint) — the arc appears on demand.
+        const selData = new Set(pts.filter(p => p.isSel && p.md).map(p => p.md));
+        if (selData.size) {
           ctx.save();
-          ctx.translate(fx, fy);
+          ctx.setLineDash([3, 3]);
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(137,220,235,0.7)'; // teal, matches the frame colour
+          selData.forEach((md) => {
+            const g = pts.filter(p => p.md === md).sort((a, b) => a.x - b.x);
+            if (g.length < 2) return;
+            for (let i = 0; i < g.length - 1; i++) {
+              const x0 = g[i].x, x1 = g[i + 1].x;
+              // A "square bracket on its side" (staple): straight down from each key, a
+              // flat run across the bottom, back up to the next key — with the two sharp
+              // bottom corners beveled by a small radius. Reads as an explicit connector,
+              // not a soft curve. Fixed depth (same for every arc, independent of the gap);
+              // the corner radius only shrinks for very narrow gaps so it can't overlap.
+              const depth = 20;
+              const r = Math.max(0, Math.min(7, (x1 - x0) / 2 - 2, depth - 2));
+              const yb = fy + depth;
+              ctx.beginPath();
+              ctx.moveTo(x0, fy);
+              ctx.arcTo(x0, yb, x0 + r, yb, r);   // down + bevel the bottom-left corner
+              ctx.lineTo(x1 - r, yb);              // flat run across the bottom
+              ctx.arcTo(x1, yb, x1, yb - r, r);    // bevel the bottom-right corner
+              ctx.lineTo(x1, fy);                  // back up to the next key
+              ctx.stroke();
+            }
+          });
+          ctx.restore();
+        }
+        // Diamonds — teal, amber when selected.
+        for (const p of pts) {
+          ctx.save();
+          ctx.translate(p.x, fy);
           ctx.rotate(Math.PI / 4);
-          ctx.fillStyle = isSel ? '#f9e2af' : '#89dceb';
+          ctx.fillStyle = p.isSel ? '#f9e2af' : '#89dceb';
           ctx.fillRect(-5, -5, 10, 10);
-          if (isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(-6.5, -6.5, 13, 13); }
+          if (p.isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(-6.5, -6.5, 13, 13); }
           ctx.restore();
         }
       }

@@ -2952,8 +2952,11 @@ class Scene {
     if (!this._mesh)
       return;
 
-    this.removeMeshes(this._selectMeshes);
-    this._stateManager.pushStateRemove(this._selectMeshes.slice());
+    // Expand to include FrameGroup children so the whole animated unit is deleted (and
+    // recorded for undo) — not just the group null, which would leave orphaned frames.
+    const toRemove = this._withDescendants(this._selectMeshes);
+    this.removeMeshes(toRemove);
+    this._stateManager.pushStateRemove(toRemove.slice());
     this._selectMeshes.length = 0;
     // Re-select a remaining mesh so the outliner keeps showing its transform/rig controls —
     // an empty selection blanks most of the panel (those only render for a single selection).
@@ -2961,7 +2964,29 @@ class Scene {
     this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
   }
 
-  removeMeshes(rm) {
+  // Expand a removal list so deleting a FrameGroup (or any parent) also removes its
+  // children. FrameGroup frames are real entries in `_meshes`; deleting just the group
+  // null used to orphan them — they stayed in the scene list, kept rendering, and got
+  // serialized into the .sxr (the "I deleted it but it came back on reload" bug).
+  // Iterative so nested groups cascade. Deduped.
+  _withDescendants(list) {
+    const out = [];
+    const seen = new Set();
+    const stack = list.slice();
+    while (stack.length) {
+      const m = stack.pop();
+      if (!m || seen.has(m)) continue;
+      seen.add(m);
+      out.push(m);
+      for (var k = 0; k < this._meshes.length; ++k) {
+        if (this._meshes[k]._parentMesh === m && !seen.has(this._meshes[k])) stack.push(this._meshes[k]);
+      }
+    }
+    return out;
+  }
+
+  removeMeshes(rm, cascade = true) {
+    if (cascade) rm = this._withDescendants(rm); // also remove FrameGroup (parent) children
     var meshes = this._meshes;
     for (var i = 0; i < rm.length; ++i) {
       var idx = this.getIndexMesh(rm[i]);
@@ -2982,6 +3007,12 @@ class Scene {
       this._guiXR.refreshSceneWidget();
     }
   }
+
+  // The legacy canvas VR UI (GuiXR main menu + wrist MiniHUD) is fully replaced by the
+  // HTML panel system. `_brushPanelEnabled` is permanently true, so this returns false and
+  // every legacy-canvas visibility/hit-test/poke path is dead. Flip `_brushPanelEnabled`
+  // to false at runtime only to resurrect the old canvas UI for debugging.
+  _legacyVrCanvasEnabled() { return window._brushPanelEnabled === false; }
 
   getIndexMesh(mesh, select) {
     var meshes = select ? this._selectMeshes : this._meshes;
@@ -5349,17 +5380,16 @@ class Scene {
         this._vrPopup.mesh.visible = _xrOn && !!this._guiPopup._isVisible && !!this._guiPopup._overlay;
     }
     if (this._vrMiniHUD && this._guiMini) {
-        // Hide MiniHUD if the old legacy Main Menu or Popup is visible.
-        const isLegacyMenuVisible = this._guiXR && this._guiXR._isVisible;
-        const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
-        // Suppress MiniHUD when HTML panel mode is enabled AND any HTML panel is
-        // visible (MiniPanel, BrushPanel, MainMenuPanel, ToolPicker).
-        const isHtmlPanelShowing = window._brushPanelEnabled !== false
-          && (!!(this._brushPanel?.mesh?.visible)
-           || !!(this._miniPanel?.mesh?.visible)
-           || !!(this._toolPickerPanel?.mesh?.visible)
-           || !!(this._mainMenuPanel?.mesh?.visible));
-        this._vrMiniHUD.mesh.visible = _xrOn && !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible && !isHtmlPanelShowing;
+        // Legacy canvas MiniHUD is replaced by the HTML MiniPanel — force it hidden in the
+        // shipped config. (Previously gated on "no HTML panel currently visible", which left
+        // it showing at immersive entry before any HTML panel had painted.)
+        if (!this._legacyVrCanvasEnabled()) {
+          this._vrMiniHUD.mesh.visible = false;
+        } else {
+          const isLegacyMenuVisible = this._guiXR && this._guiXR._isVisible;
+          const isPopupVisible = this._guiPopup && this._guiPopup._isVisible && this._guiPopup._overlay;
+          this._vrMiniHUD.mesh.visible = _xrOn && !this._htmlPanelsHidden && !!this._guiMini._isVisible && !isLegacyMenuVisible && !isPopupVisible;
+        }
     }
 
     this._isPointingAtMenu = false;
@@ -5954,13 +5984,8 @@ class Scene {
                 isFist = false;
 
                 // INDEX FINGER Z-DEPTH PUSH-TO-CLICK
-                // Guard: skip legacy MiniHUD poke when any HTML panel is visible
-                const _htHtmlPanelVisible = window._brushPanelEnabled !== false
-                  && (!!(this._brushPanel?.mesh?.visible)
-                   || !!(this._miniPanel?.mesh?.visible)
-                   || !!(this._toolPickerPanel?.mesh?.visible)
-                   || !!(this._mainMenuPanel?.mesh?.visible));
-                if (this._vrMiniHUD && this._guiMini && this._guiMini._isVisible && !_htHtmlPanelVisible) {
+                // Legacy MiniHUD poke is dead in HTML panel mode — never emulate its click.
+                if (this._legacyVrCanvasEnabled() && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible) {
                   const hit = this._vrMiniHUD.intersectPoint([pI.x, pI.y, pI.z]);
                   if (hit && hit.distance <= 0.0) {
                     isPinching = true; // Emulate Trigger pull!
@@ -6553,8 +6578,8 @@ class Scene {
               if (this._vrMiniHUD) this._vrMiniHUD.updateMatrices(null, attachMatrix);
           }
 
-          // Check Main Menu First
-          if (this._vrMenu && this._guiXR && this._guiXR._isVisible) {
+          // Check Main Menu First (legacy canvas only — dead in HTML panel mode)
+          if (this._legacyVrCanvasEnabled() && this._vrMenu && this._guiXR && this._guiXR._isVisible) {
             hit = this._vrMenu.intersect(origin, dir);
             if (hit) targetGuiXR = this._guiXR;
           }
@@ -6565,14 +6590,9 @@ class Scene {
             if (hit) targetGuiXR = this._guiPopup;
           }
 
-          // If Missed Main Menu, Check Mini-HUD (only when no HTML panel is visible)
-          if (!hit && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible
-              && (!this._guiXR || !this._guiXR._isVisible)
-              && !(window._brushPanelEnabled !== false
-                && (!!(this._brushPanel?.mesh?.visible)
-                 || !!(this._miniPanel?.mesh?.visible)
-                 || !!(this._toolPickerPanel?.mesh?.visible)
-                 || !!(this._mainMenuPanel?.mesh?.visible)))) {
+          // If Missed Main Menu, Check Mini-HUD (legacy canvas only — dead in HTML panel mode)
+          if (!hit && this._legacyVrCanvasEnabled() && this._vrMiniHUD && this._guiMini && this._guiMini._isVisible
+              && (!this._guiXR || !this._guiXR._isVisible)) {
             hit = this._vrMiniHUD.intersect(origin, dir);
             if (hit) targetGuiXR = this._guiMini;
           }
@@ -7207,18 +7227,24 @@ class Scene {
 
   // #29 Quick tool-swap: toggle to the OTHER of the two most-recent non-Smooth tools,
   // mirroring the ToolPicker side effects, and show a brief floating name toast.
-  // Command set fed to the VR radial menu (and later the desktop/iPad "…" menu).
-  // PROTOTYPE: the timeline-key context — Delete is real, the rest are stubs so the
-  // full 6-wedge wheel can be felt before the clipboard/instancing backend lands.
+  // The cross-platform context-menu command model — the single source consumed by BOTH
+  // the VR radial (VrRadialMenu) and the flatscreen desktop/iPad "…" menu (MainMenuPanel).
+  // Each entry is { label, icon, enabled, run }. The radial ignores `icon` and dims
+  // `enabled === false`; the "…" menu renders the icon and disables the row.
   _resolveRadialCommands() {
     const tl = () => this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
+    const hasKeySel = !!(window._animSelectedKeys && window._animSelectedKeys.length);
+    const canPaste  = !!(window._animKeyClipboard && window._animKeyClipboard.keys && window._animKeyClipboard.keys.length);
+    const selMesh   = this.getMesh && this.getMesh();
+    const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
+    const hasSel    = !!selMesh;
     return [
-      { label: 'Copy',        run: () => tl()?.copySelectedKeys?.() },     // selected key(s)/frame(s)
-      { label: 'Paste',       run: () => tl()?.pasteKeys?.(false) },       // at the playhead
-      { label: 'Paste Link',  run: () => tl()?.pasteKeys?.(true) },        // linked instance
-      { label: 'Dup',         run: () => this.duplicateSelection?.() },    // duplicate the object
-      { label: 'Make Uniq',   run: () => this.makeUniqueSelection?.() },   // break an instance link
-      { label: 'Delete',      run: () => window._animPanel?.deleteKey?.() },
+      { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
+      { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
+      { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
+      { label: 'Dup',        icon: 'fa-clone',       enabled: hasSel,    run: () => this.duplicateSelection?.() }, // duplicate the object
+      { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
+      { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => window._animPanel?.deleteKey?.() },
     ];
   }
 

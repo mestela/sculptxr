@@ -190,7 +190,9 @@ export class FrameGroup {
     // Restore the meshes array (add-backs / removals) by rebuilding the scene list.
     const cur = main.getMeshes();
     // Remove meshes not in the snapshot.
-    cur.slice().forEach(m => { if (!snap.meshes.includes(m)) { main.removeMeshes([m]); } });
+    // No cascade — restore removes exactly the meshes absent from the snapshot; a group's
+    // in-snapshot children must not be swept when the group itself is being removed.
+    cur.slice().forEach(m => { if (!snap.meshes.includes(m)) { main.removeMeshes([m], false); } });
     // Re-add meshes that were removed since.
     snap.meshes.forEach(m => { if (!cur.includes(m)) { main._meshes.push(m); main.attachMeshThree?.(m); } });
     // Restore parenting + frame times.
