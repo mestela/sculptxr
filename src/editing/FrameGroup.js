@@ -497,33 +497,60 @@ export class FrameGroup {
   // INDEX in the exported `meshes` list (import recreates meshes in the same order).
   // NOTE: 3a persists structure only; voxel field bytes are added in 3b (voxFlag is
   // written now so the format is forward-stable).
+  // Fetch each voxel frame's field from the worker (RLE-compressed) into _saveFieldMap so
+  // the sync serialize() can embed them. Async — call + await before exporting.
+  async prepareFieldsForSave(meshes) {
+    const vt = this._voxelTool();
+    this._saveFieldMap = null;
+    if (!vt || !meshes) return;
+    vt.storeActiveVoxelFrame?.(); // flush the live frame's edits to its slot first (FIFO)
+    const slots = [];
+    meshes.forEach(m => { if (m && m._isVoxel && m._voxelSlot != null) slots.push([m, m._voxelSlot]); });
+    if (!slots.length) return;
+    const map = new Map();
+    for (const [, slot] of slots) {
+      const rle = await vt.getCompressedField(slot);
+      if (rle && rle.length) map.set(slot, rle);
+    }
+    this._saveFieldMap = map;
+  }
+  clearSaveFields() { this._saveFieldMap = null; }
+
   serialize(meshes) {
     if (!meshes || !meshes.length) return null;
     const idxOf = (m) => meshes.indexOf(m);
     const nameOf = (m) => (m && m._permanentStaticLabel) || '';
+    const fieldMap = this._saveFieldMap;
     const entries = meshes.filter(m => m && m._isFrameGroup).map(g => ({
       gi: idxOf(g), gname: nameOf(g),
-      kids: this.children(g)
-        .map(c => ({ ci: idxOf(c), t: c._srFrameTime || 0, vox: c._isVoxel ? 1 : 0, name: nameOf(c) }))
-        .filter(k => k.ci >= 0),
+      kids: this.children(g).map(c => ({
+        ci: idxOf(c), t: c._srFrameTime || 0, vox: c._isVoxel ? 1 : 0, name: nameOf(c),
+        rle: (c._isVoxel && fieldMap) ? fieldMap.get(c._voxelSlot) : null, // v3 compressed field
+      })).filter(k => k.ci >= 0),
     })).filter(e => e.gi >= 0 && e.kids.length);
     if (!entries.length) return null;
 
-    // Names (v2): stored as UTF-16 code units, length-prefixed. 1 slot len + N slots.
+    // Names (v2): UTF-16 code units, length-prefixed. Voxel fields (v3): RLE floats,
+    // length-prefixed.
     const strSlots = (s) => 1 + s.length;
     let slots = 3; // magic, version, nbGroups
     for (const e of entries) {
       slots += 1 + strSlots(e.gname) + 1; // gi + gname + nbKids
-      for (const k of e.kids) slots += 3 + strSlots(k.name); // ci, t, vox + name
+      for (const k of e.kids) slots += 3 + strSlots(k.name) + 1 + (k.rle ? k.rle.length : 0); // + rleLen + rle
     }
     const buf = new ArrayBuffer((slots + 2) * 4); // + 2-slot footer
     const u = new Uint32Array(buf); const f = new Float32Array(buf);
     let o = 0;
     const writeStr = (s) => { u[o++] = s.length; for (let i = 0; i < s.length; i++) u[o++] = s.charCodeAt(i); };
-    u[o++] = FGRP_MAGIC; u[o++] = 2; u[o++] = entries.length;
+    u[o++] = FGRP_MAGIC; u[o++] = 3; u[o++] = entries.length;
     for (const e of entries) {
       u[o++] = e.gi; writeStr(e.gname); u[o++] = e.kids.length;
-      for (const k of e.kids) { u[o++] = k.ci; f[o++] = k.t; u[o++] = k.vox; writeStr(k.name); }
+      for (const k of e.kids) {
+        u[o++] = k.ci; f[o++] = k.t; u[o++] = k.vox; writeStr(k.name);
+        const rl = k.rle ? k.rle.length : 0;
+        u[o++] = rl;
+        if (rl) { f.set(k.rle, o); o += rl; }
+      }
     }
     u[o++] = FGRP_MAGIC; u[o++] = slots * 4; // footer: magic + block byte length
     return buf;
@@ -553,7 +580,9 @@ export class FrameGroup {
         for (let k = 0; k < nbKids; k++) {
           const mesh = meshes[u[o++]]; const t = f[o++]; const vox = u[o++] === 1;
           const name = ver >= 2 ? readStr() : '';
-          kids.push({ mesh, t, vox, name });
+          let rle = null;
+          if (ver >= 3) { const rl = u[o++]; if (rl) { rle = f.slice(o, o + rl); o += rl; } }
+          kids.push({ mesh, t, vox, name, rle });
         }
         const group = meshes[groupIdx];
         if (!group) continue;
@@ -565,11 +594,24 @@ export class FrameGroup {
         if (gname) group._permanentStaticLabel = gname;
         group.getMatrix().set([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
         const gtm = group.getThreeMesh && group.getThreeMesh();
-        if (gtm) { gtm.matrix.identity(); gtm.matrixAutoUpdate = false; gtm.updateMatrixWorld(true); gtm.children.forEach(c => { c.visible = false; }); }
+        if (gtm) {
+          gtm.matrix.identity(); gtm.matrixAutoUpdate = false; gtm.updateMatrixWorld(true);
+          gtm.children.forEach(c => { c.visible = false; });
+          // The null's placeholder sphere isn't drawn in-session (addNull gives it a
+          // colorWrite:false material) but that material isn't serialized — so hide it
+          // here too, else a low-res sphere shows at the origin after load.
+          gtm.material = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false });
+        }
+        const vt = this._voxelTool();
         for (const kd of kids) {
           if (!kd.mesh) continue;
           kd.mesh._srFrameTime = kd.t;
-          if (kd.vox) kd.mesh._isVoxel = true;
+          if (kd.vox) {
+            kd.mesh._isVoxel = true;
+            // Restore the frame's distance field into a fresh worker slot so it's
+            // re-sculptable (the surface already loaded as normal mesh geometry).
+            if (kd.rle && vt) { const slot = this._newVoxelSlot(); vt.putCompressedField(slot, kd.rle); kd.mesh._voxelSlot = slot; }
+          }
           if (kd.name) kd.mesh._permanentStaticLabel = kd.name;
           // Sync the child's Three matrix from its loaded _matrix BEFORE reparenting, so
           // setMeshParent's world-preservation (attach) reads the real world transform —

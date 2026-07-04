@@ -144,6 +144,9 @@ class SculptVoxel extends SculptBase {
           this._pendingMeshUpdate = true;
           this._worker.postMessage({ type: 'GET_MESH' });
         }
+      } else if (msg.type === 'FRAME_COMPRESSED') {
+        const r = this._fieldGetResolvers && this._fieldGetResolvers.get(msg.slot);
+        if (r) { this._fieldGetResolvers.delete(msg.slot); r(msg.rle); }
       } else if (msg.type === 'MESH_UPDATE_QUAD') {
         this._main.getSculptManager().onQuadRemeshResult(msg.data);
       } else if (msg.type === 'SLICE_AND_CAP_RESULT') {
@@ -346,6 +349,22 @@ class SculptVoxel extends SculptBase {
     if (this._worker) this._worker.postMessage({ type: 'FRAME_DELETE', slot });
   }
 
+  // Persistence: fetch a slot's field RLE-compressed (async — resolves when the worker
+  // replies), and restore one from RLE. See GeometryWorker frameGet/PutCompressed.
+  getCompressedField(slot) {
+    return new Promise((resolve) => {
+      if (!this._worker) { resolve(null); return; }
+      if (!this._fieldGetResolvers) this._fieldGetResolvers = new Map();
+      this._fieldGetResolvers.set(slot, resolve);
+      this._worker.postMessage({ type: 'FRAME_GET_COMPRESSED', slot });
+      // Safety: never let a missing worker reply hang the save.
+      setTimeout(() => { if (this._fieldGetResolvers.has(slot)) { this._fieldGetResolvers.delete(slot); resolve(null); } }, 5000);
+    });
+  }
+  putCompressedField(slot, rle) {
+    if (this._worker && rle && rle.length) this._worker.postMessage({ type: 'FRAME_PUT_COMPRESSED', slot, rle });
+  }
+
   // --- FrameGroup voxel frames (field-is-truth model) ---------------------------
   // Make `child` (a FrameGroup child mesh) the live voxel edit target: persist the
   // outgoing frame's field, point _voxelMesh at this child so the worker's extraction
@@ -357,7 +376,7 @@ class SculptVoxel extends SculptBase {
     }
     this._voxelMesh = child;
     this._activeVoxelSlot = slot;
-    this._applyGridMatrixIfBlank(child);
+    this._syncGridToFrame(child);
     this.frameLoadField(slot); // worker re-extracts → MESH_UPDATE → writes into `child`
   }
 
@@ -365,19 +384,23 @@ class SculptVoxel extends SculptBase {
   // field (used while scrubbing — the field loads on stroke start via beginVoxelFrame).
   setActiveVoxelMesh(child) {
     this._voxelMesh = child;
-    this._applyGridMatrixIfBlank(child);
+    this._syncGridToFrame(child);
   }
 
-  // A blank frame (no verts yet) never received the grid matrix from updateVoxelMesh — so
-  // apply it so the draw plane + cursor (which parent to this threeMesh) attach at the
-  // grid rather than the origin. Frames WITH geometry are already positioned; don't touch
-  // them (the current grid matrix may differ if bounds have grown).
-  _applyGridMatrixIfBlank(child) {
+  // Keep the grid matrix and the active frame's placement in agreement:
+  //  - a frame WITH geometry (e.g. a reloaded frame) owns its saved placement → adopt it
+  //    as the grid, so extraction on edit doesn't jump the frame to the default grid scale.
+  //  - a BLANK frame has no placement yet → position it at the grid so the draw plane +
+  //    cursor (which parent to this threeMesh) attach there rather than the origin.
+  _syncGridToFrame(child) {
     if (!this._gridMatrix || !child.getMatrix) return;
-    if (child.getNbVertices && child.getNbVertices() > 0) return;
-    mat4.copy(child.getMatrix(), this._gridMatrix);
-    const tm = child.getThreeMesh && child.getThreeMesh();
-    if (tm) { tm.matrix.fromArray(child.getMatrix()); tm.matrixAutoUpdate = false; tm.updateMatrixWorld(true); }
+    if (child.getNbVertices && child.getNbVertices() > 0) {
+      mat4.copy(this._gridMatrix, child.getMatrix()); // grid ← frame
+    } else {
+      mat4.copy(child.getMatrix(), this._gridMatrix); // frame ← grid
+      const tm = child.getThreeMesh && child.getThreeMesh();
+      if (tm) { tm.matrix.fromArray(child.getMatrix()); tm.matrixAutoUpdate = false; tm.updateMatrixWorld(true); }
+    }
   }
 
   // Persist the live field back into the active frame's slot (called on stroke end).

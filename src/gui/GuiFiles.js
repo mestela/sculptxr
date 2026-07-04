@@ -200,16 +200,20 @@ class GuiFiles {
     this._saveTexture('metalness');
   }
 
-  saveFileAsSGL(baseName) {
+  async saveFileAsSGL(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
+    // Pull voxel-frame fields out of the worker (compressed) so exportSGL can embed them.
+    if (this._main._frameGroup) await this._main._frameGroup.prepareFieldsForSave(meshes);
     this._save(Export.exportSGL(meshes, this._main), this._exportFileName(baseName, 'sxr'));
+    this._main._frameGroup?.clearSaveFields?.();
   }
 
-  saveToBrowserStorage(saveName) {
+  async saveToBrowserStorage(saveName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    
+
+    if (this._main._frameGroup) await this._main._frameGroup.prepareFieldsForSave(meshes);
     const blob = Export.exportSGL(meshes, this._main);
     const timestamp = Date.now();
     const key = `sculpt_${timestamp}`;

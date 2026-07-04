@@ -55,6 +55,40 @@ function frameDelete(slot) {
   delete frameFields[slot];
 }
 
+// Run-length encode a frame field for persistence. Fields are res³ Float32Arrays that
+// are mostly the constant far-value (10000.0), so RLE crushes them. Layout: a Float32Array
+// of [count, value] pairs (count is exact as f32 up to 2^24; res128³ = 2M ≪ that). The
+// total field length is derivable as the sum of counts, so it isn't stored separately.
+function frameGetCompressed(slot) {
+  const field = frameFields[slot];
+  if (!field) { self.postMessage({ type: 'FRAME_COMPRESSED', slot, rle: null }); return; }
+  const runs = [];
+  const n = field.length;
+  let i = 0;
+  while (i < n) {
+    const v = field[i];
+    let c = 1;
+    while (i + c < n && field[i + c] === v) c++;
+    runs.push(c, v);
+    i += c;
+  }
+  const rle = new Float32Array(runs);
+  self.postMessage({ type: 'FRAME_COMPRESSED', slot, rle }, [rle.buffer]);
+}
+
+function framePutCompressed(slot, rle) {
+  if (!rle || !rle.length) return;
+  let total = 0;
+  for (let i = 0; i < rle.length; i += 2) total += rle[i];
+  const field = new Float32Array(total);
+  let o = 0;
+  for (let i = 0; i < rle.length; i += 2) {
+    const c = rle[i], v = rle[i + 1];
+    for (let k = 0; k < c; k++) field[o++] = v;
+  }
+  frameFields[slot] = field;
+}
+
 // Async Init to catch import errors
 (async function () {
   try {
@@ -212,6 +246,12 @@ self.onmessage = function (e) {
         break;
       case 'FRAME_DELETE':
         frameDelete(msg.slot);
+        break;
+      case 'FRAME_GET_COMPRESSED':
+        frameGetCompressed(msg.slot);
+        break;
+      case 'FRAME_PUT_COMPRESSED':
+        framePutCompressed(msg.slot, msg.rle);
         break;
       case 'CLEAR':
         if (voxelState) {
