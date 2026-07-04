@@ -45,6 +45,20 @@ Import.importSGL = function (buffer, gl, main) {
     cam.setMode(u32a[off++]);
     cam.setFov(f32a[off++]);
     cam.setUsePivot(u32a[off++]);
+
+    // v11: restore camera framing (view transform). Flag it so loadScene skips the
+    // auto-reframe and keeps the saved viewpoint.
+    if (version >= 11) {
+      cam._quatRot = [f32a[off++], f32a[off++], f32a[off++], f32a[off++]];
+      cam._trans   = [f32a[off++], f32a[off++], f32a[off++]];
+      cam._center  = [f32a[off++], f32a[off++], f32a[off++]];
+      cam._offset  = [f32a[off++], f32a[off++], f32a[off++]];
+      // setMode() above may have queued a resetViewFront lerp — cancel it so it doesn't
+      // drift the camera off the restored framing, then apply the restored view.
+      cam.clearTimers?.();
+      cam.updateView?.();
+      main._loadedCameraFraming = true;
+    }
   }
 
   var nbMeshes = u32a[off++];
@@ -398,14 +412,6 @@ Import.importSGL = function (buffer, gl, main) {
         }
       }
     }
-  }
-
-  // Restore any appended frame-by-frame (cel) animation block. Keyed by mesh
-  // order; harmless no-op on files without it.
-  try {
-    if (main && main._frameAnim) main._frameAnim.deserialize(buffer, meshes);
-  } catch (e) {
-    console.error('[FrameAnim] import restore failed', e);
   }
 
   // NOTE: FrameGroup structure is reconstructed by Scene.loadScene AFTER these meshes are

@@ -204,14 +204,6 @@ class SculptManager {
       return false;
     }
 
-    // Frame (cel) animation gate: an object with a frame sequence can only be edited
-    // when the playhead is parked exactly on a frame — off-frame edits are ambiguous
-    // (modify which frame?). The voxel tool enforces this internally; this covers the
-    // regular brushes editing a baked (non-voxel) mesh-frame anim. Transform exempt.
-    if (!_isTransform && window._frameAnim && !window._frameAnim.canSculptActive()) {
-      if (window.screenLog) window.screenLog('Park the playhead on a frame to edit it', '#f9e2af');
-      return false;
-    }
 
     // iPad double-fire guard for single-action tools.
     // On iPadOS the pressure-transition synthesis (pointermove 0→pressure) and the
@@ -289,11 +281,6 @@ class SculptManager {
     if (!this._strokeActive) return;
     this._strokeActive = false;
     this.getCurrentTool().end();
-
-    // Capture the finished stroke back into the active non-voxel cel frame so edits
-    // persist across scrubbing (no-op for voxel — that commits via the worker, and
-    // for objects without a frame sequence).
-    window._frameAnim?.captureActiveMeshEdit?.();
 
     // Linked instances share geometry (_meshData); after an edit, re-sync every sibling's
     // GPU buffers so the change shows on all occurrences.

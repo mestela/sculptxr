@@ -400,9 +400,9 @@ class GuiFiles {
   // World-space (each frame's geom is baked through its object matrix). Static
   // (non-animated) meshes are NOT included — export those separately.
   saveObjSequence(baseName) {
-    const fa = window._frameAnim;
-    const seqs = fa ? [...fa.sequences.values()].filter(s => s.frames && s.frames.length) : [];
-    if (!seqs.length) {
+    const fg = window._frameGroup;
+    const groups = fg ? this._main.getMeshes().filter(m => m && m._isFrameGroup) : [];
+    if (!groups.length) {
       if (window.screenLog) window.screenLog('[OBJ seq] No frame-by-frame animation to export', '#f9e2af');
       return;
     }
@@ -413,7 +413,7 @@ class GuiFiles {
     if (!(loopEnd > loopStart)) {
       // No explicit range → span the latest keyed frame, plus one frame of trailing hold.
       loopEnd = loopStart;
-      seqs.forEach(s => { const last = s.frames[s.frames.length - 1]; if (last && last.time > loopEnd) loopEnd = last.time; });
+      groups.forEach(g => fg.children(g).forEach(c => { const t = c._srFrameTime || 0; if (t > loopEnd) loopEnd = t; }));
       loopEnd += 1 / fps;
     }
     let nFrames = Math.max(1, Math.round((loopEnd - loopStart) * fps));
@@ -426,35 +426,19 @@ class GuiFiles {
     const base = (baseName || '').trim() || 'anim';
     const colZ = this._objColorZbrush, colA = this._objColorAppended;
 
-    // Minimal mesh adapter so ExportOBJ.addMesh can read a stored geom snapshot.
-    const adapt = (geom, matrix) => {
-      const nv = geom.vertices ? geom.vertices.length / 3 : 0;
-      return {
-        getVertices: () => geom.vertices,
-        getColors: () => geom.colors || new Float32Array(nv * 3).fill(1),
-        getMaterials: () => geom.materials || new Float32Array(nv * 3),
-        getFaces: () => geom.faces,
-        getNbVertices: () => nv,
-        getNbFaces: () => (geom.faces ? geom.faces.length / 4 : 0),
-        getNbTexCoords: () => 0,
-        getMatrix: () => matrix,
-        getFacesTexCoord: () => null,
-        getTexCoords: () => null,
-        hasUV: () => false,
-      };
-    };
-
     const files = {};
     for (let f = 0; f < nFrames; f++) {
       const t = loopStart + f / fps;
       let data = 's 0\n';
       const offsets = [1, 1];
       let mi = 0;
-      seqs.forEach(seq => {
-        const geom = seq.frames[fa.frameIndexAtTime(seq, t)]?.geom;
-        if (!geom || !geom.vertices || geom.vertices.length === 0) return; // blank/held-empty frame
+      // Each frame group contributes its HELD child (a real MeshStatic) at time t — its
+      // matrix is already world-space (the group is identity), so ExportOBJ reads it directly.
+      groups.forEach(g => {
+        const child = fg.visibleChild(g, t);
+        if (!child || (child.getNbVertices?.() || 0) === 0) return; // blank/held-empty frame
         data += 'o mesh_' + (mi++) + '\n';
-        data = ExportOBJ.addMesh(adapt(geom, seq.mesh.getMatrix()), data, offsets, colZ, colA);
+        data = ExportOBJ.addMesh(child, data, offsets, colZ, colA);
       });
       files[`${base}.${String(f).padStart(4, '0')}.obj`] = strToU8(data);
     }

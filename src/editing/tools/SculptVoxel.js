@@ -126,9 +126,6 @@ class SculptVoxel extends SculptBase {
         
         this._pendingMeshUpdate = false;
         this.updateVoxelMesh(msg.data);
-        // A tagged capture response (forCommit) deterministically stores this
-        // settled mesh into the specific frame recorded at stroke end.
-        if (msg.forCommit && window._frameAnim) window._frameAnim.captureCommit();
 
         // If an update was requested while we were busy, request it now
         if (this._meshRequested) {
@@ -330,7 +327,7 @@ class SculptVoxel extends SculptBase {
   }
 
   // --- Frame-by-frame animation: distance-field snapshots in the worker ---
-  // Slots are integer ids owned by FrameAnimationManager. Storing/loading the
+  // Slots are integer ids owned by FrameGroup (child._voxelSlot). Storing/loading the
   // full field is the per-frame "save the drawing" primitive for voxel frames.
   frameStoreField(slot) {
     if (this._worker) this._worker.postMessage({ type: 'FRAME_STORE', slot });
@@ -627,13 +624,6 @@ class SculptVoxel extends SculptBase {
     // grid before sculpting, so the stroke edits THAT frame's slot and its child mesh.
     if (window._frameGroup?.prepareVoxelSculpt) window._frameGroup.prepareVoxelSculpt();
 
-    // Frame-mode gate: block the stroke (and its undo snapshot) unless the
-    // playhead is parked on a frame. See FrameAnimation.canSculptActive.
-    if (window._frameAnim && !window._frameAnim.canSculptActive()) {
-      if (window.screenLog) window.screenLog('Move the playhead onto a frame to sculpt', 'yellow');
-      return false;
-    }
-
     // Refresh Global Reference
     window.voxelTool = this;
 
@@ -841,8 +831,6 @@ class SculptVoxel extends SculptBase {
   }
 
   stroke(picking) {
-    // Frame-mode gate: only deposit when the playhead is exactly on a frame.
-    if (window._frameAnim && !window._frameAnim.canSculptActive()) return;
     const cur = this.getDesktopCursor(picking);
     if (!cur) {
       if (window.screenLog && Math.random() < 0.05) window.screenLog("Voxel Stroke: No Intersection", "red");
@@ -1094,11 +1082,6 @@ class SculptVoxel extends SculptBase {
       });
       this._moveProxyActive = false;
     }
-    // Frame mode: capture this stroke into the current frame so playback shows it.
-    // Records the target frame, then requests a tagged mesh whose response commits.
-    if (!this._main._xrSession && window._frameAnim && window._frameAnim.requestActiveFrameCommit) {
-      window._frameAnim.requestActiveFrameCommit();
-    }
     // FrameGroup voxel frame: persist the field to the active frame's slot (the child
     // mesh surface is already live — it IS _voxelMesh — so only the field needs storing).
     if (!this._main._xrSession && window._frameGroup?.activeVoxelGroup?.()) {
@@ -1322,10 +1305,10 @@ class SculptVoxel extends SculptBase {
           this._moveProxyActive = false;
         }
 
-        // Frame mode: a VR stroke just ended — capture it into the current frame
-        // (same deterministic commit path as desktop end()).
-        if (this._xrStrokeActive && window._frameAnim && window._frameAnim.requestActiveFrameCommit) {
-          window._frameAnim.requestActiveFrameCommit();
+        // FrameGroup voxel frame: persist the field to the active frame's slot on stroke
+        // end (mirrors desktop end()).
+        if (this._xrStrokeActive && window._frameGroup?.activeVoxelGroup?.()) {
+          this.storeActiveVoxelFrame();
         }
 
         this._lastXRPos = null; // Reset stroke
@@ -1335,11 +1318,8 @@ class SculptVoxel extends SculptBase {
 
       // Detect Start of Stroke (VR)
       if (!this._xrStrokeActive) {
-        // Frame-mode gate: only engage a stroke when the playhead is on a frame.
-        if (window._frameAnim && !window._frameAnim.canSculptActive()) {
-          if (window.screenLog) window.screenLog('Move the playhead onto a frame to sculpt', 'yellow');
-          return;
-        }
+        // Bind the held voxel frame's field before the VR stroke (parity with desktop).
+        if (window._frameGroup?.prepareVoxelSculpt) window._frameGroup.prepareVoxelSculpt();
         this._xrStrokeActive = true;
         this._strokeDistance = 0.0; 
         this._strokeStartTime = performance.now(); // Reset for temporal build-up

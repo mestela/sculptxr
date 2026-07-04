@@ -12,7 +12,6 @@ var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
 
 import ReferenceManager from './editing/ReferenceManager.js';
-import FrameAnimationManager from './editing/FrameAnimation.js';
 import { FrameGroup } from './editing/FrameGroup.js';
 
 // Manage events
@@ -97,12 +96,8 @@ class SculptGL extends Scene {
     window.sculptgl = this; // Alias for user convenience
     this._referenceManager = new ReferenceManager(this);
 
-    // Frame-by-frame animation (Quill-style cel workflow). UI builds lazily on
-    // first enable. Console: window._frameAnim.enableForActive() etc.
-    this._frameAnim = new FrameAnimationManager(this);
-    window._frameAnim = this._frameAnim;
-
-    // Shape-replacement (SR) frame animation as real outliner objects + keyframed vis.
+    // Frame-by-frame animation as real outliner objects + keyframed visibility (voxel
+    // frames own worker distance-field slots). Replaced the old FrameAnimation cel system.
     this._frameGroup = new FrameGroup(this);
     window._frameGroup = this._frameGroup;
 

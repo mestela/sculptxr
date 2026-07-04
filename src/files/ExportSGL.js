@@ -11,7 +11,8 @@ var Export = {};
 // 8 blendshape tracks (baseShape, deltas, weight keyframes, tangents)
 // 9 blendshape lock/active-layer state (baseLocked, active editing layer, per-layer lock/mute)
 // 10 per-object visibility track (step-held vis keyframes)
-Export.VERSION = 10;
+// 11 camera framing (view transform) in the header
+Export.VERSION = 11;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -118,6 +119,13 @@ Export.exportSGL = function (meshes, main) {
     u32a[off++] = cam.getMode();
     f32a[off++] = cam.getFov();
     u32a[off++] = cam.getUsePivot();
+
+    // v11: camera framing (view transform) so a save restores the viewpoint. The view is
+    // derived from these 4 state vectors (Camera.computeView): quatRot, trans, center, offset.
+    f32a.set(cam._quatRot, off); off += 4;
+    f32a.set(cam._trans,   off); off += 3;
+    f32a.set(cam._center,  off); off += 3;
+    f32a.set(cam._offset,  off); off += 3;
 
     u32a[off++] = nbMeshes;
 
@@ -432,16 +440,7 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
-    try {
-      if (main && main._frameAnim) {
-        var frameBuf = main._frameAnim.serialize(meshes);
-        if (frameBuf && frameBuf.byteLength) parts.push(frameBuf);
-      }
-    } catch (e) {
-      console.error('[FrameAnim] export append failed', e);
-    }
-    // Frame-group structure (SR + voxel frames): outermost footer block. Appended AFTER
-    // FANM so it's located first on import; the two don't coexist in practice.
+    // Frame-group structure (SR + voxel frames): appended footer block.
     try {
       if (main && main._frameGroup) {
         var fgrpBuf = main._frameGroup.serialize(meshes);

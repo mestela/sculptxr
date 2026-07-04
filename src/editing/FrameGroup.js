@@ -1,9 +1,9 @@
 /**
- * FrameGroup — shape-replacement (SR) animation as REAL outliner objects with
- * keyframed visibility. Each frame is a child mesh of an auto-created group (a null
- * parent); a per-child visibility track (AnimationRegistry) shows exactly ONE child
- * at each frame time (the flipbook invariant). Contrast FrameAnimationManager
- * (voxel/cel: frames hidden inside a single object).
+ * FrameGroup — frame-by-frame animation as REAL outliner objects with keyframed
+ * visibility. Each frame is a child mesh of an auto-created group (a null parent); a
+ * per-child visibility track (AnimationRegistry) shows exactly ONE child at each frame
+ * time (the flipbook invariant). Voxel frames additionally own a worker distance-field
+ * slot (child._voxelSlot) — the field is the truth, the surface mesh a display cache.
  *
  * Entry: dopesheet SR keymode → New/Dup/Delete. First New/Dup on a plain mesh turns
  * it into frame 0 of a new group (create null, reparent, key it visible). Later
@@ -528,21 +528,36 @@ export class FrameGroup {
         rle: (c._isVoxel && fieldMap) ? fieldMap.get(c._voxelSlot) : null, // v3 compressed field
       })).filter(k => k.ci >= 0),
     })).filter(e => e.gi >= 0 && e.kids.length);
-    if (!entries.length) return null;
+
+    // Linked instances (v4): meshes sharing the same _meshData object, recorded as index
+    // groups. The core format writes each mesh's geometry independently, so without this
+    // they reload as separate/unique meshes and the link is lost.
+    const dataGroups = new Map();
+    meshes.forEach((m, i) => {
+      const md = m && m.getMeshData && m.getMeshData();
+      if (!md) return;
+      if (!dataGroups.has(md)) dataGroups.set(md, []);
+      dataGroups.get(md).push(i);
+    });
+    const links = [...dataGroups.values()].filter(g => g.length > 1);
+
+    if (!entries.length && !links.length) return null;
 
     // Names (v2): UTF-16 code units, length-prefixed. Voxel fields (v3): RLE floats,
-    // length-prefixed.
+    // length-prefixed. Instance links (v4): index groups.
     const strSlots = (s) => 1 + s.length;
     let slots = 3; // magic, version, nbGroups
     for (const e of entries) {
       slots += 1 + strSlots(e.gname) + 1; // gi + gname + nbKids
       for (const k of e.kids) slots += 3 + strSlots(k.name) + 1 + (k.rle ? k.rle.length : 0); // + rleLen + rle
     }
+    slots += 1; // nbLinks
+    for (const lk of links) slots += 1 + lk.length; // count + indices
     const buf = new ArrayBuffer((slots + 2) * 4); // + 2-slot footer
     const u = new Uint32Array(buf); const f = new Float32Array(buf);
     let o = 0;
     const writeStr = (s) => { u[o++] = s.length; for (let i = 0; i < s.length; i++) u[o++] = s.charCodeAt(i); };
-    u[o++] = FGRP_MAGIC; u[o++] = 3; u[o++] = entries.length;
+    u[o++] = FGRP_MAGIC; u[o++] = 4; u[o++] = entries.length;
     for (const e of entries) {
       u[o++] = e.gi; writeStr(e.gname); u[o++] = e.kids.length;
       for (const k of e.kids) {
@@ -552,6 +567,8 @@ export class FrameGroup {
         if (rl) { f.set(k.rle, o); o += rl; }
       }
     }
+    u[o++] = links.length;
+    for (const lk of links) { u[o++] = lk.length; for (const idx of lk) u[o++] = idx; }
     u[o++] = FGRP_MAGIC; u[o++] = slots * 4; // footer: magic + block byte length
     return buf;
   }
@@ -622,6 +639,29 @@ export class FrameGroup {
         }
         this._rebuildVis(group); // re-derive step-held visibility from the restored times
       }
+
+      // Linked instances (v4): re-share _meshData so the meshes read as one linked group
+      // again (edit-propagation + chain glyph + make-unique). Geometry is already
+      // identical (saved from shared data), so this just re-points the data reference.
+      if (ver >= 4) {
+        const nbLinks = u[o++];
+        for (let li = 0; li < nbLinks; li++) {
+          const cnt = u[o++];
+          const idxs = [];
+          for (let c = 0; c < cnt; c++) idxs.push(u[o++]);
+          const src = meshes[idxs[0]];
+          const srcData = src && (src.getCurrentMesh ? src.getCurrentMesh().getMeshData() : src.getMeshData?.());
+          if (!srcData) continue;
+          for (let c = 1; c < cnt; c++) {
+            const tgt = meshes[idxs[c]];
+            if (!tgt) continue;
+            if (tgt.getCurrentMesh) tgt.getCurrentMesh().setMeshData(srcData);
+            tgt.setMeshData?.(srcData);
+            tgt.updateBuffers?.();
+          }
+        }
+      }
+
       main.render?.();
       this._refreshOutliner();
     } catch (e) { console.error('[FrameGroup] deserialize failed', e); }

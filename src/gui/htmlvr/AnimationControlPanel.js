@@ -803,9 +803,9 @@ export function syncAnimationSection(el, main) {
   const wt = el.querySelector('#acp-wait-trigger');
   if (wt) wt.checked = !!window._animWaitForTrigger;
 
-  // Bake affordance only appears when there's a voxel cel anim (= unsavable data).
+  // Bake is obsolete — voxel frame animation persists directly now.
   const bakeBtn = el.querySelector('#acp-bake-voxel');
-  if (bakeBtn) bakeBtn.style.display = window._frameAnim?.hasVoxelSequences?.() ? '' : 'none';
+  if (bakeBtn) bakeBtn.style.display = 'none';
 
   const bakeRate = String(window._animCaptureRate || 0.1);
   el.querySelectorAll('[data-bakerate]').forEach(b => {
@@ -1146,11 +1146,6 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     });
   });
 
-  el.querySelector('#acp-bake-voxel')?.addEventListener('click', () => {
-    window._frameAnim?.bakeActiveVoxelToMesh?.();
-    _sync();
-  });
-
   // ── Record ─────────────────────────────────────────────────────────────────
 
   _cbWire('#acp-count-in', (v) => {
@@ -1165,10 +1160,10 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     _sync();
   });
 
-  // Onion skinning — ghost neighbour frames. Shared by cel (voxel) AND SR groups.
-  _cbWire('#acp-onion', (v) => { window._frameAnim?.setOnion?.(v); window._frameGroup?.setOnion?.(v); });
+  // Onion skinning — ghost neighbour frames of the active SR group.
+  _cbWire('#acp-onion', (v) => { window._frameGroup?.setOnion?.(v); });
   // Loop-aware: wrap the neighbour ghosts around the ends of the sequence.
-  _cbWire('#acp-onion-loop', (v) => { window._frameAnim?.setOnionLoop?.(v); window._frameGroup?.setOnionLoop?.(v); });
+  _cbWire('#acp-onion-loop', (v) => { window._frameGroup?.setOnionLoop?.(v); });
 
   const brTrigger = el.querySelector('#acp-bake-rate');
   const brOpts    = el.querySelector('#acp-bake-rate-wrap .acp-select-opts');

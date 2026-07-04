@@ -1640,9 +1640,6 @@ export default class GuiTimeline {
         const bt = tr?.blendshapeTracks?.get(sk.name);
         time = bt?.times?.[sk.index];
         val  = bt?.values?.[sk.index] ?? 0;
-      } else if (sk.type === 'frame') {
-        time = window._frameAnim?.frameKeyTime(sk.meshId, sk.index);
-        val  = 0;
       }
       return { ...sk, time, val };
     });
@@ -2567,28 +2564,6 @@ export default class GuiTimeline {
     const GUTTER_W = 196;
     const by = 27, bh = 20;
     const r2BtnW = 28, r2Gap = 4;
-    // Modal swap: for a voxel object in frame mode, the key-op/mode buttons become
-    // cel-frame ops (New/Dup/Delete) that act at the playhead. See FrameAnimation.
-    // Voxel objects route to the new FrameGroup SR path by default (the convergence):
-    // suppress the legacy FrameAnimation cel buttons for a voxel object so the
-    // XF/SH/BS/SR row shows instead. Escape hatch: window._voxelSR = false reverts to
-    // the old cel path. (Non-voxel baked cel seqs keep the old path until migrated.)
-    const _amesh = this._main?.getMesh?.();
-    const frameCtx = (typeof window !== 'undefined') && window._frameAnim
-      && window._frameAnim.activeIsFrameCtx && window._frameAnim.activeIsFrameCtx()
-      && !(window._voxelSR !== false && _amesh && _amesh._isVoxel);
-    if (frameCtx) {
-      const fDefs = [
-        { id: 'frame_new', label: 'New', tooltip: 'New blank frame at playhead' },
-        { id: 'frame_dup', label: 'Dup', tooltip: 'Duplicate held frame at playhead' },
-        { id: 'frame_del', label: 'Del', tooltip: 'Delete the frame at the playhead' },
-      ];
-      const fw = 44, fgap = 6;
-      const ftotal = fDefs.length * fw + (fDefs.length - 1) * fgap;
-      let fbx = Math.round((GUTTER_W - ftotal) / 2);
-      fDefs.forEach(def => { btns.push({ ...def, x: fbx, y: by, w: fw, h: bh }); fbx += fw + fgap; });
-      return btns;
-    }
     // XF/SH/BS/SR are DISPLAY toggles (multi-select): each shows/hides that key type
     // in the sheet. The active add-type (last-activated, drawn brightest) is what the
     // "+" adds; when SR is active the "+" is replaced by New/Dup/Del. This row sits
@@ -2687,18 +2662,6 @@ export default class GuiTimeline {
           const mesh = this._main?.getMesh?.();
           const t = window._animCurrentTime || 0;
           switch (gbHit.id) {
-            case 'frame_new':
-              window._frameAnim?.addFrameAt?.(t, true);  // blank
-              this.draw();
-              return;
-            case 'frame_dup':
-              window._frameAnim?.addFrameAt?.(t, false); // duplicate held frame
-              this.draw();
-              return;
-            case 'frame_del':
-              window._frameAnim?.deleteFrameAt?.(t);
-              this.draw();
-              return;
             case 'sr_new':
               window._frameGroup?.addFrame?.(false); // blank frame
               this.draw();
@@ -3482,42 +3445,6 @@ export default class GuiTimeline {
               }
             }
 
-            // Frame-by-frame (cel) keys — ticks at lane centre, keyed by time.
-            if (!keyFound && window._frameAnim) {
-              const fseq = window._frameAnim.sequences.get(meshId);
-              if (fseq && fseq.frames.length) {
-                const fy = ty + trackH / 2;
-                for (let i = 0; i < fseq.frames.length; i++) {
-                  const t = fseq.frames[i].time || 0;
-                  const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
-                  if (Math.abs(rx - kx) < 12 && Math.abs(ry - fy) < 12) {
-                    this._isDraggingKeyframe = true;
-                    this._activeMeshId = meshId;
-                    this._activeKeyframeIndex = i;
-                    this._activeKeyframeType = 'frame';
-                    this._keyDragStartRx = rx;
-                    this._keyDragStartTime = t;
-                    this._undoFrameTimesBeforeMove = window._frameAnim.snapshotFrameTimes();
-                    const isPart = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'frame' && k.index === i);
-                    if (isPart) {
-                      this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
-                        let time;
-                        if (k.type === 'frame') time = window._frameAnim.frameKeyTime(k.meshId, k.index);
-                        else { const tr = reg.tracks.get(k.meshId); time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index]; }
-                        return { ...k, time };
-                      });
-                    } else {
-                      this._animSelectedKeysInitialTimes = null;
-                      window._animSelectedKeys = [{ meshId, type: 'frame', index: i }];
-                      window._animTransformBox = null;
-                    }
-                    keyFound = true;
-                    break;
-                  }
-                }
-              }
-            }
-
             // SR frame-group markers — uniform diamonds; click jumps the playhead to
             // that frame, drag retimes it. Mirrors the cel keys above.
             if (!keyFound && window._frameGroup && this._main._meshes) {
@@ -3934,9 +3861,6 @@ export default class GuiTimeline {
         } else if (initKey.type === 'blendshape') {
           const bt = track.blendshapeTracks?.get(initKey.name);
           if (bt?.times) bt.times[initKey.index] = t;
-        } else if (initKey.type === 'frame' && window._frameAnim) {
-          const s = window._frameAnim.sequences.get(initKey.meshId);
-          if (s && s.frames[initKey.index]) s.frames[initKey.index].time = t;
         }
       };
       const _setKeyVal = (track, initKey, newVal) => {
@@ -3955,11 +3879,6 @@ export default class GuiTimeline {
       const initBox = this._animTransformInitialBox;
 
       if (tBox && initBox) {
-        // Snapshot frame times once at the start of a box drag (for undo).
-        if (this._undoFrameTimesBeforeBox === undefined && window._frameAnim
-            && (window._animSelectedKeys || []).some(k => k.type === 'frame')) {
-          this._undoFrameTimesBeforeBox = window._frameAnim.snapshotFrameTimes();
-        }
         const dx = rx - this._transformStartRx;
         const dt = (dx / tlW) * vDur;
         
@@ -4187,7 +4106,6 @@ export default class GuiTimeline {
       const reg = window._animationRegistry;
       if (reg) {
         const _getKeyTime = (key, track) => {
-          if (key.type === 'frame') return window._frameAnim?.frameKeyTime(key.meshId, key.index) ?? 0;
           if (key.type === 'transform') return track.times?.[key.index] ?? 0;
           if (key.type === 'shape') return track.shapeTimes?.[key.index] ?? 0;
           if (key.type === 'blendshape' && key.name) return track.blendshapeTracks?.get(key.name)?.times?.[key.index] ?? 0;
@@ -4204,7 +4122,6 @@ export default class GuiTimeline {
 
         if (window._animSelectedKeys) {
           window._animSelectedKeys = selectedKeysWithTimes.map(key => {
-            if (key.type === 'frame') return key; // reindexed by identity below
             const track = reg.tracks.get(key.meshId);
             if (!track) return key;
 
@@ -4223,11 +4140,6 @@ export default class GuiTimeline {
             }
             return { ...key, index: newIdx };
           }).filter(k => k.index !== -1);
-        }
-
-        // Frames live outside reg.tracks — sort them by time and repair indices.
-        if (window._frameAnim && (window._animSelectedKeys || []).some(k => k.type === 'frame')) {
-          window._frameAnim.sortActiveAndReindex();
         }
 
         if (this._undoTracksBeforeMove) {
@@ -4257,17 +4169,6 @@ export default class GuiTimeline {
           this._undoTracksBeforeMove = null;
         }
 
-        // Frame retime undo (frames aren't in reg.tracks).
-        if (this._undoFrameTimesBeforeMove && window._frameAnim && this._main.getStateManager) {
-          const fa = window._frameAnim;
-          const before = this._undoFrameTimesBeforeMove;
-          const after = fa.snapshotFrameTimes();
-          this._main.getStateManager().pushStateCustom(
-            () => { fa.restoreFrameTimes(before); fa.sortActiveAndReindex(); this.draw(); },
-            () => { fa.restoreFrameTimes(after);  fa.sortActiveAndReindex(); this.draw(); },
-            false, 'retime frames');
-          this._undoFrameTimesBeforeMove = null;
-        }
       }
       this._isDraggingKeyframe = false;
       this._activeKeyframeTrack = null;
@@ -4453,21 +4354,6 @@ export default class GuiTimeline {
         this._undoTracksBeforeMove = null;
       }
 
-      // Frames moved by the box live outside reg.tracks — sort + reindex, undo.
-      if (window._frameAnim && (window._animSelectedKeys || []).some(k => k.type === 'frame')) {
-        window._frameAnim.sortActiveAndReindex();
-        if (this._undoFrameTimesBeforeBox && this._main.getStateManager) {
-          const fa = window._frameAnim;
-          const before = this._undoFrameTimesBeforeBox;
-          const after = fa.snapshotFrameTimes();
-          this._main.getStateManager().pushStateCustom(
-            () => { fa.restoreFrameTimes(before); fa.sortActiveAndReindex(); this.draw(); },
-            () => { fa.restoreFrameTimes(after);  fa.sortActiveAndReindex(); this.draw(); },
-            false, 'retime frames (box)');
-        }
-      }
-      this._undoFrameTimesBeforeBox = undefined;
-
       this._activeTransformHandle = null;
       this._animTransformInitialBox = null;
       this._animTransformBoxInitialTimes = null;
@@ -4483,9 +4369,6 @@ export default class GuiTimeline {
     this._marqueeStart = null;
     this._marqueeEnd = null;
     this._isPanningGraph = false;
-    // Playhead released: load the landed frame's voxel field so it's editable
-    // (scrub itself is display-only to avoid mid-scrub worker races).
-    if (_wasPlayheadDrag && window._frameAnim) window._frameAnim.loadFieldForPlayhead();
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
     this._isDraggingGutter = false;
@@ -4653,19 +4536,6 @@ export default class GuiTimeline {
       });
     });
 
-    // Add frame (cel) keys in the marquee time range.
-    if (window._frameAnim) {
-      tracks.forEach(([meshId], laneIdx) => {
-        if (laneIdx < laneMin || laneIdx > laneMax) return;
-        const fseq = window._frameAnim.sequences.get(meshId);
-        if (!fseq) return;
-        for (let i = 0; i < fseq.frames.length; i++) {
-          const t = fseq.frames[i].time || 0;
-          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'frame', index: i });
-        }
-      });
-    }
-
     // Add SR frame-group markers in range (keyed by child id — stable across retime resort).
     if (window._frameGroup) {
       tracks.forEach(([meshId], laneIdx) => {
@@ -4707,7 +4577,6 @@ export default class GuiTimeline {
         if (k.type === 'transform') t = track.times?.[k.index];
         else if (k.type === 'shape') t = track.shapeTimes?.[k.index];
         else if (k.type === 'blendshape' && k.name) t = track.blendshapeTracks?.get(k.name)?.times?.[k.index];
-        else if (k.type === 'frame') t = window._frameAnim?.frameKeyTime(k.meshId, k.index);
         if (t !== undefined && t < minT) minT = t;
         if (t !== undefined && t > maxT) maxT = t;
       });

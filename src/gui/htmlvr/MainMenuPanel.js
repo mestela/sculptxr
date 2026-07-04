@@ -3170,49 +3170,9 @@ function promptSaveName(label, defaultName, cb) {
   }
 }
 
-// Voxel cel animation can't be serialized (the per-frame voxel field is worker-only
-// runtime state). Before an .sxr / browser save that would silently drop it, warn
-// and offer to bake it to a mesh-frame animation first (which DOES persist). Desktop
-// gets a 3-button dialog; VR routes to the 2-way ray-interactable confirm.
-function warnVoxelThenSave(main, proceed) {
-  const fa = window._frameAnim;
-  if (!fa?.hasVoxelSequences?.()) { proceed(); return; }
-  const bakeThen = () => { fa.bakeAllVoxelSequences?.(); main.render?.(); proceed(); };
-  const msg = "This scene has voxel frame animation, which can't be saved (the voxel "
-    + "field is runtime-only). Bake it to mesh frames so it saves and reloads?";
-
-  // VR → 2-way confirm panel: Confirm = bake & save, Cancel = save as-is.
-  if (window._vrConfirmPanel && window.app?._renderer?.xr?.isPresenting) {
-    window._vrConfirm(msg, bakeThen, proceed);
-    return;
-  }
-
-  const overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);display:flex;align-items:center;justify-content:center;z-index:999999;font-family:system-ui,sans-serif;';
-  const box = document.createElement('div');
-  box.style.cssText = 'background:#1e1e1e;border:1px solid #555;border-radius:10px;padding:26px 30px;max-width:420px;width:90%;text-align:center;color:#eee;box-shadow:0 8px 40px rgba(0,0,0,.8);';
-  const p = document.createElement('p');
-  p.style.cssText = 'margin:0 0 22px;font-size:14px;line-height:1.5;';
-  p.textContent = msg;
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap;';
-  const mk = (label, bg, fg) => {
-    const b = document.createElement('button');
-    b.textContent = label;
-    b.style.cssText = `background:${bg};color:${fg};border:none;border-radius:6px;padding:9px 18px;font-size:13px;cursor:pointer;font-weight:600;`;
-    return b;
-  };
-  const bBake = mk('Bake & save', '#1e6b3a', '#fff');
-  const bRaw  = mk('Save without it', '#444', '#eee');
-  const bCancel = mk('Cancel', '#2a2a2a', '#aaa');
-  row.append(bBake, bRaw, bCancel);
-  box.append(p, row); overlay.append(box); document.body.append(overlay);
-  const close = () => overlay.remove();
-  bBake.onclick = () => { close(); bakeThen(); };
-  bRaw.onclick  = () => { close(); proceed(); };
-  bCancel.onclick = () => close();
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-}
+// Voxel frame animation now persists (fields are serialized), so saving needs no warning
+// or bake step — this is a straight passthrough kept only so its call sites don't change.
+function warnVoxelThenSave(main, proceed) { proceed(); }
 
 export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   const q = (sel) => el.querySelector(sel);

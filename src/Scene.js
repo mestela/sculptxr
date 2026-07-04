@@ -1222,14 +1222,6 @@ class Scene {
         if (this._animPanel) {
           try {
             this._animPanel.update(true);
-            // A static voxel sculpt becomes frame 0 the moment the anim panel is open, so
-            // it's animatable from the start (the user can delete it later) rather than a
-            // sculpt that lives in no keyframe. Fires once — enableForActive no-ops if a
-            // sequence already exists.
-            if (this._animPanel.mesh?.visible && this._frameAnim && !this._frameAnim.getActiveSeq()) {
-              const _m = this.getMesh?.();
-              if (_m && _m._isVoxel) this._frameAnim.enableForActive();
-            }
             this._animPanel.syncFromState();
           } catch (_) {}
         }
@@ -1345,21 +1337,13 @@ class Scene {
     // scrubbed, drive the displayed frame from the shared playhead clock so cel
     // frames line up with the dopesheet. Otherwise fall back to the frame panel's
     // own Play clock (and idle = manual frame nav stays put).
-    if (this._frameAnim) {
+    // Keep the outliner eye icons tracking keyframed visibility live during play/scrub
+    // (cheap in-place recolour; skip when idle, plus one final update when play stops).
+    {
       const tl = this.getGui && this.getGui() && this.getGui()._ctrlTimeline;
       const scrubbing = !!(tl && tl._isDraggingPlayhead);
-      if (window._animPlaying || scrubbing) {
-        const reg = window._animationRegistry;
-        this._frameAnim.syncToTime(reg ? (reg.globalPlaybackTime || 0) : 0);
-        // Keep the outliner eye icons tracking the keyframed visibility live (cheap
-        // in-place recolour; only during play/scrub, not every idle frame).
-        window._updateOutlinerVisIcons?.();
-      } else {
-        this._frameAnim.tick();
-        // Playback just stopped → restore onion ghosts for the landed frame.
-        if (this._frameWasPlaying) this._frameAnim.refreshOnion();
-        if (this._frameWasPlaying) window._updateOutlinerVisIcons?.(); // final state on stop
-      }
+      if (window._animPlaying || scrubbing) window._updateOutlinerVisIcons?.();
+      else if (this._frameWasPlaying) window._updateOutlinerVisIcons?.();
       this._frameWasPlaying = !!window._animPlaying;
 
       // SR onion skin: ghost neighbour frames when parked/scrubbing, hide during play.
@@ -1371,6 +1355,16 @@ class Scene {
           // held frame as the playhead moves, so any frame is immediately editable.
           this._frameGroup.syncActiveVoxelFrame();
         }
+      }
+
+      // VR panels are 3D meshes; desktop uses DOM overlays, so their meshes must never
+      // render on desktop. Some (MiniPanel, radial) aren't _startHidden, so they'd show at
+      // the world origin. Hide them whenever we're not presenting (no effect in VR).
+      if (!this._renderer?.xr?.isPresenting) {
+        const _vrPanels = [this._miniPanel, this._mainMenuPanel, this._brushPanel,
+          this._toolPickerPanel, this._vrRadial, this._vrRadialMenu, this._vrConfirm,
+          this._vrNumpad, this._vrKeyboard];
+        for (const p of _vrPanels) if (p && p.mesh && p.mesh.visible) p.mesh.visible = false;
       }
     }
 
@@ -2914,7 +2908,10 @@ class Scene {
 
     this._stateManager.pushStateAdd(newMeshes);
     this.setMesh(meshes[meshes.length - 1]);
-    this.resetCameraMeshes(newMeshes);
+    // Keep the restored viewpoint if the file carried camera framing (v11+); otherwise
+    // auto-frame the loaded meshes.
+    if (this._loadedCameraFraming) this._loadedCameraFraming = false;
+    else this.resetCameraMeshes(newMeshes);
     this._camera.optimizeNearFar(this.computeBoundingBoxScene());
     this._refreshDesktopCameraProjection();
     return newMeshes;

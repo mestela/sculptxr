@@ -580,6 +580,13 @@ class Camera {
     this._timers[n] = 0;
   }
 
+  // Cancel all pending delayed camera animations (translate/rotate/quat/center/offset).
+  // Used after restoring a saved viewpoint so a lingering resetViewFront lerp (from
+  // setMode) doesn't drift the camera off the restored framing.
+  clearTimers() {
+    for (const n in this._timers) if (this._timers[n]) this.clearTimerN(n);
+  }
+
   delay(cb, duration, name) {
     var nTimer = name || 'default';
     if (this._timers[nTimer])
