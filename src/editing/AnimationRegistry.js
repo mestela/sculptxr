@@ -23,7 +23,7 @@ class AnimationRegistry {
     this.isCountingIn = false;
     window._animPlaying = false;
     window._animMasterDuration = null;
-    window._animStatusText = '🔴 Punch In Ready!';
+    window._animStatusText = 'Punch In Ready';
     this.lastCaptureTime = -1;
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
   }
@@ -77,6 +77,45 @@ class AnimationRegistry {
     this.sortTrack(track);
     if (mesh) this.update(mesh, true);
     if (window.app?.render) window.app.render();
+  }
+
+  // Single entry point for the Record button (ACP + timeline toolbar) so both agree and
+  // it acts as a proper toggle. Idle → arm + (wait-for-grab, or start; startRecording does
+  // its own count-in). Recording / counting-in / waiting → stop and disarm. No selection →
+  // a nudge instead of a silent no-op. Returns true if now armed/recording.
+  toggleRecord(mesh) {
+    // Active = any part of a record session (armed / waiting / counting-in / recording, or a
+    // live timer). Pressing Record in ANY of these turns it off — so it's a true toggle and
+    // can't silently re-arm. (`_animArmed` stays true for the whole session.)
+    const active = this.isRecording || this.isCountingIn || window._animWaitingForGrab
+                || window._animArmed || this.captureTimer || this.countInTimer;
+    if (active) {
+      window._animWaitingForGrab = false;
+      window._animArmed = false;
+      this.stopRecording(false);   // finalize the take (keeps it + pushes undo)
+      // Force the flags off in case stopRecording early-returned (its <0.5s "discard tiny
+      // take" guard leaves isRecording set otherwise → the button would re-arm on next press).
+      this.isRecording = false;
+      this.isCountingIn = false;
+      // AFTER stopRecording: its finalize tail auto-plays the take (sets _animPlaying=true).
+      // Turning record OFF must not start playback — override it here. (The Escape handler
+      // re-enables play for the "review a real take" case it wants.)
+      window._animPlaying = false;
+      window._animStatusText = '';
+      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
+      return false;
+    }
+    if (!mesh) { window.screenLog?.('Select an object to record', 'orange'); return false; }
+    window._animArmed = true;
+    // Wait-for-Trigger (without count-in) arms and defers the capture to the next Grab.
+    if (window._animWaitForTrigger && !window._animCountIn) {
+      window._animWaitingForGrab = true;
+      window._animStatusText = 'Grab an object to record';
+      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
+    } else {
+      this.startRecording(mesh);
+    }
+    return true;
   }
 
   startRecording(mesh) {
@@ -223,7 +262,7 @@ class AnimationRegistry {
       this.startTime = performance.now();
     }
 
-    window._animStatusText = '🔴 RECORDING!';
+    window._animStatusText = 'Recording';
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;
 
     if (existingTrack) {
@@ -562,7 +601,7 @@ class AnimationRegistry {
     this.activeRecordingId = -1;
     this.activeMesh = null;
     
-    window._animStatusText = window._animArmed ? '🔴 Punch In Ready!' : '⭕ Disarmed';
+    window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
     if (window.app && window.app._guiXR) {
       if (typeof window.app._guiXR.refreshToolsWidget === 'function') {
         window.app._guiXR.refreshToolsWidget();
@@ -769,7 +808,7 @@ class AnimationRegistry {
           const cached = track.shapes[i];
           this.clipboardShape = new Float32Array(cached);
           foundExact = true;
-          window._animStatusText = `📋 Copied key at ${time.toFixed(2)}s`;
+          window._animStatusText = `Copied key at ${time.toFixed(2)}s`;
           break;
         }
       }
@@ -780,7 +819,7 @@ class AnimationRegistry {
       const v = mesh.getVertices();
       if (v) {
         this.clipboardShape = new Float32Array(v);
-        window._animStatusText = `📋 Snapshotted mesh at ${time.toFixed(2)}s`;
+        window._animStatusText = `Snapshotted mesh at ${time.toFixed(2)}s`;
       }
     }
   }
@@ -856,7 +895,7 @@ class AnimationRegistry {
     // Trigger immediate refresh so the user sees the newly pasted state!
     this.update(mesh, true);
     
-    window._animStatusText = `📥 Pasted key at ${time.toFixed(2)}s`;
+    window._animStatusText = `Pasted key at ${time.toFixed(2)}s`;
   }
 
   deleteShapeKey(mesh, time) {
@@ -868,7 +907,7 @@ class AnimationRegistry {
       if (Math.abs(track.shapeTimes[i] - time) < 0.05) {
         const singleKey = [{ meshId: mesh.getID(), type: 'shape', index: i }];
         this.deleteSelectedKeys(singleKey);
-        window._animStatusText = `🗑️ Deleted Shape key at ${time.toFixed(2)}s`;
+        window._animStatusText = `Deleted Shape key at ${time.toFixed(2)}s`;
         
         if (mesh.updateGeometry) mesh.updateGeometry();
         if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
@@ -1551,7 +1590,7 @@ class AnimationRegistry {
             q: track.quaternions.slice(i*4, i*4+4),
             s: track.scales.slice(i*3, i*3+3)
           };
-          window._animStatusText = `📋 Copied Transform key`;
+          window._animStatusText = `Copied Transform key`;
           return;
         }
       }
@@ -1617,7 +1656,7 @@ class AnimationRegistry {
       if (Math.abs(track.times[i] - time) < 0.05) {
         const singleKey = [{ meshId: mesh.getID(), type: 'transform', index: i }];
         this.deleteSelectedKeys(singleKey);
-        window._animStatusText = `🗑️ Deleted Transform key`;
+        window._animStatusText = `Deleted Transform key`;
         break;
       }
     }

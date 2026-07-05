@@ -54,6 +54,13 @@ class Grab extends SculptBase {
     this._grabbedMesh = mesh;
     this._undoMatrix  = mat4.clone(mesh.getMatrix());
 
+    // "Start on click" recording: armed-and-waiting → begin the take now that a desktop
+    // grab has started (mirror of the VR grab hook in updateXR).
+    if (window._animWaitingForGrab && window._animationRegistry) {
+      window._animWaitingForGrab = false;
+      window._animationRegistry.startRecording(mesh);
+    }
+
     // Store the hit point's camera-space depth (linear, independent of near/far).
     // Derived from the view matrix directly rather than cam.project() so it is
     // stable even when optimizeNearFar() hasn't fired yet (defaults near=0.01,

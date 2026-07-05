@@ -2542,7 +2542,7 @@ export default class GuiTimeline {
     // _leftSafeEnd = right edge of the "…" button plus a 12px breathing room.
     const _leftSafeEnd = bx + 28 + 12;
     const playing = !!window._animPlaying;
-    const armed   = !!window._animArmed;
+    const armed   = !!(window._animArmed || window._animWaitingForGrab || reg?.isRecording || reg?.isCountingIn);
     const _tbDefs = [
       { id: 'rewind',    icon: '',                                             tooltip: 'Go to start' },
       { id: 'stepback',  icon: '',                                             tooltip: 'Previous frame' },
@@ -3082,7 +3082,9 @@ export default class GuiTimeline {
             break;
           }
           case 'record':
-            window._animArmed = !window._animArmed;
+            // Same toggle lifecycle as the ACP Record button (start/stop + arm/disarm),
+            // so the two record controls agree instead of doing different things.
+            window._animationRegistry?.toggleRecord?.(this._main?.getMesh?.());
             break;
         }
         this.draw();
@@ -4784,6 +4786,13 @@ export default class GuiTimeline {
           ctx.textBaseline = 'alphabetic'; ctx.font = '13px sans-serif'; ctx.fillStyle = Theme.text;
           ctx.fillText('D/G', cx, ty);
         }
+      } else if (btn.id === 'record') {
+        // Solid red dot (no hole), matching the ACP record button — the FA record glyph
+        // is a ring, which reads confusingly. White on the red active bg, red otherwise.
+        ctx.beginPath();
+        ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+        ctx.fillStyle = btn.active ? '#ffffff' : '#f38ba8';
+        ctx.fill();
       } else if (btn.icon) {
         ctx.fillStyle = btn.disabled ? Theme.surface1 : Theme.text;
         if (_faReady) {
@@ -4934,11 +4943,31 @@ export default class GuiTimeline {
 
     // Show status or value of closest key to playhead
     ctx.textBaseline = 'middle';
-    if (reg.isCountingIn || reg.isRecording) {
+    if (reg.isCountingIn) {
+      // Count-in: red-tint the whole timeline + a big centred countdown number so it's
+      // unmistakable the take is about to roll.
+      ctx.save();
+      ctx.fillStyle = 'rgba(220,40,40,0.18)';
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+      const _n = (window._animStatusText || '').replace(/\D/g, '') || (window._animStatusText || '');
+      const _cs = Math.max(32, Math.min(72, w.h * 0.5));
+      ctx.fillStyle = '#ff6b6b';
+      ctx.font = `bold ${_cs}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(_n, w.x + w.w / 2, w.y + w.h / 2);
+      ctx.restore();
+    } else if (reg.isRecording) {
       ctx.fillStyle = '#ff4444';
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(window._animStatusText || '', w.w / 2, w.y + 40);
+      const _txt = window._animStatusText || '';
+      ctx.fillText(_txt, w.w / 2, w.y + 40);
+      // Solid REC dot to the left of the label (replaces the old emoji, drawn on canvas).
+      const _tw = ctx.measureText(_txt).width;
+      ctx.beginPath();
+      ctx.arc(w.w / 2 - _tw / 2 - 12, w.y + 40, 5, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Frame field (right-aligned in toolbar): shows the selected key's frame and

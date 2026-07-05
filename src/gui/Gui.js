@@ -424,8 +424,10 @@ class Gui {
     tabGroup.appendChild(renderingTab);
     tabGroup.appendChild(topologyTab);
     tabGroup.appendChild(sculptingTab);
-    tabGroup.appendChild(animationTab);
+    // Layers (blendshapes) then Animation then Timeline — anim + timeline sit adjacent
+    // since they're tightly linked.
     tabGroup.appendChild(blendshapesTab);
+    tabGroup.appendChild(animationTab);
     tabGroup.appendChild(timelineTab);
 
     const scenePanel     = document.createElement('wa-tab-panel'); scenePanel.setAttribute('name', 'scene');
@@ -445,8 +447,8 @@ class Gui {
     tabGroup.appendChild(renderingPanel);
     tabGroup.appendChild(topologyPanel);
     tabGroup.appendChild(sculptingPanel);
-    tabGroup.appendChild(animationPanel);
     tabGroup.appendChild(blendshapesPanel);
+    tabGroup.appendChild(animationPanel);
     tabGroup.appendChild(timelinePanel);
 
     // Canvas-2D blendshape layer-stack panel (replaces the HTML blendshape UI).

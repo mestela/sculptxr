@@ -216,6 +216,10 @@ var getOptionsURL = function () {
 
   // Animation
   options.animFPS = queryInteger(getVal('animFPS'), 1, 120, 24);
+  // Record mode (persisted, mutually exclusive). Default for new users: Start-on-click ON,
+  // Count-in OFF (matt uses start-on-click most).
+  options.animStartOnClick = queryBool(getVal('animStartOnClick'), true);
+  options.animCountIn      = queryBool(getVal('animCountIn'),      false);
 
   // Scene
   options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.5);

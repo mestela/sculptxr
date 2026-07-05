@@ -8,7 +8,7 @@
  * Sections:
  *   1. Animation  (FPS, speed, duration/loop in frames, timeline toggle)
  *   2. Transport  (8-button bar + Clear All)
- *   3. Record     (Count In, Wait for Trigger, Bake Rate)
+ *   3. Record     (Count In, Start on click, Capture Rate)
  *   4. Keyframes  (key mode, Add Key, Copy/Paste/Cut/Delete, Autokey)
  *   5. Blendshapes
  */
@@ -171,6 +171,7 @@ const CSS = `
 .acp-root .acp-transport button.hover    { background: #24243e; color: #cdd6f4; }
 .acp-root .acp-transport button.active   { background: #313244; color: #a6e3a1; border-color: #a6e3a1; }
 .acp-root .acp-transport button.recording { background: #3d1e2e; color: #f38ba8; border-color: #f38ba8; }
+.acp-root .acp-transport button.armed { background: #3d3320; color: #f9e2af; border-color: #f9e2af; }
 .acp-root .acp-btn-grid {
   display: flex;
   gap: 4px;
@@ -460,10 +461,10 @@ export function buildAnimationSectionHTML() {
           <input type="checkbox" id="acp-count-in"> Count in
         </label>
         <label class="acp-check-row">
-          <input type="checkbox" id="acp-wait-trigger"> Wait for Trigger
+          <input type="checkbox" id="acp-wait-trigger"> Start on click
         </label>
         <div class="acp-stack" style="gap:4px">
-          <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Bake rate</label>
+          <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Capture rate</label>
           <div class="acp-select" id="acp-bake-rate-wrap">
             <button class="acp-select-trigger" id="acp-bake-rate">Standard (~10 fps)</button>
             <div class="acp-select-opts" style="display:none">
@@ -773,6 +774,8 @@ export function syncAnimationSection(el, main) {
   el.querySelector('#acp-play-fwd')?.classList.toggle('active',    playFwd && !rec);
   el.querySelector('#acp-play-rev')?.classList.toggle('active',    playRev && !rec);
   el.querySelector('#acp-record')  ?.classList.toggle('recording', rec);
+  // Distinct "armed / waiting for a grab" state (amber) vs live "recording" (red).
+  el.querySelector('#acp-record')  ?.classList.toggle('armed', !!window._animWaitingForGrab && !rec);
 
   const timeline = main?.getGui?.()._ctrlTimeline;
   const tlVisible = !!(timeline?._visible);
@@ -960,6 +963,32 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   const fps    = () => window._animFPS || 24;
   const meshes = () => main._meshes || [];
 
+  // Seed the record-mode globals from persisted options on first wire (idempotent — the
+  // undefined guard means later rebuilds don't clobber a live toggle). Default: start-on-click.
+  const _opt = window.getOptionsURL?.() || {};
+  if (window._animCountIn === undefined)        window._animCountIn = !!_opt.animCountIn;
+  if (window._animWaitForTrigger === undefined) window._animWaitForTrigger = !!_opt.animStartOnClick;
+
+  // Escape cancels an active record session (count-in / armed / recording). Bound once,
+  // capture-phase so it wins over panel-close Escape handlers when a take is live.
+  if (!window._animRecEscBound) {
+    window._animRecEscBound = true;
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const r = window._animationRegistry;
+      if (!r) return;
+      if (r.isRecording || r.isCountingIn || window._animWaitingForGrab || window._animArmed) {
+        // Cancelling a real take leaves it playing back for review; cancelling a count-in or
+        // an armed-but-not-started session should just stop (there's no take yet).
+        const wasRecording = r.isRecording && !r.isCountingIn;
+        r.toggleRecord(null);               // stop/cancel (toggleRecord sets _animPlaying=false)
+        window._animPlaying = wasRecording; // recording → keep playing; countdown/armed → stopped
+        window._animSyncKeyInspector?.();    // refresh the record button state
+        e.stopPropagation();
+      }
+    }, true);
+  }
+
   const _getTargetMesh = () => {
     const sel = main._selectMeshes;
     if (sel?.length > 0) return sel[0];
@@ -1125,11 +1154,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   el.querySelector('#acp-record')?.addEventListener('click', () => {
     const r = reg(); if (!r) return;
-    const target = _getTargetMesh(); if (!target) return;
-    window._animArmed = true;
-    if (window._animCountIn) r.startRecording(target);
-    else if (window._animWaitForTrigger) window._animWaitingForGrab = true;
-    else r.startRecording(target);
+    r.toggleRecord(_getTargetMesh()); // start when idle, stop when recording/counting/waiting
     _sync();
   });
 
@@ -1148,15 +1173,23 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
 
   // ── Record ─────────────────────────────────────────────────────────────────
 
+  // Persist both keys on either toggle (they're mutually exclusive, so save the pair).
+  const _saveRecMode = () => {
+    window.saveOption?.('animCountIn', !!window._animCountIn);
+    window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
+  };
+
   _cbWire('#acp-count-in', (v) => {
     window._animCountIn = v;
     if (window._animCountIn) window._animWaitForTrigger = false;
+    _saveRecMode();
     _sync();
   });
 
   _cbWire('#acp-wait-trigger', (v) => {
     window._animWaitForTrigger = v;
     if (window._animWaitForTrigger) window._animCountIn = false;
+    _saveRecMode();
     _sync();
   });
 

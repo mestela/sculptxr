@@ -179,7 +179,8 @@ const CSS = `
   opacity: 0.3;
   pointer-events: none;
 }
-.mm-tl-btn { margin-top: auto; border-top: 1px solid #313244; }
+/* Toggle tabs (Blendshapes / Timeline) pack with the rest — no bottom push — but keep
+   the .tl-on highlight below to show when their mesh is visible. */
 .mm-tl-btn.tl-on { background: rgba(137,220,235,0.2); color: #89dceb; border-color: #89dceb; }
 .mm-section-header {
   display: flex;
@@ -812,10 +813,11 @@ function buildShellHTML() {
     </div>
     <div id="mm-body">
       <div id="mm-tabstrip">
-        ${['scene','rendering','topology','sculpting','animation'].map((s, i) =>
+        ${['scene','rendering','topology','sculpting'].map((s, i) =>
           `<button class="mm-tab-btn${i === 3 ? ' active' : ''}" data-section="${s}" title="${s[0].toUpperCase() + s.slice(1)}">${TAB_ICONS[s]}</button>`
         ).join('\n        ')}
         <button class="mm-tab-btn mm-tl-btn" id="mm-bs-btn" title="Blendshapes">${TAB_ICONS.blendshapes}</button>
+        <button class="mm-tab-btn" data-section="animation" title="Animation">${TAB_ICONS.animation}</button>
         <button class="mm-tab-btn mm-tl-btn" id="mm-tl-btn" title="Timeline">${TAB_ICONS.timeline}</button>
       </div>
       <div id="mm-content"></div>

@@ -67,6 +67,12 @@ class Transform extends SculptBase {
 
     if (mesh && this._gizmo.onMouseDown()) {
       picking._mesh = mesh;
+      // "Start on click" recording: armed-and-waiting → begin the take when the gizmo
+      // drag starts (desktop equivalent of grabbing the object in VR).
+      if (window._animWaitingForGrab && window._animationRegistry) {
+        window._animWaitingForGrab = false;
+        window._animationRegistry.startRecording(mesh);
+      }
       return true;
     }
 
