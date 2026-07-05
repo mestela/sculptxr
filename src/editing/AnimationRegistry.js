@@ -1,5 +1,6 @@
 import { quat, mat4 } from 'gl-matrix';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
+import Enums from '../misc/Enums.js';
 
 class AnimationRegistry {
   constructor() {
@@ -141,6 +142,16 @@ class AnimationRegistry {
     this.activeRecordingId = id;
     this.activeMesh = mesh;
     this.lastCaptureTime = -1;
+    this._shapeCaptureLen = -1;        // #30: re-latch the vertex-topology length per take
+    this._shapeCaptureWarned = false;
+    this.lastShapeWriteTime = undefined;
+    this._shapeStrokeSnap = null;
+
+    // #30: vertex recording needs a fixed vertex count across the take. Warn upfront if
+    // dyntopo is live (the mesh will re-tessellate under the brush and poison the lerp).
+    if (window._animKeyMode === 'shape' && mesh.isDynamic) {
+      window.screenLog?.('Heads up: turn dyntopo off for vertex recording', 'orange');
+    }
     
     // Capture state before recording for Undo!
     const track = this.tracks.get(id);
@@ -330,30 +341,96 @@ class AnimationRegistry {
 
     let elapsed = (performance.now() - this.startTime) / 1000.0;
 
+    // #30: vertex "keep-alive". In shape mode captureTick samples the live deformed
+    // vertices into the SHAPE track (shapeTimes + full-mesh Float32Array in shapes), so
+    // a continuous Move-brush wobble becomes a shape-key performance the existing
+    // ShotSculpt playback already interpolates. Self-contained and keyed off the VISIBLE
+    // playhead clock (globalPlaybackTime) — during a shape take update() keeps looping
+    // the recorded mesh (see the recording guard there), so keys land under the playhead.
+    if (window._animKeyMode === 'shape') {
+      if (!track.shapeTimes || !track.shapes) {
+        track.shapeTimes = track.shapeTimes || [];
+        track.shapes = track.shapes || [];
+      }
+
+      // Keys are laid down only WHILE a stroke is active (mouse/pen held on desktop,
+      // trigger held in VR). Record stays live between strokes so the loop keeps playing
+      // and you can puppeteer in waves — hair on one pass, beard on the next.
+      const app = window.app;
+      const stroking = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
+      if (!stroking) {
+        this._shapeCaptureLen = -1;            // re-latch topology at the next stroke
+        this.lastShapeWriteTime = undefined;   // fresh throttle window per stroke
+        return;
+      }
+
+      const keyTime = this.globalPlaybackTime || 0;
+
+      // Throttle to the capture rate.
+      const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+      if (this.lastShapeWriteTime !== undefined &&
+          keyTime >= this.lastShapeWriteTime && keyTime - this.lastShapeWriteTime < rate) return;
+
+      // Topology must stay constant across a stroke or the equal-length ShotSculpt lerp
+      // breaks — latch the vert length on the first sample, skip+warn on any change
+      // (dyntopo / voxel / a mid-take multires level switch).
+      const verts = this.activeMesh.getVertices ? this.activeMesh.getVertices() : null;
+      if (!verts) return;
+      const nb = (this.activeMesh.getNbVertices ? this.activeMesh.getNbVertices() : verts.length / 3) * 3;
+      if (this._shapeCaptureLen === undefined || this._shapeCaptureLen < 0) {
+        this._shapeCaptureLen = nb;
+        this._shapeCaptureWarned = false;
+      }
+      if (nb !== this._shapeCaptureLen) {
+        if (!this._shapeCaptureWarned) {
+          this._shapeCaptureWarned = true;
+          window.screenLog?.('Vertex recording needs a fixed topology — turn dyntopo off', 'orange');
+        }
+        return;
+      }
+
+      // ADDITIVE WAVES come from update()'s per-frame rebase (it keeps the prior waves
+      // playing UNDER the live stroke and only pins the grabbed verts to your hand), so
+      // by the time we sample here the mesh buffer already IS the composite result — we
+      // just snapshot it raw.
+      const keyVerts = new Float32Array(verts.subarray(0, nb));
+
+      // Punch-in overwrite: replace any existing key within half a capture-rate of this
+      // playhead time so a re-recorded wave overwrites cleanly, while waves elsewhere on
+      // the loop are left untouched.
+      const half = rate * 0.5;
+      for (let i = track.shapeTimes.length - 1; i >= 0; i--) {
+        if (Math.abs(track.shapeTimes[i] - keyTime) < half) {
+          track.shapeTimes.splice(i, 1);
+          track.shapes.splice(i, 1);
+          if (track.shapeOutputTimes) track.shapeOutputTimes.splice(i, 1);
+        }
+      }
+
+      this.lastShapeWriteTime = keyTime;
+      track.shapeTimes.push(keyTime);
+      track.shapes.push(keyVerts);
+      if (track.shapeOutputTimes) track.shapeOutputTimes.push(keyTime);
+      this._sortShapeRingBuffer(track);
+      return;
+    }
+
     if (window._animMasterDuration && window._animMasterDuration > 0) {
       const rawElapsed = elapsed;
       elapsed = elapsed % window._animMasterDuration;
-      
+
       if (this.lastCaptureTime >= 0) {
         const tA = this.lastCaptureTime;
         const tB = elapsed;
-        if (tB >= tA) {
-          for (let i = track.times.length - 1; i >= 0; i--) {
-            if (track.times[i] > tA && track.times[i] <= tB) {
-              track.times.splice(i, 1);
-              track.positions.splice(i * 3, 3);
-              track.quaternions.splice(i * 4, 4);
-              track.scales.splice(i * 3, 3);
-            }
-          }
-        } else {
-          for (let i = track.times.length - 1; i >= 0; i--) {
-            if (track.times[i] > tA || track.times[i] <= tB) {
-              track.times.splice(i, 1);
-              track.positions.splice(i * 3, 3);
-              track.quaternions.splice(i * 4, 4);
-              track.scales.splice(i * 3, 3);
-            }
+        // Punch-in overwrite: drop any prior transform keys in the time window we just
+        // re-passed so overdubbing replaces instead of piling up.
+        const inWindow = (t) => (tB >= tA) ? (t > tA && t <= tB) : (t > tA || t <= tB);
+        for (let i = track.times.length - 1; i >= 0; i--) {
+          if (inWindow(track.times[i])) {
+            track.times.splice(i, 1);
+            track.positions.splice(i * 3, 3);
+            track.quaternions.splice(i * 4, 4);
+            track.scales.splice(i * 3, 3);
           }
         }
       }
@@ -502,6 +579,51 @@ class AnimationRegistry {
     }
   }
 
+  // Shape-track counterpart of _sortRingBuffer: keeps shapeTimes/shapes (and the
+  // parallel shapeOutputTimes) ordered when a wrapped-loop overdub inserts a key
+  // out of order. Swaps whole Float32Array snapshots by reference (cheap).
+  _sortShapeRingBuffer(track) {
+    const st = track.shapeTimes;
+    if (!st || st.length < 2) return;
+    for (let i = st.length - 1; i > 0; i--) {
+      if (st[i] < st[i - 1]) {
+        let tmp = st[i]; st[i] = st[i - 1]; st[i - 1] = tmp;
+        let shp = track.shapes[i]; track.shapes[i] = track.shapes[i - 1]; track.shapes[i - 1] = shp;
+        if (track.shapeOutputTimes) {
+          let so = track.shapeOutputTimes[i];
+          track.shapeOutputTimes[i] = track.shapeOutputTimes[i - 1];
+          track.shapeOutputTimes[i - 1] = so;
+        }
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Evaluate a frozen shape-track snapshot ({times, shapes}) at time t into a fresh
+  // Float32Array of length nb (clamped-linear, matching the ShotSculpt playback lerp).
+  // Returns null if the snapshot has no keys. Used by #30 additive-wave recording to get
+  // the prior waves' composite at the playhead without touching the live track.
+  _evalShapeSnapshot(snap, t, nb) {
+    const times = snap && snap.times;
+    const shapes = snap && snap.shapes;
+    if (!times || !shapes || times.length === 0) return null;
+    if (times.length === 1 || shapes.length === 1) {
+      return shapes[0] ? new Float32Array(shapes[0].subarray(0, nb)) : null;
+    }
+    let i = 0;
+    const last = Math.min(times.length, shapes.length) - 1;
+    while (i < last && times[i + 1] < t) i++;
+    const s1 = shapes[i], s2 = shapes[i + 1] || shapes[i];
+    if (!s1 || !s2 || s1.length < nb || s2.length < nb) return null;
+    const t1 = times[i], t2 = times[i + 1] ?? t1;
+    let a = (t2 > t1) ? (t - t1) / (t2 - t1) : 0;
+    if (a < 0) a = 0; else if (a > 1) a = 1;
+    const out = new Float32Array(nb);
+    for (let k = 0; k < nb; k++) out[k] = s1[k] + (s2[k] - s1[k]) * a;
+    return out;
+  }
+
   stopRecording(isManualAbort = false) {
     if (this.countInTimer) {
       clearInterval(this.countInTimer);
@@ -512,28 +634,39 @@ class AnimationRegistry {
     this.captureTimer = null;
 
     const track = this.tracks.get(this.activeRecordingId);
-    const count = track ? track.times.length : 0;
-    
-    if (!isManualAbort && track && count > 0 && track.times[count - 1] < 0.5) {
+    // #30: a shape take writes shapeTimes, a transform take writes times. Measure the
+    // finalize (discard-tiny-take, duration lock, end-pad, undo) against whichever this
+    // take actually recorded.
+    const isShape = window._animKeyMode === 'shape';
+    const seqTimes = isShape ? (track && track.shapeTimes) : (track && track.times);
+    const count = seqTimes ? seqTimes.length : 0;
+
+    if (!isManualAbort && count > 0 && seqTimes[count - 1] < 0.5) {
       return;
     }
 
     this.isRecording = false;
     this.isCountingIn = false;
-    
+
     // If this is the very first finalized recording, lock its duration permanently as the Master Loop Boundary!
     if (track && count > 1 && (!window._animMasterDuration || window._animMasterDuration <= 0)) {
-      window._animMasterDuration = track.times[track.times.length - 1];
+      window._animMasterDuration = seqTimes[count - 1];
     } else if (track && count > 1 && window._animMasterDuration && window._animMasterDuration > 0) {
-      const lastTime = track.times[track.times.length - 1];
+      const lastTime = seqTimes[count - 1];
       if (lastTime < window._animMasterDuration - 0.05) {
         // Pad the rest of this track's timeline with the exact same final pose so it correctly spans the full master loop boundary!
-        track.times.push(window._animMasterDuration);
-        const pIdx = (track.times.length - 2) * 3;
-        const qIdx = (track.times.length - 2) * 4;
-        track.positions.push(track.positions[pIdx], track.positions[pIdx+1], track.positions[pIdx+2]);
-        track.quaternions.push(track.quaternions[qIdx], track.quaternions[qIdx+1], track.quaternions[qIdx+2], track.quaternions[qIdx+3]);
-        track.scales.push(track.scales[pIdx], track.scales[pIdx+1], track.scales[pIdx+2]);
+        if (isShape) {
+          track.shapeTimes.push(window._animMasterDuration);
+          track.shapes.push(new Float32Array(track.shapes[count - 1]));
+          if (track.shapeOutputTimes) track.shapeOutputTimes.push(window._animMasterDuration);
+        } else {
+          track.times.push(window._animMasterDuration);
+          const pIdx = (track.times.length - 2) * 3;
+          const qIdx = (track.times.length - 2) * 4;
+          track.positions.push(track.positions[pIdx], track.positions[pIdx+1], track.positions[pIdx+2]);
+          track.quaternions.push(track.quaternions[qIdx], track.quaternions[qIdx+1], track.quaternions[qIdx+2], track.quaternions[qIdx+3]);
+          track.scales.push(track.scales[pIdx], track.scales[pIdx+1], track.scales[pIdx+2]);
+        }
       }
     }
 
@@ -2006,7 +2139,18 @@ class AnimationRegistry {
 
     if (!mesh || (!window._animPlaying && !forceScrub)) return;
 
-    if (this.isRecording && mesh.getID() === this.activeRecordingId) return;
+    // Recording mesh: normally fully suppressed so the live performance isn't stomped by
+    // playback. EXCEPT a shape (vertex) take — there the loop must keep playing so you
+    // can see prior waves and puppeteer new ones on top; we only suppress the ShotSculpt
+    // vertex-write WHILE a stroke is actively deforming this mesh (below).
+    let liveShapeStroke = false;
+    if (this.isRecording && mesh.getID() === this.activeRecordingId) {
+      if (window._animKeyMode !== 'shape') return;
+      const app = window.app;
+      liveShapeStroke = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
+      // Stroke ended → drop the per-stroke rebase baseline so the next stroke re-begins.
+      if (!liveShapeStroke) { this._shapeStrokeSnap = null; this._dynBase = null; }
+    }
 
     const now = performance.now();
 
@@ -2182,8 +2326,44 @@ class AnimationRegistry {
     let baseForBlendshapes = null;
     const verts = mesh.getVertices();
 
+    // #30 additive rebase: while a stroke is live on the shape-recording mesh, keep the
+    // PRIOR waves playing underneath instead of freezing. Each frame we re-lay the brush's
+    // contribution (buffer − last frame's base) on top of the prior-waves composite at the
+    // current playhead, then advance the base. Untouched verts follow the earlier motion;
+    // the verts the brush is grabbing (which it pins to fixed start positions each move)
+    // stay with your hand. The buffer thus becomes the additive result captureTick records.
+    if (liveShapeStroke && track.shapeTimes && track.shapeTimes.length > 0) {
+      // Guarded: this runs inside the render loop, so a fault here must NOT propagate and
+      // kill rendering/playback — fall back to leaving the live sculpt untouched.
+      try {
+        const nb = (mesh.getNbVertices ? mesh.getNbVertices() : verts.length / 3) * 3;
+        if (!this._shapeStrokeSnap) {
+          this._shapeStrokeSnap = { times: track.shapeTimes.slice(), shapes: track.shapes.slice() };
+          this._dynBase = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
+        }
+        const comp = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
+        if (comp && comp.length === nb && this._dynBase && this._dynBase.length === nb && verts.length >= nb) {
+          for (let i = 0; i < nb; i++) verts[i] = comp[i] + (verts[i] - this._dynBase[i]);
+          this._dynBase = comp;
+          // We're inside the render loop already — refresh geometry/buffers, but don't
+          // call app.render() re-entrantly (the ongoing frame will draw the result).
+          if (mesh.updateGeometry) mesh.updateGeometry();
+          if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+        }
+      } catch (e) {
+        if (!this._rebaseErrLogged) {
+          this._rebaseErrLogged = true;
+          console.error('[#30 additive rebase] failed:', e);
+          window.screenLog?.('vertex-rec rebase error (see console)', 'red');
+        }
+      }
+      return; // handled the verts for this frame
+    }
+
     // 1. ShotSculpt (Old Shape Key System)
-    if (track.shapeTimes && track.shapeTimes.length > 0) {
+    // While a stroke is live on the shape-recording mesh the branch above owns the verts;
+    // otherwise play back the recorded shape keys normally.
+    if (track.shapeTimes && track.shapeTimes.length > 0 && !liveShapeStroke) {
       let sAlpha = 0;
       let s1 = null;
       let s2 = null;

@@ -188,12 +188,15 @@ class Selection {
       pickedMesh = false;
     }
 
-    // Hide brush indicator during playback or when using transform tool on desktop
+    // Hide brush indicator during playback or when using transform tool on desktop.
+    // EXCEPTION: a shape (vertex) take keeps the loop playing while you're actively
+    // sculpting, so the draw cursor must stay visible (#30).
     const sm = main.getSculptManager();
     const curIdx = sm ? sm.getToolIndex() : -1;
     const isTransform = curIdx === Enums.Tools.TRANSFORM || curIdx === Enums.Tools.TRANSFORM_VR;
+    const shapeRecording = window._animationRegistry?.isRecording && window._animKeyMode === 'shape';
 
-    if (window._animPlaying || isTransform) {
+    if ((window._animPlaying && !shapeRecording) || isTransform) {
       pickedMesh = false;
     }
 

@@ -1298,8 +1298,11 @@ class Scene {
         if (this._meshes) {
           for (let i = 0; i < this._meshes.length; i++) {
             const m = this._meshes[i];
-            // Skip playback update for the mesh currently being recorded
-            if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId) {
+            // Skip playback for the mesh being recorded — EXCEPT a shape (vertex) take,
+            // where the loop must keep playing so you can puppeteer in waves (update()
+            // suppresses only the vertex-write during an active stroke).
+            if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId
+                && window._animKeyMode !== 'shape') {
               continue;
             }
             window._animationRegistry.update(m);
@@ -1320,11 +1323,11 @@ class Scene {
       if (this._meshes) {
         for (let i = 0; i < this._meshes.length; i++) {
           const m = this._meshes[i];
-          // Skip playback update for the mesh currently being recorded
-          if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId) {
-            if (window.screenLog && Math.random() < 0.05) {
-              window.screenLog(`Skipping update for recording mesh: ${m.getID()}`, "cyan");
-            }
+          // Skip playback for the mesh being recorded — EXCEPT a shape (vertex) take,
+          // where the loop must keep playing so you can puppeteer in waves (update()
+          // suppresses only the vertex-write during an active stroke).
+          if (window._animationRegistry.isRecording && m.getID() === window._animationRegistry.activeRecordingId
+              && window._animKeyMode !== 'shape') {
             continue;
           }
           window._animationRegistry.update(m);
@@ -8736,7 +8739,10 @@ class Scene {
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
 
-                cursorGroup.visible = !window._animPlaying;
+                // Hidden during playback — EXCEPT a shape (vertex) take, where the loop
+                // keeps playing but you're actively sculpting, so the draw cursor must stay.
+                cursorGroup.visible = !window._animPlaying
+                  || (window._animationRegistry?.isRecording && window._animKeyMode === 'shape');
                 cursorGroup.position.set(0, 0, 0);
                 cursorGroup.quaternion.identity();
                 cursorGroup.scale.set(1, 1, 1);

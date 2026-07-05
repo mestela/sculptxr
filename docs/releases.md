@@ -1,3 +1,12 @@
+# v3.13.0
+**Performance-record vertex deformation — "keep alive" sculpting.** Puppeteer a sculpt into motion: with the timeline looping, hold the trigger (or mouse) and sculpt, and your live deformation is recorded as animation. Build it up in waves — wobble the hair on one pass, the beard on the next.
+
+- **Feature**: **Vertex performance recording (Shape mode).** Arm Record, set the key mode to **Shape**, and sculpt while the loop plays — the deformation under your brush is captured into a shape track at the capture rate. Move-brush a hairstyle to wiggle it in the wind, then loop it back.
+- **Feature**: **Record in waves, additively.** The loop keeps playing the whole time you record. Keys are only laid down *while the trigger/mouse is held*, so you can perform one region, release, and perform another over a later pass — earlier waves keep animating underneath your new stroke.
+- **Feature**: **Puppeteer against live motion.** While you sculpt, the prior waves keep playing under your brush instead of freezing; the verts you're grabbing follow your hand on top of that motion.
+- **Detail**: keys are clocked off the visible playhead so they land where you see it; punch-in overwrite only touches the span you re-perform; the draw cursor stays visible while recording; takes are undoable and save/reload with the `.sxr`.
+- **Note (MVP limitation)**: Shape recording stores full-mesh snapshots, so keep it to **relatively lightweight sculpts** for now (dense meshes make large takes). It needs a fixed topology — turn dyntopo off before recording.
+
 # v3.11.0
 **Unified frame-by-frame animation + persistence.** Voxel and mesh cel animation now live on one platform — each frame is a real object in the outliner driven by keyframed visibility — and voxel animations fully save and reload.
 

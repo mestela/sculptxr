@@ -242,8 +242,10 @@ class SculptManager {
     this._strokeActive = !!canEdit;
 
     // Sculpting interrupts animation playback (you can orbit during playback, but a
-    // sculpt/edit stops it). Refresh the timeline + transport UI to match.
-    if (canEdit && window._animPlaying) {
+    // sculpt/edit stops it). Refresh the timeline + transport UI to match. EXCEPTION:
+    // while recording (#30 vertex keep-alive), the stroke IS the performance and the
+    // transport must keep looping so you can puppeteer in waves — don't pause.
+    if (canEdit && window._animPlaying && !window._animationRegistry?.isRecording) {
       window._animPlaying = false;
       if (window._animationRegistry) window._animationRegistry.lastGlobalTime = null;
       this._main.getGui?.()?._ctrlTimeline?.draw?.();
