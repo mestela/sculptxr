@@ -401,6 +401,7 @@ const CSS = `
   color: #89b4fa;
   border-color: #89b4fa;
 }
+.mm-choice.mm-dim { opacity: 0.4; } /* mesh tools while a voxel object is active */
 
 /* Action button */
 .mm-action-btn {
@@ -1471,11 +1472,14 @@ export function buildSectionHTML_sculpting(main) {
   const symOn  = sm?._symmetry ?? false;
   const contOn = sm?._continuous ?? false;
 
+  // Mesh/sculpt tools don't apply to a voxel object — dim the inactive ones when the Voxel
+  // tool is active so the live set (the Voxel-mode grid below) is obvious.
+  const dimForVoxel = (cur === Enums.Tools.VOXEL) ? ' mm-dim' : '';
   const sculptBtns = SCULPT_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
+    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
   const meshBtns = MESH_TOOLS.map(t =>
-    `<button class="mm-choice${cur === t.id ? ' active' : ''}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
+    `<button class="mm-choice${cur === t.id ? ' active' : dimForVoxel}" data-tool-id="${t.id}" style="color:${toolTextTint(t.id)}">${t.label}</button>`
   ).join('');
 
   // ── Brush settings (radius + intensity) ─────────────────────────
@@ -1560,8 +1564,11 @@ export function buildSectionHTML_sculpting(main) {
         if (m.mode === 1 && !m.neg) return curMode === 1 || (curMode === 0 && curNeg);
         return m.mode === curMode && m.neg === curNeg;
       };
+      // Semantic tints matching toolTints.js: deform (Add/Sub/Inflate/Deflate) = red,
+      // Smooth = blue, Move = green — so voxel modes read the same as the mesh tools.
+      const modeTint = (m) => m.mode === 3 ? '#89b4fa' : m.mode === 4 ? '#a6e3a1' : '#f38ba8';
       const modeBtns = modes.map(m =>
-        `<button class="mm-choice${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`
+        `<button class="mm-choice${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}" style="color:${modeTint(m)}">${m.label}</button>`
       ).join('');
       const shapeBtns = [{ shape: 0, label: 'Sphere' }, { shape: 1, label: 'Box' }].map(s =>
         `<button class="mm-choice${curShape === s.shape ? ' active' : ''}" data-voxel-shape="${s.shape}">${s.label}</button>`

@@ -283,7 +283,10 @@ class Selection {
         this._threeVoxelSphere.position.fromArray(cur.cellPos);
         const r = Math.max(1e-4, cur.radiusCells);
         this._threeVoxelSphere.scale.set(r, r, r);
-        const isSub = !!(vtool && (vtool._negative || vtool._mode === 1));
+        // Red when the stroke will subtract/deflate — including while Alt (or Shift) is held
+        // for the temporary invert, so the cursor signals "you're in alt mode" like VR does.
+        const altInvert = (main._altKey === true) || (main._shiftKey === true);
+        const isSub = !!(vtool && (vtool._negative || vtool._mode === 1)) || altInvert;
         this._threeVoxelSphere.material.uniforms.color.value.setHex(isSub ? 0xff3030 : 0x4488ff);
         this._threeVoxelSphere.visible = true;
         // Grid + depth rail are plane-mode only; hide them in surface mode.

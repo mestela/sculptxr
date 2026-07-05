@@ -1054,8 +1054,11 @@ export class MiniPanel extends HTMLVRPanel {
         return m.mode === curMode && m.neg === curNeg;
       };
 
+      // Semantic tints matching toolTints.js / MainMenuPanel: deform (Add/Sub/Inflate/
+      // Deflate) = red, Smooth = blue, Move = green.
+      const modeTint = (m) => m.mode === 3 ? '#89b4fa' : m.mode === 4 ? '#a6e3a1' : '#f38ba8';
       const btns = modes.map(m =>
-        `<button class="mp-voxel-btn${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}">${m.label}</button>`
+        `<button class="mp-voxel-btn${isActiveMode(m) ? ' active' : ''}" data-voxel-mode="${m.mode}" data-voxel-neg="${m.neg}" style="color:${modeTint(m)}">${m.label}</button>`
       ).join('');
 
       // Brush volume shape (sphere / box) — restored from the old VR menu.

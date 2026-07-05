@@ -878,7 +878,9 @@ class SculptVoxel extends SculptBase {
     // Wait, user ASKED for Desktop Shift.
 
     // Let's try:
-    var isNegative = (this._main._shiftKey === true) || (this._negative === true);
+    // Alt (or Shift) held inverts the stroke: Add<->Sub, Inflate<->Deflate. Alt matches the
+    // mesh-brush invert modifier so it's consistent across tool types.
+    var isNegative = (this._main._altKey === true) || (this._main._shiftKey === true) || (this._negative === true);
 
     // Inflate Mode?
     // How do we toggle modes?
@@ -1453,7 +1455,7 @@ class SculptVoxel extends SculptBase {
       }
       if (isNaN(worldRadius)) worldRadius = 3.0; // Fallback again
 
-      var isNegative = (options && options.isNegative) || this._negative;
+      var isNegative = (options && options.isNegative) || this._negative || (this._main._altKey === true);
       var gridRadius = worldRadius;
       if (this._buildUp) {
         let t = 1.0;
@@ -1495,7 +1497,7 @@ class SculptVoxel extends SculptBase {
       }
 
       // Use options.isNegative OR this._negative (UI Toggle)
-      var isNegative = (options && options.isNegative) || this._negative;
+      var isNegative = (options && options.isNegative) || this._negative || (this._main._altKey === true);
 
       // INTENSITY MODULATION
       // We calculate 'strength' which is used for INFLATE.

@@ -311,6 +311,7 @@ class SculptGL extends Scene {
     };
 
     this._shiftKey = false; // Track shift key globally
+    this._altKey = false;   // Track alt key globally (voxel add<->sub / inflate<->deflate invert)
     // this._gui.initGui(); // REMOVED: Called in Scene.start(), premature call caused crash
 
     // --- Version Checker ---
@@ -1206,6 +1207,7 @@ class SculptGL extends Scene {
   ////////////////
   onKeyDown(e) {
     this._shiftKey = e.shiftKey;
+    this._altKey = e.altKey;
 
     // Timeline key clipboard (desktop): Ctrl/Cmd+C copy selected key(s), Ctrl/Cmd+V paste
     // at the playhead, +Shift = paste-linked (reserved for frame keys). Skipped while
@@ -1242,6 +1244,7 @@ class SculptGL extends Scene {
 
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
+    this._altKey = e.altKey;
     this._gui.callFunc('onKeyUp', e);
   }
 
