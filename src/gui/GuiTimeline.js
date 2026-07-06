@@ -3302,52 +3302,40 @@ export default class GuiTimeline {
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
         const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll
-        const clickedLaneIdx = Math.floor((ry - headerH + dsScroll) / trackH);
-
-        if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
-          const [meshId, trackObj] = tracks[clickedLaneIdx];
+        // Loop lanes and match by ACTUAL row Y — the blendshape/layer sub-rows extend below a
+        // lane's slot (with one object, trackH is a quarter-height but the rows stack past it),
+        // so a slot-based clickedLaneIdx pointed at the wrong/empty lane and the clicks missed.
+        for (let laneIdx = 0; laneIdx < tracks.length; laneIdx++) {
+          const [meshId, trackObj] = tracks[laneIdx];
           const laneMesh = this._main._meshes?.find(m => m.getID() === meshId);
-          // Per-blendshape sub-row M (mute layer) / × (delete this track's animation).
-          // Checked BEFORE the object-M so the sub-rows (which sit below lane centre in
-          // the same rx band) win. Sub-row y mirrors drawDopeSheet: centre+20+bIdx*12.
+          const ty2 = headerH + laneIdx * trackH - dsScroll;
+
+          // Blendshape sub-rows: M (mute layer) / × (delete this track's animation).
           if (rx >= 154 && rx < 188 && trackObj.blendshapeTracks && laneMesh) {
-            const ty2 = headerH + clickedLaneIdx * trackH - dsScroll;
             const bsNames = TimelineHelper.bsNames(trackObj);
             for (let bIdx = 0; bIdx < bsNames.length; bIdx++) {
-              const subRowY = ty2 + trackH / 2 + 22 + bIdx * 18;
-              if (Math.abs(ry - subRowY) > 9) continue;
-              const bsName = bsNames[bIdx];
-              if (rx < 170) {
-                reg.toggleBlendshapeMute?.(laneMesh, bsName);   // M ≈ x162
-              } else {
-                this._deleteBlendshapeTrack(laneMesh, bsName);  // × ≈ x178
-              }
+              if (Math.abs(ry - (ty2 + trackH / 2 + 22 + bIdx * 18)) > 9) continue;
+              if (rx < 170) reg.toggleBlendshapeMute?.(laneMesh, bsNames[bIdx]); // M ≈ x162
+              else this._deleteBlendshapeTrack(laneMesh, bsNames[bIdx]);          // × ≈ x178
               this.draw();
               return;
             }
           }
           // Shape-LAYER rows (#34): name (< x150) = arm for recording; M mute; × delete layer.
-          if (trackObj.shapeLayers && trackObj.shapeLayers.length && laneMesh && rx >= 22) {
-            const ty2 = headerH + clickedLaneIdx * trackH - dsScroll;
+          if (trackObj.shapeLayers && trackObj.shapeLayers.length && laneMesh && rx >= 22 && rx < 188) {
             const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
             for (let li = 0; li < trackObj.shapeLayers.length; li++) {
-              const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
-              if (Math.abs(ry - rowY) > 9) continue;
-              if (rx >= 154 && rx < 170) {
-                reg.toggleShapeLayerMute?.(laneMesh, li);          // M ≈ x162
-              } else if (rx >= 170 && rx < 188) {
-                reg.removeShapeLayer?.(laneMesh, li);              // × ≈ x178
-              } else if (rx < 150) {
-                // Arm this layer for recording (or click the active one again → back to base).
-                reg.setActiveShapeLayer?.(laneMesh, trackObj.activeShapeLayerIdx === li ? -1 : li);
-              } else { continue; }
+              if (Math.abs(ry - (ty2 + trackH / 2 + 22 + (bsCount + li) * 18)) > 9) continue;
+              if (rx >= 154 && rx < 170) reg.toggleShapeLayerMute?.(laneMesh, li);   // M
+              else if (rx >= 170 && rx < 188) reg.removeShapeLayer?.(laneMesh, li);  // ×
+              else if (rx < 150) reg.setActiveShapeLayer?.(laneMesh, trackObj.activeShapeLayerIdx === li ? -1 : li); // arm
+              else continue;
               this.draw();
               return;
             }
           }
-          // Right-aligned "M" mute toggle (not on SR group rows). Trash removed —
-          // select keys + Delete is the safe way to remove them.
-          if (rx >= 176 && rx < 200 && !(laneMesh && laneMesh._isFrameGroup)) {
+          // Object-level M mute (lane-centre row, right column).
+          if (rx >= 176 && rx < 200 && ry >= ty2 && ry < ty2 + trackH && !(laneMesh && laneMesh._isFrameGroup)) {
             trackObj.muted = !trackObj.muted;
             this.draw();
             return; // Don't start marquee
