@@ -69,8 +69,26 @@ export default class TimelineHelper {
     const totalAvailableSlots = Math.max(4, tracks.length);
     const trackH = laneAreaH / totalAvailableSlots;
 
+    // Vertical scroll (mouse-wheel): stacked blendshape + shape-layer sub-rows can extend
+    // past a lane's slot, so measure the deepest content and let the user scroll to it.
+    let contentBottom = 0;
     tracks.forEach(([id, track], idx) => {
-      const ty = w.y + headerH + (idx * trackH);
+      const bs = track.blendshapeTracks ? track.blendshapeTracks.size : 0;
+      const ly = track.shapeLayers ? track.shapeLayers.length : 0;
+      const laneContent = Math.max(trackH, trackH / 2 + 22 + (bs + ly) * 18 + 12);
+      contentBottom = Math.max(contentBottom, idx * trackH + laneContent);
+    });
+    uiState._dopeMaxScroll = Math.max(0, contentBottom - laneAreaH);
+    const scrollY = Math.min(uiState._dopeScrollY || 0, uiState._dopeMaxScroll);
+    uiState._dopeScrollY = scrollY;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(w.x, w.y + headerH, w.w, laneAreaH);
+    ctx.clip();
+
+    tracks.forEach(([id, track], idx) => {
+      const ty = w.y + headerH + (idx * trackH) - scrollY;
       const tyBottom = ty + trackH;
       
       // Alternate lane background
@@ -270,6 +288,38 @@ export default class TimelineHelper {
         });
       }
 
+      // Shape LAYERS (#34): rows below the blendshape rows — same layout (name + M + ×), blue
+      // keys. The ACTIVE layer (recording target) is marked with ● and highlighted. Click the
+      // name to arm it; M mutes; × deletes the layer. Hit-testing mirrors this in GuiTimeline.
+      if (show.shape && track.shapeLayers && track.shapeLayers.length) {
+        const bsCount = track.blendshapeTracks ? track.blendshapeTracks.size : 0;
+        const activeIdx = track.activeShapeLayerIdx;
+        for (let li = 0; li < track.shapeLayers.length; li++) {
+          const L = track.shapeLayers[li];
+          const rowY = ty + trackH / 2 + 22 + (bsCount + li) * 18;
+          const isActive = (activeIdx === li);
+          ctx.save();
+          ctx.beginPath(); ctx.rect(w.x + 22, rowY - 8, 130, 16); ctx.clip();
+          ctx.fillStyle = L.muted ? '#6c7086' : (isActive ? '#f9e2af' : '#89b4fa');
+          ctx.font = (isActive ? 'bold ' : '') + '12px sans-serif';
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText((isActive ? '● ' : '') + L.name, w.x + 22, rowY);
+          ctx.restore();
+          ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = L.muted ? '#f38ba8' : '#585b70'; ctx.fillText('M', w.x + 162, rowY);
+          ctx.fillStyle = '#585b70'; ctx.fillText('×', w.x + 178, rowY);
+          if (L.shapeTimes) {
+            for (let i = 0; i < L.shapeTimes.length; i++) {
+              const st = L.shapeTimes[i];
+              if (st < loopStart || st > loopEnd) continue;
+              const kx = w.x + tlX + ((st - loopStart) / visibleDuration) * tlW;
+              ctx.fillStyle = L.muted ? '#585b70' : (isActive ? '#f9e2af' : '#89b4fa');
+              ctx.fillRect(kx - 3, rowY - 3, 6, 6);
+            }
+          }
+        }
+      }
+
       // SR frame-group markers: one uniform diamond per child frame at its
       // _srFrameTime. One row = the whole flipbook. No active/dim state — the playhead
       // already shows which frame is live, so per-key highlighting is just clutter.
@@ -335,6 +385,7 @@ export default class TimelineHelper {
         }
       }
     });
+    ctx.restore(); // dopesheet vertical-scroll clip
   }
 
   static moveKeys(reg, keys, dt, dVal, mDurVal, main) {

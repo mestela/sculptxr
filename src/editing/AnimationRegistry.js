@@ -159,6 +159,7 @@ class AnimationRegistry {
     this._shapeCaptureLen = -1;        // #30: re-latch the vertex-topology length per take
     this._shapeCaptureWarned = false;
     this._shapeStrokeSnap = null;
+    this._shapeLayerStrokeSnap = null;
     this._lastGridFrame = -1;
     this._shapeWasStroking = false;
 
@@ -590,6 +591,104 @@ class AnimationRegistry {
     this._sortShapeRingBuffer(track);
   }
 
+  // ── Shape-animation LAYERS (#34) ──────────────────────────────────────────────────────
+  // A track's base shape animation lives in `shapeTimes`/`shapes` (absolute snapshots). On
+  // top sit named LAYERS, each holding per-time DELTAS in the same {shapeTimes, shapes,
+  // shapeOutputTimes} shape. Playback = base + Σ unmuted layer deltas, so a later layer's
+  // edit RIDES the earlier motion (mouth rides jaw). The active layer is where recording
+  // writes (activeShapeLayerIdx: -1 = the base track, ≥0 = a layer).
+  _shapeLayers(track) {
+    if (track && !track.shapeLayers) track.shapeLayers = [];
+    return track ? track.shapeLayers : [];
+  }
+
+  addShapeLayer(mesh, name) {
+    if (!mesh) return -1;
+    const id = mesh.getID();
+    if (!this.tracks.has(id)) {
+      this.tracks.set(id, { times: [], positions: [], quaternions: [], scales: [],
+        shapeTimes: [], shapes: [], shapeOutputTimes: [], playbackTime: 0 });
+    }
+    const track = this.tracks.get(id);
+    // The rest pose the layer deltas ride on when there's no base shape animation — snapshot
+    // the current (base) mesh once, so playback can reset to it before adding deltas.
+    if (!track._layerBase && mesh.getVertices) {
+      const v = mesh.getVertices();
+      const nb = (mesh.getNbVertices ? mesh.getNbVertices() : v.length / 3) * 3;
+      track._layerBase = new Float32Array(v.subarray(0, nb));
+    }
+    const layers = this._shapeLayers(track);
+    layers.push({ name: name || `Layer ${layers.length + 1}`, muted: false,
+                  shapeTimes: [], shapes: [], shapeOutputTimes: [] });
+    track.activeShapeLayerIdx = layers.length - 1; // record into the new layer
+    return track.activeShapeLayerIdx;
+  }
+
+  setActiveShapeLayer(mesh, idx) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    if (track) track.activeShapeLayerIdx = idx; // -1 = base shape track
+  }
+
+  toggleShapeLayerMute(mesh, idx) {
+    const L = mesh && this.tracks.get(mesh.getID())?.shapeLayers?.[idx];
+    if (!L) return;
+    L.muted = !L.muted;
+    if (window.app?.getMesh) this.update(window.app.getMesh(), true);
+    if (window.app?.render) window.app.render();
+  }
+
+  // Remove a shape layer entirely (its animation goes with it). Undoable.
+  removeShapeLayer(mesh, idx) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    const layers = track && track.shapeLayers;
+    if (!layers || idx < 0 || idx >= layers.length) return;
+    const removed = layers[idx];
+    const meshId = mesh.getID();
+    const prevActive = track.activeShapeLayerIdx;
+    const refresh = () => {
+      const msh = window.app?.getMesh?.();
+      if (msh && msh.getID() === meshId) this.update(msh, true);
+      if (window.app?.render) window.app.render();
+    };
+    const doRemove = () => {
+      const ls = this.tracks.get(meshId)?.shapeLayers;
+      const at = ls ? ls.indexOf(removed) : -1;
+      if (at >= 0) ls.splice(at, 1);
+      const t = this.tracks.get(meshId); if (t) t.activeShapeLayerIdx = -1;
+      refresh();
+    };
+    const undoRemove = () => {
+      const t = this.tracks.get(meshId);
+      if (t) { t.shapeLayers = t.shapeLayers || []; t.shapeLayers.splice(Math.min(idx, t.shapeLayers.length), 0, removed); t.activeShapeLayerIdx = prevActive; }
+      refresh();
+    };
+    doRemove();
+    window.app?.getStateManager?.()?.pushStateCustom?.(undoRemove, doRemove, false, 'Delete Shape Layer');
+  }
+
+  // The layer object currently armed for recording, or null (= the base shape track).
+  _activeShapeLayer(track) {
+    const idx = track && track.activeShapeLayerIdx;
+    if (idx === undefined || idx === null || idx < 0) return null;
+    const layers = track.shapeLayers;
+    return (layers && idx < layers.length) ? layers[idx] : null;
+  }
+
+  // Add each unmuted shape-layer's delta at time t into `verts` (in place). `excludeIdx`
+  // skips one layer — used while recording it (its own delta isn't part of the base it
+  // rides on). nb = vertex-count × 3.
+  _addShapeLayerDeltas(track, t, nb, verts, excludeIdx = -1) {
+    const layers = track && track.shapeLayers;
+    if (!layers || !layers.length) return;
+    for (let li = 0; li < layers.length; li++) {
+      if (li === excludeIdx) continue;
+      const L = layers[li];
+      if (L.muted || !L.shapeTimes || !L.shapeTimes.length) continue;
+      const d = this._evalShapeSnapshot({ times: L.shapeTimes, shapes: L.shapes }, t, nb);
+      if (d) for (let k = 0; k < nb; k++) verts[k] += d[k];
+    }
+  }
+
   // Per-wave undo for shape recording: on trigger release, push a state that restores the
   // shape track to its pre-stroke snapshot (`before`). `squash=true` chains it with the
   // sculpt's own geometry state (pushed at stroke start) so ONE undo removes both the
@@ -621,6 +720,34 @@ class AnimationRegistry {
       if (window.app?.render) window.app.render();
     };
     sm.pushStateCustom(() => restore(b), () => restore(after), true, 'Record Wave');
+  }
+
+  // Per-wave undo for a shape-LAYER stroke (#34): restore that layer's keys to the pre-stroke
+  // snapshot. squash=true chains with the sculpt's geometry state so one undo removes both.
+  _pushShapeLayerWaveUndo(meshId, snap) {
+    const sm = window.app?.getStateManager?.();
+    const layer = snap && snap.layer;
+    if (!sm || !layer) return;
+    const after = {
+      times:  (layer.shapeTimes || []).slice(),
+      shapes: (layer.shapes || []).slice(),
+      outs:   layer.shapeOutputTimes ? layer.shapeOutputTimes.slice() : null,
+    };
+    const b = snap.before;
+    const changed = b.times.length !== after.times.length
+      || b.times.some((t, i) => t !== after.times[i])
+      || b.shapes.some((s, i) => s !== after.shapes[i]);
+    if (!changed) return;
+    const restore = (s) => {
+      layer.shapeTimes = (s.times || []).slice();
+      layer.shapes = (s.shapes || []).slice();
+      if (s.outs) layer.shapeOutputTimes = s.outs.slice();
+      else if (layer.shapeOutputTimes) layer.shapeOutputTimes = (s.times || []).slice();
+      const msh = window.app?.getMesh?.();
+      if (msh && msh.getID() === meshId) this.update(msh, true);
+      if (window.app?.render) window.app.render();
+    };
+    sm.pushStateCustom(() => restore(b), () => restore(after), true, 'Record Layer Wave');
   }
 
   stopRecording(isManualAbort = false) {
@@ -2158,7 +2285,11 @@ class AnimationRegistry {
         if (this._shapeWasStroking && this._shapeStrokeSnap) {
           this._pushShapeWaveUndo(mesh.getID(), this._shapeStrokeSnap);
         }
-        this._shapeStrokeSnap = null; this._dynBase = null;
+        // Same, for a LAYER stroke (restores that layer's keys, squashed with the sculpt).
+        if (this._shapeWasStroking && this._shapeLayerStrokeSnap) {
+          this._pushShapeLayerWaveUndo(mesh.getID(), this._shapeLayerStrokeSnap);
+        }
+        this._shapeStrokeSnap = null; this._dynBase = null; this._shapeLayerStrokeSnap = null;
         this._lastGridFrame = -1; this._shapeCaptureLen = -1;
       }
       this._shapeWasStroking = liveShapeStroke;
@@ -2363,39 +2494,64 @@ class AnimationRegistry {
           return;
         }
 
-        // Freeze the PRE-STROKE track once, at the first frame of the stroke, so the rebase
-        // composites only PRIOR waves (never this stroke's own just-laid keys → no feedback).
-        // Empty for the first wave → rebase no-ops, capture records the raw sculpt.
-        if (!this._shapeStrokeSnap) {
-          this._shapeStrokeSnap = {
-            times: track.shapeTimes.slice(),
-            shapes: track.shapes.slice(),
-            outs: track.shapeOutputTimes ? track.shapeOutputTimes.slice() : null,
-          };
-          this._dynBase = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
-        }
-
-        // Rebase display: untouched verts follow the prior waves; grabbed verts (pinned by
-        // the tool to fixed start positions) ride your hand on top.
-        const comp = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
-        if (comp && comp.length === nb && this._dynBase && this._dynBase.length === nb) {
-          for (let i = 0; i < nb; i++) verts[i] = comp[i] + (verts[i] - this._dynBase[i]);
-          this._dynBase = comp;
-          // Inside the render loop already — refresh geometry/buffers, don't re-enter render().
-          if (mesh.updateGeometry) mesh.updateGeometry();
-          if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
-        }
-
-        // Grid-snapped capture: snap the playhead to a fixed frame grid anchored at 0 and
-        // write at most once per grid cell. frameStep = captureRate × fps (whole frames), so
-        // the rate is inherently fps-sympathetic and keys never roll between loops.
         const fps = window._animFPS || 24;
         const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
         const frameStep = Math.max(1, Math.round(rate * fps));
         const gridFrame = Math.round((track.playbackTime * fps) / frameStep) * frameStep;
-        if (gridFrame !== this._lastGridFrame) {
-          this._lastGridFrame = gridFrame;
-          this._captureShapeKeyGridded(track, gridFrame / fps, new Float32Array(verts.subarray(0, nb)));
+        const activeLayer = this._activeShapeLayer(track);
+
+        if (activeLayer) {
+          // ── Recording into a LAYER (#34), "pose that rides" ───────────────────────────
+          // The base FREEZES for the duration of the stroke (it resumes on release): freeze
+          // the composite at stroke start and capture just the brush's DELTA vs that frozen
+          // pose. On playback the delta is added back on top of the LIVE base → it rides it,
+          // seamlessly (the grabbed verts and their neighbours all sat on the same frozen
+          // base, so there's no tear). The moving-reference "perform on top" version pins the
+          // Move brush's grabbed verts on desktop (tool only re-applies on mouse-move) → seams
+          // and garbage, so we use the frozen approach.
+          if (!this._dynBase) {
+            this._dynBase = new Float32Array(verts.subarray(0, nb));
+            // Snapshot the layer's pre-stroke keys for per-wave undo (see the falling-edge
+            // handler + _pushShapeLayerWaveUndo). Shallow — stored key arrays aren't mutated.
+            this._shapeLayerStrokeSnap = {
+              layer: activeLayer,
+              before: {
+                times: (activeLayer.shapeTimes || []).slice(),
+                shapes: (activeLayer.shapes || []).slice(),
+                outs: activeLayer.shapeOutputTimes ? activeLayer.shapeOutputTimes.slice() : null,
+              },
+            };
+          }
+          if (gridFrame !== this._lastGridFrame && this._dynBase.length === nb) {
+            this._lastGridFrame = gridFrame;
+            const delta = new Float32Array(nb);
+            for (let i = 0; i < nb; i++) delta[i] = verts[i] - this._dynBase[i];
+            if (!activeLayer.shapeOutputTimes) activeLayer.shapeOutputTimes = [];
+            this._captureShapeKeyGridded(activeLayer, gridFrame / fps, delta);
+          }
+        } else {
+          // ── Recording into the BASE track (existing #30 additive-wave behaviour) ───────
+          // Freeze the PRE-STROKE base once so the rebase composites only PRIOR waves (never
+          // this stroke's own just-laid keys → no feedback). Empty first wave → rebase no-ops.
+          if (!this._shapeStrokeSnap) {
+            this._shapeStrokeSnap = {
+              times: track.shapeTimes.slice(),
+              shapes: track.shapes.slice(),
+              outs: track.shapeOutputTimes ? track.shapeOutputTimes.slice() : null,
+            };
+            this._dynBase = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
+          }
+          const comp = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
+          if (comp && comp.length === nb && this._dynBase && this._dynBase.length === nb) {
+            for (let i = 0; i < nb; i++) verts[i] = comp[i] + (verts[i] - this._dynBase[i]);
+            this._dynBase = comp;
+            if (mesh.updateGeometry) mesh.updateGeometry();
+            if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+          }
+          if (gridFrame !== this._lastGridFrame) {
+            this._lastGridFrame = gridFrame;
+            this._captureShapeKeyGridded(track, gridFrame / fps, new Float32Array(verts.subarray(0, nb)));
+          }
         }
       } catch (e) {
         if (!this._rebaseErrLogged) {
@@ -2535,10 +2691,13 @@ class AnimationRegistry {
           verts[i] = val;
         }
 
+        // #34: add shape-LAYER deltas into the SAME write so they upload with the base.
+        this._addShapeLayerDeltas(track, track.playbackTime, reqLen, verts, -1);
+
         if (mesh.updateGeometry) mesh.updateGeometry();
         if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
         if (window.app && window.app.render) window.app.render();
-        
+
         baseForBlendshapes = new Float32Array(verts); // Copy ShotSculpt result
       }
     }
@@ -2546,6 +2705,29 @@ class AnimationRegistry {
     // 2. New Blendshape System (Layered on top)
     if (track.blendshapes && track.blendshapes.size > 0) {
       this.applyBlendshapes(mesh, baseForBlendshapes);
+    }
+
+    // 3. Shape LAYERS (#34) — for the NO-base-shape-animation case only (when a base shape
+    //    animation exists, the ShotSculpt block above already folded the layer deltas into
+    //    its own vertex write so they upload together). Here we reset to the rest pose (or
+    //    blendshape result) and add the layer deltas. We only reach this point when NOT
+    //    mid-stroke (the live-stroke rebase returns earlier), so it also composites BETWEEN
+    //    strokes while recording — which is what makes a just-recorded layer play on release.
+    if (track.shapeLayers && track.shapeLayers.length
+        && !(track.shapeTimes && track.shapeTimes.length > 0)) {
+      const lv = mesh.getVertices();
+      const lnb = (mesh.getNbVertices ? mesh.getNbVertices() : lv.length / 3) * 3;
+      // Reset to the base the deltas ride on so they don't accumulate frame-over-frame. If
+      // blendshapes recomputed the verts this frame, that already IS the base; otherwise
+      // restore the rest pose captured when the first layer was created.
+      const recomputed = (track.blendshapes && track.blendshapes.size > 0);
+      if (!recomputed && track._layerBase && track._layerBase.length >= lnb) {
+        lv.set(track._layerBase.subarray(0, lnb));
+      }
+      this._addShapeLayerDeltas(track, track.playbackTime, lnb, lv, -1);
+      if (mesh.updateGeometry) mesh.updateGeometry();
+      if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+      if (window.app && window.app.render) window.app.render();
     }
   }
 }

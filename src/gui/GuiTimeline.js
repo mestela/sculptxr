@@ -49,6 +49,7 @@ export default class GuiTimeline {
     this._activeTangentType = null;
     this._activeTangentBsName = null;
     this._isPanningGraph = false;
+    this._isPanningDope = false;
     this._isZoomingGraph = false;
     this._panStartRy = 0;
     this._panStartOffsetY = 0;
@@ -161,17 +162,18 @@ export default class GuiTimeline {
         this._viewStart = pivotT - (pivotT - this._viewStart) * (newDuration / this._viewDuration);
         this._viewDuration = newDuration;
       } else {
-        // Horizontal scroll → pan time.
+        // Horizontal scroll (trackpad deltaX) → pan time.
         const secsPerPx = this._viewDuration / tlW;
         this._viewStart += e.deltaX * secsPerPx;
-        // Vertical scroll: gutter if cursor is in gutter column, else value/time axis.
         const wheelRx = e.clientX - this._canvas.getBoundingClientRect().left;
         if (this._mode === 'graph' && wheelRx < 200) {
           this._gutterScrollY = Math.max(0, Math.min(this._gutterMaxScroll, this._gutterScrollY + e.deltaY));
         } else if (this._mode === 'graph') {
           this._panY += e.deltaY;
         } else {
-          this._viewStart += e.deltaY * secsPerPx;
+          // Dopesheet: vertical wheel scrolls the LANES vertically (through the stacked
+          // tracks/layers) — never pans time. Clamped to the content height (set in draw).
+          this._dopeScrollY = Math.max(0, Math.min(this._dopeMaxScroll || 0, (this._dopeScrollY || 0) + e.deltaY));
         }
       }
       this.draw();
@@ -2681,6 +2683,11 @@ export default class GuiTimeline {
     } else {
       btns.push({ id: 'addkey', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Add key at playhead' }); x += bw + gap;
       btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh, disabled: !hasSel, tooltip: 'Delete selected key(s)' }); x += bw + gap;
+      // Shape mode: New shape layer (#34). Recording arms the new layer; click a layer's
+      // name in a lane to (re)arm it, click the active one again → back to the base track.
+      if (mode === 'shape') {
+        btns.push({ id: 'newlayer', label: '+L', x, y: by, w: bw + 4, h: bh, tooltip: 'New shape layer (recording targets it)' }); x += bw + 4 + gap;
+      }
     }
     // XF/SH/BS/SR are TALLER split buttons: top 60% = keying state (which mode the
     // +/New adds — a radio, one active), bottom 40% = visibility (is this key-type
@@ -2764,6 +2771,10 @@ export default class GuiTimeline {
           switch (gbHit.id) {
             case 'sr_new':
               window._frameGroup?.addFrame?.(false); // blank frame
+              this.draw();
+              return;
+            case 'newlayer':
+              if (reg && mesh) reg.addShapeLayer?.(mesh);   // creates + arms a shape layer (#34)
               this.draw();
               return;
             case 'sr_dup':
@@ -3228,6 +3239,22 @@ export default class GuiTimeline {
         return;
       }
 
+      // Dopesheet: middle-mouse drag pans (vertical scroll through the stacked tracks +
+      // horizontal time), matching the graph editor. Left mouse stays marquee.
+      if (this._mode !== 'graph' && e.button === 1) {
+        this._isPanningDope = true;
+        this._panStartRx = rx; this._panStartRy = ry;
+        this._panStartDopeScroll = this._dopeScrollY || 0;
+        if (this._viewDuration === undefined) {
+          const mD = (window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
+          this._viewStart = window._animLoopStart ?? 0.0;
+          this._viewDuration = Math.max(0.1, (window._animLoopEnd ?? mD) - this._viewStart);
+        }
+        this._panStartViewStart = this._viewStart;
+        e.preventDefault();
+        return;
+      }
+
       if (this._mode === 'graph') {
         if (e.button === 1) { // Middle click
           this._isPanningGraph = true;
@@ -3274,7 +3301,8 @@ export default class GuiTimeline {
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
-        const clickedLaneIdx = Math.floor((ry - headerH) / trackH);
+        const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll
+        const clickedLaneIdx = Math.floor((ry - headerH + dsScroll) / trackH);
 
         if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
           const [meshId, trackObj] = tracks[clickedLaneIdx];
@@ -3283,7 +3311,7 @@ export default class GuiTimeline {
           // Checked BEFORE the object-M so the sub-rows (which sit below lane centre in
           // the same rx band) win. Sub-row y mirrors drawDopeSheet: centre+20+bIdx*12.
           if (rx >= 154 && rx < 188 && trackObj.blendshapeTracks && laneMesh) {
-            const ty2 = headerH + clickedLaneIdx * trackH;
+            const ty2 = headerH + clickedLaneIdx * trackH - dsScroll;
             const bsNames = TimelineHelper.bsNames(trackObj);
             for (let bIdx = 0; bIdx < bsNames.length; bIdx++) {
               const subRowY = ty2 + trackH / 2 + 22 + bIdx * 18;
@@ -3294,6 +3322,25 @@ export default class GuiTimeline {
               } else {
                 this._deleteBlendshapeTrack(laneMesh, bsName);  // × ≈ x178
               }
+              this.draw();
+              return;
+            }
+          }
+          // Shape-LAYER rows (#34): name (< x150) = arm for recording; M mute; × delete layer.
+          if (trackObj.shapeLayers && trackObj.shapeLayers.length && laneMesh && rx >= 22) {
+            const ty2 = headerH + clickedLaneIdx * trackH - dsScroll;
+            const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
+            for (let li = 0; li < trackObj.shapeLayers.length; li++) {
+              const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
+              if (Math.abs(ry - rowY) > 9) continue;
+              if (rx >= 154 && rx < 170) {
+                reg.toggleShapeLayerMute?.(laneMesh, li);          // M ≈ x162
+              } else if (rx >= 170 && rx < 188) {
+                reg.removeShapeLayer?.(laneMesh, li);              // × ≈ x178
+              } else if (rx < 150) {
+                // Arm this layer for recording (or click the active one again → back to base).
+                reg.setActiveShapeLayer?.(laneMesh, trackObj.activeShapeLayerIdx === li ? -1 : li);
+              } else { continue; }
               this.draw();
               return;
             }
@@ -3315,6 +3362,7 @@ export default class GuiTimeline {
         const laneAreaH = this._cssHeight - headerH;
         const totalSlots = Math.max(4, tracks.length);
         const trackH = laneAreaH / totalSlots;
+        const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll offset
 
         const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
         const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -3450,7 +3498,7 @@ export default class GuiTimeline {
         }
 
         tracks.forEach(([meshId, trackObj], laneIdx) => {
-          const ty = headerH + (laneIdx * trackH);
+          const ty = headerH + (laneIdx * trackH) - dsScroll;
           const kyTransform = ty + trackH / 2; // centred (matches drawDopeSheet)
           const kyShape     = ty + trackH / 2 + 10; // matches drawDopeSheet offset
 
@@ -3612,7 +3660,7 @@ export default class GuiTimeline {
             if (keyFound) return;
             if (!trackObj.blendshapeTracks) return;
             const laneIdx = bsTracks.findIndex(([id]) => id === meshId);
-            const ty2 = headerH + (laneIdx * trackH);
+            const ty2 = headerH + (laneIdx * trackH) - dsScroll;
             let bIdx = 0;
             TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
               if (keyFound || !bTrack.times || _keyShow.blendshape === false) { bIdx++; return; }
@@ -3770,6 +3818,19 @@ export default class GuiTimeline {
       const secsPerPx = this._viewDuration / tlW;
       this._viewStart = this._panXYStartViewStart - dx * secsPerPx;
       this._panY = this._panXYStartPanY - dy;
+      this.draw();
+      return;
+    }
+
+    if (this._isPanningDope) {
+      const rect = this._canvas.getBoundingClientRect();
+      const rx = e.clientX - rect.left;
+      const ry = e.clientY - rect.top;
+      const dy = ry - this._panStartRy;
+      this._dopeScrollY = Math.max(0, Math.min(this._dopeMaxScroll || 0, this._panStartDopeScroll - dy));
+      const tlW = this._cssWidth - 200;
+      const secsPerPx = (this._viewDuration || 1) / tlW;
+      this._viewStart = this._panStartViewStart - (rx - this._panStartRx) * secsPerPx;
       this.draw();
       return;
     }
@@ -4493,6 +4554,7 @@ export default class GuiTimeline {
     this._marqueeStart = null;
     this._marqueeEnd = null;
     this._isPanningGraph = false;
+    this._isPanningDope = false;
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
     this._isDraggingGutter = false;
