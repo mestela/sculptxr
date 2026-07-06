@@ -80,6 +80,7 @@ var SCALE_X = 1 << 10;
 var SCALE_Y = 1 << 11;
 var SCALE_Z = 1 << 12;
 var SCALE_W = 1 << 13;
+var TRANS_W = 1 << 14; // center handle → free translate in the camera plane
 
 var TRANS_XYZ = TRANS_X | TRANS_Y | TRANS_Z;
 var ROT_XYZ = ROT_X | ROT_Y | ROT_Z;
@@ -129,6 +130,9 @@ class Gizmo {
   static get SCALE_W() {
     return SCALE_W;
   }
+  static get TRANS_W() {
+    return TRANS_W;
+  }
 
   static get TRANS_XYZ() {
     return TRANS_XYZ;
@@ -170,7 +174,7 @@ class Gizmo {
 
     // activated gizmos
     this._activatedType =
-      Gizmo.TRANS_XYZ | Gizmo.ROT_XYZ | Gizmo.PLANE_XYZ | Gizmo.SCALE_XYZW | Gizmo.ROT_W;
+      Gizmo.TRANS_XYZ | Gizmo.ROT_XYZ | Gizmo.PLANE_XYZ | Gizmo.SCALE_XYZW | Gizmo.ROT_W | Gizmo.TRANS_W;
 
     // trans arrow 1 dim
     this._transX = createGizmo(Gizmo.TRANS_X, 0);
@@ -193,8 +197,11 @@ class Gizmo {
     this._rotX = createGizmo(Gizmo.ROT_X, 0);
     this._rotY = createGizmo(Gizmo.ROT_Y, 1);
     this._rotZ = createGizmo(Gizmo.ROT_Z, 2);
-    // full arc display
+    // full arc display (also the trackball region — see onMouseOver interior pick)
     this._rotW = createGizmo(Gizmo.ROT_W);
+
+    // center handle — free translate in the camera plane
+    this._transW = createGizmo(Gizmo.TRANS_W);
 
     // line helper
     this._lineHelper = Primitives.createLine2D(this._gl);
@@ -258,6 +265,10 @@ class Gizmo {
     var pickables = this._pickables;
     pickables.length = 0;
     var type = this._activatedType;
+
+    // Center handle first — it's a small sphere at the origin, so nearest-hit picking lets
+    // central clicks grab it over the rings/arrows that also pass near the center.
+    if (type & TRANS_W) pickables.push(this._transW._pickGeo);
 
     if (type & TRANS_X) pickables.push(this._transX._pickGeo);
     if (type & TRANS_Y) pickables.push(this._transY._pickGeo);
@@ -365,6 +376,40 @@ class Gizmo {
     this._createPlane(this._planeX, COLOR_X, 0.0, s, 0.0, 0.0, 0.0, s, scale);
     this._createPlane(this._planeY, COLOR_Y, s, 0.0, 0.0, 0.0, 0.0, s, scale);
     this._createPlane(this._planeZ, COLOR_Z, s, 0.0, 0.0, 0.0, s, 0.0, scale);
+
+    this._createCenter(this._transW, COLOR_SW, scale);
+  }
+
+  // Center sphere = free translate in the camera plane. Base matrix is identity (it sits at
+  // the gizmo origin); the pick sphere is a touch larger so it's easy to grab.
+  _createCenter(tra, color, scale = 1.0) {
+    tra._baseMatrix = mat4.create();
+    vec3.copy(tra._color, color);
+    tra._pickGeo = Primitives.createSphere(this._gl, CUBE_SIDE * 0.75 * scale, 16, 16);
+    tra._pickGeo._gizmo = tra;
+    tra._drawGeo = Primitives.createSphere(this._gl, CUBE_SIDE * 0.5 * scale, 16, 16);
+    tra._drawGeo.setShaderType(Enums.Shader.FLAT);
+
+    const threeMesh = tra._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      threeMesh.renderOrder = 101; // just above the rings so it's grabbable at center
+      if (this._group) this._group.add(threeMesh);
+    }
+
+    const pickThreeMesh = tra._pickGeo.getThreeMesh();
+    if (pickThreeMesh) {
+      pickThreeMesh.visible = false;
+      pickThreeMesh.matrixAutoUpdate = false;
+      if (this._group) this._group.add(pickThreeMesh);
+    }
   }
 
   _createCircle(rot, rad, color, radius = ROT_RADIUS, mthick = 1.0, scale = 1.0) {
@@ -532,7 +577,7 @@ class Gizmo {
     this._scaleY.updateFinalMatrix(traScale);
     this._scaleZ.updateFinalMatrix(traScale);
     this._scaleW.updateFinalMatrix(traScale);
-    this._scaleW.updateFinalMatrix(traScale);
+    this._transW.updateFinalMatrix(traScale);
   }
 
   _updatePickGeometryMatrices() {
@@ -542,7 +587,8 @@ class Gizmo {
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
       this._rotX, this._rotY, this._rotZ, this._rotW,
-      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW,
+      this._transW
     ];
 
     for (var i = 0; i < comps.length; ++i) {
@@ -666,6 +712,8 @@ class Gizmo {
     this._scaleZ.updateMatrix();
     this._scaleW.updateFinalMatrix(traScale);
     this._scaleW.updateMatrix();
+    this._transW.updateFinalMatrix(traScale);
+    this._transW.updateMatrix();
   }
 
   onVRHover(origin, direction) {
@@ -948,6 +996,152 @@ class Gizmo {
     }
   }
 
+  // ---- Center handle: free translate in the camera plane ----------------------------
+  _startCameraPlaneEdit() {
+    var main = this._main;
+    var camera = main.getCamera();
+    var origin = this._editLineOrigin;
+    this._computeCenterGizmo(origin);
+    vec3.copy(origin, camera.project(origin));
+    var offset = this._editOffset;
+    offset[0] = main._mouseX - origin[0];
+    offset[1] = main._mouseY - origin[1];
+    vec2.set(this._editLineOrigin, main._mouseX, main._mouseY);
+    // Fixed screen-facing plane normal (camera forward) captured at drag start. editTransInv
+    // is translation-only so the direction is unchanged in that frame.
+    var c = this._computeCenterGizmo([0, 0, 0]);
+    var cs = camera.project(c);
+    var n0 = camera.unproject(cs[0], cs[1], 0.0);
+    var n1 = camera.unproject(cs[0], cs[1], 0.5);
+    this._camPlaneNormal = vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], n1, n0));
+  }
+
+  _updateCameraPlaneEdit() {
+    var main = this._main;
+    var camera = main.getCamera();
+    var vec = [main._mouseX, main._mouseY, 0.0];
+    vec2.sub(vec, vec, this._editOffset);
+    this._updateLineHelper(this._editLineOrigin[0], this._editLineOrigin[1], main._mouseX, main._mouseY);
+
+    var near = camera.unproject(vec[0], vec[1], 0.0);
+    var far = camera.unproject(vec[0], vec[1], 0.1);
+    vec3.transformMat4(near, near, this._editTransInv);
+    vec3.transformMat4(far, far, this._editTransInv);
+
+    var N = this._camPlaneNormal;
+    var dist1 = vec3.dot(near, N);
+    var dist2 = vec3.dot(far, N);
+    if (dist1 === dist2) return false;
+    var val = -dist1 / (dist2 - dist1);
+    var inter = [
+      near[0] + (far[0] - near[0]) * val,
+      near[1] + (far[1] - near[1]) * val,
+      near[2] + (far[2] - near[2]) * val
+    ];
+    this._updateMatrixTranslate(inter);
+  }
+
+  // ---- Trackball (arcball) free rotate inside the rotation sphere --------------------
+  _gizmoScreenRadius() {
+    var camera = this._main.getCamera();
+    var c = this._computeCenterGizmo([0, 0, 0]);
+    var cs = camera.project(c);
+    // A point on the (camera-facing) rotation ring in world space → its screen distance
+    // from the center is the sphere's on-screen radius.
+    var edge = vec3.transformMat4([0, 0, 0], [ROT_RADIUS, 0.0, 0.0], this._rotW._finalMatrix);
+    var es = camera.project(edge);
+    var dx = es[0] - cs[0], dy = es[1] - cs[1];
+    return { cx: cs[0], cy: cs[1], r: Math.max(1e-3, Math.sqrt(dx * dx + dy * dy)) };
+  }
+
+  _isInsideRotSphere(mx, my) {
+    var s = this._gizmoScreenRadius();
+    var dx = mx - s.cx, dy = my - s.cy;
+    return (dx * dx + dy * dy) <= s.r * s.r;
+  }
+
+  // Trackball annulus: inside the rotation sphere but outside a center exclusion radius,
+  // so the trackball never steals the crowded center (center sphere + plane handles).
+  _inTrackballZone(mx, my) {
+    var s = this._gizmoScreenRadius();
+    var dx = mx - s.cx, dy = my - s.cy;
+    var d2 = dx * dx + dy * dy;
+    var inner = s.r * 0.5; // exclusion radius (tune: larger = bigger dead zone at center)
+    return d2 <= s.r * s.r && d2 >= inner * inner;
+  }
+
+  // Camera right / up / toward-viewer axes in world space, via unproject (no Camera
+  // internals). Screen y grows downward, so screen-up is cy − 10.
+  _cameraBasis() {
+    var camera = this._main.getCamera();
+    var c = this._computeCenterGizmo([0, 0, 0]);
+    var cs = camera.project(c);
+    var o = camera.unproject(cs[0], cs[1], 0.0);
+    var oR = camera.unproject(cs[0] + 10, cs[1], 0.0);
+    var oU = camera.unproject(cs[0], cs[1] - 10, 0.0);
+    var oF = camera.unproject(cs[0], cs[1], 0.5);
+    return {
+      right: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oR, o)),
+      up: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], oU, o)),
+      viewer: vec3.normalize([0, 0, 0], vec3.sub([0, 0, 0], o, oF)),
+    };
+  }
+
+  // Map a screen point to a vector on the virtual arcball in camera space
+  // (right = +x, up = +y, toward-viewer = +z).
+  _arcballVec(mx, my) {
+    var s = this._gizmoScreenRadius();
+    var x = (mx - s.cx) / s.r;
+    var y = (my - s.cy) / s.r;
+    var d2 = x * x + y * y;
+    var z;
+    if (d2 <= 1.0) {
+      z = Math.sqrt(1.0 - d2);
+    } else {
+      var inv = 1.0 / Math.sqrt(d2);
+      x *= inv; y *= inv; z = 0.0;
+    }
+    return [x, -y, z];
+  }
+
+  _startTrackballEdit() {
+    this._trackStartVec = this._arcballVec(this._main._mouseX, this._main._mouseY);
+    this._trackBasis = this._cameraBasis();
+  }
+
+  _updateTrackballEdit() {
+    var meshes = this._main.getSelectedMeshes();
+    var v0 = this._trackStartVec;
+    var v1 = this._arcballVec(this._main._mouseX, this._main._mouseY);
+
+    var axisCam = vec3.cross([0, 0, 0], v0, v1);
+    var lenAxis = vec3.length(axisCam);
+    var dot = Math.max(-1.0, Math.min(1.0, vec3.dot(v0, v1)));
+    var angle = Math.atan2(lenAxis, dot);
+
+    if (lenAxis < 1e-6 || angle < 1e-6) {
+      for (var k = 0; k < meshes.length; ++k) mat4.identity(meshes[k].getEditMatrix());
+      return;
+    }
+    vec3.scale(axisCam, axisCam, 1.0 / lenAxis);
+
+    // camera-space axis → world axis via the camera basis captured at drag start
+    var b = this._trackBasis;
+    var axisW = [
+      b.right[0] * axisCam[0] + b.up[0] * axisCam[1] + b.viewer[0] * axisCam[2],
+      b.right[1] * axisCam[0] + b.up[1] * axisCam[1] + b.viewer[1] * axisCam[2],
+      b.right[2] * axisCam[0] + b.up[2] * axisCam[1] + b.viewer[2] * axisCam[2]
+    ];
+    vec3.normalize(axisW, axisW);
+
+    for (var i = 0; i < meshes.length; ++i) {
+      var mrot = meshes[i].getEditMatrix();
+      mat4.identity(mrot);
+      mat4.rotate(mrot, mrot, angle, axisW);
+      this._scaleRotateEditMatrix(mrot, i);
+    }
+  }
+
   _updateScaleEdit() {
     var main = this._main;
     var mesh = main.getMesh();
@@ -1013,6 +1207,8 @@ class Gizmo {
     scene.push(this._scaleZ._drawGeo);
     scene.push(this._scaleW._drawGeo);
 
+    scene.push(this._transW._drawGeo);
+
     return scene;
   }
 
@@ -1046,6 +1242,8 @@ class Gizmo {
     if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
     if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
 
+    if (type & TRANS_W) this._drawGizmo(this._transW, camera);
+
     // if (this._isEditing) this._lineHelper.render(this._main);
   }
 
@@ -1073,6 +1271,8 @@ class Gizmo {
     if (type & SCALE_Z) this._drawGizmo(this._scaleZ, camera);
     if (type & SCALE_W) this._drawGizmo(this._scaleW, camera);
 
+    if (type & TRANS_W) this._drawGizmo(this._transW, camera);
+
     // if (this._isEditing) this._lineHelper.render(this._main);
   }
 
@@ -1098,6 +1298,8 @@ class Gizmo {
       else if (type & TRANS_XYZ) this._updateTranslateEdit();
       else if (type & PLANE_XYZ) this._updatePlaneEdit();
       else if (type & SCALE_XYZW) this._updateScaleEdit();
+      else if (type & TRANS_W) this._updateCameraPlaneEdit();
+      else if (type & ROT_W) this._updateTrackballEdit();
 
       this._applyEditLive();   // editMatrix delta → real _matrix, live
       this._main.render();
@@ -1108,20 +1310,61 @@ class Gizmo {
     var picking = main.getPicking();
     var mx = main._mouseX;
     var my = main._mouseY;
-    var pickables = this._pickables;
-    picking.intersectionMouseMeshes(pickables, mx, my);
 
     if (this._selected) this._selected._isSelected = false;
-    var geo = picking.getMesh();
-    if (!geo) {
+    var sel = this._pickGizmoTiered(mx, my);
+    if (!sel) {
+      // No specific handle hit. If the cursor is in the trackball ZONE (an annulus — inside
+      // the rotation sphere but OUTSIDE a center exclusion radius), arm the trackball. The
+      // exclusion keeps the trackball from stealing the crowded center region where the
+      // center sphere and the plane handles live, so those stay selectable.
+      if ((this._activatedType & ROT_W) && this._inTrackballZone(mx, my)) {
+        this._selected = this._rotW;
+        this._rotW._isSelected = true;
+        return true;
+      }
       this._selected = null;
       return false;
     }
 
-    this._selected = geo._gizmo;
+    this._selected = sel;
     this._selected._isSelected = true;
     vec3.copy(this._selected._lastInter, picking.getIntersectionPoint());
     return true;
+  }
+
+  // Priority-tiered pick. The handles draw as a depth-off overlay, but a raw nearest-hit
+  // ray test lets the fat arrow bases (which meet at the center) and the rotation tori win
+  // over the small center sphere / thin plane quads you're visually on. So test tier by
+  // tier — center → planes → arrows/scale → rings — and take the nearest hit in the FIRST
+  // tier that hits anything. Matches what you see (WYSIWYG for the overlay).
+  _pickGizmoTiered(mx, my) {
+    var picking = this._main.getPicking();
+    var t = this._activatedType;
+    var tiers = [
+      [this._transW],
+      [this._planeX, this._planeY, this._planeZ],
+      [this._transX, this._transY, this._transZ,
+       this._scaleX, this._scaleY, this._scaleZ, this._scaleW],
+      [this._rotX, this._rotY, this._rotZ],
+    ];
+    for (var ti = 0; ti < tiers.length; ++ti) {
+      var geos = [];
+      for (var j = 0; j < tiers[ti].length; ++j) {
+        var part = tiers[ti][j];
+        if ((t & part._type) && part._pickGeo) geos.push(part._pickGeo);
+      }
+      if (geos.length === 0) continue;
+      // twoSided ONLY for the plane tier (ti===1): a thin plane quad goes edge-on / back-facing
+      // at some views and a one-sided test culls it (the green Y-plane problem). The rings must
+      // stay ONE-sided, though — twoSided rings pick from their far/back arc, so a click well
+      // OUTSIDE the gizmo grazing a ring's back was grabbing e.g. X-rotation with no visible
+      // highlight (it landed on the hidden arc). Arrows/scale/center are solid → one-sided fine.
+      picking.intersectionMouseMeshes(geos, mx, my, ti === 1);
+      var geo = picking.getMesh();
+      if (geo) return geo._gizmo;
+    }
+    return null;
   }
 
   onMouseDown() {
@@ -1136,6 +1379,8 @@ class Gizmo {
     else if (type & TRANS_XYZ) this._startTranslateEdit();
     else if (type & PLANE_XYZ) this._startPlaneEdit();
     else if (type & SCALE_XYZW) this._startScaleEdit();
+    else if (type & TRANS_W) this._startCameraPlaneEdit();
+    else if (type & ROT_W) this._startTrackballEdit();
 
     return true;
   }

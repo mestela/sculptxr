@@ -1,3 +1,13 @@
+# v3.14.0
+**Transform gizmo overhaul (desktop + VR).** New free-transform handles, much better picking, and VR fit-and-finish.
+
+- **Feature — center handle.** A sphere at the gizmo centre: drag it to translate freely in the plane perpendicular to the camera (desktop) / follow the controller in all axes (VR).
+- **Feature — trackball free-rotate.** Click (desktop) or grab (VR) inside the rotation sphere, off the rings, to arcball-rotate freely — ideal for posing a hand or an eye.
+- **Fix — pick accuracy.** Picking is now priority-tiered (centre → planes → arrows/scale → rings) so you select what's under the cursor instead of a fat arrow base or a ring behind it. Plane handles are grabbable from any angle; the trackball has a centre exclusion zone so it never steals the plane/centre handles; rings pick only from their visible side, so clicking *outside* the gizmo no longer grabs a hidden rotation.
+- **VR — constant gizmo size.** The gizmo no longer balloons or shrinks with double-grip world zoom; it holds a fixed size like the menus and panels. New **Gizmo size** slider (0.25×–2×, persistent) in Settings replaces the old Gizmo scale slider.
+- **VR — transform cursor cleanup.** The surface-snapping radius ring is hidden during transform (it read as "pushing against the mesh"), and the dominant controller's stylus tip now shows a subtle xray reveal *only* when it dips under a mesh surface — so reaching for the centre handle inside the mesh isn't flying blind.
+- **Files menu tidy.** Tightened to fit the VR panel: import options ("Scale & center on import", "sRGB color") and OBJ export options ("OBJ ZBrush", "OBJ append") are now checkboxes, two per row; "Export all meshes" is a checkbox moved after the format buttons.
+
 # v3.13.3
 **Vertex recording — capture polish + per-wave undo.** Follow-up refinements to the v3.13.0 "keep alive" recording.
 

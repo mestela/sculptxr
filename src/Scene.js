@@ -4320,6 +4320,26 @@ class Scene {
             spikeMesh.name = 'stylus_spike';
             controller.add(spikeMesh);
 
+            // Xray ghost of the spike — a child (inherits length/offset/tilt) that draws ONLY
+            // where the spike is occluded (depthFunc GreaterDepth), revealing the tip through
+            // the mesh when it dips under the surface. Hidden until the transform tool arms it.
+            // TIP-ONLY geometry: just the top ~1/3 of the spike (the part that enters a mesh),
+            // NOT the base that embeds in the controller — so the reveal never fires against the
+            // controller. Made slightly FATTER than the spike so its surface sits OUTSIDE the
+            // real spike instead of coincident with it → no z-fighting shimmer.
+            const spikeGhostGeo = new THREE.CylinderGeometry(0, 0.004, 0.035, 16);
+            spikeGhostGeo.rotateX(-Math.PI / 2);
+            spikeGhostGeo.translate(0, 0, -0.0825); // top ~1/3, z −0.065 .. −0.10 (tip)
+            const spikeGhostMat = new THREE.MeshBasicMaterial({
+                color: 0x00e5ff, transparent: true, opacity: 0.6,
+                depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false,
+            });
+            const spikeGhost = new THREE.Mesh(spikeGhostGeo, spikeGhostMat);
+            spikeGhost.name = 'stylus_spike_ghost';
+            spikeGhost.renderOrder = 9999;
+            spikeGhost.visible = false;
+            spikeMesh.add(spikeGhost);
+
             // Apply loaded settings immediately on creation
             const defLength = this.getStylusLength();
             const defOffset = this.getStylusOffset();
@@ -7087,6 +7107,11 @@ class Scene {
     // #23/#29 — position the floating button labels and tool-swap toast.
     this._updateVrFloaters();
 
+    // Gizmo proprioception: when transforming, the controller often reaches inside the
+    // (opaque) mesh at the gizmo centre. Render the stylus spike on top + bright so you can
+    // always see where your hand is relative to the gizmo (which also draws on top).
+    this._updateStylusXray();
+
     // Update Three.js Laser Pointer Visual Lengths and Cursors
     this._updateVRCursors(frame, refSpace, sources);
 
@@ -7146,6 +7171,26 @@ class Scene {
 
   // Per-frame placement/billboarding for the floating tool toast (#29) and the
   // controller button labels (#23). Both hover above their controller and face the head.
+  // The real spike renders exactly as always (correctly occluded). Alongside it sits an
+  // xray GHOST (depthFunc GreaterDepth) that draws ONLY where the spike is behind geometry —
+  // so when the controller dips under the mesh surface at the gizmo centre you see it through,
+  // and never as an always-on-top overlay. Just toggle the ghost on for the transform tool.
+  _updateStylusXray() {
+    const sm = this._sculptManager;
+    const idx = sm && sm.getToolIndex ? sm.getToolIndex() : -1;
+    const on = idx === Enums.Tools.TRANSFORM || idx === Enums.Tools.TRANSFORM_VR;
+    // Only the DOMINANT controller drives the gizmo, so only reveal its spike.
+    const key = on ? this._dominantHand : 'off';
+    if (key === this._stylusXrayKey) return;
+    this._stylusXrayKey = key;
+    const dom = this._dominantHand === 'left' ? this._vrControllerLeft : this._vrControllerRight;
+    const other = this._dominantHand === 'left' ? this._vrControllerRight : this._vrControllerLeft;
+    const domGhost = dom && dom.getObjectByName && dom.getObjectByName('stylus_spike_ghost');
+    const otherGhost = other && other.getObjectByName && other.getObjectByName('stylus_spike_ghost');
+    if (domGhost) domGhost.visible = on;
+    if (otherGhost) otherGhost.visible = false;
+  }
+
   _updateVrFloaters() {
     if (!this._toolToast && !window._vrShowButtonLabels && !this._btnLabels) return;
     const cam = this._renderer?.xr?.getCamera?.(this._camera.getThreeCamera());
@@ -8734,6 +8779,10 @@ class Scene {
                 const isVoxelTool = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
                 const isCubeShape = isVoxelTool && tool._shape === 1;
                 const isPicking = tool && tool._pickColor;
+                // Transform uses the gizmo, not a brush — the surface-snapping radius ring
+                // reads as "pushing against the mesh", so hide the whole cursor for it.
+                const isTransformTool = tool && tool.constructor
+                  && (tool.constructor.name === 'TransformVR' || tool.constructor.name === 'Transform');
 
                 if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
@@ -8741,8 +8790,9 @@ class Scene {
 
                 // Hidden during playback — EXCEPT a shape (vertex) take, where the loop
                 // keeps playing but you're actively sculpting, so the draw cursor must stay.
-                cursorGroup.visible = !window._animPlaying
-                  || (window._animationRegistry?.isRecording && window._animKeyMode === 'shape');
+                // Always hidden for the transform tool (gizmo-driven, no brush cursor).
+                cursorGroup.visible = !isTransformTool && (!window._animPlaying
+                  || (window._animationRegistry?.isRecording && window._animKeyMode === 'shape'));
                 cursorGroup.position.set(0, 0, 0);
                 cursorGroup.quaternion.identity();
                 cursorGroup.scale.set(1, 1, 1);

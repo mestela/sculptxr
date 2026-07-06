@@ -184,6 +184,7 @@ var getOptionsURL = function () {
   options.stylusOffset = queryNumber(getVal('stylusOffset'), -0.15, 0.15, 0.0);
   options.stylusTilt = queryNumber(getVal('stylusTilt'), -45.0, 45.0, 0.0);
   options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
+  options.gizmoSizeMul = queryNumber(getVal('gizmoSizeMul'), 0.25, 2.0, 1.0); // user size multiplier for the VR transform gizmo
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

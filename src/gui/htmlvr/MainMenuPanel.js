@@ -348,6 +348,12 @@ const CSS = `
   border-left: none;
   transform: rotate(45deg);
 }
+/* Two check-rows sharing one line (space-tight options). */
+.mm-check-pair { display: flex; gap: 12px; width: 100%; box-sizing: border-box; }
+.mm-check-pair .mm-check-row { flex: 1 1 0; min-width: 0; }
+.mm-check-pair .mm-check-row > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Toggle (checkbox replacement) */
 /* Toggles share the action-button resting look (single button language); the
@@ -840,11 +846,12 @@ export function buildMenuHTML_files(main) {
 
     <div class="mm-section-title">Import</div>
     <button class="mm-action-btn" id="mm-import-obj">Add mesh (obj, sgl, ply, stl)</button>
-    <button class="mm-toggle${main._autoMatrix ? ' active' : ''}" id="mm-import-scale">Scale & center on import</button>
-    <button class="mm-toggle${main._vertexSRGB ? ' active' : ''}" id="mm-import-srgb">sRGB vertex colour</button>
+    <div class="mm-check-pair">
+      <label class="mm-check-row"><span>Scale &amp; center on import</span><input type="checkbox" id="mm-import-scale"${main._autoMatrix ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+      <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+    </div>
 
     <div class="mm-section-title">Save</div>
-    <button class="mm-toggle${exportAll ? ' active' : ''}" id="mm-export-all">Export all meshes</button>
     <div class="mm-choice-grid cols-5">
       <button class="mm-choice" id="mm-export-sxr">sxr</button>
       <button class="mm-choice" id="mm-export-glb">glb</button>
@@ -852,11 +859,12 @@ export function buildMenuHTML_files(main) {
       <button class="mm-choice" id="mm-export-ply">ply</button>
       <button class="mm-choice" id="mm-export-stl">stl</button>
     </div>
+    <label class="mm-check-row"><span>Export all meshes</span><input type="checkbox" id="mm-export-all"${exportAll ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <button class="mm-toggle" id="mm-export-objseq"
       title="Export the frame-by-frame animation as a zipped per-frame OBJ sequence (anim.0000.obj …) — importable as a mesh sequence in any DCC.">Export OBJ sequence (.zip)</button>
-    <div class="mm-choice-grid cols-2">
-      <button class="mm-choice${objZbrush ? ' active' : ''}" id="mm-obj-zbrush">OBJ ZBrush</button>
-      <button class="mm-choice${objAppend ? ' active' : ''}" id="mm-obj-append">OBJ append</button>
+    <div class="mm-check-pair">
+      <label class="mm-check-row"><span>OBJ ZBrush</span><input type="checkbox" id="mm-obj-zbrush"${objZbrush ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+      <label class="mm-check-row"><span>OBJ append</span><input type="checkbox" id="mm-obj-append"${objAppend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     </div>
 
     <div class="mm-section-title">Export textures</div>
@@ -920,7 +928,7 @@ function buildMenuHTML_settings(main) {
   const stylusLength  = ui.stylusLength    ?? opts.stylusLength    ?? 0.10;
   const stylusOffset  = ui.stylusOffset    ?? opts.stylusOffset    ?? 0.0;
   const stylusTilt    = ui.stylusTilt      ?? opts.stylusTilt      ?? 0;
-  const gizmoScale    = opts.gizmoScale    ?? 15.625;
+  const gizmoSizeMul  = opts.gizmoSizeMul  ?? 1.0;
   const offsetY       = ui.offsetY         ?? opts.offsetY         ?? -1.2;
   const wfBias        = ui.wireframeBias   ?? opts.wireframeBias   ?? 0.001;
   const wfAlpha       = ui.wireframeAlpha  ?? opts.wireframeAlpha  ?? 0.2;
@@ -982,9 +990,9 @@ function buildMenuHTML_settings(main) {
       <span class="mm-val" id="mm-stylus-tilt-val">${Math.round(stylusTilt)}°</span>
     </div>
     <div class="mm-row">
-      <span class="mm-lbl">Gizmo scale</span>
-      <input type="range" id="mm-gizmo-scale" min="5" max="100" step="1" value="${Math.round(gizmoScale)}">
-      <span class="mm-val" id="mm-gizmo-val">${Math.round(gizmoScale)}</span>
+      <span class="mm-lbl">Gizmo size</span>
+      <input type="range" id="mm-gizmo-mul" min="25" max="200" step="5" value="${Math.round(gizmoSizeMul*100)}">
+      <span class="mm-val" id="mm-gizmo-mul-val">${gizmoSizeMul.toFixed(2)}x</span>
     </div>
 
     <div class="mm-section-title">Calibration</div>
@@ -2045,15 +2053,14 @@ export class MainMenuPanel extends HTMLVRPanel {
       main.updateStylusTilt?.(v);
       opts.saveOption('stylusTilt', v, 500);
     }, (v) => `${v}°`);
-    this._wireSlider(q('#mm-gizmo-scale'), q('#mm-gizmo-val'), (v) => {
-      opts.saveOption('gizmoScale', v, 500);
-      const sc = main.getSculptManager?.();
-      if (sc) {
-        const t = sc.getTool?.(Enums.Tools.TRANSFORM_VR);
-        if (t?._gizmo) { t._gizmo._resize(v); t._gizmo._lastScale = v; }
-      }
+    // Gizmo size multiplier (0.25x–2x, persistent). Live via window._gizmoSizeMul, read
+    // each frame by GizmoVR.update; no _resize needed (it's a matrix scale).
+    this._wireSlider(q('#mm-gizmo-mul'), q('#mm-gizmo-mul-val'), (v) => {
+      const f = v / 100;
+      window._gizmoSizeMul = f;
+      opts.saveOption('gizmoSizeMul', f, 500);
       main.render?.();
-    });
+    }, (v) => `${(v / 100).toFixed(2)}x`);
 
     // Calibration
     this._wireSlider(q('#mm-head-height'), q('#mm-head-height-val'), (v) => {
@@ -3207,18 +3214,15 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   q('#mm-import-obj')?.addEventListener('click', () => {
     document.getElementById('fileopen')?.click();
   });
-  q('#mm-import-scale')?.addEventListener('click', () => {
-    main._autoMatrix = !main._autoMatrix;
-    q('#mm-import-scale')?.classList.toggle('active', main._autoMatrix);
+  q('#mm-import-scale')?.addEventListener('change', (e) => {
+    main._autoMatrix = e.target.checked;
   });
-  q('#mm-import-srgb')?.addEventListener('click', () => {
-    main._vertexSRGB = !main._vertexSRGB;
-    q('#mm-import-srgb')?.classList.toggle('active', main._vertexSRGB);
+  q('#mm-import-srgb')?.addEventListener('change', (e) => {
+    main._vertexSRGB = e.target.checked;
   });
 
-  q('#mm-export-all')?.addEventListener('click', () => {
-    if (guiFiles) guiFiles._exportAll = !guiFiles._exportAll;
-    q('#mm-export-all')?.classList.toggle('active', guiFiles?._exportAll ?? true);
+  q('#mm-export-all')?.addEventListener('change', (e) => {
+    if (guiFiles) guiFiles._exportAll = e.target.checked;
   });
   q('#mm-export-sxr')?.addEventListener('click', () => warnVoxelThenSave(main, () => promptSaveName('Save .sxr as', 'sculpt', n => guiFiles?.saveFileAsSGL?.(n))));
   q('#mm-export-glb')?.addEventListener('click', () => promptSaveName('Save .glb as', 'sculpt', n => guiFiles?.saveFileAsGLB?.(n)));
@@ -3227,13 +3231,11 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
   q('#mm-export-stl')?.addEventListener('click', () => promptSaveName('Save .stl as', 'sculpt', n => guiFiles?.saveFileAsSTL?.(n)));
   q('#mm-export-objseq')?.addEventListener('click', () => promptSaveName('OBJ sequence name', 'anim', n => guiFiles?.saveObjSequence?.(n)));
 
-  q('#mm-obj-zbrush')?.addEventListener('click', () => {
-    if (guiFiles) guiFiles._objColorZbrush = !guiFiles._objColorZbrush;
-    q('#mm-obj-zbrush')?.classList.toggle('active', guiFiles?._objColorZbrush ?? true);
+  q('#mm-obj-zbrush')?.addEventListener('change', (e) => {
+    if (guiFiles) guiFiles._objColorZbrush = e.target.checked;
   });
-  q('#mm-obj-append')?.addEventListener('click', () => {
-    if (guiFiles) guiFiles._objColorAppended = !guiFiles._objColorAppended;
-    q('#mm-obj-append')?.classList.toggle('active', guiFiles?._objColorAppended ?? false);
+  q('#mm-obj-append')?.addEventListener('change', (e) => {
+    if (guiFiles) guiFiles._objColorAppended = e.target.checked;
   });
 
   q('#mm-browser-save')?.addEventListener('click', () => {

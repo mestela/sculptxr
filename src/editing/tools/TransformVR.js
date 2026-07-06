@@ -473,6 +473,9 @@ class TransformVR extends SculptBase {
     else if (type & GIZMO_TYPE.TRANS_Y) { this._mode = 0; this._axisMask = [false, true, false]; }
     else if (type & GIZMO_TYPE.TRANS_Z) { this._mode = 0; this._axisMask = [false, false, true]; }
 
+    // Center handle → free translate (all axes, follows the controller)
+    else if (type & GIZMO_TYPE.TRANS_W) { this._mode = 0; this._axisMask = [true, true, true]; }
+
     // Plane Translation (Move in 2 axes)
     else if (type & GIZMO_TYPE.PLANE_X) { this._mode = 0; this._axisMask = [false, true, true]; }
     else if (type & GIZMO_TYPE.PLANE_Y) { this._mode = 0; this._axisMask = [true, false, true]; } 

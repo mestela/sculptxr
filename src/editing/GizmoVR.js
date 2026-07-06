@@ -39,7 +39,8 @@ export const GIZMO_TYPE = {
   SCALE_X: 1 << 10,
   SCALE_Y: 1 << 11,
   SCALE_Z: 1 << 12,
-  SCALE_W: 1 << 13
+  SCALE_W: 1 << 13,
+  TRANS_W: 1 << 14   // center handle → free translate (all axes, follows the controller)
 };
 
 const TRANS_XYZ = GIZMO_TYPE.TRANS_X | GIZMO_TYPE.TRANS_Y | GIZMO_TYPE.TRANS_Z;
@@ -152,7 +153,7 @@ class GizmoVR {
     };
 
     // Default active types
-    this._activatedType = TRANS_XYZ | ROT_XYZ | PLANE_XYZ | SCALE_XYZW | GIZMO_TYPE.ROT_W;
+    this._activatedType = TRANS_XYZ | ROT_XYZ | PLANE_XYZ | SCALE_XYZW | GIZMO_TYPE.ROT_W | GIZMO_TYPE.TRANS_W;
 
     // Components
     this._transX = createGizmoPart(GIZMO_TYPE.TRANS_X, 0);
@@ -172,6 +173,12 @@ class GizmoVR {
     this._rotY = createGizmoPart(GIZMO_TYPE.ROT_Y, 1);
     this._rotZ = createGizmoPart(GIZMO_TYPE.ROT_Z, 2);
     this._rotW = createGizmoPart(GIZMO_TYPE.ROT_W);
+
+    // Center free-translate sphere (visible) + an invisible interior sphere that arms the
+    // free (all-axis) rotate — its radius is inside the rings, so nearest-hit picking lets
+    // the rings/arrows still grab when aimed at, and only the empty interior trackballs.
+    this._transW = createGizmoPart(GIZMO_TYPE.TRANS_W);
+    this._rotBall = createGizmoPart(GIZMO_TYPE.ROT_W);
 
     this._pickables = [];
     this._selected = null;
@@ -242,7 +249,12 @@ class GizmoVR {
       { mask: GIZMO_TYPE.SCALE_X, obj: this._scaleX },
       { mask: GIZMO_TYPE.SCALE_Y, obj: this._scaleY },
       { mask: GIZMO_TYPE.SCALE_Z, obj: this._scaleZ },
-      { mask: GIZMO_TYPE.SCALE_W, obj: this._scaleW }
+      { mask: GIZMO_TYPE.SCALE_W, obj: this._scaleW },
+      // Center translate handle + interior trackball ball (both map to all-axis modes in
+      // TransformVR). Small center sphere wins at dead-centre; interior ball (inside the
+      // rings) catches the rest of the interior; rings/arrows still win when aimed at.
+      { mask: GIZMO_TYPE.TRANS_W, obj: this._transW },
+      { mask: GIZMO_TYPE.ROT_W, obj: this._rotBall }
     ];
 
     for (let i = 0; i < parts.length; ++i) {
@@ -356,12 +368,30 @@ class GizmoVR {
       mat4.multiply(baseMat, baseMat, mRot);
     }
 
+    // Keep a CONSTANT physical size regardless of world zoom. The gizmo group rides
+    // _worldGroup (which scales with double-grip zoom), so it otherwise balloons/shrinks
+    // with the world instead of staying fixed like the menus/panels. `scaleFactor` is a
+    // sculpt-space constant calibrated to be scaled DOWN by the (small) default worldScale,
+    // so we can't just divide worldScale out (that exposes the raw ~metres value). Instead
+    // capture the world scale the gizmo first sized at and hold that physical size:
+    // k = refScale/worldScale → exactly 1 at the reference, compensating only when zoomed.
+    if (this._refWorldScale === undefined || this._refWorldScale <= 0.0001) {
+      this._refWorldScale = worldScale;
+    }
+    if (worldScale > 0.0001) {
+      // User size multiplier (persistent, settings slider) on top of the constant physical size.
+      const mul = window._gizmoSizeMul != null ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
+      const k = (this._refWorldScale / worldScale) * mul;
+      mat4.scale(baseMat, baseMat, [k, k, k]);
+    }
+
     // Update all components
     const components = [
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
       this._rotX, this._rotY, this._rotZ, 
-      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW,
+      this._transW, this._rotBall
     ];
 
     for (let i = 0; i < components.length; ++i) {
@@ -408,7 +438,8 @@ class GizmoVR {
       this._transX, this._transY, this._transZ,
       this._planeX, this._planeY, this._planeZ,
       this._rotX, this._rotY, this._rotZ, 
-      this._scaleX, this._scaleY, this._scaleZ, this._scaleW
+      this._scaleX, this._scaleY, this._scaleZ, this._scaleW,
+      this._transW, this._rotBall
     ];
 
     const backups = new Array(components.length);
@@ -435,7 +466,28 @@ class GizmoVR {
     const oldR2 = pick._rWorld2;
     const oldRL2 = pick._rLocal2;
 
-    pick.intersectionRayMeshesVR(this._pickables, origin, direction, radius);
+    // Priority-tiered pick (same idea as the desktop gizmo): test tier by tier and take the
+    // first tier that hits anything. Crucially the interior trackball ball is LAST, so its
+    // big sphere no longer occludes the small center handle / thin arrows on nearest-hit.
+    const _pt = this._activatedType;
+    const _tiers = [
+      [this._transW],
+      [this._planeX, this._planeY, this._planeZ],
+      [this._transX, this._transY, this._transZ,
+       this._scaleX, this._scaleY, this._scaleZ, this._scaleW],
+      [this._rotX, this._rotY, this._rotZ],
+      [this._rotBall],
+    ];
+    for (let ti = 0; ti < _tiers.length; ++ti) {
+      const geos = [];
+      for (let j = 0; j < _tiers[ti].length; ++j) {
+        const p = _tiers[ti][j];
+        if ((_pt & p._type) && p._pickGeo) geos.push(p._pickGeo);
+      }
+      if (geos.length === 0) continue;
+      pick.intersectionRayMeshesVR(geos, origin, direction, radius);
+      if (pick.getMesh()) break;
+    }
 
     const hitMesh = pick.getMesh();
     if (!hitMesh && oldMesh) {
@@ -655,6 +707,33 @@ class GizmoVR {
     }
   }
 
+  // Center sphere. `visible` false → pick-only (the interior trackball region); the draw
+  // mesh is created but kept out of the scene so the components loop can still touch it.
+  _createSphere(part, color, scale, radius, visible) {
+    part._baseMatrix = mat4.create();
+    vec3.copy(part._color, color);
+    part._pickGeo = Primitives.createSphere(this._gl, radius * scale, 16, 16);
+    part._pickGeo._gizmo = part;
+    { const _pm = part._pickGeo.getThreeMesh?.(); if (_pm) _pm.visible = false; }
+
+    part._drawGeo = Primitives.createSphere(this._gl, radius * scale, 16, 16);
+    part._drawGeo.setShaderType(Enums.Shader.FLAT);
+    const threeMesh = part._drawGeo.getThreeMesh();
+    if (threeMesh) {
+      threeMesh.material = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(color[0], color[1], color[2]),
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+        depthWrite: false
+      });
+      threeMesh.matrixAutoUpdate = false;
+      threeMesh.renderOrder = 101;
+      threeMesh.visible = visible;
+      if (visible && this._group) this._group.add(threeMesh);
+    }
+  }
+
   _initTranslate(scale) {
     const axis = [0.0, 0.0, 0.0];
     this._createArrow(this._transX, vec3.set(axis, 1.0, 0.0, 0.0), COLOR_X, scale);
@@ -665,6 +744,10 @@ class GizmoVR {
     this._createPlane(this._planeX, COLOR_X, 0.0, s, 0.0, 0.0, 0.0, s, scale);
     this._createPlane(this._planeY, COLOR_Y, s, 0.0, 0.0, 0.0, 0.0, s, scale);
     this._createPlane(this._planeZ, COLOR_Z, s, 0.0, 0.0, 0.0, s, 0.0, scale);
+
+    // visible center translate handle + invisible interior trackball ball (inside the rings)
+    this._createSphere(this._transW, COLOR_SW, scale, CUBE_SIDE * 0.5, true);
+    this._createSphere(this._rotBall, COLOR_SW, scale, ROT_RADIUS * 0.9, false);
   }
 
   _initRotate(scale) {
