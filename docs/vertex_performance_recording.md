@@ -78,6 +78,55 @@ snapshot both take/produce a track explicitly, so layers is "add a track stack +
 rebase base to 'composite of lower layers' + build the UI." **Deferred pending UX design**
 (matt: layers needs planning on the interaction side). Tracked as roadmap **#34**.
 
+### The motivating case: an edit that RIDES an earlier motion
+
+matt 2026-07-06: record the jaw opening with a big Move brush (wave 1), then go in with a
+small Move brush to pull the mouth corners into a smile. Today that fails — the moment you
+grab the corner verts the Move tool pins them to their **grab-time positions** (`vProxy`),
+so during the stroke they stop following the jaw and you get a chunk of face that no longer
+rides the jaw, with a seam at the brush-radius edge. And it's baked into the recording,
+because one **absolute** track can't express "this edit rides that motion."
+
+**Layers fix this by construction.** Each layer stores a per-vertex **delta (offset)** and
+playback is `base + jawLayer(t) + mouthLayer(t) + …`. A mouth-corner vertex that's also near
+the chin resolves to `base + jaw_offset(t) + smile_offset(t)` — it rides the jaw *and*
+carries the smile, automatically. The seam vanishes too: the smile is a smooth additive bump
+(brush falloff → 0 across the radius) on top of a continuous jaw motion, so both sides of the
+brush edge ride the jaw and differ only by the smooth falloff. This composition is the whole
+reason to store deltas — the current absolute full-mesh model structurally cannot do it, so
+**delta storage (finally the deferred sparse-delta representation) is part of the layers
+build, not optional.**
+
+### Two capture modes (a UX fork to decide when planning)
+
+While you *record* a new layer, the layers below are playing underneath. The Move tool still
+pins to a frozen grab-pose, so **during the stroke** the grabbed verts would again stop
+following the lower motion (and seam) unless we rebase the tool's grab reference to the live
+lower-composite each frame. That's the same rebase we already do, just feeding the tool a
+moving base. It splits into two interactions — decide which (or both) to offer:
+
+1. **"Pose that rides" (cheap; probably covers the smile case).** Park the playhead, sculpt
+   the layer once as a *static* delta. Stored as an offset, it rides the moving lower layers
+   automatically on playback. A constant expression over animated motion — no moving-reference
+   machinery needed. Likely all you need for a fixed smile/frown/brow.
+2. **"Perform on top" (the ambitious version).** Animate the layer *over time* while watching
+   the lower layers move live. Requires the **moving-reference** fix: each frame, rebase the
+   active tool's grab reference (`vProxy` for Move; the analogous anchor for other brushes) to
+   the live lower-composite, so grabbed verts ride the underlying motion *during* the stroke
+   and the captured delta stays clean (pure drag, not drag-minus-motion). More work, and the
+   real layered-puppeteering experience.
+
+**Open UX questions for planning:** how you create/enter/exit a layer and see which is
+active; how the lower composite is presented while recording (ghost? full-opacity live?);
+per-layer mute/solo/reorder/delete (reuse blendshape stack panel); whether "new layer" is a
+distinct gesture or implied by starting to record; and whether mode (1) vs (2) is a toggle or
+automatic (playhead parked → static, playhead rolling → performed).
+
+## Known "exciting" issues (open)
+
+- _(to be filled in as matt reports them — grabbed-region fidelity during a drag and
+  non-Move brush accuracy are the current suspects; see MVP limitations above.)_
+
 ## Known "exciting" issues (open)
 
 - _(to be filled in as matt reports them — grabbed-region fidelity during a drag and
