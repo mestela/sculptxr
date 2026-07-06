@@ -803,6 +803,34 @@ export default class GuiTimeline {
     return entries;
   }
 
+  // Delete a blendshape's ANIMATION track (its weight keyframes). The layer itself stays
+  // in the blendshape stack — only its timeline animation is removed. Undoable.
+  _deleteBlendshapeTrack(mesh, name) {
+    const reg = window._animationRegistry;
+    if (!reg || !mesh) return;
+    const bt = reg.tracks.get(mesh.getID())?.blendshapeTracks?.get(name);
+    if (!bt || !bt.times || bt.times.length === 0) return;
+    const meshId = mesh.getID();
+    const before = { times: bt.times.slice(), values: bt.values.slice() };
+    const setKeys = (times, values) => {
+      const b = reg.tracks.get(meshId)?.blendshapeTracks?.get(name);
+      if (b) { b.times = times.slice(); b.values = values.slice(); }
+      // Drop any selection that pointed at this track so nothing dangles.
+      if (window._animSelectedKeys) {
+        window._animSelectedKeys = window._animSelectedKeys.filter(
+          k => !(k.type === 'blendshape' && k.meshId === meshId && k.name === name));
+      }
+      reg.applyBlendshapes?.(mesh);
+      if (window.app?.render) window.app.render();
+      this.draw();
+    };
+    setKeys([], []);
+    window.app?.getStateManager?.()?.pushStateCustom?.(
+      () => setKeys(before.times, before.values),   // undo
+      () => setKeys([], []),                          // redo
+      false, 'Delete Blendshape Track');
+  }
+
   // Move the playhead to an explicit time and apply it (stop playback, re-evaluate
   // every mesh so visibility/transform tracks update, refresh outliner eyes).
   _setPlayhead(t) {
@@ -3251,6 +3279,25 @@ export default class GuiTimeline {
         if (clickedLaneIdx >= 0 && clickedLaneIdx < tracks.length) {
           const [meshId, trackObj] = tracks[clickedLaneIdx];
           const laneMesh = this._main._meshes?.find(m => m.getID() === meshId);
+          // Per-blendshape sub-row M (mute layer) / × (delete this track's animation).
+          // Checked BEFORE the object-M so the sub-rows (which sit below lane centre in
+          // the same rx band) win. Sub-row y mirrors drawDopeSheet: centre+20+bIdx*12.
+          if (rx >= 154 && rx < 188 && trackObj.blendshapeTracks && laneMesh) {
+            const ty2 = headerH + clickedLaneIdx * trackH;
+            const bsNames = TimelineHelper.bsNames(trackObj);
+            for (let bIdx = 0; bIdx < bsNames.length; bIdx++) {
+              const subRowY = ty2 + trackH / 2 + 22 + bIdx * 18;
+              if (Math.abs(ry - subRowY) > 9) continue;
+              const bsName = bsNames[bIdx];
+              if (rx < 170) {
+                reg.toggleBlendshapeMute?.(laneMesh, bsName);   // M ≈ x162
+              } else {
+                this._deleteBlendshapeTrack(laneMesh, bsName);  // × ≈ x178
+              }
+              this.draw();
+              return;
+            }
+          }
           // Right-aligned "M" mute toggle (not on SR group rows). Trash removed —
           // select keys + Delete is the safe way to remove them.
           if (rx >= 176 && rx < 200 && !(laneMesh && laneMesh._isFrameGroup)) {
@@ -3569,7 +3616,7 @@ export default class GuiTimeline {
             let bIdx = 0;
             TimelineHelper.bsEntries(trackObj).forEach(([name, bTrack]) => {
               if (keyFound || !bTrack.times || _keyShow.blendshape === false) { bIdx++; return; }
-              const bKy = ty2 + trackH / 2 + 20 + bIdx * 10;
+              const bKy = ty2 + trackH / 2 + 22 + bIdx * 18;
               for (let i = 0; i < bTrack.times.length; i++) {
                 const t = bTrack.times[i];
                 const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;

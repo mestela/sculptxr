@@ -201,13 +201,38 @@ export default class TimelineHelper {
       // Draw Blendshape Keys (Squares). Newest-first row order (shared with hit-test).
       if (show.blendshape && track && track.blendshapeTracks) {
         let bIdx = 0;
+        const reg = (typeof window !== 'undefined') ? window._animationRegistry : null;
         TimelineHelper.bsEntries(track).forEach(([name, bTrack]) => {
+          const subRowY = ty + trackH / 2 + 22 + (bIdx * 18);
+          // Per-blendshape gutter label — same size as the object title, just indented, so
+          // the stacked rows are legible. Muted layers dim; clipped so long ARKit names
+          // don't bleed onto the M/× controls.
+          const bsMuted = !!(laneMesh && reg?.isBlendshapeMuted?.(laneMesh, name));
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(w.x + 22, subRowY - 8, 130, 16);
+          ctx.clip();
+          ctx.fillStyle = bsMuted ? '#6c7086' : '#00ff88';
+          ctx.font = '12px sans-serif';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(name, w.x + 22, subRowY);
+          ctx.restore();
+          // Per-row M (mute layer) + × (delete this track's animation), kept well left of the
+          // key area. Hit-testing mirrors these x-bands in GuiTimeline.onMouseDown.
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = bsMuted ? '#f38ba8' : '#585b70';
+          ctx.fillText('M', w.x + 162, subRowY);
+          ctx.fillStyle = '#585b70';
+          ctx.fillText('×', w.x + 178, subRowY);
           if (bTrack && bTrack.times) {
             for (let i = 0; i < bTrack.times.length; i++) {
               const bt = bTrack.times[i];
               if (bt >= loopStart && bt <= loopEnd) {
                 const kx = w.x + tlX + ((bt - loopStart) / visibleDuration) * tlW;
-                const ky = ty + trackH / 2 + 20 + (bIdx * 10); // Offset by index
+                const ky = ty + trackH / 2 + 22 + (bIdx * 18); // Offset by index
                 
                 const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(sk => sk.meshId === id && sk.type === 'blendshape' && sk.name === name && sk.index === i);
                 let isInsideMarquee = false;
