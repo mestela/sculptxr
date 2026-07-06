@@ -84,6 +84,14 @@ class AnimationRegistry {
   // it acts as a proper toggle. Idle → arm + (wait-for-grab, or start; startRecording does
   // its own count-in). Recording / counting-in / waiting → stop and disarm. No selection →
   // a nudge instead of a silent no-op. Returns true if now armed/recording.
+  // Best-guess "object to record" when a caller doesn't pass one: current selection →
+  // active mesh → first mesh in the scene. Mirrors AnimationControlPanel's _getTargetMesh.
+  _resolveTargetMesh() {
+    const app = window.app;
+    if (!app) return null;
+    return app._selectMeshes?.[0] || app._mesh || app.getMeshes?.()?.[0] || null;
+  }
+
   toggleRecord(mesh) {
     // Active = any part of a record session (armed / waiting / counting-in / recording, or a
     // live timer). Pressing Record in ANY of these turns it off — so it's a true toggle and
@@ -106,6 +114,12 @@ class AnimationRegistry {
       if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
       return false;
     }
+    // Resolve the target robustly when the caller didn't hand us one. The timeline record
+    // button passed only `getMesh()` (== app._mesh), which can be null in VR when nothing is
+    // the actively-picked mesh — so it nudged instead of arming while the ACP button (which
+    // falls back through _selectMeshes / getMeshes) worked. Mirror that fallback here so both
+    // record controls behave identically.
+    if (!mesh) mesh = this._resolveTargetMesh();
     if (!mesh) { window.screenLog?.('Select an object to record', 'orange'); return false; }
     window._animArmed = true;
     // Wait-for-Trigger (without count-in) arms and defers the capture to the next Grab.
@@ -144,8 +158,9 @@ class AnimationRegistry {
     this.lastCaptureTime = -1;
     this._shapeCaptureLen = -1;        // #30: re-latch the vertex-topology length per take
     this._shapeCaptureWarned = false;
-    this.lastShapeWriteTime = undefined;
     this._shapeStrokeSnap = null;
+    this._lastGridFrame = -1;
+    this._shapeWasStroking = false;
 
     // #30: vertex recording needs a fixed vertex count across the take. Warn upfront if
     // dyntopo is live (the mesh will re-tessellate under the brush and poison the lerp).
@@ -341,79 +356,11 @@ class AnimationRegistry {
 
     let elapsed = (performance.now() - this.startTime) / 1000.0;
 
-    // #30: vertex "keep-alive". In shape mode captureTick samples the live deformed
-    // vertices into the SHAPE track (shapeTimes + full-mesh Float32Array in shapes), so
-    // a continuous Move-brush wobble becomes a shape-key performance the existing
-    // ShotSculpt playback already interpolates. Self-contained and keyed off the VISIBLE
-    // playhead clock (globalPlaybackTime) — during a shape take update() keeps looping
-    // the recorded mesh (see the recording guard there), so keys land under the playhead.
-    if (window._animKeyMode === 'shape') {
-      if (!track.shapeTimes || !track.shapes) {
-        track.shapeTimes = track.shapeTimes || [];
-        track.shapes = track.shapes || [];
-      }
-
-      // Keys are laid down only WHILE a stroke is active (mouse/pen held on desktop,
-      // trigger held in VR). Record stays live between strokes so the loop keeps playing
-      // and you can puppeteer in waves — hair on one pass, beard on the next.
-      const app = window.app;
-      const stroking = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
-      if (!stroking) {
-        this._shapeCaptureLen = -1;            // re-latch topology at the next stroke
-        this.lastShapeWriteTime = undefined;   // fresh throttle window per stroke
-        return;
-      }
-
-      const keyTime = this.globalPlaybackTime || 0;
-
-      // Throttle to the capture rate.
-      const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
-      if (this.lastShapeWriteTime !== undefined &&
-          keyTime >= this.lastShapeWriteTime && keyTime - this.lastShapeWriteTime < rate) return;
-
-      // Topology must stay constant across a stroke or the equal-length ShotSculpt lerp
-      // breaks — latch the vert length on the first sample, skip+warn on any change
-      // (dyntopo / voxel / a mid-take multires level switch).
-      const verts = this.activeMesh.getVertices ? this.activeMesh.getVertices() : null;
-      if (!verts) return;
-      const nb = (this.activeMesh.getNbVertices ? this.activeMesh.getNbVertices() : verts.length / 3) * 3;
-      if (this._shapeCaptureLen === undefined || this._shapeCaptureLen < 0) {
-        this._shapeCaptureLen = nb;
-        this._shapeCaptureWarned = false;
-      }
-      if (nb !== this._shapeCaptureLen) {
-        if (!this._shapeCaptureWarned) {
-          this._shapeCaptureWarned = true;
-          window.screenLog?.('Vertex recording needs a fixed topology — turn dyntopo off', 'orange');
-        }
-        return;
-      }
-
-      // ADDITIVE WAVES come from update()'s per-frame rebase (it keeps the prior waves
-      // playing UNDER the live stroke and only pins the grabbed verts to your hand), so
-      // by the time we sample here the mesh buffer already IS the composite result — we
-      // just snapshot it raw.
-      const keyVerts = new Float32Array(verts.subarray(0, nb));
-
-      // Punch-in overwrite: replace any existing key within half a capture-rate of this
-      // playhead time so a re-recorded wave overwrites cleanly, while waves elsewhere on
-      // the loop are left untouched.
-      const half = rate * 0.5;
-      for (let i = track.shapeTimes.length - 1; i >= 0; i--) {
-        if (Math.abs(track.shapeTimes[i] - keyTime) < half) {
-          track.shapeTimes.splice(i, 1);
-          track.shapes.splice(i, 1);
-          if (track.shapeOutputTimes) track.shapeOutputTimes.splice(i, 1);
-        }
-      }
-
-      this.lastShapeWriteTime = keyTime;
-      track.shapeTimes.push(keyTime);
-      track.shapes.push(keyVerts);
-      if (track.shapeOutputTimes) track.shapeOutputTimes.push(keyTime);
-      this._sortShapeRingBuffer(track);
-      return;
-    }
+    // #30 unify (2026-07-06): shape (vertex) capture no longer runs on this setInterval —
+    // it moved into update()'s render-loop rebase so display + capture share ONE clock
+    // (killed a two-clock race) and keys snap to a fixed frame grid (killed per-loop
+    // rolling drift). See `_captureShapeKeyGridded`. captureTick now handles transform only.
+    if (window._animKeyMode === 'shape') return;
 
     if (window._animMasterDuration && window._animMasterDuration > 0) {
       const rawElapsed = elapsed;
@@ -624,6 +571,58 @@ class AnimationRegistry {
     return out;
   }
 
+  // Layer-ready shape-key writer: write `keyVerts` into `track` at the (already grid-snapped)
+  // `keyTime`, overwriting the exact slot on a re-pass. Kept generic (takes the track) so the
+  // planned per-layer recording can reuse it verbatim, pointing at the active layer's track.
+  _captureShapeKeyGridded(track, keyTime, keyVerts) {
+    if (!track.shapeTimes) { track.shapeTimes = []; track.shapes = []; }
+    const eps = 1e-4; // times are grid-snapped, so a tight window hits only the same slot
+    for (let i = track.shapeTimes.length - 1; i >= 0; i--) {
+      if (Math.abs(track.shapeTimes[i] - keyTime) < eps) {
+        track.shapeTimes.splice(i, 1);
+        track.shapes.splice(i, 1);
+        if (track.shapeOutputTimes) track.shapeOutputTimes.splice(i, 1);
+      }
+    }
+    track.shapeTimes.push(keyTime);
+    track.shapes.push(keyVerts);
+    if (track.shapeOutputTimes) track.shapeOutputTimes.push(keyTime);
+    this._sortShapeRingBuffer(track);
+  }
+
+  // Per-wave undo for shape recording: on trigger release, push a state that restores the
+  // shape track to its pre-stroke snapshot (`before`). `squash=true` chains it with the
+  // sculpt's own geometry state (pushed at stroke start) so ONE undo removes both the
+  // recorded keys and the mesh deformation of that wave. No-op if the stroke captured nothing.
+  _pushShapeWaveUndo(meshId, before) {
+    const track = this.tracks.get(meshId);
+    const sm = window.app?.getStateManager?.();
+    if (!track || !sm) return;
+    const after = {
+      times:  (track.shapeTimes || []).slice(),
+      shapes: (track.shapes || []).slice(),
+      outs:   track.shapeOutputTimes ? track.shapeOutputTimes.slice() : null,
+    };
+    const b = { times: before.times || [], shapes: before.shapes || [], outs: before.outs || null };
+    const changed = b.times.length !== after.times.length
+      || b.times.some((t, i) => t !== after.times[i])
+      || b.shapes.some((s, i) => s !== after.shapes[i]);
+    if (!changed) return;
+    const restore = (snap) => {
+      const tr = this.tracks.get(meshId);
+      if (!tr) return;
+      tr.shapeTimes = (snap.times || []).slice();
+      tr.shapes = (snap.shapes || []).slice();
+      if (snap.outs) tr.shapeOutputTimes = snap.outs.slice();
+      else if (tr.shapeOutputTimes) tr.shapeOutputTimes = (snap.times || []).slice();
+      this.sortTrack(tr);
+      const msh = window.app?.getMesh?.();
+      if (msh && msh.getID() === meshId) this.update(msh, true);
+      if (window.app?.render) window.app.render();
+    };
+    sm.pushStateCustom(() => restore(b), () => restore(after), true, 'Record Wave');
+  }
+
   stopRecording(isManualAbort = false) {
     if (this.countInTimer) {
       clearInterval(this.countInTimer);
@@ -674,8 +673,10 @@ class AnimationRegistry {
       delete track.punchInTime;
     }
 
-    // Push Undo state for recording!
-    if (!isManualAbort && track && count > 0 && this._trackStateBeforeRecording) {
+    // Push Undo state for recording! (Transform takes only — shape takes push a per-wave
+    // undo on each trigger release via _pushShapeWaveUndo, so a take-level undo here would
+    // double up and fight the per-wave steps.)
+    if (!isManualAbort && !isShape && track && count > 0 && this._trackStateBeforeRecording) {
       const stateAfter = {
         times: track.times.slice(),
         positions: track.positions.slice(),
@@ -2148,8 +2149,19 @@ class AnimationRegistry {
       if (window._animKeyMode !== 'shape') return;
       const app = window.app;
       liveShapeStroke = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));
-      // Stroke ended → drop the per-stroke rebase baseline so the next stroke re-begins.
-      if (!liveShapeStroke) { this._shapeStrokeSnap = null; this._dynBase = null; }
+      // Stroke ended → drop the per-stroke rebase baseline + capture latches so the next
+      // stroke re-begins cleanly (topology re-latched, first grid cell writes).
+      if (!liveShapeStroke) {
+        // Falling edge: a wave just finished. Push a per-wave undo (using the pre-stroke
+        // snapshot as the "before") so releasing the trigger + undo removes exactly that
+        // last recorded motion — squashed so it also reverts the sculpt's geometry state.
+        if (this._shapeWasStroking && this._shapeStrokeSnap) {
+          this._pushShapeWaveUndo(mesh.getID(), this._shapeStrokeSnap);
+        }
+        this._shapeStrokeSnap = null; this._dynBase = null;
+        this._lastGridFrame = -1; this._shapeCaptureLen = -1;
+      }
+      this._shapeWasStroking = liveShapeStroke;
     }
 
     const now = performance.now();
@@ -2326,35 +2338,70 @@ class AnimationRegistry {
     let baseForBlendshapes = null;
     const verts = mesh.getVertices();
 
-    // #30 additive rebase: while a stroke is live on the shape-recording mesh, keep the
-    // PRIOR waves playing underneath instead of freezing. Each frame we re-lay the brush's
-    // contribution (buffer − last frame's base) on top of the prior-waves composite at the
-    // current playhead, then advance the base. Untouched verts follow the earlier motion;
-    // the verts the brush is grabbing (which it pins to fixed start positions each move)
-    // stay with your hand. The buffer thus becomes the additive result captureTick records.
-    if (liveShapeStroke && track.shapeTimes && track.shapeTimes.length > 0) {
-      // Guarded: this runs inside the render loop, so a fault here must NOT propagate and
-      // kill rendering/playback — fall back to leaving the live sculpt untouched.
+    // #30 unified shape recording (rebase + capture share this one render-loop pass):
+    //  - REBASE keeps the PRIOR waves playing under the live stroke (no freeze) by re-laying
+    //    the brush's contribution on top of their composite at the playhead.
+    //  - CAPTURE writes the resulting pose to a fixed FRAME GRID so keys land on the same
+    //    frames every loop (no rolling drift) and re-passing a slot overwrites it cleanly.
+    // Both use `track.playbackTime` as the single clock. Guarded: a fault here must never
+    // propagate and kill rendering — fall back to leaving the live sculpt untouched.
+    if (liveShapeStroke) {
       try {
+        if (!track.shapeTimes || !track.shapes) { track.shapeTimes = track.shapeTimes || []; track.shapes = track.shapes || []; }
         const nb = (mesh.getNbVertices ? mesh.getNbVertices() : verts.length / 3) * 3;
+
+        // Topology must stay constant across a stroke (equal-length ShotSculpt lerp).
+        if (this._shapeCaptureLen === undefined || this._shapeCaptureLen < 0) {
+          this._shapeCaptureLen = nb; this._shapeCaptureWarned = false;
+        }
+        const topoOK = (nb === this._shapeCaptureLen && verts.length >= nb);
+        if (!topoOK) {
+          if (!this._shapeCaptureWarned) {
+            this._shapeCaptureWarned = true;
+            window.screenLog?.('Vertex recording needs a fixed topology — turn dyntopo off', 'orange');
+          }
+          return;
+        }
+
+        // Freeze the PRE-STROKE track once, at the first frame of the stroke, so the rebase
+        // composites only PRIOR waves (never this stroke's own just-laid keys → no feedback).
+        // Empty for the first wave → rebase no-ops, capture records the raw sculpt.
         if (!this._shapeStrokeSnap) {
-          this._shapeStrokeSnap = { times: track.shapeTimes.slice(), shapes: track.shapes.slice() };
+          this._shapeStrokeSnap = {
+            times: track.shapeTimes.slice(),
+            shapes: track.shapes.slice(),
+            outs: track.shapeOutputTimes ? track.shapeOutputTimes.slice() : null,
+          };
           this._dynBase = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
         }
+
+        // Rebase display: untouched verts follow the prior waves; grabbed verts (pinned by
+        // the tool to fixed start positions) ride your hand on top.
         const comp = this._evalShapeSnapshot(this._shapeStrokeSnap, track.playbackTime, nb);
-        if (comp && comp.length === nb && this._dynBase && this._dynBase.length === nb && verts.length >= nb) {
+        if (comp && comp.length === nb && this._dynBase && this._dynBase.length === nb) {
           for (let i = 0; i < nb; i++) verts[i] = comp[i] + (verts[i] - this._dynBase[i]);
           this._dynBase = comp;
-          // We're inside the render loop already — refresh geometry/buffers, but don't
-          // call app.render() re-entrantly (the ongoing frame will draw the result).
+          // Inside the render loop already — refresh geometry/buffers, don't re-enter render().
           if (mesh.updateGeometry) mesh.updateGeometry();
           if (mesh.updateGeometryBuffers) mesh.updateGeometryBuffers();
+        }
+
+        // Grid-snapped capture: snap the playhead to a fixed frame grid anchored at 0 and
+        // write at most once per grid cell. frameStep = captureRate × fps (whole frames), so
+        // the rate is inherently fps-sympathetic and keys never roll between loops.
+        const fps = window._animFPS || 24;
+        const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
+        const frameStep = Math.max(1, Math.round(rate * fps));
+        const gridFrame = Math.round((track.playbackTime * fps) / frameStep) * frameStep;
+        if (gridFrame !== this._lastGridFrame) {
+          this._lastGridFrame = gridFrame;
+          this._captureShapeKeyGridded(track, gridFrame / fps, new Float32Array(verts.subarray(0, nb)));
         }
       } catch (e) {
         if (!this._rebaseErrLogged) {
           this._rebaseErrLogged = true;
-          console.error('[#30 additive rebase] failed:', e);
-          window.screenLog?.('vertex-rec rebase error (see console)', 'red');
+          console.error('[#30 shape capture] failed:', e);
+          window.screenLog?.('vertex-rec error (see console)', 'red');
         }
       }
       return; // handled the verts for this frame

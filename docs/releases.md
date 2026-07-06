@@ -1,3 +1,11 @@
+# v3.13.3
+**Vertex recording — capture polish + per-wave undo.** Follow-up refinements to the v3.13.0 "keep alive" recording.
+
+- **Fix**: the **VR timeline Record button** now arms recording. It was silently doing nothing when no object was the actively-picked mesh; it now resolves the target the same way the animation panel does.
+- **Fix**: **keyframes no longer roll between loops.** Captured keys snap to a fixed frame grid, so re-passing the loop lands on the *same* frames instead of drifting a frame each pass and wedging new keys between the old ones. The capture rate is now whole-frame-aligned to your FPS.
+- **Feature**: **per-wave undo.** Release the trigger and **Undo** removes just that last recorded motion — and the sculpt that made it — in a single step. Perform a wave, decide against it, undo, and the earlier waves stay put. Redo restores it.
+- **Under the hood**: capture and the "prior waves keep playing under your stroke" rebase now run on one render-loop clock, removing a timing race that added jitter.
+
 # v3.13.0
 **Performance-record vertex deformation — "keep alive" sculpting.** Puppeteer a sculpt into motion: with the timeline looping, hold the trigger (or mouse) and sculpt, and your live deformation is recorded as animation. Build it up in waves — wobble the hair on one pass, the beard on the next.
 

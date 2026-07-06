@@ -20,11 +20,19 @@ Everything lives in `AnimationRegistry` + a few gate changes; storage reuses the
 **ShotSculpt** shape-key path (`shapeTimes[]` + full-mesh `Float32Array` in `shapes[]`),
 so playback interpolation, save/load, and undo came largely for free.
 
-- **Capture** (`captureTick`, shape branch): while a stroke is active it snapshots
-  `mesh.getVertices()` into the shape track at `_animCaptureRate`, clocked off the visible
-  playhead (`globalPlaybackTime`) so keys land under the playhead. Punch-in overwrite is a
-  narrow ±½-rate window around the playhead, so re-performing one span leaves other waves
-  untouched. Keys are only laid while `_vrSculpting || _action === SCULPT_EDIT`.
+- **Capture** (unified into `update()`, v3.13.3): while a stroke is active, the same
+  render-loop pass that rebases the display also captures the pose — one clock, no
+  setInterval race. Keys **snap to a fixed frame grid** anchored at 0
+  (`frameStep = round(captureRate × fps)` whole frames), written at most once per grid
+  cell, so they land on the same frames every loop (no rolling drift) and re-passing a
+  cell overwrites that exact slot. Keys are only laid while `_vrSculpting || _action ===
+  SCULPT_EDIT`. The writer is `_captureShapeKeyGridded(track, keyTime, keyVerts)` — kept
+  layer-generic for the planned per-layer recording.
+- **Per-wave undo** (v3.13.3): on each trigger release, `_pushShapeWaveUndo` pushes a state
+  that restores the shape track to its pre-stroke snapshot, with `squash = true` so it
+  chains with the sculpt's own geometry state — one undo removes both the keys and the
+  deformation of that wave. Shape takes therefore do NOT push a take-level undo in
+  `stopRecording` (that's transform-only now).
 - **Keep the loop playing during a take**: normally the mesh being recorded is skipped by
   playback (render-loop guards in `Scene.js` + `update()`'s early-return) and sculpting
   pauses playback (`SculptManager.start`). All three are exempted for a shape take so the
@@ -54,10 +62,26 @@ so playback interpolation, save/load, and undo came largely for free.
 - **Non-Move brushes** (Inflate/Smooth/Drag/Crease) touch different verts each sub-step, so
   the rebase math is more approximate for them than for Move's clean grab model.
 
+## Planned next step: animation layers (deferred — needs UX planning)
+
+The current design records everything onto one shape track, compositing the live sculpt
+onto the moving playback each frame (the rebase). That's stable now (grid-snap + single
+clock), but it has a structural ceiling. The agreed next direction is **layers**: "define a
+new layer, move the eyes; new layer, move the cheeks; new layer, move the hair." Each layer
+is an independent time-varying shape track; while recording a new layer, the layers below
+play **read-only** (never written), which removes the compositing fight by construction and
+gives non-destructive edit/mute/solo/delete (reusing the blendshape stack panel UI). It's
+also the natural home for sparse-delta storage (lifting the lightweight-sculpt limit).
+
+The capture engine is already layer-ready — `_captureShapeKeyGridded` and the pre-stroke
+snapshot both take/produce a track explicitly, so layers is "add a track stack + swap the
+rebase base to 'composite of lower layers' + build the UI." **Deferred pending UX design**
+(matt: layers needs planning on the interaction side). Tracked as roadmap **#34**.
+
 ## Known "exciting" issues (open)
 
-- _(to be filled in as matt reports them — the feature shipped v3.13.0 with matt noting
-  "issues, but exciting cool issues")_
+- _(to be filled in as matt reports them — grabbed-region fidelity during a drag and
+  non-Move brush accuracy are the current suspects; see MVP limitations above.)_
 
 ## Related
 
