@@ -666,6 +666,61 @@ class AnimationRegistry {
     window.app?.getStateManager?.()?.pushStateCustom?.(undoRemove, doRemove, false, 'Delete Shape Layer');
   }
 
+  // Combine several shape layers into ONE (their deltas are additive, so the merged layer's
+  // delta at t = Σ of the selected layers' deltas at t). Keys land at the union of the
+  // sources' key times. The merged layer takes the lowest selected slot; the rest are removed.
+  // Undoable (snapshots the whole layer list). Returns the new layer's index, or -1.
+  combineShapeLayers(mesh, indices) {
+    const track = mesh && this.tracks.get(mesh.getID());
+    const layers = track && track.shapeLayers;
+    if (!layers || !indices || indices.length < 2) return -1;
+    const idxs = [...new Set(indices)].filter(i => i >= 0 && i < layers.length).sort((a, b) => a - b);
+    if (idxs.length < 2) return -1;
+    const meshId = mesh.getID();
+    const nb = (mesh.getNbVertices ? mesh.getNbVertices() : mesh.getVertices().length / 3) * 3;
+    const sel = idxs.map(i => layers[i]);
+
+    // Union of key times across the selected layers, then sum each layer's delta at each time.
+    const timeSet = new Set();
+    sel.forEach(L => (L.shapeTimes || []).forEach(t => timeSet.add(Math.round(t * 1e5) / 1e5)));
+    const times = [...timeSet].sort((a, b) => a - b);
+    const shapes = times.map(t => {
+      const d = new Float32Array(nb);
+      sel.forEach(L => {
+        const e = this._evalShapeSnapshot({ times: L.shapeTimes, shapes: L.shapes }, t, nb);
+        if (e) for (let k = 0; k < nb; k++) d[k] += e[k];
+      });
+      return d;
+    });
+    const combined = { name: sel[0].name + ' +' + (sel.length - 1), muted: false,
+      shapeTimes: times.slice(), shapes: shapes.slice(), shapeOutputTimes: times.slice() };
+
+    const before = layers.slice();          // shallow snapshot of the layer list
+    const prevActive = track.activeShapeLayerIdx;
+    const targetIdx = idxs[0];
+    const refresh = () => {
+      const msh = window.app?.getMesh?.();
+      if (msh && msh.getID() === meshId) this.update(msh, true);
+      if (window.app?.render) window.app.render();
+    };
+    const apply = () => {
+      const t = this.tracks.get(meshId); if (!t) return;
+      t.shapeLayers = before.filter(L => !sel.includes(L));
+      t.shapeLayers.splice(Math.min(targetIdx, t.shapeLayers.length), 0, combined);
+      t.activeShapeLayerIdx = -1;
+      refresh();
+    };
+    const revert = () => {
+      const t = this.tracks.get(meshId); if (!t) return;
+      t.shapeLayers = before.slice();
+      t.activeShapeLayerIdx = prevActive;
+      refresh();
+    };
+    apply();
+    window.app?.getStateManager?.()?.pushStateCustom?.(revert, apply, false, 'Combine Shape Layers');
+    return Math.min(targetIdx, (this.tracks.get(meshId)?.shapeLayers?.length || 1) - 1);
+  }
+
   // The layer object currently armed for recording, or null (= the base shape track).
   _activeShapeLayer(track) {
     const idx = track && track.activeShapeLayerIdx;

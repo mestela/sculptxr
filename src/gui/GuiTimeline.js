@@ -50,6 +50,7 @@ export default class GuiTimeline {
     this._activeTangentBsName = null;
     this._isPanningGraph = false;
     this._isPanningDope = false;
+    this._layerDotDrag = null;
     this._isZoomingGraph = false;
     this._panStartRy = 0;
     this._panStartOffsetY = 0;
@@ -58,6 +59,9 @@ export default class GuiTimeline {
     this._isResizingPanel = false;
     this._touchMap = new Map(); // [Step 1] pointerId → {x,y} for multi-touch scroll
     this._isTouchScrolling = false;
+    // Shape-layer multiselect (#34) — set of layer indices for _selShapeLayerMesh; 2+ → Combine.
+    this._selShapeLayerMesh = null;
+    this._selShapeLayerIdxs = new Set();
     // Gutter scroll (graph editor channel list)
     this._gutterScrollY = 0;
     this._gutterMaxScroll = 0;
@@ -2594,12 +2598,50 @@ export default class GuiTimeline {
   // Flatscreen "…" context menu — the desktop/iPad skin of the VR radial. Reads the same
   // command model (Scene._resolveRadialCommands) and shows it as a DOM popup anchored under
   // the toolbar button. VR uses the radial; this is the flatscreen counterpart.
+  // Which shape-layer row (if any) the cursor is over → {meshId, li}. Used by drag-through
+  // multiselect. Mirrors the dopesheet lane/sub-row layout (with vertical scroll).
+  _shapeLayerRowAt(ry) {
+    const tracks = this._dopesheetTracks();
+    const headerH = HEADER_H;
+    const trackH = (this._cssHeight - headerH) / Math.max(4, tracks.length);
+    const dsScroll = this._dopeScrollY || 0;
+    for (let laneIdx = 0; laneIdx < tracks.length; laneIdx++) {
+      const [meshId, trackObj] = tracks[laneIdx];
+      if (!trackObj.shapeLayers || !trackObj.shapeLayers.length) continue;
+      const ty2 = headerH + laneIdx * trackH - dsScroll;
+      const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
+      for (let li = 0; li < trackObj.shapeLayers.length; li++) {
+        if (Math.abs(ry - (ty2 + trackH / 2 + 22 + (bsCount + li) * 18)) <= 9) return { meshId, li };
+      }
+    }
+    return null;
+  }
+
+  // Extra "…" menu commands from the shape-layer multiselect (#34): Combine when 2+ selected.
+  _shapeLayerMenuCommands() {
+    const reg = window._animationRegistry;
+    const idxs = this._selShapeLayerIdxs;
+    if (!reg || !idxs || idxs.size < 2) return [];
+    const mesh = this._main._meshes?.find(m => m.getID() === this._selShapeLayerMesh);
+    if (!mesh) return [];
+    return [{
+      label: `Combine ${idxs.size} layers`,
+      run: () => {
+        reg.combineShapeLayers?.(mesh, [...idxs]);
+        this._selShapeLayerMesh = null;
+        this._selShapeLayerIdxs = new Set();
+        this.draw();
+      },
+    }];
+  }
+
   _openContextMenu(btn) {
     // Toggle: a re-click on the button is caught by the outside-dismiss listener (which
     // closes + timestamps), so debounce a reopen from that same click.
     if (performance.now() - (this._ctxMenuClosedAt || 0) < 200) return;
     const main = this._main;
-    const cmds = main?._resolveRadialCommands?.() || [];
+    // #34: context-aware "Combine layers" when 2+ shape layers are multiselected (dots).
+    const cmds = [...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
     if (!cmds.length) return;
 
     const menu = document.createElement('div');
@@ -3321,13 +3363,19 @@ export default class GuiTimeline {
               return;
             }
           }
-          // Shape-LAYER rows (#34): name (< x150) = arm for recording; M mute; × delete layer.
-          if (trackObj.shapeLayers && trackObj.shapeLayers.length && laneMesh && rx >= 22 && rx < 188) {
+          // Shape-LAYER rows (#34): dot (< x20) = multiselect; name (< x150) = arm; M mute; × delete.
+          if (trackObj.shapeLayers && trackObj.shapeLayers.length && laneMesh && rx >= 4 && rx < 188) {
             const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
             for (let li = 0; li < trackObj.shapeLayers.length; li++) {
               if (Math.abs(ry - (ty2 + trackH / 2 + 22 + (bsCount + li) * 18)) > 9) continue;
-              if (rx >= 154 && rx < 170) reg.toggleShapeLayerMute?.(laneMesh, li);   // M
-              else if (rx >= 170 && rx < 188) reg.removeShapeLayer?.(laneMesh, li);  // ×
+              if (rx < 20) {                                       // multiselect dot
+                if (this._selShapeLayerMesh !== meshId) { this._selShapeLayerMesh = meshId; this._selShapeLayerIdxs = new Set(); }
+                const setTo = !this._selShapeLayerIdxs.has(li);    // paint the same state while dragging
+                if (setTo) this._selShapeLayerIdxs.add(li); else this._selShapeLayerIdxs.delete(li);
+                this._layerDotDrag = { meshId, setTo };            // drag-through select/deselect
+              }
+              else if (rx >= 154 && rx < 170) reg.toggleShapeLayerMute?.(laneMesh, li);   // M
+              else if (rx >= 170 && rx < 188) reg.removeShapeLayer?.(laneMesh, li);        // ×
               else if (rx < 150) reg.setActiveShapeLayer?.(laneMesh, trackObj.activeShapeLayerIdx === li ? -1 : li); // arm
               else continue;
               this.draw();
@@ -3696,6 +3744,19 @@ export default class GuiTimeline {
   }
 
   onMouseMove(e) {
+    // Shape-layer multiselect drag-through (#34): paint the same select/deselect state onto
+    // each layer row the cursor passes over (same mesh).
+    if (this._layerDotDrag) {
+      const rect = this._canvas.getBoundingClientRect();
+      const hit = this._shapeLayerRowAt(e.clientY - rect.top);
+      if (hit && hit.meshId === this._layerDotDrag.meshId) {
+        if (this._layerDotDrag.setTo) this._selShapeLayerIdxs.add(hit.li);
+        else this._selShapeLayerIdxs.delete(hit.li);
+        this.draw();
+      }
+      return;
+    }
+
     // SR frame marker drag → retime the grabbed frame AND every other selected marker
     // by the same delta (live; sort + vis rebuild happen on release).
     if (this._srDrag) {
@@ -4543,6 +4604,7 @@ export default class GuiTimeline {
     this._marqueeEnd = null;
     this._isPanningGraph = false;
     this._isPanningDope = false;
+    this._layerDotDrag = null;
     this._isZoomingGraph = false;
     this._isResizingPanel = false;
     this._isDraggingGutter = false;

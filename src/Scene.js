@@ -7286,7 +7286,13 @@ class Scene {
     const selMesh   = this.getMesh && this.getMesh();
     const linked    = !!(selMesh && this.isLinked && this.isLinked(selMesh));
     const hasSel    = !!selMesh;
+    // #34: shape-layer multiselect commands (Combine when 2+ selected) — same source as the
+    // desktop "…" menu, mapped to the radial's {label, icon, enabled, run} shape.
+    const layerCmds = (tl()?._shapeLayerMenuCommands?.() || []).map(c => ({
+      label: c.label, icon: 'fa-object-group', enabled: true, run: c.run,
+    }));
     return [
+      ...layerCmds,
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance

@@ -241,6 +241,22 @@ class SculptManager {
     // finger happened to be over the mesh.
     this._strokeActive = !!canEdit;
 
+    // "Start on click" recording for SHAPE takes: armed-and-waiting → the sculpt stroke IS
+    // the trigger (mirror of the Grab/Transform hooks used for transform takes). Must run
+    // before the pause check below so isRecording is set and playback keeps looping.
+    if (canEdit && window._animWaitingForGrab && window._animationRegistry && window._animKeyMode === 'shape') {
+      window._animWaitingForGrab = false;
+      window._animationRegistry.startRecording(this._main.getMesh());
+    }
+
+    // A shape stroke while a take is armed+recording but the loop is PAUSED (e.g. you hit
+    // play/pause after the last take) must resume the loop — otherwise update() early-returns
+    // on !_animPlaying and the stroke captures nothing.
+    if (canEdit && window._animKeyMode === 'shape' && window._animationRegistry?.isRecording && !window._animPlaying) {
+      window._animPlaying = true;
+      window._animationRegistry.lastGlobalTime = null; // reset dt accumulator (no playhead jump)
+    }
+
     // Sculpting interrupts animation playback (you can orbit during playback, but a
     // sculpt/edit stops it). Refresh the timeline + transport UI to match. EXCEPTION:
     // while recording (#30 vertex keep-alive), the stroke IS the performance and the

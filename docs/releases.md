@@ -1,3 +1,15 @@
+# v3.15.0
+**Animation layers — record deformation in stacked, combinable layers.** The vertex "keep-alive" recording (v3.13) now supports **layers**: record a base motion, add a layer, and each layer's edit composites on top and *rides* the earlier motion (a smile rides an opening jaw).
+
+- **Feature — shape layers.** In the timeline (Shape key-mode), **`+L`** adds a layer; recording targets it, capturing its deformation as a *delta* on top of the base. Playback = base + Σ layers, so a later layer rides the motion beneath it.
+- **Feature — layer rows in the dopesheet.** Each layer is its own track: name, mute (**M**), delete (**×**), keys, and an armed indicator (gold **●**). Click a layer's name to arm it for recording (click the active one again → back to the base).
+- **Feature — combine layers.** A **selection dot** on each layer row (drag *through* the dots to multi-select), then **Combine** in the "…" menu (desktop) or the radial menu (VR) merges the selected layers into one.
+- **Feature — per-layer undo.** Release the trigger and Undo removes just that layer's last recorded wave (and its deformation), in one step.
+- **Feature — blendshape tracks in the dopesheet** now show a per-row name / mute / delete too.
+- **Fix — "Start on click" recording** now works for shape takes (was transform-only); and a stroke made while a take is paused resumes the loop and records.
+- **Change — dopesheet navigation:** the vertical mouse-wheel now scrolls the lanes (never pans time), and middle-mouse pans (vertical + time), matching the graph editor.
+- **Note:** layers record in "pose that rides" mode — the base freezes during a layer stroke and the captured delta rides it on playback, so overlapping edits stay seamless.
+
 # v3.14.0
 **Transform gizmo overhaul (desktop + VR).** New free-transform handles, much better picking, and VR fit-and-finish.
 

@@ -294,10 +294,20 @@ export default class TimelineHelper {
       if (show.shape && track.shapeLayers && track.shapeLayers.length) {
         const bsCount = track.blendshapeTracks ? track.blendshapeTracks.size : 0;
         const activeIdx = track.activeShapeLayerIdx;
+        const selSet = (uiState._selShapeLayerMesh === id) ? uiState._selShapeLayerIdxs : null;
         for (let li = 0; li < track.shapeLayers.length; li++) {
           const L = track.shapeLayers[li];
           const rowY = ty + trackH / 2 + 22 + (bsCount + li) * 18;
           const isActive = (activeIdx === li);
+          const isSel = !!(selSet && selSet.has(li));
+          // Multiselect dot (left) — click to toggle; 2+ selected → "Combine layers" in the … menu.
+          ctx.beginPath();
+          ctx.arc(w.x + 11, rowY, 4, 0, Math.PI * 2);
+          ctx.fillStyle = isSel ? '#f9e2af' : '#313244';
+          ctx.fill();
+          ctx.strokeStyle = isSel ? '#f9e2af' : '#585b70';
+          ctx.lineWidth = 1;
+          ctx.stroke();
           ctx.save();
           ctx.beginPath(); ctx.rect(w.x + 22, rowY - 8, 130, 16); ctx.clip();
           ctx.fillStyle = L.muted ? '#6c7086' : (isActive ? '#f9e2af' : '#89b4fa');
