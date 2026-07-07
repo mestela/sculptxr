@@ -1,3 +1,13 @@
+# v3.16.0
+**Editable shape-layer keys + timeline clipboard shortcuts.** Follow-up to the v3.15 animation layers (#34): the keys on a layer row are now first-class dopesheet keys you can select, move, delete, and box-transform — and the desktop copy/cut/paste/delete shortcuts now work on every key type.
+
+- **Feature — edit layer keys.** In the dopesheet, click a shape-layer key to select it (turns gold), drag to retime (snaps to frame), and it composites live. Previously the layer rows were display-only.
+- **Feature — cross-layer multi-select.** **Shift-click** keys across non-contiguous layers (1, 3, 7), or **marquee** a box over several layer rows. A drag then moves the whole group rigidly.
+- **Feature — transform box on layer keys.** With the transform box on and 2+ layer keys selected, drag its edges/centre to retime or scale the selection across layers — same as transform/shape keys.
+- **Fix — desktop key shortcuts now work on layer (and all) keys.** **Ctrl+C / Ctrl+V** copy/paste selected keys (paste lands the earliest key on the playhead), **Ctrl+X** cuts, and **Delete / Backspace** (mouse over the timeline) removes the selection. These previously did nothing when layer keys were selected, and **Ctrl+X** / **Delete-key** had no binding at all.
+- **Fix — delete is consistent everywhere.** The toolbar **×** button, the right-click **Delete**, and the **Delete** key all route to one complete implementation, so every key type (transform / shape / **layer** / blendshape) deletes and undoes the same way, in a single step.
+- **Note:** layer keys carry vertex deltas, not a scalar value, so the transform box scales them in *time* only (vertical value-scaling is a no-op, as with frame keys).
+
 # v3.15.0
 **Animation layers — record deformation in stacked, combinable layers.** The vertex "keep-alive" recording (v3.13) now supports **layers**: record a base motion, add a layer, and each layer's edit composites on top and *rides* the earlier motion (a smile rides an opening jaw).
 

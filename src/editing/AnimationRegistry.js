@@ -487,6 +487,26 @@ class AnimationRegistry {
         }
       }
     }
+    // Shape layers (#34): each layer's keys sort independently (same as base shape track).
+    if (track.shapeLayers) {
+      for (const L of track.shapeLayers) {
+        const arr = L.shapeTimes;
+        if (!arr) continue;
+        for (let i = 0; i < arr.length - 1; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            if (arr[i] > arr[j]) {
+              let tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+              let shp = L.shapes[i]; L.shapes[i] = L.shapes[j]; L.shapes[j] = shp;
+              if (L.shapeOutputTimes) {
+                let tmpOut = L.shapeOutputTimes[i];
+                L.shapeOutputTimes[i] = L.shapeOutputTimes[j];
+                L.shapeOutputTimes[j] = tmpOut;
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   _sortRingBuffer(track) {
@@ -2194,6 +2214,8 @@ class AnimationRegistry {
       } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
         const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
         track.shapeTimes[key.index] = newTime;
+      } else if (key.type === 'shapeLayer' && track.shapeLayers?.[key.layer]?.shapeTimes?.[key.index] !== undefined) {
+        track.shapeLayers[key.layer].shapeTimes[key.index] = Math.max(0, Math.min(masterDuration, key.time + dt));
       } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {
         const bTrack = track.blendshapeTracks.get(key.name);
         if (bTrack && bTrack.times[key.index] !== undefined) {

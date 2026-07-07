@@ -397,6 +397,12 @@ export default class GuiTimeline {
       live.shapes           = snap.shapes           ? snap.shapes.map(s => new Float32Array(s)) : [];
       live.shapeOutputTimes = snap.shapeOutputTimes ? [...snap.shapeOutputTimes] : [];
       live.tangentOffsets   = snap.tangentOffsets   ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
+      if (snap.shapeLayers) live.shapeLayers = snap.shapeLayers.map(L => ({
+        name: L.name, muted: L.muted,
+        shapeTimes: L.shapeTimes ? [...L.shapeTimes] : [],
+        shapes: L.shapes ? L.shapes.map(s => new Float32Array(s)) : [],
+        shapeOutputTimes: L.shapeOutputTimes ? [...L.shapeOutputTimes] : []
+      }));
       if (snap.blendshapeTracks) {
         if (!live.blendshapeTracks) live.blendshapeTracks = new Map();
         live.blendshapeTracks.clear();
@@ -478,6 +484,93 @@ export default class GuiTimeline {
     this.draw();
   }
 
+  // Delete the current key selection (any mix of transform/shape/shapeLayer/blendshape),
+  // as ONE undo step. Shared by the toolbar × button, the Delete key, and cut. Deletes
+  // directly (not reg.deleteSelectedKeys — that pushes its own undo and skips several types).
+  deleteSelectedKeys() {
+    const reg = window._animationRegistry;
+    if (!reg || !window._animSelectedKeys?.length) return;
+
+    const before = this._snapshotTracks();
+
+    // Group by mesh+type; delete highest-index-first so earlier indices stay valid.
+    const trGroups = new Map();  // "meshId_type" -> [indices]         (transform/shape)
+    const slGroups = new Map();  // "meshId:layer" -> {meshId,layer,indices[]}   (#34 layers)
+    const bsGroups = new Map();  // "meshId:name"  -> {meshId,name,indices[]}    (blendshape)
+    window._animSelectedKeys.forEach(k => {
+      if (k.type === 'blendshape') {
+        const gk = `${k.meshId}:${k.name}`;
+        if (!bsGroups.has(gk)) bsGroups.set(gk, { meshId: k.meshId, name: k.name, indices: [] });
+        bsGroups.get(gk).indices.push(k.index);
+      } else if (k.type === 'shapeLayer') {
+        const gk = `${k.meshId}:${k.layer}`;
+        if (!slGroups.has(gk)) slGroups.set(gk, { meshId: k.meshId, layer: k.layer, indices: [] });
+        slGroups.get(gk).indices.push(k.index);
+      } else if (k.type === 'transform' || k.type === 'shape') {
+        const gk = `${k.meshId}_${k.type}`;
+        if (!trGroups.has(gk)) trGroups.set(gk, []);
+        trGroups.get(gk).push(k.index);
+      }
+    });
+
+    trGroups.forEach((indices, gk) => {
+      const us = gk.lastIndexOf('_');
+      const tr = reg.tracks.get(parseInt(gk.slice(0, us), 10));
+      const type = gk.slice(us + 1);
+      if (!tr) return;
+      indices.sort((a, b) => b - a).forEach(idx => {
+        if (type === 'transform' && tr.times?.[idx] !== undefined) {
+          tr.times.splice(idx, 1); tr.positions.splice(idx * 3, 3);
+          tr.quaternions.splice(idx * 4, 4); tr.scales.splice(idx * 3, 3);
+        } else if (type === 'shape' && tr.shapeTimes?.[idx] !== undefined) {
+          tr.shapeTimes.splice(idx, 1); tr.shapes.splice(idx, 1);
+          if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
+        }
+      });
+      reg.sortTrack(tr);
+    });
+    slGroups.forEach(({ meshId, layer, indices }) => {
+      const tr = reg.tracks.get(meshId);
+      const L = tr?.shapeLayers?.[layer];
+      if (!L) return;
+      indices.sort((a, b) => b - a).forEach(idx => {
+        if (L.shapeTimes?.[idx] !== undefined) {
+          L.shapeTimes.splice(idx, 1);
+          if (L.shapes) L.shapes.splice(idx, 1);
+          if (L.shapeOutputTimes) L.shapeOutputTimes.splice(idx, 1);
+        }
+      });
+      reg.sortTrack(tr);
+    });
+    bsGroups.forEach(({ meshId, name, indices }) => {
+      const bt = reg.tracks.get(meshId)?.blendshapeTracks?.get(name);
+      if (!bt) return;
+      indices.sort((a, b) => b - a).forEach(idx => {
+        if (idx >= 0 && idx < bt.times.length) { bt.times.splice(idx, 1); bt.values.splice(idx, 1); }
+      });
+    });
+
+    window._animSelectedKeys = [];
+    window._animTransformBox = null;
+    const after = this._snapshotTracks();
+    this._main.getStateManager().pushStateCustom(
+      () => { window._animSelectedKeys = []; this._restoreTracksInPlace(before); },
+      () => { window._animSelectedKeys = []; this._restoreTracksInPlace(after); },
+      false, 'Delete Keys'
+    );
+    const m = this._main?.getMesh?.();
+    if (m) reg.update(m, true);
+    this._main?.render?.();
+    this.draw();
+  }
+
+  // Cut = copy the selection to the clipboard, then delete it (one gesture, two undo steps).
+  cutSelectedKeys() {
+    if (!window._animSelectedKeys?.length) return;
+    this.copySelectedKeys();
+    this.deleteSelectedKeys();
+  }
+
   // ── Key clipboard (desktop Ctrl-C / Ctrl-V) ────────────────────────────────
   // Copy the current key selection (any mix of transform/shape/blendshape) into
   // window._animKeyClipboard, capturing each key's VALUE payload + its time. The
@@ -511,6 +604,13 @@ export default class GuiTimeline {
         keys.push({ meshId: k.meshId, type: 'shape', time: t, payload: {
           verts: new Float32Array(tr.shapes[k.index]),
           outDelta: (tr.shapeOutputTimes?.[k.index] ?? t) - t,
+        } });
+      } else if (k.type === 'shapeLayer') {
+        const L = tr.shapeLayers?.[k.layer]; const t = L?.shapeTimes?.[k.index];
+        if (t === undefined) continue;
+        keys.push({ meshId: k.meshId, type: 'shapeLayer', layer: k.layer, time: t, payload: {
+          verts: new Float32Array(L.shapes[k.index]),   // the layer's vertex-delta snapshot
+          outDelta: (L.shapeOutputTimes?.[k.index] ?? t) - t,
         } });
       } else if (k.type === 'blendshape') {
         const bt = tr.blendshapeTracks?.get(k.name); const t = bt?.times?.[k.index];
@@ -551,10 +651,11 @@ export default class GuiTimeline {
       if (!tr) continue; // paste requires the source track to still exist
       if (k.type === 'transform')      this._insertTransformKeyAt(tr, time, k.payload);
       else if (k.type === 'shape')     this._insertShapeKeyAt(tr, time, k.payload);
+      else if (k.type === 'shapeLayer') { if (!this._insertShapeLayerKeyAt(tr, k.layer, time, k.payload)) continue; }
       else if (k.type === 'blendshape') this._insertBlendshapeKeyAt(tr, k.name, time, k.payload.value);
       else continue;
       if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
-      targets.push({ meshId: k.meshId, type: k.type, name: k.name, time });
+      targets.push({ meshId: k.meshId, type: k.type, name: k.name, layer: k.layer, time });
     }
 
     // Scalar keys: one undo entry + rebuild the selection onto them. (SR frames carry
@@ -564,11 +665,13 @@ export default class GuiTimeline {
         const tr = reg.tracks.get(t.meshId);
         const times = t.type === 'transform' ? tr.times
                     : t.type === 'shape'     ? tr.shapeTimes
+                    : t.type === 'shapeLayer' ? tr.shapeLayers?.[t.layer]?.shapeTimes
                     : tr.blendshapeTracks?.get(t.name)?.times;
         const idx = times?.findIndex(x => Math.abs(x - t.time) < 0.005) ?? -1;
-        return idx < 0 ? null : (t.type === 'blendshape'
-          ? { meshId: t.meshId, type: 'blendshape', name: t.name, index: idx }
-          : { meshId: t.meshId, type: t.type, index: idx });
+        if (idx < 0) return null;
+        if (t.type === 'blendshape') return { meshId: t.meshId, type: 'blendshape', name: t.name, index: idx };
+        if (t.type === 'shapeLayer') return { meshId: t.meshId, type: 'shapeLayer', layer: t.layer, index: idx };
+        return { meshId: t.meshId, type: t.type, index: idx };
       }).filter(Boolean);
       const after = this._snapshotTracks();
       this._main.getStateManager().pushStateCustom(
@@ -606,6 +709,22 @@ export default class GuiTimeline {
     } else {
       tr.shapeTimes.splice(idx, 0, time); tr.shapes.splice(idx, 0, copy); tr.shapeOutputTimes.splice(idx, 0, time + (outDelta || 0));
     }
+  }
+
+  // Paste a copied layer key back into a specific layer (#34). Returns false if that layer
+  // no longer exists (e.g. it was deleted after the copy).
+  _insertShapeLayerKeyAt(tr, layer, time, { verts, outDelta }) {
+    const L = tr.shapeLayers?.[layer];
+    if (!L) return false;
+    L.shapeTimes = L.shapeTimes || []; L.shapes = L.shapes || []; L.shapeOutputTimes = L.shapeOutputTimes || [];
+    const copy = new Float32Array(verts);
+    let idx = 0; while (idx < L.shapeTimes.length && L.shapeTimes[idx] < time) idx++;
+    if (idx < L.shapeTimes.length && Math.abs(L.shapeTimes[idx] - time) < 0.005) {
+      L.shapes[idx] = copy; L.shapeOutputTimes[idx] = time + (outDelta || 0);
+    } else {
+      L.shapeTimes.splice(idx, 0, time); L.shapes.splice(idx, 0, copy); L.shapeOutputTimes.splice(idx, 0, time + (outDelta || 0));
+    }
+    return true;
   }
 
   _insertBlendshapeKeyAt(tr, name, time, value) {
@@ -1670,6 +1789,9 @@ export default class GuiTimeline {
       } else if (sk.type === 'shape') {
         time = tr?.shapeTimes?.[sk.index];
         val  = tr?.shapeOutputTimes?.[sk.index] ?? 0;
+      } else if (sk.type === 'shapeLayer') {
+        time = tr?.shapeLayers?.[sk.layer]?.shapeTimes?.[sk.index];
+        val  = 0; // layer keys are vertex deltas — no scalar value to scale (dopesheet only)
       } else if (sk.type === 'blendshape') {
         const bt = tr?.blendshapeTracks?.get(sk.name);
         time = bt?.times?.[sk.index];
@@ -2843,115 +2965,9 @@ export default class GuiTimeline {
                 }
               }
               break;
-            case 'delkey': {
-              if (reg && window._animSelectedKeys?.length) {
-                // Snapshot full track state BEFORE deletion (all meshes, like keyframe-move undo).
-                const _beforeState = new Map();
-                reg.tracks.forEach((tr, mId) => { _beforeState.set(mId, TimelineHelper.cloneTrack(tr)); });
-
-                // Perform deletion for ALL key types directly (no reg.deleteSelectedKeys —
-                // that would push its own undo entry and doesn't handle blendshape).
-                const _keysToDelete = window._animSelectedKeys.slice();
-                // Group by meshId+type (for transform/shape) and meshId+name (for blendshape).
-                const _trGroups = new Map(); // "meshId_type" -> [indices]
-                const _bsGroups = new Map(); // "meshId:bsName" -> {meshId, name, indices[]}
-                _keysToDelete.forEach(k => {
-                  if (k.type === 'blendshape') {
-                    const gk = `${k.meshId}:${k.name}`;
-                    if (!_bsGroups.has(gk)) _bsGroups.set(gk, { meshId: k.meshId, name: k.name, indices: [] });
-                    _bsGroups.get(gk).indices.push(k.index);
-                  } else {
-                    const gk = `${k.meshId}_${k.type}`;
-                    if (!_trGroups.has(gk)) _trGroups.set(gk, []);
-                    _trGroups.get(gk).push(k.index);
-                  }
-                });
-                // Delete transform / shape keys (highest index first to keep indices stable)
-                _trGroups.forEach((indices, gk) => {
-                  const [meshIdStr, type] = gk.split('_');
-                  const tr = reg.tracks.get(parseInt(meshIdStr, 10));
-                  if (!tr) return;
-                  indices.sort((a, b) => b - a);
-                  indices.forEach(idx => {
-                    if (type === 'transform' && tr.times && tr.times[idx] !== undefined) {
-                      tr.times.splice(idx, 1);
-                      tr.positions.splice(idx * 3, 3);
-                      tr.quaternions.splice(idx * 4, 4);
-                      tr.scales.splice(idx * 3, 3);
-                    } else if (type === 'shape' && tr.shapeTimes && tr.shapeTimes[idx] !== undefined) {
-                      tr.shapeTimes.splice(idx, 1);
-                      if (tr.shapeOutputTimes) tr.shapeOutputTimes.splice(idx, 1);
-                      tr.shapes.splice(idx, 1);
-                    }
-                  });
-                  if (tr) reg.sortTrack(tr);
-                });
-                // Delete blendshape keys
-                _bsGroups.forEach(({ meshId, name, indices }) => {
-                  const tr = reg.tracks.get(meshId);
-                  const bt = tr?.blendshapeTracks?.get(name);
-                  if (!bt) return;
-                  indices.sort((a, b) => b - a);
-                  indices.forEach(idx => {
-                    if (idx >= 0 && idx < bt.times.length) {
-                      bt.times.splice(idx, 1);
-                      bt.values.splice(idx, 1);
-                    }
-                  });
-                });
-
-                window._animSelectedKeys = [];
-                window._animTransformBox = null;
-
-                // Snapshot AFTER deletion
-                const _afterState = new Map();
-                reg.tracks.forEach((tr, mId) => { _afterState.set(mId, TimelineHelper.cloneTrack(tr)); });
-
-                // Restore keyframe arrays in-place so non-keyframe data (blendshapes vertex
-                // deltas, restPos, etc.) stays intact on the live track object.
-                const _applyState = (stateMap) => {
-                  stateMap.forEach((snap, mId) => {
-                    const live = reg.tracks.get(mId);
-                    if (!live) return;
-                    live.times            = snap.times            ? [...snap.times]            : [];
-                    live.positions        = snap.positions        ? [...snap.positions]        : [];
-                    live.quaternions      = snap.quaternions      ? [...snap.quaternions]      : [];
-                    live.scales           = snap.scales           ? [...snap.scales]           : [];
-                    live.shapeTimes       = snap.shapeTimes       ? [...snap.shapeTimes]       : [];
-                    live.shapes           = snap.shapes           ? snap.shapes.map(s => new Float32Array(s)) : [];
-                    live.shapeOutputTimes = snap.shapeOutputTimes ? [...snap.shapeOutputTimes] : [];
-                    live.tangentOffsets   = snap.tangentOffsets   ? JSON.parse(JSON.stringify(snap.tangentOffsets)) : undefined;
-                    // Restore blendshape keyframe tracks (times/values) without touching
-                    // the vertex-delta Map (live.blendshapes) which is too large to snapshot.
-                    if (snap.blendshapeTracks) {
-                      if (!live.blendshapeTracks) live.blendshapeTracks = new Map();
-                      live.blendshapeTracks.clear();
-                      snap.blendshapeTracks.forEach((bt, name) => {
-                        live.blendshapeTracks.set(name, {
-                          times: bt.times ? [...bt.times] : [],
-                          values: bt.values ? [...bt.values] : [],
-                          tangentOffsets: bt.tangentOffsets ? JSON.parse(JSON.stringify(bt.tangentOffsets)) : undefined
-                        });
-                      });
-                    }
-                  });
-                  const _m = this._main?.getMesh?.();
-                  if (_m) reg.update(_m, true);
-                  if (this._main?.render) this._main.render();
-                  this.draw();
-                };
-                this._main.getStateManager().pushStateCustom(
-                  () => { window._animSelectedKeys = []; _applyState(_beforeState); },
-                  () => { window._animSelectedKeys = []; _applyState(_afterState); },
-                  false,
-                  'Delete Keys'
-                );
-
-                const _dm = this._main?.getMesh?.();
-                if (_dm) reg.update(_dm, true);
-              }
+            case 'delkey':
+              this.deleteSelectedKeys();
               break;
-            }
             default:
               if (gbHit.id.startsWith('keymode_')) {
                 const type = gbHit.id.replace('keymode_', '');
@@ -3454,7 +3470,7 @@ export default class GuiTimeline {
               this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
               this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                 const tr = reg.tracks.get(sk.meshId);
-                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                const time = this._keyTimeOf(tr, sk);
                 return { ...sk, time };
               });
             }
@@ -3467,7 +3483,7 @@ export default class GuiTimeline {
               this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
               this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                 const tr = reg.tracks.get(sk.meshId);
-                const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                const time = this._keyTimeOf(tr, sk);
                 return { ...sk, time };
               });
             }
@@ -3511,7 +3527,7 @@ export default class GuiTimeline {
                 this._animTransformBoxInitialKeys = this.getInitialKeysForTransform(window._animSelectedKeys, reg, 0);
                 this._animTransformBoxInitialTimes = window._animSelectedKeys.map(sk => {
                   const tr = reg.tracks.get(sk.meshId);
-                  const time = sk.type === 'transform' ? tr.times[sk.index] : tr.shapeTimes[sk.index];
+                  const time = this._keyTimeOf(tr, sk);
                   return { ...sk, time };
                 });
               }
@@ -3734,6 +3750,61 @@ export default class GuiTimeline {
           });
         }
 
+        // Shape-LAYER keys (#34): sub-rows below the blendshape rows — same layout maths as
+        // drawDopeSheet. Selectable/movable/deletable like base shape keys, with shift-click
+        // to accumulate a cross-layer multi-selection.
+        if (!keyFound && _keyShow.shape !== false) {
+          tracks.forEach(([meshId, trackObj], laneIdx) => {
+            if (keyFound || !trackObj.shapeLayers || !trackObj.shapeLayers.length) return;
+            const ty2 = headerH + (laneIdx * trackH) - dsScroll;
+            const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
+            for (let li = 0; li < trackObj.shapeLayers.length; li++) {
+              const L = trackObj.shapeLayers[li];
+              if (!L.shapeTimes) continue;
+              const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
+              for (let i = 0; i < L.shapeTimes.length; i++) {
+                const t = L.shapeTimes[i];
+                const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
+                if (Math.abs(rx - kx) < 8 && Math.abs(ry - rowY) < 8) {
+                  this._isDraggingKeyframe = true;
+                  this._activeKeyframeTrack = trackObj;
+                  this._activeMeshId = meshId;
+                  this._activeKeyframeIndex = i;
+                  this._activeKeyframeType = 'shapeLayer';
+                  this._activeKeyframeLayer = li;
+                  this._keyDragStartRx = rx;
+                  this._keyDragStartTime = t;
+                  if (reg) {
+                    this._undoTracksBeforeMove = new Map();
+                    reg.tracks.forEach((tr, mId) => this._undoTracksBeforeMove.set(mId, TimelineHelper.cloneTrack(tr)));
+                  }
+                  const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(
+                    k => k.meshId === meshId && k.type === 'shapeLayer' && k.layer === li && k.index === i);
+                  if (e.shiftKey && !isPartSelection) {
+                    // Shift-click: add this key to the running cross-layer selection.
+                    window._animSelectedKeys = window._animSelectedKeys || [];
+                    window._animSelectedKeys.push({ meshId, type: 'shapeLayer', layer: li, index: i });
+                  } else if (!isPartSelection) {
+                    window._animSelectedKeys = [{ meshId, type: 'shapeLayer', layer: li, index: i }];
+                    window._animTransformBox = null;
+                  }
+                  // Capture times for every selected key so a drag moves the whole group rigidly.
+                  this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
+                    const tr = reg.tracks.get(k.meshId);
+                    return { ...k, time: this._keyTimeOf(tr, k) };
+                  });
+                  // Refresh the transform box for a multi-selection (shift-click across
+                  // non-contiguous layers can't be done with a marquee).
+                  this._recomputeTransformBox();
+                  keyFound = true;
+                  break;
+                }
+              }
+              if (keyFound) break;
+            }
+          });
+        }
+
         if (keyFound) return;
       }
 
@@ -3741,6 +3812,33 @@ export default class GuiTimeline {
       this._marqueeStart = { x: rx, y: ry };
       this._marqueeEnd = { x: rx, y: ry };
     }
+  }
+
+  // Read a key's current time from its track, for any dopesheet key type. Shared by the
+  // layer-key drag capture and reindex paths.
+  _keyTimeOf(tr, k) {
+    if (!tr) return 0;
+    if (k.type === 'transform') return tr.times?.[k.index] ?? 0;
+    if (k.type === 'shape') return tr.shapeTimes?.[k.index] ?? 0;
+    if (k.type === 'shapeLayer') return tr.shapeLayers?.[k.layer]?.shapeTimes?.[k.index] ?? 0;
+    if (k.type === 'blendshape' && k.name) return tr.blendshapeTracks?.get(k.name)?.times?.[k.index] ?? 0;
+    return 0;
+  }
+
+  // Fit window._animTransformBox to the current key selection's time span (2+ keys), or
+  // clear it. Editable dopesheet key types only (SR frames retime via their own drag).
+  _recomputeTransformBox() {
+    const reg = window._animationRegistry;
+    const sel = window._animSelectedKeys;
+    if (!reg || !sel || sel.length < 2) { window._animTransformBox = null; return; }
+    let minT = Infinity, maxT = -Infinity;
+    sel.forEach(k => {
+      if (k.type === 'sr') return;
+      const t = this._keyTimeOf(reg.tracks.get(k.meshId), k);
+      if (t < minT) minT = t;
+      if (t > maxT) maxT = t;
+    });
+    window._animTransformBox = (minT !== Infinity) ? { startTime: minT, endTime: maxT } : null;
   }
 
   onMouseMove(e) {
@@ -3992,6 +4090,7 @@ export default class GuiTimeline {
             k.type === this._activeKeyframeType &&
             k.index === this._activeKeyframeIndex &&
             (this._activeKeyframeType !== 'transform' || k.channel === this._activeKeyframeChannel) &&
+            (this._activeKeyframeType !== 'shapeLayer' || k.layer === this._activeKeyframeLayer) &&
             (this._activeKeyframeType !== 'blendshape' || k.name === this._activeBlendshapeName));
           if (g && g.time !== undefined) grabbedBase = g.time;
         }
@@ -4092,6 +4191,9 @@ export default class GuiTimeline {
           track.times[initKey.index] = t;
         } else if (initKey.type === 'shape' && track.shapeTimes) {
           track.shapeTimes[initKey.index] = t;
+        } else if (initKey.type === 'shapeLayer') {
+          const st = track.shapeLayers?.[initKey.layer]?.shapeTimes;
+          if (st) st[initKey.index] = t;
         } else if (initKey.type === 'blendshape') {
           const bt = track.blendshapeTracks?.get(initKey.name);
           if (bt?.times) bt.times[initKey.index] = t;
@@ -4339,17 +4441,10 @@ export default class GuiTimeline {
     } else if (this._isDraggingKeyframe) {
       const reg = window._animationRegistry;
       if (reg) {
-        const _getKeyTime = (key, track) => {
-          if (key.type === 'transform') return track.times?.[key.index] ?? 0;
-          if (key.type === 'shape') return track.shapeTimes?.[key.index] ?? 0;
-          if (key.type === 'blendshape' && key.name) return track.blendshapeTracks?.get(key.name)?.times?.[key.index] ?? 0;
-          return 0;
-        };
-
         const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
           const track = reg.tracks.get(key.meshId);
           if (!track) return { ...key, time: 0 };
-          return { ...key, time: _getKeyTime(key, track) };
+          return { ...key, time: this._keyTimeOf(track, key) };
         }) : [];
 
         reg.tracks.forEach((track) => reg.sortTrack(track));
@@ -4366,7 +4461,9 @@ export default class GuiTimeline {
               return { ...key, index: newIdx };
             }
 
-            const times = key.type === 'transform' ? track.times : track.shapeTimes;
+            const times = key.type === 'transform' ? track.times
+                        : key.type === 'shapeLayer' ? track.shapeLayers?.[key.layer]?.shapeTimes
+                        : track.shapeTimes;
             if (!times) return key;
             let newIdx = -1;
             for (let i = 0; i < times.length; i++) {
@@ -4421,11 +4518,7 @@ export default class GuiTimeline {
         // 1. Capture times for index update later
         const selectedKeysWithTimes = window._animSelectedKeys ? window._animSelectedKeys.map(key => {
           const track = reg.tracks.get(key.meshId);
-          let t;
-          if (key.type === 'transform') t = track?.times?.[key.index];
-          else if (key.type === 'shape')  t = track?.shapeTimes?.[key.index];
-          else if (key.type === 'blendshape') t = track?.blendshapeTracks?.get(key.name)?.times?.[key.index];
-          return { ...key, time: t ?? 0 };
+          return { ...key, time: this._keyTimeOf(track, key) };
         }) : [];
 
         // 2. Calculate commands for undo/redo
@@ -4434,18 +4527,21 @@ export default class GuiTimeline {
           this._animTransformBoxInitialTimes.forEach(initKey => {
             const track = reg.tracks.get(initKey.meshId);
             if (!track) return;
-            
+
             let curTime = undefined;
             if (initKey.type === 'transform' && track.times) {
               curTime = track.times[initKey.index];
             } else if (initKey.type === 'shape' && track.shapeTimes) {
               curTime = track.shapeTimes[initKey.index];
+            } else if (initKey.type === 'shapeLayer') {
+              curTime = track.shapeLayers?.[initKey.layer]?.shapeTimes?.[initKey.index];
             }
-            
+
             if (curTime !== undefined && Math.abs(curTime - initKey.time) > 0.001) {
               commands.push({
                 meshId: initKey.meshId,
                 type: initKey.type,
+                layer: initKey.layer,
                 oldTime: initKey.time,
                 newTime: curTime,
                 oldPos: track.positions ? track.positions.slice(initKey.index * 3, initKey.index * 3 + 3) : null,
@@ -4463,9 +4559,11 @@ export default class GuiTimeline {
               commands.forEach(cmd => {
                 const tr = reg.tracks.get(cmd.meshId);
                 if (!tr) return;
-                const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                const times = cmd.type === 'transform' ? tr.times
+                            : cmd.type === 'shapeLayer' ? tr.shapeLayers?.[cmd.layer]?.shapeTimes
+                            : tr.shapeTimes;
                 if (!times) return;
-                
+
                 let idx = -1;
                 for (let i = 0; i < times.length; i++) {
                   if (Math.abs(times[i] - cmd.newTime) < 0.005) {
@@ -4496,9 +4594,11 @@ export default class GuiTimeline {
               commands.forEach(cmd => {
                 const tr = reg.tracks.get(cmd.meshId);
                 if (!tr) return;
-                const times = cmd.type === 'transform' ? tr.times : tr.shapeTimes;
+                const times = cmd.type === 'transform' ? tr.times
+                            : cmd.type === 'shapeLayer' ? tr.shapeLayers?.[cmd.layer]?.shapeTimes
+                            : tr.shapeTimes;
                 if (!times) return;
-                
+
                 let idx = -1;
                 for (let i = 0; i < times.length; i++) {
                   if (Math.abs(times[i] - cmd.oldTime) < 0.005) {
@@ -4538,6 +4638,7 @@ export default class GuiTimeline {
             let times;
             if (key.type === 'transform') times = track.times;
             else if (key.type === 'shape')  times = track.shapeTimes;
+            else if (key.type === 'shapeLayer') times = track.shapeLayers?.[key.layer]?.shapeTimes;
             else if (key.type === 'blendshape') times = track.blendshapeTracks?.get(key.name)?.times;
             if (!times) return key;
 
@@ -4785,11 +4886,30 @@ export default class GuiTimeline {
       });
     }
 
+    // Shape-LAYER keys in range (#34): precise per-sub-row Y test so a box over layers
+    // 1/3/7 picks exactly those. Mirrors drawDopeSheet's row layout.
+    tracks.forEach(([meshId, trackObj], laneIdx) => {
+      if (!trackObj.shapeLayers || !trackObj.shapeLayers.length) return;
+      const ty2 = headerH + (laneIdx * trackH) - (this._dopeScrollY || 0);
+      const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
+      for (let li = 0; li < trackObj.shapeLayers.length; li++) {
+        const L = trackObj.shapeLayers[li];
+        if (!L.shapeTimes) continue;
+        const rowY = ty2 + trackH / 2 + 22 + (bsCount + li) * 18;
+        if (rowY < y1 || rowY > y2) continue;
+        for (let i = 0; i < L.shapeTimes.length; i++) {
+          const t = L.shapeTimes[i];
+          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'shapeLayer', layer: li, index: i });
+        }
+      }
+    });
+
     // Hidden key types (bottom-strip visibility off) are not marquee-selectable — a
     // hidden transform/shape/etc. key must not be swept up alongside a visible one.
     const _mShow = window._animKeyShow || { transform: true, shape: true, blendshape: true, shaperep: true };
     const _typeVisible = (t) => t === 'transform' ? _mShow.transform !== false
                              : t === 'shape'     ? _mShow.shape !== false
+                             : t === 'shapeLayer' ? _mShow.shape !== false
                              : t === 'blendshape' ? _mShow.blendshape !== false
                              : t === 'sr'        ? _mShow.shaperep !== false
                              : true; // 'frame' (voxel cel) has no filter yet
@@ -4798,7 +4918,8 @@ export default class GuiTimeline {
       const alreadySelected = window._animSelectedKeys && window._animSelectedKeys.some(k =>
         k.meshId === nk.meshId && k.type === nk.type &&
         (nk.type === 'sr' ? k.childId === nk.childId : k.index === nk.index) &&
-        (nk.type !== 'blendshape' || k.name === nk.name));
+        (nk.type !== 'blendshape' || k.name === nk.name) &&
+        (nk.type !== 'shapeLayer' || k.layer === nk.layer));
       if (!alreadySelected) window._animSelectedKeys.push(nk);
     });
 
@@ -4812,6 +4933,7 @@ export default class GuiTimeline {
         let t;
         if (k.type === 'transform') t = track.times?.[k.index];
         else if (k.type === 'shape') t = track.shapeTimes?.[k.index];
+        else if (k.type === 'shapeLayer') t = track.shapeLayers?.[k.layer]?.shapeTimes?.[k.index];
         else if (k.type === 'blendshape' && k.name) t = track.blendshapeTracks?.get(k.name)?.times?.[k.index];
         if (t !== undefined && t < minT) minT = t;
         if (t !== undefined && t > maxT) maxT = t;

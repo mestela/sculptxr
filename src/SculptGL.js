@@ -1218,7 +1218,17 @@ class SculptGL extends Scene {
       const _tl = this._gui?._ctrlTimeline;
       const _kc = (e.key || '').toLowerCase();
       if (_tl && _kc === 'c' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.copySelectedKeys(); return; }
+      if (_tl && _kc === 'x' && window._animSelectedKeys?.length) { e.preventDefault(); _tl.cutSelectedKeys(); return; }
       if (_tl && _kc === 'v' && window._animKeyClipboard?.keys?.length) { e.preventDefault(); _tl.pasteKeys(e.shiftKey); return; }
+    }
+    // Delete/Backspace removes the selected timeline key(s) when the timeline is open and
+    // hovered — mirrors the KeyAction.DELETE gate, but routes to the complete delete (all
+    // key types incl. shape layers). No selection → fall through to normal mesh handling.
+    if (!_typing && (e.key === 'Delete' || e.key === 'Backspace')) {
+      const _tl = this._gui?._ctrlTimeline;
+      if (_tl && _tl._visible && _tl.isMouseOver() && window._animSelectedKeys?.length) {
+        e.preventDefault(); _tl.deleteSelectedKeys(); return;
+      }
     }
 
     // [SPECTATOR MATRIX] Cycle Modes

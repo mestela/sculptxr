@@ -7298,7 +7298,7 @@ class Scene {
       { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance
       { label: 'Dup',        icon: 'fa-clone',       enabled: hasSel,    run: () => this.duplicateSelection?.() }, // duplicate the object
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
-      { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => window._animPanel?.deleteKey?.() },
+      { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },   // selected key(s), all types incl. #34 layers
     ];
   }
 

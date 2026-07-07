@@ -323,8 +323,25 @@ export default class TimelineHelper {
               const st = L.shapeTimes[i];
               if (st < loopStart || st > loopEnd) continue;
               const kx = w.x + tlX + ((st - loopStart) / visibleDuration) * tlW;
-              ctx.fillStyle = L.muted ? '#585b70' : (isActive ? '#f9e2af' : '#89b4fa');
+
+              // #34: layer keys are now selectable/movable/deletable like base shape keys.
+              const isMultiSel = window._animSelectedKeys && window._animSelectedKeys.some(
+                sk => sk.meshId === id && sk.type === 'shapeLayer' && sk.layer === li && sk.index === i);
+              let isInsideMarquee = false;
+              if (uiState._marqueeStart && uiState._marqueeEnd) {
+                const mx1 = Math.min(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+                const mx2 = Math.max(uiState._marqueeStart.x, uiState._marqueeEnd.x) + w.x;
+                const my1 = Math.min(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+                const my2 = Math.max(uiState._marqueeStart.y, uiState._marqueeEnd.y) + w.y;
+                if (kx >= mx1 && kx <= mx2 && rowY >= my1 && rowY <= my2) isInsideMarquee = true;
+              }
+              const isHovered = TimelineHelper.isKeyHovered(kx, rowY, uiState._lastMouseX, uiState._lastMouseY, 5);
+              const isSelected = isMultiSel || isInsideMarquee;
+
+              ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff'
+                            : (L.muted ? '#585b70' : (isActive ? '#f9e2af' : '#89b4fa')));
               ctx.fillRect(kx - 3, rowY - 3, 6, 6);
+              if (isSelected) { ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 1.5; ctx.strokeRect(kx - 3, rowY - 3, 6, 6); }
             }
           }
         }
@@ -518,6 +535,20 @@ export default class TimelineHelper {
     if (track.restPos) cloned.restPos = [...track.restPos];
     if (track.restQuat) cloned.restQuat = [...track.restQuat];
     if (track.restScale) cloned.restScale = [...track.restScale];
+    // Shape layers (#34): deep-clone so the snapshot/undo paths that REPLACE the track
+    // object (keyframe-move, transform-box) preserve layer keys + their vertex deltas.
+    // _layerBase (the rest pose the deltas ride on) must ride along too, or playback loses
+    // its reference after an undo.
+    if (track.shapeLayers) {
+      cloned.shapeLayers = track.shapeLayers.map(L => ({
+        name: L.name, muted: L.muted,
+        shapeTimes: L.shapeTimes ? [...L.shapeTimes] : [],
+        shapes: L.shapes ? L.shapes.map(s => new Float32Array(s)) : [],
+        shapeOutputTimes: L.shapeOutputTimes ? [...L.shapeOutputTimes] : []
+      }));
+      cloned.activeShapeLayerIdx = track.activeShapeLayerIdx;
+      if (track._layerBase) cloned._layerBase = new Float32Array(track._layerBase);
+    }
     // Clone blendshape tracks (Map<string, {times, values, tangentOffsets}>)
     if (track.blendshapeTracks) {
       cloned.blendshapeTracks = new Map();
