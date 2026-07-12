@@ -1,0 +1,50 @@
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/mesh/mesh_frame_field.cpp b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/mesh/mesh_frame_field.cpp
+index 814a4f1..5e195b9 100644
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/mesh/mesh_frame_field.cpp
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/mesh/mesh_frame_field.cpp
+@@ -711,12 +711,21 @@ namespace GEO {
+         // Step 1: setup the fixed variables
+         index_t nb_constrained = 0;
+ 
++        // SculptXR face-group steering: corners flagged in the "seam" attribute are
++        // treated as feature edges, so the frame field aligns (and is smoothly
++        // propagated by solve_PGP) along flat group borders too.
++        Attribute<index_t> seam;
++        seam.bind_if_is_defined(
++            const_cast<Mesh&>(M).facet_corners.attributes(), "seam"
++        );
++
+         for(index_t f1: M.facets) {
+             for(index_t c1: M.facets.corners(f1)) {
+                 index_t f2 = M.facet_corners.adjacent_facet(c1);
++                bool is_seam = seam.is_bound() && seam[c1] != 0;
+                 if(
+-                    f2 == NO_FACET || (
+-			::fabs(Geom::mesh_normal_angle(M,c1)) > 
++                    f2 == NO_FACET || is_seam || (
++			::fabs(Geom::mesh_normal_angle(M,c1)) >
+ 			sharp_angle_threshold
+                     )
+                 ) {
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/parameterization/mesh_global_param.cpp b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/parameterization/mesh_global_param.cpp
+index f08c6f9..e8239d1 100644
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/parameterization/mesh_global_param.cpp
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/parameterization/mesh_global_param.cpp
+@@ -549,8 +549,16 @@ namespace GEO {
+ 		index_t f = c/3;	
+ 		vec3 N = normalize(Geom::mesh_facet_normal(*mesh,f));
+ 		
++		// SculptXR face-group steering: corners flagged in the "seam" attribute are
++		// hard regardless of dihedral angle, so flat group borders constrain the grid.
++		bool is_seam = false;
++		{
++		    Attribute<index_t> seam;
++		    seam.bind_if_is_defined(mesh->facet_corners.attributes(), "seam");
++		    if(seam.is_bound() && seam[c] != 0) is_seam = true;
++		}
+ 		index_t f2 = mesh->facet_corners.adjacent_facet(c);
+-		if(f2 != NO_FACET) {
++		if(f2 != NO_FACET && !is_seam) {
+ 		    if(
+ 			::fabs(Geom::mesh_normal_angle(*mesh,c)) * 180.0 / M_PI
+ 			< hard_angle_threshold

@@ -7,7 +7,9 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-quadrs = "1.0.0"
+# Forked quadrs (Instant Meshes) with face-group seam steering. See vendor/quadrs
+# and docs/quadrs_facegroup_steering.md.
+quadrs = { path = "vendor/quadrs" }
 baby_shark = { git = "https://github.com/dima634/baby_shark", default-features = false }
 nalgebra = "0.34.0"
 getrandom = { version = "0.2.17", features = ["custom"] }

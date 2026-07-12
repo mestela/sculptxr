@@ -1,0 +1,21 @@
+// Minimal QDebug shim for the wasm build of autoremesher.
+// autoremesher.cpp only uses qDebug() << ... for logging; route it to stderr
+// (visible in the browser worker console) and swallow everything else.
+#ifndef AUTOREMESHER_WASM_QDEBUG_SHIM_H
+#define AUTOREMESHER_WASM_QDEBUG_SHIM_H
+#include <iostream>
+#include <string>
+
+class QDebug {
+public:
+    QDebug() {}
+    ~QDebug() { std::cerr << std::endl; }
+    template <typename T>
+    QDebug& operator<<(const T& v) { std::cerr << v << ' '; return *this; }
+    // std::string / const char* handled by the template above.
+};
+
+inline QDebug qDebug() { return QDebug(); }
+inline QDebug qWarning() { return QDebug(); }
+
+#endif

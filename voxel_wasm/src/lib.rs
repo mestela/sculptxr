@@ -433,8 +433,9 @@ pub extern "C" fn remesh_quads_wasm(
     vertices_len: usize,
     faces_ptr: *const u32,
     faces_len: usize,
+    face_groups_ptr: *const u32,
     target_faces: u32,
-    stride: u32,
+    steering_weight: f32,
 ) -> *mut MeshResult {
     if vertices_ptr.is_null() || faces_ptr.is_null() {
         return std::ptr::null_mut();
@@ -475,10 +476,19 @@ pub extern "C" fn remesh_quads_wasm(
         faces: quadrs_faces,
     };
 
+    // One group id per face (faces are 4-padded, so faces_len / 4 entries), or None.
+    let num_faces = faces_len / 4;
+    let groups: Option<Vec<u32>> = if face_groups_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(face_groups_ptr, num_faces) }.to_vec())
+    };
+
     let mut options = quadrs::RemeshOptions::new(quadrs::RemeshTarget::FaceCount(target_faces as usize));
     options.seed = Some(1337);
+    options.steering_weight = steering_weight as f64;
 
-    let remesh_result = match quadrs::remesh(&input_mesh, &options) {
+    let remesh_result = match quadrs::remesh_with_groups(&input_mesh, groups.as_deref(), &options) {
         Ok(r) => r,
         Err(_) => return std::ptr::null_mut(),
     };

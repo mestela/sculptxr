@@ -39,6 +39,7 @@ var MeshData = function () {
     _trianglesABC: null, // triangles (Uint32Array)
 
     _facesTagFlags: null, // triangles tag (<: Utils.TAG_FLAG) (Int32Array)
+    _facesGroups: null, // persistent per-face group id, steers quad remesh (Int32Array, default 0)
 
     ////////////
     // edge data

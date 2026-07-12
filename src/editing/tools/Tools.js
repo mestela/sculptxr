@@ -33,6 +33,7 @@ import CutTool from './CutTool.js';
 import Extrude from './Extrude.js';
 import Inset from './Inset.js';
 import GeodesicPoseTool from './GeodesicPoseTool.js';
+import PaintGroup from './PaintGroup.js';
 
 var Tools = [];
 
@@ -69,6 +70,7 @@ Tools[Enums.Tools.SLIDE] = Slide;
 Tools[Enums.Tools.EXTRUDE] = Extrude;
 Tools[Enums.Tools.INSET] = Inset;
 Tools[Enums.Tools.GEODESIC_POSE] = GeodesicPoseTool;
+Tools[Enums.Tools.PAINT_GROUP] = PaintGroup;
 
 Tools[Enums.Tools.BRUSH].uiName = 'sculptBrush';
 Tools[Enums.Tools.INFLATE].uiName = 'sculptInflate';
@@ -103,5 +105,6 @@ Tools[Enums.Tools.SLIDE].uiName = 'sculptSlide';
 Tools[Enums.Tools.EXTRUDE].uiName = 'sculptExtrude';
 Tools[Enums.Tools.INSET].uiName = 'sculptInset';
 Tools[Enums.Tools.GEODESIC_POSE].uiName = 'sculptGeodesicPose';
+Tools[Enums.Tools.PAINT_GROUP].uiName = 'sculptPaintGroup';
 
 export default Tools;

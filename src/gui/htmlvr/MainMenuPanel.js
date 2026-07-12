@@ -1246,6 +1246,10 @@ export function buildSectionHTML_topology(main) {
 
   const res = Remesh.RESOLUTION;
 
+  const topo = main.getGui?.()?._ctrlTopology ?? null;
+  const topoTarget = topo?._targetFaces ?? 1000;
+  const topoSteer  = topo?._steeringWeight ?? 1.0;
+
   let multiInfo = isMulti
     ? `<div class="mm-info">Level ${curLvl} of ${numLvl - 1} — ${mesh.getNbVertices?.()?.toLocaleString() ?? '?'} vertices</div>`
     : '';
@@ -1284,6 +1288,23 @@ export function buildSectionHTML_topology(main) {
 
     <div class="mm-section-title">Voxel</div>
     <button class="mm-action-btn" id="mm-mesh-to-voxels" ${mesh ? '' : 'disabled'}>Mesh → Voxels</button>
+
+    <div class="mm-section-title">Quad Remesh</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Target Faces</span>
+      <input type="range" id="mm-quad-target" min="100" max="10000" step="100" value="${topoTarget}">
+      <span class="mm-val" id="mm-quad-target-val">${topoTarget}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Group Steering</span>
+      <input type="range" id="mm-quad-steer" min="0" max="1" step="0.05" value="${topoSteer}">
+      <span class="mm-val" id="mm-quad-steer-val">${topoSteer}</span>
+    </div>
+    <div class="mm-row">
+      <span class="mm-lbl">Symmetry (X)</span>
+      <input type="checkbox" id="mm-quad-symmetry">
+    </div>
+    <button class="mm-action-btn" id="mm-quadremesh" ${mesh ? '' : 'disabled'}>Quadremesh</button>
 
     <div class="mm-section-title">Mesh Health</div>
     <button class="mm-action-btn" id="mm-validate">Validate Manifold</button>
@@ -1515,6 +1536,7 @@ export function buildSectionHTML_sculpting(main) {
 
     // ── Tool-specific toggles ────────────────────────────────────────
     const isMasking        = cur === Enums.Tools.MASKING;
+    const isPaintGroup     = cur === Enums.Tools.PAINT_GROUP;
     const isMove           = cur === Enums.Tools.MOVE;
     const isSmooth         = cur === Enums.Tools.SMOOTH;
     const isVoxel          = cur === Enums.Tools.VOXEL;
@@ -1533,7 +1555,7 @@ export function buildSectionHTML_sculpting(main) {
       if (hasNegative) {
         // Masking: flip label/active so button means "Erase existing mask"
         // Move: label as "Along Normal"
-        const negLabel  = isMasking ? 'Erase' : isMove ? 'Along Normal' : 'Negative';
+        const negLabel  = (isMasking || isPaintGroup) ? 'Erase' : isMove ? 'Along Normal' : 'Negative';
         const negActive = isMasking ? !tool._negative : tool._negative;
         toggles.push(`<button class="mm-choice${negActive ? ' active' : ''}" id="mm-brush-negative">${negLabel}</button>`);
       }
@@ -1544,6 +1566,19 @@ export function buildSectionHTML_sculpting(main) {
       if (hasTangent)    toggles.push(`<button class="mm-choice${tool._tangent    ? ' active' : ''}" id="mm-brush-tangent" >Tangential</button>`);
       const cols = toggles.length <= 2 ? 'cols-2' : 'cols-3';
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
+    }
+
+    // ── Face-group paint controls ────────────────────────────────────
+    if (isPaintGroup) {
+      const grp = tool._group ?? 1;
+      const showGroups = main.getMesh?.()?.getShowFacesGroups?.() ?? false;
+      brushHTML += `
+        <div class="mm-row">
+          <span class="mm-lbl">Active Group</span>
+          <input type="range" id="mm-group-active" min="1" max="8" step="1" value="${grp}">
+          <span class="mm-val" id="mm-group-active-val">${grp}</span>
+        </div>
+        <button class="mm-toggle${showGroups ? ' active' : ''}" id="mm-group-show">Show Groups</button>`;
     }
 
     // ── Voxel-specific controls (ported from the VR MiniPanel; align-to-hand omitted) ──
@@ -2748,8 +2783,19 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
     ui.wireframeBias = f;
     const wm = main.getMesh?.()?.getRenderData?.()._wireframeMesh;
     if (wm?.material?.uniforms?.uBias) { wm.material.uniforms.uBias.value = f; main.render?.(); }
-    else {
-      // LineBasicMaterial path: rebuild wireframe buffer so bias takes effect
+    else if (wm?.material && 'polygonOffsetFactor' in wm.material) {
+      // LineBasicMaterial path (quad-remesh results): the shader uBias uniform doesn't
+      // exist, so drive the depth polygon offset instead. v (0..50) → factor/units
+      // -2 (default) .. -52, pulling the wireframe toward the camera so it stops
+      // z-fighting the dense surface and reads crisply.
+      const off = -(2 + v);
+      wm.material.polygonOffset = true;
+      wm.material.polygonOffsetFactor = off;
+      wm.material.polygonOffsetUnits = off;
+      wm.material.needsUpdate = true;
+      main.render?.();
+    } else {
+      // Fallback: rebuild wireframe buffer so bias takes effect
       main.getMesh?.()?.updateWireframeBuffer?.();
       main.render?.();
     }
@@ -2863,6 +2909,23 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
   el.querySelector('#mm-remesh-mc')?.addEventListener('click', () => { topo?.remeshMC?.(); main.render?.(); repaintFn(); });
   el.querySelector('#mm-dynamic')?.addEventListener('click',   () => { topo?.dynamicToggleActivate?.(); main.render?.(); repaintFn(); });
   el.querySelector('#mm-mesh-to-voxels')?.addEventListener('click', () => { topo?.meshToVoxel?.(); main.render?.(); repaintFn(); });
+
+  // Quad remesh
+  wireSlider(
+    el.querySelector('#mm-quad-target'), el.querySelector('#mm-quad-target-val'),
+    (v) => { if (topo) topo._targetFaces = v; }, null, sliderDirtyFn
+  );
+  wireSlider(
+    el.querySelector('#mm-quad-steer'), el.querySelector('#mm-quad-steer-val'),
+    (v) => { topo?.onSteeringChanged?.(v); }, (v) => v.toFixed(2), sliderDirtyFn
+  );
+  const symChk = el.querySelector('#mm-quad-symmetry');
+  if (symChk) {
+    symChk.checked = !!topo?._quadSymmetry;
+    symChk.addEventListener('change', () => { topo?.setQuadSymmetry?.(symChk.checked); });
+  }
+  el.querySelector('#mm-quadremesh')?.addEventListener('click', () => { topo?.remeshQuads?.(); });
+
   el.querySelector('#mm-validate')?.addEventListener('click',  () => { topo?.validateMesh?.(); });
   el.querySelector('#mm-auto-heal')?.addEventListener('click', () => {
     el.querySelector('#mm-auto-heal')?.classList.toggle('active');
@@ -2919,6 +2982,19 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       e.currentTarget.classList.toggle('active', isMasking ? !tool._negative : tool._negative);
       main.render?.();
       lightRepaintFn();
+    });
+
+    // Face-group paint controls (only present when the Groups tool is active)
+    wireSlider(
+      el.querySelector('#mm-group-active'), el.querySelector('#mm-group-active-val'),
+      (v) => { if (tool.setGroup) tool.setGroup(v); }, null, sliderDirtyFn
+    );
+    el.querySelector('#mm-group-show')?.addEventListener('click', (e) => {
+      const mesh = main.getMesh?.();
+      const on = !(mesh?.getShowFacesGroups?.() ?? false);
+      mesh?.setShowFacesGroups?.(on);
+      e.currentTarget.classList.toggle('active', on);
+      main.render?.();
     });
     el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
       tool._clay = !tool._clay;

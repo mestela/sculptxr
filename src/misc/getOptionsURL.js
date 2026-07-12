@@ -265,6 +265,16 @@ getOptionsURL.saveOption = function (key, value, debounceMs) {
 
 getOptionsURL();
 
+// Hand-puppetry (#28 v1): honour ?puppet=1 to start in puppet mode — an in-headset
+// toggle without a console (window.togglePuppet() flips it live thereafter). Read ONCE
+// here at load so repeated getOptionsURL() calls can't re-clobber a live toggle-off.
+if (typeof window !== 'undefined') {
+  try {
+    var _pp = new URLSearchParams(window.location.search).get('puppet');
+    if (_pp !== null && _pp !== 'false' && _pp !== '0') window._puppetMode = true;
+  } catch (e) { /* no URL context */ }
+}
+
 window.saveOption = getOptionsURL.saveOption;
 window.getOptionsURL = getOptionsURL;
 

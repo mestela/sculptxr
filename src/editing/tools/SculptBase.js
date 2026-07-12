@@ -152,6 +152,7 @@ class SculptBase {
       colors: mesh.getColors() ? new Float32Array(mesh.getColors().subarray(0, mesh.getNbVertices() * 3)) : null,
       materials: mesh.getMaterials() ? new Float32Array(mesh.getMaterials().subarray(0, mesh.getNbVertices() * 3)) : null,
       facesTexCoord: mesh.getFacesTexCoord() ? new Uint32Array(mesh.getFacesTexCoord().subarray(0, mesh.getNbFaces() * 4)) : null,
+      groups: mesh.getFacesGroups() ? new Int32Array(mesh.getFacesGroups().subarray(0, mesh.getNbFaces())) : null,
       nbFaces: mesh.getNbFaces(),
       nbVertices: mesh.getNbVertices()
     };
@@ -178,8 +179,12 @@ class SculptBase {
     }
     
     mesh.allocateArrays();
+    // Restore group ids after allocateArrays (which reallocates the face arrays).
+    if (snapshot.groups && snapshot.groups.length === snapshot.nbFaces) {
+      mesh.setFacesGroups(new Int32Array(snapshot.groups));
+    }
     mesh.initTopology();
-    
+
     // Clear wireframe caches to force re-computation on undo/redo!
     if (mesh._meshData) {
       mesh._meshData._drawElementsWireframe = null;

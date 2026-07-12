@@ -31,3 +31,15 @@ key.pem
 
 # Rust build artifacts
 voxel_wasm/target/
+voxel_wasm/vendor/**/target/
+
+# Claude Code local config
+.claude/
+
+# Archived autoremesher (QuadCover) research — keep the small source/docs/patches,
+# ignore the multi-hundred-MB regenerable build tree + binaries.
+docs/autoremesher_wasm/geogram_wasm_build/
+docs/autoremesher_wasm/libgeogram.a
+docs/autoremesher_wasm/wasm_build/autoremesher.js
+docs/autoremesher_wasm/wasm_build/autoremesher.wasm
+docs/autoremesher_wasm/wasm_build/test_ar.*

@@ -35,7 +35,9 @@ var RenderData = function (gl) {
     _alpha: 1.0,
 
     _flatColor: new Float32Array([1.0, 0.0, 0.0]),
-    _mode: gl.TRIANGLES
+    _mode: gl.TRIANGLES,
+
+    _showFacesGroups: false // when true, drawArrays tints each face by its group id
   };
 };
 

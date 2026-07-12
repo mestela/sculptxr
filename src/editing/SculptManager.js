@@ -43,6 +43,7 @@ class SculptManager {
 
   setToolIndex(id) {
     const oldTool = this.getCurrentTool();
+    const wasPaintGroup = this._toolIndex === Enums.Tools.PAINT_GROUP;
     if (oldTool && oldTool.clearPreview) {
       oldTool.clearPreview();
     }
@@ -63,19 +64,32 @@ class SculptManager {
     // platforms, so it also clears a stale desktop gizmo when entering VR.
     this._hideTransformGizmos();
 
-    // Low-poly / topology edit tools (DELETE_FACE..INSET) auto-show wireframe so
-    // you can see the edges you're editing; restore the prior state on leaving.
+    // Low-poly / topology edit tools (DELETE_FACE..INSET) and Paint Group auto-show
+    // wireframe so you can see the edges/faces you're working on; restore the prior
+    // state on leaving. (W still toggles it manually while the tool is active.)
     {
-      const isLowPoly = id >= Enums.Tools.DELETE_FACE && id <= Enums.Tools.INSET;
+      const wantsWire = (id >= Enums.Tools.DELETE_FACE && id <= Enums.Tools.INSET)
+                        || id === Enums.Tools.PAINT_GROUP;
       const meshes = this._main.getMeshes?.() ?? [];
-      if (isLowPoly && !this._wfForcedByEdit) {
+      if (wantsWire && !this._wfForcedByEdit) {
         this._wfSavedState = !!this._main.getMesh?.()?.getShowWireframe?.();
         this._wfForcedByEdit = true;
         meshes.forEach(m => m.setShowWireframe?.(true));
         this._main.render?.();
-      } else if (!isLowPoly && this._wfForcedByEdit) {
+      } else if (!wantsWire && this._wfForcedByEdit) {
         this._wfForcedByEdit = false;
         meshes.forEach(m => m.setShowWireframe?.(this._wfSavedState));
+        this._main.render?.();
+      }
+    }
+
+    // Paint Group tool: turn the group-colour view on while it's active so you can see
+    // what you paint, and restore normal shading when switching away.
+    {
+      const isPaintGroup = id === Enums.Tools.PAINT_GROUP;
+      if (isPaintGroup !== wasPaintGroup) {
+        const m = this._main.getMesh?.();
+        m?.setShowFacesGroups?.(isPaintGroup);
         this._main.render?.();
       }
     }
@@ -496,7 +510,116 @@ class SculptManager {
     });
   }
 
-  remeshQuads(targetFaces) {
+  // Symmetry remesh: slice the mesh to one half across the X=0 plane, boundary snapped to
+  // the plane. That plane edge becomes an OPEN boundary the quad remesher aligns quads to,
+  // so mirroring the remeshed half (mirrorWeldAcrossX) yields a clean symmetric seam.
+  // Returns { vertices, faces, colors } of the half (4-padded faces), or null.
+  sliceMeshToHalf(mesh, keepSide) {
+    const vAr = mesh.getVertices();
+    const fAr = mesh.getFaces();
+    const cAr = mesh.getColors();
+    const nbV = mesh.getNbVertices();
+    const radius = mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1.0;
+    const tol = radius * 0.02;
+
+    const snapped = new Float32Array(vAr);
+    const labels = new Int8Array(nbV);
+    for (let i = 0; i < nbV; ++i) {
+      let x = snapped[i * 3];
+      if (Math.abs(x) < tol) { snapped[i * 3] = 0; x = 0; }
+      labels[i] = (keepSide * x >= 0) ? 1 : -1;
+    }
+
+    const newFaces = [];
+    for (let i = 0; i < fAr.length; i += 4) {
+      const iv = [fAr[i], fAr[i + 1], fAr[i + 2], fAr[i + 3]];
+      const isTri = iv[3] === Utils.TRI_INDEX;
+      const nv = isTri ? 3 : 4;
+      let keep = false;
+      for (let j = 0; j < nv; ++j) if (labels[iv[j]] === 1) { keep = true; break; }
+      if (!keep) continue;
+      // A quad straddling the plane → split to two tris so the boundary can lie on it.
+      let hasL = false, hasR = false;
+      for (let j = 0; j < nv; ++j) {
+        const x = snapped[iv[j] * 3];
+        if (x < -0.001) hasL = true; else if (x > 0.001) hasR = true;
+      }
+      if (!isTri && hasL && hasR) {
+        newFaces.push(iv[0], iv[1], iv[2], Utils.TRI_INDEX);
+        newFaces.push(iv[0], iv[2], iv[3], Utils.TRI_INDEX);
+      } else {
+        newFaces.push(iv[0], iv[1], iv[2], iv[3]);
+      }
+    }
+
+    // Snap kept-but-discarded-side verts onto the plane (forms the planar boundary).
+    const kept = new Set(newFaces.filter(x => x !== Utils.TRI_INDEX));
+    for (const idx of kept) if (labels[idx] === -1) snapped[idx * 3] = 0;
+
+    // Remap to a compact half mesh.
+    const map = new Map();
+    const outV = [], outC = cAr ? [] : null;
+    const outF = new Uint32Array(newFaces.length);
+    let next = 0;
+    for (let i = 0; i < newFaces.length; ++i) {
+      const old = newFaces[i];
+      if (old === Utils.TRI_INDEX) { outF[i] = Utils.TRI_INDEX; continue; }
+      let ni = map.get(old);
+      if (ni === undefined) {
+        ni = next++;
+        map.set(old, ni);
+        outV.push(snapped[old * 3], snapped[old * 3 + 1], snapped[old * 3 + 2]);
+        if (outC) outC.push(cAr[old * 3], cAr[old * 3 + 1], cAr[old * 3 + 2]);
+      }
+      outF[i] = ni;
+    }
+    if (next === 0) return null;
+    return {
+      vertices: new Float32Array(outV),
+      faces: outF,
+      colors: outC ? new Float32Array(outC) : null
+    };
+  }
+
+  // Mirror a (remeshed) half across X=0 and weld the seam: verts on the plane are shared,
+  // off-plane verts get a mirrored copy, mirrored faces get reversed winding. O(n).
+  mirrorWeldAcrossX(v, f, c, tol) {
+    const nbV = v.length / 3;
+    const mirror = new Int32Array(nbV);
+    const outV = Array.from(v);
+    const outC = c ? Array.from(c) : null;
+    let next = nbV;
+    for (let i = 0; i < nbV; ++i) {
+      if (Math.abs(v[i * 3]) < tol) {
+        outV[i * 3] = 0;          // snap seam exactly onto the plane
+        mirror[i] = i;            // shared — welded
+      } else {
+        mirror[i] = next++;
+        outV.push(-v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
+        if (outC) outC.push(c[i * 3], c[i * 3 + 1], c[i * 3 + 2]);
+      }
+    }
+    const nbF = f.length / 4;
+    const outF = new Uint32Array(f.length * 2);
+    outF.set(f);
+    for (let i = 0; i < nbF; ++i) {
+      const o = i * 4, n = (nbF + i) * 4;
+      const a = f[o], b = f[o + 1], cc = f[o + 2], d = f[o + 3];
+      // Reverse winding so mirrored normals stay outward.
+      if (d === Utils.TRI_INDEX) {
+        outF[n] = mirror[cc]; outF[n + 1] = mirror[b]; outF[n + 2] = mirror[a]; outF[n + 3] = Utils.TRI_INDEX;
+      } else {
+        outF[n] = mirror[d]; outF[n + 1] = mirror[cc]; outF[n + 2] = mirror[b]; outF[n + 3] = mirror[a];
+      }
+    }
+    return {
+      vertices: new Float32Array(outV),
+      faces: outF,
+      colors: outC ? new Float32Array(outC) : null
+    };
+  }
+
+  remeshQuads(targetFaces, steeringWeight, symmetry) {
     const mesh = this._main.getMesh();
     if (!mesh) return;
 
@@ -518,17 +641,45 @@ class SculptManager {
       return;
     }
 
-    const vAr = mesh.getVertices();
-    const fAr = mesh.getFaces();
-    const cAr = mesh.getColors();
+    let vAr = mesh.getVertices();
+    let fAr = mesh.getFaces();
+    let cAr = mesh.getColors();
+
+    // Symmetry: remesh only one half, then mirror+weld the result. The half's plane edge
+    // is an open boundary the remesher aligns to → clean symmetric seam. Groups are
+    // skipped in symmetry mode for now (the slice would need to re-map them per face).
+    this._symmetryRemeshPending = null;
+    if (symmetry) {
+      const half = this.sliceMeshToHalf(mesh, 1);
+      if (!half) { this._isProcessingQuads = false; return; }
+      vAr = half.vertices;
+      fAr = half.faces;
+      cAr = half.colors;
+      const radius = mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1.0;
+      this._symmetryRemeshPending = { tol: radius * 0.02 };
+    }
 
     const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;
+
+    // Face-group steering: send one group id per face (fAr is 4-padded, so nbFaces
+    // entries) plus the steering weight. Only send groups if any face is actually
+    // painted (non-zero), else leave null so the worker runs the unsteered path.
+    const gAr = (!symmetry && mesh.getFacesGroups) ? mesh.getFacesGroups() : null;
+    let groups = null;
+    if (gAr) {
+      const nbFaces = fAr.length / 4;
+      for (let i = 0; i < nbFaces; ++i) {
+        if (gAr[i] !== 0) { groups = gAr.subarray(0, nbFaces); break; }
+      }
+    }
 
     voxelTool._worker.postMessage({
       type: 'REMESH_QUADRS',
       v: vAr,
       f: fAr,
       colors: cAr,
+      groups: groups,
+      steeringWeight: steeringWeight === undefined ? 1.0 : steeringWeight,
       targetFaces: targetFaces,
       id: mesh.getID(),
       isTriangles: isTriangles
@@ -1479,9 +1630,17 @@ class SculptManager {
     const main = this._main;
     const newMesh = new MeshStatic(main._gl);
 
+    // Symmetry remesh: the worker remeshed one half; mirror+weld it into a full mesh.
+    if (this._symmetryRemeshPending) {
+      const sym = this.mirrorWeldAcrossX(
+        data.vertices, data.faces, data.colors || null, this._symmetryRemeshPending.tol);
+      data = { vertices: sym.vertices, faces: sym.faces, colors: sym.colors, id: data.id };
+      this._symmetryRemeshPending = null;
+    }
+
     newMesh.setVertices(data.vertices);
     newMesh.setFaces(data.faces);
-    
+
     if (data.colors) {
       newMesh.setColors(data.colors);
     }

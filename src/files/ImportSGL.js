@@ -133,6 +133,14 @@ Import.importSGL = function (buffer, gl, main) {
 
       if (uv && fuv) mesh.initTexCoordsDataFromOBJData(uv, fuv);
 
+      // v12: per-face group ids (steers guided quad remesh). Copy out of the file buffer
+      // so the mesh owns it (allocateArrays later resizes/preserves it to nbFaces).
+      if (version >= 12) {
+        nbElts = u32a[off++];
+        if (nbElts > 0) mesh.setFacesGroups(new Int32Array(i32a.subarray(off, off + nbElts)));
+        off += nbElts;
+      }
+
       if (version >= 4) {
         let decodedStr = "";
         for (let k = 0; k < 16; k++) {

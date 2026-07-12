@@ -42,7 +42,7 @@ class GuiSculpting {
     const sculptTools = [
       Enums.Tools.BRUSH, Enums.Tools.INFLATE, Enums.Tools.TWIST, Enums.Tools.SMOOTH,
       Enums.Tools.FLATTEN, Enums.Tools.PINCH, Enums.Tools.CREASE, Enums.Tools.DRAG,
-      Enums.Tools.RELAX, Enums.Tools.PAINT, Enums.Tools.MOVE, Enums.Tools.MASKING,
+      Enums.Tools.RELAX, Enums.Tools.PAINT, Enums.Tools.PAINT_GROUP, Enums.Tools.MOVE, Enums.Tools.MASKING,
       Enums.Tools.LOCALSCALE, Enums.Tools.TRANSFORM
     ];
 

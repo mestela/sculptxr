@@ -114,6 +114,7 @@ class MeshStatic extends Mesh {
     const f = this.getFaces().slice();
     const c = this.getColors().slice();
     const m = this.getMaterials().slice();
+    const g = this.getFacesGroups() ? this.getFacesGroups().slice() : null;
     const hadUV = this.hasUV();
     const t   = hadUV ? this.getTexCoords().slice() : null;
     const fuv = hadUV ? this.getFacesTexCoord().slice() : null;
@@ -122,6 +123,7 @@ class MeshStatic extends Mesh {
     this.setFaces(f);
     this.setColors(c);
     this.setMaterials(m);
+    if (g) this.setFacesGroups(g); // carry per-face groups across the link break
     if (hadUV) this.initTexCoordsDataFromOBJData(t, fuv);
     this.init();
     this.initRender();

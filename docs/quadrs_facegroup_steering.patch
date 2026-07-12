@@ -1,0 +1,479 @@
+diff -ru quadrs-orig/src/api.rs quadrs-1.0.0/src/api.rs
+--- quadrs-orig/src/api.rs	2006-07-24 11:21:28
++++ quadrs-1.0.0/src/api.rs	2026-07-08 11:55:31
+@@ -1,4 +1,6 @@
+-use crate::boundary::{build_boundary_constraints, build_boundary_hierarchy};
++use crate::boundary::{
++    build_boundary_constraints, build_boundary_hierarchy, build_group_seam_constraints,
++};
+ use crate::field::{
+     freeze_orientation_ivars, freeze_position_ivars, initialize_state, optimize_orientations,
+     optimize_orientations_frozen, optimize_positions, optimize_positions_frozen,
+@@ -53,6 +55,9 @@
+     pub frozen_position_iterations: usize,
+     pub seed: Option<u64>,
+     pub mode: RemeshMode,
++    /// Weight applied to group-seam constraints (0.0 = ignore groups,
++    /// 1.0 = as hard as an open boundary). Only used by `remesh_with_groups`.
++    pub steering_weight: f64,
+ }
+ 
+ impl RemeshOptions {
+@@ -68,6 +73,7 @@
+             frozen_position_iterations: 20,
+             seed: None,
+             mode: RemeshMode::Intrinsic,
++            steering_weight: 1.0,
+         }
+     }
+ }
+@@ -142,8 +148,22 @@
+ 
+ /// Runs the full quad remeshing pipeline on a polygon mesh.
+ pub fn remesh(mesh: &Mesh, options: &RemeshOptions) -> Result<RemeshResult, RemeshError> {
++    remesh_with_groups(mesh, None, options)
++}
++
++/// Runs the quad remeshing pipeline, steering edge flow along group boundaries.
++///
++/// `face_groups`, if given, holds one group id per polygon face of `mesh`. Edges
++/// straddling two different group ids become seam constraints (weighted by
++/// `options.steering_weight`), so quad loops follow the group borders. Passing
++/// `None` is identical to `remesh`.
++pub fn remesh_with_groups(
++    mesh: &Mesh,
++    face_groups: Option<&[u32]>,
++    options: &RemeshOptions,
++) -> Result<RemeshResult, RemeshError> {
+     let input = analyze_mesh(mesh);
+-    let tri_mesh = triangulated_mesh(mesh)?;
++    let tri_mesh = triangulated_mesh(mesh, face_groups)?;
+     let scale = target_scale(options, compute_mesh_stats(&tri_mesh).surface_area)?;
+     let tri_mesh = preprocess_mesh(&tri_mesh, scale);
+     let dedges = build_directed_edges(&tri_mesh);
+@@ -151,10 +171,18 @@
+     let normals = generate_smooth_normals(&tri_mesh);
+     let areas = compute_dual_vertex_areas(&tri_mesh, &dedges);
+     let levels = build_hierarchy(&tri_mesh.vertices, &normals, &areas, &adjacency);
+-    let boundaries = build_boundary_hierarchy(
+-        &levels,
+-        build_boundary_constraints(&tri_mesh, &dedges, &normals),
+-    );
++    let mut fine_constraints = build_boundary_constraints(&tri_mesh, &dedges, &normals);
++    if face_groups.is_some() {
++        build_group_seam_constraints(
++            &tri_mesh,
++            &dedges,
++            &normals,
++            &tri_mesh.groups,
++            options.steering_weight,
++            &mut fine_constraints,
++        );
++    }
++    let boundaries = build_boundary_hierarchy(&levels, fine_constraints);
+     let seed = options.seed.map(Rng::new).unwrap_or_else(Rng::from_time);
+     let mesh = match options.mode {
+         RemeshMode::Intrinsic => {
+@@ -175,7 +203,7 @@
+     })
+ }
+ 
+-fn triangulated_mesh(mesh: &Mesh) -> Result<TriMesh, RemeshError> {
++fn triangulated_mesh(mesh: &Mesh, face_groups: Option<&[u32]>) -> Result<TriMesh, RemeshError> {
+     if mesh.faces.is_empty() {
+         return Err(RemeshError::EmptyMesh);
+     }
+@@ -183,9 +211,23 @@
+     if faces.is_empty() {
+         return Err(RemeshError::EmptyMesh);
+     }
++    // Each polygon fans into (len - 2) triangles; every triangle inherits the
++    // polygon's group id. Falls back to all-zero (no seams) when absent.
++    let groups = match face_groups {
++        Some(group_ids) => mesh
++            .faces
++            .iter()
++            .zip(group_ids)
++            .flat_map(|(face, &group)| {
++                std::iter::repeat(group).take(face.len().saturating_sub(2))
++            })
++            .collect(),
++        None => vec![0u32; faces.len()],
++    };
+     Ok(TriMesh {
+         vertices: mesh.vertices.clone(),
+         faces,
++        groups,
+     })
+ }
+ 
+@@ -331,5 +373,62 @@
+         assert_eq!(result.seed, 1337);
+         assert!(!result.mesh.faces.is_empty());
+         assert!(result.mesh.faces.iter().all(|face| face.len() == 4));
++    }
++
++    /// An n x n grid of triangles on the XY plane, split into two groups down
++    /// the middle column.
++    fn two_group_grid(n: usize) -> (Mesh, Vec<u32>) {
++        let mut vertices = Vec::new();
++        for j in 0..=n {
++            for i in 0..=n {
++                vertices.push(Vec3::new(i as f64, j as f64, 0.0));
++            }
++        }
++        let idx = |i: usize, j: usize| j * (n + 1) + i;
++        let mut faces: Vec<Vec<usize>> = Vec::new();
++        let mut groups: Vec<u32> = Vec::new();
++        for j in 0..n {
++            for i in 0..n {
++                faces.push(vec![idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)]);
++                faces.push(vec![idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)]);
++                let group = if i < n / 2 { 0 } else { 1 };
++                groups.push(group);
++                groups.push(group);
++            }
++        }
++        (Mesh { vertices, faces }, groups)
++    }
++
++    #[test]
++    fn remesh_with_groups_produces_quads() {
++        let (mesh, groups) = two_group_grid(8);
++        let mut options = RemeshOptions::new(RemeshTarget::FaceCount(64));
++        options.seed = Some(7);
++        let result = remesh_with_groups(&mesh, Some(&groups), &options).unwrap();
++        assert!(!result.mesh.faces.is_empty());
++        assert!(result.mesh.faces.iter().all(|face| face.len() == 4));
++    }
++
++    #[test]
++    fn none_groups_matches_plain_remesh() {
++        let (mesh, _) = two_group_grid(6);
++        let mut options = RemeshOptions::new(RemeshTarget::FaceCount(36));
++        options.seed = Some(11);
++        let a = remesh(&mesh, &options).unwrap();
++        let b = remesh_with_groups(&mesh, None, &options).unwrap();
++        assert_eq!(a.mesh.faces, b.mesh.faces);
++        assert_eq!(a.mesh.vertices.len(), b.mesh.vertices.len());
++    }
++
++    #[test]
++    fn groups_survive_preprocess_subdivision() {
++        let (mesh, groups) = two_group_grid(2);
++        let tri = triangulated_mesh(&mesh, Some(&groups)).unwrap();
++        assert_eq!(tri.groups.len(), tri.faces.len());
++        // Force heavy subdivision with a small target edge length.
++        let pre = preprocess_mesh(&tri, 0.25);
++        assert!(pre.faces.len() > tri.faces.len(), "expected subdivision");
++        assert_eq!(pre.groups.len(), pre.faces.len());
++        assert!(pre.groups.contains(&0) && pre.groups.contains(&1));
+     }
+ }
+diff -ru quadrs-orig/src/boundary.rs quadrs-1.0.0/src/boundary.rs
+--- quadrs-orig/src/boundary.rs	2006-07-24 11:21:28
++++ quadrs-1.0.0/src/boundary.rs	2026-07-08 11:55:15
+@@ -37,6 +37,59 @@
+     constraints
+ }
+ 
++/// Overlays group-seam constraints onto an existing constraint buffer.
++///
++/// Fires on interior edges whose two adjacent faces belong to different groups
++/// and aligns the field *along* the seam, so the extracted quad loops follow the
++/// group border. This is the ZRemesher/Exoside "keep polygroups" behaviour, using
++/// the same per-vertex constraint machinery the open-boundary path already uses.
++///
++/// Existing (open-boundary) constraints are left untouched — seams only fill
++/// vertices that are otherwise unconstrained.
++pub fn build_group_seam_constraints(
++    mesh: &TriMesh,
++    dedges: &DirectedEdges,
++    normals: &[Vec3],
++    groups: &[u32],
++    weight: f64,
++    out: &mut [Option<BoundaryConstraint>],
++) {
++    for edge in 0..dedges.e2e.len() {
++        let opposite = dedges.e2e[edge];
++        // Skip open/non-manifold edges (handled by build_boundary_constraints),
++        // and visit each interior edge only once.
++        if opposite == INVALID || edge > opposite {
++            continue;
++        }
++        if groups[edge / 3] == groups[opposite / 3] {
++            continue; // same group on both sides -> not a seam
++        }
++        let face = mesh.faces[edge / 3];
++        let i0 = face[edge % 3];
++        let i1 = face[(edge + 1) % 3];
++        let direction = mesh.vertices[i1] - mesh.vertices[i0];
++        if direction.length_squared() <= 1e-12 {
++            continue;
++        }
++        let tangent0 = (direction - normals[i0] * normals[i0].dot(direction)).normalize();
++        let tangent1 = (direction - normals[i1] * normals[i1].dot(direction)).normalize();
++        if out[i0].is_none() {
++            out[i0] = Some(BoundaryConstraint {
++                origin: mesh.vertices[i0],
++                tangent: tangent0,
++                weight,
++            });
++        }
++        if out[i1].is_none() {
++            out[i1] = Some(BoundaryConstraint {
++                origin: mesh.vertices[i1],
++                tangent: tangent1,
++                weight,
++            });
++        }
++    }
++}
++
+ pub fn build_boundary_hierarchy(
+     levels: &[HierarchyLevel],
+     fine_boundary: Vec<Option<BoundaryConstraint>>,
+@@ -88,4 +141,72 @@
+         hierarchy.push(coarse_boundary);
+     }
+     hierarchy
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::topology::build_directed_edges;
++
++    fn two_triangles(groups: Vec<u32>) -> TriMesh {
++        // Two triangles sharing the interior edge {0, 2}.
++        TriMesh {
++            vertices: vec![
++                Vec3::new(0.0, 0.0, 0.0),
++                Vec3::new(1.0, 0.0, 0.0),
++                Vec3::new(1.0, 1.0, 0.0),
++                Vec3::new(0.0, 1.0, 0.0),
++            ],
++            faces: vec![[0, 1, 2], [0, 2, 3]],
++            groups,
++        }
++    }
++
++    #[test]
++    fn seam_constrains_shared_edge_between_groups() {
++        let mesh = two_triangles(vec![0, 1]);
++        let dedges = build_directed_edges(&mesh);
++        let normals = vec![Vec3::new(0.0, 0.0, 1.0); mesh.vertices.len()];
++        let mut out = vec![None; mesh.vertices.len()];
++        build_group_seam_constraints(&mesh, &dedges, &normals, &mesh.groups, 1.0, &mut out);
++
++        // Only the shared-edge endpoints (0 and 2) are constrained.
++        assert!(out[0].is_some());
++        assert!(out[2].is_some());
++        assert!(out[1].is_none());
++        assert!(out[3].is_none());
++
++        // The constraint tangent runs along the seam edge (0 <-> 2).
++        let along = (mesh.vertices[2] - mesh.vertices[0]).normalize();
++        assert!(out[0].as_ref().unwrap().tangent.dot(along).abs() > 0.99);
++    }
++
++    #[test]
++    fn no_seam_when_faces_share_a_group() {
++        let mesh = two_triangles(vec![0, 0]);
++        let dedges = build_directed_edges(&mesh);
++        let normals = vec![Vec3::new(0.0, 0.0, 1.0); mesh.vertices.len()];
++        let mut out = vec![None; mesh.vertices.len()];
++        build_group_seam_constraints(&mesh, &dedges, &normals, &mesh.groups, 1.0, &mut out);
++        assert!(out.iter().all(Option::is_none));
++    }
++
++    #[test]
++    fn seam_does_not_clobber_existing_boundary_constraint() {
++        let mesh = two_triangles(vec![0, 1]);
++        let dedges = build_directed_edges(&mesh);
++        let normals = vec![Vec3::new(0.0, 0.0, 1.0); mesh.vertices.len()];
++        let mut out = vec![None; mesh.vertices.len()];
++        // Pretend vertex 0 already has a hard open-boundary constraint.
++        let sentinel = BoundaryConstraint {
++            origin: mesh.vertices[0],
++            tangent: Vec3::new(0.0, 1.0, 0.0),
++            weight: 1.0,
++        };
++        out[0] = Some(sentinel.clone());
++        build_group_seam_constraints(&mesh, &dedges, &normals, &mesh.groups, 0.5, &mut out);
++        // The pre-existing boundary constraint is preserved untouched.
++        assert_eq!(out[0].as_ref().unwrap().tangent, sentinel.tangent);
++        assert_eq!(out[0].as_ref().unwrap().weight, 1.0);
++    }
+ }
+diff -ru quadrs-orig/src/preprocess.rs quadrs-1.0.0/src/preprocess.rs
+--- quadrs-orig/src/preprocess.rs	2006-07-24 11:21:28
++++ quadrs-1.0.0/src/preprocess.rs	2026-07-08 11:44:05
+@@ -175,10 +175,8 @@
+     let max_length_sq = max_length * max_length;
+     let mut vertices = mesh.vertices.clone();
+     let mut faces = mesh.faces.clone();
+-    let mut dedge = build_directed_edges(&TriMesh {
+-        vertices: vertices.clone(),
+-        faces: faces.clone(),
+-    });
++    let mut groups = mesh.groups.clone();
++    let mut dedge = build_directed_edges(&TriMesh::ungrouped(vertices.clone(), faces.clone()));
+     let mut queue = BinaryHeap::new();
+ 
+     schedule_edges(&vertices, &faces, &dedge, max_length_sq, &mut queue);
+@@ -203,6 +201,11 @@
+         }
+ 
+         let f1 = if is_boundary { INVALID } else { e1 / 3 };
++        // Capture parent groups before we append children. Splitting edge e0
++        // divides original triangle f0 into (f0, f3) and f1 into (f1, f2), so
++        // each child inherits its parent's group id.
++        let g0 = groups[f0];
++        let g1 = if is_boundary { 0 } else { groups[f1] };
+         let v1p = if is_boundary {
+             INVALID
+         } else {
+@@ -222,8 +225,10 @@
+         };
+         if !is_boundary {
+             faces.push([0, 0, 0]);
++            groups.push(g1); // f2 is a half of original f1
+         }
+         faces.push([0, 0, 0]);
++        groups.push(g0); // f3 is a half of original f0
+         dedge.e2e.resize(faces.len() * 3, INVALID);
+ 
+         let e0p = dedge.e2e[dedge_prev_3(e0)];
+@@ -269,7 +274,11 @@
+         schedule_face(&vertices, &faces, max_length_sq, f3, &mut queue);
+     }
+ 
+-    TriMesh { vertices, faces }
++    TriMesh {
++        vertices,
++        faces,
++        groups,
++    }
+ }
+ 
+ pub fn preprocess_mesh(mesh: &TriMesh, scale: f64) -> TriMesh {
+@@ -308,7 +317,12 @@
+         .map(|face| face.map(|index| remap[index]))
+         .collect();
+ 
+-    TriMesh { vertices, faces }
++    // Face order is preserved, so per-face groups carry over unchanged.
++    TriMesh {
++        vertices,
++        faces,
++        groups: mesh.groups.clone(),
++    }
+ }
+ 
+ fn schedule_edges(
+@@ -394,15 +408,15 @@
+     use super::*;
+ 
+     fn square() -> TriMesh {
+-        TriMesh {
+-            vertices: vec![
++        TriMesh::ungrouped(
++            vec![
+                 Vec3::new(0.0, 0.0, 0.0),
+                 Vec3::new(1.0, 0.0, 0.0),
+                 Vec3::new(1.0, 1.0, 0.0),
+                 Vec3::new(0.0, 1.0, 0.0),
+             ],
+-            faces: vec![[0, 1, 2], [0, 2, 3]],
+-        }
++            vec![[0, 1, 2], [0, 2, 3]],
++        )
+     }
+ 
+     #[test]
+@@ -413,29 +427,29 @@
+ 
+     #[test]
+     fn subdivision_splits_large_triangle() {
+-        let mesh = TriMesh {
+-            vertices: vec![
++        let mesh = TriMesh::ungrouped(
++            vec![
+                 Vec3::new(0.0, 0.0, 0.0),
+                 Vec3::new(2.0, 0.0, 0.0),
+                 Vec3::new(0.0, 2.0, 0.0),
+             ],
+-            faces: vec![[0, 1, 2]],
+-        };
++            vec![[0, 1, 2]],
++        );
+         let subdivided = subdivide_to_max_edge(&mesh, 1.5);
+         assert!(subdivided.faces.len() > mesh.faces.len());
+     }
+ 
+     #[test]
+     fn preprocessing_drops_isolated_vertices() {
+-        let mesh = TriMesh {
+-            vertices: vec![
++        let mesh = TriMesh::ungrouped(
++            vec![
+                 Vec3::new(0.0, 0.0, 0.0),
+                 Vec3::new(1.0, 0.0, 0.0),
+                 Vec3::new(0.0, 1.0, 0.0),
+                 Vec3::new(9.0, 9.0, 9.0),
+             ],
+-            faces: vec![[0, 1, 2]],
+-        };
++            vec![[0, 1, 2]],
++        );
+         let preprocessed = preprocess_mesh(&mesh, 10.0);
+         assert_eq!(preprocessed.vertices.len(), 3);
+         assert_eq!(preprocessed.faces, vec![[0, 1, 2]]);
+diff -ru quadrs-orig/src/topology.rs quadrs-1.0.0/src/topology.rs
+--- quadrs-orig/src/topology.rs	2006-07-24 11:21:28
++++ quadrs-1.0.0/src/topology.rs	2026-07-08 11:43:19
+@@ -6,8 +6,23 @@
+ pub struct TriMesh {
+     pub vertices: Vec<Vec3>,
+     pub faces: Vec<[usize; 3]>,
++    /// One group id per face, parallel to `faces`. Used to steer quad flow:
++    /// edges straddling two different group ids become seam constraints.
++    pub groups: Vec<u32>,
+ }
+ 
++impl TriMesh {
++    /// Constructs a mesh with every face in group 0 (i.e. no seams).
++    pub fn ungrouped(vertices: Vec<Vec3>, faces: Vec<[usize; 3]>) -> Self {
++        let groups = vec![0; faces.len()];
++        Self {
++            vertices,
++            faces,
++            groups,
++        }
++    }
++}
++
+ #[derive(Clone)]
+ pub struct DirectedEdges {
+     pub v2e: Vec<usize>,
+@@ -124,15 +139,15 @@
+ 
+     #[test]
+     fn builds_opposites_for_two_triangles() {
+-        let mesh = TriMesh {
+-            vertices: vec![
++        let mesh = TriMesh::ungrouped(
++            vec![
+                 Vec3::new(0.0, 0.0, 0.0),
+                 Vec3::new(1.0, 0.0, 0.0),
+                 Vec3::new(1.0, 1.0, 0.0),
+                 Vec3::new(0.0, 1.0, 0.0),
+             ],
+-            faces: vec![[0, 1, 2], [0, 2, 3]],
+-        };
++            vec![[0, 1, 2], [0, 2, 3]],
++        );
+         let dedge = build_directed_edges(&mesh);
+         assert_ne!(dedge.e2e[2], INVALID);
+         assert_eq!(dedge.e2e[dedge.e2e[2]], 2);

@@ -1,0 +1,109 @@
+diff --git a/thirdparty/geogram/geogram-1.8.3/CMakeLists.txt b/thirdparty/geogram/geogram-1.8.3/CMakeLists.txt
+index 1fd796c..ce4fd64 100644
+--- a/thirdparty/geogram/geogram-1.8.3/CMakeLists.txt
++++ b/thirdparty/geogram/geogram-1.8.3/CMakeLists.txt
+@@ -131,12 +131,12 @@ if(NOT GEOGRAM_LIB_ONLY)
+   add_subdirectory(tests)
+ endif()
+ 
+-add_subdirectory(doc)
++# add_subdirectory(doc)  # stripped from vendored copy (spike)
+ 
+ ##############################################################################
+ # Cleanup from previous builds
+ 
+-file(REMOVE ${CMAKE_BINARY_DIR}/doc/LICENSE.txt)
++# file(REMOVE ${CMAKE_BINARY_DIR}/doc/LICENSE.txt)
+ 
+ 
+ ##############################################################################
+@@ -208,12 +208,12 @@ set(CPACK_COMPONENT_DOC-DEVKIT-INTERNAL_DISPLAY_NAME "Vorpaline Internal Develop
+ set(CPACK_COMPONENT_DOC-DEVKIT-INTERNAL_GROUP "Documentation")
+ 
+ # Copy the helper script to build individual packages to the binary directory
+-configure_file(
+-    tools/make_package.pl.in
+-    make_package.pl
+-    @ONLY
+-)
++# configure_file(  # stripped from vendored copy (spike)
++#     tools/make_package.pl.in
++#     make_package.pl
++#     @ONLY
++# )
+ 
+ # This must always be last!
+-include(CPack)
++# include(CPack)  # packaging not needed for the wasm lib spike
+ 
+diff --git a/thirdparty/geogram/geogram-1.8.3/cmake/platforms/Emscripten-clang.cmake b/thirdparty/geogram/geogram-1.8.3/cmake/platforms/Emscripten-clang.cmake
+index 6158a8c..ad88bb3 100644
+--- a/thirdparty/geogram/geogram-1.8.3/cmake/platforms/Emscripten-clang.cmake
++++ b/thirdparty/geogram/geogram-1.8.3/cmake/platforms/Emscripten-clang.cmake
+@@ -17,14 +17,11 @@ find_path(EMSCRIPTEN_DIR
+ 
+ message(STATUS "Emscripten dir=${EMSCRIPTEN_DIR}")
+ 
+-set(CMAKE_C_COMPILER "emcc")
+-set(CMAKE_CXX_COMPILER "em++")
+-set(CMAKE_AR "emar")
+-set(CMAKE_RANLIB "emranlib")
+-set(CMAKE_LINKER "emld")
+ set(CMAKE_SKIP_RPATH TRUE)
+ 
+-include(${EMSCRIPTEN_DIR}/cmake/Modules/Platform/Emscripten.cmake)
++# Toolchain (compilers + emscripten platform) is set by `emcmake cmake`, so we skip
++# geogram's own compiler-setting + toolchain include here (spike).
++# include(${EMSCRIPTEN_DIR}/cmake/Modules/Platform/Emscripten.cmake)
+ 
+ set(GEOGRAM_WITH_EMSCRIPTEN TRUE)
+ 
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/CMakeLists.txt b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/CMakeLists.txt
+index ed2dca0..823cd57 100755
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/CMakeLists.txt
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/CMakeLists.txt
+@@ -26,7 +26,7 @@ endif()
+ add_definitions(-DGEOGRAM_WITH_PDEL)
+ 
+ # Activate AMGCL support in OpenNL (algebraic multigrid solver)
+-add_definitions(-DNL_WITH_AMGCL)
++# add_definitions(-DNL_WITH_AMGCL)  # amgcl stripped from vendored copy; not needed for QuadCover (spike)
+ 
+ # Copy the default version info to the build directory
+ configure_file(basic/version.h.in version.h @ONLY)
+@@ -38,7 +38,8 @@ include_directories(${PROJECT_BINARY_DIR}/src/lib)
+ add_library(geogram ${SOURCES} $<TARGET_OBJECTS:geogram_third_party>)
+ 
+ target_include_directories(geogram PRIVATE
+-    ${PROJECT_SOURCE_DIR}/src/lib/geogram/third_party/amgcl 
++    ${PROJECT_SOURCE_DIR}/src/lib/geogram/third_party/amgcl
++    ${CMAKE_CURRENT_SOURCE_DIR}/tbb-shim
+ )
+ 
+ # Jeremie/Maxence: avoids the need to redeclare geogram include
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/NL/nl_amgcl.cpp b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/NL/nl_amgcl.cpp
+index d32be00..b0a1af5 100644
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/NL/nl_amgcl.cpp
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/NL/nl_amgcl.cpp
+@@ -213,7 +213,7 @@ NLboolean nlSolveAMGCL() {
+ 
+ #else
+ 
+-nlBoolean nlSolveAMGCL() {
++NLboolean nlSolveAMGCL() {
+     GEO::Logger::out("AMGCL") << "Not supported" << std::endl;
+     return NL_FALSE;
+ }
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/third_party/CMakeLists.txt b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/third_party/CMakeLists.txt
+index ba73018..def439a 100644
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/third_party/CMakeLists.txt
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/third_party/CMakeLists.txt
+@@ -46,7 +46,7 @@ aux_source_directories(SOURCES "Source Files\\libMeshb"     libMeshb/sources)
+ aux_source_directories(SOURCES "Source Files\\rply"         rply)
+ aux_source_directories(SOURCES "Source Files\\shewchuk"     shewchuk)
+ aux_source_directories(SOURCES "Source Files\\zlib"         zlib)
+-aux_source_directories(SOURCES "Source Files\\PoissonRecon" PoissonRecon)
++# aux_source_directories(SOURCES "Source Files\\PoissonRecon" PoissonRecon)  # excluded: unneeded for parametrization, old-template errors under emcc (spike)
+ aux_source_directories(SOURCES "Source Files\\xatlas"       xatlas)
+ 
+ if(GEOGRAM_WITH_LUA)

@@ -124,6 +124,7 @@ var TR = {
   sculptSlide: 'Slide',
   sculptRelax: 'Relax',
   sculptPaint: 'Paint',
+  sculptPaintGroup: 'Groups',
   sculptMasking: 'Masking (-Ctrl)',
   sculptMove: 'Move',
   sculptLocalScale: 'Local scale',

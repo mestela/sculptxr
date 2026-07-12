@@ -12,7 +12,8 @@ var Export = {};
 // 9 blendshape lock/active-layer state (baseLocked, active editing layer, per-layer lock/mute)
 // 10 per-object visibility track (step-held vis keyframes)
 // 11 camera framing (view transform) in the header
-Export.VERSION = 11;
+// 12 per-face group ids (_facesGroups; steers guided quad remesh)
+Export.VERSION = 12;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
@@ -48,6 +49,9 @@ Export.exportSGL = function (meshes, main) {
       var hasUV = lvl.hasUV();
       nbBytes += 4 + (hasUV ? lvl.getNbTexCoords() * 8 : 0);
       nbBytes += 4 + (hasUV ? lvl.getNbFaces() * 16 : 0);
+
+      // v12: per-face group ids (nbGroups u32 + Int32 data)
+      nbBytes += 4 + ((lvl.getFacesGroups && lvl.getFacesGroups()) ? lvl.getNbFaces() * 4 : 0);
 
       nbBytes += 32;
     }
@@ -242,6 +246,20 @@ Export.exportSGL = function (meshes, main) {
           if (copyFT < nbFaces * 4) {
             u32a.fill(0, off, off + (nbFaces * 4 - copyFT));
             off += (nbFaces * 4 - copyFT);
+          }
+        }
+
+        // v12: per-face group ids (steers guided quad remesh). 0 count when unpainted.
+        var gArr = lvl.getFacesGroups ? lvl.getFacesGroups() : null;
+        var nbGroups = gArr && gArr.length > 0 ? nbFaces : 0;
+        u32a[off++] = nbGroups;
+        if (nbGroups > 0) {
+          var copyG = Math.min(gArr.length, nbFaces);
+          u32a.set(gArr.subarray(0, copyG), off);
+          off += copyG;
+          if (copyG < nbFaces) {
+            u32a.fill(0, off, off + (nbFaces - copyG));
+            off += (nbFaces - copyG);
           }
         }
 

@@ -94,6 +94,16 @@ class SculptGL extends Scene {
     window.sculptgl_instance = this;
     window.app = this; // Ensure 'app' is also set globally
     window.sculptgl = this; // Alias for user convenience
+    // Hand-puppetry (#28 v1) live toggle — drives ARKit jawOpen off the non-dominant
+    // hand's thumb↔finger gap while in VR. Off by default; call before/inside a session.
+    window.togglePuppet = () => {
+      window._puppetMode = !window._puppetMode;
+      this._puppetAnchor = null; // re-grab neutral on every enable/disable
+      if (window.screenLog) window.screenLog(`🧦 Puppet mode ${window._puppetMode ? 'ON' : 'OFF'}`, window._puppetMode ? 'lime' : 'orange');
+      return window._puppetMode;
+    };
+    // Re-anchor the head to your current hand pose (call if it drifts off).
+    window.recenterPuppet = () => { this._puppetAnchor = null; if (window.screenLog) window.screenLog('🧦 Puppet re-centered', 'lime'); };
     this._referenceManager = new ReferenceManager(this);
 
     // Frame-by-frame animation as real outliner objects + keyframed visibility (voxel
@@ -1810,7 +1820,10 @@ class SculptGL extends Scene {
         // NOTE: do NOT add 'layers' here. Requesting the XRLayers feature causes
         // Three.js to use XRProjectionLayer instead of XRWebGLLayer, which triggers
         // a ~5-second compositor setup delay on Samsung GalaxyXR / Adreno devices.
-        optionalFeatures: ['local-floor', 'bounded-floor']
+        // 'hand-tracking' → XRHand joint data (Quest / Galaxy XR grant silently; AVP
+        // needs the user to grant + flip the Safari experimental flag). Required for the
+        // hand-puppetry driver (#28) and the existing pinch/fist gesture path.
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
       });
 
       // TRUSTED EVENT LISTENER for File I/O

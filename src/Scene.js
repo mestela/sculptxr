@@ -5355,6 +5355,59 @@ class Scene {
     this._bpReticle.visible = true;
   }
 
+  // Hand-puppetry (#28 v1): drive the active head's transform from the wrist pose, RELATIVE
+  // to an anchor captured when puppet mode turns on (or the active mesh changes). Rotation =
+  // the wrist's world-space rotation delta since the anchor, applied about the head's own
+  // pivot; position = the head's anchor position + the wrist's translation delta. So the head
+  // starts exactly where it was authored and rides your hand from there — no snapping.
+  // window.recenterPuppet() re-grabs neutral; window._puppetRot/_puppetPos = false isolate one.
+  _drivePuppetHead(mesh, wt) {
+    const id = mesh.getID();
+    const wQuat = new THREE.Quaternion(wt.orientation.x, wt.orientation.y, wt.orientation.z, wt.orientation.w);
+    // Wrist position → the mesh's PARENT (_worldGroup) space. The mesh matrix lives under
+    // _worldGroup (scale ~0.7, moved/zoomed by VR nav), while the wrist pose is raw refSpace
+    // metres — worldToLocal reconciles the frames + scale, so hand motion tracks 1:1 in
+    // physical space instead of being swamped by the world scale (the "position locked" bug).
+    const wg = this._worldGroup;
+    const wLocal = wg ? wg.worldToLocal(new THREE.Vector3(wt.position.x, wt.position.y, wt.position.z))
+                      : new THREE.Vector3(wt.position.x, wt.position.y, wt.position.z);
+    let A = this._puppetAnchor;
+    if (!A || A.meshId !== id) {
+      const t = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      new THREE.Matrix4().fromArray(mesh.getMatrix()).decompose(t, q, s);
+      this._puppetAnchor = { meshId: id, wLocal: wLocal.clone(), wQuat: wQuat.clone(), t, q, s };
+      return; // first frame = neutral; drive from the next
+    }
+    // rotation: wrist world-delta (wQuat · wQuat0⁻¹), optionally twist-corrected, applied
+    // onto the head's anchor orientation.
+    let rot;
+    if (window._puppetRot === false) {
+      rot = A.q.clone();
+    } else {
+      const dq = wQuat.clone().multiply(A.wQuat.clone().invert());
+      // Twist correction: the wrist tracking frame and the head's authored facing can sit
+      // ~90° apart about vertical, which turns a hand-NOD into a head-ROLL (ears→shoulders).
+      // Conjugating the delta about world-up rotates its axes so nod→nod, leaving yaw (which
+      // is about that same up axis) untouched. -90 lines up matt's sock-puppet grip;
+      // override _puppetTwistDeg (90 / -90 / 180 / 0) for a different pose or head facing.
+      const twistDeg = window._puppetTwistDeg ?? -90;
+      if (twistDeg) {
+        const R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), twistDeg * Math.PI / 180);
+        dq.premultiply(R).multiply(R.clone().invert()); // R · dq · R⁻¹
+      }
+      rot = dq.multiply(A.q);
+    }
+    // position: head anchor + wrist translation delta (in parent space). _puppetPosScale
+    // damps/exaggerates the follow (1 = 1:1 physical).
+    const pos = A.t.clone();
+    if (window._puppetPos !== false) {
+      pos.add(wLocal.clone().sub(A.wLocal).multiplyScalar(window._puppetPosScale ?? 1));
+    }
+    const M = new THREE.Matrix4().compose(pos, rot, A.s);
+    mesh.setMatrix(M.elements);
+    if (mesh.updateMatrices) mesh.updateMatrices(this._camera);
+  }
+
   handleXRInput(frame, refSpace) {
     try {
 
@@ -6016,6 +6069,29 @@ class Scene {
                 }
              }
           }
+        }
+
+        // --- HAND PUPPETRY (#28 v1): drive ARKit jawOpen from the thumb↔finger gap. ---
+        // Sock-puppet grip: thumb = lower jaw, fingers = upper. The gap between thumb-tip
+        // and middle-fingertip maps to the jawOpen weight (closed tips = 0, spread = 1).
+        // Non-dominant hand only (dominant stays free to sculpt/menu). Janky-by-design v1;
+        // toggle with window.togglePuppet() (or set window._puppetMode). Calibrate the
+        // open/closed gap with window._puppetJawMin / _puppetJawMax (metres).
+        if (window._puppetMode && source.handedness !== this._dominantHand) {
+          const pm = this.getMesh && this.getMesh();
+          // Jaw: thumb↔finger gap → jawOpen weight (closed tips = 0, spread = 1).
+          // setBlendshapeWeight no-ops if the mesh has no 'jawOpen' shape, so it's safe on
+          // any active object; on a rigged head it drives (and keys) the jaw live.
+          if (pm && thumbTip && middleTip && window._animationRegistry) {
+            const a = thumbTip.transform.position, b = middleTip.transform.position;
+            const gap = vec3.distance([a.x, a.y, a.z], [b.x, b.y, b.z]);
+            const lo = window._puppetJawMin ?? 0.025, hi = window._puppetJawMax ?? 0.09;
+            const w = Math.max(0, Math.min(1, (gap - lo) / (hi - lo)));
+            window._animationRegistry.setBlendshapeWeight(pm, 'jawOpen', w);
+          }
+          // Head: wrist pose → head transform, RELATIVE to an anchor captured on enable, so
+          // the head rides your hand from where it sits (never snaps to the raw wrist pose).
+          if (pm && wrist && wrist.transform) this._drivePuppetHead(pm, wrist.transform);
         }
 
         mockGamepad = {

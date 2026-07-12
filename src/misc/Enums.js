@@ -48,7 +48,8 @@ Enums.Tools = {
   CUT_TOOL: 29,
   EXTRUDE: 30,
   INSET: 31,
-  GEODESIC_POSE: 32
+  GEODESIC_POSE: 32,
+  PAINT_GROUP: 33
 };
 
 // display shader type

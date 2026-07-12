@@ -1,0 +1,109 @@
+diff --git a/src/AutoRemesher/autoremesher.cpp b/src/AutoRemesher/autoremesher.cpp
+index c1c9471..0a76b58 100644
+--- a/src/AutoRemesher/autoremesher.cpp
++++ b/src/AutoRemesher/autoremesher.cpp
+@@ -81,10 +81,16 @@ struct GeogramProgressLockGuard {
+                     << "(previous run may have crashed). Recovering."
+                     << std::endl;
+                 s_geogramProgressLock.clear(std::memory_order_release);
++                // std::this_thread::sleep_for is unavailable in the single-threaded
++                // wasm build (no pthreads); this spin loop is never contended there.
++#ifndef __EMSCRIPTEN__
+                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
++#endif
+                 attempts = 0;
+             } else {
++#ifndef __EMSCRIPTEN__
+                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
++#endif
+             }
+         }
+     }
+diff --git a/src/AutoRemesher/parameterizer.cpp b/src/AutoRemesher/parameterizer.cpp
+index cda6bd5..32b5bad 100644
+--- a/src/AutoRemesher/parameterizer.cpp
++++ b/src/AutoRemesher/parameterizer.cpp
+@@ -23,8 +23,11 @@
+ #include <cmath>
+ #include <exploragram/hexdom/quad_cover.h>
+ #include <geogram/mesh/mesh_frame_field.h>
++#include <geogram/mesh/mesh_geometry.h>
+ #include <geogram/mesh/mesh_io.h>
+ #include <map>
++#include <set>
++#include <utility>
+ #include <tbb/blocked_range.h>
+ #include <tbb/combinable.h>
+ #include <tbb/parallel_for.h>
+@@ -205,10 +208,37 @@ bool Parameterizer::parameterize()
+     };
+     makeMesh(M, *m_vertices, *m_triangles);
+ 
++    // Face-group steering: mark the facet corners whose edge is a group seam via a
++    // "seam" corner attribute. Our patched geogram reads it in create_from_surface_mesh
++    // (so the frame field aligns to seams and is smoothly propagated by solve_PGP) and in
++    // get_edge_constraints (so seams become hard iso-line constraints regardless of the
++    // dihedral-angle test). Set it on BOTH the frame-field mesh and the quad_cover mesh.
++    std::set<std::pair<size_t, size_t>> seamSet;
++    if (m_seamEdges != nullptr) {
++        for (const auto& e : *m_seamEdges) {
++            size_t a = e.first, b = e.second;
++            seamSet.insert(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
++        }
++    }
++    auto markSeam = [&](GEO::Mesh& mesh) {
++        if (seamSet.empty()) return;
++        GEO::Attribute<GEO::index_t> seam(mesh.facet_corners.attributes(), "seam");
++        for (GEO::index_t c = 0; c < mesh.facet_corners.nb(); ++c) {
++            GEO::index_t f = c / 3;
++            GEO::index_t cn = mesh.facets.next_corner_around_facet(f, c);
++            size_t v1 = mesh.facet_corners.vertex(c);
++            size_t v2 = mesh.facet_corners.vertex(cn);
++            auto key = v1 < v2 ? std::make_pair(v1, v2) : std::make_pair(v2, v1);
++            seam[c] = seamSet.count(key) ? 1 : 0;
++        }
++    };
++    markSeam(M);
++
+     GEO::Attribute<GEO::vec3> B(M.facets.attributes(), "B");
+     if (nullptr == m_triangleFieldVectors) {
+         GEO::Mesh originalM;
+         makeMesh(originalM, *m_vertices, *m_triangles);
++        markSeam(originalM); // so the frame field aligns to seams
+ 
+         GEO::FrameField FF;
+         FF.set_use_spatial_search(false);
+diff --git a/src/AutoRemesher/parameterizer.h b/src/AutoRemesher/parameterizer.h
+index 0628e49..e82f3fc 100644
+--- a/src/AutoRemesher/parameterizer.h
++++ b/src/AutoRemesher/parameterizer.h
+@@ -22,6 +22,7 @@
+ #include <AutoRemesher/Vector2>
+ #include <AutoRemesher/Vector3>
+ #include <map>
++#include <utility>
+ #include <vector>
+ 
+ namespace AutoRemesher {
+@@ -64,12 +65,21 @@ public:
+         m_sharpEdgeDegrees = degrees;
+     }
+ 
++    // Face-group steering: undirected pairs of vertex indices (into *vertices)
++    // whose edge is a group seam. quad_cover is forced to snap iso-lines to these,
++    // so quad edge loops follow the painted group borders. Pointer not owned.
++    void setSeamEdges(const std::vector<std::pair<size_t, size_t>>* seamEdges)
++    {
++        m_seamEdges = seamEdges;
++    }
++
+     bool parameterize();
+ 
+ private:
+     const std::vector<Vector3>* m_vertices = nullptr;
+     const std::vector<std::vector<size_t>>* m_triangles = nullptr;
+     const std::vector<Vector3>* m_triangleFieldVectors = nullptr;
++    const std::vector<std::pair<size_t, size_t>>* m_seamEdges = nullptr;
+     std::vector<std::vector<Vector2>>* m_triangleUvs = nullptr;
+     double m_scaling = 1.0;
+     double m_adaptivity = 0.5;

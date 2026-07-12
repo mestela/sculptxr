@@ -1,0 +1,20 @@
+[package]
+name = "quadrs"
+version = "1.0.0"
+edition = "2021"
+description = "Experimental quad remeshing library and tools based on Instant Meshes"
+documentation = "https://docs.rs/quadrs"
+readme = "README.md"
+repository = "https://github.com/vidstige/quadrs"
+license = "MIT"
+keywords = ["mesh", "geometry", "remeshing", "quad"]
+categories = ["graphics", "algorithms"]
+include = [
+    "Cargo.toml",
+    "LICENSE",
+    "README.md",
+    "src/**/*.rs",
+]
+
+[dependencies]
+glam = { version = "0.32.1", default-features = false, features = ["std"] }

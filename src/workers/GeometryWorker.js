@@ -1692,12 +1692,12 @@ function remeshQuads(msg) {
 
   const wasm = globalThis.wasmModule;
   const vertices = msg.v;
-  
+
   // remesh_quads_wasm expects 4-padded faces always (even for triangles)
   const finalFaces = msg.f;
-  const stride = 4;
 
   const targetFaces = msg.targetFaces;
+  const steeringWeight = msg.steeringWeight === undefined ? 1.0 : msg.steeringWeight;
 
   const vLen = vertices.length;
   const fLen = finalFaces.length;
@@ -1708,11 +1708,21 @@ function remeshQuads(msg) {
 
   new Float32Array(wasm.memory.buffer, vPtr, vLen).set(vertices);
   new Uint32Array(wasm.memory.buffer, fPtr, fLen).set(finalFaces);
+
+  // Face-group steering: one u32 per face (fLen / 4). Null pointer (0) = unsteered.
+  let gPtr = 0;
+  const nbFaces = fLen / 4;
+  if (msg.groups && msg.groups.length >= nbFaces) {
+    gPtr = wasm.alloc(nbFaces * 4);
+    new Uint32Array(wasm.memory.buffer, gPtr, nbFaces).set(msg.groups.subarray(0, nbFaces));
+  }
   const t_copy_in = performance.now();
 
   const t_exe_start = performance.now();
-  const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, targetFaces, stride);
+  const resPtr = wasm.remesh_quads_wasm(vPtr, vLen, fPtr, fLen, gPtr, targetFaces, steeringWeight);
   const t_exe_end = performance.now();
+
+  if (gPtr !== 0) wasm.dealloc(gPtr, nbFaces * 4);
 
   if (resPtr === 0) {
     console.error("remesh_quads_wasm FAILED");

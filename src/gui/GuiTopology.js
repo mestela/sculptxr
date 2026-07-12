@@ -62,9 +62,19 @@ class GuiMultiresolution {
     menu.addTitle('Voxel Conversion');
     menu.addButton('Convert Mesh to Voxels', this, 'meshToVoxel');
 
+    // face groups (steer the quad remesh along painted borders)
+    this._group = 1;
+    this._steeringWeight = 1.0;
+    menu.addTitle('Face Groups');
+    menu.addButton('Paint Groups', this, 'activatePaintGroup');
+    menu.addSlider('Active Group', this._group, this.onGroupChanged.bind(this), 1, 8, 1);
+    this._ctrlShowGroups = menu.addCheckbox('Show Groups', false, this.toggleShowGroups.bind(this));
+
     // quad remeshing
+    this._quadSymmetry = false;  // remesh one half across X=0 then mirror+weld
     menu.addTitle('Quad Remeshing');
     menu.addSlider('Target Faces', this, '_targetFaces', 100, 10000, 100);
+    menu.addSlider('Group Steering', this._steeringWeight, this.onSteeringChanged.bind(this), 0, 1, 0.05);
     menu.addButton('Quadremesh', this, 'remeshQuads');
 
     menu.addTitle('Mesh Validation');
@@ -97,7 +107,41 @@ class GuiMultiresolution {
     const sculptMgr = main.getSculptManager();
     if (sculptMgr.isProcessingQuads && sculptMgr.isProcessingQuads()) return; // Prevent duplicate clicks!
 
-    sculptMgr.remeshQuads(this._targetFaces);
+    sculptMgr.remeshQuads(this._targetFaces, this._steeringWeight, this._quadSymmetry);
+  }
+
+  // Called by the desktop topology panel's symmetry toggle.
+  setQuadSymmetry(on) {
+    this._quadSymmetry = !!on;
+  }
+
+  // Select the face-group paint brush and sync its active group id.
+  activatePaintGroup() {
+    var main = this._main;
+    var mgr = main.getSculptManager();
+    var tool = mgr.getTool(Enums.Tools.PAINT_GROUP);
+    if (tool) tool.setGroup(this._group);
+    mgr.setToolIndex(Enums.Tools.PAINT_GROUP);
+    var mesh = main.getMesh();
+    if (mesh) mesh.setShowFacesGroups(true);
+    if (this._ctrlShowGroups) this._ctrlShowGroups.setValue(true, true);
+    main.render();
+  }
+
+  onGroupChanged(val) {
+    this._group = val | 0;
+    var tool = this._main.getSculptManager().getTool(Enums.Tools.PAINT_GROUP);
+    if (tool) tool.setGroup(this._group);
+  }
+
+  onSteeringChanged(val) {
+    this._steeringWeight = val;
+  }
+
+  toggleShowGroups(bool) {
+    var mesh = this._main.getMesh();
+    if (mesh) mesh.setShowFacesGroups(bool);
+    this._main.render();
   }
 
   validateMesh() {

@@ -2,6 +2,13 @@ import { defineConfig } from 'vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { resolve } from 'path';
 
+// HTTP=1 npm run dev  → serve plain HTTP (no self-signed cert). Use this for the
+// `adb reverse` → GalaxyXR workflow: the headset hits http://localhost:8080, and
+// localhost is a secure context, so WebXR + SharedArrayBuffer still work with no cert
+// warning. Default (unset) stays HTTPS so at-home LAN-IP testing keeps a secure context
+// (HTTP over a LAN IP would NOT be a secure context and would break WebXR/SAB).
+const useHttp = process.env.HTTP === '1';
+
 export default defineConfig({
   base: './',
   resolve: {
@@ -15,7 +22,7 @@ export default defineConfig({
     }
   },
   plugins: [
-    basicSsl()
+    ...(useHttp ? [] : [basicSsl()])
   ],
   worker: {
     format: 'es'
@@ -32,7 +39,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // Listen on all network interfaces
     port: 8080,
-    https: true,
+    https: !useHttp,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

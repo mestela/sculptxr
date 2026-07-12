@@ -252,6 +252,14 @@ class Mesh {
     return this._meshData._facesTagFlags;
   }
 
+  getFacesGroups() {
+    return this._meshData._facesGroups;
+  }
+
+  setFacesGroups(groups) {
+    this._meshData._facesGroups = groups;
+  }
+
   getFaceEdges() {
     return this._meshData._faceEdges;
   }
@@ -684,6 +692,13 @@ class Mesh {
     this._meshData._faceNormalsXYZ = new Float32Array(nbFaces * 3);
     this._meshData._faceCentersXYZ = new Float32Array(nbFaces * 3);
     this._meshData._facesTagFlags = new Int32Array(nbFaces);
+
+    // _facesGroups is persistent (unlike the transient tag flags): preserve any
+    // existing group ids where the face count is unchanged, else default to 0.
+    var oldGroups = this._meshData._facesGroups;
+    var newGroups = new Int32Array(nbFaces);
+    if (oldGroups) newGroups.set(oldGroups.subarray(0, Math.min(oldGroups.length, nbFaces)));
+    this._meshData._facesGroups = newGroups;
 
     this._meshData._facePosInLeaf = new Uint32Array(nbFaces);
     var faceLeaf = this._meshData._faceLeaf = new Array(nbFaces);
@@ -1316,10 +1331,13 @@ class Mesh {
   }
 
   /** Return wireframe array (or compute it if not up to date) */
-  getWireframe() {
+  getWireframe(forceIndexed) {
     var nbEdges = this.getNbEdges();
     var cdw;
-    var useDrawArrays = this.isUsingDrawArrays();
+    // The wireframe can always render from the indexed vertex layout, independent of
+    // whether the main mesh is drawn via draw-arrays (group view). forceIndexed keeps
+    // it off the draw-arrays layout entirely (that path desynced with the DA buffer).
+    var useDrawArrays = forceIndexed ? false : this.isUsingDrawArrays();
     if (useDrawArrays) {
       if (this._meshData._drawArraysWireframe && this._meshData._drawArraysWireframe.length === nbEdges * 2) {
         return this._meshData._drawArraysWireframe;
@@ -1335,7 +1353,10 @@ class Mesh {
     var fAr = this.getFaces();
     var feAr = this.getFaceEdges();
     var nbFaces = this.getNbFaces();
-    var facesToTris = this.getFacesToTriangles();
+    // Match updateDrawArrays: pure-triangle meshes don't maintain _facesToTriangles
+    // (it stays zero-filled), so fall back to the face index directly. Reading the
+    // stale array here collapsed every draw-arrays wireframe edge onto triangle 0.
+    var facesToTris = this.hasOnlyTriangles() ? null : this.getFacesToTriangles();
 
     var nbLines = 0;
     var tagEdges = new Uint8Array(nbEdges);
@@ -1348,7 +1369,7 @@ class Mesh {
       var isQuad = iv4 !== Utils.TRI_INDEX;
 
       if (useDrawArrays) {
-        var idTri = facesToTris[i] * 3;
+        var idTri = (facesToTris ? facesToTris[i] : i) * 3;
         iv1 = idTri;
         iv2 = idTri + 1;
         iv3 = idTri + 2;
@@ -1663,11 +1684,18 @@ class Mesh {
     }
     // console.log("Mesh: updateDrawArrays called", full ? "FULL" : "PARTIAL", full ? this.getNbFaces() : iFaces.length);
 
+    // Group-view: tint each face by its group id instead of its vertex colors.
+    var showGroups = this._renderData._showFacesGroups && this._meshData._facesGroups;
+    var groupsAr = showGroups ? this._meshData._facesGroups : null;
+    var groupCol = showGroups ? [0.0, 0.0, 0.0] : null;
+
     var nbFaces = full ? this.getNbFaces() : iFaces.length;
     for (var i = 0; i < nbFaces; ++i) {
       var idFace = full ? i : iFaces[i];
       var ftt = facesToTris ? facesToTris[idFace] : idFace;
       var vId = ftt * 9;
+
+      if (showGroups) this.getFaceGroupColor(groupsAr[idFace], groupCol);
 
       idFace *= 4;
       var id1 = fAr[idFace] * 3;
@@ -1685,16 +1713,23 @@ class Mesh {
       cdv[vId + 7] = vAr[id3 + 1];
       cdv[vId + 8] = vAr[id3 + 2];
 
-      // color
-      cdc[vId] = cAr[id1];
-      cdc[vId + 1] = cAr[id1 + 1];
-      cdc[vId + 2] = cAr[id1 + 2];
-      cdc[vId + 3] = cAr[id2];
-      cdc[vId + 4] = cAr[id2 + 1];
-      cdc[vId + 5] = cAr[id2 + 2];
-      cdc[vId + 6] = cAr[id3];
-      cdc[vId + 7] = cAr[id3 + 1];
-      cdc[vId + 8] = cAr[id3 + 2];
+      // color (per-face group tint when group-view is on, else per-vertex colors)
+      if (showGroups) {
+        var gr = groupCol[0], gg = groupCol[1], gb = groupCol[2];
+        cdc[vId] = cdc[vId + 3] = cdc[vId + 6] = gr;
+        cdc[vId + 1] = cdc[vId + 4] = cdc[vId + 7] = gg;
+        cdc[vId + 2] = cdc[vId + 5] = cdc[vId + 8] = gb;
+      } else {
+        cdc[vId] = cAr[id1];
+        cdc[vId + 1] = cAr[id1 + 1];
+        cdc[vId + 2] = cAr[id1 + 2];
+        cdc[vId + 3] = cAr[id2];
+        cdc[vId + 4] = cAr[id2 + 1];
+        cdc[vId + 5] = cAr[id2 + 2];
+        cdc[vId + 6] = cAr[id3];
+        cdc[vId + 7] = cAr[id3 + 1];
+        cdc[vId + 8] = cAr[id3 + 2];
+      }
 
       // material
       cdm[vId] = mAr[id1];
@@ -1735,16 +1770,22 @@ class Mesh {
       cdv[vId + 7] = vAr[id4 + 1];
       cdv[vId + 8] = vAr[id4 + 2];
 
-      // colors
-      cdc[vId] = cAr[id1];
-      cdc[vId + 1] = cAr[id1 + 1];
-      cdc[vId + 2] = cAr[id1 + 2];
-      cdc[vId + 3] = cAr[id3];
-      cdc[vId + 4] = cAr[id3 + 1];
-      cdc[vId + 5] = cAr[id3 + 2];
-      cdc[vId + 6] = cAr[id4];
-      cdc[vId + 7] = cAr[id4 + 1];
-      cdc[vId + 8] = cAr[id4 + 2];
+      // colors (second triangle of the quad — same group tint as the first)
+      if (showGroups) {
+        cdc[vId] = cdc[vId + 3] = cdc[vId + 6] = groupCol[0];
+        cdc[vId + 1] = cdc[vId + 4] = cdc[vId + 7] = groupCol[1];
+        cdc[vId + 2] = cdc[vId + 5] = cdc[vId + 8] = groupCol[2];
+      } else {
+        cdc[vId] = cAr[id1];
+        cdc[vId + 1] = cAr[id1 + 1];
+        cdc[vId + 2] = cAr[id1 + 2];
+        cdc[vId + 3] = cAr[id3];
+        cdc[vId + 4] = cAr[id3 + 1];
+        cdc[vId + 5] = cAr[id3 + 2];
+        cdc[vId + 6] = cAr[id4];
+        cdc[vId + 7] = cAr[id4 + 1];
+        cdc[vId + 8] = cAr[id4 + 2];
+      }
 
       // materials
       cdm[vId] = mAr[id1];
@@ -2278,6 +2319,107 @@ class Mesh {
     return this._renderData._flatShading;
   }
 
+  getShowFacesGroups() {
+    return this._renderData._showFacesGroups;
+  }
+
+  setShowFacesGroups(bool) {
+    if (this._renderData._showFacesGroups === bool) return;
+    this._renderData._showFacesGroups = bool;
+    // The main mesh is left untouched (indexed, wireframe works). Group colours render as
+    // a separate non-indexed overlay child mesh — crisp per face, no draw-arrays fragility.
+    this.updateGroupOverlay();
+  }
+
+  // Rebuild the group-colour overlay: a non-indexed child mesh where every triangle of a
+  // face is painted that face's group colour (so each face reads solid — crisp per-face).
+  // Semi-transparent so the base shading + wireframe show through.
+  updateGroupOverlay() {
+    var rd = this._renderData;
+    if (!this.getShowFacesGroups() || !this._meshData._facesGroups) {
+      if (rd._groupOverlayMesh) rd._groupOverlayMesh.visible = false;
+      return;
+    }
+
+    var fAr = this.getFaces();
+    var vAr = this.getVertices();
+    var groups = this._meshData._facesGroups;
+    var nbFaces = this.getNbFaces();
+    var nbTris = this.getNbTriangles();
+
+    var pos = new Float32Array(nbTris * 9);
+    var col = new Float32Array(nbTris * 9);
+    var gcol = [0.0, 0.0, 0.0];
+    var t = 0;
+    var writeTri = (ia, ib, ic) => {
+      var o = t * 9;
+      var a = ia * 3, b = ib * 3, c = ic * 3;
+      pos[o] = vAr[a]; pos[o + 1] = vAr[a + 1]; pos[o + 2] = vAr[a + 2];
+      pos[o + 3] = vAr[b]; pos[o + 4] = vAr[b + 1]; pos[o + 5] = vAr[b + 2];
+      pos[o + 6] = vAr[c]; pos[o + 7] = vAr[c + 1]; pos[o + 8] = vAr[c + 2];
+      for (var j = 0; j < 9; j += 3) { col[o + j] = gcol[0]; col[o + j + 1] = gcol[1]; col[o + j + 2] = gcol[2]; }
+      t++;
+    };
+    for (var i = 0; i < nbFaces; ++i) {
+      this.getFaceGroupColor(groups[i], gcol);
+      var id = i * 4;
+      var a = fAr[id], b = fAr[id + 1], c = fAr[id + 2], d = fAr[id + 3];
+      writeTri(a, b, c);
+      if (d !== Utils.TRI_INDEX) writeTri(a, c, d);
+    }
+
+    if (!rd._groupOverlayMesh) {
+      // depthWrite:false so the (decorative, camera-pulled) overlay polygon doesn't write
+      // depth in FRONT of the wireframe LineSegments — polygon offset can't push lines, so
+      // an overlay that wrote depth would occlude the wireframe in group-paint mode.
+      var mat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.65,
+        depthTest: true, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -1.0, polygonOffsetUnits: -1.0
+      });
+      rd._groupOverlayMesh = new THREE.Mesh(new THREE.BufferGeometry(), mat);
+      rd._groupOverlayMesh.frustumCulled = false;
+      rd._groupOverlayMesh.renderOrder = 0.5; // above the base mesh, below the wireframe (1)
+      if (rd._threeMesh) rd._threeMesh.add(rd._groupOverlayMesh);
+    }
+    var geom = rd._groupOverlayMesh.geometry;
+    var posAttr = geom.getAttribute('position');
+    if (!posAttr || posAttr.array.length !== pos.length) {
+      geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    } else {
+      posAttr.array.set(pos); posAttr.needsUpdate = true;
+      var colAttr = geom.getAttribute('color'); colAttr.array.set(col); colAttr.needsUpdate = true;
+    }
+    rd._groupOverlayMesh.visible = true;
+  }
+
+  // Deterministic palette for group ids. Group 0 (unpainted) reads as neutral light gray;
+  // other ids get distinct hues via the golden-angle sequence. Writes rgb into out.
+  getFaceGroupColor(groupId, out) {
+    if (groupId <= 0) {
+      out[0] = out[1] = out[2] = 0.85;
+      return out;
+    }
+    var h = (groupId * 0.61803398875) % 1.0; // golden-ratio hue spread
+    var s = 0.55;
+    var v = 0.95;
+    var i = Math.floor(h * 6);
+    var f = h * 6 - i;
+    var p = v * (1 - s);
+    var q = v * (1 - f * s);
+    var t = v * (1 - (1 - f) * s);
+    switch (i % 6) {
+      case 0: out[0] = v; out[1] = t; out[2] = p; break;
+      case 1: out[0] = q; out[1] = v; out[2] = p; break;
+      case 2: out[0] = p; out[1] = v; out[2] = t; break;
+      case 3: out[0] = p; out[1] = q; out[2] = v; break;
+      case 4: out[0] = t; out[1] = p; out[2] = v; break;
+      default: out[0] = v; out[1] = p; out[2] = q; break;
+    }
+    return out;
+  }
+
   getShowWireframe() {
     return this._renderData._showWireframe;
   }
@@ -2583,10 +2725,12 @@ class Mesh {
         this.initFaceRings();
         this.initEdges();
       }
-      this.getWireframeBuffer().update(this.getWireframe(), this.getNbEdges() * 2);
+      // Always build the wireframe from the indexed layout so it's valid regardless of
+      // the main mesh's render mode (group view forces draw-arrays on the main mesh).
+      this.getWireframeBuffer().update(this.getWireframe(true), this.getNbEdges() * 2);
 
       // Revert to pure quad edge rendering using THREE.LineSegments to suppress diagonal triangulation
-      var edgeIndices = this.getWireframe();
+      var edgeIndices = this.getWireframe(true);
 
       // Fallback: derive edges from the render geometry's triangle index. The app-side
       // edge list isn't built for some meshes (e.g. the voxel SurfaceNets output), which
@@ -2627,10 +2771,17 @@ class Mesh {
           }
 
           const geom = this._renderData._wireframeMesh.geometry;
-          // Always rebind position to the CURRENT geometry — the voxel mesh replaces its
-          // BufferGeometry on every edit, which would otherwise leave the wireframe stale.
-          const pos = _g && _g.getAttribute('position');
-          if (pos && geom.getAttribute('position') !== pos) geom.setAttribute('position', pos);
+          // Bind to the INDEXED vertex positions — the wireframe edges are built from the
+          // indexed layout (getWireframe(true)), so position + indices always match, no
+          // matter the main mesh's render mode. (Sharing the main geom's position went out
+          // of sync in draw-arrays/group view → "vertex buffer is not big enough".)
+          const wfVerts = this.getVertices();
+          const wfPos = geom.getAttribute('position');
+          if (!wfPos || wfPos.array !== wfVerts) {
+              geom.setAttribute('position', new THREE.BufferAttribute(wfVerts, 3));
+          } else {
+              wfPos.needsUpdate = true;
+          }
           if (!geom.index || geom.index.array !== edgeIndices) {
               geom.setIndex(new THREE.BufferAttribute(edgeIndices, 1));
           }
@@ -2703,6 +2854,11 @@ class Mesh {
       this.initTexCoordsDataFromOBJData(mesh.getTexCoords(), mesh.getFacesTexCoord());
     }
 
+    // Per-face group ids (steers guided quad remesh). Deep-copy so the clone owns them —
+    // must be set before init() so allocateArrays preserves it to nbFaces.
+    var srcGroups = mesh.getFacesGroups ? mesh.getFacesGroups() : null;
+    if (srcGroups) this.setFacesGroups(srcGroups.slice());
+
     this._isVoxel = mesh._isVoxel;
 
     this.init();
@@ -2710,6 +2866,12 @@ class Mesh {
 
     this.copyTransformData(mesh);
     this.copyRenderConfig(mesh);
+
+    // Mirror the group-view state so a clone of a mesh that's showing groups also shows
+    // them (independent overlay), instead of the original appearing to "lose" them.
+    if (mesh.getShowFacesGroups && mesh.getShowFacesGroups()) {
+      this.setShowFacesGroups(true);
+    }
   }
 
   optimize() {
