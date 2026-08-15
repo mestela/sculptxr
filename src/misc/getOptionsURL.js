@@ -137,6 +137,12 @@ var getOptionsURL = function () {
   // misc
   options.language = getVal('language', undefined); // english/chinese/korean/japanese/russian/turkish/swedish/french/german
   options.scalecenter = queryBool(getVal('scalecenter'), false);
+  options.nomadHost = getVal('nomadHost', ''); // last Nomad Link address, so a refresh reconnects in one tap
+  options.nomadLiveSend = queryBool(getVal('nomadLiveSend'), false);
+  options.sculptLocked = queryBool(getVal('sculptLocked'), false); // "do nothing" mode
+  // Nomad units -> SculptXR units. Half of Utils.SCALE: a whole Nomad scene is
+  // roughly one unit, and normalising it to a full 100 arrives too big to work on.
+  options.nomadScale = queryNumber(getVal('nomadScale'), 0.01, 10000, 50);
 
   // display
   options.grid = queryBool(getVal('grid'), true);

@@ -1,3 +1,16 @@
+# v3.17.0
+**Nomad Link — a live, two-way connection to Nomad Sculpt.** SculptXR now speaks Nomad's own bridge protocol (the same one the Blender and Houdini bridges use), so a sculpt can move between an iPad and a headset while you work: sculpt in Nomad and watch it update in VR, retopologise or use the low-poly tools here and push it back.
+
+- **Feature — connect to Nomad.** *Files → Nomad Link*: enter the address from Nomad's Link menu and press **Connect**. Pairing is approved once on the device and remembered; the address is remembered too, so a reload reconnects in one tap. **Get scene** / **Get selection** pull geometry across.
+- **Feature — live receive.** Each completed stroke in Nomad arrives as a sparse update (only the vertices it moved) and is applied in place, so a heavy scene stays cheap to follow.
+- **Feature — send back.** **Send selected to Nomad** pushes the selected mesh, replacing the object it came from — one undo step over there. Quads stay quads, and face groups, UVs, vertex colour, roughness/metalness and the sculpt mask all survive the round trip.
+- **Feature — live send.** With **Send edits live** ticked, every finished stroke goes to Nomad as a sparse update; anything that changes topology (remesh, weld, subdivide) sends the whole mesh instead. New meshes made here appear in Nomad on their first stroke, deletions propagate both ways, and undo/redo travels too.
+- **Feature — instances.** Nomad's shared-geometry placements (mirrored eyes and the like) arrive as real linked instances — they share one mesh, so sculpting either updates both.
+- **Feature — sculpt lock.** A "do nothing" mode in *Sculpting → Safety* and the VR radial menu: every sculpt input is ignored until you unlock. For when hand tracking grabs a stroke you didn't mean.
+- **Note — connect before entering VR.** The browser asks permission to reach a device on your local network, and that prompt cannot be answered from inside a headset session.
+- **Note — scale.** A Nomad scene is about one unit across, so linked meshes are scaled up on arrival (`?nomadScale=50` by default; only object transforms are scaled, so round trips can't drift).
+- **Known gaps:** transforms made in SculptXR are not sent back; Nomad's procedural modifiers stay on Nomad's side; materials, textures, lights and cameras are ignored.
+
 # v3.16.0
 **Editable shape-layer keys + timeline clipboard shortcuts.** Follow-up to the v3.15 animation layers (#34): the keys on a layer row are now first-class dopesheet keys you can select, move, delete, and box-transform — and the desktop copy/cut/paste/delete shortcuts now work on every key type.
 

@@ -851,6 +851,24 @@ export function buildMenuHTML_files(main) {
       <label class="mm-check-row"><span>sRGB color</span><input type="checkbox" id="mm-import-srgb"${main._vertexSRGB ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     </div>
 
+    <div class="mm-section-title">Nomad Link</div>
+    <div class="mm-row">
+      <span class="mm-lbl">Address</span>
+      <input type="text" id="mm-nomad-host" placeholder="10.0.0.138" value="${main.getNomadLink?.()._host || getOptionsURL().nomadHost || ''}" style="flex:1;min-width:0">
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-nomad-connect">Connect</button>
+      <button class="mm-choice" id="mm-nomad-disconnect">Disconnect</button>
+    </div>
+    <div class="mm-choice-grid cols-2">
+      <button class="mm-choice" id="mm-nomad-get-scene">Get scene</button>
+      <button class="mm-choice" id="mm-nomad-get-selection">Get selection</button>
+    </div>
+    <button class="mm-action-btn" id="mm-nomad-send">Send selected to Nomad</button>
+    <label class="mm-check-row"><span>Send edits live</span><input type="checkbox" id="mm-nomad-live"${main._nomadLiveSend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
+    <div id="mm-nomad-status" style="color:#a6adc8;font-size:11px;margin:3px 0">${main.getNomadLink?.().getMessage() || 'Disconnected'}</div>
+    <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Connect before entering VR — the browser's permission prompt can't be answered from inside a headset session.</div>
+
     <div class="mm-section-title">Save</div>
     <div class="mm-choice-grid cols-5">
       <button class="mm-choice" id="mm-export-sxr">sxr</button>
@@ -1713,6 +1731,12 @@ export function buildSectionHTML_sculpting(main) {
     <div class="mm-section-title">Mesh Edit</div>
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
     ${brushHTML}
+    <div class="mm-section-title">Safety</div>
+    <button class="mm-toggle${window._sculptLocked ? ' active' : ''}" id="mm-sculpt-lock"
+      title="Ignore every sculpt input until unlocked — for when hand tracking or a stray controller would otherwise damage the mesh.">
+      Sculpt lock ${window._sculptLocked ? '✓ On (tools do nothing)' : 'Off'}
+    </button>
+
     <div class="mm-section-title">Symmetry</div>
     <button class="mm-toggle${symOn ? ' active' : ''}" id="mm-sym-toggle">
       Mirror Symmetry ${symOn ? '✓ On' : 'Off'}
@@ -2939,6 +2963,12 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
 export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repaintFn, sliderDirtyFn = null) {
   const sm = main.getSculptManager?.() ?? main._sculptManager;
 
+  el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
+    window._sculptLocked = !window._sculptLocked;
+    getOptionsURL.saveOption('sculptLocked', !!window._sculptLocked, 0);
+    repaintFn();
+  });
+
   el.querySelectorAll('[data-tool-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = parseInt(btn.dataset.toolId, 10);
@@ -3275,6 +3305,41 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
 
   q('#mm-exit-vr')?.addEventListener('click', () => { main._xrSession?.end(); });
   q('#mm-browser-saves')?.addEventListener('click', () => onBrowserSavesOpen?.());
+
+  // ---- Nomad Link ----
+  const link = main.getNomadLink?.();
+  if (link) {
+    const status = q('#mm-nomad-status');
+    // Write straight to the node instead of rebuilding: a rebuild would blow away
+    // the address field mid-typing.
+    link.onStatus = (state, message) => { if (status) status.textContent = message; };
+    link.onLog = (text) => { if (status) status.textContent = text; };
+
+    q('#mm-nomad-connect')?.addEventListener('click', () => {
+      const host = (q('#mm-nomad-host')?.value || '').trim();
+      if (!host) { status.textContent = 'Enter the address shown in Nomad\'s Link menu'; return; }
+      getOptionsURL.saveOption('nomadHost', host, 0); // so a refresh reconnects with one tap
+      link.connect(host, undefined);
+    });
+    q('#mm-nomad-disconnect')?.addEventListener('click', () => link.disconnect());
+    q('#mm-nomad-get-scene')?.addEventListener('click', () => {
+      if (!link.requestScene()) status.textContent = 'Connect first';
+    });
+    q('#mm-nomad-get-selection')?.addEventListener('click', () => {
+      if (!link.requestSelection()) status.textContent = 'Connect first';
+    });
+    q('#mm-nomad-live')?.addEventListener('change', (e) => {
+      main._nomadLiveSend = e.target.checked;
+      getOptionsURL.saveOption('nomadLiveSend', main._nomadLiveSend, 0);
+      status.textContent = main._nomadLiveSend
+        ? 'Edits will go to Nomad as you finish each stroke'
+        : 'Live sending off';
+    });
+    q('#mm-nomad-send')?.addEventListener('click', () => {
+      if (!link.isConnected()) status.textContent = 'Connect first';
+      else if (!main.sendMeshToNomad()) status.textContent = 'Select a mesh to send';
+    });
+  }
 
   q('#mm-clear-scene')?.addEventListener('click', () => {
     if (!main._clearSceneConfirm) {

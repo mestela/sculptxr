@@ -142,6 +142,9 @@ class StateManager {
     this._curUndoIndex--;
     if (state.squash === true)
       this.undo();
+    // An undo changes geometry without a stroke, so the Nomad link would never
+    // hear about it (no-op unless live sending is on).
+    this._main.onNomadLocalEdit?.(state);
   }
 
   redo() {
@@ -155,6 +158,7 @@ class StateManager {
     this._redos.pop();
     if (this._redos.length && this._redos[this._redos.length - 1].squash === true)
       this.redo();
+    this._main.onNomadLocalEdit?.(state);
   }
 
   reset() {

@@ -45,6 +45,8 @@ import { VrNumpad               } from './gui/htmlvr/VrNumpad.js';
 import { VrKeyboard             } from './gui/htmlvr/VrKeyboard.js';
 import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
+import NomadLink                  from './link/NomadLink.js';
+import NomadImport                from './link/NomadImport.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -336,6 +338,9 @@ class Scene {
 
     // [Step 1] Hand Swap Feature
     this._dominantHand = getOptionsURL().leftHandMode ? 'left' : 'right'; // 'right' or 'left'
+    this._nomadLiveSend = !!getOptionsURL().nomadLiveSend; // push each finished stroke to Nomad
+    window._sculptLocked = !!getOptionsURL().sculptLocked;  // "do nothing" mode (SculptManager.start)
+    this._nomadScale = getOptionsURL().nomadScale || 50; // Nomad units -> SculptXR units
     this._lockSelection = false; // Lock Selection State
     this._vrIsNegative = false; // Universal Sub Mode State
 
@@ -2845,10 +2850,30 @@ class Scene {
     else if (fileType === 'stl') newMeshes = Import.importSTL(fileData, this._gl);
     else if (fileType === 'ply') newMeshes = Import.importPLY(fileData, this._gl);
 
-    var nbNewMeshes = newMeshes.length;
-    if (nbNewMeshes === 0) {
+    if (newMeshes.length === 0) {
       return;
     }
+
+    return this.addImportedMeshes(newMeshes, (added) => {
+      // Reconstruct frame-group structure (SR + voxel frames) now that the meshes are in
+      // the scene — deserialize needs them in _meshes for setMeshParent/getMeshes.
+      if (fileType === 'sgl' && this._frameGroup) {
+        try { this._frameGroup.deserialize(fileData, added); }
+        catch (e) { console.error('[FrameGroup] import restore failed', e); }
+      }
+    });
+  }
+
+  /**
+   * Take freshly built meshes (from a file import or the Nomad link), wrap and
+   * initialise them, put them in the scene, and commit one undo step.
+   * `beforeCommit` runs after the meshes are in `_meshes` but before the undo
+   * state is pushed, for importers that need to restore extra structure.
+   */
+  addImportedMeshes(newMeshes, beforeCommit, opts) {
+    opts = opts || {};
+    var nbNewMeshes = newMeshes.length;
+    if (nbNewMeshes === 0) return;
 
     var meshes = this._meshes;
     for (var i = 0; i < nbNewMeshes; ++i) {
@@ -2898,26 +2923,294 @@ class Scene {
       }
     }
 
-    if (this._autoMatrix) {
+    // Linked meshes carry Nomad's own transforms and arrive ONE AT A TIME, so
+    // normalising would fit each object to the view separately and scatter the
+    // scene. Their placement is Nomad's to decide.
+    if (this._autoMatrix && !opts.keepTransform) {
       this.normalizeAndCenterMeshes(newMeshes);
     }
 
-    // Reconstruct frame-group structure (SR + voxel frames) now that the meshes are in
-    // the scene — deserialize needs them in _meshes for setMeshParent/getMeshes.
-    if (fileType === 'sgl' && this._frameGroup) {
-      try { this._frameGroup.deserialize(fileData, newMeshes); }
-      catch (e) { console.error('[FrameGroup] import restore failed', e); }
-    }
+    if (beforeCommit) beforeCommit(newMeshes);
 
     this._stateManager.pushStateAdd(newMeshes);
     this.setMesh(meshes[meshes.length - 1]);
     // Keep the restored viewpoint if the file carried camera framing (v11+); otherwise
     // auto-frame the loaded meshes.
+    // Live link updates must not move the view: a mesh refresh can arrive at any
+    // moment, and re-framing mid-sculpt lurches the world (badly so in a headset).
     if (this._loadedCameraFraming) this._loadedCameraFraming = false;
-    else this.resetCameraMeshes(newMeshes);
+    else if (!opts.keepCamera) this.resetCameraMeshes(newMeshes);
     this._camera.optimizeNearFar(this.computeBoundingBoxScene());
     this._refreshDesktopCameraProjection();
     return newMeshes;
+  }
+
+  /**
+   * The Nomad Link client, created on first use. Meshes Nomad sends land in the
+   * scene as ordinary objects, one undo step each.
+   */
+  getNomadLink() {
+    if (!this._nomadLink) {
+      this._nomadLink = new NomadLink();
+      this._nomadLink.onMesh = (decoded) => {
+        // A mesh we already pulled comes back as a REFRESH, not a second copy.
+        // Remove-then-add is two undo steps rather than one; that is deliberate,
+        // since the alternative is a custom state that has to re-attach the old
+        // object's Three.js side by hand.
+        var previous = this.findNomadMesh(decoded.meshId);
+        if (previous) {
+          this.removeMeshes([previous]);
+          this._stateManager.pushStateRemove([previous]);
+        }
+
+        // Keep the view where it is, unless this is the first thing to arrive —
+        // then framing it is the helpful thing to do.
+        var isFirst = this._meshes.length === 0;
+        var added = this.addImportedMeshes(
+          [NomadImport.buildMesh(decoded, this._gl)], null,
+          { keepTransform: true, keepCamera: !isFirst });
+        if (added && added[0]) {
+          // Nomad's placement, applied verbatim. Without this every object lands at
+          // the origin unscaled — invisible on the head (its matrix is identity) but
+          // obvious on anything positioned, like the eyes.
+          this._applyNomadMatrix(added[0], decoded.worldMatrix);
+          // Stamp the wrapper too — findNomadMesh searches _meshes, which holds
+          // Multimeshes, and addImportedMeshes only carries the label across.
+          added[0]._nomadMeshId = decoded.meshId;
+          added[0]._nomadGeometryId = decoded.geometryId;
+          // What Nomad believes the topology is; a later mismatch means our edits
+          // changed it and a delta would be meaningless.
+          added[0]._nomadVertexCount = decoded.nbVertices;
+        }
+        this.render();
+      };
+
+      this._nomadLink.onDelta = (delta) => this.applyNomadDelta(delta);
+
+      this._nomadLink.onInstance = (header) => this.addNomadInstance(header);
+
+      this._nomadLink.onObjectDelete = (nomadMeshId) => {
+        var mesh = this.findNomadMesh(nomadMeshId);
+        if (!mesh) return;
+        this.removeMeshes([mesh]);
+        this._stateManager.pushStateRemove([mesh]);
+        this.render();
+      };
+
+      this._nomadPendingSends = {};
+      this._nomadLink.onAck = (header) => {
+        // Adopt the id Nomad filed the mesh under, so later edits address the same
+        // object. Keyed by request id: with live sending on there can be several
+        // sends outstanding, and a single slot would misfile the acks.
+        var sent = this._nomadPendingSends[header.request_id];
+        delete this._nomadPendingSends[header.request_id];
+        if (sent && header.mesh_id) {
+          sent._nomadMeshId = header.mesh_id;
+          var inner = sent.getCurrentMesh ? sent.getCurrentMesh() : null;
+          if (inner) inner._nomadMeshId = header.mesh_id;
+        }
+      };
+    }
+    return this._nomadLink;
+  }
+
+  /**
+   * A second (third, …) placement of geometry we already hold — Nomad's eyes,
+   * mirror-modifier halves and so on. Returns false when the geometry has not
+   * arrived yet, which makes the link fetch it.
+   *
+   * Uses SculptXR's own linked instances (shareData): the occurrences share one
+   * _meshData, so sculpting any of them updates them all, which is what being an
+   * instance means on both sides.
+   */
+  addNomadInstance(header) {
+    var geometryId = header.geometry_id;
+    if (!geometryId) return false;
+
+    var source = null;
+    for (var i = 0; i < this._meshes.length; ++i) {
+      if (this._meshes[i]._nomadGeometryId === geometryId) { source = this._meshes[i]; break; }
+    }
+    if (!source) return false;
+
+    // Built exactly like instanceSelection(): a bare MeshStatic, NOT wrapped in a
+    // Multimesh. shareData() already runs init()/initRender() on it, and wrapping
+    // it again produced an object that never rendered.
+    var inner = source.getCurrentMesh ? source.getCurrentMesh() : source;
+    var instance = new MeshStatic(inner.getGL());
+    instance.shareData(inner);
+    instance._permanentStaticLabel = header.name || 'Instance';
+    instance._nomadMeshId = header.mesh_id;
+    instance._nomadGeometryId = geometryId;
+    instance._nomadVertexCount = inner.getNbVertices();
+    instance._nomadWorldMatrix = header.world_matrix;
+    this._applyNomadMatrix(instance, header.world_matrix);
+
+    this.addNewMesh(instance);
+    this._refreshLinkOutliner?.();
+    this.render();
+    return true;
+  }
+
+  /**
+   * Apply one Nomad stroke to the mesh it belongs to. Returns false when it
+   * cannot be applied, which makes the link fetch the whole mesh instead:
+   *  - we do not have that object (never pulled, or deleted since)
+   *  - the vertex count disagrees, so our topology has diverged (a remesh, a
+   *    weld, a subdivide) and the incoming indices no longer mean anything
+   */
+  applyNomadDelta(delta) {
+    var wrapper = this.findNomadMesh(delta.meshId);
+    if (!wrapper) return false;
+
+    var mesh = wrapper.getCurrentMesh ? wrapper.getCurrentMesh() : wrapper;
+    if (!mesh || mesh.getNbVertices() !== delta.vertexCount) return false;
+
+    var indices = delta.indices;
+    var count = delta.count;
+    var vAr = mesh.getVertices();
+    var cAr = delta.colors ? mesh.getColors() : null;
+    var mAr = delta.mask ? mesh.getMaterials() : null;
+
+    for (var i = 0; i < count; ++i) {
+      var id = indices[i];
+      if (id >= delta.vertexCount) continue; // defensive: a stray index would corrupt neighbours
+      var k = id * 3;
+      var j = i * 3;
+      if (delta.positions) {
+        vAr[k] = delta.positions[j];
+        vAr[k + 1] = delta.positions[j + 1];
+        vAr[k + 2] = delta.positions[j + 2];
+      }
+      if (cAr) {
+        cAr[k] = delta.colors[j];
+        cAr[k + 1] = delta.colors[j + 1];
+        cAr[k + 2] = delta.colors[j + 2];
+      }
+      // Materials are [roughness, metalness, mask]; a delta only ever moves mask.
+      if (mAr) mAr[k + 2] = delta.mask[i];
+    }
+
+    // Sparse refresh: only the touched vertices and the faces around them, the
+    // same path a local brush stroke takes.
+    var iVerts = new Uint32Array(indices.buffer, indices.byteOffset, count);
+    var iFaces = mesh.getFacesFromVertices(iVerts);
+    mesh.updateGeometry(iFaces, iVerts);
+    if (cAr || mAr) mesh.updateDuplicateColorsAndMaterials(iVerts);
+    mesh.updateBuffers();
+    this.render();
+    return true;
+  }
+
+  /**
+   * Push the selected mesh to Nomad, replacing the object it came from.
+   * One send is one undo step over there, so this is a deliberate action rather
+   * than something that fires while sculpting.
+   */
+  sendMeshToNomad(wrapper) {
+    var link = this.getNomadLink();
+    if (!link.isConnected()) return false;
+
+    wrapper = wrapper || this._mesh;
+    if (!wrapper) return false;
+    var mesh = wrapper.getCurrentMesh ? wrapper.getCurrentMesh() : wrapper;
+    if (!mesh) return false;
+
+    // Ids live on the wrapper (stamped after import) but the geometry is on the
+    // inner mesh, so hand the encoder both.
+    var requestId = link.sendMesh(mesh, {
+      meshId: wrapper._nomadMeshId || mesh._nomadMeshId,
+      geometryId: wrapper._nomadGeometryId || mesh._nomadGeometryId,
+      name: wrapper._permanentStaticLabel || 'SculptXR',
+      worldMatrix: mesh._nomadWorldMatrix
+    });
+    if (!requestId) return false;
+
+    if (!this._nomadPendingSends) this._nomadPendingSends = {};
+    this._nomadPendingSends[requestId] = wrapper;
+    // Nomad now holds this topology, so the next stroke can go as a delta.
+    wrapper._nomadVertexCount = mesh.getNbVertices();
+    return true;
+  }
+
+  /**
+   * Tell Nomad about meshes deleted here, so the link does not leave orphans
+   * behind. Only for user-initiated deletes — the refresh path in onMesh also
+   * removes a mesh, and must NOT delete the object it is about to replace.
+   */
+  notifyNomadDeleted(meshes) {
+    // Gated on live sending like every other outbound edit, so "live off" keeps a
+    // single meaning: SculptXR changes nothing in Nomad except via the Send button.
+    if (!this._nomadLiveSend || !this._nomadLink || !this._nomadLink.isConnected()) return;
+    for (var i = 0; i < meshes.length; ++i) {
+      if (meshes[i]._nomadMeshId) this._nomadLink.sendDelete(meshes[i]._nomadMeshId);
+    }
+  }
+
+  /**
+   * Called when a local edit finishes (one completed stroke, one undo step).
+   * Mirrors what the Blender bridge does on its dirty-flush: a sparse delta when
+   * the topology still matches, a full mesh when it does not.
+   *
+   * SculptXR gets the touched-vertex set for free — the undo state already
+   * recorded exactly which vertices the stroke moved — so unlike Blender there
+   * is no snapshot to diff.
+   */
+  onNomadLocalEdit(state) {
+    if (!this._nomadLiveSend) return;
+    var link = this._nomadLink;
+    if (!link || !link.isConnected()) return;
+
+    // Undo/redo pass the state they applied: its mesh is the one that changed,
+    // which is not necessarily the selected one.
+    var wrapper = (state && state._mesh) || this.getMesh();
+    if (!wrapper) return;
+    var mesh = wrapper.getCurrentMesh ? wrapper.getCurrentMesh() : wrapper;
+    if (!mesh) return;
+
+    // A mesh made here has no Nomad id yet: send it whole and it appears in Nomad,
+    // and the ack gives us the id that later strokes address. (This is what the
+    // Blender bridge does for new objects.)
+    //
+    // A topology change (remesh, weld, subdivide) likewise invalidates every index
+    // Nomad holds, so the whole mesh has to go.
+    if (!wrapper._nomadMeshId || mesh.getNbVertices() !== wrapper._nomadVertexCount) {
+      this.sendMeshToNomad(wrapper);
+      return;
+    }
+
+    var source = state || this._stateManager.getCurrentState();
+    var moved = source && source._idVertState;
+    if (!moved || !moved.length) return;
+    link.claimSync();
+    link.sendDelta(mesh, moved, { meshId: wrapper._nomadMeshId });
+  }
+
+  /**
+   * Place a linked mesh: Nomad's own transform, scaled up into SculptXR's working
+   * units. Nomad's scene is roughly one unit tall, which lands about a centimetre
+   * high here — hence the multiplier (Utils.SCALE, the same figure the file
+   * importers normalise to).
+   *
+   * ONLY the object matrix is scaled. The vertices and Nomad's original
+   * world_matrix are both left untouched (`_nomadWorldMatrix`), so a send back
+   * needs no inverse and cannot accumulate scale drift.
+   */
+  _applyNomadMatrix(mesh, worldMatrix) {
+    var s = this._nomadScale || 1.0;
+    var m = mesh.getMatrix();
+    mat4.identity(m);
+    mat4.scale(m, m, [s, s, s]);
+    if (worldMatrix) mat4.multiply(m, m, worldMatrix);
+  }
+
+  /** The scene object that came from a given Nomad mesh id, if it is still here. */
+  findNomadMesh(nomadMeshId) {
+    if (!nomadMeshId) return null;
+    for (var i = 0; i < this._meshes.length; ++i) {
+      if (this._meshes[i]._nomadMeshId === nomadMeshId) return this._meshes[i];
+    }
+    return null;
   }
 
   clearScene() {
@@ -2958,6 +3251,7 @@ class Scene {
     // Expand to include FrameGroup children so the whole animated unit is deleted (and
     // recorded for undo) — not just the group null, which would leave orphaned frames.
     const toRemove = this._withDescendants(this._selectMeshes);
+    this.notifyNomadDeleted(toRemove);
     this.removeMeshes(toRemove);
     this._stateManager.pushStateRemove(toRemove.slice());
     this._selectMeshes.length = 0;
@@ -7375,6 +7669,11 @@ class Scene {
       { label: 'Dup',        icon: 'fa-clone',       enabled: hasSel,    run: () => this.duplicateSelection?.() }, // duplicate the object
       { label: 'Make Uniq',  icon: 'fa-link-slash',  enabled: linked,    run: () => this.makeUniqueSelection?.() },// break an instance link
       { label: 'Delete',     icon: 'fa-trash',       enabled: hasKeySel, run: () => tl()?.deleteSelectedKeys?.() },   // selected key(s), all types incl. #34 layers
+      // Reachable without leaving VR, which is the point: hand tracking grabbing a
+      // stroke mid-reach is exactly when you need to switch sculpting off fast.
+      { label: window._sculptLocked ? 'Unlock' : 'Sculpt Lock',
+        icon: window._sculptLocked ? 'fa-lock' : 'fa-lock-open', enabled: true,
+        run: () => { window._sculptLocked = !window._sculptLocked; } },
     ];
   }
 
