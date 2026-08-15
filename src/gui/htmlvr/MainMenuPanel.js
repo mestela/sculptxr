@@ -592,6 +592,16 @@ const CSS = `
   font-size: 11px; padding: 4px 5px; outline: none; text-align: right;
 }
 .mm-xf:focus, .mm-xf.hover { border-color: #89b4fa; }
+/* Free-text field (Nomad Link address). Same treatment as .mm-xf so it reads the
+   same through the VR colour LUT, but left-aligned and at the panel's body size —
+   an address is easier to read large. */
+.mm-text-input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: #11111b; color: #cdd6f4;
+  border: 1px solid #45475a; border-radius: 4px;
+  font-size: 13px; padding: 4px 6px; outline: none;
+}
+.mm-text-input:focus, .mm-text-input.hover { border-color: #89b4fa; }
 .mm-xf::-webkit-inner-spin-button, .mm-xf::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 /* Per-row bake button (freeze that component into the geometry), sits after the X/Y/Z fields. */
 .mm-xf-bake {
@@ -854,7 +864,7 @@ export function buildMenuHTML_files(main) {
     <div class="mm-section-title">Nomad Link</div>
     <div class="mm-row">
       <span class="mm-lbl">Address</span>
-      <input type="text" id="mm-nomad-host" placeholder="10.0.0.138" value="${main.getNomadLink?.()._host || getOptionsURL().nomadHost || ''}" style="flex:1;min-width:0">
+      <input type="text" id="mm-nomad-host" class="mm-text-input" placeholder="10.0.0.138" value="${main.getNomadLink?.()._host || getOptionsURL().nomadHost || ''}">
     </div>
     <div class="mm-choice-grid cols-2">
       <button class="mm-choice" id="mm-nomad-connect">Connect</button>
