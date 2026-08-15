@@ -124,7 +124,13 @@ pub fn extract_graph<M: RoSy4>(state: &FieldState) -> EmbeddedGraph {
             .filter_map(|&neighbor| root_to_index.get(&dsu.find(neighbor)).copied())
             .filter(|&neighbor| neighbor != index)
             .collect::<HashSet<_>>();
-        graph_adjacency[index] = neighbors.drain().map(TaggedLink::new).collect();
+        // Sort before building the adjacency Vec. Rust seeds its hasher per process, so
+        // draining a HashSet yields a different neighbour ORDER on every run; face
+        // extraction walks these lists in order, which made the whole remesh
+        // non-deterministic (and intermittently degenerate) for identical input.
+        let mut ordered = neighbors.drain().collect::<Vec<_>>();
+        ordered.sort_unstable();
+        graph_adjacency[index] = ordered.into_iter().map(TaggedLink::new).collect();
     }
 
     let mut graph = EmbeddedGraph {

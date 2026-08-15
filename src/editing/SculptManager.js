@@ -202,6 +202,12 @@ class SculptManager {
   start(ctrl) {
     var tool = this.getCurrentTool();
 
+    // Sculpt lock: a deliberate "do nothing" mode. Hand tracking (and stray
+    // controller input) can start a stroke while the user is doing something else
+    // entirely — reaching for the iPad, say — and tear up the mesh. Gate at start()
+    // so EVERY input route is covered: nothing has begun yet, so nothing to undo.
+    if (window._sculptLocked) return false;
+
     // Blendshape layer gate (desktop + VR both route through here): when a layer is
     // active for editing, all mesh deformation is captured into that layer's delta
     // — which is only correct while the layer is visible and held at weight 1. If
@@ -317,6 +323,10 @@ class SculptManager {
     // Linked instances share geometry (_meshData); after an edit, re-sync every sibling's
     // GPU buffers so the change shows on all occurrences.
     this._main.refreshLinkedSiblings?.(this._main.getMesh?.());
+
+    // One completed stroke is one edit to push over the Nomad link (no-op unless
+    // live send is on and this mesh came from Nomad).
+    this._main.onNomadLocalEdit?.();
   }
 
   preUpdate() {
@@ -581,40 +591,126 @@ class SculptManager {
     };
   }
 
-  // Mirror a (remeshed) half across X=0 and weld the seam: verts on the plane are shared,
-  // off-plane verts get a mirrored copy, mirrored faces get reversed winding. O(n).
+  // Mirror a (remeshed) half across X=0 and weld the seam.
+  //
+  // Seam vertices are identified TOPOLOGICALLY (they sit on the half's open boundary —
+  // the cut plane), not by an |x| < tol distance test. The remesher does not land the
+  // boundary row exactly on x=0, so a tolerance test misses verts that are near-but-
+  // outside it: those got a mirrored twin a hair away, leaving cracks, T-junctions and
+  // sliver faces at the seam. Matching by boundary identity makes the weld exact —
+  // every seam vert is shared, so no near-duplicate can be created. O(n).
   mirrorWeldAcrossX(v, f, c, tol) {
     const nbV = v.length / 3;
+    const nbF = f.length / 4;
+    const TRI = Utils.TRI_INDEX;
+
+    // Count edge uses; an open boundary edge is used exactly once.
+    const edgeKey = (a, b) => (a < b ? a * 4294967296 + b : b * 4294967296 + a);
+    const uses = new Map();
+    for (let i = 0; i < nbF; ++i) {
+      const o = i * 4, nv = (f[o + 3] === TRI) ? 3 : 4;
+      for (let j = 0; j < nv; ++j) {
+        const k = edgeKey(f[o + j], f[o + ((j + 1) % nv)]);
+        uses.set(k, (uses.get(k) || 0) + 1);
+      }
+    }
+
+    // Group the open-boundary edges into loops, then classify each LOOP as seam-or-not by
+    // its MEAN |x|. Per-vertex distance tests fail here: the remesher lets individual cut
+    // verts drift up to ~1.5 edge lengths off the plane, so any threshold either misses
+    // those (leaving them unwelded → holes) or is loose enough to swallow real holes.
+    // Averaging over the loop is immune to that drift — the cut loop's mean sits on the
+    // plane however much any single vert wanders, while a genuine hole elsewhere has a
+    // mean at its own location and is left alone.
+    const boundary = [];
+    const parent = new Map();
+    const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+    for (let i = 0; i < nbF; ++i) {
+      const o = i * 4, nv = (f[o + 3] === TRI) ? 3 : 4;
+      for (let j = 0; j < nv; ++j) {
+        const a = f[o + j], b = f[o + ((j + 1) % nv)];
+        if (uses.get(edgeKey(a, b)) !== 1) continue;
+        boundary.push(a, b);
+        if (!parent.has(a)) parent.set(a, a);
+        if (!parent.has(b)) parent.set(b, b);
+      }
+    }
+    for (let i = 0; i < boundary.length; i += 2) {
+      const ra = find(boundary[i]), rb = find(boundary[i + 1]);
+      if (ra !== rb) parent.set(ra, rb);
+    }
+    const loops = new Map();
+    for (let i = 0; i < boundary.length; ++i) {
+      const root = find(boundary[i]);
+      let L = loops.get(root);
+      if (!L) { L = { verts: new Set(), sum: 0 }; loops.set(root, L); }
+      if (!L.verts.has(boundary[i])) {
+        L.verts.add(boundary[i]);
+        L.sum += Math.abs(v[boundary[i] * 3]);
+      }
+    }
+    // Judge a loop against the mesh's own EDGE LENGTH, not its overall size. Boundary
+    // drift is proportional to edge length, so a radius-derived tolerance silently stops
+    // working as density drops: at coarse targets the cut loop's mean exceeds it, the
+    // loop is rejected as "not the seam", nothing welds at all, and the mirror comes back
+    // fully open. Half a median edge keeps the cut loop (mean drift is sub-edge at every
+    // density) while still sitting far below any genuine hole's own offset.
+    let medianEdge = 0;
+    {
+      const lens = [];
+      for (let i = 0; i < nbF; ++i) {
+        const o = i * 4, nv = (f[o + 3] === TRI) ? 3 : 4;
+        for (let j = 0; j < nv; ++j) {
+          const a = f[o + j] * 3, b = f[o + ((j + 1) % nv)] * 3;
+          const dx = v[a] - v[b], dy = v[a + 1] - v[b + 1], dz = v[a + 2] - v[b + 2];
+          lens.push(Math.sqrt(dx * dx + dy * dy + dz * dz));
+        }
+      }
+      lens.sort((p, q) => p - q);
+      medianEdge = lens.length ? lens[lens.length >> 1] : tol;
+    }
+    const planeGate = Math.max(tol, 0.5 * medianEdge);
+
+    const isSeam = new Uint8Array(nbV);
+    for (const L of loops.values()) {
+      if (L.verts.size < 3) continue;
+      if (L.sum / L.verts.size >= planeGate) continue;   // not the cut plane — a real hole
+      for (const idx of L.verts) isSeam[idx] = 1;
+    }
+
     const mirror = new Int32Array(nbV);
     const outV = Array.from(v);
     const outC = c ? Array.from(c) : null;
     let next = nbV;
     for (let i = 0; i < nbV; ++i) {
-      if (Math.abs(v[i * 3]) < tol) {
+      if (isSeam[i]) {
         outV[i * 3] = 0;          // snap seam exactly onto the plane
-        mirror[i] = i;            // shared — welded
+        mirror[i] = i;            // shared — welded by identity
       } else {
         mirror[i] = next++;
         outV.push(-v[i * 3], v[i * 3 + 1], v[i * 3 + 2]);
         if (outC) outC.push(c[i * 3], c[i * 3 + 1], c[i * 3 + 2]);
       }
     }
-    const nbF = f.length / 4;
-    const outF = new Uint32Array(f.length * 2);
-    outF.set(f);
+
+    const outF = [];
+    for (let i = 0; i < f.length; ++i) outF.push(f[i]);
     for (let i = 0; i < nbF; ++i) {
-      const o = i * 4, n = (nbF + i) * 4;
+      const o = i * 4;
       const a = f[o], b = f[o + 1], cc = f[o + 2], d = f[o + 3];
+      const isTri = d === TRI;
+      // A face lying entirely on the seam would mirror onto itself — emitting it would
+      // duplicate the face and make its edges non-manifold.
+      if (isTri ? (isSeam[a] && isSeam[b] && isSeam[cc])
+                : (isSeam[a] && isSeam[b] && isSeam[cc] && isSeam[d])) continue;
       // Reverse winding so mirrored normals stay outward.
-      if (d === Utils.TRI_INDEX) {
-        outF[n] = mirror[cc]; outF[n + 1] = mirror[b]; outF[n + 2] = mirror[a]; outF[n + 3] = Utils.TRI_INDEX;
-      } else {
-        outF[n] = mirror[d]; outF[n + 1] = mirror[cc]; outF[n + 2] = mirror[b]; outF[n + 3] = mirror[a];
-      }
+      if (isTri) outF.push(mirror[cc], mirror[b], mirror[a], TRI);
+      else outF.push(mirror[d], mirror[cc], mirror[b], mirror[a]);
     }
+
     return {
       vertices: new Float32Array(outV),
-      faces: outF,
+      faces: new Uint32Array(outF),
       colors: outC ? new Float32Array(outC) : null
     };
   }
@@ -657,6 +753,9 @@ class SculptManager {
       cAr = half.colors;
       const radius = mesh.computeLocalRadius ? mesh.computeLocalRadius() : 1.0;
       this._symmetryRemeshPending = { tol: radius * 0.02 };
+      // Only half the mesh is remeshed; mirroring doubles the result. Halve the target
+      // so the requested count refers to the finished symmetric mesh, not the half.
+      targetFaces = Math.max(1, Math.round(targetFaces / 2));
     }
 
     const isTriangles = fAr.length > 3 && fAr[3] === Utils.TRI_INDEX;

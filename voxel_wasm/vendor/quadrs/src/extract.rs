@@ -334,7 +334,11 @@ impl EmbeddedGraph {
         }
         neighbors.remove(&target);
         neighbors.remove(&merge);
-        self.adjacency[target] = neighbors.into_iter().map(TaggedLink::new).collect();
+        // Same reason as graph.rs: HashSet iteration order is per-process random, and
+        // adjacency order feeds face extraction. Sort so a merge is reproducible.
+        let mut ordered = neighbors.into_iter().collect::<Vec<_>>();
+        ordered.sort_unstable();
+        self.adjacency[target] = ordered.into_iter().map(TaggedLink::new).collect();
         self.adjacency[merge].clear();
         if self.crease.remove(&merge) {
             self.crease.insert(target);

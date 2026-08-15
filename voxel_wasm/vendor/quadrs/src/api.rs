@@ -238,7 +238,7 @@ fn target_scale(options: &RemeshOptions, surface_area: f64) -> Result<f64, Remes
     match options.target {
         RemeshTarget::EdgeLength(length) if length.is_finite() && length > 0.0 => Ok(length),
         RemeshTarget::VertexCount(count) if count > 0 => Ok((surface_area / count as f64).sqrt()),
-        RemeshTarget::FaceCount(count) if count > 0 => Ok((surface_area / count as f64).sqrt()),
+        RemeshTarget::FaceCount(count) if count > 0 => Ok(2.0 * (surface_area / count as f64).sqrt()),
         _ => Err(RemeshError::InvalidTarget),
     }
 }
