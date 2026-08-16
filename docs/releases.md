@@ -1,3 +1,14 @@
+# v3.17.15
+**Skin weights save, FK posing, and a clearer bind.** Weights now survive a reload, joints can be rotated to pose the character, and binding tells you what it actually did.
+
+- **Feature — skin weights are saved.** Influences, weights, the bind pose and the inverse bind matrices all round-trip through `.sxr`, stored alongside the skeleton they index into. A file whose vertex count no longer matches its weights is refused with a warning rather than deformed with stale indices.
+- **Feature — Pose mode.** A fourth mode in the mini panel: trigger-hold a joint and the controller's rotation drives it, pivoting on the joint's own origin, with children riding along through the hierarchy. Translation is ignored on purpose — moving joints is Tweak's job, and a pose that also moved them would quietly rewrite the rig's proportions.
+- **Feature — joint selection is shared with the outliner.** Selecting a joint in the outliner lights it in the scene, and grabbing one in the scene selects it in the outliner.
+- **Fix — bind says what it bound.** Drawing a chain leaves the last joint selected, so "select a mesh and bind" could silently bind a joint locator instead of the character. Binding a joint is now refused with an explanation, and a successful bind reports the mesh, joint count, vertex count and time taken.
+- **Fix — binding is much faster.** The weight-smoothing pass was allocating per vertex per iteration; on a dense sculpt that read as a freeze.
+- **Fix — a bad mesh can no longer hide the skeleton.** Joint and bone sizing is derived from the scene's largest mesh, so a single non-finite bounding radius used to scale every marker to nothing.
+- **Fix — small rotations re-skin.** The change detector sampled only the matrix diagonal, which is insensitive to small rotations — exactly what posing produces.
+
 # v3.17.11
 **Bind a mesh to a skeleton.** Second phase of the rigging work: joints now deform geometry. Standard linear blend skinning — capsule falloff for the initial assignment, a smoothing pass over the weight field, four influences per vertex.
 

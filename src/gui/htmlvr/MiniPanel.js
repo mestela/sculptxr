@@ -687,6 +687,7 @@ export class MiniPanel extends HTMLVRPanel {
       mode('#mp-bone-draw', 'draw');
       mode('#mp-bone-fk',   'fk');
       mode('#mp-bone-free', 'free');
+      mode('#mp-bone-pose', 'pose');
 
       // Two flag flavours, and they must not share a toggle: the snaps default ON (stored
       // as "anything but false", so undefined reads as on), Lengths defaults OFF.
@@ -704,13 +705,12 @@ export class MiniPanel extends HTMLVRPanel {
       flag('#mp-bone-len',  '_boneShowLengths', false);
 
       extras.querySelector('#mp-bone-bind')?.addEventListener('click', () => {
-        const mesh = main.getMesh?.();
-        const ok = Skinning.bind(main, mesh);
-        if (window.screenLog) {
-          window.screenLog(ok ? 'Bones: bound ' + (mesh?._permanentStaticLabel || 'mesh')
-                              : 'Bones: bind failed (need a mesh and a bone chain)',
-                           ok ? 'cyan' : 'red');
-        }
+        const res = Skinning.bind(main, main.getMesh?.());
+        const msg = res.ok
+          ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
+          : `Bones: ${res.why}`;
+        console.log('[bone] bind:', msg);
+        if (window.screenLog) window.screenLog(msg, res.ok ? 'cyan' : '#f38ba8');
         // Rebuild rather than sync: the button set itself changes once bound.
         this._lastExtrasIdx = -1;
         this.syncFromState();
@@ -940,6 +940,7 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-bone-draw')?.classList.toggle('active', mode === 'draw');
       extrasEl.querySelector('#mp-bone-fk')  ?.classList.toggle('active', mode === 'fk');
       extrasEl.querySelector('#mp-bone-free')?.classList.toggle('active', mode === 'free');
+      extrasEl.querySelector('#mp-bone-pose')?.classList.toggle('active', mode === 'pose');
       extrasEl.querySelector('#mp-bone-snap')?.classList.toggle('active', window._boneSnapPlane !== false);
       extrasEl.querySelector('#mp-bone-axis')?.classList.toggle('active', window._boneSnapAxis !== false);
       extrasEl.querySelector('#mp-bone-len') ?.classList.toggle('active', !!window._boneShowLengths);
@@ -1022,6 +1023,7 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-voxel-btn${on('draw')}" id="mp-bone-draw">Draw</button>
           <button class="mp-voxel-btn${on('fk')}"   id="mp-bone-fk">Tweak FK</button>
           <button class="mp-voxel-btn${on('free')}" id="mp-bone-free">Tweak Free</button>
+          <button class="mp-voxel-btn${on('pose')}" id="mp-bone-pose">Pose</button>
         </div>
         <div class="mp-toggles">
           <button class="mp-toggle-btn${snap ? ' active' : ''}" id="mp-bone-snap">Snap Plane</button>

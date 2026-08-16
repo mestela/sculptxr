@@ -28,6 +28,7 @@ const JOINT_COLOR = 0x33e0ff;
 const BONE_COLOR = 0xf0c674;
 const BONE_EDGE = 0x1e1e2e;
 const HILITE_COLOR = 0xffe066;
+const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
 const PLANE_COLOR = 0x89b4fa;
 const PLANE_HOT = 0xa6e3a1;
 const GHOST_OPACITY = 0.35;
@@ -151,7 +152,10 @@ Skeleton.sceneUnit = function (main) {
     const ms = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
     const s = ms ? Math.hypot(ms[0], ms[1], ms[2]) : 1;
     const r = (g.boundingSphere ? g.boundingSphere.radius : 1) * s;
-    if (r > best) best = r;
+    // A non-finite radius (a mesh whose vertices went bad) must not poison the scene unit:
+    // every joint marker and bone is scaled by it, so one NaN silently makes the whole
+    // skeleton invisible — a confusing symptom a long way from its cause.
+    if (Number.isFinite(r) && r > best) best = r;
   }
   main._skelUnit = best > 1e-6 ? best : 1;
   main._skelUnitAt = now;
@@ -406,6 +410,10 @@ Skeleton.updateVisuals = function (main) {
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
   const showLen = !!window._boneShowLengths;
+  // Outliner selection lights the joint in the scene. Reading the live selection here
+  // rather than hooking setMesh means it works from every selection route — outliner,
+  // gizmo, undo — without any of them knowing joints exist.
+  const sel = new Set((main.getSelectedMeshes?.() || []).map((m) => m.getID()));
 
   for (const j of joints) {
     const id = j.getID();
@@ -417,10 +425,11 @@ Skeleton.updateVisuals = function (main) {
     // colour alone is easy to lose against a warm-coloured sculpt, and in a headset the
     // size change is what reads at a glance.
     const isHi = id === hi;
+    const isSel = sel.has(id);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isHi ? jr * 1.7 : jr);
-      o.material.color.setHex(isHi ? HILITE_COLOR : JOINT_COLOR);
+      o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
+      o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
@@ -653,9 +662,15 @@ Skeleton.mirrorPoint = function (p, plane, out) {
 //
 // Appended-block convention, matched to FrameGroup's: the block ends with
 // [magic, byteLengthExcludingFooter] and repeats the magic as its first word.
+// v2 adds SKIN weights to the same block. They live here rather than in a block of their
+// own because they are meaningless without the hierarchy: a weight is an index into the
+// joint list this block already writes. Deliberately no import of Skinning — everything is
+// read and written through the mesh's own `_skin*` properties, so the two modules stay
+// uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 1;
+const SKEL_VERSION = 2;
 const NONE = 0xffffffff;
+const INFLUENCES = 4;
 
 Skeleton.serialize = function (meshes) {
   if (!meshes || !meshes.length) return null;
@@ -677,16 +692,54 @@ Skeleton.serialize = function (meshes) {
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
     });
   });
-  if (!entries.length) return null;
+  // Bound meshes. The joint list is stored as indices into `meshes`, matching how the
+  // hierarchy entries above refer to each other.
+  const skins = [];
+  meshes.forEach((m, i) => {
+    if (!m || !m._skinW || !m._skinJoints || !m._skinRest) return;
+    const jIdx = m._skinJoints.map((id) => {
+      const j = meshes.find((x) => x && x.getID() === id);
+      return j ? idxOf(j) : NONE;
+    });
+    const nbV = (m._skinRest.length / 3) | 0;
+    if (!nbV) return;
+    skins.push({ i: i, j: jIdx, nbV: nbV, mesh: m });
+  });
 
-  const slots = 3 + entries.length * 5;
+  if (!entries.length && !skins.length) return null;
+
+  let slots = 3 + entries.length * 5 + 1;
+  for (const s of skins) {
+    slots += 3 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
+  }
+
   const buf = new ArrayBuffer((slots + 2) * 4);
-  const u = new Uint32Array(buf), f = new Float32Array(buf);
+  const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
   let o = 0;
   u[o++] = SKEL_MAGIC; u[o++] = SKEL_VERSION; u[o++] = entries.length;
   for (const e of entries) {
     u[o++] = e.i; u[o++] = e.p; u[o++] = e.bone; f[o++] = e.r; u[o++] = e.mir;
   }
+
+  u[o++] = skins.length;
+  for (const s of skins) {
+    const m = s.mesh;
+    u[o++] = s.i; u[o++] = s.j.length; u[o++] = s.nbV;
+    for (const ji of s.j) u[o++] = ji;
+    // Influence indices are signed (-1 = empty slot), so they go through the Int32 view.
+    for (let k = 0; k < s.nbV * INFLUENCES; k++) i32[o++] = m._skinIdx[k];
+    for (let k = 0; k < s.nbV * INFLUENCES; k++) f[o++] = m._skinW[k];
+    // The BIND pose, not the mesh's saved vertices — those are whatever pose it was saved
+    // in, and the skin pass overwrites them from this on the first frame after load.
+    for (let k = 0; k < s.nbV * 3; k++) f[o++] = m._skinRest[k];
+    // Inverse binds cannot be recomputed on load: that would need the joints back at their
+    // bind pose, and a rig is usually saved posed.
+    for (let a = 0; a < s.j.length; a++) {
+      const e = m._skinInvBind[a].elements;
+      for (let k = 0; k < 16; k++) f[o++] = e[k];
+    }
+  }
+
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
 };
@@ -715,6 +768,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     if (!blk) return;
     const u = new Uint32Array(buffer, blk.start, blk.len / 4);
     const f = new Float32Array(buffer, blk.start, blk.len / 4);
+    const i32 = new Int32Array(buffer, blk.start, blk.len / 4);
     let o = 0;
     if (u[o++] !== SKEL_MAGIC) return;
     const ver = u[o++];
@@ -768,6 +822,52 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         mat4.copy(it.row.mesh.getMatrix(), it.m);
         Skeleton.syncThree(it.row.mesh);
       });
+
+    // v2: skin weights. Read AFTER the hierarchy is rebuilt, so the joint list resolves
+    // against meshes that are already parented.
+    if (ver >= 2) {
+      const nbSkins = u[o++];
+      for (let s = 0; s < nbSkins; s++) {
+        const mesh = meshes[u[o++]];
+        const nbJ = u[o++], nbV = u[o++];
+        const jointIdx = [];
+        for (let a = 0; a < nbJ; a++) jointIdx.push(u[o++]);
+
+        const idx = new Int32Array(nbV * INFLUENCES);
+        for (let k = 0; k < nbV * INFLUENCES; k++) idx[k] = i32[o++];
+        const wts = new Float32Array(nbV * INFLUENCES);
+        for (let k = 0; k < nbV * INFLUENCES; k++) wts[k] = f[o++];
+        const rest = new Float32Array(nbV * 3);
+        for (let k = 0; k < nbV * 3; k++) rest[k] = f[o++];
+        const invBind = [];
+        for (let a = 0; a < nbJ; a++) {
+          const m4 = new THREE.Matrix4();
+          for (let k = 0; k < 16; k++) m4.elements[k] = f[o++];
+          invBind.push(m4);
+        }
+
+        // A weight map is indexed by vertex, so it is only valid for the exact mesh it was
+        // built against. Refuse a mismatch rather than deforming with garbage indices.
+        if (!mesh || mesh.getNbVertices() !== nbV) {
+          console.warn('[Skeleton] skin weights skipped: vertex count mismatch');
+          continue;
+        }
+        const joints = jointIdx.map((ji) => (ji === NONE ? null : meshes[ji]));
+        if (joints.some((j) => !j)) {
+          console.warn('[Skeleton] skin weights skipped: missing joint');
+          continue;
+        }
+
+        mesh._skinJoints = joints.map((j) => j.getID());
+        mesh._skinIdx = idx;
+        mesh._skinW = wts;
+        mesh._skinInvBind = invBind;
+        mesh._skinRest = rest;
+        mesh._skinSrc = new Float32Array(rest);
+        mesh._skinStampBuf = null;
+        mesh._skinDirty = true; // re-skin on the first frame; the saved verts are a pose
+      }
+    }
 
     Skeleton.updateVisuals(main);
   } catch (e) {

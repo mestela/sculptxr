@@ -108,21 +108,34 @@ function capsuleWeights(mesh, segs) {
 // where an unsmoothed bind creases.
 //
 // Weights are sparse, so smoothing runs through a dense per-vertex map and re-sparsifies.
-function smoothWeights(mesh, idx, wts, iterations) {
+// Allocation-free inner loop, deliberately. The obvious version — a Map plus an array
+// sort per vertex per iteration — is three allocations and a sort for every vertex, which
+// on a real sculpt turns a bind into a multi-second freeze. Instead the accumulator is a
+// dense scratch array indexed by joint, touched joints are tracked in a small list so it
+// can be cleared in O(touched), and the top-N is an insertion sort over 4 slots.
+function smoothWeights(mesh, idx, wts, iterations, nbJoints) {
   const nbV = mesh.getNbVertices();
   const adj = adjacencyFromFaces(mesh);
-  const acc = new Map();
 
+  const acc = new Float64Array(nbJoints);
+  const touched = new Int32Array(nbJoints);
+  const bestI = new Int32Array(MAX_INFLUENCES);
+  const bestW = new Float64Array(MAX_INFLUENCES);
+
+  let curIdx = idx, curW = wts;
   for (let it = 0; it < iterations; it++) {
-    const next = { idx: new Int32Array(nbV * MAX_INFLUENCES).fill(-1),
-                   wts: new Float32Array(nbV * MAX_INFLUENCES) };
+    const nIdx = new Int32Array(nbV * MAX_INFLUENCES).fill(-1);
+    const nW = new Float32Array(nbV * MAX_INFLUENCES);
+
     for (let i = 0; i < nbV; i++) {
-      acc.clear();
+      let nTouched = 0;
       const add = (v, scale) => {
+        const base = v * MAX_INFLUENCES;
         for (let k = 0; k < MAX_INFLUENCES; k++) {
-          const j = idx[v * MAX_INFLUENCES + k];
+          const j = curIdx[base + k];
           if (j < 0) continue;
-          acc.set(j, (acc.get(j) || 0) + wts[v * MAX_INFLUENCES + k] * scale);
+          if (acc[j] === 0) touched[nTouched++] = j;
+          acc[j] += curW[base + k] * scale;
         }
       };
       add(i, 1);
@@ -131,18 +144,28 @@ function smoothWeights(mesh, idx, wts, iterations) {
       // blurs the boundary without dragging every vertex toward the mesh average.
       if (nb.length) { const s = 1 / nb.length; for (let n = 0; n < nb.length; n++) add(nb[n], s); }
 
-      const pairs = [...acc.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAX_INFLUENCES);
+      bestI.fill(-1); bestW.fill(0);
+      for (let t = 0; t < nTouched; t++) {
+        const j = touched[t], w = acc[j];
+        acc[j] = 0; // clear as we go: no second pass, no full-array wipe
+        let k = MAX_INFLUENCES - 1;
+        if (w <= bestW[k]) continue;
+        while (k > 0 && bestW[k - 1] < w) { bestW[k] = bestW[k - 1]; bestI[k] = bestI[k - 1]; k--; }
+        bestW[k] = w; bestI[k] = j;
+      }
+
       let sum = 0;
-      for (const [, w] of pairs) sum += w;
+      for (let k = 0; k < MAX_INFLUENCES; k++) sum += bestW[k];
       if (sum <= 0) continue;
-      pairs.forEach(([j, w], k) => {
-        next.idx[i * MAX_INFLUENCES + k] = j;
-        next.wts[i * MAX_INFLUENCES + k] = w / sum;
-      });
+      for (let k = 0; k < MAX_INFLUENCES; k++) {
+        if (bestI[k] < 0) continue;
+        nIdx[i * MAX_INFLUENCES + k] = bestI[k];
+        nW[i * MAX_INFLUENCES + k] = bestW[k] / sum;
+      }
     }
-    idx = next.idx; wts = next.wts;
+    curIdx = nIdx; curW = nW;
   }
-  return { idx: idx, wts: wts };
+  return { idx: curIdx, wts: curW };
 }
 
 // Bind `mesh` to every joint currently in the scene.
@@ -153,13 +176,21 @@ function smoothWeights(mesh, idx, wts, iterations) {
 // designing against.
 Skinning.bind = function (main, mesh) {
   const joints = Skeleton.joints(main);
-  if (!mesh || !joints.length) return false;
+  if (!mesh || !joints.length) return { ok: false, why: 'need a mesh and a bone chain' };
+
+  // Drawing a chain leaves the last JOINT as the active mesh (addNewMesh selects what it
+  // adds), so "select a mesh then bind" silently binds a joint locator to the skeleton
+  // unless this is checked. Refuse it — a joint is not skinnable geometry.
+  if (mesh._isBone || mesh._isNull) {
+    return { ok: false, why: 'select the character mesh first (a joint is selected)' };
+  }
 
   const segs = boneSegments(main, mesh, joints);
-  if (!segs.length) return false;
+  if (!segs.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
+  const t0 = performance.now();
   let w = capsuleWeights(mesh, segs);
-  w = smoothWeights(mesh, w.idx, w.wts, SMOOTH_ITERATIONS);
+  w = smoothWeights(mesh, w.idx, w.wts, SMOOTH_ITERATIONS, joints.length);
 
   // Inverse bind matrices, in mesh-local space.
   _mMesh.fromArray(mesh.getModelSpaceMatrix());
@@ -178,7 +209,8 @@ Skinning.bind = function (main, mesh) {
   mesh._skinSrc = new Float32Array(mesh._skinRest);
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
-  return true;
+  return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
+           verts: nbV, ms: Math.round(performance.now() - t0) };
 };
 
 Skinning.unbind = function (mesh) {
@@ -215,17 +247,20 @@ function resolveJoints(main, mesh) {
 
 // Change detector so a static rig costs nothing per frame. Numeric, and compared against
 // a reused buffer — building a string here would allocate on every frame at 90Hz.
+// Compares the FULL matrix, not a sample of it. Sampling the diagonal is second-order
+// insensitive to small rotations (cos θ ≈ 1 for small θ, while the off-diagonals move
+// linearly), which would make a slow joint rotation — the main thing pose mode does —
+// fail to trigger a re-skin. 16 floats per joint is nothing next to the skin pass itself.
 function poseChanged(mesh, joints) {
-  const n = joints.length * 6;
+  const n = joints.length * 16;
   let buf = mesh._skinStampBuf;
   if (!buf || buf.length !== n) buf = mesh._skinStampBuf = new Float32Array(n).fill(NaN);
   let changed = false;
   for (let i = 0; i < joints.length; i++) {
-    const j = joints[i];
-    const m = j ? j.getMatrix() : null;
-    const vals = m ? [m[12], m[13], m[14], m[0], m[5], m[9]] : [0, 0, 0, 0, 0, 0];
-    for (let k = 0; k < 6; k++) {
-      if (buf[i * 6 + k] !== vals[k]) { buf[i * 6 + k] = vals[k]; changed = true; }
+    const m = joints[i] ? joints[i].getMatrix() : null;
+    for (let k = 0; k < 16; k++) {
+      const v = m ? m[k] : 0;
+      if (buf[i * 16 + k] !== v) { buf[i * 16 + k] = v; changed = true; }
     }
   }
   return changed;

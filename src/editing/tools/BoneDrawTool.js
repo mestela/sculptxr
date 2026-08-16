@@ -17,7 +17,8 @@ import Skeleton from '../Skeleton.js';
 // does the same for the joints already placed. Joint placement is deliberately MANUAL —
 // medial-axis auto-centring solves a 2D depth-perception problem we do not have here.
 //
-// Two modes, B button toggles:
+// Four modes, chosen in the mini panel on the non-dominant controller (three modes across
+// two face buttons made every button change meaning by mode, which was unreadable):
 //
 // DRAW
 //   trigger        place a joint, auto-parented to the previous one
@@ -29,9 +30,14 @@ import Skeleton from '../Skeleton.js';
 //                  stray joint you can undo.
 //   A button       end the chain (next trigger starts a new root)
 //
-// TWEAK
-//   trigger hold   grab the highlighted joint and drag it to the controller tip
-//   A button       toggle joint compensation (on by default)
+// TWEAK FK / TWEAK FREE   edit the REST skeleton
+//   trigger hold   grab the highlighted joint and drag it to the controller tip; FK lets
+//                  the children follow, FREE pins them in world space
+//
+// POSE                    move the CHARACTER
+//   trigger hold   rotate the highlighted joint in place; children ride the rotation
+//                  through the scene graph. Translation is ignored on purpose — posing
+//                  must not quietly rewrite the rig's proportions.
 //
 // With symmetry on, a mirrored joint is placed at the same time and named _L / _R. The
 // naming looks like bureaucracy at POC stage, but mirrored weight paste, mirrored posing
@@ -50,6 +56,11 @@ const _pos = new THREE.Vector3();
 // module scratch vectors, so the snapped result must never write through it.
 const _eff = new THREE.Vector3();
 const _from = new THREE.Vector3();
+// Pose-mode scratch
+const _qNow = new THREE.Quaternion(), _qDelta = new THREE.Quaternion();
+const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
+const _mParent = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
+const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
 class BoneDrawTool extends SculptBase {
   constructor(main) {
@@ -61,35 +72,40 @@ class BoneDrawTool extends SculptBase {
     this._chainName = 'bone';
     this._chainIndex = 0;
 
-    this._mode = 'draw';       // 'draw' | 'tweak'
+    this._mode = 'draw';       // draw | tweak | pose
     this._compensate = true;   // tweak: pin the dragged joint's children in world space
     this._hilite = null;       // preselected joint
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
+    this._pose = null;         // { joint, qStart, local } while rotating in pose mode
 
     this._wasXRPressed = false;
     this._wasAPressed = false;
 
     // Console escape hatch — VR round-trips are the expensive part of iterating on this.
-    window._boneSetMode = (k) => { this.setModeKey(k); }; // 'draw' | 'fk' | 'free'
+    window._boneSetMode = (k) => { this.setModeKey(k); }; // draw | fk | free | pose
   }
 
-  // Three modes, selected from the mini panel on the non-dominant controller:
+  // Four modes, selected from the mini panel on the non-dominant controller:
   //   draw  place joints
   //   fk    tweak, children FOLLOW the dragged joint (plain forward kinematics)
   //   free  tweak, children STAY PUT (the dragged joint moves on its own — drag the knee,
   //         thigh and shin re-aim, foot and toes do not move)
+  //   pose  ROTATE a joint in place; children ride the rotation through the scene graph,
+  //         which is what makes FK free here. Tweak edits the rest skeleton, pose moves
+  //         the character — two different jobs, so they are two different modes.
   modeKey() {
     if (this._mode === 'draw') return 'draw';
+    if (this._mode === 'pose') return 'pose';
     return this._compensate ? 'free' : 'fk';
   }
 
   setModeKey(key) {
-    const mode = key === 'draw' ? 'draw' : 'tweak';
+    const mode = key === 'draw' ? 'draw' : (key === 'pose' ? 'pose' : 'tweak');
     const compensate = key !== 'fk';
-    if (this._mode === mode && this._compensate === compensate) return;
+    if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
     this._mode = mode;
     this._compensate = compensate;
-    this._releaseGrab();
+    this._releaseGrab(); this._releasePose();
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -262,6 +278,8 @@ class BoneDrawTool extends SculptBase {
     const snapshot = Skeleton.captureLocal(main, joint)
       .concat(twin ? Skeleton.captureLocal(main, twin) : []);
     this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot };
+    // Scene -> outliner: grabbing a joint selects it, so the two views agree.
+    main.setMesh?.(joint);
   }
 
   _dragTo(pos) {
@@ -300,6 +318,68 @@ class BoneDrawTool extends SculptBase {
     }
   }
 
+  // ---- pose (FK rotate) ----------------------------------------------------------
+  //
+  // Grab a joint and the controller's ROTATION drives it, pivoting on the joint's own
+  // origin. Children follow through the scene graph for free — that IS forward kinematics,
+  // and it is the reason joints were built as ordinary parented nodes in the first place.
+  //
+  // Translation is deliberately ignored. Dragging a joint's position is what Tweak mode is
+  // for (editing the rest skeleton); a pose that also moved joints would quietly change the
+  // rig's proportions every time you turned a wrist.
+  _beginPose(joint, quat) {
+    this._pose = {
+      joint: joint,
+      qStart: new THREE.Quaternion(quat[0], quat[1], quat[2], quat[3]).invert(),
+      local: mat4.clone(joint.getMatrix()),
+      before: [[joint, mat4.clone(joint.getMatrix())]],
+    };
+    this._main.setMesh?.(joint); // scene -> outliner
+  }
+
+  _poseTo(quat) {
+    const p = this._pose;
+    if (!p) return;
+
+    // Controller delta, in model space.
+    _qNow.set(quat[0], quat[1], quat[2], quat[3]);
+    _qDelta.copy(_qNow).multiply(p.qStart);
+
+    // Carry it into the joint's PARENT space, or a rotation applied to a joint deep in a
+    // posed chain would be measured against the wrong frame and skew as the chain moves.
+    const parent = p.joint._parentMesh;
+    if (parent && parent.getModelSpaceMatrix) {
+      _mParent.fromArray(parent.getModelSpaceMatrix());
+      _mParent.decompose(_vTmp, _qParent, _sTmp);
+      _qDelta.premultiply(_qParent.clone().invert()).multiply(_qParent);
+    }
+
+    // Rotate about the joint's own origin: keep position and scale, pre-multiply rotation.
+    _mLocal.fromArray(p.local);
+    _mLocal.decompose(_vTmp, _qJoint, _sTmp);
+    _qJoint.premultiply(_qDelta);
+    _mLocal.compose(_vTmp, _qJoint, _sTmp);
+    mat4.copy(p.joint.getMatrix(), _mLocal.elements);
+    Skeleton.syncThree(p.joint);
+    this._refresh();
+  }
+
+  _releasePose() {
+    const p = this._pose;
+    this._pose = null;
+    if (!p) return;
+    const main = this._main;
+    const before = p.before;
+    const after = before.map(([mesh]) => [mesh, mat4.clone(mesh.getMatrix())]);
+    const sm = main.getStateManager && main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      sm.pushStateCustom(
+        () => { Skeleton.restoreLocal(before); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
+        false, 'Pose Joint');
+    }
+  }
+
   // ---- VR -----------------------------------------------------------------------
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
@@ -325,6 +405,24 @@ class BoneDrawTool extends SculptBase {
     const plane = Skeleton.symmetryPlane(main);
     Skeleton.updatePlane(main, plane, !!plane && this._snapEnabled()
       && Math.abs(Skeleton.planeDistance(_tip, plane)) <= this._planeSnap());
+
+    if (this._mode === 'pose') {
+      Skeleton.hidePreview(main);
+      Skeleton.hidePlane(main);
+      const q = (options && options.quat) || main._vrControllerQuat;
+      if (down && q) {
+        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        if (hit) this._beginPose(hit, q);
+      }
+      if (this._pose) {
+        if (isPressed && q) this._poseTo(q);
+        else this._releasePose();
+      }
+      this._hilite = this._pose ? this._pose.joint
+                                : Skeleton.pickJoint(main, _tip, this._snapDist());
+      Skeleton.setHighlight(main, this._hilite);
+      return;
+    }
 
     if (this._mode === 'tweak') {
       Skeleton.hidePreview(main);
@@ -378,7 +476,7 @@ class BoneDrawTool extends SculptBase {
   // Called by SculptManager.setToolIndex when switching away — otherwise the preselection
   // highlight and preview bone stay lit under a tool that no longer owns them.
   clearPreview() {
-    this._releaseGrab();
+    this._releaseGrab(); this._releasePose();
     Skeleton.hidePreview(this._main);
     Skeleton.hidePlane(this._main);
     Skeleton.setHighlight(this._main, null);
