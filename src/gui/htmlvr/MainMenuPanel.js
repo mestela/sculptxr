@@ -25,6 +25,7 @@
  */
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M, setMenuColorGrade } from './HTMLVRPanel.js';
+import Skinning from '../../editing/Skinning.js';
 import Enums        from '../../misc/Enums.js';
 import getOptionsURL from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
@@ -2902,18 +2903,32 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
 export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repaintFn, sliderDirtyFn = null) {
   const topo = main.getGui?.()._ctrlTopology ?? null;
 
+  // Posing a bone selects that bone, so a multires command issued straight afterwards would
+  // land on a joint locator — which has no levels and silently ignores it. That reads as "the
+  // level buttons stopped working". If the selection is a joint that drives a bound mesh,
+  // select that mesh first: the command then does what it looks like it should, and the
+  // outliner shows why.
+  const retarget = () => {
+    const sel = main.getMesh?.();
+    if (!sel || !sel._isBone) return;
+    const bound = Skinning.meshForJoint(main, sel);
+    if (bound) { main.setMesh?.(bound); repaintFn(); }
+  };
+
   el.querySelector('#mm-level-down')?.addEventListener('click', () => {
+    retarget();
     const m = main.getMesh?.();
     if (m?._meshes && m._sel > 0) { topo?.onResolutionChanged?.(m._sel); main.render?.(); repaintFn(); }
   });
   el.querySelector('#mm-level-up')?.addEventListener('click', () => {
+    retarget();
     const m = main.getMesh?.();
     if (m?._meshes && m._sel < m._meshes.length - 1) { topo?.onResolutionChanged?.(m._sel + 2); main.render?.(); repaintFn(); }
   });
-  el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { topo?.subdivide?.();    main.render?.(); repaintFn(); });
-  el.querySelector('#mm-reverse')?.addEventListener('click',     () => { topo?.reverse?.();      main.render?.(); repaintFn(); });
-  el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { topo?.deleteLower?.();  main.render?.(); repaintFn(); });
-  el.querySelector('#mm-del-higher')?.addEventListener('click',  () => { topo?.deleteHigher?.(); main.render?.(); repaintFn(); });
+  el.querySelector('#mm-subdivide')?.addEventListener('click',   () => { retarget(); topo?.subdivide?.();    main.render?.(); repaintFn(); });
+  el.querySelector('#mm-reverse')?.addEventListener('click',     () => { retarget(); topo?.reverse?.();      main.render?.(); repaintFn(); });
+  el.querySelector('#mm-del-lower')?.addEventListener('click',   () => { retarget(); topo?.deleteLower?.();  main.render?.(); repaintFn(); });
+  el.querySelector('#mm-del-higher')?.addEventListener('click',  () => { retarget(); topo?.deleteHigher?.(); main.render?.(); repaintFn(); });
 
   wireSlider(
     el.querySelector('#mm-remesh-res'), el.querySelector('#mm-remesh-res-val'),

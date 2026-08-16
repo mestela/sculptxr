@@ -209,11 +209,13 @@ function smoothWeights(mesh, idx, wts, iterations, nbJoints) {
   return { idx: curIdx, wts: curW };
 }
 
-// Optional smoothing pass on top of the rigid assignment, off unless asked for.
-function solveSmoothing(mesh, raw, nbJoints) {
+// Optional smoothing pass on top of the rigid assignment, off unless asked for. Takes the
+// bound LEVEL, not the mesh: it reads a vertex count and builds adjacency from faces, and both
+// must come from the level the weights address.
+function solveSmoothing(level, raw, nbJoints) {
   const iterations = Math.round(tune('_skinSmooth', SMOOTH_ITERATIONS));
   if (iterations <= 0) return raw;
-  return smoothWeights(mesh, raw.idx, raw.wts, iterations, nbJoints);
+  return smoothWeights(level, raw.idx, raw.wts, iterations, nbJoints);
 }
 
 // Bind `mesh` to every joint currently in the scene.
@@ -236,9 +238,16 @@ Skinning.bind = function (main, mesh) {
   const segs = boneSegments(mesh, joints, jointPositionsNow(mesh, joints));
   if (!segs.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
+  // Bind to the level currently selected, and remember which one that was. Binding at the
+  // LOWEST level is the useful case — a few thousand vertices to solve instead of a few
+  // hundred thousand, and the detail above rides along through the multires stack.
+  mesh._skinLevel = mesh._sel || 0;
+  mesh._skinSizeWarned = false;
+  const level = boundLevel(mesh);
+
   const t0 = performance.now();
-  const raw = nearestCapsuleWeights(mesh.getVertices(), mesh.getNbVertices(), segs);
-  const w = solveSmoothing(mesh, raw, joints.length);
+  const raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
+  const w = solveSmoothing(level, raw, joints.length);
 
   // Inverse bind matrices, in mesh-local space.
   _mMesh.fromArray(mesh.getModelSpaceMatrix());
@@ -248,12 +257,12 @@ Skinning.bind = function (main, mesh) {
     return new THREE.Matrix4().multiplyMatrices(_mInv, _mJoint).invert();
   });
 
-  const nbV = mesh.getNbVertices();
+  const nbV = level.getNbVertices();
   mesh._skinJoints = joints.map((j) => j.getID());
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   mesh._skinInvBind = invBind;
-  mesh._skinRest = new Float32Array(mesh.getVertices().subarray(0, nbV * 3));
+  mesh._skinRest = new Float32Array(level.getVertices().subarray(0, nbV * 3));
   mesh._skinSrc = new Float32Array(mesh._skinRest);
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
@@ -279,12 +288,26 @@ Skinning.resolveWeights = function (main, mesh) {
 
   const nbV = (mesh._skinRest.length / 3) | 0;
   const raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
-  const w = solveSmoothing(mesh, raw, joints.length);
+  const w = solveSmoothing(boundLevel(mesh), raw, joints.length);
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   mesh._skinDirty = true;
   Skinning.refreshWeightColors(main, mesh);
   return true;
+};
+
+// The mesh a joint drives, if any. Selecting a joint is unavoidable while rigging — grabbing
+// one selects it — so operations aimed at "the model" need a way to find the model from the
+// bone the user happens to have hold of.
+Skinning.meshForJoint = function (main, joint) {
+  if (!joint || !joint.getID) return null;
+  const id = joint.getID();
+  const meshes = main.getMeshes() || [];
+  for (let i = 0; i < meshes.length; i++) {
+    const m = meshes[i];
+    if (m._skinJoints && m._skinJoints.indexOf(id) >= 0) return m;
+  }
+  return null;
 };
 
 // Every bound mesh in the scene, for the live editing path.
@@ -308,8 +331,12 @@ Skinning.weightColorsShown = function (mesh) { return !!(mesh && mesh._skinSaved
 
 Skinning.showWeightColors = function (main, mesh) {
   if (!Skinning.isBound(mesh)) return false;
-  const nbV = mesh.getNbVertices();
-  const colors = mesh.getColors();
+  // Colours are per weight, so they belong to the bound level too. At another level the map
+  // does not address these vertices and painting would be meaningless.
+  const level = boundLevel(mesh);
+  const nbV = (mesh._skinRest.length / 3) | 0;
+  if (level.getNbVertices() !== nbV) return false;
+  const colors = level.getColors();
   if (!mesh._skinSavedColors) {
     mesh._skinSavedColors = new Float32Array(colors.subarray(0, nbV * 3));
   }
@@ -339,7 +366,9 @@ Skinning.showWeightColors = function (main, mesh) {
 
 Skinning.restoreColors = function (mesh) {
   if (!mesh || !mesh._skinSavedColors) return;
-  mesh.getColors().set(mesh._skinSavedColors);
+  const level = boundLevel(mesh);
+  if (level.getNbVertices() * 3 < mesh._skinSavedColors.length) return; // wrong level: leave it
+  level.getColors().set(mesh._skinSavedColors);
   mesh._skinSavedColors = null;
   mesh.updateDuplicateColorsAndMaterials();
   mesh.updateColorBuffer();
@@ -374,13 +403,19 @@ Skinning.unbind = function (mesh) {
   Skinning.restoreColors(mesh);
   // Put the mesh back in its bind pose rather than leaving it stuck in whatever pose it
   // happened to be in — an unbind that silently freezes a pose is worse than no unbind.
-  if (mesh._skinRest) {
-    mesh.getVertices().set(mesh._skinRest);
-    mesh.updateGeometry();
-    if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  const level = boundLevel(mesh);
+  if (mesh._skinRest && level.getNbVertices() * 3 >= mesh._skinRest.length) {
+    level.getVertices().set(mesh._skinRest);
+    if (synthesiseUp(mesh)) {
+      mesh.updateResolution();
+    } else {
+      mesh.updateGeometry();
+      if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+    }
   }
   mesh._skinJoints = mesh._skinIdx = mesh._skinW = null;
   mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = null;
+  mesh._skinLevel = 0;
 };
 
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the
@@ -388,10 +423,49 @@ Skinning.unbind = function (mesh) {
 // skin pass would keep re-transforming its own output.
 Skinning.captureSource = function (mesh) {
   if (!mesh || !mesh._skinSrc) return;
-  const v = mesh.getVertices();
+  // Read the bound level, and only when it still matches: the source array is the rest space
+  // the skin pass transforms, and filling it from a different level would feed the deformation
+  // vertices that are not the ones it is weighted for.
+  const v = boundLevel(mesh).getVertices();
+  if (v.length < mesh._skinSrc.length) return;
   mesh._skinSrc.set(v.subarray(0, mesh._skinSrc.length));
   mesh._skinDirty = true; // the rest pose changed, so re-skin even if no joint moved
 };
+
+// ---- multires ------------------------------------------------------------------
+//
+// A Multimesh's getVertices()/getNbVertices() delegate to the CURRENTLY SELECTED level, so a
+// weight map built at one level addresses nothing meaningful at another. Binding therefore
+// records the level it bound at, and every later pass works on THAT level's arrays explicitly
+// rather than on whatever happens to be selected.
+//
+// Without this, going up a level after binding and then rotating a joint made the mesh vanish:
+// the skin loop ran to the high level's vertex count while reading level-0-sized weight and
+// source arrays, so every index past the end returned undefined, every vertex came out NaN,
+// and the mesh (plus the skeleton, whose marker scale derives from the scene bounding radius)
+// disappeared. Reading off the end of a typed array wrapper is silent — nothing throws.
+
+// The MeshResolution the weights belong to, or the mesh itself when there is no stack.
+function boundLevel(mesh) {
+  const stack = mesh._meshes;
+  if (!stack || !stack.length) return mesh;
+  const lvl = mesh._skinLevel || 0;
+  return stack[Math.min(lvl, stack.length - 1)] || mesh;
+}
+
+// Push a change at the bound level up through the stack to the level being displayed. This is
+// the existing multires propagation — partial subdivision of the level below, then each higher
+// vertex's stored detail re-applied in its local frame — so sculpted detail rides along on top
+// of the posed cage rather than being flattened by it.
+function synthesiseUp(mesh) {
+  const stack = mesh._meshes;
+  if (!stack || !stack.length) return false;
+  const from = mesh._skinLevel || 0;
+  const to = mesh._sel || 0;
+  if (to <= from) return false;
+  for (let i = from + 1; i <= to; i++) stack[i].higherSynthesis(stack[i - 1]);
+  return true;
+}
 
 // Resolve the bound joints once per pass. Both the change check and the skin matrices
 // need them, and a find() per joint per frame is a needless O(joints × meshes) sweep.
@@ -445,9 +519,23 @@ Skinning.apply = function (main, mesh) {
     mats[i] = _mSkin.clone();
   }
 
-  const src = mesh._skinSrc, out = mesh.getVertices();
+  // Work on the level the weights were built for, whatever level is being displayed.
+  const level = boundLevel(mesh);
+  const src = mesh._skinSrc, out = level.getVertices();
   const idx = mesh._skinIdx, wts = mesh._skinW;
-  const nbV = mesh.getNbVertices();
+  const nbV = (mesh._skinRest.length / 3) | 0;
+
+  // Belt and braces: if the level's vertex count ever disagrees with the weight map, do
+  // NOTHING. Skinning past the end of the arrays writes NaN over the whole mesh, which is
+  // unrecoverable for the user; refusing to deform is merely disappointing.
+  if (level.getNbVertices() !== nbV) {
+    if (!mesh._skinSizeWarned) {
+      mesh._skinSizeWarned = true;
+      console.warn('[Skinning] weight map is for %d verts, level has %d — skipping. Rebind.',
+        nbV, level.getNbVertices());
+    }
+    return false;
+  }
 
   for (let i = 0; i < nbV; i++) {
     const sx = src[i * 3], sy = src[i * 3 + 1], sz = src[i * 3 + 2];
@@ -467,13 +555,26 @@ Skinning.apply = function (main, mesh) {
     out[i * 3] = ox; out[i * 3 + 1] = oy; out[i * 3 + 2] = oz;
   }
 
-  mesh.updateGeometry();
-  if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  // Carry the posed cage up to the displayed level, then refresh. updateResolution is the
+  // stack's own refresh (geometry + colours + buffers + wireframe); without it the higher
+  // level would hold new vertices that never reach the GPU.
+  if (synthesiseUp(mesh)) {
+    mesh.updateResolution();
+  } else {
+    mesh.updateGeometry();
+    if (mesh.isDynamic) mesh.updateBuffers(); else mesh.updateGeometryBuffers();
+  }
   return true;
 };
 
 // Per-frame pass over every bound mesh. Cheap when nothing moved (the stamp check).
+//
+// `window._skinPause = true` disables the whole pass. It is a diagnostic, not a feature: the
+// skin pass writes vertices and rebuilds buffers every frame a joint moves, so when something
+// else in the mesh pipeline misbehaves on a bound mesh, being able to take it out of the
+// picture in one line is the difference between a guess and an answer.
 Skinning.update = function (main) {
+  if (window._skinPause) return;
   const meshes = main.getMeshes();
   if (!meshes) return;
   for (let i = 0; i < meshes.length; i++) {

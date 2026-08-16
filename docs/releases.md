@@ -1,3 +1,18 @@
+# v3.18.6
+**Multires commands follow a selected bone to the mesh it drives.**
+
+- **Fix — the Multiresolution buttons appeared to stop working after posing.** Grabbing a joint selects it, so the next Level +/− (or Subdivide, Reverse, Del Lower/Higher) was aimed at a joint locator, which has no levels and ignored it silently — the level readout moved, the model did not. If the selection is a joint that drives a bound mesh, the command now selects that mesh first and acts on it. The outliner selection changes with it, so the redirection is visible rather than magic.
+- Confirmed on a Galaxy XR standalone: bind a ~700-poly cage, subdivide 3 levels, pose at the cage. Detail rides along and stays fast on-device.
+
+# v3.18.4
+**Rigging works across multires levels — bind low, sculpt high.** Bind at the lowest subdivision level, go up a level, and posing now carries the sculpted detail with it instead of destroying the mesh.
+
+- **Fix — the mesh vanished when you posed a bone at a higher subdivision level than you bound at.** A Multimesh's `getVertices()`/`getNbVertices()` return the CURRENTLY SELECTED level, so the skin pass ran to the high level's vertex count while reading a weight map and source array sized for level 0. Every index past the end returned `undefined`, every vertex came out NaN, and the mesh disappeared — taking the skeleton with it, since marker size derives from the scene bounding radius. Reading past the end of a typed-array wrapper throws nothing, so it failed silently.
+- **Feature — the bind remembers its level, and the levels above ride along.** Binding records which level it bound at and every later pass addresses that level explicitly. After posing the cage, the change is pushed up the stack through the existing multires propagation (partial subdivision plus each higher vertex's stored detail re-applied in its local frame), so sculpted detail sits on top of the posed cage rather than being flattened by it.
+- Binding low is the useful case: the weight solve runs on a few thousand vertices instead of a few hundred thousand, and the capsules are far easier to judge against a cage.
+- **Guard** — if a weight map and its level ever disagree on vertex count, the skin pass does nothing and says so once. Refusing to deform is disappointing; writing NaN over a sculpt is not recoverable.
+- Note: the upward synthesis runs on every posed frame, so a deep stack will cost more than a shallow one. `docs/rig_multires_plan.md` has a console benchmark for measuring it on a real model.
+
 # v3.18.3
 **The skin follows the capsules, bones hide from the outliner, and stop spinning when you pose them.**
 
