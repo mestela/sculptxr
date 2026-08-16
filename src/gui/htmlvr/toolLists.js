@@ -19,6 +19,7 @@ export const SCULPT_TOOLS = [
   { id: Enums.Tools.SLIDE,         label: 'Slide'     },
   { id: Enums.Tools.TWIST,         label: 'Twist'     },
   { id: Enums.Tools.GEODESIC_POSE, label: 'Pose'      },
+  { id: Enums.Tools.BONE_DRAW,     label: 'Bones'     },
   { id: Enums.Tools.TRANSFORM_VR,  label: 'Transform' },
   { id: Enums.Tools.MASKING,       label: 'Masking'   },
 ];

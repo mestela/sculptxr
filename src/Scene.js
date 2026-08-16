@@ -15,6 +15,7 @@ import Picking from './math3d/Picking.js';
 import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
+import Skeleton from './editing/Skeleton.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -1657,6 +1658,11 @@ class Scene {
       // Eye-rig constraints (look-at) — applied each frame before render.
       this._evaluateConstraints();
 
+      // Skeleton visuals are rebuilt from the joints' live model-space matrices rather
+      // than parented to them, so posing, gizmo drags, undo and animation playback all
+      // keep the bones correct without any of those paths knowing bones exist.
+      Skeleton.updateVisuals(this);
+
       // The desktop transform gizmo (Gizmo.js) must never render in VR. Its visible
       // flag is sticky from desktop (set in the desktop-only postRender), and no VR
       // hook reliably hides it, so it lingers as a ghost gizmo overlapping the VR one.
@@ -2857,6 +2863,11 @@ class Scene {
     return this.addImportedMeshes(newMeshes, (added) => {
       // Reconstruct frame-group structure (SR + voxel frames) now that the meshes are in
       // the scene — deserialize needs them in _meshes for setMeshParent/getMeshes.
+      // Scene hierarchy + bones. Runs BEFORE the frame-group restore: this block covers
+      // hand-built parenting (rigs, nulls) and deliberately skips FrameGroup's own
+      // children, so the two never reparent the same mesh.
+      if (fileType === 'sgl') Skeleton.deserialize(fileData, added, this);
+
       if (fileType === 'sgl' && this._frameGroup) {
         try { this._frameGroup.deserialize(fileData, added); }
         catch (e) { console.error('[FrameGroup] import restore failed', e); }
@@ -7548,7 +7559,10 @@ class Scene {
   _updateStylusXray() {
     const sm = this._sculptManager;
     const idx = sm && sm.getToolIndex ? sm.getToolIndex() : -1;
-    const on = idx === Enums.Tools.TRANSFORM || idx === Enums.Tools.TRANSFORM_VR;
+    // Bone draw needs the ghost even more than the gizmo does: joints are placed INSIDE
+    // the mesh, so without the reveal you are aiming a tip you cannot see.
+    const on = idx === Enums.Tools.TRANSFORM || idx === Enums.Tools.TRANSFORM_VR ||
+               idx === Enums.Tools.BONE_DRAW;
     // Only the DOMINANT controller drives the gizmo, so only reveal its spike.
     const key = on ? this._dominantHand : 'off';
     if (key === this._stylusXrayKey) return;
@@ -8208,8 +8222,11 @@ class Scene {
       const toolIndex = this._sculptManager ? this._sculptManager._toolIndex : -1;
       if (toolIndex === Enums.Tools.MOVE) {
         useVolume = true;
-      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL || toolIndex === Enums.Tools.GEODESIC_POSE) {
-        useVolume = false; // pose tool aims A/B with the laser, like Transform
+      } else if (toolIndex === Enums.Tools.TRANSFORM_VR || toolIndex === Enums.Tools.VOXEL ||
+                 toolIndex === Enums.Tools.GEODESIC_POSE || toolIndex === Enums.Tools.BONE_DRAW) {
+        useVolume = false; // pose tool aims A/B with the laser, like Transform.
+        // Bone draw places joints at the controller TIP (options.tipOrigin) and never reads
+        // the pick, so it just wants the cheap ray path, not a volume sphere query.
       }
 
       if (useVolume) {

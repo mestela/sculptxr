@@ -1,3 +1,15 @@
+# v3.17.10
+**Bones — draw a skeleton by hand, in the volume.** First phase of the rigging work: joints are placed with the controller tip *inside* the mesh, which is the thing a flat screen cannot do. No auto-centring, no medial-axis fitting — those exist to work around a missing depth channel, and in VR there isn't one to work around.
+
+- **Feature — draw chains.** *Bones* tool: trigger places a joint at the controller tip, auto-parented to the previous one. Click-per-joint rather than a continuous stroke, so every joint lands where you meant it. **A** ends the chain. Each joint is one undo step.
+- **Feature — branch anywhere.** Between chains, the nearest joint is preselected (amber, and larger). Trigger there and the new bone shares that joint as its root — spine to clavicles to arms, with no separate parenting UI.
+- **Feature — see through the mesh.** Joints, bones and the controller tip all draw an xray pass that appears only where they are occluded. Without it you are aiming a tip you cannot see.
+- **Feature — tweak mode.** *Tweak Free* drags a joint while its children stay put in world space: move the knee, and thigh and shin re-aim while foot and toes hold. *Tweak FK* is the plain hierarchy behaviour, children follow. Modes and toggles live in the mini panel on the non-dominant hand.
+- **Feature — symmetry plane, drawn.** The plane is visible and lights up when the tip is close enough to snap, so you can see that a hip or spine joint will be centred before you commit it. Joints on the plane are not mirrored; joints off it get a twin, named `_L` / `_R`.
+- **Feature — axis snap.** A bone's direction snaps to a world axis within 5 degrees, preserving its length. Eye bones point exactly down Z.
+- **Feature — bone lengths.** Optional readout at each bone's midpoint, for eyeballing that an upper and lower limb segment match.
+- **Feature — skeletons save.** Scene hierarchy is now written to `.sxr` and restored on load. This is a *general* hierarchy block, not a bones one, so hand-parented rigs (an eye parented to a head) also survive a save for the first time — previously they were silently flattened. Old files load unchanged and old builds ignore the new block.
+
 # v3.17.0
 **Nomad Link — a live, two-way connection to Nomad Sculpt.** SculptXR now speaks Nomad's own bridge protocol (the same one the Blender and Houdini bridges use), so a sculpt can move between an iPad and a headset while you work: sculpt in Nomad and watch it update in VR, retopologise or use the low-poly tools here and push it back.
 

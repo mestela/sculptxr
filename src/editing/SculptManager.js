@@ -216,8 +216,11 @@ class SculptManager {
     // so the delta-capture concern doesn't apply. Gating them locked out E-key
     // transform/keying entirely once an object had blendshapes (Base is locked by
     // default), which only flashed the palette instead of letting the object move.
+    // BONE_DRAW is exempt for the same reason: it creates joint objects, it never writes
+    // vertex deltas, so a locked/hidden blendshape layer has no bearing on it.
     const _isTransform = this._toolIndex === Enums.Tools.TRANSFORM
-                      || this._toolIndex === Enums.Tools.TRANSFORM_VR;
+                      || this._toolIndex === Enums.Tools.TRANSFORM_VR
+                      || this._toolIndex === Enums.Tools.BONE_DRAW;
     if (!_isTransform && !this._canSculptActiveBlendshapeLayer()) {
       window._blendshapeStackPanel?.flash?.();   // desktop panel
       window._blendshapeStackPanelVR?.flash?.(); // VR panel mesh

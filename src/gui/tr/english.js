@@ -147,6 +147,7 @@ var TR = {
   sculptExtrude: 'Extrude',
   sculptInset: 'Inset',
   sculptGeodesicPose: 'Pose',
+  sculptBoneDraw: 'Bones',
 
   sculptCommon: 'Common',
   sculptTool: 'Tool',

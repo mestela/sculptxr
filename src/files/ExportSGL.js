@@ -1,4 +1,5 @@
 import ShaderBase from '../render/shaders/ShaderBase.js';
+import Skeleton from '../editing/Skeleton.js';
 
 var Export = {};
 
@@ -458,6 +459,15 @@ Export.exportSGL = function (meshes, main) {
     // Frame-by-frame (cel) animation: append an independent, footer-located block
     // after the mesh data. Old importers stop after the mesh data and ignore it.
     var parts = [data];
+    // Scene hierarchy + bones: appended footer block. MUST come before the frame-group
+    // block — FrameGroup's reader only inspects the final 8 bytes of the file, so anything
+    // appended after it makes it silently skip its own data.
+    try {
+      var skelBuf = Skeleton.serialize(meshes);
+      if (skelBuf && skelBuf.byteLength) parts.push(skelBuf);
+    } catch (e) {
+      console.error('[Skeleton] export append failed', e);
+    }
     // Frame-group structure (SR + voxel frames): appended footer block.
     try {
       if (main && main._frameGroup) {

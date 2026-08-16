@@ -57,6 +57,7 @@ const TOOL_NAMES = {
   [Enums.Tools.CUT_TOOL]:     'Cut',
   [Enums.Tools.EXTRUDE]:      'Extrude',
   [Enums.Tools.INSET]:        'Inset',
+  [Enums.Tools.BONE_DRAW]:    'Bones',
 };
 const toolName = (id) => TOOL_NAMES[id] ?? `Tool ${id}`;
 
@@ -672,6 +673,36 @@ export class MiniPanel extends HTMLVRPanel {
       makeToolToggle('#mp-culling', '_culling');
     }
 
+    // ── Bones extras ───────────────────────────────────────────────────────
+    if (idx === Enums.Tools.BONE_DRAW) {
+      const mode = (id, key) => {
+        const btn = extras.querySelector(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          sm?.getCurrentTool?.()?.setModeKey?.(key);
+          this.syncFromState();
+        });
+      };
+      mode('#mp-bone-draw', 'draw');
+      mode('#mp-bone-fk',   'fk');
+      mode('#mp-bone-free', 'free');
+
+      // Two flag flavours, and they must not share a toggle: the snaps default ON (stored
+      // as "anything but false", so undefined reads as on), Lengths defaults OFF.
+      const flag = (id, key, defaultOn) => {
+        const btn = extras.querySelector(id);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          window[key] = defaultOn ? (window[key] === false) : !window[key];
+          this.syncFromState();
+          main.render?.();
+        });
+      };
+      flag('#mp-bone-snap', '_boneSnapPlane',   true);
+      flag('#mp-bone-axis', '_boneSnapAxis',    true);
+      flag('#mp-bone-len',  '_boneShowLengths', false);
+    }
+
     // ── Smooth / Relax extras ──────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
       const tangentBtn = extras.querySelector('#mp-tangent');
@@ -879,6 +910,18 @@ export class MiniPanel extends HTMLVRPanel {
         extrasEl.querySelector('#mp-sharpen')?.classList.toggle('active', !!tool._negative);
       }
 
+    } else if (idx === Enums.Tools.BONE_DRAW) {
+      // Radio behaviour: exactly one mode carries .active. Without this branch the classes
+      // are only correct at build time (tool switch), so clicking a mode changed behaviour
+      // but never moved the highlight.
+      const mode = tool.modeKey?.() ?? 'draw';
+      extrasEl.querySelector('#mp-bone-draw')?.classList.toggle('active', mode === 'draw');
+      extrasEl.querySelector('#mp-bone-fk')  ?.classList.toggle('active', mode === 'fk');
+      extrasEl.querySelector('#mp-bone-free')?.classList.toggle('active', mode === 'free');
+      extrasEl.querySelector('#mp-bone-snap')?.classList.toggle('active', window._boneSnapPlane !== false);
+      extrasEl.querySelector('#mp-bone-axis')?.classList.toggle('active', window._boneSnapAxis !== false);
+      extrasEl.querySelector('#mp-bone-len') ?.classList.toggle('active', !!window._boneShowLengths);
+
     } else if (idx === Enums.Tools.TRANSFORM_VR) {
       const mode = tool._mode ?? 0;
       extrasEl.querySelectorAll('[data-tvr-mode]').forEach(btn => {
@@ -936,6 +979,33 @@ export class MiniPanel extends HTMLVRPanel {
         <div class="mp-toggles">
           <button class="mp-toggle-btn${clay    ? ' active' : ''}" id="mp-clay">Clay</button>
           <button class="mp-toggle-btn${culling ? ' active' : ''}" id="mp-culling">Culling</button>
+        </div>
+      `;
+    }
+
+    // ── Bones ──────────────────────────────────────────────────────────────
+    // Mode lives here rather than on a face button: three modes do not fit two buttons
+    // without overloading them by mode, which is what made the previous binding opaque.
+    if (idx === Enums.Tools.BONE_DRAW) {
+      const t    = sm.getCurrentTool?.();
+      const mode = t?.modeKey?.() ?? 'draw';
+      const snap = window._boneSnapPlane !== false;
+      const axis = window._boneSnapAxis !== false;
+      const lens = !!window._boneShowLengths;
+      const on   = (k) => (mode === k ? ' active' : '');
+      return `
+        <hr class="mp-divider">
+        <div class="mp-voxel-grid">
+          <button class="mp-voxel-btn${on('draw')}" id="mp-bone-draw">Draw</button>
+          <button class="mp-voxel-btn${on('fk')}"   id="mp-bone-fk">Tweak FK</button>
+          <button class="mp-voxel-btn${on('free')}" id="mp-bone-free">Tweak Free</button>
+        </div>
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${snap ? ' active' : ''}" id="mp-bone-snap">Snap Plane</button>
+          <button class="mp-toggle-btn${axis ? ' active' : ''}" id="mp-bone-axis">Snap Axis</button>
+        </div>
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${lens ? ' active' : ''}" id="mp-bone-len">Lengths</button>
         </div>
       `;
     }
