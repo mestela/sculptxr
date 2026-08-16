@@ -47,7 +47,7 @@ class MinHeap {
 // Vertex adjacency built from the faces (ground-truth topology; the lazy vertex-ring
 // cache only encodes correct global connectivity for local ops, not full traversal).
 // Quad faces have 4 indices; triangles store an out-of-range sentinel in the 4th slot.
-function adjacencyFromFaces(mesh) {
+export function adjacencyFromFaces(mesh) {
   const nbV = mesh.getNbVertices(), nbF = mesh.getNbFaces(), fAr = mesh.getFaces();
   const adj = new Array(nbV);
   for (let i = 0; i < nbV; i++) adj[i] = [];

@@ -1,6 +1,7 @@
 import { quat, mat4 } from 'gl-matrix';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
+import Skinning from './Skinning.js';
 
 class AnimationRegistry {
   constructor() {
@@ -1531,6 +1532,12 @@ class AnimationRegistry {
         }
       }
     });
+
+    // Skinning runs LAST, over this composite: posed = skin(base + Σ deltas), with the
+    // deltas in rest space. Hand the composite to the skin pass as its rest-space source
+    // before the geometry update, or the two systems fight — skinning would otherwise
+    // keep re-transforming its own output every frame.
+    Skinning.captureSource(mesh);
 
     // Guard: prevent the updateGeometry intercept from treating this recomposition
     // as a sculpt stroke and incorrectly rebasing baseShape or layer deltas.

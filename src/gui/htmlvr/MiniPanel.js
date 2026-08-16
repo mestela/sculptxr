@@ -24,6 +24,7 @@ import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
+import Skinning       from '../../editing/Skinning.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -701,6 +702,27 @@ export class MiniPanel extends HTMLVRPanel {
       flag('#mp-bone-snap', '_boneSnapPlane',   true);
       flag('#mp-bone-axis', '_boneSnapAxis',    true);
       flag('#mp-bone-len',  '_boneShowLengths', false);
+
+      extras.querySelector('#mp-bone-bind')?.addEventListener('click', () => {
+        const mesh = main.getMesh?.();
+        const ok = Skinning.bind(main, mesh);
+        if (window.screenLog) {
+          window.screenLog(ok ? 'Bones: bound ' + (mesh?._permanentStaticLabel || 'mesh')
+                              : 'Bones: bind failed (need a mesh and a bone chain)',
+                           ok ? 'cyan' : 'red');
+        }
+        // Rebuild rather than sync: the button set itself changes once bound.
+        this._lastExtrasIdx = -1;
+        this.syncFromState();
+        main.render?.();
+      });
+
+      extras.querySelector('#mp-bone-unbind')?.addEventListener('click', () => {
+        Skinning.unbind(main.getMesh?.());
+        this._lastExtrasIdx = -1;
+        this.syncFromState();
+        main.render?.();
+      });
     }
 
     // ── Smooth / Relax extras ──────────────────────────────────────────────
@@ -992,6 +1014,7 @@ export class MiniPanel extends HTMLVRPanel {
       const snap = window._boneSnapPlane !== false;
       const axis = window._boneSnapAxis !== false;
       const lens = !!window._boneShowLengths;
+      const bound = Skinning.isBound(sm._main?.getMesh?.());
       const on   = (k) => (mode === k ? ' active' : '');
       return `
         <hr class="mp-divider">
@@ -1006,6 +1029,11 @@ export class MiniPanel extends HTMLVRPanel {
         </div>
         <div class="mp-toggles">
           <button class="mp-toggle-btn${lens ? ' active' : ''}" id="mp-bone-len">Lengths</button>
+        </div>
+        <hr class="mp-divider">
+        <div class="mp-btn-row">
+          <button class="mp-action-btn" id="mp-bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
+          ${bound ? '<button class="mp-action-btn" id="mp-bone-unbind">Unbind</button>' : ''}
         </div>
       `;
     }

@@ -7,7 +7,17 @@ import Utils from '../misc/Utils.js';
 import Remesh from './Remesh.js';
 import Mesh from '../mesh/Mesh.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
+import Skinning from './Skinning.js';
 
+// Tools that change the vertex count (or the mesh object), which a per-vertex skin weight
+// map cannot survive. Voxel is included because it replaces the surface wholesale.
+const TOPOLOGY_TOOLS = new Set([
+  Enums.Tools.VOXEL, Enums.Tools.CUT_TOOL, Enums.Tools.EXTRUDE, Enums.Tools.INSET,
+  Enums.Tools.DELETE_FACE, Enums.Tools.FILL_HOLE, Enums.Tools.DISSOLVE_EDGE,
+  Enums.Tools.SPLIT_FACE, Enums.Tools.COLLAPSE_EDGE, Enums.Tools.DISSOLVE_VERTEX,
+  Enums.Tools.WELD, Enums.Tools.SNAP_WELD_CENTER, Enums.Tools.SPLIT_EDGE,
+  Enums.Tools.EDGE_CREATE,
+]);
 
 class SculptManager {
 
@@ -227,6 +237,18 @@ class SculptManager {
       return false;
     }
 
+
+    // Topology freeze on a bound mesh. Skin weights are indexed per vertex, so anything
+    // that changes the vertex count destroys them. Every DCC has this rule; the part worth
+    // being deliberate about is that we BLOCK rather than silently drop the weights —
+    // losing a weight map without being told is the exact failure mode this project is
+    // designed against. Unbind (mini panel) to get the tools back.
+    if (Skinning.isBound(this._main.getMesh?.()) && TOPOLOGY_TOOLS.has(this._toolIndex)) {
+      if (window.screenLog) {
+        window.screenLog('Mesh is bound to a skeleton — unbind to change topology', '#f9e2af');
+      }
+      return false;
+    }
 
     // iPad double-fire guard for single-action tools.
     // On iPadOS the pressure-transition synthesis (pointermove 0→pressure) and the

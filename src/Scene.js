@@ -16,6 +16,7 @@ import Background from './drawables/Background.js';
 import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
+import Skinning from './editing/Skinning.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -1662,6 +1663,10 @@ class Scene {
       // than parented to them, so posing, gizmo drags, undo and animation playback all
       // keep the bones correct without any of those paths knowing bones exist.
       Skeleton.updateVisuals(this);
+
+      // Skinning: last in the deformation stack, and a no-op when no joint has moved
+      // since the previous frame (see Skinning.apply's pose stamp).
+      Skinning.update(this);
 
       // The desktop transform gizmo (Gizmo.js) must never render in VR. Its visible
       // flag is sticky from desktop (set in the desktop-only postRender), and no VR

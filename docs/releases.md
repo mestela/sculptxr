@@ -1,3 +1,12 @@
+# v3.17.11
+**Bind a mesh to a skeleton.** Second phase of the rigging work: joints now deform geometry. Standard linear blend skinning — capsule falloff for the initial assignment, a smoothing pass over the weight field, four influences per vertex.
+
+- **Feature — bind.** With the *Bones* tool active, select a mesh and press **Bind Mesh** in the mini panel. Each vertex is weighted against the nearest bone segments, then the weight field is smoothed so the boundary between two bones blends instead of creasing.
+- **Feature — deformation follows the rig.** Moving a joint deforms the bound mesh. Skinning runs last in the deformation stack, on top of blendshapes and animation layers, so a rigged character can still carry its shapes.
+- **Feature — unbind.** Returns the mesh to its bind pose and releases the topology tools.
+- **Note — binding freezes topology.** Weights are per-vertex, so voxel, cut, extrude, inset, weld and the other vertex-count-changing tools are blocked while a mesh is bound. They are blocked rather than allowed to silently invalidate the weights; unbind to get them back.
+- **Known gaps:** weights are not saved yet; joints can be translated but not yet rotated in place; a straight-line falloff can reach across a gap (a hand near a hip), and heavy twisting will pinch, both of which have standard fixes still to come.
+
 # v3.17.10
 **Bones — draw a skeleton by hand, in the volume.** First phase of the rigging work: joints are placed with the controller tip *inside* the mesh, which is the thing a flat screen cannot do. No auto-centring, no medial-axis fitting — those exist to work around a missing depth channel, and in VR there isn't one to work around.
 
