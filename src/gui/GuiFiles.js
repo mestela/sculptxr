@@ -222,6 +222,18 @@ class GuiFiles {
     // result is never squashed regardless of the canvas/VR framebuffer dimensions.
     let thumb = '';
     const renderer = this._main._renderer;
+    // Helper overlays that live INSIDE _worldGroup: the skeleton visuals (bones, joint
+    // markers, symmetry plane, preview bone, length labels) and Extrude's yellow face tags.
+    // Step 3 below only hides children of _scene, so these would otherwise be drawn into
+    // the thumbnail — and worse, Box3.setFromObject does not skip invisible objects, so a
+    // stale preview bone parked wherever the controller last was inflates the bounding box
+    // and the auto-framing pulls the camera back until the sculpt is a speck (or gone).
+    // Detached rather than just hidden, precisely because the box ignores visibility.
+    const detached = [];
+    const detach = (o) => { if (o && o.parent) { detached.push([o, o.parent]); o.parent.remove(o); } };
+    detach(this._main._skelGroup);
+    detach(this._main.getSculptManager?.()?.getTool?.(Enums.Tools.EXTRUDE)?._selectionMesh);
+
     if (renderer) {
       try {
         const THUMB = 512;
@@ -320,8 +332,14 @@ class GuiFiles {
 
       } catch (e) {
         console.error('Screenshot failed:', e);
+      } finally {
+        // In a finally, not after the try: a throw mid-capture must not leave the skeleton
+        // detached from the scene.
+        for (const [o, p] of detached) p.add(o);
+        detached.length = 0;
       }
     }
+    for (const [o, p] of detached) p.add(o); // no renderer: nothing captured, still restore
 
     StorageDB.set(key, { 
       blob: blob, 

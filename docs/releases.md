@@ -1,3 +1,9 @@
+# v3.17.17
+**Two overlay fixes.** Both are helper visuals outliving the moment they belonged to.
+
+- **Fix — extrude's face tags clear when you leave the tool.** The yellow multi-face tags are a world-space overlay drawn on top of everything; switching tools left them on screen as ghost faces under whatever came next. Switching away now drops the tags. They are dropped rather than hidden on purpose — an invisible-but-live selection would mean the next extrude silently acting on faces you cannot see.
+- **Fix — helper overlays no longer break the browser-save thumbnail.** The thumbnail frames its camera from the scene's bounding box, and that box ignores whether an object is visible. A parked bone preview or a set of face tags could therefore stretch the box far past the sculpt, pulling the camera back until the model was a speck or out of frame. Skeleton visuals and face tags are now excluded from both the framing and the render.
+
 # v3.17.15
 **Skin weights save, FK posing, and a clearer bind.** Weights now survive a reload, joints can be rotated to pose the character, and binding tells you what it actually did.
 

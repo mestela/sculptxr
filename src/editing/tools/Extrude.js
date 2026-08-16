@@ -196,6 +196,18 @@ class Extrude extends SculptBase {
     }
   }
 
+  // Called by SculptManager.setToolIndex when switching away. The yellow face tags are a
+  // world-space overlay with depthTest off, so without this they stay on screen under the
+  // next tool as unexplainable "ghost" faces.
+  //
+  // The tags are DROPPED, not merely hidden: they are a transient staging step before an
+  // extrude, and a live-but-invisible selection is worse than none — the next extrude would
+  // silently act on faces you cannot see.
+  clearPreview() {
+    if (this._selectedFaces) this._selectedFaces.clear();
+    if (this._selectionMesh) this._selectionMesh.visible = false;
+  }
+
   onUndo() {
     if (this._main._stateManager) {
       this._main._stateManager.undo();
