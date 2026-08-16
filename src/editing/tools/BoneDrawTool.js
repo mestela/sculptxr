@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { mat4 } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import Skeleton from '../Skeleton.js';
+import Skinning from '../Skinning.js';
+
+// Minimum gap between live weight re-solves while dragging a radius. Slow enough that a dense
+// mesh keeps its framerate, fast enough that the recolour still reads as continuous.
+const LIVE_WEIGHT_MS = 80;
 
 // [Rigging POC#2 — phase 1] Bone drawing.
 //
@@ -33,6 +38,12 @@ import Skeleton from '../Skeleton.js';
 // TWEAK FK / TWEAK FREE   edit the REST skeleton
 //   trigger hold   grab the highlighted joint and drag it to the controller tip; FK lets
 //                  the children follow, FREE pins them in world space
+//
+// RADIUS                  edit the BIND CAPSULES
+//   trigger hold   grab the capsule nearest the tip; its radius follows the controller's
+//                  distance from the bone, so you inflate the envelope until it contains the
+//                  limb. The capsule is the exact support of the capsule bind, so this is
+//                  weight editing with the geometry visible rather than a number to guess at.
 //
 // POSE                    move the CHARACTER
 //   trigger hold   rotate the highlighted joint in place; children ride the rotation
@@ -72,11 +83,12 @@ class BoneDrawTool extends SculptBase {
     this._chainName = 'bone';
     this._chainIndex = 0;
 
-    this._mode = 'draw';       // draw | tweak | pose
+    this._mode = 'draw';       // draw | tweak | pose | radius
     this._compensate = true;   // tweak: pin the dragged joint's children in world space
     this._hilite = null;       // preselected joint
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
     this._pose = null;         // { joint, qStart, local } while rotating in pose mode
+    this._radius = null;       // { joint, twin, before } while dragging a capsule radius
 
     this._wasXRPressed = false;
     this._wasAPressed = false;
@@ -96,16 +108,21 @@ class BoneDrawTool extends SculptBase {
   modeKey() {
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
+    if (this._mode === 'radius') return 'radius';
     return this._compensate ? 'free' : 'fk';
   }
 
   setModeKey(key) {
-    const mode = key === 'draw' ? 'draw' : (key === 'pose' ? 'pose' : 'tweak');
+    const named = { draw: 'draw', pose: 'pose', radius: 'radius' };
+    const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
     this._mode = mode;
     this._compensate = compensate;
-    this._releaseGrab(); this._releasePose();
+    this._releaseGrab(); this._releasePose(); this._releaseRadius();
+    // The capsules are the whole point of radius mode, so turn them on when entering it
+    // rather than making the user find a second toggle to make the mode visible.
+    if (mode === 'radius') window._boneShowCapsules = true;
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -266,6 +283,10 @@ class BoneDrawTool extends SculptBase {
   // gizmo, not as the real workflow.
   start() {
     if (this._main._xrSession) return false; // VR drives everything from updateXR
+    // Only DRAW places joints. The other modes have no desktop path yet, and placing a joint
+    // in them would be an action the user did not ask for from a mode that means something
+    // else entirely.
+    if (this._mode !== 'draw') return false;
     const picking = this._main.getPicking();
     if (!picking.intersectionMouseMeshes()) return false;
     const m = picking.getMesh();
@@ -395,6 +416,92 @@ class BoneDrawTool extends SculptBase {
     }
   }
 
+  // ---- radius (capsule editing) --------------------------------------------------
+  //
+  // The capsule around a bone is what the bind measures against, and until it was drawn its
+  // radius was a number nobody could judge. Here it is grabbed directly: hold the trigger and
+  // the radius follows the controller's distance from the bone, so you inflate the envelope
+  // until it contains the limb and stop. That is the same "reach into the volume" argument
+  // that made VR bone placement worth building.
+
+  // Pick by RELATIVE distance (distance / radius), not absolute: the capsules differ hugely
+  // in size across a rig, and the one you mean is the one you are inside or nearest the shell
+  // of — not whichever bone's centreline happens to be closest to your hand.
+  _pickBone(pos) {
+    const main = this._main;
+    let best = null, bestT = 4;
+    for (const j of Skeleton.joints(main)) {
+      const d = Skeleton.boneDistance(main, j, pos);
+      if (d === null) continue;
+      // A zero/absent radius must stay grabbable, or a bone can never be given one.
+      const ref = Math.max(j._boneRadius || 0, Skeleton.boneLength(main, j) * 0.05, 1e-9);
+      const t = d / ref;
+      if (t < bestT) { bestT = t; best = j; }
+    }
+    return best;
+  }
+
+  _beginRadius(joint) {
+    const main = this._main;
+    const twin = (joint._boneMirror && main.getMeshes().includes(joint._boneMirror))
+      ? joint._boneMirror : null;
+    const before = [[joint, joint._boneRadius || 0]];
+    if (twin) before.push([twin, twin._boneRadius || 0]);
+    this._radius = { joint: joint, twin: twin, before: before };
+  }
+
+  _radiusTo(pos) {
+    const r = this._radius;
+    if (!r) return;
+    const d = Skeleton.boneDistance(this._main, r.joint, pos);
+    if (d === null) return;
+    // A capsule with no thickness has no support at all, so never let a drag collapse one to
+    // zero — that would silently unweight everything the bone owned.
+    const min = Math.max(Skeleton.boneLength(this._main, r.joint) * 0.02, 1e-6);
+    const val = Math.max(d, min);
+    r.joint._boneRadius = val;
+    if (r.twin) r.twin._boneRadius = val; // a mirrored rig stays mirrored
+    this._liveWeights();
+    this._refresh();
+  }
+
+  // Re-solve the bound weights mid-drag, so the vertices a capsule owns recolour under your
+  // hand. Throttled: the solve is O(vertices x bones) and a dense sculpt cannot afford it at
+  // 90Hz, but it is far too useful to defer to the release — half the value is watching the
+  // territory change as the capsule grows.
+  _liveWeights(force) {
+    if (window._boneLiveWeights === false) return;
+    const now = performance.now();
+    if (!force && now - (this._lastLiveWeights || 0) < LIVE_WEIGHT_MS) return;
+    this._lastLiveWeights = now;
+    const t0 = now;
+    const n = Skinning.resolveWeightsAll(this._main);
+    if (window._boneTrace && n) {
+      console.log('[bone] live weights %dms', Math.round(performance.now() - t0));
+    }
+  }
+
+  _releaseRadius() {
+    const r = this._radius;
+    this._radius = null;
+    if (!r) return;
+    this._liveWeights(true); // land on the final radius, not on the last throttled tick
+    this._selectLater(r.joint);
+    const main = this._main;
+    const before = r.before;
+    const after = before.map(([j]) => [j, j._boneRadius || 0]);
+    const sm = main.getStateManager && main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      const apply = (radii) => {
+        Skeleton.restoreRadii(radii);
+        Skinning.resolveWeightsAll(main); // radii ARE the weights now; undoing one undoes both
+        Skeleton.updateVisuals(main);
+        main.render();
+      };
+      sm.pushStateCustom(() => apply(before), () => apply(after), false, 'Bone Radius');
+    }
+  }
+
   // ---- VR -----------------------------------------------------------------------
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
@@ -435,6 +542,22 @@ class BoneDrawTool extends SculptBase {
       }
       this._hilite = this._pose ? this._pose.joint
                                 : Skeleton.pickJoint(main, _tip, this._snapDist());
+      Skeleton.setHighlight(main, this._hilite);
+      return;
+    }
+
+    if (this._mode === 'radius') {
+      Skeleton.hidePreview(main);
+      Skeleton.hidePlane(main);
+      if (down) {
+        const hit = this._pickBone(_tip);
+        if (hit) this._beginRadius(hit);
+      }
+      if (this._radius) {
+        if (isPressed) this._radiusTo(_tip);
+        else this._releaseRadius();
+      }
+      this._hilite = this._radius ? this._radius.joint : this._pickBone(_tip);
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -491,7 +614,10 @@ class BoneDrawTool extends SculptBase {
   // Called by SculptManager.setToolIndex when switching away — otherwise the preselection
   // highlight and preview bone stay lit under a tool that no longer owns them.
   clearPreview() {
-    this._releaseGrab(); this._releasePose();
+    this._releaseGrab(); this._releasePose(); this._releaseRadius();
+    // Leaving the tool puts the real vertex colours back. A weight preview is a diagnostic,
+    // and one that outlived the tool could be saved into the sculpt without anyone noticing.
+    Skinning.restoreColorsAll(this._main);
     Skeleton.hidePreview(this._main);
     Skeleton.hidePlane(this._main);
     Skeleton.setHighlight(this._main, null);

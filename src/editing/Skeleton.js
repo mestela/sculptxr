@@ -74,6 +74,29 @@ function boneEdgeGeometry() {
 let _jointGeo = null;
 function jointGeometry() { return (_jointGeo = _jointGeo || new THREE.SphereGeometry(1, 10, 8)); }
 
+// Capsule parts. A capsule is drawn as a shaft plus a cap sphere at each end rather than as
+// one CapsuleGeometry, because a capsule's radius and length have to scale INDEPENDENTLY —
+// scaling a single capsule mesh non-uniformly would squash its caps into ellipsoids and
+// misreport the very number the user is editing. Three unit primitives, three uniform-ish
+// scales, no per-frame geometry rebuild.
+let _capShaftGeo = null;
+function capsuleShaftGeometry() {
+  return (_capShaftGeo = _capShaftGeo || new THREE.CylinderGeometry(1, 1, 1, 14, 1, true));
+}
+let _capEndGeo = null;
+function capsuleEndGeometry() {
+  return (_capEndGeo = _capEndGeo || new THREE.SphereGeometry(1, 14, 10));
+}
+
+// Default capsule radius as a fraction of the bone's own length. 0.15 was a guess with no
+// evidence behind it, and every downstream weight inherited it; it is a tuning knob now, and
+// the capsules are drawn, so the number can be judged by eye instead of by argument.
+const DEFAULT_RADIUS_FRAC = 0.5;
+function radiusFrac() {
+  const v = window._boneRadiusFrac;
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_RADIUS_FRAC;
+}
+
 // Solid + xray ghost pair. The ghost draws only where occluded (GreaterDepth), so it
 // reveals the part of the skeleton buried inside the mesh without ever becoming an
 // always-on-top overlay (which reads as a stereo headache and loses all depth cue).
@@ -90,6 +113,21 @@ function makePair(geo, color) {
   solid.isPickable = ghost.isPickable = false;
   solid.frustumCulled = ghost.frustumCulled = false;
   return { solid: solid, ghost: ghost };
+}
+
+// One piece of a bind capsule: a translucent shell, plus the usual occluded-only ghost.
+// Translucent rather than wireframe on purpose — the capsule's job is to read as a VOLUME
+// enclosing part of the sculpt ("does this envelope contain the forearm?"), and a wireframe
+// sphere in a headset reads as a ball of noise sitting over the model.
+function makeCapsulePart(geo) {
+  const p = makePair(geo, 0xffffff); // recoloured per frame from the bone's identity colour
+  p.solid.material.transparent = true;
+  p.solid.material.opacity = 0.16;
+  p.solid.material.depthWrite = false;
+  p.ghost.material.opacity = 0.09;
+  p.solid.renderOrder = 9996;
+  p.ghost.renderOrder = 9996;
+  return p;
 }
 
 // Bone length readout. The point is proportion, not measurement: an upper and lower limb
@@ -128,6 +166,91 @@ function setLabelText(lab, text) {
 const Skeleton = {};
 
 Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
+
+// ---- bone identity colours -----------------------------------------------------
+//
+// Each bone gets a saturated colour, and the capsule and the vertices it claims are painted
+// in it — that is what makes "does this bone own what it should?" a question you can answer
+// by looking. The only pairs that MUST be far apart are the ones that touch: a shoulder and
+// an elbow next to each other in pink and purple is the case where the whole diagnostic
+// stops working, since the boundary between them is exactly what you are trying to see.
+//
+// So the colours are not a hash. They are assigned greedily down the hierarchy, each joint
+// taking the palette entry furthest in hue from its parent, its grandparent, and the siblings
+// already assigned. A hash spreads colours evenly over the WHOLE rig, which says nothing about
+// whether any particular adjacent pair is distinguishable.
+const BONE_PALETTE_SIZE = 12;
+const _paletteColors = [];
+function paletteColor(i) {
+  let c = _paletteColors[i];
+  if (!c) {
+    c = _paletteColors[i] = new THREE.Color().setHSL(i / BONE_PALETTE_SIZE, 0.95, 0.55);
+    c._hue = i / BONE_PALETTE_SIZE;
+  }
+  return c;
+}
+
+function hueGap(a, b) {
+  const d = Math.abs(a - b) % 1;
+  return d > 0.5 ? 1 - d : d;
+}
+
+// Rebuild the id -> palette-slot map. Roots first, so a joint's parent always already has a
+// colour when its own is chosen.
+function assignBoneColors(main, joints) {
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  const order = joints.slice().sort((a, b) => depth(a) - depth(b));
+  const slot = new Map();      // joint id -> palette index
+  const used = new Array(BONE_PALETTE_SIZE).fill(0);
+  const kidsDone = new Map();  // parent id -> palette indices already given to its children
+
+  for (const j of order) {
+    const parent = j._parentMesh;
+    const gp = parent && parent._parentMesh;
+    const avoid = [];
+    if (parent && slot.has(parent.getID())) avoid.push(slot.get(parent.getID()));
+    if (gp && slot.has(gp.getID())) avoid.push(slot.get(gp.getID()));
+    const pid = parent ? parent.getID() : -1;
+    for (const s of (kidsDone.get(pid) || [])) avoid.push(s);
+
+    let best = 0, bestScore = -Infinity;
+    for (let i = 0; i < BONE_PALETTE_SIZE; i++) {
+      let near = 1;
+      for (const a of avoid) near = Math.min(near, hueGap(i / BONE_PALETTE_SIZE, a / BONE_PALETTE_SIZE));
+      // Distance from the colours that touch this one comes first; even usage across the rig
+      // is only a tie-break, so a busy rig still cycles rather than clumping.
+      const score = near * 10 - used[i];
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    slot.set(j.getID(), best);
+    used[best]++;
+    if (!kidsDone.has(pid)) kidsDone.set(pid, []);
+    kidsDone.get(pid).push(best);
+  }
+  main._skelColorSlots = slot;
+  return slot;
+}
+
+// The colour map is rebuilt only when the set of joints changes — it is read per joint per
+// frame by the visuals, and re-solving the whole hierarchy at 90Hz would be silly.
+function colorSlots(main) {
+  const joints = Skeleton.joints(main);
+  let sig = joints.length;
+  for (const j of joints) sig += j.getID() * 31;
+  if (main._skelColorSig !== sig || !main._skelColorSlots) {
+    main._skelColorSig = sig;
+    return assignBoneColors(main, joints);
+  }
+  return main._skelColorSlots;
+}
+
+const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
+Skeleton.boneColor = function (main, joint) {
+  if (!joint || !joint.getID) return _fallbackColor;
+  const slots = colorSlots(main);
+  const s = slots.get(joint.getID());
+  return s === undefined ? _fallbackColor : paletteColor(s);
+};
 
 Skeleton.joints = function (main) {
   return (main.getMeshes() || []).filter(Skeleton.isJoint);
@@ -285,7 +408,7 @@ Skeleton.createJoint = function (main, pos, parent, name) {
     // is what makes the phase-2 capsule bind possible without a second pass over the rig;
     // editing a stored number later is cheap, re-measuring a finished skeleton is not.
     const len = Skeleton.jointPos(parent).distanceTo(Skeleton.jointPos(mesh));
-    mesh._boneRadius = len * 0.15;
+    mesh._boneRadius = len * radiusFrac();
   } else {
     mesh._boneRadius = unit * 0.05;
   }
@@ -329,9 +452,15 @@ function ensureEntry(main, id) {
       joint: makePair(jointGeometry(), JOINT_COLOR),
       wire: { solid: wire, ghost: wireGhost },
       label: makeLabel(),
+      cap: {
+        shaft: makeCapsulePart(capsuleShaftGeometry()),
+        a: makeCapsulePart(capsuleEndGeometry()),
+        b: makeCapsulePart(capsuleEndGeometry()),
+      },
     };
     g.add(e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
           e.wire.solid, e.wire.ghost, e.label.sprite);
+    for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
     main._skelVis.set(id, e);
   }
   return e;
@@ -341,7 +470,8 @@ function disposeEntry(main, id) {
   const e = main._skelVis && main._skelVis.get(id);
   if (!e) return;
   const g = skelGroup(main);
-  for (const p of [e.bone, e.joint, e.wire]) {
+  const caps = e.cap ? [e.cap.shaft, e.cap.a, e.cap.b] : [];
+  for (const p of [e.bone, e.joint, e.wire, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     p.solid.material.dispose(); p.ghost.material.dispose();
@@ -410,6 +540,13 @@ Skeleton.updateVisuals = function (main) {
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
   const showLen = !!window._boneShowLengths;
+  // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
+  // outside every capsule gets no weight from any of them — so seeing them is the difference
+  // between tuning weights by argument and tuning them by eye.
+  const showCaps = window._boneShowCapsules !== false;
+  const hideCaps = (e) => {
+    for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) p.solid.visible = p.ghost.visible = false;
+  };
   // Outliner selection lights the joint in the scene. Reading the live selection here
   // rather than hooking setMesh means it works from every selection route — outliner,
   // gizmo, undo — without any of them knowing joints exist.
@@ -440,6 +577,7 @@ Skeleton.updateVisuals = function (main) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
+      hideCaps(e);
       continue;
     }
 
@@ -450,6 +588,7 @@ Skeleton.updateVisuals = function (main) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
+      hideCaps(e);
       continue;
     }
 
@@ -471,6 +610,40 @@ Skeleton.updateVisuals = function (main) {
       o.scale.set(w, len, w);
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+    }
+
+    // Capsule. The radius belongs to the CHILD joint, matching the bind (a bone deforms with
+    // its child), so the joint you highlight is the joint whose capsule lights up and whose
+    // radius the Radius mode edits.
+    const cr = j._boneRadius || 0;
+    if (!showCaps || !(cr > 1e-9)) { hideCaps(e); continue; }
+    // The capsule wears the colour of the joint that MOVES it — the parent, at its head —
+    // which is the same colour the weight preview paints onto the vertices it claims. (The
+    // radius still belongs to this joint; ownership and authorship are different things.)
+    // Highlighting brightens rather than recolours, so the capsule-to-vertex colour match is
+    // never broken by preselection.
+    const capColor = Skeleton.boneColor(main, parent);
+    const capOp = (isHi || isSel) ? 0.34 : 0.16;
+    for (const o of [e.cap.shaft.solid, e.cap.shaft.ghost]) {
+      o.position.copy(_pA).addScaledVector(_dir, len * 0.5); // cylinder is centre-origin
+      o.quaternion.copy(_q);
+      o.scale.set(cr, len, cr);
+      o.visible = true;
+      o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+    }
+    for (const [part, at] of [[e.cap.a, _pA], [e.cap.b, _pB]]) {
+      for (const o of [part.solid, part.ghost]) {
+        o.position.copy(at);
+        o.scale.setScalar(cr);
+        o.visible = true;
+        o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+      }
+    }
+    for (const part of [e.cap.shaft, e.cap.a, e.cap.b]) {
+      part.solid.material.color.copy(capColor);
+      part.ghost.material.color.copy(capColor);
+      part.solid.material.opacity = capOp;
+      part.ghost.material.opacity = capOp * 0.55;
     }
   }
 
@@ -526,6 +699,56 @@ Skeleton.pickJoint = function (main, pos, maxDist) {
     if (d < bestD) { bestD = d; best = j; }
   }
   return best;
+};
+
+// ---- capsule radii -------------------------------------------------------------
+//
+// A joint's `_boneRadius` is the radius of the capsule around the bone that ENDS at it
+// (parent -> this joint), in model space. It is what the capsule bind measures against, so
+// it is the single number that decides how far a bone's influence reaches.
+
+// Distance from a model-space point to the bone ending at `joint`, or null when the joint
+// has no bone (a chain root). Used both by the radius drag and by any "is this vertex in
+// the capsule" question asked outside the bind.
+Skeleton.boneDistance = function (main, joint, p) {
+  const parent = joint && joint._parentMesh;
+  if (!Skeleton.isJoint(parent) || !main.getMeshes().includes(parent)) return null;
+  Skeleton.jointPos(parent, _pA);
+  Skeleton.jointPos(joint, _pB);
+  _dir.subVectors(_pB, _pA);
+  const len2 = _dir.lengthSq();
+  // _pB is free once _dir is built, so the projection costs no allocation.
+  let t = len2 > 1e-12 ? _pB.copy(p).sub(_pA).dot(_dir) / len2 : 0;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return _pA.addScaledVector(_dir, t).distanceTo(p);
+};
+
+// Bone length of the bone ending at `joint`, or 0 for a chain root.
+Skeleton.boneLength = function (main, joint) {
+  const parent = joint && joint._parentMesh;
+  if (!Skeleton.isJoint(parent) || !main.getMeshes().includes(parent)) return 0;
+  return Skeleton.jointPos(parent, _pA).distanceTo(Skeleton.jointPos(joint, _pB));
+};
+
+// Re-derive every capsule radius as `frac` x its own bone's length. This is the constant
+// that was hard-coded at 0.15, turned into a knob: one drag re-proportions the whole rig,
+// which is the only way to judge a default like that honestly.
+Skeleton.setRadiusFraction = function (main, frac) {
+  const unit = Skeleton.sceneUnit(main);
+  for (const j of Skeleton.joints(main)) {
+    const len = Skeleton.boneLength(main, j);
+    j._boneRadius = len > 1e-9 ? len * frac : unit * 0.05;
+  }
+};
+
+// Radii of every joint, for undo. Small (one float per joint), so snapshotting all of them
+// is simpler and safer than tracking which ones an edit touched.
+Skeleton.captureRadii = function (main) {
+  return Skeleton.joints(main).map((j) => [j, j._boneRadius || 0]);
+};
+
+Skeleton.restoreRadii = function (snapshot) {
+  for (const [j, r] of snapshot) j._boneRadius = r;
 };
 
 // Symmetry plane of the sculpt being rigged (not of the joints, which have none).

@@ -25,6 +25,7 @@ import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import Skinning       from '../../editing/Skinning.js';
+import Skeleton       from '../../editing/Skeleton.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -688,6 +689,7 @@ export class MiniPanel extends HTMLVRPanel {
       mode('#mp-bone-fk',   'fk');
       mode('#mp-bone-free', 'free');
       mode('#mp-bone-pose', 'pose');
+      mode('#mp-bone-radius', 'radius');
 
       // Two flag flavours, and they must not share a toggle: the snaps default ON (stored
       // as "anything but false", so undefined reads as on), Lengths defaults OFF.
@@ -703,11 +705,55 @@ export class MiniPanel extends HTMLVRPanel {
       flag('#mp-bone-snap', '_boneSnapPlane',   true);
       flag('#mp-bone-axis', '_boneSnapAxis',    true);
       flag('#mp-bone-len',  '_boneShowLengths', false);
+      flag('#mp-bone-caps', '_boneShowCapsules', true);
+      // Toggling the weight preview has to repaint or restore immediately — the flag alone
+      // changes nothing until something re-solves.
+      extras.querySelector('#mp-bone-weights')?.addEventListener('click', () => {
+        window._boneShowWeights = window._boneShowWeights === false;
+        Skinning.refreshWeightColorsAll(main);
+        this.syncFromState();
+        main.render?.();
+      });
+
+      // Re-entering the tool restores the preview that clearPreview() took down on the way
+      // out, so the toggle state is what decides whether colours are shown, not tool history.
+      Skinning.refreshWeightColorsAll(main);
+
+      // The slider sets the DEFAULT fraction (used by every joint drawn from now on); the
+      // button pushes it onto the bones that already exist. Split deliberately: applying live
+      // on every drag frame would silently wipe radii that were hand-tuned in Radius mode.
+      const radInput = extras.querySelector('#mp-bone-rad');
+      const radVal   = extras.querySelector('#mp-bone-rad-val');
+      if (radInput) {
+        radInput.addEventListener('input', () => {
+          const pct = parseFloat(radInput.value);
+          window._boneRadiusFrac = pct / 100;
+          if (radVal) radVal.textContent = Math.round(pct) + '%';
+        });
+      }
+      extras.querySelector('#mp-bone-rad-all')?.addEventListener('click', () => {
+        const before = Skeleton.captureRadii(main);
+        Skeleton.setRadiusFraction(main, window._boneRadiusFrac ?? 0.5);
+        const after = Skeleton.captureRadii(main);
+        const apply = (radii) => {
+          Skeleton.restoreRadii(radii);
+          Skinning.resolveWeightsAll(main);
+          Skeleton.updateVisuals(main);
+          main.render();
+        };
+        Skinning.resolveWeightsAll(main);
+        main.getStateManager?.()?.pushStateCustom?.(
+          () => apply(before), () => apply(after), false, 'Bone Radii');
+        window._boneShowCapsules = true; // an invisible edit is indistinguishable from a no-op
+        this.syncFromState();
+        main.render?.();
+      });
 
       extras.querySelector('#mp-bone-bind')?.addEventListener('click', () => {
         const res = Skinning.bind(main, main.getMesh?.());
         const msg = res.ok
           ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
+            + (res.outside ? `, ${res.outside} verts outside every capsule` : '')
           : `Bones: ${res.why}`;
         console.log('[bone] bind:', msg);
         if (window.screenLog) window.screenLog(msg, res.ok ? 'cyan' : '#f38ba8');
@@ -941,9 +987,12 @@ export class MiniPanel extends HTMLVRPanel {
       extrasEl.querySelector('#mp-bone-fk')  ?.classList.toggle('active', mode === 'fk');
       extrasEl.querySelector('#mp-bone-free')?.classList.toggle('active', mode === 'free');
       extrasEl.querySelector('#mp-bone-pose')?.classList.toggle('active', mode === 'pose');
+      extrasEl.querySelector('#mp-bone-radius')?.classList.toggle('active', mode === 'radius');
       extrasEl.querySelector('#mp-bone-snap')?.classList.toggle('active', window._boneSnapPlane !== false);
       extrasEl.querySelector('#mp-bone-axis')?.classList.toggle('active', window._boneSnapAxis !== false);
       extrasEl.querySelector('#mp-bone-len') ?.classList.toggle('active', !!window._boneShowLengths);
+      extrasEl.querySelector('#mp-bone-caps')?.classList.toggle('active', window._boneShowCapsules !== false);
+      extrasEl.querySelector('#mp-bone-weights')?.classList.toggle('active', window._boneShowWeights !== false);
 
     } else if (idx === Enums.Tools.TRANSFORM_VR) {
       const mode = tool._mode ?? 0;
@@ -1016,6 +1065,12 @@ export class MiniPanel extends HTMLVRPanel {
       const axis = window._boneSnapAxis !== false;
       const lens = !!window._boneShowLengths;
       const bound = Skinning.isBound(sm._main?.getMesh?.());
+      const caps = window._boneShowCapsules !== false;
+      const wts  = window._boneShowWeights !== false;
+      // The capsule radius default, as a percentage of bone length. Exposed because it was a
+      // hard-coded guess that every skin weight inherited: one drag re-proportions the whole
+      // rig, which is the only honest way to judge it.
+      const radPct = Math.round((window._boneRadiusFrac ?? 0.5) * 100);
       const on   = (k) => (mode === k ? ' active' : '');
       return `
         <hr class="mp-divider">
@@ -1024,6 +1079,7 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-voxel-btn${on('fk')}"   id="mp-bone-fk">Tweak FK</button>
           <button class="mp-voxel-btn${on('free')}" id="mp-bone-free">Tweak Free</button>
           <button class="mp-voxel-btn${on('pose')}" id="mp-bone-pose">Pose</button>
+          <button class="mp-voxel-btn${on('radius')}" id="mp-bone-radius">Radius</button>
         </div>
         <div class="mp-toggles">
           <button class="mp-toggle-btn${snap ? ' active' : ''}" id="mp-bone-snap">Snap Plane</button>
@@ -1031,6 +1087,16 @@ export class MiniPanel extends HTMLVRPanel {
         </div>
         <div class="mp-toggles">
           <button class="mp-toggle-btn${lens ? ' active' : ''}" id="mp-bone-len">Lengths</button>
+          <button class="mp-toggle-btn${caps ? ' active' : ''}" id="mp-bone-caps">Capsules</button>
+          <button class="mp-toggle-btn${wts ? ' active' : ''}" id="mp-bone-weights">Weights</button>
+        </div>
+        <div class="mp-row">
+          <span class="mp-lbl">Capsule</span>
+          <input type="range" id="mp-bone-rad" min="5" max="120" step="1" value="${radPct}">
+          <span class="mp-val" id="mp-bone-rad-val">${radPct}%</span>
+        </div>
+        <div class="mp-btn-row">
+          <button class="mp-action-btn" id="mp-bone-rad-all">Apply To All</button>
         </div>
         <hr class="mp-divider">
         <div class="mp-btn-row">

@@ -16,10 +16,23 @@ import { adjacencyFromFaces } from './Geodesic.js';
 // moving the character afterwards costs nothing and cannot skew the deformation.
 
 const MAX_INFLUENCES = 4;
-const SMOOTH_ITERATIONS = 3;
+// Smoothing is OFF by default. The bind is rigid — one bone per vertex — and that is the
+// point: the capsules state exactly which vertices each bone owns, and a smoothing pass
+// immediately blurs that statement across capsule boundaries. Smoothing (and delta mush after
+// it) belongs on top of an assignment that is already right, so it stays a knob rather than a
+// default until the assignment is trusted.
+const SMOOTH_ITERATIONS = 0;
+
+// Tuning knobs, live from the console — a VR round trip is the expensive part of judging a
+// weight solve, so the numbers that shape it are adjustable without an edit-reload cycle.
+function tune(key, dflt) {
+  const v = window[key];
+  return Number.isFinite(v) && v >= 0 ? v : dflt;
+}
 
 const _mMesh = new THREE.Matrix4(), _mInv = new THREE.Matrix4();
 const _mJoint = new THREE.Matrix4(), _mSkin = new THREE.Matrix4();
+const _mTmp = new THREE.Matrix4();
 const _v = new THREE.Vector3();
 
 const Skinning = {};
@@ -36,15 +49,40 @@ function distToSegment2(px, py, pz, ax, ay, az, bx, by, bz) {
   return cx * cx + cy * cy + cz * cz;
 }
 
-// Bones as (parent joint, child joint) segments in MESH-LOCAL space. A root joint with no
-// parent contributes no bone — there is nothing to measure a capsule against — but it can
-// still be an influence via its children.
-function boneSegments(main, mesh, joints) {
+// Joint positions in MESH-LOCAL space, as they are RIGHT NOW.
+function jointPositionsNow(mesh, joints) {
   _mMesh.fromArray(mesh.getModelSpaceMatrix());
   _mInv.copy(_mMesh).invert();
+  return joints.map((j) => Skeleton.jointPos(j).applyMatrix4(_mInv));
+}
+
+// Joint positions as they were AT BIND, recovered from the inverse bind matrices (which are
+// already mesh-local, so inverting one and reading its translation gives the bind position).
+// Re-solving weights has to measure against these: the rest vertices the solve runs on are
+// the bind-pose vertices, so measuring them against a POSED skeleton would assign every
+// vertex by where its bone has moved to rather than by where it started.
+function jointPositionsAtBind(invBind) {
+  return invBind.map((m) => {
+    const e = _mTmp.copy(m).invert().elements;
+    return new THREE.Vector3(e[12], e[13], e[14]);
+  });
+}
+
+// Bones as (parent joint, child joint) segments in MESH-LOCAL space, given joint positions in
+// that space. A chain's LAST joint contributes no bone of its own — nothing hangs below it —
+// though the bone that ends at it is still measured against its position.
+//
+// A BONE DEFORMS WITH ITS PARENT JOINT — the joint at its head. The forearm runs elbow to
+// wrist and is moved by the ELBOW; rotating the wrist must move the hand, not the forearm.
+// This was the other way round at first (bone owned by its child joint), and the symptom was
+// exact: rotating a wrist swung the whole forearm, because the forearm's vertices were bound
+// to the wrist. The vertex colours looked correct throughout — the assignment WAS what the
+// colours said — but every capsule was labelled with the joint one step too far down the
+// chain. Weights bound before this need a rebind.
+function boneSegments(mesh, joints, pos) {
+  _mMesh.fromArray(mesh.getModelSpaceMatrix());
   const scale = Math.hypot(_mMesh.elements[0], _mMesh.elements[1], _mMesh.elements[2]) || 1;
 
-  const pos = joints.map((j) => Skeleton.jointPos(j).applyMatrix4(_mInv));
   const index = new Map();
   joints.forEach((j, i) => index.set(j, i));
 
@@ -53,7 +91,9 @@ function boneSegments(main, mesh, joints) {
     const p = j._parentMesh;
     if (!index.has(p)) return;
     segs.push({
-      joint: i,                        // the bone deforms with its CHILD joint
+      // The radius still lives on the CHILD joint (that is the joint that created the bone and
+      // the one whose radius you drag), but the bone moves with the PARENT.
+      joint: index.get(p),
       a: pos[index.get(p)], b: pos[i],
       r: Math.max((j._boneRadius || 0) / scale, 1e-4),
     });
@@ -61,45 +101,46 @@ function boneSegments(main, mesh, joints) {
   return segs;
 }
 
-// Inverse-square capsule falloff, top-N influences, normalised. The classic rigid-assign
-// pass: predictable and explainable, and wrong in exactly the places the smoothing pass
-// afterwards is good at fixing.
-function capsuleWeights(mesh, segs) {
-  const nbV = mesh.getNbVertices(), verts = mesh.getVertices();
+// NEAREST CAPSULE, ONE BONE PER VERTEX. Every vertex belongs to exactly one capsule — the
+// one it is nearest — with weight 1. No falloff, no blending, no smoothing.
+//
+// This replaced a smooth multi-influence falloff on purpose. Any falloff spreads influence
+// past the capsule it came from, so the drawn capsules stopped predicting the deformation and
+// the weights read as broad and mushy no matter how carefully the capsules were tuned. Rigid
+// assignment makes the capsule an exact statement: this bone moves these vertices and no
+// others. That is what makes editing a radius a legible act, and it is the thing to get right
+// before smoothing or delta mush go on top — both of which soften a correct assignment, and
+// neither of which can rescue a wrong one.
+//
+// "Nearest" is measured in units of each capsule's OWN radius (t = distance / radius), not in
+// absolute distance. A thick torso capsule and a thin finger capsule otherwise compete on raw
+// proximity, and the thin one wins territory it has no business owning purely by being close
+// to the surface. In these units a vertex inside a capsule has t < 1, so `outside` — the count
+// of vertices no capsule actually contains — is a real diagnostic: it means capsules are too
+// small, and those vertices were assigned by nearest rather than by containment.
+function nearestCapsuleWeights(verts, nbV, segs) {
   const idx = new Int32Array(nbV * MAX_INFLUENCES).fill(-1);
   const wts = new Float32Array(nbV * MAX_INFLUENCES);
-
-  const bestI = new Int32Array(MAX_INFLUENCES);
-  const bestW = new Float64Array(MAX_INFLUENCES);
+  let outside = 0;
 
   for (let i = 0; i < nbV; i++) {
-    bestI.fill(-1); bestW.fill(0);
     const px = verts[i * 3], py = verts[i * 3 + 1], pz = verts[i * 3 + 2];
+    let bestJoint = -1, bestT2 = Infinity;
 
     for (let s = 0; s < segs.length; s++) {
       const sg = segs[s];
       const d2 = distToSegment2(px, py, pz,
         sg.a.x, sg.a.y, sg.a.z, sg.b.x, sg.b.y, sg.b.z);
-      // Radius sets the scale at which a bone stops dominating; without it a thin bone
-      // near a thick one wins purely by being closer to the surface.
-      const w = 1 / (d2 / (sg.r * sg.r) + 1e-4);
-
-      // insertion sort into the top-N
-      let k = MAX_INFLUENCES - 1;
-      if (w <= bestW[k]) continue;
-      while (k > 0 && bestW[k - 1] < w) { bestW[k] = bestW[k - 1]; bestI[k] = bestI[k - 1]; k--; }
-      bestW[k] = w; bestI[k] = sg.joint;
+      const t2 = d2 / (sg.r * sg.r);
+      if (t2 < bestT2) { bestT2 = t2; bestJoint = sg.joint; }
     }
 
-    let sum = 0;
-    for (let k = 0; k < MAX_INFLUENCES; k++) sum += bestW[k];
-    if (sum <= 0) continue;
-    for (let k = 0; k < MAX_INFLUENCES; k++) {
-      idx[i * MAX_INFLUENCES + k] = bestI[k];
-      wts[i * MAX_INFLUENCES + k] = bestW[k] / sum;
-    }
+    if (bestJoint < 0) continue;
+    if (bestT2 > 1) outside++;
+    idx[i * MAX_INFLUENCES] = bestJoint;
+    wts[i * MAX_INFLUENCES] = 1;
   }
-  return { idx: idx, wts: wts };
+  return { idx: idx, wts: wts, outside: outside };
 }
 
 // Laplacian smoothing over the weight field: average each vertex's weights with its
@@ -168,6 +209,13 @@ function smoothWeights(mesh, idx, wts, iterations, nbJoints) {
   return { idx: curIdx, wts: curW };
 }
 
+// Optional smoothing pass on top of the rigid assignment, off unless asked for.
+function solveSmoothing(mesh, raw, nbJoints) {
+  const iterations = Math.round(tune('_skinSmooth', SMOOTH_ITERATIONS));
+  if (iterations <= 0) return raw;
+  return smoothWeights(mesh, raw.idx, raw.wts, iterations, nbJoints);
+}
+
 // Bind `mesh` to every joint currently in the scene.
 //
 // Binding FREEZES TOPOLOGY: the weights are indexed by vertex, so any op that changes the
@@ -185,12 +233,12 @@ Skinning.bind = function (main, mesh) {
     return { ok: false, why: 'select the character mesh first (a joint is selected)' };
   }
 
-  const segs = boneSegments(main, mesh, joints);
+  const segs = boneSegments(mesh, joints, jointPositionsNow(mesh, joints));
   if (!segs.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
-  let w = capsuleWeights(mesh, segs);
-  w = smoothWeights(mesh, w.idx, w.wts, SMOOTH_ITERATIONS, joints.length);
+  const raw = nearestCapsuleWeights(mesh.getVertices(), mesh.getNbVertices(), segs);
+  const w = solveSmoothing(mesh, raw, joints.length);
 
   // Inverse bind matrices, in mesh-local space.
   _mMesh.fromArray(mesh.getModelSpaceMatrix());
@@ -209,12 +257,121 @@ Skinning.bind = function (main, mesh) {
   mesh._skinSrc = new Float32Array(mesh._skinRest);
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
+  Skinning.refreshWeightColors(main, mesh);
   return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
-           verts: nbV, ms: Math.round(performance.now() - t0) };
+           verts: nbV, ms: Math.round(performance.now() - t0), outside: raw.outside };
+};
+
+// Re-solve the weights of an already-bound mesh against the CURRENT capsules, leaving the
+// bind pose and the inverse binds alone. This is what makes radius editing a live operation:
+// grow a capsule and the vertices it owns change under your hand, in colour, immediately —
+// which is the only way to tune an envelope without a bind-look-unbind loop for every guess.
+//
+// Deliberately measures the BIND-pose skeleton against the BIND-pose vertices, so it stays
+// correct even if the character is posed while you edit.
+Skinning.resolveWeights = function (main, mesh) {
+  if (!Skinning.isBound(mesh)) return false;
+  const joints = resolveJoints(main, mesh);
+  if (joints.some((j) => !j)) return false; // a joint was deleted: rebinding is the fix
+
+  const segs = boneSegments(mesh, joints, jointPositionsAtBind(mesh._skinInvBind));
+  if (!segs.length) return false;
+
+  const nbV = (mesh._skinRest.length / 3) | 0;
+  const raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
+  const w = solveSmoothing(mesh, raw, joints.length);
+  mesh._skinIdx = w.idx;
+  mesh._skinW = w.wts;
+  mesh._skinDirty = true;
+  Skinning.refreshWeightColors(main, mesh);
+  return true;
+};
+
+// Every bound mesh in the scene, for the live editing path.
+Skinning.resolveWeightsAll = function (main) {
+  const meshes = main.getMeshes() || [];
+  let n = 0;
+  for (let i = 0; i < meshes.length; i++) {
+    if (Skinning.isBound(meshes[i]) && Skinning.resolveWeights(main, meshes[i])) n++;
+  }
+  return n;
+};
+
+// ---- weight colour preview ------------------------------------------------------
+//
+// Paint each vertex in the identity colour of the bone that owns it. This is the whole
+// diagnostic: a bone's capsule and the vertices it claims are the same colour, so weights
+// reaching past their capsule are not something to reason about, they are something you see.
+// The mesh's real colours are saved and put back when the preview is turned off.
+
+Skinning.weightColorsShown = function (mesh) { return !!(mesh && mesh._skinSavedColors); };
+
+Skinning.showWeightColors = function (main, mesh) {
+  if (!Skinning.isBound(mesh)) return false;
+  const nbV = mesh.getNbVertices();
+  const colors = mesh.getColors();
+  if (!mesh._skinSavedColors) {
+    mesh._skinSavedColors = new Float32Array(colors.subarray(0, nbV * 3));
+  }
+
+  const joints = resolveJoints(main, mesh);
+  const cols = joints.map((j) => (j ? Skeleton.boneColor(main, j) : null));
+  const idx = mesh._skinIdx, wts = mesh._skinW;
+
+  for (let i = 0; i < nbV; i++) {
+    let r = 0, g = 0, b = 0, total = 0;
+    for (let k = 0; k < MAX_INFLUENCES; k++) {
+      const j = idx[i * MAX_INFLUENCES + k];
+      if (j < 0 || !cols[j]) continue;
+      const w = wts[i * MAX_INFLUENCES + k];
+      r += cols[j].r * w; g += cols[j].g * w; b += cols[j].b * w;
+      total += w;
+    }
+    // Unowned vertices go near-black rather than to some bone's colour: "nothing moves this"
+    // is a distinct answer from "this bone moves it", and it is the one worth spotting.
+    if (total <= 1e-6) { r = g = b = 0.04; total = 1; }
+    colors[i * 3] = r / total; colors[i * 3 + 1] = g / total; colors[i * 3 + 2] = b / total;
+  }
+  mesh.updateDuplicateColorsAndMaterials();
+  mesh.updateColorBuffer();
+  return true;
+};
+
+Skinning.restoreColors = function (mesh) {
+  if (!mesh || !mesh._skinSavedColors) return;
+  mesh.getColors().set(mesh._skinSavedColors);
+  mesh._skinSavedColors = null;
+  mesh.updateDuplicateColorsAndMaterials();
+  mesh.updateColorBuffer();
+};
+
+// Repaint if the preview is on, otherwise make sure the real colours are back. Called after
+// anything that changes the assignment, so the two states can never drift apart.
+Skinning.refreshWeightColors = function (main, mesh) {
+  if (!Skinning.isBound(mesh)) { Skinning.restoreColors(mesh); return; }
+  if (window._boneShowWeights === false) Skinning.restoreColors(mesh);
+  else Skinning.showWeightColors(main, mesh);
+};
+
+// Put every mesh's real colours back. Called when the Bones tool is left, so a preview can
+// never end up baked into a saved sculpt just because the user walked away from the tool.
+Skinning.restoreColorsAll = function (main) {
+  const meshes = main.getMeshes() || [];
+  for (let i = 0; i < meshes.length; i++) Skinning.restoreColors(meshes[i]);
+};
+
+Skinning.refreshWeightColorsAll = function (main) {
+  const meshes = main.getMeshes() || [];
+  for (let i = 0; i < meshes.length; i++) {
+    if (Skinning.isBound(meshes[i]) || meshes[i]._skinSavedColors) {
+      Skinning.refreshWeightColors(main, meshes[i]);
+    }
+  }
 };
 
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
+  Skinning.restoreColors(mesh);
   // Put the mesh back in its bind pose rather than leaving it stuck in whatever pose it
   // happened to be in — an unbind that silently freezes a pose is worse than no unbind.
   if (mesh._skinRest) {

@@ -1,3 +1,27 @@
+# v3.17.22
+**Fix — a bone deforms with its parent joint, not its child.** Rotating a wrist swung the whole forearm.
+
+- **Fix — bone ownership was one joint too far down the chain.** The forearm runs elbow to wrist, and it is the ELBOW that moves it; rotating the wrist should move the hand. Every capsule was bound to the joint at its tail instead of its head, so each joint dragged the bone above it. The weight colours were never wrong — the assignment genuinely was what they showed — which is why this read as a rotation problem rather than a binding one. **Rigs bound before this need a rebind.**
+- **Change — bone colours are assigned, not hashed.** Each joint now takes the palette colour furthest in hue from its parent, its grandparent and its already-coloured siblings. A hash spreads colour evenly across the whole rig but says nothing about any particular adjacent pair, which is how a shoulder and an elbow ended up pink and purple — the one boundary the preview exists to show. Capsules wear the colour of the joint that moves them, matching the vertices they claim.
+
+# v3.17.21
+**Rigid nearest-capsule binding, with the weights painted on the mesh.** Weights were still reaching well past the capsules they came from. The fix is to stop blending entirely: one bone per vertex, decided by which capsule it is nearest.
+
+- **Change — the bind is rigid.** Every vertex belongs to exactly one bone, weight 1, chosen by nearest capsule. No falloff, no multi-influence blend, no smoothing pass. Any falloff spreads influence past the capsule it came from, so the capsules stopped predicting the deformation no matter how carefully they were tuned. Smoothing and delta mush go on top of a correct assignment later; neither can rescue a wrong one. Smoothing is still available via `window._skinSmooth`, off by default.
+- **Feature — weight colour preview.** Each bone gets a saturated identity colour, its capsule is drawn in that colour, and on bind every vertex is painted the colour of the bone that owns it. Weights reaching past their capsule are now something you see rather than something you infer. Vertices no bone claims go near-black. Toggle: Weights in the mini panel; the mesh's real colours are restored when it is turned off, when the mesh is unbound, and whenever you leave the Bones tool — so a preview can never be saved into a sculpt by accident.
+- **Feature — Radius mode re-solves live.** Dragging a capsule radius on a bound mesh re-solves the weights under your hand (throttled, and measured against the bind pose so it stays correct on a posed character), so the territory recolours as the capsule grows. Undoing a radius change undoes the weights with it. `window._boneLiveWeights = false` disables it.
+- **Note** — nearest is measured in units of each capsule's own radius, so a thin finger capsule cannot win territory from a thick torso one purely by sitting closer to the surface.
+
+# v3.17.19
+**Bind capsules, drawn and editable — and a falloff that actually stops.** The default weighting was too broad and too soft, and the capsule radius behind it was an invisible guess. It is now geometry you can see and grab.
+
+- **Feature — capsules are drawn.** Every bone shows the capsule its weights are measured against, as a translucent envelope with the same xray ghost as the rest of the skeleton, so it reads through the sculpt. Toggle: Capsules in the mini panel.
+- **Feature — Radius mode.** A fifth mode: trigger-hold near a capsule and its radius follows the controller's distance from the bone. Inflate the envelope until it contains the limb and let go. Mirrored bones follow their twin, and each drag is one undo step.
+- **Feature — capsule size is a knob, not a constant.** The default radius (a fraction of the bone's own length) is a slider in the mini panel, with Apply To All to push it onto a skeleton already drawn. It was hard-coded at 0.15 with nothing behind that number; the default is now 0.5, but the point is that it can be judged by eye.
+- **Change — the capsule falloff has compact support.** Weight now falls to exactly zero at the capsule wall instead of trailing off forever. Under the old inverse-square kernel every bone kept a small say in every vertex, the four influence slots filled with whatever was nearest after the real one, and the radius could only ever set a relative scale between bones — no value of it tightened anything. The drawn capsule is now precisely the region a bone can influence.
+- **Change — vertices outside every capsule bind rigidly to the nearest bone**, and the bind reports how many did. A large count means the capsules are too small, which is now a number rather than a mystery deformation.
+- **Tuning hatches:** `window._skinPower` (falloff exponent, default 2), `window._skinSmooth` (smoothing iterations, default 3), `window._boneRadiusFrac`, `window._boneShowCapsules`.
+
 # v3.17.18
 **Fix — joints could not be moved after a selection change.** Grabbing a joint selected it, selecting runs the tool-context switch, and that re-applied the already-active tool — which discarded the outgoing tool's preview state unconditionally, cancelling the grab on the frame it began.
 
