@@ -431,6 +431,7 @@ class BoneDrawTool extends SculptBase {
     const main = this._main;
     let best = null, bestT = 4;
     for (const j of Skeleton.joints(main)) {
+      if (!Skeleton.jointVisible(j)) continue; // hidden capsules are not grabbable
       const d = Skeleton.boneDistance(main, j, pos);
       if (d === null) continue;
       // A zero/absent radius must stay grabbable, or a bone can never be given one.

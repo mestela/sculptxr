@@ -1,3 +1,17 @@
+# v3.18.3
+**The skin follows the capsules, bones hide from the outliner, and stop spinning when you pose them.**
+
+- **Fix — Make Skin now matches the capsules you tuned.** Each bone gets two rings at its own capsule radius, square to its own bone, so a tube is the constant thickness its capsule is. Previously every ring sat at a joint carrying the AVERAGE of the two bones meeting there, cut square to the bisector and widened by a miter at bends — so a bone between a thick parent and a thin child came out thick at one end and thin at the other, every joint introduced a radius nobody asked for, and bends bulged past the capsule that had been tuned against the real mesh. Thickness changes now happen at the joint, where the capsules change, instead of being smeared along the limb.
+
+- **Fix — the drawn bone no longer spins about its own long axis while posing.** The bone visual was oriented by the minimal rotation from +Y onto the bone's direction, and the roll of that rotation is a function of the direction alone — so as a joint swung, the bone rolled in a way the joint never did, while the deformation underneath stayed correct. The visual was inventing a roll rather than reporting one. It is now built from the owning joint's own rotation, with the direction expressed in that joint's frame, so the bone rolls exactly as the joint rolls. Under a general 6DOF rotation the old orientation drifted up to 300 degrees against the joint frame; it now holds to zero.
+- **Fix — the outliner eye on a joint does something.** A joint's own locator never draws (the bone and joint visuals represent it), so toggling its visibility had nothing to act on. The skeleton pass honours it now, and visibility is inherited down the chain: hide the root and every joint, bone, capsule and length label below it goes with it.
+- Hidden joints are not grabbable either — preselection, tweak, pose and radius all skip them. Grabbing something you cannot see is worse than not being able to grab it.
+- Hiding is display only: a hidden skeleton still deforms a bound mesh, so you can pose the rig, hide it, and look at the skin alone.
+
+- **Fix — the outliner eye did nothing on a bone.** A joint's own locator never draws (the bone and joint visuals in the skeleton pass represent it), so toggling the mesh's visibility had nothing to act on. The skeleton pass now honours it, and visibility is inherited down the chain: hide the root and every joint, bone, capsule and length label below it goes with it.
+- Hidden joints are not grabbable either — preselection, tweak, pose and radius all skip them. Grabbing something you cannot see is worse than not being able to grab it.
+- Hiding is display only: a hidden skeleton still deforms a bound mesh, so you can pose the rig, hide it, and look at the skin alone.
+
 # v3.18.0
 **Bones to low-poly skin — clay over a wire armature.** Draw a skeleton, press Make Skin, and get quad tubes at the capsule radii you already tuned: a blockout to sculpt on rather than scaffolding to look at.
 

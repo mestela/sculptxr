@@ -78,16 +78,11 @@ function chains(main, joints) {
 // Radius of the bone ENDING at `joint` (that is where the radius is stored).
 function boneRadius(joint) { return joint._boneRadius || 0; }
 
-// Per-ring radius along a chain. Interior rings average the two bones meeting there, so a
-// tapering limb tapers smoothly instead of stepping at every joint.
-function ringRadii(chain) {
-  const n = chain.length - 1;
-  const r = new Array(chain.length);
-  r[0] = boneRadius(chain[1]);
-  for (let i = 1; i < n; i++) r[i] = (boneRadius(chain[i]) + boneRadius(chain[i + 1])) * 0.5;
-  r[n] = boneRadius(chain[n]);
-  return r;
-}
+// How far each bone's two rings sit in from its ends, as a fraction of bone length. The rings
+// have to be inset rather than sitting on the joints: two rings at the same point would make
+// degenerate zero-height quads, and the gap between one bone's end ring and the next bone's
+// start ring is what forms the transition across a joint.
+const RING_INSET = 0.25;
 
 // Ring frames along the chain, PARALLEL TRANSPORTED. Rebuilding the basis from a fixed world
 // up-vector at every ring makes the tube spin as the chain changes direction (and degenerate
@@ -119,50 +114,65 @@ function ringFrames(pts, normals) {
 }
 
 // One chain -> a list of rings (centre, basis, radius) ready to stitch, plus the two poles.
+//
+// TWO RINGS PER BONE, BOTH AT THAT BONE'S OWN CAPSULE RADIUS, both square to that bone.
+//
+// The first version put one ring at each JOINT, at the average of the two bones meeting
+// there, cut square to the bisector and widened by a miter factor at bends. Three things were
+// wrong with that, and together they produced shapes that matched no capsule anywhere: a bone
+// between a thick parent and a thin child ended up thick at one end and thin at the other when
+// its capsule is a constant radius; every joint became a radius the user never asked for; and
+// the miter inflated bends past the capsule that was tuned against the actual mesh.
+//
+// A capsule has ONE radius along its whole length. Giving each bone two rings at its own
+// radius makes the tube say exactly what the capsule says, and the short span between one
+// bone's end ring and the next bone's start ring becomes the transition across the joint —
+// which is also where a change in thickness now happens, instead of smeared along a limb.
 function chainRings(main, chain) {
   const pts = chain.map((j) => Skeleton.jointPos(j));
-  const radii = ringRadii(chain);
   const n = pts.length - 1;
 
-  // Direction of each bone, and the ring normal at each joint: the bisector at interior
-  // joints, so the ring sits square to the bend rather than square to one of the two bones.
-  const dirs = [];
+  const dirs = [], lens = [], radii = [];
   for (let i = 0; i < n; i++) {
     const d = new THREE.Vector3().subVectors(pts[i + 1], pts[i]);
     const len = d.length();
     if (len < 1e-9) return null; // coincident joints: nothing sensible to build
     dirs.push(d.divideScalar(len));
-  }
-  const normals = [];
-  for (let i = 0; i <= n; i++) {
-    if (i === 0) normals.push(dirs[0].clone());
-    else if (i === n) normals.push(dirs[n - 1].clone());
-    else normals.push(new THREE.Vector3().addVectors(dirs[i - 1], dirs[i]).normalize());
+    lens.push(len);
+    // The radius belongs to the bone's CHILD joint — that is where the capsule stores it.
+    radii.push(Math.max(boneRadius(chain[i + 1]), 1e-6));
   }
 
-  const frames = ringFrames(pts, normals);
-  const rings = [];
-  for (let i = 0; i <= n; i++) {
-    // Miter: a ring cut square to the bisector is an ellipse narrower than the tube, so widen
-    // it by 1/cos(half angle). Clamped, because a hairpin bend would otherwise blow up.
-    const bend = i === 0 || i === n ? 1 : Math.max(dirs[i - 1].dot(normals[i]), 0.35);
-    rings.push({ c: pts[i], f: frames[i], r: radii[i] / bend });
+  const centers = [], normals = [], rs = [];
+  for (let i = 0; i < n; i++) {
+    // Cap the inset by the radius too: on a short fat bone a quarter-length inset would put
+    // the two rings inside each other's cap domes.
+    const inset = Math.min(lens[i] * RING_INSET, radii[i] * 0.75);
+    centers.push(pts[i].clone().addScaledVector(dirs[i], inset));
+    centers.push(pts[i + 1].clone().addScaledVector(dirs[i], -inset));
+    normals.push(dirs[i], dirs[i]);
+    rs.push(radii[i], radii[i]);
   }
+
+  const frames = ringFrames(centers, normals);
+  const rings = centers.map((c, i) => ({ c: c, f: frames[i], r: rs[i] }));
 
   // Dome caps at both ends, reusing the adjacent ring's basis so the stitching stays aligned.
+  // Anchored to the ring rather than the joint, so the dome closes the tube it is attached to.
   const first = rings[0], last = rings[rings.length - 1];
+  const rFirst = radii[0], rLast = radii[n - 1];
   const startCap = {
-    c: first.c.clone().addScaledVector(first.f.n, -radii[0] * CAP_RING_OFFSET),
-    f: first.f, r: radii[0] * CAP_RING_SCALE,
+    c: first.c.clone().addScaledVector(first.f.n, -rFirst * CAP_RING_OFFSET),
+    f: first.f, r: rFirst * CAP_RING_SCALE,
   };
   const endCap = {
-    c: last.c.clone().addScaledVector(last.f.n, radii[n] * CAP_RING_OFFSET),
-    f: last.f, r: radii[n] * CAP_RING_SCALE,
+    c: last.c.clone().addScaledVector(last.f.n, rLast * CAP_RING_OFFSET),
+    f: last.f, r: rLast * CAP_RING_SCALE,
   };
   return {
     rings: [startCap].concat(rings, [endCap]),
-    poleStart: first.c.clone().addScaledVector(first.f.n, -radii[0]),
-    poleEnd: last.c.clone().addScaledVector(last.f.n, radii[n]),
+    poleStart: first.c.clone().addScaledVector(first.f.n, -rFirst),
+    poleEnd: last.c.clone().addScaledVector(last.f.n, rLast),
   };
 }
 

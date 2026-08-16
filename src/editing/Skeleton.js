@@ -38,6 +38,10 @@ const _pA = new THREE.Vector3(), _pB = new THREE.Vector3();
 const _dir = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const _zAxis = new THREE.Vector3(0, 0, 1);
 const _q = new THREE.Quaternion();
+// Scratch for deriving a bone's roll from the joint that owns it.
+const _qOwner = new THREE.Quaternion(), _qAlign = new THREE.Quaternion();
+const _qInv = new THREE.Quaternion();
+const _dirLocal = new THREE.Vector3(), _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
 // Unit octahedral bone along +Y: apex at the origin, apex at (0,1,0), diamond ring at
 // y = 0.15. X/Z are scaled by the bone width, Y by its length, so the ring width stays
@@ -254,6 +258,19 @@ Skeleton.boneColor = function (main, joint) {
 
 Skeleton.joints = function (main) {
   return (main.getMeshes() || []).filter(Skeleton.isJoint);
+};
+
+// Is this joint's rig visible? A joint's own locator never draws — the flat visuals in this
+// file represent it — so the outliner's eye has to be honoured HERE or it does nothing on a
+// bone. Visibility is inherited down the chain: hiding the root hides the whole skeleton,
+// which is the only way anyone actually wants to hide a rig. Walking ancestors per joint per
+// frame is O(depth) on a handful of joints, far cheaper than maintaining a cached flag that
+// could drift out of sync with the outliner.
+Skeleton.jointVisible = function (joint) {
+  for (let m = joint; m; m = m._parentMesh) {
+    if (Skeleton.isJoint(m) && m.isVisible && !m.isVisible()) return false;
+  }
+  return true;
 };
 
 // A scene-scale unit so joint markers and preview bones are sized relative to the model
@@ -556,6 +573,18 @@ Skeleton.updateVisuals = function (main) {
     const id = j.getID();
     live.add(id);
     const e = ensureEntry(main, id);
+
+    // Hidden by the outliner (its own eye, or an ancestor's). Everything this joint draws
+    // goes away; the entry itself stays so unhiding costs nothing.
+    if (!Skeleton.jointVisible(j)) {
+      e.joint.solid.visible = e.joint.ghost.visible = false;
+      e.bone.solid.visible = e.bone.ghost.visible = false;
+      e.wire.solid.visible = e.wire.ghost.visible = false;
+      e.label.sprite.visible = false;
+      hideCaps(e);
+      continue;
+    }
+
     Skeleton.jointPos(j, _pB);
 
     // Preselection: the joint the next trigger will act on. Colour AND size both change —
@@ -602,7 +631,24 @@ Skeleton.updateVisuals = function (main) {
     } else {
       e.label.sprite.visible = false;
     }
-    _q.setFromUnitVectors(_up, _dir.divideScalar(len));
+    _dir.divideScalar(len);
+    // ROLL COMES FROM THE JOINT, NOT FROM THE DIRECTION.
+    //
+    // `setFromUnitVectors(+Y, dir)` is the minimal rotation onto the bone's direction, and its
+    // roll about that direction is a function of the direction alone. Rotating a joint in pose
+    // mode therefore made the drawn bone spin about its own long axis even though the joint's
+    // real transform — and so the deformation — was rock steady. The visual was inventing a
+    // roll rather than reporting one.
+    //
+    // Instead: express the bone's direction in the OWNING joint's frame (the parent, at the
+    // bone's head), align +Y to that, and put the joint's own rotation back on top. The local
+    // direction is fixed while posing — a child rides its parent — so all the roll now comes
+    // from the joint's actual orientation, which is what the bone is supposed to be showing.
+    _mTmp.fromArray(parent.getModelSpaceMatrix());
+    _mTmp.decompose(_vTmp, _qOwner, _sTmp);
+    _dirLocal.copy(_dir).applyQuaternion(_qInv.copy(_qOwner).invert()).normalize();
+    _qAlign.setFromUnitVectors(_up, _dirLocal);
+    _q.copy(_qOwner).multiply(_qAlign);
     const w = Math.max(len * 0.12, jr * 0.6);
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
       o.position.copy(_pA);
@@ -695,6 +741,9 @@ Skeleton.hidePreview = function (main) {
 Skeleton.pickJoint = function (main, pos, maxDist) {
   let best = null, bestD = maxDist;
   for (const j of Skeleton.joints(main)) {
+    // A hidden joint must not be grabbable. Picking something you cannot see is worse than
+    // not being able to pick it — you would move a rig with no idea what you had hold of.
+    if (!Skeleton.jointVisible(j)) continue;
     const d = Skeleton.jointPos(j, _pA).distanceTo(pos);
     if (d < bestD) { bestD = d; best = j; }
   }
