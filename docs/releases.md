@@ -1,3 +1,9 @@
+# v3.17.18
+**Fix — joints could not be moved after a selection change.** Grabbing a joint selected it, selecting runs the tool-context switch, and that re-applied the already-active tool — which discarded the outgoing tool's preview state unconditionally, cancelling the grab on the frame it began.
+
+- **Fix — re-applying the current tool no longer throws away work in progress.** Switching tools still clears the previous tool's preview; merely selecting something no longer does. This also protects extrude's tagged faces, which a selection change would otherwise have silently dropped.
+- **Fix — joint selection syncs on release.** The outliner now follows a grabbed joint once the drag finishes, rather than mid-grab.
+
 # v3.17.17
 **Two overlay fixes.** Both are helper visuals outliving the moment they belonged to.
 

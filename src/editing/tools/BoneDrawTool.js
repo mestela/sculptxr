@@ -133,6 +133,22 @@ class BoneDrawTool extends SculptBase {
     this._main.render();
   }
 
+  // Scene -> outliner, deferred to AFTER the drag and OUT of the XR frame. Two reasons,
+  // both of which bit when this ran at grab time instead:
+  //   1. Scene.setMesh runs tool-context switching, which calls setToolIndex — and
+  //      setToolIndex fires clearPreview() on the outgoing tool WITHOUT checking whether
+  //      the tool actually changed. Since the "new" tool is Bones again, that cancelled the
+  //      grab on the very frame it started, in every mode.
+  //   2. setMesh ends in a render(), and rendering from inside updateXR is the re-entrant
+  //      render that has broken the VR loop before.
+  // A timeout leaves the XR frame entirely, and by then the grab is already committed.
+  _selectLater(joint) {
+    const main = this._main;
+    setTimeout(() => {
+      if (joint && main.getMeshes().includes(joint)) main.setMesh?.(joint);
+    }, 0);
+  }
+
   endChain() {
     this._chainParent = this._chainParentMirror = null;
     this._chainIndex = 0;
@@ -278,8 +294,6 @@ class BoneDrawTool extends SculptBase {
     const snapshot = Skeleton.captureLocal(main, joint)
       .concat(twin ? Skeleton.captureLocal(main, twin) : []);
     this._grab = { joint: joint, twin: twin, plane: plane, before: snapshot };
-    // Scene -> outliner: grabbing a joint selects it, so the two views agree.
-    main.setMesh?.(joint);
   }
 
   _dragTo(pos) {
@@ -306,6 +320,7 @@ class BoneDrawTool extends SculptBase {
     const g = this._grab;
     this._grab = null;
     if (!g) return;
+    this._selectLater(g.joint);
     const main = this._main;
     const before = g.before;
     const after = before.map(([mesh]) => [mesh, mat4.clone(mesh.getMatrix())]);
@@ -334,7 +349,6 @@ class BoneDrawTool extends SculptBase {
       local: mat4.clone(joint.getMatrix()),
       before: [[joint, mat4.clone(joint.getMatrix())]],
     };
-    this._main.setMesh?.(joint); // scene -> outliner
   }
 
   _poseTo(quat) {
@@ -368,6 +382,7 @@ class BoneDrawTool extends SculptBase {
     const p = this._pose;
     this._pose = null;
     if (!p) return;
+    this._selectLater(p.joint);
     const main = this._main;
     const before = p.before;
     const after = before.map(([mesh]) => [mesh, mat4.clone(mesh.getMatrix())]);

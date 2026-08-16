@@ -54,16 +54,24 @@ class SculptManager {
   setToolIndex(id) {
     const oldTool = this.getCurrentTool();
     const wasPaintGroup = this._toolIndex === Enums.Tools.PAINT_GROUP;
-    if (oldTool && oldTool.clearPreview) {
-      oldTool.clearPreview();
-    }
 
     // Route both transform variants to the right tool for the current context.
     // Transform (13) has desktop mouse interaction; TransformVR (16) has controller interaction.
+    // Resolved BEFORE the clearPreview check below, so "is this actually a tool change?"
+    // is asked about the tool we will really end up on.
     if (id === Enums.Tools.TRANSFORM || id === Enums.Tools.TRANSFORM_VR) {
       const isVR = this._main && this._main._renderer &&
                    this._main._renderer.xr && this._main._renderer.xr.isPresenting;
       id = isVR ? Enums.Tools.TRANSFORM_VR : Enums.Tools.TRANSFORM;
+    }
+
+    // Only discard the outgoing tool's preview when the tool is genuinely CHANGING.
+    // setToolIndex is called with the current tool from routine places — notably
+    // Scene.setOrUnsetMesh's tool-context switching, which fires on every selection change
+    // — and unconditionally clearing meant merely selecting something threw away live
+    // in-progress state: Extrude's tagged faces, and a bone grab on the frame it began.
+    if (id !== this._toolIndex && oldTool && oldTool.clearPreview) {
+      oldTool.clearPreview();
     }
 
     this._toolIndex = id;
