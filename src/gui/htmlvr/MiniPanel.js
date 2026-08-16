@@ -26,6 +26,7 @@ import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import Skinning       from '../../editing/Skinning.js';
 import Skeleton       from '../../editing/Skeleton.js';
+import SkinMesh       from '../../editing/SkinMesh.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -749,6 +750,18 @@ export class MiniPanel extends HTMLVRPanel {
         main.render?.();
       });
 
+      extras.querySelector('#mp-bone-skin')?.addEventListener('click', () => {
+        const res = SkinMesh.build(main);
+        const msg = res.ok
+          ? `Bones: skin built — ${res.chains} chains, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
+          : `Bones: ${res.why}`;
+        console.log('[bone] skin:', msg);
+        if (window.screenLog) window.screenLog(msg, res.ok ? 'cyan' : '#f38ba8');
+        this._lastExtrasIdx = -1; // the new mesh becomes the selection, so the panel changes
+        this.syncFromState();
+        main.render?.();
+      });
+
       extras.querySelector('#mp-bone-bind')?.addEventListener('click', () => {
         const res = Skinning.bind(main, main.getMesh?.());
         const msg = res.ok
@@ -1099,6 +1112,9 @@ export class MiniPanel extends HTMLVRPanel {
           <button class="mp-action-btn" id="mp-bone-rad-all">Apply To All</button>
         </div>
         <hr class="mp-divider">
+        <div class="mp-btn-row">
+          <button class="mp-action-btn" id="mp-bone-skin">Make Skin</button>
+        </div>
         <div class="mp-btn-row">
           <button class="mp-action-btn" id="mp-bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
           ${bound ? '<button class="mp-action-btn" id="mp-bone-unbind">Unbind</button>' : ''}

@@ -1,3 +1,13 @@
+# v3.18.0
+**Bones to low-poly skin — clay over a wire armature.** Draw a skeleton, press Make Skin, and get quad tubes at the capsule radii you already tuned: a blockout to sculpt on rather than scaffolding to look at.
+
+This is also the release that carries the skinning rework below it (v3.17.19–22): visible and editable bind capsules, rigid nearest-capsule weights, and the weight colour preview.
+
+- **Feature — Make Skin** (mini panel, Bones). One continuous tube per chain, so an arm runs shoulder to wrist as a single surface and the elbow is a bend in it rather than a seam. Ring radius follows the capsules, tapering between bones, with a miter at each joint so the tube does not pinch on a bend. Dome caps at the ends. Frames are parallel-transported down the chain, so the quad rows run straight along a limb instead of spinning where it changes direction.
+- Branch points are left interpenetrating on purpose: two clavicles leaving a spine each cap off inside the other. Resolving junctions cleanly is the hard part of every skin modifier ever written, and this is a shape you are about to voxel-remesh or sculpt over anyway.
+- The skin lands exactly on the skeleton (model-space vertices, identity matrix, no auto-normalise) — the proportions you drew are the proportions you get. It arrives as an ordinary new mesh, one undo step, unbound so you can sculpt it freely.
+- `window._boneSkinSides` sets the radial segment count (default 6 — low on purpose).
+
 # v3.17.22
 **Fix — a bone deforms with its parent joint, not its child.** Rotating a wrist swung the whole forearm.
 
