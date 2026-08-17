@@ -3,6 +3,7 @@ import { mat4 } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import Skeleton from '../Skeleton.js';
 import Skinning from '../Skinning.js';
+import IKSolver from '../IKSolver.js';
 
 // Minimum gap between live weight re-solves while dragging a radius. Slow enough that a dense
 // mesh keeps its framerate, fast enough that the recolour still reads as continuous.
@@ -50,6 +51,19 @@ const LIVE_WEIGHT_MS = 80;
 //                  through the scene graph. Translation is ignored on purpose — posing
 //                  must not quietly rewrite the rig's proportions.
 //
+// IK                      move the CHARACTER, full-body
+//   A button       cycle the highlighted joint's pin: none -> position -> position+rotation
+//                  (Mirai stop-motion pinning: a pin says "this stays where it is", and
+//                  everything else rearranges around it). A position pin lets the limb above
+//                  it swivel — right for a hand on a surface; a 6DOF pin also holds the
+//                  joint's orientation, which is what keeps a foot flat on the ground.
+//   trigger hold   drag the highlighted joint; the solver reaches for your hand with the
+//                  whole skeleton, holding every pin. The grab is 6DOF — TURNING your hand
+//                  turns the joint, and the rest of the rig is solved around that too, so
+//                  pinning the feet and twisting the hips moves the whole body. With nothing
+//                  pinned the chain root is the anchor, so a first drag reaches with the arm
+//                  instead of flinging the character after your hand.
+//
 // With symmetry on, a mirrored joint is placed at the same time and named _L / _R. The
 // naming looks like bureaucracy at POC stage, but mirrored weight paste, mirrored posing
 // and any future retargeting all key off it, and it is free only at creation time. Tweak
@@ -83,12 +97,13 @@ class BoneDrawTool extends SculptBase {
     this._chainName = 'bone';
     this._chainIndex = 0;
 
-    this._mode = 'draw';       // draw | tweak | pose | radius
+    this._mode = 'draw';       // draw | tweak | pose | radius | ik
     this._compensate = true;   // tweak: pin the dragged joint's children in world space
     this._hilite = null;       // preselected joint
     this._grab = null;         // { joint, twin, snapshot } while dragging in tweak mode
     this._pose = null;         // { joint, qStart, local } while rotating in pose mode
     this._radius = null;       // { joint, twin, before } while dragging a capsule radius
+    this._ik = null;           // { joint, before } while dragging an IK effector
 
     this._wasXRPressed = false;
     this._wasAPressed = false;
@@ -109,17 +124,18 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === 'draw') return 'draw';
     if (this._mode === 'pose') return 'pose';
     if (this._mode === 'radius') return 'radius';
+    if (this._mode === 'ik') return 'ik';
     return this._compensate ? 'free' : 'fk';
   }
 
   setModeKey(key) {
-    const named = { draw: 'draw', pose: 'pose', radius: 'radius' };
+    const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik' };
     const mode = named[key] || 'tweak';
     const compensate = key !== 'fk';
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
     this._mode = mode;
     this._compensate = compensate;
-    this._releaseGrab(); this._releasePose(); this._releaseRadius();
+    this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
     if (mode === 'radius') window._boneShowCapsules = true;
@@ -503,6 +519,82 @@ class BoneDrawTool extends SculptBase {
     }
   }
 
+  // ---- ik (full-body, pinned) ----------------------------------------------------
+  //
+  // The dragged joint is an effector and every pinned joint is an effector that wants to stay
+  // put, so one solve handles both. The undo snapshot is EVERY joint: a full-body solve can
+  // legitimately reach anywhere in the tree, and a snapshot of only the joints it happened to
+  // touch this time would be a snapshot of the solver's behaviour rather than of the rig.
+
+  // The grab is 6DOF: the controller's position drives where the joint goes, its ROTATION
+  // drives how the joint is turned, and both are constraints on the same solve. Grabbing the
+  // hips and twisting them has to swing the legs and spine, which then have to be re-solved
+  // against the pins — a rotation applied after the fact would leave the pinned feet behind.
+  _beginIK(joint, quat) {
+    _mParent.fromArray(joint.getModelSpaceMatrix());
+    _mParent.decompose(_vTmp, _qJoint, _sTmp);
+    this._ik = {
+      joint: joint,
+      before: IKSolver.captureAll(this._main),
+      // Inverted at capture: every frame's delta is measured against this one pose, so the
+      // orientation is absolute and cannot drift over a long drag.
+      qCtrl0: quat ? new THREE.Quaternion(quat[0], quat[1], quat[2], quat[3]).invert() : null,
+      qJoint0: _qJoint.clone(),
+    };
+  }
+
+  _ikTo(pos, quat) {
+    const ik = this._ik;
+    if (!ik) return;
+    let orient = null;
+    if (quat && ik.qCtrl0 && window._ikGrabRotate !== false) {
+      orient = _qNow.set(quat[0], quat[1], quat[2], quat[3])
+        .multiply(ik.qCtrl0)   // controller delta since the grab, in model space
+        .multiply(ik.qJoint0); // ...applied on top of the joint's orientation at the grab
+    }
+    IKSolver.solve(this._main, ik.joint, pos, null, orient);
+    this._refresh();
+  }
+
+  _releaseIK() {
+    const ik = this._ik;
+    this._ik = null;
+    if (!ik) return;
+    this._selectLater(ik.joint);
+    const main = this._main;
+    const before = ik.before;
+    const after = before.map(([mesh]) => [mesh, mat4.clone(mesh.getMatrix())]);
+    const sm = main.getStateManager && main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      sm.pushStateCustom(
+        () => { Skeleton.restoreLocal(before); Skeleton.updateVisuals(main); main.render(); },
+        () => { Skeleton.restoreLocal(after); Skeleton.updateVisuals(main); main.render(); },
+        false, 'IK Pose');
+    }
+  }
+
+  // A cycles: unpinned -> position -> position + rotation -> unpinned. One button, because
+  // pinning is "point at a joint and press", and the marker out in the scene says which of
+  // the three states you landed in.
+  _togglePin(joint) {
+    if (!joint) return;
+    const was = IKSolver.pinMode(joint);
+    const now = IKSolver.cyclePin(joint);
+    const main = this._main;
+    const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)'];
+    const sm = main.getStateManager && main.getStateManager();
+    if (sm && sm.pushStateCustom) {
+      const apply = (mode) => { IKSolver.setPin(joint, mode); Skeleton.updateVisuals(main); main.render(); };
+      sm.pushStateCustom(() => apply(was), () => apply(now), false, 'Pin Joint');
+    }
+    if (window.screenLog) window.screenLog('Bones: ' + names[now], 'cyan');
+    // The mini panel's pin count is only refreshed when something asks it to, and pinning
+    // from the face button is exactly the route that would otherwise leave it stale. One
+    // repaint per button press, not per frame.
+    try { main._miniPanel?.syncFromState?.(); } catch (_) {}
+    this._refresh();
+  }
+
   // ---- VR -----------------------------------------------------------------------
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
@@ -514,9 +606,16 @@ class BoneDrawTool extends SculptBase {
     // modes across two face buttons meant each button changed meaning by mode, which is
     // exactly why the previous binding was unreadable.
     const aPressed = this._readButton(options, 4);
-    if (aPressed && !this._wasAPressed && this._mode === 'draw') {
-      this.endChain();
-      if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+    if (aPressed && !this._wasAPressed) {
+      // Same button, two modes, no overlap in meaning: A ends a chain while drawing, and
+      // pins the highlighted joint while solving. Both are "commit the thing you are
+      // pointing at", which is the only reading of a face button that stays memorable.
+      if (this._mode === 'draw') {
+        this.endChain();
+        if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+      } else if (this._mode === 'ik') {
+        this._togglePin(this._hilite);
+      }
     }
     this._wasAPressed = aPressed;
 
@@ -543,6 +642,24 @@ class BoneDrawTool extends SculptBase {
       }
       this._hilite = this._pose ? this._pose.joint
                                 : Skeleton.pickJoint(main, _tip, this._snapDist());
+      Skeleton.setHighlight(main, this._hilite);
+      return;
+    }
+
+    if (this._mode === 'ik') {
+      Skeleton.hidePreview(main);
+      Skeleton.hidePlane(main);
+      const qIK = (options && options.quat) || main._vrControllerQuat;
+      if (down) {
+        const hit = Skeleton.pickJoint(main, _tip, this._snapDist());
+        if (hit) this._beginIK(hit, qIK);
+      }
+      if (this._ik) {
+        if (isPressed) this._ikTo(_tip, qIK);
+        else this._releaseIK();
+      }
+      this._hilite = this._ik ? this._ik.joint
+                              : Skeleton.pickJoint(main, _tip, this._snapDist());
       Skeleton.setHighlight(main, this._hilite);
       return;
     }
@@ -615,7 +732,7 @@ class BoneDrawTool extends SculptBase {
   // Called by SculptManager.setToolIndex when switching away — otherwise the preselection
   // highlight and preview bone stay lit under a tool that no longer owns them.
   clearPreview() {
-    this._releaseGrab(); this._releasePose(); this._releaseRadius();
+    this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
     // Leaving the tool puts the real vertex colours back. A weight preview is a diagnostic,
     // and one that outlived the tool could be saved into the sculpt without anyone noticing.
     Skinning.restoreColorsAll(this._main);

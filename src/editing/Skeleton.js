@@ -31,6 +31,7 @@ const HILITE_COLOR = 0xffe066;
 const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
 const PLANE_COLOR = 0x89b4fa;
 const PLANE_HOT = 0xa6e3a1;
+const PIN_COLOR = 0xf38ba8;
 const GHOST_OPACITY = 0.35;
 
 const _mTmp = new THREE.Matrix4();
@@ -40,6 +41,7 @@ const _zAxis = new THREE.Vector3(0, 0, 1);
 const _q = new THREE.Quaternion();
 // Scratch for deriving a bone's roll from the joint that owns it.
 const _qOwner = new THREE.Quaternion(), _qAlign = new THREE.Quaternion();
+const _qPin = new THREE.Quaternion();
 const _qInv = new THREE.Quaternion();
 const _dirLocal = new THREE.Vector3(), _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
@@ -77,6 +79,88 @@ function boneEdgeGeometry() {
 
 let _jointGeo = null;
 function jointGeometry() { return (_jointGeo = _jointGeo || new THREE.SphereGeometry(1, 10, 8)); }
+
+// ---- IK pin markers ------------------------------------------------------------
+//
+// A pin has three states and the marker has to say WHICH, at a glance, in a headset, while
+// the joint underneath is also carrying preselection and selection colour. So the pin is a
+// SHAPE, in the conventional language for exactly these two constraints:
+//   position held          -> an axis triad
+//   position + orientation -> the triad inside gimbal rings
+// Drawn in the JOINT's own frame, which makes the difference legible while you drag: a 3DOF
+// pin's triad turns with the limb (rotation is free), a 6DOF pin's stands still.
+const AXIS_COLORS = [
+  new THREE.Color(0xf38ba8), // X
+  new THREE.Color(0xa6e3a1), // Y
+  new THREE.Color(0x89b4fa), // Z
+];
+
+// One buffer per marker rather than three meshes plus three ghosts per joint: every joint
+// gets a visual entry whether or not it is ever pinned, and six extra objects each adds up
+// on a full rig. Non-indexed so the concatenation needs no index rebasing.
+function mergeColored(parts) {
+  let total = 0;
+  const geos = parts.map(([g, c]) => {
+    const n = g.index ? g.toNonIndexed() : g;
+    total += n.attributes.position.count;
+    return [n, c];
+  });
+  const pos = new Float32Array(total * 3);
+  const nor = new Float32Array(total * 3);
+  const col = new Float32Array(total * 3);
+  let o = 0;
+  for (const [g, c] of geos) {
+    const cnt = g.attributes.position.count;
+    pos.set(g.attributes.position.array, o * 3);
+    nor.set(g.attributes.normal.array, o * 3);
+    for (let i = 0; i < cnt; i++) {
+      col[(o + i) * 3] = c.r; col[(o + i) * 3 + 1] = c.g; col[(o + i) * 3 + 2] = c.b;
+    }
+    o += cnt;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return out;
+}
+
+let _triadGeo = null;
+function triadGeometry() {
+  if (_triadGeo) return _triadGeo;
+  const t = 0.1; // arm thickness; arms run through the joint so the centre reads as a point
+  return (_triadGeo = mergeColored([
+    [new THREE.BoxGeometry(2, t, t), AXIS_COLORS[0]],
+    [new THREE.BoxGeometry(t, 2, t), AXIS_COLORS[1]],
+    [new THREE.BoxGeometry(t, t, 2), AXIS_COLORS[2]],
+  ]));
+}
+
+let _gimbalGeo = null;
+function gimbalGeometry() {
+  if (_gimbalGeo) return _gimbalGeo;
+  const r = 0.92, tube = 0.05, seg = 28;
+  // A torus lies in XY and turns about Z; rotate two copies so each ring turns about its own
+  // axis, and colour each ring by the axis it turns ABOUT.
+  const rx = new THREE.TorusGeometry(r, tube, 5, seg); rx.rotateY(Math.PI / 2);
+  const ry = new THREE.TorusGeometry(r, tube, 5, seg); ry.rotateX(Math.PI / 2);
+  const rz = new THREE.TorusGeometry(r, tube, 5, seg);
+  return (_gimbalGeo = mergeColored([
+    [rx, AXIS_COLORS[0]], [ry, AXIS_COLORS[1]], [rz, AXIS_COLORS[2]],
+  ]));
+}
+
+// makePair paints one colour; these carry their colours per vertex instead.
+function makePinPart(geo) {
+  const p = makePair(geo, 0xffffff);
+  for (const o of [p.solid, p.ghost]) {
+    o.material.vertexColors = true;
+    o.material.needsUpdate = true;
+  }
+  p.solid.renderOrder = p.ghost.renderOrder = 9998;
+  return p;
+}
 
 // Capsule parts. A capsule is drawn as a shaft plus a cap sphere at each end rather than as
 // one CapsuleGeometry, because a capsule's radius and length have to scale INDEPENDENTLY —
@@ -465,6 +549,8 @@ function ensureEntry(main, id) {
     wire.frustumCulled = wireGhost.frustumCulled = false;
 
     e = {
+      pinT: makePinPart(triadGeometry()),
+      pinG: makePinPart(gimbalGeometry()),
       bone: makePair(boneGeometry(), BONE_COLOR),
       joint: makePair(jointGeometry(), JOINT_COLOR),
       wire: { solid: wire, ghost: wireGhost },
@@ -476,7 +562,8 @@ function ensureEntry(main, id) {
       },
     };
     g.add(e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
-          e.wire.solid, e.wire.ghost, e.label.sprite);
+          e.wire.solid, e.wire.ghost, e.label.sprite,
+          e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost);
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
     main._skelVis.set(id, e);
   }
@@ -488,7 +575,7 @@ function disposeEntry(main, id) {
   if (!e) return;
   const g = skelGroup(main);
   const caps = e.cap ? [e.cap.shaft, e.cap.a, e.cap.b] : [];
-  for (const p of [e.bone, e.joint, e.wire, ...caps]) {
+  for (const p of [e.bone, e.joint, e.wire, e.pinT, e.pinG, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     p.solid.material.dispose(); p.ghost.material.dispose();
@@ -561,6 +648,11 @@ Skeleton.updateVisuals = function (main) {
   // outside every capsule gets no weight from any of them — so seeing them is the difference
   // between tuning weights by argument and tuning them by eye.
   const showCaps = window._boneShowCapsules !== false;
+  // The bone body and its edge overlay, each switchable. Turn both off and only the joint
+  // markers remain — which is the pose-mode display: the spheres are what you aim at, and the
+  // bones between them are just something to see the sculpt through.
+  const showSolid = window._boneShowSolid !== false;
+  const showWire = window._boneShowWire !== false;
   const hideCaps = (e) => {
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) p.solid.visible = p.ghost.visible = false;
   };
@@ -581,6 +673,8 @@ Skeleton.updateVisuals = function (main) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
       e.label.sprite.visible = false;
+      e.pinT.solid.visible = e.pinT.ghost.visible = false;
+      e.pinG.solid.visible = e.pinG.ghost.visible = false;
       hideCaps(e);
       continue;
     }
@@ -598,6 +692,31 @@ Skeleton.updateVisuals = function (main) {
       o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+    }
+
+    // The IK pin marker: triad for a position pin, triad + gimbal rings for a 6DOF one. Read
+    // straight off the joint rather than through IKSolver, so the visuals stay independent of
+    // the solver (and there is no import cycle).
+    const pinMode = (j._boneIKPin | 0) & 3;
+    if (pinMode) {
+      // The joint's own frame — which is what makes the two states tell themselves apart in
+      // motion: a 3DOF triad turns with the limb, a 6DOF one holds still.
+      _mTmp.fromArray(j.getModelSpaceMatrix());
+      _mTmp.decompose(_vTmp, _qPin, _sTmp);
+    }
+    const pinParts = [
+      [e.pinT, pinMode > 0, jr * 2.2],
+      [e.pinG, pinMode > 1, jr * 2.2],
+    ];
+    for (const [part, on, size] of pinParts) {
+      for (const o of [part.solid, part.ghost]) {
+        o.visible = on;
+        if (!on) continue;
+        o.position.copy(_pB);
+        o.quaternion.copy(_qPin);
+        o.scale.setScalar(size); // sits outside the marker, including its highlight size
+        o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
+      }
     }
 
     const parent = j._parentMesh;
@@ -654,7 +773,7 @@ Skeleton.updateVisuals = function (main) {
       o.position.copy(_pA);
       o.quaternion.copy(_q);
       o.scale.set(w, len, w);
-      o.visible = true;
+      o.visible = (o === e.bone.solid || o === e.bone.ghost) ? showSolid : showWire;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -959,7 +1078,11 @@ Skeleton.serialize = function (meshes) {
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
-      bone: m._isBone ? 1 : 0,
+      // Bit 0 = is a joint, bits 1-2 = IK pin mode (0 none, 1 position, 2 position+rotation).
+      // The pin rides in spare bits of a field that was already a 32-bit word holding a single
+      // boolean, so pins persist with NO version bump: an older build reads the whole word as
+      // truthy and still sees a bone, and a v1/v2 file read here simply has the pin bits clear.
+      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
     });
@@ -1058,9 +1181,10 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     // Restore the joint's own properties first — healGraph keys off _isBone, and the
     // no-draw material is not serialized (same caveat FrameGroup hits with its nulls).
     for (const row of rows) {
-      if (!row.bone) continue;
+      if (!(row.bone & 1)) continue;
       const m = row.mesh;
       m._isBone = true;
+      m._boneIKPin = (row.bone >> 1) & 3;
       m._isNull = true;
       m.isPickable = false;
       m._boneRadius = row.r;

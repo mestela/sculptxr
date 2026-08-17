@@ -126,6 +126,18 @@ class MeshResolution extends Mesh {
 
   /** Apply back the detail vectors */
   applyDetails() {
+    // A level that has never been analysed DOWN has no detail vectors yet — `_detailsXYZ` and
+    // friends are allocated by computeDetails(), which only runs on the way down. Its geometry
+    // is therefore exactly the subdivision of the level below, so "apply no details" is the
+    // correct answer rather than a workaround.
+    //
+    // This used to be unreachable by accident: higherSynthesis was only ever called from
+    // higherLevel(), and you could only be below the top if you had already gone down through
+    // lowerAnalysis(). Skinning broke that invariant — it synthesises up from the bound level
+    // EVERY frame, so a mesh subdivided while bound reached here with null details and threw
+    // on the first frame after the subdivision.
+    if (!this._detailsXYZ || !this._detailsRGB || !this._detailsPBR) return;
+
     var vrvStartCountUp = this.getVerticesRingVertStartCount();
     var vertRingVertUp = this.getVerticesRingVert();
     var vArUp = this.getVertices();

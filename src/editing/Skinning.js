@@ -243,7 +243,11 @@ Skinning.bind = function (main, mesh) {
   // hundred thousand, and the detail above rides along through the multires stack.
   mesh._skinLevel = mesh._sel || 0;
   mesh._skinSizeWarned = false;
+  mesh._skinLevelWarned = false;
+  // The level itself, so later passes survive the list being reordered under them.
+  mesh._skinLevelMesh = mesh._meshes ? mesh._meshes[mesh._skinLevel] : null;
   const level = boundLevel(mesh);
+  if (!level) return { ok: false, why: 'no geometry at the selected level' };
 
   const t0 = performance.now();
   const raw = nearestCapsuleWeights(level.getVertices(), level.getNbVertices(), segs);
@@ -288,7 +292,9 @@ Skinning.resolveWeights = function (main, mesh) {
 
   const nbV = (mesh._skinRest.length / 3) | 0;
   const raw = nearestCapsuleWeights(mesh._skinRest, nbV, segs);
-  const w = solveSmoothing(boundLevel(mesh), raw, joints.length);
+  const lvl = boundLevel(mesh);
+  if (!lvl) return false;
+  const w = solveSmoothing(lvl, raw, joints.length);
   mesh._skinIdx = w.idx;
   mesh._skinW = w.wts;
   mesh._skinDirty = true;
@@ -334,8 +340,8 @@ Skinning.showWeightColors = function (main, mesh) {
   // Colours are per weight, so they belong to the bound level too. At another level the map
   // does not address these vertices and painting would be meaningless.
   const level = boundLevel(mesh);
+  if (!level || level.getNbVertices() !== (mesh._skinRest.length / 3 | 0)) return false;
   const nbV = (mesh._skinRest.length / 3) | 0;
-  if (level.getNbVertices() !== nbV) return false;
   const colors = level.getColors();
   if (!mesh._skinSavedColors) {
     mesh._skinSavedColors = new Float32Array(colors.subarray(0, nbV * 3));
@@ -367,7 +373,7 @@ Skinning.showWeightColors = function (main, mesh) {
 Skinning.restoreColors = function (mesh) {
   if (!mesh || !mesh._skinSavedColors) return;
   const level = boundLevel(mesh);
-  if (level.getNbVertices() * 3 < mesh._skinSavedColors.length) return; // wrong level: leave it
+  if (!level || level.getNbVertices() * 3 < mesh._skinSavedColors.length) return; // wrong level: leave it
   level.getColors().set(mesh._skinSavedColors);
   mesh._skinSavedColors = null;
   mesh.updateDuplicateColorsAndMaterials();
@@ -398,13 +404,66 @@ Skinning.refreshWeightColorsAll = function (main) {
   }
 };
 
+// Is ANYTHING in the scene bound? Distinct from `isBound(getMesh())` on purpose: while
+// rigging, the selection is a joint most of the time (grabbing one selects it), so a
+// scene-wide action must not be gated on what happens to be selected.
+// Would dropping these levels take the one the weights were built on with it? Asked BEFORE a
+// destructive multires command, so the answer can be a refusal with a reason rather than a
+// rig that silently stops deforming afterwards.
+Skinning.levelsHoldBind = function (mesh, levels) {
+  if (!Skinning.isBound(mesh) || !mesh._skinLevelMesh) return false;
+  return levels.indexOf(mesh._skinLevelMesh) >= 0;
+};
+
+Skinning.anyBound = function (main) {
+  return (main.getMeshes() || []).some(Skinning.isBound);
+};
+
+// Put every bound rig back at the pose it was bound in.
+//
+// The bind pose is not stored as a pose anywhere — but it does not need to be, because the
+// inverse bind matrices ARE it: `invBind = inverse(inv(M_mesh) . J_model)` at bind, so the
+// joint's bind transform comes straight back out as `M_mesh . inverse(invBind)`. Reading the
+// mesh's CURRENT matrix there is deliberate: it puts the skeleton back at bind RELATIVE TO
+// THE MESH, so a character that has since been moved or scaled keeps its rig on it.
+//
+// This is the reset that makes posing safe to experiment with, and it is exact — it restores
+// the pose the weights were actually solved against, not an approximation of it.
+Skinning.restoreBindPose = function (main) {
+  const meshes = main.getMeshes() || [];
+  const targets = new Map();
+  for (const mesh of meshes) {
+    if (!Skinning.isBound(mesh)) continue;
+    const joints = resolveJoints(main, mesh);
+    _mMesh.fromArray(mesh.getModelSpaceMatrix());
+    joints.forEach((j, i) => {
+      // First bind wins if two meshes share a joint — they were bound at different moments
+      // and would disagree, and silently averaging two bind poses would be worse than either.
+      if (!j || targets.has(j) || !mesh._skinInvBind[i]) return;
+      targets.set(j, new THREE.Matrix4().copy(mesh._skinInvBind[i]).invert().premultiply(_mMesh));
+    });
+  }
+  if (!targets.size) return 0;
+
+  // Roots first: a child's model-space transform is only meaningful once its ancestors are
+  // back in place, since setModelSpaceMatrix converts through the parent's CURRENT world
+  // matrix. Same ordering the skeleton loader needs, for the same reason.
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  const ordered = Array.from(targets.keys()).sort((a, b) => depth(a) - depth(b));
+  for (const j of ordered) {
+    j.setModelSpaceMatrix(targets.get(j).elements);
+    Skeleton.syncThree(j);
+  }
+  return ordered.length;
+};
+
 Skinning.unbind = function (mesh) {
   if (!mesh) return;
   Skinning.restoreColors(mesh);
   // Put the mesh back in its bind pose rather than leaving it stuck in whatever pose it
   // happened to be in — an unbind that silently freezes a pose is worse than no unbind.
   const level = boundLevel(mesh);
-  if (mesh._skinRest && level.getNbVertices() * 3 >= mesh._skinRest.length) {
+  if (level && mesh._skinRest && level.getNbVertices() * 3 >= mesh._skinRest.length) {
     level.getVertices().set(mesh._skinRest);
     if (synthesiseUp(mesh)) {
       mesh.updateResolution();
@@ -416,6 +475,8 @@ Skinning.unbind = function (mesh) {
   mesh._skinJoints = mesh._skinIdx = mesh._skinW = null;
   mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = null;
   mesh._skinLevel = 0;
+  mesh._skinLevelMesh = null;
+  mesh._skinLevelWarned = false;
 };
 
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the
@@ -426,7 +487,9 @@ Skinning.captureSource = function (mesh) {
   // Read the bound level, and only when it still matches: the source array is the rest space
   // the skin pass transforms, and filling it from a different level would feed the deformation
   // vertices that are not the ones it is weighted for.
-  const v = boundLevel(mesh).getVertices();
+  const lvl = boundLevel(mesh);
+  if (!lvl) return;
+  const v = lvl.getVertices();
   if (v.length < mesh._skinSrc.length) return;
   mesh._skinSrc.set(v.subarray(0, mesh._skinSrc.length));
   mesh._skinDirty = true; // the rest pose changed, so re-skin even if no joint moved
@@ -446,11 +509,40 @@ Skinning.captureSource = function (mesh) {
 // disappeared. Reading off the end of a typed array wrapper is silent — nothing throws.
 
 // The MeshResolution the weights belong to, or the mesh itself when there is no stack.
+//
+// THE BOUND LEVEL IS A REFERENCE, NOT AN INDEX. An index into `_meshes` is only stable until
+// something reorders the list, and several ordinary commands do: Reverse inserts a new level
+// BELOW, shifting every existing level up one, and Delete Lower splices levels off the bottom.
+// Undo and redo shuffle them back again, in two places that write `_meshes` directly rather
+// than going through Multimesh. A stored index would have to be patched at every one of those
+// sites, and the failure when one was missed is a weight map silently addressing the WRONG
+// resolution. Holding the mesh itself and re-deriving the index makes all of them correct for
+// free, and turns "the bound level was deleted" into something detectable (indexOf === -1)
+// rather than something that quietly resolves to a different level.
 function boundLevel(mesh) {
   const stack = mesh._meshes;
   if (!stack || !stack.length) return mesh;
+  const ref = mesh._skinLevelMesh;
+  if (ref) {
+    const i = stack.indexOf(ref);
+    if (i < 0) return null; // the level the weights belong to is gone
+    mesh._skinLevel = i;    // keep the index in step for anything still reading it
+    return ref;
+  }
   const lvl = mesh._skinLevel || 0;
   return stack[Math.min(lvl, stack.length - 1)] || mesh;
+}
+
+// Warn once per mesh when the bound level has been deleted out from under the weights, and
+// refuse to deform. Refusing is disappointing; deforming against the wrong resolution writes
+// garbage over a sculpt, which is not recoverable.
+function boundLevelGone(mesh) {
+  if (!mesh._skinLevelWarned) {
+    mesh._skinLevelWarned = true;
+    console.warn('[Skinning] the level this mesh was bound at no longer exists; rebind to pose it');
+    if (window.screenLog) window.screenLog('Bones: bound level deleted - rebind to pose', '#f38ba8');
+  }
+  return null;
 }
 
 // Push a change at the bound level up through the stack to the level being displayed. This is
@@ -460,8 +552,11 @@ function boundLevel(mesh) {
 function synthesiseUp(mesh) {
   const stack = mesh._meshes;
   if (!stack || !stack.length) return false;
-  const from = mesh._skinLevel || 0;
+  const level = boundLevel(mesh);
+  if (!level) return false;
+  const from = stack.indexOf(level);
   const to = mesh._sel || 0;
+  if (from < 0) return false;
   if (to <= from) return false;
   for (let i = from + 1; i <= to; i++) stack[i].higherSynthesis(stack[i - 1]);
   return true;
@@ -521,6 +616,7 @@ Skinning.apply = function (main, mesh) {
 
   // Work on the level the weights were built for, whatever level is being displayed.
   const level = boundLevel(mesh);
+  if (!level) return boundLevelGone(mesh) || false;
   const src = mesh._skinSrc, out = level.getVertices();
   const idx = mesh._skinIdx, wts = mesh._skinW;
   const nbV = (mesh._skinRest.length / 3) | 0;

@@ -9,6 +9,7 @@ import StateMultiresolution from '../states/StateMultiresolution.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import Enums from '../misc/Enums.js';
 import VoxelDensityOverlay from '../render/VoxelDensityOverlay.js';
+import Skinning from '../editing/Skinning.js';
 
 
 class GuiMultiresolution {
@@ -388,6 +389,16 @@ class GuiMultiresolution {
       return;
     }
 
+    // Deleting the level a rig was bound at would leave a weight map addressing geometry that
+    // no longer exists. Refuse it and say so, rather than letting the character quietly stop
+    // deforming several actions later.
+    if (Skinning.levelsHoldBind(mul, mul._meshes.slice(0, mul._sel))) {
+      var msgL = 'Cannot delete lower: the rig is bound at one of those levels. Unbind first.';
+      if (window.screenLog) window.screenLog(msgL, 'orange');
+      else console.warn(msgL);
+      return;
+    }
+
     main.getStateManager().pushState(new StateMultiresolution(main, mul, StateMultiresolution.DELETE_LOWER));
     mul.deleteLower();
     this.updateMeshResolution();
@@ -400,6 +411,13 @@ class GuiMultiresolution {
     if (!this.isMultimesh(mul) || mul._sel === mul._meshes.length - 1) {
       if (window.screenLog) window.screenLog(TR('multiresNoHigher'), 'orange');
       else console.warn(TR('multiresNoHigher'));
+      return;
+    }
+
+    if (Skinning.levelsHoldBind(mul, mul._meshes.slice(mul._sel + 1))) {
+      var msgH = 'Cannot delete higher: the rig is bound at one of those levels. Unbind first.';
+      if (window.screenLog) window.screenLog(msgH, 'orange');
+      else console.warn(msgH);
       return;
     }
 

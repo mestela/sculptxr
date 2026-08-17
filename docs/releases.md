@@ -1,3 +1,49 @@
+# v3.18.11
+**Subdividing a bound, posed mesh works instead of crashing.**
+
+- **Fix — Subdivide on a bound mesh threw on the next frame.** A level created by subdividing has no detail vectors yet: they are allocated on the way DOWN, by the analysis pass. Nothing had ever reached a fresh level from below, because the only route up was a level you had already come down from — so the null was unreachable by accident. Skinning broke that invariant, since it synthesises up from the bound level on every posed frame. Applying details is now skipped when there are none, which is not a workaround: a level with no details IS exactly the subdivision of the level below.
+- Posing continues to work across the new level. The rig stays bound at the level it was bound at, and the subdivided level rides on top through the existing multires propagation.
+- **Fix — the bound level was remembered as a position in the level list, and several commands reorder that list.** Reverse inserts a level below, shifting everything up; Delete Lower splices levels off the bottom; undo and redo shuffle them back, in code that writes the list directly. The stored number then named a DIFFERENT resolution, and nothing threw — the weights simply addressed the wrong vertices. The bind now holds the level itself and re-derives its position, which makes every one of those cases correct without having to patch each of them.
+- **Delete Lower / Delete Higher now refuse** when they would delete the level a rig is bound at, and say why. Previously the weight map was left pointing at geometry that no longer existed.
+- Both behaviours are covered headlessly against the real source (`scratchpad/skin_level_test.mjs`): subdivide, reverse, delete, undo, and the synthesis walk starting from the re-derived level.
+
+# v3.18.10
+**Pins have three states, and the bone display has two more switches.**
+
+- **A now cycles a joint's pin: none, position, position + rotation.** A position pin lets the limb above it swivel, which is right for a hand resting on something. A 6DOF pin holds the joint's orientation too — that is what keeps a foot flat on the ground instead of tipping over as the shin swings.
+- The 6DOF pin runs through the same machinery as the joint in your hand: an absolute orientation the solve has to work around, not a correction applied afterwards. Its target is simply the orientation it already has, so the joint is its own fixed point and cannot ratchet round during a long drag (checked over 60 consecutive solves).
+- **The pin marker says which state it is in.** An axis triad for a position pin, the triad inside gimbal rings for a 6DOF one. Both are drawn in the joint's own frame, so the difference is legible while you drag: a 3DOF triad turns with the limb, a 6DOF one stands still.
+- **Solid and Wire toggles** for the bone display, alongside Lengths and Capsules. Turn both off and only the joint markers remain — the least cluttered thing to pose against, since the spheres are what you aim at.
+- Pin modes are saved with the file, still with no format version bump (they occupy two spare bits of a flags word that held one boolean). A file saved by an earlier build reloads with its pins as position pins.
+
+# v3.18.9
+**Bind Pose button — one press puts a posed character back where it was bound.**
+
+- New button in the Bones mini panel, below Bind/Unbind. Every bound rig returns to the pose its weights were solved against, and the mesh follows on the next frame.
+- **Exact, not approximate.** The bind pose is not stored as a pose anywhere, but it does not need to be: the inverse bind matrices already are it, so each joint's bind transform comes straight back out of them. This is the same pose the weights were built against, to the last decimal.
+- The mesh's CURRENT transform is used, so a character that has been moved or scaled since binding keeps its rig on it rather than snapping back to where the mesh used to stand.
+- Undoable in one step, so trying a pose out costs nothing.
+- The button is shown whenever ANYTHING in the scene is bound, not when the SELECTION is bound — while rigging, the selection is usually a joint, and a scene-wide reset should not vanish because you last grabbed an elbow.
+
+# v3.18.8
+**The IK grab is 6DOF — turn your hand and the joint turns with it.**
+
+- **Rotation is now part of the solve, not applied after it.** Grab the hips with the feet and hands pinned, and twisting your controller twists the hips: the legs and spine are carried by that rotation, and the pinned limbs are then re-solved against wherever they land. Applying the rotation after the solve would have looked the same on the hips and left the pinned feet behind.
+- The driven orientation is treated as absolute, measured from the pose at the moment of the grab, so a long drag with a lot of turning cannot accumulate drift.
+- **A joint at the end of a chain can be rotated too.** Its rotation was previously undefined — there is nothing hanging off a hand to fit an orientation against — so a wrist could only be moved, never turned.
+- `window._ikGrabRotate = false` goes back to position-only dragging.
+
+# v3.18.7
+**Full-body IK with stop-motion pinning.** A new IK mode in the Bones tool: pin the parts that should stay where they are, drag anything else, and the whole skeleton rearranges itself around the pins.
+
+- **IK mode** (mini panel, alongside Draw / Tweak / Pose / Radius). Trigger-hold a joint and the rig reaches for your hand — the arm bends, the spine follows, the bones keep their lengths.
+- **Pinning** — A button pins or unpins the joint you are pointing at. A pinned joint wears a red shell around its marker and does not move while anything else is dragged, so "hold the foot down and pull the hips into a crouch" is two pins and one drag. Pins are undoable, are saved with the file, and there is a Clear Pins button carrying the current count.
+- **With nothing pinned the chain root is the anchor**, so a first drag reaches with the limb rather than dragging the whole character after your hand. Pin anything and the root is free to travel — which is what lets a pinned-feet pose actually lower the body.
+- **The solver writes rotations, never bone lengths.** It solves positions, then converts them into the joint rotation that explains them, so no pose — reachable or not — can quietly re-proportion a rig. The one exception is the root's position, and only when something else is pinned.
+- **Bones that share a joint move as one rigid unit.** Plain tree FABRIK lets two bones off the same joint change their angle to each other, which no single joint rotation can reproduce; the difference was silently discarded when the result was written back, and showed up as pinned joints drifting off their pins even after the solve had converged.
+- An unreachable target makes the chain straighten and stop at its own reach. Joint limits are not in yet, so a knee will happily bend the wrong way — that is the next decision, once the solver has been posed with.
+- Tested headlessly against the real solver source (`scratchpad/ik_test.mjs`): bone lengths preserved to 1e-6 across every case, pins held, unreachable targets falling short instead of stretching, separate skeletons untouched, and no NaN on a degenerate drag.
+
 # v3.18.6
 **Multires commands follow a selected bone to the mesh it drives.**
 
