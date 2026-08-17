@@ -103,7 +103,10 @@ export default class TimelineHelper {
         laneMesh = main._meshes.find(m => m.getID() === id);
         if (laneMesh) laneName = laneMesh._permanentStaticLabel || `Object ${id}`;
       }
-      const isGroupRow = !!(laneMesh && laneMesh._isFrameGroup);
+      if (track._rigRow) laneName = 'Rig: ' + track._rigName;
+      // Rig rows have no real track behind them, so there is nothing to mute — same reason
+      // frame-group rows skip the toggle.
+      const isGroupRow = !!(laneMesh && laneMesh._isFrameGroup) || !!track._rigRow;
 
       // Lane label — clipped so it never runs under the mute toggle.
       const nameRight = w.x + 176;

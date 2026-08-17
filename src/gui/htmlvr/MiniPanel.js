@@ -803,6 +803,24 @@ export class MiniPanel extends HTMLVRPanel {
         main.render?.();
       });
 
+      // Key the WHOLE rig at the playhead. Every joint, including the ones that did not move:
+      // a joint left unkeyed holds its neighbouring keys' value and drifts out of the pose
+      // that was just set, which reads as the rig coming apart between poses.
+      extras.querySelector('#mp-bone-key')?.addEventListener('click', () => {
+        const reg = window._animationRegistry;
+        const joints = Skeleton.joints(main);
+        if (!reg || !joints.length) {
+          if (window.screenLog) window.screenLog('Bones: no rig to key', '#f38ba8');
+          return;
+        }
+        const t = window._animCurrentTime || 0;
+        const n = reg.keyTransforms(joints, t, 'Key Pose');
+        const msg = `Bones: keyed ${n} joints at ${t.toFixed(1)}`;
+        console.log('[bone] key pose:', msg);
+        if (window.screenLog) window.screenLog(msg, 'cyan');
+        main.render?.();
+      });
+
       // Back to the pose the rig was bound in. Undoable in one step like any other pose edit —
       // it is a big change, and "I only wanted to see what it looked like" has to be free.
       extras.querySelector('#mp-bone-restpose')?.addEventListener('click', () => {
@@ -1157,6 +1175,7 @@ export class MiniPanel extends HTMLVRPanel {
         </div>
         <div class="mp-btn-row">
           <button class="mp-action-btn" id="mp-bone-unpin">${pinLabel(pins)}</button>
+          <button class="mp-action-btn" id="mp-bone-key">Key Pose</button>
         </div>
         <div class="mp-toggles">
           <button class="mp-toggle-btn${snap ? ' active' : ''}" id="mp-bone-snap">Snap Plane</button>

@@ -1813,9 +1813,7 @@ class AnimationRegistry {
     this.applyBlendshapes(mesh);
   }
 
-  addTransformKey(mesh, time) {
-    if (!mesh) return;
-    const id = mesh.getID();
+  _ensureTransformTrack(id) {
     if (!this.tracks.has(id)) {
       this.tracks.set(id, {
         times: [], positions: [], quaternions: [], scales: [],
@@ -1827,6 +1825,15 @@ class AnimationRegistry {
     if (!track.positions) track.positions = [];
     if (!track.quaternions) track.quaternions = [];
     if (!track.scales) track.scales = [];
+    return track;
+  }
+
+  // Insert (or overwrite) one mesh's transform key. Split out of addTransformKey so a
+  // rig-wide key can reuse it: keying thirty joints must be ONE undo step, not thirty.
+  _writeTransformKey(mesh, time) {
+    if (!mesh) return;
+    const id = mesh.getID();
+    const track = this._ensureTransformTrack(id);
 
     // Extract TRS from matrix safely
     const m = mesh.getMatrix ? mesh.getMatrix() : [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
@@ -1857,10 +1864,6 @@ class AnimationRegistry {
       const ql = Math.hypot(qx, qy, qz, qw) || 1.0;
       qx /= ql; qy /= ql; qz /= ql; qw /= ql;
     }
-
-    // Snapshot track state BEFORE insertion for undo.
-    const _snapBeforeTK = this._snapshotTrack(track);
-    const _meshIdTK = id;
 
     let idx = 0;
     while (idx < track.times.length && track.times[idx] < time) idx++;
@@ -1896,9 +1899,23 @@ class AnimationRegistry {
         track.tangentOffsets = newOffsets;
       }
     }
+  }
+
+  // Advance the master duration and the playhead to a key just written.
+  _stampKeyTime(time) {
     if (time > (window._animMasterDuration || 0)) window._animMasterDuration = time;
     window._animCurrentTime = time;
     this.globalPlaybackTime = time;
+  }
+
+  addTransformKey(mesh, time) {
+    if (!mesh) return;
+    const id = mesh.getID();
+    const track = this._ensureTransformTrack(id);
+    const _snapBeforeTK = this._snapshotTrack(track);
+    const _meshIdTK = id;
+    this._writeTransformKey(mesh, time);
+    this._stampKeyTime(time);
 
     // Push atomic undo entry.
     const _snapAfterTK = this._snapshotTrack(track);
@@ -1920,6 +1937,45 @@ class AnimationRegistry {
         'Add Transform Key'
       );
     }
+  }
+
+  // Key a WHOLE SET of meshes at one time, as a single undoable act.
+  //
+  // This is what keying a pose is. A character pose is one thought and one undo step, not
+  // thirty — and a rig where some joints got a key and others did not is not a pose at all,
+  // it is a half-pose that will interpolate from somewhere unintended. So every mesh handed
+  // in is keyed, including the ones that did not move: a joint with no key at this time
+  // holds its neighbouring keys' value and would drift out of the pose you just set.
+  //
+  // Returns how many were keyed.
+  keyTransforms(meshes, time, label) {
+    const list = (meshes || []).filter((m) => m && m.getID);
+    if (!list.length) return 0;
+
+    const before = list.map((m) => {
+      const track = this._ensureTransformTrack(m.getID());
+      return [m, this._snapshotTrack(track)];
+    });
+
+    for (const m of list) this._writeTransformKey(m, time);
+    this._stampKeyTime(time);
+
+    const after = list.map((m) => [m, this._snapshotTrack(this.tracks.get(m.getID()))]);
+    // Restore the TRACKS only — no mesh is handed to _restoreTrack, which would re-evaluate
+    // each one at the playhead. Undoing a key should take the key back, not move the rig: the
+    // pose you are looking at is still the pose you posed. It also avoids running a full scrub
+    // evaluation once per joint for something that changed no geometry.
+    const apply = (snaps) => {
+      for (const [mesh, snap] of snaps) {
+        const tr = this.tracks.get(mesh.getID());
+        if (tr) this._restoreTrack(tr, snap, null);
+      }
+      if (window.app && window.app.render) window.app.render();
+    };
+    window.app?.getStateManager?.()?.pushStateCustom?.(
+      () => apply(before), () => apply(after), false, label || 'Key Pose');
+
+    return list.length;
   }
 
   copyTransformKey(mesh, time) {
@@ -2545,6 +2601,8 @@ class AnimationRegistry {
       if (mesh.updateMatrices && window.app && window.app._camera) {
         mesh.updateMatrices(window.app._camera);
       }
+      // Cheap despite being per mesh: app.render() only raises the redraw flag, it does not
+      // draw. A keyed rig evaluating thirty joints a frame sets one boolean thirty times.
       if (window.app && window.app.render) window.app.render();
     }
 

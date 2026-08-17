@@ -1,3 +1,45 @@
+# v3.19.0
+**Full-body IK, stop-motion pinning, and pose keyframing.** Pin the parts that should stay where they are, drag anything else, and the whole skeleton rearranges itself around the pins — then key the pose and do it again.
+
+- **IK mode** in the Bones tool. Trigger-hold a joint and the rig reaches for your hand: the limb bends, the spine follows, bone lengths hold. The grab is 6DOF, and that rotation is a constraint inside the solve rather than something applied after it — so twisting the hips swings the legs, and the pinned feet are re-solved against where they land.
+- **Pins have three states**, cycled with A: none, position, position and rotation. A position pin lets the limb above it swivel; a 6DOF pin holds orientation too, which is what keeps a foot flat on the ground. An axis triad marks the first, the triad inside gimbal rings the second, both drawn in the joint's frame so the difference reads while you drag.
+- **Key Pose** keys the whole rig at the playhead as one undo step, and the rig occupies a single lane in the dopesheet rather than one per joint. Pose, key, scrub, pose, key — playback interpolates and the bound mesh follows.
+- **Bind Pose** returns a posed character to the pose its weights were solved against, exactly, using the inverse binds that already encode it.
+- **Subdividing a bound, posed mesh** works instead of crashing, and the bound level survives Reverse, Delete Lower and undo — it was remembered as a position in a list that all three reorder.
+- Solid and Wire toggles for the bone display; A ends a bone chain and, pressed again, leaves drawing entirely.
+- Face buttons are read from the device rather than from whatever the current call path passed along — a binding that works "sometimes" is usually a degraded options object, not a bad binding.
+
+# v3.18.16
+**Face buttons read the device, not the call path.**
+
+- **A now falls back to the live WebXR gamepads** when the options object it is handed carries no matching controller. A face button is global device state — it is not aimed at anything and does not depend on which code path called the tool this frame — but the value was only ever arriving through the options object, so any caller passing a thinner one silently disabled the binding.
+- The trace made the case for this: the pointing-at-menu flag is STICKY and reads true almost permanently, so the guarded call path (which passed no controllers at all before v3.18.14) is the normal case rather than a rare one. Rather than audit every call site for a good options object, the tool asks the device.
+- The fallback also covers a handedness mismatch: controllers present but none matching the hand being processed now falls through to the session instead of reporting "not pressed".
+- Trace (`window._boneATrace = true`) additionally reports recording/playback state, the dominant hand, and a bail-out if the tool is ever called with no controller tip — which would skip the button handling entirely and look identical to a dead button.
+
+# v3.18.14
+**Face buttons stop being swallowed when the ray crosses a menu.**
+
+- **Fix — A intermittently did nothing** (ending a bone chain, cycling an IK pin, the pose tool's maintain-length toggle). While the controller is pointing at a menu, the tool is still updated — so it does not pop — but with the trigger forced off, which is what stops a stroke starting through the panel. It was also handed an EMPTY controller list, and face buttons are read out of that list, so every face-button binding went dead. A face button is not aimed at anything; where the ray happens to be pointing has no business swallowing it.
+- That is why it looked intermittent and order-dependent. The menu-pointing state is sticky, and the branch is skipped entirely while a tool is mid-action — so the trigger kept working, drawing kept working, and only the face button was lost. Having just used the mini panel made it far more likely.
+- The trigger is still blocked through a menu. Only the button state is passed through now.
+
+# v3.18.13
+**A gets you out of bone drawing.**
+
+- **A ends the chain; A again leaves Draw mode** (landing in Pose). Previously A only ever ended the chain, and there was no way to stop drawing from the controller at all — the next trigger dropped another root joint wherever your hand happened to be, which is fine while building a skeleton and wrong the moment you have finished one.
+- **The cursor now says which of the two the next trigger will do.** Continuing a chain draws the full-size joint-coloured dot at the end of the preview bone; with no chain in progress it is a smaller blue dot, a place to start one. Ending a chain previously looked exactly like not having ended it — the only signal was a log line, which is hidden by default.
+
+# v3.18.12
+**Key Pose — the whole rig keyframed in one press.**
+
+- **Key Pose** in the Bones mini panel keys every joint at the playhead, as ONE undo step. Pose, key, scrub on, pose again, key again — playback interpolates between them, and the bound mesh follows because the skin pass already re-skins whenever a joint moves.
+- **Every joint is keyed, including the ones that did not move.** A joint left unkeyed holds its neighbouring keys' value and drifts out of the pose that was just set, which reads as the rig coming apart between poses.
+- **The rig is one lane in the dopesheet, not thirty.** A keyed skeleton is thirty tracks carrying identical key times; thirty identical rows would bury every other object in the scene, and the thing being animated is the pose, not joint 14. Joint tracks fold into a single "Rig" row per skeleton.
+- Keys on that row are shown but not yet draggable or deletable. Editing a rig's keys means moving the whole pose rather than one bone out of thirty, and that wants designing rather than falling out of the existing per-object key handling — so for now the row cannot be edited into a state that pulls the rig apart.
+- Undo of a key takes the key back without moving the rig: the pose you are looking at is still the pose you posed.
+- Behaviour verified headlessly (`scratchpad/keyrig_test.mjs`): single keys unchanged by the refactor, rig keys landing on every joint at shared times, one undo entry per pose, re-keying the same time overwriting rather than stacking, and out-of-order keying staying sorted.
+
 # v3.18.11
 **Subdividing a bound, posed mesh works instead of crashing.**
 

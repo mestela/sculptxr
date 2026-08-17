@@ -7935,6 +7935,20 @@ class Scene {
     this.updateVROffsets();
   }
   processVRSculpting(source, frame, refSpace) {
+    // Which hands reach the tool at all, and how often. If this fires for BOTH hands, every
+    // tool's face-button edge detector is being written twice per frame — the dominant hand's
+    // rising edge would be cleared by the other hand's "not pressed" before it could be acted
+    // on a second time, which is the classic way a face button goes half-dead.
+    if (window._boneATrace) {
+      this._pvsCount = this._pvsCount || {};
+      const h = source.handedness || '?';
+      this._pvsCount[h] = (this._pvsCount[h] || 0) + 1;
+      if ((this._pvsCount[h] % 90) === 1) {
+        console.log(`[boneA] processVRSculpting hand=${h} n=${this._pvsCount[h]}` +
+          ` (all: ${JSON.stringify(this._pvsCount)})` +
+          ` tool=${this._sculptManager && this._sculptManager._toolIndex}`);
+      }
+    }
     const space = source.targetRaySpace || source.gripSpace;
     const pose = frame.getPose(space, refSpace);
     if (!pose) return;
@@ -8125,9 +8139,33 @@ class Scene {
         vec3.set(dir, 0, 0, -1); // Fallback
       }
       vec3.normalize(dir, dir);
+      // Face buttons still get through. `isPressed: false` is what stops a stroke starting
+      // through the menu, and that is the whole job of this branch — but handing the tool an
+      // EMPTY controller list also silently disabled every face-button binding it has, since
+      // those are read out of `controllers`. A face button is not aimed at anything, so where
+      // the ray happens to be pointing has no business swallowing it. Symptom this fixed: A
+      // stopped ending a bone chain, but only sometimes — the menu-pointing state is sticky
+      // (`_wasPointingAtMenu`) and this branch is skipped while a tool is mid-action, so the
+      // trigger kept working and only the face button went dead.
+      if (window._boneATrace) {
+        this._menuGuardLog = (this._menuGuardLog || 0) + 1;
+        if (this._menuGuardLog % 30 === 1) {
+          console.log(`[boneA] MENU-GUARD path hand=${source.handedness}` +
+            ` pointing=${this._isPointingAtMenu ? 1 : 0} wasPointing=${this._wasPointingAtMenu ? 1 : 0}` +
+            ` latch=${this._vrMenuTriggerLatch ? 1 : 0} sculpting=${isSculpting ? 1 : 0}` +
+            ` toolActive=${isToolActive ? 1 : 0} (n=${this._menuGuardLog})`);
+        }
+      }
+      const btnControllers = [];
+      const btnSession = this._xrSession;
+      if (btnSession && btnSession.inputSources) {
+        for (const src of btnSession.inputSources) {
+          if (src.gamepad) btnControllers.push({ handedness: src.handedness, buttons: src.gamepad.buttons });
+        }
+      }
       this._sculptManager.updateXR(this._picking, false, enginePos, dir, {
         isNegative: false,
-        controllers: [],
+        controllers: btnControllers,
         triggerValue: 0.0,
         handedness: source.handedness,
         quat: engineQuat,

@@ -831,8 +831,17 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
   const pv = main._skelPreview;
   const jr = Skeleton.sceneUnit(main) * 0.018;
 
+  // The cursor says which of two things the next trigger will do. Continuing a chain draws it
+  // full size in the joint colour, at the end of the preview bone; with no chain in progress
+  // it is a smaller blue dot — a place to START one. Without that difference, ending a chain
+  // looks exactly like not having ended it, and the only other signal is a log line that is
+  // hidden by default.
+  const rooting = !fromPos;
   for (const o of [pv.dot.solid, pv.dot.ghost]) {
-    o.position.copy(toPos); o.scale.setScalar(jr); o.visible = true;
+    o.position.copy(toPos);
+    o.scale.setScalar(rooting ? jr * 0.6 : jr);
+    o.material.color.setHex(rooting ? PLANE_COLOR : JOINT_COLOR);
+    o.visible = true;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
   }
 

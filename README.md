@@ -1,4 +1,4 @@
-# SculptXR (v3.18.0)
+# SculptXR (v3.19.0)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.19.0**: **Full-body IK with stop-motion pinning, and pose keyframing**: pin the parts that should stay put — position, or position and rotation — drag anything else, and the whole skeleton rearranges itself around the pins, bone lengths intact. The grab is 6DOF, so twisting the hips swings the legs while the pinned feet re-solve. **Key Pose** keys the whole rig in one step and the rig takes a single dopesheet lane, so pose-to-pose blocking works end to end; **Bind Pose** puts a posed character exactly back. Plus subdividing a bound, posed mesh no longer crashes.
 *   **v3.18.0**: **Rigging — skinning, and bones to skin**: bind capsules are now drawn as editable envelopes (grab one in Radius mode and resize it against the mesh), the bind is rigid nearest-capsule so a capsule states exactly which vertices it moves, and a weight colour preview paints every vertex in the colour of the bone that owns it. Plus **Make Skin**: turn a drawn skeleton into low-poly quad tubes at those radii — clay over a wire armature, ready to sculpt.
 *   **v3.17.0**: **Nomad Link — a live, two-way connection to Nomad Sculpt**: SculptXR speaks Nomad's own bridge protocol, so a sculpt moves between an iPad and a headset while you work. Pull the scene (*Files → Nomad Link*), watch Nomad strokes arrive live, and push edits back — quads, face groups, UVs, colour and mask all survive the round trip. Live send, instances, deletions and undo travel both ways. Plus a **sculpt lock** ("do nothing" mode) for when hand tracking grabs a stroke you didn't mean.
 *   **v3.10.0**: **Frame-by-frame voxel animation**: draw a voxel object frame by frame and play it back from the timeline dopesheet — time-keyed held frames (New/Dup/Delete in the gutter), retime/reorder by dragging keys, onion skinning (with a loop-aware option), and on-frame sculpt gating; works in VR and desktop. Frames save with the `.sxr`. Plus a desktop voxel Move tool with live preview, and a reworked browser-saves panel (thumbnail grid + Load/Import/Delete).

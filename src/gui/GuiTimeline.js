@@ -919,6 +919,38 @@ export default class GuiTimeline {
     // Only show tracks for meshes still IN the scene — a deleted mesh's track lingers
     // in the registry (kept so undo can restore it) but must not draw a phantom row.
     let entries = Array.from(reg.tracks.entries()).filter(([id]) => liveIds.has(id) && !srChildIds.has(id));
+
+    // ONE LANE PER RIG. A keyed skeleton is thirty tracks that all carry the same key times —
+    // thirty identical rows would bury every other object in the scene, and the thing being
+    // animated is the POSE, not joint 14. Joint tracks are folded into a synthetic row per
+    // skeleton root showing where the poses are.
+    //
+    // The row's id is deliberately NOT a real mesh id: nothing downstream can then resolve it
+    // to a track, so hit-testing, dragging and deleting all no-op on it instead of silently
+    // editing one joint out of thirty and pulling the rig apart. Per-key editing wants a
+    // considered design (move the whole pose, not one bone) and gets it later.
+    const joints = meshes.filter((m) => m._isBone);
+    if (joints.length) {
+      const jointIds = new Set(joints.map((m) => m.getID()));
+      const rigs = new Map(); // root joint -> Set of key times
+      for (const j of joints) {
+        const track = reg.tracks.get(j.getID());
+        if (!track || !track.times || !track.times.length) continue;
+        let root = j;
+        while (root._parentMesh && root._parentMesh._isBone) root = root._parentMesh;
+        if (!rigs.has(root)) rigs.set(root, new Set());
+        const set = rigs.get(root);
+        for (const t of track.times) set.add(t);
+      }
+      entries = entries.filter(([id]) => !jointIds.has(id));
+      for (const [root, times] of rigs) {
+        entries.push([-1000 - root.getID(), {
+          _rigRow: true,
+          _rigName: root._permanentStaticLabel || 'Rig',
+          times: Array.from(times).sort((a, b) => a - b),
+        }]);
+      }
+    }
     // One synthetic row per frame GROUP (the whole flipbook on a single lane), unless
     // it already has a real track (e.g. group transform animation). drawDopeSheet draws
     // its frame markers from the children's _srFrameTime.

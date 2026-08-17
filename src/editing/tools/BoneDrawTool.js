@@ -599,20 +599,42 @@ class BoneDrawTool extends SculptBase {
   updateXR(picking, isPressed, origin, dir, options) {
     const main = this._main;
     const tip = (options && options.tipOrigin) || origin;
-    if (!tip) return;
+    if (!tip) {
+      // An early return here skips the A handling entirely, so a caller passing no tip would
+      // look exactly like a dead button.
+      if (window._boneATrace) {
+        this._noTip = (this._noTip || 0) + 1;
+        if (this._noTip % 30 === 1) console.log(`[boneA] NO TIP - updateXR bailed (n=${this._noTip})`);
+      }
+      return;
+    }
     _tip.set(tip[0], tip[1], tip[2]);
 
     // A ends the chain, in draw mode only. Mode selection moved to the mini panel — three
     // modes across two face buttons meant each button changed meaning by mode, which is
     // exactly why the previous binding was unreadable.
     const aPressed = this._readButton(options, 4);
+    this._traceA(options, aPressed);
     if (aPressed && !this._wasAPressed) {
+      if (window._boneATrace) console.log('[boneA] EDGE -> acting, mode=' + this._mode);
       // Same button, two modes, no overlap in meaning: A ends a chain while drawing, and
       // pins the highlighted joint while solving. Both are "commit the thing you are
       // pointing at", which is the only reading of a face button that stays memorable.
       if (this._mode === 'draw') {
-        this.endChain();
-        if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+        // A ENDS THE CHAIN; A AGAIN LEAVES DRAWING. Ending a chain used to be all it did, and
+        // there was no way to stop drawing from the controller at all — the next trigger
+        // dropped another root joint, wherever your hand happened to be. That is fine while
+        // building a skeleton and wrong the moment you have finished one.
+        if (this._validParent()) {
+          this.endChain();
+          if (window.screenLog) window.screenLog('Bones: chain ended - A again to stop drawing', 'cyan');
+        } else {
+          // Pose, not some inert state: there isn't one, and it is what you want next after
+          // drawing a skeleton. Nothing there happens without deliberately grabbing a joint.
+          this.setModeKey('pose');
+          if (window.screenLog) window.screenLog('Bones: drawing off - Pose mode', 'cyan');
+          try { main._miniPanel?.syncFromState?.(); } catch (_) {}
+        }
       } else if (this._mode === 'ik') {
         this._togglePin(this._hilite);
       }
@@ -715,15 +737,96 @@ class BoneDrawTool extends SculptBase {
       this._resolve(_tip, plane, _eff, parent));
   }
 
+  // ---- A-button trace -------------------------------------------------------------
+  //
+  // Turn on with `window._boneATrace = true`. A face button that works "sometimes" is almost
+  // never a bug in the binding, so this deliberately reports the whole chain rather than the
+  // verdict: whether updateXR runs at all, which hand it was called for, what the options
+  // object actually contains, and — separately — what the RAW WebXR gamepads say. If the raw
+  // state shows the press and the options state does not, the press is being filtered on the
+  // way in; if neither shows it, it never reached the page; if both do and nothing happens,
+  // the edge detector is being reset by something.
+  _traceA(options, aPressed) {
+    if (!window._boneATrace) return;
+    this._aFrame = (this._aFrame || 0) + 1;
+
+    const ctrls = (options && options.controllers) || [];
+    const optStr = ctrls.length
+      ? ctrls.map((c) => `${c.handedness || '?'}:${c.buttons ? c.buttons.length : 'nobtns'}` +
+          `:A=${c.buttons && c.buttons[4] ? (c.buttons[4].pressed ? 1 : 0) : '-'}`).join(' ')
+      : 'EMPTY';
+
+    // Raw, straight off the session — bypasses whatever the caller chose to pass along.
+    let rawStr = 'nosession';
+    let rawAny = false;
+    const session = this._main._xrSession;
+    if (session && session.inputSources) {
+      const parts = [];
+      for (const src of session.inputSources) {
+        const b = src.gamepad && src.gamepad.buttons && src.gamepad.buttons[4];
+        const on = !!(b && b.pressed);
+        if (on) rawAny = true;
+        parts.push(`${src.handedness || '?'}:A=${b ? (on ? 1 : 0) : '-'}`);
+      }
+      rawStr = parts.join(' ') || 'nosources';
+    }
+
+    // State that differed between the working run and the failing one: recording, playback,
+    // and which hand the app thinks is dominant. A binding that only dies during a take is a
+    // different bug from one that dies near a menu.
+    const reg = window._animationRegistry;
+    const rec = reg
+      ? `rec=${reg.isRecording ? 1 : 0}${reg.isCountingIn ? '+in' : ''}` +
+        `${window._animWaitingForGrab ? '+wait' : ''}${window._animPlaying ? '+play' : ''}`
+      : 'rec=none';
+    const dom = `dom=${this._main._dominantHand}`;
+
+    const chain = this._validParent() ? 'chain' : 'nochain';
+    const sig = `${options && options.handedness}|${optStr}|${rawStr}|${aPressed ? 1 : 0}|` +
+                `${this._wasAPressed ? 1 : 0}|${this._mode}|${chain}|${rec}|${dom}`;
+    // Log on any change, plus a heartbeat so a silent console distinguishes "nothing is
+    // changing" from "updateXR is not being called at all".
+    const beat = (this._aFrame % 90) === 0;
+    if (sig === this._aSig && !beat) return;
+    this._aSig = sig;
+    console.log(`[boneA] f=${this._aFrame} hand=${options && options.handedness}` +
+      ` opts=[${optStr}] raw=[${rawStr}] rawAny=${rawAny ? 1 : 0}` +
+      ` aPressed=${aPressed ? 1 : 0} wasA=${this._wasAPressed ? 1 : 0}` +
+      ` mode=${this._mode} ${chain} ${rec} ${dom}${beat ? ' (beat)' : ''}`);
+  }
+
   // Dominant-hand face button from the per-controller gamepad state (4 = A/X, 5 = B/Y).
+  //
+  // Reads the options first, then falls back to the LIVE SESSION. A face button is global
+  // device state — it is not aimed at anything and does not depend on which code path
+  // happened to call the tool this frame — but the value was arriving only through the
+  // options object, so any caller that passed a thinner one silently disabled the binding.
+  // That has now caused the same "A works, then doesn't" report twice, and the menu-guard
+  // path (which passed no controllers at all until v3.18.14) turns out to be the NORMAL case
+  // rather than a rare one: the pointing-at-menu flag is sticky and reads true almost
+  // permanently. Rather than audit every call site for a good options object, ask the device.
+  //
+  // The fallback also covers a handedness mismatch: if the options carry controllers but none
+  // matches the hand being processed, the loop falls through to the session rather than
+  // reporting "not pressed".
   _readButton(options, index) {
+    const hand = (options && options.handedness) || this._main._dominantHand;
     const ctrls = options && options.controllers;
-    if (!ctrls) return false;
-    const hand = options.handedness;
-    for (let i = 0; i < ctrls.length; i++) {
-      const c = ctrls[i];
-      if (c.handedness === hand && c.buttons && c.buttons[index]) {
-        return !!c.buttons[index].pressed;
+    if (ctrls) {
+      for (let i = 0; i < ctrls.length; i++) {
+        const c = ctrls[i];
+        if (c.handedness === hand && c.buttons && c.buttons[index]) {
+          return !!c.buttons[index].pressed;
+        }
+      }
+    }
+    const session = this._main._xrSession;
+    if (session && session.inputSources) {
+      for (const src of session.inputSources) {
+        if (src.handedness === hand && src.gamepad && src.gamepad.buttons
+            && src.gamepad.buttons[index]) {
+          return !!src.gamepad.buttons[index].pressed;
+        }
       }
     }
     return false;
