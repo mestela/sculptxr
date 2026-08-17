@@ -1,4 +1,4 @@
-# SculptXR (v3.19.0)
+# SculptXR (v3.19.11)
 
 WebXR Sculpting
 
@@ -12,6 +12,7 @@ Watch a demo of the Feb 27 build [here.](https://www.youtube.com/watch?v=h7nVgpO
 
 Try the latest build [here!](https://tokeru.com/sculptxr/)
 
+*   **v3.19.11**: **The bone tools work with a mouse and a finger**: Tweak, Pose, Radius and IK were 6DOF controller gestures only, and were shown disabled outside VR. All of them are live now — screen-plane drag for Tweak and IK, a camera-axis sweep for Pose, distance-from-the-shaft for Radius, and a tap to cycle an IK pin. Drawing is press-drag-release with the symmetry plane drawn and lighting up as you cross it; joints go in the *middle* of the sculpt rather than on its skin, chains draw past the silhouette, and a rig can be built with no mesh in the scene at all. Plus `Escape`/`Enter` (or a tap back on the parent joint) to end a chain, `O` to toggle orthographic, and a fix for orthographic views rendering blank since the Three.js port.
 *   **v3.19.0**: **Full-body IK with stop-motion pinning, and pose keyframing**: pin the parts that should stay put — position, or position and rotation — drag anything else, and the whole skeleton rearranges itself around the pins, bone lengths intact. The grab is 6DOF, so twisting the hips swings the legs while the pinned feet re-solve. **Key Pose** keys the whole rig in one step and the rig takes a single dopesheet lane, so pose-to-pose blocking works end to end; **Bind Pose** puts a posed character exactly back. Plus subdividing a bound, posed mesh no longer crashes.
 *   **v3.18.0**: **Rigging — skinning, and bones to skin**: bind capsules are now drawn as editable envelopes (grab one in Radius mode and resize it against the mesh), the bind is rigid nearest-capsule so a capsule states exactly which vertices it moves, and a weight colour preview paints every vertex in the colour of the bone that owns it. Plus **Make Skin**: turn a drawn skeleton into low-poly quad tubes at those radii — clay over a wire armature, ready to sculpt.
 *   **v3.17.0**: **Nomad Link — a live, two-way connection to Nomad Sculpt**: SculptXR speaks Nomad's own bridge protocol, so a sculpt moves between an iPad and a headset while you work. Pull the scene (*Files → Nomad Link*), watch Nomad strokes arrive live, and push edits back — quads, face groups, UVs, colour and mask all survive the round trip. Live send, instances, deletions and undo travel both ways. Plus a **sculpt lock** ("do nothing" mode) for when hand tracking grabs a stroke you didn't mean.

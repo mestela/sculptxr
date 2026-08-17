@@ -460,6 +460,16 @@ class Camera {
     var w = this._width * delta;
     var h = this._height * delta;
     mat4.ortho(this._proj, -w, w, -h, h, -this._near, this._far);
+
+    // ...and push it into the Three camera, which is what actually draws. Only `_proj` was
+    // being written here — a leftover from the raw-WebGL engine — so selecting Orthographic
+    // left the renderer on its perspective projection while picking used an ortho one. The
+    // two disagreeing is why the view went blank. Assigned directly rather than through
+    // updateProjectionMatrix(), which would recompute the perspective one and undo this.
+    if (this._threeCamera) {
+      this._threeCamera.projectionMatrix.fromArray(this._proj);
+      this._threeCamera.projectionMatrixInverse.copy(this._threeCamera.projectionMatrix).invert();
+    }
   }
 
   computePosition(out) {

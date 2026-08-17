@@ -316,4 +316,21 @@ Utils.rgb2hsv = function (r, g, b, hsv) {
   return [h, s, v];
 };
 
+// Is the user typing into a field right now?
+//
+// Every global key handler has to ask this before claiming a key. The app binds a lot of
+// BARE letters and digits as shortcuts (n toggles the animation panel, m the main menu, d
+// cycles spectator modes, c calibration, plus the whole GUI shortcut table), and a text
+// input anywhere in the UI then cannot receive them — typing an IP address into the Nomad
+// Link field toggled panels instead of entering digits.
+//
+// Both the event target and the active element are checked: the target is right for a
+// bubbling event, and activeElement covers a listener bound on window during the capture
+// phase, or a synthetic event with no useful target.
+Utils.isTypingTarget = function (e) {
+  const typing = (n) => !!n && (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA'
+    || n.tagName === 'SELECT' || n.isContentEditable);
+  return typing(e && e.target) || typing(document.activeElement);
+};
+
 export default Utils;

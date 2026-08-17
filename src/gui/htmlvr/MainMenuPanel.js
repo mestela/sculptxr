@@ -33,6 +33,7 @@ import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
+import { buildBoneSectionHTML, wireBoneSection } from '../bonePanel.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
@@ -878,7 +879,6 @@ export function buildMenuHTML_files(main) {
     <button class="mm-action-btn" id="mm-nomad-send">Send selected to Nomad</button>
     <label class="mm-check-row"><span>Send edits live</span><input type="checkbox" id="mm-nomad-live"${main._nomadLiveSend ? ' checked' : ''}><span class="mm-checkmark"></span></label>
     <div id="mm-nomad-status" style="color:#a6adc8;font-size:11px;margin:3px 0">${main.getNomadLink?.().getMessage() || 'Disconnected'}</div>
-    <div style="color:#a6adc8;font-size:11px;margin-bottom:4px">Connect before entering VR — the browser's permission prompt can't be answered from inside a headset session.</div>
 
     <div class="mm-section-title">Save</div>
     <div class="mm-choice-grid cols-5">
@@ -1742,6 +1742,7 @@ export function buildSectionHTML_sculpting(main) {
     <div class="mm-section-title">Mesh Edit</div>
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
     ${brushHTML}
+    ${cur === Enums.Tools.BONE_DRAW ? buildBoneSectionHTML(main, 'mm') : ''}
     <div class="mm-section-title">Safety</div>
     <button class="mm-toggle${window._sculptLocked ? ' active' : ''}" id="mm-sculpt-lock"
       title="Ignore every sculpt input until unlocked — for when hand tracking or a stray controller would otherwise damage the mesh.">
@@ -2987,6 +2988,12 @@ export function wireSectionTopology(el, main, repaintFn, lightRepaintFn = repain
  */
 export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repaintFn, sliderDirtyFn = null) {
   const sm = main.getSculptManager?.() ?? main._sculptManager;
+
+  // The Bones controls, shared with the wrist panel. This section is what makes rigging
+  // reachable at all on iPad and desktop — it lived only in the VR wrist panel before.
+  // Both callbacks repaint: this panel has no in-place state sync, so a rebuild is how a
+  // toggle shows that it toggled.
+  wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;

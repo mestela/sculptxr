@@ -24,15 +24,7 @@ import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
-import Skinning       from '../../editing/Skinning.js';
-import Skeleton       from '../../editing/Skeleton.js';
-import SkinMesh       from '../../editing/SkinMesh.js';
-import IKSolver       from '../../editing/IKSolver.js';
-
-// Label for the IK pin-clearing button. The count is part of the label because the pins
-// themselves are markers out in the scene, and "how many are set" is the question you ask
-// when the solver refuses to move something.
-function pinLabel(n) { return n ? `Clear Pins (${n})` : 'Clear Pins'; }
+import { buildBoneSectionHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -683,167 +675,13 @@ export class MiniPanel extends HTMLVRPanel {
     }
 
     // ── Bones extras ───────────────────────────────────────────────────────
+    // Shared with the menu/sidebar build of the same panel — see gui/bonePanel.js.
     if (idx === Enums.Tools.BONE_DRAW) {
-      const mode = (id, key) => {
-        const btn = extras.querySelector(id);
-        if (!btn) return;
-        btn.addEventListener('click', () => {
-          sm?.getCurrentTool?.()?.setModeKey?.(key);
-          this.syncFromState();
-        });
-      };
-      mode('#mp-bone-draw', 'draw');
-      mode('#mp-bone-fk',   'fk');
-      mode('#mp-bone-free', 'free');
-      mode('#mp-bone-pose', 'pose');
-      mode('#mp-bone-radius', 'radius');
-      mode('#mp-bone-ik', 'ik');
-
-      // Clearing pins is undoable like every other rig edit: a lost set of pins is a lost
-      // pose setup, and re-placing them by hand is exactly the tedium pinning exists to avoid.
-      extras.querySelector('#mp-bone-unpin')?.addEventListener('click', () => {
-        // Snapshot WHICH KIND of pin each one was, not merely that it existed — undoing a
-        // clear has to give back the 6DOF pins as 6DOF.
-        const had = IKSolver.capturePins(main);
-        if (!had.length) return;
-        IKSolver.clearPins(main);
-        const sm2 = main.getStateManager?.();
-        sm2?.pushStateCustom?.(
-          () => { IKSolver.restorePins(main, had); Skeleton.updateVisuals(main); main.render(); },
-          () => { IKSolver.clearPins(main); Skeleton.updateVisuals(main); main.render(); },
-          false, 'Clear Pins');
-        Skeleton.updateVisuals(main);
-        this.syncFromState();
-        main.render?.();
-      });
-
-      // Two flag flavours, and they must not share a toggle: the snaps default ON (stored
-      // as "anything but false", so undefined reads as on), Lengths defaults OFF.
-      const flag = (id, key, defaultOn) => {
-        const btn = extras.querySelector(id);
-        if (!btn) return;
-        btn.addEventListener('click', () => {
-          window[key] = defaultOn ? (window[key] === false) : !window[key];
-          this.syncFromState();
-          main.render?.();
-        });
-      };
-      flag('#mp-bone-snap', '_boneSnapPlane',   true);
-      flag('#mp-bone-axis', '_boneSnapAxis',    true);
-      flag('#mp-bone-len',  '_boneShowLengths', false);
-      flag('#mp-bone-caps', '_boneShowCapsules', true);
-      flag('#mp-bone-solid', '_boneShowSolid', true);
-      flag('#mp-bone-wire', '_boneShowWire', true);
-      // Toggling the weight preview has to repaint or restore immediately — the flag alone
-      // changes nothing until something re-solves.
-      extras.querySelector('#mp-bone-weights')?.addEventListener('click', () => {
-        window._boneShowWeights = window._boneShowWeights === false;
-        Skinning.refreshWeightColorsAll(main);
-        this.syncFromState();
-        main.render?.();
-      });
-
-      // Re-entering the tool restores the preview that clearPreview() took down on the way
-      // out, so the toggle state is what decides whether colours are shown, not tool history.
-      Skinning.refreshWeightColorsAll(main);
-
-      // The slider sets the DEFAULT fraction (used by every joint drawn from now on); the
-      // button pushes it onto the bones that already exist. Split deliberately: applying live
-      // on every drag frame would silently wipe radii that were hand-tuned in Radius mode.
-      const radInput = extras.querySelector('#mp-bone-rad');
-      const radVal   = extras.querySelector('#mp-bone-rad-val');
-      if (radInput) {
-        radInput.addEventListener('input', () => {
-          const pct = parseFloat(radInput.value);
-          window._boneRadiusFrac = pct / 100;
-          if (radVal) radVal.textContent = Math.round(pct) + '%';
-        });
-      }
-      extras.querySelector('#mp-bone-rad-all')?.addEventListener('click', () => {
-        const before = Skeleton.captureRadii(main);
-        Skeleton.setRadiusFraction(main, window._boneRadiusFrac ?? 0.5);
-        const after = Skeleton.captureRadii(main);
-        const apply = (radii) => {
-          Skeleton.restoreRadii(radii);
-          Skinning.resolveWeightsAll(main);
-          Skeleton.updateVisuals(main);
-          main.render();
-        };
-        Skinning.resolveWeightsAll(main);
-        main.getStateManager?.()?.pushStateCustom?.(
-          () => apply(before), () => apply(after), false, 'Bone Radii');
-        window._boneShowCapsules = true; // an invisible edit is indistinguishable from a no-op
-        this.syncFromState();
-        main.render?.();
-      });
-
-      extras.querySelector('#mp-bone-skin')?.addEventListener('click', () => {
-        const res = SkinMesh.build(main);
-        const msg = res.ok
-          ? `Bones: skin built — ${res.chains} chains, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
-          : `Bones: ${res.why}`;
-        console.log('[bone] skin:', msg);
-        if (window.screenLog) window.screenLog(msg, res.ok ? 'cyan' : '#f38ba8');
-        this._lastExtrasIdx = -1; // the new mesh becomes the selection, so the panel changes
-        this.syncFromState();
-        main.render?.();
-      });
-
-      extras.querySelector('#mp-bone-bind')?.addEventListener('click', () => {
-        const res = Skinning.bind(main, main.getMesh?.());
-        const msg = res.ok
-          ? `Bones: bound ${res.name} — ${res.joints} joints, ${res.verts} verts, ${res.ms}ms`
-            + (res.outside ? `, ${res.outside} verts outside every capsule` : '')
-          : `Bones: ${res.why}`;
-        console.log('[bone] bind:', msg);
-        if (window.screenLog) window.screenLog(msg, res.ok ? 'cyan' : '#f38ba8');
-        // Rebuild rather than sync: the button set itself changes once bound.
-        this._lastExtrasIdx = -1;
-        this.syncFromState();
-        main.render?.();
-      });
-
-      // Key the WHOLE rig at the playhead. Every joint, including the ones that did not move:
-      // a joint left unkeyed holds its neighbouring keys' value and drifts out of the pose
-      // that was just set, which reads as the rig coming apart between poses.
-      extras.querySelector('#mp-bone-key')?.addEventListener('click', () => {
-        const reg = window._animationRegistry;
-        const joints = Skeleton.joints(main);
-        if (!reg || !joints.length) {
-          if (window.screenLog) window.screenLog('Bones: no rig to key', '#f38ba8');
-          return;
-        }
-        const t = window._animCurrentTime || 0;
-        const n = reg.keyTransforms(joints, t, 'Key Pose');
-        const msg = `Bones: keyed ${n} joints at ${t.toFixed(1)}`;
-        console.log('[bone] key pose:', msg);
-        if (window.screenLog) window.screenLog(msg, 'cyan');
-        main.render?.();
-      });
-
-      // Back to the pose the rig was bound in. Undoable in one step like any other pose edit —
-      // it is a big change, and "I only wanted to see what it looked like" has to be free.
-      extras.querySelector('#mp-bone-restpose')?.addEventListener('click', () => {
-        const before = IKSolver.captureAll(main);
-        const n = Skinning.restoreBindPose(main);
-        const msg = n ? `Bones: ${n} joints returned to bind pose` : 'Bones: nothing bound';
-        console.log('[bone] bind pose:', msg);
-        if (window.screenLog) window.screenLog(msg, n ? 'cyan' : '#f38ba8');
-        if (n) {
-          const after = IKSolver.captureAll(main);
-          const apply = (snap) => { Skeleton.restoreLocal(snap); Skeleton.updateVisuals(main); main.render(); };
-          main.getStateManager?.()?.pushStateCustom?.(
-            () => apply(before), () => apply(after), false, 'Bind Pose');
-        }
-        Skeleton.updateVisuals(main);
-        main.render?.();
-      });
-
-      extras.querySelector('#mp-bone-unbind')?.addEventListener('click', () => {
-        Skinning.unbind(main.getMesh?.());
-        this._lastExtrasIdx = -1;
-        this.syncFromState();
-        main.render?.();
+      wireBoneSection(extras, main, {
+        refresh: () => this.syncFromState(),
+        // Binding and Make Skin change WHICH buttons exist, and the extras markup is only
+        // rebuilt when the tool changes, so those have to force one.
+        rebuild: () => { this._lastExtrasIdx = -1; this.syncFromState(); },
       });
     }
 
@@ -1055,28 +893,7 @@ export class MiniPanel extends HTMLVRPanel {
       }
 
     } else if (idx === Enums.Tools.BONE_DRAW) {
-      // Radio behaviour: exactly one mode carries .active. Without this branch the classes
-      // are only correct at build time (tool switch), so clicking a mode changed behaviour
-      // but never moved the highlight.
-      const mode = tool.modeKey?.() ?? 'draw';
-      extrasEl.querySelector('#mp-bone-draw')?.classList.toggle('active', mode === 'draw');
-      extrasEl.querySelector('#mp-bone-fk')  ?.classList.toggle('active', mode === 'fk');
-      extrasEl.querySelector('#mp-bone-free')?.classList.toggle('active', mode === 'free');
-      extrasEl.querySelector('#mp-bone-pose')?.classList.toggle('active', mode === 'pose');
-      extrasEl.querySelector('#mp-bone-radius')?.classList.toggle('active', mode === 'radius');
-      extrasEl.querySelector('#mp-bone-ik')?.classList.toggle('active', mode === 'ik');
-      // The extras HTML is only rebuilt when the TOOL changes, so anything that varies with
-      // rig state — the pin count — has to be refreshed here or it shows the count from
-      // whenever the panel was last built.
-      const unpin = extrasEl.querySelector('#mp-bone-unpin');
-      if (unpin) unpin.textContent = pinLabel(IKSolver.pinnedJoints(this._main).length);
-      extrasEl.querySelector('#mp-bone-snap')?.classList.toggle('active', window._boneSnapPlane !== false);
-      extrasEl.querySelector('#mp-bone-axis')?.classList.toggle('active', window._boneSnapAxis !== false);
-      extrasEl.querySelector('#mp-bone-len') ?.classList.toggle('active', !!window._boneShowLengths);
-      extrasEl.querySelector('#mp-bone-caps')?.classList.toggle('active', window._boneShowCapsules !== false);
-      extrasEl.querySelector('#mp-bone-solid')?.classList.toggle('active', window._boneShowSolid !== false);
-      extrasEl.querySelector('#mp-bone-wire')?.classList.toggle('active', window._boneShowWire !== false);
-      extrasEl.querySelector('#mp-bone-weights')?.classList.toggle('active', window._boneShowWeights !== false);
+      syncBoneSection(extrasEl, this._main);
 
     } else if (idx === Enums.Tools.TRANSFORM_VR) {
       const mode = tool._mode ?? 0;
@@ -1140,78 +957,10 @@ export class MiniPanel extends HTMLVRPanel {
     }
 
     // ── Bones ──────────────────────────────────────────────────────────────
-    // Mode lives here rather than on a face button: three modes do not fit two buttons
-    // without overloading them by mode, which is what made the previous binding opaque.
-    if (idx === Enums.Tools.BONE_DRAW) {
-      const t    = sm.getCurrentTool?.();
-      const mode = t?.modeKey?.() ?? 'draw';
-      const snap = window._boneSnapPlane !== false;
-      const axis = window._boneSnapAxis !== false;
-      const lens = !!window._boneShowLengths;
-      const bound = Skinning.isBound(sm._main?.getMesh?.());
-      const caps = window._boneShowCapsules !== false;
-      const wts  = window._boneShowWeights !== false;
-      // Bone body and bone edges, separately. Both off leaves just the joint markers, which
-      // is the least cluttered thing to pose against — the spheres are what you aim at.
-      const solid = window._boneShowSolid !== false;
-      const wire  = window._boneShowWire !== false;
-      // The capsule radius default, as a percentage of bone length. Exposed because it was a
-      // hard-coded guess that every skin weight inherited: one drag re-proportions the whole
-      // rig, which is the only honest way to judge it.
-      const radPct = Math.round((window._boneRadiusFrac ?? 0.5) * 100);
-      const on   = (k) => (mode === k ? ' active' : '');
-      // The pin count is the only readout of the solver's state that is visible without
-      // looking at the rig, and "why is nothing moving" is almost always "everything is pinned".
-      const pins = IKSolver.pinnedJoints(this._main).length;
-      return `
-        <hr class="mp-divider">
-        <div class="mp-voxel-grid">
-          <button class="mp-voxel-btn${on('draw')}" id="mp-bone-draw">Draw</button>
-          <button class="mp-voxel-btn${on('fk')}"   id="mp-bone-fk">Tweak FK</button>
-          <button class="mp-voxel-btn${on('free')}" id="mp-bone-free">Tweak Free</button>
-          <button class="mp-voxel-btn${on('pose')}" id="mp-bone-pose">Pose</button>
-          <button class="mp-voxel-btn${on('radius')}" id="mp-bone-radius">Radius</button>
-          <button class="mp-voxel-btn${on('ik')}" id="mp-bone-ik">IK</button>
-        </div>
-        <div class="mp-btn-row">
-          <button class="mp-action-btn" id="mp-bone-unpin">${pinLabel(pins)}</button>
-          <button class="mp-action-btn" id="mp-bone-key">Key Pose</button>
-        </div>
-        <div class="mp-toggles">
-          <button class="mp-toggle-btn${snap ? ' active' : ''}" id="mp-bone-snap">Snap Plane</button>
-          <button class="mp-toggle-btn${axis ? ' active' : ''}" id="mp-bone-axis">Snap Axis</button>
-        </div>
-        <div class="mp-toggles">
-          <button class="mp-toggle-btn${lens ? ' active' : ''}" id="mp-bone-len">Lengths</button>
-          <button class="mp-toggle-btn${caps ? ' active' : ''}" id="mp-bone-caps">Capsules</button>
-          <button class="mp-toggle-btn${wts ? ' active' : ''}" id="mp-bone-weights">Weights</button>
-        </div>
-        <div class="mp-toggles">
-          <button class="mp-toggle-btn${solid ? ' active' : ''}" id="mp-bone-solid">Solid</button>
-          <button class="mp-toggle-btn${wire ? ' active' : ''}" id="mp-bone-wire">Wire</button>
-        </div>
-        <div class="mp-row">
-          <span class="mp-lbl">Capsule</span>
-          <input type="range" id="mp-bone-rad" min="5" max="120" step="1" value="${radPct}">
-          <span class="mp-val" id="mp-bone-rad-val">${radPct}%</span>
-        </div>
-        <div class="mp-btn-row">
-          <button class="mp-action-btn" id="mp-bone-rad-all">Apply To All</button>
-        </div>
-        <hr class="mp-divider">
-        <div class="mp-btn-row">
-          <button class="mp-action-btn" id="mp-bone-skin">Make Skin</button>
-        </div>
-        <div class="mp-btn-row">
-          <button class="mp-action-btn" id="mp-bone-bind">${bound ? 'Rebind' : 'Bind Mesh'}</button>
-          ${bound ? '<button class="mp-action-btn" id="mp-bone-unbind">Unbind</button>' : ''}
-        </div>
-        ${Skinning.anyBound(this._main) ? `
-        <div class="mp-btn-row">
-          <button class="mp-action-btn" id="mp-bone-restpose">Bind Pose</button>
-        </div>` : ''}
-      `;
-    }
+    // The same controls the menu/sidebar shows, in the wrist panel's dialect. Mode lives
+    // here rather than on a face button: the modes do not fit two buttons without each one
+    // changing meaning by mode, which is what made the previous binding opaque.
+    if (idx === Enums.Tools.BONE_DRAW) return buildBoneSectionHTML(this._main, 'mp');
 
     // ── Smooth / Relax ─────────────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {

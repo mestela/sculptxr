@@ -1,3 +1,99 @@
+# v3.19.11
+**Bones are the right thickness again, orthographic tracks the cursor, and a rig can be drawn with no mesh at all.**
+
+- **Bone width reverted; the JOINT grew instead.** v3.19.10 made the joint markers visible by thinning the bones, which was the wrong way round — it turned the rig into needles at roughly a third of their proper width. Bones are back to the size they have always been, and the marker is now sized to clear the bone it terminates, capped so one long limb cannot balloon its joint. The capsules were the giveaway: they were right, so the bones were wrong.
+- **Orthographic no longer tracks at double rate.** `Raycaster.setFromCamera` branches on the camera's *class*, and orthographic mode here keeps a `PerspectiveCamera` object with an ortho matrix swapped into it — so the raycaster took its perspective path against an ortho projection. The screen ray is now unprojected by hand from the matrices, which is correct for either projection because it never consults the class. Covered by a regression test that fails loudly on the old path.
+- **A chain can be started with no sculpt in the scene.** The press was gated on a surface hit, so with the mesh deleted no chain could ever begin — VR has never had this problem because it places at the controller tip and asks the mesh nothing. The gate now only applies when there is actually something to press on.
+- **The snap plane is sized to the view in an empty scene.** With no sculpt and no joints there is no object to take a scale from, so it falls back to how far the camera is pulled back — the difference between a usable plane and a postage stamp at the origin.
+- **`O` toggles orthographic/perspective.** Rigging is done from flat front and side views and the Rendering menu is the wrong amount of friction for something flipped constantly. Any open Projection dropdown follows along.
+
+# v3.19.10
+**Branching, a rig that outlives its sculpt, visible joints, and orthographic views.** Four separate blockers found while rigging on the desktop.
+
+- **Branching works again.** A press between chains was gated on the surface pick alone, so clicking the neck to grow the arms did nothing — the joint you aim at is usually the one place the cursor is NOT over unbroken sculpt. A press on a preselected joint now claims the pointer wherever it is.
+- **Deleting the sculpt no longer takes the symmetry plane with it.** The plane is read off the sculpt but does not belong to it, so with no mesh the world centreline is still the answer; returning nothing took the plane, the snap and the mirrored joints away at once. The scene unit falls back to the skeleton's own extent for the same reason — measured against 1 instead, every marker was too small to see and every snap too tight to hit.
+- **The joint markers are visible.** Bone width was a flat 12% of the bone's LENGTH while the marker is a fraction of the SCENE, so on anything longer than a finger the bone body grew wider than the joint and swallowed it. Width is now capped below the marker radius: beads on a string, at every scale.
+- **Orthographic views render.** `Camera.updateOrtho` only ever wrote the legacy `_proj` matrix — a leftover from the raw-WebGL engine — and never touched the Three camera that actually draws, so selecting Orthographic left the renderer on its perspective projection while picking used an ortho one. Long-standing, not new; it just happens to block the front/side views rigging is normally done from.
+
+# v3.19.9
+**A root joint goes in the middle of the sculpt, not on its skin.** The depth ladder still consulted the surface pick for the first joint of a chain, so the root landed on the shell — and every joint after it inherited that depth, putting the whole chain on the surface. That is the one place a bone never belongs, and the exact 2D problem that made this feature VR-first.
+
+- **The root takes the middle of the sculpt** (its own bounding sphere, in model space). Aiming at the body now puts the joint inside it; the drag then moves it laterally at that depth, so an off-centre root is still one gesture away.
+- **The centreline comes from the snap, not from the depth.** Near the middle on screen the joint lands exactly on the symmetry plane, with the plane lit — measured in the running app: the skin under the cursor at z=22.3, the joint at x=0, z=-1.6.
+- Not "where the cursor ray crosses the symmetry plane", which was the obvious construction and is quietly wrong: when the camera sits *on* the plane — which is exactly what a front view of a symmetric character is — the ray only meets it at the eye, so that path never fired from the most ordinary viewpoint there is. Mid-depth works from every angle.
+
+# v3.19.8
+**The bone tip follows the cursor everywhere, and the snap band lets go.** Two reports, one cause: the tip was driven straight off the surface pick, so it existed only where there was mesh under the pointer. On a limb that is most of the screen, and the tip simply vanished — which also made Snap Plane off look like the tool had stopped responding.
+
+- **A depth ladder, so there is always an answer.** The tip rides a camera-facing plane whose depth comes from, in order: the joint you are continuing from; the surface under the cursor when starting a chain over the mesh; the last depth used when starting one off it. Continuing a chain no longer consults the mesh at all — the next joint belongs at the depth of the one before it, not on whatever skin happens to be under the pointer.
+- **So a chain draws past the silhouette.** Verified in the app: with the sphere's edge at x≈615px the tip tracks smoothly out to x=820px, where before it drew nothing at all.
+- **The snap band is measured in screen px** (14), not 5% of a scene unit. The old band was a hand-width — the right unit for a controller and the wrong one for a screen, since it scales with whatever else is in the scene and had grown wide enough to swallow the model, so every joint landed on the centreline whether you meant it or not. VR keeps the band it was tuned with.
+- Whether a joint is treated as centreline (snapped, not mirrored) now follows whether it was *actually* snapped rather than a second reading of the band, which the two units would otherwise disagree about.
+- Mid-chain a press anywhere on screen is meant, since the depth no longer comes from the mesh. Between chains it still has to land on the sculpt — that is where the first joint's depth comes from, and it leaves left-drag free to orbit when you are not drawing.
+
+# v3.19.7
+**The snap plane stays put, and Snap Plane off means draw at depth.** The plane was appearing and disappearing with the pointer, which is worse than not having one — you cannot line anything up against a plane that blinks.
+
+- **The plane is furniture, not a hover effect.** With Snap Plane on it is drawn for as long as the mode is Draw or Tweak: no pointer needed, it survives the cursor leaving the mesh, and it survives release. Only its *brightening* still comes and goes, and that is a reading of the plane ("this joint will land on the centreline"), not a decision about showing it. Kept up by the tool's per-frame `postRender` hook, so nothing has to poke it.
+- **Hidden in Pose, Radius and IK**, which move the character rather than edit the rest skeleton and have nothing to snap. Same split as VR.
+- **Snap Plane off switches Draw to a fixed depth.** With no plane there is no centreline seam to aim at, and the surface pick then does the one thing you never want — it puts every joint on the skin. Instead the joint follows a camera-perpendicular plane at the depth of the bone being continued, so a chain stays inside the limb. Symmetry being off lands in the same place, for the same reason.
+- In depth mode the drag is free of the mesh, so a chain can run out past the silhouette. The *press* still has to hit the sculpt — a press that claimed the pointer anywhere would swallow every attempt to orbit and look at what you are drawing. Starting a fresh chain, the press point is the only depth on offer, so it becomes the anchor and the drag holds it.
+- Toggling Snap Plane reaches the plane on the same click rather than a frame later.
+
+# v3.19.6
+**Drawing bones on a flat screen: drag to place, and the centreline is visible again.** Draw mode was still click-to-commit, with the symmetry plane drawn only in VR — so placing a hip or a spine joint at x=0 meant guessing and undoing.
+
+- **The symmetry plane is drawn on desktop and iPad**, exactly as in VR: faint while you are away from it, bright the moment the joint would snap to it. It appears while Draw mode is active and goes away on release. Note it is the *symmetry* plane — with symmetry off there is no centreline and no snap, in VR either.
+- **Placement is press-drag-release.** Press on the mesh to start the joint, drag to adjust it, release to commit. The preview bone shows the resolved position throughout, so crossing into the snap band visibly pulls the joint onto the centreline before you let go. Dragging off the silhouette holds the last good point rather than jumping.
+- **Hover previews the next bone** once a chain is going, so a chain is drawn by moving and pressing rather than pressing and hoping.
+- **Two ways to end a chain, because the iPad has no A button.** Escape or Enter ends it, and pressing again leaves Draw for Pose — the same two steps the controller's A button walks through. With no keyboard, releasing a joint within 12px of the one it would hang from ends the chain instead: a zero-length bone is never a thing you meant. 12 rather than 5 px because this is for a fingertip.
+- The pointer is no longer hidden during a bone drag. Hiding it is right for a sculpt brush, which draws its own ring in its place; Bones draws no cursor, so a drag aimed at a point on screen was losing the thing doing the aiming.
+- Draw now opts out of the iPadOS single-action debounce along with the other modes. It commits on release, and a blocked `start()` mid-gesture would clear the active stroke so the release never placed anything.
+
+# v3.19.5
+**Every bone mode works with a mouse or a finger.** Tweak, Pose, Radius and IK existed only as 6DOF controller gestures, so on iPad and desktop they were shown disabled. They are all live now, and nothing in the Bones panel is greyed out any more.
+
+The depth problem is the reason this was VR-first: a joint lives inside the mesh and a screen has no depth channel. It is answered per mode rather than papered over, because none of these modes is inventing a depth — each is moving, rotating or sizing something that already has a position.
+
+- **Tweak (FK and Free) and IK — screen-plane drag.** The joint moves in the camera-facing plane through where it already is, so its depth is left exactly as it was and orbiting gives you the other axis. This is what every DCC does, and it never pretends to have supplied a depth it does not have. The grab holds its offset, so a joint does not jump to the pointer on the first frame.
+- **Pose — camera-axis sweep.** No translation is involved, so there is nothing to fake: the axis locks to the camera view axis at the grab and the cursor's angular sweep around the joint's screen position is the amount. Straight off `GeodesicPoseTool`, which solved the same problem for its bend.
+- **Radius — distance from the shaft.** A radius is a distance from a line, and a screen measures that perfectly well. Drag away from the capsule and it inflates, with the live weight recolour it has in VR.
+- **A tap in IK mode cycles that joint's pin** (none → position → position + rotation), which is the A button's job in VR. The solve is deliberately not started until the pointer moves past a small threshold, so a pin press does not leave an empty "IK Pose" step in the undo history — and a finger that never quite holds still is still read as a tap.
+- **Picking is done in screen space**, not by pushing the cursor into the volume: on a flat screen the joint you mean is the one under the pointer, and a model-space test against the ray would prefer whichever joint sat nearest the camera along it. Hidden joints stay ungrabbable, as in VR, and a click that hits nothing still orbits the camera.
+- Correct under an orthographic camera and under the worldGroup's scale, both of which are easy to get silently wrong in a projection round-trip.
+- The single-action debounce that protects click-once tools from iPadOS double-fire no longer applies to the drag modes, where it could only ever have blocked a second deliberate drag begun within 300ms of the last.
+- Covered headlessly by `scratchpad/bonescreen_test.mjs` (against the shipped source): picking, cursor tracking, depth preservation, the pose sweep and its seam unwrap, radius growth, and the IK tap/drag split.
+
+# v3.19.4
+**The Bones controls exist outside VR.** Everything rigging — modes, bind, capsules, Make Skin, Bind Pose, Key Pose, the display toggles — was only ever in the VR wrist panel, so on iPad and desktop the whole feature was unreachable.
+
+- The controls now appear in the Sculpting section whenever the Bones tool is active, which puts them in the iPad/desktop sidebar, the VR main menu and torn-off panels at once.
+- **One source, two dialects.** The wrist panel and the menu use different chrome, so the markup is generated in either class dialect while the behaviour and the state sync are shared outright. A control added once now shows up everywhere.
+- **The five controller-driven modes are shown disabled on a flat screen**, with a tooltip saying why. Tweak, Pose, Radius and IK are press-and-hold-a-joint-in-6DOF gestures with no touch or mouse equivalent yet; showing them as available and inert would be worse than showing them greyed. Draw works everywhere — it places joints from a surface pick.
+- Everything that is a command rather than a gesture works on iPad today: bind and rebind, the capsule slider and Apply To All, Make Skin, Bind Pose, Key Pose, Clear Pins, and every display toggle.
+- Structure verified headlessly (`scratchpad/bonepanel_test.mjs`), including that every id the wiring binds is an id the markup emits — a rename in one half would otherwise be a silently dead button.
+
+# v3.19.3
+**Shorter Nomad Link messages, and one that was not true.**
+
+- The connection-failure hints are trimmed to the cause and the fix.
+- **Removed "connect before entering VR"** from the Nomad Link panel. It was written on the theory that the browser's local-network prompt cannot be answered inside an immersive session; connecting from inside VR turns out to work, so it was advice for a problem nobody has.
+
+# v3.19.2
+**Nomad Link says why it could not connect.**
+
+- A failed connection now names the likely cause instead of reporting only that it failed. The browser deliberately withholds the reason, so a blocked connection and a typo in the address looked identical — and you would go looking for the typo.
+- **The case worth calling out is iOS.** Every browser on an iPhone or iPad is WebKit — Chrome there is a WKWebView wrapper and does not bring Chrome's networking rules with it — and WebKit does not appear to implement the loopback exception that lets an https page open a plain `ws://` to 127.0.0.1. Desktop Chrome does, which is why the same address works on the desktop and fails on the iPad with nothing visibly different. The error now says so, and suggests running Nomad on another device or opening SculptXR over http.
+- A synchronous SecurityError at construction — some browsers refuse a mixed-content WebSocket there rather than failing later — is reported as the definite cause rather than as one candidate among several.
+- Elsewhere the message points at Nomad's Link being enabled and at the local-network permission prompt.
+
+# v3.19.1
+**You can type into text fields again.**
+
+- **Fix — a focused text field could not receive its own characters.** The app binds a lot of BARE keys as shortcuts, and every global key handler claimed them regardless of what had focus: entering an IP address in the Nomad Link panel toggled the animation panel on 'n' and the main menu on 'm' instead of typing. Typing now wins — global shortcuts stand down while an input, textarea, select or contenteditable has focus.
+- Applied at every global entry point (the main key handler and its fan-out to every GUI shortcut, plus the three window listeners bound for the panel toggles) through one shared check, rather than case by case.
+- Modifier state is still recorded while typing, since a focused field does not stop you holding shift.
+
 # v3.19.0
 **Full-body IK, stop-motion pinning, and pose keyframing.** Pin the parts that should stay where they are, drag anything else, and the whole skeleton rearranges itself around the pins — then key the pose and do it again.
 

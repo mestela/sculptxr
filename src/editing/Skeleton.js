@@ -188,6 +188,20 @@ function radiusFrac() {
 // Solid + xray ghost pair. The ghost draws only where occluded (GreaterDepth), so it
 // reveals the part of the skeleton buried inside the mesh without ever becoming an
 // always-on-top overlay (which reads as a stereo headache and loses all depth cue).
+// A bone's body width, from its own length. Proportional to the bone so a long limb reads as
+// a limb — this is the size it has always been, and thinning it turns the rig into needles.
+function boneWidth(len, jr) { return Math.max(len * 0.12, jr * 0.6); }
+
+// A joint marker's radius. The base size is a fraction of the SCENE while a bone's width is
+// a fraction of its own LENGTH, so on anything longer than a finger the body grew wider than
+// the marker and swallowed it — the joints are what you aim at, so losing them is losing the
+// rig. Grow the MARKER to clear the bone rather than thinning the bone to fit the marker.
+// Capped so one very long bone cannot balloon its joint into a beach ball.
+function jointRadius(main, j, jr) {
+  const w = boneWidth(Skeleton.boneLength(main, j), jr);
+  return Math.min(Math.max(jr, w * 1.25), jr * 4);
+}
+
 function makePair(geo, color) {
   const solid = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
     color: color, side: THREE.DoubleSide,
@@ -380,6 +394,27 @@ Skeleton.sceneUnit = function (main) {
     // every joint marker and bone is scaled by it, so one NaN silently makes the whole
     // skeleton invisible — a confusing symptom a long way from its cause.
     if (Number.isFinite(r) && r > best) best = r;
+  }
+  // No sculpt in the scene — deleted, or a skeleton built before one exists. Fall back to
+  // the SKELETON's own extent rather than to 1: every marker, snap radius and default bone
+  // radius is scaled by this, so a rig drawn at scene scale suddenly measured against 1
+  // makes its own joints too small to see and its snaps too tight to hit.
+  if (best <= 1e-6) {
+    const js = Skeleton.joints(main);
+    if (js.length) {
+      _pA.set(0, 0, 0);
+      for (const j of js) _pA.add(Skeleton.jointPos(j, _pB));
+      _pA.divideScalar(js.length);
+      for (const j of js) best = Math.max(best, _pA.distanceTo(Skeleton.jointPos(j, _pB)));
+    }
+  }
+  // Empty scene: no sculpt AND no joints yet, so there is no object to take a scale from.
+  // Use how far the camera is pulled back — that is the size of what the user is looking at,
+  // and it is the difference between a usable snap plane and a postage stamp at the origin.
+  if (best <= 1e-6) {
+    const cam = main.getCamera && main.getCamera();
+    const d = cam && cam._trans ? Math.abs(cam._trans[2]) : 0;
+    if (d > 1e-6) best = d * 0.3;
   }
   main._skelUnit = best > 1e-6 ? best : 1;
   main._skelUnitAt = now;
@@ -686,9 +721,10 @@ Skeleton.updateVisuals = function (main) {
     // size change is what reads at a glance.
     const isHi = id === hi;
     const isSel = sel.has(id);
+    const rj = jointRadius(main, j, jr);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
+      o.scale.setScalar(isHi || isSel ? rj * 1.7 : rj);
       o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
@@ -768,7 +804,7 @@ Skeleton.updateVisuals = function (main) {
     _dirLocal.copy(_dir).applyQuaternion(_qInv.copy(_qOwner).invert()).normalize();
     _qAlign.setFromUnitVectors(_up, _dirLocal);
     _q.copy(_qOwner).multiply(_qAlign);
-    const w = Math.max(len * 0.12, jr * 0.6);
+    const w = boneWidth(len, jr);
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
       o.position.copy(_pA);
       o.quaternion.copy(_q);
@@ -850,7 +886,7 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
   const len = _dir.length();
   if (len < 1e-6) { pv.bone.solid.visible = pv.bone.ghost.visible = false; return; }
   _q.setFromUnitVectors(_up, _dir.divideScalar(len));
-  const w = Math.max(len * 0.12, jr * 0.6);
+  const w = boneWidth(len, jr);
   for (const o of [pv.bone.solid, pv.bone.ghost]) {
     o.position.copy(fromPos); o.quaternion.copy(_q); o.scale.set(w, len, w); o.visible = true;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
@@ -944,7 +980,14 @@ Skeleton._computeSymmetryPlane = function (main) {
   if (!main.getSculptManager || !main.getSculptManager().getSymmetry()) return null;
   const meshes = (main.getMeshes() || []).filter((m) => !Skeleton.isJoint(m) && !m._isNull);
   const m = meshes.includes(main.getMesh()) ? main.getMesh() : meshes[0];
-  if (!m || !m.getSymmetryOrigin) return null;
+  // The plane is READ off the sculpt, but it does not belong to the sculpt — it is where the
+  // centreline of the thing being rigged is. With no sculpt (deleted, or a skeleton being
+  // built before one exists) the world centreline is still a perfectly good answer, and it
+  // is the only way to draw a symmetric rig without a mesh in the scene. Returning null here
+  // took the plane, the snap and the mirrored joints away all at once.
+  if (!m || !m.getSymmetryOrigin) {
+    return { origin: new THREE.Vector3(0, 0, 0), normal: new THREE.Vector3(1, 0, 0) };
+  }
   const o = m.getSymmetryOrigin(), n = m.getSymmetryNormal();
   if (!o || !n) return null;
   // Both are mesh-local; the joints live in model space, so carry them across.

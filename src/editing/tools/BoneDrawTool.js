@@ -87,6 +87,28 @@ const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _mParent = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
+// Screen-input scratch. Kept separate from the pose scratch above: the screen path CALLS
+// _poseTo, which clobbers every one of those on its way through.
+const _rayO = new THREE.Vector3(), _rayD = new THREE.Vector3();
+const _axis = new THREE.Vector3(), _hit = new THREE.Vector3();
+const _jp = new THREE.Vector3(), _jp2 = new THREE.Vector3();
+const _wA = new THREE.Vector3(), _wB = new THREE.Vector3();
+const _proj = new THREE.Vector3(), _qDrag = new THREE.Quaternion();
+const _surf = new THREE.Vector3(), _mSurf = new THREE.Matrix4();
+const _snapTo = new THREE.Vector3();
+const _s0 = new THREE.Vector2(), _s1 = new THREE.Vector2();
+
+// Distance in px from (px,py) to the segment a-b. The bone pick is a segment pick, not a
+// joint pick — a capsule is grabbed anywhere along its shaft, which is where you look when
+// you are judging whether it contains the limb.
+function _distToSegment(px, py, a, b) {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  let t = len2 > 1e-9 ? ((px - a.x) * vx + (py - a.y) * vy) / len2 : 0;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  return Math.hypot(a.x + vx * t - px, a.y + vy * t - py);
+}
+
 class BoneDrawTool extends SculptBase {
   constructor(main) {
     super(main);
@@ -104,6 +126,7 @@ class BoneDrawTool extends SculptBase {
     this._pose = null;         // { joint, qStart, local } while rotating in pose mode
     this._radius = null;       // { joint, twin, before } while dragging a capsule radius
     this._ik = null;           // { joint, before } while dragging an IK effector
+    this._drag = null;         // { kind, joint, ... } while a mouse/touch drag owns the pointer
 
     this._wasXRPressed = false;
     this._wasAPressed = false;
@@ -135,6 +158,8 @@ class BoneDrawTool extends SculptBase {
     if (this._mode === mode && (mode !== 'tweak' || this._compensate === compensate)) return;
     this._mode = mode;
     this._compensate = compensate;
+    this._drag = null;
+    this._hot = false;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
@@ -162,6 +187,10 @@ class BoneDrawTool extends SculptBase {
   // needs the explicit refresh.
   _refresh() {
     if (this._main._xrSession) return;
+    // Before the render, not after: postRender also syncs the plane, but that runs once the
+    // frame is already drawn, so a mode switch with nothing else moving would leave the
+    // plane a frame behind — which on a still screen means invisible.
+    this.syncPlane();
     Skeleton.updateVisuals(this._main);
     this._main.render();
   }
@@ -211,8 +240,7 @@ class BoneDrawTool extends SculptBase {
   // `out` must not alias `pos`. `parent` may be null (a root joint has no direction).
   _resolve(pos, plane, out, parent) {
     let at = pos;
-    if (plane && this._snapEnabled()
-        && Math.abs(Skeleton.planeDistance(at, plane)) <= this._planeSnap()) {
+    if (this._inSnapBand(at, plane)) {
       at = Skeleton.projectToPlane(at, plane, out);
     }
     if (parent && this._axisEnabled()) {
@@ -256,7 +284,11 @@ class BoneDrawTool extends SculptBase {
     // Signed distance: magnitude says whether this is a centreline joint (spine, head —
     // must NOT be duplicated), sign says which side.
     const sd = plane ? Skeleton.planeDistance(at, plane) : 0;
-    const offPlane = plane ? Math.abs(sd) > this._planeSnap() : false;
+    // Classify on whether _resolve ACTUALLY snapped it (distance is then exactly 0), not on
+    // a second reading of the band. The two used to be the same threshold; now that the
+    // screen decides the band in px they would disagree, and a joint that was NOT snapped
+    // would still be read as centreline — losing its mirror and its offset in one go.
+    const offPlane = plane ? !this._onPlane(at, plane) : false;
     const side = offPlane ? (sd > 0 ? '_L' : '_R') : '';
     const base = this._chainName + '_' + String(this._chainIndex).padStart(2, '0');
 
@@ -292,30 +324,540 @@ class BoneDrawTool extends SculptBase {
     }
   }
 
-  // ---- desktop ------------------------------------------------------------------
-  // Desktop places the joint at the picked surface point. It cannot do better — there is
-  // no depth channel on a flat screen, which is exactly the limitation this feature is
-  // built to escape — so treat it as a way to rough a chain in and nudge it with the
-  // gizmo, not as the real workflow.
-  start() {
-    if (this._main._xrSession) return false; // VR drives everything from updateXR
-    // Only DRAW places joints. The other modes have no desktop path yet, and placing a joint
-    // in them would be an action the user did not ask for from a mode that means something
-    // else entirely.
-    if (this._mode !== 'draw') return false;
-    const picking = this._main.getPicking();
-    if (!picking.intersectionMouseMeshes()) return false;
-    const m = picking.getMesh();
-    const inter = picking.getIntersectionPoint();
-    if (!m || !inter) return false;
-    _pos.set(inter[0], inter[1], inter[2]).applyMatrix4(
-      new THREE.Matrix4().fromArray(m.getModelSpaceMatrix()));
-    this._place(_pos);
-    return false; // not a deforming stroke
+  // ---- desktop / iPad ------------------------------------------------------------
+  //
+  // DRAW places the joint at the picked surface point. It cannot do better — there is no
+  // depth channel on a flat screen, which is exactly the limitation this feature is built to
+  // escape — so treat it as a way to rough a chain in and nudge it afterwards, not as the
+  // real workflow.
+  //
+  // The other modes DO have a 2D answer, because none of them is placing a new joint in the
+  // volume: they are moving, rotating or sizing something that already has a position. The
+  // depth channel VR provides is only needed to INVENT a depth. So:
+  //
+  //   TWEAK / IK   drag in the camera-facing plane through the joint's current position.
+  //                Depth is left exactly as it was, and orbiting gives you the other axis.
+  //                This is what every DCC does, and it is honest — the screen never
+  //                pretends to have supplied a depth it does not have.
+  //   POSE         no translation is involved at all, so there is nothing to fake: lock the
+  //                axis to the camera view axis and read the cursor's angular sweep around
+  //                the joint's screen position. Straight off GeodesicPoseTool, which solved
+  //                this exact problem for its bend.
+  //   RADIUS       a radius is a distance from the bone, and a screen measures distance from
+  //                a line perfectly well. Drag away from the shaft and the capsule inflates.
+  //
+  // Picking is done in SCREEN space, not by pushing the cursor into the volume: on a flat
+  // screen the joint you mean is the one you can see under the pointer, and a model-space
+  // proximity test against a ray would prefer whichever joint happened to be nearest the
+  // camera along it.
+
+  // Grab radius for the screen picks, in device px (`_mouseX/_mouseY` are already scaled by
+  // the pixel ratio, and so is `_canvas.width`). Sized for a fingertip rather than a mouse —
+  // iPad is the surface this is being built for, and a generous radius costs a mouse nothing.
+  _pickPx() { return 26 * (this._main.getPixelRatio ? this._main.getPixelRatio() : 1); }
+
+  // Model space is worldGroup-relative (see Skeleton.jointPos), and the worldGroup carries a
+  // scale — so every conversion below goes through the group rather than assuming the two
+  // spaces agree. Directions are transformed as a difference of two points, which stays
+  // correct under that scale without needing to reason about it.
+  _screenRay(outO, outD) {
+    const main = this._main;
+    const cam = main.getCamera && main.getCamera();
+    const tcam = cam && cam.getThreeCamera && cam.getThreeCamera();
+    const canvas = main._canvas;
+    if (!tcam || !canvas || !canvas.width || !canvas.height) return false;
+    const nx = (main._mouseX / canvas.width) * 2 - 1;
+    const ny = -(main._mouseY / canvas.height) * 2 + 1;
+    // Unproject both ends of the NDC ray by hand rather than via Raycaster.setFromCamera.
+    // That helper branches on the camera's TYPE, and in orthographic mode this app keeps a
+    // PerspectiveCamera object and swaps an ortho matrix into it — so the raycaster took its
+    // perspective path against an ortho projection and built a ray that moved at roughly
+    // twice the cursor's rate. Unprojecting near and far is correct for either projection
+    // because it only ever consults the matrices, never the class.
+    _wA.set(nx, ny, -1).applyMatrix4(tcam.projectionMatrixInverse).applyMatrix4(tcam.matrixWorld);
+    _wB.set(nx, ny, 1).applyMatrix4(tcam.projectionMatrixInverse).applyMatrix4(tcam.matrixWorld);
+    const wg = main._worldGroup;
+    outO.copy(_wA);
+    outD.copy(_wB);
+    if (wg) { wg.worldToLocal(outO); wg.worldToLocal(outD); }
+    outD.sub(outO).normalize();
+    return true;
   }
 
-  update() {}
-  end() {}
+  // Camera view axis in model space — the drag plane's normal, and pose's rotation axis.
+  _camAxis(out) {
+    const main = this._main;
+    const cam = main.getCamera && main.getCamera();
+    const tcam = cam && cam.getThreeCamera && cam.getThreeCamera();
+    if (!tcam) return out.set(0, 0, -1);
+    tcam.getWorldDirection(_wB);
+    const wg = main._worldGroup;
+    if (!wg) return out.copy(_wB).normalize();
+    _wA.set(0, 0, 0);
+    wg.worldToLocal(_wA); wg.worldToLocal(_wB);
+    return out.copy(_wB).sub(_wA).normalize();
+  }
+
+  // Where the cursor ray meets the camera-facing plane through `anchor` (model space).
+  _planePoint(anchor, out) {
+    if (!this._screenRay(_rayO, _rayD)) return false;
+    this._camAxis(_axis);
+    const denom = _axis.dot(_rayD);
+    if (Math.abs(denom) < 1e-9) return false; // ray parallel to the plane: no useful answer
+    const t = _axis.dot(_wA.copy(anchor).sub(_rayO)) / denom;
+    out.copy(_rayO).addScaledVector(_rayD, t);
+    return true;
+  }
+
+  // Model-space point -> canvas device px. Returns false for anything behind the camera,
+  // which would otherwise project to a mirrored position and read as a near hit.
+  _toScreen(pos, out) {
+    const main = this._main;
+    const cam = main.getCamera && main.getCamera();
+    const tcam = cam && cam.getThreeCamera && cam.getThreeCamera();
+    const canvas = main._canvas;
+    if (!tcam || !canvas) return false;
+    _proj.copy(pos);
+    if (main._worldGroup) main._worldGroup.localToWorld(_proj);
+    _proj.project(tcam);
+    if (_proj.z > 1) return false;
+    out.set((_proj.x * 0.5 + 0.5) * canvas.width, (-_proj.y * 0.5 + 0.5) * canvas.height);
+    return true;
+  }
+
+  _pickJointScreen() {
+    const main = this._main;
+    const mx = main._mouseX, my = main._mouseY;
+    let best = null, bestD = this._pickPx();
+    for (const j of Skeleton.joints(main)) {
+      if (!Skeleton.jointVisible(j)) continue; // as in VR: never grab what you cannot see
+      Skeleton.jointPos(j, _jp);
+      if (!this._toScreen(_jp, _s0)) continue;
+      const d = Math.hypot(_s0.x - mx, _s0.y - my);
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    return best;
+  }
+
+  // The screen twin of _pickBone. Capped rather than "nearest anywhere": an uncapped pick
+  // means a click on empty space grabs some distant capsule and starts resizing it.
+  _pickBoneScreen() {
+    const main = this._main;
+    const mx = main._mouseX, my = main._mouseY;
+    let best = null, bestD = this._pickPx() * 4;
+    for (const j of Skeleton.joints(main)) {
+      if (!Skeleton.jointVisible(j)) continue;
+      const parent = j._parentMesh;
+      if (!Skeleton.isJoint(parent) || !main.getMeshes().includes(parent)) continue;
+      Skeleton.jointPos(j, _jp);
+      Skeleton.jointPos(parent, _jp2);
+      if (!this._toScreen(_jp, _s0) || !this._toScreen(_jp2, _s1)) continue;
+      const d = _distToSegment(mx, my, _s1, _s0);
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    return best;
+  }
+
+  // Movement below this (device px) is a TAP, not a drag. Only IK reads it, to tell "cycle
+  // this joint's pin" from "reach with this joint" — the A button that does the former in VR
+  // has no equivalent here, and a tap on the thing being pinned is the same gesture in
+  // spirit: point at a joint and commit.
+  _tapPx() { return 6 * (this._main.getPixelRatio ? this._main.getPixelRatio() : 1); }
+
+  // Model-space point under the cursor, from the surface pick. `fresh` re-runs the raycast;
+  // pass false to reuse the pick SculptBase.preUpdate has already done this move, which is
+  // the difference between one raycast per pointer move on a dense sculpt and two.
+  _surfacePoint(out, fresh) {
+    const picking = this._main.getPicking();
+    if (fresh && !picking.intersectionMouseMeshes()) return null;
+    const m = picking.getMesh();
+    const inter = picking.getIntersectionPoint();
+    if (!m || !inter) return null;
+    return out.set(inter[0], inter[1], inter[2])
+      .applyMatrix4(_mSurf.fromArray(m.getModelSpaceMatrix()));
+  }
+
+  // Placing a joint ON TOP OF the one it would hang from is the gesture that ends the chain
+  // when there is no keyboard — a zero-length bone is never a thing you meant, so the only
+  // reading left is "done". 12 CSS px rather than the 5 a mouse would want: this exists for
+  // the iPad, and a fingertip does not land inside 5.
+  _endTapPx() { return 12 * (this._main.getPixelRatio ? this._main.getPixelRatio() : 1); }
+
+  // Is there anything in the scene to press ON? A rig outlives the mesh it was built against.
+  _hasSculpt() {
+    return (this._main.getMeshes() || []).some(
+      (m) => !Skeleton.isJoint(m) && !m._isNull && m.isVisible?.() !== false);
+  }
+
+  // Is the cursor on the joint that lit up? _place already re-roots the chain onto _hilite,
+  // so this is only asking whether the press should be allowed to reach it.
+  _onHilitedJoint() {
+    const h = this._hilite;
+    return !!(h && this._main.getMeshes().includes(h) && this._pickJointScreen() === h);
+  }
+
+  _isEndTap(parent) {
+    if (!parent) return false;
+    Skeleton.jointPos(parent, _jp);
+    if (!this._toScreen(_jp, _s0)) return false;
+    const main = this._main;
+    return Math.hypot(_s0.x - main._mouseX, _s0.y - main._mouseY) <= this._endTapPx();
+  }
+
+  start() {
+    if (this._main._xrSession) return false; // VR drives everything from updateXR
+    if (this._mode === 'draw') return this._startDraw();
+    return this._startScreenDrag();
+  }
+
+  // Draw is press-drag-release, not click-to-commit. The joint is not placed until release,
+  // so the drag is a chance to see where it will land — with the symmetry plane drawn and
+  // lighting up as you cross its snap band — instead of committing blind and undoing.
+  _startDraw() {
+    // Mid-chain a press anywhere is meant — the depth comes from the parent, so the mesh has
+    // nothing to say about it and a chain can run out past the silhouette. Between chains
+    // the press must land on the sculpt: it is where the first joint's depth comes from, and
+    // it is what leaves left-drag free to orbit when you are not drawing anything.
+    const parent = this._validParent();
+    // Between chains the press must land on the sculpt OR on a preselected joint. Not
+    // because the depth comes from there any more — it does not — but so that left-drag is
+    // still free to orbit when you are not drawing.
+    //
+    // The joint case is what BRANCHING is: press the neck to grow the arms from it. Gating
+    // on the surface pick alone lost it entirely, because the joint you are aiming at is
+    // usually the one place the cursor is NOT over unbroken sculpt — it sits in the hollow
+    // at a shoulder, or past the silhouette on a rig whose mesh has been deleted.
+    // ...and the surface gate only applies when there IS a sculpt to press on. With the mesh
+    // deleted there is nothing to hit, so requiring a hit meant no chain could ever be
+    // started — VR has no such problem, because it places at the controller tip and never
+    // asks the mesh anything. Nothing to orbit around either, so nothing is lost.
+    if (!parent && !this._onHilitedJoint()
+        && this._hasSculpt() && !this._surfacePoint(_surf, true)) return false;
+    const anchor = this._drawAnchor(_jp2);
+    if (!anchor || !this._planePoint(anchor, _hit)) return false;
+    this._drag = { kind: 'draw', pos: _hit.clone(), anchor: anchor.clone() };
+    this._drawFeedback(this._drag.pos);
+    return true;
+  }
+
+  // The snap plane is a persistent piece of the tool's furniture, not a hover effect. It
+  // answers "where is x = 0", and that question does not come and go with the pointer — a
+  // plane that blinks in and out is worse than no plane, because you cannot line anything up
+  // against it. Drawn for the modes where a snap actually applies (Draw and Tweak, as in
+  // VR); the modes that move a character rather than edit the rest skeleton hide it.
+  //
+  // `_hot` (the candidate joint is inside the snap band, so it WILL land on the centreline)
+  // only brightens it. That is a reading of the plane, not a decision about showing it.
+  syncPlane() {
+    const main = this._main;
+    if (main._xrSession) return; // updateXR owns the plane there
+    const wants = this._mode === 'draw' || this._mode === 'tweak';
+    const plane = wants && this._snapEnabled() ? Skeleton.symmetryPlane(main) : null;
+    if (!plane) { Skeleton.hidePlane(main); return; }
+    Skeleton.updatePlane(main, plane, !!this._hot);
+  }
+
+  // Model-space centre of the sculpt — the depth a joint gets when there is no plane and no
+  // parent to take one from. Its own bounding sphere, carried into model space the same way
+  // sceneUnit does it.
+  _modelCentre(out) {
+    const main = this._main;
+    let best = null, bestR = 0;
+    for (const m of main.getMeshes() || []) {
+      if (Skeleton.isJoint(m) || m._isNull) continue;
+      const tm = m.getThreeMesh && m.getThreeMesh();
+      const g = tm && tm.geometry;
+      if (!g) continue;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const bs = g.boundingSphere;
+      if (!bs || !Number.isFinite(bs.radius)) continue;
+      if (bs.radius > bestR) { bestR = bs.radius; best = { bs: bs, m: m }; }
+    }
+    if (best) {
+      out.copy(best.bs.center);
+      if (best.m.getModelSpaceMatrix) out.applyMatrix4(_mSurf.fromArray(best.m.getModelSpaceMatrix()));
+      return out;
+    }
+    // No sculpt: use the skeleton's own centre, so a rig can still be extended after the
+    // mesh it was built against is gone. Origin only when there is nothing at all.
+    const js = Skeleton.joints(main);
+    out.set(0, 0, 0);
+    if (!js.length) return out;
+    for (const j of js) out.add(Skeleton.jointPos(j, _jp));
+    return out.divideScalar(js.length);
+  }
+
+  // Depth for the camera-facing plane the tip rides in:
+  //   mid-chain   the joint you are continuing from
+  //   new chain   the middle of the sculpt
+  //
+  // Notably NOT the surface pick. Taking the root's depth off the skin put the first joint
+  // on the surface, and every joint after it inherited that depth — so a whole chain sat on
+  // the shell of the model, the one place a bone never belongs, and the exact 2D problem
+  // that made this feature VR-first.
+  //
+  // The middle of the sculpt rather than where the cursor ray crosses the symmetry plane:
+  // the ray only crosses the plane at the eye when the CAMERA sits on it, which is precisely
+  // what a front view of a symmetric character is. That construction quietly never fired
+  // from the most ordinary viewpoint there is. Mid-depth works from every angle, and the
+  // centreline is still one thing away — the plane snap pulls the joint exactly onto it as
+  // soon as the cursor is near it on screen.
+  _drawAnchor(out) {
+    const parent = this._validParent();
+    if (parent) return Skeleton.jointPos(parent, out);
+    return this._modelCentre(out);
+  }
+
+  // Where the tip is right now: the cursor ray, met by the camera-facing plane at that depth.
+  _drawPoint(out) {
+    const anchor = this._drawAnchor(_jp2);
+    if (!anchor) return null;
+    return this._planePoint(anchor, out) ? out : null;
+  }
+
+  // The plane snap band, in SCREEN px. It used to be 5% of a scene unit — a hand-width,
+  // which is the right unit for a controller in VR and the wrong one entirely for a screen:
+  // it scales with whatever else is in the scene, and on a normal rig it had grown wide
+  // enough to swallow the model, so every joint landed on the centreline whether you meant
+  // it or not. Px is what you are actually aiming with.
+  _planeSnapPx() { return 14 * (this._main.getPixelRatio ? this._main.getPixelRatio() : 1); }
+
+  // Is `pos` close enough to the plane to snap? VR keeps the model-space band it was tuned
+  // with; the screen asks the question in the units the screen has.
+  _inSnapBand(pos, plane) {
+    if (!plane || !this._snapEnabled()) return false;
+    if (this._main._xrSession) {
+      return Math.abs(Skeleton.planeDistance(pos, plane)) <= this._planeSnap();
+    }
+    Skeleton.projectToPlane(pos, plane, _snapTo);
+    if (!this._toScreen(pos, _s0) || !this._toScreen(_snapTo, _s1)) return false;
+    return Math.hypot(_s0.x - _s1.x, _s0.y - _s1.y) <= this._planeSnapPx();
+  }
+
+  // Preview bone + plane state for a candidate position. Shows the RESOLVED point — where
+  // the joint will actually land once snapping is applied — so what you see is what commits.
+  _drawFeedback(pos) {
+    const main = this._main;
+    const plane = Skeleton.symmetryPlane(main);
+    const parent = this._validParent();
+    this._hot = !!plane && this._snapEnabled()
+      && Math.abs(Skeleton.planeDistance(pos, plane)) <= this._planeSnap();
+    Skeleton.showPreview(main, parent ? Skeleton.jointPos(parent, _pos) : null,
+      this._resolve(pos, plane, _eff, parent));
+    this._refresh();
+  }
+
+  // Returning TRUE is what claims the drag: SculptGL puts the pointer into SCULPT_EDIT and
+  // stops the camera taking it. Returning false on a miss is equally deliberate — a click
+  // that hit no joint must still orbit, or the tool would eat every camera move.
+  _startScreenDrag() {
+    const main = this._main;
+    const startX = main._mouseX, startY = main._mouseY;
+
+    if (this._mode === 'radius') {
+      const bone = this._pickBoneScreen();
+      if (!bone) return false;
+      // Anchor the plane on the bone's MIDPOINT, not on the joint: the radius is a distance
+      // from the shaft, so the plane you drag in should contain the shaft you are measuring.
+      Skeleton.jointPos(bone, _jp);
+      Skeleton.jointPos(bone._parentMesh, _jp2);
+      const anchor = _jp.clone().add(_jp2).multiplyScalar(0.5);
+      this._beginRadius(bone);
+      this._drag = { kind: 'radius', joint: bone, anchor: anchor, startX: startX, startY: startY };
+      this._hilite = bone;
+      Skeleton.setHighlight(main, bone);
+      return true;
+    }
+
+    const joint = this._pickJointScreen();
+    if (!joint) return false;
+    Skeleton.jointPos(joint, _jp);
+    const anchor = _jp.clone();
+    this._hilite = joint;
+    Skeleton.setHighlight(main, joint);
+
+    if (this._mode === 'pose') {
+      // Identity at the grab makes _poseTo's stored inverse identity too, so the quaternion
+      // handed to it each frame IS the accumulated model-space delta — no controller to
+      // measure against, and none needed.
+      this._beginPose(joint, [0, 0, 0, 1]);
+      const screen = new THREE.Vector2();
+      this._toScreen(anchor, screen);
+      this._drag = {
+        kind: 'pose', joint: joint, screen: screen,
+        // Axis is locked at the grab, as in GeodesicPoseTool: an axis that followed the
+        // camera would rewrite the meaning of the sweep already accumulated.
+        axis: this._camAxis(new THREE.Vector3()),
+        last: Math.atan2(startY - screen.y, startX - screen.x),
+        total: 0, startX: startX, startY: startY,
+      };
+      return true;
+    }
+
+    // TWEAK and IK both drag a position in the camera-facing plane. Hold the offset between
+    // the cursor and the joint so the joint does not jump to the pointer on the first frame.
+    const d = { kind: this._mode === 'ik' ? 'ik' : 'tweak', joint: joint, anchor: anchor,
+                offset: new THREE.Vector3(), startX: startX, startY: startY, moved: false };
+    if (this._planePoint(anchor, _hit)) d.offset.copy(anchor).sub(_hit);
+    this._drag = d;
+
+    // IK does NOT begin the solve here. A tap is a pin cycle, and _beginIK snapshots every
+    // joint and _releaseIK pushes an undo — so starting one for a gesture that turns out to
+    // be a tap would put an empty "IK Pose" step in the history for every pin press.
+    if (d.kind === 'tweak') this._beginGrab(joint);
+    return true;
+  }
+
+  update() {
+    if (this._main._xrSession) return;
+    const d = this._drag;
+    if (!d) return;
+    const main = this._main;
+
+    if (d.kind === 'draw') {
+      // The anchor is fixed for the whole drag, so the tip rides one plane and follows the
+      // cursor everywhere — off the silhouette included.
+      if (this._planePoint(d.anchor, _hit)) d.pos.copy(_hit);
+      this._drawFeedback(d.pos);
+      return;
+    }
+
+    if (d.kind === 'pose') {
+      const cur = Math.atan2(main._mouseY - d.screen.y, main._mouseX - d.screen.x);
+      let da = cur - d.last;
+      // Unwrap, or dragging across the -pi/pi seam snaps the joint through a half turn.
+      if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+      d.total += da;
+      d.last = cur;
+      _qDrag.setFromAxisAngle(d.axis, d.total);
+      this._poseTo([_qDrag.x, _qDrag.y, _qDrag.z, _qDrag.w]);
+      return;
+    }
+
+    if (d.kind === 'radius') {
+      if (this._planePoint(d.anchor, _hit)) this._radiusTo(_hit);
+      return;
+    }
+
+    if (!this._planePoint(d.anchor, _hit)) return;
+    _hit.add(d.offset);
+
+    if (d.kind === 'tweak') { this._dragTo(_hit); return; }
+
+    // IK: the first movement past the tap threshold promotes the gesture to a solve.
+    if (!d.moved) {
+      if (Math.hypot(main._mouseX - d.startX, main._mouseY - d.startY) < this._tapPx()) return;
+      d.moved = true;
+      this._beginIK(d.joint, null); // no rotation channel from a plain drag — position only
+    }
+    this._ikTo(_hit, null);
+  }
+
+  end() {
+    if (this._main._xrSession) return;
+    const d = this._drag;
+    this._drag = null;
+    if (!d) return;
+    if (d.kind === 'draw') {
+      this._hot = false; // the plane stays; only its "you are about to snap" reading clears
+      // Released on the joint it would hang from: that is the end-of-chain gesture, not a
+      // zero-length bone. Checked before _place so nothing is created and nothing to undo.
+      if (this._isEndTap(this._validParent())) {
+        this.endChain();
+        if (window.screenLog) window.screenLog('Bones: chain ended', 'cyan');
+        this._refresh();
+        return;
+      }
+      this._place(d.pos);
+      Skeleton.hidePreview(this._main);
+      this._refresh();
+      return;
+    }
+    if (d.kind === 'tweak') this._releaseGrab();
+    else if (d.kind === 'pose') this._releasePose();
+    else if (d.kind === 'radius') this._releaseRadius();
+    else if (d.moved) this._releaseIK();
+    else this._togglePin(d.joint); // tap in IK mode = cycle the pin (the VR A button)
+  }
+
+  // Hover preselection, the desktop twin of the highlight updateXR maintains from the tip.
+  // Gated on an actual change: this runs on every pointer move, and _refresh renders.
+  preUpdate(canBeContinuous) {
+    super.preUpdate(canBeContinuous);
+    if (this._main._xrSession) return;
+
+    if (this._mode === 'draw') {
+      if (this._drag) return; // the drag owns the feedback; update() is already driving it
+      const main = this._main;
+      // Between chains, preselect the nearest joint so a press there ROOTS the new chain at
+      // it rather than dropping a loose joint on top — the same branching gesture as in VR,
+      // and _place reads _hilite so what lit up is exactly what gets used.
+      const parent = this._validParent();
+      const hilite = parent ? null : this._pickJointScreen();
+      if (hilite !== this._hilite) {
+        this._hilite = hilite;
+        Skeleton.setHighlight(main, hilite);
+        this._refresh();
+      }
+      // Hover preview of the next bone, so a chain is drawn by moving and pressing rather
+      // than by pressing and hoping. Mid-chain it previews anywhere; between chains it is
+      // shown only where a press would actually place one, so the preview never promises a
+      // joint that a press would turn into a camera orbit. super.preUpdate already ran the
+      // pick this move, so the gate costs no second raycast.
+      // `hilite` was just picked above, so reuse it rather than picking every joint twice per
+      // pointer move. It stands in for _onHilitedJoint: a lit joint is a place a press works.
+      const canPlace = parent || hilite || !this._hasSculpt() || this._surfacePoint(_surf, false);
+      const at = canPlace ? this._drawPoint(_hit) : null;
+      if (at) { this._previewOn = true; this._drawFeedback(at); }
+      else if (this._previewOn) {
+        // Only once on leaving the silhouette: this runs on every pointer move, and off-mesh
+        // is where the cursor spends most of its time. The plane is not touched — it is not
+        // a hover effect, and postRender keeps it up.
+        this._previewOn = false;
+        this._hot = false;
+        Skeleton.hidePreview(main); this._refresh();
+      }
+      return;
+    }
+
+    const hit = this._drag ? this._drag.joint
+      : (this._mode === 'radius' ? this._pickBoneScreen() : this._pickJointScreen());
+    if (hit === this._hilite) return;
+    this._hilite = hit;
+    Skeleton.setHighlight(this._main, hit);
+    this._refresh();
+  }
+
+  // The single-action debounce in SculptManager exists for tools whose whole operation runs
+  // inside start(); it is keyed on `_continuous === false`, which this tool is. Nothing here
+  // happens in start() any more — every desktop mode is press-drag-release, Draw included —
+  // so the debounce could only block a second deliberate gesture begun within 300ms of the
+  // last. Worse, blocking start() mid-drag clears SculptManager's _strokeActive, and the
+  // release that should have placed the joint would never reach end().
+  isDragAction() { return !this._main._xrSession; }
+
+  // Escape / Enter, routed from SculptGL.onKeyDown. Two presses, matching what A does on the
+  // controller: the first ends the chain, the second leaves drawing altogether. Returns true
+  // when the key was consumed, so an unhandled key still reaches the app's own shortcuts.
+  onKeyDown(e) {
+    if (this._main._xrSession || this._mode !== 'draw') return false;
+    if (e.key !== 'Escape' && e.key !== 'Enter') return false;
+    if (this._validParent()) {
+      this.endChain();
+      if (window.screenLog) window.screenLog('Bones: chain ended - again to stop drawing', 'cyan');
+    } else {
+      // Pose, not some inert state: there isn't one, and it is what you want next after
+      // drawing a skeleton. Same landing as the controller's second A press.
+      this.setModeKey('pose');
+      if (window.screenLog) window.screenLog('Bones: drawing off - Pose mode', 'cyan');
+      try { this._main._miniPanel?.syncFromState?.(); } catch (_) {}
+      try { this._main._boneSectionRebuild?.(); } catch (_) {}
+    }
+    Skeleton.hidePreview(this._main);
+    Skeleton.hidePlane(this._main);
+    this._refresh();
+    return true;
+  }
 
   // ---- tweak --------------------------------------------------------------------
 
@@ -835,6 +1377,7 @@ class BoneDrawTool extends SculptBase {
   // Called by SculptManager.setToolIndex when switching away — otherwise the preselection
   // highlight and preview bone stay lit under a tool that no longer owns them.
   clearPreview() {
+    this._drag = null;
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
     // Leaving the tool puts the real vertex colours back. A weight preview is a diagnostic,
     // and one that outlived the tool could be saved into the sculpt without anyone noticing.
@@ -845,7 +1388,13 @@ class BoneDrawTool extends SculptBase {
     this._hilite = null;
   }
 
-  postRender() {} // no brush cursor
+  // No brush cursor to draw — but this is the once-per-frame hook the active tool gets, and
+  // it is what keeps the snap plane up without anything having to poke it. Sets visibility
+  // only: calling render() from inside a render is the re-entrant failure this repo has hit
+  // before, and syncPlane deliberately does not.
+  postRender() { this.syncPlane(); }
+  // ...and because there is none, SculptGL must not hide the real pointer during a drag.
+  drawsOwnCursor() { return false; }
 }
 
 export default BoneDrawTool;

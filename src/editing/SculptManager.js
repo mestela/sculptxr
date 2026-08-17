@@ -265,8 +265,12 @@ class SculptManager {
     // operation on the (now mutated) mesh with a stale picking face index.
     // The guard is intentionally limited to tools with _continuous===false because
     // drag-based tools need start() called once per stroke and are not affected.
+    // A tool may also opt out per-gesture via isDragAction(): Bones is _continuous===false
+    // (its Draw mode really is one action per click) but its other modes are press-and-drag,
+    // where nothing happens in start() and the only thing the debounce could block is a
+    // second deliberate drag begun within 300ms of the last.
     const SINGLE_ACTION_DEBOUNCE_MS = 300;
-    if (tool._continuous === false) {
+    if (tool._continuous === false && !(tool.isDragAction && tool.isDragAction())) {
       const now = performance.now();
       const msSinceLast = now - (this._lastSingleActionMs || 0);
       if (msSinceLast < SINGLE_ACTION_DEBOUNCE_MS) {

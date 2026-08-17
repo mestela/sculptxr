@@ -1,9 +1,11 @@
 // Nomad Link client (protocol v1) over a browser WebSocket.
 //
 // Nomad's host accepts a WebSocket upgrade directly, so there is no relay: the
-// page dials the device running Nomad. From an https page the browser shows a
-// one-time local-network permission prompt, which CANNOT be answered from inside
-// an immersive WebXR session — connect on the 2D page before entering VR.
+// page dials the device running Nomad. From an https page the browser may show a
+// one-time local-network permission prompt. Connecting before entering VR was
+// advised on the theory that the prompt cannot be answered inside an immersive
+// session; in practice connecting from inside VR works (Galaxy XR, 2026-08-15),
+// so it is a precaution, not a requirement, and the panel no longer says otherwise.
 //
 // Framing (identical on the wire to the raw-TCP transport Nomad's other bridges
 // use): uint32 json length, uint32 binary length, the JSON header, the blob.
@@ -112,6 +114,30 @@ class NomadLink {
 
   // ------------------------------------------------------------- lifecycle
 
+  // Why a connection most likely failed, when the browser will not say.
+  //
+  // The case worth calling out is iOS. EVERY browser there is WebKit — Chrome on an iPad is a
+  // WKWebView wrapper and does not bring Chrome's networking rules with it — and WebKit does
+  // not appear to implement the loopback exception that lets an https page open a plain ws://
+  // to 127.0.0.1. Desktop Chrome does, which is exactly why this works on the desktop and
+  // fails on the iPad with no visible difference in what you typed. Without this line, a
+  // blocked connection is indistinguishable from a typo in the address, and you would go
+  // looking for the typo.
+  _failureHint() {
+    var https = window.location && window.location.protocol === 'https:';
+    if (!https) return '. Check Nomad is running with Link enabled.';
+
+    var nav = window.navigator || {};
+    var ua = nav.userAgent || '';
+    // Modern iPadOS reports itself as a Mac; the touch points are what give it away.
+    var ios = /iP(hone|ad|od)/.test(ua) || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
+    if (ios) {
+      return '. iOS browsers block ws:// from an https page. Run Nomad on another device, '
+        + 'or open SculptXR over http.';
+    }
+    return '. Check Nomad is running with Link enabled, and allow the local network prompt.';
+  }
+
   connect(host, port) {
     this.disconnect();
     this._host = (host || '').trim();
@@ -130,7 +156,12 @@ class NomadLink {
     try {
       socket = new WebSocket(url);
     } catch (e) {
-      this._setStatus('error', 'Could not open ' + url + ': ' + e.message);
+      // A synchronous throw here is the unambiguous version of the same problem: some
+      // browsers refuse a mixed-content WebSocket at construction rather than failing the
+      // connection later, and then we can name the cause instead of listing candidates.
+      var blocked = e && (e.name === 'SecurityError' || /insecure|security/i.test(e.message || ''));
+      this._setStatus('error', 'Could not open ' + url + ': ' + e.message
+        + (blocked ? '. The browser blocked ws:// from an https page.' : this._failureHint()));
       return false;
     }
     socket.binaryType = 'arraybuffer';
@@ -161,9 +192,11 @@ class NomadLink {
     socket.onmessage = (event) => this._receive(event.data);
 
     socket.onerror = () => {
-      // The browser deliberately withholds the reason; the usual causes are a
-      // denied permission prompt, Nomad's server not running, or a wrong address.
-      this._setStatus('error', 'Could not reach Nomad at ' + this._host + ':' + this._port);
+      // The browser deliberately withholds the reason — a blocked connection and a wrong
+      // address look identical here — so say what the likely causes are instead of
+      // pretending to know which one it was.
+      this._setStatus('error', 'Could not reach Nomad at ' + this._host + ':' + this._port
+        + this._failureHint());
     };
 
     socket.onclose = () => {

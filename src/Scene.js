@@ -497,6 +497,7 @@ class Scene {
           if (!window._animPanelKeyBound) {
             window._animPanelKeyBound = true;
             window.addEventListener('keydown', (e) => {
+              if (Utils.isTypingTarget(e)) return; // 'n' belongs to the text field, not the panel
               if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.shiftKey) window.toggleAnimPanel?.();
             });
           }
@@ -4374,6 +4375,7 @@ class Scene {
         if (!window._mmKeyBound) {
           window._mmKeyBound = true;
           window.addEventListener('keydown', (e) => {
+            if (Utils.isTypingTarget(e)) return; // ] [ and m belong to a focused field
             if (e.which === 221) window.mmOverlay?.();      // ]  → desktop HTML clone
             if (e.which === 219) window.mmShowCanvas?.();   // [  → raw polyfill canvas
             if (e.which === 77  && !e.ctrlKey && !e.metaKey) window.toggleMainMenu?.(); // M
@@ -4468,6 +4470,7 @@ class Scene {
         if (!window._animPanelKeyBound) {
           window._animPanelKeyBound = true;
           window.addEventListener('keydown', (e) => {
+            if (Utils.isTypingTarget(e)) return; // 'n' belongs to the text field, not the panel
             if (e.key === 'n' && !e.ctrlKey && !e.metaKey && !e.shiftKey) window.toggleAnimPanel?.();
           });
         }

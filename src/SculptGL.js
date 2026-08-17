@@ -1219,11 +1219,45 @@ class SculptGL extends Scene {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
 
+    // TYPING WINS. Every shortcut below this line — and everything callFunc fans out to — is
+    // bound to a bare key, so a focused text field could not receive its own characters:
+    // entering an IP address in the Nomad Link panel toggled the animation panel on 'n' and
+    // the main menu on 'm'. Modifiers are still recorded above, since a field being focused
+    // does not stop the user holding shift.
+    const _typing = Utils.isTypingTarget(e);
+    if (_typing) return;
+
+    // The active tool gets first refusal. A tool with a modal state of its own — the Bones
+    // chain, where Escape/Enter ends the chain and then leaves drawing — needs the key, and
+    // routing that through the GUI would split the tool's state across two files. Returning
+    // false (or having no handler at all) leaves every shortcut below untouched.
+    const _tool = this._sculptManager?.getCurrentTool?.();
+    if (_tool?.onKeyDown?.(e)) { e.preventDefault(); return; }
+
+    // 'O' toggles orthographic/perspective. Rigging is done from flat front and side views,
+    // and reaching into the Rendering menu for every switch is the wrong amount of friction
+    // for something you flip constantly. Goes through setProjectionType so the camera, the
+    // Three projection and the picking matrices all stay in step.
+    if ((e.key === 'o' || e.key === 'O') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const cam = this._camera;
+      const toOrtho = !cam.isOrthographic();
+      cam.setProjectionType(toOrtho ? Enums.Projection.ORTHOGRAPHIC : Enums.Projection.PERSPECTIVE);
+      // Keep the Rendering menu's own dropdown honest about what just happened, wherever it
+      // happens to be mounted (sidebar, main menu, a torn-off panel).
+      try {
+        for (const sel of document.querySelectorAll('#mm-cam-proj')) {
+          sel.value = String(cam.getProjectionType());
+        }
+      } catch (_) {}
+      if (window.screenLog) window.screenLog('Camera: ' + (toOrtho ? 'Orthographic' : 'Perspective'), 'cyan');
+      this.render();
+      e.preventDefault();
+      return;
+    }
+
     // Timeline key clipboard (desktop): Ctrl/Cmd+C copy selected key(s), Ctrl/Cmd+V paste
     // at the playhead, +Shift = paste-linked (reserved for frame keys). Skipped while
     // typing in a field so it doesn't hijack normal text copy/paste.
-    const _ae = document.activeElement;
-    const _typing = _ae && (_ae.tagName === 'INPUT' || _ae.tagName === 'TEXTAREA' || _ae.isContentEditable);
     if (!_typing && (e.ctrlKey || e.metaKey)) {
       const _tl = this._gui?._ctrlTimeline;
       const _kc = (e.key || '').toLowerCase();
@@ -1265,6 +1299,7 @@ class SculptGL extends Scene {
   onKeyUp(e) {
     this._shiftKey = e.shiftKey;
     this._altKey = e.altKey;
+    if (Utils.isTypingTarget(e)) return;
     this._gui.callFunc('onKeyUp', e);
   }
 
@@ -1714,7 +1749,11 @@ class SculptGL extends Scene {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
     }
 
-    if (button === MOUSE_LEFT && canEdit)
+    // The cursor is hidden because a sculpt brush draws its own ring in its place. A tool
+    // with no brush cursor (Bones) must keep the real one, or a drag that is aimed at a
+    // point on screen loses the thing doing the aiming.
+    if (button === MOUSE_LEFT && canEdit
+        && this._sculptManager?.getCurrentTool?.()?.drawsOwnCursor?.() !== false)
       this.setCanvasCursor('none');
 
     if (button === MOUSE_RIGHT && event.ctrlKey)
