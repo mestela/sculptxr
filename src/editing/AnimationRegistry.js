@@ -1,8 +1,12 @@
+import * as THREE from 'three';
 import { quat, mat4 } from 'gl-matrix';
-import { xfWrite } from './xfChannel.js';
+import { rotSync, xfWrite } from './xfChannel.js';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
+
+const _regQuat = new THREE.Quaternion();
+const _regEuler = new THREE.Euler();
 
 class AnimationRegistry {
   constructor() {
@@ -39,6 +43,7 @@ class AnimationRegistry {
       times:            track.times            ? track.times.slice()                              : [],
       positions:        track.positions        ? track.positions.slice()                          : [],
       quaternions:      track.quaternions      ? track.quaternions.slice()                        : [],
+      eulers:           track.eulers           ? track.eulers.slice()                             : [],
       scales:           track.scales           ? track.scales.slice()                             : [],
       shapeTimes:       track.shapeTimes       ? track.shapeTimes.slice()                         : [],
       shapes:           track.shapes           ? track.shapes.map(s => new Float32Array(s))       : [],
@@ -63,6 +68,7 @@ class AnimationRegistry {
     track.times            = snap.times.slice();
     track.positions        = snap.positions.slice();
     track.quaternions      = snap.quaternions.slice();
+    track.eulers           = snap.eulers ? snap.eulers.slice() : null;
     track.scales           = snap.scales.slice();
     track.shapeTimes       = snap.shapeTimes.slice();
     track.shapes           = snap.shapes.map(s => new Float32Array(s));
@@ -179,6 +185,7 @@ class AnimationRegistry {
         times: track.times ? track.times.slice() : [],
         positions: track.positions ? track.positions.slice() : [],
         quaternions: track.quaternions ? track.quaternions.slice() : [],
+        eulers: track.eulers ? track.eulers.slice() : [],
         scales: track.scales ? track.scales.slice() : [],
         shapeTimes: track.shapeTimes ? track.shapeTimes.slice() : [],
         shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : [],
@@ -247,6 +254,7 @@ class AnimationRegistry {
         tr.times.length = 0;
         tr.positions.length = 0;
         tr.quaternions.length = 0;
+        tr.eulers = null;
         tr.scales.length = 0;
       }
     }
@@ -380,6 +388,7 @@ class AnimationRegistry {
             track.times.splice(i, 1);
             track.positions.splice(i * 3, 3);
             track.quaternions.splice(i * 4, 4);
+            if (track.eulers) track.eulers.splice(i * 3, 3);
             track.scales.splice(i * 3, 3);
           }
         }
@@ -437,10 +446,12 @@ class AnimationRegistry {
         track.positions.push(0, 0, 0);
         track.scales.push(1, 1, 1);
         track.quaternions.push(0, 0, 0, 1);
+        track.eulers = null; // rebuilt on next read
       } else {
         track.positions.push(m[12], m[13], m[14]);
         track.scales.push(sx, sy, sz);
         track.quaternions.push(qx, qy, qz, qw);
+        track.eulers = null; // rebuilt on next read
       }
     }
     
@@ -535,6 +546,11 @@ class AnimationRegistry {
           let q = track.quaternions[i*4 + j];
           track.quaternions[i*4 + j] = track.quaternions[(i-1)*4 + j];
           track.quaternions[(i-1)*4 + j] = q;
+          if (track.eulers && j < 3) {
+            const e = track.eulers[i*3 + j];
+            track.eulers[i*3 + j] = track.eulers[(i-1)*3 + j];
+            track.eulers[(i-1)*3 + j] = e;
+          }
         }
         
         // Swap scale
@@ -868,6 +884,7 @@ class AnimationRegistry {
           const qIdx = (track.times.length - 2) * 4;
           track.positions.push(track.positions[pIdx], track.positions[pIdx+1], track.positions[pIdx+2]);
           track.quaternions.push(track.quaternions[qIdx], track.quaternions[qIdx+1], track.quaternions[qIdx+2], track.quaternions[qIdx+3]);
+          track.eulers = null; // rebuilt on next read
           track.scales.push(track.scales[pIdx], track.scales[pIdx+1], track.scales[pIdx+2]);
         }
       }
@@ -885,6 +902,7 @@ class AnimationRegistry {
         times: track.times.slice(),
         positions: track.positions.slice(),
         quaternions: track.quaternions.slice(),
+        eulers: track.eulers ? track.eulers.slice() : null,
         scales: track.scales.slice(),
         shapeTimes: track.shapeTimes ? track.shapeTimes.slice() : [],
         shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : []
@@ -902,6 +920,7 @@ class AnimationRegistry {
             tr.times = stateBefore.times.slice();
             tr.positions = stateBefore.positions.slice();
             tr.quaternions = stateBefore.quaternions.slice();
+            tr.eulers = stateBefore.eulers ? stateBefore.eulers.slice() : null;
             tr.scales = stateBefore.scales.slice();
             tr.shapeTimes = stateBefore.shapeTimes.slice();
             tr.shapes = stateBefore.shapes.map(s => new Float32Array(s));
@@ -924,6 +943,7 @@ class AnimationRegistry {
             tr.times = stateAfter.times.slice();
             tr.positions = stateAfter.positions.slice();
             tr.quaternions = stateAfter.quaternions.slice();
+            tr.eulers = stateAfter.eulers ? stateAfter.eulers.slice() : null;
             tr.scales = stateAfter.scales.slice();
             tr.shapeTimes = stateAfter.shapeTimes.slice();
             tr.shapes = stateAfter.shapes.map(s => new Float32Array(s));
@@ -1872,11 +1892,13 @@ class AnimationRegistry {
     if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
       track.positions.splice(idx*3, 3, px, py, pz);
       track.quaternions.splice(idx*4, 4, qx, qy, qz, qw);
+      track.eulers = null;
       track.scales.splice(idx*3, 3, sx, sy, sz);
     } else {
       track.times.splice(idx, 0, time);
       track.positions.splice(idx*3, 0, px, py, pz);
       track.quaternions.splice(idx*4, 0, qx, qy, qz, qw);
+      track.eulers = null;
       track.scales.splice(idx*3, 0, sx, sy, sz);
 
       // Shift tangent offsets up for keys after idx
@@ -2016,11 +2038,13 @@ class AnimationRegistry {
     if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
       track.positions.splice(idx*3, 3, p[0], p[1], p[2]);
       track.quaternions.splice(idx*4, 4, q[0], q[1], q[2], q[3]);
+      track.eulers = null;
       track.scales.splice(idx*3, 3, s[0], s[1], s[2]);
     } else {
       track.times.splice(idx, 0, time);
       track.positions.splice(idx*3, 0, p[0], p[1], p[2]);
       track.quaternions.splice(idx*4, 0, q[0], q[1], q[2], q[3]);
+      track.eulers = null;
       track.scales.splice(idx*3, 0, s[0], s[1], s[2]);
       
       // Shift tangent offsets up for keys after idx
@@ -2124,6 +2148,7 @@ class AnimationRegistry {
           track.times.splice(idx, 1);
           track.positions.splice(idx * 3, 3);
           track.quaternions.splice(idx * 4, 4);
+          if (track.eulers) track.eulers.splice(idx * 3, 3);
           track.scales.splice(idx * 3, 3);
         } else if (type === 'shape' && track.shapeTimes && track.shapeTimes[idx] !== undefined) {
           track.shapeTimes.splice(idx, 1);
@@ -2186,6 +2211,7 @@ class AnimationRegistry {
               tr.times.push(cmd.time);
               tr.positions.push(...cmd.pos);
               tr.quaternions.push(...cmd.quat);
+              tr.eulers = null;
               tr.scales.push(...cmd.scale);
             } else if (cmd.type === 'shape') {
               tr.shapeTimes.push(cmd.time);
@@ -2223,6 +2249,7 @@ class AnimationRegistry {
                 tr.times.splice(idx, 1);
                 tr.positions.splice(idx * 3, 3);
                 tr.quaternions.splice(idx * 4, 4);
+                if (tr.eulers) tr.eulers.splice(idx * 3, 3);
                 tr.scales.splice(idx * 3, 3);
               } else if (cmd.type === 'shape') {
                 tr.shapeTimes.splice(idx, 1);
@@ -2581,7 +2608,27 @@ class AnimationRegistry {
     const q2 = [track.quaternions[qIdx2], track.quaternions[qIdx2 + 1], track.quaternions[qIdx2 + 2], track.quaternions[qIdx2 + 3]];
     
     const outQuat = [0, 0, 0, 1];
-    quat.slerp(outQuat, q1, q2, alpha);
+    // ROTATION INTERPOLATION. Euler by default: three independent channels lerped like any
+    // other curve, which is the only way a multi-turn key means anything — slerp always takes
+    // the short way round, so a key at 3600 degrees and a key at 0 are the same pose and
+    // nothing moves. Quaternion slerp stays available per track (`track.rotInterp = 'quat'`)
+    // or globally (`window._animRotInterp = 'quat'`), and is still the better choice for a
+    // tumbling motion where Euler will gimbal.
+    const rotMode = track.rotInterp || window._animRotInterp || 'euler';
+    const eul = rotMode === 'euler' ? rotSync(track) : null;
+    if (eul && eul.length >= (frameIdx + 2) * 3) {
+      const e0 = frameIdx * 3, e1 = (frameIdx + 1) * 3;
+      _regEuler.set(
+        (eul[e0]     + (eul[e1]     - eul[e0])     * alpha) * Math.PI / 180,
+        (eul[e0 + 1] + (eul[e1 + 1] - eul[e0 + 1]) * alpha) * Math.PI / 180,
+        (eul[e0 + 2] + (eul[e1 + 2] - eul[e0 + 2]) * alpha) * Math.PI / 180,
+        'XYZ');
+      _regQuat.setFromEuler(_regEuler);
+      outQuat[0] = _regQuat.x; outQuat[1] = _regQuat.y;
+      outQuat[2] = _regQuat.z; outQuat[3] = _regQuat.w;
+    } else {
+      quat.slerp(outQuat, q1, q2, alpha);
+    }
 
     if (mesh.getMatrix) {
       const m = mesh.getMatrix();

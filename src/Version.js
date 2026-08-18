@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.30 - Fix rotation key drag writing position';
+export const VERSION = 'v3.19.31 - Euler rotation with winding';

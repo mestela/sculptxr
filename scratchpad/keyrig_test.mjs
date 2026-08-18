@@ -33,6 +33,12 @@ globalThis.window = {
 };
 
 const prelude = `
+// The registry now composes rotation through THREE and reads winding through xfChannel, so the
+// harness has to supply both. THREE is the real module — the rotation maths is exactly what is
+// under test here, and stubbing it would test the stub.
+import * as THREE from '${path.join(REPO, 'node_modules/three/build/three.module.js')}';
+${fs.readFileSync(path.join(REPO, 'src/editing/xfChannel.js'), 'utf8')
+  .split('\n').filter((l) => !/^import\s/.test(l)).join('\n')}
 const quat = { slerp: () => {} };
 const mat4 = {};
 const arkitEntry = () => null, arkitSplitTargets = () => [], arkitUnifiedFor = () => null;
@@ -43,7 +49,8 @@ const Skinning = { captureSource() {} };
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_key_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body + '\nexport default AnimationRegistry;\n');
 
-const { default: AnimationRegistry } = await import(outPath + '?v=' + Date.now());
+const { default: AnimationRegistry, rotSync } = await import(outPath + '?v=' + Date.now());
+const THREE = await import(path.join(REPO, 'node_modules/three/build/three.module.js'));
 
 let failures = 0;
 function check(name, ok, detail) {
@@ -148,6 +155,50 @@ function joint(tx, ty, tz) {
   const reg = new AnimationRegistry();
   check('empty: nothing keyed, nothing pushed',
     reg.keyTransforms([], 0, 'Key Pose') === 0 && undoStack.length === 0);
+}
+
+// --- multi-turn rotation actually plays back --------------------------------------
+// matt's case, end to end: key X at 0 on frame 0 and 3600 on frame 100 and expect TEN FULL
+// TURNS, not the shortest path. Quaternion slerp cannot do this — 3600 and 0 are the same
+// orientation, so it sweeps nothing at all. The Euler channels carry the winding, and this
+// measures the total angle actually travelled rather than trusting the stored numbers.
+{
+  const reg = new AnimationRegistry();
+  const id = 991;
+  const track = {
+    times: [0, 1], positions: [0, 0, 0, 0, 0, 0], scales: [1, 1, 1, 1, 1, 1],
+    quaternions: [0, 0, 0, 1, 0, 0, 0, 1],
+    eulers: [0, 0, 0, 3600, 0, 0],
+    playbackTime: 0,
+  };
+  reg.tracks.set(id, track);
+
+  // Walk the interpolation the way playback does and total up the angle swept.
+  const sweep = (mode) => {
+    track.rotInterp = mode;
+    const e = rotSync(track);
+    let total = 0;
+    let prev = null;
+    for (let k = 0; k <= 200; k++) {
+      const alpha = k / 200;
+      let q = new THREE.Quaternion();
+      if (mode === 'euler') {
+        const x = (e[0] + (e[3] - e[0]) * alpha) * Math.PI / 180;
+        q.setFromEuler(new THREE.Euler(x, 0, 0, 'XYZ'));
+      } // 'quat': both keys are identity, so q stays identity
+      const v = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+      if (prev) total += v.angleTo(prev) * 180 / Math.PI;
+      prev = v;
+    }
+    return total;
+  };
+
+  const euler = sweep('euler');
+  const quatSweep = sweep('quat');
+  check('multi-turn: euler interpolation sweeps ten full turns',
+    Math.abs(euler - 3600) < 20, 'swept ' + euler.toFixed(1) + ' degrees');
+  check('multi-turn: quaternion slerp sweeps nothing (the old behaviour)',
+    quatSweep < 1, 'swept ' + quatSweep.toFixed(1) + ' degrees');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

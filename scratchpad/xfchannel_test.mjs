@@ -5,6 +5,7 @@
 // GuiTimeline needs a canvas and a DOM, which these functions do not.
 import fs from 'fs';
 import path from 'path';
+import * as THREE from '/Users/mattestela/sculptxr/node_modules/three/build/three.module.js';
 
 const REPO = '/Users/mattestela/sculptxr';
 const SRC = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
@@ -27,6 +28,9 @@ import * as THREE from '${path.join(REPO, 'node_modules/three/build/three.module
 globalThis.window = globalThis.window || {};
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _rq = new THREE.Quaternion();
+const _re = new THREE.Euler();
+const R2D = 180 / Math.PI, D2R = Math.PI / 180;
 ${grab('xfGroup')}
 ${grab('xfRead')}
 ${grab('xfWrite')}
@@ -51,7 +55,16 @@ export function segRects() { const o = { ${segSrc.replace('_xfSegRects() {', '_x
 export const CONSTS = { HEADER_H, XF_SEG_H };
 `);
 
-const { xfGroup, xfRead, xfWrite, segRects, CONSTS } = await import(gen + '?v=' + Date.now());
+fs.appendFileSync(gen, `
+${grab('eulerFromQuat')}
+${grab('unwrapTo')}
+${grab('rotRebuild')}
+${grab('rotSync')}
+${grab('rotSetEuler')}
+export { rotSync, rotRebuild, unwrapTo };
+`);
+const { xfGroup, xfRead, xfWrite, segRects, CONSTS, rotSync, rotRebuild, unwrapTo } =
+  await import(gen + '?v=' + Date.now());
 
 let failures = 0;
 const check = (name, ok, detail) => {
@@ -107,13 +120,54 @@ check('rotation: channels are independent',
   && Math.abs(xfRead(t4, 0, 2) + 35) < 1e-6,
   `[${xfRead(t4,0,0).toFixed(3)}, ${xfRead(t4,0,1).toFixed(3)}, ${xfRead(t4,0,2).toFixed(3)}]`);
 
-// The limit, asserted rather than described: a quaternion has no winding, so a multi-turn
-// value collapses. This is what stops the graph editor from fixing matt's 3600-degree case,
-// and it is the test that should FAIL the day rotation is stored as Euler with a turn count.
-const t5 = track();
-xfWrite(t5, 0, 0, 3600);
-check('rotation: multi-turn is LOST (quaternion has no winding)', Math.abs(xfRead(t5, 0, 0)) < 1e-6,
-  'read back ' + xfRead(t5, 0, 0).toFixed(3) + ' — if this is now 3600, storage gained winding');
+// The whole point of the winding store: ten turns must stay ten turns. This test used to
+// assert the OPPOSITE — that a quaternion loses it — and was written to fail once rotation
+// gained real winding. It has, so here is the claim the other way round.
+for (const deg of [3600, -720, 1080.5]) {
+  const t5 = track();
+  xfWrite(t5, 0, 0, deg);
+  check(`rotation: ${deg} degrees keeps its winding`, Math.abs(xfRead(t5, 0, 0) - deg) < 1e-6,
+    'read back ' + xfRead(t5, 0, 0));
+}
+
+// The quaternion is kept in step, so everything reading rotation the old way still agrees —
+// modulo the turns it cannot represent, which is exactly what it should lose.
+{
+  const t = track();
+  xfWrite(t, 0, 1, 45 + 720);
+  const q = t.quaternions.slice(0, 4);
+  const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q), 'XYZ');
+  check('rotation: the quaternion stays in step, one turn folded away',
+    Math.abs(e.y * 180 / Math.PI - 45) < 1e-6, (e.y * 180 / Math.PI).toFixed(4));
+}
+
+// --- winding survives, and repairs itself when it cannot -------------------------
+{
+  check('unwrap: picks the nearest equivalent turn',
+    unwrapTo(350, -10) === 350 && unwrapTo(0, 359) === -1 && unwrapTo(720, 0) === 720,
+    [unwrapTo(350, -10), unwrapTo(0, 359), unwrapTo(720, 0)].join());
+
+  // A rebuild from quaternions cannot know about turns, but it MUST stay continuous rather
+  // than sawtoothing at every half turn — that is what makes a recorded spin read as a spin.
+  const spin = { times: [0, 1, 2, 3], quaternions: [], positions: [], scales: [] };
+  for (let i = 0; i < 4; i++) {
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, i * 170 * Math.PI / 180, 0, 'XYZ'));
+    spin.quaternions.push(q.x, q.y, q.z, q.w);
+  }
+  const e = rotRebuild(spin);
+  const ys = [e[1], e[4], e[7], e[10]];
+  let monotonic = true;
+  for (let i = 1; i < 4; i++) if (ys[i] <= ys[i - 1]) monotonic = false;
+  check('rebuild: a continuous spin stays continuous', monotonic,
+    ys.map((v) => v.toFixed(1)).join(', '));
+
+  // The safety net. A missed splice site leaves eulers the wrong length; rotSync must repair
+  // rather than let rotation index against the wrong times.
+  const t = { times: [0, 1], quaternions: [0, 0, 0, 1, 0, 0, 0, 1], eulers: [1, 2, 3] };
+  const fixed = rotSync(t);
+  check('rotSync: a length mismatch is repaired, not trusted', fixed.length === 6,
+    'length ' + fixed.length);
+}
 
 // Rotation editing must not corrupt the neighbouring key.
 const t6 = track();
