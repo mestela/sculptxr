@@ -1,3 +1,12 @@
+# v3.19.54
+**VR grab preselection works.** Three bugs stacked on top of one another, which is why it kept half-working and why two false leads (dev versus production, and a debug flag) looked convincing.
+
+- **The hover ray was in the wrong space.** `updateXR` is handed `origin`/`dir` by Scene, already in engine space; the hover derived its own from the controller matrix — the raw WebXR frame — so the pick missed every mesh on every frame.
+- **The hover never asked for a redraw**, so its work never reached the screen. This is why turning the trace ON appeared to fix it: `console.log` is redirected to `screenLog`, and the logging was performing the repaint.
+- **It was far too expensive** — a full ray pick against every mesh plus a skeleton visual rebuild, ninety times a second. Merely attaching the remote console changed the frame budget enough to alter the outcome. Now throttled to about 15Hz (`window._grabHoverMs`), with the redraw tied to the highlight actually changing. Preselection does not need 90Hz; a hand does not move that fast.
+
+**The lesson worth keeping**: "only works with debugging enabled" is a timing signal, not a mystery. Both false leads were the same cost problem wearing different hats.
+
 # v3.19.51
 **Full-body IK becomes a controller, not a mode.** The skeleton is now driven by the solver rather than posed directly: grab a bone with a hand or the mouse and it states where that joint should END UP, with every pin holding and the rest of the rig rearranging around it. Pins became objects in the scene, so they can be selected, dragged with the gizmo, saved and (next) keyed.
 

@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.51 - VR grab rotates bones too';
+export const VERSION = 'v3.19.54 - Throttle the VR hover pick';
