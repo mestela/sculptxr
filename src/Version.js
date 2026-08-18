@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.23 - Joints and pins display toggle';
+export const VERSION = 'v3.19.25 - Pin tint follows the bone root';

@@ -29,9 +29,15 @@ const BONE_COLOR = 0xf0c674;
 const BONE_EDGE = 0x1e1e2e;
 const HILITE_COLOR = 0xffe066;
 const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
-// The leader from a joint to the pin it has not reached. Warm, so a shortfall reads as a
-// warning against the cool joint/bone palette.
-const PIN_LINK_COLOR = 0xf38ba8;
+// A pinned bone is tinted, which is the one display channel still free: the JOINT marker's
+// colour is already spoken for by preselect and selection, so pin state goes on the bone. It
+// also reads from across the scene, where a small triad does not.
+const PIN_POS_COLOR = 0x89b4fa;   // 3DOF: held in place, free to rotate
+const PIN_FULL_COLOR = 0xf38ba8;  // 6DOF: position and orientation both held
+// The leader from a joint to the pin it has not reached. Deliberately NOT the 6DOF red above:
+// "this pin holds orientation" and "this pin is not being met" are independent facts, and
+// sharing a colour would conflate them.
+const PIN_LINK_COLOR = 0xcba6f7;
 const PLANE_COLOR = 0x89b4fa;
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
@@ -721,6 +727,13 @@ Skeleton.updateVisuals = function (main) {
   // them off is how you see the sculpt with a rig inside it rather than a rig with a sculpt
   // around it.
   const showJoints = window._boneShowJoints !== false;
+  // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
+  // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
+  const hasChildBone = new Set();
+  for (const j of joints) {
+    const p = j._parentMesh;
+    if (Skeleton.isJoint(p)) hasChildBone.add(p.getID());
+  }
   const hideCaps = (e) => {
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) p.solid.visible = p.ghost.visible = false;
   };
@@ -875,11 +888,24 @@ Skeleton.updateVisuals = function (main) {
     _qAlign.setFromUnitVectors(_up, _dirLocal);
     _q.copy(_qOwner).multiply(_qAlign);
     const w = boneWidth(len, jr);
+    // TINTED BY THE PIN AT THE BONE'S ROOT, not at its tip. Pinning the ankle colours the FOOT
+    // — the bone that grows out of the pinned joint — because "the pin is at the root of the
+    // foot" is how a rig is read and talked about, and tinting the shin instead invites you to
+    // hunt for which end of it the pin is actually on.
+    //
+    // A pinned LEAF has no bone growing out of it and would show nothing at all, so it falls
+    // back to the bone that ENDS there. That is the one case where the two readings cannot
+    // agree, and showing the pin somewhere beats showing it nowhere.
+    const rootPin = (parent._boneIKPin | 0) & 3;
+    const leafPin = hasChildBone.has(id) ? 0 : pinMode;
+    const tintMode = rootPin || leafPin;
+    const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : BONE_COLOR);
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
       o.position.copy(_pA);
       o.quaternion.copy(_q);
       o.scale.set(w, len, w);
       o.visible = (o === e.bone.solid || o === e.bone.ghost) ? showSolid : showWire;
+      if (o === e.bone.solid || o === e.bone.ghost) o.material.color.setHex(boneTint);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
