@@ -76,7 +76,9 @@ class Transform extends SculptBase {
       return true;
     }
 
-    if (!picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY))
+    // The gizmo is a selection tool before it is a transform tool, so it reaches rig nodes:
+    // a bone or a pin is precisely what you want to put the gizmo on.
+    if (!picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY, false, true))
       return false;
 
     if (!main.setOrUnsetMesh(picking.getMesh(), ctrl))

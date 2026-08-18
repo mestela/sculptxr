@@ -779,7 +779,8 @@ Skeleton.updateVisuals = function (main) {
     // The IK pin marker: triad for a position pin, triad + gimbal rings for a 6DOF one. Read
     // straight off the joint rather than through IKSolver, so the visuals stay independent of
     // the solver (and there is no import cycle).
-    const pinMode = (j._boneIKPin | 0) & 3;
+    const pinMode = (j._boneIKPinObj && j._boneIKPinObj._isPinTarget)
+      ? ((j._boneIKPinObj._pinMode | 0) & 3) : 0;
     if (pinMode) {
       // THE MARKER BELONGS AT THE ANCHOR, NOT AT THE JOINT.
       //
@@ -793,13 +794,19 @@ Skeleton.updateVisuals = function (main) {
       // independent of the solver and there is no import cycle. A rig loaded from a save file
       // has no anchor yet — the saved pose IS the pinned pose, so the joint is the right
       // reading until the solver takes its own.
-      if (j._boneIKPinAt) _vPin.fromArray(j._boneIKPinAt);
-      else _vPin.copy(_pB);
+      const pinObj = j._boneIKPinObj;
+      if (pinObj && pinObj.getModelSpaceMatrix) {
+        const pm = pinObj.getModelSpaceMatrix();
+        _vPin.set(pm[12], pm[13], pm[14]);
+      } else {
+        _vPin.copy(_pB);
+      }
       // A 3DOF triad turns with the limb, a 6DOF one holds still — which is what lets the two
       // states tell themselves apart in motion. The 6DOF marker now takes the ANCHORED
       // orientation, so it really is still rather than merely nearly so.
-      if (pinMode > 1 && j._boneIKPinQ) {
-        _qPin.fromArray(j._boneIKPinQ);
+      if (pinMode > 1 && pinObj && pinObj.getModelSpaceMatrix) {
+        _mTmp.fromArray(pinObj.getModelSpaceMatrix());
+        _mTmp.decompose(_vTmp, _qPin, _sTmp);
       } else {
         _mTmp.fromArray(j.getModelSpaceMatrix());
         _mTmp.decompose(_vTmp, _qPin, _sTmp);
@@ -896,7 +903,8 @@ Skeleton.updateVisuals = function (main) {
     // A pinned LEAF has no bone growing out of it and would show nothing at all, so it falls
     // back to the bone that ENDS there. That is the one case where the two readings cannot
     // agree, and showing the pin somewhere beats showing it nowhere.
-    const rootPin = (parent._boneIKPin | 0) & 3;
+    const rootPin = (parent._boneIKPinObj && parent._boneIKPinObj._isPinTarget)
+      ? ((parent._boneIKPinObj._pinMode | 0) & 3) : 0;
     const leafPin = hasChildBone.has(id) ? 0 : pinMode;
     const tintMode = rootPin || leafPin;
     const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : BONE_COLOR);

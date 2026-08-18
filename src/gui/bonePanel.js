@@ -197,10 +197,19 @@ export function wireBoneSection(root, main, opts) {
     // pins as 6DOF.
     const had = IKSolver.capturePins(main);
     if (!had.length) return;
-    IKSolver.clearPins(main);
+    // Clearing takes the pin nulls out of the scene; undo puts the SAME objects back at the
+    // matrices they stood at, so the pins return where they were rather than to the rig.
+    for (const p of IKSolver.clearPins(main)) main.removeMeshSilent?.(p);
     main.getStateManager?.()?.pushStateCustom?.(
-      () => { IKSolver.restorePins(main, had); Skeleton.updateVisuals(main); main.render(); },
-      () => { IKSolver.clearPins(main); Skeleton.updateVisuals(main); main.render(); },
+      () => {
+        for (const [, , pin] of had) if (pin) main.addMeshSilent?.(pin);
+        IKSolver.restorePins(main, had);
+        Skeleton.updateVisuals(main); main.render();
+      },
+      () => {
+        for (const p of IKSolver.clearPins(main)) main.removeMeshSilent?.(p);
+        Skeleton.updateVisuals(main); main.render();
+      },
       false, 'Clear Pins');
     Skeleton.updateVisuals(main);
     refresh();

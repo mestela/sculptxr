@@ -12,6 +12,7 @@ var _TMP_INV = mat4.create();
 var _TMP_MS = mat4.create(); // model-space (worldGroup-relative) mesh matrix
 var _TMP_INTER = [0.0, 0.0, 0.0];
 var _TMP_INTER_1 = [0.0, 0.0, 0.0];
+var _TMP_INTER_RIG = [0.0, 0.0, 0.0];
 var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
 var _TMP_V1 = [0.0, 0.0, 0.0];
 var _TMP_V2 = [0.0, 0.0, 0.0];
@@ -157,7 +158,11 @@ class Picking {
   }
 
   /** Intersection between a ray the mouse position for every meshes */
-  intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY, twoSided = false) {
+  // RIG NODES ARE PICKABLE ONLY WHEN ASKED FOR. Joints and pin nulls carry
+  // `isPickable = false` so sculpt brushes cannot grab them — the brush and the selection share
+  // this one function, so making them pickable outright would put a joint under every stroke.
+  // `includeRig` is the opt-in the selection paths use.
+  intersectionMouseMeshes(meshes = this._main.getMeshes(), mouseX = this._main._mouseX, mouseY = this._main._mouseY, twoSided = false, includeRig = false) {
     if (this._main && this._main._lockSelection) {
       const activeMesh = this._main.getMesh();
       if (activeMesh) {
@@ -171,11 +176,15 @@ class Picking {
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
+    var nearRigDistance = Infinity;
+    var nearRig = null;
+    var nearRigFace = -1;
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
       var mesh = meshes[i];
-      if (!mesh.isVisible() || mesh.isPickable === false || mesh._selectLocked)
-        continue;
+      var isRig = !!(mesh._isBone || mesh._isPinTarget);
+      if (!mesh.isVisible() || mesh._selectLocked) continue;
+      if (mesh.isPickable === false && !(includeRig && isRig)) continue;
 
       mesh.getThreeMesh().updateMatrixWorld(true);
       mat4.invert(_TMP_INV, mesh.getThreeMesh().matrixWorld.elements);
@@ -186,12 +195,30 @@ class Picking {
 
       var interTest = this.getIntersectionPoint();
       var testDistance = vec3.dist(_TMP_NEAR_1, interTest) * mesh.getScale();
+      if (isRig && testDistance < nearRigDistance) {
+        nearRigDistance = testDistance;
+        nearRig = mesh;
+        vec3.copy(_TMP_INTER_RIG, interTest);
+        nearRigFace = this.getPickedFace();
+      }
       if (testDistance < nearDistance) {
         nearDistance = testDistance;
         nearMesh = mesh;
         vec3.copy(_TMP_INTER_1, interTest);
         nearFace = this.getPickedFace();
       }
+    }
+
+    // A RIG NODE BEATS A MESH WHENEVER ONE WAS ASKED FOR. The skeleton lives INSIDE the sculpt,
+    // so bones sit behind the surface from almost every angle and a nearest-hit rule leaves the
+    // mesh permanently in the way of its own rig — you end up hiding the mesh to reach a hip.
+    // Only the tools that want rig nodes pass includeRig, so asking for them is a clear enough
+    // statement of intent to let them win. Gated to a bound mesh first, which was too narrow:
+    // a rig is usually drawn long before anything is bound to it.
+    if (nearRig && nearMesh && nearMesh !== nearRig) {
+      nearMesh = nearRig;
+      nearFace = nearRigFace;
+      vec3.copy(_TMP_INTER_1, _TMP_INTER_RIG);
     }
 
     if (this._main && this._main._lockSelection) {

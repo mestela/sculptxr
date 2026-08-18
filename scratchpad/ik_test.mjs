@@ -55,8 +55,32 @@ function modelMat(j) {
   return j._parentMesh ? m.premultiply(modelMat(j._parentMesh)) : m;
 }
 
+// The scene, as much of it as the solver touches. Pins are now real objects, so the mock has
+// to be able to make and hold them: buildNull + addMeshSilent is the whole surface
+// IKSolver.makePinObject uses, and keeping the mesh list mutable is what lets a pin come and
+// go the way it does in the app.
 export function makeMain(joints) {
-  return { getMeshes: () => joints };
+  const list = joints.slice();
+  return {
+    getMeshes: () => list,
+    buildNull() {
+      const n = {
+        _isNull: true,
+        _permanentStaticLabel: null,
+        _id: _nextId++,
+        _m: new THREE.Matrix4(),
+        _parentMesh: null,
+        getID() { return this._id; },
+        getMatrix() { return this._m.elements; },
+        getModelSpaceMatrix() { return this._m.elements; },
+        setModelSpaceMatrix(e) { this._m.fromArray(e); },
+      };
+      return n;
+    },
+    decorateNull() {},
+    addMeshSilent(m) { if (!list.includes(m)) list.push(m); return m; },
+    removeMeshSilent(m) { const i = list.indexOf(m); if (i >= 0) list.splice(i, 1); },
+  };
 }
 
 const Skeleton = {
@@ -159,7 +183,7 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(s4, true);
+  IKSolver.setPinned(s4, true, main);
   const tipBefore = pos(s4).clone();
 
   // Kept inside the pin's reach on purpose: s2 -> s4 is two bones of length 1, so a target
@@ -173,7 +197,7 @@ function lengthsPreserved(name, joints, before) {
     'err ' + pos(s2).distanceTo(target).toExponential(2));
   check('pinned: the root was free to move', pos(root).length() > 1e-6);
   lengthsPreserved('pinned', joints, L0);
-  IKSolver.setPinned(s4, false);
+  IKSolver.setPinned(s4, false, main);
 }
 
 // --- 4. branching tree, two pins --------------------------------------------------
@@ -192,8 +216,8 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(haL, true);
-  IKSolver.setPinned(haR, true);
+  IKSolver.setPinned(haL, true, main);
+  IKSolver.setPinned(haR, true, main);
   const handL = pos(haL).clone(), handR = pos(haR).clone();
 
   // Pull the hips down: the classic "hands pinned, body crouches" case.
@@ -206,8 +230,8 @@ function lengthsPreserved(name, joints, before) {
   check('branch: hips actually moved down', pos(hips).y < -0.2,
     'y ' + pos(hips).y.toFixed(3));
   lengthsPreserved('branch', joints, L0);
-  IKSolver.setPinned(haL, false);
-  IKSolver.setPinned(haR, false);
+  IKSolver.setPinned(haL, false, main);
+  IKSolver.setPinned(haR, false, main);
 }
 
 // --- 5. what the solver is allowed to touch ---------------------------------------
@@ -251,8 +275,8 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(footL, true);
-  IKSolver.setPinned(footR, true);
+  IKSolver.setPinned(footL, true, main);
+  IKSolver.setPinned(footR, true, main);
   const fL = pos(footL).clone(), fR = pos(footR).clone();
   const thighLBefore = pos(thighL).clone();
 
@@ -277,8 +301,8 @@ function lengthsPreserved(name, joints, before) {
   check('twist: right foot still pinned', pos(footR).distanceTo(fR) < 1e-2,
     'moved ' + pos(footR).distanceTo(fR).toFixed(4));
   lengthsPreserved('twist', joints, L0);
-  IKSolver.setPinned(footL, false);
-  IKSolver.setPinned(footR, false);
+  IKSolver.setPinned(footL, false, main);
+  IKSolver.setPinned(footR, false, main);
 }
 
 // --- 7. a LEAF effector can be rotated (nothing hangs off it to fit against) --------
@@ -317,7 +341,7 @@ function lengthsPreserved(name, joints, before) {
 
   const a = build();
   const mainA = makeMain(a.joints);
-  IKSolver.setPin(a.ankle, IKSolver.PIN_POS);
+  IKSolver.setPin(a.ankle, IKSolver.PIN_POS, mainA);
   const o3 = orientOf(a.ankle);
   IKSolver.solve(mainA, a.hips, new THREE.Vector3(0.5, 1.8, 0));
   const drift3 = orientOf(a.ankle).angleTo(o3);
@@ -325,7 +349,7 @@ function lengthsPreserved(name, joints, before) {
   const b = build();
   const mainB = makeMain(b.joints);
   const L0 = lengths(b.joints);
-  IKSolver.setPin(b.ankle, IKSolver.PIN_FULL);
+  IKSolver.setPin(b.ankle, IKSolver.PIN_FULL, mainB);
   const o6 = orientOf(b.ankle);
   const p6 = pos(b.ankle).clone();
   IKSolver.solve(mainB, b.hips, new THREE.Vector3(0.5, 1.8, 0));
@@ -343,19 +367,69 @@ function lengthsPreserved(name, joints, before) {
   }
   check('6dof pin: no orientation drift over 60 solves', orientOf(b.ankle).angleTo(o6) < 1e-3,
     'drifted ' + (orientOf(b.ankle).angleTo(o6) * 180 / Math.PI).toFixed(4) + ' deg');
-  IKSolver.setPin(b.ankle, IKSolver.PIN_NONE);
-  IKSolver.setPin(a.ankle, IKSolver.PIN_NONE);
+  IKSolver.setPin(b.ankle, IKSolver.PIN_NONE, mainB);
+  IKSolver.setPin(a.ankle, IKSolver.PIN_NONE, mainB);
 }
 
 // --- 9. pin state cycles and reads back --------------------------------------------
 {
   const j = J([0, 0, 0]);
-  check('cycle: none -> position', IKSolver.cyclePin(j) === IKSolver.PIN_POS);
-  check('cycle: position -> full', IKSolver.cyclePin(j) === IKSolver.PIN_FULL);
-  check('cycle: full -> none', IKSolver.cyclePin(j) === IKSolver.PIN_NONE);
-  // Files written before pins had modes stored a boolean.
-  j._boneIKPin = true;
-  check('legacy: a boolean pin reads as a position pin', IKSolver.pinMode(j) === IKSolver.PIN_POS);
+  const m9 = makeMain([j]);
+  const before = m9.getMeshes().length;
+
+  const c1 = IKSolver.cyclePin(j, m9);
+  check('cycle: none -> position', c1.mode === IKSolver.PIN_POS);
+  check('cycle: pinning puts a null in the scene', m9.getMeshes().length === before + 1);
+  const pinObj = IKSolver.pinObject(j);
+  check('cycle: the joint points at it', !!pinObj && pinObj === c1.pin);
+
+  const c2 = IKSolver.cyclePin(j, m9);
+  check('cycle: position -> full', c2.mode === IKSolver.PIN_FULL);
+  check('cycle: strengthening a pin reuses the same object', IKSolver.pinObject(j) === pinObj);
+  check('cycle: and does not add a second null', m9.getMeshes().length === before + 1);
+
+  const c3 = IKSolver.cyclePin(j, m9);
+  check('cycle: full -> none', c3.mode === IKSolver.PIN_NONE);
+  check('cycle: unpinning hands the object back to be removed', c3.removed === pinObj);
+  check('cycle: and the joint no longer reads as pinned', !IKSolver.isPinned(j));
+
+  // THE ANCHOR IS THE OBJECT'S TRANSFORM. This is the whole point of the change: move the pin
+  // and the joint is pinned somewhere else, with nothing to re-read and nothing to ratchet.
+  const k = J([0, 1, 0]);
+  const m9b = makeMain([k]);
+  IKSolver.setPin(k, IKSolver.PIN_POS, m9b);
+  const kp = IKSolver.pinObject(k);
+  check('anchor: a fresh pin sits on its joint',
+    IKSolver.pinAnchor(k, new THREE.Vector3()).distanceTo(pos(k)) < 1e-9);
+  kp._m.elements[13] = 5;
+  check('anchor: moving the pin object moves the anchor',
+    Math.abs(IKSolver.pinAnchor(k, new THREE.Vector3()).y - 5) < 1e-9,
+    'y ' + IKSolver.pinAnchor(k, new THREE.Vector3()).y);
+
+  // A pin is named after the bone it constrains: "Pin 7" is useless in an outliner, and being
+  // findable is most of the point of a pin being an object at all.
+  const named = J([0, 2, 0]);
+  named._permanentStaticLabel = 'bone_03_R';
+  const mN = makeMain([named]);
+  IKSolver.setPin(named, IKSolver.PIN_POS, mN);
+  check('name: the pin is named after its bone',
+    IKSolver.pinObject(named)._permanentStaticLabel === 'pin_bone_03_R',
+    IKSolver.pinObject(named)._permanentStaticLabel);
+
+  // Moving a pin has to be NOTICED, or dragging one with the gizmo leaves the rig where it was.
+  const mv = J([0, 0, 0]);
+  const mM = makeMain([mv]);
+  IKSolver.setPin(mv, IKSolver.PIN_POS, mM);
+  IKSolver.pinsMoved(mM); // first look establishes the baseline
+  check('moved: a settled pin reports no movement', !IKSolver.pinsMoved(mM));
+  IKSolver.pinObject(mv)._m.elements[13] += 0.5;
+  check('moved: nudging the pin object is noticed', IKSolver.pinsMoved(mM));
+  check('moved: and only once, until it moves again', !IKSolver.pinsMoved(mM));
+
+  // A pin whose object has been deleted from the scene is no pin at all — checked once, in
+  // pinObject, rather than left to dangle at every call site.
+  kp._isPinTarget = false;
+  check('anchor: a dangling pin reference reads as unpinned', !IKSolver.isPinned(k));
   j._boneIKPin = 0;
 }
 
@@ -390,8 +464,8 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(footL, true);
-  IKSolver.setPinned(footR, true);
+  IKSolver.setPinned(footL, true, main);
+  IKSolver.setPinned(footR, true, main);
   const groundL = pos(footL).clone(), groundR = pos(footR).clone();
   const hips0 = pos(hips).clone();
 
@@ -428,9 +502,9 @@ function lengthsPreserved(name, joints, before) {
     pos(footR).distanceTo(groundR) < 1e-2, 'off by ' + pos(footR).distanceTo(groundR).toFixed(4));
 
   // Unpinning forgets the anchor, so the next pin anchors fresh rather than resurrecting it.
-  IKSolver.setPinned(footL, false);
+  IKSolver.setPinned(footL, false, main);
   check('jump: unpinning drops the anchor', !footL._boneIKPinAt);
-  IKSolver.setPinned(footR, false);
+  IKSolver.setPinned(footR, false, main);
 }
 
 // --- 12. a position-only drag can hold the effector's orientation -----------------
@@ -490,7 +564,7 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(foot, true);
+  IKSolver.setPinned(foot, true, main);
   const ground = pos(foot).clone();
   const boneLen = pos(knee).distanceTo(pos(foot));
 
@@ -510,7 +584,7 @@ function lengthsPreserved(name, joints, before) {
   for (let i = 0; i < 6; i++) IKSolver.solve(main, knee, near.clone());
   check('knee: a reachable drag is not clamped', pos(knee).distanceTo(near) < 1e-2,
     'err ' + pos(knee).distanceTo(near).toFixed(4));
-  IKSolver.setPinned(foot, false);
+  IKSolver.setPinned(foot, false, main);
 }
 
 // --- 14. the drawn bend decides which way a knee goes -----------------------------
@@ -609,8 +683,8 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPinned(footL, true);
-  IKSolver.setPinned(footR, true);
+  IKSolver.setPinned(footL, true, main);
+  IKSolver.setPinned(footR, true, main);
   const hips0 = pos(hips).clone();
 
   // Both knees are drawn bending +z, so both should stay in front through a deep crouch.
@@ -636,8 +710,8 @@ function lengthsPreserved(name, joints, before) {
   IKSolver.solve(main, hips, hips0.clone());
   check('symmetry: and the next solve re-reads it', !!kneeL._boneBendRef);
 
-  IKSolver.setPinned(footL, false);
-  IKSolver.setPinned(footR, false);
+  IKSolver.setPinned(footL, false, main);
+  IKSolver.setPinned(footR, false, main);
 }
 
 // --- 17. the constraint must not itself be a pop ----------------------------------
@@ -718,7 +792,7 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPin(ankle, IKSolver.PIN_FULL);
+  IKSolver.setPin(ankle, IKSolver.PIN_FULL, main);
   const anchor = pos(ankle).clone();
   IKSolver.solve(main, hips, new THREE.Vector3(0.5, 1.8, 0));
 
@@ -729,7 +803,7 @@ function lengthsPreserved(name, joints, before) {
   check('branch: and the hips still reached the drag',
     pos(hips).distanceTo(new THREE.Vector3(0.5, 1.8, 0)) < 1e-2);
   lengthsPreserved('branch', joints, L0);
-  IKSolver.setPin(ankle, IKSolver.PIN_NONE);
+  IKSolver.setPin(ankle, IKSolver.PIN_NONE, main);
 }
 
 // --- 19. pins survive keyframe playback -------------------------------------------
@@ -755,7 +829,7 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPin(foot, IKSolver.PIN_POS);
+  IKSolver.setPin(foot, IKSolver.PIN_POS, main);
   const anchor = IKSolver.pinAnchor(foot, new THREE.Vector3());
 
   const grab = () => joints.map((j) => {
@@ -817,7 +891,7 @@ function lengthsPreserved(name, joints, before) {
   check('playback: and does not move the authored root', hipsMoved < 1e-9,
     'hips moved ' + hipsMoved.toFixed(5));
   lengthsPreserved('playback', joints, L0);
-  IKSolver.setPin(foot, IKSolver.PIN_NONE);
+  IKSolver.setPin(foot, IKSolver.PIN_NONE, main);
 }
 
 // --- 20. a closed loop must not wind the bones up ---------------------------------
@@ -840,8 +914,8 @@ function lengthsPreserved(name, joints, before) {
   const main = makeMain(joints);
   const L0 = lengths(joints);
 
-  IKSolver.setPin(anL, IKSolver.PIN_POS);
-  IKSolver.setPin(anR, IKSolver.PIN_POS);
+  IKSolver.setPin(anL, IKSolver.PIN_POS, main);
+  IKSolver.setPin(anR, IKSolver.PIN_POS, main);
 
   // How far a joint's frame has turned ABOUT ITS OWN BONE: the twist half of a swing-twist
   // split, which is the component that collapses a skin rather than bending it.
@@ -886,8 +960,8 @@ function lengthsPreserved(name, joints, before) {
   const th3 = J([-0.28, 1.7, 0], hips2), kn3 = J([-0.36, 1.05, 0.30], th3);
   const an3 = J([-0.28, 0.35, 0], kn3);
   const main2 = makeMain([hips2, th2, kn2, an2, th3, kn3, an3]);
-  IKSolver.setPin(an2, IKSolver.PIN_POS);
-  IKSolver.setPin(an3, IKSolver.PIN_POS);
+  IKSolver.setPin(an2, IKSolver.PIN_POS, main);
+  IKSolver.setPin(an3, IKSolver.PIN_POS, main);
   IKSolver.solve(main2, hips2, home);
   const u0 = twistDeg(th2, kn2);
   const old = [];
@@ -904,11 +978,11 @@ function lengthsPreserved(name, joints, before) {
   check('twist: the accumulating write-back does wind it up',
     Math.abs(old[3] - old[0]) > 20,
     'grew only ' + Math.abs(old[3] - old[0]).toFixed(1) + ' deg — this loop no longer provokes it');
-  IKSolver.setPin(an2, IKSolver.PIN_NONE); IKSolver.setPin(an3, IKSolver.PIN_NONE);
+  IKSolver.setPin(an2, IKSolver.PIN_NONE, main); IKSolver.setPin(an3, IKSolver.PIN_NONE, main);
 
   lengthsPreserved('twist', joints, L0);
-  IKSolver.setPin(anL, IKSolver.PIN_NONE);
-  IKSolver.setPin(anR, IKSolver.PIN_NONE);
+  IKSolver.setPin(anL, IKSolver.PIN_NONE, main);
+  IKSolver.setPin(anR, IKSolver.PIN_NONE, main);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

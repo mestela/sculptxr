@@ -1134,14 +1134,30 @@ class BoneDrawTool extends SculptBase {
   // the three states you landed in.
   _togglePin(joint) {
     if (!joint) return;
-    const was = IKSolver.pinMode(joint);
-    const now = IKSolver.cyclePin(joint);
     const main = this._main;
+    const was = IKSolver.pinMode(joint);
+    const wasPin = IKSolver.pinObject(joint);
+    const wasM = wasPin ? mat4.clone(wasPin.getMatrix()) : null;
+    const r = IKSolver.cyclePin(joint, main);
+    const now = r.mode;
+    // Unpinning takes the null out of the scene; undo has to put the SAME object back, at the
+    // matrix it stood at, or the pin returns somewhere else.
+    if (r.removed) main.removeMeshSilent(r.removed);
+    const nowPin = r.pin;
     const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)'];
     const sm = main.getStateManager && main.getStateManager();
     if (sm && sm.pushStateCustom) {
-      const apply = (mode) => { IKSolver.setPin(joint, mode); Skeleton.updateVisuals(main); main.render(); };
-      sm.pushStateCustom(() => apply(was), () => apply(now), false, 'Pin Joint');
+      const apply = (mode, pin, m) => {
+        if (pin && mode) { main.addMeshSilent(pin); IKSolver.attachPin(joint, pin, mode, m); }
+        else {
+          const live = IKSolver.pinObject(joint);
+          IKSolver.setPin(joint, 0, main);
+          if (live) main.removeMeshSilent(live);
+        }
+        Skeleton.updateVisuals(main); main.render();
+      };
+      sm.pushStateCustom(() => apply(was, wasPin, wasM), () => apply(now, nowPin, null),
+        false, 'Pin Joint');
     }
     if (window.screenLog) window.screenLog('Bones: ' + names[now], 'cyan');
     // The mini panel's pin count is only refreshed when something asks it to, and pinning

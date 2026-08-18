@@ -32,16 +32,18 @@ class Grab extends SculptBase {
     var main    = this._main;
     var picking = main.getPicking();
     const mx = main._mouseX, my = main._mouseY;
-    if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my)) {
+    // Grab is a SELECTION-style tool — an immediate transform with no gizmo — so it opts into
+    // rig picking: a joint or a pin is exactly the sort of thing you reach out and move with it.
+    if (!picking.intersectionMouseMeshes(main.getMeshes(), mx, my, false, true)) {
       const lhx = main._penHoverMouseX;
       const lhy = main._penHoverMouseY;
       const dx = lhx !== undefined ? Math.abs(lhx - mx) : Infinity;
       const dy = lhy !== undefined ? Math.abs(lhy - my) : Infinity;
-      if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy)) {
+      if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy, false, true)) {
         // pen hover fallback
-      } else if (picking.intersectionMouseMeshes(undefined, mx, my, true)) {
+      } else if (picking.intersectionMouseMeshes(undefined, mx, my, true, true)) {
         // backface fallback
-      } else if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy, true)) {
+      } else if (dx < 30 && dy < 30 && picking.intersectionMouseMeshes(undefined, lhx, lhy, true, true)) {
         // backface hover fallback
       } else {
         return false;

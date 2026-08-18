@@ -61,6 +61,7 @@ const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _qPInv = new THREE.Quaternion(), _qLocal = new THREE.Quaternion();
 const _qNow = new THREE.Quaternion();
 const _mTmp = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
+const _sOne = new THREE.Vector3(1, 1, 1);
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
 const IKSolver = {};
@@ -92,75 +93,154 @@ IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 // Held as a fixed point, an unreachable pin fails honestly: the foot aims at it and falls
 // short, and snaps back onto it exactly as soon as the chain can reach again. That is what
 // lets a character jump.
-IKSolver.setPin = function (joint, mode) {
-  if (!joint) return;
-  const was = IKSolver.pinMode(joint);
-  const now = (mode | 0) & 3;
-  joint._boneIKPin = now;
-  if (!now) { joint._boneIKPinAt = null; joint._boneIKPinQ = null; return; }
-  // Only anchor on the way IN. Cycling 3DOF -> 6DOF must not re-anchor: if the joint has
-  // drifted off an unreachable pin, re-reading it there would quietly move the pin to the
-  // wrong place at the very moment the user asked for a STRONGER hold.
-  if (!was || !joint._boneIKPinAt) {
-    joint._boneIKPinAt = Skeleton.jointPos(joint, new THREE.Vector3()).toArray();
-  }
-  if (now === IKSolver.PIN_FULL && !joint._boneIKPinQ) {
-    joint._boneIKPinQ = modelQuat(joint, new THREE.Quaternion()).toArray();
-  }
+// ---- pins as objects -------------------------------------------------------------
+//
+// A pin is a NULL IN THE SCENE that a joint is constrained to, not two bits of state on the
+// joint. The joint holds a direct reference — the same shape `_boneMirror` already uses, and
+// serialised the same way, as an index — so reading a pin needs no scene lookup.
+//
+// The pin's transform IS the anchor. That is the whole point: it makes a pin a thing you can
+// select, drag with the gizmo and KEY, and it makes a class of bug unrepresentable. The old
+// code carried careful "only anchor on the way IN" logic because re-reading the joint's live
+// position let pins ratchet upward with a jumping character; with the anchor living in an
+// object's transform there is nothing to re-read.
+
+// Where the pin null is parked when a joint is pinned: exactly where the joint is now.
+function placePinAt(pin, joint) {
+  _mTmp.fromArray(joint.getModelSpaceMatrix());
+  _mTmp.decompose(_vTmp, _qNow, _sTmp);
+  // The null carries no scale of its own — it is a frame, not a shape.
+  _mTmp.compose(_vTmp, _qNow, _sOne);
+  if (pin.setModelSpaceMatrix) pin.setModelSpaceMatrix(_mTmp.elements);
+  else mat4.copy(pin.getMatrix(), _mTmp.elements);
+}
+
+IKSolver.pinObject = function (joint) {
+  const p = joint && joint._boneIKPinObj;
+  // A pin whose object has been deleted from the scene is no pin at all. Checked here rather
+  // than hunted down at every call site, so a dangling reference degrades to "unpinned".
+  return p && p._isPinTarget ? p : null;
 };
 
-// The anchor this joint is pinned to, in model space. Falls back to where the joint is now —
-// which is what a rig loaded from a save file has, since the anchor is not persisted; the
-// saved pose IS the pinned pose, so adopting it on first use is the right reading.
+IKSolver.setPin = function (joint, mode, main) {
+  if (!joint) return null;
+  const now = (mode | 0) & 3;
+  let pin = IKSolver.pinObject(joint);
+
+  if (!now) {
+    joint._boneIKPinObj = null;
+    joint._boneIKPin = 0;
+    return pin; // handed back so the caller can remove it from the scene and undo that
+  }
+
+  if (!pin) {
+    pin = IKSolver.makePinObject(main, joint);
+    if (!pin) return null; // no scene to put it in
+    joint._boneIKPinObj = pin;
+  }
+  // Cycling 3DOF -> 6DOF must NOT re-place the pin: if the joint has drifted off an
+  // unreachable pin, moving it to the joint would shift the pin at the very moment the user
+  // asked for a stronger hold.
+  pin._pinMode = now;
+  joint._boneIKPin = now; // kept in step for the save format and for older readers
+  return pin;
+};
+
+// The null itself. Built through the scene's own addNull so it arrives pickable, selectable,
+// serialisable and in the outliner — everything a pin needs in order to be transformable and
+// keyable comes free from being an ordinary object.
+IKSolver.makePinObject = function (main, joint) {
+  if (!main || !main.buildNull) return null;
+  // Built and attached SILENTLY: the caller wraps creating the pin, linking it and setting its
+  // mode in one undo step, and addNewMesh would push a second one — so a single button press
+  // would take two undos to unwind.
+  const pin = main.buildNull();
+  pin._typeName = 'Pin';
+  // Named after the bone it constrains, because "Pin 7" tells you nothing in an outliner and
+  // the whole reason a pin is an object is so you can find and grab it. Set before the mesh is
+  // attached: addMeshSilent only invents a label when there is not one already.
+  const jn = joint._permanentStaticLabel;
+  pin._permanentStaticLabel = jn ? 'pin_' + jn : 'pin';
+  main.addMeshSilent(pin);
+  if (main.decorateNull) main.decorateNull(pin);
+  pin._isPinTarget = true;
+  pin._pinnedJoint = joint;
+  // The skeleton pass draws the triad and gimbal at this transform, so the null's own
+  // cruciform would be a second marker in the same place.
+  const tm = pin.getThreeMesh && pin.getThreeMesh();
+  const cross = tm && tm.children.find((c) => c.name === 'null_cruciform');
+  if (cross) cross.visible = false;
+  placePinAt(pin, joint);
+  return pin;
+};
+
+IKSolver.pinMode = function (joint) {
+  const p = IKSolver.pinObject(joint);
+  return p ? ((p._pinMode | 0) & 3) : 0;
+};
+IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
+
+// The anchor this joint is pinned to, in model space: the pin object's own transform.
 IKSolver.pinAnchor = function (joint, out) {
   out = out || new THREE.Vector3();
-  if (!joint._boneIKPinAt) {
-    joint._boneIKPinAt = Skeleton.jointPos(joint, new THREE.Vector3()).toArray();
-  }
-  return out.fromArray(joint._boneIKPinAt);
+  const p = IKSolver.pinObject(joint);
+  if (!p) return Skeleton.jointPos(joint, out);
+  _mTmp.fromArray(p.getModelSpaceMatrix());
+  return out.set(_mTmp.elements[12], _mTmp.elements[13], _mTmp.elements[14]);
 };
 
 IKSolver.pinAnchorQuat = function (joint, out) {
   out = out || new THREE.Quaternion();
-  if (!joint._boneIKPinQ) joint._boneIKPinQ = modelQuat(joint, new THREE.Quaternion()).toArray();
-  return out.fromArray(joint._boneIKPinQ);
+  const p = IKSolver.pinObject(joint);
+  if (!p) return modelQuat(joint, out);
+  _mTmp.fromArray(p.getModelSpaceMatrix());
+  _mTmp.decompose(_vTmp, out, _sTmp);
+  return out;
 };
 
 // none -> position -> position+rotation -> none. A cycle rather than two buttons: pinning is
 // done by pointing at a joint and pressing one thing, and the marker says which state it is in.
-IKSolver.cyclePin = function (joint) {
+// Returns { mode, pin, removed } so the caller can put the object in or out of the scene.
+IKSolver.cyclePin = function (joint, main) {
   const next = (IKSolver.pinMode(joint) + 1) % 3;
-  IKSolver.setPin(joint, next);
-  return next;
+  const before = IKSolver.pinObject(joint);
+  const pin = IKSolver.setPin(joint, next, main);
+  return { mode: next, pin: next ? pin : null, removed: next ? null : before };
 };
 
-IKSolver.setPinned = function (joint, on) {
-  IKSolver.setPin(joint, on ? IKSolver.PIN_POS : IKSolver.PIN_NONE);
+IKSolver.setPinned = function (joint, on, main) {
+  return IKSolver.setPin(joint, on ? IKSolver.PIN_POS : IKSolver.PIN_NONE, main);
 };
 
 IKSolver.pinnedJoints = function (main) {
   return Skeleton.joints(main).filter(IKSolver.isPinned);
 };
 
-// Pin states of every pinned joint, so an undo can put back WHICH KIND of pin each one was.
-// ...including WHERE each was anchored. Restoring the mode alone would re-anchor every pin
-// to wherever the rig happens to be sitting at undo time, which is the one moment it is least
-// likely to be the place the pin was originally put.
+// Pin states of every pinned joint, so an undo can put back WHICH KIND of pin each one was and
+// WHERE it stood. The pin object is captured by reference along with its matrix: restoring the
+// mode alone would re-place every pin at wherever the rig happens to be sitting at undo time,
+// which is the one moment it is least likely to be where the pin was put.
 IKSolver.capturePins = function (main) {
-  return IKSolver.pinnedJoints(main).map((j) => [
-    j, IKSolver.pinMode(j),
-    j._boneIKPinAt ? j._boneIKPinAt.slice() : null,
-    j._boneIKPinQ ? j._boneIKPinQ.slice() : null,
-  ]);
+  return IKSolver.pinnedJoints(main).map((j) => {
+    const p = IKSolver.pinObject(j);
+    return [j, IKSolver.pinMode(j), p, p ? mat4.clone(p.getMatrix()) : null];
+  });
 };
 
 IKSolver.restorePins = function (main, snapshot) {
-  IKSolver.clearPins(main);
-  for (const [j, mode, at, q] of snapshot) {
-    IKSolver.setPin(j, mode);
-    if (at) j._boneIKPinAt = at.slice();
-    if (q) j._boneIKPinQ = q.slice();
+  for (const [j, mode, pin, m] of snapshot) {
+    IKSolver.attachPin(j, pin, mode, m);
   }
+};
+
+IKSolver.attachPin = function (joint, pin, mode, m) {
+  if (!pin) return;
+  joint._boneIKPinObj = pin;
+  joint._boneIKPin = mode;
+  pin._isPinTarget = true;
+  pin._pinMode = mode;
+  pin._pinnedJoint = joint;
+  if (m) mat4.copy(pin.getMatrix(), m);
 };
 
 // Forget every remembered bend, so the next solve re-reads it from the rest pose. Called
@@ -170,10 +250,17 @@ IKSolver.clearBendRefs = function (main) {
   for (const j of Skeleton.joints(main)) j._boneBendRef = null;
 };
 
+// Unpin everything, handing back the pin objects so the caller can take them out of the scene.
 IKSolver.clearPins = function (main) {
   const had = IKSolver.pinnedJoints(main);
-  for (const j of had) { j._boneIKPin = 0; j._boneIKPinAt = null; j._boneIKPinQ = null; }
-  return had.length;
+  const objs = [];
+  for (const j of had) {
+    const p = IKSolver.pinObject(j);
+    if (p) objs.push(p);
+    j._boneIKPinObj = null;
+    j._boneIKPin = 0;
+  }
+  return objs;
 };
 
 // ---- graph ---------------------------------------------------------------------
@@ -1014,6 +1101,26 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
 // it is what the take says the character does — so the legs bend to meet the pins rather than
 // the character sliding to meet them. Letting the root move would have the pin pass quietly
 // rewriting the animation.
+// Has any pin been moved since the last look? Cheap enough to ask every frame — a rig has a
+// handful of pins, and this is the only way a pin dragged with the GIZMO re-solves the rig.
+// Watching the transforms rather than hooking the gizmo means undo, a keyed pin and a script
+// setting the matrix all count as a move, without any of them knowing about the solver.
+IKSolver.pinsMoved = function (main) {
+  let moved = false;
+  for (const j of IKSolver.pinnedJoints(main)) {
+    const p = IKSolver.pinObject(j);
+    if (!p) continue;
+    const m = p.getMatrix();
+    const last = p._pinLastM;
+    if (!last) { p._pinLastM = mat4.clone(m); moved = true; continue; }
+    for (let i = 0; i < 16; i++) {
+      if (Math.abs(last[i] - m[i]) > 1e-9) { moved = true; break; }
+    }
+    if (moved) mat4.copy(p._pinLastM, m);
+  }
+  return moved;
+};
+
 IKSolver.holdPins = function (main) {
   const pins = IKSolver.pinnedJoints(main);
   if (!pins.length) return false;

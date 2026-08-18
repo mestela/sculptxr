@@ -1359,6 +1359,11 @@ class Scene {
     // path as playback without either having to know about this.
     //
     // Guarded like the rest of the loop: a fault here must never take rendering down with it.
+    // A pin dragged with the gizmo has to re-solve the rig, and nothing tells the solver that
+    // happened — so the pins are watched rather than the gizmo hooked. Undo, a keyed pin and a
+    // console poke all count as a move without any of them knowing the solver exists.
+    if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) window._ikPinsDirty = true;
+
     if (window._ikPinsDirty) {
       window._ikPinsDirty = false;
       if (window._ikHoldPins !== false) {
@@ -2227,7 +2232,39 @@ class Scene {
   // for free. isPickable=false makes the sculpt brush skip it (Picking.js:294) while
   // VR ray-select still picks it (Picking.js:229 ignores isPickable). Not a true
   // geometry-less node yet — fine for the rig; can be refined later.
+  // Add or remove a mesh WITHOUT pushing an undo state of its own. For callers that wrap a
+  // whole operation — create the object, link it, set its mode — in one undo step, so a single
+  // button press is a single undo rather than two or three.
+  addMeshSilent(mesh) {
+    if (this.getIndexMesh(mesh) >= 0) return mesh;
+    this._meshes.push(mesh);
+    if (!mesh._permanentStaticLabel) {
+      mesh._permanentStaticLabel = (mesh._typeName || 'Mesh') + ' ' + this._meshes.length;
+    }
+    this.attachMeshThree(mesh);
+    if (this._guiXR && this._guiXR.refreshSceneWidget) this._guiXR.refreshSceneWidget();
+    return mesh;
+  }
+
+  removeMeshSilent(mesh) {
+    const idx = this.getIndexMesh(mesh);
+    if (idx < 0) return;
+    this.removeMirror(mesh.getID());
+    this.detachMeshThree(mesh);
+    this._meshes.splice(idx, 1);
+    if (this._guiXR && this._guiXR.refreshSceneWidget) this._guiXR.refreshSceneWidget();
+  }
+
   addNull() {
+    const mesh = this.buildNull();
+    this.addNewMesh(mesh);
+    this.decorateNull(mesh);
+    return mesh;
+  }
+
+  // The null's geometry and flags, with nothing added to the scene. Split out so a caller that
+  // manages its own undo (the IK pins) can build one and attach it silently.
+  buildNull() {
     // Pick/transform target: a tiny sphere (kept small so it's just a centre dot).
     var mesh = new Multimesh(Primitives.createSphere(this._gl, 0.5, 8, 8));
     mesh.normalizeSize();
@@ -2236,7 +2273,12 @@ class Scene {
     mesh._typeName    = "Null";
     mesh._isNull      = true;   // transform-only locator (rig nodes look for this)
     mesh.isPickable   = false;  // sculpt brush skips it; still VR-ray-selectable
-    this.addNewMesh(mesh);
+    return mesh;
+  }
+
+  // The null's LOOK. Separate because it needs the Three mesh, which only exists once the
+  // locator has been attached to the scene.
+  decorateNull(mesh) {
 
     // Standard null look: a 3D line cruciform (X/Y/Z) parented to the locator's
     // threeMesh, so it rides the transform. cross.scale enlarges it relative to the
