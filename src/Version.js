@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.49 - VR grab reaches bones and pins';
+export const VERSION = 'v3.19.51 - VR grab rotates bones too';

@@ -339,10 +339,17 @@ class Picking {
         if (tRay < 0) continue;                       // behind the controller
         vec3.scaleAndAdd(_TMP_RIG_C, origin, direction, tRay);
         var offRay = vec3.dist(_TMP_RIG_C, _TMP_RIG_P);
-        if (offRay > (window._rigPickConeVR || 0.06) * tRay) continue;
+        // Pins get a WIDER cone than bones, not just a higher rank. A pin sits exactly on its
+        // joint, so ranking alone only decides it when both are inside their cones — and with
+        // equal cones the bone is just as easy to catch at the edge. The wider pin cone is what
+        // makes the controller reach the pin FIRST, which is what "pins take priority" means
+        // when you are pointing a hand at them.
+        var isPin = !!mesh._isPinTarget;
+        var vrCone = isPin ? (window._rigPickConeVRPin || 0.14) : (window._rigPickConeVR || 0.075);
+        if (offRay > vrCone * tRay) continue;
         // Pins outrank bones, by rank rather than distance: a pin sits on its joint, so the
         // two are the same direction and a distance test would be decided by float noise.
-        var rScore = tRay - (mesh._isPinTarget ? 2 : 1) * 1e6;
+        var rScore = tRay - (isPin ? 2 : 1) * 1e6;
         if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = mesh; }
         continue;
       }

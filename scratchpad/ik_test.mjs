@@ -999,5 +999,43 @@ function lengthsPreserved(name, joints, before) {
   IKSolver.setPin(anR, IKSolver.PIN_NONE, main);
 }
 
+// --- 21. a 6DOF grab turns the limb, not just moves it -----------------------------
+// A VR grab carries position AND orientation, and the solver takes the orientation as a
+// CONSTRAINT rather than a decoration — the joint's children are carried by it. Passing
+// position alone is why a grabbed bone slid but never turned while a pin did both.
+{
+  const root = J([0, 0, 0]);
+  const mid = J([0, 1, 0], root);
+  const tip = J([0, 2, 0], mid);
+  const leaf = J([0.4, 2.4, 0], tip); // off-axis, so a twist of `tip` actually moves it
+  const joints = [root, mid, tip, leaf];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  const target = new THREE.Vector3(0.3, 1.9, 0);
+  const twist = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 3);
+
+  // Position only: the leaf goes wherever the chain takes it.
+  IKSolver.solve(main, tip, target.clone());
+  const leafNoTwist = pos(leaf).clone();
+
+  // Same target, now with a driven orientation. The leaf must end up somewhere else, because
+  // it is carried by the joint's rotation rather than merely following its position.
+  IKSolver.solve(main, tip, target.clone(), null, twist);
+  const leafTwisted = pos(leaf).clone();
+
+  check('grab: a driven orientation moves what the joint carries',
+    leafTwisted.distanceTo(leafNoTwist) > 1e-2,
+    'leaf moved only ' + leafTwisted.distanceTo(leafNoTwist).toFixed(5));
+
+  const q = new THREE.Quaternion();
+  modelMat(tip).decompose(new THREE.Vector3(), q, new THREE.Vector3());
+  check('grab: the joint actually reached the driven orientation', q.angleTo(twist) < 1e-3,
+    'off by ' + (q.angleTo(twist) * 180 / Math.PI).toFixed(3) + ' deg');
+  check('grab: and still reached the target', pos(tip).distanceTo(target) < 1e-2,
+    'err ' + pos(tip).distanceTo(target).toFixed(4));
+  lengthsPreserved('grab', joints, L0);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

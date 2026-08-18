@@ -7,6 +7,9 @@ import IKSolver from '../IKSolver.js';
 import Skeleton from '../Skeleton.js';
 
 const _gV = new THREE.Vector3();
+const _grabM = new THREE.Matrix4();
+const _grabQ = new THREE.Quaternion();
+const _grabS = new THREE.Vector3();
 const _grabTarget = [0, 0, 0];
 const _grabTargetV = new THREE.Vector3();
 
@@ -370,6 +373,29 @@ class Grab extends SculptBase {
         }
 
       }
+    } else if (!this._grabbedMesh && !rightTrigger && !leftTrigger) {
+      // HOVER. Everything below is gated on a trigger, so until now nothing in VR picked
+      // anything until you had already committed to grabbing it — which is why there was no
+      // preselection at all. One ray per frame from the dominant controller, highlight only.
+      const hoverC = right || left;
+      if (hoverC && hoverC.matrix) {
+        const o = vec3.create(), d = vec3.create();
+        vec3.transformMat4(o, [0, 0, 0], hoverC.matrix);
+        vec3.transformMat4(d, [0, 0, -1], hoverC.matrix);
+        vec3.sub(d, d, o);
+        vec3.normalize(d, d);
+        const vis = this._main.getMeshes().filter((m) => m.isVisible() && !m._isVoxelChunk);
+        const got = picking.intersectionRayMeshes(vis, o, d, true);
+        const hm = got ? picking.getMesh() : null;
+        const node = hm && (hm._isBone || hm._isPinTarget) ? hm : null;
+        const wasJ = this._main._skelHighlightId ?? -1;
+        const wasP = this._main._pinHighlightId ?? -1;
+        Skeleton.setRigHighlight(this._main, node);
+        if ((this._main._skelHighlightId ?? -1) !== wasJ
+            || (this._main._pinHighlightId ?? -1) !== wasP) {
+          Skeleton.updateVisuals(this._main);
+        }
+      }
     } else if (rightTrigger || leftTrigger) {
       this._isTwoHanded = false;
       const active = rightTrigger ? right : left;
@@ -450,6 +476,9 @@ class Grab extends SculptBase {
           if (mesh._isVoxel) return; // LOCK TRANSFORM
           this._grabbedMesh = mesh;
           this._undoMatrix = mat4.clone(mesh.getMatrix());
+          // Same rule as the desktop grab: taking a BONE is an IK operation, not a transform.
+          this._grabIsJoint = Skeleton.isJoint(mesh);
+          this._grabUndoRig = this._grabIsJoint ? IKSolver.captureAll(this._main) : null;
           this._activeController = active; // First assignment
 
           // Calculate Offset (For Fallback/Init)
@@ -525,6 +554,29 @@ class Grab extends SculptBase {
               if (selGroup && selGroup.length > 0 && selGroup.includes(this._grabbedMesh)) {
                 targets = selGroup;
               }
+            }
+
+            // A GRABBED BONE POSES THE RIG. The controller states where that joint should end
+            // up and the solver rearranges the chain around it and around the pins; applying
+            // the delta to the bone directly would edit the rig's proportions instead.
+            if (this._grabIsJoint) {
+              const jm = this._grabbedMesh.getModelSpaceMatrix
+                ? this._grabbedMesh.getModelSpaceMatrix() : this._grabbedMesh.getMatrix();
+              const nm = mat4.create();
+              mat4.multiply(nm, delta, jm);
+              // POSITION AND ORIENTATION BOTH. The controller carries 6DOF, and the solver
+              // takes a driven orientation as a constraint rather than a decoration — the
+              // joint's children are carried by it, so twisting the hand twists the limb and
+              // the pins re-solve against where it lands. Passing position alone was why a
+              // grabbed bone slid but never turned, while a pin (which receives the whole
+              // delta matrix) did both.
+              _grabM.fromArray(nm);
+              _grabM.decompose(_grabTargetV, _grabQ, _grabS);
+              IKSolver.solve(this._main, this._grabbedMesh, _grabTargetV, null, _grabQ);
+              Skeleton.updateVisuals(this._main);
+              mat4.copy(this._lastControllerMatrix, currentMat);
+              this._main.render();
+              return;
             }
 
             for (let i = 0; i < targets.length; ++i) {

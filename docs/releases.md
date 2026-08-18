@@ -1,3 +1,41 @@
+# v3.19.51
+**Full-body IK becomes a controller, not a mode.** The skeleton is now driven by the solver rather than posed directly: grab a bone with a hand or the mouse and it states where that joint should END UP, with every pin holding and the rest of the rig rearranging around it. Pins became objects in the scene, so they can be selected, dragged with the gizmo, saved and (next) keyed.
+
+- **Pins are scene nulls.** A joint holds a direct reference, the same shape `_boneMirror` uses. The pin's TRANSFORM is the anchor, which makes the old ratcheting bug unrepresentable rather than carefully avoided — there is nothing to re-read. Moving a pin re-solves the rig; the transforms are watched each frame rather than the gizmo hooked, so undo, a keyed pin and a console poke all count. Pins are named after the bone they constrain (`pin_bone_03_R`) and survive saving (SKEL v3).
+- **Bones and pins are selectable and grabbable**, on desktop and in VR. They are picked as points in a CONE rather than by ray-vs-geometry: a joint's pick sphere is a fraction the size of the marker you see, so the old behaviour meant aiming at an invisible object. Pins get a wider cone than bones, because ranking alone only decides ties — with equal cones a bone at the edge is as catchable as the pin sitting on it. A rig node beats a mesh whenever one was asked for, since the skeleton lives inside the sculpt.
+- **A VR grab carries orientation as well as position.** The driven orientation is a constraint, not a decoration: the joint's children are carried by it, so twisting the hand twists the limb and the pins re-solve against where it lands.
+- **The mouse and VR picks are separate functions**, and every rig change had to be made in both. Missing that is why VR selection lagged the desktop by three versions; `rigpick_test` now asserts the same four properties per path.
+- **Known gaps**: a VR grab's undo restores only the grabbed joint, not the posed chain. The VR hover pick runs every frame against every visible mesh and may want throttling on a heavy scene.
+
+# v3.19.48
+**Orthographic is correct, and grab works in it.** `getOrthoZoom` read `_trans[2]` as a distance, but `setPivot` stores it pre-multiplied by `fov/45` — 1.8x at an 81-degree fov, which was the size jump on toggle. The corrected formula reproduces the old hand-tuned `0.00055` at the fov and canvas that constant was calibrated for, which is the proof it was this formula all along, frozen at one viewport.
+
+- Grab's `start()` rebuilt its anchor with a perspective-only formula while `update()` intersects a plane, so the two disagreed and the first mouse move jumped by the difference. The anchor is now the pick's own hit point, and the cursor ray is mapped into MODEL space so the ray, the plane and the delta share one space — replacing the `worldScale` depth fudge.
+- Rig picking in ortho uses a cylinder, not a cone: parallel rays make a depth-scaled radius vanish up close and balloon far away.
+
+# v3.19.38
+**Grabbing a bone drives the solver, with rig preselection.** Undo changed with it — a solved grab moves the whole chain, so the undo is a rig snapshot taken at grab time rather than one matrix. Bones already had a highlight; pins could not ride it, so `Skeleton.setRigHighlight` sets whichever applies and the pin marker grows and warms exactly as a joint does.
+
+- Adds `scratchpad/undef_test.mjs`: eslint `no-undef` over the rig and animation files. A block-scoped `const` used outside its block crashed bone drawing and was invisible to everything else — not a syntax error, not module-scope, and `updateVisuals` has no harness because it needs a live Three scene.
+
+# v3.19.31
+**Rotation is stored as Euler with winding.** Keying a wheel at 3600 degrees now spins it ten times. A quaternion cannot hold more than one turn, so 3600 and 0 were the same orientation and slerp swept nothing. Interpolation is Euler by default and quaternion per track (`track.rotInterp = 'quat'`) — slerp is still better for tumbling motion where Euler will gimbal.
+
+- Every read goes through `rotSync`, which rebuilds the Euler channels from the quaternions when they fall out of step with `times`. Rotation indexed against the wrong times would attach values to the wrong frames, which is far worse than losing winding — so a missed splice site degrades and cannot corrupt.
+- The rebuild had to learn Euler's double cover: every XYZ orientation has two spellings and `setFromQuaternion` always returns the one with |y| <= 90, so a steady 170-degree-per-key spin rebuilt as 0, 10, −20, 30. Both spellings are unwrapped against the previous key and the nearer wins. This matters beyond the fallback — every existing saved animation goes through it.
+
+# v3.19.30
+**The curve editor gained rotation and scale.** A `T | R | S` segmented switch in the gutter; the three channel rows mean X/Y/Z of whichever is chosen, so hit-tests, tangents and selection are untouched. The vertical view is remembered PER GROUP and framed to a group's own keys on first visit — degrees and scene units are not the same kind of number, and carrying one group's zoom into another shows an empty graph that reads as a bug.
+
+- The accessors moved to `src/editing/xfChannel.js` because the edit path spans three files. Dragging a rotation key vertically lands in `AnimationRegistry.moveSelectedKeysValue`, which wrote `positions` unconditionally — so it translated the object instead. A source guard now asserts no channel-indexed transform access outside the accessors, across all three files.
+
+# v3.19.24
+**IK pins hold through keyframe playback**, and pinned bones are colour-coded. Playback slerps stored local rotations and does not re-run the solver, so pin satisfaction does not survive interpolation — the foot cuts the chord instead of following the arc, exact at the keys and worst between them. `IKSolver.holdPins` re-solves once per frame after playback writes the pose, with the ROOT always held: the root's motion is what the take says the character does.
+
+- Maya documents the same behaviour and the same answer — pinning "only affects your FBIK effectors during interaction, not during playback".
+- A pinned bone is tinted by the pin at its ROOT (pin the ankle, the foot lights up), with a dashed leader drawn to any anchor the solve cannot reach, so a shortfall is visible as a gap rather than hidden.
+- Also: a **Joints** display toggle for the markers and pins, and the pin marker moved to the anchor — it was drawn at the joint, which made a pin the solve was falling short of look like a pin being dragged along.
+
 # v3.19.22
 **Joint rotations no longer carry the history of how you got there.** A thigh wound up by tens of degrees every time the hips travelled a closed path, which is the candy-wrapper collapse at the top of the leg — and the same cause behind limbs spinning between keyframes and the solve depending on which way you scrubbed. One defect wearing three hats.
 

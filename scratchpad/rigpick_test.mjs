@@ -101,8 +101,12 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 {
   const vr = SRC.slice(SRC.indexOf('intersectionRayMeshes(meshes, origin, direction'));
   check('VR: rig picking is opt-in', /includeRig = false\)/.test(vr));
-  check('VR: rig nodes use the cone, not geometry', /_rigPickConeVR \|\| 0\.06/.test(vr));
-  check('VR: pins outrank bones', /mesh\._isPinTarget \? 2 : 1/.test(vr));
+  check('VR: rig nodes use the cone, not geometry', /_rigPickConeVR \|\| 0\.075/.test(vr));
+  // Pins need a WIDER cone, not just a higher rank: with equal cones a bone at the edge is as
+  // easy to catch as the pin sitting on it, and ranking only decides ties.
+  check('VR: the pin cone is wider than the bone cone',
+    /_rigPickConeVRPin \|\| 0\.14/.test(vr) && 0.14 > 0.075);
+  check('VR: pins outrank bones', /isPin \? 2 : 1/.test(vr));
   check('VR: a lone rig hit is adopted without a mesh hit',
     /if \(nearRig\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
     'the same guard that broke the desktop path');
