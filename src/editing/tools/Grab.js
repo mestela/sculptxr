@@ -1,7 +1,13 @@
+import * as THREE from 'three';
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import Utils from '../../misc/Utils.js';
 import AnimationRegistry from '../AnimationRegistry.js';
+import IKSolver from '../IKSolver.js';
+import Skeleton from '../Skeleton.js';
+
+const _grabTarget = [0, 0, 0];
+const _grabTargetV = new THREE.Vector3();
 
 class Grab extends SculptBase {
 
@@ -55,6 +61,12 @@ class Grab extends SculptBase {
 
     this._grabbedMesh = mesh;
     this._undoMatrix  = mat4.clone(mesh.getMatrix());
+    // GRABBING A BONE IS AN IK OPERATION, not a transform. The skeleton is driven by the
+    // solver, so dragging a joint states where that joint should END UP and the rest of the
+    // rig rearranges around it and around the pins — dragging the bone itself would edit the
+    // rig's proportions, which is Tweak's job and emphatically not what a grab means.
+    this._grabIsJoint = Skeleton.isJoint(mesh);
+    this._grabUndoRig = this._grabIsJoint ? IKSolver.captureAll(main) : null;
 
     // "Start on click" recording: armed-and-waiting → begin the take now that a desktop
     // grab has started (mirror of the VR grab hook in updateXR).
@@ -128,6 +140,18 @@ class Grab extends SculptBase {
     var delta    = vec3.sub(vec3.create(), curWorld, this._grabInitWorld);
 
 
+    if (this._grabIsJoint) {
+      // The dragged joint is the effector; every pin holds. The solve writes the whole chain,
+      // so nothing is set on the joint directly.
+      _grabTarget[0] = this._grabInitT[0] + delta[0];
+      _grabTarget[1] = this._grabInitT[1] + delta[1];
+      _grabTarget[2] = this._grabInitT[2] + delta[2];
+      IKSolver.solve(main, this._grabbedMesh, _grabTargetV.fromArray(_grabTarget));
+      Skeleton.updateVisuals(main);
+      main.render();
+      return;
+    }
+
     var m = this._grabbedMesh.getMatrix();
     m[12] = this._grabInitT[0] + delta[0];
     m[13] = this._grabInitT[1] + delta[1];
@@ -138,6 +162,24 @@ class Grab extends SculptBase {
   }
 
   end() {
+    // A solved grab moved the WHOLE chain, so one matrix is not the undo — the snapshot taken
+    // at grab time is.
+    if (this._grabbedMesh && this._grabIsJoint && this._grabUndoRig) {
+      const main = this._main;
+      const before = this._grabUndoRig;
+      const after = IKSolver.captureAll(main);
+      const put = (snap) => {
+        for (const [j, m] of snap) { mat4.copy(j.getMatrix(), m); Skeleton.syncThree(j); }
+        Skeleton.updateVisuals(main); main.render();
+      };
+      main.getStateManager().pushStateCustom(() => put(before), () => put(after), false, 'Pose');
+      this._grabbedMesh = null;
+      this._grabIsJoint = false;
+      this._grabUndoRig = null;
+      this._undoMatrix = null;
+      this._isTwoHanded = false;
+      return;
+    }
     if (this._grabbedMesh && this._undoMatrix) {
       const mesh = this._grabbedMesh;
       const oldMat = mat4.clone(this._undoMatrix);
@@ -153,12 +195,34 @@ class Grab extends SculptBase {
       });
     }
     this._grabbedMesh = null;
+    this._grabIsJoint = false;
+    this._grabUndoRig = null;
     this._isTwoHanded = false;
     this._undoMatrix = null;
   }
 
   preUpdate(canBeContinuous) {
     super.preUpdate(canBeContinuous); // updates hover cache + cursor picking for desktop/iPad
+
+    // PRESELECTION for the rig. Grab reaches bones and pins, so it has to say which one the
+    // next press will take — they sit inside the sculpt and are small on screen, and without
+    // the highlight you are aiming at something you cannot confirm you have. Skipped while a
+    // grab is in flight: the answer is already settled, and re-picking every frame of a drag
+    // would flicker the highlight onto whatever the cursor passes over.
+    const m = this._main;
+    if (!this._grabbedMesh && m && m.getPicking) {
+      const pk = m.getPicking();
+      const hit = pk && pk.intersectionMouseMeshes(m.getMeshes(), m._mouseX, m._mouseY, false, true)
+        ? pk.getMesh() : null;
+      const node = hit && (hit._isBone || hit._isPinTarget) ? hit : null;
+      const wasJ = m._skelHighlightId ?? -1;
+      const wasP = m._pinHighlightId ?? -1;
+      Skeleton.setRigHighlight(m, node);
+      if ((m._skelHighlightId ?? -1) !== wasJ || (m._pinHighlightId ?? -1) !== wasP) {
+        Skeleton.updateVisuals(m);
+        m.render();
+      }
+    }
 
     const main = this._main;
     const picking = main.getPicking();

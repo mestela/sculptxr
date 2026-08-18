@@ -24,6 +24,7 @@ const MODULES = [
   'src/gui/GuiTimeline.js',
   'src/gui/TimelineHelper.js',
   'src/editing/xfChannel.js',
+  'src/editing/tools/Grab.js',
 ];
 
 // Browser globals the bundled leaves touch at module scope. Deliberately minimal: the point

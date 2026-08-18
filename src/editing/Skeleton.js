@@ -497,6 +497,15 @@ Skeleton.setHighlight = function (main, joint) {
   main._skelHighlightId = joint ? joint.getID() : -1;
 };
 
+// Preselection for the rig, whatever kind of node is under the cursor. A pin is not a joint,
+// so it cannot ride _skelHighlightId — but it needs the same "the next press acts on THIS"
+// feedback, or reaching for a pin is guesswork.
+Skeleton.setRigHighlight = function (main, node) {
+  const isPin = !!(node && node._isPinTarget);
+  main._skelHighlightId = node && !isPin ? node.getID() : -1;
+  main._pinHighlightId = isPin ? node.getID() : -1;
+};
+
 // Model-space (worldGroup-relative) position of a joint.
 Skeleton.jointPos = function (joint, out) {
   const ms = joint.getModelSpaceMatrix();
@@ -779,8 +788,10 @@ Skeleton.updateVisuals = function (main) {
     // The IK pin marker: triad for a position pin, triad + gimbal rings for a 6DOF one. Read
     // straight off the joint rather than through IKSolver, so the visuals stay independent of
     // the solver (and there is no import cycle).
-    const pinMode = (j._boneIKPinObj && j._boneIKPinObj._isPinTarget)
-      ? ((j._boneIKPinObj._pinMode | 0) & 3) : 0;
+    // Declared out here, not inside the `if (pinMode)` below: the preselection highlight
+    // further down needs it whether or not this joint is pinned.
+    const pinObj = j._boneIKPinObj;
+    const pinMode = (pinObj && pinObj._isPinTarget) ? ((pinObj._pinMode | 0) & 3) : 0;
     if (pinMode) {
       // THE MARKER BELONGS AT THE ANCHOR, NOT AT THE JOINT.
       //
@@ -794,7 +805,6 @@ Skeleton.updateVisuals = function (main) {
       // independent of the solver and there is no import cycle. A rig loaded from a save file
       // has no anchor yet — the saved pose IS the pinned pose, so the joint is the right
       // reading until the solver takes its own.
-      const pinObj = j._boneIKPinObj;
       if (pinObj && pinObj.getModelSpaceMatrix) {
         const pm = pinObj.getModelSpaceMatrix();
         _vPin.set(pm[12], pm[13], pm[14]);
@@ -812,9 +822,12 @@ Skeleton.updateVisuals = function (main) {
         _mTmp.decompose(_vTmp, _qPin, _sTmp);
       }
     }
+    // The pin marker grows and warms the same way a joint does under the cursor: same signal,
+    // same meaning, so the two read as one preselection rather than two conventions.
+    const pinHot = pinObj && pinObj.getID() === (main._pinHighlightId ?? -1);
     const pinParts = [
-      [e.pinT, showJoints && pinMode > 0, jr * 2.2],
-      [e.pinG, showJoints && pinMode > 1, jr * 2.2],
+      [e.pinT, showJoints && pinMode > 0, jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinG, showJoints && pinMode > 1, jr * (pinHot ? 3.0 : 2.2)],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
@@ -838,6 +851,10 @@ Skeleton.updateVisuals = function (main) {
       for (const o of [part.solid, part.ghost]) {
         o.visible = on;
         if (!on) continue;
+        if (o.material && o.material.color) {
+          o.material.color.setHex(pinHot ? HILITE_COLOR
+            : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR));
+        }
         o.position.copy(_vPin);
         o.quaternion.copy(_qPin);
         o.scale.setScalar(size); // sits outside the marker, including its highlight size
