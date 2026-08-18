@@ -254,20 +254,9 @@ class Grab extends SculptBase {
     // the highlight you are aiming at something you cannot confirm you have. Skipped while a
     // grab is in flight: the answer is already settled, and re-picking every frame of a drag
     // would flicker the highlight onto whatever the cursor passes over.
-    const m = this._main;
-    if (!this._grabbedMesh && m && m.getPicking) {
-      const pk = m.getPicking();
-      const hit = pk && pk.intersectionMouseMeshes(m.getMeshes(), m._mouseX, m._mouseY, false, true)
-        ? pk.getMesh() : null;
-      const node = hit && (hit._isBone || hit._isPinTarget) ? hit : null;
-      const wasJ = m._skelHighlightId ?? -1;
-      const wasP = m._pinHighlightId ?? -1;
-      Skeleton.setRigHighlight(m, node);
-      if ((m._skelHighlightId ?? -1) !== wasJ || (m._pinHighlightId ?? -1) !== wasP) {
-        Skeleton.updateVisuals(m);
-        m.render();
-      }
-    }
+    // Shared with the Transform tool: Skeleton.hoverRigFromMouse. Two tools needing the same
+    // preselection is exactly how the mouse and VR picks drifted apart earlier.
+    if (!this._grabbedMesh) Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.());
 
     const main = this._main;
     const picking = main.getPicking();
@@ -380,55 +369,11 @@ class Grab extends SculptBase {
       // HOVER. Everything below is gated on a trigger, so until now nothing in VR picked
       // anything until you had already committed to grabbing it — which is why there was no
       // preselection at all. One ray per frame from the dominant controller, highlight only.
-      // THROTTLED, and that is not a nicety. A full ray pick against every mesh plus a skeleton
-      // visual rebuild, ninety times a second, costs more frame than it is worth — and the
-      // symptom was not slowness but the grab failing outright, with anything that changed the
-      // frame timing (the trace, or merely attaching the remote console) appearing to "fix" it.
-      // Preselection does not need 90Hz; a hand does not move that fast, and the highlight is
-      // sticky between checks.
-      const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      const due = !this._lastHoverMs || (nowMs - this._lastHoverMs) >= (window._grabHoverMs || 66);
-      if (window._grabTrace) {
-        console.log('[grabXR] HOVER branch, controller=' + !!(right || left) + ' due=' + due);
-      }
-      const hoverC = right || left;
-      if (due && (hoverC || (origin && dir))) {
-        this._lastHoverMs = nowMs;
-        // THE RAY SCENE ALREADY HANDED US. `origin`/`dir` arrive in ENGINE space, which is what
-        // the pick works in; deriving one from the controller matrix instead puts it in the raw
-        // WebXR frame, and the pick then misses everything in the scene on every frame — which
-        // is exactly what the trace showed (hit=false, 12 meshes, forever). The trigger branch
-        // below only falls back to the matrix when Scene does NOT supply a ray, and this must
-        // do the same rather than always taking the fallback.
-        let o = origin, d = dir;
-        if (!o || !d) {
-          o = vec3.create(); d = vec3.create();
-          vec3.transformMat4(o, [0, 0, 0], hoverC.matrix);
-          vec3.transformMat4(d, [0, 0, -1], hoverC.matrix);
-          vec3.sub(d, d, o);
-          vec3.normalize(d, d);
-        }
-        const vis = this._main.getMeshes().filter((m) => m.isVisible() && !m._isVoxelChunk);
-        const got = picking.intersectionRayMeshes(vis, o, d, true);
-        const hm = got ? picking.getMesh() : null;
-        if (window._grabTrace) {
-          console.log('[grabXR] hover pick: ray=' + (origin && dir ? 'scene' : 'derived') +
-            ' meshes=' + vis.length + ' hit=' + !!got +
-            ' name=' + (hm ? (hm._permanentStaticLabel || hm.getID()) : 'none') +
-            ' rig=' + !!(hm && (hm._isBone || hm._isPinTarget)));
-        }
-        const node = hm && (hm._isBone || hm._isPinTarget) ? hm : null;
-        const wasJ = this._main._skelHighlightId ?? -1;
-        const wasP = this._main._pinHighlightId ?? -1;
-        Skeleton.setRigHighlight(this._main, node);
-        if ((this._main._skelHighlightId ?? -1) !== wasJ
-            || (this._main._pinHighlightId ?? -1) !== wasP) {
-          Skeleton.updateVisuals(this._main);
-          // The hover's work has to reach the screen. render() only raises the redraw flag, so
-          // this is one boolean — but tying it to an actual CHANGE keeps the idle case free.
-          this._main.render();
-        }
-      }
+      // Shared with the desktop path and with Transform. The ray is the ENGINE-space one Scene
+      // hands us; deriving one from the controller matrix picks in the raw WebXR frame and
+      // misses every mesh. Throttling lives in the helper.
+      if (window._grabTrace) console.log('[grabXR] HOVER branch, controller=' + !!(right || left));
+      Skeleton.hoverRigFromRay(this._main, picking, origin, dir);
     } else if (rightTrigger || leftTrigger) {
       this._isTwoHanded = false;
       const active = rightTrigger ? right : left;

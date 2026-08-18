@@ -1046,7 +1046,10 @@ class BoneDrawTool extends SculptBase {
   _releaseRadius() {
     const r = this._radius;
     this._radius = null;
-    if (!r) return;
+    // `before` is missing when the radius drag never actually captured one — which happens when
+    // the tool is switched away mid-drag, since setToolIndex calls clearPreview and that lands
+    // here. Without this the map below throws and takes the tool switch with it.
+    if (!r || !r.before) return;
     this._liveWeights(true); // land on the final radius, not on the last throttled tick
     this._selectLater(r.joint);
     const main = this._main;

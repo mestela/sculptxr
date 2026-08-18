@@ -1364,6 +1364,28 @@ class Scene {
     // console poke all count as a move without any of them knowing the solver exists.
     if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) window._ikPinsDirty = true;
 
+    // THE SAME TRICK FOR BONES, which is what makes the transform gizmo a posing tool. The
+    // gizmo writes a joint's matrix directly; watching for that and re-solving to wherever it
+    // was put means the chain and the pins rearrange around it, instead of the drag quietly
+    // editing the rig's proportions. Watched rather than hooked, so the gizmo, an undo and a
+    // console poke all behave identically and none of them needs to know the solver exists.
+    // The solver refreshes this cache after every solve, so its own writes cannot feed back.
+    if (window._ikGizmoPose === true && !window._animPlaying) {
+      const movedJoint = IKSolver.externallyMovedJoint(this);
+      if (movedJoint && window._ikTrace) {
+        console.log('[ikPose] external move on ' +
+          (movedJoint._permanentStaticLabel || movedJoint.getID()) + ' -> re-solving');
+      }
+      if (movedJoint) {
+        try {
+          IKSolver.resolveToJoint(this, movedJoint);
+          Skeleton.updateVisuals(this);
+        } catch (e) {
+          console.error('IK gizmo pose failed:', e);
+        }
+      }
+    }
+
     if (window._ikPinsDirty) {
       window._ikPinsDirty = false;
       if (window._ikHoldPins !== false) {

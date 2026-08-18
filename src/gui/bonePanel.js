@@ -224,8 +224,17 @@ export function wireBoneSection(root, main, opts) {
     const joints = Skeleton.joints(main);
     if (!reg || !joints.length) { say('Bones: no rig to key', false); return; }
     const t = window._animCurrentTime || 0;
-    const n = reg.keyTransforms(joints, t, 'Key Pose');
-    say(`Bones: keyed ${n} joints at ${t.toFixed(1)}`);
+    // PINS ARE KEYED WITH THE POSE. A pin is an ordinary object with an ordinary transform, so
+    // keying it needs no new key type and inherits every editor operation — drag to retime,
+    // marquee, the transform box, copy and paste — because all of those are written against
+    // `type === 'transform'` generically. It is also what makes a foot that plants at frame 10
+    // and releases at 40 expressible at all: without keys, holdPins can only treat a pin as
+    // constant for the whole timeline.
+    const pins = IKSolver.pinnedJoints(main)
+      .map((j) => IKSolver.pinObject(j))
+      .filter(Boolean);
+    const n = reg.keyTransforms(joints.concat(pins), t, 'Key Pose');
+    say(`Bones: keyed ${n} joints at ${t.toFixed(1)}` + (pins.length ? ` (+${pins.length} pins)` : ''));
     main.render?.();
   });
 

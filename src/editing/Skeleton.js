@@ -526,6 +526,85 @@ Skeleton.makePin = function (main, joint) {
   return pin;
 };
 
+// ---- rig preselection -------------------------------------------------------------
+//
+// SHARED BY EVERY TOOL THAT CAN TAKE A RIG NODE. Grab and Transform both need "the marker under
+// the cursor grows and warms", and this session has twice been bitten by the same logic living
+// in two places and drifting — the mouse and VR picks, and the graph editor's channel
+// accessors. One implementation, two entry points for the two kinds of ray.
+//
+// Throttled: a full pick plus a visual rebuild at 90Hz costs more frame than preselection is
+// worth, and the cost showed up not as slowness but as VR grab failing outright. A hand does
+// not move fast enough to need more, and the highlight is sticky between checks.
+function applyRigHover(main, node) {
+  if (window._grabTrace) {
+    console.log('[rigHover] node=' + (node ? (node._permanentStaticLabel || node.getID()) : 'none')
+      + ' kind=' + (node ? (node._isPinTarget ? 'pin' : 'bone') : '-'));
+  }
+  const wasJ = main._skelHighlightId ?? -1;
+  const wasP = main._pinHighlightId ?? -1;
+  Skeleton.setRigHighlight(main, node);
+  if ((main._skelHighlightId ?? -1) !== wasJ || (main._pinHighlightId ?? -1) !== wasP) {
+    Skeleton.updateVisuals(main);
+    main.render?.();   // only raises the redraw flag; without it the hover never reaches screen
+  }
+}
+
+function hoverDue(main) {
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (main._rigHoverAt && (now - main._rigHoverAt) < (window._grabHoverMs || 66)) return false;
+  main._rigHoverAt = now;
+  return true;
+}
+
+const isRigNode = (m) => !!(m && (m._isBone || m._isPinTarget));
+
+// A HOVER MUST LEAVE THE PICK EXACTLY AS IT FOUND IT.
+//
+// The picking object is shared state: a pick writes `_mesh`, `_interPoint` and `_pickedFace`,
+// and the tools read those to decide what was clicked. Running a preselection pick every frame
+// therefore clobbers whatever the tool had — which locked the Transform gizmo up completely,
+// since the gizmo consults exactly those fields to work out which handle you took. Snapshot
+// and restore, so preselection is a read and nothing else.
+function pickPreserving(picking, fn) {
+  const mesh = picking._mesh;
+  const inter = picking._interPoint ? picking._interPoint.slice() : null;
+  const face = picking._pickedFace;
+  let hit = null;
+  try { hit = fn(); } finally {
+    picking._mesh = mesh;
+    if (inter && picking._interPoint) {
+      picking._interPoint[0] = inter[0];
+      picking._interPoint[1] = inter[1];
+      picking._interPoint[2] = inter[2];
+    }
+    picking._pickedFace = face;
+  }
+  return hit;
+}
+
+// Desktop / iPad: pick from the cursor.
+Skeleton.hoverRigFromMouse = function (main, picking) {
+  if (window._grabTrace && (!main || !picking)) {
+    console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
+  }
+  if (!main || !picking || !hoverDue(main)) return;
+  const hit = pickPreserving(picking, () =>
+    picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY, false, true)
+      ? picking.getMesh() : null);
+  applyRigHover(main, isRigNode(hit) ? hit : null);
+};
+
+// VR: pick from the controller ray Scene supplies. NOT derived from the controller matrix —
+// that is the raw WebXR frame, and picking against it misses every mesh in the scene.
+Skeleton.hoverRigFromRay = function (main, picking, origin, dir) {
+  if (!main || !picking || !origin || !dir || !hoverDue(main)) return;
+  const vis = main.getMeshes().filter((m) => m.isVisible() && !m._isVoxelChunk);
+  const hit = pickPreserving(picking, () =>
+    picking.intersectionRayMeshes(vis, origin, dir, true) ? picking.getMesh() : null);
+  applyRigHover(main, isRigNode(hit) ? hit : null);
+};
+
 Skeleton.setHighlight = function (main, joint) {
   main._skelHighlightId = joint ? joint.getID() : -1;
 };

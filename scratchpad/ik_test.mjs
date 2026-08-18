@@ -1037,5 +1037,73 @@ function lengthsPreserved(name, joints, before) {
   lengthsPreserved('grab', joints, L0);
 }
 
+// --- 22. a joint moved behind the solver's back re-solves the rig --------------------
+// This is what makes the transform GIZMO a posing tool. The gizmo writes a joint's matrix
+// directly, so the rig has to notice and rearrange around it — and, critically, the solver's
+// OWN writes must not read back as an external move, or every frame would re-solve to the pose
+// it just produced.
+{
+  const hips = J([0, 2, 0]);
+  const knee = J([0.1, 1, 0], hips);
+  const ankle = J([0, 0.2, 0], knee);
+  const joints = [hips, knee, ankle];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  // The watcher is opt-in (window._ikGizmoPose), so the test has to arm it.
+  window._ikGizmoPose = true;
+  IKSolver.syncJointCache(main);
+  check('gizmo: a settled rig reports no external move',
+    IKSolver.externallyMovedJoint(main) === null);
+
+  // Something else writes the joint — exactly what the gizmo does.
+  // A gizmo drag writes the joint's LOCAL matrix, which lengthens the bone — the solver has to
+  // put that back and treat the position as a request, or the rig stretches a little on every
+  // drag.
+  ankle._m.elements[12] += 0.3;
+  const moved = IKSolver.externallyMovedJoint(main);
+  check('gizmo: a directly-written joint is noticed', moved === ankle,
+    moved ? 'reported ' + moved.getID() : 'reported nothing');
+
+  IKSolver.resolveToJoint(main, ankle);
+  check('gizmo: and the rig re-solves rather than the bone stretching', true);
+  lengthsPreserved('gizmo', joints, L0);
+
+  // THE FEEDBACK GUARD. After a solve there must be nothing left to report, or the render loop
+  // would re-solve to its own output every frame for ever.
+  check('gizmo: the solver\'s own writes do not read back as an external move',
+    IKSolver.externallyMovedJoint(main) === null,
+    'the cache is not refreshed after a solve');
+
+  // One at a time: a gizmo drags one thing, and re-solving to several contradictory effectors
+  // is not a pose.
+  hips._m.elements[13] += 0.2;
+  knee._m.elements[13] += 0.2;
+  const one = IKSolver.externallyMovedJoint(main);
+  check('gizmo: only one moved joint is reported', !!one);
+  IKSolver.syncJointCache(main);
+  check('gizmo: syncing clears the report', IKSolver.externallyMovedJoint(main) === null);
+  check('gizmo: the watcher is OFF unless armed', (() => {
+    window._ikGizmoPose = false;
+    ankle._m.elements[12] += 0.5;
+    const r = IKSolver.externallyMovedJoint(main);
+    window._ikGizmoPose = true;
+    IKSolver.syncJointCache(main);
+    return r === null;
+  })());
+
+  // THE THRESHOLD IS NOT AN EPSILON. Matrices are Float32Array, so near values of 1 to 2 the
+  // spacing between representable floats is about 1.2e-7 — a "tighter is safer" threshold below
+  // that reports a move on every single comparison and the rig re-solves every frame for ever.
+  // This is exactly what the first version did, at 1e-9.
+  IKSolver.syncJointCache(main);
+  ankle._m.elements[12] += 1e-7;   // float32 noise, not a drag
+  check('gizmo: float32 noise is not a move', IKSolver.externallyMovedJoint(main) === null,
+    'the threshold is back below float32 spacing');
+  ankle._m.elements[12] += 0.01;   // a real, if small, drag
+  check('gizmo: a small real move still counts',
+    IKSolver.externallyMovedJoint(main) === ankle);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

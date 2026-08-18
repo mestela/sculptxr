@@ -62,6 +62,14 @@ const _qPInv = new THREE.Quaternion(), _qLocal = new THREE.Quaternion();
 const _qNow = new THREE.Quaternion();
 const _mTmp = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _sOne = new THREE.Vector3(1, 1, 1);
+
+// How different two matrices must be to count as "something moved it".
+//
+// NOT an epsilon: matrices are Float32Array, and near values of 1 to 2 the spacing between
+// representable float32s is about 1.2e-7 — so a threshold below that reports a move on every
+// comparison, whether or not anything moved. A drag moves things by orders of magnitude more
+// than this, so the bar is set well clear of the noise rather than as tight as possible.
+const MOVE_EPS = 1e-5;
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
 const IKSolver = {};
@@ -1051,6 +1059,9 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
 
   runSolve(nodes, targets, root, rootFixed, Skeleton.sceneUnit(main) * TOL_FRAC);
   const touched = applyRotations(main, nodes, root, rootFixed);
+  // The solver's OWN writes must not read back as someone having moved a joint, or the next
+  // frame would re-solve to the pose it just produced, for ever.
+  IKSolver.syncJointCache(main);
   return touched.length > 0 || !rootFixed;
 };
 
@@ -1087,11 +1098,66 @@ IKSolver.pinsMoved = function (main) {
     const last = p._pinLastM;
     if (!last) { p._pinLastM = mat4.clone(m); moved = true; continue; }
     for (let i = 0; i < 16; i++) {
-      if (Math.abs(last[i] - m[i]) > 1e-9) { moved = true; break; }
+      if (Math.abs(last[i] - m[i]) > MOVE_EPS) { moved = true; break; }
     }
     if (moved) mat4.copy(p._pinLastM, m);
   }
   return moved;
+};
+
+// Remember every joint's matrix as the solver last left it. Anything that differs afterwards
+// was written by something ELSE — the gizmo, a script, an undo — which is the signal that a
+// joint has been dragged and the rig should re-solve around it.
+IKSolver.syncJointCache = function (main) {
+  for (const j of Skeleton.joints(main)) j._ikLastM = mat4.clone(j.getMatrix());
+};
+
+// The joint someone moved behind the solver's back, or null. Only ONE is reported: a gizmo
+// drags one thing, and re-solving to several contradictory effectors at once is not a pose.
+IKSolver.externallyMovedJoint = function (main) {
+  // Off by default while this is under suspicion: it runs every frame in the render loop for
+  // EVERY tool, not just the gizmo, and restoring a joint's matrix before re-solving is exactly
+  // the kind of thing that fights anything else writing joints. `window._ikGizmoPose = true`
+  // turns gizmo-posing back on.
+  if (window._ikGizmoPose !== true) return null;
+  let found = null;
+  for (const j of Skeleton.joints(main)) {
+    const m = j.getMatrix();
+    if (!j._ikLastM) { j._ikLastM = mat4.clone(m); continue; }
+    if (found) continue;                       // still refresh the rest, but report the first
+    const last = j._ikLastM;
+    for (let i = 0; i < 16; i++) {
+      if (Math.abs(last[i] - m[i]) > MOVE_EPS) { found = j; break; }
+    }
+  }
+  return found;
+};
+
+// Drag a joint to wherever it currently SITS — the entry point for anything that has already
+// moved a joint directly, the transform gizmo above all. The joint is the effector and its
+// present transform is the request; the solver then rearranges the chain and the pins around
+// it, which is what makes the gizmo a posing tool rather than a way to edit bone lengths.
+IKSolver.resolveToJoint = function (main, joint) {
+  if (!joint) return false;
+  // Read where it was PUT...
+  _mTmp.fromArray(joint.getModelSpaceMatrix());
+  _mTmp.decompose(_vTmp, _qNow, _sTmp);
+  const target = _vTmp.clone(), orient = _qNow.clone();
+
+  // ...then PUT IT BACK before solving. A joint's local translation IS its bone length, so a
+  // gizmo drag has already lengthened the bone by the time we see it; solving from that state
+  // would adopt the new length as the truth and the rig would stretch a little more with every
+  // drag. Restoring first makes the gizmo's position a REQUEST — the solver reaches it by
+  // rotating the chain, with every bone length exactly as it was, which is the whole difference
+  // between posing and editing the rig's proportions.
+  if (joint._ikLastM) {
+    mat4.copy(joint.getMatrix(), joint._ikLastM);
+    Skeleton.syncThree(joint);
+  }
+
+  const ok = IKSolver.solve(main, joint, target, null, orient);
+  IKSolver.syncJointCache(main);
+  return ok;
 };
 
 IKSolver.holdPins = function (main) {
