@@ -1,6 +1,16 @@
+import * as THREE from 'three';
 import { vec3, mat4, quat } from 'gl-matrix';
 import SculptBase from './SculptBase.js';
 import GizmoVR, { GIZMO_TYPE } from '../GizmoVR.js';
+import Skeleton from '../Skeleton.js';
+import IKSolver from '../IKSolver.js';
+
+// Scratch for the joint solve. Reused rather than allocated: this runs on every frame of a
+// drag at 90Hz.
+const _poseM = new THREE.Matrix4();
+const _poseT = new THREE.Vector3();
+const _poseQ = new THREE.Quaternion();
+const _poseS = new THREE.Vector3();
 
 class TransformVR extends SculptBase {
 
@@ -25,6 +35,9 @@ class TransformVR extends SculptBase {
     this._lastHoverHand = null;
     this._dragMesh = null; // MESH LOCKING: Specific mesh being dragged
     this._isGizmoHovered = false;
+    this._pickConsumed = false; // one selection pick per trigger press, not one per frame
+    this._dragIsJoint = false;  // the dragged node is a BONE: the gizmo poses, it does not move
+    this._dragUndoRig = null;   // whole-skeleton snapshot, because a solve writes the chain
   }
 
   start(ctrl) {
@@ -55,6 +68,30 @@ class TransformVR extends SculptBase {
   }
 
   end() {
+    // A POSED BONE MOVED THE WHOLE CHAIN, so one matrix is not the undo. Checked before the
+    // mesh path and gated on the snapshot ALONE, not on _dragMesh: the grace-period recovery
+    // clears _dragMesh when the trigger signal is lost, and a pose that cannot be undone is
+    // worse than one that ends untidily.
+    if (this._dragUndoRig) {
+      const main = this._main;
+      const before = this._dragUndoRig;
+      const after = IKSolver.captureAll(main);
+      const put = (snap) => {
+        for (const [j, m] of snap) { mat4.copy(j.getMatrix(), m); Skeleton.syncThree(j); }
+        Skeleton.updateVisuals(main); main.render();
+      };
+      main.getStateManager().pushStateCustom(() => put(before), () => put(after), false, 'Pose');
+
+      this._initInput = false;
+      this._dragUndoRig = null;
+      this._dragIsJoint = false;
+      this._undoMatrix = null;
+      this._undoCenter = null;
+      this._dragMesh = null;
+      super.end();
+      return;
+    }
+
     if (this._initInput && this._dragMesh && this._undoMatrix) {
       const mesh = this._dragMesh;
       const oldMat = mat4.clone(this._undoMatrix);
@@ -80,6 +117,7 @@ class TransformVR extends SculptBase {
     this._undoMatrix = null;
     this._undoCenter = null;
     this._dragMesh = null;
+    this._dragIsJoint = false;
     super.end();
   }
 
@@ -137,6 +175,15 @@ class TransformVR extends SculptBase {
             }
           }
         }
+
+        // 1b. RIG PRESELECTION. Only when the ray is not already on a gizmo handle — while a
+        //     handle is under the ray it owns the ray. hoverRigFromRay is the same helper Grab
+        //     uses; it throttles itself and snapshots/restores the pick, which matters here
+        //     because the gizmo reads picking._mesh/_interPoint/_pickedFace to decide which
+        //     handle you took. origin/dir are the ENGINE-space ray Scene hands us.
+        if (!this._isGizmoHovered && !isPressed && origin && dir) {
+          Skeleton.hoverRigFromRay(main, picking, origin, dir);
+        }
       }
     }
 
@@ -144,6 +191,7 @@ class TransformVR extends SculptBase {
 
     // 2. Trigger Sensitivity Protection (Grace Period)
     if (!isPressed) {
+      this._pickConsumed = false; // trigger released: the next press may pick again
       if (this._vrActiveHand && currentHand === this._vrActiveHand) {
         this._graceFrames = (this._graceFrames || 0) + 1;
         if (this._graceFrames % 2 === 0) {
@@ -173,6 +221,20 @@ class TransformVR extends SculptBase {
 
     // START OF GESTURE
     if (!this._initInput) {
+      // RIG-AWARE PICK. Same rule as Transform.start on desktop: the gizmo is a SELECTION tool
+      // before it is a transform tool, so a press that is not on a handle re-selects whatever
+      // the ray is on — which is how a bone or a pin gets reached in VR at all. A press that
+      // hits nothing falls through to the old behaviour and drags the current selection.
+      if (!this._isGizmoHovered && !this._pickConsumed && origin && dir) {
+        this._pickConsumed = true;
+        const picked = this._pickRigOrMesh(picking, origin, dir);
+        if (picked) {
+          main.setOrUnsetMesh(picked, false);
+          main.render();
+          return; // a selection press, not a drag
+        }
+      }
+
       // Find Mesh to Drag
       const mesh = this.getMesh();
       if (!mesh || mesh._isVoxel) return;
@@ -181,7 +243,15 @@ class TransformVR extends SculptBase {
       this._vrActiveHand = currentHand;
       this._dragMesh = mesh; // MESH LOCKING: Cache the target mesh
 
-      // UNDO SUPPORT: Capture state once at start of drag
+      // A DRAGGED BONE IS A POSE, NOT A TRANSFORM. Deciding this ONCE, here, is the whole
+      // point: the handover's warning about gizmo posing was against a watcher that compared
+      // every joint's matrix every frame for every tool. This is scoped to one gizmo drag,
+      // press to release, so nothing is inferred and nothing else's writes are second-guessed.
+      this._dragIsJoint = Skeleton.isJoint(mesh) && window._vrGizmoPose !== false;
+
+      // UNDO SUPPORT: Capture state once at start of drag. A solve can reach anywhere in the
+      // tree, so for a bone the honest snapshot is the whole skeleton, not one matrix.
+      this._dragUndoRig = this._dragIsJoint ? IKSolver.captureAll(main) : null;
       this._undoMatrix = mat4.clone(mesh.getMatrix());
       this._undoCenter = vec3.clone(mesh.getCenter());
 
@@ -461,6 +531,22 @@ class TransformVR extends SculptBase {
     }
   }
 
+  // The VR twin of Transform's `picking.intersectionMouseMeshes(..., true)`. Both sides are
+  // asserted together in scratchpad/rigpick_test.mjs precisely so they cannot drift apart
+  // again. `origin`/`dir` MUST be the ray updateXR is handed (engine space); a ray rebuilt
+  // from the controller matrix lives in the raw WebXR frame and misses everything, silently.
+  _pickRigOrMesh(picking, origin, dir) {
+    if (!picking) return null;
+    const main = this._main;
+    let targets = main.getMeshes().filter((m) => m.isVisible() && !m._isVoxelChunk);
+    if (main._lockSelection) {
+      const sel = main.getSelectedMeshes();
+      targets = (sel && sel.length > 0) ? sel : (main.getMesh() ? [main.getMesh()] : targets);
+    }
+    // includeRig: in VR a bone or a pin is exactly what you reach out and take.
+    return picking.intersectionRayMeshes(targets, origin, dir, true) ? picking.getMesh() : null;
+  }
+
   _updateStateFromGizmo(type) {
     // Mode: 0=Translate, 1=Rotate, 2=Scale
     // Type bitmask mapping
@@ -494,6 +580,26 @@ class TransformVR extends SculptBase {
 
   _applyMatrix(mesh, mat) {
     if (!mesh) return;
+
+    // A BONE IS POSED, NEVER WRITTEN. Every mode funnels through here, so this one branch
+    // covers translate, rotate and free/arcball alike. `mat` is where the gizmo says the joint
+    // should END UP; that is a REQUEST, which the solver answers by rotating the chain. Writing
+    // it to the joint instead would set its local translation — and a joint's local translation
+    // IS its bone length, so the rig would stretch a little more with every drag. Because the
+    // matrix is never written, there is nothing to restore before solving (the step
+    // IKSolver.resolveToJoint has to perform for the desktop watcher path).
+    if (this._dragIsJoint) {
+      _poseM.fromArray(mat);
+      _poseM.decompose(_poseT, _poseQ, _poseS);
+      // Position AND orientation. The solver takes a driven orientation as a constraint, not a
+      // decoration — without it a posed bone slides but never turns, which is exactly the bug
+      // the VR grab had.
+      IKSolver.solve(this._main, mesh, _poseT, null, _poseQ);
+      Skeleton.updateVisuals(this._main);
+      this._main.render();
+      return;
+    }
+
     // `mat` is a MODEL-space transform; convert back to local-to-parent (== setMatrix
     // for a top-level mesh) so parented children transform correctly.
     if (mesh.setModelSpaceMatrix) mesh.setModelSpaceMatrix(mat);

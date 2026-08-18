@@ -25,6 +25,7 @@ const MODULES = [
   'src/gui/TimelineHelper.js',
   'src/editing/xfChannel.js',
   'src/editing/tools/Grab.js',
+  'src/editing/tools/TransformVR.js',
 ];
 
 // Browser globals the bundled leaves touch at module scope. Deliberately minimal: the point

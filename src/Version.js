@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.60 - Guard the radius-release crash';
+export const VERSION = 'v3.19.62 - Pose a bone with the VR gizmo';

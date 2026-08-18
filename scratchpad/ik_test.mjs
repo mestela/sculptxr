@@ -1105,5 +1105,43 @@ function lengthsPreserved(name, joints, before) {
     IKSolver.externallyMovedJoint(main) === ankle);
 }
 
+// THE VR GIZMO POSES A BONE. Source guards, because the drag itself needs a headset — what
+// can be pinned down here is the SHAPE of the path: that a joint goes to the solver instead of
+// having its matrix written, and that it does so scoped to one drag rather than by watching
+// every joint every frame (the arrangement that locked the desktop gizmo up).
+{
+  const VR = fs.readFileSync(path.join(REPO, 'src/editing/tools/TransformVR.js'), 'utf8');
+
+  check('VR gizmo: a dragged bone is solved, not written',
+    /if \(this\._dragIsJoint\) \{[\s\S]{0,700}?IKSolver\.solve\(/.test(VR),
+    'the joint branch in _applyMatrix is gone; a drag would edit bone LENGTH');
+  check('VR gizmo: the joint branch returns before the matrix write',
+    /IKSolver\.solve\([\s\S]{0,300}?return;[\s\S]{0,200}?setModelSpaceMatrix/.test(VR),
+    'falling through would write the joint after solving it');
+  check('VR gizmo: orientation is driven, not just position',
+    /IKSolver\.solve\(this\._main, mesh, _poseT, null, _poseQ\)/.test(VR),
+    'position alone is why a posed bone slides but never turns');
+
+  // Scoped to the drag: decided ONCE on press, from the picked node.
+  check('VR gizmo: the joint test is made once at drag start',
+    /_dragIsJoint = Skeleton\.isJoint\(mesh\)/.test(VR));
+  // Comments stripped first: the watcher is NAMED in the prose explaining why this path does
+  // not use it, and a test that cannot tell code from commentary reports the fix as the bug.
+  const vrCode = VR.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('VR gizmo: it does not watch matrices to find the drag',
+    !/externallyMovedJoint|resolveToJoint/.test(vrCode),
+    'inferring the drag from changing matrices is the arrangement that fought every other writer');
+
+  // A solve reaches anywhere in the tree, so the undo is the whole skeleton.
+  check('VR gizmo: the pose undo snapshots every joint',
+    /_dragUndoRig = this\._dragIsJoint \? IKSolver\.captureAll\(main\)/.test(VR)
+      && /pushStateCustom\([\s\S]{0,120}?'Pose'\)/.test(VR),
+    'one matrix cannot undo a solve');
+  // The grace-period recovery clears _dragMesh when the trigger signal is lost. If the undo
+  // hung off that, the pose would become unundoable exactly when the hardware misbehaved.
+  check('VR gizmo: the pose undo does not depend on the drag mesh surviving',
+    /if \(this\._dragUndoRig\) \{/.test(VR));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

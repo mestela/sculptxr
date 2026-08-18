@@ -112,5 +112,46 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     'the same guard that broke the desktop path');
 }
 
+// THE TWO TRANSFORM TOOLS. Transform.js (desktop) and TransformVR.js (VR) are the same tool
+// twice, and six rounds of fixes once went into the desktop one while matt was testing the
+// headset. TransformVR had no pick of ANY kind: it transformed whatever was already selected,
+// so a bone or a pin could never be reached in VR. These assert the two picks stay in step.
+{
+  const DESK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/Transform.js', 'utf8');
+  const VR = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/tools/TransformVR.js', 'utf8');
+
+  check('desktop Transform picks with the rig included',
+    /intersectionMouseMeshes\(main\.getMeshes\(\), main\._mouseX, main\._mouseY, false, true\)/.test(DESK));
+  check('VR Transform picks at all',
+    /intersectionRayMeshes\(/.test(VR),
+    'TransformVR is back to operating on getMesh() with no pick');
+  check('VR Transform picks with the rig included',
+    /intersectionRayMeshes\(targets, origin, dir, true\)/.test(VR),
+    'includeRig dropped: bones and pins become unreachable in VR');
+  check('VR Transform preselects through the shared helper',
+    /Skeleton\.hoverRigFromRay\(/.test(VR),
+    'preselection must be the same helper Grab uses, not a private copy');
+
+  // The ray MUST be the engine-space one updateXR is handed. Rebuilding it from the controller
+  // matrix puts the pick in the raw WebXR frame, where it misses every mesh in the scene and
+  // says nothing about it.
+  check('VR Transform does not rebuild the ray from the controller matrix',
+    !/transformMat4\([^)]*\[0, ?0, ?0\]/.test(VR),
+    'a ray derived from the controller matrix picks in the wrong space');
+
+  // A press is one selection, not one per frame at 90Hz.
+  check('the VR selection pick is latched to the press',
+    /_pickConsumed = true;[\s\S]{0,200}?_pickRigOrMesh/.test(VR)
+      && /_pickConsumed = false;.*(?:release|press)/i.test(VR),
+    'the pick must be consumed on press and rearmed on release');
+
+  // While a handle is under the ray it owns the ray: re-picking there would drop the selection
+  // at the very moment you took hold of the gizmo.
+  check('a gizmo-handle press does not re-select',
+    /!this\._isGizmoHovered && !this\._pickConsumed/.test(VR));
+  check('rig preselection yields to the gizmo handle',
+    /!this\._isGizmoHovered && !isPressed/.test(VR));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

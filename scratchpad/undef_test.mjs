@@ -19,6 +19,7 @@ const FILES = [
   'src/editing/xfChannel.js',
   'src/editing/AnimationRegistry.js',
   'src/editing/tools/Grab.js',
+  'src/editing/tools/TransformVR.js',
   'src/editing/tools/BoneDrawTool.js',
   'src/gui/GuiTimeline.js',
   'src/gui/TimelineHelper.js',
