@@ -1,4 +1,5 @@
 import { quat, mat4 } from 'gl-matrix';
+import { xfWrite } from './xfChannel.js';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
@@ -2300,7 +2301,10 @@ class AnimationRegistry {
       if (!track) return;
       
       if (key.type === 'transform' && track.positions && key.index !== undefined && key.channel !== undefined) {
-        track.positions[key.index * 3 + key.channel] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
+        // Through the accessor, NOT straight into `positions`: this is the graph editor's
+        // vertical drag, so it must land on whichever group the editor is showing. Writing
+        // positions unconditionally is what made dragging a rotation key translate the object.
+        xfWrite(track, key.index, key.channel, (key.startVal !== undefined ? key.startVal : 0) + dVal);
       } else if (key.type === 'shape' && track.shapeOutputTimes && key.index !== undefined) {
         track.shapeOutputTimes[key.index] = (key.startVal !== undefined ? key.startVal : 0) + dVal;
       } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {

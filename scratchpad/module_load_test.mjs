@@ -19,6 +19,11 @@ const MODULES = [
   'src/editing/Skinning.js',
   'src/editing/tools/BoneDrawTool.js',
   'src/gui/bonePanel.js',
+  // Added 2026-08-18: the graph editor gained module-scope THREE objects, which is exactly
+  // the kind of top-level work the stubbed harnesses cannot see fail.
+  'src/gui/GuiTimeline.js',
+  'src/gui/TimelineHelper.js',
+  'src/editing/xfChannel.js',
 ];
 
 // Browser globals the bundled leaves touch at module scope. Deliberately minimal: the point

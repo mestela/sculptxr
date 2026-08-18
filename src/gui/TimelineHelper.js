@@ -1,3 +1,5 @@
+import { xfRead, xfWrite } from '../editing/xfChannel.js';
+
 export default class TimelineHelper {
 
   // Canonical blendshape display order, shared by the timeline and the canvas
@@ -475,7 +477,7 @@ export default class TimelineHelper {
         if (t >= tMin && t <= tMax) {
           for (let c = 0; c < 3; c++) {
             if (channelsVisible[c]) {
-              const val = track.positions[i * 3 + c];
+              const val = xfRead(track, i, c);
               if (val >= vMin && val <= vMax) {
                 newKeys.push({ meshId: trackId, type: 'transform', index: i, channel: c, time: t });
               }
@@ -585,7 +587,7 @@ export default class TimelineHelper {
         newVal = initialBox.maxV - (initialBox.maxV - initialVal) * factor;
       }
       if (sk.type === 'transform' && track.positions) {
-        track.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)] = newVal;
+        xfWrite(track, sk.index, sk.channel !== undefined ? sk.channel : 0, newVal);
       } else if (sk.type === 'shape' && track.shapeOutputTimes) {
         track.shapeOutputTimes[sk.index] = newVal;
       } else if (sk.type === 'blendshape') {

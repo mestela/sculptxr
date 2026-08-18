@@ -1,14 +1,27 @@
 import TimelineHelper from './TimelineHelper.js';
+import { xfGroup, xfRead, xfWrite } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
 
 // Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
 const TL_ACCENT = '#3b82f6';
 
+
+// Deep trace for the graph editor, off by default. `window._tlTrace = true` in the console and
+// every key hit-test reports what it compared against what, which is the only way to tell
+// "the key is not where it is drawn" from "the click never arrived" from "nothing is selected".
+const tlLog = (...a) => { if (window._tlTrace) console.log('[tl]', ...a); };
+
 // Timeline header height (toolbar row + gutter key-mode row + frame ruler). Single
 // source of truth — referenced everywhere the lanes/ruler/hit-tests offset from the
 // header. Bump this alone to resize the header.
 const HEADER_H = 64;
+
+// Height of the T|R|S strip at the top of the graph editor's gutter. The channel rows start
+// below it, so every place that maps a row index to a y — drawing, hit-testing and
+// scroll-into-view alike — offsets by this. One constant, or they drift apart and clicking a
+// row selects its neighbour.
+const XF_SEG_H = 20;
 
 export default class GuiTimeline {
   constructor(main) {
@@ -293,7 +306,7 @@ export default class GuiTimeline {
   // visible. Used to bring the channel being edited into view (desktop + VR).
   _ensureGutterRowVisible(rowIdx) {
     const headerH = HEADER_H;
-    const gutterY = headerH + 4;
+    const gutterY = headerH + 4 + XF_SEG_H;
     const rowH    = 22;
     const rowTopAbs = gutterY + rowIdx * rowH;
     const maxScroll = rowTopAbs - headerH;                       // keep row top below header
@@ -736,14 +749,72 @@ export default class GuiTimeline {
     else { bt.times.splice(idx, 0, time); bt.values.splice(idx, 0, value); }
   }
 
-  // The edited value of a key (transform → position channel, shape → output time,
-  // blendshape → weight). undefined if not resolvable.
+  // The edited value of a key (transform → the channel of the group on show, shape → output
+  // time, blendshape → weight). undefined if not resolvable.
   _keyValue(k, tr) {
     if (!tr) return undefined;
-    if (k.type === 'transform')  return tr.positions?.[k.index * 3 + (k.channel ?? 0)];
+    if (k.type === 'transform')  return xfRead(tr, k.index, k.channel ?? 0);
     if (k.type === 'shape')      return tr.shapeOutputTimes?.[k.index];
     if (k.type === 'blendshape') return tr.blendshapeTracks?.get(k.name)?.values?.[k.index];
     return undefined;
+  }
+
+  // Switch the graph editor between translate / rotate / scale.
+  //
+  // The vertical view is REMEMBERED PER GROUP. Degrees and scene units are not the same kind
+  // of number — a rotation curve at 90 sits far off a view framed for a 1.5-unit translation —
+  // so carrying one group's zoom into another shows an empty graph and reads as a bug. Each
+  // group keeps its own framing, and a group being visited for the first time is framed to its
+  // own keys rather than to a guess.
+  _switchXfGroup(g) {
+    if (g === xfGroup()) return;
+    this._graphViewByGroup = this._graphViewByGroup || {};
+    this._graphViewByGroup[xfGroup()] = { zoomY: this._zoomY, panY: this._panY };
+    window._animXfGroup = g;
+    // Selected keys carry a channel, not a group, so a selection made against translation
+    // would silently re-point at rotation. Drop it rather than move it.
+    window._animSelectedKeys = [];
+
+    const seen = this._graphViewByGroup[g];
+    if (seen) { this._zoomY = seen.zoomY; this._panY = seen.panY; }
+    else this._frameXfGroup();
+    tlLog(`switch group -> ${g}`, `zoomY=${this._zoomY} panY=${this._panY}`,
+      seen ? '(remembered)' : '(framed to keys)');
+  }
+
+  // Fit the vertical view to the visible keys of the group on show. Falls back to leaving the
+  // view alone when there is nothing to measure — a blank graph is not worth reframing for.
+  _frameXfGroup() {
+    const reg = window._animationRegistry;
+    const mesh = this._main?.getMesh?.();
+    const tr = reg && mesh ? reg.tracks.get(mesh.getID()) : null;
+    const n = tr?.times?.length || 0;
+    if (!n) return;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < 3; c++) {
+        const v = xfRead(tr, i, c);
+        if (typeof v !== 'number' || !isFinite(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    tlLog(`frame ${xfGroup()}: keys=${n} range ${lo} .. ${hi}`);
+    if (!isFinite(lo) || !isFinite(hi)) return;
+    const graphH = Math.max(1, this._cssHeight - HEADER_H);
+    const span = Math.max(hi - lo, 1e-3);
+    this._zoomY = (graphH * 0.7) / span;          // leave a margin rather than filling edge to edge
+    this._panY = -((lo + hi) / 2) * this._zoomY;  // centre the range in the graph band
+  }
+
+  // The three segments of the T|R|S strip, in canvas CSS coords. Drawing and hit-testing both
+  // read this, which is the only way they stay in step.
+  _xfSegRects() {
+    const pad = 6, gap = 3, w = (200 - pad * 2 - gap * 2) / 3;
+    return ['pos', 'rot', 'scale'].map((g, i) => ({
+      g, x: pad + i * (w + gap), y: HEADER_H + 5, w, h: XF_SEG_H - 6,
+      label: g === 'pos' ? 'T' : (g === 'rot' ? 'R' : 'S'),
+    }));
   }
 
   // Toolbar value field rect — sits just left of the frame field.
@@ -759,6 +830,8 @@ export default class GuiTimeline {
   _applyValueExpr(rawVal) {
     const reg = window._animationRegistry;
     const sel = window._animSelectedKeys;
+    tlLog(`applyValue "${rawVal}" selected=${sel?.length ?? 0} group=${xfGroup()}`,
+      sel?.length ? JSON.stringify(sel.map((k) => ({ t: k.type, i: k.index, ch: k.channel }))) : '');
     if (!reg || !sel?.length) return;
     const s = String(rawVal ?? '').trim();
     if (!s) return;
@@ -777,8 +850,8 @@ export default class GuiTimeline {
       const cur = this._keyValue(k, tr) ?? 0;
       const nv = parseExpr(s, cur);
       if (nv == null) return;
-      if (k.type === 'transform' && tr.positions) {
-        tr.positions[k.index * 3 + (k.channel ?? 0)] = nv;
+      if (k.type === 'transform') {
+        xfWrite(tr, k.index, k.channel ?? 0, nv);
       } else if (k.type === 'shape') {
         if (!tr.shapeOutputTimes) tr.shapeOutputTimes = [...(tr.shapeTimes || [])];
         tr.shapeOutputTimes[k.index] = nv;
@@ -1027,10 +1100,14 @@ export default class GuiTimeline {
 
     // Draw Gutter Content (Channel List) for Graph Editor
     ctx.save();
-    const gutterY = headerH + 4;
+    const gutterY = headerH + 4 + XF_SEG_H;
     const rowH = 22; // 25% smaller than original 30
     const colors = ['#ff4444', '#44ff44', '#4444ff'];
-    const labels = ['X', 'Y', 'Z'];
+    // Prefixed so the rows say WHICH transform they belong to — three rows called X/Y/Z are
+    // ambiguous the moment they can mean three different things.
+    const _xfg = xfGroup();
+    const _xfPrefix = _xfg === 'rot' ? 'R' : (_xfg === 'scale' ? 'S' : 'T');
+    const labels = [_xfPrefix + 'X', _xfPrefix + 'Y', _xfPrefix + 'Z'];
 
     const activeMeshForGutter = this._main.getMesh();
     const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
@@ -1049,6 +1126,28 @@ export default class GuiTimeline {
     const visibleGutterH = this._cssHeight - headerH;
     this._gutterMaxScroll = Math.max(0, totalRows * rowH - visibleGutterH + 8);
     this._gutterScrollY = Math.min(this._gutterScrollY, this._gutterMaxScroll);
+
+    // The T|R|S strip. Drawn BEFORE the clip below, so it stays put while the channel rows
+    // scroll under it — it is a mode switch, not a row.
+    {
+      const active = xfGroup();
+      for (const r of this._xfSegRects()) {
+        const on = r.g === active;
+        const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+                 && this._lastMouseY >= r.y && this._lastMouseY <= r.y + r.h;
+        ctx.fillStyle = on ? TL_ACCENT : (hov ? Theme.surface1 : Theme.surface0);
+        ctx.beginPath();
+        ctx.roundRect(r.x, r.y, r.w, r.h, 3);
+        ctx.fill();
+        ctx.fillStyle = on ? '#ffffff' : Theme.text;
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r.label, r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+      }
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
 
     // Clip to gutter column so scrolled rows don't bleed into header or outside
     ctx.beginPath();
@@ -1315,8 +1414,8 @@ export default class GuiTimeline {
             
             const dt = t2 - t1;
             
-            const val1 = track.positions[i * 3 + channel];
-            const val2 = track.positions[(i + 1) * 3 + channel];
+            const val1 = xfRead(track, i, channel);
+            const val2 = xfRead(track, i + 1, channel);
 
             const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
             const rightDv = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dv_${channel}`] : undefined;
@@ -1328,31 +1427,29 @@ export default class GuiTimeline {
 
             let slope0 = 0;
             if (i === 0) {
-              slope0 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+              slope0 = (xfRead(track, 1, channel) - xfRead(track, 0, channel)) / (track.times[1] - track.times[0]);
             } else if (i === track.times.length - 1) {
-              const pIdx = (i - 1) * 3;
-              const cIdx = i * 3;
-              slope0 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i] - track.times[i - 1]);
+              slope0 = (xfRead(track, i, channel) - xfRead(track, i - 1, channel)) / (track.times[i] - track.times[i - 1]);
             } else {
               const pIdx = (i - 1) * 3;
               const nIdx = (i + 1) * 3;
               const dt_seg = track.times[i + 1] - track.times[i - 1];
-              slope0 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+              slope0 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / dt_seg : 0;
             }
 
             let slope1 = 0;
             const i1 = i + 1;
             if (i1 === 0) {
-              slope1 = (track.positions[3 + channel] - track.positions[channel]) / (track.times[1] - track.times[0]);
+              slope1 = (xfRead(track, 1, channel) - xfRead(track, 0, channel)) / (track.times[1] - track.times[0]);
             } else if (i1 === track.times.length - 1) {
               const pIdx = (i1 - 1) * 3;
               const cIdx = i1 * 3;
-              slope1 = (track.positions[cIdx + channel] - track.positions[pIdx + channel]) / (track.times[i1] - track.times[i1 - 1]);
+              slope1 = (xfRead(track, cIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / (track.times[i1] - track.times[i1 - 1]);
             } else {
               const pIdx = (i1 - 1) * 3;
               const nIdx = (i1 + 1) * 3;
               const dt_seg = track.times[i1 + 1] - track.times[i1 - 1];
-              slope1 = dt_seg !== 0 ? (track.positions[nIdx + channel] - track.positions[pIdx + channel]) / dt_seg : 0;
+              slope1 = dt_seg !== 0 ? (xfRead(track, nIdx / 3, channel) - xfRead(track, pIdx / 3, channel)) / dt_seg : 0;
             }
 
             const dv0 = rightDv !== undefined ? rightDv : slope0 * dt0;
@@ -1392,7 +1489,7 @@ export default class GuiTimeline {
             const isVisible = window._animChannelVisible ? window._animChannelVisible[channel] !== false : true;
             if (!isVisible) continue;
             
-            const val = track.positions[i * 3 + channel];
+            const val = xfRead(track, i, channel);
             const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
             const y = this.valueToY(val);
             
@@ -1432,7 +1529,7 @@ export default class GuiTimeline {
             const t = track.times[i];
             const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
             
-            const val = track.positions[i * 3 + selChannel];
+            const val = xfRead(track, i, selChannel);
             const ky = this.valueToY(val);
             
             const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
@@ -1763,7 +1860,7 @@ export default class GuiTimeline {
             let t, val;
             if (sk.type === 'transform') {
               t   = track.times?.[sk.index];
-              val = track.positions?.[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
+              val = track ? xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
             } else if (sk.type === 'shape') {
               t   = track.shapeTimes?.[sk.index];
               val = track.shapeOutputTimes?.[sk.index] ?? track.shapes?.[sk.index];
@@ -1817,7 +1914,7 @@ export default class GuiTimeline {
       let time, val;
       if (sk.type === 'transform') {
         time = tr?.times?.[sk.index];
-        val  = tr?.positions?.[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
+        val  = tr ? xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
       } else if (sk.type === 'shape') {
         time = tr?.shapeTimes?.[sk.index];
         val  = tr?.shapeOutputTimes?.[sk.index] ?? 0;
@@ -1879,7 +1976,7 @@ export default class GuiTimeline {
     if (track.times && track.positions) {
       for (let c = 0; c < 3; c++) {
         if (!vis[c]) continue;
-        if (test(track.times.map((t, i) => ({ t, v: track.positions[i * 3 + c] })))) return { kind: 'transform', channel: c };
+        if (test(track.times.map((t, i) => ({ t, v: xfRead(track, i, c) })))) return { kind: 'transform', channel: c };
       }
     }
     if (track.shapeTimes && track.shapeOutputTimes && vis[3]) {
@@ -2004,7 +2101,7 @@ export default class GuiTimeline {
         let t, val;
         if (sk.type === 'transform') {
           t   = track.times?.[sk.index];
-          val = track.positions?.[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
+          val = track ? xfRead(track, sk.index, sk.channel !== undefined ? sk.channel : 0) : undefined;
         } else if (sk.type === 'shape') {
           t   = track.shapeTimes?.[sk.index];
           val = track.shapeOutputTimes?.[sk.index] ?? track.shapes?.[sk.index];
@@ -2090,14 +2187,20 @@ export default class GuiTimeline {
 
     if (track.times && track.positions) {
       const _chVis = window._animChannelVisible || [true, true, true, true];
+      tlLog(`mousedown rx=${rx.toFixed(1)} ry=${ry.toFixed(1)} group=${xfGroup()}`,
+        `keys=${track.times.length} zoomY=${this._zoomY} panY=${this._panY}`,
+        `chVis=[${_chVis.slice(0, 3).join(',')}]`);
       for (let i = 0; i < track.times.length; i++) {
         const t = track.times[i];
         const x = tlX + ((t - loopStart) / visibleDuration) * tlW;
 
         for (let c = 0; c < 3; c++) {
           if (_chVis[c] === false) continue; // hidden channel — not selectable
-          const val = track.positions[i * 3 + c];
+          const val = xfRead(track, i, c);
           const y = this.valueToY(val);
+          tlLog(`  key ${i} ch${c} val=${val} x=${x.toFixed(1)} y=${y.toFixed(1)}`,
+            `dist=${Math.hypot(x - rx, y - ry).toFixed(1)}`,
+            TimelineHelper.isKeyHovered(x, y, rx, ry, 10) ? 'HIT' : '');
 
           if (TimelineHelper.isKeyHovered(x, y, rx, ry, 10)) {
             this._isDraggingKeyframe = true;
@@ -2124,7 +2227,7 @@ export default class GuiTimeline {
               this._animSelectedKeysInitialTimes = window._animSelectedKeys.map(k => {
                 const tr = reg.tracks.get(k.meshId);
                 const time = k.type === 'transform' ? tr.times[k.index] : tr.shapeTimes[k.index];
-                const startVal = k.type === 'transform' ? tr.positions[k.index * 3 + (k.channel !== undefined ? k.channel : 0)] : 0;
+                const startVal = k.type === 'transform' ? xfRead(tr, k.index, k.channel !== undefined ? k.channel : 0) : 0;
                 return { ...k, time, startVal };
               });
             } else {
@@ -2271,7 +2374,7 @@ export default class GuiTimeline {
         const t = track.times[i];
         const kx = tlX + ((t - loopStart) / visibleDuration) * tlW;
         
-        const val = track.positions[i * 3 + selChannel];
+        const val = xfRead(track, i, selChannel);
         const ky = this.valueToY(val);
         
         const rightDt = track.tangentOffsets ? track.tangentOffsets[`trans_${i}_right_dt`] : undefined;
@@ -2481,7 +2584,7 @@ export default class GuiTimeline {
       for (let i = 0; i < track.times.length; i++) {
         for (let c = 0; c < 3; c++) {
           if (channelsVisible[c]) {
-            const val = track.positions[i * 3 + c];
+            const val = xfRead(track, i, c);
             if (val < minVal) minVal = val;
             if (val > maxVal) maxVal = val;
           }
@@ -3224,7 +3327,16 @@ export default class GuiTimeline {
     } else {
       // Gutter click/drag for Graph Editor channels in Desktop Timeline
       if (this._mode === 'graph' && rx < 200 && ry > HEADER_H) {
-        const gutterY = HEADER_H + 4;
+        // The T|R|S strip sits above row 0, so it has to be answered before the row math —
+        // otherwise a click on it lands on a negative row index.
+        const seg = this._xfSegRects().find((r) => rx >= r.x && rx <= r.x + r.w
+                                                && ry >= r.y && ry <= r.y + r.h);
+        if (seg) {
+          this._switchXfGroup(seg.g);
+          this.draw();
+          return;
+        }
+        const gutterY = HEADER_H + 4 + XF_SEG_H;
         const rowH = 22;
         const channel = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
 
@@ -3294,7 +3406,7 @@ export default class GuiTimeline {
               // Desktop: inline numeric input overlay, right-aligned in the badge.
               // Row y in canvas CSS coords: gutterY + abs-row-index * rowH − scroll
               // (computed after _ensureGutterRowVisible may have adjusted scroll).
-              const _gutterRowTop = (HEADER_H + 4) + channel * rowH - this._gutterScrollY;
+              const _gutterRowTop = (HEADER_H + 4 + XF_SEG_H) + channel * rowH - this._gutterScrollY;
               this._valInput.style.top  = Math.round(_gutterRowTop + 3) + 'px';
               this._valInput.style.display = 'block';
               this._valInput.value = curW.toFixed(2);
@@ -3475,7 +3587,7 @@ export default class GuiTimeline {
             window._animSelectedKeys.forEach(sk => {
               const tr = reg.tracks.get(sk.meshId);
               if (tr && sk.type === 'transform' && tr.positions) {
-                const val = tr.positions[sk.index * 3 + (sk.channel !== undefined ? sk.channel : 0)];
+                const val = xfRead(tr, sk.index, sk.channel !== undefined ? sk.channel : 0);
                 if (val < minV) minV = val;
                 if (val > maxV) maxV = val;
               }
@@ -4233,7 +4345,7 @@ export default class GuiTimeline {
       };
       const _setKeyVal = (track, initKey, newVal) => {
         if (initKey.type === 'transform' && track.positions && initKey.channel !== undefined) {
-          track.positions[initKey.index * 3 + initKey.channel] = newVal;
+          xfWrite(track, initKey.index, initKey.channel, newVal);
         } else if (initKey.type === 'shape' && track.shapeOutputTimes) {
           track.shapeOutputTimes[initKey.index] = newVal;
         } else if (initKey.type === 'blendshape') {
