@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.48 - Grab drags in model space';
+export const VERSION = 'v3.19.49 - VR grab reaches bones and pins';

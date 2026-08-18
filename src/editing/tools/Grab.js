@@ -425,8 +425,22 @@ class Grab extends SculptBase {
           targetMeshes = (selGroup && selGroup.length > 0) ? selGroup : (this._main.getMesh() ? [this._main.getMesh()] : targetMeshes);
         }
         
-        const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction);
+        // Rig nodes included: in VR a bone or a pin is exactly what you reach out and take.
+        const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction, true);
         let mesh = hit ? picking.getMesh() : null;
+
+        // Preselection, the same signal the desktop hover gives: the marker under the ray grows
+        // and warms, so you can see what the trigger will take before you pull it.
+        if (!this._grabbedMesh) {
+          const node = mesh && (mesh._isBone || mesh._isPinTarget) ? mesh : null;
+          const wasJ = this._main._skelHighlightId ?? -1;
+          const wasP = this._main._pinHighlightId ?? -1;
+          Skeleton.setRigHighlight(this._main, node);
+          if ((this._main._skelHighlightId ?? -1) !== wasJ
+              || (this._main._pinHighlightId ?? -1) !== wasP) {
+            Skeleton.updateVisuals(this._main);
+          }
+        }
 
         if (!mesh && this._main.getMesh() && this._main.getMesh().isVisible()) {
           mesh = this._main.getMesh();

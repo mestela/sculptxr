@@ -305,10 +305,15 @@ class Picking {
     return !!nearMesh;
   }
 
-  intersectionRayMeshes(meshes, origin, direction) {
+  // The VR twin of intersectionMouseMeshes. `includeRig` opts into joints and pins the same
+  // way, and for the same reason: the controller ray shares this function with sculpting, so
+  // making rig nodes pickable outright would put a joint under every stroke.
+  intersectionRayMeshes(meshes, origin, direction, includeRig = false) {
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
+    var nearRigScore = Infinity;
+    var nearRig = null;
 
     // vNear = origin
     // vFar = origin + direction * length
@@ -320,6 +325,29 @@ class Picking {
       if (!mesh.isVisible() || mesh._selectLocked) continue;
 
       mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
+
+      // RIG NODES AS POINTS IN A CONE, exactly as the mouse path does — a joint's pick sphere
+      // is a fraction the size of the marker you see, so ray-vs-geometry means pointing a
+      // controller at something invisible and tiny. Here the cone is angular by nature: a
+      // radius growing with distance along the ray IS a constant angle, which is what pointing
+      // at arm's length actually needs. Wider than the mouse default, because a hand is not a
+      // cursor. `window._rigPickConeVR` tunes it.
+      if (includeRig && (mesh._isBone || mesh._isPinTarget)) {
+        _TMP_RIG_P[0] = _TMP_MS[12]; _TMP_RIG_P[1] = _TMP_MS[13]; _TMP_RIG_P[2] = _TMP_MS[14];
+        vec3.sub(_TMP_RIG_W, _TMP_RIG_P, origin);
+        var tRay = vec3.dot(_TMP_RIG_W, direction);
+        if (tRay < 0) continue;                       // behind the controller
+        vec3.scaleAndAdd(_TMP_RIG_C, origin, direction, tRay);
+        var offRay = vec3.dist(_TMP_RIG_C, _TMP_RIG_P);
+        if (offRay > (window._rigPickConeVR || 0.06) * tRay) continue;
+        // Pins outrank bones, by rank rather than distance: a pin sits on its joint, so the
+        // two are the same direction and a distance test would be decided by float noise.
+        var rScore = tRay - (mesh._isPinTarget ? 2 : 1) * 1e6;
+        if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = mesh; }
+        continue;
+      }
+      if (mesh.isPickable === false) continue;
+
       mat4.invert(_TMP_INV, _TMP_MS);
       vec3.transformMat4(_TMP_NEAR, _TMP_NEAR_1, _TMP_INV);
       vec3.transformMat4(_TMP_FAR, _TMP_FAR_1, _TMP_INV);
@@ -340,6 +368,18 @@ class Picking {
         vec3.copy(_TMP_INTER_1, interTest);
         nearFace = this.getPickedFace();
       }
+    }
+
+    // A rig node wins whenever one was asked for — the skeleton lives inside the sculpt, so
+    // nearest-hit leaves the mesh permanently in the way of its own rig. Note it does not
+    // require nearMesh: rig nodes are tested on their own path and never set it, and requiring
+    // one is what made a lone bone report nothing on the desktop side.
+    if (nearRig) {
+      nearMesh = nearRig;
+      nearFace = -1;
+      // Local coords: callers transform this by the mesh matrix, and a locator's origin is its
+      // centre.
+      _TMP_INTER_1[0] = _TMP_INTER_1[1] = _TMP_INTER_1[2] = 0;
     }
 
     this._mesh = nearMesh;

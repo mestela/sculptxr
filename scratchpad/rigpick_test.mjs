@@ -95,5 +95,18 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   }
 }
 
+// The VR ray path is a SEPARATE function from the mouse one, and was missed entirely the
+// first time: everything went into intersectionMouseMeshes while the headset uses
+// intersectionRayMeshes. These assert the same four properties hold on both sides.
+{
+  const vr = SRC.slice(SRC.indexOf('intersectionRayMeshes(meshes, origin, direction'));
+  check('VR: rig picking is opt-in', /includeRig = false\)/.test(vr));
+  check('VR: rig nodes use the cone, not geometry', /_rigPickConeVR \|\| 0\.06/.test(vr));
+  check('VR: pins outrank bones', /mesh\._isPinTarget \? 2 : 1/.test(vr));
+  check('VR: a lone rig hit is adopted without a mesh hit',
+    /if \(nearRig\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
+    'the same guard that broke the desktop path');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
