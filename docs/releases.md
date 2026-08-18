@@ -1,3 +1,41 @@
+# v3.19.22
+**Joint rotations no longer carry the history of how you got there.** A thigh wound up by tens of degrees every time the hips travelled a closed path, which is the candy-wrapper collapse at the top of the leg — and the same cause behind limbs spinning between keyframes and the solve depending on which way you scrubbed. One defect wearing three hats.
+
+- `fitRotation` measured each joint's rotation as a DELTA from its current orientation. Every delta is minimal-arc, so no single frame invents roll — but composing a long run of them along a path is parallel transport, and parallel transport around a CLOSED loop comes back rotated. Driving the hips once round a circle and back to exactly where they started left the thigh about 35 degrees out; four laps left 130.
+- The rotation is now built ABSOLUTELY from two things that carry no history: the child's offset in the joint's own frame (constant, because the solver only ever writes rotations) and where the solve wants that child, expressed in the parent's frame. With one child the fit is the minimal arc, which means zero twist relative to the parent — so identity means "the rest pose" rather than "wherever this joint drifted to".
+- Measured over four laps: 2.21, 2.23, 2.23, 2.23 degrees. A constant offset rather than a ratchet. Peak thigh twist through the loop fell from 249 degrees to 22.
+- `window._ikAbsoluteRotations = false` restores the accumulating write-back.
+- **A held pose settles more slowly than it did.** Hold the target still and the knee moves 5.8e-3 per twenty solves, decaying geometrically; the old path reached machine precision immediately. The multi-child fit is an approximate Kabsch stand-in — read as a delta its error is re-measured and corrected away, read absolutely it is re-made from scratch each solve.
+- **Not fully understood**: raising the fit's accuracy (`window._ikFitPasses`) fixes the settling but brings the ratchet back, which means the write-back was not the only source of history. FABRIK seeds each solve from the current pose and converges to the nearest solution, so the solved POSITIONS are path-dependent before any rotation is written. That one is still there.
+
+# v3.19.21
+**The hinge picks the branch once instead of being enforced every sweep, and pins are drawn where they actually are.**
+
+- **Clamping the hinge inside every FABRIK sweep was making the solver oscillate.** On a rig with pinned ankles and the hips dragged about it cost 40x the frame-to-frame jitter and 270x the pin drift of leaving the constraint off — and MORE iterations made it worse, not better, which is the signature of a limit cycle rather than slow convergence. Bend depth, the hinge floor, letting the plane roll, and freezing the axis per solve were all tried; none closed the gap.
+- Which side a knee bends is a DISCRETE choice, and a branch is chosen once, not enforced continuously. The solver now seeds the legal branch up front — closed form, intersecting the sphere of thigh-length about the hip with the sphere of shin-length about the goal and taking the solution the drawn bend permits — and then leaves FABRIK completely alone. It stays put because the sweeps only make local moves and cannot cross to the far branch unaided, which is the same "limitation" the clamp was fighting.
+- Result: jitter and pin drift back to the unconstrained solver's levels, and reach error to exactly zero. A solver with nothing to argue with converges properly, so everything improved at once.
+- The cost is that a drag which genuinely crosses branches switches once, visibly, rather than being held — three or four frames in four hundred on sweeps built to provoke it, about what the old post-hoc correction did and at less than half the jump size. `window._ikHingeMode = 'clamp'` trades back.
+- **The pin marker was being drawn at the joint, not at the anchor**, so a pin the solve was falling short of looked like a pin being dragged along. The anchor data was never touched by the solver; the display was hiding the shortfall. The marker now sits at the anchor, a dashed leader is drawn from the joint to it whenever there is a real gap, and the 6DOF gimbal takes the anchored orientation so it genuinely holds still.
+
+# v3.19.20
+**IK pins hold through keyframe playback.** Playback does not re-run the solver — it slerps each joint's stored local rotation back into its matrix — and pin satisfaction does not survive that, because where a foot ends up is a nonlinear function of the rotations above it. Interpolate between two poses that each sit on the pin and the foot cuts the chord instead of following the arc.
+
+- Exact AT the keys and worst between them: measured on a two-key leg it left the pin by 0.39 at the midpoint, about a quarter of the leg's length.
+- This is Maya's behaviour too, and Maya says so outright — pinning "only affects your FBIK effectors during interaction, not during playback" — and its answer is to solve the pins every frame.
+- `IKSolver.holdPins()` re-solves the interpolated pose against the pins, once per frame, after every joint matrix has been written. Driven by a dirty flag set as each bone is written, so a timeline SCRUB is covered by the same path as playback without either having to know about it.
+- **The root is always held**, unlike an interactive drag: the root's motion is what the take says the character does, so the legs bend up to meet the pins rather than the character sliding down to meet them.
+- Treats pins as constant goals for the whole timeline, since they are read from the joint's live pin state rather than from the animation data. Right for a foot planted through a shot; wrong for a pin meant to travel. That needs keyable goals — Maya's "set an IK key on the effector" — which is a larger job.
+- `window._ikHoldPins = false` disables the pass.
+
+# v3.19.19
+**Hinge joint limits, applied inside the FABRIK sweeps.** Replaces the post-hoc `fixBendDirection` reflection, which solved freely and then reflected the joint back if it came out on the wrong side — a discrete jump applied after convergence, which moved the knee 2.06 units in a single frame against an input step of 0.015.
+
+- Knees, elbows and fingers are 1-DOF. The axis comes from the pose the rig was DRAWN in: cross(bone in, bone out) at rest IS the hinge axis, so a pronounced bend is what turns this on and a joint drawn dead straight is left completely free. No new UI and no chain classification.
+- **A limb's ball joint hangs directly off a branch point** — shoulders off the chest, thighs off the hips — while the hinge is always the joint one step further down. That structural test is what separates a knee from a shoulder without naming anything; hinging the ball joint instead locked the arm into its drawn plane and drifted pinned hands 1.45 units off their anchors.
+- The floor is not zero. A perfectly straight limb is a degenerate fixed point of the sweeps — collinear in, collinear out — so a leg that once went straight stayed straight for ever, whatever the target.
+- A hinge makes the set of reachable poses NON-CONVEX, and the sweeps are local, so a solve that falls short is retried once from the other branch.
+- Superseded by v3.19.21, which keeps the branch selection and drops the in-sweep clamping. `window._ikHingeMode = 'clamp'` still selects this behaviour.
+
 # v3.19.18
 **The preferred bend comes from the rest pose only.** v3.19.17 refreshed the remembered bend on every frame it judged correct, which is self-confirming: the first frame a knee happened to solve backwards became that knee's preference and was then enforced for ever.
 

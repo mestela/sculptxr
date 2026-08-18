@@ -2598,6 +2598,13 @@ class AnimationRegistry {
       m[8] = (xz + wy) * sz; m[9] = (yz - wx) * sz; m[10] = (1 - (xx + yy)) * sz; m[11] = 0;
       m[12] = px; m[13] = py; m[14] = pz; m[15] = 1;
 
+      // A keyed pose is interpolated, and interpolation does not preserve an IK pin: the foot
+      // cuts the chord instead of following the arc. Flag it so the render loop re-solves the
+      // pins ONCE after every joint has been written — doing it here, per mesh, would run
+      // against a half-updated skeleton. Set from playback and from scrubbing alike, which is
+      // why it is a flag rather than a call at the playback site.
+      if (mesh._isBone) window._ikPinsDirty = true;
+
       if (mesh.updateMatrices && window.app && window.app._camera) {
         mesh.updateMatrices(window.app._camera);
       }

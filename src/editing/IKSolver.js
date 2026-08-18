@@ -51,11 +51,14 @@ const _qFit = new THREE.Quaternion(), _qStep = new THREE.Quaternion();
 const _qRigid = new THREE.Quaternion();
 const _vReach = new THREE.Vector3();
 const _vRestA = new THREE.Vector3(), _vRestB = new THREE.Vector3();
-const _vNowA = new THREE.Vector3(), _vNowB = new THREE.Vector3();
-const _vNormRest = new THREE.Vector3(), _vNormNow = new THREE.Vector3();
-const _vAxis = new THREE.Vector3(), _vRel = new THREE.Vector3();
+const _vNormRest = new THREE.Vector3();
+const _vHu = new THREE.Vector3(), _vHv = new THREE.Vector3(), _vHa = new THREE.Vector3();
+const _vHd = new THREE.Vector3(), _vHdir = new THREE.Vector3(), _vHw = new THREE.Vector3();
+const _vHx = new THREE.Vector3(), _vHy = new THREE.Vector3();
+const _qHinge = new THREE.Quaternion();
 const _qPart = new THREE.Quaternion(), _qId = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
+const _qPInv = new THREE.Quaternion(), _qLocal = new THREE.Quaternion();
 const _qNow = new THREE.Quaternion();
 const _mTmp = new THREE.Matrix4(), _mLocal = new THREE.Matrix4();
 const _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
@@ -194,6 +197,9 @@ function buildGraph(main) {
       active: false,
       orient: null, // driven model-space orientation (the joint in your hand), if any
       rot: null,    // ...and the rotation from its pre-solve orientation to that one
+      hinge: false, // is this joint constrained to one degree of freedom this solve?
+      axis: new THREE.Vector3(), // ...and its hinge axis, refreshed once per iteration
+      hkid: null,   // the single child the hinge governs
     });
   }
   for (const n of nodes.values()) {
@@ -336,84 +342,180 @@ function clampToPins(eff, target, pinNodes) {
   }
 }
 
-// ---- preferred bend -------------------------------------------------------------
+// ---- hinge constraint -----------------------------------------------------------
 //
-// A leg drawn with a slight bend in it IS the statement of which way the knee goes. FABRIK
-// has no opinion — a knee bent backwards satisfies every bone length just as well as one
-// bent forwards — so the solve is free to flip it, and that flip is the visible pop when
-// dragging a limb around.
+// A knee, an elbow and a finger are ONE degree of freedom. FABRIK has no such opinion — a
+// knee bent backwards satisfies every bone length just as well as one bent forwards — so the
+// solve is free to flip it, and that flip is the visible pop when swinging a limb around.
 //
-// So: read the bend the rig was drawn with, and refuse to invert it. For a joint with one
-// parent and one child, the sign of cross(bone in, bone out) says which side the joint bends
-// to. If the solve has changed that sign, reflect the joint back across the line joining its
-// neighbours — a reflection, because it puts the joint on the correct side while leaving
-// BOTH bone lengths exactly as they were.
+// The previous attempt corrected this AFTER convergence, reflecting the joint back across the
+// line joining its neighbours. That is structurally poppy: the correction is a discrete jump,
+// so a limb passing through straight crosses the boundary and gets snapped back. Measured on a
+// sweep that drags the ankle up past the hip, the snap moved the knee 2.06 units in a single
+// frame against an input step of 0.015.
 //
-// A joint drawn dead straight has no bend to preserve and is left alone, which is precisely
-// why drawing the small bend in the first place is the thing that makes this work.
-function fixBendDirection(byDepth, targets) {
+// So the constraint is applied INSIDE the sweeps instead (Aristidou & Lasenby's constrained
+// FABRIK). A solve that is never allowed to cross the boundary has nothing to snap back from,
+// and the joint simply stops at straight and comes back the way it went.
+//
+// THE AXIS COMES FROM THE POSE THE RIG WAS DRAWN IN — the pronounced bend already drawn by
+// habit. cross(bone in, bone out) at rest IS the hinge axis, which is why drawing the bend is
+// the thing that turns this on and a joint drawn dead straight is left completely free.
+
+// How far round the hinge a joint may swing, measured as deviation from dead straight. Wide on
+// purpose: phase one is about removing the branch flip, not about making a knee anatomical.
+// Per-joint ranges want the chain classification that is deliberately deferred.
+//
+// THE FLOOR IS NOT ZERO, and that matters more than its size. A perfectly straight limb is a
+// degenerate FIXED POINT of the sweeps: with all three joints collinear the backward pass
+// proposes a collinear knee and the forward pass clamps it back to collinear, so a leg that
+// once goes dead straight stays dead straight for ever, whatever the target. Dragging an ankle
+// up through the hip and out the other side hit exactly that and left the leg stuck straight
+// with a 2.0-unit reach error for the rest of the drag. A couple of degrees of residual bend
+// keeps the configuration non-degenerate, and real knees do not lock flat either.
+const HINGE_MIN = 2 * Math.PI / 180;
+const HINGE_MAX = 160 * Math.PI / 180;
+
+// The remembered rest geometry: [axis, bone in, bone out], all unit, all model space, read
+// ONCE and never refreshed from a solve.
+//
+// Refreshing it per frame was a bad mistake the last time round: it is self-confirming, so the
+// first frame a knee happened to solve backwards became the remembered preference and was then
+// enforced for ever — one knee aiming forward and the other back on a symmetric rig. It also
+// means a limb that STRAIGHTENS (a jump) does not forget, which is the case where there is
+// nothing to read off the live pose at all.
+//
+// `0` is the sentinel for "looked, and this joint was drawn straight": distinct from unset, so
+// a straight joint is not re-measured every solve, and `clearBendRefs` (null) still forces a
+// genuine re-read after the rest skeleton is edited.
+function hingeRest(n) {
+  const j = n.joint;
+  let r = j._boneBendRef;
+  if (r === 0) return null;
+  if (!r) {
+    _vRestA.copy(n.off);       // parent -> joint, model space, before the solve
+    _vRestB.copy(n.hkid.off);  // joint -> child
+    _vNormRest.crossVectors(_vRestA, _vRestB);
+    if (_vNormRest.lengthSq() < 1e-14 || _vRestA.lengthSq() < 1e-18 || _vRestB.lengthSq() < 1e-18) {
+      j._boneBendRef = 0; // drawn dead straight: no plane to read, so no hinge and no opinion
+      return null;
+    }
+    r = j._boneBendRef = [
+      ..._vNormRest.normalize().toArray(),
+      ..._vRestA.normalize().toArray(),
+      ..._vRestB.normalize().toArray(),
+    ];
+  }
+  return r;
+}
+
+// Re-orthogonalise the hinge axis against a bone direction. The axis is carried along by the
+// limb between iterations, so it drifts out of perpendicular within one; both the projection
+// and the signed angle below assume the two are square, and a degenerate result means the bone
+// has swung onto the axis itself, where there is no hinge plane to speak of.
+function orthoAxis(axis, dir, out) {
+  out.copy(axis).addScaledVector(dir, -axis.dot(dir));
+  const d2 = out.lengthSq();
+  if (d2 < 1e-12) return false;
+  out.multiplyScalar(1 / Math.sqrt(d2));
+  return true;
+}
+
+// Angle from `from` to `to` about `axis`, signed. Both are unit and perpendicular to the axis,
+// so their cross product lies exactly along it and the sign is simply its component there.
+function signedAngle(from, to, axis) {
+  _vHx.crossVectors(from, to);
+  return Math.atan2(_vHx.dot(axis), from.dot(to));
+}
+
+function clampAngle(a) {
+  return a < HINGE_MIN ? HINGE_MIN : (a > HINGE_MAX ? HINGE_MAX : a);
+}
+
+// Which joints are hinged this solve, and where their axes point.
+//
+// Run ONCE at the top of each iteration, on purpose: both sweeps then constrain against the
+// same axis, and an axis recomputed mid-sweep from half-updated positions would have the two
+// passes arguing with each other. It lags the pose by one iteration and catches up as the
+// solve converges, which is the same bargain FABRIK itself makes.
+//
+// A joint qualifies when it is a simple link one step below another simple link, has a bend to
+// read, and has no driven orientation of its own to obey.
+//
+// THE PARENT TEST IS WHAT SEPARATES A KNEE FROM A SHOULDER, and it is the whole reason phase
+// one needs no chain classification. A limb's ball joint hangs DIRECTLY off a branch point —
+// the shoulders off the chest, the thighs off the hips — while the hinge is always the joint
+// one step further down. Hinging the ball joint instead locks the arm into the plane it was
+// drawn in, and the first thing that goes is the pins: with the shoulders hinged, this rig's
+// pinned hands drifted 1.45 units off their anchors in the branch test.
+//
+// Structural children, not active ones, deliberately: whether a thigh is a ball joint is a
+// fact about the skeleton, not about which limb the current drag happens to have woken up.
+// Several branches meeting is not a hinge either — those children are placed as one rigid
+// cluster, and there is no single outgoing bone for an axis to govern.
+function updateHingeAxes(byDepth) {
   for (const n of byDepth) {
-    if (targets.has(n) || !n.parent) continue;
+    n.hinge = false;
+    if (!n.parent || n.rot) continue;
+    if (n.parent.children.length !== 1) continue;
     const kids = activeChildren(n);
     if (kids.length !== 1) continue;
-    // The parent must be a simple link too. Where several branches meet, the solver places
-    // them as ONE rigid cluster on purpose — their relative geometry is carried by a single
-    // joint rotation — and reflecting one of them alone produces a pose no such rotation can
-    // reproduce. The rotation-fitting stage then quietly discards the difference, which comes
-    // out as pinned joints sliding off their pins. Knees and elbows are serial links anyway;
-    // that is what makes them the joints with a bend direction worth preserving.
-    if (activeChildren(n.parent).length !== 1) continue;
-    const c = kids[0];
-    _vNowA.subVectors(n.pos, n.parent.pos);
-    _vNowB.subVectors(c.pos, n.pos);
-    _vNormNow.crossVectors(_vNowA, _vNowB);
-    // A limb that is momentarily STRAIGHT has no bend to read and none to correct: the knee
-    // sits on the line between its neighbours, where every side is equally valid. Nothing to
-    // do this frame — but the preference must not be forgotten, which is the whole reason it
-    // is remembered rather than re-read from the pose each time.
-    const nowMag2 = _vNormNow.lengthSq();
-    const scale2 = Math.max(_vNowA.lengthSq() * _vNowB.lengthSq(), 1e-24);
-    if (nowMag2 / scale2 < 1e-6) continue;
+    n.hkid = kids[0];
+    const rest = hingeRest(n);
+    if (!rest) continue;
 
-    // The remembered preference, taken ONCE from the pose the limb was drawn in and never
-    // refreshed from a solve. Refreshing it on every frame that looked correct was a bad
-    // mistake: it is self-confirming, so the first frame a knee happened to solve backwards
-    // became the remembered preference and was then enforced for ever. On a symmetric rig
-    // that showed up as one knee aiming forward and the other back, permanently.
-    //
-    // The drawn rest pose is the authority precisely because it is a deliberate statement —
-    // it is why putting a pronounced bend in the knees is the way to say which way they go.
-    // Storing it also means a limb that STRAIGHTENS (a jump) does not forget: there is
-    // nothing to read off a straight leg, and now nothing needs to be.
-    let ref = n.joint._boneBendRef;
-    if (!ref) {
-      _vRestA.copy(n.off);
-      _vRestB.copy(c.off);
-      _vNormRest.crossVectors(_vRestA, _vRestB);
-      if (_vNormRest.lengthSq() < 1e-12) continue; // drawn dead straight: no preference at all
-      ref = n.joint._boneBendRef = _vNormRest.clone().normalize().toArray();
-    }
-    _vNormRest.fromArray(ref);
-    if (_vNormNow.dot(_vNormRest) >= 0) continue; // still bending the way it was drawn
-
-    // Reflect n across the line parent->child. Distances to both neighbours are unchanged,
-    // so the chain stays valid and nothing downstream needs re-imposing.
-    _vAxis.subVectors(c.pos, n.parent.pos);
-    const axLen = _vAxis.length();
-    if (axLen < 1e-12) continue; // neighbours coincident: no line to reflect across
-    _vAxis.divideScalar(axLen);
-    _vRel.subVectors(n.pos, n.parent.pos);         // parent -> joint
-    const along = _vRel.dot(_vAxis);               // its component along the line
-    _vRel.addScaledVector(_vAxis, -along);         // ...leaving the perpendicular component
-    // Mirror the perpendicular part: parent + parallel - perpendicular.
-    n.pos.copy(n.parent.pos).addScaledVector(_vAxis, along).sub(_vRel);
+    // Carry the rest axis onto the bone's current direction by the minimal rotation between
+    // the two. Minimal-arc because that is the rule the whole solver follows (see fitRotation):
+    // no roll is ever invented, so a hinge does not acquire a twist the pose does not have.
+    _vHu.subVectors(n.pos, n.parent.pos);
+    if (_vHu.lengthSq() < 1e-18) continue;
+    _vHu.normalize();
+    _vRestA.set(rest[3], rest[4], rest[5]);
+    _qHinge.setFromUnitVectors(_vRestA, _vHu);
+    n.axis.set(rest[0], rest[1], rest[2]).applyQuaternion(_qHinge);
+    n.hinge = true;
   }
 }
 
-function alignVectors(from, to, n, out) {
+// FORWARD SWEEP form: the joint and its parent are placed, so the incoming bone is known and
+// the child's direction is what the hinge decides. `want` is where the unconstrained solve was
+// heading; `out` receives the unit direction it is allowed to take.
+function hingeOut(n, want, out) {
+  _vHu.subVectors(n.pos, n.parent.pos);
+  if (_vHu.lengthSq() < 1e-18) return false;
+  _vHu.normalize();
+  if (!orthoAxis(n.axis, _vHu, _vHa)) return false;
+  // Fold the wanted direction into the hinge plane, then clamp how far round it may swing.
+  _vHd.copy(want).addScaledVector(_vHa, -want.dot(_vHa));
+  if (_vHd.lengthSq() < 1e-18) _vHd.copy(_vHu); // asked to point straight along the axis
+  else _vHd.normalize();
+  out.copy(_vHu).applyQuaternion(_qHinge.setFromAxisAngle(_vHa, clampAngle(signedAngle(_vHu, _vHd, _vHa))));
+  return true;
+}
+
+// BACKWARD SWEEP form: the same constraint read the other way round. Here the child is placed
+// and the PARENT is what we are proposing, so the outgoing bone is known and the hinge decides
+// where the incoming one may come from. `out` receives the proposed parent position.
+function hingeIn(c, parentPos, out) {
+  _vHv.subVectors(c.hkid.pos, c.pos);
+  if (_vHv.lengthSq() < 1e-18) return false;
+  _vHv.normalize();
+  if (!orthoAxis(c.axis, _vHv, _vHa)) return false;
+  _vHu.subVectors(c.pos, parentPos);
+  _vHu.addScaledVector(_vHa, -_vHu.dot(_vHa));
+  if (_vHu.lengthSq() < 1e-18) return false;
+  _vHu.normalize();
+  // Rebuild the incoming direction FROM the outgoing one, rotating back by the allowed angle.
+  // Going the other way would let an out-of-range angle survive the sweep untouched.
+  _vHdir.copy(_vHv).applyQuaternion(_qHinge.setFromAxisAngle(_vHa, -clampAngle(signedAngle(_vHu, _vHv, _vHa))));
+  out.copy(c.pos).addScaledVector(_vHdir, -c.len);
+  return true;
+}
+
+function alignVectors(from, to, n, out, passReq) {
   out.identity();
   if (!n) return out;
-  const passes = n > 1 ? 3 : 1;
+  const passes = n > 1 ? (passReq || 3) : 1;
   const share = 1 / n;
   for (let pass = 0; pass < passes; pass++) {
     for (let i = 0; i < n; i++) {
@@ -440,13 +542,20 @@ function scratchPair(i) {
 
 // Run FABRIK over the tree. `targets` maps node -> desired model-space position (the dragged
 // joint and every pin). Returns the solved positions on the nodes themselves.
+let _sweepHinge = true;
+
 function fabrik(nodes, targets, root, rootFixed, tol) {
+  let worst = Infinity;
   const active = [];
   for (const n of nodes.values()) if (n.active) active.push(n);
   const byDepth = active.slice().sort((a, b) => a.depth - b.depth);
   const rootPos0 = root.pos.clone();
 
-  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+  const maxIter = window._ikIterations || MAX_ITERATIONS;
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Which joints are hinged, and where their axes point, for BOTH sweeps of this iteration.
+    if (window._ikHinge !== false && _sweepHinge) updateHingeAxes(byDepth);
+
     // BACKWARD: leaves toward the root. An anchor is hard — it takes its target outright and
     // does not average with what its branches would prefer, which is what makes a pin a pin
     // rather than a suggestion.
@@ -461,7 +570,11 @@ function fabrik(nodes, targets, root, rootFixed, tol) {
       // still converge on one shoulder position.
       _v2.set(0, 0, 0);
       for (const c of kids) {
-        towards(_v, c.pos, n.pos, c.len);
+        // A hinged child does not propose freely: it proposes the parent position its own one
+        // degree of freedom permits. `n.pos` is still last iteration's value here, which is
+        // what the proposal is measured against — it is overwritten only after every branch
+        // has had its say.
+        if (!(c.hinge && _sweepHinge && hingeIn(c, n.pos, _v))) towards(_v, c.pos, n.pos, c.len);
         _v2.add(_v);
       }
       n.pos.copy(_v2.divideScalar(kids.length));
@@ -485,8 +598,14 @@ function fabrik(nodes, targets, root, rootFixed, tol) {
       }
 
       if (kids.length === 1) {
-        // One child: the joint may rotate freely, so the only constraint is the bone length.
-        towards(kids[0].pos, n.pos, kids[0].pos, kids[0].len);
+        // One child. A free joint has only its bone length to satisfy; a hinged one also has
+        // to keep the bone in its plane and inside its range.
+        const c = kids[0];
+        if (n.hinge && _sweepHinge) {
+          _vHw.subVectors(c.pos, n.pos);
+          if (hingeOut(n, _vHw, _vHdir)) { c.pos.copy(n.pos).addScaledVector(_vHdir, c.len); continue; }
+        }
+        towards(c.pos, n.pos, c.pos, c.len);
         continue;
       }
       if (!kids.length) continue;
@@ -518,16 +637,128 @@ function fabrik(nodes, targets, root, rootFixed, tol) {
       }
     }
 
-    let worst = 0;
+    worst = 0;
     for (const [n, t] of targets) worst = Math.max(worst, n.pos.distanceTo(t));
     if (worst < tol) break;
   }
+  return worst;
+}
 
-  // Last, once the positions have settled: put back any joint the solve flipped. Done here
-  // rather than inside the loop because a reflection mid-iteration is a discontinuity the
-  // next sweep would simply undo, and because it changes nothing the targets depend on —
-  // both of the joint's bone lengths survive it exactly.
-  if (window._ikPreferredBend !== false) fixBendDirection(byDepth, targets);
+// ---- the other branch -----------------------------------------------------------
+//
+// A hinge makes the set of poses a limb can hold NON-CONVEX, and the sweeps are local: they
+// find the legal pose nearest the one the limb is already in and cannot cross to the other
+// side. Nearest-branch is exactly what removes the pop, so that is a feature — right up to the
+// point where the near branch cannot reach at all and the foot simply stops following your
+// hand. Folding a leg to half its own span, an ordinary pose, missed by 1.74 units that way.
+//
+// So a solve that falls short is retried once from the OTHER branch. The other branch is not
+// guessed at: for a hinge one bone above its goal the whole limb lies in a plane (both bones
+// are perpendicular to the hinge axis), which makes it the two-bone problem with a closed
+// form. Intersect the sphere of radius `n.len` about the parent with the sphere of radius
+// `hkid.len` about the goal, and of the two solutions take the one the hinge actually permits.
+//
+// Being exact rather than approximate is what makes this safe to keep: the retry either lands
+// on the legal pose or reports that there is not one, so it fires decisively instead of
+// wandering. An earlier version reflected the joint across the line to the goal, which is the
+// right mirror but says nothing about whether the result is legal, and it traded a wrong-way
+// bend for a 1.2-unit jump.
+function reseedBranches(byDepth, targets) {
+  let any = false;
+  for (const n of byDepth) {
+    if (!n.hinge || !n.parent) continue;
+    // One bone below the hinge, and pulled by something. A hinge with nothing asking anything
+    // of it has no branch worth choosing, and a goal further down is not a two-bone problem.
+    const goal = targets.get(n.hkid);
+    if (!goal) continue;
+
+    // Where the parent is HEADED, when it is an effector or a pin of its own: seeding against
+    // a position it is about to leave poses the wrong two-bone problem.
+    const base = targets.get(n.parent) || n.parent.pos;
+    _vHd.subVectors(goal, base);
+    const L = _vHd.length();
+    if (L < 1e-9) continue;              // goal sits on the parent: no line to build a plane on
+    _vHd.divideScalar(L);
+    // The limb's plane contains the parent and the goal, so the axis square to it is the part
+    // of the hinge axis perpendicular to that line.
+    if (!orthoAxis(n.axis, _vHd, _vHa)) continue;
+
+    const l1 = n.len, l2 = n.hkid.len;
+    const x = (L * L + l1 * l1 - l2 * l2) / (2 * L);
+    const h2 = l1 * l1 - x * x;
+    if (h2 <= 1e-12) continue;           // the goal is out of the limb's range, or dead straight
+    const h = Math.sqrt(h2);
+
+    _vHv.crossVectors(_vHa, _vHd);       // unit: both are unit and square to each other
+    _vHu.copy(base).addScaledVector(_vHd, x); // foot of the joint on the parent-goal line
+    for (let sgn = 1; sgn >= -1; sgn -= 2) {
+      _vHw.copy(_vHu).addScaledVector(_vHv, sgn * h);
+      _vHdir.subVectors(_vHw, base).normalize();
+      _vHy.subVectors(goal, _vHw).normalize(); // not _vHx: signedAngle uses that as its own scratch
+      if (signedAngle(_vHdir, _vHy, _vHa) >= HINGE_MIN) { n.pos.copy(_vHw); any = true; break; }
+    }
+  }
+  return any;
+}
+
+// The sweeps, plus the one retry from the other branch. Shared by the interactive solve and by
+// the playback pin pass, which want identical behaviour — a foot that holds its pin while you
+// drag it should hold the same pin when the take plays back.
+function runSolve(nodes, targets, root, rootFixed, tol) {
+  const active = [];
+  for (const n of nodes.values()) if (n.active) active.push(n);
+
+  // PICK THE BRANCH ONCE, UP FRONT, then let the sweeps run unconstrained.
+  //
+  // Clamping the hinge inside every sweep was the original plan, and it does remove the flip
+  // completely — but on a rig with pinned ankles and the hips dragged about it made the sweeps
+  // oscillate rather than settle. Measured against the same rig with the constraint off: 40x
+  // the frame-to-frame jitter and 270x the pin drift, and MORE iterations made it worse, not
+  // better, which is the signature of a limit cycle rather than slow convergence. Bend depth,
+  // the hinge floor, letting the plane roll, and freezing the axis per solve were all tried and
+  // none of them closed the gap.
+  //
+  // The realisation: the flip is a question of WHICH BRANCH, and a branch is chosen once, not
+  // continuously. Seeding the legal branch and then leaving FABRIK alone gets the pose right
+  // without a constraint for the sweeps to fight — pins land exactly, targets are reached
+  // exactly, and the solver is as steady as it is with no hinge at all. The cost is that a
+  // drag which genuinely crosses between branches switches once, visibly, instead of being
+  // held; on the harsh synthetic sweeps that is three or four frames in four hundred, about
+  // what the old post-hoc correction did, and with none of its 2-bone snap.
+  //
+  // `window._ikHingeMode = 'clamp'` puts the constraint back inside the sweeps.
+  const seedOnly = window._ikHingeMode !== 'clamp';
+  if (seedOnly && window._ikHinge !== false) {
+    const bd = active.slice().sort((a, b) => a.depth - b.depth);
+    _sweepHinge = true;
+    updateHingeAxes(bd);
+    reseedBranches(bd, targets);
+    _sweepHinge = false;
+  }
+
+  let worst = fabrik(nodes, targets, root, rootFixed, tol);
+  _sweepHinge = true;
+
+  // Fell short? It may be the near branch that cannot reach rather than the target that is out
+  // of range, so try once from the other side and keep whichever got closer. Only a DECISIVE
+  // improvement counts: a branch switch is a visible jump, and accepting marginal ones would
+  // have the limb flickering between two nearly equal poses from frame to frame. A genuinely
+  // unreachable target improves by nothing and is left exactly as it was.
+  if (window._ikHinge !== false && window._ikBranchRetry !== false && worst > tol * 10) {
+    const best = active.map((n) => n.pos.clone());
+    const byDepth = active.slice().sort((a, b) => a.depth - b.depth);
+    // Reseeded from the CONVERGED pose, not the one the solve started in: everything above the
+    // hinge has already gone where it is going, so the two-bone problem is posed against the
+    // parent's real position rather than a stale one. Getting that backwards left the 6DOF-pin
+    // rig placing its knee against hips that had not moved yet, and the pin drifted 0.64.
+    updateHingeAxes(byDepth); // the seed needs to know which joints are hinged, before any sweep
+    let keptRetry = false;
+    if (reseedBranches(byDepth, targets)) {
+      keptRetry = fabrik(nodes, targets, root, rootFixed, tol) < worst * 0.5;
+    }
+    if (!keptRetry) for (let i = 0; i < active.length; i++) active[i].pos.copy(best[i]);
+  }
+  return worst;
 }
 
 // ---- writing the result back ---------------------------------------------------
@@ -545,6 +776,58 @@ function fitRotation(node, kids, out) {
     k++;
   }
   return alignVectors(_fromBuf, _toBuf, k, out);
+}
+
+// ---- rotations without history --------------------------------------------------
+//
+// THE TWIST RATCHET. `fitRotation` above measures a DELTA from the joint's current
+// orientation. Each such delta is minimal-arc, so no single frame invents any roll — and yet
+// composing a long run of them along a path is parallel transport, which comes back rotated
+// when the path closes. Drive the hips once round a circle and back to exactly where they
+// started and the thigh keeps about 40 degrees of twist it did not have before; go round four
+// times and it keeps 130. That is the candy-wrapper collapse at the top of the thigh, and the
+// limbs spinning between keyframes, and the solve depending on which way you scrubbed: one
+// cause wearing three hats. The pose was a function of how you got there, not of where you are.
+//
+// So the rotation is built ABSOLUTELY instead, from two things that carry no history:
+//
+//   * the child's offset in this joint's own frame, which is CONSTANT — the solver only ever
+//     writes rotations, so a bone's local offset is the same in every pose it will ever hold;
+//   * where the solve wants that child, expressed in the PARENT's frame.
+//
+// The rotation carrying one to the other IS the joint's local rotation, and it is written
+// outright rather than accumulated onto what was there. With one child the fit is the minimal
+// arc, which means zero twist relative to the parent — the convention a limb needs, and the
+// reason identity now means "the rest pose" rather than "wherever this joint drifted to".
+// With two or more children their directions pin the rotation down completely and there is no
+// convention left to choose.
+//
+// `window._ikAbsoluteRotations = false` restores the accumulating behaviour.
+function fitLocalRotation(n, kids, out) {
+  const p = n.joint._parentMesh;
+  if (p && p.getModelSpaceMatrix) modelQuat(p, _qPInv).invert();
+  else _qPInv.identity(); // the root: its own frame IS model space
+  Skeleton.jointPos(n.joint, _v2); // where the joint is, now that its parents are written
+  let k = 0;
+  for (const c of kids) {
+    scratchPair(k);
+    // The child's offset in THIS joint's frame. Constant across every pose, which is exactly
+    // what makes the result independent of the poses that came before.
+    const lm = c.joint.getMatrix();
+    _fromBuf[k].set(lm[12], lm[13], lm[14]);
+    _toBuf[k].subVectors(c.pos, _v2).applyQuaternion(_qPInv);
+    k++;
+  }
+  return alignVectors(_fromBuf, _toBuf, k, out, window._ikFitPasses || 3);
+}
+
+// Write a joint's LOCAL rotation outright, leaving its offset and scale alone.
+function setLocalRotation(joint, q) {
+  _mLocal.fromArray(joint.getMatrix());
+  _mLocal.decompose(_vTmp, _qJoint, _sTmp);
+  _mLocal.compose(_vTmp, q, _sTmp);
+  mat4.copy(joint.getMatrix(), _mLocal.elements);
+  Skeleton.syncThree(joint);
 }
 
 // A joint's orientation in model space.
@@ -607,8 +890,28 @@ function applyRotations(main, nodes, root, rootFixed) {
     }
     const kids = activeChildren(n);
     if (!kids.length) continue; // a leaf's own rotation is not determined by any position
-    fitRotation(n, kids, _qFit);
-    rotateJoint(n.joint, _qFit);
+
+    // ONLY WHERE THE ROLL IS ACTUALLY FREE, which is a joint with a single child.
+    //
+    // That is where the ratchet lives: one child direction leaves the twist about the bone
+    // undetermined, so nothing stops it wandering, and the wander is what collapses the skin at
+    // the top of a thigh. Two or more children pin the rotation down completely — there is no
+    // free roll to accumulate — and those joints are better left on the delta form, because the
+    // multi-child fit is a cheap approximation of a Kabsch solve rather than an exact one. Read
+    // absolutely, that approximation is re-made from scratch every solve and never goes away;
+    // read as a delta it is re-measured and corrected, and settles to machine precision. Making
+    // every joint absolute cost exactly that: a fixed target stopped converging cleanly and
+    // crept 5.8e-3 per twenty solves instead of 3.4e-15.
+    //
+    // So: absolute where the convention is needed, delta where the geometry already decides.
+    const canBeAbsolute = n.parent || kids.length > 1;
+    if (window._ikAbsoluteRotations !== false && canBeAbsolute) {
+      fitLocalRotation(n, kids, _qLocal);
+      setLocalRotation(n.joint, _qLocal);
+    } else {
+      fitRotation(n, kids, _qFit);
+      rotateJoint(n.joint, _qFit);
+    }
     touched.push(n);
   }
   return touched;
@@ -686,9 +989,68 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   // your hand on the very first drag.
   const rootFixed = targets.size <= 1;
 
-  fabrik(nodes, targets, root, rootFixed, Skeleton.sceneUnit(main) * TOL_FRAC);
+  runSolve(nodes, targets, root, rootFixed, Skeleton.sceneUnit(main) * TOL_FRAC);
   const touched = applyRotations(main, nodes, root, rootFixed);
   return touched.length > 0 || !rootFixed;
+};
+
+// ---- holding pins through playback ----------------------------------------------
+//
+// A keyed pose does NOT re-run the solver: playback slerps each joint's stored LOCAL rotation
+// straight back into its matrix. Pin satisfaction is not preserved by that, because where a
+// foot ends up is a nonlinear function of the joint rotations above it — slerp between two
+// poses that each sit on the pin and the foot cuts the chord instead of following the arc. It
+// is exact AT the keys and worst between them; measured on a two-key leg it left the pin by
+// 0.39 at the midpoint, about a quarter of the leg's length.
+//
+// This is Maya's behaviour too, and Maya says so outright: pinning "only affects your FBIK
+// effectors during interaction — not during playback". Their answer is to promote a pin into a
+// keyed IK effector that the solver evaluates every frame. This is the cheap half of that: the
+// pins are treated as constant goals and re-solved once per frame after playback has written
+// the interpolated pose. Right for a foot planted through a shot, wrong for a pin that is
+// meant to travel — that needs keyable goals, which is the larger job.
+//
+// THE ROOT IS ALWAYS FIXED HERE, unlike an interactive drag. The root's motion is authored —
+// it is what the take says the character does — so the legs bend to meet the pins rather than
+// the character sliding to meet them. Letting the root move would have the pin pass quietly
+// rewriting the animation.
+IKSolver.holdPins = function (main) {
+  const pins = IKSolver.pinnedJoints(main);
+  if (!pins.length) return false;
+  const nodes = buildGraph(main);
+
+  // Grouped by skeleton: two pinned characters are two independent problems, and throwing all
+  // their pins at one solve would treat them as one body.
+  const byRoot = new Map();
+  for (const j of pins) {
+    const n = nodes.get(j.getID());
+    if (!n) continue;
+    const root = rootOf(n);
+    let g = byRoot.get(root);
+    if (!g) byRoot.set(root, (g = []));
+    g.push({ node: n, joint: j });
+  }
+
+  const tol = Skeleton.sceneUnit(main) * TOL_FRAC;
+  let solved = false;
+  for (const [root, group] of byRoot) {
+    const targets = new Map();
+    for (const { node, joint } of group) {
+      targets.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
+      // A 6DOF pin holds its orientation as well, through the same machinery the interactive
+      // solve uses: the target is the orientation it already has, so the joint is its own fixed
+      // point and its children stay rigid with it while the chain above swings.
+      if (IKSolver.pinMode(joint) === IKSolver.PIN_FULL) {
+        node.orient = IKSolver.pinAnchorQuat(joint, new THREE.Quaternion());
+        node.rot = node.orient.clone().multiply(modelQuat(joint, _qNow).invert());
+      }
+    }
+    markActive(targets.keys());
+    runSolve(nodes, targets, root, true, tol);
+    applyRotations(main, nodes, root, true);
+    solved = true;
+  }
+  return solved;
 };
 
 // Every joint's local matrix, for undo. A solve can reach anywhere in the tree (that is the

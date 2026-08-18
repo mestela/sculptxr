@@ -29,6 +29,9 @@ const BONE_COLOR = 0xf0c674;
 const BONE_EDGE = 0x1e1e2e;
 const HILITE_COLOR = 0xffe066;
 const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
+// The leader from a joint to the pin it has not reached. Warm, so a shortfall reads as a
+// warning against the cool joint/bone palette.
+const PIN_LINK_COLOR = 0xf38ba8;
 const PLANE_COLOR = 0x89b4fa;
 const PLANE_HOT = 0xa6e3a1;
 const PIN_COLOR = 0xf38ba8;
@@ -42,6 +45,7 @@ const _q = new THREE.Quaternion();
 // Scratch for deriving a bone's roll from the joint that owns it.
 const _qOwner = new THREE.Quaternion(), _qAlign = new THREE.Quaternion();
 const _qPin = new THREE.Quaternion();
+const _vPin = new THREE.Vector3();
 const _qInv = new THREE.Quaternion();
 const _dirLocal = new THREE.Vector3(), _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
 
@@ -590,7 +594,19 @@ function ensureEntry(main, id) {
     wire.isPickable = wireGhost.isPickable = false;
     wire.frustumCulled = wireGhost.frustumCulled = false;
 
+    // The dashed leader from a pinned joint to the anchor it is trying to reach. Two points,
+    // rewritten each frame; the dash pattern needs computeLineDistances() after every move.
+    const linkGeo = new THREE.BufferGeometry();
+    linkGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const link = new THREE.Line(linkGeo, new THREE.LineDashedMaterial({
+      color: PIN_LINK_COLOR, transparent: true, opacity: 0.85, depthWrite: false, depthTest: false,
+    }));
+    link.renderOrder = 10000;
+    link.isPickable = false;
+    link.frustumCulled = false;
+
     e = {
+      pinLink: link,
       pinT: makePinPart(triadGeometry()),
       pinG: makePinPart(gimbalGeometry()),
       bone: makePair(boneGeometry(), BONE_COLOR),
@@ -604,7 +620,7 @@ function ensureEntry(main, id) {
       },
     };
     g.add(e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
-          e.wire.solid, e.wire.ghost, e.label.sprite,
+          e.wire.solid, e.wire.ghost, e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost);
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
     main._skelVis.set(id, e);
@@ -617,6 +633,10 @@ function disposeEntry(main, id) {
   if (!e) return;
   const g = skelGroup(main);
   const caps = e.cap ? [e.cap.shaft, e.cap.a, e.cap.b] : [];
+  if (e.pinLink) {
+    g.remove(e.pinLink);
+    e.pinLink.geometry.dispose(); e.pinLink.material.dispose();
+  }
   for (const p of [e.bone, e.joint, e.wire, e.pinT, e.pinG, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
@@ -717,6 +737,7 @@ Skeleton.updateVisuals = function (main) {
       e.label.sprite.visible = false;
       e.pinT.solid.visible = e.pinT.ghost.visible = false;
       e.pinG.solid.visible = e.pinG.ghost.visible = false;
+      e.pinLink.visible = false;
       hideCaps(e);
       continue;
     }
@@ -741,20 +762,57 @@ Skeleton.updateVisuals = function (main) {
     // the solver (and there is no import cycle).
     const pinMode = (j._boneIKPin | 0) & 3;
     if (pinMode) {
-      // The joint's own frame — which is what makes the two states tell themselves apart in
-      // motion: a 3DOF triad turns with the limb, a 6DOF one holds still.
-      _mTmp.fromArray(j.getModelSpaceMatrix());
-      _mTmp.decompose(_vTmp, _qPin, _sTmp);
+      // THE MARKER BELONGS AT THE ANCHOR, NOT AT THE JOINT.
+      //
+      // A pin is a fixed point in space that the joint is trying to reach, and it is never
+      // moved by the solver — an unreachable pin is one the joint falls SHORT of. Drawing the
+      // marker on the joint made the pin look like it was being dragged along with the ankle,
+      // which is exactly the wrong story: it hid the shortfall instead of showing it. The
+      // dashed leader below draws the gap so a pin that is not being met is visible as a gap.
+      //
+      // Read off the joint's own fields rather than through IKSolver, so the visuals stay
+      // independent of the solver and there is no import cycle. A rig loaded from a save file
+      // has no anchor yet — the saved pose IS the pinned pose, so the joint is the right
+      // reading until the solver takes its own.
+      if (j._boneIKPinAt) _vPin.fromArray(j._boneIKPinAt);
+      else _vPin.copy(_pB);
+      // A 3DOF triad turns with the limb, a 6DOF one holds still — which is what lets the two
+      // states tell themselves apart in motion. The 6DOF marker now takes the ANCHORED
+      // orientation, so it really is still rather than merely nearly so.
+      if (pinMode > 1 && j._boneIKPinQ) {
+        _qPin.fromArray(j._boneIKPinQ);
+      } else {
+        _mTmp.fromArray(j.getModelSpaceMatrix());
+        _mTmp.decompose(_vTmp, _qPin, _sTmp);
+      }
     }
     const pinParts = [
       [e.pinT, pinMode > 0, jr * 2.2],
       [e.pinG, pinMode > 1, jr * 2.2],
     ];
+    // The gap between where the joint is and where it is pinned. Shown only when there IS a
+    // gap worth showing: a pin that is being met draws no leader, so a visible dash always
+    // means the solve is falling short.
+    const gap = pinMode ? _vPin.distanceTo(_pB) : 0;
+    if (gap > jr * 0.35) {
+      const pa = e.pinLink.geometry.getAttribute('position');
+      pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
+      pa.setXYZ(1, _vPin.x, _vPin.y, _vPin.z);
+      pa.needsUpdate = true;
+      e.pinLink.geometry.computeBoundingSphere();
+      e.pinLink.material.dashSize = jr * 0.8;
+      e.pinLink.material.gapSize = jr * 0.6;
+      e.pinLink.computeLineDistances();
+      e.pinLink.visible = true;
+    } else {
+      e.pinLink.visible = false;
+    }
+
     for (const [part, on, size] of pinParts) {
       for (const o of [part.solid, part.ghost]) {
         o.visible = on;
         if (!on) continue;
-        o.position.copy(_pB);
+        o.position.copy(_vPin);
         o.quaternion.copy(_qPin);
         o.scale.setScalar(size); // sits outside the marker, including its highlight size
         o.updateMatrix(); o.matrixWorldNeedsUpdate = true;

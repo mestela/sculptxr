@@ -17,6 +17,7 @@ import Mesh from './mesh/Mesh.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import Skeleton from './editing/Skeleton.js';
 import Skinning from './editing/Skinning.js';
+import IKSolver from './editing/IKSolver.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -1341,6 +1342,31 @@ class Scene {
           window._animationRegistry.update(m);
         }
         this._drawFullScene = true; // Ensure we redraw
+      }
+    }
+
+    // Re-seat pinned joints against the pose playback just wrote.
+    //
+    // A keyed pose is INTERPOLATED, and interpolation does not preserve a pin: where a foot
+    // ends up is a nonlinear function of the joint rotations above it, so slerping between two
+    // poses that each sit on the pin sends the foot along the chord instead of the arc. It is
+    // exact at the keys and drifts by about a quarter of a leg's length between them. Maya has
+    // the same behaviour and says so — pinning "only affects your FBIK effectors during
+    // interaction, not during playback" — and its answer is to solve the pins every frame.
+    //
+    // Once per frame, and only after every joint matrix has been written: the flag is set by
+    // AnimationRegistry as it writes each bone, so a timeline SCRUB is covered by the same
+    // path as playback without either having to know about this.
+    //
+    // Guarded like the rest of the loop: a fault here must never take rendering down with it.
+    if (window._ikPinsDirty) {
+      window._ikPinsDirty = false;
+      if (window._ikHoldPins !== false) {
+        try {
+          IKSolver.holdPins(this);
+        } catch (e) {
+          console.error('IK pin hold failed:', e);
+        }
       }
     }
 
