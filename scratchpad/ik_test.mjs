@@ -92,6 +92,20 @@ const Skeleton = {
     return out.set(m.elements[12], m.elements[13], m.elements[14]);
   },
   sceneUnit: () => 1,
+  // Pin creation moved into Skeleton so the file loader can reach it without an import cycle.
+  // The stub mirrors what the real one does that the SOLVER can observe: a null in the scene,
+  // flagged as a pin, standing where the joint stands.
+  makePin(main, joint) {
+    if (!main || !main.buildNull) return null;
+    const pin = main.buildNull();
+    pin._isPinTarget = true;
+    pin._pinnedJoint = joint;
+    pin._permanentStaticLabel = joint && joint._permanentStaticLabel
+      ? 'pin_' + joint._permanentStaticLabel : 'pin';
+    main.addMeshSilent(pin);
+    if (joint) pin._m.fromArray(modelMat(joint).elements);
+    return pin;
+  },
   syncThree() {},
   moveJoint(main, joint, pos) {
     const m = modelMat(joint);

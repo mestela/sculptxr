@@ -13,6 +13,8 @@ var _TMP_MS = mat4.create(); // model-space (worldGroup-relative) mesh matrix
 var _TMP_INTER = [0.0, 0.0, 0.0];
 var _TMP_INTER_1 = [0.0, 0.0, 0.0];
 var _TMP_INTER_RIG = [0.0, 0.0, 0.0];
+var _TMP_RIG_P = [0.0, 0.0, 0.0], _TMP_RIG_D = [0.0, 0.0, 0.0];
+var _TMP_RIG_W = [0.0, 0.0, 0.0], _TMP_RIG_C = [0.0, 0.0, 0.0];
 var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
 var _TMP_V1 = [0.0, 0.0, 0.0];
 var _TMP_V2 = [0.0, 0.0, 0.0];
@@ -186,6 +188,71 @@ class Picking {
       if (!mesh.isVisible() || mesh._selectLocked) continue;
       if (mesh.isPickable === false && !(includeRig && isRig)) continue;
 
+      // RIG NODES ARE PICKED AS POINTS IN A CONE, not as geometry.
+      //
+      // A joint's pick sphere is a 0.03-scale locator while the marker you SEE is sized from
+      // the scene unit — different things entirely — so ray-vs-geometry meant aiming at an
+      // invisible object a fraction the size of the dot, and missing it by a pixel or landing
+      // somewhere else entirely depending on zoom. Instead: distance from the node's centre to
+      // the ray, against a radius that grows with depth, which is a fixed target in SCREEN
+      // space at any distance. `window._rigPickCone` widens or narrows it.
+      if (isRig) {
+        // WORLD space, to match the ray. vNear/vFar are unprojected into world coords and the
+        // mesh path transforms them INTO each mesh; getModelSpaceMatrix is worldGroup-relative,
+        // so comparing a model-space point against a world-space ray silently misses entirely
+        // the moment the world group carries any transform of its own.
+        const rtm = mesh.getThreeMesh();
+        if (!rtm) continue;
+        rtm.updateMatrixWorld(true);
+        const rwm = rtm.matrixWorld.elements;
+        _TMP_RIG_P[0] = rwm[12]; _TMP_RIG_P[1] = rwm[13]; _TMP_RIG_P[2] = rwm[14];
+        vec3.sub(_TMP_RIG_D, vFar, vNear);
+        var rl2 = vec3.sqrLen(_TMP_RIG_D);
+        if (rl2 < 1e-20) continue;
+        vec3.sub(_TMP_RIG_W, _TMP_RIG_P, vNear);
+        var tAlong = vec3.dot(_TMP_RIG_W, _TMP_RIG_D) / rl2;
+        if (tAlong < 0) continue;                       // behind the eye
+        vec3.scaleAndAdd(_TMP_RIG_C, vNear, _TMP_RIG_D, tAlong);
+        var offAxis = vec3.dist(_TMP_RIG_C, _TMP_RIG_P);
+        // ORTHO RAYS ARE PARALLEL, so the hit zone is a cylinder, not a cone: scaling the
+        // radius with depth there makes it vanish near the camera and balloon far away, which
+        // is why nothing could be picked in orthographic at all. In both cases the radius is
+        // chosen to be the same fraction of the SCREEN.
+        var _pk = (window._rigPickCone || 0.035);
+        var _cam = this._main && this._main.getCamera && this._main.getCamera();
+        var cone;
+        if (_cam && _cam.isOrthographic && _cam.isOrthographic()) {
+          var halfH = (_cam._height || 1) * _cam.getOrthoZoom(); // matches updateOrtho's half-extent
+          cone = _pk * halfH / Math.tan((_cam.getFov ? _cam.getFov() : 45) * 0.5 * Math.PI / 180);
+        } else {
+          cone = _pk * tAlong * Math.sqrt(rl2);
+        }
+        if (window._pickTrace) {
+          console.log('[pick]', mesh._permanentStaticLabel || mesh.getID(),
+            mesh._isPinTarget ? 'PIN' : 'BONE',
+            'p=', _TMP_RIG_P.map((v) => v.toFixed(2)).join(','),
+            't=', tAlong.toFixed(3), 'off=', offAxis.toFixed(3), 'cone=', cone.toFixed(3),
+            offAxis <= cone ? 'HIT' : '');
+        }
+        if (offAxis > cone) continue;
+        // PINS BEAT BONES. A pin sits exactly on the joint it holds, so on the common case the
+        // two are the same pixel — and the pin is the thing you reach for, being the controller.
+        // Ranked rather than distance-sorted, or the pin would win or lose by float noise.
+        var rank = mesh._isPinTarget ? 2 : 1;
+        var score = tAlong - rank * 1e6;               // rank first, then nearest to the eye
+        if (score < nearRigDistance) {
+          nearRigDistance = score;
+          nearRig = mesh;
+          // The intersection is reported in MESH-LOCAL coords — callers transform it by the
+          // mesh matrix — and a locator's origin is its centre. Handing back the model-space
+          // position instead would be transformed a second time and put the grab depth in the
+          // wrong place entirely.
+          _TMP_INTER_RIG[0] = _TMP_INTER_RIG[1] = _TMP_INTER_RIG[2] = 0;
+          nearRigFace = -1;
+        }
+        continue;
+      }
+
       mesh.getThreeMesh().updateMatrixWorld(true);
       mat4.invert(_TMP_INV, mesh.getThreeMesh().matrixWorld.elements);
       vec3.transformMat4(_TMP_NEAR_1, vNear, _TMP_INV);
@@ -195,12 +262,6 @@ class Picking {
 
       var interTest = this.getIntersectionPoint();
       var testDistance = vec3.dist(_TMP_NEAR_1, interTest) * mesh.getScale();
-      if (isRig && testDistance < nearRigDistance) {
-        nearRigDistance = testDistance;
-        nearRig = mesh;
-        vec3.copy(_TMP_INTER_RIG, interTest);
-        nearRigFace = this.getPickedFace();
-      }
       if (testDistance < nearDistance) {
         nearDistance = testDistance;
         nearMesh = mesh;
@@ -215,7 +276,10 @@ class Picking {
     // Only the tools that want rig nodes pass includeRig, so asking for them is a clear enough
     // statement of intent to let them win. Gated to a bound mesh first, which was too narrow:
     // a rig is usually drawn long before anything is bound to it.
-    if (nearRig && nearMesh && nearMesh !== nearRig) {
+    // Note the missing `&& nearMesh`: rig nodes are tested on their own path and never touch
+    // nearMesh, so requiring one meant a hit on a bone with no mesh behind it reported NOTHING
+    // — which read as the rig having become unselectable altogether.
+    if (nearRig) {
       nearMesh = nearRig;
       nearFace = nearRigFace;
       vec3.copy(_TMP_INTER_1, _TMP_INTER_RIG);

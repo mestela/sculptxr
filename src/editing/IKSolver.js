@@ -105,16 +105,6 @@ IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 // position let pins ratchet upward with a jumping character; with the anchor living in an
 // object's transform there is nothing to re-read.
 
-// Where the pin null is parked when a joint is pinned: exactly where the joint is now.
-function placePinAt(pin, joint) {
-  _mTmp.fromArray(joint.getModelSpaceMatrix());
-  _mTmp.decompose(_vTmp, _qNow, _sTmp);
-  // The null carries no scale of its own — it is a frame, not a shape.
-  _mTmp.compose(_vTmp, _qNow, _sOne);
-  if (pin.setModelSpaceMatrix) pin.setModelSpaceMatrix(_mTmp.elements);
-  else mat4.copy(pin.getMatrix(), _mTmp.elements);
-}
-
 IKSolver.pinObject = function (joint) {
   const p = joint && joint._boneIKPinObj;
   // A pin whose object has been deleted from the scene is no pin at all. Checked here rather
@@ -149,29 +139,12 @@ IKSolver.setPin = function (joint, mode, main) {
 // The null itself. Built through the scene's own addNull so it arrives pickable, selectable,
 // serialisable and in the outliner — everything a pin needs in order to be transformable and
 // keyable comes free from being an ordinary object.
+// The null itself. Built by SKELETON rather than here: the file loader has to make one
+// during a pre-v3 migration, and IKSolver already imports Skeleton — owning it here would
+// close an import cycle. One implementation, so the loader's pins and the tool's pins
+// cannot drift apart.
 IKSolver.makePinObject = function (main, joint) {
-  if (!main || !main.buildNull) return null;
-  // Built and attached SILENTLY: the caller wraps creating the pin, linking it and setting its
-  // mode in one undo step, and addNewMesh would push a second one — so a single button press
-  // would take two undos to unwind.
-  const pin = main.buildNull();
-  pin._typeName = 'Pin';
-  // Named after the bone it constrains, because "Pin 7" tells you nothing in an outliner and
-  // the whole reason a pin is an object is so you can find and grab it. Set before the mesh is
-  // attached: addMeshSilent only invents a label when there is not one already.
-  const jn = joint._permanentStaticLabel;
-  pin._permanentStaticLabel = jn ? 'pin_' + jn : 'pin';
-  main.addMeshSilent(pin);
-  if (main.decorateNull) main.decorateNull(pin);
-  pin._isPinTarget = true;
-  pin._pinnedJoint = joint;
-  // The skeleton pass draws the triad and gimbal at this transform, so the null's own
-  // cruciform would be a second marker in the same place.
-  const tm = pin.getThreeMesh && pin.getThreeMesh();
-  const cross = tm && tm.children.find((c) => c.name === 'null_cruciform');
-  if (cross) cross.visible = false;
-  placePinAt(pin, joint);
-  return pin;
+  return Skeleton.makePin ? Skeleton.makePin(main, joint) : null;
 };
 
 IKSolver.pinMode = function (joint) {

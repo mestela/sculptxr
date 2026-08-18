@@ -362,6 +362,7 @@ class Camera {
   }
 
   updateProjection() {
+    if (window._orthoTrace) console.log('[proj]', JSON.stringify(this.orthoDebug()));
     if (this._projectionType === Enums.Projection.PERSPECTIVE) {
       if (this._threeCamera) {
         this._threeCamera.fov = this._fov;
@@ -451,12 +452,55 @@ class Camera {
     this.updateView();
   }
 
+  // World units per pixel in the orthographic view.
+  //
+  // Derived rather than tuned. The old value was a flat 0.00055, which happens to match the
+  // perspective view only at one particular viewport height — everywhere else, toggling
+  // projection jumped the model's apparent size (roughly 2x on a tall canvas). At the pivot
+  // distance the perspective view is `dist * tan(fov/2)` half-heights tall, so matching that
+  // per pixel is `dist * tan(fov/2) / (height/2)`, and the model barely moves on the swap.
+  // True distance from the eye to the pivot. `_trans[2]` is NOT that: it is the distance
+  // pre-multiplied by `_fov / 45` (see setPivot), so reading it as a distance inflates
+  // everything by that factor — 1.8x at an 81-degree fov, which is the size jump on toggle.
+  pivotDistance() {
+    return Math.abs(this._trans[2]) * 45 / (this._fov || 45);
+  }
+
   getOrthoZoom() {
-    return Math.abs(this._trans[2]) * 0.00055;
+    const h = this._height || 1;
+    // Divided by the FULL height, not half of it: updateOrtho uses `_height * delta` as the
+    // half-extent (mat4.ortho gets -h..h), so treating it as the full height made the frustum
+    // twice as wide and the model half the size on screen.
+    return this.pivotDistance() * Math.tan(this._fov * 0.5 * Math.PI / 180) / h;
+  }
+
+  // Diagnostic for the ortho/perspective size match. `window._orthoTrace = true` prints the
+  // two half-heights at the pivot: if they differ, the ratio IS the size jump on toggle.
+  orthoDebug() {
+    const d = this.pivotDistance();
+    const persp = d * Math.tan(this._fov * 0.5 * Math.PI / 180);
+    const ortho = this._height * this.getOrthoZoom();
+    // What the RENDERER is actually using. updateOrtho writes _proj straight into the Three
+    // camera, but perspective mode goes through threeCam.updateProjectionMatrix() and its own
+    // fov field — so if the two disagree, matching this camera's _proj matches the wrong
+    // perspective and the size still jumps however right the arithmetic looks.
+    const tc = this._threeCamera;
+    const tcFov = tc ? tc.fov : null;
+    const e = tc ? tc.projectionMatrix.elements : null;
+    // The Three camera may hold EITHER projection at this point, and the two read out
+    // differently — perspective is d/e[5], orthographic is 1/e[5]. Reading an ortho matrix with
+    // the perspective formula is what made this diagnostic report a meaningless 0.008 ratio.
+    const isOrtho = e ? Math.abs(e[15] - 1) < 1e-9 : false;
+    const tcHalf = e && e[5] ? (isOrtho ? 1 / e[5] : d / e[5]) : null;
+    return { dist: d, fov: this._fov, width: this._width, height: this._height,
+      perspHalfHeight: persp, orthoHalfHeight: ortho, ratio: ortho / persp,
+      threeFov: tcFov, threeHalfHeight: tcHalf,
+      rendererRatio: tcHalf ? ortho / tcHalf : null };
   }
 
   updateOrtho() {
     var delta = this.getOrthoZoom();
+    if (window._orthoTrace) console.log('[ortho]', JSON.stringify(this.orthoDebug()));
     var w = this._width * delta;
     var h = this._height * delta;
     mat4.ortho(this._proj, -w, w, -h, h, -this._near, this._far);

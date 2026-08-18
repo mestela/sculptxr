@@ -51,6 +51,7 @@ const _q = new THREE.Quaternion();
 // Scratch for deriving a bone's roll from the joint that owns it.
 const _qOwner = new THREE.Quaternion(), _qAlign = new THREE.Quaternion();
 const _qPin = new THREE.Quaternion();
+const _sOnePin = new THREE.Vector3(1, 1, 1);
 const _vPin = new THREE.Vector3();
 const _qInv = new THREE.Quaternion();
 const _dirLocal = new THREE.Vector3(), _vTmp = new THREE.Vector3(), _sTmp = new THREE.Vector3();
@@ -491,6 +492,38 @@ Skeleton.restoreLocal = function (snapshot) {
     mat4.copy(mesh.getMatrix(), m);
     Skeleton.syncThree(mesh);
   }
+};
+
+// The pin null itself. Lives HERE rather than in IKSolver because the loader needs to build
+// one during a pre-v3 migration, and IKSolver already imports Skeleton — putting it the other
+// way round would close a cycle. IKSolver.makePinObject delegates to this, so there is one
+// implementation rather than two that drift.
+Skeleton.makePin = function (main, joint) {
+  if (!main || !main.buildNull) return null;
+  const pin = main.buildNull();
+  pin._typeName = 'Pin';
+  pin._isPinTarget = true;
+  pin._pinnedJoint = joint;
+  // Named after the bone it constrains: "Pin 7" tells you nothing in an outliner, and being
+  // findable is most of the point of a pin being an object. Set before attach, since the scene
+  // only invents a label when there is not one already.
+  const jn = joint && joint._permanentStaticLabel;
+  pin._permanentStaticLabel = jn ? 'pin_' + jn : 'pin';
+  main.addMeshSilent(pin);
+  if (main.decorateNull) main.decorateNull(pin);
+  // The skeleton pass draws the triad and gimbal at this transform, so the null's own
+  // cruciform would be a second marker in the same place.
+  const tm = pin.getThreeMesh && pin.getThreeMesh();
+  const cross = tm && tm.children && tm.children.find((c) => c.name === 'null_cruciform');
+  if (cross) cross.visible = false;
+  if (joint) {
+    _mTmp.fromArray(joint.getModelSpaceMatrix());
+    _mTmp.decompose(_vTmp, _qPin, _sTmp);
+    _mTmp.compose(_vTmp, _qPin, _sOnePin);
+    if (pin.setModelSpaceMatrix) pin.setModelSpaceMatrix(_mTmp.elements);
+    else mat4.copy(pin.getMatrix(), _mTmp.elements);
+  }
+  return pin;
 };
 
 Skeleton.setHighlight = function (main, joint) {
@@ -1232,7 +1265,7 @@ Skeleton.mirrorPoint = function (p, plane, out) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 2;
+const SKEL_VERSION = 3;  // v3 adds the IK pin link per entry
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
 
@@ -1258,6 +1291,10 @@ Skeleton.serialize = function (meshes) {
       bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
+      // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
+      // mesh path — all this has to carry is the link, exactly as `mir` carries the mirror.
+      // Without it a reloaded rig has pin MODES and nothing to attach them to.
+      pin: (m._isBone && m._boneIKPinObj && idxOf(m._boneIKPinObj) >= 0) ? idxOf(m._boneIKPinObj) : NONE,
     });
   });
   // Bound meshes. The joint list is stored as indices into `meshes`, matching how the
@@ -1276,7 +1313,7 @@ Skeleton.serialize = function (meshes) {
 
   if (!entries.length && !skins.length) return null;
 
-  let slots = 3 + entries.length * 5 + 1;
+  let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
     slots += 3 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
   }
@@ -1286,7 +1323,7 @@ Skeleton.serialize = function (meshes) {
   let o = 0;
   u[o++] = SKEL_MAGIC; u[o++] = SKEL_VERSION; u[o++] = entries.length;
   for (const e of entries) {
-    u[o++] = e.i; u[o++] = e.p; u[o++] = e.bone; f[o++] = e.r; u[o++] = e.mir;
+    u[o++] = e.i; u[o++] = e.p; u[o++] = e.bone; f[o++] = e.r; u[o++] = e.mir; u[o++] = e.pin;
   }
 
   u[o++] = skins.length;
@@ -1329,6 +1366,10 @@ function findSkelBlock(buffer) {
   return null;
 }
 
+// Pins are joined up at the very END of a load: a migrated pin has to be built where the joint
+// finally stands, not where it stood before the file's matrices were applied.
+const pendingPins = [];
+
 Skeleton.deserialize = function (buffer, meshes, main) {
   try {
     if (!buffer || !meshes || !main) return;
@@ -1346,9 +1387,12 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     const rows = [];
     for (let i = 0; i < n; i++) {
       const mi = u[o++], pi = u[o++], bone = u[o++], r = f[o++], mir = u[o++];
+      // v1/v2 entries are five words; v3 added the pin link. Read it only when the file says
+      // it is there, or every field after it shifts by one.
+      const pin = ver >= 3 ? u[o++] : NONE;
       const mesh = meshes[mi];
       if (!mesh) continue;
-      rows.push({ mesh: mesh, parent: pi === NONE ? null : meshes[pi] || null, bone: bone, r: r, mir: mir });
+      rows.push({ mesh: mesh, parent: pi === NONE ? null : meshes[pi] || null, bone: bone, r: r, mir: mir, pin: pin });
     }
 
     // Restore the joint's own properties first — healGraph keys off _isBone, and the
@@ -1369,6 +1413,24 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     }
     for (const row of rows) {
       if (row.mir !== NONE && meshes[row.mir]) row.mesh._boneMirror = meshes[row.mir];
+    }
+
+    // ---- IK pins ------------------------------------------------------------------
+    //
+    // v3 files carry the link and the pin null was saved as an ordinary mesh, so the two are
+    // simply joined back up. Older files carry only the MODE, in the flag bits — for those a
+    // pin is created where the joint is standing, which is the same reading the old code had:
+    // the saved pose IS the pinned pose.
+    //
+    // Deferred to the end of the load, after the matrices are restored, or a migrated pin
+    // would be built at whatever transform the joint had before the file was applied.
+    pendingPins.length = 0;
+    for (const row of rows) {
+      if (!(row.bone & 1)) continue;
+      const mode = (row.bone >> 1) & 3;
+      if (!mode) continue;
+      const pinMesh = row.pin !== NONE ? meshes[row.pin] : null;
+      pendingPins.push({ joint: row.mesh, mode: mode, pin: pinMesh || null });
     }
 
     // Reparenting is world-PRESERVING (setMeshParent uses attach), but the matrix loaded
@@ -1437,6 +1499,29 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         mesh._skinDirty = true; // re-skin on the first frame; the saved verts are a pose
       }
     }
+
+    for (const p of pendingPins) {
+      if (p.pin) {
+        // v3: the null came back with the file. Re-flag it — _isPinTarget and the mode live on
+        // the object and are not part of the mesh format.
+        p.pin._isPinTarget = true;
+        p.pin._pinMode = p.mode;
+        p.pin._pinnedJoint = p.joint;
+        p.pin._isNull = true;
+        p.pin.isPickable = false;
+        p.joint._boneIKPinObj = p.pin;
+        p.joint._boneIKPin = p.mode;
+      } else {
+        // Pre-v3: only the mode survived, so a pin is made where the joint is standing.
+        const made = Skeleton.makePin(main, p.joint);
+        if (made) {
+          made._pinMode = p.mode;
+          p.joint._boneIKPinObj = made;
+          p.joint._boneIKPin = p.mode;
+        }
+      }
+    }
+    pendingPins.length = 0;
 
     Skeleton.updateVisuals(main);
   } catch (e) {

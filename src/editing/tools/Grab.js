@@ -6,6 +6,7 @@ import AnimationRegistry from '../AnimationRegistry.js';
 import IKSolver from '../IKSolver.js';
 import Skeleton from '../Skeleton.js';
 
+const _gV = new THREE.Vector3();
 const _grabTarget = [0, 0, 0];
 const _grabTargetV = new THREE.Vector3();
 
@@ -89,6 +90,17 @@ class Grab extends SculptBase {
     this._grabCamForward = vec3.normalize(vec3.create(),
       [-view[2], -view[6], -view[10]]);
 
+    // The world group's transform is what separates RENDERED space (where the cursor ray
+    // lives, since unproject works against the drawn projection) from MODEL space (where
+    // hitWorld and the mesh matrices live). Cached at grab time so the drag maps the ray into
+    // model space rather than compensating for the difference with a depth fudge.
+    this._grabWorldInv = null;
+    const wg = main._worldGroup;
+    if (wg) {
+      wg.updateMatrixWorld(true);
+      this._grabWorldInv = new THREE.Matrix4().copy(wg.matrixWorld).invert();
+    }
+
     // worldGroup.scale shrinks the rendered scene toward the world origin.
     // When the camera is away from the origin this moves rendered mesh points
     // further from the camera than their sculpt coordinates suggest — perspective
@@ -105,13 +117,32 @@ class Grab extends SculptBase {
     var m = mesh.getMatrix();
     this._grabInitT = [m[12], m[13], m[14]];
 
-    // Ray-plane anchor at the effective depth.
-    var vNear   = picking.unproject(main._mouseX, main._mouseY, 0.0);
-    var vFar    = picking.unproject(main._mouseX, main._mouseY, 0.1);
-    var rayDir0 = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), vFar, vNear));
-    var eye0    = cam.computePosition();
-    var t0      = this._grabEffectiveDepth / vec3.dot(rayDir0, this._grabCamForward);
-    this._grabInitWorld = vec3.scaleAndAdd(vec3.create(), eye0, rayDir0, t0);
+    // THE ANCHOR IS THE HIT POINT ITSELF — no reconstruction.
+    //
+    // This used to rebuild it as eye + rayDir * (depth / dot(rayDir, forward)), which is a
+    // perspective-only formula: under orthographic the eye is not a point the rays pass
+    // through. Worse, update() intersects the cursor ray with a plane, so start() and update()
+    // were computing the same point two different ways — and where they disagree, the very
+    // first mouse move jumps by the difference. That is the warp.
+    //
+    // The pick already gives the point under the cursor, on the surface, in world space. Using
+    // it directly makes the anchor exact and identical under both projections, and the drag
+    // starts with a delta of precisely zero.
+    this._grabInitWorld = vec3.clone(hitWorld);
+    // The drag plane, stated as a point and a normal rather than a depth from the eye. Under
+    // ORTHOGRAPHIC projection every ray is parallel and the eye is not a real point the rays
+    // pass through — only the unprojected NEAR point moves with the cursor — so a depth-from-eye
+    // formula gives the same answer for every mouse position and the drag does nothing at all.
+    this._grabPlanePt = vec3.clone(this._grabInitWorld);
+    // Camera forward in MODEL space: a direction, so the translation is removed by mapping two
+    // points and taking the difference.
+    if (this._grabWorldInv) {
+      const a = _gV.set(0, 0, 0).applyMatrix4(this._grabWorldInv).clone();
+      const b = _gV.fromArray(this._grabCamForward).applyMatrix4(this._grabWorldInv);
+      this._grabCamForwardModel = vec3.normalize(vec3.create(), [b.x - a.x, b.y - a.y, b.z - a.z]);
+    } else {
+      this._grabCamForwardModel = null;
+    }
 
     this._grabUpdateCount = 0;
 
@@ -128,15 +159,26 @@ class Grab extends SculptBase {
     // Does NOT use screenZ, so it is immune to near=0.001 depth precision collapse.
     var vNear  = picking.unproject(main._mouseX, main._mouseY, 0.0);
     var vFar   = picking.unproject(main._mouseX, main._mouseY, 0.1);
+    // Into MODEL space, so the ray, the drag plane and the resulting delta are all one space
+    // and the delta can be added to the mesh matrix untouched.
+    if (this._grabWorldInv) {
+      _gV.fromArray(vNear).applyMatrix4(this._grabWorldInv).toArray(vNear);
+      _gV.fromArray(vFar).applyMatrix4(this._grabWorldInv).toArray(vFar);
+    }
     var rayDir = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), vFar, vNear));
-    var eye    = cam.computePosition();
 
-    var denom = vec3.dot(rayDir, this._grabCamForward);
+    // The plane normal has to live in the same space as the ray now, so it is mapped too —
+    // direction only, hence the w=0 transform via subtracting the mapped origin.
+    var fwd = this._grabCamForwardModel || this._grabCamForward;
+    var denom = vec3.dot(rayDir, fwd);
     if (Math.abs(denom) < 1e-6) return;
-    var t = this._grabEffectiveDepth / denom;
-    if (t < 0) return;
 
-    var curWorld = vec3.scaleAndAdd(vec3.create(), eye, rayDir, t);
+    // Intersect the cursor ray with the drag plane, from the ray's OWN origin. vNear is the
+    // unprojected near point, which tracks the cursor under both projections; the eye only
+    // does so under perspective.
+    var toPlane = vec3.sub(vec3.create(), this._grabPlanePt, vNear);
+    var t = vec3.dot(toPlane, fwd) / denom;
+    var curWorld = vec3.scaleAndAdd(vec3.create(), vNear, rayDir, t);
     var delta    = vec3.sub(vec3.create(), curWorld, this._grabInitWorld);
 
 
