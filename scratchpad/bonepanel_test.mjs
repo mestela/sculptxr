@@ -6,7 +6,7 @@ const body = SRC.split('\n').filter(l => !/^import\s/.test(l)).filter(l => !/^ex
 globalThis.window = {};
 const stub = `
 const Enums = { Tools: { BONE_DRAW: 34 } };
-const Skeleton = { joints: () => [] };
+const Skeleton = { joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25 };
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){} };
 const SkinMesh = {};
 const IKSolver = { pinnedJoints: () => [{},{}] };

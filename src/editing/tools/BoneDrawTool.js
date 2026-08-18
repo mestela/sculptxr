@@ -899,6 +899,9 @@ class BoneDrawTool extends SculptBase {
     const g = this._grab;
     this._grab = null;
     if (!g) return;
+    // Tweak edits the REST skeleton, and where a knee sits in the rest pose is the statement
+    // of which way it bends. Drop the remembered preferences so the next solve re-reads them.
+    IKSolver.clearBendRefs(this._main);
     this._selectLater(g.joint);
     const main = this._main;
     const before = g.before;
@@ -1093,6 +1096,17 @@ class BoneDrawTool extends SculptBase {
       orient = _qNow.set(quat[0], quat[1], quat[2], quat[3])
         .multiply(ik.qCtrl0)   // controller delta since the grab, in model space
         .multiply(ik.qJoint0); // ...applied on top of the joint's orientation at the grab
+    } else if (!quat && window._ikLockGrabRotation !== false) {
+      // NO CONTROLLER — a mouse or a finger, which carries position and nothing else. That
+      // is three fewer constraints per drag than the same grab in VR, and it is why a
+      // full-body solve reads as far looser on a screen: the solver is being asked a vaguer
+      // question, not behaving differently. Hold the orientation the joint had at the grab
+      // and the question is as specific as the 6DOF one.
+      //
+      // The joint keeps the orientation it started with rather than being free to spin — a
+      // dragged hand stays level while the arm re-solves under it. Set
+      // window._ikLockGrabRotation = false for the old free-effector behaviour.
+      orient = ik.qJoint0;
     }
     IKSolver.solve(this._main, ik.joint, pos, null, orient);
     this._refresh();

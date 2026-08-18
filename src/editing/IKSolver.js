@@ -40,6 +40,7 @@ import Skeleton from './Skeleton.js';
 // chain negotiate slowly. 12 left a visible few-millimetre drift there, 40 does not. It costs
 // nothing: a sweep is a few arithmetic ops per active joint, on a rig with tens of joints.
 const MAX_ITERATIONS = 40;
+
 // Convergence is measured against the scene unit, so the tolerance means the same thing on a
 // 2cm sculpt and a 200-unit one.
 const TOL_FRAC = 1e-4;
@@ -48,6 +49,11 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _vDir = new THREE.Vec
 const _dCur = new THREE.Vector3(), _dTgt = new THREE.Vector3();
 const _qFit = new THREE.Quaternion(), _qStep = new THREE.Quaternion();
 const _qRigid = new THREE.Quaternion();
+const _vReach = new THREE.Vector3();
+const _vRestA = new THREE.Vector3(), _vRestB = new THREE.Vector3();
+const _vNowA = new THREE.Vector3(), _vNowB = new THREE.Vector3();
+const _vNormRest = new THREE.Vector3(), _vNormNow = new THREE.Vector3();
+const _vAxis = new THREE.Vector3(), _vRel = new THREE.Vector3();
 const _qPart = new THREE.Quaternion(), _qId = new THREE.Quaternion();
 const _qParent = new THREE.Quaternion(), _qJoint = new THREE.Quaternion();
 const _qNow = new THREE.Quaternion();
@@ -72,8 +78,49 @@ IKSolver.PIN_FULL = 2;  // 6DOF: position and orientation both held
 IKSolver.pinMode = function (joint) { return joint ? ((joint._boneIKPin | 0) & 3) : 0; };
 IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 
+// A pin is a WORLD-SPACE anchor, captured once when the pin goes on and held there until it
+// comes off. It is emphatically NOT "wherever this joint happens to be this frame": reading
+// the joint's live position each solve made the pin follow the foot whenever the solve could
+// not satisfy it. Lift the hips until the legs over-extend, the feet fall short of the pin,
+// and the next frame adopts that shortfall as the new pin — so the pins climbed with the
+// character instead of holding the ground. Nothing looked wrong on the way DOWN, where the
+// legs have slack and the solve lands on the pin exactly, so re-reading it changed nothing.
+//
+// Held as a fixed point, an unreachable pin fails honestly: the foot aims at it and falls
+// short, and snaps back onto it exactly as soon as the chain can reach again. That is what
+// lets a character jump.
 IKSolver.setPin = function (joint, mode) {
-  if (joint) joint._boneIKPin = (mode | 0) & 3;
+  if (!joint) return;
+  const was = IKSolver.pinMode(joint);
+  const now = (mode | 0) & 3;
+  joint._boneIKPin = now;
+  if (!now) { joint._boneIKPinAt = null; joint._boneIKPinQ = null; return; }
+  // Only anchor on the way IN. Cycling 3DOF -> 6DOF must not re-anchor: if the joint has
+  // drifted off an unreachable pin, re-reading it there would quietly move the pin to the
+  // wrong place at the very moment the user asked for a STRONGER hold.
+  if (!was || !joint._boneIKPinAt) {
+    joint._boneIKPinAt = Skeleton.jointPos(joint, new THREE.Vector3()).toArray();
+  }
+  if (now === IKSolver.PIN_FULL && !joint._boneIKPinQ) {
+    joint._boneIKPinQ = modelQuat(joint, new THREE.Quaternion()).toArray();
+  }
+};
+
+// The anchor this joint is pinned to, in model space. Falls back to where the joint is now —
+// which is what a rig loaded from a save file has, since the anchor is not persisted; the
+// saved pose IS the pinned pose, so adopting it on first use is the right reading.
+IKSolver.pinAnchor = function (joint, out) {
+  out = out || new THREE.Vector3();
+  if (!joint._boneIKPinAt) {
+    joint._boneIKPinAt = Skeleton.jointPos(joint, new THREE.Vector3()).toArray();
+  }
+  return out.fromArray(joint._boneIKPinAt);
+};
+
+IKSolver.pinAnchorQuat = function (joint, out) {
+  out = out || new THREE.Quaternion();
+  if (!joint._boneIKPinQ) joint._boneIKPinQ = modelQuat(joint, new THREE.Quaternion()).toArray();
+  return out.fromArray(joint._boneIKPinQ);
 };
 
 // none -> position -> position+rotation -> none. A cycle rather than two buttons: pinning is
@@ -93,18 +140,36 @@ IKSolver.pinnedJoints = function (main) {
 };
 
 // Pin states of every pinned joint, so an undo can put back WHICH KIND of pin each one was.
+// ...including WHERE each was anchored. Restoring the mode alone would re-anchor every pin
+// to wherever the rig happens to be sitting at undo time, which is the one moment it is least
+// likely to be the place the pin was originally put.
 IKSolver.capturePins = function (main) {
-  return IKSolver.pinnedJoints(main).map((j) => [j, IKSolver.pinMode(j)]);
+  return IKSolver.pinnedJoints(main).map((j) => [
+    j, IKSolver.pinMode(j),
+    j._boneIKPinAt ? j._boneIKPinAt.slice() : null,
+    j._boneIKPinQ ? j._boneIKPinQ.slice() : null,
+  ]);
 };
 
 IKSolver.restorePins = function (main, snapshot) {
   IKSolver.clearPins(main);
-  for (const [j, mode] of snapshot) IKSolver.setPin(j, mode);
+  for (const [j, mode, at, q] of snapshot) {
+    IKSolver.setPin(j, mode);
+    if (at) j._boneIKPinAt = at.slice();
+    if (q) j._boneIKPinQ = q.slice();
+  }
+};
+
+// Forget every remembered bend, so the next solve re-reads it from the rest pose. Called
+// after the REST SKELETON is edited (Tweak mode) — moving a knee is how you change which way
+// it should bend, and a preference captured before that edit would fight the new pose.
+IKSolver.clearBendRefs = function (main) {
+  for (const j of Skeleton.joints(main)) j._boneBendRef = null;
 };
 
 IKSolver.clearPins = function (main) {
   const had = IKSolver.pinnedJoints(main);
-  for (const j of had) j._boneIKPin = 0;
+  for (const j of had) { j._boneIKPin = 0; j._boneIKPinAt = null; j._boneIKPinQ = null; }
   return had.length;
 };
 
@@ -196,6 +261,155 @@ function towards(out, from, to, len) {
 // that satisfies all of them, so the residuals are averaged by repeated partial slerps — a
 // cheap stand-in for a Kabsch fit that settles in three passes on the two or three children a
 // real rig ever hangs off one joint. Only directions matter; lengths are handled elsewhere.
+
+// ---- reachability -------------------------------------------------------------
+//
+// The bone lengths along the path between two joints, through their common ancestor. Used to
+// ask "how far apart CAN these two be?", which is the question a pin and a dragged joint are
+// really arguing about.
+function pathLengths(a, b) {
+  const up = new Map();
+  for (let n = a, d = 0; n; n = n.parent, d++) up.set(n, d);
+  let common = null;
+  for (let n = b; n; n = n.parent) if (up.has(n)) { common = n; break; }
+  if (!common) return null;
+  const lens = [];
+  for (let n = a; n !== common; n = n.parent) lens.push(n.len);
+  for (let n = b; n !== common; n = n.parent) lens.push(n.len);
+  return lens;
+}
+
+// A chain of fixed-length bones can span anything from `min` to `max` apart, and nothing
+// outside that. `max` is the obvious sum; `min` is what is left when the longest bone is
+// folded back against all the others — for a SINGLE bone the two coincide, which is exactly
+// the knee-and-planted-foot case.
+function reachSpan(lens) {
+  let sum = 0, longest = 0;
+  for (const l of lens) { sum += l; if (l > longest) longest = l; }
+  return { min: Math.max(0, longest * 2 - sum), max: sum };
+}
+
+// Pull `target` into the shell every pinned joint can actually reach.
+//
+// Dragging the KNEE with the foot pinned is the case that made this necessary: the knee and
+// the foot are one rigid bone apart, so the knee can only ever sit on a sphere around the
+// planted foot. Ask for anything off that sphere and the two constraints are not merely hard
+// to satisfy, they are contradictory — and FABRIK resolves a contradiction by splitting the
+// difference, which is why the foot slid off its pin. Clamping the DRAG instead keeps the pin
+// exact and lets the knee swing around the planted foot, which is what the gesture means.
+//
+// Iterated, because with several pins the shells intersect and one clamp can push the target
+// out of another's range. A few passes is enough for the cases a skeleton produces; it is a
+// projection onto an intersection of shells, not an exact solve.
+function clampToPins(eff, target, pinNodes) {
+  if (!pinNodes.length) return;
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    for (const { node, anchor } of pinNodes) {
+      const lens = pathLengths(eff, node);
+      // ONE bone only. A single bone between the drag and a pin is a rigid identity — the
+      // knee can be nowhere but on a sphere around the planted foot — so any violation is
+      // pure contradiction and splitting the difference is unambiguously wrong.
+      //
+      // A longer path is a different situation: it has slack, and running out of it is
+      // MEANINGFUL. Pulling the hips up until the legs straighten and the feet leave the
+      // ground is a jump, and clamping there would pin the character to the floor for ever.
+      // Falling short is the right failure for a limb; it is not a failure at all for a bone.
+      if (!lens || lens.length !== 1) continue;
+      const span = reachSpan(lens);
+      _vReach.subVectors(target, anchor);
+      const d = _vReach.length();
+      if (d > span.max + 1e-9) {
+        target.copy(anchor).addScaledVector(_vReach.divideScalar(d), span.max);
+        moved = true;
+      } else if (d < span.min - 1e-9) {
+        // Inside the fold-back limit. At d ~ 0 there is no direction to push out along, so
+        // any is as good as any other; keep the one the chain already has.
+        if (d < 1e-9) _vReach.subVectors(node.pos, anchor).normalize();
+        else _vReach.divideScalar(d);
+        if (_vReach.lengthSq() < 1e-12) _vReach.set(0, 1, 0);
+        target.copy(anchor).addScaledVector(_vReach, span.min);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+// ---- preferred bend -------------------------------------------------------------
+//
+// A leg drawn with a slight bend in it IS the statement of which way the knee goes. FABRIK
+// has no opinion — a knee bent backwards satisfies every bone length just as well as one
+// bent forwards — so the solve is free to flip it, and that flip is the visible pop when
+// dragging a limb around.
+//
+// So: read the bend the rig was drawn with, and refuse to invert it. For a joint with one
+// parent and one child, the sign of cross(bone in, bone out) says which side the joint bends
+// to. If the solve has changed that sign, reflect the joint back across the line joining its
+// neighbours — a reflection, because it puts the joint on the correct side while leaving
+// BOTH bone lengths exactly as they were.
+//
+// A joint drawn dead straight has no bend to preserve and is left alone, which is precisely
+// why drawing the small bend in the first place is the thing that makes this work.
+function fixBendDirection(byDepth, targets) {
+  for (const n of byDepth) {
+    if (targets.has(n) || !n.parent) continue;
+    const kids = activeChildren(n);
+    if (kids.length !== 1) continue;
+    // The parent must be a simple link too. Where several branches meet, the solver places
+    // them as ONE rigid cluster on purpose — their relative geometry is carried by a single
+    // joint rotation — and reflecting one of them alone produces a pose no such rotation can
+    // reproduce. The rotation-fitting stage then quietly discards the difference, which comes
+    // out as pinned joints sliding off their pins. Knees and elbows are serial links anyway;
+    // that is what makes them the joints with a bend direction worth preserving.
+    if (activeChildren(n.parent).length !== 1) continue;
+    const c = kids[0];
+    _vNowA.subVectors(n.pos, n.parent.pos);
+    _vNowB.subVectors(c.pos, n.pos);
+    _vNormNow.crossVectors(_vNowA, _vNowB);
+    // A limb that is momentarily STRAIGHT has no bend to read and none to correct: the knee
+    // sits on the line between its neighbours, where every side is equally valid. Nothing to
+    // do this frame — but the preference must not be forgotten, which is the whole reason it
+    // is remembered rather than re-read from the pose each time.
+    const nowMag2 = _vNormNow.lengthSq();
+    const scale2 = Math.max(_vNowA.lengthSq() * _vNowB.lengthSq(), 1e-24);
+    if (nowMag2 / scale2 < 1e-6) continue;
+
+    // The remembered preference, taken ONCE from the pose the limb was drawn in and never
+    // refreshed from a solve. Refreshing it on every frame that looked correct was a bad
+    // mistake: it is self-confirming, so the first frame a knee happened to solve backwards
+    // became the remembered preference and was then enforced for ever. On a symmetric rig
+    // that showed up as one knee aiming forward and the other back, permanently.
+    //
+    // The drawn rest pose is the authority precisely because it is a deliberate statement —
+    // it is why putting a pronounced bend in the knees is the way to say which way they go.
+    // Storing it also means a limb that STRAIGHTENS (a jump) does not forget: there is
+    // nothing to read off a straight leg, and now nothing needs to be.
+    let ref = n.joint._boneBendRef;
+    if (!ref) {
+      _vRestA.copy(n.off);
+      _vRestB.copy(c.off);
+      _vNormRest.crossVectors(_vRestA, _vRestB);
+      if (_vNormRest.lengthSq() < 1e-12) continue; // drawn dead straight: no preference at all
+      ref = n.joint._boneBendRef = _vNormRest.clone().normalize().toArray();
+    }
+    _vNormRest.fromArray(ref);
+    if (_vNormNow.dot(_vNormRest) >= 0) continue; // still bending the way it was drawn
+
+    // Reflect n across the line parent->child. Distances to both neighbours are unchanged,
+    // so the chain stays valid and nothing downstream needs re-imposing.
+    _vAxis.subVectors(c.pos, n.parent.pos);
+    const axLen = _vAxis.length();
+    if (axLen < 1e-12) continue; // neighbours coincident: no line to reflect across
+    _vAxis.divideScalar(axLen);
+    _vRel.subVectors(n.pos, n.parent.pos);         // parent -> joint
+    const along = _vRel.dot(_vAxis);               // its component along the line
+    _vRel.addScaledVector(_vAxis, -along);         // ...leaving the perpendicular component
+    // Mirror the perpendicular part: parent + parallel - perpendicular.
+    n.pos.copy(n.parent.pos).addScaledVector(_vAxis, along).sub(_vRel);
+  }
+}
+
 function alignVectors(from, to, n, out) {
   out.identity();
   if (!n) return out;
@@ -308,6 +522,12 @@ function fabrik(nodes, targets, root, rootFixed, tol) {
     for (const [n, t] of targets) worst = Math.max(worst, n.pos.distanceTo(t));
     if (worst < tol) break;
   }
+
+  // Last, once the positions have settled: put back any joint the solve flipped. Done here
+  // rather than inside the loop because a reflection mid-iteration is a discontinuity the
+  // next sweep would simply undo, and because it changes nothing the targets depend on —
+  // both of the joint's bone lengths survive it exactly.
+  if (window._ikPreferredBend !== false) fixBendDirection(byDepth, targets);
 }
 
 // ---- writing the result back ---------------------------------------------------
@@ -426,12 +646,17 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   // statement that you want it somewhere else, and refusing to move would read as a bug.
   targets.set(eff, target.clone());
 
+  const pinTargets = [];
   const pinList = pins || IKSolver.pinnedJoints(main);
   for (const j of pinList) {
     const n = nodes.get(j.getID());
     if (!n || n === eff) continue;
     if (rootOf(n) !== root) continue; // a pin on a different skeleton is not our business
-    targets.set(n, n.pos.clone()); // "stay exactly where you are"
+    // The anchor, not the joint's current position — see setPin. This is the whole
+    // difference between a pin that holds the ground and one that rides the character up.
+    const anchor = IKSolver.pinAnchor(j, new THREE.Vector3());
+    targets.set(n, anchor);
+    pinTargets.push({ node: n, anchor: anchor });
 
     // A 6DOF pin also holds its ORIENTATION, through the same machinery as the driven
     // effector. The target is simply the orientation it has right now: the graph is rebuilt
@@ -440,9 +665,20 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
     // reason — relative to where it already is, a held orientation asks for no change, which
     // is precisely what keeps its children rigid with it while the chain above swings.
     if (IKSolver.pinMode(j) === IKSolver.PIN_FULL) {
-      n.orient = modelQuat(j, _qNow).clone();
-      n.rot = new THREE.Quaternion();
+      // Anchored the same way and for the same reason: an orientation re-read each frame
+      // ratchets round exactly as the position did. `rot` carries the joint's CURRENT
+      // offsets to the held orientation, so its children stay rigid with it.
+      n.orient = IKSolver.pinAnchorQuat(j, new THREE.Quaternion());
+      n.rot = n.orient.clone().multiply(modelQuat(j, _qNow).invert());
     }
+  }
+
+  // Pins are statements; a drag is continuous input. When the two are geometrically
+  // irreconcilable the drag is the one that gives — otherwise the pin slides and the thing
+  // the user explicitly nailed down is the thing that moves.
+  if (window._ikClampToPins !== false && pinTargets.length) {
+    const t = targets.get(eff);
+    clampToPins(eff, t, pinTargets);
   }
 
   markActive(targets.keys());

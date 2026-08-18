@@ -21,6 +21,9 @@ const body = SRC.split('\n')
 const prelude = `
 import * as THREE from '${THREE_PATH}';
 
+// The solver reads its tuning knobs off window, as the rest of the app does.
+globalThis.window = globalThis.window || {};
+
 const mat4 = {
   clone: (m) => Float32Array.from(m),
   copy: (out, m) => { for (let i = 0; i < 16; i++) out[i] = m[i]; return out; },
@@ -85,6 +88,7 @@ const { default: IKSolver, makeJoint: J, makeMain, Skeleton, modelMat } = mod;
 const THREE = await import(THREE_PATH);
 
 let failures = 0;
+function spineless() { return null; }
 function check(name, ok, detail) {
   if (ok) { console.log('  ok   ' + name); return; }
   failures++;
@@ -365,6 +369,275 @@ function lengthsPreserved(name, joints, before) {
   const finite = joints.every((j) => Array.from(j.getMatrix()).every(Number.isFinite));
   check('degenerate: no NaN in any joint matrix', finite);
   lengthsPreserved('degenerate', joints, [1]);
+}
+
+// --- 11. pins are WORLD-SPACE anchors: the character can jump ---------------------
+// The reported bug: pin the feet, push the hips DOWN and the pins behave; pull the hips UP
+// until the legs over-extend and the pins rise with the feet. The pin target was being
+// re-read from the joint's live position every solve, so any shortfall was adopted as the
+// new pin and the anchor ratcheted upward. Down worked only because the legs have slack
+// there, so the solve lands on the pin exactly and re-reading it changes nothing.
+{
+  const hips = J([0, 0, 0]);
+  const thighL = J([0.3, -0.2, 0], hips);
+  const kneeL = J([0.35, -0.9, 0], thighL);
+  const footL = J([0.4, -1.6, 0], kneeL);
+  const thighR = J([-0.3, -0.2, 0], hips);
+  const kneeR = J([-0.35, -0.9, 0], thighR);
+  const footR = J([-0.4, -1.6, 0], kneeR);
+  const joints = [hips, spineless(hips), thighL, kneeL, footL, thighR, kneeR, footR]
+    .filter(Boolean);
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  IKSolver.setPinned(footL, true);
+  IKSolver.setPinned(footR, true);
+  const groundL = pos(footL).clone(), groundR = pos(footR).clone();
+  const hips0 = pos(hips).clone();
+
+  // 1. DOWN into a crouch: reachable, so the feet hold exactly. (This always worked.)
+  IKSolver.solve(main, hips, hips0.clone().add(new THREE.Vector3(0, -0.5, 0)));
+  check('jump: crouching holds both feet', pos(footL).distanceTo(groundL) < 1e-2
+    && pos(footR).distanceTo(groundR) < 1e-2);
+
+  // 2. UP far enough that the legs cannot reach the ground any more.
+  const reach = L0.length ? null : null;
+  for (let i = 0; i < 8; i++) {
+    IKSolver.solve(main, hips, hips0.clone().add(new THREE.Vector3(0, 3.0, 0)));
+  }
+  const anchorL = IKSolver.pinAnchor(footL, new THREE.Vector3());
+  const anchorR = IKSolver.pinAnchor(footR, new THREE.Vector3());
+  check('jump: the left pin stayed on the ground', anchorL.distanceTo(groundL) < 1e-9,
+    'moved ' + anchorL.distanceTo(groundL).toFixed(4));
+  check('jump: the right pin stayed on the ground', anchorR.distanceTo(groundR) < 1e-9,
+    'moved ' + anchorR.distanceTo(groundR).toFixed(4));
+  check('jump: the feet actually left the ground', pos(footL).y > groundL.y + 0.2,
+    'foot y ' + pos(footL).y.toFixed(3) + ' vs ground ' + groundL.y.toFixed(3));
+  // Falling short is correct — but it must fall short TOWARD the pin, not off sideways.
+  const aim = pos(footL).clone().sub(pos(kneeL)).normalize();
+  const want = anchorL.clone().sub(pos(kneeL)).normalize();
+  check('jump: the airborne foot still aims at its pin', aim.dot(want) > 0.9,
+    'dot ' + aim.dot(want).toFixed(3));
+  lengthsPreserved('jump', joints, L0);
+
+  // 3. BACK DOWN: the feet must land exactly on the pins again, not on wherever they drifted.
+  for (let i = 0; i < 8; i++) IKSolver.solve(main, hips, hips0.clone());
+  check('jump: landing puts the left foot back on its pin',
+    pos(footL).distanceTo(groundL) < 1e-2, 'off by ' + pos(footL).distanceTo(groundL).toFixed(4));
+  check('jump: landing puts the right foot back on its pin',
+    pos(footR).distanceTo(groundR) < 1e-2, 'off by ' + pos(footR).distanceTo(groundR).toFixed(4));
+
+  // Unpinning forgets the anchor, so the next pin anchors fresh rather than resurrecting it.
+  IKSolver.setPinned(footL, false);
+  check('jump: unpinning drops the anchor', !footL._boneIKPinAt);
+  IKSolver.setPinned(footR, false);
+}
+
+// --- 12. a position-only drag can hold the effector's orientation -----------------
+// The desktop case: a mouse carries position and nothing else, so the solve is three
+// constraints short of the same grab in VR. Passing the joint's grab-time orientation as the
+// driven orientation closes that gap — this is the solver half of it.
+{
+  const root = J([0, 0, 0]);
+  const a = J([0, 1, 0], root);
+  const b = J([0, 2, 0], a);
+  const hand = J([0, 3, 0], b);
+  const finger = J([0.4, 3, 0], hand); // gives the hand an orientation worth holding
+  const joints = [root, a, b, hand, finger];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  // orientOf lives inside the 6DOF-pin block, so this test carries its own copy.
+  const orientAt = (j) => {
+    const q = new THREE.Quaternion();
+    modelMat(j).decompose(new THREE.Vector3(), q, new THREE.Vector3());
+    return q;
+  };
+  const held = orientAt(hand).clone();
+  const target = new THREE.Vector3(1.4, 2.2, 0);
+  IKSolver.solve(main, hand, target, null, held);
+
+  check('lock: the effector still reaches its target', pos(hand).distanceTo(target) < 1e-2,
+    'err ' + pos(hand).distanceTo(target).toFixed(4));
+  check('lock: and kept the orientation it was given',
+    orientAt(hand).angleTo(held) < 1e-3,
+    'off by ' + (orientAt(hand).angleTo(held) * 180 / Math.PI).toFixed(3) + ' deg');
+  lengthsPreserved('lock', joints, L0);
+
+  // Without it the hand is free to spin — which is the looseness being complained about.
+  const j2 = [J([0, 0, 0])];
+  const a2 = J([0, 1, 0], j2[0]), b2 = J([0, 2, 0], a2);
+  const hand2 = J([0, 3, 0], b2), fin2 = J([0.4, 3, 0], hand2);
+  const main2 = makeMain([j2[0], a2, b2, hand2, fin2]);
+  const held2 = orientAt(hand2).clone();
+  IKSolver.solve(main2, hand2, target.clone());
+  check('lock: unconstrained, the same drag lets it turn',
+    orientAt(hand2).angleTo(held2) > 1e-2,
+    'turned ' + (orientAt(hand2).angleTo(held2) * 180 / Math.PI).toFixed(2) + ' deg');
+}
+
+// --- 13. a pinned foot survives its own knee being dragged ------------------------
+// Knee and foot are ONE bone apart, so the knee can only ever sit on a sphere around the
+// planted foot. Dragging it off that sphere is not a hard request, it is a contradictory
+// one — and FABRIK answers a contradiction by splitting the difference, which slid the foot
+// off its pin. The drag is clamped to the sphere instead, so the leg swings around the foot.
+{
+  const hips = J([0, 0, 0]);
+  const thigh = J([0.3, -0.2, 0], hips);
+  const knee = J([0.35, -0.9, 0.1], thigh);
+  const foot = J([0.4, -1.6, 0], knee);
+  const joints = [hips, thigh, knee, foot];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  IKSolver.setPinned(foot, true);
+  const ground = pos(foot).clone();
+  const boneLen = pos(knee).distanceTo(pos(foot));
+
+  // Yank the knee somewhere it cannot possibly be: far off the sphere around the foot.
+  for (let i = 0; i < 4; i++) IKSolver.solve(main, knee, new THREE.Vector3(2.5, -0.4, 0));
+  check('knee: the foot stayed on its pin', pos(foot).distanceTo(ground) < 1e-2,
+    'moved ' + pos(foot).distanceTo(ground).toFixed(4));
+  check('knee: the knee stayed one bone from the foot',
+    Math.abs(pos(knee).distanceTo(pos(foot)) - boneLen) < 1e-3,
+    'off by ' + Math.abs(pos(knee).distanceTo(pos(foot)) - boneLen).toFixed(4));
+  check('knee: and it actually moved toward the drag', pos(knee).x > 0.35 + 1e-3,
+    'knee x ' + pos(knee).x.toFixed(3));
+  lengthsPreserved('knee', joints, L0);
+
+  // A reachable knee drag must still land exactly, not be clamped when it need not be.
+  const near = pos(foot).clone().add(new THREE.Vector3(0, boneLen, 0));
+  for (let i = 0; i < 6; i++) IKSolver.solve(main, knee, near.clone());
+  check('knee: a reachable drag is not clamped', pos(knee).distanceTo(near) < 1e-2,
+    'err ' + pos(knee).distanceTo(near).toFixed(4));
+  IKSolver.setPinned(foot, false);
+}
+
+// --- 14. the drawn bend decides which way a knee goes -----------------------------
+// A leg drawn with a slight bend states its preferred direction. FABRIK has no opinion — a
+// backwards knee satisfies every bone length just as well — so it is free to flip, and that
+// flip is the visible pop. The sign of the drawn bend is held.
+{
+  const hip = J([0, 0, 0]);
+  const knee = J([0.25, -1.0, 0], hip);   // drawn bent forward (+x)
+  const ankle = J([0, -2.0, 0], knee);
+  const joints = [hip, knee, ankle];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  const bendSign = (a, b, c) => {
+    const u = pos(b).clone().sub(pos(a));
+    const v = pos(c).clone().sub(pos(b));
+    return u.cross(v).z;
+  };
+  const want = bendSign(hip, knee, ankle);
+  check('bend: the rig was drawn with a bend to read', Math.abs(want) > 1e-6);
+
+  // Drag the ankle straight up past the hip. Chosen because it PROVOKES the flip: unguarded
+  // this motion inverts the knee on 29 of 60 steps (a gentle arc, by contrast, never flips at
+  // all, and a test built on one would have proved nothing).
+  const sweep = (i, N) => new THREE.Vector3(0.02, -1.9 + 3.6 * (i / N), 0);
+  let flips = 0;
+  for (let i = 1; i <= 60; i++) {
+    IKSolver.solve(main, ankle, sweep(i, 60));
+    if (bendSign(hip, knee, ankle) * want < 0) flips++;
+  }
+  check('bend: the knee never inverted over a full sweep', flips === 0, flips + ' flips');
+  lengthsPreserved('bend', joints, L0);
+
+  // Turned off, the same sweep is free to flip — which is the behaviour being fixed.
+  window._ikPreferredBend = false;
+  const hip2 = J([0, 0, 0]);
+  const knee2 = J([0.25, -1.0, 0], hip2);
+  const ankle2 = J([0, -2.0, 0], knee2);
+  const main2 = makeMain([hip2, knee2, ankle2]);
+  const want2 = (() => { const u = pos(knee2).clone().sub(pos(hip2));
+    return u.cross(pos(ankle2).clone().sub(pos(knee2))).z; })();
+  let flips2 = 0;
+  for (let i = 1; i <= 60; i++) {
+    IKSolver.solve(main2, ankle2, sweep(i, 60));
+    const u = pos(knee2).clone().sub(pos(hip2));
+    if (u.cross(pos(ankle2).clone().sub(pos(knee2))).z * want2 < 0) flips2++;
+  }
+  window._ikPreferredBend = undefined;
+  check('bend: unguarded, the same sweep inverts it repeatedly', flips2 > 10, flips2 + ' flips');
+}
+
+// --- 15. the bend survives the leg going straight ---------------------------------
+// The reported case: jump (legs straighten, feet leave the floor), then land. While straight
+// there is no bend to read, so a preference taken from the live pose vanishes exactly when
+// it is needed and the knee lands whichever way the solver fancies.
+{
+  const hip = J([0, 0, 0]);
+  const knee = J([0.25, -1.0, 0], hip);   // drawn bent forward (+x)
+  const ankle = J([0, -2.0, 0], knee);
+  const main = makeMain([hip, knee, ankle]);
+  const bendSign = () => pos(knee).clone().sub(pos(hip))
+    .cross(pos(ankle).clone().sub(pos(knee))).z;
+  const want = Math.sign(bendSign());
+
+  // Straighten it out completely (ankle at full reach), hold there, then fold back up.
+  const reach = pos(hip).distanceTo(pos(knee)) + pos(knee).distanceTo(pos(ankle));
+  for (let i = 0; i < 6; i++) IKSolver.solve(main, ankle, new THREE.Vector3(0, -reach, 0));
+  for (let i = 0; i < 6; i++) IKSolver.solve(main, ankle, new THREE.Vector3(0, -reach * 0.999, 0));
+
+  // Land: fold to a deep bend again.
+  let wrong = 0;
+  for (let i = 1; i <= 30; i++) {
+    const d = reach * (1 - 0.5 * (i / 30));
+    IKSolver.solve(main, ankle, new THREE.Vector3(0, -d, 0));
+    if (Math.abs(bendSign()) > 1e-6 && Math.sign(bendSign()) !== want) wrong++;
+  }
+  check('straight: the knee folds back the way it was drawn', wrong === 0, wrong + ' frames wrong');
+  check('straight: the preference was remembered, not re-read', !!knee._boneBendRef);
+}
+
+// --- 16. a symmetric rig crouches symmetrically -----------------------------------
+// Reported: pronounced bend at rest, feet pinned, lower the hips — and one knee aimed
+// forward while the other aimed back. The cause was refreshing the remembered bend from each
+// solve: it is self-confirming, so the first frame a knee happened to solve backwards became
+// that knee's preference for ever. The rest pose is the authority, and only the rest pose.
+{
+  const hips = J([0, 0, 0]);
+  const thighL = J([0.3, -0.2, 0], hips);
+  const kneeL = J([0.35, -0.9, 0.35], thighL);   // pronounced forward bend (+z)
+  const footL = J([0.3, -1.6, 0], kneeL);
+  const thighR = J([-0.3, -0.2, 0], hips);
+  const kneeR = J([-0.35, -0.9, 0.35], thighR);  // mirrored: same forward bend
+  const footR = J([-0.3, -1.6, 0], kneeR);
+  const joints = [hips, thighL, kneeL, footL, thighR, kneeR, footR];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  IKSolver.setPinned(footL, true);
+  IKSolver.setPinned(footR, true);
+  const hips0 = pos(hips).clone();
+
+  // Both knees are drawn bending +z, so both should stay in front through a deep crouch.
+  let wrong = 0, minZ = Infinity;
+  for (let i = 1; i <= 25; i++) {
+    IKSolver.solve(main, hips, hips0.clone().add(new THREE.Vector3(0, -0.9 * (i / 25), 0)));
+    if (pos(kneeL).z <= 0 || pos(kneeR).z <= 0) wrong++;
+    minZ = Math.min(minZ, pos(kneeL).z, pos(kneeR).z);
+  }
+  check('symmetry: both knees stayed in front through the crouch', wrong === 0,
+    wrong + ' frames wrong, worst knee z ' + minZ.toFixed(3));
+  check('symmetry: the two knees agree with each other',
+    Math.sign(pos(kneeL).z) === Math.sign(pos(kneeR).z),
+    `L ${pos(kneeL).z.toFixed(3)} R ${pos(kneeR).z.toFixed(3)}`);
+  check('symmetry: the feet held their pins', pos(footL).y < -1.59 && pos(footR).y < -1.59,
+    `L ${pos(footL).y.toFixed(3)} R ${pos(footR).y.toFixed(3)}`);
+  lengthsPreserved('symmetry', joints, L0);
+
+  // The preference must come from the REST pose, not from whatever a solve produced. Poison
+  // one knee's remembered bend and re-derive: it must be re-read, not trusted.
+  IKSolver.clearBendRefs(main);
+  check('symmetry: clearing forgets the remembered bends', !kneeL._boneBendRef);
+  IKSolver.solve(main, hips, hips0.clone());
+  check('symmetry: and the next solve re-reads it', !!kneeL._boneBendRef);
+
+  IKSolver.setPinned(footL, false);
+  IKSolver.setPinned(footR, false);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

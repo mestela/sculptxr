@@ -1,3 +1,57 @@
+# v3.19.18
+**The preferred bend comes from the rest pose only.** v3.19.17 refreshed the remembered bend on every frame it judged correct, which is self-confirming: the first frame a knee happened to solve backwards became that knee's preference and was then enforced for ever.
+
+- The bend is now read ONCE from the pose the limb was drawn in and never refreshed from a solve. That is also why a drawn-in bend is the way to state the direction — the rest pose is a deliberate statement, a solved frame is not.
+- A straight limb still does not forget, because nothing is being read off the live pose any more.
+- `IKSolver.clearBendRefs()` re-reads them, and Tweak mode calls it on release: moving a knee in the rest skeleton IS how you change which way it bends, so a preference captured before that edit must not outlive it.
+- **Unverified against the reported symptom.** A symmetric two-legged rig crouching on pinned feet passes with the fix AND with the old self-confirming refresh in place, so the harness does not reproduce the one-knee-forward-one-back case. The refresh was unsound and is gone on that reasoning; whether it was the cause of that specific report is not established.
+
+# v3.19.17
+**The preferred bend is remembered, not re-read.** A leg that straightens — jumping, so the feet leave the floor — expresses no bend while it is straight, so a preference taken from the live pose vanished at exactly the moment it was needed and the knees folded whichever way the solver fancied on the way down.
+
+- The bend direction is now stored on the joint and refreshed on every frame the limb IS bent, so it survives a straight pose and decides which way the knee folds when the limb bends again.
+- A joint drawn dead straight still expresses no preference and is left alone; the first bend it is given becomes the remembered one.
+- **Known limit**: the preference is remembered in model space, so rotating the whole body a long way WHILE a limb is held straight can leave it stale. Refreshing on every bent frame makes that a narrow window, but it is not airtight — a body-relative frame is the proper fix.
+
+# v3.19.16
+**The drawn bend is the preferred bend, and a pinned foot survives its own knee being dragged.**
+
+- **A leg drawn with a slight bend now keeps bending that way.** FABRIK has no opinion about which side a knee goes — a backwards knee satisfies every bone length just as well — so it was free to invert, and that inversion is the visible pop when swinging a limb. The sign of the bend the rig was DRAWN with is read once and held: if a solve flips it, the joint is reflected back across the line joining its neighbours, which restores the side while leaving both bone lengths exactly as they were. A joint drawn dead straight expresses no preference and is left alone — which is what makes drawing the bend the thing that turns this on. `window._ikPreferredBend = false` to disable.
+- Only applied to serial links. Where several branches meet, the solver places them as one rigid cluster on purpose, and reflecting one alone produces a pose no single joint rotation can reproduce — the fitting stage then discards the difference, which comes out as pinned joints sliding. Knees and elbows are serial anyway.
+- **Dragging a knee no longer pulls the pinned foot off the ground.** Knee and foot are one bone apart, so the knee can only ever sit on a sphere around the planted foot; asking for anything else is not a hard request but a contradictory one, and FABRIK answers a contradiction by splitting the difference. The drag is clamped onto that sphere instead, so the leg swings around the foot. A reachable drag is not clamped.
+- **Deliberately limited to a SINGLE bone between the drag and the pin**, where there is no freedom at all. A longer path has slack, and running out of it is meaningful: pulling the hips up until the legs straighten and the feet leave the ground is a jump, and clamping there would nail the character to the floor. So dragging a thigh (two bones from a pinned foot) still moves the foot.
+
+# v3.19.15
+**A desktop IK drag holds the dragged joint's orientation.** A mouse or a finger carries position and nothing else, so a screen drag hands the solver three fewer constraints than the same grab in a headset — which is why full-body IK reads as far looser on the desktop. The rig was not behaving differently; it was being asked a vaguer question.
+
+- The joint now keeps the orientation it had at the grab while it travels, through the same driven-orientation machinery the VR grab and the 6DOF pins already use. A dragged hand stays level while the arm re-solves under it. `window._ikLockGrabRotation = false` restores the free effector.
+- **Per-joint stiffness was built, measured, and removed.** The idea was to blend each bone's new direction back toward the one it held before the solve, so the chain reaches the same targets by moving less. Measured over a 60-step drag it changed total joint travel by under 1.5% and left the worst single-frame jump untouched (2.76 → 2.71 of a scene unit), and the settings that moved the number at all cost up to 3×10⁻² of target accuracy. FABRIK converges too strongly for an early positional bias to survive; it is washed out by the iterations that follow. Shipping a tuning knob that does nothing is worse than shipping none, so it is gone.
+- What the measurement actually shows is that the visible jerk is a BRANCH FLIP — the elbow or knee snapping to the other side — and positional damping cannot prevent one, because both branches satisfy the bone lengths equally well. That wants a preferred bend direction (a pole vector) or real joint limits, which is a different mechanism from the one tried here.
+
+# v3.19.14
+**Fix: `Skeleton.js` failed to load.** The v3.19.13 accessor that lets the panel read the capsule default was assigned onto `Skeleton` from a point ABOVE `const Skeleton = {}` — inside the const's temporal dead zone — so the module threw on evaluation and the whole rigging system was dead on load. Moved below the declaration.
+
+- **Every unit check still passed while it was broken**, which is the more useful finding: the harnesses strip imports and stub their dependencies, so they exercise logic but never run a module's top level the way a browser does. A module that cannot even evaluate looked perfectly healthy.
+- Added `scratchpad/module_load_test.mjs`: bundles the real rigging modules with their real imports and imports the result, which is the cheapest thing that catches a module-init failure. Verified to fail on the exact bug it was written for.
+
+# v3.19.13
+**Rig display proportions: one size of joint, thinner capsules.** The three things drawn per bone — body, joint marker, bind capsule — were each scaled off a different quantity, so none of them agreed with the others.
+
+- **Joint markers are ONE size across the rig again.** v3.19.11 sized each marker off the bone below it, which did keep every joint clear of its own bone but turned a rig of mixed bone lengths into a string of mismatched beads — reading as noise, and as meaning something it does not. Constant is the honest choice: the marker says "a joint is here", and that claim is the same size everywhere. Set a little above the pre-v3.19.11 size so it still clears a typical bone; `JOINT_R_FRAC` in `Skeleton.js` is the single knob.
+- **Default capsule radius halved**, 0.5 → 0.25 of a bone's own length. At half a bone's length the envelopes read as bloated tubes rather than limbs and swamped the bones they wrap. This is the number every downstream bind weight inherits, so it changes what a fresh bind produces.
+- Bone bodies are unchanged — they were the one part that read correctly.
+- The panel's Capsule slider now reads the default from `Skeleton` instead of carrying its own copy of the number, which is how a slider ends up lying about the current value.
+
+# v3.19.12
+**IK pins are world-space anchors, so a character can jump.** Pin the feet and push the hips down and the pins behaved; pull the hips up until the legs over-extend and the pins rose with the feet instead of holding the ground.
+
+- **The cause**: a pin's target was read from the joint's LIVE position on every solve — "stay exactly where you are", asked afresh each frame. Any shortfall was therefore adopted as the new pin, and the anchor ratcheted upward a little per frame. Moving down worked only because the legs have slack there, so the solve lands on the pin exactly and re-reading it changes nothing; the bug was invisible in precisely the direction that was tested.
+- **The fix**: the anchor is captured once when the pin goes on and held until it comes off. An unreachable pin now fails honestly — the foot aims at it and falls short — and snaps back onto it exactly as soon as the chain can reach again.
+- Cycling 3DOF → 6DOF does not re-anchor. If the joint has drifted off an unreachable pin, re-reading it there would move the pin to the wrong place at the very moment a *stronger* hold was asked for. The 6DOF orientation is anchored the same way, for the same ratcheting reason.
+- Undo carries the anchors, not just the pin modes: restoring the mode alone would re-anchor every pin to wherever the rig sat at undo time.
+- **Known limit**: the anchor is not written to the save file (only the pin mode is, in the SKEL flags). A reloaded rig anchors its pins to the pose it loaded in — which is the pinned pose, so it is the right reading, but a pin that was deliberately left unreachable when saved comes back reachable.
+- Covered by `scratchpad/ik_test.mjs`, including a jump-and-land case that fails by ~3 units of drift on the old code.
+
 # v3.19.11
 **Bones are the right thickness again, orthographic tracks the cursor, and a rig can be drawn with no mesh at all.**
 

@@ -179,7 +179,10 @@ function capsuleEndGeometry() {
 // Default capsule radius as a fraction of the bone's own length. 0.15 was a guess with no
 // evidence behind it, and every downstream weight inherited it; it is a tuning knob now, and
 // the capsules are drawn, so the number can be judged by eye instead of by argument.
-const DEFAULT_RADIUS_FRAC = 0.5;
+// Halved from 0.5 on the evidence the drawn capsules provide: at half a bone's length the
+// envelopes read as bloated tubes rather than as limbs, and they swamped the bones they were
+// meant to wrap. This is the number every downstream weight inherits.
+const DEFAULT_RADIUS_FRAC = 0.25;
 function radiusFrac() {
   const v = window._boneRadiusFrac;
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_RADIUS_FRAC;
@@ -192,15 +195,12 @@ function radiusFrac() {
 // a limb — this is the size it has always been, and thinning it turns the rig into needles.
 function boneWidth(len, jr) { return Math.max(len * 0.12, jr * 0.6); }
 
-// A joint marker's radius. The base size is a fraction of the SCENE while a bone's width is
-// a fraction of its own LENGTH, so on anything longer than a finger the body grew wider than
-// the marker and swallowed it — the joints are what you aim at, so losing them is losing the
-// rig. Grow the MARKER to clear the bone rather than thinning the bone to fit the marker.
-// Capped so one very long bone cannot balloon its joint into a beach ball.
-function jointRadius(main, j, jr) {
-  const w = boneWidth(Skeleton.boneLength(main, j), jr);
-  return Math.min(Math.max(jr, w * 1.25), jr * 4);
-}
+// Joint markers are ONE size across the whole rig. Sizing each one off the bone below it did
+// keep every joint clear of its own bone, but it made a rig of mixed bone lengths a string of
+// mismatched beads — which reads as noise, and as meaning something it does not. A constant
+// is the honest choice: the marker says "a joint is here", and that claim is the same size
+// everywhere. JOINT_R_FRAC is the single knob; bones stay proportional to their own length.
+const JOINT_R_FRAC = 0.03;
 
 function makePair(geo, color) {
   const solid = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
@@ -268,6 +268,13 @@ function setLabelText(lab, text) {
 const Skeleton = {};
 
 Skeleton.isJoint = function (m) { return !!(m && m._isBone); };
+
+// Exported so the panel shows the default the rig actually uses instead of its own copy of
+// the number — the two drifting apart is how a slider ends up lying about the current value.
+// Must live BELOW `const Skeleton`: assigning onto it from up beside DEFAULT_RADIUS_FRAC put
+// the write in the const's temporal dead zone and the whole module failed to evaluate.
+Skeleton.defaultRadiusFrac = function () { return DEFAULT_RADIUS_FRAC; };
+Skeleton.radiusFraction = radiusFrac;
 
 // ---- bone identity colours -----------------------------------------------------
 //
@@ -675,7 +682,7 @@ Skeleton.updateVisuals = function (main) {
   }
 
   const unit = Skeleton.sceneUnit(main);
-  const jr = unit * 0.018;
+  const jr = unit * JOINT_R_FRAC;
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
   const showLen = !!window._boneShowLengths;
@@ -721,10 +728,9 @@ Skeleton.updateVisuals = function (main) {
     // size change is what reads at a glance.
     const isHi = id === hi;
     const isSel = sel.has(id);
-    const rj = jointRadius(main, j, jr);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isHi || isSel ? rj * 1.7 : rj);
+      o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
       o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
       o.visible = true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
@@ -865,7 +871,7 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
     main._skelPreview = { bone: p, dot: d };
   }
   const pv = main._skelPreview;
-  const jr = Skeleton.sceneUnit(main) * 0.018;
+  const jr = Skeleton.sceneUnit(main) * JOINT_R_FRAC;
 
   // The cursor says which of two things the next trigger will do. Continuing a chain draws it
   // full size in the joint colour, at the end of the preview bone; with no chain in progress

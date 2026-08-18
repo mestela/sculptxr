@@ -74,7 +74,7 @@ export function buildBoneSectionHTML(main, style) {
   const wts   = window._boneShowWeights !== false;
   const solid = window._boneShowSolid !== false;
   const wire  = window._boneShowWire !== false;
-  const radPct = Math.round((window._boneRadiusFrac ?? 0.5) * 100);
+  const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
   const anyBound = Skinning.anyBound(main);
@@ -229,7 +229,7 @@ export function wireBoneSection(root, main, opts) {
 
   q('rad-all')?.addEventListener('click', () => {
     const before = Skeleton.captureRadii(main);
-    Skeleton.setRadiusFraction(main, window._boneRadiusFrac ?? 0.5);
+    Skeleton.setRadiusFraction(main, Skeleton.radiusFraction());
     const after = Skeleton.captureRadii(main);
     const apply = (radii) => {
       Skeleton.restoreRadii(radii);
