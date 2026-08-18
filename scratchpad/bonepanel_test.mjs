@@ -52,5 +52,23 @@ const all = vr + boundHTML;
 const missing = [...new Set(wired)].filter(id => !all.includes('id="bone-' + id + '"') && id !== 'rad-val');
 check('every wired id exists in the markup', missing.length === 0, missing.join(','));
 
+// The three display toggles are one group to the eye and one group in the markup: the bone
+// body, its edge overlay, and the joint markers with the IK pins that hang off them. Checked
+// together because a toggle that renders but is never wired (or wired but never rendered) is
+// exactly the failure the id sweep above cannot see on its own.
+// Wired through the flag() helper rather than a literal q('id'), so the id sweep above cannot
+// see them — the wiring call is what has to be looked for.
+for (const id of ['solid', 'wire', 'joints']) {
+  const drawn = flat.includes('id="bone-' + id + '"');
+  const hooked = SRC.includes("flag('" + id + "'");
+  check('display toggle "' + id + '" is drawn and wired', drawn && hooked,
+    (drawn ? '' : 'not in markup ') + (hooked ? '' : 'not wired'));
+}
+
+// Default ON: a rig you have just drawn has to be visible without hunting for a switch.
+check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="[^"]*active[^"]*"[^>]*id="bone-joints"/.test(flat)
+  || /<button class="[^"]*active[^"]*" id="bone-joints"/.test(flat),
+  'Joints button did not render active by default');
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

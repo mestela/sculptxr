@@ -715,6 +715,12 @@ Skeleton.updateVisuals = function (main) {
   // bones between them are just something to see the sculpt through.
   const showSolid = window._boneShowSolid !== false;
   const showWire = window._boneShowWire !== false;
+  // The joint markers and everything that hangs off them — the IK pin triad, the 6DOF gimbal
+  // and the dashed leader to an unreached anchor. Together because they are one layer to the
+  // eye: the things you AIM at, as against the bones, which are what you look through. Turning
+  // them off is how you see the sculpt with a rig inside it rather than a rig with a sculpt
+  // around it.
+  const showJoints = window._boneShowJoints !== false;
   const hideCaps = (e) => {
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) p.solid.visible = p.ghost.visible = false;
   };
@@ -753,7 +759,7 @@ Skeleton.updateVisuals = function (main) {
       o.position.copy(_pB);
       o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
       o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
-      o.visible = true;
+      o.visible = showJoints;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -787,13 +793,13 @@ Skeleton.updateVisuals = function (main) {
       }
     }
     const pinParts = [
-      [e.pinT, pinMode > 0, jr * 2.2],
-      [e.pinG, pinMode > 1, jr * 2.2],
+      [e.pinT, showJoints && pinMode > 0, jr * 2.2],
+      [e.pinG, showJoints && pinMode > 1, jr * 2.2],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
     // means the solve is falling short.
-    const gap = pinMode ? _vPin.distanceTo(_pB) : 0;
+    const gap = showJoints && pinMode ? _vPin.distanceTo(_pB) : 0;
     if (gap > jr * 0.35) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);

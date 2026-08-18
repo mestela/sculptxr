@@ -74,6 +74,7 @@ export function buildBoneSectionHTML(main, style) {
   const wts   = window._boneShowWeights !== false;
   const solid = window._boneShowSolid !== false;
   const wire  = window._boneShowWire !== false;
+  const jnts  = window._boneShowJoints !== false;
   const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
@@ -103,6 +104,7 @@ export function buildBoneSectionHTML(main, style) {
     <div class="${c.toggles}">
       ${flag('solid', 'Solid', solid)}
       ${flag('wire', 'Wire', wire)}
+      ${flag('joints', 'Joints', jnts)}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule</span>
@@ -177,6 +179,7 @@ export function wireBoneSection(root, main, opts) {
   flag('caps', '_boneShowCapsules', true);
   flag('solid', '_boneShowSolid', true);
   flag('wire', '_boneShowWire', true);
+  flag('joints', '_boneShowJoints', true);
 
   // Toggling the weight preview has to repaint or restore immediately — the flag alone
   // changes nothing until something re-solves.
@@ -307,6 +310,7 @@ export function syncBoneSection(root, main) {
   setFlag('weights', window._boneShowWeights !== false);
   setFlag('solid', window._boneShowSolid !== false);
   setFlag('wire', window._boneShowWire !== false);
+  setFlag('joints', window._boneShowJoints !== false);
 
   // The pin count is rig state rather than panel state, so it has to be refreshed here or it
   // shows whatever was true when the markup was last built.

@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.22 - History-free joint rotations (twist fix)';
+export const VERSION = 'v3.19.23 - Joints and pins display toggle';
