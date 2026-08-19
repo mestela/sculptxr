@@ -1,171 +1,178 @@
 # Handover Prompt (Protocol Enforced)
 
-**Project Status**: Active Development — Rigging (roadmap #35). FBIK now works as a CONTROLLER:
-pins are scene objects, grabbing a bone poses the rig, rotation has real winding. The remaining
-work is making the VR transform tool reach bones and pins.
+**Project Status**: Rigging and rig animation are shipped and working. Bones and pins are
+ordinary keyable scene objects; the VR gizmo poses through the solver; the animation editor
+treats a bone like any other object. Two NEW features are next, both named by matt.
 **Current Working Directory**: `/Users/mattestela/sculptxr`
-**Checkpoint**: Give `TransformVR.js` a rig-aware pick. It has none at all.
+**Checkpoint**: Nothing is mid-flight. Start on the pole vector (read the blocker first) or on
+`SkinMesh` (wait for matt's description).
 
 ## MANDATORY reading
-You MUST read `project_rules.md`, `overview.md` and `docs/code_summary.md` before responding. NO EXCEPTIONS.
-Every response starts with `Step Id: {id}`. Never commit, push or deploy unless asked.
+You MUST read `project_rules.md`, `overview.md` and `docs/code_summary.md` before responding.
+NO EXCEPTIONS. Every response starts with `Step Id: {id}`. Never commit, push or deploy unless
+asked.
+
+**Also read `docs/ik_orientation_pin_findings.md` before touching the solver.** It records what
+was tried, the numbers, and why the fixes are scoped the way they are. It will save you from
+re-deriving three things the hard way.
 
 ## Deployed Version
-- **Local**: v3.19.60 — committed as `f545693a`, **NOT PUSHED**
-- **Prod**: v3.19.54 (`388a55ec`) — deployed, working
-- **Beta**: v2.9.0 (stale, ignore)
+- **Local / Prod / origin**: all at **v3.19.84** (`1c8473a8`). Working tree clean, nothing
+  unpushed, nothing uncommitted.
+- **Beta**: v2.9.0 (stale, ignore).
 
 ## Interactive Debugging
-- **Preference**: browser console for immediate state inspection; copy-pasteable snippets.
-- Matt tests on desktop AND iPad AND in VR. Trust his reports over a green suite.
-- **`console.log` IS INTERCEPTED** (`index.html` ~236) and routed to `screenLog`. That is not a
-  curiosity: logging performs a repaint, so a debug flag can be LOAD-BEARING. See the war
-  stories below — "only works with the trace on" cost half a session.
+- **Preference**: browser console; copy-pasteable snippets. matt tests on desktop AND iPad AND
+  in VR. Trust his reports over a green suite.
+- **Trace flags that exist now** — use them instead of guessing:
+  - `window._ikTrace` — one line per solve: effector, target and pin counts, rootFixed, and
+    whether a driven orientation was dropped and why. Plus `holdPins`.
+  - `window._tlTrace` — per dopesheet click: the geometry the hit test is using, the NEAREST
+    key with its dx/dy, the gate states, and which branch consumed the click.
+  - `window._animKeyTrace` — every input to the AutoKey decision, not just the outcome.
+  - `window._grabTrace`, `window._boneATrace` — preselection and the A button.
 
 ---
 
-## THE TASK: rig picking in TransformVR
+## THE TWO NEXT FEATURES
 
-`TransformVR.js` contains no `intersection*` call of any kind — it operates on
-`this.getMesh()`, whatever was already selected. So "picking doesn't work in VR" is precise:
-there is no picking to fix. It needs one adding.
+### 1. Pole vector — but fix determinism first
 
-Everything it needs already exists and is shared with Grab:
+matt's design, and better than a dedicated pole object: **per-joint weights as a priority
+ordering**. A hard ankle goal and a low-weight knee goal, so the knee only steers the freedom
+the ankle leaves.
 
-- `picking.intersectionRayMeshes(meshes, origin, dir, /* includeRig */ true)`
-- `Skeleton.hoverRigFromRay(main, picking, origin, dir)` — preselection, throttled, non-destructive
+That freedom is real and measured. A pinned ankle is ONE bone below the knee, so it does not
+merely limit the knee's reach — it confines the knee to a SPHERE about the pin (an equality,
+not an inequality; a drag to any point off it is projected onto it, whether too far or too
+near). Fix the hip as well and the intersection is the classic pole-vector CIRCLE.
 
-Use the `origin`/`dir` that `updateXR` is HANDED. They arrive in engine space. Deriving a ray
-from the controller matrix puts it in the raw WebXR frame and the pick misses every mesh in the
-scene, silently, on every frame.
+**BLOCKER, and it is not optional:** the solve is not a pure function of (rest skeleton,
+control values). FABRIK seeds each solve from the current pose, so the pose carries history.
+Same pins, same hip target, three different routes to the same frame:
 
----
+| arrived at the frame | knee position | distance from the "from rest" answer |
+| -------------------- | ------------- | ------------------------------------ |
+| from rest            | −0.064, 1.998, −0.018 | — |
+| via one other frame  | −0.054, 1.997, −0.049 | 0.032 |
+| via two other frames | 0.338, 1.910, 0.240   | **0.487** |
 
-## THE TRAP THAT COST A DAY: parallel implementations
+The controls are satisfied every time (hips exact, ankle holds its pin to 0.0002) and the knee
+still lands half a bone-length apart. Until evaluation is seeded from the rest pose (or a
+stored reference pose), a scrub and a playback will disagree and keyed controls will not
+reproduce. Note it probably needs to stay seeded-from-current while DRAGGING — continuity is
+part of why interactive dragging feels smooth — so expect two seeding modes, not one change.
 
-Four times this week the same shape of bug: two code paths doing one job, and a fix landing in
-only one of them.
+Reproduce it with `scratchpad/_ik_gen.mjs` (the generated real-solver module `ik_test.mjs`
+builds); the probe that produced the table above is trivial to rewrite.
 
-| desktop | VR |
-| --- | --- |
-| `Transform.js` | `TransformVR.js` |
-| `Picking.intersectionMouseMeshes` | `Picking.intersectionRayMeshes` |
-| `Grab.start`/`update` | `Grab.updateXR` |
+### 2. Mesh from skeleton — "Make Skin" should make a better mesh
 
-**CHECK WHICH TOOL IS ACTUALLY ACTIVE BEFORE EDITING.** Six rounds of fixes went into
-`Transform.js` while matt was testing `TransformVR` in the headset — the log line
-`[TransformVR] updateXR` is what finally revealed it. Ask for a console trace EARLY.
+`src/editing/SkinMesh.js`, wired to the `Make Skin` button in `gui/bonePanel.js`.
+**matt will describe what "better" means — ask before designing.**
 
-`rigpick_test.mjs` now asserts the same properties on both picks precisely so they cannot
-drift again. Extend that pattern rather than fixing one side.
+What it does today, from its own header comments: quad **tubes along CHAINS** at the capsule
+radii you already tuned, one continuous tube per chain so an elbow is just a bend in it (a
+capsule per bone would leave interpenetrating shells at every joint). The documented weakness
+is almost certainly what he means:
 
----
+> Branch points ARE left interpenetrating: the tubes for two clavicles leaving a spine each cap
+> themselves off inside the other. Resolving junctions properly is the hard part of every skin
+> modifier ever written... This is a blockout, not a model.
 
-## STATE OF THE RIG
-
-**Working and confirmed by matt:**
-- **Pins are scene nulls.** The pin's TRANSFORM is the anchor, so the old ratcheting bug is
-  unrepresentable. Selectable, gizmo-draggable, named after their bone (`pin_bone_03_R`), saved
-  (SKEL v3), and keyed by Key Pose.
-- **Grab poses the rig** on desktop and in VR, carrying orientation as well as position.
-- **Bones and pins are picked as points in a CONE**, not by ray-vs-geometry — a joint's pick
-  sphere is a fraction the size of the marker you see. Pins get a wider cone than bones because
-  ranking only decides ties. Ortho uses a cylinder (parallel rays).
-- **Rotation is Euler with winding** — a 3600-degree key spins ten times. `rotSync` rebuilds
-  from quaternions when the arrays fall out of step: a missed splice site degrades, never
-  corrupts.
-- **The graph editor has T/R/S channels**, with per-group view framing.
-
-**Off or absent:**
-- **Gizmo posing** (`window._ikGizmoPose = true` to enable). It WORKS, but the detector watches
-  every joint every frame for every tool, and restoring matrices before re-solving fights
-  anything else that writes joints — it locked the desktop gizmo up completely. Watching global
-  state is fine for pins (nothing else moves them) and wrong for joints (solver, skinning,
-  animation, undo all write them). **Scope it to an actual gizmo drag** — mouse-down over a
-  joint to mouse-up — rather than inferring from matrices changing.
-- **Rig preselection in `TransformVR`** — the task above.
-- **Thumbstick controlling gizmo scale** (matt's idea, not started). The gizmo is sized for
-  objects and is comically large on a bone; radius-on-thumbstick is the established gesture so
-  it should feel familiar. Note the gizmo's size is DERIVED (constant screen size), so this
-  means adding a user scale factor on top, persisting it, and routing the thumbstick when
-  Transform is active.
-
----
-
-## WAR STORIES — read these before debugging anything visual
-
-1. **A debug flag can be load-bearing.** VR grab worked only with `_grabTrace` on, then only
-   with the remote console attached. Neither can change logic. `console.log` is redirected to
-   `screenLog` (a repaint), and the console changes frame timing. The real causes were a missing
-   `render()` and a hover costing too much at 90Hz. **"Only works with debugging on" is a TIMING
-   signal, not a mystery.**
-2. **Preselection must not disturb the pick.** `picking` is shared state — a pick writes
-   `_mesh`, `_interPoint`, `_pickedFace`, which tools read to decide what was clicked. A hover
-   pick every frame clobbered it. `Skeleton.hoverRigFromMouse/FromRay` snapshot and restore.
-3. **Thresholds are not epsilons.** Move detection compared matrices at `1e-9`, below float32
-   spacing (~1.2e-7 near 1-2), so it reported a move on EVERY comparison. This shipped in the
-   pin watcher at v3.19.33 and re-solved every frame for two days. Now `1e-5` (`MOVE_EPS`).
-4. **`_trans[2]` is not a distance.** `setPivot` stores it pre-multiplied by `fov/45`. Reading it
-   as a distance inflated the ortho frustum by 1.8x. The corrected formula reproduces the old
-   hand-tuned `0.00055` at the fov and canvas that constant was calibrated for.
-5. **Euler has a double cover.** Every XYZ orientation has two spellings and
-   `setFromQuaternion` always returns |y| <= 90, so a steady 170-deg-per-key spin rebuilds as
-   0, 10, -20, 30. Unwrapping by whole turns cannot fix it; both spellings must be compared.
+## STILL OPEN (from the findings doc)
+- **The solve carries history** — see the blocker above.
+- **Cross-limb drift**: posing the right knee re-solves the left one, which settles back to
+  where the solver thinks it belongs. `buildGraph` walks the whole skeleton and `markActive`
+  lights every chain leading to a target: the solve is global, the intent is local.
+- **A Key Pose on a thirty-joint rig is now thirty dopesheet rows.** The fold that hid them was
+  removed deliberately (its keys drew, highlighted, and could not be selected). If Key Pose
+  becomes central again, the fix is to make a summary row RESOLVE to its joints — click selects
+  the pose, drag retimes it together — rather than hide them.
 
 ---
 
 ## HOW THIS CODE IS TESTED
 
 `scratchpad/*.mjs`, run with `/opt/homebrew/bin/node`. Each reads the REAL source, strips
-imports, prepends stubs — so the code under test is the shipped code.
+imports, prepends stubs — so the code under test is the shipped code. Sixteen harnesses:
 
-- `ik_test.mjs` — the solver, pins, gizmo watcher. Where solver work belongs.
-- `rigpick_test.mjs` — the cone geometry and the mouse/VR pick parity.
-- `xfchannel_test.mjs` — graph editor channels, rotation winding, and a SOURCE GUARD that no
-  channel-indexed transform access exists outside the accessors, across three files.
-- `undef_test.mjs` — eslint `no-undef` over ten rig/animation files. Added after a block-scoped
-  `const` used outside its block crashed bone drawing, invisible to every other harness.
-- `module_load_test.mjs` — bundles the REAL modules with REAL imports and imports them. The only
-  thing that catches a module failing to EVALUATE.
-- `keyrig_test.mjs`, `bonepanel_test.mjs`, `bonescreen_test.mjs`, `skin_level_test.mjs`.
+- `ik_test.mjs` — the solver. Where solver work belongs. Has the root-grab, knee+pin and driven
+  orientation cases.
+- `rigpick_test.mjs` — cone geometry, mouse/VR pick parity, Transform/TransformVR parity.
+- `transformopts_test.mjs` — the free-rotate handle and the A-button pin binding.
+- `timeline_lane_test.mjs` — lane height, the dopesheet scroll, marquee reach, key colour.
+- `graph_target_test.mjs` — what the graph editor graphs and how it is set.
+- `autokey_rig_test.mjs` — AutoKey's two gates and the three take-hold sites.
+- `skellock_test.mjs` — a REAL round trip through the shipped SKEL serialize/deserialize.
+- `stylusxray_test.mjs`, `gizmosize_test.mjs`, `bonepanel_test.mjs`, `bonescreen_test.mjs`,
+  `keyrig_test.mjs`, `xfchannel_test.mjs`, `skin_level_test.mjs`, `undef_test.mjs`,
+  `module_load_test.mjs`.
 
-**Two standing lessons:**
-1. **A passing test proves nothing until you have seen it fail.** A source guard passed against
-   the real bug TWICE (wrong file, then a regex blind to optional chaining) before it worked.
-   Always reintroduce the actual defect.
-2. **Test the CALL SITES, not just the helper.** Accessor tests were green while five call sites
-   went around them and the graph editor was broken. What catches that is asserting nothing else
-   touches the underlying arrays.
+**`module_load_test.mjs` earns its keep**: it is the only thing that catches an import cycle,
+which it reports as *Class extends value undefined*.
+
+### Standing lessons — every one of these cost time THIS session
+1. **A passing test proves nothing until you have seen it fail.** Reintroduce the actual defect,
+   and check the injection reproduced the RIGHT thing: one removed a call from the wrong site
+   and another landed before an early return rather than after it, so both "passed" while
+   proving nothing.
+2. **Do not test a copy of the rule.** Behaviour checks that reimplement the logic locally pass
+   happily with the shipped logic deleted. Lift the function body out of the source and evaluate
+   it.
+3. **Strip comments before a source guard.** Three guards matched the prose explaining why the
+   code does NOT do the thing they forbade.
+4. **Never bound a source slice by a character count.** A fixed 2600-char window truncated the
+   block the moment a diagnostic was added, failing two checks on correct code. Bound by braces.
+5. **Assert the property, not a tally.** A check for "exactly 8 callers" broke when a ninth
+   legitimate caller appeared.
 
 ---
 
+## WAR STORIES — read before debugging anything
+
+1. **Reading the code produced wrong answers; measuring produced right ones.** Four times this
+   session a confident explanation was contradicted by the harness or a trace — twice mine, once
+   matt's, once a fix that was right in aim and too broad in scope. When a symptom is unclear,
+   add a flag-gated trace and ask for one run. It beats three rounds of "try this".
+2. **The selection is one gesture stale.** `currentMesh` at AutoKey time comes from the SCULPTING
+   pick captured at stroke start, and tools update the app selection AFTER AutoKey has run. Any
+   code that wants "what did the user just take" must use the tool's own synchronous report
+   (`main._lastRigEdit`), never the selection.
+3. **A debug flag can be load-bearing.** `console.log` is redirected to `screenLog` (a repaint),
+   and the console changes frame timing. "Only works with debugging on" is a TIMING signal.
+4. **Preselection must not disturb the pick.** `picking` is shared state; a hover pick every
+   frame clobbers `_mesh`/`_interPoint`/`_pickedFace`. `Skeleton.hoverRigFromRay` snapshots and
+   restores.
+5. **Thresholds are not epsilons.** Move detection at `1e-9` is below float32 spacing, so it
+   reported a move on every comparison. Now `1e-5`.
+6. **Euler has a double cover** — both spellings must be compared when rebuilding from
+   quaternions.
+7. **The menu-guard path hands tools BUTTON-ONLY controllers** (`{handedness, buttons}`, no
+   matrix, no ray) so face buttons keep working while a panel is under the ray. Anything reading
+   a pose must guard for it; Grab did not, and threw once per frame for a whole session.
+8. **Same rule in N places is this project's signature bug.** Found again three times this
+   session: lane height in five places, the dopesheet scroll clamped in the drawing but not the
+   hit tests, and a marquee collector indexing the registry's map with dopesheet row numbers.
+   When you fix one, grep for the others.
+
 ## SOLVER MAP (`src/editing/IKSolver.js`)
-
 - `fabrik` — backward/forward sweeps. Subbase children move as ONE RIGID CLUSTER.
-- `runSolve` — the sweeps plus one retry from the other branch. Shared by the interactive solve
-  and the playback pin pass.
-- **The hinge is SEEDED, not clamped.** Which side a knee bends is a discrete choice; clamping
-  it inside every sweep made the solver oscillate (40x jitter, 270x pin drift, and MORE
-  iterations made it worse). `window._ikHingeMode = 'clamp'` restores the old behaviour.
+- `runSolve` — the sweeps plus one retry from the other branch.
+- **The hinge is SEEDED, not clamped** — clamping made the solver oscillate (40x jitter, 270x
+  pin drift). `window._ikHingeMode = 'clamp'` restores the old behaviour.
 - `fitLocalRotation` — rotations built ABSOLUTELY from the child's constant local offset, not as
-  a delta from the current orientation. Deltas are individually roll-free but compose into
-  parallel transport, which comes back rotated around a closed loop — that was the twist ratchet
-  behind the candy-wrapper collapse.
+  a delta (deltas compose into parallel transport and come back rotated — the twist ratchet).
+- `solve` — the interactive path. Pulls in pinned joints as extra targets; `rootFixed` is
+  `targets.size <= 1 && eff !== root` (the second half is what makes the root grabbable). A
+  driven orientation is DROPPED when a pinned joint is a direct child — see the findings doc.
 - `holdPins` — re-solves pins after playback writes an interpolated pose. Root always fixed.
-- `externallyMovedJoint` / `resolveToJoint` — the gizmo-posing watcher. Opt-in, see above.
-
-## STILL UNRESOLVED
-- A held pose settles geometrically rather than to machine precision, and raising the
-  multi-child fit accuracy brings the twist ratchet back — FABRIK seeding each solve from the
-  current pose is a second source of path dependence.
-- `hitWorld` in `Grab.start` is built from `getMatrix()`, which is local-to-parent and equals the
-  model matrix only for unparented objects. Latent; desktop grab works and it is not understood
-  why.
-- `Skinning.isBound` may not survive the Multimesh proxy — a bound-mesh check failed to fire.
-- `docs/releases.md` is written through v3.19.54; v3.19.55-60 are not yet written up.
+- `togglePin` / `pinOnA` — the shared A-button binding. `pinOnA` takes the TOOL as an argument
+  because `SculptBase` cannot import `IKSolver` (cycle through `Skeleton` and the mesh stack).
 
 ## WORKING WITH MATT
 He iterates fast and prefers a working thing to a designed thing. He finds the cases the harness
 does not. Tell him plainly when something is unverified — he is not served by confident-sounding
-guesses. When a fix cannot be verified locally, ASK FOR A CONSOLE TRACE EARLY rather than
-shipping another guess; three round-trips of "try this" is worse than one trace.
+guesses. When a fix cannot be verified locally, ASK FOR A TRACE EARLY rather than shipping
+another guess. He is happy to answer a crisp design question with a recommendation attached; he
+is not happy to be handed a survey of options with no opinion.
