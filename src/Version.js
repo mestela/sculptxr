@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.67 - Root bone is grabbable';
+export const VERSION = 'v3.19.68 - A pinned child outranks a driven twist';

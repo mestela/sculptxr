@@ -151,6 +151,15 @@ class BoneDrawTool extends SculptBase {
     return this._compensate ? 'free' : 'fk';
   }
 
+  // Which path a joint drag takes is the thing that is hardest to see from inside the
+  // headset — FK, free, pose and IK all look like "the bone moved" until you compare what the
+  // REST of the chain did. One line per drag start, on the same flag the solver uses.
+  _traceMode(what) {
+    if (!window._ikTrace) return;
+    console.log('[bones] ' + what + ' mode=' + this.modeKey()
+      + ' (fk/free edit the rest skeleton and never call the solver)');
+  }
+
   setModeKey(key) {
     const named = { draw: 'draw', pose: 'pose', radius: 'radius', ik: 'ik' };
     const mode = named[key] || 'tweak';
@@ -514,6 +523,7 @@ class BoneDrawTool extends SculptBase {
   // so the drag is a chance to see where it will land — with the symmetry plane drawn and
   // lighting up as you cross its snap band — instead of committing blind and undoing.
   _startDraw() {
+    this._traceMode('draw');
     // Mid-chain a press anywhere is meant — the depth comes from the parent, so the mesh has
     // nothing to say about it and a chain can run out past the silhouette. Between chains
     // the press must land on the sculpt: it is where the first joint's depth comes from, and
@@ -651,6 +661,7 @@ class BoneDrawTool extends SculptBase {
   // stops the camera taking it. Returning false on a miss is equally deliberate — a click
   // that hit no joint must still orbit, or the tool would eat every camera move.
   _startScreenDrag() {
+    this._traceMode('screen drag');
     const main = this._main;
     const startX = main._mouseX, startY = main._mouseY;
 

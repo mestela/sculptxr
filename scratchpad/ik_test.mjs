@@ -1156,6 +1156,75 @@ function lengthsPreserved(name, joints, before) {
   IKSolver.setPinned(ankle, false, main);
 }
 
+// A DRIVEN ORIENTATION MUST NOT CARRY A PINNED DESCENDANT OFF ITS PIN.
+//
+// The headset always sends an orientation — the controller carries 6DOF — and driving it makes
+// the effector's children RIGID with it, which is the point of it for a hand or a foot. On a
+// mid-limb joint it over-constrains everything below: with the knee's position AND orientation
+// both driven, the ankle's position is a rigid function of them and the pin has no freedom
+// left. The leg below the hand then moves as one piece, which reads as the solver having been
+// bypassed for plain FK. Measured before the fix: the pin held to 0.0000 on position alone and
+// was dragged 0.80 / 1.10 / 1.50 off it at 10 / 30 / 60 degrees.
+{
+  const mk = () => {
+    const hip = J([0, 3, 0]);
+    const knee = J([0, 2, 0], hip);
+    const ankle = J([0, 1, 0], knee);
+    const toe = J([0.3, 1, 0], ankle);
+    return { hip, knee, ankle, toe, joints: [hip, knee, ankle, toe],
+             main: makeMain([hip, knee, ankle, toe]) };
+  };
+  const target = new THREE.Vector3(0.6, 1.8, 0); // one shin from the pin at (0, 1, 0)
+
+  for (const deg of [10, 30, 60]) {
+    const { knee, ankle, joints, main } = mk();
+    const L0 = lengths(joints);
+    IKSolver.setPinned(ankle, true, main);
+    const before = pos(ankle).clone();
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), deg * Math.PI / 180);
+    IKSolver.solve(main, knee, target, null, q);
+    check(`orient: a pinned ankle holds through a ${deg}-degree driven rotation`,
+      pos(ankle).distanceTo(before) < 1e-2,
+      'moved ' + pos(ankle).distanceTo(before).toFixed(4));
+    check(`orient: the knee still reaches its target at ${deg} degrees`,
+      pos(knee).distanceTo(target) < 2e-2, 'err ' + pos(knee).distanceTo(target).toFixed(4));
+    lengthsPreserved(`orient ${deg}`, joints, L0);
+    IKSolver.setPinned(ankle, false, main);
+  }
+
+  // THE TWO CASES THAT MUST NOT REGRESS. Dropping the orientation is scoped to a pinned
+  // DIRECT CHILD, and that scope was found the hard way: gating on any pinned DESCENDANT broke
+  // the hips twist above, where the feet are pinned three bones down and are supposed to stay
+  // planted while the body turns. A pin with intervening joints has slack to absorb the
+  // rotation; a pin one bone down does not.
+  {
+    const { toe, ankle, main } = mk();
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.7);
+    IKSolver.solve(main, toe, pos(toe).clone(), null, q);
+    const m = toe.getModelSpaceMatrix ? toe.getModelSpaceMatrix() : null;
+    const got = new THREE.Quaternion();
+    new THREE.Matrix4().fromArray(m).decompose(new THREE.Vector3(), got, new THREE.Vector3());
+    check('orient: a LEAF effector still keeps its driven orientation',
+      Math.abs(got.angleTo(q)) < 1e-2, 'off by ' + got.angleTo(q).toFixed(4) + ' rad');
+    IKSolver.setPinned(ankle, false, main);
+  }
+
+  // A pin further down the chain leaves the orientation armed: the toe is pinned, the HIP is
+  // driven, and the two bones between them absorb it. Same shape as the hips/feet twist.
+  {
+    const { hip, toe, main } = mk();
+    IKSolver.setPinned(toe, true, main);
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.5);
+    IKSolver.solve(main, hip, pos(hip).clone(), null, q);
+    const got = new THREE.Quaternion();
+    new THREE.Matrix4().fromArray(hip.getModelSpaceMatrix())
+      .decompose(new THREE.Vector3(), got, new THREE.Vector3());
+    check('orient: a pin further down does NOT disarm the driven orientation',
+      Math.abs(got.angleTo(q)) < 1e-2, 'off by ' + got.angleTo(q).toFixed(4) + ' rad');
+    IKSolver.setPinned(toe, false, main);
+  }
+}
+
 // GRABBING THE ROOT MOVES THE CHARACTER. The root is the anchor for every other drag — with
 // nothing pinned, something has to be, or the whole rig follows your hand on the first pull —
 // but anchoring it while it is ITSELF the effector held it against the only input asking it to

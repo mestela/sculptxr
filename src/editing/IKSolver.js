@@ -997,13 +997,44 @@ function applyRotations(main, nodes, root, rootFixed) {
 // your hand turning as well as travelling. It is a constraint on the solve, not a decoration
 // applied afterwards: the joint's children are carried by it, so turning the hips swings the
 // legs and spine, and the pinned feet then have to be re-solved against where they landed.
+// Is one of these pinned joints a DIRECT CHILD of the effector?
+//
+// Direct child, not any descendant: a driven orientation rotates the effector's IMMEDIATE
+// children rigidly with it, and deeper joints reach their positions through their own solved
+// rotations, which stay free. So a pin one bone down is rigidly determined and has nothing left
+// to give, while a pin further down has intervening joints to absorb the rotation. That is the
+// difference between a knee with a pinned ankle (over-constrained: the foot is carried off its
+// pin) and hips with pinned feet (fine, and the point of the feature — the feet stay planted
+// while the body twists above them).
+function pinnedChild(effector, pinList) {
+  if (!effector || !pinList || !pinList.length) return null;
+  const id = effector.getID();
+  for (const j of pinList) {
+    if (j !== effector && Skeleton.isJoint(j._parentMesh) && j._parentMesh.getID() === id) return j;
+  }
+  return null;
+}
+
 IKSolver.solve = function (main, effector, target, pins, orientation) {
   if (!effector || !target) return false;
   const nodes = buildGraph(main);
   const eff = nodes.get(effector.getID());
   if (!eff) return false;
 
-  if (orientation) {
+  // A DRIVEN ORIENTATION MAKES THE EFFECTOR'S CHILDREN RIGID WITH IT — that is the point of
+  // it, and for a hand or a foot it is exactly right: the limb keeps the orientation you are
+  // holding it at. For a joint with a PINNED DESCENDANT it is wrong, and quietly so. With the
+  // knee's position and orientation both driven, the ankle's position becomes a rigid function
+  // of them, the pin has no freedom left to work with, and the foot is carried off it — the
+  // whole leg below your hand moves as one piece, which reads as the solver having been
+  // bypassed for plain FK. Measured: a pinned ankle holds to 0.0000 on position alone, and is
+  // dragged 0.80 / 1.10 / 1.50 off its pin at 10 / 30 / 60 degrees of driven rotation.
+  //
+  // So the pin wins. A pin is an explicit statement about where something stays; the wrist
+  // rotation that comes free with a 6DOF grab is not a statement about anything.
+  const pinListEarly = pins || IKSolver.pinnedJoints(main);
+  const blockingPin = orientation ? pinnedChild(effector, pinListEarly) : null;
+  if (orientation && !blockingPin) {
     eff.orient = orientation.clone();
     // The rotation that carries the joint's CURRENT offsets to where the driven orientation
     // wants them. Both halves are pre-solve, and the graph is rebuilt every frame, so this
@@ -1018,7 +1049,7 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   targets.set(eff, target.clone());
 
   const pinTargets = [];
-  const pinList = pins || IKSolver.pinnedJoints(main);
+  const pinList = pinListEarly;
   for (const j of pinList) {
     const n = nodes.get(j.getID());
     if (!n || n === eff) continue;
@@ -1050,6 +1081,15 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   if (window._ikClampToPins !== false && pinTargets.length) {
     const t = targets.get(eff);
     clampToPins(eff, t, pinTargets);
+  }
+
+  if (window._ikTrace) {
+    console.log('[ik] solve eff=' + (effector._permanentStaticLabel || effector.getID())
+      + ' targets=' + targets.size + ' pins=' + pinTargets.length
+      + ' rootFixed=' + (targets.size <= 1 && eff !== root)
+      + ' orient=' + (eff.orient ? 1 : 0)
+      + (blockingPin ? ' (orientation dropped: pinned child '
+          + (blockingPin._permanentStaticLabel || blockingPin.getID()) + ')' : ''));
   }
 
   markActive(targets.keys());
@@ -1167,6 +1207,7 @@ IKSolver.resolveToJoint = function (main, joint) {
 
 IKSolver.holdPins = function (main) {
   const pins = IKSolver.pinnedJoints(main);
+  if (window._ikTrace) console.log('[ik] holdPins pins=' + pins.length);
   if (!pins.length) return false;
   const nodes = buildGraph(main);
 
