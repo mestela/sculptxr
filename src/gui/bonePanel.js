@@ -271,7 +271,7 @@ export function wireBoneSection(root, main, opts) {
   q('skin')?.addEventListener('click', () => {
     const res = SkinMesh.build(main);
     say(res.ok
-      ? `Bones: skin built — ${res.chains} chains, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
+      ? `Bones: skin built — ${res.boxes} joints, ${res.bones} bones, ${res.verts} verts, ${res.faces} faces, ${res.ms}ms`
       : `Bones: ${res.why}`, res.ok);
     rebuild(); // the new mesh becomes the selection, so the panel changes
     main.render?.();

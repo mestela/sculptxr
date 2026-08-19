@@ -3,6 +3,7 @@ import { VERSION } from './Version.js';
 import { vec3, mat4, quat, mat3 } from 'gl-matrix';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
+import Skeleton from './editing/Skeleton.js';
 import Utils from './misc/Utils.js';
 import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
@@ -1272,6 +1273,18 @@ class SculptGL extends Scene {
       const _tl = this._gui?._ctrlTimeline;
       if (_tl && _tl._visible && _tl.isMouseOver() && window._animSelectedKeys?.length) {
         e.preventDefault(); _tl.deleteSelectedKeys(); return;
+      }
+      // In Bone Draw, Delete removes the selected joint. It goes through the ordinary scene
+      // delete rather than anything rig-specific, because a joint IS an ordinary mesh — which
+      // also means it cascades to the joints below it, and that is what you want: deleting a
+      // shoulder should take the arm with it, not leave a chain floating with no root.
+      // Gated on the tool so Delete keeps meaning "delete the selected mesh" everywhere else.
+      const _sm = this.getSculptManager?.();
+      if (_sm?.getToolIndex?.() === Enums.Tools.BONE_DRAW) {
+        const sel = this.getSelectedMeshes?.() || [];
+        if (sel.length && sel.every((m) => Skeleton.isJoint(m))) {
+          e.preventDefault(); this.deleteCurrentSelection(); this.render(); return;
+        }
       }
     }
 

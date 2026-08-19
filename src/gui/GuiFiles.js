@@ -5,6 +5,7 @@ import { zipSync, strToU8 } from 'fflate';
 import Export from '../files/Export.js';
 import ExportOBJ from '../files/ExportOBJ.js';
 import StorageDB from '../misc/StorageDB.js';
+import Skeleton from '../editing/Skeleton.js';
 import * as THREE from 'three';
 
 import Rtt from '../drawables/Rtt.js';
@@ -222,16 +223,20 @@ class GuiFiles {
     // result is never squashed regardless of the canvas/VR framebuffer dimensions.
     let thumb = '';
     const renderer = this._main._renderer;
-    // Helper overlays that live INSIDE _worldGroup: the skeleton visuals (bones, joint
-    // markers, symmetry plane, preview bone, length labels) and Extrude's yellow face tags.
-    // Step 3 below only hides children of _scene, so these would otherwise be drawn into
-    // the thumbnail — and worse, Box3.setFromObject does not skip invisible objects, so a
-    // stale preview bone parked wherever the controller last was inflates the bounding box
-    // and the auto-framing pulls the camera back until the sculpt is a speck (or gone).
-    // Detached rather than just hidden, precisely because the box ignores visibility.
+    // Helper overlays that live INSIDE _worldGroup. Step 3 below only hides children of
+    // _scene, so these would otherwise be drawn into the thumbnail — and worse,
+    // Box3.setFromObject does not skip invisible objects, so anything parked wherever the
+    // controller last was inflates the bounding box and the auto-framing pulls the camera
+    // back until the sculpt is a speck. Detached rather than hidden, precisely because the
+    // box ignores visibility.
+    //
+    // THE RIG ITSELF STAYS. It used to be detached wholesale, which kept the framing honest
+    // but meant a skeleton with no sculpt yet photographed as an empty square — no use at all
+    // for building a library of rigs to come back to. Only the preview cursor has to go, and
+    // Skeleton owns the list of what that is.
     const detached = [];
     const detach = (o) => { if (o && o.parent) { detached.push([o, o.parent]); o.parent.remove(o); } };
-    detach(this._main._skelGroup);
+    for (const o of Skeleton.snapshotHide(this._main)) detach(o);
     detach(this._main.getSculptManager?.()?.getTool?.(Enums.Tools.EXTRUDE)?._selectionMesh);
 
     if (renderer) {

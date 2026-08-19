@@ -366,6 +366,7 @@ function colorSlots(main) {
 }
 
 const _fallbackColor = new THREE.Color(0.6, 0.6, 0.6);
+const _wireCol = new THREE.Color();
 Skeleton.boneColor = function (main, joint) {
   if (!joint || !joint.getID) return _fallbackColor;
   const slots = colorSlots(main);
@@ -375,6 +376,21 @@ Skeleton.boneColor = function (main, joint) {
 
 Skeleton.joints = function (main) {
   return (main.getMeshes() || []).filter(Skeleton.isJoint);
+};
+
+// The rig visuals a SNAPSHOT must not see. Everything else in the skeleton group is real rig
+// and belongs in a thumbnail — a library of skeleton assets is unusable if every card is an
+// empty grey square.
+//
+// It is only the preview cursor that has to go, and the reason is not that it looks untidy:
+// `Box3.setFromObject` ignores visibility, so the preview bone parked wherever the controller
+// was last pointing still counts toward the bounding box even when hidden, and the auto-framing
+// then pulls the camera back until the sculpt is a speck. Hiding the whole group was the blunt
+// way to dodge that. These four objects are the entire problem.
+Skeleton.snapshotHide = function (main) {
+  const pv = main && main._skelPreview;
+  if (!pv) return [];
+  return [pv.bone.solid, pv.bone.ghost, pv.dot.solid, pv.dot.ghost];
 };
 
 // Is this joint's rig visible? A joint's own locator never draws — the flat visuals in this
@@ -1037,13 +1053,28 @@ Skeleton.updateVisuals = function (main) {
       ? ((parent._boneIKPinObj._pinMode | 0) & 3) : 0;
     const leafPin = hasChildBone.has(id) ? 0 : pinMode;
     const tintMode = rootPin || leafPin;
-    const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : BONE_COLOR);
+    // IDENTITY COLOUR WHILE RIGGING, plain yellow otherwise. The capsule below already wears
+    // the colour of the joint that moves it, and matching the bone to it is what lets you read
+    // which bone is which at a glance — the same reason the capsules are coloured at all. It
+    // is only useful while you are in the rig though: outside Bone Draw the colours are noise
+    // competing with the sculpt, so the bones go back to being one quiet yellow. A pin still
+    // wins over both, because pin state is the thing you most need to not miss.
+    const rigging = main.getSculptManager?.()?.getToolIndex?.() === Enums.Tools.BONE_DRAW;
+    const ident = rigging ? Skeleton.boneColor(main, parent) : null;
+    const restTint = ident ? ident.getHex() : BONE_COLOR;
+    const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : restTint);
+    // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
+    // Its whole job is to make the bone's roll and taper legible, and it can only do that by
+    // contrasting with the body it sits on — matched exactly, the ridge lines disappear into
+    // the face they are drawn over and the bone reads as a flat lozenge again.
+    const wireTint = ident ? _wireCol.copy(ident).multiplyScalar(0.35).getHex() : BONE_EDGE;
     for (const o of [e.bone.solid, e.bone.ghost, e.wire.solid, e.wire.ghost]) {
+      const isBody = o === e.bone.solid || o === e.bone.ghost;
       o.position.copy(_pA);
       o.quaternion.copy(_q);
       o.scale.set(w, len, w);
-      o.visible = (o === e.bone.solid || o === e.bone.ghost) ? showSolid : showWire;
-      if (o === e.bone.solid || o === e.bone.ghost) o.material.color.setHex(boneTint);
+      o.visible = isBody ? showSolid : showWire;
+      o.material.color.setHex(isBody ? boneTint : wireTint);
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 

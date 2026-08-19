@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.84 - Three key colours, not five';
+export const VERSION = 'v3.19.90 - Bridges subdivided by length';
