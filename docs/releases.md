@@ -1,3 +1,51 @@
+# v3.19.83
+**The animation editor learns about rigs.** Keying a pose used to mean one button and one
+all-or-nothing row; a bone is now an ordinary keyable object, and the editor treats it like one.
+
+- **AutoKey keys a bone or a pin.** The gate asked which TOOL was active, so posing under the
+  Bones tool fell through to the SHAPE-key branch and keyed the skin. It asks what MOVED now.
+- **...and keys the node you actually took.** The selection is updated after AutoKey has run,
+  so it is reliably one gesture stale — grab left pin, right pin, root and the keys landed on
+  root, left, right. Every tool that can take a rig node now reports it synchronously.
+- **A keyed bone gets its own dopesheet row.** Joint tracks were folded into one synthetic row
+  per skeleton whose id resolved to no track: the keys drew, and highlighted, and could not be
+  selected, dragged or deleted. Pins were never folded, which is why they behaved and bones
+  did not.
+- **The marquee reaches the first and last keys in time.** It tests a key's centre, and at the
+  two ends the centre is unreachable — the first key sits under the row-name gutter, the last
+  at the canvas edge. Transform keys were also gathered by indexing the registry's map with
+  dopesheet row numbers, which are a different list.
+- **Clicking a row or a key drives the graph editor**, rather than having to select the object
+  in the 3D view first — and the target is now visible: the row's name turns yellow and the
+  graph names what it is showing.
+- **Mouse-up always releases the drag.** A throw left every drag flag set, so the marquee never
+  closed and the playhead followed the cursor for ever.
+- Plus the dopesheet's lane height is capped (a tall panel stretched three rows to fill it),
+  one clamped scroll value shared by the drawing and the hit tests, and a fix for Grab throwing
+  every frame when the trigger was held while pointing at a panel.
+
+# v3.19.72
+**Rig ergonomics.** The VR transform gizmo reaches the rig, and the rig gets out of the way.
+
+- **The gizmo picks bones and pins.** `TransformVR` had no pick of any kind — it transformed
+  whatever was already selected — so a bone could not be reached in VR at all. It now
+  preselects on hover and selects on press, sharing both with Grab.
+- **A dragged bone poses the rig.** The gizmo hands the joint to the solver as a request rather
+  than writing its matrix, which would edit bone LENGTH. Undo snapshots the whole skeleton,
+  because a solve reaches anywhere in the tree.
+- **A pinned child outranks a driven twist.** A driven orientation makes the effector's
+  immediate children rigid with it — right for a hand, fatal one bone above a pin, where it
+  dragged the foot off its pin by up to 1.5 units. Scoped to a pinned DIRECT child: hips with
+  pinned feet still twist, because the knee and ankle between them absorb it.
+- **A pinned ankle confines the knee to a sphere**, not a reach limit — the freedom a pole
+  vector would steer. Documented in `docs/ik_orientation_pin_findings.md`.
+- **The thumbstick resizes the gizmo** while Transform is active (it is sized for objects and
+  swamps a bone), the centre handle can optionally carry rotation as well as position, and
+  **A pins the joint under the ray** in Transform and Grab, the same press the bone tool uses.
+- **A bound mesh is locked out of viewport selection** and stays locked across a save, so the
+  ray reaches the joints inside the character instead of the skin. Unbind hands it back.
+- Bone capsules and weight colours default OFF, and every bone display flag persists.
+
 # v3.19.54
 **VR grab preselection works.** Three bugs stacked on top of one another, which is why it kept half-working and why two false leads (dev versus production, and a debug flag) looked convincing.
 
