@@ -169,6 +169,18 @@ function boundMesh(levels, boundAt) {
     /mesh\._selectLocked = false;/.test(unbindFn),
     'a mesh left unselectable after unbind has no way out from inside the headset');
 
+  // AND IT HAS TO SURVIVE A RELOAD. The lock is a runtime flag with no slot in the mesh
+  // format, so a reloaded character was pickable again — the ray back to catching the skin
+  // instead of the joints inside it. Derived on load from the bind state, which IS in the file.
+  {
+    const SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+    const i = SKEL.indexOf('mesh._skinDirty = true;');
+    const near = i === -1 ? '' : SKEL.slice(i, i + 900);
+    check('a bound mesh comes back locked after a reload',
+      /mesh\._selectLocked = true;/.test(near),
+      'the lock is not in the file format, so it has to be re-derived where the skin is restored');
+  }
+
   // The lock is only worth anything because the picking scans already honour it — all three.
   const scans = (PICK.match(/mesh\._selectLocked/g) || []).length;
   check('every picking scan honours the lock', scans >= 3, `${scans} scans`);

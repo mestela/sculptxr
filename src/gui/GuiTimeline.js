@@ -1109,7 +1109,7 @@ export default class GuiTimeline {
     const _xfPrefix = _xfg === 'rot' ? 'R' : (_xfg === 'scale' ? 'S' : 'T');
     const labels = [_xfPrefix + 'X', _xfPrefix + 'Y', _xfPrefix + 'Z'];
 
-    const activeMeshForGutter = this._main.getMesh();
+    const activeMeshForGutter = this._graphMesh();
     const idForGutter = activeMeshForGutter ? activeMeshForGutter.getID() : null;
     const trackForGutter = idForGutter ? reg.tracks.get(idForGutter) : null;
 
@@ -1383,7 +1383,7 @@ export default class GuiTimeline {
 
 
     // 5. Draw Curves for Active Mesh
-    const activeMesh = this._main.getMesh();
+    const activeMesh = this._graphMesh();
     if (activeMesh) {
       const id = activeMesh.getID();
       const track = reg.tracks.get(id);
@@ -1845,7 +1845,7 @@ export default class GuiTimeline {
 
     // Draw Transform Box in Graph Mode!
     if (window._animShowTransformBox && window._animSelectedKeys && window._animSelectedKeys.length > 1) {
-      const activeMesh = this._main.getMesh();
+      const activeMesh = this._graphMesh();
       if (activeMesh) {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);
@@ -2060,7 +2060,7 @@ export default class GuiTimeline {
     const reg = window._animationRegistry;
     if (!reg) return;
 
-    const activeMesh = this._main.getMesh();
+    const activeMesh = this._graphMesh();
     if (!activeMesh) return;
     const id = activeMesh.getID();
     const track = reg.tracks.get(id);
@@ -2565,11 +2565,37 @@ export default class GuiTimeline {
     }
   }
 
+  // WHAT THE GRAPH EDITOR GRAPHS.
+  //
+  // It used to read _main.getMesh() — the 3D-VIEW selection — in eight places, so the only way
+  // to graph a track was to go and select its object in the scene, even though you had just
+  // clicked its row. The timeline now owns its own target, set by clicking a row name or a key,
+  // and falls back to the scene selection when it has none (which is exactly the old
+  // behaviour, so nothing changes until you click something).
+  //
+  // Deliberately NOT routed through main.setMesh: that runs tool-context switching and ends in
+  // a render, which is the re-entrancy the bones tool's _selectLater exists to dodge. Picking a
+  // curve to look at should not be able to change your active tool.
+  _setGraphTarget(meshId) {
+    if (meshId == null || meshId < 0) return; // synthetic rows (the folded rig lane) have no track
+    this._graphMeshId = meshId;
+  }
+
+  _graphMesh() {
+    const id = this._graphMeshId;
+    if (id != null) {
+      const m = this._main._meshes?.find((x) => x.getID() === id);
+      if (m) return m;
+      this._graphMeshId = null; // the object went away — fall back rather than graph nothing
+    }
+    return this._main.getMesh();
+  }
+
   autoFitGraph() {
     const reg = window._animationRegistry;
     if (!reg) return;
 
-    const activeMesh = this._main.getMesh();
+    const activeMesh = this._graphMesh();
     if (!activeMesh) return;
     const id = activeMesh.getID();
     const track = reg.tracks.get(id);
@@ -3341,7 +3367,7 @@ export default class GuiTimeline {
         const channel = Math.floor((ry - gutterY + this._gutterScrollY) / rowH);
 
         const reg = window._animationRegistry;
-        const activeMesh = this._main.getMesh();
+        const activeMesh = this._graphMesh();
         const track = activeMesh ? reg.tracks.get(activeMesh.getID()) : null;
         const maxChannels = (track && track.shapeTimes && track.shapeTimes.length >= 2) ? 4 : 3;
 
@@ -3541,6 +3567,16 @@ export default class GuiTimeline {
               return;
             }
           }
+          // CLICKING A ROW NAME POINTS THE GRAPH EDITOR AT THAT TRACK. The row you clicked is
+          // the thing whose curves you want; having to go and select its object in the 3D view
+          // first was the whole complaint. Sub-rows above have already had their chance, so
+          // this only catches a click on the lane's own name strip.
+          if (rx < 176 && ry >= ty2 && ry < ty2 + trackH) {
+            this._setGraphTarget(meshId);
+            this.draw();
+            return; // a deliberate pick, not the start of a marquee
+          }
+
           // Object-level M mute (lane-centre row, right column).
           if (rx >= 176 && rx < 200 && ry >= ty2 && ry < ty2 + trackH && !(laneMesh && laneMesh._isFrameGroup)) {
             trackObj.muted = !trackObj.muted;
@@ -3705,6 +3741,7 @@ export default class GuiTimeline {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
+                  this._setGraphTarget(meshId); // the key you grabbed is the curve you want
                   
                   const reg = window._animationRegistry;
                   if (reg) {
@@ -3786,6 +3823,7 @@ export default class GuiTimeline {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
+                  this._setGraphTarget(meshId); // the key you grabbed is the curve you want
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'shape';
                   this._keyDragStartRx = rx;
@@ -3866,6 +3904,7 @@ export default class GuiTimeline {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = bTrack;
                   this._activeMeshId = meshId;
+                  this._setGraphTarget(meshId); // the key you grabbed is the curve you want
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'blendshape';
                   this._activeBlendshapeName = name;
@@ -3911,6 +3950,7 @@ export default class GuiTimeline {
                   this._isDraggingKeyframe = true;
                   this._activeKeyframeTrack = trackObj;
                   this._activeMeshId = meshId;
+                  this._setGraphTarget(meshId); // the key you grabbed is the curve you want
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'shapeLayer';
                   this._activeKeyframeLayer = li;
@@ -4290,7 +4330,7 @@ export default class GuiTimeline {
       const targetVal = this.yToValue(ry);
       const initialBox = this._animTransformInitialBox;
       
-      const activeMesh = this._main.getMesh();
+      const activeMesh = this._graphMesh();
       if (activeMesh && window._animationRegistry && this._animTransformBoxInitialKeys) {
         const id = activeMesh.getID();
         const track = window._animationRegistry.tracks.get(id);
@@ -4946,7 +4986,7 @@ export default class GuiTimeline {
       const beforeSelection = this._undoSelectionBeforeMarquee || [];
       
       const newKeys = [];
-      const activeMesh = this._main.getMesh();
+      const activeMesh = this._graphMesh();
       if (activeMesh) {
         const id = activeMesh.getID();
         const track = reg.tracks.get(id);

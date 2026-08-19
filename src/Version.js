@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.72 - Cap the dopesheet lane height';
+export const VERSION = 'v3.19.74 - Selection lock is saved (SKEL v4)';

@@ -1345,7 +1345,7 @@ Skeleton.mirrorPoint = function (p, plane, out) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 3;  // v3 adds the IK pin link per entry
+const SKEL_VERSION = 4;  // v3 adds the IK pin link per entry; v4 the selection lock
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
 
@@ -1360,7 +1360,10 @@ Skeleton.serialize = function (meshes) {
     if (!m) return;
     const p = m._parentMesh || null;
     const parented = p && !p._isFrameGroup && idxOf(p) >= 0;
-    if (!parented && !m._isBone) return;
+    // A LOCKED MESH EARNS A ROW OF ITS OWN. The lock is set from the outliner on anything at
+    // all, and a bound character is typically neither parented nor a bone — so without this
+    // the one case that most wants saving is the one with nowhere to be written.
+    if (!parented && !m._isBone && !m._selectLocked) return;
     entries.push({
       i: i,
       p: parented ? idxOf(p) : NONE,
@@ -1368,7 +1371,8 @@ Skeleton.serialize = function (meshes) {
       // The pin rides in spare bits of a field that was already a 32-bit word holding a single
       // boolean, so pins persist with NO version bump: an older build reads the whole word as
       // truthy and still sees a bone, and a v1/v2 file read here simply has the pin bits clear.
-      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1),
+      // Bit 3 (v4) = selection lock. Same field, next spare bit — see the note above.
+      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -1475,6 +1479,14 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       rows.push({ mesh: mesh, parent: pi === NONE ? null : meshes[pi] || null, bone: bone, r: r, mir: mir, pin: pin });
     }
 
+    // THE SELECTION LOCK, for every row — a locked mesh is usually not a joint, so this runs
+    // over all of them rather than inside the joint loop below. Written for the first time in
+    // v4; an older file simply has the bit clear, and the skin restore further down re-derives
+    // it for bound meshes so a v3 file still comes back locked.
+    if (ver >= 4) {
+      for (const row of rows) row.mesh._selectLocked = !!(row.bone & 8);
+    }
+
     // Restore the joint's own properties first — healGraph keys off _isBone, and the
     // no-draw material is not serialized (same caveat FrameGroup hits with its nulls).
     for (const row of rows) {
@@ -1577,6 +1589,14 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         mesh._skinSrc = new Float32Array(rest);
         mesh._skinStampBuf = null;
         mesh._skinDirty = true; // re-skin on the first frame; the saved verts are a pose
+        // A BOUND MESH COMES BACK LOCKED, exactly as binding leaves it (Skinning.bind) —
+        // otherwise a reloaded character is pickable again and the ray goes back to catching
+        // the skin instead of the joints inside it.
+        //
+        // ONLY FOR PRE-v4 FILES. From v4 the lock is stored per mesh and has already been
+        // applied above; re-deriving it here would override an explicit unlock, so a mesh you
+        // deliberately unlocked would come back locked every time you opened the file.
+        if (ver < 4) mesh._selectLocked = true;
       }
     }
 

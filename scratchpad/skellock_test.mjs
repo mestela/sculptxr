@@ -1,0 +1,146 @@
+// The selection lock through a save and a reload.
+//
+// The lock is what stops the ray catching a bound character instead of the joints inside it,
+// and it is set from the outliner on anything at all. It lived only in memory, so it did not
+// survive a save — noticed the moment binding started setting it.
+//
+// This is a REAL ROUND TRIP, not a source guard: the shipped Skeleton.serialize writes a
+// buffer and the shipped Skeleton.deserialize reads it back, so the two halves are checked
+// against each other rather than against my description of them.
+//
+// Run: node scratchpad/skellock_test.mjs   (from the repo root)
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const REPO = '/Users/mattestela/sculptxr';
+const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+
+// Same trick the other rig harnesses use: strip the imports, prepend just enough stubs, keep
+// the code under test byte-identical to what ships.
+const body = SRC.split('\n')
+  .filter((l) => !/^import\s/.test(l))
+  .filter((l) => !/^export default/.test(l))
+  .join('\n');
+
+const prelude = `
+// Enough of three.js to EVALUATE and RUN. The serialiser touches none of it, but the module
+// body builds materials at load time and the deserialiser ends in the visual rebuild — which
+// its own try/catch would otherwise swallow, letting this harness pass on a half-done load.
+// Every instance answers any method chainably and any vector component as 0.
+const _inst = () => new Proxy({}, {
+  get: (t, k) => {
+    if (k === 'x' || k === 'y' || k === 'z' || k === 'w') return 0;
+    if (k === 'elements') return new Float32Array(16);
+    if (k === 'children' || k === 'geometry' || k === 'material') return _inst();
+    if (k === 'visible') return true;
+    if (typeof k === 'symbol') return undefined;
+    return () => _inst();
+  },
+  set: () => true,
+});
+const _Any = new Proxy(function () {}, {
+  construct: () => _inst(),
+  apply: () => _inst(),
+  get: () => _Any,
+});
+const THREE = new Proxy({}, { get: (t, k) => {
+  if (k === 'DoubleSide' || k === 'GreaterDepth' || k === 'NormalBlending') return 0;
+  return _Any;
+} });
+const Multimesh = class {};
+const Primitives = { createSphere: () => ({}) };
+const Enums = { Shader: { FLAT: 0 } };
+const getOptionsURL = () => ({});
+getOptionsURL.saveOption = () => {};
+const mat4 = { clone: (m) => m.slice(), copy: (a, b) => { for (let i = 0; i < 16; i++) a[i] = b[i]; return a; } };
+globalThis.window = globalThis.window || {};
+`;
+
+const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_skellock_gen.mjs');
+fs.writeFileSync(outPath, prelude + '\n' + body + '\nexport default Skeleton;\n');
+const Skeleton = (await import(outPath + '?v=' + Date.now())).default;
+
+// The visual rebuild is NOT under test here — it wants a real three.js scene, and chasing a
+// stub faithful enough to run it proves nothing about the file format. Stubbed out explicitly
+// so the "did the load throw" check below covers the serialisation path and says so, rather
+// than being quietly satisfied by deserialize's own try/catch.
+Skeleton.updateVisuals = () => {};
+
+let failures = 0;
+const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
+  failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
+
+let nextId = 1;
+const mk = (over) => Object.assign({
+  _id: nextId++,
+  getID() { return this._id; },
+  getMatrix() { return this._m || (this._m = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])); },
+  getModelSpaceMatrix() { return this.getMatrix(); },
+  setModelSpaceMatrix() {},
+  getThreeMesh() { return null; },
+  isVisible() { return true; },
+}, over || {});
+
+// The shape that made this matter: a bound character (not a bone, not parented) that binding
+// locked, a joint, and an ordinary object left alone.
+const roundTrip = (meshes) => {
+  const buf = Skeleton.serialize(meshes);
+  if (!buf) return null;
+  // serialize returns the chunk; deserialize hunts for it from the END of the file.
+  const withFooter = new ArrayBuffer(buf.byteLength);
+  new Uint8Array(withFooter).set(new Uint8Array(buf));
+  const fresh = meshes.map((m) => mk({ _id: m._id }));
+  // deserialize ends in healGraph/updateVisuals, and its own try/catch swallows anything that
+  // throws in there. Give the mock what those need, or the load half-completes and the checks
+  // below pass on whatever happened to be applied before the throw.
+  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null };
+  let threw = null;
+  const err = console.error;
+  console.error = (...a) => { threw = a.join(' '); };
+  Skeleton.deserialize(withFooter, fresh, main);
+  console.error = err;
+  check('the load completes without throwing (visual rebuild aside)', !threw, threw || '');
+  return fresh;
+};
+
+{
+  const skin = mk({ _selectLocked: true });          // bound character: locked, no parent, no bone
+  const bone = mk({ _isBone: true, _boneRadius: 1 });
+  const other = mk({});                               // ordinary object, untouched
+  const out = roundTrip([skin, bone, other]);
+  check('the file round-trips at all', !!out);
+  if (out) {
+    check('a locked mesh comes back locked', out[0]._selectLocked === true,
+      'the lock is the thing that keeps the ray off a bound character');
+    check('an unlocked mesh stays unlocked', !out[2]._selectLocked,
+      'a blanket lock would make ordinary objects unpickable');
+    check('the joint is still a joint', out[1]._isBone === true,
+      'the lock bit must not disturb the flags it shares a word with');
+  }
+}
+
+// A LOCKED MESH THAT IS NEITHER A BONE NOR PARENTED must still earn a row — that is exactly
+// the bound-character case, and the entry filter used to drop it.
+{
+  const lone = mk({ _selectLocked: true });
+  const bone = mk({ _isBone: true });
+  const out = roundTrip([lone, bone]);
+  check('a lone locked mesh is written at all', out && out[0]._selectLocked === true,
+    'the entry filter dropped anything that was neither parented nor a bone');
+}
+
+// An explicit UNLOCK on a bound mesh has to stick. The loader re-derives the lock from the
+// bind state for older files; if that ran on a v4 file it would override the unlock, and a
+// mesh you deliberately unlocked would come back locked every single time you opened it.
+{
+  const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('the bind-derived lock is confined to pre-v4 files',
+    /if \(ver < 4\) mesh\._selectLocked = true;/.test(code),
+    'an unconditional re-derive silently overrides an explicit unlock');
+  check('and v4 applies the stored value to every row, not just joints',
+    /if \(ver >= 4\) \{[\s\S]{0,120}?row\.mesh\._selectLocked = !!\(row\.bone & 8\)/.test(code));
+}
+
+console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
+process.exit(failures ? 1 : 0);
