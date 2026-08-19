@@ -211,5 +211,45 @@ check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\
     'finalizeMarquee referenced one that was never declared there');
 }
 
+// KEY COLOUR. Keys were coloured by KIND — orange transform, blue shape, teal blendshape,
+// another blue for layer keys, each with selected and hovered variants on top. Five hues
+// before anything is selected, and the row already says what kind a key is. What you need at
+// a glance is the STATE: idle, selected, moving.
+{
+  const TH2 = fs.readFileSync(REPO + '/src/gui/TimelineHelper.js', 'utf8');
+  const code = TH2.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  check('there is one palette', /static keyFill\(isSelected, isMoving, isMuted\)/.test(code));
+
+  // Every key-drawing site must use it — four kinds of key, one rule.
+  const users = (code.match(/TimelineHelper\.keyFill\(/g) || []).length;
+  check('every key kind uses it', users === 4, `${users} of 4`);
+
+  // The per-kind hues are gone from the KEYS. (#00ff88 survives on the blendshape row LABEL,
+  // which is a lane name, not a key — the request was about key colours.)
+  for (const [hue, what] of [['#ff9944', 'transform orange'], ['#44aaff', 'shape blue']]) {
+    check(`the ${what} is gone`, !code.includes(hue), 'a key is still coloured by kind');
+  }
+  check('hover no longer claims a colour', !/isHovered \? '#00ffff'/.test(code),
+    'cyan means MOVING now; hover reads as a heavier outline instead');
+  check('...but hover is still visible', /static keyRing\(ctx, isHovered\)/.test(code)
+    && /lineWidth = isHovered \?/.test(code),
+    'losing preselection entirely would be worse than the colour clash');
+
+  // The rule itself, run as shipped.
+  const i = code.indexOf('static keyFill(isSelected, isMoving, isMuted)');
+  const inner = code.slice(code.indexOf('{', i) + 1, code.indexOf('\n  }', i));
+  const fill = new Function('isSelected', 'isMoving', 'isMuted', inner);
+  check('idle is white', fill(false, false, false) === '#ffffff');
+  check('selected is yellow', fill(true, false, false) === '#ffff00');
+  check('moving is cyan', fill(true, true, false) === '#00ffff');
+  // ORDER: a key being moved is also selected, so moving has to win or it never shows.
+  check('moving beats selected', fill(true, true, false) !== fill(true, false, false),
+    'checked after selected, cyan would never appear');
+  check('muted stays grey', fill(false, false, true) === '#585b70',
+    '"this will not play" is orthogonal to selection and worth keeping');
+  check('muted beats the rest', fill(true, true, true) === fill(false, false, true));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

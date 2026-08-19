@@ -1,3 +1,12 @@
+# v3.19.84
+**Three key colours, not five.** Dopesheet keys were coloured by KIND — orange transform, blue
+shape, teal blendshape, another blue for layer keys — each with its own selected and hovered
+variant on top. The row already says what kind a key is; what you need at a glance is its
+state, so every key now reads the same way: **white** idle, **yellow** selected, **cyan**
+moving. Muted keeps its grey ("this will not play" is orthogonal to selection), the armed
+shape layer keeps its amber ring (it is where a NEW key lands), and hover trades its colour
+for a heavier outline, since cyan now means something else.
+
 # v3.19.83
 **The animation editor learns about rigs.** Keying a pose used to mean one button and one
 all-or-nothing row; a bone is now an ordinary keyable object, and the editor treats it like one.

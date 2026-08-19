@@ -183,12 +183,10 @@ export default class TimelineHelper {
             const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
             
-            if (isSelected) ctx.fillStyle = '#ffff00';
-            else if (isHovered) ctx.fillStyle = '#00ffff';
-            else ctx.fillStyle = '#ff9944'; // Orange for transform keys
-
-            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#ff9944');
-            ctx.lineWidth = 1.5;
+            const isMoving = isSelected && !!uiState._isDraggingKeyframe;
+            ctx.fillStyle = TimelineHelper.keyFill(isSelected, isMoving, track.muted);
+            ctx.strokeStyle = ctx.fillStyle;
+            TimelineHelper.keyRing(ctx, isHovered);
 
             ctx.beginPath();
             ctx.moveTo(kx, ky - 7);
@@ -229,12 +227,10 @@ export default class TimelineHelper {
             const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 10);
             const isSelected = isMultiSel || isInsideMarquee;
             
-            if (isSelected) ctx.fillStyle = '#ffff00';
-            else if (isHovered) ctx.fillStyle = '#00ffff';
-            else ctx.fillStyle = '#44aaff'; // Blue for shape keys
-
-            ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#44aaff');
-            ctx.lineWidth = 1.5;
+            const isMoving = isSelected && !!uiState._isDraggingKeyframe;
+            ctx.fillStyle = TimelineHelper.keyFill(isSelected, isMoving, track.muted);
+            ctx.strokeStyle = ctx.fillStyle;
+            TimelineHelper.keyRing(ctx, isHovered);
 
             ctx.beginPath();
             ctx.arc(kx, ky, 4, 0, Math.PI * 2);
@@ -299,12 +295,10 @@ export default class TimelineHelper {
                 const isHovered = TimelineHelper.isKeyHovered(kx, ky, uiState._lastMouseX, uiState._lastMouseY, 5);
                 const isSelected = isMultiSel || isInsideMarquee;
                 
-                if (isSelected) ctx.fillStyle = '#ffff00'; // Yellow
-                else if (isHovered) ctx.fillStyle = '#00ffff'; // Cyan
-                else ctx.fillStyle = '#00ff88'; // Teal/Green for blendshapes
-                
-                ctx.strokeStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff' : '#00ff88');
-                ctx.lineWidth = 1.5;
+                const isMoving = isSelected && !!uiState._isDraggingKeyframe;
+                ctx.fillStyle = TimelineHelper.keyFill(isSelected, isMoving, bsMuted);
+                ctx.strokeStyle = ctx.fillStyle;
+                TimelineHelper.keyRing(ctx, isHovered);
                 
                 ctx.beginPath();
                 ctx.fillRect(kx - 3, ky - 3, 6, 6); // Square!
@@ -366,10 +360,16 @@ export default class TimelineHelper {
               const isHovered = TimelineHelper.isKeyHovered(kx, rowY, uiState._lastMouseX, uiState._lastMouseY, 5);
               const isSelected = isMultiSel || isInsideMarquee;
 
-              ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? '#00ffff'
-                            : (L.muted ? '#585b70' : (isActive ? '#f9e2af' : '#89b4fa')));
+              const isMoving = isSelected && !!uiState._isDraggingKeyframe;
+              ctx.fillStyle = TimelineHelper.keyFill(isSelected, isMoving, L.muted);
               ctx.fillRect(kx - 3, rowY - 3, 6, 6);
-              if (isSelected) { ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 1.5; ctx.strokeRect(kx - 3, rowY - 3, 6, 6); }
+              // The ARMED layer keeps a marker of its own: it is where a NEW key will land,
+              // which selection has nothing to say about.
+              if (isActive || isSelected || isHovered) {
+                ctx.strokeStyle = isActive ? '#f9e2af' : ctx.fillStyle;
+                TimelineHelper.keyRing(ctx, isHovered);
+                ctx.strokeRect(kx - 3.5, rowY - 3.5, 7, 7);
+              }
             }
           }
         }
@@ -541,6 +541,33 @@ export default class TimelineHelper {
     }
 
     return newKeys;
+  }
+
+  // THREE STATES, ONE PALETTE, EVERY KEY TYPE.
+  //
+  // Keys used to be coloured by KIND — orange transform, blue shape, teal blendshape, another
+  // blue for layer keys, each with its own selected and hovered variants. That is five hues
+  // before anything is even selected, and the thing you need to read at a glance is not what
+  // KIND a key is (its row already says that) but what STATE it is in.
+  //
+  //   white   nothing doing
+  //   yellow  selected
+  //   cyan    moving right now
+  //
+  // Muted keeps its grey: it means "this will not play", which is orthogonal to selection and
+  // is the one distinction worth keeping.
+  static keyFill(isSelected, isMoving, isMuted) {
+    if (isMuted) return '#585b70';
+    if (isMoving) return '#00ffff';   // before selected: a key being moved is also selected
+    if (isSelected) return '#ffff00';
+    return '#ffffff';
+  }
+
+  // Hover no longer has a hue of its own — cyan means "moving" now. A heavier outline keeps
+  // preselection readable (you still need to see what the press will take) without putting a
+  // fourth colour back.
+  static keyRing(ctx, isHovered) {
+    ctx.lineWidth = isHovered ? 3 : 1.5;
   }
 
   static isKeyHovered(keyX, keyY, cursorX, cursorY, threshold) {
