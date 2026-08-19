@@ -993,37 +993,24 @@ export default class GuiTimeline {
     // in the registry (kept so undo can restore it) but must not draw a phantom row.
     let entries = Array.from(reg.tracks.entries()).filter(([id]) => liveIds.has(id) && !srChildIds.has(id));
 
-    // ONE LANE PER RIG. A keyed skeleton is thirty tracks that all carry the same key times —
-    // thirty identical rows would bury every other object in the scene, and the thing being
-    // animated is the POSE, not joint 14. Joint tracks are folded into a synthetic row per
-    // skeleton root showing where the poses are.
+    // A KEYED BONE GETS A ROW OF ITS OWN, like every other object.
     //
-    // The row's id is deliberately NOT a real mesh id: nothing downstream can then resolve it
-    // to a track, so hit-testing, dragging and deleting all no-op on it instead of silently
-    // editing one joint out of thirty and pulling the rig apart. Per-key editing wants a
-    // considered design (move the whole pose, not one bone) and gets it later.
-    const joints = meshes.filter((m) => m._isBone);
-    if (joints.length) {
-      const jointIds = new Set(joints.map((m) => m.getID()));
-      const rigs = new Map(); // root joint -> Set of key times
-      for (const j of joints) {
-        const track = reg.tracks.get(j.getID());
-        if (!track || !track.times || !track.times.length) continue;
-        let root = j;
-        while (root._parentMesh && root._parentMesh._isBone) root = root._parentMesh;
-        if (!rigs.has(root)) rigs.set(root, new Set());
-        const set = rigs.get(root);
-        for (const t of track.times) set.add(t);
-      }
-      entries = entries.filter(([id]) => !jointIds.has(id));
-      for (const [root, times] of rigs) {
-        entries.push([-1000 - root.getID(), {
-          _rigRow: true,
-          _rigName: root._permanentStaticLabel || 'Rig',
-          times: Array.from(times).sort((a, b) => a - b),
-        }]);
-      }
-    }
+    // These were folded into one synthetic row per skeleton, with the real joint entries
+    // removed. That was right when Key Pose was the only way in: thirty joints keyed
+    // identically, one row saying where the poses are, per-key editing deferred. The row
+    // carried the joints' key TIMES, so it drew keys and they highlighted — but its id was
+    // deliberately not a real mesh id, so nothing downstream could resolve it to a track and
+    // hit-testing, dragging and deleting all no-op'd on it.
+    //
+    // Keying is now per CONTROL — a pin here, the hips there — so the rows it folded away are
+    // the ones you authored and want to edit, and "highlights but will not select" was the
+    // whole of it. Pins never folded (they are _isPinTarget, not _isBone), which is why they
+    // behaved and bones did not.
+    //
+    // The cost is back: a Key Pose on a thirty-joint rig is thirty rows. If that becomes the
+    // common case again, the fix is to make the summary row RESOLVE to its joints (click
+    // selects the pose, drag retimes it together) rather than to hide them.
+
     // One synthetic row per frame GROUP (the whole flipbook on a single lane), unless
     // it already has a real track (e.g. group transform animation). drawDopeSheet draws
     // its frame markers from the children's _srFrameTime.
@@ -1381,6 +1368,22 @@ export default class GuiTimeline {
     }
 
 
+
+    // WHOSE CURVES ARE THESE? The graph shows one object at a time and never said which, so a
+    // graph full of curves was unattributed — and with the target now settable from four places
+    // (row name, key, marquee, the 3D selection as fallback) that is a real question. Drawn in
+    // the same yellow the dopesheet gives the target row, so the two read as one selection.
+    {
+      const _gm = this._graphMesh();
+      const _gname = _gm ? (_gm._permanentStaticLabel || `Object ${_gm.getID()}`) : 'nothing selected';
+      ctx.save();
+      ctx.fillStyle = _gm ? '#ffff00' : '#6c7086';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(_gname, 208, HEADER_H + 6);
+      ctx.restore();
+    }
 
     // 5. Draw Curves for Active Mesh
     const activeMesh = this._graphMesh();
@@ -4593,7 +4596,28 @@ export default class GuiTimeline {
     }
   }
 
+  // MOUSE-UP MUST ALWAYS RELEASE, whatever happens inside it.
+  //
+  // A throw in here leaves every drag flag set — _isDraggingMarquee, _isDraggingKeyframe, the
+  // playhead — because nothing clears them on the way out. The pointer is then held down
+  // forever from the UI's point of view: the marquee never closes, the key never drops, the
+  // playhead follows the cursor. That is a dead timeline, and in a headset there is no easy way
+  // back from it.
+  //
+  // Defensive, and deliberately so: this is not a hypothetical. A ReferenceError in
+  // finalizeMarquee produced exactly that stuck state, and the error itself was the easy half
+  // to fix. _cancelActiveAction already exists and clears the lot.
   onMouseUp(e) {
+    try {
+      this._onMouseUpBody(e);
+    } catch (err) {
+      console.error('[TL] mouse-up failed; releasing the drag so the timeline stays usable:', err);
+      this._cancelActiveAction();
+      try { this.draw(); } catch (_) { /* a failed repaint must not re-trap the pointer */ }
+    }
+  }
+
+  _onMouseUpBody(e) {
     // SR frame marker release: no-move = click → jump playhead to that frame; moved =
     // retime → sort children + rebuild the flipbook vis, as one undo step.
     if (this._srDrag) {
@@ -5045,8 +5069,19 @@ export default class GuiTimeline {
     const tlX = 200;
     const tlW = this._cssWidth - 200;
 
-    const tMin = loopStart + ((x1 - tlX) / tlW) * visibleDuration;
-    const tMax = loopStart + ((x2 - tlX) / tlW) * visibleDuration;
+    // A KEY IS A DRAWN MARKER, NOT A POINT, and the marquee tests its CENTRE — so a rectangle
+    // that visually covers a key could still miss it. That is unreachable rather than merely
+    // fiddly at the two ends: the first key sits at exactly tlX, and everything left of tlX is
+    // the row-name gutter where a press is claimed before any marquee can start; the last key
+    // sits at the right-hand edge of the canvas, with nowhere further to drag. So the first and
+    // last keys in time could not be marqueed at all, however carefully you dragged — the
+    // middle ones always worked, which is exactly the reported shape.
+    //
+    // Padding the rectangle by the marker's own radius before converting to time fixes both
+    // ends and makes the selection match what the rectangle looks like it covers.
+    const MARQ_PAD = 8;
+    const tMin = loopStart + ((x1 - MARQ_PAD - tlX) / tlW) * visibleDuration;
+    const tMax = loopStart + ((x2 + MARQ_PAD - tlX) / tlW) * visibleDuration;
 
     if (this._mode === 'graph') {
       const vMax = this.yToValue(y1);
@@ -5105,10 +5140,40 @@ export default class GuiTimeline {
 
 
     
-    const laneMin = Math.floor((y1 - headerH) / trackH);
-    const laneMax = Math.floor((y2 - headerH) / trackH);
+    // Lane bounds must carry the SCROLL, like every other lane computation in this file —
+    // without it a scrolled dopesheet marquees the wrong rows.
+    // Padded in y for the same reason: the first row's keys sit half a lane below the header
+    // and the last row's are the bottom-most thing on the canvas.
+    const _marqScroll = this._dopeScroll();
+    const laneMin = Math.floor((y1 - MARQ_PAD - headerH + _marqScroll) / trackH);
+    const laneMax = Math.floor((y2 + MARQ_PAD - headerH + _marqScroll) / trackH);
 
-    const newKeys = reg.getKeysInTimeRange(tMin, tMax, laneMin, laneMax);
+    // TRANSFORM KEYS, GATHERED THE SAME WAY AS EVERY OTHER KIND BELOW.
+    //
+    // This used to call reg.getKeysInTimeRange(tMin, tMax, laneMin, laneMax), which indexes
+    // `Array.from(this.tracks.entries())` — the REGISTRY's own map. `laneMin`/`laneMax` are row
+    // numbers in the DOPESHEET, and the two lists are neither the same order nor the same
+    // membership: the dopesheet drops dead tracks and frame-group children and appends group
+    // rows. So the lane range selected whichever registry entries happened to sit at those
+    // indices. The blendshape, SR and shape-layer collectors below always iterated `tracks`
+    // directly; this one was the odd path out, and removing the rig-row fold shifted the row
+    // numbering enough to make the mismatch bite.
+    const newKeys = [];
+    tracks.forEach(([meshId, trackObj], laneIdx) => {
+      if (laneIdx < laneMin || laneIdx > laneMax) return;
+      if (trackObj.times) {
+        for (let j = 0; j < trackObj.times.length; j++) {
+          const t = trackObj.times[j];
+          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'transform', index: j });
+        }
+      }
+      if (trackObj.shapeTimes) {
+        for (let j = 0; j < trackObj.shapeTimes.length; j++) {
+          const t = trackObj.shapeTimes[j];
+          if (t >= tMin && t <= tMax) newKeys.push({ meshId, type: 'shape', index: j });
+        }
+      }
+    });
 
     // Add blendshape keys in the marquee time range
     tracks.forEach(([meshId, trackObj], laneIdx) => {
@@ -5172,6 +5237,17 @@ export default class GuiTimeline {
         (nk.type !== 'shapeLayer' || k.layer === nk.layer));
       if (!alreadySelected) window._animSelectedKeys.push(nk);
     });
+
+    // A MARQUEE IS A SELECTION TOO, so it points the graph editor at what it caught. Clicking
+    // a row name or a single key already did this; sweeping a rectangle over the same keys did
+    // not, which left the graph showing whatever was selected in the 3D view — the exact thing
+    // the per-click version was added to stop.
+    //
+    // The FIRST caught key decides. A marquee can span several objects and the graph shows one
+    // at a time; the first in row order is the one nearest the top of the rectangle, which is
+    // the one you were reaching for. It is also a no-op when the sweep caught nothing, so an
+    // empty marquee leaves the graph where it was rather than blanking it.
+    if (newKeys.length) this._setGraphTarget(newKeys[0].meshId);
 
     // Automatically create transform box around selection!
     if (window._animSelectedKeys && window._animSelectedKeys.length > 0) {

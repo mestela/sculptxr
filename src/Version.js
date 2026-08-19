@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.78 - Autokey the node the tool took, not the stale selection';
+export const VERSION = 'v3.19.83 - Show which object the graph is editing';

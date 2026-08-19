@@ -108,5 +108,108 @@ check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\
     call(300, 0)[0] === 0 && call(300, 0)[1] === 0);
 }
 
+// A KEYED BONE GETS A REAL ROW. Joint tracks used to be folded into one synthetic row per
+// skeleton, with the real entries removed. The row carried the joints' key TIMES so it drew
+// keys and they highlighted — but its id was deliberately not a real mesh id, so nothing could
+// resolve it to a track and selection, dragging and deleting all no-op'd. Keying is now per
+// control, so those are exactly the rows you want to edit.
+{
+  const TLsrc = fs.readFileSync(REPO + '/src/gui/GuiTimeline.js', 'utf8');
+  const THsrc = fs.readFileSync(REPO + '/src/gui/TimelineHelper.js', 'utf8');
+  const code = TLsrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  const thCode = THsrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  const i = code.indexOf('_dopesheetTracks() {');
+  const FN = i === -1 ? '' : code.slice(i, code.indexOf('\n  }', i));
+
+  check('joint tracks are not removed from the row list', !/jointIds\.has\(id\)/.test(FN),
+    'filtering them out is what left the keys visible but unreachable');
+  check('no synthetic rig row is pushed', !/_rigRow/.test(FN),
+    'a row whose id resolves to no track cannot be selected or dragged');
+  check('the drawing no longer special-cases one', !/_rigRow|_rigName/.test(thCode));
+  // Rows carrying a NEGATIVE id are the unreachable kind. Frame groups keep their real ids.
+  check('every row id is a real mesh id', !/entries\.push\(\[-/.test(FN),
+    'a negative pseudo-id is by construction unresolvable');
+  // The frame-group row must survive — it was never the problem and uses a real id.
+  check('frame-group rows are untouched', /_srGroupRow: true/.test(FN));
+}
+
+// MARQUEE SELECTION. Two bugs, one call: the first and last keys in TIME could not be
+// marqueed at all, and the lane range indexed the wrong list entirely.
+{
+  const TLsrc = fs.readFileSync(REPO + '/src/gui/GuiTimeline.js', 'utf8');
+  const REG = fs.readFileSync(REPO + '/src/editing/AnimationRegistry.js', 'utf8');
+  const code = TLsrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  // The marquee tests a key's CENTRE, but a key is a drawn marker. At the two ends that is
+  // unreachable rather than fiddly: the first key sits at exactly tlX with the row-name gutter
+  // to its left (where a press is claimed before a marquee can begin), and the last sits at
+  // the canvas edge with nowhere further to drag.
+  check('the marquee is padded before becoming a time range',
+    /x1 - MARQ_PAD - tlX/.test(code) && /x2 \+ MARQ_PAD - tlX/.test(code),
+    'without padding the first and last keys in time cannot be selected at all');
+  check('...and padded in y for the first and last rows',
+    /y1 - MARQ_PAD - headerH/.test(code) && /y2 \+ MARQ_PAD - headerH/.test(code));
+  check('the pad is a named constant', /const MARQ_PAD = \d+;/.test(code));
+
+  // The lane range is a DOPESHEET row number. getKeysInTimeRange indexed the REGISTRY's map,
+  // which is neither the same order nor the same membership — it keeps dead tracks and frame
+  // group children and lacks the group rows. Every other collector iterates `tracks` directly.
+  check('transform keys are gathered from the dopesheet rows',
+    !/reg\.getKeysInTimeRange\(/.test(code),
+    'that call indexes the registry map with dopesheet row numbers');
+  const marq = code.slice(code.indexOf('const MARQ_PAD'));
+  // Three collectors share the lane range (transform, blendshape, SR). The shape-LAYER one
+  // legitimately differs: its sub-rows stack BELOW the lane's own slot, so a lane-index test
+  // would cut them off — it compares its computed row Y against the rectangle instead.
+  // Asserted rather than waved past, because "the odd one out" is what the transform
+  // collector turned out to be.
+  const collectors = (marq.match(/laneIdx < laneMin \|\| laneIdx > laneMax/g) || []).length;
+  check('the three lane-indexed collectors agree', collectors === 3, `${collectors} collectors`);
+  check('the shape-layer collector bounds itself geometrically instead',
+    /rowY < y1 \|\| rowY > y2/.test(marq),
+    'its sub-rows extend past the lane, so a lane index would drop them');
+
+  // Lane maths carries the scroll, like every other lane computation in the file.
+  check('the lane range carries the scroll',
+    /_marqScroll = this\._dopeScroll\(\)/.test(code) && /headerH \+ _marqScroll/.test(code),
+    'a scrolled dopesheet would marquee the wrong rows');
+
+  // The registry helper may still exist for other callers, but its own test must stay
+  // inclusive — an exclusive bound would drop the keys sitting exactly on the boundary.
+  const gk = REG.slice(REG.indexOf('getKeysInTimeRange('));
+  check('the registry range test is inclusive at both ends',
+    (gk.match(/t >= tMin && t <= tMax/g) || []).length >= 2);
+}
+
+// MOUSE-UP MUST ALWAYS RELEASE. A throw inside it leaves every drag flag set, so the pointer
+// reads as held down for ever: the marquee never closes, the key never drops, the playhead
+// follows the cursor. A ReferenceError in finalizeMarquee produced exactly that, and in a
+// headset there is no easy way back from a dead timeline.
+{
+  const TLsrc = fs.readFileSync(REPO + '/src/gui/GuiTimeline.js', 'utf8');
+  const code = TLsrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  const i = code.indexOf('onMouseUp(e) {');
+  const FN = i === -1 ? '' : code.slice(i, code.indexOf('_onMouseUpBody(e) {', i));
+  check('mouse-up guards its own body', /try \{[\s\S]{0,80}_onMouseUpBody\(e\);[\s\S]{0,40}\} catch/.test(FN),
+    'an unguarded handler leaves the drag flags set when it throws');
+  check('...and releases the drag when it fails', /_cancelActiveAction\(\)/.test(FN),
+    'clearing the flags is the whole point; logging alone still leaves it stuck');
+  check('the release helper clears every drag flag',
+    ['_isDraggingPlayhead', '_isDraggingKeyframe', '_isDraggingMarquee', '_isDraggingTangent']
+      .every((f) => new RegExp(f + ' = false').test(code)));
+  // A failed repaint inside the handler must not put it back where it started.
+  check('a failing redraw cannot re-trap the pointer',
+    /try \{ this\.draw\(\); \} catch/.test(FN));
+
+  // And the error that started it: no bare dsScroll may survive outside a parameter or a local.
+  const bare = (code.match(/[^._\w]dsScroll/g) || []).length;
+  const bound = (code.match(/const dsScroll = this\._dopeScroll\(\)/g) || []).length
+              + (code.match(/trackH, dsScroll, tlX/g) || []).length;
+  check('every dsScroll use is bound in its own scope', bare > 0 ? bound > 0 : true,
+    'finalizeMarquee referenced one that was never declared there');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

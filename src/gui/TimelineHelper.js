@@ -125,10 +125,9 @@ export default class TimelineHelper {
         laneMesh = main._meshes.find(m => m.getID() === id);
         if (laneMesh) laneName = laneMesh._permanentStaticLabel || `Object ${id}`;
       }
-      if (track._rigRow) laneName = 'Rig: ' + track._rigName;
       // Rig rows have no real track behind them, so there is nothing to mute — same reason
       // frame-group rows skip the toggle.
-      const isGroupRow = !!(laneMesh && laneMesh._isFrameGroup) || !!track._rigRow;
+      const isGroupRow = !!(laneMesh && laneMesh._isFrameGroup);
 
       // Lane label — clipped so it never runs under the mute toggle.
       const nameRight = w.x + 176;
@@ -136,8 +135,12 @@ export default class TimelineHelper {
       ctx.beginPath();
       ctx.rect(w.x, ty, nameRight - w.x, trackH);
       ctx.clip();
-      ctx.fillStyle = track.muted ? '#6c7086' : '#cdd6f4';
-      ctx.font = '12px sans-serif';
+      // THE GRAPH TARGET'S NAME IS YELLOW — the same yellow a selected key is drawn in, so the
+      // row and the keys read as one selection. Without it the target is invisible: you click a
+      // row, switch to the graph, and have to infer from the curves whether it took.
+      const isGraphTarget = uiState && uiState._graphMeshId === id;
+      ctx.fillStyle = isGraphTarget ? '#ffff00' : (track.muted ? '#6c7086' : '#cdd6f4');
+      ctx.font = isGraphTarget ? 'bold 12px sans-serif' : '12px sans-serif';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       ctx.fillText(laneName, w.x + 10, ty + trackH / 2);

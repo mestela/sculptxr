@@ -24,8 +24,12 @@ check('and a setter', /_setGraphTarget\(meshId\) \{/.test(code));
 const direct = (code.match(/this\._main\.getMesh\(\)/g) || []).length;
 check('only the resolver still reads the scene selection', direct === 1,
   `${direct} direct reads; every graph path must go through _graphMesh()`);
+// A MINIMUM, not an exact count. Pinned at exactly 8 this broke the moment a legitimate new
+// caller was added (the graph's own name label) — a test asserting a tally rather than the
+// property it cares about. The property is the check above: nothing reads the scene selection
+// directly except the resolver's fallback.
 const routed = (code.match(/this\._graphMesh\(\)/g) || []).length;
-check('every graph path is routed', routed === 8, `${routed} of 8`);
+check('every graph path goes through the resolver', routed >= 8, `${routed} callers`);
 
 // The fallback IS the old behaviour, so nothing changes until something is clicked.
 {
@@ -53,6 +57,16 @@ check('clicking a key sets it too',
   (code.match(/_activeMeshId = meshId;\s*\n\s*this\._setGraphTarget\(meshId\)/g) || []).length === 4,
   'all four key-hit paths (transform, shape, blendshape, layer) must agree');
 
+// A MARQUEE IS A SELECTION TOO. Clicking a row or a single key pointed the graph at it;
+// sweeping a rectangle over the same keys did not, and the graph stayed on whatever the 3D
+// view had selected — the very thing the per-click version exists to stop.
+check('a marquee points the graph at what it caught',
+  /if \(newKeys\.length\) this\._setGraphTarget\(newKeys\[0\]\.meshId\);/.test(code),
+  'sweeping a selection left the graph on the scene selection');
+check('...and an empty sweep leaves the graph alone',
+  /if \(newKeys\.length\)/.test(code),
+  'blanking the graph on an empty marquee would be worse than doing nothing');
+
 // It must NOT go through the app's selection: setMesh runs tool-context switching and ends in
 // a render — the re-entrancy the bones tool's _selectLater exists to dodge. Looking at a curve
 // should not be able to change your active tool.
@@ -62,6 +76,32 @@ check('clicking a key sets it too',
   check('picking a curve does not change the scene selection',
     !/setMesh|setOrUnsetMesh/.test(FN),
     'this would switch tools as a side effect of clicking a row');
+}
+
+// THE TARGET HAS TO BE VISIBLE. It can now be set from four places (row name, key, marquee,
+// and the 3D selection as a fallback), so "which object am I looking at" is a real question in
+// both halves of the editor — and neither half answered it.
+{
+  const TH = fs.readFileSync(REPO + '/src/gui/TimelineHelper.js', 'utf8');
+
+  // Dopesheet: the target row's name, in the same yellow a selected key is drawn in, so the
+  // row and its keys read as one selection.
+  check('the dopesheet marks the target row',
+    /uiState && uiState\._graphMeshId === id/.test(TH),
+    'nothing in the dopesheet says which row the graph will show');
+  check('...in the selected-key yellow', /isGraphTarget \? '#ffff00'/.test(TH));
+  check('...without losing the muted colour', /track\.muted \? '#6c7086' : '#cdd6f4'/.test(TH),
+    'a muted row must still read as muted when it is not the target');
+
+  // Graph: the subject's name, drawn in the curve area.
+  const i = code.indexOf('drawGraph(ctx) {');
+  const FN = i === -1 ? '' : code.slice(i, code.indexOf('\n  }\n', i));
+  check('the graph editor names what it is showing', /_gname/.test(FN) && /fillText\(_gname/.test(FN),
+    'a graph full of curves with nothing saying whose they are');
+  check('...and says so when there is nothing to show',
+    /'nothing selected'/.test(FN),
+    'an empty graph and a graph of an empty track look identical otherwise');
+  check('the label matches the row colour', /_gm \? '#ffff00'/.test(FN));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
