@@ -215,6 +215,11 @@ class BoneDrawTool extends SculptBase {
   // A timeout leaves the XR frame entirely, and by then the grab is already committed.
   _selectLater(joint) {
     const main = this._main;
+    // ...but AutoKey cannot wait for a timeout. It runs inside end(), in this frame, and reads
+    // the CURRENT selection — which is still whatever was selected before the drag, typically
+    // the skin. That is why posing a joint with AutoKey on keyed the mesh instead of the bone.
+    // Record what was moved synchronously; the deferred selection below is for the outliner.
+    main._lastRigEdit = joint || null;
     setTimeout(() => {
       if (joint && main.getMeshes().includes(joint)) main.setMesh?.(joint);
     }, 0);

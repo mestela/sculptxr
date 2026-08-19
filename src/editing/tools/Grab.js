@@ -64,6 +64,8 @@ class Grab extends SculptBase {
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
 
     this._grabbedMesh = mesh;
+    // See the note at the VR pick below: AutoKey reads the SCULPTING pick, not this one.
+    main._lastRigEdit = (mesh._isBone || mesh._isPinTarget) ? mesh : null;
     this._undoMatrix  = mat4.clone(mesh.getMatrix());
     // GRABBING A BONE IS AN IK OPERATION, not a transform. The skeleton is driven by the
     // solver, so dragging a joint states where that joint should END UP and the rest of the
@@ -460,6 +462,12 @@ class Grab extends SculptBase {
         if (mesh) {
           if (mesh._isVoxel) return; // LOCK TRANSFORM
           this._grabbedMesh = mesh;
+          // AUTOKEY KEYS WHAT THE TOOL TOOK, and only the tool knows what that was.
+          // `currentMesh` at AutoKey time comes from _vrSculptMesh — the SCULPTING pick,
+          // captured at stroke start, before this rig-aware pick has run — so on a grabbed
+          // bone or pin it is still the skin. Same marker the bones tool sets; the AutoKey
+          // block reads it and clears it.
+          this._main._lastRigEdit = (mesh._isBone || mesh._isPinTarget) ? mesh : null;
           this._undoMatrix = mat4.clone(mesh.getMatrix());
           // Same rule as the desktop grab: taking a BONE is an IK operation, not a transform.
           this._grabIsJoint = Skeleton.isJoint(mesh);

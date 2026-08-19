@@ -257,6 +257,9 @@ class TransformVR extends SculptBase {
       this._initInput = true;
       this._vrActiveHand = currentHand;
       this._dragMesh = mesh; // MESH LOCKING: Cache the target mesh
+      // Same reason as Grab: AutoKey's `currentMesh` is the SCULPTING pick from stroke start,
+      // which on a bone or a pin is still the skin. Tell it what was actually taken.
+      main._lastRigEdit = (mesh._isBone || mesh._isPinTarget) ? mesh : null;
 
       // A DRAGGED BONE IS A POSE, NOT A TRANSFORM. Deciding this ONCE, here, is the whole
       // point: the handover's warning about gizmo posing was against a watcher that compared

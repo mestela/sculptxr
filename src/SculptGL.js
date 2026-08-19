@@ -1501,7 +1501,17 @@ class SculptGL extends Scene {
       // Grab is a transform tool (moves the object matrix, stores _undoMatrix) just
       // like the gizmo — so it autokeys a transform key too. The VR path already
       // treats both TRANSFORM_VR and GRAB as a move.
-      const isMove = sm && (sm._toolIndex === Enums.Tools.TRANSFORM || sm._toolIndex === Enums.Tools.GRAB);
+      // A RIG NODE IS AN ORDINARY KEYABLE OBJECT. The gate used to ask which TOOL was active,
+      // so posing under the Bones tool fell through to the shape-key branch and keyed the skin.
+      // Ask what MOVED instead: a bone and a pin both carry a transform and no shape, so a
+      // transform key is the only kind that means anything for either.
+      const rigNode = (currentMesh && (currentMesh._isBone || currentMesh._isPinTarget))
+      ? currentMesh
+      : ((this._lastRigEdit && (this._lastRigEdit._isBone || this._lastRigEdit._isPinTarget))
+      ? this._lastRigEdit : null);
+      this._lastRigEdit = null; // consumed: the next stroke must not inherit it
+      const keyMesh = rigNode || currentMesh;
+      const isMove = !!rigNode || (sm && (sm._toolIndex === Enums.Tools.TRANSFORM || sm._toolIndex === Enums.Tools.GRAB));
       const fps = window._animFPS || 24;
       const targetTime = Math.round((window._animCurrentTime !== undefined ? window._animCurrentTime : 0) * fps) / fps;
       window._animCurrentTime = targetTime;
@@ -1509,7 +1519,9 @@ class SculptGL extends Scene {
       const meshId = currentMesh.getID();
 
       if (isMove) {
-        // Transform AutoKey
+        // Transform AutoKey. Its own id: `meshId` above belongs to the SHAPE branch, which must
+        // go on keying the selected mesh — only the transform key follows what moved.
+        const meshId = keyMesh.getID();
         if (!window._animationRegistry.tracks.has(meshId)) {
           window._animationRegistry.tracks.set(meshId, {
             times: [], positions: [], quaternions: [], scales: [],
@@ -1522,14 +1534,14 @@ class SculptGL extends Scene {
         if (track.times.length === 0 && targetTime > 0.005) {
           const tool = this._sculptManager.getCurrentTool();
           if (tool && tool._undoMatrix) {
-            const currMat = mat4.clone(currentMesh.getMatrix());
-            currentMesh.setMatrix(tool._undoMatrix);
-            window._animationRegistry.addTransformKey(currentMesh, 0.0);
-            currentMesh.setMatrix(currMat);
+            const currMat = mat4.clone(keyMesh.getMatrix());
+            keyMesh.setMatrix(tool._undoMatrix);
+            window._animationRegistry.addTransformKey(keyMesh, 0.0);
+            keyMesh.setMatrix(currMat);
           }
         }
 
-        const tMat = currentMesh.getMatrix();
+        const tMat = keyMesh.getMatrix();
         const pos = [tMat[12], tMat[13], tMat[14]];
         
         const sx = Math.hypot(tMat[0], tMat[1], tMat[2]);
@@ -1564,7 +1576,7 @@ class SculptGL extends Scene {
           };
         }
 
-        window._animationRegistry.addTransformKey(currentMesh, targetTime);
+        window._animationRegistry.addTransformKey(keyMesh, targetTime);
         
         const newData = {
           pos: [...pos],
@@ -1586,9 +1598,9 @@ class SculptGL extends Scene {
                   tr.scales.splice(idx*3, 3, ...oldData.s);
                 }
               } else {
-                window._animationRegistry.deleteTransformKey(currentMesh, targetTime);
+                window._animationRegistry.deleteTransformKey(keyMesh, targetTime);
               }
-              window._animationRegistry.update(currentMesh, true);
+              window._animationRegistry.update(keyMesh, true);
             },
             () => { // REDO
               const tr = window._animationRegistry.tracks.get(meshId);
@@ -1606,7 +1618,7 @@ class SculptGL extends Scene {
                 tr.quaternions.splice(idx*4, 0, ...newData.q);
                 tr.scales.splice(idx*3, 0, ...newData.s);
               }
-              window._animationRegistry.update(currentMesh, true);
+              window._animationRegistry.update(keyMesh, true);
             }
           );
         }
