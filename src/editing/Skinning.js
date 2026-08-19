@@ -271,6 +271,18 @@ Skinning.bind = function (main, mesh) {
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
   Skinning.refreshWeightColors(main, mesh);
+  // A BOUND MESH IS DRIVEN BY THE RIG, so it stops being a viewport selection target: from
+  // here on you reach for a bone or a pin, and the ray hitting the character instead is a
+  // constant nuisance — the skin is exactly the thing standing between you and every joint
+  // inside it. Reuses the outliner's existing lock (Scene.toggleSelectLock), which the picking
+  // scans already honour, so the mesh stays selectable FROM the outliner. Unbind clears it,
+  // and there is a button for that in the bones panel.
+  //
+  // Set here rather than derived from isBound() at pick time: the picking scans have no
+  // business importing the skinning module, and a bound-mesh check through the Multimesh proxy
+  // has failed to fire before.
+  mesh._selectLocked = true;
+
   return { ok: true, name: mesh._permanentStaticLabel || 'mesh', joints: joints.length,
            verts: nbV, ms: Math.round(performance.now() - t0), outside: raw.outside };
 };
@@ -477,6 +489,10 @@ Skinning.unbind = function (mesh) {
   mesh._skinLevel = 0;
   mesh._skinLevelMesh = null;
   mesh._skinLevelWarned = false;
+  // Bind locked it out of the viewport; unbind hands it back. Unconditional, matching bind —
+  // the lock is owned by the bind state here, and leaving a mesh unselectable after unbinding
+  // is the one failure mode with no obvious way out from inside the headset.
+  mesh._selectLocked = false;
 };
 
 // Called by applyBlendshapes once it has composited base + deltas: that composite IS the

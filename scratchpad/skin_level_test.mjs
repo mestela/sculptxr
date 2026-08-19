@@ -146,5 +146,33 @@ function boundMesh(levels, boundAt) {
     synthesiseUp(m) === false && synthLog.length === 0);
 }
 
+// A BOUND MESH IS LOCKED OUT OF VIEWPORT SELECTION. Once the character is driven by the rig
+// you are reaching for bones and pins, and the skin is exactly what stands between the ray and
+// every joint inside it. Reuses the outliner's lock, which the picking scans already honour —
+// so it stays selectable FROM the outliner, and Unbind hands it back.
+{
+  const SKIN = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skinning.js', 'utf8');
+  const PICK = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Picking.js', 'utf8');
+
+  const bindFn = SKIN.slice(SKIN.indexOf('Skinning.bind = function'),
+                            SKIN.indexOf('Skinning.unbind = function'));
+  const unbindFn = SKIN.slice(SKIN.indexOf('Skinning.unbind = function'),
+                             SKIN.indexOf('Skinning.captureSource'));
+
+  check('bind locks the mesh out of viewport selection',
+    /mesh\._selectLocked = true;/.test(bindFn), 'flag missing');
+  // Only on the SUCCESS path: a refused bind (a joint was selected) must not lock anything.
+  check('...only once the bind has succeeded',
+    bindFn.indexOf('_selectLocked = true') > bindFn.lastIndexOf("return { ok: false"),
+    'a refused bind would lock the mesh it refused');
+  check('unbind hands it back',
+    /mesh\._selectLocked = false;/.test(unbindFn),
+    'a mesh left unselectable after unbind has no way out from inside the headset');
+
+  // The lock is only worth anything because the picking scans already honour it — all three.
+  const scans = (PICK.match(/mesh\._selectLocked/g) || []).length;
+  check('every picking scan honours the lock', scans >= 3, `${scans} scans`);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

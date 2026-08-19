@@ -2860,7 +2860,7 @@ export default class GuiTimeline {
   _shapeLayerRowAt(ry) {
     const tracks = this._dopesheetTracks();
     const headerH = HEADER_H;
-    const trackH = (this._cssHeight - headerH) / Math.max(4, tracks.length);
+    const trackH = TimelineHelper.laneHeight(this._cssHeight - headerH, tracks.length);
     const dsScroll = this._dopeScrollY || 0;
     for (let laneIdx = 0; laneIdx < tracks.length; laneIdx++) {
       const [meshId, trackObj] = tracks[laneIdx];
@@ -3501,8 +3501,7 @@ export default class GuiTimeline {
         const tracks = this._dopesheetTracks();
         const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
-        const totalSlots = Math.max(4, tracks.length);
-        const trackH = laneAreaH / totalSlots;
+        const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
         const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll
         // Loop lanes and match by ACTUAL row Y — the blendshape/layer sub-rows extend below a
         // lane's slot (with one object, trackH is a quarter-height but the rows stack past it),
@@ -3556,8 +3555,7 @@ export default class GuiTimeline {
         const tracks = this._dopesheetTracks();
         const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
-        const totalSlots = Math.max(4, tracks.length);
-        const trackH = laneAreaH / totalSlots;
+        const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
         const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll offset
 
         const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
@@ -4994,8 +4992,7 @@ export default class GuiTimeline {
     }
     const tracks = this._dopesheetTracks();
     const laneAreaH = this._cssHeight - headerH;
-    const totalSlots = Math.max(4, tracks.length);
-    const trackH = laneAreaH / totalSlots;
+    const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
 
 
     

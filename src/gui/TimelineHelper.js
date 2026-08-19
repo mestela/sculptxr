@@ -2,6 +2,24 @@ import { xfRead, xfWrite } from '../editing/xfChannel.js';
 
 export default class TimelineHelper {
 
+  // LANE HEIGHT, IN ONE PLACE. The rule was written out at five call sites — the drawing
+  // below, and four hit-testing/marquee paths in GuiTimeline — which is four chances for a
+  // click to land on a different row than the one it was drawn on.
+  //
+  // Lanes SHARE the panel height, with a floor of four slots so a single object does not get a
+  // full-height row. They are also CAPPED: without that, a tall panel with two or three tracks
+  // stretched each row to several times the height its text and keys need, which is what a
+  // resized VR timeline (and a tall desktop one) looked like. Filling the space was never the
+  // intent — the floor of four was.
+  //
+  // LANE_H_MAX is a taste value, not a derived one: it wants to fit a key marker centred on a
+  // label, with room for the blendshape/layer sub-rows that stack below at 18px.
+  static laneHeight(laneAreaH, nTracks) {
+    const LANE_H_MAX = 34;
+    return Math.min(LANE_H_MAX, laneAreaH / Math.max(4, nTracks));
+  }
+
+
   // Canonical blendshape display order, shared by the timeline and the canvas
   // BlendshapeStackPanel: Photoshop order — newest layer first (top). Every place
   // that lays out blendshape rows / maps a row index back to a name MUST go
@@ -68,8 +86,7 @@ export default class TimelineHelper {
     // Per-type display filters (XF/SH/BS/SR toggles). Default all-on.
     const show = (typeof window !== 'undefined' && window._animKeyShow) || { transform: true, shape: true, blendshape: true, shaperep: true };
 
-    const totalAvailableSlots = Math.max(4, tracks.length);
-    const trackH = laneAreaH / totalAvailableSlots;
+    const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
 
     // Vertical scroll (mouse-wheel): stacked blendshape + shape-layer sub-rows can extend
     // past a lane's slot, so measure the deepest content and let the user scroll to it.
