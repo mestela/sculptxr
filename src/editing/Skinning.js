@@ -384,7 +384,7 @@ Skinning.restoreColors = function (mesh) {
 // anything that changes the assignment, so the two states can never drift apart.
 Skinning.refreshWeightColors = function (main, mesh) {
   if (!Skinning.isBound(mesh)) { Skinning.restoreColors(mesh); return; }
-  if (window._boneShowWeights === false) Skinning.restoreColors(mesh);
+  if (!Skeleton.displayFlag('weights')) Skinning.restoreColors(mesh);
   else Skinning.showWeightColors(main, mesh);
 };
 

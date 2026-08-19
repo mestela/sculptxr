@@ -163,7 +163,7 @@ class BoneDrawTool extends SculptBase {
     this._releaseGrab(); this._releasePose(); this._releaseRadius(); this._releaseIK();
     // The capsules are the whole point of radius mode, so turn them on when entering it
     // rather than making the user find a second toggle to make the mode visible.
-    if (mode === 'radius') window._boneShowCapsules = true;
+    if (mode === 'radius') Skeleton.setDisplayFlag('capsules', true);
     // Leaving draw mode ends the chain — coming back to draw should start clean rather
     // than silently resuming a chain from before the detour.
     if (mode !== 'draw') this.endChain();
@@ -227,8 +227,8 @@ class BoneDrawTool extends SculptBase {
   // the plane is its own twin); outside it, the joint is a side joint and gets a mirror.
   _planeSnap() { return Skeleton.sceneUnit(this._main) * 0.05; }
 
-  _snapEnabled() { return window._boneSnapPlane !== false; }
-  _axisEnabled() { return window._boneSnapAxis !== false; }
+  _snapEnabled() { return Skeleton.displayFlag('snapPlane'); }
+  _axisEnabled() { return Skeleton.displayFlag('snapAxis'); }
 
   _onPlane(p, plane) {
     return !!plane && Math.abs(Skeleton.planeDistance(p, plane)) <= 1e-4;
@@ -1134,40 +1134,10 @@ class BoneDrawTool extends SculptBase {
 
   // A cycles: unpinned -> position -> position + rotation -> unpinned. One button, because
   // pinning is "point at a joint and press", and the marker out in the scene says which of
-  // the three states you landed in.
+  // the three states you landed in. The work itself lives on Skeleton: Transform and Grab
+  // bind the same press, and three copies of an undo this fiddly would not stay in step.
   _togglePin(joint) {
-    if (!joint) return;
-    const main = this._main;
-    const was = IKSolver.pinMode(joint);
-    const wasPin = IKSolver.pinObject(joint);
-    const wasM = wasPin ? mat4.clone(wasPin.getMatrix()) : null;
-    const r = IKSolver.cyclePin(joint, main);
-    const now = r.mode;
-    // Unpinning takes the null out of the scene; undo has to put the SAME object back, at the
-    // matrix it stood at, or the pin returns somewhere else.
-    if (r.removed) main.removeMeshSilent(r.removed);
-    const nowPin = r.pin;
-    const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)'];
-    const sm = main.getStateManager && main.getStateManager();
-    if (sm && sm.pushStateCustom) {
-      const apply = (mode, pin, m) => {
-        if (pin && mode) { main.addMeshSilent(pin); IKSolver.attachPin(joint, pin, mode, m); }
-        else {
-          const live = IKSolver.pinObject(joint);
-          IKSolver.setPin(joint, 0, main);
-          if (live) main.removeMeshSilent(live);
-        }
-        Skeleton.updateVisuals(main); main.render();
-      };
-      sm.pushStateCustom(() => apply(was, wasPin, wasM), () => apply(now, nowPin, null),
-        false, 'Pin Joint');
-    }
-    if (window.screenLog) window.screenLog('Bones: ' + names[now], 'cyan');
-    // The mini panel's pin count is only refreshed when something asks it to, and pinning
-    // from the face button is exactly the route that would otherwise leave it stale. One
-    // repaint per button press, not per frame.
-    try { main._miniPanel?.syncFromState?.(); } catch (_) {}
-    this._refresh();
+    if (IKSolver.togglePin(this._main, joint)) this._refresh();
   }
 
   // ---- VR -----------------------------------------------------------------------
@@ -1368,43 +1338,6 @@ class BoneDrawTool extends SculptBase {
       ` opts=[${optStr}] raw=[${rawStr}] rawAny=${rawAny ? 1 : 0}` +
       ` aPressed=${aPressed ? 1 : 0} wasA=${this._wasAPressed ? 1 : 0}` +
       ` mode=${this._mode} ${chain} ${rec} ${dom}${beat ? ' (beat)' : ''}`);
-  }
-
-  // Dominant-hand face button from the per-controller gamepad state (4 = A/X, 5 = B/Y).
-  //
-  // Reads the options first, then falls back to the LIVE SESSION. A face button is global
-  // device state — it is not aimed at anything and does not depend on which code path
-  // happened to call the tool this frame — but the value was arriving only through the
-  // options object, so any caller that passed a thinner one silently disabled the binding.
-  // That has now caused the same "A works, then doesn't" report twice, and the menu-guard
-  // path (which passed no controllers at all until v3.18.14) turns out to be the NORMAL case
-  // rather than a rare one: the pointing-at-menu flag is sticky and reads true almost
-  // permanently. Rather than audit every call site for a good options object, ask the device.
-  //
-  // The fallback also covers a handedness mismatch: if the options carry controllers but none
-  // matches the hand being processed, the loop falls through to the session rather than
-  // reporting "not pressed".
-  _readButton(options, index) {
-    const hand = (options && options.handedness) || this._main._dominantHand;
-    const ctrls = options && options.controllers;
-    if (ctrls) {
-      for (let i = 0; i < ctrls.length; i++) {
-        const c = ctrls[i];
-        if (c.handedness === hand && c.buttons && c.buttons[index]) {
-          return !!c.buttons[index].pressed;
-        }
-      }
-    }
-    const session = this._main._xrSession;
-    if (session && session.inputSources) {
-      for (const src of session.inputSources) {
-        if (src.handedness === hand && src.gamepad && src.gamepad.buttons
-            && src.gamepad.buttons[index]) {
-          return !!src.gamepad.buttons[index].pressed;
-        }
-      }
-    }
-    return false;
   }
 
   // Called by SculptManager.setToolIndex when switching away — otherwise the preselection

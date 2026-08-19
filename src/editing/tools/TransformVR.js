@@ -4,6 +4,7 @@ import SculptBase from './SculptBase.js';
 import GizmoVR, { GIZMO_TYPE } from '../GizmoVR.js';
 import Skeleton from '../Skeleton.js';
 import IKSolver from '../IKSolver.js';
+import getOptionsURL from '../../misc/getOptionsURL.js';
 
 // Scratch for the joint solve. Reused rather than allocated: this runs on every frame of a
 // drag at 90Hz.
@@ -122,6 +123,13 @@ class TransformVR extends SculptBase {
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
+    // A PINS THE BONE YOU ARE POINTING AT. Same press, same cycle and same undo as the bone
+    // tool's — pointing at a joint and pressing one thing is the whole gesture, so it should
+    // not change meaning with the tool in your hand. Read first, because several of the
+    // returns below would swallow it: a face button is not aimed at anything, and a tool being
+    // mid-gesture is no reason for it to go dead.
+    IKSolver.pinOnA(this, options, this._initInput);
+
     if (this._wasPressed !== isPressed) {
       console.log(`[TransformVR] updateXR, isPressed: ${isPressed}, initInput: ${this._initInput}`);
       this._wasPressed = isPressed;
@@ -148,8 +156,15 @@ class TransformVR extends SculptBase {
           const physOrigin = main._vrControllerPosPhys;
           const physDir = main._vrControllerDirPhys;
 
+          // THE GRAB TOLERANCE FOLLOWS THE GIZMO'S SIZE. These radii are slop around the ray,
+          // added on top of the handle geometry; the geometry rides the gizmo's matrix scale
+          // but a fixed slop does not. Left fixed, a gizmo shrunk to 0.25x keeps a grab zone
+          // four times too wide for it and the handles stop being separable — the thumbstick
+          // would appear to break picking rather than resize anything.
+          const sizeMul = window._gizmoSizeMul != null ? window._gizmoSizeMul : 1.0;
+
           if (physOrigin && physDir) {
-            const radius = 0.02; 
+            const radius = 0.02 * sizeMul;
             var hitType = this._gizmo.intersectPhysical(physOrigin, physDir, radius, true);
             if (hitType !== -1) {
               this._updateStateFromGizmo(hitType);
@@ -166,7 +181,7 @@ class TransformVR extends SculptBase {
               } else if (main._worldGroup) {
                 worldScale = main._worldGroup.scale.x;
               }
-              const radiusMeters = 0.02 * 31.25; // radius * scaleFactor (31.25)
+              const radiusMeters = 0.02 * 31.25 * sizeMul; // radius * scaleFactor (31.25)
               var vrHitType = this._gizmo.intersectPhysical(rayOrigin, rayDir, radiusMeters, false);
               if (vrHitType !== -1) {
                 this._updateStateFromGizmo(vrHitType);
@@ -315,6 +330,37 @@ class TransformVR extends SculptBase {
 
       // Check for Free Move (All Axes True)
       if (mask[0] && mask[1] && mask[2]) {
+        // FREE TRANSFORM: the centre handle can carry the controller's ROTATION as well as
+        // its position, so the object is held the way Grab holds one rather than slid about
+        // flat. Optional because the two are different jobs — placing something along a
+        // surface wants a hand that cannot accidentally tilt it.
+        const freeRot = window._xfFreeRotate != null
+          ? window._xfFreeRotate : !!getOptionsURL().xfFreeRotate;
+
+        if (freeRot) {
+          // Rotate about where the CONTROLLER started, not the object's centre: a point at
+          // the controller's start position maps exactly onto the controller now, which is
+          // what makes it feel like the thing is held in the hand instead of orbiting it.
+          const qDelta = quat.create();
+          quat.conjugate(qDelta, this._startControllerQuat);
+          quat.multiply(qDelta, controllerQuat, qDelta);
+
+          const m = mat4.create();
+          mat4.fromQuat(m, qDelta);
+          const pre = mat4.create();
+          mat4.fromTranslation(pre, [-this._startControllerPos[0], -this._startControllerPos[1],
+                                     -this._startControllerPos[2]]);
+          const post = mat4.create();
+          mat4.fromTranslation(post, controllerPos);
+          mat4.multiply(m, m, pre);
+          mat4.multiply(m, post, m);
+
+          const newMat = mat4.create();
+          mat4.multiply(newMat, m, this._startMeshMatrix);
+          this._applyMatrix(mesh, newMat);
+          return;
+        }
+
         // FREE MOVE (Matches Hand Delta exactly, World Space)
         mat4.fromTranslation(translationMatrix, delta);
 

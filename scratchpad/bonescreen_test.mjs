@@ -11,6 +11,18 @@
 //
 // Run: node scratchpad/bonescreen_test.mjs   (from the repo root)
 import fs from 'fs';
+
+// Display flags are read through Skeleton now. The defaults are PARSED OUT of the real source
+// rather than retyped into the stub below, so this harness cannot drift from the shipped ones
+// — which is the whole reason the registry exists.
+const FLAG_ROWS = {};
+{
+  const src = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  const block = /const DISPLAY_FLAGS = \{([\s\S]*?)\n\};/.exec(src);
+  for (const m of (block ? block[1] : '').matchAll(/(\w+): \['(\w+)', '(\w+)', (true|false)\]/g)) {
+    FLAG_ROWS[m[1]] = [m[2], m[3], m[4] === 'true'];
+  }
+}
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -65,7 +77,21 @@ export function makeJoint(pos, parent) {
 
 const _sA = new THREE.Vector3(), _sB = new THREE.Vector3(), _sD = new THREE.Vector3();
 
+
+// Mirrors the real accessor: the LIVE window global wins, then the default. (The real one
+// consults the saved option in between; there is no localStorage here.) Reading window is not
+// an incidental detail — the tests below flip these globals directly, exactly as the panel
+// does at runtime.
+const FLAG_ROWS = ${JSON.stringify(FLAG_ROWS)};
 const Skeleton = {
+  displayFlag: (n) => {
+    const r = FLAG_ROWS[n];
+    if (!r) return false;
+    const live = window[r[0]];
+    return live != null ? !!live : r[2];
+  },
+  setDisplayFlag: (n, v) => { const r = FLAG_ROWS[n]; if (r) window[r[0]] = !!v; },
+  DISPLAY_FLAGS: FLAG_ROWS,
   isJoint: (m) => !!(m && m._isBone),
   joints: (main) => main.getMeshes().filter((m) => m._isBone),
   jointVisible: (j) => j._hidden !== true,

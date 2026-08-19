@@ -34,6 +34,7 @@ import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import { buildBoneSectionHTML, wireBoneSection } from '../bonePanel.js';
+import { buildTransformSectionHTML, wireTransformSection } from '../transformPanel.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
@@ -1743,6 +1744,8 @@ export function buildSectionHTML_sculpting(main) {
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
     ${brushHTML}
     ${cur === Enums.Tools.BONE_DRAW ? buildBoneSectionHTML(main, 'mm') : ''}
+    ${cur === Enums.Tools.TRANSFORM_VR || cur === Enums.Tools.TRANSFORM
+      ? buildTransformSectionHTML(main, 'mm') : ''}
     <div class="mm-section-title">Safety</div>
     <button class="mm-toggle${window._sculptLocked ? ' active' : ''}" id="mm-sculpt-lock"
       title="Ignore every sculpt input until unlocked — for when hand tracking or a stray controller would otherwise damage the mesh.">
@@ -2994,6 +2997,7 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
   // Both callbacks repaint: this panel has no in-place state sync, so a rebuild is how a
   // toggle shows that it toggled.
   wireBoneSection(el, main, { refresh: repaintFn, rebuild: repaintFn });
+  wireTransformSection(el, main, { refresh: repaintFn });
 
   el.querySelector('#mm-sculpt-lock')?.addEventListener('click', () => {
     window._sculptLocked = !window._sculptLocked;

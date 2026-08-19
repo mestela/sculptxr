@@ -67,14 +67,15 @@ export function buildBoneSectionHTML(main, style) {
   const flag = (id, label, val) =>
     `<button class="${c.toggle}${val ? ' active' : ''}" id="bone-${id}">${label}</button>`;
 
-  const snap  = window._boneSnapPlane !== false;
-  const axis  = window._boneSnapAxis !== false;
-  const lens  = !!window._boneShowLengths;
-  const caps  = window._boneShowCapsules !== false;
-  const wts   = window._boneShowWeights !== false;
-  const solid = window._boneShowSolid !== false;
-  const wire  = window._boneShowWire !== false;
-  const jnts  = window._boneShowJoints !== false;
+  const f     = (k) => Skeleton.displayFlag(k);
+  const snap  = f('snapPlane');
+  const axis  = f('snapAxis');
+  const lens  = f('lengths');
+  const caps  = f('capsules');
+  const wts   = f('weights');
+  const solid = f('solid');
+  const wire  = f('wire');
+  const jnts  = f('joints');
   const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
@@ -161,10 +162,11 @@ export function wireBoneSection(root, main, opts) {
   main._boneSectionRebuild = rebuild;
 
   // Two flag flavours, and they must not share a toggle: the snaps and the display flags
-  // default ON (stored as "anything but false", so undefined reads as on), Lengths OFF.
-  const flag = (id, key, defaultOn) => {
+  // Defaults and persistence both live in Skeleton.DISPLAY_FLAGS — the toggle only has to
+  // say which flag it is.
+  const flag = (id, name) => {
     q(id)?.addEventListener('click', () => {
-      window[key] = defaultOn ? (window[key] === false) : !window[key];
+      Skeleton.setDisplayFlag(name, !Skeleton.displayFlag(name));
       refresh();
       // Snap Plane draws the plane, so the toggle has to reach the tool BEFORE the render —
       // the tool's own per-frame sync runs after the frame is drawn, which on a still screen
@@ -173,18 +175,18 @@ export function wireBoneSection(root, main, opts) {
       main.render?.();
     });
   };
-  flag('snap', '_boneSnapPlane', true);
-  flag('axis', '_boneSnapAxis', true);
-  flag('len', '_boneShowLengths', false);
-  flag('caps', '_boneShowCapsules', true);
-  flag('solid', '_boneShowSolid', true);
-  flag('wire', '_boneShowWire', true);
-  flag('joints', '_boneShowJoints', true);
+  flag('snap', 'snapPlane');
+  flag('axis', 'snapAxis');
+  flag('len', 'lengths');
+  flag('caps', 'capsules');
+  flag('solid', 'solid');
+  flag('wire', 'wire');
+  flag('joints', 'joints');
 
   // Toggling the weight preview has to repaint or restore immediately — the flag alone
   // changes nothing until something re-solves.
   q('weights')?.addEventListener('click', () => {
-    window._boneShowWeights = window._boneShowWeights === false;
+    Skeleton.setDisplayFlag('weights', !Skeleton.displayFlag('weights'));
     Skinning.refreshWeightColorsAll(main);
     refresh();
     main.render?.();
@@ -261,7 +263,7 @@ export function wireBoneSection(root, main, opts) {
     Skinning.resolveWeightsAll(main);
     main.getStateManager?.()?.pushStateCustom?.(
       () => apply(before), () => apply(after), false, 'Bone Radii');
-    window._boneShowCapsules = true; // an invisible edit is indistinguishable from a no-op
+    Skeleton.setDisplayFlag('capsules', true); // an invisible edit is indistinguishable from a no-op
     refresh();
     main.render?.();
   });
@@ -321,14 +323,14 @@ export function syncBoneSection(root, main) {
   for (const [key] of MODES) q(key)?.classList.toggle('active', mode === key);
 
   const setFlag = (id, val) => q(id)?.classList.toggle('active', val);
-  setFlag('snap', window._boneSnapPlane !== false);
-  setFlag('axis', window._boneSnapAxis !== false);
-  setFlag('len', !!window._boneShowLengths);
-  setFlag('caps', window._boneShowCapsules !== false);
-  setFlag('weights', window._boneShowWeights !== false);
-  setFlag('solid', window._boneShowSolid !== false);
-  setFlag('wire', window._boneShowWire !== false);
-  setFlag('joints', window._boneShowJoints !== false);
+  setFlag('snap', Skeleton.displayFlag('snapPlane'));
+  setFlag('axis', Skeleton.displayFlag('snapAxis'));
+  setFlag('len', Skeleton.displayFlag('lengths'));
+  setFlag('caps', Skeleton.displayFlag('capsules'));
+  setFlag('weights', Skeleton.displayFlag('weights'));
+  setFlag('solid', Skeleton.displayFlag('solid'));
+  setFlag('wire', Skeleton.displayFlag('wire'));
+  setFlag('joints', Skeleton.displayFlag('joints'));
 
   // The pin count is rig state rather than panel state, so it has to be refreshed here or it
   // shows whatever was true when the markup was last built.

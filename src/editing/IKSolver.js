@@ -1055,7 +1055,12 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   markActive(targets.keys());
   // With nothing else pinned the root is the anchor, or the whole character would follow
   // your hand on the very first drag.
-  const rootFixed = targets.size <= 1;
+  //
+  // UNLESS THE ROOT IS THE THING YOU GRABBED. Anchoring it then held the root against the
+  // only input asking it to move, so with no pins set the root bone simply would not budge —
+  // which reads as the root being locked rather than as anything being anchored. Taking hold
+  // of the root IS the statement that the character should move.
+  const rootFixed = targets.size <= 1 && eff !== root;
 
   runSolve(nodes, targets, root, rootFixed, Skeleton.sceneUnit(main) * TOL_FRAC);
   const touched = applyRotations(main, nodes, root, rootFixed);
@@ -1204,6 +1209,66 @@ IKSolver.holdPins = function (main) {
 // per joint, which is nothing next to the vertex snapshots the sculpt tools push.
 IKSolver.captureAll = function (main) {
   return Skeleton.joints(main).map((j) => [j, mat4.clone(j.getMatrix())]);
+};
+
+// PIN CYCLE: unpinned -> position -> position + rotation -> unpinned. Shared by every tool
+// that binds it (bone draw, transform, grab) — one button, one meaning, one undo. Returns
+// false when there was no joint to act on, so a caller can tell a miss from a press.
+//
+// The undo is the fiddly part and the reason this is not copied: unpinning takes the null OUT
+// of the scene, so undo has to put THE SAME OBJECT back at the matrix it stood at, or the pin
+// comes back somewhere else.
+IKSolver.togglePin = function (main, joint) {
+  if (!joint || !main) return false;
+  const was = IKSolver.pinMode(joint);
+  const wasPin = IKSolver.pinObject(joint);
+  const wasM = wasPin ? mat4.clone(wasPin.getMatrix()) : null;
+  const r = IKSolver.cyclePin(joint, main);
+  const now = r.mode;
+  if (r.removed) main.removeMeshSilent(r.removed);
+  const nowPin = r.pin;
+  const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)'];
+  const sm = main.getStateManager && main.getStateManager();
+  if (sm && sm.pushStateCustom) {
+    const apply = (mode, pin, m) => {
+      if (pin && mode) { main.addMeshSilent(pin); IKSolver.attachPin(joint, pin, mode, m); }
+      else {
+        const live = IKSolver.pinObject(joint);
+        IKSolver.setPin(joint, 0, main);
+        if (live) main.removeMeshSilent(live);
+      }
+      Skeleton.updateVisuals(main); main.render();
+    };
+    sm.pushStateCustom(() => apply(was, wasPin, wasM), () => apply(now, nowPin, null),
+      false, 'Pin Joint');
+  }
+  if (window.screenLog) window.screenLog('Bones: ' + names[now], 'cyan');
+  Skeleton.updateVisuals(main);
+  main.render();
+  // The mini panel's pin count is only refreshed when something asks it to, and pinning from
+  // a face button is exactly the route that would otherwise leave it stale.
+  try { main._miniPanel?.syncFromState?.(); } catch (_) {}
+  return true;
+};
+
+// A PINS THE JOINT UNDER THE RAY, on the press EDGE. Bone draw, Transform and Grab all bind
+// it, so it lives in ONE place: pointing at a joint and pressing one thing is the gesture, and
+// it should not change meaning with the tool in your hand.
+//
+// The TOOL is passed in rather than imported. Putting this on SculptBase would have been the
+// obvious home, but SculptBase cannot import IKSolver — Skeleton pulls in the mesh stack and
+// the cycle leaves SculptBase undefined at the moment the tools extend it (module_load_test
+// catches it as "Class extends value undefined"). Handing the tool in keeps the arrow
+// pointing one way.
+//
+// `busy` is the tool's own mid-gesture flag: the press that starts a drag must not also
+// re-pin the thing it is about to move.
+IKSolver.pinOnA = function (tool, options, busy) {
+  const a = tool._readButton(options, 4);
+  const was = tool._wasAPressed;
+  tool._wasAPressed = a;
+  if (!a || was || busy) return false;
+  return IKSolver.togglePin(tool._main, Skeleton.hoveredJoint(tool._main));
 };
 
 export default IKSolver;

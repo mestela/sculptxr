@@ -6194,6 +6194,33 @@ class Scene {
               }
               this._guiXR._needsRedraw = true;
             }
+          } else if (isPressedY && this._sculptManager._toolIndex === Enums.Tools.TRANSFORM_VR) {
+            // THE STICK RESIZES THE GIZMO WHILE TRANSFORM IS ACTIVE. Radius means nothing to a
+            // gizmo, and the gizmo is sized for objects — on a bone it swamps the thing you are
+            // trying to see. Same stick, same repeat rate and same slow-modifier as radius, so
+            // the gesture is the one the hand already knows.
+            //
+            // gizmoSizeMul is a MATRIX scale (GizmoVR.update reads it every frame) and the
+            // pick geometry rides the same matrix, so the handles stay grabbable where they
+            // are drawn. Driving _resize() instead would rebuild all fifteen primitives per
+            // tick — 33 times a second while the stick is held, and it disposes nothing.
+            if (now - state.lastRadiusTime > targetRateY) {
+              state.lastRadiusTime = now;
+
+              // Geometric, not linear: this is a multiplier over an 8x span, so a fixed
+              // PERCENTAGE per tick reads the same to the hand at either end. 5% matches the
+              // step radius uses.
+              const step = 1.0 + 0.05 * speedModifier;
+              const cur = window._gizmoSizeMul != null
+                ? window._gizmoSizeMul : (getOptionsURL().gizmoSizeMul || 1.0);
+              const next = valY < -T_PRESS ? cur * step : cur / step; // UP -> bigger
+
+              // Clamped to the same range the settings slider offers, so the two agree.
+              window._gizmoSizeMul = Math.max(0.25, Math.min(2.0, next));
+              getOptionsURL.saveOption('gizmoSizeMul', window._gizmoSizeMul, 500);
+              this._main ? this._main.render() : this.render();
+            }
+            state.axes[3] = valY;
           } else if (isPressedY) {
             if (now - state.lastRadiusTime > targetRateY) { 
               state.lastRadiusTime = now;
@@ -6280,6 +6307,13 @@ class Scene {
             const tracker = this._vrButtonStates[this._dominantHand].Primary;
             const activeTool = this._sculptManager.getCurrentTool();
             const isPaint = activeTool && activeTool.constructor.name === 'Paint';
+            // A ALREADY MEANS SOMETHING to these tools — it pins the joint under the ray, and
+            // they bind it themselves (IKSolver.pinOnA). None of them sculpt, so the subtract
+            // toggle below has nothing to act on; letting it run would silently flip Negative
+            // for whatever brush you pick up next, from a press you made to place a pin.
+            const idxA = this._sculptManager._toolIndex;
+            const bindsA = idxA === Enums.Tools.TRANSFORM_VR || idxA === Enums.Tools.GRAB
+                        || idxA === Enums.Tools.BONE_DRAW;
 
             if (btnA && btnA.pressed !== tracker.pressed) {
               if (btnA.pressed) {
@@ -6293,12 +6327,12 @@ class Scene {
                   if (targetMain && targetMain.getGui() && targetMain.getGui()._guiXR) {
                     targetMain.getGui()._guiXR._needsRedraw = true;
                   }
-                } else {
+                } else if (!bindsA) {
                   this._vrSubtractActive = !this._vrSubtractActive;
                 }
               } else {
                 // Button Up
-                if (tracker.longPressActive && !isPaint) {
+                if (tracker.longPressActive && !isPaint && !bindsA) {
                   // It was a momentary hold (transient mode) that is now releasing
                   // Revert the state back to what it was before pressing down
                   this._vrSubtractActive = !this._vrSubtractActive;
@@ -7659,17 +7693,28 @@ class Scene {
     const idx = sm && sm.getToolIndex ? sm.getToolIndex() : -1;
     // Bone draw needs the ghost even more than the gizmo does: joints are placed INSIDE
     // the mesh, so without the reveal you are aiming a tip you cannot see.
+    // GRAB reaches inside a mesh for exactly the same reason the gizmo does — you take hold of
+    // something at its centre — so it wants the same reveal. This is an explicit list rather
+    // than a universal rule: the sculpt brushes work ON the surface, and revealing the spike
+    // through the mesh for them would be an always-on blue tip with nothing to look at.
     const on = idx === Enums.Tools.TRANSFORM || idx === Enums.Tools.TRANSFORM_VR ||
-               idx === Enums.Tools.BONE_DRAW;
+               idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB;
     // Only the DOMINANT controller drives the gizmo, so only reveal its spike.
     const key = on ? this._dominantHand : 'off';
     if (key === this._stylusXrayKey) return;
-    this._stylusXrayKey = key;
     const dom = this._dominantHand === 'left' ? this._vrControllerLeft : this._vrControllerRight;
     const other = this._dominantHand === 'left' ? this._vrControllerRight : this._vrControllerLeft;
     const domGhost = dom && dom.getObjectByName && dom.getObjectByName('stylus_spike_ghost');
     const otherGhost = other && other.getObjectByName && other.getObjectByName('stylus_spike_ghost');
-    if (domGhost) domGhost.visible = on;
+    // CACHE THE WRITE, NOT THE INTENT. The controller objects are assigned by the 'connected'
+    // event and nulled again by the wiped-state branch, so this can run with no ghost to
+    // write to — and recording the key anyway latched the failure in: the early return above
+    // then skipped every retry for as long as the tool stayed selected. Entering VR with
+    // Transform already active is enough to hit it, and because the key is the HAND (not the
+    // tool) even switching Transform <-> TransformVR would not clear it.
+    if (!domGhost) return;
+    this._stylusXrayKey = key;
+    domGhost.visible = on;
     if (otherGhost) otherGhost.visible = false;
   }
 

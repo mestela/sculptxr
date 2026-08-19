@@ -4,9 +4,27 @@ import fs from 'fs';
 const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
 const body = SRC.split('\n').filter(l => !/^import\s/.test(l)).filter(l => !/^export \{ Enums/.test(l)).join('\n');
 globalThis.window = {};
+
+// The display flags are read through Skeleton now, so the stub below carries the SAME defaults
+// the real registry does — PARSED OUT of the real source rather than retyped here, or this
+// harness would happily pass while the shipped defaults said something else.
+const FLAG_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+const FLAG_DEFAULTS = {};
+{
+  const block = /const DISPLAY_FLAGS = \{([\s\S]*?)\n\};/.exec(FLAG_SRC);
+  for (const m of (block ? block[1] : '').matchAll(/(\w+): \['(\w+)', '(\w+)', (true|false)\]/g)) {
+    FLAG_DEFAULTS[m[1]] = m[4] === 'true';
+  }
+}
 const stub = `
 const Enums = { Tools: { BONE_DRAW: 34 } };
-const Skeleton = { joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25 };
+const Skeleton = {
+  joints: () => [], radiusFraction: () => 0.25, defaultRadiusFrac: () => 0.25,
+  DISPLAY_FLAGS: ${JSON.stringify(FLAG_DEFAULTS)},
+  displayFlag: (n) => (_flagState[n] != null ? _flagState[n] : !!${JSON.stringify(FLAG_DEFAULTS)}[n]),
+  setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
+};
+const _flagState = {};
 const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){} };
 const SkinMesh = {};
 const IKSolver = { pinnedJoints: () => [{},{}] };
@@ -69,6 +87,48 @@ for (const id of ['solid', 'wire', 'joints']) {
 check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="[^"]*active[^"]*"[^>]*id="bone-joints"/.test(flat)
   || /<button class="[^"]*active[^"]*" id="bone-joints"/.test(flat),
   'Joints button did not render active by default');
+
+// ── Display flags: defaults, one registry, and persistence ──────────────────────
+{
+  const OPTS = fs.readFileSync('/Users/mattestela/sculptxr/src/misc/getOptionsURL.js', 'utf8');
+
+  // Capsules and weights are DIAGNOSTICS drawn over the sculpt. Neither is what you want to
+  // be looking at the moment the tool opens.
+  check('capsules are off by default', FLAG_DEFAULTS.capsules === false, FLAG_DEFAULTS.capsules);
+  check('weight colours are off by default', FLAG_DEFAULTS.weights === false, FLAG_DEFAULTS.weights);
+  // The rest keep the defaults they had; a registry that quietly flipped them would be worse
+  // than the sentinel it replaced.
+  for (const k of ['snapPlane', 'snapAxis', 'solid', 'wire', 'joints']) {
+    check(`${k} is still on by default`, FLAG_DEFAULTS[k] === true, FLAG_DEFAULTS[k]);
+  }
+  check('lengths are still off by default', FLAG_DEFAULTS.lengths === false, FLAG_DEFAULTS.lengths);
+
+  // THE DEFAULT IS WRITTEN TWICE — registry and option validator — so they must agree, or a
+  // reload silently changes what the panel shows.
+  const rows = [...FLAG_SRC.matchAll(/(\w+): \['(\w+)', '(\w+)', (true|false)\]/g)];
+  check('every flag is declared as a saved option', rows.length === 8, rows.length);
+  for (const [, name, , opt, def] of rows) {
+    const m = new RegExp(`options\\.${opt} = queryBool\\(getVal\\('${opt}'\\), (true|false)\\)`).exec(OPTS);
+    check(`${name} is persisted and its two defaults agree`, !!m && m[1] === def,
+      m ? `registry ${def} vs option ${m[1]}` : 'the option is not declared, so it is not restored');
+  }
+
+  // NO RAW SENTINEL READS LEFT. `window._boneShowX !== false` hard-codes "default on" into
+  // every reader — the arrangement that made flipping a default an eight-file edit.
+  for (const f of ['src/gui/bonePanel.js', 'src/editing/Skeleton.js', 'src/editing/Skinning.js',
+                   'src/editing/tools/BoneDrawTool.js']) {
+    const t = fs.readFileSync('/Users/mattestela/sculptxr/' + f, 'utf8')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
+      .replace(/const DISPLAY_FLAGS[\s\S]*?\n\};/, '');
+    const raw = /window\._bone(Show|Snap)\w+\s*(!==|===|=[^=])/.test(t);
+    check(`${f.split('/').pop()} reads flags through the registry`, !raw,
+      'a raw window._boneShowX read is back: it carries its own copy of the default');
+  }
+
+  // The toggle has to SAVE, or the panel forgets it the moment you take the headset off.
+  check('toggling a flag persists it',
+    /setDisplayFlag = function[\s\S]{0,300}?saveOption\(/.test(FLAG_SRC), 'no saveOption');
+}
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

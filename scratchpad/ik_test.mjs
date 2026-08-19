@@ -1105,6 +1105,91 @@ function lengthsPreserved(name, joints, before) {
     IKSolver.externallyMovedJoint(main) === ankle);
 }
 
+// GRAB THE KNEE, THE FOOT STAYS ON ITS PIN. The leg shape specifically, because this is the
+// thing you reach for when a pin alone pulls too much: the pinned joint is a DESCENDANT of the
+// one being dragged, which is the case that looks like it should not work. It does — in the
+// solver. Dragging the same joint under the bone tool's FK mode does not consult pins at all,
+// by design (FK edits the rest skeleton, children follow rigidly); this is what the IK path
+// gives you instead.
+{
+  const hip = J([0, 3, 0]);
+  const knee = J([0, 2, 0], hip);
+  const ankle = J([0, 1, 0], knee);
+  const toe = J([0.3, 1, 0], ankle);
+  const joints = [hip, knee, ankle, toe];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  IKSolver.setPinned(ankle, true, main);
+  const footBefore = pos(ankle).clone();
+
+  // ON THE SPHERE, and this is the part worth understanding. The ankle is ONE bone below the
+  // knee, so pinning it does not merely limit the knee's reach — it CONFINES the knee to the
+  // sphere of radius (shin length) about the pin. That is an equality, not an inequality: a
+  // drag to any point off that sphere is projected onto it, whether it was too far or too
+  // near. So a pinned ankle leaves the knee two degrees of freedom, sliding on a sphere —
+  // which is exactly the freedom a pole vector exists to steer.
+  // (0.6, 1.8, 0) is distance 1 from the pin at (0, 1, 0), so it is exactly reachable.
+  const target = new THREE.Vector3(0.6, 1.8, 0);
+  IKSolver.solve(main, knee, target);
+
+  check('knee+pin: the pinned ankle held its ground',
+    pos(ankle).distanceTo(footBefore) < 1e-2,
+    'moved ' + pos(ankle).distanceTo(footBefore).toExponential(2));
+  check('knee+pin: the knee still went where it was put',
+    pos(knee).distanceTo(target) < 2e-2, 'err ' + pos(knee).distanceTo(target).toExponential(2));
+  lengthsPreserved('knee+pin', joints, L0);
+
+  // AND THE LIMIT, which is the thing worth knowing: pull the knee further from the pin than
+  // the shin is long and the two goals cannot both be met. The DRAG is what gives (clampToPins)
+  // — the alternative is the pin sliding, and a pin that moves when you pull hard enough is
+  // not holding anything. This is why an elbow pin can feel like it has "too much influence":
+  // past the bone's length it is the pin that wins, not the hand.
+  const far = new THREE.Vector3(2.5, 2.0, 0);
+  IKSolver.solve(main, knee, far);
+  check('knee+pin: an out-of-reach drag is clamped, not the pin dragged',
+    pos(ankle).distanceTo(footBefore) < 1e-2 && pos(knee).distanceTo(far) > 0.5,
+    'ankle moved ' + pos(ankle).distanceTo(footBefore).toExponential(2));
+  check('knee+pin: and the knee sits exactly one shin from the pin',
+    Math.abs(pos(knee).distanceTo(pos(ankle)) - 1) < 1e-2,
+    'dist ' + pos(knee).distanceTo(pos(ankle)).toFixed(4));
+  IKSolver.setPinned(ankle, false, main);
+}
+
+// GRABBING THE ROOT MOVES THE CHARACTER. The root is the anchor for every other drag — with
+// nothing pinned, something has to be, or the whole rig follows your hand on the first pull —
+// but anchoring it while it is ITSELF the effector held it against the only input asking it to
+// move, and the root bone read as locked.
+{
+  const root = J([0, 0, 0]);
+  const a = J([0, 1, 0], root);
+  const b = J([0, 2, 0], a);
+  const joints = [root, a, b];
+  const main = makeMain(joints);
+  const L0 = lengths(joints);
+
+  const target = new THREE.Vector3(0.7, -0.4, 0.2);
+  IKSolver.solve(main, root, target);
+  check('root: grabbing the root moves it', pos(root).distanceTo(target) < 1e-2,
+    'err ' + pos(root).distanceTo(target).toExponential(2) + ' (the root is anchored against its own drag)');
+  // Moving a root is a translation of the whole rig, not a stretch of the first bone.
+  check('root: the children travel with it',
+    pos(a).distanceTo(target.clone().add(new THREE.Vector3(0, 1, 0))) < 1e-2);
+  lengthsPreserved('root', joints, L0);
+}
+
+// ...and every OTHER joint still gets the root as its anchor, which is the behaviour the
+// fixed root was there for in the first place.
+{
+  const root = J([0, 0, 0]);
+  const a = J([0, 1, 0], root);
+  const b = J([0, 2, 0], a);
+  const main = makeMain([root, a, b]);
+  IKSolver.solve(main, b, new THREE.Vector3(1.2, 1.0, 0));
+  check('root: stays put when a LIMB is dragged', pos(root).length() < 1e-6,
+    'the whole character follows your hand on the first drag');
+}
+
 // THE VR GIZMO POSES A BONE. Source guards, because the drag itself needs a headset — what
 // can be pinned down here is the SHAPE of the path: that a joint goes to the solver instead of
 // having its matrix written, and that it does so scoped to one drag rather than by watching

@@ -3,6 +3,7 @@ import { mat4 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
 import Enums from '../misc/Enums.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 // [Rigging POC#2 — phase 1] Skeleton nodes.
 //
@@ -832,22 +833,22 @@ Skeleton.updateVisuals = function (main) {
   const jr = unit * JOINT_R_FRAC;
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
-  const showLen = !!window._boneShowLengths;
+  const showLen = Skeleton.displayFlag('lengths');
   // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
   // outside every capsule gets no weight from any of them — so seeing them is the difference
   // between tuning weights by argument and tuning them by eye.
-  const showCaps = window._boneShowCapsules !== false;
+  const showCaps = Skeleton.displayFlag('capsules');
   // The bone body and its edge overlay, each switchable. Turn both off and only the joint
   // markers remain — which is the pose-mode display: the spheres are what you aim at, and the
   // bones between them are just something to see the sculpt through.
-  const showSolid = window._boneShowSolid !== false;
-  const showWire = window._boneShowWire !== false;
+  const showSolid = Skeleton.displayFlag('solid');
+  const showWire = Skeleton.displayFlag('wire');
   // The joint markers and everything that hangs off them — the IK pin triad, the 6DOF gimbal
   // and the dashed leader to an unreached anchor. Together because they are one layer to the
   // eye: the things you AIM at, as against the bones, which are what you look through. Turning
   // them off is how you see the sculpt with a rig inside it rather than a rig with a sculpt
   // around it.
-  const showJoints = window._boneShowJoints !== false;
+  const showJoints = Skeleton.displayFlag('joints');
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
   const hasChildBone = new Set();
@@ -1606,6 +1607,66 @@ Skeleton.deserialize = function (buffer, meshes, main) {
   } catch (e) {
     console.error('[Skeleton] import restore failed', e);
   }
+};
+
+// ---- bone display flags ---------------------------------------------------------
+//
+// ONE REGISTRY, because the same rule was written out at every call site as
+// `window._boneShowX !== false` — a sentinel that hard-codes "default on" into the READ.
+// Changing a default therefore meant finding every reader, and getting one wrong leaves a
+// flag that is on in the viewport and off in the panel. Name -> [live global, saved option,
+// default].
+//
+// Capsules and weights default OFF: both are diagnostics drawn over the sculpt, and neither
+// is what you want to be looking at the moment you open the tool.
+const DISPLAY_FLAGS = {
+  snapPlane: ['_boneSnapPlane', 'boneSnapPlane', true],
+  snapAxis: ['_boneSnapAxis', 'boneSnapAxis', true],
+  lengths: ['_boneShowLengths', 'boneShowLengths', false],
+  capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
+  weights: ['_boneShowWeights', 'boneShowWeights', false],
+  solid: ['_boneShowSolid', 'boneShowSolid', true],
+  wire: ['_boneShowWire', 'boneShowWire', true],
+  joints: ['_boneShowJoints', 'boneShowJoints', true],
+};
+Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
+
+// Live value first, then the saved one, then the default — the same order every other
+// persisted VR setting is read in, so a toggle takes effect on the current frame.
+Skeleton.displayFlag = function (name) {
+  const e = DISPLAY_FLAGS[name];
+  if (!e) return false;
+  const live = window[e[0]];
+  if (live != null) return !!live;
+  const saved = getOptionsURL()[e[1]];
+  return saved != null ? !!saved : e[2];
+};
+
+Skeleton.setDisplayFlag = function (name, on) {
+  const e = DISPLAY_FLAGS[name];
+  if (!e) return;
+  window[e[0]] = !!on;
+  getOptionsURL.saveOption(e[1], !!on, 0);
+};
+
+// The joint the ray is preselecting, if any — what "clicked on a bone" means for a face
+// button, which is not aimed at anything itself.
+//
+// A HOVERED PIN COUNTS AS ITS JOINT. Pins sit exactly on the joint they hold and win the pick
+// outright (higher rank, wider cone), so the moment you pin a joint the ray stops preselecting
+// the BONE and starts preselecting the PIN. Reading only the bone highlight therefore made the
+// binding work once and then go dead on that joint — you could pin, but never cycle or unpin,
+// which reads as "it cannot pin a pin". The pin knows its joint, so ask it.
+Skeleton.hoveredJoint = function (main) {
+  if (!main) return null;
+  const pinId = main._pinHighlightId;
+  if (pinId != null && pinId >= 0) {
+    const pin = (main.getMeshes() || []).find((m) => m._isPinTarget && m.getID() === pinId);
+    if (pin && pin._pinnedJoint) return pin._pinnedJoint;
+  }
+  const id = main._skelHighlightId;
+  if (id == null || id < 0) return null;
+  return Skeleton.joints(main).find((j) => j.getID() === id) || null;
 };
 
 export default Skeleton;

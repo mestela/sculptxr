@@ -275,6 +275,13 @@ class Grab extends SculptBase {
   // Custom method called by Scene.js for VR tools?
   // Or we just hook into standard update.
   updateXR(picking, isPressed, origin, dir, options) {
+    // A PINS THE BONE YOU ARE POINTING AT — the same press, cycle and undo the bone tool and
+    // Transform use. Read FIRST: the `controllers.length === 0` return just below would
+    // otherwise swallow it, and a face button is not aimed at anything (that exact swallow is
+    // the "A works, then doesn't" bug the reader in SculptBase was written for). Skipped while
+    // a grab is in flight, so the press that takes hold of a joint does not also re-pin it.
+    IKSolver.pinOnA(this, options, !!this._grabbedMesh);
+
     if (!this._logThrottle) this._logThrottle = 0;
     const shouldLog = (this._logThrottle++ % 60 === 0) && window.screenLog;
 

@@ -25,6 +25,7 @@ import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
 import { buildBoneSectionHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
+import { buildTransformSectionHTML, wireTransformSection, syncTransformSection } from '../transformPanel.js';
 
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
@@ -676,6 +677,10 @@ export class MiniPanel extends HTMLVRPanel {
 
     // ── Bones extras ───────────────────────────────────────────────────────
     // Shared with the menu/sidebar build of the same panel — see gui/bonePanel.js.
+    if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
+      wireTransformSection(extras, main, { refresh: () => this.syncFromState() });
+    }
+
     if (idx === Enums.Tools.BONE_DRAW) {
       wireBoneSection(extras, main, {
         refresh: () => this.syncFromState(),
@@ -894,6 +899,8 @@ export class MiniPanel extends HTMLVRPanel {
 
     } else if (idx === Enums.Tools.BONE_DRAW) {
       syncBoneSection(extrasEl, this._main);
+    } else if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
+      syncTransformSection(extrasEl);
 
     } else if (idx === Enums.Tools.TRANSFORM_VR) {
       const mode = tool._mode ?? 0;
@@ -961,6 +968,12 @@ export class MiniPanel extends HTMLVRPanel {
     // here rather than on a face button: the modes do not fit two buttons without each one
     // changing meaning by mode, which is what made the previous binding opaque.
     if (idx === Enums.Tools.BONE_DRAW) return buildBoneSectionHTML(this._main, 'mp');
+
+    // ── Transform ──────────────────────────────────────────────────────────
+    // Shared with the main menu's copy — see gui/transformPanel.js.
+    if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
+      return buildTransformSectionHTML(this._main, 'mp');
+    }
 
     // ── Smooth / Relax ─────────────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {

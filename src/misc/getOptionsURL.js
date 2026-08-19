@@ -191,6 +191,21 @@ var getOptionsURL = function () {
   options.stylusTilt = queryNumber(getVal('stylusTilt'), -45.0, 45.0, 0.0);
   options.gizmoScale = queryNumber(getVal('gizmoScale'), 5.0, 100.0, 15.625); // [5-100], default 15.625 (0.5 of 31.25)
   options.gizmoSizeMul = queryNumber(getVal('gizmoSizeMul'), 0.25, 2.0, 1.0); // user size multiplier for the VR transform gizmo
+  // Centre handle of the VR gizmo carries the controller's ROTATION as well as its
+  // position (6DOF, the way Grab holds a thing). Off = the centre handle translates only.
+  options.xfFreeRotate = queryBool(getVal('xfFreeRotate'), false);
+
+  // Bone display flags — persisted so the rig looks the way you left it. Capsules and
+  // weights default OFF: both are diagnostics drawn over the sculpt. Registry and accessors
+  // live in editing/Skeleton.js (Skeleton.DISPLAY_FLAGS); these defaults must match it.
+  options.boneSnapPlane = queryBool(getVal('boneSnapPlane'), true);
+  options.boneSnapAxis = queryBool(getVal('boneSnapAxis'), true);
+  options.boneShowLengths = queryBool(getVal('boneShowLengths'), false);
+  options.boneShowCapsules = queryBool(getVal('boneShowCapsules'), false);
+  options.boneShowWeights = queryBool(getVal('boneShowWeights'), false);
+  options.boneShowSolid = queryBool(getVal('boneShowSolid'), true);
+  options.boneShowWire = queryBool(getVal('boneShowWire'), true);
+  options.boneShowJoints = queryBool(getVal('boneShowJoints'), true);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 
