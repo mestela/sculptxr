@@ -387,6 +387,16 @@ class Grab extends SculptBase {
       this._isTwoHanded = false;
       const active = rightTrigger ? right : left;
 
+      // BUTTON-ONLY CONTROLLERS HAVE NO POSE. When a menu is under the ray, Scene takes the
+      // menu-guard path and hands the tools `{handedness, buttons}` with no matrix and no ray
+      // — deliberately, so face-button bindings keep working while pointing at a panel (the
+      // path that once passed nothing at all and silently killed every face button).
+      //
+      // The trigger is read straight out of those buttons, so holding it while pointing at a
+      // panel walked into this branch and dereferenced a matrix that was never sent, throwing
+      // once per frame for the rest of the session. There is nothing to grab with here.
+      if (!active || !active.matrix) return;
+
       if (shouldLog) {
         const m = active.matrix;
         const p = vec3.fromValues(m[12], m[13], m[14]);

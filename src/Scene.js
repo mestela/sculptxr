@@ -8683,13 +8683,35 @@ class Scene {
           // so posing under the Bones tool fell through to the shape-key branch and keyed the skin.
           // Ask what MOVED instead: a bone and a pin both carry a transform and no shape, so a
           // transform key is the only kind that means anything for either.
-          const rigNode = (currentMesh && (currentMesh._isBone || currentMesh._isPinTarget))
-          ? currentMesh
-          : ((this._lastRigEdit && (this._lastRigEdit._isBone || this._lastRigEdit._isPinTarget))
-          ? this._lastRigEdit : null);
+          // THE TOOL'S REPORT BEATS THE SELECTION, and the order matters more than it looks.
+          // _lastRigEdit is set SYNCHRONOUSLY the instant a tool takes hold of a rig node.
+          // currentMesh comes from the selection, which is updated AFTER AutoKey has already
+          // run — so it is reliably one gesture STALE. Preferring it keyed the previously
+          // grabbed node every time: grab left pin, right pin, root and the keys land on
+          // root, left, right — the whole sequence rotated by one, which is what the traces
+          // showed (currentMesh at each key equalled lastRigEdit at the one before it).
+          const _rigOf = (m) => ((m && (m._isBone || m._isPinTarget)) ? m : null);
+          const rigNode = _rigOf(this._lastRigEdit) || _rigOf(currentMesh);
+          const _rigEditWas = this._lastRigEdit; // kept for the trace below
           this._lastRigEdit = null; // consumed: the next stroke must not inherit it
           const keyMesh = rigNode || currentMesh;
           const isMove = !!rigNode || (sm && (sm._toolIndex === Enums.Tools.TRANSFORM_VR || sm._toolIndex === Enums.Tools.GRAB));
+          // WHAT DID AUTOKEY JUST KEY? (window._animKeyTrace = true)
+          //
+          // Prints every input to the decision, not just the outcome, because "it keyed the
+          // wrong thing" has several distinct causes that look identical afterwards:
+          //   currentMesh is the SCULPTING pick from stroke start (stale on a rig drag)
+          //   _lastRigEdit is what the tool says it took (unset = the tool never reported)
+          //   rigNode is which of those won; keyMesh is what actually receives the key
+          //   isMove decides transform key vs SHAPE key — a shape key on a bone is a no-op
+          const _nm = (m) => (m ? ((m._permanentStaticLabel || m._typeName || 'mesh') + '#' + m.getID()) : 'none');
+          if (window._animKeyTrace) {
+            console.log(`[autokey] tool=${sm && sm._toolIndex}`
+              + ` currentMesh=${_nm(currentMesh)} lastRigEdit=${_nm(_rigEditWas)}`
+              + ` -> rigNode=${_nm(rigNode)} keyMesh=${_nm(keyMesh)}`
+              + ` isMove=${isMove ? 'transform' : 'SHAPE'}`
+              + ` t=${(window._animCurrentTime || 0).toFixed(3)}`);
+          }
 
           if (isMove) {
             const meshId = keyMesh.getID();

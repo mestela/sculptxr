@@ -2565,6 +2565,66 @@ export default class GuiTimeline {
     }
   }
 
+  // WHY DID THAT CLICK MISS? (window._tlTrace = true)
+  //
+  // Reports the geometry the hit test is working from and, crucially, the NEAREST key to the
+  // cursor with its offset — so a miss says how far off it was and in which axis, which is
+  // what separates the possibilities:
+  //
+  //   dy large, dx small ....... the lane maths disagree (height, scroll, or which lane)
+  //   dx large, dy small ....... the time-to-x mapping disagrees (view range vs drawn range)
+  //   both large ............... the pointer coordinates themselves are wrong (VR mapping)
+  //   both small, still a miss .. the tolerance, or an earlier branch swallowed the click
+  //
+  // Runs before the hit loop and changes nothing, so it reports on hits and misses alike.
+  _traceKeyPick(rx, ry, tracks, trackH, dsScroll, tlX, tlW, loopStart, visibleDuration) {
+    if (!window._tlTrace) return;
+    const headerH = HEADER_H;
+    let best = null;
+    tracks.forEach(([meshId, trackObj], laneIdx) => {
+      const ty = headerH + laneIdx * trackH - dsScroll;
+      const ky = ty + trackH / 2;
+      const times = trackObj.times || [];
+      for (let i = 0; i < times.length; i++) {
+        const kx = tlX + ((times[i] - loopStart) / visibleDuration) * tlW;
+        const d = Math.hypot(rx - kx, ry - ky);
+        if (!best || d < best.d) {
+          best = { d: d, dx: rx - kx, dy: ry - ky, lane: laneIdx, meshId: meshId, i: i, t: times[i] };
+        }
+      }
+    });
+    console.log(`[tl] click rx=${rx.toFixed(1)} ry=${ry.toFixed(1)}`
+      + ` css=${this._cssWidth}x${this._cssHeight} lanes=${tracks.length}`
+      + ` trackH=${trackH.toFixed(1)} scroll=${dsScroll.toFixed(1)}/${(this._dopeMaxScroll || 0).toFixed(1)}`
+      + ` view=[${loopStart.toFixed(2)}+${visibleDuration.toFixed(2)}] tlX=${tlX} tlW=${tlW.toFixed(0)}`
+      + ` | gates marquee=${!!window._animMarqueeMode}`
+      + ` xbox=${!!(window._animShowTransformBox && window._animTransformBox)}`
+      + ` showTransform=${(window._animKeyShow || {}).transform !== false}`
+      + (best
+          ? ` | nearest key lane=${best.lane} mesh=${best.meshId} t=${best.t.toFixed(3)}`
+            + ` dx=${best.dx.toFixed(1)} dy=${best.dy.toFixed(1)} dist=${best.d.toFixed(1)}`
+            + ` (click tolerance is 12 in x AND y; hover ring is 10)`
+          : ' | NO TRANSFORM KEYS in any lane'));
+  }
+
+  // THE DOPESHEET SCROLL, CLAMPED, IN ONE PLACE.
+  //
+  // The DRAW clamped it (to _dopeMaxScroll, which the draw itself computes) and wrote the
+  // clamped value back; every hit test read the raw field. Whenever the raw value sat outside
+  // the range — which is exactly what making the panel TALLER does, since more visible rows
+  // means a smaller maximum scroll — the two disagreed until the next frame wrote the clamp
+  // back. In that window the keys DREW where the clamp put them and were HIT-TESTED where the
+  // raw value put them, so they highlighted under the cursor and then would not select.
+  //
+  // That is the whole of "sometimes I can drag them, sometimes I can't select them at all",
+  // and why it followed a resize: the redraw silently repaired it, so it came and went.
+  _dopeScroll() {
+    const max = this._dopeMaxScroll || 0;
+    const v = Math.min(Math.max(0, this._dopeScrollY || 0), max);
+    this._dopeScrollY = v;
+    return v;
+  }
+
   // WHAT THE GRAPH EDITOR GRAPHS.
   //
   // It used to read _main.getMesh() — the 3D-VIEW selection — in eight places, so the only way
@@ -2887,7 +2947,7 @@ export default class GuiTimeline {
     const tracks = this._dopesheetTracks();
     const headerH = HEADER_H;
     const trackH = TimelineHelper.laneHeight(this._cssHeight - headerH, tracks.length);
-    const dsScroll = this._dopeScrollY || 0;
+    const dsScroll = this._dopeScroll();
     for (let laneIdx = 0; laneIdx < tracks.length; laneIdx++) {
       const [meshId, trackObj] = tracks[laneIdx];
       if (!trackObj.shapeLayers || !trackObj.shapeLayers.length) continue;
@@ -3528,7 +3588,7 @@ export default class GuiTimeline {
         const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
         const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
-        const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll
+        const dsScroll = this._dopeScroll();
         // Loop lanes and match by ACTUAL row Y — the blendshape/layer sub-rows extend below a
         // lane's slot (with one object, trackH is a quarter-height but the rows stack past it),
         // so a slot-based clickedLaneIdx pointed at the wrong/empty lane and the clicks missed.
@@ -3592,7 +3652,7 @@ export default class GuiTimeline {
         const headerH = HEADER_H;
         const laneAreaH = this._cssHeight - headerH;
         const trackH = TimelineHelper.laneHeight(laneAreaH, tracks.length);
-        const dsScroll = this._dopeScrollY || 0; // dopesheet vertical scroll offset
+        const dsScroll = this._dopeScroll();
 
         const mDurVal = (window._animMasterDuration !== undefined && window._animMasterDuration > 0) ? window._animMasterDuration : 2.0;
         const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
@@ -3607,6 +3667,8 @@ export default class GuiTimeline {
 
         const tlX = 200;
         const tlW = this._cssWidth - 200;
+
+        this._traceKeyPick(rx, ry, tracks, trackH, dsScroll, tlX, tlW, loopStart, visibleDuration);
 
         // Check if clicked on Transform Box handles!
         if (window._animShowTransformBox && window._animTransformBox) {
@@ -3721,6 +3783,7 @@ export default class GuiTimeline {
 
         // In marquee mode, skip key-drag detection — always start marquee.
         if (window._animMarqueeMode) {
+          if (window._tlTrace) console.log('[tl] -> MARQUEE MODE is on: key detection skipped entirely');
           this._isDraggingMarquee = true;
           this._marqueeStart = { x: rx, y: ry };
           this._marqueeEnd   = { x: rx, y: ry };
@@ -3987,9 +4050,15 @@ export default class GuiTimeline {
           });
         }
 
-        if (keyFound) return;
+        if (keyFound) {
+          if (window._tlTrace) console.log('[tl] -> KEY TAKEN, dragging');
+          return;
+        }
       }
 
+      // Falling through to a marquee IS the failure the user reports as "it will not select":
+      // the click was in the lane, near the key, and nothing claimed it.
+      if (window._tlTrace) console.log('[tl] -> no key claimed the click; starting a marquee');
       this._isDraggingMarquee = true;
       this._marqueeStart = { x: rx, y: ry };
       this._marqueeEnd = { x: rx, y: ry };
@@ -5071,7 +5140,7 @@ export default class GuiTimeline {
     // 1/3/7 picks exactly those. Mirrors drawDopeSheet's row layout.
     tracks.forEach(([meshId, trackObj], laneIdx) => {
       if (!trackObj.shapeLayers || !trackObj.shapeLayers.length) return;
-      const ty2 = headerH + (laneIdx * trackH) - (this._dopeScrollY || 0);
+      const ty2 = headerH + (laneIdx * trackH) - this._dopeScroll();
       const bsCount = trackObj.blendshapeTracks ? trackObj.blendshapeTracks.size : 0;
       for (let li = 0; li < trackObj.shapeLayers.length; li++) {
         const L = trackObj.shapeLayers[li];

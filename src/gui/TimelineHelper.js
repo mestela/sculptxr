@@ -98,8 +98,11 @@ export default class TimelineHelper {
       contentBottom = Math.max(contentBottom, idx * trackH + laneContent);
     });
     uiState._dopeMaxScroll = Math.max(0, contentBottom - laneAreaH);
-    const scrollY = Math.min(uiState._dopeScrollY || 0, uiState._dopeMaxScroll);
-    uiState._dopeScrollY = scrollY;
+    // Clamp through the SAME accessor the hit tests use, now that _dopeMaxScroll is known for
+    // this frame — drawing at one offset while hit-testing at another is what made the keys
+    // highlight and then refuse to be picked.
+    const scrollY = uiState._dopeScroll ? uiState._dopeScroll()
+                                        : Math.min(uiState._dopeScrollY || 0, uiState._dopeMaxScroll);
 
     ctx.save();
     ctx.beginPath();

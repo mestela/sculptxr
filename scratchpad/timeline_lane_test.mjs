@@ -66,5 +66,47 @@ check('the drawing uses it too', /TimelineHelper\.laneHeight\(laneAreaH, tracks\
   check('more tracks never means taller rows', ok);
 }
 
+// THE DOPESHEET SCROLL. The draw clamped it and wrote the clamp back; every hit test read the
+// raw field. Whenever the raw value sat outside the range — which is what making the panel
+// TALLER does, since more visible rows means a smaller maximum scroll — the keys DREW at one
+// offset and were HIT-TESTED at another, so they highlighted under the cursor and then would
+// not select. The next redraw repaired it silently, which is why it came and went.
+{
+  const TLsrc = fs.readFileSync(REPO + '/src/gui/GuiTimeline.js', 'utf8');
+  const code = TLsrc.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+
+  check('the clamp has one implementation', /_dopeScroll\(\) \{/.test(code));
+
+  // A raw read is only legitimate where the value is being WRITTEN (the wheel and the pan
+  // start, both of which clamp as they write) and inside the accessor itself.
+  const raw = (code.match(/this\._dopeScrollY \|\| 0/g) || []).length;
+  check('no hit test reads the raw scroll', raw <= 3,
+    `${raw} raw reads — a hit test on the unclamped value disagrees with the drawing`);
+  const routed = (code.match(/this\._dopeScroll\(\)/g) || []).length;
+  check('every hit test goes through the accessor', routed >= 4, `${routed}`);
+  check('the drawing uses it too',
+    /uiState\._dopeScroll \? uiState\._dopeScroll\(\)/.test(TH),
+    'the draw clamping on its own is exactly the bug');
+
+  // The accessor's own arithmetic, run as shipped.
+  const i = code.indexOf('_dopeScroll() {');
+  const inner = code.slice(code.indexOf('{', i) + 1, code.indexOf('\n  }', i));
+  const fn = new Function(inner);
+  const call = (cur, max) => {
+    const ctx = { _dopeScrollY: cur, _dopeMaxScroll: max };
+    const v = fn.call(ctx);
+    return [v, ctx._dopeScrollY];
+  };
+  check('a scroll past the end is clamped', call(500, 120)[0] === 120, String(call(500, 120)[0]));
+  check('...and the clamp is written back, so the next read agrees',
+    call(500, 120)[1] === 120,
+    'leaving the field unclamped means the very next raw read diverges again');
+  check('a negative scroll is clamped too', call(-40, 120)[0] === 0);
+  check('a scroll in range is left alone', call(60, 120)[0] === 60);
+  // The case that produced the bug: the panel grows, max shrinks below the current offset.
+  check('growing the panel does not strand the scroll past the new end',
+    call(300, 0)[0] === 0 && call(300, 0)[1] === 0);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

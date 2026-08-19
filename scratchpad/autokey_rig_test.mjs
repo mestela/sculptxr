@@ -37,13 +37,29 @@ for (const [name, src] of blocks) {
   const i = src.indexOf('window._animAutoKey && window._animationRegistry');
   check(`${name}: the AutoKey block is still there`, i !== -1);
   if (i === -1) continue;
-  const B = strip(src.slice(i, i + 2600));
+  // Bounded by BRACES, not by a character count. A fixed window silently truncated the block
+  // the moment a diagnostic was added to it, and two checks failed on code that was still
+  // perfectly correct — a test reporting on its own slice rather than on the source.
+  const from = src.slice(i);
+  const iMove = from.indexOf('if (isMove)');
+  let depth = 0, k = from.indexOf('{', iMove), end = k;
+  for (; k < from.length; k++) {
+    if (from[k] === '{') depth++;
+    else if (from[k] === '}') { depth--; if (depth === 0) { end = k; break; } }
+  }
+  const B = strip(from.slice(0, end + 1));
 
   check(`${name}: the gate asks what MOVED, not which tool`,
     /const isMove = !!rigNode \|\|/.test(B),
     'a tool-only gate sends a posed joint to the shape-key branch');
   check(`${name}: a bone and a pin both count as a rig node`,
-    /_isBone \|\| currentMesh\._isPinTarget/.test(B));
+    /_isBone \|\| m\._isPinTarget/.test(B));
+  // ORDER, not just presence. The tool's report is set synchronously when it takes hold; the
+  // selection is updated after AutoKey has run and is reliably one gesture stale. Preferring
+  // the selection keyed the PREVIOUS node every time — the whole sequence rotated by one.
+  check(`${name}: the tool's report is preferred over the selection`,
+    /_rigOf\(this\._lastRigEdit\) \|\| _rigOf\(currentMesh\)/.test(B),
+    'the selection is stale by one gesture; preferring it keys the previously grabbed node');
   check(`${name}: it falls back to what the rig tool moved`,
     /_lastRigEdit/.test(B),
     'the selection is set on a timeout and is stale by the time AutoKey runs');

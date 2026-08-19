@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.74 - Selection lock is saved (SKEL v4)';
+export const VERSION = 'v3.19.78 - Autokey the node the tool took, not the stale selection';
