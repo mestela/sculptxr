@@ -11,7 +11,26 @@ import { fileURLToPath } from 'url';
 
 const REPO = '/Users/mattestela/sculptxr';
 const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
-const SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
+let SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
+
+// Defect injections, so the steering checks have been seen to fail (standing lesson 1):
+//   IK_INJECT=noswivel  the steering goal does nothing at all
+//   IK_INJECT=axial     swivel toward the goal WITHOUT removing the component along the axis,
+//                       which is the plausible-looking version that lands short of the circle's
+//                       closest point because it asks for an angle the rotation cannot deliver
+{
+  const inj = process.env.IK_INJECT || '';
+  if (inj === 'noswivel') {
+    const a = '  if (!soft || !soft.size) return 0;';
+    if (!SRC.includes(a)) throw new Error('inject noswivel: anchor moved');
+    SRC = SRC.replace(a, '  return 0;');
+  } else if (inj === 'axial') {
+    const a = `  _vPu.addScaledVector(_vAx, -_vPu.dot(_vAx));`;
+    const b = `  _vPv.addScaledVector(_vAx, -_vPv.dot(_vAx));`;
+    if (!SRC.includes(a) || !SRC.includes(b)) throw new Error('inject axial: anchors moved');
+    SRC = SRC.replace(a, '').replace(b, '');
+  }
+}
 
 const body = SRC.split('\n')
   .filter((l) => !/^import\s/.test(l))
@@ -402,9 +421,18 @@ function lengthsPreserved(name, joints, before) {
   check('cycle: strengthening a pin reuses the same object', IKSolver.pinObject(j) === pinObj);
   check('cycle: and does not add a second null', m9.getMeshes().length === before + 1);
 
+  // The cycle gained a fourth stop when steering goals arrived: a soft pin is a pin in every
+  // structural sense (same object, same anchor, same undo) and differs only in what the solver
+  // does with it, so it belongs on the same button rather than on a new one.
   const c3 = IKSolver.cyclePin(j, m9);
-  check('cycle: full -> none', c3.mode === IKSolver.PIN_NONE);
-  check('cycle: unpinning hands the object back to be removed', c3.removed === pinObj);
+  check('cycle: full -> steer', c3.mode === IKSolver.PIN_SOFT);
+  check('cycle: a steering goal still reads as pinned', IKSolver.isPinned(j));
+  check('cycle: and still reuses the same object', IKSolver.pinObject(j) === pinObj);
+  check('cycle: and does not add a null of its own', m9.getMeshes().length === before + 1);
+
+  const c4 = IKSolver.cyclePin(j, m9);
+  check('cycle: steer -> none', c4.mode === IKSolver.PIN_NONE);
+  check('cycle: unpinning hands the object back to be removed', c4.removed === pinObj);
   check('cycle: and the joint no longer reads as pinned', !IKSolver.isPinned(j));
 
   // THE ANCHOR IS THE OBJECT'S TRANSFORM. This is the whole point of the change: move the pin
@@ -1461,6 +1489,91 @@ function spread(runs) {
   for (let k = 0; k < 16; k++) if (restBefore[k] !== rig.hips._ikRest[k]) same = false;
   check('capturing rest again leaves an existing rest alone', same,
     'a blanket capture would enshrine the current pose as the rest skeleton');
+}
+
+// --- the pole vector, as a steering goal ------------------------------------------------
+//
+// A pinned ankle one bone below the knee confines the knee to a SPHERE about the pin; fix the
+// hip too and it is the intersection of two spheres, which is a CIRCLE about the hip-to-ankle
+// axis. Nothing used to steer where on that circle the knee sat. A soft pin does, and the
+// claim being tested is the strong one: it costs the hard pins NOTHING, because the rotation
+// that steers is about the axis through both of them and every point of that axis is fixed.
+function poleLeg() {
+  const hips = J([0, 2, 0]);
+  const knee = J([0.05, 1, 0.05], hips);
+  const ankle = J([0, 0, 0], knee);
+  const joints = [hips, knee, ankle];
+  const main = makeMain(joints);
+  IKSolver.setPin(ankle, IKSolver.PIN_POS, main);
+  return { main, joints, hips, knee, ankle };
+}
+
+{
+  window._ikWritten = null;
+  const ANKLE = new THREE.Vector3(0, 0, 0);
+
+  // Where the knee lands with no steering at all.
+  const plain = poleLeg();
+  Skeleton.moveJoint(plain.main, plain.hips, new THREE.Vector3(0.1, 1.85, 0));
+  IKSolver.holdPins(plain.main);
+  const free = pos(plain.knee);
+
+  // The same pose, with a steering goal well off to one side.
+  const steered = poleLeg();
+  const L0 = lengths(steered.joints);
+  Skeleton.moveJoint(steered.main, steered.hips, new THREE.Vector3(0.1, 1.85, 0));
+  IKSolver.setPin(steered.knee, IKSolver.PIN_SOFT, steered.main);
+  const goalPin = IKSolver.pinObject(steered.knee);
+  // Out along +Z: a direction the knee can only reach by swivelling about the hip-ankle axis.
+  const goal = new THREE.Vector3(0, 1, 1.5);
+  goalPin._m.makeTranslation(goal.x, goal.y, goal.z);
+  IKSolver.holdPins(steered.main);
+
+  const before = free.distanceTo(goal);
+  const after = pos(steered.knee).distanceTo(goal);
+  check('the steering goal actually moves the knee', pos(steered.knee).distanceTo(free) > 1e-3,
+    'moved ' + pos(steered.knee).distanceTo(free).toExponential(2));
+  check('and moves it TOWARDS the goal', after < before - 1e-3,
+    before.toFixed(4) + ' -> ' + after.toFixed(4));
+
+  // The claim that makes this a priority rather than a competing goal.
+  check('steering costs the hard pin nothing', pos(steered.ankle).distanceTo(ANKLE) < 1e-9,
+    'ankle drifted ' + pos(steered.ankle).distanceTo(ANKLE).toExponential(2));
+  check('and leaves the fixed root where it is',
+    pos(steered.hips).distanceTo(new THREE.Vector3(0.1, 1.85, 0)) < 1e-9);
+  lengthsPreserved('steering', steered.joints, L0);
+
+  // The knee is confined to a circle, so it cannot REACH a goal off that circle — and it must
+  // not stretch anything trying. What it can do is get as close as the circle allows, which is
+  // the closest point: no other point of the circle is nearer the goal.
+  const axis = new THREE.Vector3().subVectors(ANKLE, pos(steered.hips)).normalize();
+  const k = pos(steered.knee);
+  let best = after;
+  for (let i = 0; i < 360; i++) {
+    const q = new THREE.Quaternion().setFromAxisAngle(axis, i * Math.PI / 180);
+    const p = k.clone().sub(pos(steered.hips)).applyQuaternion(q).add(pos(steered.hips));
+    best = Math.min(best, p.distanceTo(goal));
+  }
+  check('it lands on the CLOSEST point of the circle, not merely a better one',
+    after < best + 1e-4, 'landed ' + after.toFixed(5) + ', best on the circle ' + best.toFixed(5));
+}
+
+// A steering goal with no hard anchor below it has no circle to slide on. It must then do
+// NOTHING rather than approximate — silently turning a steering goal into a weak target is how
+// a feature that is supposed to cost the hard pins nothing starts costing them something.
+{
+  window._ikWritten = null;
+  const rig = poleLeg();
+  IKSolver.setPin(rig.ankle, IKSolver.PIN_NONE, rig.main);   // no hard pin anywhere
+  IKSolver.setPin(rig.knee, IKSolver.PIN_SOFT, rig.main);
+  const pin = IKSolver.pinObject(rig.knee);
+  pin._m.makeTranslation(1.5, 1, 1.5);
+  const was = rig.joints.map((j) => pos(j));
+  IKSolver.holdPins(rig.main);
+  let worst = 0;
+  rig.joints.forEach((j, i) => { worst = Math.max(worst, pos(j).distanceTo(was[i])); });
+  check('a steering goal with nothing to swivel about does nothing', worst < 1e-9,
+    'moved ' + worst.toExponential(2));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

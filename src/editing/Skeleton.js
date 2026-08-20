@@ -35,6 +35,10 @@ const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber pr
 // also reads from across the scene, where a small triad does not.
 const PIN_POS_COLOR = 0x89b4fa;   // 3DOF: held in place, free to rotate
 const PIN_FULL_COLOR = 0xf38ba8;  // 6DOF: position and orientation both held
+// A STEERING GOAL, not a hold — green, and deliberately far from both pin colours, because the
+// one thing that must be legible at a glance is that this marker does not anchor anything. It
+// slides the joint around the freedom the hard pins leave and gives way completely to them.
+const PIN_SOFT_COLOR = 0xa6e3a1;
 // The leader from a joint to the pin it has not reached. Deliberately NOT the 6DOF red above:
 // "this pin holds orientation" and "this pin is not being met" are independent facts, and
 // sharing a colour would conflate them.
@@ -149,6 +153,20 @@ function triadGeometry() {
   ]));
 }
 
+// The STEERING goal's marker, and the shape is doing real work. A triad says "this point is
+// held, along these axes"; rings say "and this orientation too". A steering goal holds
+// nothing and has no axes — it is a place to lean towards, and the joint slides around a
+// circle to get as near it as it can. So it gets a solid with no axes at all: nothing about it
+// invites you to read an axis off it, which is the one wrong idea available here.
+//
+// A tetrahedron rather than a sphere or a cube: it is unmistakable at a glance next to a
+// triad, it is the only marker in the rig with a flat face, and it has an obvious point.
+let _tetraGeo = null;
+function tetraGeometry() {
+  if (_tetraGeo) return _tetraGeo;
+  return (_tetraGeo = new THREE.TetrahedronGeometry(1.15));
+}
+
 let _gimbalGeo = null;
 function gimbalGeometry() {
   if (_gimbalGeo) return _gimbalGeo;
@@ -164,10 +182,15 @@ function gimbalGeometry() {
 }
 
 // makePair paints one colour; these carry their colours per vertex instead.
-function makePinPart(geo) {
+// `vertexColored` is not decoration: the triad and the gimbal carry a colour per axis in the
+// geometry, and the material's own colour multiplies it. A geometry with NO colour attribute
+// under vertexColors reads every vertex as black and multiplies the material colour away, so
+// the tetrahedron has to opt out — the symptom is a marker that is present, correctly placed,
+// and invisibly dark.
+function makePinPart(geo, vertexColored = true) {
   const p = makePair(geo, 0xffffff);
   for (const o of [p.solid, p.ghost]) {
-    o.material.vertexColors = true;
+    o.material.vertexColors = vertexColored;
     o.material.needsUpdate = true;
   }
   p.solid.renderOrder = p.ghost.renderOrder = 9998;
@@ -720,6 +743,12 @@ function skelGroup(main) {
   return g;
 }
 
+// The overlay group, for anything that draws alongside the rig. Exported so the motion trail
+// can live in its own module: a trail needs the animation registry AND the solver, and Skeleton
+// can import neither (IKSolver imports Skeleton, and closing that cycle leaves the whole rig
+// undefined at load — see the findings doc).
+Skeleton.overlayGroup = skelGroup;
+
 function ensureEntry(main, id) {
   const g = skelGroup(main);
   main._skelVis = main._skelVis || new Map();
@@ -753,6 +782,7 @@ function ensureEntry(main, id) {
       pinLink: link,
       pinT: makePinPart(triadGeometry()),
       pinG: makePinPart(gimbalGeometry()),
+      pinS: makePinPart(tetraGeometry(), false),
       bone: makePair(boneGeometry(), BONE_COLOR),
       joint: makePair(jointGeometry(), JOINT_COLOR),
       wire: { solid: wire, ghost: wireGhost },
@@ -765,7 +795,8 @@ function ensureEntry(main, id) {
     };
     g.add(e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
           e.wire.solid, e.wire.ghost, e.label.sprite, e.pinLink,
-          e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost);
+          e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
+          e.pinS.solid, e.pinS.ghost);
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
     main._skelVis.set(id, e);
   }
@@ -781,7 +812,7 @@ function disposeEntry(main, id) {
     g.remove(e.pinLink);
     e.pinLink.geometry.dispose(); e.pinLink.material.dispose();
   }
-  for (const p of [e.bone, e.joint, e.wire, e.pinT, e.pinG, ...caps]) {
+  for (const p of [e.bone, e.joint, e.wire, e.pinT, e.pinG, e.pinS, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     p.solid.material.dispose(); p.ghost.material.dispose();
@@ -894,6 +925,7 @@ Skeleton.updateVisuals = function (main) {
       e.label.sprite.visible = false;
       e.pinT.solid.visible = e.pinT.ghost.visible = false;
       e.pinG.solid.visible = e.pinG.ghost.visible = false;
+      e.pinS.solid.visible = e.pinS.ghost.visible = false;
       e.pinLink.visible = false;
       hideCaps(e);
       continue;
@@ -954,9 +986,13 @@ Skeleton.updateVisuals = function (main) {
     // The pin marker grows and warms the same way a joint does under the cursor: same signal,
     // same meaning, so the two read as one preselection rather than two conventions.
     const pinHot = pinObj && pinObj.getID() === (main._pinHighlightId ?? -1);
+    // A steering goal is NOT a triad with a different colour — it is its own marker, and the
+    // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
+    // which quietly gave the steering goal a set of orientation rings it does not have.
     const pinParts = [
-      [e.pinT, showJoints && pinMode > 0, jr * (pinHot ? 3.0 : 2.2)],
-      [e.pinG, showJoints && pinMode > 1, jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinT, showJoints && (pinMode === 1 || pinMode === 2), jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinG, showJoints && pinMode === 2, jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinS, showJoints && pinMode === 3, jr * (pinHot ? 2.0 : 1.5)],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
@@ -982,7 +1018,8 @@ Skeleton.updateVisuals = function (main) {
         if (!on) continue;
         if (o.material && o.material.color) {
           o.material.color.setHex(pinHot ? HILITE_COLOR
-            : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR));
+            : (pinMode === 3 ? PIN_SOFT_COLOR
+              : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR)));
         }
         o.position.copy(_vPin);
         o.quaternion.copy(_qPin);
@@ -1062,6 +1099,8 @@ Skeleton.updateVisuals = function (main) {
     const rigging = main.getSculptManager?.()?.getToolIndex?.() === Enums.Tools.BONE_DRAW;
     const ident = rigging ? Skeleton.boneColor(main, parent) : null;
     const restTint = ident ? ident.getHex() : BONE_COLOR;
+    // A steering goal does not tint the bone: the bone below a HARD pin is being held, which is
+    // worth colouring, and the bone below a steering goal is not held at all.
     const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : restTint);
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
     // Its whole job is to make the bone's roll and taper legible, and it can only do that by
@@ -1354,6 +1393,174 @@ Skeleton.mirrorPoint = function (p, plane, out) {
   out = out || new THREE.Vector3();
   const d = out.copy(p).sub(plane.origin).dot(plane.normal);
   return out.copy(p).addScaledVector(plane.normal, -2 * d);
+};
+
+// ---- mirror pose ---------------------------------------------------------------
+//
+// Pose one arm, mirror it onto the other. Cheap to build because the hard part was already
+// done: `_boneMirror` links each side joint to its twin, they are set as the chain is drawn
+// and they survive a save, so there is no name matching, no "_L"/"_R" string surgery, and no
+// guessing which joint pairs with which.
+//
+// THE ROTATION IS CONJUGATED, NOT COPIED. Reflecting an orthonormal frame gives an improper
+// one — a left-handed basis is not a rotation and a joint cannot hold it. The transform that
+// IS a rotation is P·M·P, reflecting both the input and the output of the joint's own
+// rotation: two sign flips, so the determinant comes back to +1. Copying the rotation across
+// instead produces a twin that is rotated the same way rather than the opposite way, which
+// looks right on a shoulder shrug and inside out on anything with a twist in it.
+//
+// Positions come out of the same product for free — P·M·P applied to the translation column
+// is the plane reflection of the joint's position, which is what `mirrorPoint` does on its
+// own — so one matrix expression covers the whole transform.
+const _mMirror = new THREE.Matrix4(), _mSrc = new THREE.Matrix4();
+
+// The reflection matrix for a plane, as a Matrix4: I - 2nnT about the plane's origin.
+function reflectionMatrix(plane, out) {
+  const n = plane.normal, o = plane.origin;
+  const d = 2 * n.dot(o);
+  out.set(
+    1 - 2 * n.x * n.x, -2 * n.x * n.y, -2 * n.x * n.z, n.x * d,
+    -2 * n.y * n.x, 1 - 2 * n.y * n.y, -2 * n.y * n.z, n.y * d,
+    -2 * n.z * n.x, -2 * n.z * n.y, 1 - 2 * n.z * n.z, n.z * d,
+    0, 0, 0, 1);
+  return out;
+}
+
+// Which side of the plane a joint is on. Used to pick the SOURCE side from the selection:
+// you have just been holding the arm you posed, so the joint that happens to be selected is
+// the best statement of "this side is the one I mean" available without asking.
+Skeleton.jointSide = function (joint, plane) {
+  return Skeleton.planeDistance(Skeleton.jointPos(joint), plane);
+};
+
+// Mirror the pose across the sculpt's symmetry plane.
+//
+// `side` picks the source: a positive number takes the joints on the plane's +normal side,
+// negative the other, and 0 (or absent) means SWAP — every twin pair exchanges poses, which is
+// the "flip the pose" command rather than the "copy one side" one.
+//
+// Joints ON the plane are left alone by design: a spine joint is its own reflection only if
+// its rotation happens to be symmetric, and silently squaring up a deliberately asymmetric
+// spine is not what "mirror the arms" means. Their twin link is null anyway.
+Skeleton.mirrorPose = function (main, side) {
+  const plane = Skeleton.symmetryPlane(main);
+  if (!plane) return { ok: false, why: 'symmetry is off — turn it on to mirror a pose' };
+  const joints = Skeleton.joints(main);
+  const has = new Set(joints);
+  reflectionMatrix(plane, _mMirror);
+
+  // Every unordered twin pair, once.
+  const pairs = [];
+  const seen = new Set();
+  for (const j of joints) {
+    const t = j._boneMirror;
+    if (!t || !has.has(t) || seen.has(j) || seen.has(t)) continue;
+    seen.add(j); seen.add(t);
+    pairs.push([j, t]);
+  }
+  if (!pairs.length) return { ok: false, why: 'no mirrored joints (draw the rig with Snap Plane on)' };
+
+  // The mirrored transform of a joint, in MODEL space. Read before anything is written: a
+  // parent that has already moved would change what its children reflect to, and a swap reads
+  // both sides of every pair.
+  const target = new Map();
+  const mirrorOf = (j) => {
+    _mSrc.fromArray(j.getModelSpaceMatrix());
+    return new THREE.Matrix4().multiplyMatrices(_mMirror, _mSrc).multiply(_mMirror);
+  };
+
+  // Which joint drove which, kept because the PINS have to be mirrored from the same source —
+  // and a pin's anchor is not derivable from the posed joint. A pin can be unreachable (the
+  // joint falls short of it, and the gap is the whole diagnostic) and a steering goal is
+  // deliberately somewhere the joint is not, so snapping the twin's pin onto the twin's joint
+  // gets both of those wrong.
+  const srcOf = new Map();
+  let n = 0;
+  for (const [a, b] of pairs) {
+    const da = Skeleton.jointSide(a, plane);
+    let src = null, dst = null;
+    if (!side) {                       // swap
+      target.set(a, mirrorOf(b)); srcOf.set(a, b);
+      target.set(b, mirrorOf(a)); srcOf.set(b, a);
+      n += 2;
+      continue;
+    }
+    src = (da * side > 0) ? a : b;     // the joint on the requested side drives
+    dst = (src === a) ? b : a;
+    target.set(dst, mirrorOf(src));
+    srcOf.set(dst, src);
+    n++;
+  }
+
+  // The pin setup, read BEFORE anything is written. A swap needs both sides' pins as they were,
+  // and creating one twin's pin would otherwise be visible to the other twin's turn.
+  const pinWas = new Map();
+  for (const j of srcOf.values()) {
+    const pin = j._boneIKPinObj;
+    pinWas.set(j, pin ? {
+      mode: (j._boneIKPin | 0) & 3,
+      m: new THREE.Matrix4().fromArray(pin.getModelSpaceMatrix()),
+    } : null);
+  }
+
+  // Roots first: setModelSpaceMatrix converts through the parent's CURRENT world matrix, so a
+  // child written before its parent would be placed relative to the old one. Same ordering the
+  // loader and the bind-pose restore need, for the same reason.
+  const depth = (m) => { let d = 0; for (let p = m._parentMesh; p; p = p._parentMesh) d++; return d; };
+  const ordered = Array.from(target.keys()).sort((x, y) => depth(x) - depth(y));
+  for (const j of ordered) {
+    j.setModelSpaceMatrix(target.get(j).elements);
+    Skeleton.syncThree(j);
+  }
+
+  // MIRRORING A POSE MIRRORS THE PIN SETUP, not just the joints — a pin is what holds a foot
+  // on the floor, and a mirrored leg with the old anchors still in place is pulled straight
+  // back where it came from by the next solve, which reads as the mirror not having worked.
+  //
+  // Three cases, and only the first was handled before:
+  //   both sides pinned  — the twin's anchor becomes the reflection of the SOURCE's anchor
+  //   source only        — the twin gets a pin of the same mode, made where the reflection is
+  //   twin only          — that pin goes, because the pose being copied does not have one
+  //
+  // The anchor is conjugated exactly like the pose (P·M·P), which matters for a 6DOF pin:
+  // reflecting its orientation alone would hand the twin an improper frame to hold.
+  let pinned = 0;
+  const added = [], removed = [];
+  for (const dst of ordered) {
+    const src = srcOf.get(dst);
+    if (!src) continue;
+    const was = pinWas.get(src);
+    const dstPin = dst._boneIKPinObj;
+
+    if (!was) {
+      if (dstPin) {
+        dst._boneIKPinObj = null;
+        dst._boneIKPin = 0;
+        removed.push(dstPin);
+        pinned++;
+      }
+      continue;
+    }
+
+    let pin = dstPin;
+    if (!pin) {
+      pin = Skeleton.makePin(main, dst);
+      if (!pin) continue;              // no scene to build one in
+      dst._boneIKPinObj = pin;
+      added.push(pin);
+    }
+    pin._pinMode = was.mode;
+    dst._boneIKPin = was.mode;
+    const m = new THREE.Matrix4().multiplyMatrices(_mMirror, was.m).multiply(_mMirror);
+    pin.setModelSpaceMatrix(m.elements);
+    Skeleton.syncThree(pin);
+    pinned++;
+  }
+
+  // The scene add/remove is the CALLER's, exactly as it is for Clear Pins: taking an object out
+  // of the scene and putting it back is the undoable half, and the caller is the one holding
+  // the undo record.
+  return { ok: true, joints: n, pins: pinned, added: added, removed: removed };
 };
 
 // ---- persistence ---------------------------------------------------------------
@@ -1712,6 +1919,10 @@ const DISPLAY_FLAGS = {
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
   joints: ['_boneShowJoints', 'boneShowJoints', true],
+  // The path the selected joint takes over the timeline. Off by default: it costs a full
+  // evaluation per sample, and it is an animation aid rather than something you want while
+  // sculpting.
+  trails: ['_boneShowTrails', 'boneShowTrails', false],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
 

@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.94 - Deterministic IK evaluation';
+export const VERSION = 'v3.19.96 - Steering tetra + mirror pins';

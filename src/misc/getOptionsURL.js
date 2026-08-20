@@ -206,6 +206,7 @@ var getOptionsURL = function () {
   options.boneShowSolid = queryBool(getVal('boneShowSolid'), true);
   options.boneShowWire = queryBool(getVal('boneShowWire'), true);
   options.boneShowJoints = queryBool(getVal('boneShowJoints'), true);
+  options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

@@ -1,3 +1,4 @@
+import { mat4 } from 'gl-matrix';
 import Enums from '../misc/Enums.js';
 import Skeleton from '../editing/Skeleton.js';
 import Skinning from '../editing/Skinning.js';
@@ -76,6 +77,7 @@ export function buildBoneSectionHTML(main, style) {
   const solid = f('solid');
   const wire  = f('wire');
   const jnts  = f('joints');
+  const trails = f('trails');
   const radPct = Math.round(Skeleton.radiusFraction() * 100);
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
@@ -94,6 +96,10 @@ export function buildBoneSectionHTML(main, style) {
       <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
       <button class="${c.action}" id="bone-key">Key Pose</button>
     </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
+      <button class="${c.action}" id="bone-flip">Flip Pose</button>
+    </div>
     <div class="${c.toggles}">
       ${flag('snap', 'Snap Plane', snap)}
       ${flag('axis', 'Snap Axis', axis)}
@@ -107,6 +113,9 @@ export function buildBoneSectionHTML(main, style) {
       ${flag('solid', 'Solid', solid)}
       ${flag('wire', 'Wire', wire)}
       ${flag('joints', 'Joints', jnts)}
+    </div>
+    <div class="${c.toggles}">
+      ${flag('trails', 'Trails', trails)}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule</span>
@@ -188,6 +197,7 @@ export function wireBoneSection(root, main, opts) {
   flag('solid', 'solid');
   flag('wire', 'wire');
   flag('joints', 'joints');
+  flag('trails', 'trails');
 
   // Toggling the weight preview has to repaint or restore immediately — the flag alone
   // changes nothing until something re-solves.
@@ -245,6 +255,73 @@ export function wireBoneSection(root, main, opts) {
     say(`Bones: keyed ${n} joints at ${t.toFixed(1)}` + (pins.length ? ` (+${pins.length} pins)` : ''));
     main.render?.();
   });
+
+  // MIRROR takes the side you are holding. Posing an arm leaves that arm's joint selected —
+  // grabbing one selects it — so the selection is the best available statement of "this side is
+  // the one I mean", and it needs no extra control to say it. With nothing suitable selected
+  // it refuses and says so rather than picking a side and silently discarding an arm of work.
+  //
+  // FLIP swaps both sides and needs no selection at all.
+  const doMirror = (side, label) => {
+    // Mirroring can CREATE and DESTROY pins, not merely move them — a leg pinned on one side
+    // and not the other is the ordinary case — so the undo record has to carry the pin
+    // attachments and the scene membership, not just a pile of matrices.
+    const beforePins = IKSolver.capturePins(main);
+    const beforeMx = IKSolver.captureAll(main)
+      .concat(beforePins.map(([, , p]) => p).filter(Boolean)
+        .map((p) => [p, mat4.clone(p.getMatrix())]));
+
+    const res = Skeleton.mirrorPose(main, side);
+    if (!res.ok) { say('Bones: ' + res.why, false); return; }
+    for (const p of res.removed) main.removeMeshSilent?.(p);
+    say(`Bones: ${label} — ${res.joints} joints` + (res.pins ? `, ${res.pins} pins` : ''));
+
+    const afterPins = IKSolver.capturePins(main);
+    const afterMx = IKSolver.captureAll(main)
+      .concat(afterPins.map(([, , p]) => p).filter(Boolean)
+        .map((p) => [p, mat4.clone(p.getMatrix())]));
+
+    // Undo puts THE SAME objects back rather than building new ones, so a pin that comes back
+    // is the pin that was there — same id, same outliner row, same keys hanging off it.
+    const apply = (mx, pins, put, take) => {
+      for (const p of take) main.removeMeshSilent?.(p);
+      for (const p of put) main.addMeshSilent?.(p);
+      for (const j of Skeleton.joints(main)) { j._boneIKPinObj = null; j._boneIKPin = 0; }
+      IKSolver.restorePins(main, pins);
+      Skeleton.restoreLocal(mx);
+      // The pose moved and the pins moved with it, so the rig has to settle onto them again.
+      window._ikPinsDirty = true;
+      Skeleton.updateVisuals(main);
+      main.render();
+    };
+    window._ikPinsDirty = true;
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(beforeMx, beforePins, res.removed, res.added),
+      () => apply(afterMx, afterPins, res.added, res.removed),
+      false, label);
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  };
+
+  q('mirror')?.addEventListener('click', () => {
+    // The SELECTION, not the hover: pressing this button means pointing at a panel, so there
+    // is no hover to read, and a stale one would be worse than none.
+    const sel = main.getMesh?.();
+    if (!sel || !sel._isBone) {
+      say('Bones: select a joint on the side you want to copy FROM', false);
+      return;
+    }
+    const plane = Skeleton.symmetryPlane(main);
+    if (!plane) { say('Bones: symmetry is off — turn it on to mirror a pose', false); return; }
+    const d = Skeleton.jointSide(sel, plane);
+    if (Math.abs(d) < 1e-6) {
+      say('Bones: that joint is on the centreline — pick one on the side to copy from', false);
+      return;
+    }
+    doMirror(d > 0 ? 1 : -1, 'Mirror Pose');
+  });
+
+  q('flip')?.addEventListener('click', () => doMirror(0, 'Flip Pose'));
 
   // The slider sets the DEFAULT fraction (used by every joint drawn from now on); the button
   // pushes it onto the bones that already exist. Split deliberately: applying live on every
@@ -353,6 +430,7 @@ export function syncBoneSection(root, main) {
   setFlag('solid', Skeleton.displayFlag('solid'));
   setFlag('wire', Skeleton.displayFlag('wire'));
   setFlag('joints', Skeleton.displayFlag('joints'));
+  setFlag('trails', Skeleton.displayFlag('trails'));
 
   const mushInput = q('mush'), mushVal = q('mush-val');
   if (mushInput) {

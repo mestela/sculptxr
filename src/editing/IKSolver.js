@@ -85,6 +85,11 @@ const IKSolver = {};
 IKSolver.PIN_NONE = 0;
 IKSolver.PIN_POS = 1;   // 3DOF: position held, free to rotate
 IKSolver.PIN_FULL = 2;  // 6DOF: position and orientation both held
+// A STEERING GOAL, not a constraint — the pole vector, expressed as a priority rather than as
+// a separate kind of object. See the swivel section below for what it does and why it costs
+// the hard pins nothing. Value 3 is the last free pattern in the two-bit field the pin already
+// rides in, so it saves and loads with no file format change at all.
+IKSolver.PIN_SOFT = 3;
 
 // Older builds stored a boolean here; `true | 0` is 1, which is exactly the 3DOF pin.
 IKSolver.pinMode = function (joint) { return joint ? ((joint._boneIKPin | 0) & 3) : 0; };
@@ -183,7 +188,7 @@ IKSolver.pinAnchorQuat = function (joint, out) {
 // done by pointing at a joint and pressing one thing, and the marker says which state it is in.
 // Returns { mode, pin, removed } so the caller can put the object in or out of the scene.
 IKSolver.cyclePin = function (joint, main) {
-  const next = (IKSolver.pinMode(joint) + 1) % 3;
+  const next = (IKSolver.pinMode(joint) + 1) % 4;   // none -> position -> 6DOF -> steer -> none
   const before = IKSolver.pinObject(joint);
   const pin = IKSolver.setPin(joint, next, main);
   return { mode: next, pin: next ? pin : null, removed: next ? null : before };
@@ -934,6 +939,121 @@ function runSolve(nodes, targets, root, rootFixed, tol) {
   return worst;
 }
 
+// ---- the swivel: a steering goal in the freedom the hard pins leave ---------------
+//
+// matt's design, and better than a dedicated pole-vector object: per-joint PRIORITY rather
+// than a separate mechanism. A hard ankle goal and a soft knee goal, so the knee only steers
+// the freedom the ankle leaves.
+//
+// That freedom is not a metaphor, it is a circle, and the findings doc measured it: a pinned
+// ankle is one bone below the knee, so it confines the knee to a SPHERE about the pin; fix the
+// hip as well and the knee lies on the intersection of two spheres, which is a circle about
+// the hip-to-ankle axis. Nothing steered where on that circle the knee rested — the solver
+// simply left it wherever FABRIK put it.
+//
+// So the implementation is not a weighted solve at all. It is a ROTATION ABOUT THAT AXIS, and
+// that is the whole trick: every point of the axis is fixed by it, so both hard anchors are
+// preserved EXACTLY — not approximately, not to a tolerance — and every bone length with them,
+// because a rigid rotation cannot change a distance. The hard goals therefore cost nothing to
+// respect and there is no priority weighting to tune, no second solve to converge, and no way
+// for the steering to pull a foot off the floor.
+//
+// It runs AFTER the sweeps, on the solved positions, and needs no iteration of its own: the
+// closest point of the circle to a goal is one angle, computed directly.
+
+// Everything strictly between two nodes on the same chain, from `below` up to (not including)
+// `above`. Null when they are not on one chain — a soft goal that does not lie between two
+// anchors has no circle to slide around and is left alone rather than being approximated.
+function chainBetween(above, below) {
+  const out = [];
+  for (let n = below; n; n = n.parent) {
+    if (n === above) return out;
+    out.push(n);
+  }
+  return null;
+}
+
+// The nearest ancestor that this solve holds FIXED: a hard target, or the root when the root
+// is pinned down. The joint being steered is not eligible — a goal cannot anchor itself.
+function anchorAbove(n, targets, root, rootFixed) {
+  for (let p = n.parent; p; p = p.parent) {
+    if (targets.has(p)) return p;
+    if (p === root && rootFixed) return p;
+  }
+  return null;
+}
+
+// The nearest hard target BELOW, down the active branch. Stops at a fork: with two pinned feet
+// under one node there is no single axis, and picking one of them would silently steer against
+// the other.
+function anchorBelow(n, targets) {
+  let cur = n;
+  for (let guard = 0; guard < 64; guard++) {
+    const kids = activeChildren(cur);
+    if (kids.length !== 1) return null;
+    cur = kids[0];
+    if (targets.has(cur)) return cur;
+  }
+  return null;
+}
+
+const _vAx = new THREE.Vector3(), _vPu = new THREE.Vector3(), _vPv = new THREE.Vector3();
+const _vRel = new THREE.Vector3(), _qSw = new THREE.Quaternion();
+
+// Rotate the chain between its two anchors about the axis joining them, to bring `n` as close
+// to `goal` as that rotation can. Returns the angle applied, or 0 if there was nothing to do.
+function swivelToward(n, goal, targets, root, rootFixed, rate) {
+  const above = anchorAbove(n, targets, root, rootFixed);
+  const below = anchorBelow(n, targets);
+  if (!above || !below) return 0;
+  const between = chainBetween(above, below);
+  if (!between || !between.length) return 0;
+
+  _vAx.subVectors(below.pos, above.pos);
+  const axLen = _vAx.length();
+  if (axLen < 1e-9) return 0;   // the two anchors coincide: no axis, no circle
+  _vAx.divideScalar(axLen);
+
+  // Both the joint and its goal, measured perpendicular to the axis. The component ALONG the
+  // axis is untouchable by this rotation, so including it would ask for an angle that cannot
+  // be delivered and land the joint short of the closest point rather than on it.
+  _vPu.subVectors(n.pos, above.pos);
+  _vPu.addScaledVector(_vAx, -_vPu.dot(_vAx));
+  _vPv.subVectors(goal, above.pos);
+  _vPv.addScaledVector(_vAx, -_vPv.dot(_vAx));
+  if (_vPu.lengthSq() < 1e-12 || _vPv.lengthSq() < 1e-12) return 0; // one of them is ON the axis
+  _vPu.normalize(); _vPv.normalize();
+
+  let ang = signedAngle(_vPu, _vPv, _vAx) * rate;
+  if (!Number.isFinite(ang) || Math.abs(ang) < 1e-9) return 0;
+
+  _qSw.setFromAxisAngle(_vAx, ang);
+  for (const m of between) {
+    _vRel.subVectors(m.pos, above.pos).applyQuaternion(_qSw);
+    m.pos.copy(above.pos).add(_vRel);
+  }
+  return ang;
+}
+
+// Apply every steering goal. Deepest first: a soft goal further down the chain sits inside the
+// span of one further up, so steering the outer one first and the inner one second leaves both
+// satisfied, while the other order has the outer rotation carry the inner joint back off its
+// goal.
+function applySwivels(nodes, soft, targets, root, rootFixed) {
+  if (!soft || !soft.size) return 0;
+  const rate = Number.isFinite(window._ikSwivelRate) ? window._ikSwivelRate : 1;
+  if (rate <= 0) return 0;
+  let n = 0;
+  const order = Array.from(soft.keys()).sort((a, b) => a.depth - b.depth);
+  for (const node of order) {
+    if (swivelToward(node, soft.get(node), targets, root, rootFixed, rate)) n++;
+  }
+  if (window._ikTrace && soft.size) {
+    console.log('[ik] swivel: %d of %d steering goals had a circle to slide on', n, soft.size);
+  }
+  return n;
+}
+
 // ---- writing the result back ---------------------------------------------------
 
 // Model-space rotation that carries this joint's CURRENT child directions onto the solved
@@ -1348,7 +1468,14 @@ IKSolver.holdPins = function (main) {
   let solved = false;
   for (const [root, group] of byRoot) {
     const targets = new Map();
+    // A steering goal is NOT a target: handing it to FABRIK as one would make it compete with
+    // the hard pins on equal terms, which is precisely the arrangement it exists to replace.
+    const soft = new Map();
     for (const { node, joint } of group) {
+      if (IKSolver.pinMode(joint) === IKSolver.PIN_SOFT) {
+        soft.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
+        continue;
+      }
       targets.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
       // A 6DOF pin holds its orientation as well, through the same machinery the interactive
       // solve uses: the target is the orientation it already has, so the joint is its own fixed
@@ -1358,8 +1485,14 @@ IKSolver.holdPins = function (main) {
         node.rot = node.orient.clone().multiply(modelQuat(joint, _qNow).invert());
       }
     }
+    // A steering goal still has to WAKE its chain, or the joints between the anchors are never
+    // marked active and the swivel has nothing it is allowed to move.
     markActive(targets.keys());
+    markActive(soft.keys());
     runSolve(nodes, targets, root, true, tol);
+    // After the sweeps and before the rotations are fitted: the swivel moves POSITIONS, and
+    // applyRotations is what turns positions back into joint transforms.
+    applySwivels(nodes, soft, targets, root, true);
     applyRotations(main, nodes, root, true);
     solved = true;
   }

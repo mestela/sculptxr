@@ -51,6 +51,7 @@ import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
 import NomadLink                  from './link/NomadLink.js';
 import NomadImport                from './link/NomadImport.js';
 import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder (window._vrLog)
+import MotionTrail from './editing/MotionTrail.js';
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -1718,6 +1719,16 @@ class Scene {
       // than parented to them, so posing, gizmo drags, undo and animation playback all
       // keep the bones correct without any of those paths knowing bones exist.
       Skeleton.updateVisuals(this);
+
+      // The motion trail, when it is switched on. It fingerprints the keys and the pins and
+      // rebuilds only when one of them changes — a rebuild is a full evaluation per sample, so
+      // it must not be a per-frame cost. Guarded: a fault in an overlay must never take the
+      // render loop down with it.
+      try {
+        MotionTrail.update(this);
+      } catch (e) {
+        console.error('Motion trail failed:', e);
+      }
 
       // Skinning: last in the deformation stack, and a no-op when no joint has moved
       // since the previous frame (see Skinning.apply's pose stamp).

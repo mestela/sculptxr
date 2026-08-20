@@ -107,7 +107,12 @@ check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="
   // THE DEFAULT IS WRITTEN TWICE — registry and option validator — so they must agree, or a
   // reload silently changes what the panel shows.
   const rows = [...FLAG_SRC.matchAll(/(\w+): \['(\w+)', '(\w+)', (true|false)\]/g)];
-  check('every flag is declared as a saved option', rows.length === 8, rows.length);
+  // Bound to the PROPERTY, not a tally: "exactly 8" breaks the day a ninth legitimate flag
+  // is added, and the useful assertion is that EVERY flag in the registry is declared and
+  // persisted — which the per-flag loop below checks one at a time.
+  check('every flag is declared as a saved option',
+    rows.length === Object.keys(FLAG_DEFAULTS).length,
+    rows.length + ' declared vs ' + Object.keys(FLAG_DEFAULTS).length + ' flags');
   for (const [, name, , opt, def] of rows) {
     const m = new RegExp(`options\\.${opt} = queryBool\\(getVal\\('${opt}'\\), (true|false)\\)`).exec(OPTS);
     check(`${name} is persisted and its two defaults agree`, !!m && m[1] === def,
