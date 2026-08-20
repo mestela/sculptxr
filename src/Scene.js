@@ -50,6 +50,7 @@ import { VrConfirm              } from './gui/htmlvr/VrConfirm.js';
 import { VrRadialMenu           } from './gui/htmlvr/VrRadialMenu.js';
 import NomadLink                  from './link/NomadLink.js';
 import NomadImport                from './link/NomadImport.js';
+import { sampleVR } from './misc/vrDiag.js'; // once-a-second VR flight recorder (window._vrLog)
 
 // Scratch vector reused by panel grip-drag code — avoids per-frame allocation.
 const _v3tmp = new THREE.Vector3();
@@ -3798,11 +3799,16 @@ class Scene {
     this._camera.updateView();
     this._camera.updateProjection();
 
-    // Prevent lingering tools from thinking they are active
+    // Prevent lingering tools from thinking they are active.
+    // THE LOCKED HAND MUST GO WITH IT. Clearing _vrSculpting alone leaves _vrLockedHand set,
+    // and the next session's first stroke then inherits a hand lock from the previous one —
+    // the branch that would refresh it is guarded on the lock being empty. Switching VR to AR
+    // runs exactly this path, with a session ending under whatever the hands were doing.
     if (this._vrSculpting) {
       this._vrSculpting = false;
       if (this._sculptManager) this._sculptManager.end();
     }
+    this._vrLockedHand = null;
 
     // this._vrControllerLeft = null;
     // this._vrControllerRight = null;
@@ -7489,12 +7495,38 @@ class Scene {
     // Priority: Locked Hand (if sculpting) > Pressed Hand > Dominant Hand > Other Hand > First Found
     const domSource = this._dominantHand === 'left' ? left : right;
 
+    // THE HAND LOCK IS A LATCH, AND A LATCH THAT CANNOT BE OPENED IS A DEADLOCK.
+    //
+    // While a stroke is in progress the active hand is pinned, so a stray reading from the
+    // other controller cannot steal the stroke mid-drag. But the lock is only ever released
+    // inside processVRSculpting — and processVRSculpting only runs when this block resolves
+    // an activeSource. So if the locked hand is not among the current input sources, the old
+    // code left activeSource null, processVRSculpting did not run, nothing cleared the lock,
+    // and the next frame asked the same impossible question again. From that point on there
+    // is no brush centre and no pick FOR THE REST OF THE SESSION: the radius indicator has
+    // nothing to draw and grab has nothing to grab, while the menus (handled elsewhere) go on
+    // working perfectly — which reads exactly like a half-broken build.
+    //
+    // A controller can leave inputSources for ordinary reasons: it sleeps, its battery dies,
+    // it loses tracking, or the session was torn down and rebuilt around it (switching VR to
+    // AR ends one session and starts another). None of those should cost the rest of the
+    // session, so failing to resolve the locked hand now ENDS the stroke and falls through to
+    // the normal choice rather than pinning on a hand that is not there.
     if (this._vrSculpting && this._vrLockedHand) {
       // Find the locked hand source
       const locked = (this._vrLockedHand === 'right') ? right : left;
       if (locked) {
         activeSource = locked;
+      } else {
+        this._vrSculpting = false;
+        this._vrLockedHand = null;
+        if (this._sculptManager) this._sculptManager.end();
+        if (window.screenLog) window.screenLog('VR: sculpt hand lost, stroke ended', '#f9e2af');
       }
+    }
+
+    if (activeSource) {
+      // already chosen by the lock above
     } else if (isVoxel) {
       // PROPER VOXEL BEHAVIOR:
       // Dominant Hand = Sculpt/Carve (Action)
@@ -7521,6 +7553,28 @@ class Scene {
     // DEBUG: Source Selection
     if (window.screenLog && this._logThrottle % 60 === 0) {
       // window.screenLog(`VR Src: R=${right ? (rightPressed?'YES':'no') : 'miss'} L=${left ? (leftPressed?'YES':'no') : 'miss'} -> Active=${activeSource ? activeSource.handedness : 'NONE'}`, "yellow");
+    }
+
+    // NO ACTIVE SOURCE, SESSION LIVE — say so, unprompted.
+    //
+    // This is the state every "the build is half broken" report has looked like from inside
+    // the headset: no brush centre, no pick, no grab, menus fine. It is worth a line on the
+    // screen log rather than silence, because the alternative is noticing it mid-recording and
+    // having no idea whether it is the app, the build, or the controller. Counted in frames
+    // and announced once per episode, so a single dropped frame says nothing.
+    if (!activeSource) {
+      this._noSourceFrames = (this._noSourceFrames || 0) + 1;
+      if (this._noSourceFrames === 120 && !this._noSourceWarned) {
+        this._noSourceWarned = true;
+        window._vrNoSourceAt = Date.now();
+        const msg = 'VR: no active controller (sculpting=' + !!this._vrSculpting +
+          ' locked=' + (this._vrLockedHand || 'none') + ' sources=' + sources.length + ')';
+        console.warn('[Scene] ' + msg);
+        if (window.screenLog) window.screenLog(msg, '#f38ba8');
+      }
+    } else {
+      this._noSourceFrames = 0;
+      this._noSourceWarned = false;
     }
 
     if (activeSource) {
@@ -7627,6 +7681,7 @@ class Scene {
 
     // Update Three.js Laser Pointer Visual Lengths and Cursors
     this._updateVRCursors(frame, refSpace, sources);
+    sampleVR(this);
 
     // Buffer menu pointing state for exactly one frame to absorb trigger releases when menus close
     this._wasPointingAtMenu = this._isPointingAtMenu;
@@ -8301,6 +8356,7 @@ class Scene {
           if (src.gamepad) btnControllers.push({ handedness: src.handedness, buttons: src.gamepad.buttons });
         }
       }
+      this._lastXRControllers = btnControllers; // button-only: no matrix, by design
       this._sculptManager.updateXR(this._picking, false, enginePos, dir, {
         isNegative: false,
         controllers: btnControllers,
@@ -9061,6 +9117,10 @@ class Scene {
           this._wasTriggerPressed = isTriggerPressed;
         }
 
+        // Stashed for the flight recorder: it must report the list the TOOLS were handed, not
+        // a list rebuilt from the session — the difference between the two is exactly the
+        // menu-guard case it exists to catch.
+        this._lastXRControllers = xrControllers;
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
           controllers: xrControllers,

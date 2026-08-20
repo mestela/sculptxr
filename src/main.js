@@ -2,6 +2,7 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 import SculptGL from './SculptGL.js';
 import { installFontReadyRepaint } from './gui/htmlvr/fontReady.js';
 import { VERSION } from './Version.js';
+import './misc/whyNoPick.js'; // registers window._whyNoPick()
 
 window.SculptGL = SculptGL;
 
@@ -54,7 +55,14 @@ async function checkBuildVersion() {
     if (!r.ok) return;
     const deployed = ((await r.json()).version || '').trim();
     const loaded = (VERSION || '').trim();
-    if (deployed && loaded && deployed !== loaded) showUpdateBanner(deployed);
+    window._deployedVersion = deployed; // so _whyNoPick() can report it without a fetch
+    if (deployed && loaded && deployed !== loaded) {
+      showUpdateBanner(deployed);
+      // The banner is a DOM element, and there is no DOM in an immersive session — so in the
+      // headset, the one place a stale build is hardest to diagnose, it says nothing at all.
+      // screenLog is the channel that survives into VR.
+      if (window.screenLog) window.screenLog('Stale build: running ' + loaded + ', ' + deployed + ' is live', '#f9e2af');
+    }
   } catch (_) { /* offline / no version.json — ignore */ }
 }
 
