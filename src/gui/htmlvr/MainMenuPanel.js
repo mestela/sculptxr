@@ -33,7 +33,13 @@ import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
-import { buildBoneSectionHTML, wireBoneSection } from '../bonePanel.js';
+import {
+  buildBoneSectionHTML,
+  buildBonePoseHTML,
+  buildBoneDisplayHTML,
+  buildBoneAnimationHTML,
+  wireBoneSection,
+} from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection } from '../transformPanel.js';
 import Tablet from '../../misc/Tablet.js';
 import TR from '../GuiTR.js';
@@ -700,10 +706,16 @@ const CSS = `
 }
 
 /* Conditional sections (Rendering) */
-.mm-if-pbr, .mm-if-matcap, .mm-if-uv { display: none; }
-.shader-pbr    .mm-if-pbr    { display: block; }
-.shader-matcap .mm-if-matcap { display: block; }
-.shader-uv     .mm-if-uv     { display: block; }
+.mm-disabled-group {
+  border: 0; margin: 0; padding: 0; min-width: 0;
+}
+.mm-disabled-group:disabled, .mm-if-pbr[inert], .mm-if-matcap[inert], .mm-if-uv[inert] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* Shader-specific groups keep their place. Inapplicable controls mute instead of vanishing,
+ * so the Rendering panel has one stable layout and can be used by muscle memory. */
+.mm-if-pbr, .mm-if-matcap, .mm-if-uv { display: block; }
 
 /* ── TornOffPanel (floating section panels) ───────── */
 .mm-torn-root {
@@ -1344,11 +1356,12 @@ export function buildSectionHTML_topology(main) {
 
 export function buildSectionHTML_rendering(main) {
   const mesh = main.getMesh?.();
-  if (!mesh) return '<div class="mm-info">No mesh selected</div>';
+  const rigDisplay = buildBoneDisplayHTML(main, 'mm');
+  const meshDisabled = mesh ? '' : ' disabled';
 
   const ShaderPBR    = Shader[Enums.Shader.PBR];
   const ShaderMATCAP = Shader[Enums.Shader.MATCAP];
-  const shaderType   = mesh.getShaderType?.() ?? Enums.Shader.PBR;
+  const shaderType   = mesh?.getShaderType?.() ?? Enums.Shader.PBR;
 
   const shaders = [
     { id: Enums.Shader.MATCAP, label: 'Matcap' },
@@ -1371,11 +1384,11 @@ export function buildSectionHTML_rendering(main) {
   ).join('');
 
   const exposure    = main.getExposure?.() ?? 1.0;
-  const curvature   = mesh.getCurvature?.() ?? 0;
-  const opacity     = mesh.getOpacity?.() ?? 1;
-  const isFlat      = mesh.getFlatShading?.() ?? false;
-  const isWire      = mesh.getShowWireframe?.() ?? false;
-  const isSolid     = mesh._renderData?._threeMesh?.material?.visible ?? true;
+  const curvature   = mesh?.getCurvature?.() ?? 0;
+  const opacity     = mesh?.getOpacity?.() ?? 1;
+  const isFlat      = mesh?.getFlatShading?.() ?? false;
+  const isWire      = mesh?.getShowWireframe?.() ?? false;
+  const isSolid     = mesh?._renderData?._threeMesh?.material?.visible ?? true;
 
   const gx       = main._guiXR ?? main.getGuiXR?.();
   const uiS      = gx?._uiSettings ?? {};
@@ -1390,10 +1403,11 @@ export function buildSectionHTML_rendering(main) {
 
   // Matcap list
   const matcapBtns = (ShaderMATCAP?.matcaps ?? []).map((m, i) =>
-    `<button class="mm-choice${mesh.getMatcap?.() === i ? ' active' : ''}" data-matcap="${i}">${m.name}</button>`
+    `<button class="mm-choice${mesh?.getMatcap?.() === i ? ' active' : ''}" data-matcap="${i}">${m.name}</button>`
   ).join('');
 
-  // Shader-class on the root div drives .mm-if-pbr / .mm-if-matcap / .mm-if-uv visibility
+  // Shader-class remains useful for styling, but every group is always laid out. Inapplicable
+  // groups are inert and muted instead of removed, so controls never jump under the hand.
   const shaderClass = shaderType === Enums.Shader.PBR    ? 'shader-pbr'
                     : shaderType === Enums.Shader.MATCAP  ? 'shader-matcap'
                     : shaderType === Enums.Shader.UV       ? 'shader-uv'
@@ -1411,28 +1425,29 @@ export function buildSectionHTML_rendering(main) {
   const speed   = main._cameraSpeed ?? 0.3;
 
   return `
+    ${rigDisplay}
     <div id="mm-render-root" class="${shaderClass}">
+      <fieldset class="mm-disabled-group"${meshDisabled}>
       <div class="mm-section-title">Shader</div>
       <div class="mm-choice-grid cols-5">${shaderBtns}</div>
 
-      <div class="mm-if-pbr">
+      <div class="mm-if-pbr"${shaderType === Enums.Shader.PBR ? '' : ' inert aria-disabled="true"'}>
         <div class="mm-section-title">Environment</div>
         <div class="mm-choice-grid cols-2" id="mm-env-grid">${envBtns}</div>
       </div>
 
-      <div class="mm-if-matcap">
+      <div class="mm-if-matcap"${shaderType === Enums.Shader.MATCAP ? '' : ' inert aria-disabled="true"'}>
         <div class="mm-section-title">Matcap</div>
         <div class="mm-choice-grid cols-2" id="mm-matcap-grid">${matcapBtns}</div>
         <button class="mm-action-btn" id="mm-import-matcap">Import matcap…</button>
       </div>
 
-      <div class="mm-if-uv">
+      <div class="mm-if-uv"${shaderType === Enums.Shader.UV ? '' : ' inert aria-disabled="true"'}>
         <div class="mm-section-title">Texture</div>
         <button class="mm-action-btn" id="mm-import-uv">Import UV texture…</button>
       </div>
 
-      <div class="mm-section-title">Display</div>
-      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
+      <div class="mm-section-title">Mesh Display</div>
       <div class="mm-row">
         <span class="mm-lbl">Curvature</span>
         <input type="range" id="mm-curvature" min="0" max="100" step="1" value="${Math.round(curvature * 20)}">
@@ -1456,6 +1471,10 @@ export function buildSectionHTML_rendering(main) {
         <span class="mm-val" id="mm-render-wf-bias-val">${wfBias.toFixed(4)}</span>
       </div>
       <button class="mm-toggle${isSolid ? ' active' : ''}" id="mm-solid">Solid Shading</button>
+      </fieldset>
+
+      <div class="mm-section-title">Scene Display</div>
+      <button class="mm-toggle${main._showGrid ? ' active' : ''}" id="mm-grid-toggle">Ground Plane</button>
 
       <div class="mm-section-title">Tone Mapping</div>
       <div class="mm-choice-grid cols-5">${tmBtns}</div>
@@ -1744,6 +1763,8 @@ export function buildSectionHTML_sculpting(main) {
     <div class="mm-choice-grid cols-3">${meshBtns}</div>
     ${brushHTML}
     ${cur === Enums.Tools.BONE_DRAW ? buildBoneSectionHTML(main, 'mm') : ''}
+    ${cur === Enums.Tools.GRAB || cur === Enums.Tools.TRANSFORM_VR
+      ? buildBonePoseHTML(main, 'mm') : ''}
     ${cur === Enums.Tools.TRANSFORM_VR || cur === Enums.Tools.TRANSFORM
       ? buildTransformSectionHTML(main, 'mm') : ''}
     <div class="mm-section-title">Safety</div>
@@ -1766,8 +1787,8 @@ export function buildSectionHTML_sculpting(main) {
   `;
 }
 
-export function buildSectionHTML_animation() {
-  return buildAnimationSectionHTML();
+export function buildSectionHTML_animation(main) {
+  return buildAnimationSectionHTML() + buildBoneAnimationHTML(main, 'mm');
 }
 
 // ── MainMenuPanel class ──────────────────────────────────────────────────────
@@ -1983,7 +2004,7 @@ export class MainMenuPanel extends HTMLVRPanel {
         case 'topology':  html = buildSectionHTML_topology(main);  break;
         case 'rendering': html = buildSectionHTML_rendering(main); break;
         case 'sculpting': html = buildSectionHTML_sculpting(main); break;
-        case 'animation': html = buildSectionHTML_animation();     break;
+        case 'animation': html = buildSectionHTML_animation(main); break;
       }
       const SECTION_LABELS = { scene: 'Scene', rendering: 'Rendering', topology: 'Topology', sculpting: 'Sculpting', animation: 'Animation' };
       const label = SECTION_LABELS[this._activeSection] ?? this._activeSection;
@@ -2246,6 +2267,7 @@ export class MainMenuPanel extends HTMLVRPanel {
       wireSectionSculpting(el, main, fullRepaint, lightRepaint, lightRepaint);
     } else if (section === 'animation') {
       this._wireSectionAnimation(el, lightRepaint);
+      wireBoneSection(el, main, { refresh: lightRepaint, rebuild: lightRepaint });
     }
   }
 
@@ -2736,6 +2758,8 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   const mesh   = main.getMesh?.();
   const meshes = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : (mesh ? [mesh] : []);
   const ShaderPBR = Shader[Enums.Shader.PBR];
+
+  wireBoneSection(el, main, { refresh: fullRepaintFn, rebuild: fullRepaintFn });
 
   el.querySelectorAll('[data-shader]').forEach(btn => {
     btn.addEventListener('click', () => {

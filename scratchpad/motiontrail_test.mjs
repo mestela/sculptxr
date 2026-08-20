@@ -198,5 +198,16 @@ function setup(times) {
   check('and no path', samplePaths(main, [j]) === null);
 }
 
+// --- 6. viewport representation ----------------------------------------------------------
+// A trail is the thin spatial curve. THREE.Points uses camera-facing square sprites; at scene
+// scale those became a wall of large red squares that hid the curve and the model underneath.
+// Key timing already belongs to the dopesheet, so the viewport layer must stay line-only.
+{
+  const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  check('the viewport trail is a line', /new THREE\.Line\(/.test(code));
+  check('the viewport trail has no camera-facing point sprites',
+    !/new THREE\.Points\(|new THREE\.PointsMaterial\(/.test(code));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

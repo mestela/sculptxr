@@ -50,7 +50,19 @@ function pinLabel(n) { return n ? `Clear Pins (${n})` : 'Clear Pins'; }
 // of the dialect: the `mm` markup is used by the desktop sidebar AND by the main menu inside
 // a headset, so keying it to the class names would disable the modes in the one place they
 // actually work.
-export function buildBoneSectionHTML(main, style) {
+function sectionTitle(c, label) {
+  const rule = c.divider ? `<hr class="${c.divider}">` : '';
+  const title = c.title ? `<div class="${c.title}">${label}</div>` : '';
+  return `${rule}${title}`;
+}
+
+function flagButton(c, id, label, val) {
+  return `<button class="${c.toggle}${val ? ' active' : ''}" id="bone-${id}">${label}</button>`;
+}
+
+// Rig construction and bind diagnostics. This is the only block tied to Bone Draw: the modes,
+// radius and skin/bind operations edit the rig definition rather than a pose.
+export function buildBoneAuthoringHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
   const sm = main.getSculptManager?.() ?? main._sculptManager;
   const tool = sm?.getCurrentTool?.();
@@ -65,57 +77,27 @@ export function buildBoneSectionHTML(main, style) {
       `${off ? ' disabled' : ''}${tip}>${label}</button>`;
   }).join('');
 
-  const flag = (id, label, val) =>
-    `<button class="${c.toggle}${val ? ' active' : ''}" id="bone-${id}">${label}</button>`;
-
   const f     = (k) => Skeleton.displayFlag(k);
   const snap  = f('snapPlane');
   const axis  = f('snapAxis');
-  const lens  = f('lengths');
   const caps  = f('capsules');
   const wts   = f('weights');
-  const solid = f('solid');
-  const wire  = f('wire');
-  const jnts  = f('joints');
-  const trails = f('trails');
   const radPct = Math.round(Skeleton.radiusFraction() * 100);
-  const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
   const anyBound = Skinning.anyBound(main);
   const mush = Skinning.mushIterations();
-
-  const titleOpen = c.title ? `<div class="${c.title}">` : '';
-  const titleClose = c.title ? '</div>' : '';
   const rule = c.divider ? `<hr class="${c.divider}">` : '';
 
   return `
-    ${rule}
-    ${titleOpen}${c.title ? 'Bones' : ''}${titleClose}
+    ${sectionTitle(c, 'Rig Authoring')}
     <div class="${c.grid}">${modeBtns}</div>
-    <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
-      <button class="${c.action}" id="bone-key">Key Pose</button>
-    </div>
-    <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
-      <button class="${c.action}" id="bone-flip">Flip Pose</button>
+    <div class="${c.toggles}">
+      ${flagButton(c, 'snap', 'Snap Plane', snap)}
+      ${flagButton(c, 'axis', 'Snap Axis', axis)}
     </div>
     <div class="${c.toggles}">
-      ${flag('snap', 'Snap Plane', snap)}
-      ${flag('axis', 'Snap Axis', axis)}
-    </div>
-    <div class="${c.toggles}">
-      ${flag('len', 'Lengths', lens)}
-      ${flag('caps', 'Capsules', caps)}
-      ${flag('weights', 'Weights', wts)}
-    </div>
-    <div class="${c.toggles}">
-      ${flag('solid', 'Solid', solid)}
-      ${flag('wire', 'Wire', wire)}
-      ${flag('joints', 'Joints', jnts)}
-    </div>
-    <div class="${c.toggles}">
-      ${flag('trails', 'Trails', trails)}
+      ${flagButton(c, 'caps', 'Capsules', caps)}
+      ${flagButton(c, 'weights', 'Weights', wts)}
     </div>
     <div class="${c.row}">
       <span class="${c.lbl}">Capsule</span>
@@ -137,10 +119,57 @@ export function buildBoneSectionHTML(main, style) {
       <input type="range" id="bone-mush" min="0" max="30" step="1" value="${mush}">
       <span class="${c.val}" id="bone-mush-val">${mush}</span>
     </div>
-    <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-restpose">Bind Pose</button>
-    </div>` : ''}
+    ` : ''}
   `;
+}
+
+// Pose operations are useful anywhere a rig node can be held. Bone Draw, Grab and TransformVR
+// all bind the same A-button pin cycle, so their menus all expose this same block.
+export function buildBonePoseHTML(main, style) {
+  const c = DIALECT[style] || DIALECT.mm;
+  const pins = IKSolver.pinnedJoints(main).length;
+  const bound = Skinning.anyBound(main);
+  return `
+    ${sectionTitle(c, 'Pose')}
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-unpin">${pinLabel(pins)}</button>
+      ${bound ? `<button class="${c.action}" id="bone-restpose">Bind Pose</button>` : ''}
+    </div>
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
+      <button class="${c.action}" id="bone-flip">Flip Pose</button>
+    </div>
+  `;
+}
+
+export function buildBoneDisplayHTML(main, style) {
+  const c = DIALECT[style] || DIALECT.mm;
+  return `
+    ${sectionTitle(c, 'Rig Display')}
+    <div class="${c.toggles}">
+      ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
+      ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
+      ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
+      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
+    </div>
+  `;
+}
+
+export function buildBoneAnimationHTML(main, style) {
+  const c = DIALECT[style] || DIALECT.mm;
+  return `
+    ${sectionTitle(c, 'Rig Animation')}
+    <div class="${c.btnRow}">
+      <button class="${c.action}" id="bone-key">Key Pose</button>
+      ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
+    </div>
+  `;
+}
+
+// Compatibility composition for the places/tests that mean "everything relevant while the
+// Bones tool is active". Display and animation deliberately are not part of it any more.
+export function buildBoneSectionHTML(main, style) {
+  return buildBoneAuthoringHTML(main, style) + buildBonePoseHTML(main, style);
 }
 
 // Attach behaviour. `refresh` is called after anything that changes panel state; `rebuild`
@@ -148,10 +177,9 @@ export function buildBoneSectionHTML(main, style) {
 // Make Skin changes the selection), since a panel that only syncs classes would keep showing
 // the old set.
 export function wireBoneSection(root, main, opts) {
-  // The sculpting section is wired for EVERY tool, so bail out when this panel is not
-  // currently showing the bones controls. Without this the weight-colour refresh at the
-  // bottom would run under the brush tool and paint bind colours over the mesh.
-  if (!root || !root.querySelector('#bone-draw')) return;
+  // This one wire function services four composable blocks. Bail only when NONE is present;
+  // checking #bone-draw made pose/display/animation controls inert outside Bone Draw.
+  if (!root || !root.querySelector('[id^="bone-"]')) return;
   opts = opts || {};
   const sm = main.getSculptManager?.() ?? main._sculptManager;
   const refresh = opts.refresh || (() => {});
@@ -174,7 +202,7 @@ export function wireBoneSection(root, main, opts) {
   // buttons would go on showing Draw as the active one. A single slot rather than a list:
   // every panel re-wires on repaint, so a list would grow without bound, and the only
   // caller is the desktop keyboard, where the sidebar is the one panel in play.
-  main._boneSectionRebuild = rebuild;
+  if (q('draw')) main._boneSectionRebuild = rebuild;
 
   // Two flag flavours, and they must not share a toggle: the snaps and the display flags
   // Defaults and persistence both live in Skeleton.DISPLAY_FLAGS — the toggle only has to
@@ -408,9 +436,9 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  // Re-entering the tool restores the preview that clearPreview() took down on the way out,
-  // so the toggle state is what decides whether colours are shown, not tool history.
-  Skinning.refreshWeightColorsAll(main);
+  // Only the authoring block owns the weight diagnostic. Rendering/animation/pose sections
+  // must not repaint bind colours merely because their unrelated controls were wired.
+  if (q('caps')) Skinning.refreshWeightColorsAll(main);
 }
 
 // In-place state refresh, for panels that do not rebuild their markup on every change.

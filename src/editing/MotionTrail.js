@@ -113,19 +113,10 @@ function samplePaths(main, targets) {
   return paths;
 }
 
-// Where the KEYS are on the curve. A smooth line says where the joint goes; the dots say where
-// you can grab the motion, which is the difference between a picture and a tool.
-function keyPoints(main, joint, reg) {
-  const track = reg && reg.tracks && reg.tracks.get(joint.getID());
-  if (!track || !track.times) return [];
-  const r = range();
-  return track.times.filter((t) => t >= r.start && t <= r.end);
-}
-
 function disposeTrail(main) {
   const v = main._trailVis;
   if (!v) return;
-  for (const o of [v.line, v.dots]) {
+  for (const o of [v.line]) {
     if (!o) continue;
     if (o.parent) o.parent.remove(o);
     if (o.geometry) o.geometry.dispose();
@@ -153,7 +144,6 @@ MotionTrail.update = function (main) {
   const paths = samplePaths(main, targets);
   if (!paths || !paths[0] || paths[0].length < 2) { MotionTrail.clear(main); return false; }
 
-  const reg = window._animationRegistry;
   const pts = paths[0];
   const col = Skeleton.boneColor(main, targets[0]);
 
@@ -161,33 +151,17 @@ MotionTrail.update = function (main) {
     const g = Skeleton.overlayGroup(main);
     const line = new THREE.Line(new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false }));
-    const dots = new THREE.Points(new THREE.BufferGeometry(),
-      new THREE.PointsMaterial({ size: Skeleton.sceneUnit(main) * 0.02, sizeAttenuation: true,
-        transparent: true, depthWrite: false }));
-    line.frustumCulled = dots.frustumCulled = false;
-    line.isPickable = dots.isPickable = false;
-    line.renderOrder = dots.renderOrder = TRAIL_ORDER;
-    g.add(line, dots);
-    main._trailVis = { line: line, dots: dots };
+    line.frustumCulled = false;
+    line.isPickable = false;
+    line.renderOrder = TRAIL_ORDER;
+    g.add(line);
+    main._trailVis = { line: line };
   }
 
   const v = main._trailVis;
   v.line.geometry.setFromPoints(pts);
   v.line.material.color.setRGB(col.r, col.g, col.b);
   v.line.visible = true;
-
-  // The key dots are placed by looking the key time up in the sampled curve rather than by
-  // evaluating again: the curve is already the answer, and a second evaluation per key would
-  // double the cost of the whole feature to land on points it has already computed.
-  const keys = keyPoints(main, targets[0], reg);
-  const at = (t) => {
-    const f = (t - r.start) / (r.end - r.start) * (pts.length - 1);
-    const i = Math.max(0, Math.min(pts.length - 2, Math.floor(f)));
-    return pts[i].clone().lerp(pts[i + 1], f - i);
-  };
-  v.dots.geometry.setFromPoints(keys.map(at));
-  v.dots.material.color.setRGB(col.r, col.g, col.b);
-  v.dots.visible = keys.length > 0;
 
   return true;
 };

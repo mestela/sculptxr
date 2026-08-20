@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.96 - Steering tetra + mirror pins';
+export const VERSION = 'v3.19.98 - Stable Rendering panel, line-only trails';

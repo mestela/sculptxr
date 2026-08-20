@@ -2,6 +2,8 @@
 // that the ids the wiring looks for are the ids the markup emits.
 import fs from 'fs';
 const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/bonePanel.js', 'utf8');
+const MINI_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MiniPanel.js', 'utf8');
+const MAIN_SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
 const body = SRC.split('\n').filter(l => !/^import\s/.test(l)).filter(l => !/^export \{ Enums/.test(l)).join('\n');
 globalThis.window = {};
 
@@ -31,7 +33,13 @@ const SkinMesh = {};
 const IKSolver = { pinnedJoints: () => [{},{}] };
 `;
 const mod = await import('data:text/javascript,' + encodeURIComponent(stub + body));
-const { buildBoneSectionHTML } = mod;
+const {
+  buildBoneSectionHTML,
+  buildBoneAuthoringHTML,
+  buildBonePoseHTML,
+  buildBoneDisplayHTML,
+  buildBoneAnimationHTML,
+} = mod;
 
 let fails = 0;
 const check = (n, ok, got) => { console.log((ok ? '  ok   ' : '  FAIL ') + n + (ok ? '' : '  got: ' + got)); if (!ok) fails++; };
@@ -41,6 +49,10 @@ const main = { _xrSession: null, getSculptManager: () => ({ getCurrentTool: () =
 const flat = buildBoneSectionHTML(main, 'mm');
 const vr = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mm');
 const wrist = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mp');
+const authoring = buildBoneAuthoringHTML(main, 'mm');
+const pose = buildBonePoseHTML(main, 'mm');
+const display = buildBoneDisplayHTML(main, 'mm');
+const animation = buildBoneAnimationHTML(main, 'mm');
 
 // Every mode now has a mouse/touch path in BoneDrawTool, so nothing is gated to a controller
 // on a flat screen any more. The gate itself (XR_ONLY_MODES) is still wired, so a future
@@ -53,8 +65,9 @@ check('every mode button reaches a flat screen',
   ['bone-draw', 'bone-fk', 'bone-free', 'bone-pose', 'bone-radius', 'bone-ik']
     .every(id => /id="/.test(flat) && flat.includes('id="' + id + '"')));
 check('every command button is present on a flat screen',
-  ['bone-bind', 'bone-skin', 'bone-key', 'bone-unpin', 'bone-rad-all', 'bone-restpose']
-    .every(id => flat.includes('id="' + id + '"')));
+  ['bone-bind', 'bone-skin', 'bone-rad-all'].every(id => authoring.includes('id="' + id + '"'))
+    && ['bone-unpin', 'bone-restpose'].every(id => pose.includes('id="' + id + '"'))
+    && animation.includes('id="bone-key"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 check('wrist panel uses its own class dialect', wrist.includes('mp-voxel-btn') && !wrist.includes('mm-choice'));
 check('menu panel uses its own class dialect', flat.includes('mm-choice') && !flat.includes('mp-voxel-btn'));
@@ -67,7 +80,7 @@ globalThis.__bound = true;
 const boundHTML = buildBoneSectionHTML({ ...main, _xrSession: {} }, 'mm');
 globalThis.__bound = false;
 check('Unbind appears once a mesh is bound', boundHTML.includes('id="bone-unbind"') && boundHTML.includes('Rebind'));
-const all = vr + boundHTML;
+const all = vr + boundHTML + display + animation;
 const missing = [...new Set(wired)].filter(id => !all.includes('id="bone-' + id + '"') && id !== 'rad-val');
 check('every wired id exists in the markup', missing.length === 0, missing.join(','));
 
@@ -78,16 +91,62 @@ check('every wired id exists in the markup', missing.length === 0, missing.join(
 // Wired through the flag() helper rather than a literal q('id'), so the id sweep above cannot
 // see them — the wiring call is what has to be looked for.
 for (const id of ['solid', 'wire', 'joints']) {
-  const drawn = flat.includes('id="bone-' + id + '"');
+  const drawn = display.includes('id="bone-' + id + '"');
   const hooked = SRC.includes("flag('" + id + "'");
   check('display toggle "' + id + '" is drawn and wired', drawn && hooked,
     (drawn ? '' : 'not in markup ') + (hooked ? '' : 'not wired'));
 }
 
 // Default ON: a rig you have just drawn has to be visible without hunting for a switch.
-check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="[^"]*active[^"]*"[^>]*id="bone-joints"/.test(flat)
-  || /<button class="[^"]*active[^"]*" id="bone-joints"/.test(flat),
+check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="[^"]*active[^"]*"[^>]*id="bone-joints"/.test(display)
+  || /<button class="[^"]*active[^"]*" id="bone-joints"/.test(display),
   'Joints button did not render active by default');
+
+// The split itself: each concern appears in exactly its intended block. This is the property
+// the reorganisation is for; checking only that every id exists would pass with the old
+// undifferentiated panel.
+check('authoring keeps bind diagnostics', /bone-(caps|weights|skin|bind)/.test(authoring));
+check('authoring contains no pose, display or animation commands',
+  !/bone-(unpin|mirror|flip|restpose|len|solid|wire|joints|key|trails)/.test(authoring));
+check('pose contains only pose operations',
+  ['unpin', 'mirror', 'flip', 'restpose'].every(id => pose.includes('bone-' + id))
+    && !/bone-(draw|caps|key|trails|solid)/.test(pose));
+check('animation owns Key Pose and Trails',
+  animation.includes('bone-key') && animation.includes('bone-trails'));
+
+// Caller-level routing. The shared blocks can be perfect and still be invisible if one panel
+// forgets to compose or wire them — the same parallel-implementation failure this split is
+// meant to prevent.
+check('MiniPanel shows Pose for Grab',
+  /idx === Enums\.Tools\.GRAB\) return buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
+check('MiniPanel composes Pose with TransformVR controls',
+  /idx === Enums\.Tools\.TRANSFORM_VR \? buildBonePoseHTML\(this\._main, 'mp'\)/.test(MINI_SRC));
+check('MainMenu shows Pose for Grab and TransformVR',
+  /cur === Enums\.Tools\.GRAB \|\| cur === Enums\.Tools\.TRANSFORM_VR[\s\S]{0,100}?buildBonePoseHTML/.test(MAIN_SRC));
+check('Rendering owns the rig display block',
+  /function buildSectionHTML_rendering[\s\S]{0,250}?buildBoneDisplayHTML/.test(MAIN_SRC));
+check('Animation owns the rig animation block',
+  /function buildSectionHTML_animation[\s\S]{0,150}?buildBoneAnimationHTML/.test(MAIN_SRC));
+
+// Rendering is a spatial menu: sections stay put and become unavailable rather than being
+// removed. Ground Plane is scene state, so it remains usable even when the current selection
+// is a bone or there is no mesh selected.
+const renderStart = MAIN_SRC.indexOf('export function buildSectionHTML_rendering');
+const renderEnd = MAIN_SRC.indexOf('\nexport function ', renderStart + 1);
+const RENDER_SRC = MAIN_SRC.slice(renderStart, renderEnd);
+check('Rendering does not disappear when no mesh is selected',
+  !/if \(!mesh\) return/.test(RENDER_SRC));
+check('mesh-only Rendering controls use a disabled fieldset',
+  /fieldset class="mm-disabled-group"/.test(MAIN_SRC) && /const meshDisabled = mesh \? '' : ' disabled'/.test(MAIN_SRC));
+check('Ground Plane sits outside the mesh-disabled fieldset', (() => {
+  const start = MAIN_SRC.indexOf('<fieldset class="mm-disabled-group"');
+  const end = MAIN_SRC.indexOf('</fieldset>', start);
+  const grid = MAIN_SRC.indexOf('id="mm-grid-toggle"');
+  return start >= 0 && end > start && grid > end;
+})());
+check('shader-specific groups mute instead of hiding',
+  !/\.mm-if-pbr[^\n]*display:\s*none/.test(MAIN_SRC)
+    && /mm-if-pbr[^\n]*inert/.test(MAIN_SRC));
 
 // ── Display flags: defaults, one registry, and persistence ──────────────────────
 {

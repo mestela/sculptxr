@@ -24,7 +24,12 @@ import getOptionsURL  from '../../misc/getOptionsURL.js';
 import Utils          from '../../misc/Utils.js';
 import { toolTint }   from './toolTints.js';
 import VoxelDensityOverlay from '../../render/VoxelDensityOverlay.js';
-import { buildBoneSectionHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
+import {
+  buildBoneSectionHTML,
+  buildBonePoseHTML,
+  wireBoneSection,
+  syncBoneSection,
+} from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection, syncTransformSection } from '../transformPanel.js';
 
 
@@ -681,7 +686,7 @@ export class MiniPanel extends HTMLVRPanel {
       wireTransformSection(extras, main, { refresh: () => this.syncFromState() });
     }
 
-    if (idx === Enums.Tools.BONE_DRAW) {
+    if (idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB || idx === Enums.Tools.TRANSFORM_VR) {
       wireBoneSection(extras, main, {
         refresh: () => this.syncFromState(),
         // Binding and Make Skin change WHICH buttons exist, and the extras markup is only
@@ -897,16 +902,11 @@ export class MiniPanel extends HTMLVRPanel {
         extrasEl.querySelector('#mp-sharpen')?.classList.toggle('active', !!tool._negative);
       }
 
-    } else if (idx === Enums.Tools.BONE_DRAW) {
+    } else if (idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB) {
       syncBoneSection(extrasEl, this._main);
     } else if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
       syncTransformSection(extrasEl);
-
-    } else if (idx === Enums.Tools.TRANSFORM_VR) {
-      const mode = tool._mode ?? 0;
-      extrasEl.querySelectorAll('[data-tvr-mode]').forEach(btn => {
-        btn.classList.toggle('active', parseInt(btn.dataset.tvrMode, 10) === mode);
-      });
+      if (idx === Enums.Tools.TRANSFORM_VR) syncBoneSection(extrasEl, this._main);
 
     } else if (idx === Enums.Tools.VOXEL) {
       const curMode = tool._mode    ?? 0;
@@ -969,10 +969,13 @@ export class MiniPanel extends HTMLVRPanel {
     // changing meaning by mode, which is what made the previous binding opaque.
     if (idx === Enums.Tools.BONE_DRAW) return buildBoneSectionHTML(this._main, 'mp');
 
+    if (idx === Enums.Tools.GRAB) return buildBonePoseHTML(this._main, 'mp');
+
     // ── Transform ──────────────────────────────────────────────────────────
     // Shared with the main menu's copy — see gui/transformPanel.js.
     if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
-      return buildTransformSectionHTML(this._main, 'mp');
+      return buildTransformSectionHTML(this._main, 'mp')
+        + (idx === Enums.Tools.TRANSFORM_VR ? buildBonePoseHTML(this._main, 'mp') : '');
     }
 
     // ── Smooth / Relax ─────────────────────────────────────────────────────
