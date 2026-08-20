@@ -324,6 +324,12 @@ class BoneDrawTool extends SculptBase {
 
     this._chainParent = joint;
     this._chainIndex++;
+    // A JOINT IS BORN AT REST, and this is the only moment that is unambiguously true. The
+    // solver evaluates keyed frames by putting every joint it owns back to rest first, so a
+    // joint with no rest recorded has to adopt one later — from whatever pose the rig happened
+    // to be in at the first scrub, which is the history the rest pose exists to remove. Filling
+    // it here costs one matrix and makes drawing the rig the moment that defines it.
+    IKSolver.captureRest(main);
     this._refresh();
 
     // Deep trace (window._boneTrace = true). Logs the requested position next to where the
@@ -918,6 +924,11 @@ class BoneDrawTool extends SculptBase {
     // Tweak edits the REST skeleton, and where a knee sits in the rest pose is the statement
     // of which way it bends. Drop the remembered preferences so the next solve re-reads them.
     IKSolver.clearBendRefs(this._main);
+    // Tweak edits the REST skeleton, so the joints it moved have a new rest — and only those.
+    // A blanket re-capture here would enshrine the current POSE as rest for the whole rig.
+    // `before` is the exact set moveJoint writes: the joint, its twin, and their direct
+    // children.
+    IKSolver.captureRest(this._main, g.before.map(([mesh]) => mesh).filter((m) => m._isBone));
     this._selectLater(g.joint);
     const main = this._main;
     const before = g.before;

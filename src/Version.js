@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.93 - Delta mush + VR flight recorder';
+export const VERSION = 'v3.19.94 - Deterministic IK evaluation';

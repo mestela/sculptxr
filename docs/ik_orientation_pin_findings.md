@@ -189,9 +189,58 @@ re-solve once after every joint has been written.
 
 ---
 
+## 8. The solve no longer carries history (v3.19.94)
+
+*(Added after the above. This closes the first "Still open" item; it is left below, struck
+through in prose rather than deleted, because the numbers are the evidence.)*
+
+**Two channels, not one.** The seed was the loud one and the bend reference was the quiet one,
+and they fail differently:
+
+| channel | varies with | measured spread (two-legged rig, both ankles pinned) |
+| ------- | ----------- | --------------------------------------------------- |
+| FABRIK seed | the ROUTE through the timeline | 0.0375 |
+| cached bend reference | what the SESSION did before the scrub | 0.0096 |
+
+The second is worth naming because it is invisible to a route test: a cached constant cannot
+vary by route, so all three routes agree with each other and all three are wrong together
+after a reload. Pose interactively before you ever scrub and the remembered bend is taken from
+that pose instead of from the skeleton as drawn.
+
+**Both are now zero.** Evaluation restores the joints the solver OWNS back to a stored rest
+pose before solving, and clears their bend references so those are re-read from the rest
+offsets. The controls still land exactly and the pins still hold.
+
+**Three decisions that carry the fix, each of which was a bug first:**
+
+1. **The caller says which joints are controls.** Playback names each keyed bone as it writes
+   it (`window._ikWritten`); `holdPins` consumes the set. Its presence means "this is an
+   evaluation", its absence means "a pin is being dragged" — so there are two seeding modes and
+   they are told apart by the caller rather than by a setting. Dragging still seeds from the
+   live pose, because continuity is most of why a drag feels attached to your hand.
+
+2. **Only the joints the solve will WRITE are reset.** The first version reset everything not
+   named as a control, and a hand-posed chest — off every path from a pin to the root, so never
+   touched by the solver — was silently undone by a scrub. Trading one bug for a worse one. The
+   owned set is what `markActive` lights, computed on a throwaway graph before the real one,
+   since the reset changes the positions the real graph reads.
+
+3. **Rest is captured when the rig is DRAWN, not adopted at the first scrub.** Adopting it
+   lazily looked like a harmless fallback and is the session-history bug in another costume:
+   the normal workflow is pose-then-scrub, so the pose is what gets enshrined. `captureRest`
+   therefore fills only joints that have none, or a named set — drawing a finger onto a posed
+   character must not redefine the whole body's rest. It is persisted in the SKEL block (v5,
+   its own section after the skins, so the entry record keeps the size older readers expect).
+
+**Still open, and noticed on the way:** `holdPins` is not idempotent. Called twice with
+identical inputs it moves the knee about 0.047 — the solve is not at a fixed point when it
+stops. It does not affect determinism (evaluation always starts from the same seed and runs
+the same number of times), but it is why a drag frame cannot be asserted to be stable, and it
+is probably worth a look before the pole vector leans on the solve settling.
+
 ## Still open
 
-- **The solve carries history.** Controls-only keying — key the pins and the hips, let the
+- ~~**The solve carries history.**~~ *Fixed in v3.19.94 — see §8. Kept for the numbers.* Controls-only keying — key the pins and the hips, let the
   solver fill in the rest — needs the solve to be a pure function of (rest skeleton, control
   values). It is not. Same pins, same hip target, three different routes to the same frame:
 

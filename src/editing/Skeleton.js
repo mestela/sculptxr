@@ -1376,7 +1376,7 @@ Skeleton.mirrorPoint = function (p, plane, out) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 4;  // v3 adds the IK pin link per entry; v4 the selection lock
+const SKEL_VERSION = 5;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
 
@@ -1426,12 +1426,25 @@ Skeleton.serialize = function (meshes) {
     skins.push({ i: i, j: jIdx, nbV: nbV, mesh: m });
   });
 
+  // v5: the REST POSE — each joint's local matrix as the skeleton was drawn. It cannot be
+  // recovered from the file otherwise: a rig is usually saved posed, and the solver evaluates
+  // a keyed frame by putting every joint it owns back to rest first. Without this, reloading a
+  // scene and scrubbing to the same frame gives a different pose from the session that saved
+  // it — the rig would silently adopt whatever pose it was in at the first scrub as its rest.
+  //
+  // Written as its own section AFTER the skins rather than as extra words in each entry, so
+  // the entry record keeps the size every older reader expects and only the new section is
+  // version-gated.
+  const rests = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && m._ikRest) rests.push({ i: i, m: m }); });
+
   if (!entries.length && !skins.length) return null;
 
   let slots = 3 + entries.length * 6 + 1;
   for (const s of skins) {
     slots += 3 + s.j.length + s.nbV * INFLUENCES * 2 + s.nbV * 3 + s.j.length * 16;
   }
+  slots += 1 + rests.length * 17;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -1458,6 +1471,12 @@ Skeleton.serialize = function (meshes) {
       const e = m._skinInvBind[a].elements;
       for (let k = 0; k < 16; k++) f[o++] = e[k];
     }
+  }
+
+  u[o++] = rests.length;
+  for (const r of rests) {
+    u[o++] = r.i;
+    for (let k = 0; k < 16; k++) f[o++] = r.m._ikRest[k];
   }
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
@@ -1628,6 +1647,20 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         // applied above; re-deriving it here would override an explicit unlock, so a mesh you
         // deliberately unlocked would come back locked every time you opened the file.
         if (ver < 4) mesh._selectLocked = true;
+      }
+    }
+
+    // v5: the rest pose, read after the skins for the reason given at the writer. A v4 file
+    // simply has no section here, and those joints adopt a rest at the first evaluation — the
+    // same fallback a rig drawn before this existed gets.
+    if (ver >= 5) {
+      const rn = u[o++];
+      for (let i = 0; i < rn; i++) {
+        const mi = u[o++];
+        const m = meshes[mi];
+        const rest = new Float32Array(16);
+        for (let k = 0; k < 16; k++) rest[k] = f[o++];
+        if (m) m._ikRest = rest;
       }
     }
 

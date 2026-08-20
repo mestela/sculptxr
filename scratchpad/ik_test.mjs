@@ -1297,5 +1297,171 @@ function lengthsPreserved(name, joints, before) {
     /if \(this\._dragUndoRig\) \{/.test(VR));
 }
 
+// --- determinism: an evaluated frame is the same pose however it was reached -------------
+//
+// FABRIK seeds from the pose the rig is already in, which is right for a drag and wrong for
+// evaluation: it makes the solved pose a function of the ROUTE to the frame rather than of the
+// frame. Keying the controls and letting the solver fill in the rest is unusable until this
+// holds, because a scrub and a playback disagree about the same frame.
+//
+// A body rather than a leg, deliberately: a pinned ankle leaves the knee free on a circle, and
+// two legs sharing one root is what makes where each knee settles depend on where it started.
+function pinnedBody() {
+  const hips = J([0, 2, 0]);
+  const spine = J([0, 2.5, 0], hips);
+  const chest = J([0, 3.0, 0], spine);
+  const limb = (sx) => {
+    const hip = J([0.2 * sx, 1.9, 0], hips);
+    const knee = J([0.22 * sx, 1.0, 0.06], hip);
+    const ankle = J([0.2 * sx, 0.1, 0], knee);
+    return { hip, knee, ankle };
+  };
+  const L = limb(-1), R = limb(1);
+  const joints = [hips, spine, chest, L.hip, L.knee, L.ankle, R.hip, R.knee, R.ankle];
+  const main = makeMain(joints);
+  IKSolver.setPin(L.ankle, IKSolver.PIN_POS, main);
+  IKSolver.setPin(R.ankle, IKSolver.PIN_POS, main);
+  return { main, joints, hips, knee: R.knee, ankle: R.ankle };
+}
+
+const FR = { A: [0.35, 1.55, 0.25], B: [-0.30, 1.45, -0.30], T: [0.10, 1.70, 0.10] };
+
+// One EVALUATED frame, in the app's own order: playback writes the keyed bone and names it as
+// a control, then the solver holds the pins.
+function evalFrame(rig, at, nameControls) {
+  Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(at[0], at[1], at[2]));
+  if (nameControls) (window._ikWritten || (window._ikWritten = new Set())).add(rig.hips.getID());
+  IKSolver.holdPins(rig.main);
+}
+
+function poseAfter(path, { rest = true, controls = true } = {}) {
+  const rig = pinnedBody();
+  if (rest) IKSolver.captureRest(rig.main);       // what drawing the rig does
+  for (const f of path) evalFrame(rig, FR[f], controls);
+  return { rig, pose: rig.joints.map((j) => pos(j)) };
+}
+
+function spread(runs) {
+  const base = runs[0].pose;
+  let worst = 0;
+  for (const r of runs) {
+    for (let i = 0; i < base.length; i++) worst = Math.max(worst, base[i].distanceTo(r.pose[i]));
+  }
+  return worst;
+}
+
+{
+  // Seen to fail first: with the controls unnamed the solver cannot tell a keyed hip from its
+  // own output, so it seeds from the live pose and the three routes disagree. This is the
+  // shipped behaviour this feature replaces, and asserting that it DOES spread is what proves
+  // the check below can tell the difference.
+  window._ikWritten = null;
+  const noCtl = { controls: false };
+  const before = spread([poseAfter(['T'], noCtl), poseAfter(['A', 'T'], noCtl),
+                         poseAfter(['A', 'B', 'T'], noCtl)]);
+  check('the old seed really does carry history (the check can tell)', before > 1e-3,
+    'spread ' + before.toExponential(2));
+
+  window._ikWritten = null;
+  const runs = [poseAfter(['T'], {}), poseAfter(['A', 'T'], {}), poseAfter(['A', 'B', 'T'], {})];
+  const after = spread(runs);
+  check('an evaluated frame is the same pose however it was reached', after < 1e-6,
+    'spread ' + after.toExponential(2) + ' (was ' + before.toExponential(2) + ')');
+
+  // And it is the same pose because the CONTROLS still hold, not because everything collapsed
+  // onto rest and stayed there.
+  const r = runs[2].rig;
+  check('determinism: the keyed control still lands exactly',
+    pos(r.hips).distanceTo(new THREE.Vector3(...FR.T)) < 1e-6);
+  check('determinism: the pins still hold',
+    pos(r.ankle).distanceTo(new THREE.Vector3(0.2, 0.1, 0)) < 1e-3,
+    'err ' + pos(r.ankle).distanceTo(new THREE.Vector3(0.2, 0.1, 0)).toExponential(2));
+}
+
+// The other history channel, and the quieter one: what the SESSION did before the scrub. Pose
+// by hand first — which seeds from the live pose, as a drag must — then evaluate, and compare
+// against a rig nobody touched. This is what the rest pose being captured AT DRAW TIME buys;
+// adopting a rest at the first evaluation instead would enshrine the posed rig.
+{
+  window._ikWritten = null;
+  const fresh = poseAfter(['T'], {});
+
+  const used = pinnedBody();
+  IKSolver.captureRest(used.main);
+  Skeleton.moveJoint(used.main, used.hips, new THREE.Vector3(-0.4, 1.4, -0.35));
+  IKSolver.holdPins(used.main);                      // a drag: no controls named
+  Skeleton.moveJoint(used.main, used.hips, new THREE.Vector3(0.45, 1.5, 0.4));
+  IKSolver.holdPins(used.main);
+  evalFrame(used, FR.T, true);
+
+  let worst = 0;
+  used.joints.forEach((j, i) => { worst = Math.max(worst, pos(j).distanceTo(fresh.pose[i])); });
+  check('posing by hand first does not change the evaluated frame', worst < 1e-6,
+    'worst ' + worst.toExponential(2));
+}
+
+// DRAGGING MUST NOT BE RESET TO REST. Continuity between frames is most of why a drag feels
+// attached to your hand, and the two modes are told apart by whether the caller named any
+// controls — so from one and the same posed state the two must give different answers.
+{
+  const settle = () => {
+    const rig = pinnedBody();
+    IKSolver.captureRest(rig.main);
+    window._ikWritten = null;
+    Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(-0.4, 1.4, -0.35));
+    IKSolver.holdPins(rig.main);                      // drags: nothing named
+    Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(0.45, 1.5, 0.4));
+    IKSolver.holdPins(rig.main);
+    Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(...FR.T));
+    return rig;
+  };
+
+  window._ikWritten = null;
+  const dragRig = settle();
+  IKSolver.holdPins(dragRig.main);                    // one more drag frame
+
+  const evalRig = settle();
+  (window._ikWritten || (window._ikWritten = new Set())).add(evalRig.hips.getID());
+  IKSolver.holdPins(evalRig.main);                    // the same frame, evaluated
+
+  check('a drag keeps the live pose while an evaluation does not',
+    pos(dragRig.knee).distanceTo(pos(evalRig.knee)) > 1e-3,
+    'the two modes agreed, so the drag was reset to rest too');
+}
+
+// A joint the solver does not own — off every path from a pin to the root — must survive an
+// evaluation untouched. Scrubbing the timeline is not permission to undo a hand-posed chest.
+{
+  window._ikWritten = null;
+  const rig = pinnedBody();
+  IKSolver.captureRest(rig.main);
+  const chest = rig.joints[2];
+  Skeleton.moveJoint(rig.main, chest, new THREE.Vector3(0.3, 3.2, 0.25));
+  // Its LOCAL matrix, not its model position: the chest hangs off the hips, and the hips are
+  // the control being written, so the chest moving through the world is it riding its parent —
+  // which is correct. What must not change is the pose that was set on the chest itself.
+  const posed = Float32Array.from(chest.getMatrix());
+  evalFrame(rig, FR.T, true);
+  let worst = 0;
+  const now = chest.getMatrix();
+  for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(now[k] - posed[k]));
+  check('an evaluation leaves joints the solver does not own alone', worst < 1e-6,
+    'local matrix moved ' + worst.toExponential(2) + ' - a scrub undid a hand pose');
+}
+
+// Drawing a joint onto a rig that is currently POSED must not record that pose as rest for
+// every joint in the body — only the new joint has no rest to keep.
+{
+  const rig = pinnedBody();
+  IKSolver.captureRest(rig.main);
+  const restBefore = Float32Array.from(rig.hips._ikRest);
+  Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(0.4, 1.5, 0.3));
+  IKSolver.captureRest(rig.main);   // as drawing another joint would
+  let same = true;
+  for (let k = 0; k < 16; k++) if (restBefore[k] !== rig.hips._ikRest[k]) same = false;
+  check('capturing rest again leaves an existing rest alone', same,
+    'a blanket capture would enshrine the current pose as the rest skeleton');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

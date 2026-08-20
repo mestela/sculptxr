@@ -2654,7 +2654,15 @@ class AnimationRegistry {
       // pins ONCE after every joint has been written — doing it here, per mesh, would run
       // against a half-updated skeleton. Set from playback and from scrubbing alike, which is
       // why it is a flag rather than a call at the playback site.
-      if (mesh._isBone) window._ikPinsDirty = true;
+      if (mesh._isBone) {
+        window._ikPinsDirty = true;
+        // NAME THE JOINT, not just the fact that one moved. The solver treats the joints it
+        // was handed as this frame's CONTROLS and puts every other joint back to rest before
+        // solving, which is what makes an evaluated frame the same pose however it was reached
+        // — scrubbed to, played into, or landed on from the other direction. Without the names
+        // the solver cannot tell a keyed hip from its own output on the previous frame.
+        (window._ikWritten || (window._ikWritten = new Set())).add(mesh.getID());
+      }
 
       if (mesh.updateMatrices && window.app && window.app._camera) {
         mesh.updateMatrices(window.app._camera);

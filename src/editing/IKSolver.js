@@ -231,6 +231,111 @@ IKSolver.clearBendRefs = function (main) {
   for (const j of Skeleton.joints(main)) j._boneBendRef = null;
 };
 
+// ---- the rest pose, and why evaluation needs one ---------------------------------
+//
+// FABRIK seeds every solve from the pose the rig is ALREADY in. For an interactive drag that
+// is exactly right — continuity between frames is most of why dragging feels smooth. For
+// EVALUATION it is a bug, and a bad one: it makes the solved pose a function of the route
+// taken to the frame rather than of the frame itself. Same pins, same hip target, three
+// different routes, measured on a two-legged rig with both ankles pinned:
+//
+//   from rest             knee (0.406, 0.808, 0.519)
+//   via one other frame        (0.384, 0.809, 0.526)   0.0230 away
+//   via two other frames       (0.441, 0.807, 0.506)   0.0375 away
+//
+// Every control is satisfied in every row — the hips land exactly, the pins hold to 1e-9 —
+// and the knee still lands a good fraction of a bone apart. So a scrub and a playback
+// disagree, and a pose keyed through controls does not reproduce. That is what the rest pose
+// below fixes: evaluation restores every joint the solver OWNS back to rest first, so the
+// answer depends on (rest skeleton, control values) and nothing else.
+//
+// THE REST POSE IS THE SKELETON AS DRAWN. It is captured when the rig is built or tweaked —
+// the same moments that invalidate a bend reference, and for the same reason: both describe
+// the shape the solver should reason from, and editing that shape invalidates both.
+// Record rest for joints that have none — a joint is born at rest, so drawing one is the
+// moment to record it. Deliberately NOT a whole-rig overwrite by default: draw a new finger
+// onto a character that is currently posed and a blanket capture would enshrine that pose as
+// the rest skeleton for every joint in the body.
+//
+// `only` forces a re-capture for a named set, which is what a Tweak edit needs: tweak moves a
+// joint IN the rest skeleton, so the joints it touched have a new rest and the rest of the rig
+// does not.
+IKSolver.captureRest = function (main, only) {
+  const joints = only || Skeleton.joints(main);
+  let n = 0;
+  for (const j of joints) {
+    if (!j || (!only && j._ikRest)) continue;
+    j._ikRest = mat4.clone(j.getMatrix());
+    j._boneBendRef = null; // the bend is a fact about the rest shape, which just changed
+    n++;
+  }
+  return n;
+};
+
+// Put every joint back to rest EXCEPT the ones named in `keep` — the controls for this frame.
+// A pinned joint is NOT a control: the pin object carries the control, and the joint itself is
+// something the solver moves onto it.
+//
+// A joint with no rest recorded adopts its current transform as rest rather than being left
+// out. That is the honest fallback for a rig built before this existed: the first evaluation
+// defines rest, and every one after it agrees. Silently skipping it instead would leave one
+// joint history-dependent inside an otherwise deterministic solve, which is the worst of both.
+function seedFromRest(main, keep, owned) {
+  let restored = 0, adopted = 0;
+  for (const j of Skeleton.joints(main)) {
+    if (keep && keep.has(j.getID())) continue;
+    // ONLY THE JOINTS THIS SOLVE WILL WRITE. A joint off every path from a pin to the root is
+    // never touched by the solver, so its current transform is not solver output — it is
+    // either keyed, or something the user posed by hand. Resetting those too would make a
+    // scrub quietly undo hand-posed parts of the rig, which is a far worse bug than the one
+    // being fixed.
+    if (owned && !owned.has(j.getID())) continue;
+    if (!j._ikRest) { j._ikRest = mat4.clone(j.getMatrix()); adopted++; continue; }
+    mat4.copy(j.getMatrix(), j._ikRest);
+    Skeleton.syncThree(j);
+    // THE BEND REFERENCE IS THE OTHER HISTORY CHANNEL, and it is quieter than the seed. It is
+    // read once and cached for ever, from whatever pose the rig happened to be in at the first
+    // solve that needed it — so it does not vary by route (a constant cannot), but it does vary
+    // by SESSION: pose interactively before you ever scrub, and the remembered bend is taken
+    // from that pose instead of from the skeleton as drawn. Cleared here for the joints we just
+    // put back, so it is re-read from the rest offsets buildGraph is about to compute. Constant
+    // input, constant answer, and the same one after a reload.
+    //
+    // Only for joints that were RESTORED: a control joint is not at rest, and clearing its
+    // reference would have it re-read from the posed offsets, which is the mistake this is
+    // avoiding everywhere else.
+    j._boneBendRef = null;
+    restored++;
+  }
+  if (window._ikTrace) console.log('[ik] seed from rest: %d restored, %d adopted', restored, adopted);
+}
+
+// The joints this solve is going to write: everything on a path from a pin up to its root,
+// which is exactly what markActive lights. Built on a throwaway graph because the answer is
+// needed BEFORE the real one is built — the reset changes the positions the real graph reads.
+// A few nodes and a walk per pin; the graph is rebuilt every solve anyway.
+function solverOwned(main, pins) {
+  const nodes = buildGraph(main);
+  const anchors = [];
+  for (const j of pins) {
+    const n = nodes.get(j.getID());
+    if (n) anchors.push(n);
+  }
+  markActive(anchors);
+  const ids = new Set();
+  for (const n of nodes.values()) if (n.active) ids.add(n.joint.getID());
+  return ids;
+}
+
+// The joints something OTHER than the solver wrote this frame — playback and scrubbing set
+// this as they write each keyed bone. Consumed (and cleared) by holdPins, which is what makes
+// its presence mean "this is an evaluation" and its absence mean "a pin is being dragged".
+function consumeWritten() {
+  const w = window._ikWritten;
+  window._ikWritten = null;
+  return w && w.size ? w : null;
+}
+
 // Unpin everything, handing back the pin objects so the caller can take them out of the scene.
 IKSolver.clearPins = function (main) {
   const had = IKSolver.pinnedJoints(main);
@@ -1206,9 +1311,25 @@ IKSolver.resolveToJoint = function (main, joint) {
 };
 
 IKSolver.holdPins = function (main) {
+  // Consumed FIRST, before any early return: a set left behind would be read by a later solve
+  // as that frame's controls, and the joints it names would then be held at values from a
+  // frame nobody is on any more.
+  const written = consumeWritten();
   const pins = IKSolver.pinnedJoints(main);
-  if (window._ikTrace) console.log('[ik] holdPins pins=' + pins.length);
+  if (window._ikTrace) {
+    console.log('[ik] holdPins pins=%d seed=%s', pins.length, written ? 'rest' : 'current');
+  }
   if (!pins.length) return false;
+
+  // TWO SEEDING MODES, and the difference is the caller, not a setting. Playback and scrubbing
+  // name the joints they wrote, so everything else goes back to rest and the frame evaluates
+  // to the same pose however it was reached. A pin dragged by hand names nothing, so the solve
+  // seeds from the live pose and keeps the frame-to-frame continuity that makes a drag feel
+  // attached to your controller. `window._ikSeedFromRest = false` forces the old behaviour.
+  if (written && window._ikSeedFromRest !== false) {
+    seedFromRest(main, written, solverOwned(main, pins));
+  }
+
   const nodes = buildGraph(main);
 
   // Grouped by skeleton: two pinned characters are two independent problems, and throwing all

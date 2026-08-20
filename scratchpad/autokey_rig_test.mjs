@@ -121,9 +121,21 @@ for (const [name, src] of blocks) {
 // The registry itself was never the problem, and this is what says so: the generic path keys
 // any mesh, and playback already knows a keyed bone needs the pins re-solved after it.
 check('the registry keys any mesh generically', /_writeTransformKey\(mesh, time\)/.test(REG));
-check('playback re-solves pins after a keyed bone is written',
-  /if \(mesh\._isBone\) window\._ikPinsDirty = true;/.test(REG),
-  'without this a keyed pose interpolates off its pins');
+// Bound to the PROPERTY rather than to one spelling of it: the branch used to be a single
+// line and is now a block, and a guard pinned to the line reported the addition as the bug.
+{
+  const i = REG.indexOf('mesh._isBone');
+  const near = i === -1 ? '' : REG.slice(i, i + 700);
+  check('playback re-solves pins after a keyed bone is written',
+    /_ikPinsDirty = true/.test(near),
+    'without this a keyed pose interpolates off its pins');
+  // The solver treats the joints it was handed as the frame's CONTROLS and puts the ones it
+  // owns back to rest, which is what makes an evaluated frame independent of the route to it.
+  // Flagging that SOMETHING moved is not enough — it has to say what.
+  check('and names the joint it wrote, not just that one moved',
+    /_ikWritten[\s\S]{0,80}?\.add\(mesh\.getID\(\)\)/.test(near),
+    'unnamed, the solver cannot tell a keyed joint from its own output last frame');
+}
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

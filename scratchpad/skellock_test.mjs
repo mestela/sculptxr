@@ -142,5 +142,46 @@ const roundTrip = (meshes) => {
     /if \(ver >= 4\) \{[\s\S]{0,120}?row\.mesh\._selectLocked = !!\(row\.bone & 8\)/.test(code));
 }
 
+// THE REST POSE (v5). The solver evaluates a keyed frame by putting every joint it owns back
+// to rest first, so a rest that does not survive the file makes the same frame evaluate
+// differently after a reload — the rig adopts whatever pose it happened to be in at the first
+// scrub. Round-tripped here rather than asserted from the source, because the writer and the
+// reader agreeing is the whole property.
+{
+  const rest = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0.5,1.25,-2,1]);
+  const bone = mk({ _isBone: true, _ikRest: rest });
+  const posed = mk({ _isBone: true }); // no rest recorded: must not invent one
+  const out = roundTrip([bone, posed]);
+  check('the rest pose survives a save and a load', !!(out && out[0]._ikRest),
+    'without it a reloaded rig evaluates a keyed frame differently');
+  if (out && out[0]._ikRest) {
+    let worst = 0;
+    for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(out[0]._ikRest[k] - rest[k]));
+    check('and comes back to the float, not approximately', worst === 0, 'worst ' + worst);
+  }
+  check('a joint with no rest recorded does not get one from the file',
+    !!(out && !out[1]._ikRest), 'inventing a rest here would enshrine a posed rig');
+}
+
+// A v4 file has no rest section at all. Reading one must not walk off the end and corrupt the
+// fields around it — the section is appended AFTER the skins precisely so that older files
+// simply end where they always did.
+{
+  const bone = mk({ _isBone: true, _boneRadius: 3 });
+  const buf = Skeleton.serialize([bone]);
+  const u = new Uint32Array(buf);
+  u[1] = 4; // claim v4
+  const fresh = [mk({ _id: bone._id })];
+  const main = { _skelAll: new Set(), getMeshes: () => fresh, render() {}, _scene: null };
+  let threw = null;
+  const err = console.error;
+  console.error = (...a) => { threw = a.join(' '); };
+  Skeleton.deserialize(buf, fresh, main);
+  console.error = err;
+  check('a v4 file loads without reading the rest section', !threw && fresh[0]._isBone === true,
+    threw || 'bone flag ' + fresh[0]._isBone);
+  check('and gains no rest pose from it', !fresh[0]._ikRest);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
