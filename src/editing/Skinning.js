@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Skeleton from './Skeleton.js';
 import { adjacencyFromFaces } from './Geodesic.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 // [Rigging POC#2 — phase 2a] Bind + linear blend skinning.
 //
@@ -218,6 +219,255 @@ function solveSmoothing(level, raw, nbJoints) {
   return smoothWeights(level, raw.idx, raw.wts, iterations, nbJoints);
 }
 
+// ---- delta mush ------------------------------------------------------------------
+//
+// The pass that makes a RIGID capsule bind usable: Blue Sky's answer to "one bone per
+// vertex creases at every boundary". It does not touch the weights at all — it is a
+// post-process on the deformed positions, so the capsules go on stating exactly which bone
+// owns which vertex (which is what makes editing a radius legible) while the SHAPE across a
+// boundary comes out smooth.
+//
+// How it works, in one line: smooth the deformed mesh hard enough to lose every crease AND
+// every sculpted detail, then put the detail back as a per-vertex offset expressed in a
+// LOCAL FRAME built from the smoothed surface. Because the frame rotates with the smoothed
+// surface, the detail rides the deformation instead of being flattened by it.
+//
+// Two properties fall out of that and both are load-bearing:
+//   - At the bind pose the result is EXACTLY the rest mesh. smooth(rest) + frame . delta is
+//     how the delta was defined, so mush is invisible until something moves.
+//   - Under a rigid move of the whole skeleton the result is the rigidly moved rest mesh.
+//     The frames rotate with it, so nothing shrinks and nothing swims.
+// Both are asserted in scratchpad/deltamush_test.mjs. They are the checks that separate a
+// working mush from a plausible-looking blur.
+//
+// The iteration count is the only real knob: it is the RADIUS of the smoothing, in edges. It
+// has to reach across the crease it is meant to remove, so a dense mesh needs more of them
+// than a coarse one. Zero disables the whole pass.
+const MUSH_ITERATIONS = 10;
+const MUSH_STEP = 0.6;   // per-iteration move toward the neighbour average
+const MUSH_AMOUNT = 1;   // blend between the raw LBS result (0) and the mushed one (1)
+
+// Live value, then the saved one, then the default — the display-flag order, so a slider
+// drag takes effect on the current frame.
+Skinning.mushIterations = function () {
+  const live = window._skinMush;
+  if (Number.isFinite(live) && live >= 0) return Math.round(live);
+  const saved = getOptionsURL().boneMush;
+  return Number.isFinite(saved) && saved >= 0 ? Math.round(saved) : MUSH_ITERATIONS;
+};
+
+Skinning.setMushIterations = function (n) {
+  window._skinMush = Math.max(0, Math.round(n));
+  getOptionsURL.saveOption('boneMush', window._skinMush, 0);
+};
+
+Skinning.defaultMushIterations = function () { return MUSH_ITERATIONS; };
+
+// Vertex adjacency, flattened. The array-of-arrays that adjacencyFromFaces returns is fine
+// to build from and wrong to iterate at 90Hz — this runs several times a frame over every
+// vertex, and chasing a pointer per vertex per iteration is most of the cost. Duplicates are
+// dropped: adjacencyFromFaces links an interior edge once per face that shares it, which
+// would weight those neighbours double in the average for no reason anyone chose.
+function flatAdjacency(level) {
+  const adj = adjacencyFromFaces(level);
+  const nbV = adj.length;
+  const off = new Int32Array(nbV + 1);
+  let total = 0;
+  const seen = new Int32Array(nbV).fill(-1);
+  for (let i = 0; i < nbV; i++) {
+    const a = adj[i];
+    for (let k = 0; k < a.length; k++) { if (seen[a[k]] !== i) { seen[a[k]] = i; total++; } }
+    off[i + 1] = total;
+  }
+  const nb = new Int32Array(total);
+  seen.fill(-1);
+  let w = 0;
+  for (let i = 0; i < nbV; i++) {
+    const a = adj[i];
+    for (let k = 0; k < a.length; k++) { if (seen[a[k]] !== i) { seen[a[k]] = i; nb[w++] = a[k]; } }
+  }
+  return { off: off, nb: nb };
+}
+
+// Uniform Laplacian, `iters` passes, ping-ponging between two buffers. Returns whichever
+// buffer holds the result. A vertex with no neighbours (an isolated vert) holds still.
+function smoothPositions(src, a, b, off, nb, iters, step) {
+  let cur = src, out = a;
+  const nbV = (src.length / 3) | 0;
+  for (let it = 0; it < iters; it++) {
+    for (let i = 0; i < nbV; i++) {
+      const s = off[i], e = off[i + 1], n = e - s;
+      const i3 = i * 3, px = cur[i3], py = cur[i3 + 1], pz = cur[i3 + 2];
+      if (n === 0) { out[i3] = px; out[i3 + 1] = py; out[i3 + 2] = pz; continue; }
+      let ax = 0, ay = 0, az = 0;
+      for (let k = s; k < e; k++) { const j = nb[k] * 3; ax += cur[j]; ay += cur[j + 1]; az += cur[j + 2]; }
+      const inv = 1 / n;
+      out[i3] = px + (ax * inv - px) * step;
+      out[i3 + 1] = py + (ay * inv - py) * step;
+      out[i3 + 2] = pz + (az * inv - pz) * step;
+    }
+    cur = out; out = (out === a) ? b : a;
+  }
+  return cur;
+}
+
+// The orthonormal frame at vertex `i` of a smoothed position array, from two of its
+// neighbours. Written into `f` as [tx,ty,tz, nx,ny,nz, bx,by,bz]; returns false when the
+// pair is degenerate (collinear), which the caller answers by storing the delta in world
+// space instead.
+//
+// The PAIR IS CHOSEN ONCE, AT BIND, and stored — not re-picked per frame. Picking the
+// "best" pair from the posed mesh would let the choice flip between frames as the surface
+// moves, and a frame that changes identity mid-animation makes the detail jump.
+function frameAt(p, i, ia, ib, f) {
+  const i3 = i * 3, a3 = ia * 3, b3 = ib * 3;
+  const px = p[i3], py = p[i3 + 1], pz = p[i3 + 2];
+  let tx = p[a3] - px, ty = p[a3 + 1] - py, tz = p[a3 + 2] - pz;
+  const ex = p[b3] - px, ey = p[b3 + 1] - py, ez = p[b3 + 2] - pz;
+  const tl = Math.sqrt(tx * tx + ty * ty + tz * tz);
+  if (tl < 1e-12) return false;
+  tx /= tl; ty /= tl; tz /= tl;
+  // Normal from the two edges. Perpendicular to t by construction, so t/n/b is orthonormal
+  // without a Gram-Schmidt step.
+  let nx = ty * ez - tz * ey, ny = tz * ex - tx * ez, nz = tx * ey - ty * ex;
+  const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (nl < 1e-9) return false;
+  nx /= nl; ny /= nl; nz /= nl;
+  f[0] = tx; f[1] = ty; f[2] = tz;
+  f[3] = nx; f[4] = ny; f[5] = nz;
+  f[6] = ny * tz - nz * ty; f[7] = nz * tx - nx * tz; f[8] = nx * ty - ny * tx;
+  return true;
+}
+
+// Scratch, sized to the bound level and reused. Two position buffers for the ping-pong plus
+// the frame.
+function mushScratch(mesh, n) {
+  let sc = mesh._skinMushScratch;
+  if (!sc || sc.a.length !== n) {
+    sc = mesh._skinMushScratch = { a: new Float32Array(n), b: new Float32Array(n), f: new Float64Array(9) };
+  }
+  return sc;
+}
+
+// Build the rest-space deltas: what each vertex is, relative to the smoothed surface under
+// it. Runs against `_skinSrc` — the composited rest pose, base plus blendshape deltas — not
+// `_skinRest`, so a blendshape's detail is preserved rather than being read as deformation
+// and smoothed away.
+function buildMush(mesh, level, iters, step) {
+  const src = mesh._skinSrc;
+  const nbV = (src.length / 3) | 0;
+  if (!mesh._skinAdj || mesh._skinAdj.off.length !== nbV + 1) mesh._skinAdj = flatAdjacency(level);
+  const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb;
+
+  const sc = mushScratch(mesh, src.length);
+  const sm = smoothPositions(src, sc.a, sc.b, off, nb, iters, step);
+
+  const pair = new Int32Array(nbV * 2);
+  const delta = new Float32Array(nbV * 3);
+  const f = sc.f;
+
+  for (let i = 0; i < nbV; i++) {
+    const s = off[i], e = off[i + 1];
+    // Pick the neighbour pair whose edges are furthest from collinear, measured on the
+    // SMOOTHED surface the frame is actually built from. A near-collinear pair gives a
+    // normal that is mostly rounding error, and the detail it carries wobbles with it.
+    let ba = -1, bb = -1, best = 0;
+    const i3 = i * 3, px = sm[i3], py = sm[i3 + 1], pz = sm[i3 + 2];
+    for (let k = s; k < e; k++) {
+      const j = nb[k] * 3;
+      const ux = sm[j] - px, uy = sm[j + 1] - py, uz = sm[j + 2] - pz;
+      const ul = Math.sqrt(ux * ux + uy * uy + uz * uz);
+      if (ul < 1e-12) continue;
+      for (let k2 = k + 1; k2 < e; k2++) {
+        const j2 = nb[k2] * 3;
+        const vx = sm[j2] - px, vy = sm[j2 + 1] - py, vz = sm[j2 + 2] - pz;
+        const vl = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (vl < 1e-12) continue;
+        const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+        // Normalised: the sine of the angle between them, so a long thin edge pair cannot
+        // beat a short well-spread one just by being long.
+        const q = Math.sqrt(cx * cx + cy * cy + cz * cz) / (ul * vl);
+        if (q > best) { best = q; ba = nb[k]; bb = nb[k2]; }
+      }
+    }
+
+    const dx = src[i3] - sm[i3], dy = src[i3 + 1] - sm[i3 + 1], dz = src[i3 + 2] - sm[i3 + 2];
+    if (ba >= 0 && frameAt(sm, i, ba, bb, f)) {
+      pair[i * 2] = ba; pair[i * 2 + 1] = bb;
+      delta[i3] = dx * f[0] + dy * f[1] + dz * f[2];
+      delta[i3 + 1] = dx * f[3] + dy * f[4] + dz * f[5];
+      delta[i3 + 2] = dx * f[6] + dy * f[7] + dz * f[8];
+    } else {
+      // No usable frame (an isolated or degenerate vertex): carry the offset in world space.
+      // It will not rotate with the surface, which is wrong in principle and unnoticeable in
+      // practice for a vertex that has no surface around it to rotate with.
+      pair[i * 2] = -1; pair[i * 2 + 1] = -1;
+      delta[i3] = dx; delta[i3 + 1] = dy; delta[i3 + 2] = dz;
+    }
+  }
+
+  mesh._skinMushPair = pair;
+  mesh._skinMushDelta = delta;
+  mesh._skinMushIters = iters;
+  mesh._skinMushStep = step;
+  mesh._skinMushDirty = false;
+}
+
+// Smooth the DEFORMED positions in `out` and put the stored detail back on top, in place.
+// Called with the LBS result; leaves `out` holding the mushed result.
+function applyMush(mesh, level, out, nbV) {
+  const iters = Skinning.mushIterations();
+  if (iters <= 0) return false;
+  const step = tune('_skinMushStep', MUSH_STEP);
+  let amount = tune('_skinMushAmount', MUSH_AMOUNT);
+  if (amount > 1) amount = 1;
+  if (amount <= 0) return false;
+
+  if (!mesh._skinMushDelta || mesh._skinMushDelta.length !== nbV * 3 ||
+      mesh._skinMushIters !== iters || mesh._skinMushStep !== step || mesh._skinMushDirty) {
+    buildMush(mesh, level, iters, step);
+  }
+
+  // The pass is O(vertices x iterations) and runs on every frame a joint moves, so it is the
+  // one part of skinning with a real per-frame budget. Measured (desktop M-series, 10
+  // iterations): about 0.12 ms per 1000 vertices, linear in both. A 5k bind level is well
+  // inside a 90Hz frame; a 50k one is not, on any headset. `window._skinTrace = true` prints
+  // the cost once a second FROM THE DEVICE, which is the only number worth trusting.
+  const t0 = window._skinTrace ? performance.now() : 0;
+
+  const off = mesh._skinAdj.off, nb = mesh._skinAdj.nb;
+  const sc = mushScratch(mesh, nbV * 3);
+  const sm = smoothPositions(out, sc.a, sc.b, off, nb, iters, step);
+  const pair = mesh._skinMushPair, delta = mesh._skinMushDelta, f = sc.f;
+
+  for (let i = 0; i < nbV; i++) {
+    const i3 = i * 3;
+    const ia = pair[i * 2], ib = pair[i * 2 + 1];
+    let x, y, z;
+    if (ia >= 0 && frameAt(sm, i, ia, ib, f)) {
+      const dx = delta[i3], dy = delta[i3 + 1], dz = delta[i3 + 2];
+      x = sm[i3] + f[0] * dx + f[3] * dy + f[6] * dz;
+      y = sm[i3 + 1] + f[1] * dx + f[4] * dy + f[7] * dz;
+      z = sm[i3 + 2] + f[2] * dx + f[5] * dy + f[8] * dz;
+    } else {
+      x = sm[i3] + delta[i3]; y = sm[i3 + 1] + delta[i3 + 1]; z = sm[i3 + 2] + delta[i3 + 2];
+    }
+    if (amount >= 1) { out[i3] = x; out[i3 + 1] = y; out[i3 + 2] = z; continue; }
+    out[i3] += (x - out[i3]) * amount;
+    out[i3 + 1] += (y - out[i3 + 1]) * amount;
+    out[i3 + 2] += (z - out[i3 + 2]) * amount;
+  }
+
+  if (window._skinTrace) {
+    const now = performance.now();
+    if (now - (mesh._skinTraceAt || 0) > 1000) {
+      mesh._skinTraceAt = now;
+      console.log('[skin] mush %d verts x %d iters: %sms', nbV, iters, (now - t0).toFixed(2));
+    }
+  }
+  return true;
+}
+
 // Bind `mesh` to every joint currently in the scene.
 //
 // Binding FREEZES TOPOLOGY: the weights are indexed by vertex, so any op that changes the
@@ -270,6 +520,9 @@ Skinning.bind = function (main, mesh) {
   mesh._skinSrc = new Float32Array(mesh._skinRest);
   mesh._skinStampBuf = null;
   mesh._skinDirty = true;
+  // Topology and rest space both just changed, so nothing cached for the mush survives.
+  mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
+  mesh._skinMushDirty = true;
   Skinning.refreshWeightColors(main, mesh);
   // A BOUND MESH IS DRIVEN BY THE RIG, so it stops being a viewport selection target: from
   // here on you reach for a bone or a pin, and the ray hitting the character instead is a
@@ -416,6 +669,16 @@ Skinning.refreshWeightColorsAll = function (main) {
   }
 };
 
+// Force the next skin pass to run even though no joint moved. The pass is change-gated on
+// the pose, so a change to the DEFORMER — the mush iteration count, from the slider — would
+// otherwise sit there doing nothing until something happened to move a bone.
+Skinning.markDirtyAll = function (main) {
+  const meshes = main.getMeshes() || [];
+  for (let i = 0; i < meshes.length; i++) {
+    if (Skinning.isBound(meshes[i])) meshes[i]._skinDirty = true;
+  }
+};
+
 // Is ANYTHING in the scene bound? Distinct from `isBound(getMesh())` on purpose: while
 // rigging, the selection is a joint most of the time (grabbing one selects it), so a
 // scene-wide action must not be gated on what happens to be selected.
@@ -486,6 +749,7 @@ Skinning.unbind = function (mesh) {
   }
   mesh._skinJoints = mesh._skinIdx = mesh._skinW = null;
   mesh._skinInvBind = mesh._skinRest = mesh._skinSrc = null;
+  mesh._skinAdj = mesh._skinMushPair = mesh._skinMushDelta = mesh._skinMushScratch = null;
   mesh._skinLevel = 0;
   mesh._skinLevelMesh = null;
   mesh._skinLevelWarned = false;
@@ -509,6 +773,10 @@ Skinning.captureSource = function (mesh) {
   if (v.length < mesh._skinSrc.length) return;
   mesh._skinSrc.set(v.subarray(0, mesh._skinSrc.length));
   mesh._skinDirty = true; // the rest pose changed, so re-skin even if no joint moved
+  // The mush deltas are DEFINED against that rest pose, so they are stale too. Rebuilt
+  // lazily on the next skin pass rather than here: a blendshape being scrubbed fires this
+  // every frame, and only the frames that actually deform need the rebuild.
+  mesh._skinMushDirty = true;
 };
 
 // ---- multires ------------------------------------------------------------------
@@ -666,6 +934,11 @@ Skinning.apply = function (main, mesh) {
     if (total <= 1e-6) { out[i * 3] = sx; out[i * 3 + 1] = sy; out[i * 3 + 2] = sz; continue; }
     out[i * 3] = ox; out[i * 3 + 1] = oy; out[i * 3 + 2] = oz;
   }
+
+  // Delta mush LAST, over the finished LBS result. It is a post-process on positions, so it
+  // has to see the deformation the weights produced — running it before, or folding it into
+  // the weights, would be a different (and much worse) algorithm.
+  applyMush(mesh, level, out, nbV);
 
   // Carry the posed cage up to the displayed level, then refresh. updateResolution is the
   // stack's own refresh (geometry + colours + buffers + wireframe); without it the higher

@@ -80,6 +80,7 @@ export function buildBoneSectionHTML(main, style) {
   const pins = IKSolver.pinnedJoints(main).length;
   const bound = Skinning.isBound(main.getMesh?.());
   const anyBound = Skinning.anyBound(main);
+  const mush = Skinning.mushIterations();
 
   const titleOpen = c.title ? `<div class="${c.title}">` : '';
   const titleClose = c.title ? '</div>' : '';
@@ -122,6 +123,11 @@ export function buildBoneSectionHTML(main, style) {
       ${bound ? '<button class="' + c.action + '" id="bone-unbind">Unbind</button>' : ''}
     </div>
     ${anyBound ? `
+    <div class="${c.row}">
+      <span class="${c.lbl}">Mush</span>
+      <input type="range" id="bone-mush" min="0" max="30" step="1" value="${mush}">
+      <span class="${c.val}" id="bone-mush-val">${mush}</span>
+    </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-restpose">Bind Pose</button>
     </div>` : ''}
@@ -268,6 +274,22 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
+  // Delta mush strength, in smoothing iterations — the radius, in edges, that the smoothing
+  // reaches. Live on drag rather than on release: judging a mush is entirely a matter of
+  // watching a bent limb while the number moves, and the pass is a post-process on positions,
+  // so it costs a re-skin and nothing else. Unlike the capsule slider it has no "apply" step,
+  // because it changes no per-vertex state that a hand edit could be overwriting.
+  const mushInput = q('mush'), mushVal = q('mush-val');
+  mushInput?.addEventListener('input', () => {
+    const n = parseInt(mushInput.value, 10);
+    Skinning.setMushIterations(n);
+    if (mushVal) mushVal.textContent = String(n);
+    // The skin pass only runs when the POSE changed, and this changed the deformer instead.
+    // Without this the slider does nothing at all until the next time a joint moves.
+    Skinning.markDirtyAll(main);
+    main.render?.();
+  });
+
   q('skin')?.addEventListener('click', () => {
     const res = SkinMesh.build(main);
     say(res.ok
@@ -331,6 +353,13 @@ export function syncBoneSection(root, main) {
   setFlag('solid', Skeleton.displayFlag('solid'));
   setFlag('wire', Skeleton.displayFlag('wire'));
   setFlag('joints', Skeleton.displayFlag('joints'));
+
+  const mushInput = q('mush'), mushVal = q('mush-val');
+  if (mushInput) {
+    const n = Skinning.mushIterations();
+    mushInput.value = String(n);
+    if (mushVal) mushVal.textContent = String(n);
+  }
 
   // The pin count is rig state rather than panel state, so it has to be refreshed here or it
   // shows whatever was true when the markup was last built.

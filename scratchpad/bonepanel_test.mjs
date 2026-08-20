@@ -25,7 +25,8 @@ const Skeleton = {
   setDisplayFlag: (n, v) => { _flagState[n] = !!v; },
 };
 const _flagState = {};
-const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){} };
+const Skinning = { isBound: () => !!globalThis.__bound, anyBound: () => true, refreshWeightColorsAll(){},
+  mushIterations: () => 10, setMushIterations(){}, markDirtyAll(){} };
 const SkinMesh = {};
 const IKSolver = { pinnedJoints: () => [{},{}] };
 `;
