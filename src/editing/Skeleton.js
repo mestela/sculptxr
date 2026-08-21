@@ -1439,14 +1439,17 @@ Skeleton.jointSide = function (joint, plane) {
 // negative the other, and 0 (or absent) means SWAP — every twin pair exchanges poses, which is
 // the "flip the pose" command rather than the "copy one side" one.
 //
-// Joints ON the plane are left alone by design: a spine joint is its own reflection only if
-// its rotation happens to be symmetric, and silently squaring up a deliberately asymmetric
-// spine is not what "mirror the arms" means. Their twin link is null anyway.
-Skeleton.mirrorPose = function (main, side) {
+// `controls`, when supplied, is the set of authored joints to mirror. This keeps an IK pose
+// sparse: keyed hips and active effectors are controls, while unkeyed knees and elbows are
+// solver output and should be rebuilt rather than baked. With no set this remains the static
+// pose command and mirrors the complete evaluated rig.
+Skeleton.mirrorPose = function (main, side, controls) {
   const plane = Skeleton.symmetryPlane(main);
   if (!plane) return { ok: false, why: 'symmetry is off — turn it on to mirror a pose' };
   const joints = Skeleton.joints(main);
   const has = new Set(joints);
+  const authored = controls && new Set(Array.from(controls, (j) => typeof j === 'object' ? j : null));
+  const use = (j) => !authored || authored.has(j);
   reflectionMatrix(plane, _mMirror);
 
   // Every unordered twin pair, once.
@@ -1480,6 +1483,7 @@ Skeleton.mirrorPose = function (main, side) {
     const da = Skeleton.jointSide(a, plane);
     let src = null, dst = null;
     if (!side) {                       // swap
+      if (!use(a) && !use(b)) continue;
       target.set(a, mirrorOf(b)); srcOf.set(a, b);
       target.set(b, mirrorOf(a)); srcOf.set(b, a);
       n += 2;
@@ -1487,15 +1491,60 @@ Skeleton.mirrorPose = function (main, side) {
     }
     src = (da * side > 0) ? a : b;     // the joint on the requested side drives
     dst = (src === a) ? b : a;
+    if (!use(src)) continue;
     target.set(dst, mirrorOf(src));
     srcOf.set(dst, src);
     n++;
   }
 
+  // A joint without a twin is not necessarily centred in the current pose. Hips can travel
+  // metres to one side and a spine can carry a large twist. They mirror IN PLACE: the source
+  // and destination object are the same, but its model transform is still conjugated by P.
+  for (const j of joints) {
+    if (seen.has(j) || !use(j)) continue;
+    // An unpaired tip below a paired hand is not a centre control; it rides the mirrored hand
+    // frame. Only the unpaired trunk (no paired ancestor) reflects in place.
+    let pairedAncestor = false;
+    for (let p = j._parentMesh; p; p = p._parentMesh) {
+      if (p._boneMirror && has.has(p._boneMirror)) { pairedAncestor = true; break; }
+    }
+    if (pairedAncestor) continue;
+    target.set(j, mirrorOf(j));
+    srcOf.set(j, j);
+    n++;
+  }
+
+  // Pin controls are independent of bone-transform controls. A static foot pin must swap even
+  // when the foot itself has no track; keying the solved foot merely because its pin exists
+  // would turn solver output into another authored control.
+  const pinSrcOf = new Map(srcOf);
+  for (const [a, b] of pairs) {
+    const ap = a._boneIKPinObj, bp = b._boneIKPinObj;
+    if (!ap && !bp) continue;
+    if (!side) {
+      pinSrcOf.set(a, b); pinSrcOf.set(b, a);
+    } else {
+      const src = Skeleton.jointSide(a, plane) * side > 0 ? a : b;
+      pinSrcOf.set(src === a ? b : a, src);
+    }
+  }
+  for (const j of joints) {
+    if (seen.has(j) || !j._boneIKPinObj) continue;
+    let pairedAncestor = false;
+    for (let p = j._parentMesh; p; p = p._parentMesh) {
+      if (p._boneMirror && has.has(p._boneMirror)) { pairedAncestor = true; break; }
+    }
+    if (!pairedAncestor) pinSrcOf.set(j, j);
+  }
+
+  if (!target.size && !pinSrcOf.size) {
+    return { ok: false, why: 'no authored controls to mirror at this frame' };
+  }
+
   // The pin setup, read BEFORE anything is written. A swap needs both sides' pins as they were,
   // and creating one twin's pin would otherwise be visible to the other twin's turn.
   const pinWas = new Map();
-  for (const j of srcOf.values()) {
+  for (const j of pinSrcOf.values()) {
     const pin = j._boneIKPinObj;
     pinWas.set(j, pin ? {
       mode: (j._boneIKPin | 0) & 3,
@@ -1525,9 +1574,11 @@ Skeleton.mirrorPose = function (main, side) {
   // The anchor is conjugated exactly like the pose (P·M·P), which matters for a 6DOF pin:
   // reflecting its orientation alone would hand the twin an improper frame to hold.
   let pinned = 0;
+  const pinObjects = [];
   const added = [], removed = [];
-  for (const dst of ordered) {
-    const src = srcOf.get(dst);
+  const pinOrdered = Array.from(pinSrcOf.keys()).sort((x, y) => depth(x) - depth(y));
+  for (const dst of pinOrdered) {
+    const src = pinSrcOf.get(dst);
     if (!src) continue;
     const was = pinWas.get(src);
     const dstPin = dst._boneIKPinObj;
@@ -1554,13 +1605,15 @@ Skeleton.mirrorPose = function (main, side) {
     const m = new THREE.Matrix4().multiplyMatrices(_mMirror, was.m).multiply(_mMirror);
     pin.setModelSpaceMatrix(m.elements);
     Skeleton.syncThree(pin);
+    pinObjects.push(pin);
     pinned++;
   }
 
   // The scene add/remove is the CALLER's, exactly as it is for Clear Pins: taking an object out
   // of the scene and putting it back is the undoable half, and the caller is the one holding
   // the undo record.
-  return { ok: true, joints: n, pins: pinned, added: added, removed: removed };
+  return { ok: true, joints: n, pins: pinned, added: added, removed: removed,
+    controls: ordered, pinObjects: pinObjects };
 };
 
 // ---- persistence ---------------------------------------------------------------

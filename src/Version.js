@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.98 - Stable Rendering panel, line-only trails';
+export const VERSION = 'v3.19.99 - Pin-driven pose mirror and root controls';

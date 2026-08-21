@@ -404,6 +404,28 @@ function lengthsPreserved(name, joints, before) {
   IKSolver.setPin(a.ankle, IKSolver.PIN_NONE, mainB);
 }
 
+// --- 8b. a full pin on the root holds translation as well as rotation ----------------
+{
+  const hips = J([0, 2, 0]);
+  const thighL = J([0.3, 1.4, 0], hips);
+  const thighR = J([-0.3, 1.4, 0], hips);
+  const main = makeMain([hips, thighL, thighR]);
+  IKSolver.setPin(hips, IKSolver.PIN_FULL, main);
+  const pin = IKSolver.pinObject(hips);
+  const wantP = new THREE.Vector3(0.45, 1.65, -0.2);
+  const wantQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.55);
+  pin._m.compose(wantP, wantQ, new THREE.Vector3(1, 1, 1));
+  IKSolver.holdPins(main);
+  const gotQ = new THREE.Quaternion();
+  modelMat(hips).decompose(new THREE.Vector3(), gotQ, new THREE.Vector3());
+  check('root pin: hips follow the pin translation', pos(hips).distanceTo(wantP) < 1e-6,
+    'off by ' + pos(hips).distanceTo(wantP).toExponential(2));
+  check('root pin: hips still follow the pin rotation', gotQ.angleTo(wantQ) < 1e-6,
+    'off by ' + (gotQ.angleTo(wantQ) * 180 / Math.PI).toFixed(4) + ' deg');
+  check('root pin: the body travels with the hips', pos(thighL).x > 0.5,
+    'left thigh x ' + pos(thighL).x.toFixed(3));
+}
+
 // --- 9. pin state cycles and reads back --------------------------------------------
 {
   const j = J([0, 0, 0]);
@@ -1350,6 +1372,26 @@ function pinnedBody() {
   IKSolver.setPin(L.ankle, IKSolver.PIN_POS, main);
   IKSolver.setPin(R.ankle, IKSolver.PIN_POS, main);
   return { main, joints, hips, knee: R.knee, ankle: R.ankle };
+}
+
+// The production case: two planted ankles and a 6DOF hip control. Moving the hip pin must
+// move the root while the legs absorb the change and both ankle anchors remain fixed.
+{
+  const rig = pinnedBody();
+  const ankles = IKSolver.pinnedJoints(rig.main).slice();
+  const ankleAnchors = ankles.map((j) => IKSolver.pinAnchor(j, new THREE.Vector3()));
+  IKSolver.setPin(rig.hips, IKSolver.PIN_FULL, rig.main);
+  const hipPin = IKSolver.pinObject(rig.hips);
+  const wantP = new THREE.Vector3(0.18, 1.72, 0.12);
+  const wantQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.3);
+  hipPin._m.compose(wantP, wantQ, new THREE.Vector3(1, 1, 1));
+  window._ikWritten = new Set();
+  IKSolver.holdPins(rig.main);
+  check('three-pin body: hips follow their translated pin', pos(rig.hips).distanceTo(wantP) < 1e-6,
+    'off by ' + pos(rig.hips).distanceTo(wantP).toExponential(2));
+  ankles.forEach((j, i) => check('three-pin body: planted ankle ' + (i + 1) + ' still holds',
+    pos(j).distanceTo(ankleAnchors[i]) < 1e-3,
+    'off by ' + pos(j).distanceTo(ankleAnchors[i]).toExponential(2)));
 }
 
 const FR = { A: [0.35, 1.55, 0.25], B: [-0.30, 1.45, -0.30], T: [0.10, 1.70, 0.10] };

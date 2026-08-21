@@ -237,20 +237,38 @@ const reflect = (v) => v.clone().addScaledVector(PLANE.normal, -2 * v.dot(PLANE.
   check('swap twice returns the original pose', back < 1e-6, 'drift ' + back.toExponential(2));
 }
 
-// --- 5. joints on the centreline are left alone -------------------------------------
+// --- 5. trunk controls reflect in place ----------------------------------------------
 {
   const r = rig();
   poseJoint(r.chest, [0.2, 0.3, 1], 0.4);
   // Array.from, NOT Float32Array.from: three.js keeps matrix elements in a plain (float64)
   // array, and rounding the copy to float32 fakes a delta of about 1e-8 all by itself.
   const chestBefore = Array.from(r.chest.getMatrix());
+  const chestWant = new THREE.Matrix4().fromArray(chestBefore);
+  const P = new THREE.Matrix4().set(-1, 0, 0, 0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0, 0, 0, 1);
+  chestWant.premultiply(P).multiply(P);
   poseJoint(r.L.sh, [0.3, 1, 0.6], 0.9);
   Skeleton.mirrorPose(r.main, Skeleton.planeDistance(pos(r.L.sh), PLANE) > 0 ? 1 : -1);
-  let worst = 0;
   const now = r.chest.getMatrix();
-  for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(now[k] - chestBefore[k]));
-  check('a centreline joint keeps its own pose', worst < 1e-9,
-    'squaring up a deliberately asymmetric spine is not what mirroring an arm means');
+  let worst = 0;
+  for (let k = 0; k < 16; k++) worst = Math.max(worst, Math.abs(now[k] - chestWant.elements[k]));
+  check('an unpaired trunk control reflects its position and orientation in place', worst < 1e-9,
+    'an asymmetric hip or spine is part of the pose, even when it has no twin');
+}
+
+// Sparse animation mirrors only authored controls. An unkeyed limb is solver output and must
+// not be baked just because it happened to be in the evaluated pose when the button was hit.
+{
+  const r = rig();
+  poseJoint(r.chest, [0.2, 0.3, 1], 0.4);
+  poseJoint(r.L.sh, [0.3, 1, 0.6], 0.9);
+  const leftBefore = Array.from(r.L.sh.getMatrix());
+  Skeleton.mirrorPose(r.main, 0, new Set([r.chest]));
+  let limbDelta = 0;
+  for (let k = 0; k < 16; k++) limbDelta = Math.max(limbDelta,
+    Math.abs(r.L.sh.getMatrix()[k] - leftBefore[k]));
+  check('sparse mirror leaves unkeyed solver-owned limbs alone', limbDelta < 1e-9);
 }
 
 // --- PINS. Mirroring a pose that does not mirror its pins is a mirror that undoes itself on
@@ -319,6 +337,25 @@ function pinAt(r, joint, xyz, mode) {
     check('and it lands on the reflected anchor',
       got.distanceTo(reflect(new THREE.Vector3(-2.2, 3.4, 0.7))) < 1e-6);
   }
+}
+
+// A pin remains a control in a sparse animated pose, but its attached bone does not become
+// one. Mirror the anchor while leaving the evaluated limb for IK to reconstruct.
+{
+  const r = pinnable(rig());
+  const srcPin = pinAt(r, r.L.hd, [-2.2, 3.4, 0.7]);
+  const leftBefore = Array.from(r.L.hd.getMatrix());
+  const res = Skeleton.mirrorPose(r.main,
+    Skeleton.planeDistance(pos(r.L.sh), PLANE) > 0 ? 1 : -1, new Set([r.chest]));
+  const dstPin = r.R.hd._boneIKPinObj;
+  check('a static pin mirrors even when its bone has no animation track',
+    !!dstPin && pos(dstPin).distanceTo(reflect(pos(srcPin))) < 1e-6);
+  let boneDelta = 0;
+  for (let k = 0; k < 16; k++) boneDelta = Math.max(boneDelta,
+    Math.abs(r.L.hd.getMatrix()[k] - leftBefore[k]));
+  check('mirroring that pin does not bake its solver-owned bone', boneDelta < 1e-9);
+  check('the sparse result reports only the authored trunk bone',
+    res.controls.length === 1 && res.controls[0] === r.chest, res.controls.length);
 }
 
 // Twin pinned, source not: that pin has to GO. The pose being copied does not have one, and

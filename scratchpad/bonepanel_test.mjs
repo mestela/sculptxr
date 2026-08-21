@@ -67,7 +67,7 @@ check('every mode button reaches a flat screen',
 check('every command button is present on a flat screen',
   ['bone-bind', 'bone-skin', 'bone-rad-all'].every(id => authoring.includes('id="' + id + '"'))
     && ['bone-unpin', 'bone-restpose'].every(id => pose.includes('id="' + id + '"'))
-    && animation.includes('id="bone-key"'));
+    && animation.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 check('wrist panel uses its own class dialect', wrist.includes('mp-voxel-btn') && !wrist.includes('mm-choice'));
 check('menu panel uses its own class dialect', flat.includes('mm-choice') && !flat.includes('mp-voxel-btn'));
@@ -111,8 +111,8 @@ check('authoring contains no pose, display or animation commands',
 check('pose contains only pose operations',
   ['unpin', 'mirror', 'flip', 'restpose'].every(id => pose.includes('bone-' + id))
     && !/bone-(draw|caps|key|trails|solid)/.test(pose));
-check('animation owns Key Pose and Trails',
-  animation.includes('bone-key') && animation.includes('bone-trails'));
+check('animation owns Trails without the obsolete whole-rig Key Pose command',
+  !animation.includes('bone-key') && animation.includes('bone-trails'));
 
 // Caller-level routing. The shared blocks can be perfect and still be invisible if one panel
 // forgets to compose or wire them — the same parallel-implementation failure this split is

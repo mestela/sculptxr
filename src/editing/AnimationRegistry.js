@@ -1971,7 +1971,7 @@ class AnimationRegistry {
   // holds its neighbouring keys' value and would drift out of the pose you just set.
   //
   // Returns how many were keyed.
-  keyTransforms(meshes, time, label) {
+  keyTransforms(meshes, time, label, pushUndo = true) {
     const list = (meshes || []).filter((m) => m && m.getID);
     if (!list.length) return 0;
 
@@ -1995,8 +1995,10 @@ class AnimationRegistry {
       }
       if (window.app && window.app.render) window.app.render();
     };
-    window.app?.getStateManager?.()?.pushStateCustom?.(
-      () => apply(before), () => apply(after), false, label || 'Key Pose');
+    if (pushUndo) {
+      window.app?.getStateManager?.()?.pushStateCustom?.(
+        () => apply(before), () => apply(after), false, label || 'Key Pose');
+    }
 
     return list.length;
   }

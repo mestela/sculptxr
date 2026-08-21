@@ -8,7 +8,7 @@ import IKSolver from '../editing/IKSolver.js';
 // The Bones tool's controls, in ONE place, for every panel that shows them.
 //
 // They started life inside the VR wrist panel, which meant the whole rigging feature —
-// bind, capsules, Make Skin, Bind Pose, Key Pose, every display toggle — did not exist on
+// bind, capsules, Make Skin, Bind Pose, every display toggle — did not exist on
 // iPad or desktop at all. The two surfaces have different chrome (the wrist panel's `mp-`
 // classes, the menu/sidebar's `mm-`) but identical behaviour, so the markup is generated in
 // either dialect while the wiring and the state sync are shared outright.
@@ -160,7 +160,6 @@ export function buildBoneAnimationHTML(main, style) {
   return `
     ${sectionTitle(c, 'Rig Animation')}
     <div class="${c.btnRow}">
-      <button class="${c.action}" id="bone-key">Key Pose</button>
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
     </div>
   `;
@@ -262,28 +261,6 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  // Key the WHOLE rig at the playhead. Every joint, including the ones that did not move: a
-  // joint left unkeyed holds its neighbouring keys' value and drifts out of the pose that
-  // was just set, which reads as the rig coming apart between poses.
-  q('key')?.addEventListener('click', () => {
-    const reg = window._animationRegistry;
-    const joints = Skeleton.joints(main);
-    if (!reg || !joints.length) { say('Bones: no rig to key', false); return; }
-    const t = window._animCurrentTime || 0;
-    // PINS ARE KEYED WITH THE POSE. A pin is an ordinary object with an ordinary transform, so
-    // keying it needs no new key type and inherits every editor operation — drag to retime,
-    // marquee, the transform box, copy and paste — because all of those are written against
-    // `type === 'transform'` generically. It is also what makes a foot that plants at frame 10
-    // and releases at 40 expressible at all: without keys, holdPins can only treat a pin as
-    // constant for the whole timeline.
-    const pins = IKSolver.pinnedJoints(main)
-      .map((j) => IKSolver.pinObject(j))
-      .filter(Boolean);
-    const n = reg.keyTransforms(joints.concat(pins), t, 'Key Pose');
-    say(`Bones: keyed ${n} joints at ${t.toFixed(1)}` + (pins.length ? ` (+${pins.length} pins)` : ''));
-    main.render?.();
-  });
-
   // MIRROR takes the side you are holding. Posing an arm leaves that arm's joint selected —
   // grabbing one selects it — so the selection is the best available statement of "this side is
   // the one I mean", and it needs no extra control to say it. With nothing suitable selected
@@ -291,6 +268,33 @@ export function wireBoneSection(root, main, opts) {
   //
   // FLIP swaps both sides and needs no selection at all.
   const doMirror = (side, label) => {
+    const reg = window._animationRegistry;
+    const joints = Skeleton.joints(main);
+    const livePins = IKSolver.pinnedJoints(main);
+    const animatedJoints = reg ? joints.filter((j) => {
+      const tr = reg.tracks.get(j.getID());
+      return tr && tr.times && tr.times.length;
+    }) : [];
+    const animatedPins = reg ? livePins.filter((j) => {
+      const p = IKSolver.pinObject(j), tr = p && reg.tracks.get(p.getID());
+      return tr && tr.times && tr.times.length;
+    }) : [];
+    // A timeline pose mirrors authored bone controls plus every active IK control. With no
+    // transform animation this is the original static command and mirrors the whole pose.
+    const timed = animatedJoints.length || animatedPins.length;
+    // Pins are the pose controls. Bones are evaluated solver output here, even when an older
+    // clip still contains bone tracks; mirror/flip must not bake or rewrite the rig itself.
+    const controls = new Set();
+
+    // Track snapshots join the matrix/pin snapshots below so the button is still one undo.
+    // Snapshot every possible existing participant before mirrorPose can create a twin pin.
+    const existingTracks = new Map();
+    if (reg && timed) {
+      for (const m of joints.concat(livePins.map((j) => IKSolver.pinObject(j)).filter(Boolean))) {
+        const tr = reg.tracks.get(m.getID());
+        existingTracks.set(m.getID(), tr ? reg._snapshotTrack(tr) : null);
+      }
+    }
     // Mirroring can CREATE and DESTROY pins, not merely move them — a leg pinned on one side
     // and not the other is the ordinary case — so the undo record has to carry the pin
     // attachments and the scene membership, not just a pile of matrices.
@@ -299,23 +303,50 @@ export function wireBoneSection(root, main, opts) {
       .concat(beforePins.map(([, , p]) => p).filter(Boolean)
         .map((p) => [p, mat4.clone(p.getMatrix())]));
 
-    const res = Skeleton.mirrorPose(main, side);
+    const res = Skeleton.mirrorPose(main, side, controls);
     if (!res.ok) { say('Bones: ' + res.why, false); return; }
     for (const p of res.removed) main.removeMeshSilent?.(p);
+
+    const keyed = timed && reg ? Array.from(new Set(res.controls.concat(res.pinObjects))) : [];
+    if (keyed.length) {
+      reg.keyTransforms(keyed, window._animCurrentTime || 0, label, false);
+      // These are the controls for this evaluation. holdPins restores every other active
+      // joint from rest, then reconstructs the limbs against the reflected pins.
+      window._ikWritten = new Set(res.controls.map((j) => j.getID()));
+      IKSolver.holdPins(main);
+    }
     say(`Bones: ${label} — ${res.joints} joints` + (res.pins ? `, ${res.pins} pins` : ''));
 
     const afterPins = IKSolver.capturePins(main);
     const afterMx = IKSolver.captureAll(main)
       .concat(afterPins.map(([, , p]) => p).filter(Boolean)
         .map((p) => [p, mat4.clone(p.getMatrix())]));
+    const trackBefore = new Map();
+    const trackAfter = new Map();
+    if (reg && timed) {
+      for (const m of keyed) {
+        trackBefore.set(m.getID(), existingTracks.get(m.getID()) || null);
+        trackAfter.set(m.getID(), reg._snapshotTrack(reg.tracks.get(m.getID())));
+      }
+    }
 
     // Undo puts THE SAME objects back rather than building new ones, so a pin that comes back
     // is the pin that was there — same id, same outliner row, same keys hanging off it.
-    const apply = (mx, pins, put, take) => {
+    const applyTracks = (snaps) => {
+      if (!reg || !timed) return;
+      const ids = new Set([...trackBefore.keys(), ...trackAfter.keys()]);
+      for (const id of ids) {
+        const snap = snaps.get(id);
+        if (!snap) reg.tracks.delete(id);
+        else reg._restoreTrack(reg._ensureTransformTrack(id), snap, null);
+      }
+    };
+    const apply = (mx, pins, put, take, tracks) => {
       for (const p of take) main.removeMeshSilent?.(p);
       for (const p of put) main.addMeshSilent?.(p);
       for (const j of Skeleton.joints(main)) { j._boneIKPinObj = null; j._boneIKPin = 0; }
       IKSolver.restorePins(main, pins);
+      applyTracks(tracks);
       Skeleton.restoreLocal(mx);
       // The pose moved and the pins moved with it, so the rig has to settle onto them again.
       window._ikPinsDirty = true;
@@ -324,8 +355,8 @@ export function wireBoneSection(root, main, opts) {
     };
     window._ikPinsDirty = true;
     main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(beforeMx, beforePins, res.removed, res.added),
-      () => apply(afterMx, afterPins, res.added, res.removed),
+      () => apply(beforeMx, beforePins, res.removed, res.added, trackBefore),
+      () => apply(afterMx, afterPins, res.added, res.removed, trackAfter),
       false, label);
     Skeleton.updateVisuals(main);
     main.render?.();

@@ -338,7 +338,10 @@ function solverOwned(main, pins) {
 function consumeWritten() {
   const w = window._ikWritten;
   window._ikWritten = null;
-  return w && w.size ? w : null;
+  // An explicitly empty set is still an evaluation: pin-only mirror/flip has no authored
+  // bone to preserve, and therefore wants every solver-owned joint restored before solving.
+  // `null` alone means an interactive drag that should seed from the live pose.
+  return w instanceof Set ? w : null;
 }
 
 // Unpin everything, handing back the pin objects so the caller can take them out of the scene.
@@ -1489,11 +1492,16 @@ IKSolver.holdPins = function (main) {
     // marked active and the swivel has nothing it is allowed to move.
     markActive(targets.keys());
     markActive(soft.keys());
-    runSolve(nodes, targets, root, true, tol);
+    // Ordinarily holdPins anchors the root while limbs settle onto their goals. A hard pin ON
+    // the root is the exception: fixing the root to its pre-solve position immediately after
+    // assigning its target discarded the pin's translation, while its orientation still ran
+    // through `node.orient` — exactly the confusing rotate-but-don't-move behaviour.
+    const rootFixed = !targets.has(root);
+    runSolve(nodes, targets, root, rootFixed, tol);
     // After the sweeps and before the rotations are fitted: the swivel moves POSITIONS, and
     // applyRotations is what turns positions back into joint transforms.
-    applySwivels(nodes, soft, targets, root, true);
-    applyRotations(main, nodes, root, true);
+    applySwivels(nodes, soft, targets, root, rootFixed);
+    applyRotations(main, nodes, root, rootFixed);
     solved = true;
   }
   return solved;
