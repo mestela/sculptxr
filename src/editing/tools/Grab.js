@@ -83,8 +83,8 @@ class Grab extends SculptBase {
     IKSolver.holdPins(this._main);
     IKSolver.syncJointCache(this._main);
     IKSolver.syncPinCache(this._main);
-    Skeleton.updateVisuals(this._main);
-    this._main.render();
+    // XR's render loop rebuilds skeleton visuals every frame. Doing it here as well causes
+    // a second full rig-visual pass for every controller movement.
   }
 
   _queueXRPinSolve() {
@@ -411,7 +411,9 @@ class Grab extends SculptBase {
     // would flicker the highlight onto whatever the cursor passes over.
     // Shared with the Transform tool: Skeleton.hoverRigFromMouse. Two tools needing the same
     // preselection is exactly how the mouse and VR picks drifted apart earlier.
-    if (!this._grabbedMesh) Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.());
+    if (!this._main._xrSession && !this._grabbedMesh) {
+      Skeleton.hoverRigFromMouse(this._main, this._main.getPicking?.());
+    }
 
     const main = this._main;
     const picking = main.getPicking();

@@ -930,12 +930,10 @@ Skeleton.updateVisuals = function (main) {
   // bones between them are just something to see the sculpt through.
   const showSolid = Skeleton.displayFlag('solid');
   const showWire = Skeleton.displayFlag('wire');
-  // The joint markers and everything that hangs off them — the IK pin triad, the 6DOF gimbal
-  // and the dashed leader to an unreached anchor. Together because they are one layer to the
-  // eye: the things you AIM at, as against the bones, which are what you look through. Turning
-  // them off is how you see the sculpt with a rig inside it rather than a rig with a sculpt
-  // around it.
+  // Joint spheres and pin controls are independent display layers. Pins remain available
+  // while joint spheres are hidden, which is useful for a lighter puppeteering view.
   const showJoints = Skeleton.displayFlag('joints');
+  const showPins = Skeleton.displayFlag('pins');
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
   const hasChildBone = new Set();
@@ -1030,14 +1028,14 @@ Skeleton.updateVisuals = function (main) {
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
     // which quietly gave the steering goal a set of orientation rings it does not have.
     const pinParts = [
-      [e.pinT, showJoints && (pinMode === 1 || pinMode === 2), jr * (pinHot ? 3.0 : 2.2)],
-      [e.pinG, showJoints && pinMode === 2, jr * (pinHot ? 3.0 : 2.2)],
-      [e.pinS, showJoints && pinMode === 3, jr * (pinHot ? 2.0 : 1.5)],
+      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinG, showPins && pinMode === 2, jr * (pinHot ? 3.0 : 2.2)],
+      [e.pinS, showPins && pinMode === 3, jr * (pinHot ? 2.0 : 1.5)],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
     // means the solve is falling short.
-    const gap = showJoints && pinMode ? _vPin.distanceTo(_pB) : 0;
+    const gap = showPins && pinMode ? _vPin.distanceTo(_pB) : 0;
     if (gap > jr * 0.35) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
@@ -2012,6 +2010,7 @@ const DISPLAY_FLAGS = {
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
   joints: ['_boneShowJoints', 'boneShowJoints', true],
+  pins: ['_boneShowPins', 'boneShowPins', true],
   // The path the selected joint takes over the timeline. Off by default: it costs a full
   // evaluation per sample, and it is an animation aid rather than something you want while
   // sculpting.

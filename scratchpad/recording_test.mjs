@@ -20,6 +20,7 @@ const desktopPanel = read('src/gui/GuiAnimation.js');
 const oldVrPanel = read('src/gui/vr/GuiVRAnimation.js');
 const scene = read('src/Scene.js');
 const skel = read('src/editing/Skeleton.js');
+const bonePanel = read('src/gui/bonePanel.js');
 
 check('recording owns one begin-interaction transition', /beginInteraction\(mesh\)/.test(reg));
 check('recording owns one end-interaction transition', /endInteraction\(mesh\)/.test(reg));
@@ -87,6 +88,9 @@ check('two pin targets are applied before one batched IK solve',
   /if \(moved\) this\._queueXRPinSolve\(\)/.test(grab)
     && /queueMicrotask\(\(\) => this\._flushXRPinSolve\(\)\)/.test(grab)
     && /_flushXRPinSolve\(\)[\s\S]{0,250}?IKSolver\.holdPins/.test(grab));
+check('VR pin solve avoids a duplicate skeleton visual rebuild',
+  /XR's render loop rebuilds skeleton visuals every frame/.test(grab)
+    && !/_flushXRPinSolve\(\)[\s\S]{0,350}?Skeleton\.updateVisuals/.test(grab));
 check('Grab reads both controllers from the complete Scene snapshot',
   /const activeControllers = \[left, right\]\.filter\(Boolean\)/.test(grab)
     && !/callerHand/.test(grab));
@@ -99,6 +103,11 @@ check('secondary trigger reaches Grab instead of activating temporary Smooth',
 check('Grab hides the brush radius cursor',
   /tool\.constructor\.name === 'Grab'/.test(scene)
     && /cursorGroup\.visible = !isTransformTool/.test(scene));
+check('bone display exposes pins independently from joints',
+  /pins: \['_boneShowPins', 'boneShowPins', true\]/.test(skel)
+    && /const showPins = Skeleton\.displayFlag\('pins'\)/.test(skel)
+    && /flagButton\(c, 'pins', 'Pins'/.test(bonePanel)
+    && /flag\('pins', 'pins'\)/.test(bonePanel));
 check('Grab preselects rig targets under both controller rays',
   /Skeleton\.hoverRigFromRays\(this\._main, picking, hoverRays/.test(grab)
     && /main\._skelHighlightIds = jointIds/.test(skel)
@@ -109,6 +118,8 @@ check('a free controller keeps preselecting while the other holds a pin',
     && /!this\._vrPinGrabs\.has\(controller\.handedness\)/.test(grab)
     && /Skeleton\.hoverRigFromRays\(this\._main, picking, freeHoverRays/.test(grab)
     && /_rigHoverAtVR/.test(skel) && /_rigHoverAtMouse/.test(skel));
+check('VR Grab skips desktop mouse preselection',
+  /if \(!this\._main\._xrSession && !this\._grabbedMesh\)/.test(grab));
 check('two-hand pin undo and recording close on final release',
   /if \(this\._vrPinGrabs\.size === 0 && this\._vrPinGesture\)/.test(grab)
     && /Two-hand pin pose/.test(grab)

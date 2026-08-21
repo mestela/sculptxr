@@ -151,6 +151,7 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
+      ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
     </div>
   `;
 }
@@ -224,6 +225,7 @@ export function wireBoneSection(root, main, opts) {
   flag('solid', 'solid');
   flag('wire', 'wire');
   flag('joints', 'joints');
+  flag('pins', 'pins');
   flag('trails', 'trails');
 
   // Toggling the weight preview has to repaint or restore immediately — the flag alone
@@ -485,6 +487,7 @@ export function syncBoneSection(root, main) {
   setFlag('solid', Skeleton.displayFlag('solid'));
   setFlag('wire', Skeleton.displayFlag('wire'));
   setFlag('joints', Skeleton.displayFlag('joints'));
+  setFlag('pins', Skeleton.displayFlag('pins'));
   setFlag('trails', Skeleton.displayFlag('trails'));
 
   const mushInput = q('mush'), mushVal = q('mush-val');
