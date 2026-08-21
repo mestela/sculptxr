@@ -93,6 +93,17 @@ class Grab extends SculptBase {
     queueMicrotask(() => this._flushXRPinSolve());
   }
 
+  _syncXRPinHandColors() {
+    const handMap = {};
+    for (const [hand, held] of this._vrPinGrabs) handMap[held.pin.getID()] = hand;
+    const signature = JSON.stringify(handMap);
+    if (signature === this._vrPinHandColorSignature) return;
+    this._vrPinHandColorSignature = signature;
+    this._main._rigGrabHands = handMap;
+    Skeleton.updateVisuals(this._main);
+    this._main.render?.();
+  }
+
   _updateXRPinGrabs(picking, controllers) {
     if (this._grabbedMesh || !controllers.length) return false;
     const right = controllers.find(c => c.handedness === 'right' && c.matrix);
@@ -121,9 +132,19 @@ class Grab extends SculptBase {
               }).filter(Boolean),
               recordMesh: pin,
             };
-            window._animationRegistry?.beginInteraction?.(pin);
+            const registry = window._animationRegistry;
+            const startedRecording = registry?.beginInteraction?.(pin);
+            // Immediate/count-in recording may already be live before the first controller
+            // grabs. In that case beginInteraction deliberately does not restart the take,
+            // but this first pin must still join its target set.
+            if (!startedRecording && (registry?.isRecording || registry?.isCountingIn)) {
+              registry.addInteractionTarget?.(pin);
+            }
+          } else {
+            window._animationRegistry?.addInteractionTarget?.(pin);
           }
           this._vrPinGrabs.set(hand, { pin, last: mat4.clone(controller.matrix) });
+          this._syncXRPinHandColors();
           this._main._lastRigEdit = pin;
         }
       }
@@ -136,6 +157,7 @@ class Grab extends SculptBase {
     for (const controller of activeControllers) {
       if (!controller.buttons?.[0]?.pressed) this._vrPinGrabs.delete(controller.handedness);
     }
+    this._syncXRPinHandColors();
 
     // A held pin must not suppress aim feedback for the free hand. The free controller can
     // continue preselecting its next target while the other controller moves its pin.
@@ -215,7 +237,7 @@ class Grab extends SculptBase {
         return false;
       }
     }
-    var mesh = picking.getMesh();
+    var mesh = IKSolver.controlFor(picking.getMesh(), main);
     if (!mesh || mesh._isVoxel) return false;
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
 
@@ -611,7 +633,7 @@ class Grab extends SculptBase {
         
         // Rig nodes included: in VR a bone or a pin is exactly what you reach out and take.
         const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction, true);
-        let mesh = hit ? picking.getMesh() : null;
+        let mesh = hit ? IKSolver.controlFor(picking.getMesh(), this._main) : null;
 
         // Preselection, the same signal the desktop hover gives: the marker under the ray grows
         // and warms, so you can see what the trigger will take before you pull it.

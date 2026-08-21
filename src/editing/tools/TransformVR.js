@@ -255,7 +255,7 @@ class TransformVR extends SculptBase {
       }
 
       // Find Mesh to Drag
-      const mesh = this.getMesh();
+      const mesh = IKSolver.controlFor(this.getMesh(), main);
       if (!mesh || mesh._isVoxel) return;
 
       this._initInput = true;

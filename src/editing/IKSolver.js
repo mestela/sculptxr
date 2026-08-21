@@ -125,6 +125,14 @@ IKSolver.pinObject = function (joint) {
   return p && p._isPinTarget ? p : null;
 };
 
+// A pinned joint is driven through its pin control. Use this at selection/keying boundaries
+// so an overlapping joint marker cannot leave focus—or animation—on the driven bone itself.
+IKSolver.controlFor = function (mesh, main) {
+  if (!mesh?._isBone) return mesh;
+  const pin = IKSolver.pinObject(mesh);
+  return pin && (!main?.getMeshes || main.getMeshes().includes(pin)) ? pin : mesh;
+};
+
 IKSolver.setPin = function (joint, mode, main) {
   if (!joint) return null;
   const now = (mode | 0) & 3;

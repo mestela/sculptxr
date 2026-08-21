@@ -227,7 +227,7 @@ class GuiAnimation {
     transportSection.content.appendChild(transportGrid);
 
     const btnClearAll = document.createElement('wa-button');
-    btnClearAll.innerText = 'Clear all animation';
+    btnClearAll.innerText = 'Delete animation from selected objects';
     btnClearAll.setAttribute('variant', 'danger');
     btnClearAll.addEventListener('click', () => this.clearAll());
     transportSection.content.appendChild(btnClearAll);
@@ -396,8 +396,7 @@ class GuiAnimation {
       window._animPlaying = false;
       reg.stopRecording(true);
     } else {
-      window._animPlaying = true;
-      if (reg) reg.playbackDirection = -1;
+      if (reg) reg.startPlayback(-1);
     }
   }
 
@@ -407,8 +406,7 @@ class GuiAnimation {
       window._animPlaying = false;
       reg.stopRecording(true);
     } else {
-      window._animPlaying = true;
-      if (reg) reg.playbackDirection = 1;
+      if (reg) reg.startPlayback(1);
     }
   }
 
@@ -424,13 +422,7 @@ class GuiAnimation {
   }
 
   clearAll() {
-    if (!window._animationRegistry) return;
-    window._vrConfirm('Clear all animation and reset tempo?', () => {
-      window._animationRegistry.stopRecording(true);
-      window._animationRegistry.tracks.clear();
-      window._animCurrentTime = 0;
-      window._animationRegistry.globalPlaybackTime = 0;
-    });
+    this._main.getGui?.()?._ctrlTimeline?.deleteAnimationFromSelectedObjects?.();
   }
 
   printTracks() {

@@ -1074,6 +1074,7 @@ class Scene {
   }
 
   setOrUnsetMesh(mesh, multiSelect) {
+    mesh = IKSolver.controlFor(mesh, this);
     if (!mesh) {
       this._selectMeshes.length = 0;
     } else if (!multiSelect) {
@@ -8759,7 +8760,10 @@ class Scene {
           // grabbed node every time: grab left pin, right pin, root and the keys land on
           // root, left, right — the whole sequence rotated by one, which is what the traces
           // showed (currentMesh at each key equalled lastRigEdit at the one before it).
-          const _rigOf = (m) => ((m && (m._isBone || m._isPinTarget)) ? m : null);
+          const _rigOf = (m) => {
+            const control = IKSolver.controlFor(m, this);
+            return (control && (control._isBone || control._isPinTarget)) ? control : null;
+          };
           const rigNode = _rigOf(this._lastRigEdit) || _rigOf(currentMesh);
           const _rigEditWas = this._lastRigEdit; // kept for the trace below
           this._lastRigEdit = null; // consumed: the next stroke must not inherit it

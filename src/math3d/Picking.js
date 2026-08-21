@@ -218,7 +218,9 @@ class Picking {
         // radius with depth there makes it vanish near the camera and balloon far away, which
         // is why nothing could be picked in orthographic at all. In both cases the radius is
         // chosen to be the same fraction of the SCREEN.
-        var _pk = (window._rigPickCone || 0.035);
+        var _pk = mesh._isPinTarget
+          ? (window._rigPickConePin || 0.028)
+          : (window._rigPickCone || 0.018);
         var _cam = this._main && this._main.getCamera && this._main.getCamera();
         var cone;
         if (_cam && _cam.isOrthographic && _cam.isOrthographic()) {
@@ -326,30 +328,19 @@ class Picking {
 
       mesh.getModelSpaceMatrix(_TMP_MS); // parent-aware (== getMatrix() for flat meshes)
 
-      // RIG NODES AS POINTS IN A CONE, exactly as the mouse path does — a joint's pick sphere
-      // is a fraction the size of the marker you see, so ray-vs-geometry means pointing a
-      // controller at something invisible and tiny. Here the cone is angular by nature: a
-      // radius growing with distance along the ray IS a constant angle, which is what pointing
-      // at arm's length actually needs. Wider than the mouse default, because a hand is not a
-      // cursor. `window._rigPickConeVR` tunes it.
+      // VR rig nodes are selected entirely by controller proximity. Reaching for a joint or
+      // pin is more predictable than aiming a ray at it, especially during two-hand posing.
       if (includeRig && (mesh._isBone || mesh._isPinTarget)) {
         _TMP_RIG_P[0] = _TMP_MS[12]; _TMP_RIG_P[1] = _TMP_MS[13]; _TMP_RIG_P[2] = _TMP_MS[14];
         vec3.sub(_TMP_RIG_W, _TMP_RIG_P, origin);
-        var tRay = vec3.dot(_TMP_RIG_W, direction);
-        if (tRay < 0) continue;                       // behind the controller
-        vec3.scaleAndAdd(_TMP_RIG_C, origin, direction, tRay);
-        var offRay = vec3.dist(_TMP_RIG_C, _TMP_RIG_P);
-        // Pins get a WIDER cone than bones, not just a higher rank. A pin sits exactly on its
-        // joint, so ranking alone only decides it when both are inside their cones — and with
-        // equal cones the bone is just as easy to catch at the edge. The wider pin cone is what
-        // makes the controller reach the pin FIRST, which is what "pins take priority" means
-        // when you are pointing a hand at them.
+        // Coordinates are in model space; convert to physical metres so world scale does not
+        // change the reach distance.
+        const vrScale = this._main?._vrScale || 1.0;
+        const physicalDistance = vec3.len(_TMP_RIG_W) * vrScale;
+        if (physicalDistance > (window._rigPickProximityVR || 0.11)) continue;
         var isPin = !!mesh._isPinTarget;
-        var vrCone = isPin ? (window._rigPickConeVRPin || 0.14) : (window._rigPickConeVR || 0.075);
-        if (offRay > vrCone * tRay) continue;
-        // Pins outrank bones, by rank rather than distance: a pin sits on its joint, so the
-        // two are the same direction and a distance test would be decided by float noise.
-        var rScore = tRay - (isPin ? 2 : 1) * 1e6;
+        // Pins outrank every bone in reach; proximity chooses only within each category.
+        var rScore = physicalDistance - (isPin ? 2 : 1) * 1e6;
         if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = mesh; }
         continue;
       }

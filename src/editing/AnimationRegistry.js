@@ -13,6 +13,8 @@ class AnimationRegistry {
     this.tracks = new Map(); // Map<MeshID, { times, positions, quaternions, scales, playbackTime, lastUpdate }>
     this.activeRecordingId = -1;
     this.activeMesh = null;
+    this.recordingTargets = null;
+    this._trackStatesBeforeRecording = null;
     this.clipboardShape = null; // Floating clipboard buffer for copy/pasting morph keys
     this.isRecording = false;
     this.isCountingIn = false;
@@ -26,6 +28,8 @@ class AnimationRegistry {
     this.tracks.clear();
     this.activeRecordingId = -1;
     this.activeMesh = null;
+    this.recordingTargets = null;
+    this._trackStatesBeforeRecording = null;
     this.isRecording = false;
     this.isCountingIn = false;
     window._animPlaying = false;
@@ -161,6 +165,35 @@ class AnimationRegistry {
     return true;
   }
 
+  // Add another transform control to the take already started by beginInteraction. Used by
+  // two-hand pin Grab: both controls share one capture clock and one final undo step.
+  addInteractionTarget(mesh) {
+    if (!mesh || (!this.isRecording && !this.isCountingIn)) return false;
+    if (!this.recordingTargets) this.recordingTargets = this.activeMesh ? [this.activeMesh] : [];
+    if (this.recordingTargets.some((m) => m.getID() === mesh.getID())) return true;
+    const track = this._ensureTransformTrack(mesh.getID());
+    if (!this._trackStatesBeforeRecording) this._trackStatesBeforeRecording = new Map();
+    this._trackStatesBeforeRecording.set(mesh.getID(), this._snapshotTrack(track));
+    this.recordingTargets.push(mesh);
+    return true;
+  }
+
+  startPlayback(direction = 1) {
+    const start = window._animLoopStart ?? 0;
+    const end = window._animLoopEnd ?? window._animMasterDuration ?? 0;
+    const now = Number.isFinite(this.globalPlaybackTime) ? this.globalPlaybackTime : 0;
+    if (direction >= 0 && end > start && now >= end - 1e-4) {
+      this.globalPlaybackTime = start;
+      window._animCurrentTime = start;
+    } else if (direction < 0 && end > start && now <= start + 1e-4) {
+      this.globalPlaybackTime = end;
+      window._animCurrentTime = end;
+    }
+    this.playbackDirection = direction < 0 ? -1 : 1;
+    this.lastGlobalTime = null;
+    window._animPlaying = true;
+  }
+
   startRecording(mesh) {
     if (!mesh || !window._animArmed) return;
     
@@ -183,6 +216,8 @@ class AnimationRegistry {
     const id = mesh.getID();
     this.activeRecordingId = id;
     this.activeMesh = mesh;
+    this.recordingTargets = [mesh];
+    this._trackStatesBeforeRecording = new Map();
     this.lastCaptureTime = -1;
     this._shapeCaptureLen = -1;        // #30: re-latch the vertex-topology length per take
     this._shapeCaptureWarned = false;
@@ -218,6 +253,7 @@ class AnimationRegistry {
         meshMatrix: mesh.getMatrix ? mesh.getMatrix().slice() : null
       };
     }
+    this._trackStatesBeforeRecording.set(id, this._trackStateBeforeRecording);
     
     // If it is the very first track EVER, or we are resetting it:
     if (!this.tracks.has(id)) {
@@ -332,7 +368,7 @@ class AnimationRegistry {
   }
 
   captureTick() {
-    if (window.app && window.app._mesh) {
+    if (window.app && window.app._mesh && !this.recordingTargets?.length) {
       const liveMesh = window.app._mesh;
       if (liveMesh.getID() !== this.activeRecordingId) {
         this.activeRecordingId = liveMesh.getID();
@@ -382,10 +418,20 @@ class AnimationRegistry {
 
     if (!this.isRecording || !this.activeMesh) return;
 
+    const targets = this.recordingTargets?.length ? this.recordingTargets : [this.activeMesh];
     const track = this.tracks.get(this.activeRecordingId);
     if (!track) return;
 
-    let elapsed = (performance.now() - this.startTime) / 1000.0;
+    // Record against the transport clock, not wall time. The transport already applies the
+    // playback-speed multiplier and owns range clamping/wrapping, so captured keys stay in
+    // sync at every speed.
+    let elapsed = Number.isFinite(this.globalPlaybackTime)
+      ? this.globalPlaybackTime
+      : (performance.now() - this.startTime) / 1000.0;
+    const rangeEnd = window._animLoopEnd ?? window._animMasterDuration ?? Infinity;
+    const stopAtRangeEnd = window._animLoopEnabled === false && Number.isFinite(rangeEnd)
+      && elapsed >= rangeEnd - 1e-4;
+    if (stopAtRangeEnd) elapsed = rangeEnd;
 
     // #30 unify (2026-07-06): shape (vertex) capture no longer runs on this setInterval —
     // it moved into update()'s render-loop rebase so display + capture share ONE clock
@@ -403,13 +449,17 @@ class AnimationRegistry {
         // Punch-in overwrite: drop any prior transform keys in the time window we just
         // re-passed so overdubbing replaces instead of piling up.
         const inWindow = (t) => (tB >= tA) ? (t > tA && t <= tB) : (t > tA || t <= tB);
-        for (let i = track.times.length - 1; i >= 0; i--) {
-          if (inWindow(track.times[i])) {
-            track.times.splice(i, 1);
-            track.positions.splice(i * 3, 3);
-            track.quaternions.splice(i * 4, 4);
-            if (track.eulers) track.eulers.splice(i * 3, 3);
-            track.scales.splice(i * 3, 3);
+        for (const target of targets) {
+          const targetTrack = this.tracks.get(target.getID());
+          if (!targetTrack) continue;
+          for (let i = targetTrack.times.length - 1; i >= 0; i--) {
+            if (inWindow(targetTrack.times[i])) {
+              targetTrack.times.splice(i, 1);
+              targetTrack.positions.splice(i * 3, 3);
+              targetTrack.quaternions.splice(i * 4, 4);
+              if (targetTrack.eulers) targetTrack.eulers.splice(i * 3, 3);
+              targetTrack.scales.splice(i * 3, 3);
+            }
           }
         }
       }
@@ -417,10 +467,16 @@ class AnimationRegistry {
     }
 
     const rate = window._animCaptureRate !== undefined ? window._animCaptureRate : 0.1;
-    if (this.lastCaptureWriteTime !== undefined) {
+    if (!stopAtRangeEnd && this.lastCaptureWriteTime !== undefined) {
       if (elapsed >= this.lastCaptureWriteTime && elapsed - this.lastCaptureWriteTime < rate) return;
     }
     this.lastCaptureWriteTime = elapsed;
+
+    if (targets.length > 1) {
+      for (const target of targets) this._writeTransformKey(target, elapsed);
+      if (stopAtRangeEnd) this.stopRecording();
+      return;
+    }
 
     track.times.push(elapsed);
 
@@ -477,6 +533,7 @@ class AnimationRegistry {
     
     // Auto-sort ring buffer so that when overdubbing out of order, interpolation remains stable!
     this._sortRingBuffer(track);
+    if (stopAtRangeEnd) this.stopRecording();
   }
 
   sortTrack(track) {
@@ -873,6 +930,17 @@ class AnimationRegistry {
     this.captureTimer = null;
 
     const track = this.tracks.get(this.activeRecordingId);
+    const takeTargets = this.recordingTargets?.length ? this.recordingTargets.slice()
+      : (this.activeMesh ? [this.activeMesh] : []);
+    const restoreTransformSnap = (tr, snap) => {
+      if (!tr || !snap) return;
+      tr.times = (snap.times || []).slice();
+      tr.positions = (snap.positions || []).slice();
+      tr.quaternions = (snap.quaternions || []).slice();
+      tr.eulers = snap.eulers ? snap.eulers.slice() : null;
+      tr.scales = (snap.scales || []).slice();
+      this.sortTrack(tr);
+    };
     // #30: a shape take writes shapeTimes, a transform take writes times. Measure the
     // finalize (discard-tiny-take, duration lock, end-pad, undo) against whichever this
     // take actually recorded.
@@ -884,13 +952,19 @@ class AnimationRegistry {
       // A tap is not a take. Restore the pre-record track, but ALWAYS finish the lifecycle:
       // the old early return had already cleared the timer while leaving isRecording=true,
       // producing a red Record button that could neither capture nor reliably re-arm.
-      if (track && this._trackStateBeforeRecording) {
-        this._restoreTrack(track, this._trackStateBeforeRecording, null);
+      if (this._trackStatesBeforeRecording?.size) {
+        for (const [id, snap] of this._trackStatesBeforeRecording) {
+          restoreTransformSnap(this.tracks.get(id), snap);
+        }
+      } else if (track && this._trackStateBeforeRecording) {
+        restoreTransformSnap(track, this._trackStateBeforeRecording);
       }
       this.isRecording = false;
       this.isCountingIn = false;
       this.activeRecordingId = -1;
       this.activeMesh = null;
+      this.recordingTargets = null;
+      this._trackStatesBeforeRecording = null;
       window._animPlaying = false;
       window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
       if (!window._animWaitingForGrab) window._animArmed = false;
@@ -928,61 +1002,41 @@ class AnimationRegistry {
     if (track) {
       delete track.punchInTime;
     }
+    // Every control in a multi-target take spans the same loop boundary.
+    if (!isShape && window._animMasterDuration > 0) {
+      for (const target of takeTargets) {
+        const tr = this.tracks.get(target.getID());
+        if (!tr || !tr.times?.length) continue;
+        delete tr.punchInTime;
+        const n = tr.times.length;
+        if (tr.times[n - 1] < window._animMasterDuration - 0.05) {
+          tr.times.push(window._animMasterDuration);
+          tr.positions.push(...tr.positions.slice((n - 1) * 3, n * 3));
+          tr.quaternions.push(...tr.quaternions.slice((n - 1) * 4, n * 4));
+          tr.scales.push(...tr.scales.slice((n - 1) * 3, n * 3));
+          tr.eulers = null;
+        }
+      }
+    }
 
     // Push Undo state for recording! (Transform takes only — shape takes push a per-wave
     // undo on each trigger release via _pushShapeWaveUndo, so a take-level undo here would
     // double up and fight the per-wave steps.)
-    if (!isManualAbort && !isShape && track && count > 0 && this._trackStateBeforeRecording) {
-      const stateAfter = {
-        times: track.times.slice(),
-        positions: track.positions.slice(),
-        quaternions: track.quaternions.slice(),
-        eulers: track.eulers ? track.eulers.slice() : null,
-        scales: track.scales.slice(),
-        shapeTimes: track.shapeTimes ? track.shapeTimes.slice() : [],
-        shapes: track.shapes ? track.shapes.map(s => new Float32Array(s)) : []
-      };
-      
-      const stateBefore = this._trackStateBeforeRecording;
-      const meshId = this.activeRecordingId;
-      
+    if (!isManualAbort && !isShape && track && count > 0 && this._trackStatesBeforeRecording?.size) {
+      const statesBefore = new Map(this._trackStatesBeforeRecording);
+      const statesAfter = new Map();
+      for (const target of takeTargets) {
+        const tr = this.tracks.get(target.getID());
+        if (tr) statesAfter.set(target.getID(), this._snapshotTrack(tr));
+      }
       if (window.app && window.app.getStateManager()) {
         window.app.getStateManager().pushStateCustom(
-          () => { // UNDO
-            console.log("[Undo] Restore Track State before Recording");
-            const tr = this.tracks.get(meshId);
-            if (!tr) return;
-            tr.times = stateBefore.times.slice();
-            tr.positions = stateBefore.positions.slice();
-            tr.quaternions = stateBefore.quaternions.slice();
-            tr.eulers = stateBefore.eulers ? stateBefore.eulers.slice() : null;
-            tr.scales = stateBefore.scales.slice();
-            tr.shapeTimes = stateBefore.shapeTimes.slice();
-            tr.shapes = stateBefore.shapes.map(s => new Float32Array(s));
-            this.sortTrack(tr);
-            
-            const msh = window.app.getMesh();
-            if (msh && msh.getID() === meshId) {
-              if (stateBefore.meshMatrix) {
-                msh.setMatrix(stateBefore.meshMatrix);
-              }
-              this.update(msh, true);
-            }
-            
+          () => {
+            for (const [id, snap] of statesBefore) restoreTransformSnap(this.tracks.get(id), snap);
             if (window.app.render) window.app.render();
           },
-          () => { // REDO
-            console.log("[Redo] Restore Recorded Track State");
-            const tr = this.tracks.get(meshId);
-            if (!tr) return;
-            tr.times = stateAfter.times.slice();
-            tr.positions = stateAfter.positions.slice();
-            tr.quaternions = stateAfter.quaternions.slice();
-            tr.eulers = stateAfter.eulers ? stateAfter.eulers.slice() : null;
-            tr.scales = stateAfter.scales.slice();
-            tr.shapeTimes = stateAfter.shapeTimes.slice();
-            tr.shapes = stateAfter.shapes.map(s => new Float32Array(s));
-            this.sortTrack(tr);
+          () => {
+            for (const [id, snap] of statesAfter) restoreTransformSnap(this.tracks.get(id), snap);
             if (window.app.render) window.app.render();
           },
           false,
@@ -993,6 +1047,8 @@ class AnimationRegistry {
 
     this.activeRecordingId = -1;
     this.activeMesh = null;
+    this.recordingTargets = null;
+    this._trackStatesBeforeRecording = null;
     // Start-on-grab is an armed session, so one released gesture returns to waiting for the
     // next gesture. Countdown/immediate recording is a one-shot and disarms on completion.
     window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
@@ -1008,11 +1064,11 @@ class AnimationRegistry {
       window.app._guiXR.updateTexture();
     }
     
-    if (!isManualAbort && this.tracks.size > 0) {
+    if (!isManualAbort && this.tracks.size > 0 && window._animLoopEnabled !== false) {
       this.globalPlaybackTime = 0;
       window._animCurrentTime = 0;
       window._animPlaying = true;
-    } else if (isManualAbort) {
+    } else {
       window._animPlaying = false;
     }
   }
@@ -2136,6 +2192,29 @@ class AnimationRegistry {
     }
   }
 
+  // Remove complete animation channels for the selected objects, not merely their currently
+  // selected keys. Tracks are restored as the same objects on undo so all channel metadata,
+  // tangents, layers and rest transforms survive intact.
+  deleteAnimationForIds(ids) {
+    const unique = [...new Set(ids || [])].filter((id) => this.tracks.has(id));
+    if (!unique.length) return false;
+    this.stopRecording(true);
+    const removed = new Map(unique.map((id) => [id, this.tracks.get(id)]));
+    const remove = () => {
+      for (const id of removed.keys()) this.tracks.delete(id);
+      if (!this.tracks.size) window._animPlaying = false;
+      window.app?.render?.();
+    };
+    const restore = () => {
+      for (const [id, track] of removed) this.tracks.set(id, track);
+      window.app?.render?.();
+    };
+    remove();
+    window.app?.getStateManager?.()?.pushStateCustom(
+      restore, remove, false, unique.length === 1 ? 'Delete Animation' : 'Delete Animation Channels');
+    return true;
+  }
+
   deleteSelectedKeys(selectedKeys) {
     if (!selectedKeys || selectedKeys.length === 0) return;
     
@@ -2494,7 +2573,9 @@ class AnimationRegistry {
     // can see prior waves and puppeteer new ones on top; we only suppress the ShotSculpt
     // vertex-write WHILE a stroke is actively deforming this mesh (below).
     let liveShapeStroke = false;
-    if (this.isRecording && mesh.getID() === this.activeRecordingId) {
+    const isRecordingTarget = this.recordingTargets?.some((m) => m.getID() === mesh.getID())
+      || mesh.getID() === this.activeRecordingId;
+    if (this.isRecording && isRecordingTarget) {
       if (window._animKeyMode !== 'shape') return;
       const app = window.app;
       liveShapeStroke = !!(app && (app._vrSculpting || app._action === Enums.Action.SCULPT_EDIT));

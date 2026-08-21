@@ -448,7 +448,7 @@ export function buildAnimationSectionHTML() {
           <button id="acp-to-end"     title="Jump to end"><i class="fa-solid fa-forward-step"></i></button>
           <button id="acp-record"     title="Record"><i class="fa-solid fa-circle" style="color:#f38ba8"></i></button>
         </div>
-        <button class="acp-btn-clear" id="acp-clear-all">Clear all animation</button>
+        <button class="acp-btn-clear" id="acp-clear-all">Delete animation from selected objects</button>
         <button class="acp-btn-full" id="acp-bake-voxel" style="display:none"
           title="Voxel frame animations can't be saved to .sxr (the voxel field is runtime-only). Bake to a plain mesh-frame animation that saves and reloads. Undoable.">Bake voxel anim &rarr; mesh frames</button>
       </div>
@@ -1127,7 +1127,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const r = reg();
     if (window._animPlaying && r?.playbackDirection === -1) {
       window._animPlaying = false; r?.stopRecording?.(true);
-    } else { window._animPlaying = true; if (r) r.playbackDirection = -1; }
+    } else { r?.startPlayback?.(-1); }
     _sync();
   });
 
@@ -1139,7 +1139,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     const r = reg();
     if (window._animPlaying && r?.playbackDirection !== -1) {
       window._animPlaying = false; r?.stopRecording?.(true);
-    } else { window._animPlaying = true; if (r) r.playbackDirection = 1; }
+    } else { r?.startPlayback?.(1); }
     _sync();
   });
 
@@ -1165,16 +1165,8 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   });
 
   el.querySelector('#acp-clear-all')?.addEventListener('click', () => {
-    window._vrConfirm('Clear all animation?', () => {
-      const r = reg(); if (!r) return;
-      r.stopRecording?.(true); r.tracks.clear();
-      window._animCurrentTime = 0; r.globalPlaybackTime = 0;
-      window._animPlaying = false;
-      window._animSelectedKeys = [];
-      // [Step Bug2] Reset timeline view so playhead is visible at t=0.
-      window._animOnClearAll?.();
-      _sync();
-    });
+    main.getGui?.()?._ctrlTimeline?.deleteAnimationFromSelectedObjects?.();
+    _sync();
   });
 
   // ── Record ─────────────────────────────────────────────────────────────────

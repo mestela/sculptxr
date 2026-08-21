@@ -30,6 +30,8 @@ const BONE_COLOR = 0xf0c674;
 const BONE_EDGE = 0x1e1e2e;
 const HILITE_COLOR = 0xffe066;
 const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
+const RIGHT_HAND_COLOR = 0xf38ba8;
+const LEFT_HAND_COLOR = 0xa6e3a1;
 // A pinned bone is tinted, which is the one display channel still free: the JOINT marker's
 // colour is already spoken for by preselect and selection, so pin state goes on the bone. It
 // also reads from across the scene, where a small triad does not.
@@ -590,16 +592,19 @@ function applyRigHover(main, node) {
   }
 }
 
-function applyRigHovers(main, nodes, primaryNode) {
+function applyRigHovers(main, nodes, primaryNode, hands = []) {
   const jointIds = nodes.filter((n) => n && !n._isPinTarget).map((n) => n.getID());
   const pinIds = nodes.filter((n) => n?._isPinTarget).map((n) => n.getID());
-  const before = `${main._skelHighlightIds || ''}|${main._pinHighlightIds || ''}`;
+  const handMap = {};
+  nodes.forEach((node, i) => { if (node) handMap[node.getID()] = hands[i]; });
+  const before = `${main._skelHighlightIds || ''}|${main._pinHighlightIds || ''}|${JSON.stringify(main._rigHoverHands || {})}`;
   main._skelHighlightIds = jointIds;
   main._pinHighlightIds = pinIds;
+  main._rigHoverHands = handMap;
   const isPin = !!primaryNode?._isPinTarget;
   main._skelHighlightId = primaryNode && !isPin ? primaryNode.getID() : -1;
   main._pinHighlightId = isPin ? primaryNode.getID() : -1;
-  const after = `${jointIds}|${pinIds}`;
+  const after = `${jointIds}|${pinIds}|${JSON.stringify(handMap)}`;
   if (before !== after) {
     Skeleton.updateVisuals(main);
     main.render?.();
@@ -676,7 +681,7 @@ Skeleton.hoverRigFromRays = function (main, picking, rays, primaryHand) {
     return isRigNode(hit) ? hit : null;
   });
   const primaryIndex = Math.max(0, rays.findIndex((r) => r.handedness === primaryHand));
-  applyRigHovers(main, hits.filter(Boolean), hits[primaryIndex] || null);
+  applyRigHovers(main, hits, hits[primaryIndex] || null, rays.map((r) => r.handedness));
 };
 
 Skeleton.setHighlight = function (main, joint) {
@@ -920,6 +925,10 @@ Skeleton.updateVisuals = function (main) {
   const hi = main._skelHighlightId ?? -1;
   const hiAll = new Set(main._skelHighlightIds || [hi]);
   const pinHiAll = new Set(main._pinHighlightIds || [main._pinHighlightId ?? -1]);
+  const hoverHands = main._rigHoverHands || {};
+  const grabHands = main._rigGrabHands || {};
+  const handColor = (hand) => hand === 'right' ? RIGHT_HAND_COLOR
+    : (hand === 'left' ? LEFT_HAND_COLOR : null);
   const showLen = Skeleton.displayFlag('lengths');
   // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
   // outside every capsule gets no weight from any of them — so seeing them is the difference
@@ -976,10 +985,11 @@ Skeleton.updateVisuals = function (main) {
     // size change is what reads at a glance.
     const isHi = hiAll.has(id);
     const isSel = sel.has(id);
+    const jointHandColor = handColor(grabHands[id] || hoverHands[id]);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
       o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
-      o.material.color.setHex(isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR));
+      o.material.color.setHex(jointHandColor || (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
       o.visible = showJoints;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
@@ -1024,6 +1034,7 @@ Skeleton.updateVisuals = function (main) {
     // The pin marker grows and warms the same way a joint does under the cursor: same signal,
     // same meaning, so the two read as one preselection rather than two conventions.
     const pinHot = pinObj && pinHiAll.has(pinObj.getID());
+    const pinHandColor = pinObj ? handColor(grabHands[pinObj.getID()] || hoverHands[pinObj.getID()]) : null;
     // A steering goal is NOT a triad with a different colour — it is its own marker, and the
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
     // which quietly gave the steering goal a set of orientation rings it does not have.
@@ -1055,9 +1066,9 @@ Skeleton.updateVisuals = function (main) {
         o.visible = on;
         if (!on) continue;
         if (o.material && o.material.color) {
-          o.material.color.setHex(pinHot ? HILITE_COLOR
+          o.material.color.setHex(pinHandColor || (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
-              : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR)));
+              : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR))));
         }
         o.position.copy(_vPin);
         o.quaternion.copy(_qPin);

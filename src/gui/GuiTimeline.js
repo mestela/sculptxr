@@ -38,6 +38,7 @@ export default class GuiTimeline {
     this._isDraggingMarquee = false;
     this._isDraggingKeyframe = false;
     this._speedMenuOpen = false;
+    this._contextMenuOpen = false;
     this._activeKeyframeTrack = null;
     this._activeKeyframeIndex = undefined;
     this._activeKeyframeType = null;
@@ -400,6 +401,77 @@ export default class GuiTimeline {
       ctx.fillText(`${speed}x`, x + r.cellW / 2, y + r.cellH / 2);
     });
     ctx.restore();
+  }
+
+  _contextMenuCommands() {
+    const main = this._main;
+    return [...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
+  }
+
+  _contextMenuRect() {
+    const btn = this._toolbarBtnDefs().find(b => b.id === 'ctxmenu');
+    const count = this._contextMenuCommands().length;
+    return btn && count ? { x: btn.x, y: btn.y + btn.h, w: 190, h: count * 24, cellH: 24 } : null;
+  }
+
+  _drawContextMenu(ctx) {
+    if (!this._contextMenuOpen) return;
+    const r = this._contextMenuRect();
+    if (!r) return;
+    const cmds = this._contextMenuCommands();
+    ctx.save();
+    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    cmds.forEach((cmd, i) => {
+      const y = r.y + i * r.cellH;
+      const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
+      if (hov && cmd.enabled !== false) {
+        ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2);
+      }
+      ctx.fillStyle = cmd.enabled === false ? Theme.overlay0 : Theme.text;
+      ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(cmd.label, r.x + 10, y + r.cellH / 2);
+    });
+    ctx.restore();
+  }
+
+  selectedAnimationIds() {
+    const active = this._main.getMesh?.();
+    const activeId = active?.getID?.();
+    const keyIds = new Set();
+    for (const key of window._animSelectedKeys || []) {
+      if (key.meshId != null) keyIds.add(key.meshId);
+      if (key.childId != null) keyIds.add(key.childId);
+    }
+    // Last-click wins. A row or scene click changes the active object; stale key selections
+    // from another row must not make Delete affect both. A genuine multi-key selection whose
+    // active object is one of its rows still targets every represented channel.
+    if (activeId != null && (!keyIds.size || !keyIds.has(activeId))) return [activeId];
+    if (keyIds.size) return [...keyIds];
+    if (activeId != null) return [activeId];
+    return this._graphMeshId != null ? [this._graphMeshId] : [];
+  }
+
+  deleteAnimationFromSelectedObjects() {
+    const reg = window._animationRegistry;
+    const ids = this.selectedAnimationIds().filter((id) => reg?.tracks.has(id));
+    if (!ids.length) {
+      window._animStatusText = 'No animation on selected objects';
+      window.screenLog?.(window._animStatusText, 'orange');
+      this.draw();
+      return false;
+    }
+    const run = () => {
+      if (!reg.deleteAnimationForIds(ids)) return;
+      window._animSelectedKeys = [];
+      if (ids.includes(this._graphMeshId)) this._graphMeshId = null;
+      window._animStatusText = `Deleted animation from ${ids.length} object${ids.length === 1 ? '' : 's'}`;
+      this.draw();
+    };
+    run();
+    return true;
   }
 
   // Scroll the gutter (if needed) so the given absolute row index is fully
@@ -2741,12 +2813,13 @@ export default class GuiTimeline {
   // and falls back to the scene selection when it has none (which is exactly the old
   // behaviour, so nothing changes until you click something).
   //
-  // Deliberately NOT routed through main.setMesh: that runs tool-context switching and ends in
-  // a render, which is the re-entrancy the bones tool's _selectLater exists to dodge. Picking a
-  // curve to look at should not be able to change your active tool.
+  // Timeline focus and scene selection are deliberately unified: the last row, key or scene
+  // object clicked is the selected object everywhere, avoiding two contradictory highlights.
   _setGraphTarget(meshId) {
     if (meshId == null || meshId < 0) return; // synthetic rows (the folded rig lane) have no track
     this._graphMeshId = meshId;
+    const mesh = this._main._meshes?.find((m) => m.getID() === meshId);
+    if (mesh && this._main.getMesh?.() !== mesh) this._main.setMesh?.(mesh);
   }
 
   _graphMesh() {
@@ -3111,71 +3184,6 @@ export default class GuiTimeline {
     }];
   }
 
-  _openContextMenu(btn) {
-    // Toggle: a re-click on the button is caught by the outside-dismiss listener (which
-    // closes + timestamps), so debounce a reopen from that same click.
-    if (performance.now() - (this._ctxMenuClosedAt || 0) < 200) return;
-    const main = this._main;
-    // #34: context-aware "Combine layers" when 2+ shape layers are multiselected (dots).
-    const cmds = [...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
-    if (!cmds.length) return;
-
-    const menu = document.createElement('div');
-    Object.assign(menu.style, {
-      position: 'fixed', zIndex: '100000', minWidth: '176px',
-      background: '#1e1e2e', border: '1px solid #45475a', borderRadius: '8px',
-      padding: '4px', boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-      font: '13px system-ui, sans-serif', userSelect: 'none',
-    });
-    cmds.forEach((cmd) => {
-      const disabled = cmd.enabled === false;
-      const item = document.createElement('button');
-      item.textContent = cmd.label;
-      Object.assign(item.style, {
-        display: 'block', width: '100%', padding: '8px 12px', border: 'none',
-        background: 'none', borderRadius: '5px', textAlign: 'left',
-        color: disabled ? '#6c7086' : '#cdd6f4',
-        cursor: disabled ? 'default' : 'pointer', boxSizing: 'border-box',
-        opacity: disabled ? '0.6' : '1',
-      });
-      if (!disabled) {
-        item.addEventListener('pointerenter', () => { item.style.background = '#313244'; });
-        item.addEventListener('pointerleave', () => { item.style.background = 'none'; });
-        item.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          cleanup();
-          try { cmd.run?.(); } catch (e) { console.error('[TL ctxmenu] command failed', e); }
-          this.draw();
-        });
-      }
-      menu.appendChild(item);
-    });
-
-    document.body.appendChild(menu);
-    // Anchor under the toolbar button (button coords are CSS-space on the canvas).
-    const rect = this._canvas.getBoundingClientRect();
-    const mw = menu.offsetWidth, mh = menu.offsetHeight;
-    let left = rect.left + btn.x;
-    let top  = rect.top + btn.y + btn.h + 4;
-    if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
-    if (top + mh > window.innerHeight - 8) top = rect.top + btn.y - mh - 4;
-    menu.style.left = Math.max(8, left) + 'px';
-    menu.style.top  = Math.max(8, top) + 'px';
-
-    const onDown = (ev) => { if (!menu.contains(ev.target)) cleanup(); };
-    const onKey  = (ev) => { if (ev.key === 'Escape') cleanup(); };
-    const cleanup = () => {
-      this._ctxMenuClosedAt = performance.now();
-      window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('keydown', onKey, true);
-      menu.remove();
-    };
-    setTimeout(() => { // defer so this opening click doesn't self-dismiss
-      window.addEventListener('pointerdown', onDown, true);
-      window.addEventListener('keydown', onKey, true);
-    }, 0);
-  }
-
   // ── Gutter header buttons (key ops + mode) — single row, y:27-47 ──
   _gutterBtnDefs() {
     const mode   = window._animKeyMode || 'transform';
@@ -3239,6 +3247,21 @@ export default class GuiTimeline {
     const rect = this._canvas.getBoundingClientRect();
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
+
+    // Shared canvas-native "…" menu. This path receives both desktop pointer events and the
+    // synthetic VR timeline events, unlike the old DOM popup.
+    if (this._contextMenuOpen) {
+      const mr = this._contextMenuRect();
+      if (mr && rx >= mr.x && rx <= mr.x + mr.w && ry >= mr.y && ry < mr.y + mr.h) {
+        const cmd = this._contextMenuCommands()[Math.floor((ry - mr.y) / mr.cellH)];
+        if (cmd && cmd.enabled !== false) {
+          try { cmd.run?.(); } catch (err) { console.error('[TL ctxmenu] command failed', err); }
+        }
+      }
+      this._contextMenuOpen = false;
+      this.draw();
+      return;
+    }
 
     // Canvas-native playback-speed dropdown. Handle it before ruler/key hit tests
     // because the menu intentionally overlays the timeline below the toolbar.
@@ -3510,8 +3533,10 @@ export default class GuiTimeline {
             window._animMarqueeMode = !window._animMarqueeMode;
             break;
           case 'ctxmenu':
-            this._openContextMenu(hit);
-            break;
+            this._contextMenuOpen = !this._contextMenuOpen;
+            this._speedMenuOpen = false;
+            this.draw();
+            return;
           case 'rewind': {
             const _reg = window._animationRegistry;
             const _mesh = this._main?.getMesh?.();
@@ -3533,11 +3558,16 @@ export default class GuiTimeline {
             if (_r2 && _m2) _r2.update(_m2, true);
             break;
           }
-          case 'playpause':
-            window._animPlaying = !window._animPlaying;
-            if (!window._animPlaying && window._animationRegistry)
-              window._animationRegistry.lastGlobalTime = null; // reset dt accumulator on pause
+          case 'playpause': {
+            const _playReg = window._animationRegistry;
+            if (window._animPlaying) {
+              window._animPlaying = false;
+              if (_playReg) _playReg.lastGlobalTime = null;
+            } else {
+              _playReg?.startPlayback?.(1);
+            }
             break;
+          }
           case 'stepfwd': {
             const _fps3 = window._animFPS || 24;
             const _end3 = window._animLoopEnd ?? (window._animMasterDuration ?? 2);
@@ -3591,6 +3621,7 @@ export default class GuiTimeline {
             return;
           case 'speed':
             this._speedMenuOpen = !this._speedMenuOpen;
+            this._contextMenuOpen = false;
             this.draw();
             return;
         }
@@ -5824,6 +5855,7 @@ export default class GuiTimeline {
     if (this._mode === 'graph') {
       this.drawGraph(ctx);
       this._drawSpeedMenu(ctx);
+      this._drawContextMenu(ctx);
       return;
     }
 
@@ -5888,5 +5920,6 @@ export default class GuiTimeline {
       ctx.strokeRect(x, y, w, h);
     }
     this._drawSpeedMenu(ctx);
+    this._drawContextMenu(ctx);
   }
 }
