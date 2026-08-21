@@ -29,6 +29,162 @@ class Grab extends SculptBase {
     this._initialScale = 1.0;
     this._initialMidpoint = vec3.create();
     this._allowAir = true; // Allow Grab to function even if Scene picking misses
+    // Existing pins may be owned independently by the two VR controllers. Ordinary
+    // object/bone grabbing remains on the legacy single-owner path below.
+    this._vrPinGrabs = new Map();
+    this._vrPinTriggerWas = { left: false, right: false };
+    this._vrPinGesture = null;
+    this._vrPinSolveQueued = false;
+  }
+
+  _pinControllerRay(controller) {
+    if (!controller?.matrix) return null;
+    const origin = controller.rayOrigin ? vec3.clone(controller.rayOrigin) : vec3.create();
+    const direction = controller.rayDirection ? vec3.clone(controller.rayDirection) : vec3.create();
+    if (!controller.rayOrigin || !controller.rayDirection) {
+      vec3.transformMat4(origin, [0, 0, 0], controller.matrix);
+      vec3.transformMat4(direction, [0, 0, -1], controller.matrix);
+      vec3.sub(direction, direction, origin);
+      vec3.normalize(direction, direction);
+    }
+    return { origin, direction };
+  }
+
+  _pickPinForController(picking, controller) {
+    const ray = this._pinControllerRay(controller);
+    if (!ray) return null;
+    const targets = this._main.getMeshes().filter(m => m?.isVisible?.() && m._isPinTarget);
+    if (!targets.length) return null;
+    if (!picking.intersectionRayMeshes(targets, ray.origin, ray.direction, true)) return null;
+    const pin = picking.getMesh();
+    if (!pin?._isPinTarget) return null;
+    for (const held of this._vrPinGrabs.values()) {
+      if (held.pin === pin) return null;
+    }
+    return pin;
+  }
+
+  _restorePinGesture(snapshot) {
+    if (!snapshot) return;
+    const main = this._main;
+    for (const [joint, m] of snapshot.rig) { mat4.copy(joint.getMatrix(), m); Skeleton.syncThree(joint); }
+    for (const [pin, m] of snapshot.pins) {
+      if (pin.setModelSpaceMatrix) pin.setModelSpaceMatrix(m);
+      else mat4.copy(pin.getMatrix(), m);
+    }
+    IKSolver.syncPinCache(main);
+    Skeleton.updateVisuals(main);
+    main.render();
+  }
+
+  _flushXRPinSolve() {
+    if (!this._vrPinSolveQueued) return;
+    this._vrPinSolveQueued = false;
+    IKSolver.holdPins(this._main);
+    IKSolver.syncJointCache(this._main);
+    IKSolver.syncPinCache(this._main);
+    Skeleton.updateVisuals(this._main);
+    this._main.render();
+  }
+
+  _queueXRPinSolve() {
+    if (this._vrPinSolveQueued) return;
+    this._vrPinSolveQueued = true;
+    queueMicrotask(() => this._flushXRPinSolve());
+  }
+
+  _updateXRPinGrabs(picking, controllers) {
+    if (this._grabbedMesh || !controllers.length) return false;
+    const right = controllers.find(c => c.handedness === 'right' && c.matrix);
+    const left = controllers.find(c => c.handedness === 'left' && c.matrix);
+    // Scene dispatches tools through one dominant active source, but supplies a complete
+    // controller snapshot in options.controllers. Read both snapshots here; filtering by
+    // options.handedness would silently discard the non-dominant trigger.
+    const activeControllers = [left, right].filter(Boolean);
+    if (!activeControllers.length) return this._vrPinGrabs.size > 0;
+
+    const hadGesture = this._vrPinGrabs.size > 0;
+    for (const controller of activeControllers) {
+      const hand = controller.handedness;
+      const pressed = !!controller.buttons?.[0]?.pressed;
+      const was = !!this._vrPinTriggerWas[hand];
+      if (pressed && !was && !this._vrPinGrabs.has(hand)) {
+        const pin = this._pickPinForController(picking, controller);
+        if (pin) {
+          if (!this._vrPinGesture) {
+            this._vrPinGesture = {
+              rig: IKSolver.captureAll(this._main),
+              pins: IKSolver.pinnedJoints(this._main).map(j => {
+                const p = IKSolver.pinObject(j);
+                const m = p?.getModelSpaceMatrix ? p.getModelSpaceMatrix() : p?.getMatrix?.();
+                return p && m ? [p, mat4.clone(m)] : null;
+              }).filter(Boolean),
+              recordMesh: pin,
+            };
+            window._animationRegistry?.beginInteraction?.(pin);
+          }
+          this._vrPinGrabs.set(hand, { pin, last: mat4.clone(controller.matrix) });
+          this._main._lastRigEdit = pin;
+        }
+      }
+      this._vrPinTriggerWas[hand] = pressed;
+    }
+
+    if (!hadGesture && this._vrPinGrabs.size === 0) return false;
+
+    // Release ownership independently; the other hand remains live.
+    for (const controller of activeControllers) {
+      if (!controller.buttons?.[0]?.pressed) this._vrPinGrabs.delete(controller.handedness);
+    }
+
+    // A held pin must not suppress aim feedback for the free hand. The free controller can
+    // continue preselecting its next target while the other controller moves its pin.
+    const freeHoverRays = activeControllers
+      .filter((controller) => !this._vrPinGrabs.has(controller.handedness)
+        && !controller.buttons?.[0]?.pressed)
+      .map((controller) => {
+        const ray = this._pinControllerRay(controller);
+        return ray && { handedness: controller.handedness, ...ray };
+      }).filter(Boolean);
+    if (freeHoverRays.length) {
+      Skeleton.hoverRigFromRays(this._main, picking, freeHoverRays, freeHoverRays[0].handedness);
+    }
+
+    let moved = false;
+    for (const controller of activeControllers) {
+      const state = this._vrPinGrabs.get(controller.handedness);
+      if (!state) continue;
+      const invLast = mat4.create();
+      if (!mat4.invert(invLast, state.last)) continue;
+      const delta = mat4.create(); mat4.multiply(delta, controller.matrix, invLast);
+      const pm = state.pin.getModelSpaceMatrix ? state.pin.getModelSpaceMatrix() : state.pin.getMatrix();
+      const next = mat4.create(); mat4.multiply(next, delta, pm);
+      if (state.pin.setModelSpaceMatrix) state.pin.setModelSpaceMatrix(next);
+      else mat4.copy(state.pin.getMatrix(), next);
+      mat4.copy(state.last, controller.matrix);
+      moved = true;
+    }
+
+    if (moved) this._queueXRPinSolve();
+
+    if (this._vrPinGrabs.size === 0 && this._vrPinGesture) {
+      // If release happened in the same frame as a final movement, solve before taking
+      // the after-snapshot; the queued microtask becomes a harmless no-op.
+      this._flushXRPinSolve();
+      const before = this._vrPinGesture;
+      const after = {
+        rig: IKSolver.captureAll(this._main),
+        pins: before.pins.map(([pin]) => {
+          const m = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix() : pin.getMatrix();
+          return [pin, mat4.clone(m)];
+        }),
+      };
+      this._main.getStateManager().pushStateCustom(
+        () => this._restorePinGesture(before), () => this._restorePinGesture(after), false, 'Two-hand pin pose');
+      window._animationRegistry?.endInteraction?.(before.recordMesh);
+      this._vrPinGesture = null;
+    }
+    return true;
   }
 
   // Override start/end/update to handle TRIGGER inputs manually?
@@ -296,6 +452,10 @@ class Grab extends SculptBase {
       return;
     }
 
+    // Pins-only two-controller manipulation. If no pin was acquired this returns false and
+    // the existing single-object Grab behaviour continues unchanged.
+    if (this._updateXRPinGrabs(picking, controllers)) return;
+
     // We expect controllers to have 'handedness' and 'buttons' and 'matrix'
     const right = controllers.find(c => c.handedness === 'right');
     const left = controllers.find(c => c.handedness === 'left');
@@ -374,12 +534,14 @@ class Grab extends SculptBase {
     } else if (!this._grabbedMesh && !rightTrigger && !leftTrigger) {
       // HOVER. Everything below is gated on a trigger, so until now nothing in VR picked
       // anything until you had already committed to grabbing it — which is why there was no
-      // preselection at all. One ray per frame from the dominant controller, highlight only.
-      // Shared with the desktop path and with Transform. The ray is the ENGINE-space one Scene
-      // hands us; deriving one from the controller matrix picks in the raw WebXR frame and
-      // misses every mesh. Throttling lives in the helper.
+      // preselection at all. Evaluate both supplied stylus rays so each controller can show
+      // what it would acquire; the dominant ray remains the face-button action target.
       if (window._grabTrace) console.log('[grabXR] HOVER branch, controller=' + !!(right || left));
-      Skeleton.hoverRigFromRay(this._main, picking, origin, dir);
+      const hoverRays = controllers.map((controller) => {
+        const ray = this._pinControllerRay(controller);
+        return ray && { handedness: controller.handedness, ...ray };
+      }).filter(Boolean);
+      Skeleton.hoverRigFromRays(this._main, picking, hoverRays, options?.handedness);
     } else if (rightTrigger || leftTrigger) {
       this._isTwoHanded = false;
       const active = rightTrigger ? right : left;

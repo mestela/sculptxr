@@ -19,6 +19,7 @@ const acp = read('src/gui/htmlvr/AnimationControlPanel.js');
 const desktopPanel = read('src/gui/GuiAnimation.js');
 const oldVrPanel = read('src/gui/vr/GuiVRAnimation.js');
 const scene = read('src/Scene.js');
+const skel = read('src/editing/Skeleton.js');
 
 check('recording owns one begin-interaction transition', /beginInteraction\(mesh\)/.test(reg));
 check('recording owns one end-interaction transition', /endInteraction\(mesh\)/.test(reg));
@@ -78,6 +79,40 @@ check('two-controller time zoom is enabled in the dopesheet',
   /this\._mode === 'graph' \? !this\._hitTestCurve\(cx, cy\) : this\._mode === 'dope'/.test(tl)
     && /z\.mode === 'graph'/.test(tl)
     && /empty timeline space/.test(scene));
+check('Grab owns existing pins independently by controller',
+  /this\._vrPinGrabs = new Map\(\)/.test(grab)
+    && /this\._vrPinGrabs\.set\(hand, \{ pin, last:/.test(grab)
+    && /this\._vrPinGrabs\.get\(controller\.handedness\)/.test(grab));
+check('two pin targets are applied before one batched IK solve',
+  /if \(moved\) this\._queueXRPinSolve\(\)/.test(grab)
+    && /queueMicrotask\(\(\) => this\._flushXRPinSolve\(\)\)/.test(grab)
+    && /_flushXRPinSolve\(\)[\s\S]{0,250}?IKSolver\.holdPins/.test(grab));
+check('Grab reads both controllers from the complete Scene snapshot',
+  /const activeControllers = \[left, right\]\.filter\(Boolean\)/.test(grab)
+    && !/callerHand/.test(grab));
+check('Scene supplies the actual stylus ray for every controller',
+  /rayOrigin: controllerRayOrigin/.test(scene)
+    && /rayDirection: controllerRayDirection/.test(scene)
+    && /getStylusTilt\(\)/.test(scene));
+check('secondary trigger reaches Grab instead of activating temporary Smooth',
+  /activeTool\.constructor\.name !== 'Grab'/.test(scene));
+check('Grab hides the brush radius cursor',
+  /tool\.constructor\.name === 'Grab'/.test(scene)
+    && /cursorGroup\.visible = !isTransformTool/.test(scene));
+check('Grab preselects rig targets under both controller rays',
+  /Skeleton\.hoverRigFromRays\(this\._main, picking, hoverRays/.test(grab)
+    && /main\._skelHighlightIds = jointIds/.test(skel)
+    && /main\._pinHighlightIds = pinIds/.test(skel)
+    && /filter\(\(m\) => m\.isVisible\(\) && isRigNode\(m\)\)/.test(skel));
+check('a free controller keeps preselecting while the other holds a pin',
+  /const freeHoverRays = activeControllers/.test(grab)
+    && /!this\._vrPinGrabs\.has\(controller\.handedness\)/.test(grab)
+    && /Skeleton\.hoverRigFromRays\(this\._main, picking, freeHoverRays/.test(grab)
+    && /_rigHoverAtVR/.test(skel) && /_rigHoverAtMouse/.test(skel));
+check('two-hand pin undo and recording close on final release',
+  /if \(this\._vrPinGrabs\.size === 0 && this\._vrPinGesture\)/.test(grab)
+    && /Two-hand pin pose/.test(grab)
+    && /endInteraction\?\.\(before\.recordMesh\)/.test(grab));
 check('main Animation panel exposes Loop', acp.includes('id="acp-loop-enabled"'));
 check('main Animation panel exposes Reset Rig + Pins', acp.includes('id="acp-reset-rig"'));
 

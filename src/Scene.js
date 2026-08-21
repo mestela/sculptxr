@@ -8600,8 +8600,10 @@ class Scene {
             const activeTool = this._sculptManager.getCurrentTool();
             if (activeTool && activeTool.constructor.name === 'Paint') {
               isColorSmoothOverride = true;
-            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel' && activeTool.constructor.name !== 'Extrude') {
-              // Disable Smooth toggle for Voxel tool as it does not fully support it yet
+            } else if (activeTool && activeTool.constructor.name !== 'SculptVoxel' &&
+                       activeTool.constructor.name !== 'Extrude' && activeTool.constructor.name !== 'Grab') {
+              // Grab consumes both index triggers for independent pin manipulation. Do not
+              // replace it with Smooth while the non-dominant trigger is held.
               isSmoothOverride = true;
             }
             break;
@@ -9084,10 +9086,24 @@ class Scene {
                 mat4.multiply(sceneMat, invScaleMat, sceneMat);
               }
 
+              // Give multi-controller tools the SAME stylus ray convention as the active
+              // controller path. A raw matrix -Z ray misses whenever stylus offset/tilt is
+              // configured, which made the first hand fall back to legacy Grab and left the
+              // second hand unable to acquire another pin.
+              const stylusOff = this.getStylusOffset();
+              const stylusTilt = this.getStylusTilt() * Math.PI / 180.0;
+              const controllerRayOrigin = vec3.transformMat4(vec3.create(), [0, 0, -stylusOff], sceneMat);
+              const controllerRayEnd = vec3.transformMat4(vec3.create(),
+                [0, Math.sin(stylusTilt), -Math.cos(stylusTilt) - stylusOff], sceneMat);
+              const controllerRayDirection = vec3.normalize(vec3.create(),
+                vec3.sub(vec3.create(), controllerRayEnd, controllerRayOrigin));
+
               xrControllers.push({
                 handedness: src.handedness,
                 buttons: src.gamepad.buttons,
                 matrix: sceneMat, // VIRTUAL SCENE MATRIX
+                rayOrigin: controllerRayOrigin,
+                rayDirection: controllerRayDirection,
               });
 
               // DEBUG: MATRIX TRACE (Throttled)
@@ -9461,10 +9477,11 @@ class Scene {
                 const isVoxelTool = tool && tool.constructor && tool.constructor.name === 'SculptVoxel';
                 const isCubeShape = isVoxelTool && tool._shape === 1;
                 const isPicking = tool && tool._pickColor;
-                // Transform uses the gizmo, not a brush — the surface-snapping radius ring
-                // reads as "pushing against the mesh", so hide the whole cursor for it.
+                // Transform uses the gizmo and Grab uses direct rig targets; neither has a
+                // brush radius, so the surface ring/volume indicator is misleading.
                 const isTransformTool = tool && tool.constructor
-                  && (tool.constructor.name === 'TransformVR' || tool.constructor.name === 'Transform');
+                  && (tool.constructor.name === 'TransformVR' || tool.constructor.name === 'Transform'
+                    || tool.constructor.name === 'Grab');
 
                 if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;

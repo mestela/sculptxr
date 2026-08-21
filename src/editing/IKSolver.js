@@ -1378,6 +1378,19 @@ IKSolver.pinsMoved = function (main) {
   return moved;
 };
 
+// A tool that deliberately moved pin controls and solved them in the same frame can
+// acknowledge those matrices here. This prevents Scene's generic external-pin watcher
+// from scheduling a redundant second solve on the following frame.
+IKSolver.syncPinCache = function (main) {
+  for (const joint of IKSolver.pinnedJoints(main)) {
+    const pin = IKSolver.pinObject(joint);
+    if (!pin) continue;
+    const m = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix() : pin.getMatrix();
+    if (pin._pinLastM) mat4.copy(pin._pinLastM, m);
+    else pin._pinLastM = mat4.clone(m);
+  }
+};
+
 // Remember every joint's matrix as the solver last left it. Anything that differs afterwards
 // was written by something ELSE — the gizmo, a script, an undo — which is the signal that a
 // joint has been dragged and the rig should re-solve around it.

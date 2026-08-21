@@ -590,10 +590,27 @@ function applyRigHover(main, node) {
   }
 }
 
-function hoverDue(main) {
+function applyRigHovers(main, nodes, primaryNode) {
+  const jointIds = nodes.filter((n) => n && !n._isPinTarget).map((n) => n.getID());
+  const pinIds = nodes.filter((n) => n?._isPinTarget).map((n) => n.getID());
+  const before = `${main._skelHighlightIds || ''}|${main._pinHighlightIds || ''}`;
+  main._skelHighlightIds = jointIds;
+  main._pinHighlightIds = pinIds;
+  const isPin = !!primaryNode?._isPinTarget;
+  main._skelHighlightId = primaryNode && !isPin ? primaryNode.getID() : -1;
+  main._pinHighlightId = isPin ? primaryNode.getID() : -1;
+  const after = `${jointIds}|${pinIds}`;
+  if (before !== after) {
+    Skeleton.updateVisuals(main);
+    main.render?.();
+  }
+}
+
+function hoverDue(main, channel = 'mouse') {
   const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-  if (main._rigHoverAt && (now - main._rigHoverAt) < (window._grabHoverMs || 66)) return false;
-  main._rigHoverAt = now;
+  const key = channel === 'vr' ? '_rigHoverAtVR' : '_rigHoverAtMouse';
+  if (main[key] && (now - main[key]) < (window._grabHoverMs || 66)) return false;
+  main[key] = now;
   return true;
 }
 
@@ -628,7 +645,7 @@ Skeleton.hoverRigFromMouse = function (main, picking) {
   if (window._grabTrace && (!main || !picking)) {
     console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
   }
-  if (!main || !picking || !hoverDue(main)) return;
+  if (!main || !picking || !hoverDue(main, 'mouse')) return;
   const hit = pickPreserving(picking, () =>
     picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY, false, true)
       ? picking.getMesh() : null);
@@ -638,14 +655,33 @@ Skeleton.hoverRigFromMouse = function (main, picking) {
 // VR: pick from the controller ray Scene supplies. NOT derived from the controller matrix —
 // that is the raw WebXR frame, and picking against it misses every mesh in the scene.
 Skeleton.hoverRigFromRay = function (main, picking, origin, dir) {
-  if (!main || !picking || !origin || !dir || !hoverDue(main)) return;
-  const vis = main.getMeshes().filter((m) => m.isVisible() && !m._isVoxelChunk);
+  if (!main || !picking || !origin || !dir || !hoverDue(main, 'vr')) return;
+  // Rig hover is an x-ray operation: skin geometry must not occlude the bone/pin that the
+  // controller is visibly aiming at. Use the same target class as rig acquisition.
+  const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));
   const hit = pickPreserving(picking, () =>
     picking.intersectionRayMeshes(vis, origin, dir, true) ? picking.getMesh() : null);
   applyRigHover(main, isRigNode(hit) ? hit : null);
 };
 
+// VR Grab supplies a complete controller snapshot even though Scene dispatches the tool
+// through the dominant hand. Pick both rays so each controller gets independent preselection;
+// keep the dominant ray in the legacy singular fields used by face-button actions.
+Skeleton.hoverRigFromRays = function (main, picking, rays, primaryHand) {
+  if (!main || !picking || !rays?.length || !hoverDue(main, 'vr')) return;
+  const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));
+  const hits = rays.map(({ origin, direction }) => {
+    const hit = pickPreserving(picking, () =>
+      picking.intersectionRayMeshes(vis, origin, direction, true) ? picking.getMesh() : null);
+    return isRigNode(hit) ? hit : null;
+  });
+  const primaryIndex = Math.max(0, rays.findIndex((r) => r.handedness === primaryHand));
+  applyRigHovers(main, hits.filter(Boolean), hits[primaryIndex] || null);
+};
+
 Skeleton.setHighlight = function (main, joint) {
+  main._skelHighlightIds = null;
+  main._pinHighlightIds = null;
   main._skelHighlightId = joint ? joint.getID() : -1;
 };
 
@@ -653,6 +689,8 @@ Skeleton.setHighlight = function (main, joint) {
 // so it cannot ride _skelHighlightId — but it needs the same "the next press acts on THIS"
 // feedback, or reaching for a pin is guesswork.
 Skeleton.setRigHighlight = function (main, node) {
+  main._skelHighlightIds = null;
+  main._pinHighlightIds = null;
   const isPin = !!(node && node._isPinTarget);
   main._skelHighlightId = node && !isPin ? node.getID() : -1;
   main._pinHighlightId = isPin ? node.getID() : -1;
@@ -880,6 +918,8 @@ Skeleton.updateVisuals = function (main) {
   const jr = unit * JOINT_R_FRAC;
   const live = new Set();
   const hi = main._skelHighlightId ?? -1;
+  const hiAll = new Set(main._skelHighlightIds || [hi]);
+  const pinHiAll = new Set(main._pinHighlightIds || [main._pinHighlightId ?? -1]);
   const showLen = Skeleton.displayFlag('lengths');
   // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
   // outside every capsule gets no weight from any of them — so seeing them is the difference
@@ -936,7 +976,7 @@ Skeleton.updateVisuals = function (main) {
     // Preselection: the joint the next trigger will act on. Colour AND size both change —
     // colour alone is easy to lose against a warm-coloured sculpt, and in a headset the
     // size change is what reads at a glance.
-    const isHi = id === hi;
+    const isHi = hiAll.has(id);
     const isSel = sel.has(id);
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
@@ -985,7 +1025,7 @@ Skeleton.updateVisuals = function (main) {
     }
     // The pin marker grows and warms the same way a joint does under the cursor: same signal,
     // same meaning, so the two read as one preselection rather than two conventions.
-    const pinHot = pinObj && pinObj.getID() === (main._pinHighlightId ?? -1);
+    const pinHot = pinObj && pinHiAll.has(pinObj.getID());
     // A steering goal is NOT a triad with a different colour — it is its own marker, and the
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
     // which quietly gave the steering goal a set of orientation rings it does not have.
