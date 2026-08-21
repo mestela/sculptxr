@@ -69,6 +69,10 @@ class TransformVR extends SculptBase {
   }
 
   end() {
+    // The take begins on the first real gizmo drag (not the selection press) and ends with
+    // that same trigger gesture. This hook was missing entirely here, while Grab had it.
+    window._animationRegistry?.endInteraction?.(this._dragMesh);
+
     // A POSED BONE MOVED THE WHOLE CHAIN, so one matrix is not the undo. Checked before the
     // mesh path and gated on the snapshot ALONE, not on _dragMesh: the grace-period recovery
     // clears _dragMesh when the trigger signal is lost, and a pose that cannot be undone is
@@ -260,6 +264,7 @@ class TransformVR extends SculptBase {
       // Same reason as Grab: AutoKey's `currentMesh` is the SCULPTING pick from stroke start,
       // which on a bone or a pin is still the skin. Tell it what was actually taken.
       main._lastRigEdit = (mesh._isBone || mesh._isPinTarget) ? mesh : null;
+      window._animationRegistry?.beginInteraction?.(mesh);
 
       // A DRAGGED BONE IS A POSE, NOT A TRANSFORM. Deciding this ONCE, here, is the whole
       // point: the handover's warning about gizmo posing was against a watcher that compared

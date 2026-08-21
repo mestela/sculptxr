@@ -69,10 +69,7 @@ class Transform extends SculptBase {
       picking._mesh = mesh;
       // "Start on click" recording: armed-and-waiting → begin the take when the gizmo
       // drag starts (desktop equivalent of grabbing the object in VR).
-      if (window._animWaitingForGrab && window._animationRegistry) {
-        window._animWaitingForGrab = false;
-        window._animationRegistry.startRecording(mesh);
-      }
+      window._animationRegistry?.beginInteraction?.(mesh);
       return true;
     }
 
@@ -94,6 +91,7 @@ class Transform extends SculptBase {
 
     var meshes = this._main.getSelectedMeshes();
     const main = this._main;
+    window._animationRegistry?.endInteraction?.(meshes[0] || this.getMesh());
     // The gizmo wrote the real _matrix live during the drag (editMatrix stays
     // identity). Undo/redo therefore compares the drag-start snapshot (_startLocal)
     // against the current, already-moved matrix.
@@ -117,10 +115,6 @@ class Transform extends SculptBase {
         mesh.updateMatrices(main.getCamera());
         main.render();
       });
-    }
-
-    if (window._animationRegistry && window._animationRegistry.isRecording) {
-      window._animationRegistry.stopRecording();
     }
 
     main.render();

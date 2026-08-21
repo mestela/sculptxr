@@ -1,1 +1,1 @@
-export const VERSION = 'v3.20.0 - Pin-pose mirroring';
+export const VERSION = 'v3.20.1 - Reliable recording and expanded timeline controls';

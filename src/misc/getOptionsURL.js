@@ -243,6 +243,7 @@ var getOptionsURL = function () {
   // Count-in OFF (matt uses start-on-click most).
   options.animStartOnClick = queryBool(getVal('animStartOnClick'), true);
   options.animCountIn      = queryBool(getVal('animCountIn'),      false);
+  options.animLoopEnabled  = queryBool(getVal('animLoopEnabled'),  true);
 
   // Scene
   options.gridOpacity = queryNumber(getVal('gridOpacity'), 0.0, 1.0, 0.5);

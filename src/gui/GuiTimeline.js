@@ -1,6 +1,7 @@
 import TimelineHelper from './TimelineHelper.js';
 import { xfGroup, xfRead, xfWrite } from '../editing/xfChannel.js';
 import { Theme } from './theme.js';
+import IKSolver from '../editing/IKSolver.js';
 
 // Darker, higher-contrast blue (matches the desktop sidebar sliders) for active buttons
 // and the playhead — Theme.blue (#89b4fa) is too light against white text to read in VR.
@@ -15,7 +16,10 @@ const tlLog = (...a) => { if (window._tlTrace) console.log('[tl]', ...a); };
 // Timeline header height (toolbar row + gutter key-mode row + frame ruler). Single
 // source of truth — referenced everywhere the lanes/ruler/hit-tests offset from the
 // header. Bump this alone to resize the header.
-const HEADER_H = 64;
+const HEADER_H = 90;
+const TOOLBAR_BOTTOM = 55;
+const KEY_DRAG_FREE_THRESHOLD = 50;
+const PLAYBACK_SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2];
 
 // Height of the T|R|S strip at the top of the graph editor's gutter. The channel rows start
 // below it, so every place that maps a row index to a y — drawing, hit-testing and
@@ -33,10 +37,12 @@ export default class GuiTimeline {
     this._isDraggingPlayhead = false;
     this._isDraggingMarquee = false;
     this._isDraggingKeyframe = false;
+    this._speedMenuOpen = false;
     this._activeKeyframeTrack = null;
     this._activeKeyframeIndex = undefined;
     this._activeKeyframeType = null;
     this._keyDragStartRx = 0;
+    this._keyDragStartRy = 0;
     this._keyDragStartTime = 0;
     this._animSelectedKeysInitialTimes = null;
     this._marqueeStart = null;
@@ -257,6 +263,28 @@ export default class GuiTimeline {
     });
     this._container.appendChild(this._frameInput);
 
+    // Playback-range entry shared by the Start/End fields in the second toolbar row.
+    this._rangeInput = document.createElement('input');
+    this._rangeInput.type = 'text';
+    this._rangeInput.inputMode = 'numeric';
+    Object.assign(this._rangeInput.style, {
+      position: 'absolute', height: '18px', font: '10px monospace',
+      padding: '1px 4px', textAlign: 'right',
+      background: '#1a2a1a', border: '1px solid #446644', color: '#88ddaa',
+      borderRadius: '3px', outline: 'none', display: 'none', zIndex: '50',
+    });
+    this._rangeInputKind = null;
+    this._rangeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { this._commitRangeInput(); this._rangeInput.style.display = 'none'; }
+      if (e.key === 'Escape') { this._rangeInput.style.display = 'none'; this._rangeInputKind = null; }
+      e.stopPropagation();
+    });
+    this._rangeInput.addEventListener('blur', () => {
+      if (this._rangeInput.style.display !== 'none') this._commitRangeInput();
+      this._rangeInput.style.display = 'none';
+    });
+    this._container.appendChild(this._rangeInput);
+
     // ── Value entry for the toolbar value field (set/shift selected key values) ──
     this._valueInput = document.createElement('input');
     this._valueInput.type = 'text';
@@ -300,6 +328,78 @@ export default class GuiTimeline {
       if (window.app?.render) window.app.render();
     }
     _done();
+  }
+
+  _setPlaybackRangeFrame(kind, frame) {
+    const fps = window._animFPS || 24;
+    const minGap = 1 / fps;
+    const t = Math.max(0, Math.round(Number(frame) || 0) / fps);
+    if (kind === 'start') {
+      window._animLoopStart = Math.min(t, (window._animLoopEnd ?? t + minGap) - minGap);
+    } else {
+      window._animLoopEnd = Math.max(t, (window._animLoopStart ?? 0) + minGap);
+    }
+    window._animSyncKeyInspector?.();
+    this.draw();
+  }
+
+  _commitRangeInput() {
+    if (this._rangeInputKind) this._setPlaybackRangeFrame(this._rangeInputKind, this._rangeInput.value);
+    this._rangeInputKind = null;
+  }
+
+  _editPlaybackRange(kind, btn) {
+    const fps = window._animFPS || 24;
+    const value = Math.round((kind === 'start' ? (window._animLoopStart ?? 0)
+      : (window._animLoopEnd ?? window._animMasterDuration ?? 2)) * fps);
+    if (window._vrNumpad?.shouldUse?.()) {
+      if (window._vrNumpad.isBlockingOpen) return;
+      window._vrNumpad.open(value, { label: kind === 'start' ? 'Playback Start' : 'Playback End', integer: true },
+        (v) => this._setPlaybackRangeFrame(kind, v), null, null, this._main?._vrTimelineMesh || null);
+      return;
+    }
+    this._rangeInputKind = kind;
+    this._rangeInput.style.left = Math.round(btn.x) + 'px';
+    this._rangeInput.style.top = Math.round(btn.y) + 'px';
+    this._rangeInput.style.width = (btn.w - 10) + 'px';
+    this._rangeInput.style.display = 'block';
+    this._rangeInput.value = String(value);
+    this._rangeInput.focus();
+    this._rangeInput.select();
+  }
+
+  _speedMenuRect() {
+    const btn = this._toolbarBtnDefs().find(b => b.id === 'speed');
+    return btn ? { x: btn.x, y: TOOLBAR_BOTTOM, w: btn.w * 2, h: 60, cellW: btn.w, cellH: 20 } : null;
+  }
+
+  _drawSpeedMenu(ctx) {
+    if (!this._speedMenuOpen) return;
+    const r = this._speedMenuRect();
+    if (!r) return;
+    ctx.save();
+    ctx.fillStyle = Theme.crust;
+    ctx.strokeStyle = Theme.surface1;
+    ctx.lineWidth = 1;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    const current = window._animPlaybackSpeed || 1;
+    PLAYBACK_SPEEDS.forEach((speed, i) => {
+      const x = r.x + (i % 2) * r.cellW;
+      const y = r.y + Math.floor(i / 2) * r.cellH;
+      const hov = this._lastMouseX >= x && this._lastMouseX <= x + r.cellW
+        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
+      if (speed === current || hov) {
+        ctx.fillStyle = speed === current ? TL_ACCENT : Theme.surface1;
+        ctx.fillRect(x + 1, y + 1, r.cellW - 2, r.cellH - 2);
+      }
+      ctx.fillStyle = Theme.text;
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${speed}x`, x + r.cellW / 2, y + r.cellH / 2);
+    });
+    ctx.restore();
   }
 
   // Scroll the gutter (if needed) so the given absolute row index is fully
@@ -925,14 +1025,15 @@ export default class GuiTimeline {
     const loopStartReal = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
     const loopEndReal = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
     const visibleDurationReal = Math.max(0.1, loopEndReal - loopStartReal);
+    const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
 
     let loopStart = loopStartReal;
     let visibleDuration = visibleDurationReal;
-    if (this._mode === 'graph') {
-      if (this._viewDuration === undefined) {
-        this._viewStart = loopStart;
-        this._viewDuration = visibleDuration;
-      }
+    if (this._viewDuration === undefined) {
+      this._viewStart = loopStart;
+      this._viewDuration = visibleDuration;
+    }
+    if (this._viewDuration !== undefined) {
       loopStart = this._viewStart;
       visibleDuration = this._viewDuration;
     }
@@ -940,13 +1041,12 @@ export default class GuiTimeline {
     const tlW = this._cssWidth - 200;
     const headerH = HEADER_H;
     const fps = window._animFPS || 24;
-    const currentTimeVal = window._animCurrentTime !== undefined ? window._animCurrentTime : 0;
     const snappedTime = Math.round(currentTimeVal * fps) / fps;
     const playheadAlpha = (snappedTime - loopStart) / visibleDuration;
     const playheadX = tlX + playheadAlpha * tlW;
 
     if (playheadX >= tlX && playheadX <= tlX + tlW) {
-      const capStartY = 25;
+      const capStartY = TOOLBAR_BOTTOM;
       const phHovered = Math.abs(this._lastMouseX - playheadX) < 10
                      && this._lastMouseY >= capStartY && this._lastMouseY <= this._cssHeight;
       const phColor = phHovered ? '#88bbff' : TL_ACCENT;
@@ -973,7 +1073,7 @@ export default class GuiTimeline {
       ctx.font = 'bold 10px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(curT, playheadX, 37);
+      ctx.fillText(curT, playheadX, Math.round((capStartY + headerH) / 2));
     }
   }
 
@@ -2005,13 +2105,12 @@ export default class GuiTimeline {
     return [];
   }
 
-  // True when (cx,cy) in canvas px is open graph background — not the gutter,
-  // not the header, and not on a curve. Used by the VR two-handed zoom gesture
-  // to require both controllers to point at empty space.
+  // True when (cx,cy) is usable background for the VR two-controller zoom.
+  // Graph mode excludes curves; dopesheet mode accepts the lane area so the same
+  // time-zoom gesture is available there too.
   isEmptyGraphSpaceAt(cx, cy) {
-    if (this._mode !== 'graph') return false;
     if (cx < 200 || cy < HEADER_H) return false;
-    return !this._hitTestCurve(cx, cy);
+    return this._mode === 'graph' ? !this._hitTestCurve(cx, cy) : this._mode === 'dope';
   }
 
   // ── Two-pointer zoom (VR, both controllers in empty space) ──────────────────
@@ -2031,6 +2130,7 @@ export default class GuiTimeline {
       dy0: cy1 - cy2,
       pivotT: this._viewStart + ((midCx - tlX) / tlW) * this._viewDuration,
       pivotVal: this.yToValue(midCy),
+      mode: this._mode,
     };
   }
 
@@ -2048,12 +2148,14 @@ export default class GuiTimeline {
       this._viewDuration = Math.max(1e-4, z.viewDuration / fx);
     }
     this._viewStart = z.pivotT - ((midCx - tlX) / tlW) * this._viewDuration;
-    if (Math.abs(z.dy0) > 20) {
+    if (z.mode === 'graph' && Math.abs(z.dy0) > 20) {
       const fy = Math.max(0.02, dy / z.dy0); // taller apart → fy>1 → larger zoomY (zoom in)
       this._zoomY = Math.max(1e-4, z.zoomY * fy);
     }
-    const graphH = this._cssHeight - 50;
-    this._panY = (HEADER_H + graphH / 2 - midCy) - z.pivotVal * this._zoomY;
+    if (z.mode === 'graph') {
+      const graphH = this._cssHeight - HEADER_H;
+      this._panY = (HEADER_H + graphH / 2 - midCy) - z.pivotVal * this._zoomY;
+    }
     this.draw();
   }
 
@@ -2221,6 +2323,7 @@ export default class GuiTimeline {
             this._activeKeyframeType = 'transform';
             this._activeKeyframeChannel = c;
             this._keyDragStartRx = rx;
+            this._keyDragStartRy = ry;
             this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
             this._keyDragStartVal = this.yToValue(ry);
 
@@ -2286,6 +2389,7 @@ export default class GuiTimeline {
           this._activeKeyframeType = 'shape';
           this._activeKeyframeChannel = 0;
           this._keyDragStartRx = rx;
+          this._keyDragStartRy = ry;
           this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
           this._keyDragStartVal = val;
 
@@ -2343,6 +2447,7 @@ export default class GuiTimeline {
             this._activeKeyframeType = 'blendshape';
             this._activeBlendshapeName = name;
             this._keyDragStartRx = rx;
+            this._keyDragStartRy = ry;
             this._keyDragStartTime = loopStart + ((rx - tlX) / tlW) * visibleDuration;
 
             if (window._animationRegistry) {
@@ -2938,6 +3043,31 @@ export default class GuiTimeline {
       btns.push({ ...def, x: _tbX, y: 5, w: _tbBtnW, h: 20 });
       _tbX += _tbBtnW + _tbBtnGap;
     });
+
+    // Recording row. Kept in the timeline itself because this is the surface visible while
+    // posing; the main Animation panel mirrors the same globals and lifecycle.
+    if (window._animLoopEnabled === undefined) window._animLoopEnabled = true;
+    let rx = 205;
+    const recMode = [
+      { id: 'loop', label: 'Loop', w: 50, active: window._animLoopEnabled !== false,
+        tooltip: 'Loop playback and recording through the range' },
+      { id: 'trigger', label: 'On Grab', w: 68, active: !!window._animWaitForTrigger,
+        tooltip: 'Arm now; begin recording on the next Grab or TransformVR drag' },
+      { id: 'countin', label: '3-2-1', w: 54, active: !!window._animCountIn,
+        tooltip: 'Begin recording after a countdown' },
+      { id: 'reset-rig', label: 'Reset Rig + Pins', w: 112,
+        tooltip: 'Return the skeleton and pin controls to their rest pose' },
+      { id: 'range-start', label: `Start ${Math.round((window._animLoopStart ?? 0) * (window._animFPS || 24))}`, w: 68,
+        tooltip: 'Playback range start frame' },
+      { id: 'range-end', label: `End ${Math.round((window._animLoopEnd ?? window._animMasterDuration ?? 2) * (window._animFPS || 24))}`, w: 68,
+        tooltip: 'Playback range end frame' },
+      { id: 'speed', label: `Speed ${window._animPlaybackSpeed || 1}x ▾`, w: 78,
+        tooltip: 'Playback speed' },
+    ];
+    for (const def of recMode) {
+      btns.push({ ...def, x: rx, y: 31, h: 20 });
+      rx += def.w + 7;
+    }
     return btns;
   }
 
@@ -3110,6 +3240,29 @@ export default class GuiTimeline {
     const rx = e.clientX - rect.left;
     const ry = e.clientY - rect.top;
 
+    // Canvas-native playback-speed dropdown. Handle it before ruler/key hit tests
+    // because the menu intentionally overlays the timeline below the toolbar.
+    if (this._speedMenuOpen) {
+      const sr = this._speedMenuRect();
+      if (sr && rx >= sr.x && rx <= sr.x + sr.w && ry >= sr.y && ry < sr.y + sr.h) {
+        const col = Math.floor((rx - sr.x) / sr.cellW);
+        const row = Math.floor((ry - sr.y) / sr.cellH);
+        const idx = row * 2 + col;
+        const speed = PLAYBACK_SPEEDS[idx];
+        if (speed !== undefined) {
+          window._animPlaybackSpeed = speed;
+          window.saveOption?.('animPlaybackSpeed', speed);
+          window._animSyncKeyInspector?.();
+        }
+        this._speedMenuOpen = false;
+        this.draw();
+        return;
+      }
+      this._speedMenuOpen = false;
+      this.draw();
+      return;
+    }
+
     // Any new pointer interaction dismisses an open value-entry field and its
     // channel highlight (click elsewhere = lose focus). The value-badge handler
     // below re-sets the highlight for a freshly clicked channel.
@@ -3125,6 +3278,10 @@ export default class GuiTimeline {
       this._applyValueExpr(this._valueInput.value);
       this._valueInput.style.display = 'none';
     }
+    if (this._rangeInput && this._rangeInput.style.display !== 'none') {
+      this._commitRangeInput();
+      this._rangeInput.style.display = 'none';
+    }
     const _hadEdit = this._editingBsName != null;
     this._editingBsName = null;
     if (_hadEdit) this.draw();
@@ -3136,12 +3293,12 @@ export default class GuiTimeline {
       return;
     }
 
-    // Ruler strip + playhead cap (y 25-HEADER_H, x in timeline column).
+    // Ruler strip + playhead cap (below both toolbar rows, in the timeline column).
     // Must be checked before toolbar buttons — several buttons extend into rx >= 200
     // but are drawn only at y 5-25, so the ruler row has priority here.
     const _tlX = 200;
     const _tlW = this._cssWidth - 220;
-    if (ry >= 25 && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
+    if (ry >= TOOLBAR_BOTTOM && ry < HEADER_H && rx >= _tlX && rx <= _tlX + _tlW) {
       this._isDraggingPlayhead = true;
       this.handleInteraction(e);
       return;
@@ -3407,6 +3564,35 @@ export default class GuiTimeline {
             // so the two record controls agree instead of doing different things.
             window._animationRegistry?.toggleRecord?.(this._main?.getMesh?.());
             break;
+          case 'loop':
+            window._animLoopEnabled = window._animLoopEnabled === false;
+            window.saveOption?.('animLoopEnabled', window._animLoopEnabled);
+            break;
+          case 'trigger':
+            window._animWaitForTrigger = !window._animWaitForTrigger;
+            if (window._animWaitForTrigger) window._animCountIn = false;
+            window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
+            window.saveOption?.('animCountIn', !!window._animCountIn);
+            break;
+          case 'countin':
+            window._animCountIn = !window._animCountIn;
+            if (window._animCountIn) window._animWaitForTrigger = false;
+            window.saveOption?.('animCountIn', !!window._animCountIn);
+            window.saveOption?.('animStartOnClick', !!window._animWaitForTrigger);
+            break;
+          case 'reset-rig':
+            IKSolver.resetRigAndPins(this._main);
+            break;
+          case 'range-start':
+            this._editPlaybackRange('start', hit);
+            return;
+          case 'range-end':
+            this._editPlaybackRange('end', hit);
+            return;
+          case 'speed':
+            this._speedMenuOpen = !this._speedMenuOpen;
+            this.draw();
+            return;
         }
         this.draw();
         return;
@@ -3819,6 +4005,7 @@ export default class GuiTimeline {
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'transform';
                   this._keyDragStartRx = rx;
+                  this._keyDragStartRy = ry;
                   this._keyDragStartTime = t;
                   
                   const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'transform' && k.index === i);
@@ -3893,6 +4080,7 @@ export default class GuiTimeline {
                   this._activeKeyframeIndex = i;
                   this._activeKeyframeType = 'shape';
                   this._keyDragStartRx = rx;
+                  this._keyDragStartRy = ry;
                   this._keyDragStartTime = t;
 
                   const isPartSelection = window._animSelectedKeys && window._animSelectedKeys.some(k => k.meshId === meshId && k.type === 'shape' && k.index === i);
@@ -3975,6 +4163,7 @@ export default class GuiTimeline {
                   this._activeKeyframeType = 'blendshape';
                   this._activeBlendshapeName = name;
                   this._keyDragStartRx = rx;
+                  this._keyDragStartRy = ry;
                   this._keyDragStartTime = t;
                   if (window._animationRegistry) {
                     this._undoTracksBeforeMove = new Map();
@@ -4021,6 +4210,7 @@ export default class GuiTimeline {
                   this._activeKeyframeType = 'shapeLayer';
                   this._activeKeyframeLayer = li;
                   this._keyDragStartRx = rx;
+                  this._keyDragStartRy = ry;
                   this._keyDragStartTime = t;
                   if (reg) {
                     this._undoTracksBeforeMove = new Map();
@@ -4166,8 +4356,9 @@ export default class GuiTimeline {
     this._lastMouseY = ry;
 
     // Update toolbar tooltip.
-    if (this._tooltip && ry >= 5 && ry <= 25) {
-      const hovered = this._toolbarBtnDefs().find(b => rx >= b.x && rx <= b.x + b.w);
+    if (this._tooltip && ry >= 5 && ry <= TOOLBAR_BOTTOM) {
+      const hovered = this._toolbarBtnDefs().find(b => rx >= b.x && rx <= b.x + b.w
+        && ry >= b.y && ry <= b.y + b.h);
       if (hovered?.tooltip) {
         this._tooltip.textContent = hovered.tooltip;
         this._tooltip.style.left = (hovered.x + hovered.w / 2) + 'px';
@@ -4329,7 +4520,17 @@ export default class GuiTimeline {
       const targetTime = loopStart + t * visibleDuration;
 
       let dt = targetTime - this._keyDragStartTime;
-      if (window._animSnapToFrame !== false) {
+      // Sticky graph drag: favour the dominant axis until the pointer has travelled
+      // at least 10px on BOTH axes. At that point the gesture deliberately becomes free.
+      const dragDX = rx - this._keyDragStartRx;
+      const dragDY = ry - this._keyDragStartRy;
+      const freeDrag = Math.abs(dragDX) >= KEY_DRAG_FREE_THRESHOLD
+        && Math.abs(dragDY) >= KEY_DRAG_FREE_THRESHOLD;
+      const dragAxis = this._mode !== 'graph' || freeDrag ? 'free'
+        : (Math.abs(dragDX) >= Math.abs(dragDY) ? 'time' : 'value');
+      if (dragAxis === 'value') dt = 0;
+
+      if (dragAxis !== 'value' && window._animSnapToFrame !== false) {
         const fps = window._animFPS || 24;
         // Snap the GRABBED key's resulting time to a whole frame (not the raw
         // delta) — a key at 6.2 moves to 7.0, not 7.2. Other selected keys shift
@@ -4354,7 +4555,7 @@ export default class GuiTimeline {
       if (window._animationRegistry) {
         if (this._mode === 'graph') {
           const targetVal = this.yToValue(ry);
-          const dVal = targetVal - this._keyDragStartVal;
+          const dVal = dragAxis === 'time' ? 0 : targetVal - this._keyDragStartVal;
           
           const keysToMove = this._animSelectedKeysInitialTimes || [{
             meshId: this._activeMeshId,
@@ -4437,7 +4638,7 @@ export default class GuiTimeline {
 
       // Helpers — write time/value back to the correct array for any key type.
       const _setKeyTime = (track, initKey, newTime) => {
-        let t = Math.max(0, Math.min(mDurVal, newTime));
+        let t = Math.max(0, newTime);
         // Respect snap-to-integer for the WHOLE transform box (edge/center/scale) —
         // the single-key drag already snapped, the box math didn't.
         if (window._animSnapToFrame !== false) { const fps = window._animFPS || 24; t = Math.round(t * fps) / fps; }
@@ -4452,6 +4653,7 @@ export default class GuiTimeline {
           const bt = track.blendshapeTracks?.get(initKey.name);
           if (bt?.times) bt.times[initKey.index] = t;
         }
+        window._animationRegistry?._extendDurationForTime?.(t);
       };
       const _setKeyVal = (track, initKey, newVal) => {
         if (initKey.type === 'transform' && track.positions && initKey.channel !== undefined) {
@@ -4475,7 +4677,7 @@ export default class GuiTimeline {
         const baseDur = initBox.endTime - initBox.startTime;
         
         if (this._activeTransformHandle === 'left') {
-          const newStartTime = Math.max(0, Math.min(mDurVal, initBox.startTime + dt));
+          const newStartTime = Math.max(0, initBox.startTime + dt);
           tBox.startTime = newStartTime;
           const newDur = initBox.endTime - newStartTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
@@ -4494,11 +4696,6 @@ export default class GuiTimeline {
 
           const newDur = newEndTime - initBox.startTime;
           const scaleFactor = baseDur > 0.001 ? (newDur / baseDur) : 1;
-
-          if (newEndTime > mDurVal) {
-            window._animMasterDuration = newEndTime;
-            window._animLoopEnd = newEndTime;
-          }
 
           if (this._animTransformBoxInitialKeys) {
             this._animTransformBoxInitialKeys.forEach(initKey => {
@@ -4549,7 +4746,7 @@ export default class GuiTimeline {
             }
           }
         } else if (this._activeTransformHandle === 'center') {
-          const dtClamped = Math.max(-initBox.startTime, Math.min(mDurVal - initBox.endTime, dt));
+          const dtClamped = Math.max(-initBox.startTime, dt);
           tBox.startTime = initBox.startTime + dtClamped;
           tBox.endTime   = initBox.endTime   + dtClamped;
 
@@ -5008,10 +5205,8 @@ export default class GuiTimeline {
       let loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
       let visibleDuration = Math.max(0.1, loopEnd - loopStart);
       
-      if (this._mode === 'graph') {
-        loopStart = this._viewStart !== undefined ? this._viewStart : loopStart;
-        visibleDuration = this._viewDuration !== undefined ? this._viewDuration : visibleDuration;
-      }
+      loopStart = this._viewStart !== undefined ? this._viewStart : loopStart;
+      visibleDuration = this._viewDuration !== undefined ? this._viewDuration : visibleDuration;
       
       const fps = window._animFPS || 24;
       const targetTime = Math.round((loopStart + t * visibleDuration) * fps) / fps;
@@ -5060,12 +5255,6 @@ export default class GuiTimeline {
     let loopStart = this._viewStart;
     let visibleDuration = this._viewDuration;
 
-    if (this._mode === 'dope') {
-      loopStart = window._animLoopStart !== undefined ? window._animLoopStart : 0.0;
-      const loopEnd = window._animLoopEnd !== undefined ? window._animLoopEnd : mDurVal;
-      visibleDuration = Math.max(0.1, loopEnd - loopStart);
-    }
-    
     const tlX = 200;
     const tlW = this._cssWidth - 200;
 
@@ -5349,7 +5538,7 @@ export default class GuiTimeline {
     const _tbBtns = this._toolbarBtnDefs();
     _tbBtns.forEach(btn => {
       const hov = this._lastMouseX >= btn.x && this._lastMouseX <= btn.x + btn.w
-               && this._lastMouseY >= 5    && this._lastMouseY <= 25;
+               && this._lastMouseY >= btn.y && this._lastMouseY <= btn.y + btn.h;
       const fill = btn.disabled  ? Theme.surface0
                  : btn.id === 'record' && btn.active ? '#cc2244'  // record armed → red
                  : btn.active   ? TL_ACCENT
@@ -5498,9 +5687,12 @@ export default class GuiTimeline {
     const loopStartF = Math.round(loopStart * fps);
     const loopEndF = Math.round(loopEnd * fps);
 
-    // --- Frame ruler strip (y 28..50) ---
-    const rulerY = 28;
-    const rulerH = headerH - rulerY; // 22px
+    // --- Frame ruler strip (below both toolbar rows) ---
+    // Keep this tied to the toolbar hit-test boundary. A hardcoded y=28 here used
+    // to repaint the ruler over the recording controls even though HEADER_H had
+    // already been expanded for them.
+    const rulerY = TOOLBAR_BOTTOM;
+    const rulerH = headerH - rulerY;
     ctx.fillStyle = Theme.mantle;
     ctx.fillRect(tlX, w.y + rulerY, tlW, rulerH);
 
@@ -5631,6 +5823,7 @@ export default class GuiTimeline {
 
     if (this._mode === 'graph') {
       this.drawGraph(ctx);
+      this._drawSpeedMenu(ctx);
       return;
     }
 
@@ -5694,5 +5887,6 @@ export default class GuiTimeline {
       ctx.fillRect(x, y, w, h);
       ctx.strokeRect(x, y, w, h);
     }
+    this._drawSpeedMenu(ctx);
   }
 }

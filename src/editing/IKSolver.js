@@ -1514,6 +1514,45 @@ IKSolver.captureAll = function (main) {
   return Skeleton.joints(main).map((j) => [j, mat4.clone(j.getMatrix())]);
 };
 
+// Return the rig and every active pin control to the solver rest pose. Pins are moved onto
+// their joints AFTER the local rest matrices are restored, so a hip pin, feet and pole goals
+// all return to the same coherent frame rather than immediately pulling the reset rig apart.
+IKSolver.resetRigAndPins = function (main) {
+  if (!main) return 0;
+  const joints = Skeleton.joints(main);
+  const pins = IKSolver.pinnedJoints(main)
+    .map((j) => [j, IKSolver.pinObject(j)])
+    .filter(([, p]) => !!p);
+  const objects = joints.concat(pins.map(([, p]) => p));
+  const before = objects.map((m) => [m, mat4.clone(m.getMatrix())]);
+
+  let restored = 0;
+  for (const j of joints) {
+    if (!j._ikRest) continue;
+    mat4.copy(j.getMatrix(), j._ikRest);
+    j._boneBendRef = null;
+    Skeleton.syncThree(j);
+    restored++;
+  }
+  for (const [j, pin] of pins) {
+    pin.setModelSpaceMatrix(j.getModelSpaceMatrix());
+    Skeleton.syncThree(pin);
+  }
+  IKSolver.syncJointCache(main);
+  Skeleton.updateVisuals?.(main);
+  const after = objects.map((m) => [m, mat4.clone(m.getMatrix())]);
+  const apply = (snap) => {
+    Skeleton.restoreLocal(snap);
+    IKSolver.syncJointCache(main);
+    Skeleton.updateVisuals?.(main);
+    main.render?.();
+  };
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => apply(before), () => apply(after), false, 'Reset Rig and Pins');
+  main.render?.();
+  return restored;
+};
+
 // PIN CYCLE: unpinned -> position -> position + rotation -> unpinned. Shared by every tool
 // that binds it (bone draw, transform, grab) — one button, one meaning, one undo. Returns
 // false when there was no joint to act on, so a caller can tell a miss from a press.

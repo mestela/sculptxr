@@ -420,34 +420,7 @@ class GuiAnimation {
   }
 
   record() {
-    if (!window._animationRegistry) return;
-    let targetMesh = this._main.getMesh();
-    if (!targetMesh) return;
-    window._animArmed = true;
-
-    if (window._animCountIn) {
-      window._animationRegistry.startRecording(targetMesh);
-      return;
-    }
-
-    if (window._animWaitForTrigger) {
-      window._animWaitingForGrab = true;
-      window._animStatusText = '🟢 Waiting for Click...';
-      
-      const canvas = this._main.getCanvas();
-      const onClick = (e) => {
-        if (e.button !== 0) return; // Only left click
-        canvas.removeEventListener('mousedown', onClick);
-        if (window._animWaitingForGrab) {
-          window._animWaitingForGrab = false;
-          window._animationRegistry.startRecording(targetMesh);
-        }
-      };
-      canvas.addEventListener('mousedown', onClick);
-      return;
-    }
-
-    window._animationRegistry.startRecording(targetMesh);
+    window._animationRegistry?.toggleRecord?.(this._main.getMesh());
   }
 
   clearAll() {

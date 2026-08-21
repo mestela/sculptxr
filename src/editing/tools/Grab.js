@@ -76,10 +76,7 @@ class Grab extends SculptBase {
 
     // "Start on click" recording: armed-and-waiting → begin the take now that a desktop
     // grab has started (mirror of the VR grab hook in updateXR).
-    if (window._animWaitingForGrab && window._animationRegistry) {
-      window._animWaitingForGrab = false;
-      window._animationRegistry.startRecording(mesh);
-    }
+    window._animationRegistry?.beginInteraction?.(mesh);
 
     // Store the hit point's camera-space depth (linear, independent of near/far).
     // Derived from the view matrix directly rather than cam.project() so it is
@@ -494,10 +491,7 @@ class Grab extends SculptBase {
             this._main.setMesh(mesh);
           }
 
-          if (window._animWaitingForGrab && window._animationRegistry) {
-            window._animWaitingForGrab = false;
-            window._animationRegistry.startRecording(mesh);
-          }
+          window._animationRegistry?.beginInteraction?.(mesh);
 
 
         } else {
@@ -617,6 +611,7 @@ class Grab extends SculptBase {
       }
     } else {
       // Released
+      const releasedMesh = this._grabbedMesh;
       if (this._grabbedMesh && this._undoMatrix) {
         const mesh = this._grabbedMesh;
         const oldMat = mat4.clone(this._undoMatrix);
@@ -636,9 +631,7 @@ class Grab extends SculptBase {
       this._isTwoHanded = false;
       this._lastControllerMatrix = null;
       // Auto-stop the recording loop when the user lets go of the physical VR trigger!
-      if (window._animationRegistry && window._animationRegistry.isRecording) {
-        window._animationRegistry.stopRecording();
-      }
+      window._animationRegistry?.endInteraction?.(releasedMesh);
 
 
     }

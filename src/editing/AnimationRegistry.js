@@ -141,6 +141,26 @@ class AnimationRegistry {
     return true;
   }
 
+  // Tools call these at the actual beginning/end of an interaction. Keeping the state
+  // transition here prevents Grab, Transform and TransformVR from each implementing subtly
+  // different versions of "armed, now start" and "released, now stop".
+  beginInteraction(mesh) {
+    if (!window._animWaitingForGrab || !window._animArmed || this.isRecording || this.isCountingIn)
+      return false;
+    mesh = mesh || this._resolveTargetMesh();
+    if (!mesh) return false;
+    window._animWaitingForGrab = false;
+    this.startRecording(mesh);
+    return true;
+  }
+
+  endInteraction(mesh) {
+    if (!this.isRecording) return false;
+    if (mesh && this.activeRecordingId !== mesh.getID?.()) return false;
+    this.stopRecording();
+    return true;
+  }
+
   startRecording(mesh) {
     if (!mesh || !window._animArmed) return;
     
@@ -373,7 +393,7 @@ class AnimationRegistry {
     // rolling drift). See `_captureShapeKeyGridded`. captureTick now handles transform only.
     if (window._animKeyMode === 'shape') return;
 
-    if (window._animMasterDuration && window._animMasterDuration > 0) {
+    if (window._animLoopEnabled !== false && window._animMasterDuration && window._animMasterDuration > 0) {
       const rawElapsed = elapsed;
       elapsed = elapsed % window._animMasterDuration;
 
@@ -861,6 +881,21 @@ class AnimationRegistry {
     const count = seqTimes ? seqTimes.length : 0;
 
     if (!isManualAbort && count > 0 && seqTimes[count - 1] < 0.5) {
+      // A tap is not a take. Restore the pre-record track, but ALWAYS finish the lifecycle:
+      // the old early return had already cleared the timer while leaving isRecording=true,
+      // producing a red Record button that could neither capture nor reliably re-arm.
+      if (track && this._trackStateBeforeRecording) {
+        this._restoreTrack(track, this._trackStateBeforeRecording, null);
+      }
+      this.isRecording = false;
+      this.isCountingIn = false;
+      this.activeRecordingId = -1;
+      this.activeMesh = null;
+      window._animPlaying = false;
+      window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
+      if (!window._animWaitingForGrab) window._animArmed = false;
+      window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
+      if (window.app?._guiXR) window.app._guiXR._needsRedraw = true;
       return;
     }
 
@@ -958,6 +993,10 @@ class AnimationRegistry {
 
     this.activeRecordingId = -1;
     this.activeMesh = null;
+    // Start-on-grab is an armed session, so one released gesture returns to waiting for the
+    // next gesture. Countdown/immediate recording is a one-shot and disarms on completion.
+    window._animWaitingForGrab = !!(window._animArmed && window._animWaitForTrigger);
+    if (!window._animWaitingForGrab) window._animArmed = false;
     
     window._animStatusText = window._animArmed ? 'Punch In Ready' : 'Disarmed';
     if (window.app && window.app._guiXR) {
@@ -2296,23 +2335,29 @@ class AnimationRegistry {
     return selected;
   }
 
-  moveSelectedKeys(selectedKeys, dt, masterDuration) {
+  _extendDurationForTime(time) {
+    if (!Number.isFinite(time) || time <= (window._animMasterDuration || 0)) return;
+    window._animMasterDuration = time;
+  }
+
+  moveSelectedKeys(selectedKeys, dt, _masterDuration) {
+    let maxTime = 0;
     selectedKeys.forEach(key => {
       const track = this.tracks.get(key.meshId);
       if (!track) return;
+      const newTime = Math.max(0, key.time + dt);
+      maxTime = Math.max(maxTime, newTime);
       
       if (key.type === 'transform' && track.times && track.times[key.index] !== undefined) {
-        const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
         track.times[key.index] = newTime;
       } else if (key.type === 'shape' && track.shapeTimes && track.shapeTimes[key.index] !== undefined) {
-        const newTime = Math.max(0, Math.min(masterDuration, key.time + dt));
         track.shapeTimes[key.index] = newTime;
       } else if (key.type === 'shapeLayer' && track.shapeLayers?.[key.layer]?.shapeTimes?.[key.index] !== undefined) {
-        track.shapeLayers[key.layer].shapeTimes[key.index] = Math.max(0, Math.min(masterDuration, key.time + dt));
+        track.shapeLayers[key.layer].shapeTimes[key.index] = newTime;
       } else if (key.type === 'blendshape' && key.name && track.blendshapeTracks) {
         const bTrack = track.blendshapeTracks.get(key.name);
         if (bTrack && bTrack.times[key.index] !== undefined) {
-          bTrack.times[key.index] = Math.max(0, Math.min(masterDuration, key.time + dt));
+          bTrack.times[key.index] = newTime;
           // Keep times sorted
           const idx = key.index;
           while (idx > 0 && bTrack.times[idx] < bTrack.times[idx - 1]) {
@@ -2322,6 +2367,7 @@ class AnimationRegistry {
         }
       }
     });
+    this._extendDurationForTime(maxTime);
   }
 
   moveSelectedKeysValue(selectedKeys, dVal) {
@@ -2346,14 +2392,16 @@ class AnimationRegistry {
     });
   }
 
-  scaleSelectedKeys(selectedKeys, pivotTime, scaleFactor, masterDuration) {
+  scaleSelectedKeys(selectedKeys, pivotTime, scaleFactor, _masterDuration) {
+    let maxTime = 0;
     selectedKeys.forEach(initKey => {
       const track = this.tracks.get(initKey.meshId);
       if (!track) return;
       
       const relTime = initKey.time - pivotTime;
       const newTime = pivotTime + relTime * scaleFactor;
-      const finalTime = Math.max(0, Math.min(masterDuration, newTime));
+      const finalTime = Math.max(0, newTime);
+      maxTime = Math.max(maxTime, finalTime);
 
       if (initKey.type === 'transform' && track.times && track.times[initKey.index] !== undefined) {
         track.times[initKey.index] = finalTime;
@@ -2361,6 +2409,7 @@ class AnimationRegistry {
         track.shapeTimes[initKey.index] = finalTime;
       }
     });
+    this._extendDurationForTime(maxTime);
   }
 
   getInterpolatedPosition(track, time) {
@@ -2494,11 +2543,19 @@ class AnimationRegistry {
 
         const lStart = window._animLoopStart ?? 0.0;
         const lEnd   = window._animLoopEnd ?? window._animMasterDuration ?? 0;
-        if (lEnd > lStart) {
+        if (lEnd > lStart && window._animLoopEnabled !== false) {
           if (this.globalPlaybackTime > lEnd) {
             this.globalPlaybackTime = lStart;
           } else if (this.globalPlaybackTime < lStart) {
             this.globalPlaybackTime = lEnd;
+          }
+        } else if (lEnd > lStart) {
+          if (this.globalPlaybackTime >= lEnd) {
+            this.globalPlaybackTime = lEnd;
+            window._animPlaying = false;
+          } else if (this.globalPlaybackTime <= lStart) {
+            this.globalPlaybackTime = lStart;
+            window._animPlaying = false;
           }
         }
         

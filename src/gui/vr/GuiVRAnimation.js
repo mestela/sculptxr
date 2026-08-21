@@ -237,52 +237,7 @@ export default function getAnimationWidgets(main, Enums) {
     type: 'button', id: 'anim_record', label: '⬤', x: col1X + tW*7, y: y, w: tW, h: btnH,
     data: { tint: (window._animationRegistry && (window._animationRegistry.isRecording || window._animationRegistry.isCountingIn)) ? '#ff4444' : (isFlashing ? '#ff8800' : '#ccc') },
     onInteract: () => {
-      if (!window._animationRegistry) return;
-
-      // Backup check: if key mode is transform and tool isn't grab/transform, swap to grab
-      if (window._animKeyMode === 'transform') {
-        const sm = main.getSculptManager();
-        if (sm) {
-          const currTool = sm.getToolIndex();
-          if (currTool !== Enums.Tools.TRANSFORM && currTool !== Enums.Tools.GRAB) {
-            sm.setToolIndex(Enums.Tools.GRAB);
-            if (main._guiXR) {
-              main._guiXR.refreshToolsWidget();
-              main._guiXR.syncWidgetValues();
-            }
-          }
-        }
-      }
-
-      let targetMesh = (main._selectMeshes && main._selectMeshes.length > 0) ? main._selectMeshes[0] : main._mesh;
-      if (!targetMesh && main.getMeshes && main.getMeshes().length > 0) {
-        targetMesh = main.getMeshes()[0];
-      }
-
-      if (!targetMesh) return;
-      
-      window._animArmed = true;
-
-      if (window._animPlaying) {
-        window._animWaitingForGrab = true;
-        window._animStatusText = '🟢 Waiting for Trigger Pull...';
-        if (main._guiXR) main._guiXR._needsRedraw = true;
-        return;
-      }
-
-      if (window._animCountIn) {
-        window._animationRegistry.startRecording(targetMesh);
-        return;
-      }
-
-      if (window._animWaitForTrigger) {
-        window._animWaitingForGrab = true;
-        window._animStatusText = '🟢 Waiting for Trigger Pull...';
-        if (main._guiXR) main._guiXR._needsRedraw = true;
-        return;
-      }
-
-      window._animationRegistry.startRecording(targetMesh);
+      window._animationRegistry?.toggleRecord?.();
     }
   });
 

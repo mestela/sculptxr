@@ -1394,6 +1394,30 @@ function pinnedBody() {
     'off by ' + pos(j).distanceTo(ankleAnchors[i]).toExponential(2)));
 }
 
+{
+  const rig = pinnedBody();
+  IKSolver.captureRest(rig.main);
+  const rest = rig.joints.map((j) => pos(j));
+  IKSolver.setPin(rig.hips, IKSolver.PIN_FULL, rig.main);
+  const hipPin = IKSolver.pinObject(rig.hips);
+  hipPin._m.makeTranslation(0.3, 1.6, 0.2);
+  const ankle = IKSolver.pinnedJoints(rig.main).find((j) => j !== rig.hips);
+  IKSolver.pinObject(ankle)._m.makeTranslation(-0.45, 0.25, 0.3);
+  window._ikWritten = new Set();
+  IKSolver.holdPins(rig.main);
+  IKSolver.resetRigAndPins(rig.main);
+  let restErr = 0;
+  rig.joints.forEach((j, i) => { restErr = Math.max(restErr, pos(j).distanceTo(rest[i])); });
+  check('reset rig: every joint returns to solver rest', restErr < 1e-6,
+    'worst ' + restErr.toExponential(2));
+  let pinErr = 0;
+  for (const j of IKSolver.pinnedJoints(rig.main)) {
+    pinErr = Math.max(pinErr, IKSolver.pinAnchor(j, new THREE.Vector3()).distanceTo(pos(j)));
+  }
+  check('reset rig: every pin returns onto its rest joint', pinErr < 1e-6,
+    'worst ' + pinErr.toExponential(2));
+}
+
 const FR = { A: [0.35, 1.55, 0.25], B: [-0.30, 1.45, -0.30], T: [0.10, 1.70, 0.10] };
 
 // One EVALUATED frame, in the app's own order: playback writes the keyed bone and names it as

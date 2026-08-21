@@ -5576,9 +5576,9 @@ class Scene {
     laser.visible = true;
   }
 
-  // Two-handed VR zoom: when BOTH controllers point at empty timeline graph space
-  // with triggers held, controller separation drives non-linear zoom (horizontal →
-  // time, vertical → value). Runs once per frame, before the dominant-hand dispatch
+  // Two-handed VR zoom: when BOTH controllers point at empty timeline space with
+  // triggers held, horizontal separation zooms time in graph and dopesheet modes;
+  // graph mode additionally uses vertical separation for value zoom. Runs before dispatch
   // so it can suppress the single-hand pan.
   _updateVRTimelineZoom(leftSrc, rightSrc) {
     // Keep the non-dominant controller's aim laser in sync every frame.
@@ -5600,7 +5600,7 @@ class Scene {
     const pR = { cx: hitR.uv.x * cssW, cy: (1 - hitR.uv.y) * cssH };
 
     if (!this._vtlZoomActive) {
-      // Both controllers must be over empty graph space to START the gesture.
+      // Both controllers must be over usable timeline space to START the gesture.
       if (!tl.isEmptyGraphSpaceAt(pL.cx, pL.cy) || !tl.isEmptyGraphSpaceAt(pR.cx, pR.cy)) return;
       // Cancel any single-hand pan that may have begun, then capture the anchors.
       this._onVRTimelineHit({ x: 0.5, y: 0.5 }, 'up', false);

@@ -15,6 +15,7 @@
 
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import TimelineHelper from '../TimelineHelper.js';
+import IKSolver from '../../editing/IKSolver.js';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 // Uses .acp-root class prefix so the rules apply both to:
@@ -463,6 +464,10 @@ export function buildAnimationSectionHTML() {
         <label class="acp-check-row">
           <input type="checkbox" id="acp-wait-trigger"> Start on click
         </label>
+        <label class="acp-check-row">
+          <input type="checkbox" id="acp-loop-enabled" checked> Loop playback and recording
+        </label>
+        <button class="acp-btn-full" id="acp-reset-rig">Reset rig + pins</button>
         <div class="acp-stack" style="gap:4px">
           <label style="font-size:10px;color:#6c7086;text-transform:uppercase;letter-spacing:.06em">Capture rate</label>
           <div class="acp-select" id="acp-bake-rate-wrap">
@@ -805,6 +810,8 @@ export function syncAnimationSection(el, main) {
   if (ci) ci.checked = !!window._animCountIn;
   const wt = el.querySelector('#acp-wait-trigger');
   if (wt) wt.checked = !!window._animWaitForTrigger;
+  const loop = el.querySelector('#acp-loop-enabled');
+  if (loop) loop.checked = window._animLoopEnabled !== false;
 
   // Bake is obsolete — voxel frame animation persists directly now.
   const bakeBtn = el.querySelector('#acp-bake-voxel');
@@ -968,6 +975,7 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
   const _opt = window.getOptionsURL?.() || {};
   if (window._animCountIn === undefined)        window._animCountIn = !!_opt.animCountIn;
   if (window._animWaitForTrigger === undefined) window._animWaitForTrigger = !!_opt.animStartOnClick;
+  if (window._animLoopEnabled === undefined)    window._animLoopEnabled = _opt.animLoopEnabled !== false;
 
   // Escape cancels an active record session (count-in / armed / recording). Bound once,
   // capture-phase so it wins over panel-close Escape handlers when a take is live.
@@ -1067,21 +1075,19 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
       inputEl.value = Math.round((window._animMasterDuration || 2) * fps());
       return;
     }
-    // Duration ONLY moves the loop boundary — it never touches keyframes. Make it undoable
-    // so a misclick is always recoverable (snapshot the loop vars; the keyframes are intact).
-    const prevDur = window._animMasterDuration, prevEnd = window._animLoopEnd;
-    const apply = (dur, end) => {
+    // Animation duration and playback range are independent. Changing duration never
+    // moves playback Start/End; those are authored only through their explicit fields.
+    const prevDur = window._animMasterDuration;
+    const apply = (dur) => {
       window._animMasterDuration = dur;
-      window._animLoopEnd = end;
       const di = el.querySelector('#acp-duration'); if (di) di.value = Math.round((dur || 2) * fps());
-      const le = el.querySelector('#acp-loop-end'); if (le) le.value = Math.round((end ?? dur ?? 2) * fps());
       main.getGui?.()._ctrlTimeline?.draw();
       repaint();
     };
     const newDur = frames / fps();
-    apply(newDur, newDur);
+    apply(newDur);
     const sm = main.getStateManager?.();
-    if (sm?.pushStateCustom) sm.pushStateCustom(() => apply(prevDur, prevEnd), () => apply(newDur, newDur), false, 'Change loop duration');
+    if (sm?.pushStateCustom) sm.pushStateCustom(() => apply(prevDur), () => apply(newDur), false, 'Change animation duration');
   });
 
   el.querySelector('#acp-loop-start')?.addEventListener('change', () => {
@@ -1190,6 +1196,17 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     window._animWaitForTrigger = v;
     if (window._animWaitForTrigger) window._animCountIn = false;
     _saveRecMode();
+    _sync();
+  });
+
+  _cbWire('#acp-loop-enabled', (v) => {
+    window._animLoopEnabled = v;
+    window.saveOption?.('animLoopEnabled', v);
+    _sync();
+  });
+
+  el.querySelector('#acp-reset-rig')?.addEventListener('click', () => {
+    IKSolver.resetRigAndPins(main);
     _sync();
   });
 
