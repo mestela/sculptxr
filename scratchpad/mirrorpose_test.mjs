@@ -321,6 +321,28 @@ function pinAt(r, joint, xyz, mode) {
     srcNow.distanceTo(new THREE.Vector3(-2.2, 3.4, 0.7)) < 1e-9);
 }
 
+// Full Mirror Pose swaps both side controls and reflects an unpaired hip/root pin in place.
+// This is the pin-only animation contract: IK owns the bones and rebuilds them afterwards.
+{
+  const r = pinnable(rig());
+  const leftAt = new THREE.Vector3(-2.2, 3.4, 0.7);
+  const rightAt = new THREE.Vector3(1.1, 2.0, -0.3);
+  const hipAt = new THREE.Vector3(-0.35, 2.7, 0.25);
+  const lp = pinAt(r, r.L.hd, leftAt.toArray(), 1);
+  const rp = pinAt(r, r.R.hd, rightAt.toArray(), 2);
+  const hp = pinAt(r, r.chest, hipAt.toArray(), 2);
+
+  Skeleton.mirrorPose(r.main, 0, new Set());
+
+  const at = (p) => new THREE.Vector3().setFromMatrixPosition(p._m);
+  check('full pin mirror sends left to reflected right', at(lp).distanceTo(reflect(rightAt)) < 1e-6);
+  check('full pin mirror sends right to reflected left', at(rp).distanceTo(reflect(leftAt)) < 1e-6);
+  check('full pin mirror reflects the hip/root pin in place', at(hp).distanceTo(reflect(hipAt)) < 1e-6);
+  check('full pin mirror swaps side pin modes',
+    r.L.hd._boneIKPin === 2 && r.R.hd._boneIKPin === 1,
+    r.L.hd._boneIKPin + '/' + r.R.hd._boneIKPin);
+}
+
 // Source pinned, twin not: the twin has to GAIN one, or the mirrored leg is not held at all.
 {
   const r = pinnable(rig());

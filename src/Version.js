@@ -1,1 +1,1 @@
-export const VERSION = 'v3.19.99 - Pin-driven pose mirror and root controls';
+export const VERSION = 'v3.20.0 - Pin-pose mirroring';

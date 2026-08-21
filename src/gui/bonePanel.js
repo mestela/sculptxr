@@ -137,7 +137,7 @@ export function buildBonePoseHTML(main, style) {
     </div>
     <div class="${c.btnRow}">
       <button class="${c.action}" id="bone-mirror">Mirror Pose</button>
-      <button class="${c.action}" id="bone-flip">Flip Pose</button>
+      <button class="${c.action}" id="bone-flip">Copy Side</button>
     </div>
   `;
 }
@@ -261,12 +261,8 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   });
 
-  // MIRROR takes the side you are holding. Posing an arm leaves that arm's joint selected —
-  // grabbing one selects it — so the selection is the best available statement of "this side is
-  // the one I mean", and it needs no extra control to say it. With nothing suitable selected
-  // it refuses and says so rather than picking a side and silently discarding an arm of work.
-  //
-  // FLIP swaps both sides and needs no selection at all.
+  // MIRROR is the complete reflected pin pose and needs no selection. COPY SIDE takes the side
+  // you are holding; selection is the best available statement of which side is the source.
   const doMirror = (side, label) => {
     const reg = window._animationRegistry;
     const joints = Skeleton.joints(main);
@@ -362,7 +358,9 @@ export function wireBoneSection(root, main, opts) {
     main.render?.();
   };
 
-  q('mirror')?.addEventListener('click', () => {
+  q('mirror')?.addEventListener('click', () => doMirror(0, 'Mirror Pose'));
+
+  q('flip')?.addEventListener('click', () => {
     // The SELECTION, not the hover: pressing this button means pointing at a panel, so there
     // is no hover to read, and a stale one would be worse than none.
     const sel = main.getMesh?.();
@@ -377,10 +375,8 @@ export function wireBoneSection(root, main, opts) {
       say('Bones: that joint is on the centreline — pick one on the side to copy from', false);
       return;
     }
-    doMirror(d > 0 ? 1 : -1, 'Mirror Pose');
+    doMirror(d > 0 ? 1 : -1, 'Copy Side');
   });
-
-  q('flip')?.addEventListener('click', () => doMirror(0, 'Flip Pose'));
 
   // The slider sets the DEFAULT fraction (used by every joint drawn from now on); the button
   // pushes it onto the bones that already exist. Split deliberately: applying live on every

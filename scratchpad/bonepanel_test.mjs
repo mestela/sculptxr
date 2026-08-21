@@ -111,6 +111,8 @@ check('authoring contains no pose, display or animation commands',
 check('pose contains only pose operations',
   ['unpin', 'mirror', 'flip', 'restpose'].every(id => pose.includes('bone-' + id))
     && !/bone-(draw|caps|key|trails|solid)/.test(pose));
+check('pose names the full and one-sided pin operations clearly',
+  pose.includes('>Mirror Pose<') && pose.includes('>Copy Side<'));
 check('animation owns Trails without the obsolete whole-rig Key Pose command',
   !animation.includes('bone-key') && animation.includes('bone-trails'));
 
