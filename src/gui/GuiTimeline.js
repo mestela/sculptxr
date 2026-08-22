@@ -1894,10 +1894,10 @@ export default class GuiTimeline {
           else ctx.fillStyle = '#ff00ff'; // Magenta (to match curve)
           
           ctx.beginPath();
-          ctx.moveTo(x, y - 5);
-          ctx.lineTo(x + 5, y);
-          ctx.lineTo(x, y + 5);
-          ctx.lineTo(x - 5, y);
+          ctx.moveTo(x, y - 2.5);
+          ctx.lineTo(x + 2.5, y);
+          ctx.lineTo(x, y + 2.5);
+          ctx.lineTo(x - 2.5, y);
           ctx.closePath();
           ctx.fill();
           
@@ -1965,10 +1965,10 @@ export default class GuiTimeline {
 
             ctx.fillStyle = isSelected ? '#ffff00' : (isHovered ? Theme.text : color);
             ctx.beginPath();
-            ctx.moveTo(x, y - 5);
-            ctx.lineTo(x + 5, y);
-            ctx.lineTo(x, y + 5);
-            ctx.lineTo(x - 5, y);
+            ctx.moveTo(x, y - 2.5);
+            ctx.lineTo(x + 2.5, y);
+            ctx.lineTo(x, y + 2.5);
+            ctx.lineTo(x - 2.5, y);
             ctx.closePath();
             ctx.fill();
             if (isSelected) { ctx.strokeStyle = Theme.text; ctx.lineWidth = 1; ctx.stroke(); }
@@ -2990,7 +2990,15 @@ export default class GuiTimeline {
     };
     const loop = () => {
       if (this._visible) {
-        this.draw();
+        const now = performance.now();
+        const inXR = !!window.app?._renderer?.xr?.isPresenting;
+        // A full-size canvas upload is expensive on a standalone headset. The playhead does
+        // not need to refresh at 72/90 Hz to read smoothly, while the rig itself absolutely
+        // does. Cap only the floating VR editor at 30 Hz; desktop retains native rAF cadence.
+        if (!inXR || !this._lastVRDrawAt || now - this._lastVRDrawAt >= 33) {
+          this.draw();
+          if (inXR) this._lastVRDrawAt = now;
+        }
       }
       requestAnimationFrame(loop);
     };
@@ -5856,6 +5864,9 @@ export default class GuiTimeline {
       this.drawGraph(ctx);
       this._drawSpeedMenu(ctx);
       this._drawContextMenu(ctx);
+      // Graph mode returns before the dopesheet tail below. Still publish the completed
+      // draw so Scene uploads its changed canvas texture in VR (transport state included).
+      this._drawRevision = (this._drawRevision || 0) + 1;
       return;
     }
 
@@ -5921,5 +5932,6 @@ export default class GuiTimeline {
     }
     this._drawSpeedMenu(ctx);
     this._drawContextMenu(ctx);
+    this._drawRevision = (this._drawRevision || 0) + 1;
   }
 }

@@ -33,7 +33,9 @@ class AnimationRegistry {
     this.isRecording = false;
     this.isCountingIn = false;
     window._animPlaying = false;
-    window._animMasterDuration = null;
+    // Tracks and playback range have separate lifecycles.  In particular, loading/clearing
+    // animation must not silently put the manually-authored range back to the legacy
+    // two-second (48 frame) default.
     window._animStatusText = 'Punch In Ready';
     this.lastCaptureTime = -1;
     if (window.app && window.app._guiXR) window.app._guiXR._needsRedraw = true;

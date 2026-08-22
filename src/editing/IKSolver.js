@@ -34,12 +34,10 @@ import Skeleton from './Skeleton.js';
 // Joint limits are deliberately absent for now (see the ranking in the rigging notes): the
 // solver is worth feeling before deciding which constraint is worth building.
 
-// Sweeps per solve. A simple reach converges in two or three and exits early on the tolerance
-// check below; the number is set for the worst case that actually occurs — an INTERIOR anchor
-// (a pinned hand with the elbow being dragged) near full extension, where the two ends of the
-// chain negotiate slowly. 12 left a visible few-millimetre drift there, 40 does not. It costs
-// nothing: a sweep is a few arithmetic ops per active joint, on a rig with tens of joints.
-const MAX_ITERATIONS = 40;
+// Sweeps per solve. Complex full-body pin arrangements often cannot meet every target exactly;
+// letting those cases run to 40 merely repeated a stalled solve and made immersive playback
+// several times slower. Ten is visually indistinguishable in normal posing and keeps XR live.
+const MAX_ITERATIONS = 10;
 
 // Convergence is measured against the scene unit, so the tolerance means the same thing on a
 // 2cm sculpt and a 200-unit one.
@@ -125,8 +123,9 @@ IKSolver.pinObject = function (joint) {
   return p && p._isPinTarget ? p : null;
 };
 
-// A pinned joint is driven through its pin control. Use this at selection/keying boundaries
-// so an overlapping joint marker cannot leave focus—or animation—on the driven bone itself.
+// Resolve a pinned joint to its driving control only where a caller explicitly needs the
+// driven target. General selection deliberately does not use this: bones remain selectable
+// for rig setup and for editing/deleting legacy bone animation.
 IKSolver.controlFor = function (mesh, main) {
   if (!mesh?._isBone) return mesh;
   const pin = IKSolver.pinObject(mesh);
@@ -379,6 +378,7 @@ function buildGraph(main) {
       joint: j,
       parent: null,
       children: [],
+      activeKids: null, // lazily cached once activation paths have been marked
       pos: Skeleton.jointPos(j),
       off: new THREE.Vector3(), // offset from the parent BEFORE the solve, in model space
       len: 0,
@@ -428,9 +428,10 @@ function markActive(anchors) {
 }
 
 function activeChildren(n) {
+  if (n.activeKids) return n.activeKids;
   const out = [];
   for (const c of n.children) if (c.active) out.push(c);
-  return out;
+  return (n.activeKids = out);
 }
 
 // Move `to` onto the sphere of radius `len` around `from`, along the direction it already
@@ -733,15 +734,14 @@ function scratchPair(i) {
 // joint and every pin). Returns the solved positions on the nodes themselves.
 let _sweepHinge = true;
 
-function fabrik(nodes, targets, root, rootFixed, tol) {
+function fabrik(nodes, targets, root, rootFixed, tol, active, byDepth) {
   let worst = Infinity;
-  const active = [];
-  for (const n of nodes.values()) if (n.active) active.push(n);
-  const byDepth = active.slice().sort((a, b) => a.depth - b.depth);
   const rootPos0 = root.pos.clone();
 
   const maxIter = window._ikIterations || MAX_ITERATIONS;
+  let iterations = 0;
   for (let iter = 0; iter < maxIter; iter++) {
+    iterations++;
     // Which joints are hinged, and where their axes point, for BOTH sweeps of this iteration.
     if (window._ikHinge !== false && _sweepHinge) updateHingeAxes(byDepth);
 
@@ -830,6 +830,13 @@ function fabrik(nodes, targets, root, rootFixed, tol) {
     for (const [n, t] of targets) worst = Math.max(worst, n.pos.distanceTo(t));
     if (worst < tol) break;
   }
+  if (window._ikProfile) {
+    const stats = window._ikPerf || (window._ikPerf = { fabrikCalls: 0, sweeps: 0, retries: 0 });
+    stats.fabrikCalls++;
+    stats.sweeps += iterations;
+    stats.lastSweeps = iterations;
+    stats.lastError = worst;
+  }
   return worst;
 }
 
@@ -896,6 +903,10 @@ function reseedBranches(byDepth, targets) {
 function runSolve(nodes, targets, root, rootFixed, tol) {
   const active = [];
   for (const n of nodes.values()) if (n.active) active.push(n);
+  // Activation is fixed for the duration of a solve. Build its traversal order and each
+  // node's filtered child list once; the old path allocated them again on every sweep.
+  const byDepth = active.slice().sort((a, b) => a.depth - b.depth);
+  for (const n of active) activeChildren(n);
 
   // PICK THE BRANCH ONCE, UP FRONT, then let the sweeps run unconstrained.
   //
@@ -918,14 +929,13 @@ function runSolve(nodes, targets, root, rootFixed, tol) {
   // `window._ikHingeMode = 'clamp'` puts the constraint back inside the sweeps.
   const seedOnly = window._ikHingeMode !== 'clamp';
   if (seedOnly && window._ikHinge !== false) {
-    const bd = active.slice().sort((a, b) => a.depth - b.depth);
     _sweepHinge = true;
-    updateHingeAxes(bd);
-    reseedBranches(bd, targets);
+    updateHingeAxes(byDepth);
+    reseedBranches(byDepth, targets);
     _sweepHinge = false;
   }
 
-  let worst = fabrik(nodes, targets, root, rootFixed, tol);
+  let worst = fabrik(nodes, targets, root, rootFixed, tol, active, byDepth);
   _sweepHinge = true;
 
   // Fell short? It may be the near branch that cannot reach rather than the target that is out
@@ -933,9 +943,14 @@ function runSolve(nodes, targets, root, rootFixed, tol) {
   // improvement counts: a branch switch is a visible jump, and accepting marginal ones would
   // have the limb flickering between two nearly equal poses from frame to frame. A genuinely
   // unreachable target improves by nothing and is left exactly as it was.
-  if (window._ikHinge !== false && window._ikBranchRetry !== false && worst > tol * 10) {
+  // The alternate-branch retry is deliberately opt-in. On constrained animation it was firing
+  // on virtually every frame and performing a second complete solve without improving the pose.
+  if (window._ikHinge !== false && window._ikBranchRetry === true && worst > tol * 10) {
+    if (window._ikProfile) {
+      const stats = window._ikPerf || (window._ikPerf = { fabrikCalls: 0, sweeps: 0, retries: 0 });
+      stats.retries++;
+    }
     const best = active.map((n) => n.pos.clone());
-    const byDepth = active.slice().sort((a, b) => a.depth - b.depth);
     // Reseeded from the CONVERGED pose, not the one the solve started in: everything above the
     // hinge has already gone where it is going, so the two-bone problem is posed against the
     // parent's real position rather than a stale one. Getting that backwards left the 6DOF-pin
@@ -943,7 +958,7 @@ function runSolve(nodes, targets, root, rootFixed, tol) {
     updateHingeAxes(byDepth); // the seed needs to know which joints are hinged, before any sweep
     let keptRetry = false;
     if (reseedBranches(byDepth, targets)) {
-      keptRetry = fabrik(nodes, targets, root, rootFixed, tol) < worst * 0.5;
+      keptRetry = fabrik(nodes, targets, root, rootFixed, tol, active, byDepth) < worst * 0.5;
     }
     if (!keptRetry) for (let i = 0; i < active.length; i++) active[i].pos.copy(best[i]);
   }

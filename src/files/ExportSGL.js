@@ -14,12 +14,13 @@ var Export = {};
 // 10 per-object visibility track (step-held vis keyframes)
 // 11 camera framing (view transform) in the header
 // 12 per-face group ids (_facesGroups; steers guided quad remesh)
-Export.VERSION = 12;
+// 13 animation playback range (master duration, start, end)
+Export.VERSION = 13;
 
 Export.exportSGL = function (meshes, main) {
   var nbMeshes = meshes.length;
 
-  var nbBytes = 4 * (1 + 3 + 4 + 1);
+  var nbBytes = 4 * (1 + 3 + 4 + 13 + 3 + 1);
 
   for (var i = 0; i < nbMeshes; ++i) {
     var mesh = meshes[i];
@@ -131,6 +132,13 @@ Export.exportSGL = function (meshes, main) {
     f32a.set(cam._trans,   off); off += 3;
     f32a.set(cam._center,  off); off += 3;
     f32a.set(cam._offset,  off); off += 3;
+
+    // v13: playback range is authored scene state, not a UI default. Keeping it beside the
+    // camera header makes it available before any animation track is read and avoids deriving
+    // a user's deliberate range from whichever track happens to end last.
+    f32a[off++] = window._animMasterDuration ?? 2;
+    f32a[off++] = window._animLoopStart ?? 0;
+    f32a[off++] = window._animLoopEnd ?? window._animMasterDuration ?? 2;
 
     u32a[off++] = nbMeshes;
 

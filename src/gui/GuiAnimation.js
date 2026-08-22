@@ -36,11 +36,11 @@ class GuiAnimation {
     if (!window._animFPS) {
       try { const s = JSON.parse(localStorage.getItem('sculptxr_settings') || '{}'); window._animFPS = s.animFPS || 24; } catch (_) { window._animFPS = 24; }
     }
-    window._animPlaybackSpeed = window._animPlaybackSpeed || 1.0;
-    window._animKeyMode = window._animKeyMode || 'transform';
-    window._animMasterDuration = window._animMasterDuration || 2.0;
-    window._animLoopStart = window._animLoopStart || 0.0;
-    window._animLoopEnd = window._animLoopEnd || window._animMasterDuration;
+    window._animPlaybackSpeed = window._animPlaybackSpeed ?? 1.0;
+    window._animKeyMode = window._animKeyMode ?? 'transform';
+    window._animMasterDuration = window._animMasterDuration ?? 2.0;
+    window._animLoopStart = window._animLoopStart ?? 0.0;
+    window._animLoopEnd = window._animLoopEnd ?? window._animMasterDuration;
 
     const fps = window._animFPS;
 

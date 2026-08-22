@@ -1074,7 +1074,6 @@ class Scene {
   }
 
   setOrUnsetMesh(mesh, multiSelect) {
-    mesh = IKSolver.controlFor(mesh, this);
     if (!mesh) {
       this._selectMeshes.length = 0;
     } else if (!multiSelect) {
@@ -1274,7 +1273,12 @@ class Scene {
         this._vrBlendTexture.needsUpdate = true;
       }
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
-        this._vrTimelineTexture.needsUpdate = true;
+        const timeline = this.getGui?.()?._ctrlTimeline;
+        const revision = timeline?._drawRevision || 0;
+        if (revision !== this._vrTimelineUploadedRevision) {
+          this._vrTimelineTexture.needsUpdate = true;
+          this._vrTimelineUploadedRevision = revision;
+        }
         // Keep resize handle anchored to bottom-right corner as mesh moves/scales.
         if (this._vrResizeHandle) {
           const tl = this._vrTimelineMesh;
@@ -1490,7 +1494,12 @@ class Scene {
         this._vrBlendTexture.needsUpdate = true;
       }
       if (this._vrTimelineMesh?.visible && this._vrTimelineTexture) {
-        this._vrTimelineTexture.needsUpdate = true;
+        const timeline = this.getGui?.()?._ctrlTimeline;
+        const revision = timeline?._drawRevision || 0;
+        if (revision !== this._vrTimelineUploadedRevision) {
+          this._vrTimelineTexture.needsUpdate = true;
+          this._vrTimelineUploadedRevision = revision;
+        }
         this._drawFullScene = true;
       }
     }
@@ -3579,6 +3588,40 @@ class Scene {
         break;
     }
   }
+
+  _recoverXRTransientInput(reason = 'resume') {
+    if (!this._xrSession) return;
+
+    // System overlays (notably headset screen recording) can briefly blur the immersive
+    // session without ending it. Poses/input disappear for a few frames, but the old stroke,
+    // menu and hand latches survive; hover and brush-cursor updates then remain suppressed
+    // until a completely new XR session is created. Treat resume as a clean input boundary.
+    if (this._vrSculpting) this._sculptManager?.end?.();
+    this._vrSculpting = false;
+    this._vrLockedHand = null;
+    this._activeHandedness = null;
+    this._vrMenuTriggerLatch = false;
+    this._isPointingAtMenu = false;
+    this._wasPointingAtMenu = false;
+    this._lastXRControllers = [];
+    this._noSourceFrames = 0;
+    this._noSourceWarned = false;
+
+    // Make the first restored pose perform a fresh hover pick immediately.
+    this._rigHoverAtVR = 0;
+    this._skelHighlightIds = [];
+    this._pinHighlightIds = [];
+    this._skelHighlightId = -1;
+    this._pinHighlightId = -1;
+    this._rigHoverHands = {};
+    Skeleton.updateVisuals?.(this);
+
+    this._preventRender = false;
+    this._drawFullScene = true;
+    this.render?.();
+    console.info(`[XR] Input state recovered after ${reason}`);
+  }
+
   async enterXR(session) {
     window._lastLogTime = performance.now();
     // console.log("[Telemetry] WebXR Session entered");
@@ -3595,6 +3638,12 @@ class Scene {
     this._lastSeenTool = -1;
 
     session.addEventListener('end', this.onXREnd.bind(this));
+    session.addEventListener('visibilitychange', () => {
+      if (session.visibilityState === 'visible') this._recoverXRTransientInput('visibility restore');
+    });
+    session.addEventListener('inputsourceschange', (event) => {
+      if (event.added?.length) this._recoverXRTransientInput('controller restore');
+    });
 
     // Cache the standard desktop camera exactly ONCE before any VR resolutions
     // or matrices pollute the state.
@@ -5832,6 +5881,12 @@ class Scene {
   handleXRInput(frame, refSpace) {
     try {
 
+    const xrInputNow = performance.now();
+    if (this._lastXRInputFrameAt && xrInputNow - this._lastXRInputFrameAt > 500) {
+      this._recoverXRTransientInput('frame interruption');
+    }
+    this._lastXRInputFrameAt = xrInputNow;
+
     // Dynamic Material Override for Virtual Desktop (One-way)
     const forceGrey = !!window._forceGreyControllers;
     if (forceGrey) {
@@ -6706,12 +6761,15 @@ class Scene {
           // slider behind the numpad) is absorbed during the cooldown window.
           const _numpadOpen = !!this._vrNumpad?.mesh?.visible || !!this._vrNumpad?.isBlockingOpen
                             || !!this._vrConfirm?.mesh?.visible || !!this._vrConfirm?.isBlockingOpen;
+          // A rig manipulation captures both hands as one gesture. While it is live,
+          // an incidental ray across the wrist-mounted MiniHUD must not change values.
+          const _miniHudBlocked = !!this._sculptManager.getCurrentTool()?.blocksMiniHudInput?.();
           if (!_numpadOpen) {
             if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
               const h = _rc.intersectObject(this._brushPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'BrushPanel', panel: this._brushPanel, hit: h[0], pressKey: '_bpWasPressed' });
             }
-            if (this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
+            if (!_miniHudBlocked && this._miniPanel?.mesh?.visible && window._brushPanelEnabled !== false) {
               const h = _rc.intersectObject(this._miniPanel.mesh);
               if (h.length > 0) _panelHits.push({ name: 'MiniPanel', panel: this._miniPanel, hit: h[0], pressKey: '_mpWasPressed' });
             }
@@ -6799,7 +6857,7 @@ class Scene {
               { name: 'MainMenuPanel',   panel: this._mainMenuPanel,      pressKey: '_mmWasPressed' },
               { name: 'FilesPanel',      panel: this._filesPanel,         pressKey: '_fpWasPressed' },
               { name: 'BrushPanel',      panel: this._brushPanel,         pressKey: '_bpWasPressed' },
-              { name: 'MiniPanel',       panel: this._miniPanel,          pressKey: '_mpWasPressed' },
+              ...(!_miniHudBlocked ? [{ name: 'MiniPanel', panel: this._miniPanel, pressKey: '_mpWasPressed' }] : []),
               { name: 'ToolPickerPanel', panel: this._toolPickerPanel,    pressKey: '_tpWasPressed' },
               { name: 'VrNumpad',        panel: this._vrNumpad,           pressKey: '_npWasPressed' },
               { name: 'VrKeyboard',      panel: this._vrKeyboard,         pressKey: '_kbWasPressed' },
@@ -8760,10 +8818,7 @@ class Scene {
           // grabbed node every time: grab left pin, right pin, root and the keys land on
           // root, left, right — the whole sequence rotated by one, which is what the traces
           // showed (currentMesh at each key equalled lastRigEdit at the one before it).
-          const _rigOf = (m) => {
-            const control = IKSolver.controlFor(m, this);
-            return (control && (control._isBone || control._isPinTarget)) ? control : null;
-          };
+          const _rigOf = (m) => (m && (m._isBone || m._isPinTarget)) ? m : null;
           const rigNode = _rigOf(this._lastRigEdit) || _rigOf(currentMesh);
           const _rigEditWas = this._lastRigEdit; // kept for the trace below
           this._lastRigEdit = null; // consumed: the next stroke must not inherit it
@@ -9090,15 +9145,18 @@ class Scene {
                 mat4.multiply(sceneMat, invScaleMat, sceneMat);
               }
 
-              // Give multi-controller tools the SAME stylus ray convention as the active
-              // controller path. A raw matrix -Z ray misses whenever stylus offset/tilt is
-              // configured, which made the first hand fall back to legacy Grab and left the
-              // second hand unable to acquire another pin.
+              // Grab is proximity-based, so its origin must be the VISIBLE STYLUS TIP rather
+              // than the controller pivot or spike base. Offset places the base; length then
+              // advances along the tilted spike to its tip.
               const stylusOff = this.getStylusOffset();
+              const stylusLen = this.getStylusLength();
               const stylusTilt = this.getStylusTilt() * Math.PI / 180.0;
-              const controllerRayOrigin = vec3.transformMat4(vec3.create(), [0, 0, -stylusOff], sceneMat);
+              const controllerRayOrigin = vec3.transformMat4(vec3.create(),
+                [0, Math.sin(stylusTilt) * stylusLen,
+                  -stylusOff - Math.cos(stylusTilt) * stylusLen], sceneMat);
               const controllerRayEnd = vec3.transformMat4(vec3.create(),
-                [0, Math.sin(stylusTilt), -Math.cos(stylusTilt) - stylusOff], sceneMat);
+                [0, Math.sin(stylusTilt) * (stylusLen + 1),
+                  -stylusOff - Math.cos(stylusTilt) * (stylusLen + 1)], sceneMat);
               const controllerRayDirection = vec3.normalize(vec3.create(),
                 vec3.sub(vec3.create(), controllerRayEnd, controllerRayOrigin));
 

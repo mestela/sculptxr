@@ -37,6 +37,13 @@ class Grab extends SculptBase {
     this._vrPinSolveQueued = false;
   }
 
+  // Wrist UI is easy to sweep through while either hand is puppeteering a rig.
+  // Keep the MiniHUD inert for the full gesture, including the interval where one
+  // hand has released but the other still owns a pin.
+  blocksMiniHudInput() {
+    return !!this._grabbedMesh || !!this._vrPinGesture || this._vrPinGrabs.size > 0;
+  }
+
   _pinControllerRay(controller) {
     if (!controller?.matrix) return null;
     const origin = controller.rayOrigin ? vec3.clone(controller.rayOrigin) : vec3.create();
@@ -237,7 +244,7 @@ class Grab extends SculptBase {
         return false;
       }
     }
-    var mesh = IKSolver.controlFor(picking.getMesh(), main);
+    var mesh = picking.getMesh();
     if (!mesh || mesh._isVoxel) return false;
     if (!main.setOrUnsetMesh(mesh, ctrl)) return false;
 
@@ -633,7 +640,7 @@ class Grab extends SculptBase {
         
         // Rig nodes included: in VR a bone or a pin is exactly what you reach out and take.
         const hit = picking.intersectionRayMeshes(targetMeshes, origin, direction, true);
-        let mesh = hit ? IKSolver.controlFor(picking.getMesh(), this._main) : null;
+        let mesh = hit ? picking.getMesh() : null;
 
         // Preselection, the same signal the desktop hover gives: the marker under the ray grows
         // and warms, so you can see what the trigger will take before you pull it.

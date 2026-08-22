@@ -237,11 +237,9 @@ class Picking {
             offAxis <= cone ? 'HIT' : '');
         }
         if (offAxis > cone) continue;
-        // PINS BEAT BONES. A pin sits exactly on the joint it holds, so on the common case the
-        // two are the same pixel — and the pin is the thing you reach for, being the controller.
-        // Ranked rather than distance-sorted, or the pin would win or lose by float noise.
-        var rank = mesh._isPinTarget ? 2 : 1;
-        var score = tAlong - rank * 1e6;               // rank first, then nearest to the eye
+        // Selection is spatial, not categorical. A pin wins only an effectively coincident
+        // tie with its own joint; it must never hide a different bone elsewhere in the cone.
+        var score = offAxis + tAlong * 1e-6 - (mesh._isPinTarget ? 1e-7 : 0);
         if (score < nearRigDistance) {
           nearRigDistance = score;
           nearRig = mesh;
@@ -339,8 +337,9 @@ class Picking {
         const physicalDistance = vec3.len(_TMP_RIG_W) * vrScale;
         if (physicalDistance > (window._rigPickProximityVR || 0.11)) continue;
         var isPin = !!mesh._isPinTarget;
-        // Pins outrank every bone in reach; proximity chooses only within each category.
-        var rScore = physicalDistance - (isPin ? 2 : 1) * 1e6;
+        // Pure controller-tip proximity. The 2 mm pin bias resolves the common exact overlap
+        // with its own joint but cannot steal focus from a genuinely nearer setup bone.
+        var rScore = physicalDistance - (isPin ? 0.002 : 0);
         if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = mesh; }
         continue;
       }

@@ -1,5 +1,7 @@
 import Utils from '../misc/Utils.js';
-import { quat } from 'gl-matrix';
+import { quat, mat4, vec3 } from 'gl-matrix';
+import Skeleton from '../editing/Skeleton.js';
+import IKSolver from '../editing/IKSolver.js';
 
 var Export = {};
 
@@ -27,6 +29,7 @@ function getMinMax(arr, itemSize) {
 
 Export.exportGLB = function (meshes, options = {}) {
   var bake = options.bake !== undefined ? options.bake : false;
+  var main = options.main || window.app || null;
   var fps = 60;
   var dt = 1.0 / fps;
 
@@ -251,6 +254,252 @@ Export.exportGLB = function (meshes, options = {}) {
     return json.bufferViews.length - 1;
   }
 
+  // A pin animation is not a bone animation until the solver has run.  Sample the shared
+  // play range, evaluate every authored control, solve the pins once, and capture the LOCAL
+  // matrices that result.  Local TRS is what glTF animation channels expect and preserving
+  // it also preserves the exact hierarchy independently of SculptXR's pin objects.
+  function bakeSolvedRig() {
+    if (!bake || !main || !window._animationRegistry) return null;
+    const joints = Skeleton.joints(main);
+    if (!joints.length) return null;
+
+    const registry = window._animationRegistry;
+    const sceneMeshes = main.getMeshes ? main.getMeshes() : (main._meshes || meshes);
+    const fps = Math.max(1, window._animFPS || 24);
+    const start = Math.max(0, window._animLoopStart ?? 0);
+    const end = Math.max(start, window._animLoopEnd ?? window._animMasterDuration ?? start);
+    const count = Math.max(1, Math.round((end - start) * fps) + 1);
+    const times = new Float32Array(count);
+    const samples = new Map(joints.map((j) => [j, {
+      positions: new Float32Array(count * 3),
+      rotations: new Float32Array(count * 4),
+      scales: new Float32Array(count * 3),
+    }]));
+    const bindModels = new Map();
+
+    const savedMatrices = new Map(sceneMeshes.filter((m) => m?.getMatrix).map((m) => [m, mat4.clone(m.getMatrix())]));
+    const saved = {
+      playing: window._animPlaying,
+      current: window._animCurrentTime,
+      global: registry.globalPlaybackTime,
+      written: window._ikWritten,
+      dirty: window._ikPinsDirty,
+    };
+    const p = vec3.create(), s = vec3.create(), q = quat.create();
+    const one = vec3.fromValues(1, 1, 1);
+    const cleanModels = new Map(joints.map((j) => [j, mat4.create()]));
+    const modelPositions = new Map(joints.map((j) => [j, vec3.create()]));
+    const modelRotations = new Map(joints.map((j) => [j, quat.create()]));
+    const children = new Map(joints.map((j) => [j, []]));
+    for (const j of joints) if (children.has(j._parentMesh)) children.get(j._parentMesh).push(j);
+    const local = mat4.create(), parentInv = mat4.create();
+    const aimDir = vec3.create(), axisY = vec3.fromValues(0, 1, 0), currentY = vec3.create();
+    const aimCorrection = quat.create(), aimedRotation = quat.create();
+
+    try {
+      window._animPlaying = false;
+      for (let frame = 0; frame < count; frame++) {
+        const t = Math.min(end, start + frame / fps);
+        times[frame] = t - start;
+        registry.globalPlaybackTime = t;
+        window._animCurrentTime = t;
+        // An explicit set means "evaluated frame" even when the clip only keys pins.  The IK
+        // solver then seeds unkeyed joints deterministically instead of carrying the previous
+        // sample's result forward.
+        window._ikWritten = new Set();
+        for (const m of sceneMeshes) registry.update(m, true);
+        if (IKSolver.pinnedJoints(main).length) IKSolver.holdPins(main);
+
+        // Locator scale is a viewport implementation detail, not skeleton scale. Build a
+        // scale-free MODEL transform for every joint first, then derive a clean LOCAL
+        // transform from its clean parent. Exporting getMatrix() directly made Blender inherit
+        // each tiny geodesic sphere's scale and compensate child offsets by its reciprocal.
+        for (const j of joints) {
+          const model = j.getModelSpaceMatrix();
+          mat4.getTranslation(modelPositions.get(j), model);
+          mat4.getRotation(modelRotations.get(j), model);
+        }
+        for (const j of joints) {
+          const jp = modelPositions.get(j);
+          const jq = modelRotations.get(j);
+          const kids = children.get(j);
+          if (kids.length) {
+            // Blender's armature convention: a bone runs along local +Y. SculptXR locator
+            // rotations have no display-axis contract, so carry their roll across while
+            // correcting +Y to point at the first child. At forks one bone cannot point at
+            // every child; the remaining children still branch from the same head normally.
+            vec3.subtract(aimDir, modelPositions.get(kids[0]), jp);
+          } else if (modelPositions.has(j._parentMesh)) {
+            // Give a leaf a useful visible tail by continuing the incoming segment instead of
+            // leaving Blender to invent a sky-pointing default from an arbitrary locator axis.
+            vec3.subtract(aimDir, jp, modelPositions.get(j._parentMesh));
+          } else {
+            aimDir[0] = aimDir[1] = 0; aimDir[2] = 1;
+          }
+          if (vec3.squaredLength(aimDir) > 1e-12) {
+            vec3.normalize(aimDir, aimDir);
+            vec3.transformQuat(currentY, axisY, jq);
+            quat.rotationTo(aimCorrection, currentY, aimDir);
+            quat.multiply(aimedRotation, aimCorrection, jq);
+          } else {
+            quat.copy(aimedRotation, jq);
+          }
+          mat4.fromRotationTranslationScale(cleanModels.get(j), aimedRotation, jp, one);
+        }
+        for (const j of joints) {
+          const dst = samples.get(j);
+          const model = cleanModels.get(j);
+          if (cleanModels.has(j._parentMesh)) {
+            mat4.invert(parentInv, cleanModels.get(j._parentMesh));
+            mat4.multiply(local, parentInv, model);
+          } else {
+            mat4.copy(local, model);
+          }
+          mat4.getTranslation(p, local);
+          mat4.getRotation(q, local);
+          mat4.getScaling(s, local);
+          // q and -q are the same rotation, but alternating signs make linear interpolation
+          // take the long route. Keep every sample in the previous sample's hemisphere.
+          if (frame && quat.dot(q, dst.rotations.subarray((frame - 1) * 4, frame * 4)) < 0) {
+            q[0] *= -1; q[1] *= -1; q[2] *= -1; q[3] *= -1;
+          }
+          dst.positions.set(p, frame * 3);
+          dst.rotations.set(q, frame * 4);
+          dst.scales.set(s, frame * 3);
+          if (frame === 0) bindModels.set(j, mat4.clone(model));
+        }
+      }
+    } finally {
+      for (const [m, matrix] of savedMatrices) {
+        mat4.copy(m.getMatrix(), matrix);
+        if (m.updateMatrices && main._camera) m.updateMatrices(main._camera);
+      }
+      window._animPlaying = saved.playing;
+      window._animCurrentTime = saved.current;
+      registry.globalPlaybackTime = saved.global;
+      window._ikWritten = saved.written;
+      window._ikPinsDirty = saved.dirty;
+      IKSolver.syncJointCache(main);
+    }
+    return { joints, times, samples, bindModels };
+  }
+
+  function addSolvedRig(rig) {
+    if (!rig) return;
+    const { joints, times, samples, bindModels } = rig;
+    const nodeFor = new Map();
+
+    // Nodes first, then hierarchy: a glTF node may have children that appear later in the
+    // array, so there is no need to reorder SculptXR's stable joint list.
+    for (const j of joints) {
+      const sample = samples.get(j);
+      const nodeIndex = json.nodes.length;
+      nodeFor.set(j, nodeIndex);
+      json.nodes.push({
+        name: j._permanentStaticLabel || `Bone_${j.getID()}`,
+        translation: Array.from(sample.positions.subarray(0, 3)),
+        rotation: Array.from(sample.rotations.subarray(0, 4)),
+        scale: Array.from(sample.scales.subarray(0, 3)),
+      });
+    }
+    for (const j of joints) {
+      const parent = j._parentMesh;
+      if (nodeFor.has(parent)) {
+        const parentNode = json.nodes[nodeFor.get(parent)];
+        (parentNode.children || (parentNode.children = [])).push(nodeFor.get(j));
+      } else {
+        json.scenes[0].nodes.push(nodeFor.get(j));
+      }
+    }
+
+    const timeBv = addBufferView(times);
+    const timeAccessor = json.accessors.length;
+    const timeMM = getMinMax(times, 1);
+    json.accessors.push({ bufferView: timeBv, componentType: 5126, count: times.length,
+      type: 'SCALAR', min: timeMM.min, max: timeMM.max });
+    const anim = { name: 'SolvedRig', samplers: [], channels: [] };
+    const addChannel = (node, path, values, type) => {
+      const bv = addBufferView(values);
+      const accessor = json.accessors.length;
+      const itemSize = type === 'VEC4' ? 4 : 3;
+      const mm = getMinMax(values, itemSize);
+      json.accessors.push({ bufferView: bv, componentType: 5126,
+        count: values.length / itemSize, type, min: mm.min, max: mm.max });
+      const sampler = anim.samplers.length;
+      anim.samplers.push({ input: timeAccessor, output: accessor, interpolation: 'LINEAR' });
+      anim.channels.push({ sampler, target: { node, path } });
+    };
+    for (const j of joints) {
+      const sample = samples.get(j);
+      const node = nodeFor.get(j);
+      addChannel(node, 'translation', sample.positions, 'VEC3');
+      addChannel(node, 'rotation', sample.rotations, 'VEC4');
+      addChannel(node, 'scale', sample.scales, 'VEC3');
+    }
+    json.animations.push(anim);
+
+    // glTF permits animated transform nodes without geometry, but viewers then quite correctly
+    // show nothing. Some DCCs also only recognise a hierarchy as a skeleton when a skin
+    // references it. A bone-only scene therefore gets one lightweight line mesh: two rigidly
+    // weighted endpoints per parent/child segment. It previews the baked motion in an ordinary
+    // viewer without leaking SculptXR's geodesic locator spheres into the deliverable.
+    const hasAttachedSkin = meshes.some((m) => m && m._skinW && m._skinJoints);
+    if (!hasAttachedSkin) {
+      const jointIndex = new Map(joints.map((j, i) => [j, i]));
+      const segments = joints.filter((j) => jointIndex.has(j._parentMesh));
+      const vertexCount = Math.max(2, segments.length * 2);
+      const pos = new Float32Array(vertexCount * 3);
+      const joints0 = new Uint16Array(vertexCount * 4);
+      const weights0 = new Float32Array(vertexCount * 4);
+      const bindPos = vec3.create();
+      if (segments.length) {
+        segments.forEach((j, i) => {
+          const parent = j._parentMesh;
+          mat4.getTranslation(bindPos, bindModels.get(parent));
+          pos.set(bindPos, i * 6);
+          mat4.getTranslation(bindPos, bindModels.get(j));
+          pos.set(bindPos, i * 6 + 3);
+          joints0[i * 8] = jointIndex.get(parent);
+          joints0[i * 8 + 4] = jointIndex.get(j);
+          weights0[i * 8] = 1;
+          weights0[i * 8 + 4] = 1;
+        });
+      } else {
+        weights0[0] = weights0[4] = 1;
+      }
+      const invBind = new Float32Array(joints.length * 16);
+      for (let i = 0; i < joints.length; i++) {
+        const inv = mat4.create();
+        mat4.invert(inv, bindModels.get(joints[i]));
+        invBind.set(inv, i * 16);
+      }
+      const posBv = addBufferView(pos, 34962);
+      const jointBv = addBufferView(joints0, 34962), weightBv = addBufferView(weights0, 34962);
+      const invBv = addBufferView(invBind);
+      const posAcc = json.accessors.length;
+      const posMM = getMinMax(pos, 3);
+      json.accessors.push({ bufferView: posBv, componentType: 5126, count: vertexCount, type: 'VEC3', min: posMM.min, max: posMM.max });
+      const jointAcc = json.accessors.length;
+      json.accessors.push({ bufferView: jointBv, componentType: 5123, count: vertexCount, type: 'VEC4' });
+      const weightAcc = json.accessors.length;
+      json.accessors.push({ bufferView: weightBv, componentType: 5126, count: vertexCount, type: 'VEC4' });
+      const invAcc = json.accessors.length;
+      json.accessors.push({ bufferView: invBv, componentType: 5126, count: joints.length, type: 'MAT4' });
+      const meshIndex = json.meshes.length;
+      json.meshes.push({ name: 'SkeletonPreview', primitives: [{
+        attributes: { POSITION: posAcc, JOINTS_0: jointAcc, WEIGHTS_0: weightAcc }, mode: 1,
+      }] });
+      const skinIndex = (json.skins || (json.skins = [])).length;
+      const roots = joints.filter((j) => !nodeFor.has(j._parentMesh));
+      const skin = { name: 'SculptXR_Skeleton', joints: joints.map((j) => nodeFor.get(j)), inverseBindMatrices: invAcc };
+      if (roots.length === 1) skin.skeleton = nodeFor.get(roots[0]);
+      json.skins.push(skin);
+      const previewNode = json.nodes.length;
+      json.nodes.push({ name: 'SkeletonPreview', mesh: meshIndex, skin: skinIndex });
+      json.scenes[0].nodes.push(previewNode);
+    }
+  }
+
   // Calculate total duration for baking if needed
   var totalDuration = 0;
   if (bake) {
@@ -272,6 +521,10 @@ Export.exportGLB = function (meshes, options = {}) {
 
   for (var i = 0; i < meshes.length; ++i) {
     var mesh = meshes[i];
+    // Rig controls are transform-only authoring objects. Their geodesic locator geometry and
+    // per-control source tracks must never leak into the deliverable: addSolvedRig emits one
+    // clean hierarchy and one solved clip after this ordinary sculpt-mesh pass.
+    if (mesh && (mesh._isBone || mesh._isPinTarget || mesh._isNull)) continue;
     var id = mesh.getID();
     var vAr = mesh.getVertices();
     var iAr = mesh.getTriangles();
@@ -920,6 +1173,8 @@ Export.exportGLB = function (meshes, options = {}) {
 
     json.meshes.push(meshObj);
   }
+
+  addSolvedRig(bakeSolvedRig());
 
   json.buffers.push({
     byteLength: byteOffset

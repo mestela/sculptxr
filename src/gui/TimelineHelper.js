@@ -189,10 +189,10 @@ export default class TimelineHelper {
             TimelineHelper.keyRing(ctx, isHovered);
 
             ctx.beginPath();
-            ctx.moveTo(kx, ky - 7);
-            ctx.lineTo(kx + 7, ky);
-            ctx.lineTo(kx, ky + 7);
-            ctx.lineTo(kx - 7, ky);
+            ctx.moveTo(kx, ky - 3.5);
+            ctx.lineTo(kx + 3.5, ky);
+            ctx.lineTo(kx, ky + 3.5);
+            ctx.lineTo(kx - 3.5, ky);
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
@@ -434,8 +434,8 @@ export default class TimelineHelper {
           ctx.translate(p.x, fy);
           ctx.rotate(Math.PI / 4);
           ctx.fillStyle = p.isSel ? '#f9e2af' : '#89dceb';
-          ctx.fillRect(-5, -5, 10, 10);
-          if (p.isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.strokeRect(-6.5, -6.5, 13, 13); }
+          ctx.fillRect(-2.5, -2.5, 5, 5);
+          if (p.isSel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(-3.5, -3.5, 7, 7); }
           ctx.restore();
         }
       }

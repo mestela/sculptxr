@@ -2054,7 +2054,11 @@ export class MainMenuPanel extends HTMLVRPanel {
     const paint = () => this.markDirty();
 
     if (menu === 'files') {
-      wireMenuFiles(el, main, paint, () => {
+      const rebuildFiles = () => {
+        this._lastContentKey = '';
+        this._refreshContent();
+      };
+      wireMenuFiles(el, main, rebuildFiles, () => {
         this._setMenu('browser-saves');
       });
     } else if (menu === 'browser-saves') {
@@ -3405,7 +3409,11 @@ export function wireMenuFiles(el, main, rebuildFn, onBrowserSavesOpen = null) {
     if (!main._clearSceneConfirm) {
       main._clearSceneConfirm = true;
       rebuildFn(); // re-render button as "Confirm"
-      setTimeout(() => { main._clearSceneConfirm = false; }, 3000);
+      setTimeout(() => {
+        if (!main._clearSceneConfirm) return;
+        main._clearSceneConfirm = false;
+        rebuildFn();
+      }, 3000);
     } else {
       main._clearSceneConfirm = false;
       main.clearScene?.(); main.render?.(); rebuildFn();

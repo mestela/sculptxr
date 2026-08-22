@@ -59,6 +59,11 @@ Import.importSGL = function (buffer, gl, main) {
       cam.updateView?.();
       main._loadedCameraFraming = true;
     }
+    if (version >= 13) {
+      window._animMasterDuration = f32a[off++];
+      window._animLoopStart = f32a[off++];
+      window._animLoopEnd = f32a[off++];
+    }
   }
 
   var nbMeshes = u32a[off++];

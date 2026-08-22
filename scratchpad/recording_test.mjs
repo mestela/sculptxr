@@ -16,12 +16,16 @@ const xf = read('src/editing/tools/Transform.js');
 const vr = read('src/editing/tools/TransformVR.js');
 const tl = read('src/gui/GuiTimeline.js');
 const acp = read('src/gui/htmlvr/AnimationControlPanel.js');
+const mainMenu = read('src/gui/htmlvr/MainMenuPanel.js');
 const desktopPanel = read('src/gui/GuiAnimation.js');
 const oldVrPanel = read('src/gui/vr/GuiVRAnimation.js');
 const scene = read('src/Scene.js');
 const skel = read('src/editing/Skeleton.js');
 const bonePanel = read('src/gui/bonePanel.js');
 const picking = read('src/math3d/Picking.js');
+const timelineHelper = read('src/gui/TimelineHelper.js');
+const exportSgl = read('src/files/ExportSGL.js');
+const importSgl = read('src/files/ImportSGL.js');
 
 check('recording owns one begin-interaction transition', /beginInteraction\(mesh\)/.test(reg));
 check('recording owns one end-interaction transition', /endInteraction\(mesh\)/.test(reg));
@@ -84,22 +88,26 @@ check('selected objects delete whole animation tracks',
 check('timeline row and key focus update real scene selection',
   /this\._main\.setMesh\?\.\(mesh\)/.test(tl)
     && /Last-click wins/.test(tl));
-check('VR rig picking is proximity-only and pins retain priority over bones',
+check('VR rig picking is proximity-first with only a coincident-pin tie break',
   /physicalDistance = vec3\.len\(_TMP_RIG_W\) \* vrScale/.test(picking)
     && /_rigPickProximityVR \|\| 0\.11/.test(picking)
     && /var rScore = physicalDistance/.test(picking)
-    && /isPin \? 2 : 1/.test(picking)
+    && /isPin \? 0\.002 : 0/.test(picking)
     && !/_rigPickConeVRPin/.test(picking));
 check('VR pin hover and grab colors identify each controller',
   /RIGHT_HAND_COLOR = 0xf38ba8/.test(skel)
     && /LEFT_HAND_COLOR = 0xa6e3a1/.test(skel)
     && /_rigGrabHands/.test(grab));
-check('pinned bones redirect selection and keying to their pins',
-  /IKSolver\.controlFor\(mesh, this\)/.test(scene)
-    && /const control = IKSolver\.controlFor\(m, this\)/.test(scene)
-    && /IKSolver\.controlFor\(picking\.getMesh\(\), main\)/.test(grab)
-    && /IKSolver\.controlFor\(picking\.getMesh\(\), this\._main\)/.test(grab)
-    && /IKSolver\.controlFor\(this\.getMesh\(\), main\)/.test(vr));
+check('bones remain directly selectable beside pins and retain their own animation focus',
+  !/setOrUnsetMesh\(mesh, multiSelect\) \{\s*mesh = IKSolver\.controlFor/.test(scene)
+    && /var mesh = picking\.getMesh\(\)/.test(grab)
+    && /let mesh = hit \? picking\.getMesh\(\) : null/.test(grab)
+    && /const mesh = this\.getMesh\(\)/.test(vr));
+check('XR hover and cursor state recover after system overlays',
+  /session\.addEventListener\('visibilitychange'/.test(scene)
+    && /session\.addEventListener\('inputsourceschange'/.test(scene)
+    && /_recoverXRTransientInput\('frame interruption'\)/.test(scene)
+    && /this\._rigHoverAtVR = 0/.test(scene));
 check('non-loop recording parks without automatic playback',
   /window\._animLoopEnabled !== false/.test(reg)
     && /startPlayback\(direction = 1\)/.test(reg));
@@ -123,6 +131,12 @@ check('Grab owns existing pins independently by controller',
   /this\._vrPinGrabs = new Map\(\)/.test(grab)
     && /this\._vrPinGrabs\.set\(hand, \{ pin, last:/.test(grab)
     && /this\._vrPinGrabs\.get\(controller\.handedness\)/.test(grab));
+check('two-hand rig gestures shield the wrist MiniHUD',
+  /blocksMiniHudInput\(\)/.test(grab)
+    && /this\._vrPinGesture \|\| this\._vrPinGrabs\.size > 0/.test(grab)
+    && /const _miniHudBlocked = .*blocksMiniHudInput/.test(scene)
+    && /if \(!_miniHudBlocked && this\._miniPanel/.test(scene)
+    && /\.\.\.\(!_miniHudBlocked \? \[\{ name: 'MiniPanel'/.test(scene));
 check('two pin targets are applied before one batched IK solve',
   /if \(moved\) this\._queueXRPinSolve\(\)/.test(grab)
     && /queueMicrotask\(\(\) => this\._flushXRPinSolve\(\)\)/.test(grab)
@@ -137,7 +151,9 @@ check('Grab reads both controllers from the complete Scene snapshot',
 check('Scene supplies the actual stylus ray for every controller',
   /rayOrigin: controllerRayOrigin/.test(scene)
     && /rayDirection: controllerRayDirection/.test(scene)
-    && /getStylusTilt\(\)/.test(scene));
+    && /const stylusLen = this\.getStylusLength\(\)/.test(scene)
+    && /Math\.sin\(stylusTilt\) \* stylusLen/.test(scene)
+    && /Math\.cos\(stylusTilt\) \* stylusLen/.test(scene));
 check('secondary trigger reaches Grab instead of activating temporary Smooth',
   /activeTool\.constructor\.name !== 'Grab'/.test(scene));
 check('Grab hides the brush radius cursor',
@@ -172,6 +188,28 @@ check('two-hand pin recording registers and captures every acquired pin',
     && /const statesAfter = new Map\(\)/.test(reg));
 check('main Animation panel exposes Loop', acp.includes('id="acp-loop-enabled"'));
 check('main Animation panel exposes Reset Rig + Pins', acp.includes('id="acp-reset-rig"'));
+check('clearing animation preserves the manually authored playback range',
+  !/resetAll\(\)[\s\S]{0,700}?_animMasterDuration\s*=/.test(reg)
+    && /_animMasterDuration = window\._animMasterDuration \?\? 2\.0/.test(desktopPanel));
+check('dense animation diamonds render at half size without shrinking their hit areas',
+  /ctx\.moveTo\(kx, ky - 3\.5\)/.test(timelineHelper)
+    && /ctx\.fillRect\(-2\.5, -2\.5, 5, 5\)/.test(timelineHelper)
+    && /isKeyHovered\(kx, ky,[\s\S]{0,80}?10\)/.test(timelineHelper)
+    && /ctx\.moveTo\(x, y - 2\.5\)/.test(tl));
+check('native scene files preserve the authored playback range',
+  /Export\.VERSION = 13/.test(exportSgl)
+    && /f32a\[off\+\+\] = window\._animLoopStart/.test(exportSgl)
+    && /f32a\[off\+\+\] = window\._animLoopEnd/.test(exportSgl)
+    && /version >= 13[\s\S]{0,180}?window\._animLoopStart = f32a\[off\+\+\][\s\S]{0,100}?window\._animLoopEnd = f32a\[off\+\+\]/.test(importSgl));
+check('VR timeline uploads only after a throttled canvas redraw',
+  /now - this\._lastVRDrawAt >= 33/.test(tl)
+    && /this\._drawRevision = \(this\._drawRevision \|\| 0\) \+ 1/.test(tl)
+    && /revision !== this\._vrTimelineUploadedRevision/.test(scene));
+check('graph redraws publish their VR texture revision',
+  /if \(this\._mode === 'graph'\) \{[\s\S]{0,500}?_drawRevision[\s\S]{0,80}?return;/.test(tl));
+check('VR clear-scene confirmation rebuilds the Files menu',
+  /const rebuildFiles = \(\) => \{[\s\S]{0,120}?_lastContentKey = ''[\s\S]{0,80}?_refreshContent\(\)/.test(mainMenu)
+    && /main\._clearSceneConfirm = false;[\s\S]{0,60}?rebuildFn\(\);/.test(mainMenu));
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

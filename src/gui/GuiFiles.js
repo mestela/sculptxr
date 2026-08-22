@@ -406,7 +406,7 @@ class GuiFiles {
   saveFileAsGLB(baseName) {
     var meshes = this._getExportMeshes();
     if (!meshes) return;
-    this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation }), this._exportFileName(baseName, 'glb'));
+    this._save(Export.exportGLB(meshes, { bake: this._bakeAnimation, main: this._main }), this._exportFileName(baseName, 'glb'));
   }
 
   saveFileAsOBJ(baseName) {
