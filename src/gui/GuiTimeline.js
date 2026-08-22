@@ -3015,6 +3015,18 @@ export default class GuiTimeline {
     this._viewDuration = Math.max(0.1, le - ls);
   }
 
+  // Project loads replace the authored playback range, so their editor should open framed to
+  // that range rather than retaining the pan/zoom window from the previously open scene.
+  framePlaybackRange() {
+    const mDur = (window._animMasterDuration !== undefined && window._animMasterDuration > 0)
+      ? window._animMasterDuration : 2.0;
+    const start = window._animLoopStart ?? 0;
+    const end = window._animLoopEnd ?? mDur;
+    this._viewStart = start;
+    this._viewDuration = Math.max(0.1, end - start);
+    this.draw();
+  }
+
   _getTouchCentroidAndDist() {
     const pts = [...this._touchMap.values()];
     const cx = (pts[0].x + pts[1].x) / 2;

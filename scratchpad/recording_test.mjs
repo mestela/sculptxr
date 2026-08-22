@@ -201,6 +201,9 @@ check('native scene files preserve the authored playback range',
     && /f32a\[off\+\+\] = window\._animLoopStart/.test(exportSgl)
     && /f32a\[off\+\+\] = window\._animLoopEnd/.test(exportSgl)
     && /version >= 13[\s\S]{0,180}?window\._animLoopStart = f32a\[off\+\+\][\s\S]{0,100}?window\._animLoopEnd = f32a\[off\+\+\]/.test(importSgl));
+check('loading a project frames the editor to its restored playback range',
+  /framePlaybackRange\(\)[\s\S]{0,260}?this\._viewStart = start[\s\S]{0,80}?this\._viewDuration = Math\.max\(0\.1, end - start\)/.test(tl)
+    && /fileType === 'sgl'[\s\S]{0,100}?framePlaybackRange/.test(scene));
 check('VR timeline uploads only after a throttled canvas redraw',
   /now - this\._lastVRDrawAt >= 33/.test(tl)
     && /this\._drawRevision = \(this\._drawRevision \|\| 0\) \+ 1/.test(tl)

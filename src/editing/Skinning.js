@@ -488,14 +488,18 @@ Skinning.bind = function (main, mesh) {
   const segs = boneSegments(mesh, joints, jointPositionsNow(mesh, joints));
   if (!segs.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
-  // Bind to the level currently selected, and remember which one that was. Binding at the
-  // LOWEST level is the useful case — a few thousand vertices to solve instead of a few
-  // hundred thousand, and the detail above rides along through the multires stack.
-  mesh._skinLevel = mesh._sel || 0;
+  // Skinning always belongs to the control cage. If the sculpt is currently displayed above
+  // level 0, analyse each step downward first so the cage and every stored detail layer reflect
+  // the visible sculpt. Do this directly on the resolution objects rather than changing
+  // selection: Bind must not unexpectedly drop the user's viewport to the lowest level.
+  if (mesh._meshes?.length) {
+    for (let i = mesh._sel || 0; i > 0; i--) mesh._meshes[i - 1].lowerAnalysis(mesh._meshes[i]);
+  }
+  mesh._skinLevel = 0;
   mesh._skinSizeWarned = false;
   mesh._skinLevelWarned = false;
   // The level itself, so later passes survive the list being reordered under them.
-  mesh._skinLevelMesh = mesh._meshes ? mesh._meshes[mesh._skinLevel] : null;
+  mesh._skinLevelMesh = mesh._meshes ? mesh._meshes[0] : null;
   const level = boundLevel(mesh);
   if (!level) return { ok: false, why: 'no geometry at the selected level' };
 

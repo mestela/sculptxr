@@ -2990,6 +2990,7 @@ class Scene {
         try { this._frameGroup.deserialize(fileData, added); }
         catch (e) { console.error('[FrameGroup] import restore failed', e); }
       }
+      if (fileType === 'sgl') this.getGui?.()?._ctrlTimeline?.framePlaybackRange?.();
     });
   }
 

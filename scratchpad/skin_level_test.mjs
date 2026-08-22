@@ -165,6 +165,14 @@ function boundMesh(levels, boundAt) {
   check('...only once the bind has succeeded',
     bindFn.indexOf('_selectLocked = true') > bindFn.lastIndexOf("return { ok: false"),
     'a refused bind would lock the mesh it refused');
+  check('bind always targets the lowest control cage',
+    /mesh\._skinLevel = 0;/.test(bindFn)
+      && /mesh\._skinLevelMesh = mesh\._meshes \? mesh\._meshes\[0\]/.test(bindFn),
+    'bind still follows the selected subdivision level');
+  check('binding a higher displayed level analyses detail down without changing selection',
+    /for \(let i = mesh\._sel \|\| 0; i > 0; i--\) mesh\._meshes\[i - 1\]\.lowerAnalysis\(mesh\._meshes\[i\]\)/.test(bindFn)
+      && !/setSelection\(/.test(bindFn),
+    'the visible sculpt was not transferred safely to level 0');
   check('unbind hands it back',
     /mesh\._selectLocked = false;/.test(unbindFn),
     'a mesh left unselectable after unbind has no way out from inside the headset');
