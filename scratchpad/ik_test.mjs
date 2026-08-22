@@ -1626,6 +1626,30 @@ function poleLeg() {
     after < best + 1e-4, 'landed ' + after.toFixed(5) + ', best on the circle ' + best.toFixed(5));
 }
 
+// An elbow pole must use shoulder-to-wrist as its axis even when the nearest HARD ancestor is
+// the hips. The old hard-anchor search rotated the chest and shoulder as part of the swivel.
+{
+  window._ikWritten = null;
+  const hips = J([0, 0, 0]);
+  const chest = J([0, 1, 0], hips);
+  const shoulder = J([0.6, 1.2, 0], chest);
+  const elbow = J([1.2, 1.0, 0.1], shoulder);
+  const wrist = J([1.8, 0.8, 0], elbow);
+  const main = makeMain([hips, chest, shoulder, elbow, wrist]);
+  IKSolver.setPin(hips, IKSolver.PIN_POS, main);
+  IKSolver.setPin(wrist, IKSolver.PIN_POS, main);
+  IKSolver.setPin(elbow, IKSolver.PIN_SOFT, main);
+  const shoulderBefore = pos(shoulder);
+  const elbowBefore = pos(elbow);
+  IKSolver.pinObject(elbow)._m.makeTranslation(1.2, 1.0, -1.2);
+  IKSolver.holdPins(main);
+  check('elbow steering moves the elbow', pos(elbow).distanceTo(elbowBefore) > 1e-3,
+    'moved ' + pos(elbow).distanceTo(elbowBefore).toExponential(2));
+  check('elbow steering does not collapse the shoulder into the torso',
+    pos(shoulder).distanceTo(shoulderBefore) < 1e-9,
+    'shoulder moved ' + pos(shoulder).distanceTo(shoulderBefore).toExponential(2));
+}
+
 // A steering goal with no hard anchor below it has no circle to slide on. It must then do
 // NOTHING rather than approximate — silently turning a steering goal into a weak target is how
 // a feature that is supposed to cost the hard pins nothing starts costing them something.

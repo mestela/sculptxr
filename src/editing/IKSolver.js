@@ -999,14 +999,13 @@ function chainBetween(above, below) {
   return null;
 }
 
-// The nearest ancestor that this solve holds FIXED: a hard target, or the root when the root
-// is pinned down. The joint being steered is not eligible — a goal cannot anchor itself.
-function anchorAbove(n, targets, root, rootFixed) {
-  for (let p = n.parent; p; p = p.parent) {
-    if (targets.has(p)) return p;
-    if (p === root && rootFixed) return p;
-  }
-  return null;
+// The limb root immediately above the steered joint. A pole adjustment runs after FABRIK, so
+// this point is already solved and may be treated as fixed for the swivel without requiring a
+// hard pin of its own. Searching upward for a hard target made an elbow with pinned hips use
+// the HIP-to-wrist axis and rotate the shoulder/torso along with it; the intended axis is always
+// shoulder-to-wrist (or hip-to-ankle for a knee).
+function anchorAbove(n) {
+  return n.parent || null;
 }
 
 // The nearest hard target BELOW, down the active branch. Stops at a fork: with two pinned feet
@@ -1029,7 +1028,7 @@ const _vRel = new THREE.Vector3(), _qSw = new THREE.Quaternion();
 // Rotate the chain between its two anchors about the axis joining them, to bring `n` as close
 // to `goal` as that rotation can. Returns the angle applied, or 0 if there was nothing to do.
 function swivelToward(n, goal, targets, root, rootFixed, rate) {
-  const above = anchorAbove(n, targets, root, rootFixed);
+  const above = anchorAbove(n);
   const below = anchorBelow(n, targets);
   if (!above || !below) return 0;
   const between = chainBetween(above, below);
