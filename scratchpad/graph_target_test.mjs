@@ -67,15 +67,28 @@ check('...and an empty sweep leaves the graph alone',
   /if \(newKeys\.length\)/.test(code),
   'blanking the graph on an empty marquee would be worse than doing nothing');
 
-// It must NOT go through the app's selection: setMesh runs tool-context switching and ends in
-// a render — the re-entrancy the bones tool's _selectLater exists to dodge. Looking at a curve
-// should not be able to change your active tool.
+// Timeline focus and the scene selection are deliberately ONE THING, so this DOES go through
+// the app's selection. The hazard the old check was guarding is real and survives the change:
+// setOrUnsetMesh runs TOOL CONTEXT SWITCHING and ends in a render. So the property to assert is
+// not "never selects" — it is "selects without switching your tool". Looking at a curve must not
+// change the active tool.
 {
   const i = code.indexOf('_setGraphTarget(meshId) {');
   const FN = code.slice(i, code.indexOf('\n  }', i));
-  check('picking a curve does not change the scene selection',
-    !/setMesh|setOrUnsetMesh/.test(FN),
-    'this would switch tools as a side effect of clicking a row');
+  const call = FN.match(/setMesh\?\.\(([^)]*)\)/);
+  check('picking a curve selects, but with keepTool set',
+    !!call && /,\s*true\s*$/.test(call[1]),
+    call ? `setMesh(${call[1]}) — no keepTool argument, so this switches tools`
+         : 'the graph target no longer selects at all');
+
+  // ...and the flag has to actually reach the guard. A call site passing an argument the
+  // selection path ignores would pass the check above while switching tools exactly as before.
+  const SCENE = fs.readFileSync(REPO + '/src/Scene.js', 'utf8');
+  check('...and keepTool gates the tool-context switch in Scene',
+    /setMesh\(mesh, keepTool\)[\s\S]{0,120}setOrUnsetMesh\(mesh, false, keepTool\)/.test(SCENE)
+      && /setOrUnsetMesh\(mesh, multiSelect, keepTool\)/.test(SCENE)
+      && /selected\.length > 0 && !keepTool/.test(SCENE),
+    'keepTool is passed but never reaches the tool-switch guard');
 }
 
 // THE TARGET HAS TO BE VISIBLE. It can now be set from four places (row name, key, marquee,

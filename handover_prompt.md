@@ -194,22 +194,22 @@ decisions, so nobody unpicks one by accident:
 ---
 
 ## STILL OPEN
-- **`master` has not been merged with `codex`.** Everything since v3.19.94 lives on `codex`
-  only. matt's call — ask before fast-forwarding.
-- **Three harnesses fail, and have failed since before this work**: `rigpick_test` (5),
-  `graph_target_test` (1) and `undef_test` (1, eslint not knowing `queueMicrotask`). They fail
-  identically on `master`, so they are stale assertions rather than regressions — but nobody has
-  gone through them. Do that before trusting a green run as a gate.
-- **Manual joint orientation in VR** (matt, 2026-08-20). Grab a bone, untwist it. The
-  world-aligned skinning removed the NEED for this, so it is now a rig-authoring want rather
-  than a blocker. Anything stored per-joint has to be added to the SKEL block to survive save.
-- **Cross-limb drift**: posing the right knee re-solves the left one. `buildGraph` walks the
-  whole skeleton and `markActive` lights every chain leading to a target: the solve is global,
-  the intent is local.
-- **A Key Pose on a thirty-joint rig is now thirty dopesheet rows.** The fold that hid them was
-  removed deliberately (its keys drew, highlighted, and could not be selected). If Key Pose
-  becomes central again, the fix is to make a summary row RESOLVE to its joints — click selects
-  the pose, drag retimes it together — rather than hide them.
+
+- **Nothing is blocked.** The three failing harnesses were triaged and fixed in v3.20.7; all 24
+  pass. What they turned out to be is worth remembering, because two of the three were the
+  harness condemning a BETTER rule (see standing lesson 7):
+  - `rigpick_test` asserted the superseded picking design verbatim. Its checks now LIFT the
+    score expression out of `Picking.js` and evaluate it, so they test the property (a pin wins
+    a coincident tie with its own joint, but never beats a genuinely nearer bone; depth breaks
+    ties and never outranks off-axis) rather than a spelling.
+  - `graph_target_test` was the real one. It is now allowed to select, but `setMesh` takes a
+    `keepTool` flag so the tool-context switch in `setOrUnsetMesh` is skipped.
+  - `undef_test` was missing `queueMicrotask` from a hand-maintained globals list.
+
+- **Picking rules are asserted in TWO harnesses.** `recording_test` carries its own copy of the
+  VR proximity-pick assertions that `rigpick_test` also makes, by source spelling. That is this
+  project's signature bug in the tests themselves: the next person to touch `Picking.js` will
+  fix one and be failed by the other. Worth collapsing to one.
 
 ---
 
@@ -271,7 +271,11 @@ which it reports as *Class extends value undefined*.
    `const meshDisabled = mesh ? '' : ' disabled'`. The condition was later widened, correctly,
    from "a mesh is SELECTED" to "a mesh EXISTS", and the check reported correct code as a
    regression. It now asserts that the fieldset takes its disabled state from a variable that
-   can evaluate to `' disabled'`, whatever that variable is called.
+   can evaluate to `' disabled'`, whatever that variable is called. Then v3.20.7 found FIVE more of the
+   same shape in `rigpick_test`, one in `graph_target_test` and one in `recording_test` — each
+   pinning a source spelling that a deliberate, better design change had moved. **A check bound
+   to a spelling reports an improvement as a regression, which is worse than no check**, because
+   it trains people to ignore the suite. Where the rule is arithmetic, LIFT IT AND EVALUATE IT.
 
 ---
 

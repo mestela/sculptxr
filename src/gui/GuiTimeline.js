@@ -2819,7 +2819,9 @@ export default class GuiTimeline {
     if (meshId == null || meshId < 0) return; // synthetic rows (the folded rig lane) have no track
     this._graphMeshId = meshId;
     const mesh = this._main._meshes?.find((m) => m.getID() === meshId);
-    if (mesh && this._main.getMesh?.() !== mesh) this._main.setMesh?.(mesh);
+    // Unify timeline focus with the scene selection, but pass keepTool: setOrUnsetMesh runs
+    // tool-context switching, and looking at a curve must not change your active tool.
+    if (mesh && this._main.getMesh?.() !== mesh) this._main.setMesh?.(mesh, true);
   }
 
   _graphMesh() {

@@ -1,3 +1,25 @@
+# v3.20.7
+**The test suite stops condemning its own improvements.** Three harnesses had been failing, and
+triage found that two of the three were asserting a superseded design rather than catching a
+bug — a check bound to a source spelling reports a deliberate improvement as a regression, which
+is worse than no check because it trains people to ignore the suite.
+
+- **`rigpick_test`** pinned the old VR ray-cone and the old `rank * 1e6` desktop score, both of
+  which were deliberately replaced by controller-tip proximity and a spatial score. Its checks
+  now LIFT the score expression out of `Picking.js` and evaluate it, asserting the properties:
+  a pin wins a coincident tie with its own joint but never beats a genuinely nearer bone, and
+  depth breaks ties without ever outranking off-axis distance.
+- **Clicking a graph row can no longer change your active tool.** Timeline focus and scene
+  selection were unified through `setMesh`, but `setOrUnsetMesh` runs tool-context switching, so
+  looking at a curve could detach or swap your tool as a side effect. `setMesh` takes a
+  `keepTool` flag; the timeline passes it. The check now permits the selection and asserts the
+  flag reaches the guard.
+- **`undef_test`** was missing `queueMicrotask` from its hand-maintained globals list — an
+  ordinary browser global, not an undefined identifier.
+- `recording_test` also pinned an exact call spelling, and now asserts the property.
+
+All 24 harnesses pass. Every rewritten check was verified by reintroducing the defect it guards.
+
 # v3.20.6
 **The Pins toggle survives a reload.** `pins` was a full member of the bone display registry
 with a button of its own, but its saved key `boneShowPins` was never declared in

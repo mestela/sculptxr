@@ -8,7 +8,8 @@ export default [{
       localStorage: 'readonly', fetch: 'readonly', Image: 'readonly', FileReader: 'readonly',
       Blob: 'readonly', URL: 'readonly', XMLHttpRequest: 'readonly', self: 'readonly',
       alert: 'readonly', prompt: 'readonly', confirm: 'readonly', OffscreenCanvas: 'readonly',
-      Path2D: 'readonly', ResizeObserver: 'readonly', WebGL2RenderingContext: 'readonly' },
+      Path2D: 'readonly', ResizeObserver: 'readonly', WebGL2RenderingContext: 'readonly',
+      queueMicrotask: 'readonly' },
   },
   rules: { 'no-undef': 'error' },
 }];

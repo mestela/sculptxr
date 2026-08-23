@@ -85,8 +85,12 @@ check('selected objects delete whole animation tracks',
     && /selectedAnimationIds\(\)/.test(tl)
     && /const active = this\._main\.getMesh\?\.\(\)/.test(tl)
     && /for \(const key of window\._animSelectedKeys \|\| \[\]\)/.test(tl));
+// The PROPERTY is that timeline focus reaches the real scene selection. Do not pin the argument
+// list: `setMesh(mesh, true)` (keepTool, so clicking a curve cannot switch your active tool) is
+// the same claim, and the exact-spelling version of this check called that a regression.
+// What keepTool itself guarantees is asserted in graph_target_test, against Scene.js.
 check('timeline row and key focus update real scene selection',
-  /this\._main\.setMesh\?\.\(mesh\)/.test(tl)
+  /this\._main\.setMesh\?\.\(mesh\b/.test(tl)
     && /Last-click wins/.test(tl));
 check('VR rig picking is proximity-first with only a coincident-pin tie break',
   /physicalDistance = vec3\.len\(_TMP_RIG_W\) \* vrScale/.test(picking)

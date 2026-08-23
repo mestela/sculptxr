@@ -17,9 +17,45 @@ check('a rig hit is adopted without requiring a mesh hit',
   /if \(nearRig\) \{\s*\n\s*nearMesh = nearRig;/.test(SRC),
   'the guard still requires nearMesh, so a lone bone reports nothing');
 
-// Pins outrank bones by RANK, not by distance — they sit on the same pixel as their joint.
-check('pins outrank bones', /rank = mesh\._isPinTarget \? 2 : 1/.test(SRC));
-check('rank dominates distance', /score = tAlong - rank \* 1e6/.test(SRC));
+// PIN PRIORITY IS A TIE-BREAK, NOT A RANK. The original rule was `score = tAlong - rank*1e6`,
+// which let a pin ANYWHERE inside the cone beat a bone directly under the cursor — rank
+// dominated distance absolutely. Selection is spatial: a pin should win only when it is
+// effectively coincident with its own joint, which is the case the priority exists for.
+//
+// Lifted from the source and evaluated, rather than matched as a spelling — the previous
+// version of these two checks asserted the old formula verbatim and reported the better rule
+// as a regression.
+{
+  const m = SRC.match(/var score = ([^;]+);/);
+  check('the desktop rig score is liftable', !!m,
+    'no `var score = ...;` in intersectionMouseMeshes — the checks below cannot run');
+  if (m) {
+    // A lifted expression that no longer evaluates in these terms is a FAILURE, not a crash.
+    // The old rule read a `rank` variable hoisted above it; lifting that threw a ReferenceError
+    // and took the whole harness down, which reports nothing rather than reporting the defect.
+    let scoreOf = null, liftErr = '';
+    try {
+      const f = new Function('offAxis', 'tAlong', 'isPin',
+        'const mesh = { _isPinTarget: isPin }; return ' + m[1] + ';');
+      f(0.02, 3, true);                       // prove it evaluates before trusting it
+      scoreOf = f;
+    } catch (e) { liftErr = String(e.message || e); }
+    check('the desktop rig score evaluates in (offAxis, tAlong, isPin) alone', !!scoreOf,
+      liftErr + ' — a score depending on anything else is not a spatial score');
+    const wins = (a, b) => scoreOf && a < b;   // lower score wins
+
+    check('a pin beats its own joint when they coincide',
+      scoreOf && wins(scoreOf(0.02, 3, true), scoreOf(0.02, 3, false)),
+      'a pin sitting exactly on its joint must not lose to it by float noise');
+    check('...but a nearer bone beats a pin',
+      scoreOf && wins(scoreOf(0.005, 3, false), scoreOf(0.02, 3, true)),
+      'the old rank*1e6 bug: a pin anywhere in the cone hid the bone under the cursor');
+    check('depth breaks ties only',
+      scoreOf && wins(scoreOf(0.02, 1, false), scoreOf(0.02, 9, false))
+        && wins(scoreOf(0.005, 99, false), scoreOf(0.02, 0.1, false)),
+      'nearest-to-eye must decide equal off-axis hits, and never outrank off-axis itself');
+  }
+}
 
 // The intersection must be reported in mesh-LOCAL coords (callers transform it by the matrix).
 check('a rig hit reports the local origin',
@@ -101,12 +137,34 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
 {
   const vr = SRC.slice(SRC.indexOf('intersectionRayMeshes(meshes, origin, direction'));
   check('VR: rig picking is opt-in', /includeRig = false\)/.test(vr));
-  check('VR: rig nodes use the cone, not geometry', /_rigPickConeVR \|\| 0\.075/.test(vr));
-  // Pins need a WIDER cone, not just a higher rank: with equal cones a bone at the edge is as
-  // easy to catch as the pin sitting on it, and ranking only decides ties.
-  check('VR: the pin cone is wider than the bone cone',
-    /_rigPickConeVRPin \|\| 0\.14/.test(vr) && 0.14 > 0.075);
-  check('VR: pins outrank bones', /isPin \? 2 : 1/.test(vr));
+  // VR rig selection is CONTROLLER-TIP PROXIMITY, not a ray cone. Reaching for a joint is more
+  // predictable than aiming at one, and it is the only thing that works during two-hand posing
+  // where neither controller is pointing at anything in particular.
+  check('VR: rig nodes are picked by proximity, not geometry and not a ray cone',
+    /_rigPickProximityVR \|\| 0\.11/.test(vr) && !/_rigPickConeVR\b/.test(vr));
+  // The reach is a distance you can feel with your arm, so it has to be in PHYSICAL metres.
+  // Model-space distance would make the reach grow and shrink with the world scale.
+  check('VR: the reach is in physical metres, not model space',
+    /_vrScale/.test(vr) && /physicalDistance = vec3\.len\([^)]*\) \* vrScale/.test(vr),
+    'an unscaled distance changes how far you can reach when the world is scaled');
+  {
+    const m = vr.match(/var rScore = ([^;]+);/);
+    check('the VR rig score is liftable', !!m, 'no `var rScore = ...;` in intersectionRayMeshes');
+    if (m) {
+      let scoreOf = null, liftErr = '';
+      try {
+        const f = new Function('physicalDistance', 'isPin', 'return ' + m[1] + ';');
+        f(0.05, true);
+        scoreOf = f;
+      } catch (e) { liftErr = String(e.message || e); }
+      check('the VR rig score evaluates in (physicalDistance, isPin) alone', !!scoreOf, liftErr);
+      check('VR: a pin beats its own joint when they coincide',
+        scoreOf && scoreOf(0.05, true) < scoreOf(0.05, false));
+      check('VR: ...but a genuinely nearer bone beats a pin',
+        scoreOf && scoreOf(0.01, false) < scoreOf(0.05, true),
+        'the pin bias must resolve an overlap, not steal focus across the reach');
+    }
+  }
   check('VR: a lone rig hit is adopted without a mesh hit',
     /if \(nearRig\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
     'the same guard that broke the desktop path');

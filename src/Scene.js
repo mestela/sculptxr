@@ -1044,8 +1044,11 @@ class Scene {
     this.getGui?.()?.updateMesh?.();
   }
 
-  setMesh(mesh) {
-    return this.setOrUnsetMesh(mesh);
+  // `keepTool` selects without running the tool-context switch below. The timeline uses it:
+  // clicking a graph row or a key unifies timeline focus with the scene selection, and must
+  // not be able to change the active tool as a side effect of looking at a curve.
+  setMesh(mesh, keepTool) {
+    return this.setOrUnsetMesh(mesh, false, keepTool);
   }
 
   setCanvasCursor(style) {
@@ -1073,7 +1076,7 @@ class Scene {
     grid.setFlatColor([0.3, 0.3, 0.3]);
   }
 
-  setOrUnsetMesh(mesh, multiSelect) {
+  setOrUnsetMesh(mesh, multiSelect, keepTool) {
     if (!mesh) {
       this._selectMeshes.length = 0;
     } else if (!multiSelect) {
@@ -1095,7 +1098,7 @@ class Scene {
 
     // --- TOOL CONTEXT SWITCHING ---
     const selected = this._selectMeshes;
-    if (selected.length > 0) {
+    if (selected.length > 0 && !keepTool) {
       let hasVoxel = false;
       let hasPoly = false;
 
