@@ -13,7 +13,13 @@ const SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionPathEdit.js'), 'u
 const body = SRC.split('\n').filter((l) => !/^import\s/.test(l))
   .filter((l) => !/^export default/.test(l)).join('\n');
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_pathedit_gen.mjs');
-fs.writeFileSync(outPath, 'globalThis.window = globalThis.window || {};\n' + body +
+// Undo has to re-solve the rig, not just rewrite the pin's track, so the solver is stubbed and
+// its calls counted rather than being left undefined.
+const prelude = 'globalThis.window = globalThis.window || {};\n' +
+  'globalThis.__holds = 0;\n' +
+  'const IKSolver = { holdPins: () => { globalThis.__holds++; } };\n';
+fs.writeFileSync(outPath, prelude +
+  body.split('\n').filter((l) => !/^import\s/.test(l)).join('\n') +
   '\nexport default MotionPathEdit;\n');
 const MPE = (await import(outPath + '?v=' + Date.now())).default;
 
@@ -356,6 +362,73 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('...and a frame it does not consume falls through to the tool',
     /if \(MotionPathEdit\.strokeXR\([^)]*\)\) return;/.test(MV)
       && /return super\.updateXR\(/.test(SM));
+}
+
+// --- 12. UNDO ------------------------------------------------------------------------------
+//
+// One gesture, one step. And undoing it has to put back three things, not one: the keys, the
+// rig they drive, and the curve drawn from them.
+{
+  const pin = { getID: () => 5, getParent: () => null, _pinnedJoint: {} };
+  const track = { times: [0, 1, 2], positions: [0,0,0, 0,0,0, 0,0,0], eulers: [1] };
+  const reg = { tracks: new Map([[5, track]]), updated: [], update(m) { this.updated.push(m); } };
+  globalThis.window._animationRegistry = reg;
+
+  const pushed = [];
+  const main = {
+    _pathEdit: {
+      strand: { pin: pin, times: [0, 1, 2], line: 0 },
+      before: line(3),
+      after: line(3).map((p, i) => ({ ...p, y: i === 1 ? 6 : 0 })),
+      index: 1, radius: 2,
+    },
+    getStateManager: () => ({
+      pushStateCustom: (undo, redo, squash, name) => pushed.push({ undo, redo, squash, name }),
+    }),
+    render() {},
+  };
+
+  const moved = MPE.finish(main);
+  check('the edit moved a key', moved === 1, moved);
+  // Guarded, so a missing step FAILS here instead of throwing three lines down and taking the
+  // whole harness with it — a crash reports nothing, which is worse than a red line.
+  check('exactly ONE undo step for the whole gesture', pushed.length === 1, pushed.length);
+  const step = pushed[0];
+  check('...named so it reads in the history', !!step && step.name === 'Edit Motion Path');
+  check('...and NOT squashed into the step before it', !!step && step.squash === false,
+    'squashing would fold a path edit into whatever the user did previously');
+  check('the key holds the edit', near(track.positions[4], 6), track.positions[4]);
+
+  if (step) {
+    step.undo();
+    check('undo puts the keys back', near(track.positions[4], 0), track.positions[4]);
+    step.redo();
+    check('and redo re-applies them', near(track.positions[4], 6), track.positions[4]);
+  } else {
+    check('undo puts the keys back', false, 'no undo step to run');
+    check('and redo re-applies them', false, 'no undo step to run');
+  }
+
+  // Writing the track alone moves the PIN; every joint it drives comes from the solve, so
+  // without re-solving an undo leaves the limb where the edit put it.
+  const FIN = SRC.slice(SRC.indexOf('MotionPathEdit.finish'));
+  check('undo re-solves the rig, not just the pin', /IKSolver\.holdPins\(main\)/.test(FIN),
+    'the pin would jump back and the limb would stay put');
+
+  // The drawing has to follow too, and it does it by NOTICING rather than being told.
+  const TRAIL = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
+  check('the trail fingerprint hashes key VALUES, not only times',
+    /pacc \+= pos\[i\] \* \(i \+ 1\)/.test(TRAIL),
+    'push-back changes positions and nothing else, so a times-only fingerprint cannot see it');
+
+  // A gesture that moved nothing must not litter the history with an empty step.
+  pushed.length = 0;
+  main._pathEdit = {
+    strand: { pin: pin, times: [0, 1, 2], line: 0 },
+    before: line(3), after: line(3), index: 1, radius: 2,
+  };
+  MPE.finish(main);
+  check('a gesture that changed nothing pushes no undo step', pushed.length === 0);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

@@ -1,3 +1,4 @@
+import IKSolver from './IKSolver.js';
 // EDITING A MOTION PATH DIRECTLY, and pushing the result back onto the keys.
 //
 // The idea, from matt: see a control that is not moving right, expose its motion path, and use
@@ -291,17 +292,25 @@ MotionPathEdit.finish = function (main) {
 
   const afterPos = track.positions.slice();
   const sm = main.getStateManager && main.getStateManager();
+  // Restore the keys, then make the rig and the drawing agree with them again.
+  //
+  // Writing the track alone is not enough: the pin's transform comes from the track, but every
+  // joint the pin drives comes from the SOLVE, so without re-solving an undo would move the pin
+  // and leave the limb where the edit had put it. The trail then re-derives itself from the
+  // restored keys through its own fingerprint, which now notices a key that moved without
+  // being retimed.
   const put = (arr) => {
     const t = reg.tracks.get(e.strand.pin.getID());
     if (!t) return;
     t.positions = arr.slice();
     t.eulers = null;
     reg.update(e.strand.pin, true);
+    IKSolver.holdPins(main);
   };
   if (sm && sm.pushStateCustom) {
     sm.pushStateCustom(() => put(beforePos), () => put(afterPos), false, 'Edit Motion Path');
   }
-  reg.update(e.strand.pin, true);
+  put(afterPos);
   return moved;
 };
 

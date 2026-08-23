@@ -100,7 +100,15 @@ function trackSig(reg, obj, tag) {
   if (!t || !t.times || !t.times.length) return '';
   let acc = 0;
   for (let i = 0; i < t.times.length; i++) acc += t.times[i] * (i + 1);
-  return tag + obj.getID() + ':' + t.times.length + ':' + acc.toFixed(4) + ';';
+  // VALUES, not just times. A key that MOVES without being retimed leaves the count and every
+  // time identical, so a fingerprint built from times alone cannot see it — and the curve is a
+  // drawing of exactly those values. This was invisible while keys only ever arrived by
+  // recording; editing a motion path changes positions and nothing else, and an UNDO of that
+  // edit changes them straight back, which is the case that made it obvious.
+  let pacc = 0;
+  const pos = t.positions || [];
+  for (let i = 0; i < pos.length; i++) pacc += pos[i] * (i + 1);
+  return tag + obj.getID() + ':' + t.times.length + ':' + acc.toFixed(4) + ':' + pacc.toFixed(4) + ';';
 }
 
 function signature(main, joints, r) {
