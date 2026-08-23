@@ -181,6 +181,14 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('...and a stroke that is NOT on the curve falls through unchanged',
     /return super\.start\(ctrl\);/.test(MOVE));
 
+  // start() is SHARED between mouse and headset; sculptStroke() is not. Without a guard a VR
+  // stroke reaches begin() with a stale mouse position, sometimes hits, and SWALLOWS the
+  // stroke — start() returns true so super.start() never runs.
+  const BEGIN = SRC.slice(SRC.indexOf('MotionPathEdit.begin'), SRC.indexOf('MotionPathEdit.drag'));
+  check('begin() refuses to run during a VR stroke',
+    /if \(main\._vrSculpting \|\| main\._xrSession\) return false;/.test(BEGIN),
+    'a headset stroke would be intermittently swallowed');
+
   check('the drag runs before the mesh guard in sculptStroke',
     /sculptStroke\(\) \{\s*\n\s*if \(MotionPathEdit\.active/.test(MOVE),
     'the mesh guard would return first in a rig-only scene');

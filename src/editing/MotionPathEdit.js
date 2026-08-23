@@ -211,6 +211,20 @@ function worldAt(camera, sampleScreenZ, x, y) {
 // Try to take hold of the authored curve. Returns false when the pointer is not on it, so the
 // stroke falls through to whatever it would have done — sculpting the mesh, usually.
 MotionPathEdit.begin = function (main, x, y, radiusPx) {
+  // DESKTOP AND IPAD ONLY, and the guard is not defensive padding — it stops a live bug.
+  //
+  // SculptBase.start() is SHARED between the mouse and the headset, while sculptStroke() is
+  // not: update() returns early in VR and the stroke goes through updateXR/sculptStrokeXR
+  // instead. So without this, a VR stroke would reach begin() with a stale _mouseX/_mouseY from
+  // whenever the mouse was last touched, occasionally land within radiusPx of a projected
+  // sample, and SWALLOW the stroke — start() returns true, super.start() never runs, and the
+  // sculpt simply does not happen. Intermittently, and only sometimes.
+  //
+  // The VR path is a separate wiring job, and a better one: a controller tip is already a 3D
+  // point, so the hit test is a distance to the curve and the drag is a real 3D delta, with no
+  // unprojection anywhere.
+  if (main._vrSculpting || main._xrSession) return false;
+
   const strand = main._trailStrand;
   if (!strand || !strand.points || strand.points.length < 2) return false;
   if (!MotionPathEdit.editable(strand.pin)) {
