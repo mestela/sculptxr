@@ -39,6 +39,45 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('nothing is ever pulled backwards', w.every((v) => v >= 0 && v <= 1));
 }
 
+// --- 1b. the falloff IS Move's, not something that resembles it ----------------------------
+//
+// A Move on a motion path has to feel like a Move on a mesh. Lifted from Move.move() and
+// evaluated side by side, so the two cannot drift the first time either is tuned — comparing a
+// reimplementation here would pass happily with the shipped curve replaced.
+{
+  const MOVE = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+  const m = MOVE.match(/var fallOff = dist \* dist;\s*\n\s*fallOff = ([^;]+);/);
+  check('Move\'s falloff expression is liftable', !!m,
+    'the anchor moved; this check cannot compare the two curves');
+  if (m) {
+    const moveFalloff = new Function('dist', 'let fallOff = dist * dist; return ' + m[1] + ';');
+    // Straight unit-spaced line, so arc length from the grab equals index distance.
+    const pts = line(11);
+    const w = MPE.weights(pts, 5, 4);
+    let worst = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.min(1, Math.abs(i - 5) / 4);
+      worst = Math.max(worst, Math.abs(w[i] - moveFalloff(d)));
+    }
+    check('the strand falloff matches Move\'s curve exactly', worst < 1e-12, worst);
+  }
+}
+
+// --- 1c. radius zero is the GRAB case ------------------------------------------------------
+//
+// Grab moves an OBJECT; the object under the pointer on a strand is one sample. Same machinery,
+// radius zero — not a second code path that could drift from the soft one.
+{
+  const pts = line(7);
+  const w = MPE.weights(pts, 3, 0);
+  check('a grab takes the whole drag on its own sample', near(w[3], 1));
+  check('...and moves nothing else', w.every((v, i) => i === 3 || near(v, 0)), w.join(','));
+
+  const after = MPE.displace(pts, 3, { x: 0, y: 5, z: 0 }, 0);
+  check('...which displace honours', near(after[3].y, 5)
+    && after.every((p, i) => i === 3 || near(p.y, 0)));
+}
+
 // --- 2. A SELF-CROSSING PATH IS THE POINT --------------------------------------------------
 //
 // A walk cycle, or a hand returning to the same spot: the curve passes NEAR ITSELF at two very

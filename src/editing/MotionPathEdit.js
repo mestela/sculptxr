@@ -29,16 +29,19 @@
 
 const MotionPathEdit = {};
 
-// World distance along the curve that a drag reaches. Arc length rather than a frame count,
-// because this is a sculpting gesture and it should feel like a brush radius. A fast section of
-// the curve therefore covers fewer frames than a slow one, which is a real trade and the first
-// thing to revisit if editing a snappy move feels too broad.
-const DEFAULT_RADIUS = 0.35;
-
-function tune(key, dflt) {
-  const v = window[key];
-  return Number.isFinite(v) && v > 0 ? v : dflt;
-}
+// WHICH TOOL DOES WHAT, which is not a cosmetic choice — it decides what the falloff is for.
+//
+//   MOVE  moves vertices with falloff. On a strand that is a soft edit: grab the curve and the
+//         neighbouring samples come with it, which is the gesture for sculpting a path into
+//         place or easing a section over. The radius is the BRUSH radius, so the control and
+//         the cursor ring the user already has are the ones that size the edit.
+//   GRAB  moves an object. On a strand the object under the pointer is a single SAMPLE, so a
+//         grab moves exactly one point and nothing else — a hard edit of one instant. That is
+//         a radius of zero through the same machinery, not a separate path.
+//
+// The radius is measured in ARC LENGTH along the curve. A fast section therefore covers fewer
+// frames than a slow one, which is a real trade and the first thing to revisit if editing a
+// snappy move feels too broad.
 
 // Cumulative arc length, so falloff can be measured in world units along the curve.
 function arcLengths(points) {
@@ -51,12 +54,17 @@ function arcLengths(points) {
   return s;
 }
 
-// Smoothstep, so the edit blends into the untouched curve instead of ending in a corner.
+// SculptGL's own brush falloff, lifted from Move.move() rather than approximated. A Move on a
+// motion path has to feel like a Move on a mesh, and two curves that are merely similar would
+// diverge the first time either was tuned.
+//
+// Radius zero is the GRAB case: one sample, full weight, nothing else touched.
 function falloff(d, radius) {
   if (!(radius > 0)) return d === 0 ? 1 : 0;
-  const x = Math.min(1, Math.abs(d) / radius);
-  const inv = 1 - x;
-  return inv * inv * (3 - 2 * inv);
+  const dist = Math.min(1, Math.abs(d) / radius);
+  let f = dist * dist;
+  f = 3.0 * f * f - 4.0 * f * dist + 1.0;
+  return f;
 }
 
 // The weight each sample takes from a drag centred on `index`.
@@ -149,7 +157,5 @@ MotionPathEdit.editable = function (pin) {
   const parent = pin.getParent ? pin.getParent() : pin._parent;
   return !parent;
 };
-
-MotionPathEdit.radius = function () { return tune('_pathEditRadius', DEFAULT_RADIUS); };
 
 export default MotionPathEdit;
