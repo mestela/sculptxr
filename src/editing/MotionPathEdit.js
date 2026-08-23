@@ -95,14 +95,76 @@ MotionPathEdit.hit = function (points, project, x, y, radiusPx) {
 // Apply a drag: every sample moves by `delta` scaled by its weight. Pure, and returns new
 // points, so the original stays available as the baseline the residual is measured against —
 // re-reading a mutated curve as its own baseline is how a drag ends up applied twice.
-MotionPathEdit.displace = function (points, index, delta, radius) {
+// 6DOF. Twisting the controller turns the section you are holding, exactly as it does to
+// vertices under a mesh Move — the behaviour is lifted from `Move.move()` rather than invented,
+// because "the same as the move tool" is the whole requirement:
+//
+//   rotate the point about the GRAB POINT, take the displacement that produced, add it to the
+//   translation, and scale the sum by the falloff.
+//
+// Rotating about the grab point rather than each point's own position is what makes a twist
+// swing the curve around your hand instead of spinning every sample in place.
+function rotateAbout(p, q, c, out) {
+  const x = p.x - c.x, y = p.y - c.y, z = p.z - c.z;
+  // Standard quaternion-vector rotation: t = 2 * (q.xyz X v); v' = v + q.w * t + (q.xyz X t).
+  const tx = 2 * (q[1] * z - q[2] * y);
+  const ty = 2 * (q[2] * x - q[0] * z);
+  const tz = 2 * (q[0] * y - q[1] * x);
+  out.x = x + q[3] * tx + (q[1] * tz - q[2] * ty);
+  out.y = y + q[3] * ty + (q[2] * tx - q[0] * tz);
+  out.z = z + q[3] * tz + (q[0] * ty - q[1] * tx);
+  // Returned as the DISPLACEMENT the rotation caused, not the rotated point, so the caller adds
+  // it to the translation the same way move() does.
+  out.x -= x; out.y -= y; out.z -= z;
+  return out;
+}
+
+const _rot = { x: 0, y: 0, z: 0 };
+
+MotionPathEdit.displace = function (points, index, delta, radius, rotQuat, rotCenter) {
   const w = MotionPathEdit.weights(points, index, radius);
-  return points.map((p, i) => ({
-    x: p.x + delta.x * w[i],
-    y: p.y + delta.y * w[i],
-    z: p.z + delta.z * w[i],
-  }));
+  const c = rotCenter || points[index];
+  return points.map((p, i) => {
+    let rx = 0, ry = 0, rz = 0;
+    if (rotQuat) {
+      rotateAbout(p, rotQuat, c, _rot);
+      rx = _rot.x; ry = _rot.y; rz = _rot.z;
+    }
+    return {
+      x: p.x + (delta.x + rx) * w[i],
+      y: p.y + (delta.y + ry) * w[i],
+      z: p.z + (delta.z + rz) * w[i],
+    };
+  });
 };
+
+// The controller's rotation since the grab, damped by the tool's intensity — the same slerp
+// from identity that Move uses, so the strength slider means the same thing on a curve as it
+// does on a mesh.
+function twistSince(startInv, nowQ, intensity) {
+  if (!startInv || !nowQ) return null;
+  const x = nowQ[0], y = nowQ[1], z = nowQ[2], w = nowQ[3];
+  const ax = startInv[0], ay = startInv[1], az = startInv[2], aw = startInv[3];
+  const d = [
+    w * ax + x * aw + y * az - z * ay,
+    w * ay - x * az + y * aw + z * ax,
+    w * az + x * ay - y * ax + z * aw,
+    w * aw - x * ax - y * ay - z * az,
+  ];
+  const k = Math.max(0, Math.min(1, intensity == null ? 1 : intensity));
+  if (k >= 0.999) return d;
+  // Slerp from identity. Short-arc: without the sign flip a twist past a half turn unwinds the
+  // long way round, which reads as the curve snapping backwards mid-drag.
+  let cw = d[3];
+  let sx = d[0], sy = d[1], sz = d[2];
+  if (cw < 0) { cw = -cw; sx = -sx; sy = -sy; sz = -sz; }
+  if (cw > 0.9995) return [sx * k, sy * k, sz * k, 1 - k + cw * k];
+  const th = Math.acos(cw);
+  const s = Math.sin(th);
+  const a = Math.sin((1 - k) * th) / s;
+  const b = Math.sin(k * th) / s;
+  return [sx * b, sy * b, sz * b, a + cw * b];
+}
 
 // SMOOTH, which on a strand is a 1D Laplacian along it — each sample toward the average of its
 // two neighbours, scaled by the same falloff. On a mesh "smooth" is ambiguous enough to need a
@@ -379,15 +441,26 @@ MotionPathEdit.beginXR = function (main, tip, radiusWorld) {
     startWorld: { x: tip[0], y: tip[1], z: tip[2] },
     after: null,
     xr: true,
+    // Inverted at the grab, so every frame's twist is measured against that ONE pose. A delta
+    // taken frame to frame would compose into a ratchet that never comes back to zero.
+    startQuatInv: invert(main._vrControllerQuat),
   };
   return true;
 };
 
-MotionPathEdit.dragXR = function (main, tip) {
+function invert(q) {
+  return q ? [-q[0], -q[1], -q[2], q[3]] : null;   // unit quaternion: conjugate is the inverse
+}
+
+MotionPathEdit.dragXR = function (main, tip, intensity) {
   const e = main._pathEdit;
   if (!e || !tip) return false;
   const delta = { x: tip[0] - e.startWorld.x, y: tip[1] - e.startWorld.y, z: tip[2] - e.startWorld.z };
-  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius);
+  // The twist comes free with the hand that is already holding the curve. Without it the
+  // controller's rotation is simply discarded, which is surprising in a way a missing feature
+  // usually is not: you are already turning your wrist and nothing happens.
+  const twist = twistSince(e.startQuatInv, main._vrControllerQuat, intensity);
+  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius, twist, e.startWorld);
   return true;
 };
 
@@ -405,7 +478,7 @@ MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, streng
     if (!isPressed) { MotionPathEdit.endStroke(main); tool._pathXRHeld = false; return true; }
     const ok = mode === 'smooth'
       ? MotionPathEdit.smoothStep(main, strength)
-      : MotionPathEdit.dragXR(main, tip);
+      : MotionPathEdit.dragXR(main, tip, strength);
     if (ok) { MotionPathEdit.redrawHook(main); main.render(); }
     return true;
   }

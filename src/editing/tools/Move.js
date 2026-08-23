@@ -482,7 +482,9 @@ class Move extends SculptBase {
     // A motion path is grabbable in VR too, and this is the honest version of the gesture:
     // the controller tip is already a point in the world, so there is no projection anywhere.
     // `options` carries the per-controller snapshot the tip is read from.
-    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'move', 0, options)) return;
+    // _intensity damps the TWIST the same way it does on a mesh, so the strength slider means
+    // the same thing on a curve as it does under an ordinary Move.
+    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'move', this._intensity, options)) return;
 
     // Custom Move Logic:
     // Hover: Update Anchor (_lastVRPos) continuously so we are ready to drag from current pos.

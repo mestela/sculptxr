@@ -367,8 +367,12 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   // The tip lives on the per-controller snapshot, so both tools have to forward `options` or
   // they silently fall back to the pivot - which is the bug this pair of checks now guards.
   check('...and both forward the controller snapshot the TIP is read from',
-    /'move', 0, options\)/.test(MV) && /'smooth', this\._intensity, options\)/.test(SM),
+    /'move', this\._intensity, options\)/.test(MV)
+      && /'smooth', this\._intensity, options\)/.test(SM),
     'without options the tip falls back to the controller pivot');
+  check('...and Move passes its intensity, which damps the twist',
+    /'move', this\._intensity, options\)/.test(MV),
+    'the strength slider has to mean the same thing on a curve as on a mesh');
   check('...which Move can only do by accepting it',
     /updateXR\(picking, isPressed, origin, dir, options\)/.test(MV));
   check('...and a frame it does not consume falls through to the tool',
@@ -441,6 +445,112 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   };
   MPE.finish(main);
   check('a gesture that changed nothing pushes no undo step', pushed.length === 0);
+}
+
+// --- 13. 6DOF: twisting the controller turns the section you are holding -------------------
+//
+// matt: "I keep instinctively twisting my controller and keep getting surprised it only reads
+// translation." The requirement is explicit — it should behave as a twist does under an
+// ordinary mesh Move — so the arithmetic is lifted from Move.move() rather than invented, and
+// checked against it here.
+{
+  const pts = line(9);
+  const c = { x: 4, y: 0, z: 0 };            // grab point, mid-curve
+  const halfPi = Math.PI / 4;                 // 90 degrees about Z
+  const qz = [0, 0, Math.sin(halfPi), Math.cos(halfPi)];
+
+  const out = MPE.displace(pts, 4, { x: 0, y: 0, z: 0 }, 99, qz, c);
+  check('a twist alone moves the curve, with no translation at all',
+    Math.abs(out[8].y - pts[8].y) > 0.5, out[8].y);
+  // The centre is the HAND, not the grabbed sample, and in VR the two are never quite the same
+  // point. Tested with them deliberately apart: with the centre set to the grabbed sample the
+  // two implementations agree exactly, so the check could not tell them apart.
+  {
+    const off = { x: 0, y: 0, z: 0 };          // grab centre at the origin, sample 4 at x=4
+    const o2 = MPE.displace(pts, 4, { x: 0, y: 0, z: 0 }, 99, qz, off);
+    check('...about the supplied centre, not the grabbed sample',
+      near(o2[4].x, 0, 0.02) && near(o2[4].y, 4, 0.02),
+      'a quarter turn about the ORIGIN takes sample 4 from (4,0) to (0,4); about itself it would not move');
+  }
+  check('...so the point at the centre itself does not move',
+    near(out[4].x, 4) && near(out[4].y, 0),
+    'rotating each point about itself would spin samples in place instead of swinging the curve');
+  // Tolerance of 0.01, not 1e-6: the falloff is a smooth curve, so even at a huge radius a
+  // point 4 units from the grab weighs a shade under 1. Demanding exactness here would be
+  // asserting that the falloff does not apply, which is the opposite of the rule above.
+  check('...and a point 4 along +X swings to +Y under a quarter turn about Z',
+    near(out[8].x, 4, 0.01) && near(out[8].y, 4, 0.01),
+    Array.of(out[8].x, out[8].y, out[8].z).join(','));
+  check('...with the far side swinging the other way',
+    near(out[0].y, -4, 0.01), out[0].y);
+
+  // The falloff gates rotation exactly as it gates translation.
+  const narrow = MPE.displace(pts, 4, { x: 0, y: 0, z: 0 }, 2, qz, c);
+  check('the twist is under the falloff too',
+    near(narrow[8].y, 0) && Math.abs(narrow[5].y) > 0,
+    'a rotation that ignores falloff turns the whole curve however small the brush');
+
+  // Translation and rotation add, which is what makes a 6DOF drag one gesture rather than two.
+  const both = MPE.displace(pts, 4, { x: 0, y: 10, z: 0 }, 99, qz, c);
+  check('translation and twist combine',
+    both[8].y > out[8].y && near(both[8].y - out[8].y, 10, 0.01),
+    both[8].y + ' vs ' + out[8].y);
+
+  // THE SAME ARITHMETIC AS THE MESH TOOL. Lifted from Move.move() and run side by side: a
+  // reimplementation here would pass happily with the shipped rule replaced.
+  {
+    const MOVE = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+    check('Move rotates about a centre and ADDS the result to the translation',
+      /vAr\[ind\] \+= \(dirx \+ rotX\) \* fallOff;/.test(MOVE)
+        && /var rCenter = rotCenter \|\| center;/.test(MOVE),
+      'the anchor moved; the claim that these behave alike is no longer checked');
+  }
+
+  // No controller quaternion at all — the mouse — must be plain translation, not a crash.
+  const flat = MPE.displace(pts, 4, { x: 0, y: 1, z: 0 }, 99, null, c);
+  check('with no rotation supplied it is a plain translation', near(flat[4].y, 1));
+}
+
+// --- 14. the twist is measured from the GRAB, once ------------------------------------------
+{
+  const strand = { points: line(9), times: [0,1,2,3,4,5,6,7,8],
+    pin: { getID: () => 1, getParent: () => null, _pinnedJoint: {} }, line: 0 };
+  const main = { _trailStrand: strand, _vrControllerQuat: [0, 0, 0, 1], render() {} };
+  // A radius that reaches the sample the checks below measure: at 0.5 the far end weighs zero
+  // and every twist assertion would pass by measuring a point the brush never touched.
+  MPE.beginXR(main, [4, 0, 0], 99);
+  check('the grab pose is inverted and kept', !!main._pathEdit.startQuatInv);
+
+  // Still at the grab pose: no twist, whatever else has happened.
+  MPE.dragXR(main, [4, 0, 0], 1);
+  check('holding the grab pose applies no twist', near(main._pathEdit.after[8].y, 0),
+    main._pathEdit.after[8].y);
+
+  // A frame-to-frame delta would compose into a ratchet that never returns to zero; measured
+  // against the grab, turning back returns the curve exactly where it started.
+  const q = [0, 0, Math.sin(Math.PI / 8), Math.cos(Math.PI / 8)];
+  main._vrControllerQuat = q;
+  MPE.dragXR(main, [4, 0, 0], 1);
+  const turned = main._pathEdit.after[8].y;
+  MPE.dragXR(main, [4, 0, 0], 1);
+  check('holding a turn steady does not keep turning',
+    near(main._pathEdit.after[8].y, turned, 1e-9), main._pathEdit.after[8].y + ' vs ' + turned);
+  main._vrControllerQuat = [0, 0, 0, 1];
+  MPE.dragXR(main, [4, 0, 0], 1);
+  check('...and turning back returns it exactly', near(main._pathEdit.after[8].y, 0, 1e-9),
+    'a frame-to-frame delta ratchets and never comes home');
+
+  // Intensity damps the twist, the same slerp-from-identity the mesh tool uses.
+  main._vrControllerQuat = q;
+  MPE.dragXR(main, [4, 0, 0], 1);
+  const full = main._pathEdit.after[8].y;
+  MPE.dragXR(main, [4, 0, 0], 0.5);
+  const half = main._pathEdit.after[8].y;
+  check('intensity damps the twist', Math.abs(half) > 0 && Math.abs(half) < Math.abs(full),
+    half + ' vs ' + full);
+  MPE.dragXR(main, [4, 0, 0], 0);
+  check('...and zero intensity leaves only the translation',
+    near(main._pathEdit.after[8].y, 0, 1e-9), main._pathEdit.after[8].y);
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
