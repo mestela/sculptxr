@@ -1,3 +1,78 @@
+# v3.20.13 - v3.20.22
+**Sculpt a motion path, and the animation follows.** Expose a control's path, take hold of it
+with the tools you already sculpt with, and the keys move to match. The idea is matt's: see a
+control that is not moving right, fix the curve rather than hunt the keys.
+
+**Only a CONTROL is editable, and that is the load-bearing decision.** An IK-driven bone's
+position is solver output, constrained by bone lengths — push an arbitrary curve onto a knee and
+you have asked for something the limb cannot do, and the result quietly disagrees with what you
+drew. A pin is a free 6DOF control, so any curve is reachable. A selected pin therefore draws
+TWO curves: the **authored** one, solid and editable, and the **solved** one, faint and read
+only. While IK reaches they coincide; where they separate, the gap is the diagnosis.
+
+- **Move sculpts the curve, Grab moves one sample.** Move means "displace with falloff", which
+  is exactly what shaping a path is; Grab means "move this object", and the object under the
+  pointer on a curve is a single sample — one instant, moved hard. Same machinery, radius zero.
+  The falloff is lifted from `Move.move()` rather than approximated, so a Move on a path feels
+  like a Move on a mesh, and the brush radius is what sizes the edit.
+- **Smooth is noise removal.** On a mesh "smooth" needs a whole tool to disambiguate; on a
+  strand it is a 1D Laplacian along the curve, which is precisely what takes the jitter out of a
+  hand-recorded take. Endpoints are pinned — a Laplacian shortens a curve, and an unpinned end
+  creeps inward every pass, quietly losing the first and last poses.
+- **Falloff runs ALONG the strand, not through space.** This is what makes real animation
+  editable. A walk cycle passes near itself at two very different times, and a spherical brush
+  would take both passes — wrecking frame 90 while fixing frame 12.
+- **Every point owns its time.** A brush moves points in space; time never moves. Editing is a
+  spatial displacement field over time, push-back is well defined, and retiming stays the
+  dopesheet's job.
+- **Keys move by a DELTA**, so tangents, rotation and every key you did not sculpt survive. Keys
+  outside the drawn span are left alone: the curve makes no claim about them.
+- **Dots show the samples**, with the ones sitting on a KEY drawn larger and brighter — those
+  are the instants an edit can be recorded at, which shows directly why a wiggle sculpted
+  between two of them has nothing to carry it.
+- **In the headset it is the honest version of the gesture**, and shorter: a controller tip is
+  already a point in the world, so the reach is a distance and the drag is a real 3D delta, with
+  no projection anywhere. It reaches from the visible stylus tip, not the controller pivot.
+- **One undo step per gesture**, restoring the keys, re-solving the rig they drive, and letting
+  the curve re-derive itself from what was put back.
+
+**Two fixes underneath it.** Motion trails now evaluate keyed PINS — the sampler wrote the keyed
+bones and then held the pins wherever they happened to be sitting, so with pin-driven animation
+the trail was a curve playback does not follow. And samples now land on every key time rather
+than a uniform grid, so the curve passes through the poses that were authored instead of cutting
+chords across them.
+
+**Known limit:** push-back moves EXISTING keys. A wiggle sculpted between two of them has
+nothing to carry it and will vanish on release — the large dots are there so this is
+predictable rather than surprising.
+
+# v3.20.9 - v3.20.12
+**A secondary action, for screens that have no A button.** In VR, **A** is a universal
+modifier: it works from Grab, from TransformVR and from Bone Draw. Flat screens had no such
+channel, so the one binding that needed it — cycling an IK pin — was re-homed as a tap inside
+Bone Draw's IK mode, and Grab and Transform could not pin at all on desktop or iPad.
+
+So this is not a pin button, it is the missing input channel; pinning is simply its first user,
+and the next face-button binding gets a home here instead of inventing another gesture. The
+on-screen button labels itself from the active tool's action and hides when there is none.
+
+- **One armed shot, and no timed gesture anywhere.** Tap the modifier, it lights, the next click
+  does the secondary action, it disarms. Hold-to-modify cannot work with a single pointer — you
+  cannot hold an on-screen button *and* click a joint with one mouse or one pencil — and
+  long-press was rejected outright: it misfires, it is slow, and the misfire is silent.
+- **Right-click is the desktop shorthand** for the same entry point. A right *drag* already
+  orbits the camera, so only a press that never travelled counts, decided on release. Pen and
+  touch are excluded: on iPad a second finger is dispatched as a right button to mean PAN, and a
+  pan that started and ended on the same spot would otherwise fire it.
+- The button rides above the animation panel and follows it when resized, and **Escape** disarms
+  without consuming the key when it was not armed.
+- **The Trails toggle reaches the desktop sidebar.** There are two animation panels built from
+  one shared section, but only the main menu appended the rig-animation block — so Trails
+  existed in one of the two places that show it and was unreachable on desktop. The block is now
+  composed once, by the section itself.
+- Plus the Pins display flag actually persists: it was a full member of the bone display
+  registry with a button and a reader, and its saved key was never declared.
+
 # v3.20.8
 **One harness owns the picking rules.** `recording_test` carried its own copy of the VR
 proximity-pick assertions that `rigpick_test` also makes — the same rule in two places, this
