@@ -351,6 +351,48 @@ function setup(times) {
   reg.tracks.delete(j.getID());
 }
 
+// --- 5d. the trail target STICKS to the last rig node -------------------------------------
+//
+// Read straight off the live selection, the trail was far too easy to lose: with a pin selected
+// and Move active, a stroke that missed the curve by a few pixels fell through to an ordinary
+// sculpt, that sculpt selected the MESH, and the trail being edited vanished.
+{
+  const { j, main, reg } = setup();
+  const pin = { _isPinTarget: true, _id: 903, _p: [0, 0, 0], _pinnedJoint: j,
+    getID() { return this._id; } };
+  const mesh = { _id: 904, getID() { return this._id; } };
+  j._pin = pin;
+  main.getMeshes = () => [j, pin, mesh];
+  delete main._trailTarget;
+
+  main.getMesh = () => pin;
+  check('selecting a pin takes the trail', mod.trailed(main).length >= 1);
+
+  main.getMesh = () => mesh;
+  const held = mod.trailed(main);
+  check('...and selecting an ordinary MESH does not drop it',
+    held.length >= 1 && held[held.length - 1].obj === j,
+    'this is the sculpt-missed-the-curve case that lost the trail mid-edit');
+
+  main.getMesh = () => null;
+  check('...nor does selecting nothing', mod.trailed(main).length >= 1);
+
+  // Another rig node is a deliberate change of subject, and must take it.
+  const j2 = joint({ times: [0, 1, 2] });
+  main.getMeshes = () => [j, pin, mesh, j2];
+  main.getMesh = () => j2;
+  const moved = mod.trailed(main);
+  check('but selecting another rig node DOES take it', moved[0].obj === j2);
+
+  // A target that has left the scene is the one case where holding on would be a lie.
+  main.getMesh = () => null;
+  main.getMeshes = () => [mesh];
+  check('a deleted target is dropped', mod.trailed(main).length === 0);
+
+  delete j._pin;
+  delete main._trailTarget;
+}
+
 // --- 6. viewport representation ----------------------------------------------------------
 // A trail is the thin spatial curve. THREE.Points uses camera-facing square sprites; at scene
 // scale those became a wall of large red squares that hid the curve and the model underneath.

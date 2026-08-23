@@ -51,8 +51,35 @@ function range() {
 //
 // A pin with no track of its own has no authored path — just a stationary point — so only the
 // output curve is drawn for it. Drawing a degenerate curve would be noise.
-function trailed(main) {
+// THE TARGET STICKS. It used to be read straight off the live selection, which made the trail
+// far too easy to lose: with a pin selected and Move active, a stroke that missed the curve by a
+// few pixels fell through to an ordinary sculpt, that sculpt selected the MESH, and the trail
+// you were in the middle of editing simply vanished. The edit was lost and so was the thing
+// showing you what you were editing.
+//
+// So a rig node captures the trail when it is selected, and KEEPS it until another rig node
+// takes it — selecting a mesh, or nothing, leaves the trail where it was. The target is dropped
+// only when it leaves the scene, which is the one case where keeping it would be a lie.
+function trailTarget(main) {
   const sel = main.getMesh && main.getMesh();
+  if (sel && (Skeleton.isJoint(sel) || (sel._isPinTarget && sel._pinnedJoint))) {
+    main._trailTarget = sel;
+    return sel;
+  }
+  const held = main._trailTarget;
+  if (held && (main.getMeshes() || []).indexOf(held) >= 0) return held;
+  main._trailTarget = null;
+  return null;
+}
+
+function trailed(main) {
+  const sel = trailTarget(main);
+  if (window._trailTrace) {
+    console.log('[trail] target=' + (sel && sel._permanentStaticLabel) +
+      ' isBone=' + !!(sel && sel._isBone) + ' isPin=' + !!(sel && sel._isPinTarget) +
+      ' pinnedJoint=' + !!(sel && sel._pinnedJoint) +
+      ' selection=' + (main.getMesh && main.getMesh() && main.getMesh()._permanentStaticLabel));
+  }
   if (sel && Skeleton.isJoint(sel)) return [{ obj: sel, control: false }];
   if (sel && sel._isPinTarget && sel._pinnedJoint) {
     const reg = window._animationRegistry;
@@ -317,6 +344,13 @@ MotionTrail.clear = function (main) {
   main._trailStrand = null;
 };
 
+// Dropping the held target is a separate thing from clearing the drawing: turning trails off
+// and on again should come back to what you were looking at.
+MotionTrail.forget = function (main) {
+  main._trailTarget = null;
+  MotionTrail.clear(main);
+};
+
 // Redraw one curve from points the editor is holding, without re-sampling. The drag is a pure
 // geometry change until it is pushed back, so a solve per frame would be wasted work.
 MotionTrail.redraw = function (main, lineIndex, points) {
@@ -345,6 +379,13 @@ MotionTrail.update = function (main) {
   const r = range();
   if (!targets.length || !r) { MotionTrail.clear(main); return false; }
 
+  if (window._trailTrace) {
+    const reg = window._animationRegistry;
+    console.log('[trail] targets=' + targets.length +
+      ' control=' + targets.some((t) => t.control) +
+      ' range=' + (r ? r.start + '..' + r.end : 'none') +
+      ' tracks=' + (reg && reg.tracks ? reg.tracks.size : 'none'));
+  }
   const sig = signature(main, targets, r);
   if (sig === main._trailSig && main._trailVis) return false;
   main._trailSig = sig;
