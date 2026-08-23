@@ -7853,10 +7853,24 @@ class Scene {
     // something at its centre — so it wants the same reveal. This is an explicit list rather
     // than a universal rule: the sculpt brushes work ON the surface, and revealing the spike
     // through the mesh for them would be an always-on blue tip with nothing to look at.
+    //
+    // MOVE AND SMOOTH JOIN THE LIST ONLY WHILE A MOTION PATH IS ON SCREEN. The rule above says
+    // sculpt brushes are excluded because they work ON the surface — true while they are
+    // sculpting, and false the moment they are editing a motion path, which hangs inside and
+    // behind the model. So the condition is the STRAND, not the tool: with no path drawn they
+    // behave exactly as before.
+    const pathTool = idx === Enums.Tools.MOVE || idx === Enums.Tools.SMOOTH;
+    const onPath = pathTool && !!this._trailStrand;
     const on = idx === Enums.Tools.TRANSFORM || idx === Enums.Tools.TRANSFORM_VR ||
-               idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB;
+               idx === Enums.Tools.BONE_DRAW || idx === Enums.Tools.GRAB || onPath;
     // Only the DOMINANT controller drives the gizmo, so only reveal its spike.
-    const key = on ? this._dominantHand : 'off';
+    //
+    // THE STRAND HAS TO BE IN THE CACHE KEY. This function returns early when the key is
+    // unchanged, and `onPath` can flip without the tool changing — select a pin and the path
+    // appears under the same Move tool. Keying on the hand alone would latch whichever state
+    // happened to be current when Move was selected, which is the exact shape of the bug this
+    // cache caused for the transform tools before.
+    const key = on ? this._dominantHand + (onPath ? ':path' : '') : 'off';
     if (key === this._stylusXrayKey) return;
     const dom = this._dominantHand === 'left' ? this._vrControllerLeft : this._vrControllerRight;
     const other = this._dominantHand === 'left' ? this._vrControllerRight : this._vrControllerLeft;

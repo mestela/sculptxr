@@ -305,6 +305,10 @@ const FUTURE_NEAR = [0.00, 1.00, 0.00];
 const FAR_GREY    = [0.48, 0.48, 0.48];
 // A key sitting on the playhead is the one an edit lands on, so it is not on the scale at all.
 const NOW_WHITE   = [1.00, 1.00, 1.00];
+// The sample a click would take. Bright and distinctly warm, so it does not read as "this key
+// is at the playhead" — the two marks mean different things and must not be confusable.
+const HOVER_COL   = [1.00, 0.85, 0.15];
+const HOVER_GROW  = 1.9;
 
 function mix(a, b, k, out, i) {
   out[i]     = b[0] + (a[0] - b[0]) * k;
@@ -483,6 +487,34 @@ MotionTrail.recolor = function (main) {
   const col = new Float32Array(times.length * 3);
   for (let i = 0; i < times.length; i++) timeColor(times[i], head, span, col, i * 3, 0);
 
+  // The dots are recoloured here as well, not in drawDots: preselection changes every frame,
+  // and drawDots only runs when the geometry is rebuilt.
+  const hover = MotionPathEdit.hoverIndex(main);
+  if (v.slots) {
+    const plainCol = v.plainCol, keyCol = v.keyCol;
+    if (plainCol) { for (let i = 0; i < plainCol.length; i++) plainCol[i] = v.identity[i % 3]; }
+    if (keyCol) {
+      for (let i = 0; i < v.keyTimes.length; i++) {
+        timeColor(v.keyTimes[i], head, span, keyCol, i * 3, v.nowEps);
+      }
+    }
+    const slot = hover >= 0 ? v.slots[hover] : null;
+    if (slot) {
+      const arr = slot.key ? keyCol : plainCol;
+      if (arr) {
+        arr[slot.i * 3] = HOVER_COL[0];
+        arr[slot.i * 3 + 1] = HOVER_COL[1];
+        arr[slot.i * 3 + 2] = HOVER_COL[2];
+      }
+    }
+    if (plainCol) setColors(v.dots, plainCol);
+    if (keyCol) setColors(v.keyDots, keyCol);
+    // The hovered mark grows as well as changes colour: at four pixels a colour shift alone is
+    // easy to miss against a busy scene.
+    v.dots.material.size = DOT_PX * (slot && !slot.key ? HOVER_GROW : 1);
+    v.keyDots.material.size = KEY_DOT_PX * (slot && slot.key ? HOVER_GROW : 1);
+  }
+
   for (const line of v.lines) {
     const g = line.geometry;
     const pos = g.getAttribute('position');
@@ -569,10 +601,10 @@ MotionTrail.drawDots = function (main, weights) {
 
   const pts = strand.points;
   const isKey = keyMask(main, strand.pin, strand.times);
-  const plain = [], keys = [], keyTimes = [];
+  const plain = [], keys = [], keyTimes = [], slots = [];
   for (let i = 0; i < pts.length; i++) {
-    if (isKey[i]) { keys.push(pts[i]); keyTimes.push(strand.times[i]); }
-    else plain.push(pts[i]);
+    if (isKey[i]) { slots.push({ key: true, i: keys.length }); keys.push(pts[i]); keyTimes.push(strand.times[i]); }
+    else { slots.push({ key: false, i: plain.length }); plain.push(pts[i]); }
   }
 
   v.dots.geometry.setFromPoints(plain);
@@ -583,23 +615,20 @@ MotionTrail.drawDots = function (main, weights) {
   // SAMPLE dots keep IDENTITY — which control is this. KEY dots carry TIME, because a key is
   // where an edit can actually land, so "which of these is at the playhead, and which side of
   // it is the rest" is the question you are asking of them.
+  // Published for recolor, which runs every frame and owns the colours: the identity tint, the
+  // key times, and a map from SAMPLE index to which cloud a sample landed in and where. Without
+  // that map a preselected sample cannot be found again once the two clouds are split.
   const col = Skeleton.boneColor(main, strand.pin._pinnedJoint);
-  const plainCol = new Float32Array(plain.length * 3);
-  for (let i = 0; i < plain.length; i++) {
-    plainCol[i * 3] = col.r; plainCol[i * 3 + 1] = col.g; plainCol[i * 3 + 2] = col.b;
-  }
-  setColors(v.dots, plainCol);
-  v.dots.material.opacity = 0.55;
-
-  const t0 = strand.times[0];
-  const span = (strand.times[strand.times.length - 1] - t0) || 1;
-  const head = now(main);
+  const span = (strand.times[strand.times.length - 1] - strand.times[0]) || 1;
+  v.identity = [col.r, col.g, col.b];
+  v.keyTimes = keyTimes;
+  v.slots = slots;
+  v.plainCol = new Float32Array(plain.length * 3);
+  v.keyCol = new Float32Array(keyTimes.length * 3);
   // Half a sample spacing counts as "on the playhead": the key and the playhead rarely land on
   // the same float, and a white mark that only appears on exact equality never appears.
-  const eps = span / Math.max(1, strand.times.length - 1) * 0.5;
-  const keyCol = new Float32Array(keyTimes.length * 3);
-  for (let i = 0; i < keyTimes.length; i++) timeColor(keyTimes[i], head, span, keyCol, i * 3, eps);
-  setColors(v.keyDots, keyCol);
+  v.nowEps = span / Math.max(1, strand.times.length - 1) * 0.5;
+  v.dots.material.opacity = 0.55;
   v.keyDots.material.opacity = 0.95;
   void weights;
 };

@@ -1,3 +1,4 @@
+import Enums from '../misc/Enums.js';
 import IKSolver from './IKSolver.js';
 // EDITING A MOTION PATH DIRECTLY, and pushing the result back onto the keys.
 //
@@ -398,6 +399,8 @@ MotionPathEdit.dragXR = function (main, tip) {
 // gets subtly different second implementations.
 MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, strength, options) {
   const tip = xrTip(main, options);
+  // Stashed for preselection, which needs the tip on frames where nothing is pressed.
+  main._pathXRTip = tip;
   if (MotionPathEdit.active(main)) {
     if (!isPressed) { MotionPathEdit.endStroke(main); tool._pathXRHeld = false; return true; }
     const ok = mode === 'smooth'
@@ -417,6 +420,43 @@ MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, streng
 // Set by MotionTrail at import time, so this module does not import the drawing back and close
 // a cycle (module_load_test reports those as "Class extends value undefined").
 MotionPathEdit.redrawHook = function () {};
+
+// PRESELECTION — which sample a click would take. Samples are discrete and the nearest one may
+// be a little off where you are pointing, so without this the curve appears to move from
+// somewhere other than the cursor. Showing it in advance turns that from a mystery into an aim.
+//
+// Only for the tools that can act on a path: a highlight under a brush that will sculpt the
+// mesh instead is a promise the click does not keep.
+MotionPathEdit.hoverIndex = function (main) {
+  if (main._pathEdit) return main._pathEdit.index;   // during a drag, the anchor is the answer
+  const strand = main._trailStrand;
+  if (!strand || !strand.points || strand.points.length < 2) return -1;
+
+  const sm = main.getSculptManager && main.getSculptManager();
+  const idx = sm && sm.getToolIndex && sm.getToolIndex();
+  if (idx !== Enums.Tools.MOVE && idx !== Enums.Tools.SMOOTH) return -1;
+  const tool = sm.getCurrentTool && sm.getCurrentTool();
+
+  // In the headset the tip is a point in the world, so proximity answers it directly. The tip
+  // is stashed by strokeXR, which runs every frame whether or not the trigger is down.
+  if (main._vrSculpting || main._xrSession) {
+    const tip = main._pathXRTip;
+    if (!tip) return -1;
+    const r = main._vrLastPickingRadius || 0.05;
+    let best = -1, bestD = r * r;
+    for (let i = 0; i < strand.points.length; i++) {
+      const d = dist2(strand.points[i], tip);
+      if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  const camera = main.getCamera && main.getCamera();
+  if (!camera || !tool || !tool.getScreenRadius) return -1;
+  const project = (p) => { const s = camera.project([p.x, p.y, p.z]); return { x: s[0], y: s[1] }; };
+  return MotionPathEdit.hit(strand.points, project, main._mouseX, main._mouseY,
+                            tool.getScreenRadius());
+};
 
 MotionPathEdit.active = function (main) { return !!(main && main._pathEdit); };
 

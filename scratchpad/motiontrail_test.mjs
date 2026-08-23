@@ -54,7 +54,9 @@ globalThis.window = globalThis.window || {};
 globalThis.__solves = [];
 // MotionTrail publishes the editor's redraw hook, so the editor need not import the drawing
 // back and close a cycle. Stubbed here because the drawing is not what this harness tests.
-const MotionPathEdit = {};
+// Preselection lives in the editor; the trail asks it which sample a click would take. Stubbed
+// to "nothing hovered" by default, and overridden where a test is about the highlight itself.
+const MotionPathEdit = { hoverIndex: () => (globalThis.__hover == null ? -1 : globalThis.__hover) };
 `;
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');
@@ -68,6 +70,7 @@ const THREE = await import(THREE_PATH);
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
+const near = (a, b, e) => Math.abs(a - b) < (e || 1e-6);
 
 // A joint whose position is a known function of time, so the sampled curve can be checked
 // against the times the sampler CLAIMS it visited rather than against itself.
@@ -452,11 +455,65 @@ function setup(times) {
   // SAMPLE dots keep identity — with several paths on screen, which one is the question they
   // answer. KEY dots moved onto the time ramp, because a key is where an edit can land, so
   // which side of the playhead it sits on is what you need from it.
-  check('...and the sample dots still carry the identity colour',
-    /plainCol\[i \* 3\] = col\.r/.test(SRC),
-    'with several paths on screen, which one is the question the dots answer');
-  check('...while the KEY dots are on the time ramp',
-    /timeColor\(keyTimes\[i\], head, span, keyCol/.test(SRC));
+  // Behavioural now that recolor owns the dot colours: drive it and read the buffers back.
+  {
+    const mk = (n) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      return { geometry: g, material: { size: 0, opacity: 1 } };
+    };
+    // Four samples: 0 and 2 are keys, 1 and 3 are plain fill.
+    const v = {
+      lines: [], dots: mk(2), keyDots: mk(2),
+      identity: [0.2, 0.4, 0.9],
+      keyTimes: [0, 1],
+      nowEps: 0.25,
+      slots: [{ key: true, i: 0 }, { key: false, i: 0 }, { key: true, i: 1 }, { key: false, i: 1 }],
+      plainCol: new Float32Array(6), keyCol: new Float32Array(6),
+    };
+    const m = { _trailTimes: [0, 0.5, 1, 1.5], _trailVis: v };
+    window._animationRegistry = { globalPlaybackTime: 0 };
+
+    globalThis.__hover = -1;
+    mod.default.recolor(m);
+    const pc = v.dots.geometry.getAttribute('color').array;
+    const kc = v.keyDots.geometry.getAttribute('color').array;
+    check('...and the sample dots still carry the identity colour',
+      near(pc[0], 0.2) && near(pc[1], 0.4) && near(pc[2], 0.9),
+      'with several paths on screen, which one is the question the dots answer');
+    check('...while the KEY dots are on the time ramp',
+      near(kc[0], 1) && near(kc[1], 1) && near(kc[2], 1)      // key 0 sits on the playhead
+        && kc[4] > kc[3],                                      // key 1 is ahead of it: green
+      Array.from(kc).join(','));
+
+    // PRESELECTION: which sample a click would take. Samples are discrete, so without this the
+    // curve appears to move from somewhere other than the cursor.
+    globalThis.__hover = 3;            // a PLAIN sample, slot 1 of the plain cloud
+    mod.default.recolor(m);
+    const pc2 = v.dots.geometry.getAttribute('color').array;
+    check('the preselected sample is highlighted', pc2[3] > 0.9 && pc2[5] < 0.4,
+      Array.from(pc2).join(','));
+    check('...and its neighbours are not', near(pc2[0], 0.2) && near(pc2[2], 0.9));
+    check('...and it grows, since a colour shift alone is easy to miss at four pixels',
+      v.dots.material.size > 4, v.dots.material.size);
+    check('...while the other cloud stays its normal size',
+      v.keyDots.material.size === 6, v.keyDots.material.size);
+
+    globalThis.__hover = 0;            // now a KEY sample
+    mod.default.recolor(m);
+    const kc2 = v.keyDots.geometry.getAttribute('color').array;
+    check('a preselected KEY highlights too, and is not confusable with the playhead white',
+      kc2[0] > 0.9 && kc2[2] < 0.4, Array.from(kc2).join(','));
+    check('...and the highlight is dropped when nothing is hovered', (() => {
+      globalThis.__hover = -1;
+      mod.default.recolor(m);
+      const k = v.keyDots.geometry.getAttribute('color').array;
+      return near(k[0], 1) && near(k[2], 1) && v.dots.material.size === 4;
+    })(), 'a stuck highlight promises a click that would land somewhere else');
+
+    globalThis.__hover = -1;
+    window._animationRegistry = { globalPlaybackTime: 1 };
+  }
   check('...through the SAME ramp the line uses',
     (SRC.match(/timeColor\(/g) || []).length >= 3 && /function timeColor/.test(SRC),
     'two ramps drift into two slightly different reds');
@@ -487,8 +544,8 @@ function setup(times) {
       'this is what the key dots must NOT be called with');
   }
   check('the key dots are given a real tolerance, not zero',
-    /timeColor\(keyTimes\[i\], head, span, keyCol, i \* 3, eps\)/.test(SRC)
-      && /const eps = span \/ Math\.max\(1, strand\.times\.length - 1\) \* 0\.5/.test(SRC),
+    /timeColor\(v\.keyTimes\[i\], head, span, keyCol, i \* 3, v\.nowEps\)/.test(SRC)
+      && /v\.nowEps = span \/ Math\.max\(1, strand\.times\.length - 1\) \* 0\.5/.test(SRC),
     'a key rarely lands on the same float as the playhead');
   check('the far end of the ramp is a midtone GREY, not black',
     /const FAR_GREY\s*=\s*\[0\.48/.test(SRC),

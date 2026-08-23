@@ -56,5 +56,36 @@ if (list) {
   }
 }
 
+// --- Move and Smooth, but only while a path is on screen -----------------------------------
+//
+// The exclusion of sculpt brushes reads "they work ON the surface" — true while sculpting, and
+// false the moment they are editing a motion path, which hangs inside and behind the model.
+{
+  // The DEFINITION, not the call site: `_updateStylusXray()` matches `this._updateStylusXray();`
+  // first, and slicing from there gives an empty body that every check below reads as absent.
+  const at = SCENE.indexOf('_updateStylusXray() {');
+  check('the xray function is locatable', at >= 0);
+  const fn = SCENE.slice(at);
+  const body = fn.slice(0, fn.indexOf('\n  }'));
+  // Not just that the identifiers appear — that `onPath` actually REACHES the gate. Testing
+  // for the names alone passed with `|| onPath` deleted, because they still occur in the line
+  // that computes it.
+  check('Move and Smooth can raise the ghost',
+    /Enums\.Tools\.MOVE/.test(body) && /Enums\.Tools\.SMOOTH/.test(body)
+      && /const on =[^;]*\|\|\s*onPath;/.test(body),
+    'onPath is computed but never consulted');
+  check('...but only when a motion path is drawn',
+    /const onPath = pathTool && !!this\._trailStrand/.test(body),
+    'otherwise it is an always-on blue tip with nothing to look at while sculpting');
+
+  // THIS IS THE SAME CACHE THAT CAUSED THE ORIGINAL BUG. The function returns early on an
+  // unchanged key, and onPath flips WITHOUT the tool changing — select a pin and the path
+  // appears under the same Move tool. A key that ignores it latches whichever state happened
+  // to be current when Move was selected.
+  check('the strand is part of the cache key, not just the hand',
+    /const key = on \? this\._dominantHand \+ \(onPath \? ':path' : ''\) : 'off'/.test(body),
+    'the ghost would latch on or off until the tool changed');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
