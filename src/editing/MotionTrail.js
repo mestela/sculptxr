@@ -448,7 +448,31 @@ function makeGnomons(main) {
 // Sized off the scene, not a constant: the same triad has to be legible on a head and on a
 // whole figure, and Skeleton.sceneUnit is what every other rig marker is scaled by.
 function gnomonLength(main) {
-  return (Skeleton.sceneUnit(main) || 1) * 0.06;
+  return (Skeleton.sceneUnit(main) || 1) * 0.03;
+}
+
+// DISTANCE IS SHOWN BY SCALE, NOT BY FADING. A faded triad still occupies its space and still
+// reads as three coloured lines, so a long take turns into a wall of them; a shrinking one
+// simply gets out of the way, and vanishes for real at the edge of the range instead of
+// lingering as a smudge. It also keeps the axis colours at full strength, which is the one
+// thing about a gnomon you must not have to squint at.
+//
+// Counted in KEYS, not seconds: ten keys either side is ten poses either side, whether they
+// are a second apart or a minute. Frames would mean a densely keyed passage shows three triads
+// and a sparse one shows none.
+const GNOMON_KEY_REACH = 10;
+
+// Where the playhead sits in the key ordering, as a FRACTIONAL index — it rarely lands on a
+// key, and an integer answer would make the whole set jump a step as it crossed each one.
+function playheadKeyIndex(keyTimes, head) {
+  const n = keyTimes.length;
+  if (!n) return 0;
+  if (head <= keyTimes[0]) return 0;
+  if (head >= keyTimes[n - 1]) return n - 1;
+  let i = 1;
+  while (i < n && keyTimes[i] < head) i++;
+  const t0 = keyTimes[i - 1], t1 = keyTimes[i];
+  return (i - 1) + (t1 > t0 ? (head - t0) / (t1 - t0) : 0);
 }
 
 MotionTrail.drawGnomons = function (main) {
@@ -464,6 +488,9 @@ MotionTrail.drawGnomons = function (main) {
   if (!n) { v.gnomons.visible = false; return; }
 
   const L = gnomonLength(main);
+  // Sized for EVERY key even though only some are drawn: which ones qualify changes as the
+  // playhead moves, and a buffer that resized with them would reallocate constantly. The
+  // draw range does the hiding instead.
   const need = n * 6 * 3;
   if (!v.gnomonPos || v.gnomonPos.length !== need) {
     v.gnomonPos = new Float32Array(need);
@@ -472,12 +499,21 @@ MotionTrail.drawGnomons = function (main) {
   }
   const pos = v.gnomonPos;
   const col = v.gnomonCol;
+
+  const keyTimes = idx.map((i) => strand.times[i]);
+  const centre = playheadKeyIndex(keyTimes, now(main));
+
   let o = 0;
-  for (const i of idx) {
+  let verts = 0;
+  for (let k = 0; k < idx.length; k++) {
+    const scale = 1 - Math.abs(k - centre) / GNOMON_KEY_REACH;
+    if (scale <= 0) continue;          // past the reach: not drawn at all, not drawn faintly
+    const len = L * scale;
+    const i = idx[k];
     const p = strand.points[i];
     const q = strand.quats[i];
     for (let a = 0; a < 3; a++) {
-      _axV.set(a === 0 ? L : 0, a === 1 ? L : 0, a === 2 ? L : 0);
+      _axV.set(a === 0 ? len : 0, a === 1 ? len : 0, a === 2 ? len : 0);
       if (q) _axV.applyQuaternion(q);
       pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
       pos[o + 3] = p.x + _axV.x; pos[o + 4] = p.y + _axV.y; pos[o + 5] = p.z + _axV.z;
@@ -485,8 +521,10 @@ MotionTrail.drawGnomons = function (main) {
       col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2];
       col[o + 3] = c[0]; col[o + 4] = c[1]; col[o + 5] = c[2];
       o += 6;
+      verts += 2;
     }
   }
+  if (!verts) { v.gnomons.visible = false; return; }
   const g = v.gnomons.geometry;
   const pa = g.getAttribute('position');
   if (v.gnomonFresh || !pa || pa.count !== n * 6) {
@@ -498,6 +536,7 @@ MotionTrail.drawGnomons = function (main) {
     const ca = g.getAttribute('color');
     if (ca) ca.needsUpdate = true;
   }
+  g.setDrawRange(0, verts);
   v.gnomons.visible = true;
 };
 

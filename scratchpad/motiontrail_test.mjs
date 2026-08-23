@@ -617,6 +617,66 @@ function setup(times) {
     near(at(7)[0] - at(6)[0], 0, 1e-6) && at(7)[1] - at(6)[1] > 0,
     'a triad that ignores the quaternion is just three lines at a point');
 
+  // DISTANCE IS SHOWN BY SCALE. A faded triad still occupies its space and still reads as
+  // three coloured lines; a shrinking one gets out of the way and vanishes for real.
+  {
+    const pts = [], qs = [], times = [], keys = [];
+    for (let i = 0; i < 30; i++) {
+      pts.push({ x: i, y: 0, z: 0 });
+      qs.push(new THREE.Quaternion());
+      times.push(i);
+      keys.push(i);                       // every sample is a key, so key index == time
+    }
+    const s2 = { geometry: new THREE.BufferGeometry(), visible: false };
+    const m2 = { _trailStrand: { points: pts, quats: qs, times: times,
+                                 pin: { getID: () => 1, _pinnedJoint: {} } },
+                 _trailVis: { gnomons: s2, keyIndices: keys } };
+    window._flag_gnomons = true;
+    window._animationRegistry = { globalPlaybackTime: 15 };
+    mod.default.drawGnomons(m2);
+
+    const P = s2.geometry.getAttribute('position').array;
+    const axisLen = (k) => {              // length of the X axis of the k'th DRAWN triad
+      const o = k * 18;
+      return Math.abs(P[o + 3] - P[o]);
+    };
+    const drawn = s2.geometry.drawRange.count / 6;
+    check('only keys within reach are drawn at all',
+      drawn === 19, drawn);               // 15 +/- 10 exclusive of the zero-scale ends
+    check('...and the rest are not drawn faintly, they are not drawn',
+      s2.geometry.drawRange.count < 30 * 6);
+
+    check('the triad at the playhead is the largest', axisLen(9) > axisLen(0));
+    check('...and it shrinks linearly with distance in KEYS',
+      near(axisLen(9) - axisLen(8), axisLen(8) - axisLen(7), 1e-6),
+      [axisLen(7), axisLen(8), axisLen(9)].join(','));
+    check('...reaching zero at the edge of the reach', axisLen(0) < axisLen(9) * 0.15,
+      axisLen(0) + ' vs ' + axisLen(9));
+
+    // Counted in KEYS, not seconds: ten keys either side is ten poses either side, whether
+    // they are a second apart or a minute.
+    // The playhead moves with them, or this tests "the playhead drifted to the start" instead.
+    const stretched = times.map((t) => t * 100);
+    m2._trailStrand.times = stretched;
+    window._animationRegistry = { globalPlaybackTime: 1500 };
+    mod.default.drawGnomons(m2);
+    // Visibility as well as the count: with the reach measured in seconds nothing qualifies at
+    // this spacing, the draw is abandoned early, and the STALE draw range from the previous
+    // call still reads as correct.
+    check('the reach does not change when the keys are spread out in time',
+      s2.visible === true && s2.geometry.drawRange.count / 6 === drawn,
+      s2.visible + ' / ' + s2.geometry.drawRange.count / 6);
+    m2._trailStrand.times = times;
+
+    // The colours stay at full strength - the one thing about a gnomon you must not squint at.
+    const C = s2.geometry.getAttribute('color').array;
+    check('axis colours do not fade with distance', near(C[0], C[18 * 9]),
+      'scale carries the distance, colour carries which axis');
+
+    window._flag_gnomons = false;
+    window._animationRegistry = { globalPlaybackTime: 1 };
+  }
+
   // It runs every frame now, so it must not allocate a fresh pair of buffers each time.
   const firstPos = seg.geometry.getAttribute('position');
   mod.default.drawGnomons(m);
