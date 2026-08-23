@@ -56,7 +56,7 @@ globalThis.__solves = [];
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body +
-  '\nexport { samplePaths, signature, range, trailed };\nexport default MotionTrail;\n');
+  '\nexport { samplePaths, signature, range, trailed, animated };\nexport default MotionTrail;\n');
 
 const mod = await import(outPath + '?v=' + Date.now());
 const { samplePaths, signature, range } = mod;
@@ -178,15 +178,70 @@ function setup(times) {
   check('and restoring the key restores it', signature(main, [j], r) === base);
 
   // A pin drag does not touch a track, and it moves the solved pose as much as a key does.
-  j._pin = { getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.5,0,0,1] };
+  // A pin is a MESH, so it has an id and can carry a track — stub it as one.
+  j._pin = { _isPinTarget: true, getID: () => 901, getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.5,0,0,1] };
   const pinned = signature(main, [j], r);
   check('a pin appearing changes it', pinned !== base);
-  j._pin = { getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.9,0,0,1] };
+  j._pin = { _isPinTarget: true, getID: () => 901, getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.9,0,0,1] };
   check('and dragging that pin changes it again', signature(main, [j], r) !== pinned);
+  delete j._pin;
+
+  // A KEYED pin is not the same as a dragged one: its track can change without its matrix
+  // moving at all (retime a key, delete one, add one at another time). Both have to register.
+  j._pin = { _isPinTarget: true, getID: () => 901,
+    getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.5,0,0,1] };
+  const dragOnly = signature(main, [j], r);
+  window._animationRegistry.tracks.set(901, { times: [0, 1, 2] });
+  const keyed = signature(main, [j], r);
+  check('a pin gaining a track changes the fingerprint', keyed !== dragOnly, keyed);
+  window._animationRegistry.tracks.set(901, { times: [0, 1.5, 2] });
+  check('...and retiming that pin key changes it again, though the pin has not moved',
+    signature(main, [j], r) !== keyed);
+  window._animationRegistry.tracks.delete(901);
   delete j._pin;
 
   const r2 = { start: 0, end: 1 };
   check('changing the range changes it', signature(main, [j], r2) !== base);
+}
+
+// --- 4b. AN ANIMATED PIN IS EVALUATED, NOT FROZEN ------------------------------------
+//
+// MotionTrail predates pin animation. It was written when a pin was a static anchor you drag,
+// so the sampler writes the keyed BONES and then calls holdPins — and holdPins reads whatever
+// transform each pin currently has. A pin with a track of its own is therefore held at its
+// present position for every sample, and the trail is a curve the playback does not follow.
+// That is the exact failure the file's own header says the feature was blocked on.
+//
+// Real playback does not have this bug: Scene.js iterates EVERY mesh, and a pin is an ordinary
+// mesh ("everything a pin needs in order to be transformable and keyable comes free from being
+// an ordinary object" — IKSolver.makePinObject). So the two evaluators disagree, which is the
+// second-evaluator problem the header warns about.
+{
+  const { j, main, reg } = setup();
+  const pin = { _isPinTarget: true, _id: 900, _p: [0, 0, 0],
+    _track: { times: [0, 1, 2] }, getID() { return this._id; } };
+  j._pin = pin;
+  main.getMeshes = () => [j, pin];
+  reg.tracks.set(pin.getID(), pin._track);
+
+  const seen = [];
+  const realUpdate = reg.update;
+  reg.update = function (mesh) { seen.push([mesh.getID(), this.globalPlaybackTime]); realUpdate.call(this, mesh); };
+
+  window._trailSamples = 5;
+  samplePaths(main, [j]);
+  delete window._trailSamples;
+
+  const pinWrites = seen.filter(([id]) => id === 900);
+  check('an animated pin is evaluated at every sample',
+    pinWrites.length >= 5,
+    `the pin's track was applied ${pinWrites.length} times across 5 samples — holdPins then ` +
+    'reads a stale transform, so the trail is not the path playback takes');
+  check('...at the sample times, not all at one time',
+    new Set(pinWrites.map(([, t]) => t)).size >= 5,
+    pinWrites.map(([, t]) => t).join(','));
+
+  delete j._pin;
 }
 
 // --- 5. no range, no trail --------------------------------------------------------------
@@ -196,6 +251,52 @@ function setup(times) {
   window._animMasterDuration = 0;
   check('an empty timeline yields no range', range() === null);
   check('and no path', samplePaths(main, [j]) === null);
+}
+
+// --- 5b. a pin gets its AUTHORED curve as well as the solved one ------------------------
+//
+// The whole point of trailing a pin. The control curve is what you keyed and what will become
+// editable; the output curve is what the solver managed. When IK reaches, they coincide; where
+// they separate, the gap is the diagnosis. An unkeyed pin has no authored path at all, only a
+// stationary point, so it gets one curve rather than a degenerate second one.
+{
+  const { j, main, reg } = setup();
+  const pin = { _isPinTarget: true, _id: 902, _p: [0, 0, 0], _pinnedJoint: j,
+    getID() { return this._id; } };
+  j._pin = pin;
+  main.getMeshes = () => [j, pin];
+
+  main.getMesh = () => j;
+  const forBone = mod.trailed(main);
+  check('a selected bone trails itself, once',
+    forBone.length === 1 && forBone[0].obj === j && forBone[0].control === false,
+    JSON.stringify(forBone.map((t) => [t.obj.getID(), t.control])));
+
+  main.getMesh = () => pin;
+  const unkeyed = mod.trailed(main);
+  check('an UNKEYED pin trails only the solved joint path',
+    unkeyed.length === 1 && unkeyed[0].obj === j && unkeyed[0].control === false,
+    JSON.stringify(unkeyed.map((t) => [t.obj.getID(), t.control])));
+
+  reg.tracks.set(pin.getID(), { times: [0, 1, 2] });
+  const keyed = mod.trailed(main);
+  check('a KEYED pin trails its authored curve too',
+    keyed.length === 2, JSON.stringify(keyed.map((t) => [t.obj.getID(), t.control])));
+  check('...the authored curve is the PIN, flagged as the control',
+    keyed[0] && keyed[0].obj === pin && keyed[0].control === true);
+  check('...and the solved curve is the JOINT, not flagged',
+    keyed[1] && keyed[1].obj === j && keyed[1].control === false);
+
+  // Two curves means two sampled paths, or the drawing has nothing to draw the second from.
+  window._trailSamples = 4;
+  const paths = samplePaths(main, keyed);
+  delete window._trailSamples;
+  check('...and both are sampled', !!paths && paths.length === 2
+    && paths[0].length === 4 && paths[1].length === 4,
+    paths ? paths.map((p) => p.length).join(',') : 'null');
+
+  reg.tracks.delete(pin.getID());
+  delete j._pin;
 }
 
 // --- 6. viewport representation ----------------------------------------------------------
