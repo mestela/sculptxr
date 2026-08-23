@@ -114,6 +114,10 @@ export default class GuiTimeline {
 
   initDOM() {
     this._container = document.createElement('div');
+    // Named so other on-screen controls can keep out from under it — the modifier button rides
+    // above this panel, and a querySelector on inline styles would break the first time one of
+    // them changed.
+    this._container.id = 'timeline-panel';
     this._container.style.position = 'fixed';
     this._container.style.bottom = '0';
     this._container.style.left = '0';

@@ -12,12 +12,14 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 
 const ID = 'modifier-btn';
 const SIDE_OPT = 'modifierLeft';
+const TIMELINE_ID = 'timeline-panel';
+const GAP = 24;
 
 // Thumb zone, clear of the palm on an iPad, and swappable so a left-hander is not reaching
 // across their own drawing hand.
 const CSS = `
 #${ID} {
-  position: absolute; bottom: 24px; width: 96px; height: 52px;
+  position: fixed; width: 96px; height: 52px;
   display: none; align-items: center; justify-content: center;
   font: 600 15px/1 system-ui, sans-serif; letter-spacing: 0.02em;
   color: #cdd6f4; background: rgba(30, 30, 46, 0.82);
@@ -62,6 +64,27 @@ export default class ModifierButton {
     this._el = el;
   }
 
+  // RIDE ABOVE THE TIMELINE. It is a fixed panel pinned to the bottom of the window, and the
+  // modifier lives in the same corner — so with the animation panel open the button was simply
+  // underneath it.
+  //
+  // Watched rather than pushed. A resize hook has to be added to every path that can change the
+  // panel — show, hide, drag-resize, layout — and the one that gets forgotten leaves the button
+  // stranded in a place that looks deliberate. One observer notices all of them, including
+  // display:none, which reads as a size change to zero.
+  _timelineHeight() {
+    if (!this._timeline || !this._timeline.isConnected) {
+      this._timeline = document.getElementById(TIMELINE_ID);
+      if (this._timeline && !this._observer && typeof ResizeObserver !== 'undefined') {
+        this._observer = new ResizeObserver(() => this.refresh());
+        this._observer.observe(this._timeline);
+      }
+    }
+    const tl = this._timeline;
+    if (!tl || tl.style.display === 'none') return 0;
+    return tl.getBoundingClientRect().height || 0;
+  }
+
   // Cheap, and called from the places that already mean "the tool or selection changed".
   refresh() {
     const el = this._el;
@@ -82,7 +105,8 @@ export default class ModifierButton {
     el.textContent = label;
     el.classList.toggle('armed', SecondaryAction.armed(this._main));
     const left = !!getOptionsURL()[SIDE_OPT];
-    el.style.left = left ? '24px' : '';
-    el.style.right = left ? '' : '24px';
+    el.style.left = left ? GAP + 'px' : '';
+    el.style.right = left ? '' : GAP + 'px';
+    el.style.bottom = (this._timelineHeight() + GAP) + 'px';
   }
 }

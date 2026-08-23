@@ -133,5 +133,31 @@ function app(toolIndex, hovered) {
     'consuming Escape unconditionally would break the Bones chain');
 }
 
+// --- 6. the on-screen button keeps out from under the timeline ----------------------------
+//
+// The timeline is a FIXED panel pinned to the bottom of the window, and the modifier lives in
+// the same corner, so with the animation panel open the button was underneath it. Watched with
+// one observer rather than pushed from every show/hide/resize path — the forgotten call site is
+// how a control ends up stranded somewhere that looks deliberate.
+{
+  const MB = fs.readFileSync(path.join(REPO, 'src/gui/ModifierButton.js'), 'utf8');
+  const TL = fs.readFileSync(path.join(REPO, 'src/gui/GuiTimeline.js'), 'utf8');
+
+  check('the timeline panel is addressable by id, not by an inline-style selector',
+    /this\._container\.id = 'timeline-panel';/.test(TL) && /TIMELINE_ID = 'timeline-panel'/.test(MB));
+  check('the button is offset by the timeline height',
+    /el\.style\.bottom = \(this\._timelineHeight\(\) \+ GAP\)/.test(MB));
+  check('a hidden timeline contributes no offset',
+    /tl\.style\.display === 'none'\) return 0;/.test(MB),
+    'display:none still reports a bounding box in some layouts');
+  check('...and it is WATCHED, so a drag-resize moves the button too',
+    /new ResizeObserver\(\(\) => this\.refresh\(\)\)/.test(MB),
+    'without an observer the offset is only correct until the panel is resized');
+  // Fixed, not absolute: the timeline is position:fixed against the window, so the button has
+  // to measure against the same origin or the two disagree whenever the viewport is inset.
+  check('the button is positioned against the same origin as the timeline',
+    /position: fixed; width: 96px/.test(MB));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
