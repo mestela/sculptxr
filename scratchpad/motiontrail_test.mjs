@@ -59,7 +59,7 @@ const MotionPathEdit = {};
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body +
-  '\nexport { samplePaths, signature, range, trailed, animated, sampleTimes };\nexport default MotionTrail;\n');
+  '\nexport { samplePaths, signature, range, trailed, animated, sampleTimes, timeColor };\nexport default MotionTrail;\n');
 
 const mod = await import(outPath + '?v=' + Date.now());
 const { samplePaths, signature, range } = mod;
@@ -444,9 +444,55 @@ function setup(times) {
 
   // Identity moved to the dots when the line took the gradient.
   check('the line is drawn with per-vertex colour', /vertexColors: true/.test(SRC));
-  check('...and the dots still carry the identity colour',
-    /v\.dots\.material\.color\.setRGB\(col\.r, col\.g, col\.b\)/.test(SRC),
+  // A path runs through the model it belongs to; with depth testing on it z-fights wherever it
+  // grazes a surface, which looks like the curve itself is unstable.
+  check('the line reads as an overlay throughout, like the dots',
+    /depthWrite: false, depthTest: false, vertexColors: true/.test(SRC),
+    'depth testing makes the curve shimmer where it grazes the mesh');
+  // SAMPLE dots keep identity — with several paths on screen, which one is the question they
+  // answer. KEY dots moved onto the time ramp, because a key is where an edit can land, so
+  // which side of the playhead it sits on is what you need from it.
+  check('...and the sample dots still carry the identity colour',
+    /plainCol\[i \* 3\] = col\.r/.test(SRC),
     'with several paths on screen, which one is the question the dots answer');
+  check('...while the KEY dots are on the time ramp',
+    /timeColor\(keyTimes\[i\], head, span, keyCol/.test(SRC));
+  check('...through the SAME ramp the line uses',
+    (SRC.match(/timeColor\(/g) || []).length >= 3 && /function timeColor/.test(SRC),
+    'two ramps drift into two slightly different reds');
+  // A hard-edged quad a few pixels across crawls as it moves: every frame it lands on a
+  // different set of whole pixels and nothing blends the step.
+  check('the sprites are round and soft-edged, not raw squares',
+    /map: dotTexture\(\)/.test(SRC) && /createRadialGradient/.test(SRC),
+    'a hard-edged few-pixel quad shimmers as it moves');
+  check('...and only ONE texture is built for all of them',
+    /let _dotTex = null/.test(SRC) && /if \(_dotTex\) return _dotTex/.test(SRC),
+    'a texture per point cloud is a texture per rebuild');
+  // A key rarely lands on the same float as the playhead.
+  // Behavioural, not a spelling: the ramp is lifted and run. A source check here passed with
+  // the call site changed to hand it a tolerance of zero, which is exactly the defect.
+  {
+    const out = new Float32Array(3);
+    mod.timeColor(1.0, 1.0, 2, out, 0, 0.25);
+    check('a key AT the playhead reads white', out[0] === 1 && out[1] === 1 && out[2] === 1,
+      Array.from(out).join(','));
+    // Outside the tolerance, deliberately: 1.1 is INSIDE 0.25 of the playhead and is supposed
+    // to read white, so testing it here would be asserting the opposite of the rule.
+    mod.timeColor(1.4, 1.0, 2, out, 0, 0.25);
+    check('...and one outside the tolerance does not, but is still nearly saturated',
+      !(out[0] === 1 && out[1] === 1) && out[1] > 0.8, Array.from(out).join(','));
+    mod.timeColor(1.0, 1.0, 2, out, 0, 0);
+    check('...and a zero tolerance means no white mark ever appears',
+      !(out[0] === 1 && out[1] === 1 && out[2] === 1),
+      'this is what the key dots must NOT be called with');
+  }
+  check('the key dots are given a real tolerance, not zero',
+    /timeColor\(keyTimes\[i\], head, span, keyCol, i \* 3, eps\)/.test(SRC)
+      && /const eps = span \/ Math\.max\(1, strand\.times\.length - 1\) \* 0\.5/.test(SRC),
+    'a key rarely lands on the same float as the playhead');
+  check('the far end of the ramp is a midtone GREY, not black',
+    /const FAR_GREY\s*=\s*\[0\.48/.test(SRC),
+    'fading to black desaturates, so a dim red reads as orange and a dim green as lime');
 }
 
 // --- 6. viewport representation ----------------------------------------------------------

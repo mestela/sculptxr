@@ -159,22 +159,16 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
+      ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
     </div>
   `;
 }
 
-export function buildBoneAnimationHTML(main, style) {
-  const c = DIALECT[style] || DIALECT.mm;
-  const inner = `
-    ${sectionTitle(c, 'Rig Animation')}
-    <div class="${c.btnRow}">
-      ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
-    </div>
-  `;
-  // Some hosts group their controls in a wrapper that carries the spacing. Opt-in per dialect
-  // rather than assumed, since the menu panels lay their sections out themselves.
-  return c.section ? `<div class="${c.section}">${inner}</div>` : inner;
-}
+// Trails used to live in a block of its own under Animation, on the grounds that a motion trail
+// is an animation aid. In use it is simply another thing the rig can draw, and it belongs next
+// to the rest of them — you reach for it while looking at the rig, not while setting up a take.
+// The block is gone rather than left empty: an empty section is a heading with nothing under it.
+export function buildBoneAnimationHTML() { return ''; }
 
 // Compatibility composition for the places/tests that mean "everything relevant while the
 // Bones tool is active". Display and animation deliberately are not part of it any more.

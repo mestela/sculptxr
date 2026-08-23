@@ -67,7 +67,7 @@ check('every mode button reaches a flat screen',
 check('every command button is present on a flat screen',
   ['bone-bind', 'bone-skin', 'bone-rad-all'].every(id => authoring.includes('id="' + id + '"'))
     && ['bone-unpin', 'bone-restpose'].every(id => pose.includes('id="' + id + '"'))
-    && animation.includes('id="bone-trails"'));
+    && display.includes('id="bone-trails"'));
 check('pin count reaches the label', /Clear Pins \(2\)/.test(flat));
 check('wrist panel uses its own class dialect', wrist.includes('mp-voxel-btn') && !wrist.includes('mm-choice'));
 check('menu panel uses its own class dialect', flat.includes('mm-choice') && !flat.includes('mp-voxel-btn'));
@@ -113,8 +113,17 @@ check('pose contains only pose operations',
     && !/bone-(draw|caps|key|trails|solid)/.test(pose));
 check('pose names the full and one-sided pin operations clearly',
   pose.includes('>Mirror Pose<') && pose.includes('>Copy Side<'));
-check('animation owns Trails without the obsolete whole-rig Key Pose command',
-  !animation.includes('bone-key') && animation.includes('bone-trails'));
+// Trails moved out of an animation block of its own and in beside the other rig display flags:
+// in use it is simply another thing the rig can draw, reached for while looking at the rig
+// rather than while setting up a take. The block went with it — an empty section is a heading
+// with nothing under it.
+check('DISPLAY owns Trails, and it sits after Pins',
+  display.indexOf('bone-trails') > display.indexOf('bone-pins'),
+  'it was asked for next to the other things the rig draws');
+check('...and the obsolete whole-rig Key Pose command is still gone',
+  !display.includes('bone-key') && !animation.includes('bone-key'));
+check('...and the empty animation block is not still emitting a heading',
+  animation.trim() === '', JSON.stringify(animation));
 
 // Caller-level routing. The shared blocks can be perfect and still be invisible if one panel
 // forgets to compose or wire them — the same parallel-implementation failure this split is

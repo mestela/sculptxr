@@ -296,15 +296,33 @@ const OUTPUT_OPACITY = 0.35;
 // This takes the line's colour, so IDENTITY moves to the dots — which is the right way round,
 // since the dots are what you aim at, and with several paths on screen the thing you need from
 // a line at a glance is when, not which.
-const PAST_NEAR   = [1.00, 0.42, 0.38];
-const PAST_FAR    = [0.32, 0.02, 0.06];
-const FUTURE_NEAR = [0.55, 1.00, 0.48];
-const FUTURE_FAR  = [0.02, 0.30, 0.10];
+// FULLY SATURATED AT THE PLAYHEAD, FADING TO A MIDTONE GREY. The first attempt lerped toward
+// black at both ends, which desaturates as it darkens: a dim red reads as orange and a dim green
+// as lime, so the two shades stopped being distinguishable exactly where you need to tell them
+// apart. Grey holds the value steady and lets only the SATURATION carry distance.
+const PAST_NEAR   = [1.00, 0.00, 0.00];
+const FUTURE_NEAR = [0.00, 1.00, 0.00];
+const FAR_GREY    = [0.48, 0.48, 0.48];
+// A key sitting on the playhead is the one an edit lands on, so it is not on the scale at all.
+const NOW_WHITE   = [1.00, 1.00, 1.00];
 
 function mix(a, b, k, out, i) {
   out[i]     = b[0] + (a[0] - b[0]) * k;
   out[i + 1] = b[1] + (a[1] - b[1]) * k;
   out[i + 2] = b[2] + (a[2] - b[2]) * k;
+}
+
+// The one ramp, so the line and the key dots cannot drift into two slightly different reds.
+// `nowEps` is how close to the playhead counts as ON it; 0 for the line, which has a sample
+// every few frames and would otherwise show a white speck wandering along it.
+function timeColor(t, head, span, out, i, nowEps) {
+  const d = (t - head) / span;
+  if (nowEps > 0 && Math.abs(t - head) <= nowEps) {
+    out[i] = NOW_WHITE[0]; out[i + 1] = NOW_WHITE[1]; out[i + 2] = NOW_WHITE[2];
+    return;
+  }
+  const k = Math.max(0, 1 - Math.min(1, Math.abs(d)));
+  mix(d < 0 ? PAST_NEAR : FUTURE_NEAR, FAR_GREY, k, out, i);
 }
 
 // Where the playhead is, in the same clock the samples were taken on.
@@ -323,8 +341,10 @@ function now(main) {
 // DEFAULT PointsMaterial draws world-sized camera-facing squares, and they became a wall of red
 // that hid both the curve and the model. The fix for that was sizeAttenuation, not banning the
 // primitive — a point pinned to a few SCREEN pixels is a dot, and cannot swamp anything.
-const DOT_PX = 7;          // a sample: grabbable, small
-const KEY_DOT_PX = 11;     // a sample that is also a KEY: where an edit can actually land
+// Halved from the first attempt, which drew squares big enough to sit ON the curve rather than
+// mark it. The ratio between them is kept: a key still reads as the larger mark.
+const DOT_PX = 4;          // a sample: grabbable, small
+const KEY_DOT_PX = 6;      // a sample that is also a KEY: where an edit can actually land
 const DOT_ORDER = 9999;
 
 // A sample sitting on a key time is worth showing differently: push-back moves KEYS, so those
@@ -345,11 +365,42 @@ function keyMask(main, pin, times) {
   return out;
 }
 
+// A ROUND, SOFT-EDGED SPRITE instead of the raw square. A PointsMaterial with no map draws a
+// hard-edged quad, and a hard-edged quad a few pixels across crawls and shimmers as it moves —
+// every frame it lands on a different set of whole pixels and there is nothing to blend the
+// step. A radial alpha ramp gives the edge something to resolve against, which is what stops
+// the crawl; it also stops the marks reading as squares.
+//
+// Built once and shared: a texture per point cloud would be a texture per rebuild.
+let _dotTex = null;
+function dotTexture() {
+  if (_dotTex) return _dotTex;
+  const N = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = N;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+  // Solid to about two thirds, then a soft shoulder — a pure gradient to the rim looks like a
+  // smudge rather than a dot at these sizes.
+  g.addColorStop(0.0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.62, 'rgba(255,255,255,1)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, N, N);
+  _dotTex = new THREE.CanvasTexture(c);
+  _dotTex.minFilter = THREE.LinearFilter;
+  _dotTex.magFilter = THREE.LinearFilter;
+  return _dotTex;
+}
+
 function makeDots(main, sizePx) {
   const g = Skeleton.overlayGroup(main);
   const pts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
     size: sizePx,
     sizeAttenuation: false,   // SCREEN pixels — this is the whole difference from the old wall
+    map: dotTexture(),
+    alphaTest: 0.02,          // discard the fully transparent rim rather than blending it
+    vertexColors: true,       // key dots carry the time ramp; sample dots carry identity
     transparent: true,
     depthWrite: false,
     depthTest: false,
@@ -363,8 +414,19 @@ function makeDots(main, sizePx) {
 
 function makeLine(main) {
   const g = Skeleton.overlayGroup(main);
+  // depthTest OFF, like the dots. A motion path runs through the model it belongs to, so with
+  // depth testing on it z-fights wherever it grazes a surface — which is a shimmer that looks
+  // like the curve itself is unstable. It is an overlay; it should read as one throughout
+  // rather than dipping in and out of the geometry.
+  //
+  // What this does NOT fix: THREE.Line draws hardware 1px lines, which are aliased by nature
+  // and step between whole pixels as the camera moves. The real fix is Line2/LineMaterial,
+  // which triangulates a screen-space width and antialiases properly — but it needs the
+  // viewport resolution kept in step on every resize, so it is its own change, not a flag.
   const line = new THREE.Line(new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({ transparent: true, depthWrite: false, vertexColors: true }));
+    new THREE.LineBasicMaterial({
+      transparent: true, depthWrite: false, depthTest: false, vertexColors: true,
+    }));
   line.frustumCulled = false;
   line.isPickable = false;
   line.renderOrder = TRAIL_ORDER;
@@ -419,12 +481,7 @@ MotionTrail.recolor = function (main) {
   const head = now(main);
 
   const col = new Float32Array(times.length * 3);
-  for (let i = 0; i < times.length; i++) {
-    const d = (times[i] - head) / span;              // -1 .. 1 across the drawn range
-    const k = Math.max(0, 1 - Math.min(1, Math.abs(d)));   // 1 at the playhead, 0 at the ends
-    if (d < 0) mix(PAST_NEAR, PAST_FAR, k, col, i * 3);
-    else mix(FUTURE_NEAR, FUTURE_FAR, k, col, i * 3);
-  }
+  for (let i = 0; i < times.length; i++) timeColor(times[i], head, span, col, i * 3, 0);
 
   for (const line of v.lines) {
     const g = line.geometry;
@@ -512,23 +569,51 @@ MotionTrail.drawDots = function (main, weights) {
 
   const pts = strand.points;
   const isKey = keyMask(main, strand.pin, strand.times);
-  const plain = [], keys = [];
-  for (let i = 0; i < pts.length; i++) (isKey[i] ? keys : plain).push(pts[i]);
+  const plain = [], keys = [], keyTimes = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (isKey[i]) { keys.push(pts[i]); keyTimes.push(strand.times[i]); }
+    else plain.push(pts[i]);
+  }
 
   v.dots.geometry.setFromPoints(plain);
   v.keyDots.geometry.setFromPoints(keys);
   v.dots.visible = plain.length > 0;
   v.keyDots.visible = keys.length > 0;
 
+  // SAMPLE dots keep IDENTITY — which control is this. KEY dots carry TIME, because a key is
+  // where an edit can actually land, so "which of these is at the playhead, and which side of
+  // it is the rest" is the question you are asking of them.
   const col = Skeleton.boneColor(main, strand.pin._pinnedJoint);
-  v.dots.material.color.setRGB(col.r, col.g, col.b);
+  const plainCol = new Float32Array(plain.length * 3);
+  for (let i = 0; i < plain.length; i++) {
+    plainCol[i * 3] = col.r; plainCol[i * 3 + 1] = col.g; plainCol[i * 3 + 2] = col.b;
+  }
+  setColors(v.dots, plainCol);
   v.dots.material.opacity = 0.55;
-  // A key is where an edit can actually be recorded, so it reads brighter than a sample that
-  // is only there to draw the curve smoothly.
-  v.keyDots.material.color.setRGB(1, 1, 1);
+
+  const t0 = strand.times[0];
+  const span = (strand.times[strand.times.length - 1] - t0) || 1;
+  const head = now(main);
+  // Half a sample spacing counts as "on the playhead": the key and the playhead rarely land on
+  // the same float, and a white mark that only appears on exact equality never appears.
+  const eps = span / Math.max(1, strand.times.length - 1) * 0.5;
+  const keyCol = new Float32Array(keyTimes.length * 3);
+  for (let i = 0; i < keyTimes.length; i++) timeColor(keyTimes[i], head, span, keyCol, i * 3, eps);
+  setColors(v.keyDots, keyCol);
   v.keyDots.material.opacity = 0.95;
   void weights;
 };
+
+function setColors(obj, arr) {
+  const g = obj.geometry;
+  const existing = g.getAttribute('color');
+  if (existing && existing.count === arr.length / 3) {
+    existing.copyArray(arr);
+    existing.needsUpdate = true;
+  } else {
+    g.setAttribute('color', new THREE.BufferAttribute(arr.slice(), 3));
+  }
+}
 
 // The editor redraws through this rather than importing MotionTrail, which would close an
 // import cycle between the two.
