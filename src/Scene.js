@@ -2928,11 +2928,21 @@ class Scene {
   }
 
   addNewMesh(mesh) {
+    if (mesh?.setShaderType && !mesh._isBone && !mesh._isNull && !mesh._isReference) {
+      mesh.setShaderType(getOptionsURL().shader);
+      mesh.setFlatShading?.(getOptionsURL().flatshading);
+    }
     this._meshes.push(mesh);
     if (!mesh._permanentStaticLabel) {
       mesh._permanentStaticLabel = (mesh._typeName || "Mesh") + " " + this._meshes.length;
     }
     this.attachMeshThree(mesh);
+    // Build/attach the overlay only after the Three.js mesh is in the scene graph. When this
+    // happened earlier the saved flag was true, but the orphaned line object did not become
+    // visible until a subdivision change rebuilt it.
+    if (!mesh._isBone && !mesh._isNull && !mesh._isReference) {
+      mesh.setShowWireframe?.(getOptionsURL().wireframe);
+    }
     this._stateManager.pushStateAdd(mesh);
     this.setMesh(mesh);
 
@@ -3061,6 +3071,12 @@ class Scene {
     }
 
     if (beforeCommit) beforeCommit(newMeshes);
+    // Imported files may carry per-object shader choices from the old model. Shading is now a
+    // viewport preference, so once hierarchy flags are restored, reapply the global mode to all
+    // ordinary meshes while leaving bones, pins and reference images on their own shaders.
+    getOptionsURL.setGlobalShader(this, getOptionsURL().shader);
+    getOptionsURL.setGlobalFlatShading(this, getOptionsURL().flatshading);
+    getOptionsURL.setGlobalWireframe(this, getOptionsURL().wireframe);
 
     this._stateManager.pushStateAdd(newMeshes);
     this.setMesh(meshes[meshes.length - 1]);
@@ -3463,6 +3479,10 @@ class Scene {
   }
 
   replaceMesh(mesh, newMesh) {
+    if (newMesh?.setShaderType && !newMesh._isBone && !newMesh._isNull && !newMesh._isReference) {
+      newMesh.setShaderType(getOptionsURL().shader);
+      newMesh.setFlatShading?.(getOptionsURL().flatshading);
+    }
     var index = this.getIndexMesh(mesh);
     if (index >= 0) this._meshes[index] = newMesh;
     
@@ -3476,6 +3496,9 @@ class Scene {
         this._worldGroup.remove(mesh.getThreeMesh());
       }
       this._worldGroup.add(newMesh.getThreeMesh());
+    }
+    if (!newMesh._isBone && !newMesh._isNull && !newMesh._isReference) {
+      newMesh.setShowWireframe?.(getOptionsURL().wireframe);
     }
   }
 

@@ -2844,7 +2844,7 @@ export default class GuiXR {
         }
         cb = (id) => {
           if (this._main) {
-            this._main.getMesh().setShaderType(Enums.Shader.MATCAP);
+            getOptionsURL.setGlobalShader(this._main, Enums.Shader.MATCAP);
             this._main.getMesh().setMatcap(id);
             this._main.render();
           }
@@ -2855,7 +2855,7 @@ export default class GuiXR {
         }
         cb = (id) => {
           if (this._main) {
-            this._main.getMesh().setShaderType(Enums.Shader.PBR);
+            getOptionsURL.setGlobalShader(this._main, Enums.Shader.PBR);
             ShaderPBR.idEnv = id;
             this._main.render();
           }
@@ -3018,19 +3018,15 @@ export default class GuiXR {
     }
 
     // View / Rendering Modes
-    if (w.id === 'pbr') main.getMesh().setShaderType(Enums.Shader.PBR);
-    if (w.id === 'matcap') main.getMesh().setShaderType(Enums.Shader.MATCAP);
+    if (w.id === 'pbr') getOptionsURL.setGlobalShader(main, Enums.Shader.PBR);
+    if (w.id === 'matcap') getOptionsURL.setGlobalShader(main, Enums.Shader.MATCAP);
 
     // Toggles (Modifiers)
     if (w.id === 'flat') {
-      const val = !main.getMesh().getFlatShading();
-      main.getMesh().setFlatShading(val);
-      getOptionsURL.saveOption('flatshading', val);
+      getOptionsURL.setGlobalFlatShading(main, !getOptionsURL().flatshading);
     }
     if (w.id === 'wireframe') {
-      const val = !main.getMesh().getShowWireframe();
-      main.getMesh().setShowWireframe(val);
-      getOptionsURL.saveOption('wireframe', val);
+      getOptionsURL.setGlobalWireframe(main, !getOptionsURL().wireframe);
     }
 
     // Toggles
@@ -3203,8 +3199,7 @@ export default class GuiXR {
           changed = true;
         }
       } else if (w.id === 'wireframe') {
-        const mesh = this._main.getMesh();
-        const showWire = mesh ? mesh.getShowWireframe() : false;
+        const showWire = getOptionsURL().wireframe;
         if (w.value !== showWire) {
           w.value = showWire;
           changed = true;
@@ -4144,8 +4139,8 @@ export default class GuiXR {
       let isActive = false;
       if (typeof wid.id === 'number') isActive = (wid.id === activeTool);
       if (wid.id === 'dynamic' && mesh) isActive = mesh.isDynamic;
-      if (wid.id === 'wireframe' && mesh) isActive = mesh.getShowWireframe();
-      if (wid.id === 'flat' && mesh) isActive = mesh.getFlatShading();
+      if (wid.id === 'wireframe') isActive = getOptionsURL().wireframe;
+      if (wid.id === 'flat') isActive = getOptionsURL().flatshading;
       const sculptManager = this._main ? this._main.getSculptManager() : null;
       if (wid.id === 'symmetry' && sculptManager) isActive = sculptManager.getSymmetry();
 
@@ -7148,5 +7143,3 @@ export default class GuiXR {
   }
 
 }
-
-

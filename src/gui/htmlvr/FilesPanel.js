@@ -33,7 +33,8 @@ export function openBrowserSavesDOMOverlay(main) {
   const body = document.createElement('div');
   body.style.cssText = 'overflow-y:auto;padding:8px;flex:1;min-height:0;';
 
-  const build = () => {
+  const build = async () => {
+    await guiFiles?.prepareBrowserSavePage?.();
     body.innerHTML = buildMenuHTML_browserSaves(main);
     wireMenuBrowserSaves(body, main, build);
   };
@@ -93,7 +94,8 @@ export function openFilesDOMOverlay(main) {
   const body = document.createElement('div');
   body.style.cssText = 'overflow-y:auto;padding:8px;flex:1;min-height:0;';
 
-  const build = () => {
+  const build = async () => {
+    await guiFiles?.prepareBrowserSavePage?.();
     body.innerHTML = buildMenuHTML_files(main);
     wireMenuFiles(body, main, build, () => openBrowserSavesDOMOverlay(main));
     fixSliderDrag(body);
@@ -177,13 +179,12 @@ export class FilesPanel extends HTMLVRPanel {
     this._main = main;
     const guiFiles = main.getGui?.()._ctrlFiles ?? null;
     if (guiFiles) {
-      guiFiles.refreshBrowserSaves().then(() => {
-        this._rebuild();
+      guiFiles.refreshBrowserSaves().then(() => guiFiles.prepareBrowserSavePage?.()).then(async () => {
+        await this._rebuild();
         this.flushPaint?.();
       });
     } else {
-      this._rebuild();
-      this.flushPaint?.();
+      this._rebuild().then(() => this.flushPaint?.());
     }
     if (this.mesh) this.mesh.visible = true;
   }
@@ -197,11 +198,15 @@ export class FilesPanel extends HTMLVRPanel {
     if (this._main) this._rebuild();
   }
 
-  _rebuild() {
+  async _rebuild() {
     const body = this._root.querySelector('#fp-body');
     if (!body || !this._main) return;
+    const token = this._rebuildToken = (this._rebuildToken || 0) + 1;
+    const guiFiles = this._main.getGui?.()._ctrlFiles ?? null;
+    await guiFiles?.prepareBrowserSavePage?.();
+    if (token !== this._rebuildToken) return;
     body.innerHTML = buildMenuHTML_browserSaves(this._main);
-    wireMenuBrowserSaves(body, this._main, () => this._rebuild());
+    wireMenuBrowserSaves(body, this._main, () => this._rebuild(), () => this.markDirty());
     this.markDirty();
   }
 }

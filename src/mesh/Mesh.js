@@ -2770,7 +2770,14 @@ class Mesh {
               }
           }
 
-          const geom = this._renderData._wireframeMesh.geometry;
+          // A restored preference can request wireframe before the owning Three.js mesh has
+          // entered the scene. Creation then succeeds without a parent. Reattach on any later
+          // refresh so rendering does not depend on changing subdivision level.
+          const wireMesh = this._renderData._wireframeMesh;
+          const solidMesh = this._renderData._threeMesh;
+          if (solidMesh && wireMesh.parent !== solidMesh) solidMesh.add(wireMesh);
+
+          const geom = wireMesh.geometry;
           // Bind to the INDEXED vertex positions — the wireframe edges are built from the
           // indexed layout (getWireframe(true)), so position + indices always match, no
           // matter the main mesh's render mode. (Sharing the main geom's position went out

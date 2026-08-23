@@ -3,6 +3,7 @@ import { VERSION } from './Version.js';
 import { vec3, mat4, quat, mat3 } from 'gl-matrix';
 import Tablet from './misc/Tablet.js';
 import Enums from './misc/Enums.js';
+import getOptionsURL from './misc/getOptionsURL.js';
 import Skeleton from './editing/Skeleton.js';
 import Utils from './misc/Utils.js';
 import Scene from './Scene.js';
@@ -445,12 +446,7 @@ class SculptGL extends Scene {
         }
       },
       toggleWireframe: () => {
-        const mesh = this.getMesh();
-        if (!mesh) return;
-        const rd = mesh.getRenderData();
-        rd._showWireframe = !rd._showWireframe;
-        console.log(`Wireframe: ${rd._showWireframe}`);
-        this.render();
+        getOptionsURL.setGlobalWireframe(this, !getOptionsURL().wireframe);
       },
       sceneInfo: () => {
         // Fallback for lost context

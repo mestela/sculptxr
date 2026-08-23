@@ -672,6 +672,13 @@ const CSS = `
   gap: 5px;
   margin-bottom: 6px;
 }
+.mm-storage-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #a6adc8;
+}
 .mm-action-btn:disabled {
   opacity: 0.4;
   cursor: default;
@@ -1357,11 +1364,11 @@ export function buildSectionHTML_topology(main) {
 export function buildSectionHTML_rendering(main) {
   const mesh = main.getMesh?.();
   const rigDisplay = buildBoneDisplayHTML(main, 'mm');
-  const meshDisabled = mesh ? '' : ' disabled';
+  const meshDisabled = main.getMeshes?.().some(m => !m._isBone && !m._isNull && !m._isReference) ? '' : ' disabled';
 
   const ShaderPBR    = Shader[Enums.Shader.PBR];
   const ShaderMATCAP = Shader[Enums.Shader.MATCAP];
-  const shaderType   = mesh?.getShaderType?.() ?? Enums.Shader.PBR;
+  const shaderType   = getOptionsURL().shader;
 
   const shaders = [
     { id: Enums.Shader.MATCAP, label: 'Matcap' },
@@ -1386,8 +1393,8 @@ export function buildSectionHTML_rendering(main) {
   const exposure    = main.getExposure?.() ?? 1.0;
   const curvature   = mesh?.getCurvature?.() ?? 0;
   const opacity     = mesh?.getOpacity?.() ?? 1;
-  const isFlat      = mesh?.getFlatShading?.() ?? false;
-  const isWire      = mesh?.getShowWireframe?.() ?? false;
+  const isFlat      = getOptionsURL().flatshading;
+  const isWire      = getOptionsURL().wireframe;
   const isSolid     = mesh?._renderData?._threeMesh?.material?.visible ?? true;
 
   const gx       = main._guiXR ?? main.getGuiXR?.();
@@ -1960,7 +1967,7 @@ export class MainMenuPanel extends HTMLVRPanel {
     // Build cache key first — DOM mutations below are no-ops when the key
     // matches, so skip them entirely to avoid polyfill layout recalculations.
     const mesh = this._main.getMesh?.();
-    const shaderType = mesh?.getShaderType?.() ?? -1;
+    const shaderType = getOptionsURL().shader;
     const meshCount  = this._main.getMeshes?.()?.length ?? 0;
     const sm = this._main.getSculptManager?.() ?? this._main._sculptManager;
     const curTool = sm?.getToolIndex?.() ?? -1;
@@ -2059,10 +2066,16 @@ export class MainMenuPanel extends HTMLVRPanel {
         this._refreshContent();
       };
       wireMenuFiles(el, main, rebuildFiles, () => {
-        this._setMenu('browser-saves');
+        const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+        Promise.resolve(guiFiles?.prepareBrowserSavePage?.()).then(() => this._setMenu('browser-saves'));
       });
     } else if (menu === 'browser-saves') {
-      wireMenuBrowserSaves(el, main, () => { this._lastContentKey = ''; paint(); });
+      wireMenuBrowserSaves(el, main, async () => {
+        const guiFiles = main.getGui?.()._ctrlFiles ?? null;
+        await guiFiles?.prepareBrowserSavePage?.();
+        this._lastContentKey = '';
+        this._refreshContent();
+      }, paint);
       q('#mm-back-to-files')?.addEventListener('click', () => this._setMenu('files'));
 
     } else if (menu === 'history') {
@@ -2768,9 +2781,7 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   el.querySelectorAll('[data-shader]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = parseInt(btn.dataset.shader, 10);
-      const ms = main.getSelectedMeshes?.()?.length ? main.getSelectedMeshes() : [mesh];
-      ms?.forEach(m => { if (m) m.setShaderType?.(id); });
-      main.render?.();
+      getOptionsURL.setGlobalShader(main, id);
       fullRepaintFn(); // sections appear/disappear on shader change
     });
   });
@@ -2820,16 +2831,14 @@ export function wireSectionRendering(el, main, fullRepaintFn, lightRepaintFn = f
   }, (v) => `${v}%`, sliderDirtyFn);
 
   el.querySelector('#mm-flat-shading')?.addEventListener('click', () => {
-    const t = !mesh?.getFlatShading?.();
-    meshes?.forEach(m => m.setFlatShading?.(t));
-    main.render?.();
+    const t = !getOptionsURL().flatshading;
+    getOptionsURL.setGlobalFlatShading(main, t);
     el.querySelector('#mm-flat-shading')?.classList.toggle('active', t);
     lightRepaintFn();
   });
   el.querySelector('#mm-wireframe')?.addEventListener('click', () => {
-    const t = !mesh?.getShowWireframe?.();
-    (main.getMeshes?.() ?? meshes)?.forEach(m => m.setShowWireframe?.(t));
-    main.render?.();
+    const t = !getOptionsURL().wireframe;
+    getOptionsURL.setGlobalWireframe(main, t);
     el.querySelector('#mm-wireframe')?.classList.toggle('active', t);
     lightRepaintFn();
   });
@@ -3261,6 +3270,11 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
 export function buildMenuHTML_browserSaves(main) {
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const saves    = guiFiles?._browserSaves ?? [];
+  const pageSize = 12;
+  const pageCount = Math.max(1, Math.ceil(saves.length / pageSize));
+  const page = Math.max(0, Math.min(guiFiles?._browserSavePage ?? 0, pageCount - 1));
+  if (guiFiles) guiFiles._browserSavePage = page;
+  const pageSaves = saves.slice(page * pageSize, (page + 1) * pageSize);
   const selKey   = guiFiles?._selectedSaveKey ?? null;
   // Drop a stale selection (e.g. after a delete) so the toolbar disables again.
   const hasSel   = saves.some(s => (s.key ?? s.id ?? '') === selKey);
@@ -3268,10 +3282,10 @@ export function buildMenuHTML_browserSaves(main) {
 
   const thumbs = saves.length === 0
     ? '<div class="mm-info">No saves yet</div>'
-    : saves.map(s => {
+    : pageSaves.map(s => {
         const key   = s.key ?? s.id ?? '';
         const ts    = s.value?.timestamp ?? 0;
-        const thumb = s.value?.thumb ?? '';
+        const thumb = s.value?.galleryThumb ?? s.value?.thumb ?? '';
         const date  = ts ? new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : '—';
         const sel   = key === selKey ? ' selected' : '';
         const img   = thumb
@@ -3294,11 +3308,16 @@ export function buildMenuHTML_browserSaves(main) {
       <button class="mm-action-btn" id="mm-browser-save">Save scene</button>
       <button class="mm-action-btn" id="mm-storage-refresh"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
     </div>
+    <div class="mm-storage-toolbar">
+      <button class="mm-action-btn" id="mm-storage-prev" ${page <= 0 ? 'disabled' : ''}>Previous</button>
+      <span class="mm-storage-page">${page + 1} / ${pageCount}</span>
+      <button class="mm-action-btn" id="mm-storage-next" ${page >= pageCount - 1 ? 'disabled' : ''}>Next</button>
+    </div>
     <div class="mm-storage-grid" id="mm-storage-grid">${thumbs}</div>
   `;
 }
 
-export function wireMenuBrowserSaves(el, main, rebuildFn) {
+export function wireMenuBrowserSaves(el, main, rebuildFn, repaintFn = rebuildFn) {
   const q = (sel) => el.querySelector(sel);
   const guiFiles = main.getGui?.()._ctrlFiles ?? null;
   const selKey = () => guiFiles?._selectedSaveKey ?? null;
@@ -3314,12 +3333,31 @@ export function wireMenuBrowserSaves(el, main, rebuildFn) {
   q('#mm-storage-refresh')?.addEventListener('click', () => {
     guiFiles?.refreshBrowserSaves?.().then(() => rebuildFn());
   });
+  q('#mm-storage-prev')?.addEventListener('click', () => {
+    if (!guiFiles || guiFiles._browserSavePage <= 0) return;
+    guiFiles._browserSavePage--;
+    guiFiles._selectedSaveKey = null;
+    rebuildFn();
+  });
+  q('#mm-storage-next')?.addEventListener('click', () => {
+    if (!guiFiles) return;
+    const pages = Math.ceil((guiFiles._browserSaves?.length || 0) / 12);
+    if (guiFiles._browserSavePage >= pages - 1) return;
+    guiFiles._browserSavePage++;
+    guiFiles._selectedSaveKey = null;
+    rebuildFn();
+  });
 
   // Select a save by clicking its thumbnail; the toolbar acts on the selection.
   el.querySelectorAll('.mm-storage-item').forEach(item => {
     item.addEventListener('click', () => {
       if (guiFiles) guiFiles._selectedSaveKey = item.dataset.saveKey;
-      rebuildFn();
+      el.querySelectorAll('.mm-storage-item').forEach(card =>
+        card.classList.toggle('selected', card === item));
+      ['#mm-storage-load', '#mm-storage-import', '#mm-storage-delete'].forEach(sel => {
+        const button = q(sel); if (button) button.disabled = false;
+      });
+      repaintFn?.();
     });
   });
 

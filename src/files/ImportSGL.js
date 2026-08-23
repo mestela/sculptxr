@@ -188,9 +188,14 @@ Import.importSGL = function (buffer, gl, main) {
       }
       mm.getCurrentMesh().constructor.OPTIMIZE = false;
 
-      // Push levels 1–N directly, sharing each parsed level's data.
+      // Push levels 1–N directly, sharing each parsed level's mesh data. All resolutions of a
+      // Multimesh must also share ONE RenderData/Three.js object. Keeping each parsed level's
+      // private RenderData attached higher-level wireframes to objects that never enter the scene;
+      // level 0 appeared only because its render object is the one owned by the Multimesh.
       for (var L = 1; L < parsedLevels.length; ++L) {
         var lvlN = new MeshResolution(parsedLevels[L], true); // keepMesh=true → shares data
+        lvlN.setRenderData(mm.getRenderData());
+        lvlN.setTransformData(mm.getTransformData());
         mm._meshes.push(lvlN);
         mm._sel = L;
         mm.setMeshData(lvlN.getMeshData());
@@ -198,10 +203,7 @@ Import.importSGL = function (buffer, gl, main) {
 
       Mesh.OPTIMIZE = globalOptTemp;
 
-      // Create Three.js mesh objects for every level.
-      for (let L = 0; L < mm._meshes.length; L++) {
-        if (mm._meshes[L].initThreeMesh) mm._meshes[L].initThreeMesh();
-      }
+      // There is deliberately one render object for the complete resolution stack.
       if (mm.initThreeMesh) mm.initThreeMesh();
 
       mm.setSelection(activeIndex);

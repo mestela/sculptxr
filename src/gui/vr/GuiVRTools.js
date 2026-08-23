@@ -795,15 +795,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'voxel_flat',
       label: 'Flat Shading',
       x: col1X, y: y, w: 550, h: btnH,
-      value: main.getMesh() ? main.getMesh().getFlatShading() : false,
+      value: getOptionsURL().flatshading,
       onInteract: () => {
-        const mesh = main.getMesh();
-        if (mesh) {
-          mesh.setFlatShading(!mesh.getFlatShading());
-          main.render();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-          if (main._guiMini) main._guiMini._needsRedraw = true;
-        }
+        getOptionsURL.setGlobalFlatShading(main, !getOptionsURL().flatshading);
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
       }
     });
     y += btnH + gapBtn;
@@ -814,15 +810,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'voxel_wireframe',
       label: 'Show Wireframe',
       x: col1X, y: y, w: 550, h: btnH,
-      value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
+      value: getOptionsURL().wireframe,
       onInteract: () => {
-        const mesh = main.getMesh();
-        if (mesh) {
-          mesh.setShowWireframe(!mesh.getShowWireframe());
-          main.render();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-          if (main._guiMini) main._guiMini._needsRedraw = true;
-        }
+        getOptionsURL.setGlobalWireframe(main, !getOptionsURL().wireframe);
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
       }
     });
     y += btnH + gapBtn;
@@ -938,15 +930,11 @@ export default function getToolsWidgets(main, activeToolIndex, isMiniHUD = false
       id: 'wireframe',
       label: 'Wireframe',
       x: col1X, y: y, w: 550, h: btnH,
-      value: main.getMesh() ? main.getMesh().getShowWireframe() : false,
+      value: getOptionsURL().wireframe,
       onInteract: () => {
-        const mesh = main.getMesh();
-        if (mesh) {
-          mesh.setShowWireframe(!mesh.getShowWireframe());
-          main.render();
-          if (main._guiXR) main._guiXR._needsRedraw = true;
-          if (main._guiMini) main._guiMini._needsRedraw = true;
-        }
+        getOptionsURL.setGlobalWireframe(main, !getOptionsURL().wireframe);
+        if (main._guiXR) main._guiXR._needsRedraw = true;
+        if (main._guiMini) main._guiMini._needsRedraw = true;
       }
     });
     y += btnH + gapBtn;

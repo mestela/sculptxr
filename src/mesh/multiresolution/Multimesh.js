@@ -279,7 +279,10 @@ class Multimesh extends Mesh {
     }
 
     // Start with the base wireframe
-    var edges = Array.from(lowMesh.getWireframe());
+    // The overlay always supplies indexed vertex positions. Never pair those positions with
+    // draw-arrays edge indices, which refer to duplicated triangle vertices and only happen to
+    // line up at some resolutions.
+    var edges = Array.from(lowMesh.getWireframe(true));
 
     // Recursively split edges for each subdivision level
     for (var L = lowIdx; L < this._sel; ++L) {
@@ -359,9 +362,9 @@ class Multimesh extends Mesh {
       var activeVerts = activeMesh.getVertices();
       var indices;
       if (this._meshes.length === 1 || wireType === 2) {
-        indices = activeMesh.getWireframe();
+        indices = activeMesh.getWireframe(true);
       } else if (wireType === 0) {
-        indices = baseMesh.getWireframe();
+        indices = baseMesh.getWireframe(true);
       } else if (wireType === 1) {
         indices = this.getTessellatedWireframe(0);
       }

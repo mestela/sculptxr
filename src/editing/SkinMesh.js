@@ -596,7 +596,6 @@ SkinMesh.build = function (main) {
   if (main._gl) base.initRender();
 
   const mesh = new Multimesh(base);
-  mesh.setShaderType(Enums.Shader.MATCAP);
   mesh.setMatcap(getOptionsURL().matcap);
   mesh._typeName = 'Skin';
   mesh.isQuad = true;

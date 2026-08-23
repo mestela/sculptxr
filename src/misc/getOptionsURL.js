@@ -286,6 +286,50 @@ getOptionsURL.saveOption = function (key, value, debounceMs) {
   }
 };
 
+// Shader mode is a viewport preference, not mesh authoring data. Keep one numeric runtime
+// value, persist its readable enum name, and apply it to every ordinary scene mesh. Rig
+// controls and reference images own specialised shaders and are deliberately excluded.
+getOptionsURL.shaderName = function (shader) {
+  if (shader === Enums.Shader.MATCAP) return 'matcap';
+  if (shader === Enums.Shader.FLAT) return 'flat';
+  if (shader === Enums.Shader.NORMAL) return 'normal';
+  if (shader === Enums.Shader.UV) return 'uv';
+  return 'pbr';
+};
+
+getOptionsURL.setGlobalShader = function (main, shader) {
+  getOptionsURL.saveOption('shader', getOptionsURL.shaderName(shader));
+  getOptionsURL().shader = shader; // saveOption stores the serialised name in the live snapshot
+  const meshes = main?.getMeshes?.() || [];
+  for (const mesh of meshes) {
+    if (!mesh?.setShaderType || mesh._isBone || mesh._isNull || mesh._isReference) continue;
+    mesh.setShaderType(shader);
+  }
+  main?.render?.();
+};
+
+getOptionsURL.setGlobalFlatShading = function (main, enabled) {
+  enabled = !!enabled;
+  getOptionsURL.saveOption('flatshading', enabled);
+  const meshes = main?.getMeshes?.() || [];
+  for (const mesh of meshes) {
+    if (!mesh?.setFlatShading || mesh._isBone || mesh._isNull || mesh._isReference) continue;
+    mesh.setFlatShading(enabled);
+  }
+  main?.render?.();
+};
+
+getOptionsURL.setGlobalWireframe = function (main, enabled) {
+  enabled = !!enabled;
+  getOptionsURL.saveOption('wireframe', enabled);
+  const meshes = main?.getMeshes?.() || [];
+  for (const mesh of meshes) {
+    if (!mesh?.setShowWireframe || mesh._isBone || mesh._isNull || mesh._isReference) continue;
+    mesh.setShowWireframe(enabled);
+  }
+  main?.render?.();
+};
+
 getOptionsURL();
 
 // Hand-puppetry (#28 v1): honour ?puppet=1 to start in puppet mode — an in-headset

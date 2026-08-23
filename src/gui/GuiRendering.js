@@ -159,32 +159,7 @@ class GuiRendering {
 
   onShaderChanged(val) {
     var main = this._main;
-
-    var warning = false;
-    var meshes = this._main.getSelectedMeshes();
-    for (var i = 0, nb = meshes.length; i < nb; ++i) {
-      var mesh = meshes[i];
-
-      if (mesh) {
-        if (val === Enums.Shader.UV && !mesh.hasUV()) {
-          if (!warning)
-            (window._vrAlert || window.alert)('No UV on the mesh.');
-          warning = true;
-        } else {
-          mesh.setShaderType(val);
-          
-          let shaderName = 'pbr';
-          if (val === Enums.Shader.MATCAP) shaderName = 'matcap';
-          else if (val === Enums.Shader.UV) shaderName = 'uv';
-          getOptionsURL.saveOption('shader', shaderName);
-
-          main.render();
-        }
-        if (warning)
-          this.updateMesh();
-      }
-    }
-
+    getOptionsURL.setGlobalShader(main, val);
     this.updateVisibility();
   }
 
@@ -201,21 +176,11 @@ class GuiRendering {
   }
 
   onFlatShading(bool) {
-    var meshes = this._main.getSelectedMeshes();
-    for (var i = 0, nb = meshes.length; i < nb; ++i) {
-      meshes[i].setFlatShading(bool);
-    }
-    getOptionsURL.saveOption('flatshading', bool);
-    this._main.render();
+    getOptionsURL.setGlobalFlatShading(this._main, bool);
   }
 
   onShowWireframe(bool) {
-    var meshes = this._main.getSelectedMeshes();
-    for (var i = 0, nb = meshes.length; i < nb; ++i) {
-      meshes[i].setShowWireframe(bool);
-    }
-    getOptionsURL.saveOption('wireframe', bool);
-    this._main.render();
+    getOptionsURL.setGlobalWireframe(this._main, bool);
   }
 
   onShowSolid(bool) {
@@ -244,16 +209,18 @@ class GuiRendering {
   }
 
   updateMesh() {
-    var mesh = this._main.getMesh();
+    var mesh = this._main.getMesh() || this._main.getMeshes().find(
+      m => !m._isBone && !m._isNull && !m._isReference
+    );
     if (!mesh) {
       this._menu.setVisibility(false);
       return;
     }
 
     this._menu.setVisibility(true);
-    this._ctrlShaders.setValue(mesh.getShaderType(), true);
-    this._ctrlFlatShading.setValue(mesh.getFlatShading(), true);
-    this._ctrlShowWireframe.setValue(mesh.getShowWireframe(), true);
+    this._ctrlShaders.setValue(getOptionsURL().shader, true);
+    this._ctrlFlatShading.setValue(getOptionsURL().flatshading, true);
+    this._ctrlShowWireframe.setValue(getOptionsURL().wireframe, true);
     if (this._ctrlWireframeBias) {
       const wireMesh = mesh.getRenderData()._wireframeMesh;
       if (wireMesh && wireMesh.material) {
@@ -282,7 +249,7 @@ class GuiRendering {
     var isVoxelTool = this._main.getSculptManager().getToolIndex() === Enums.Tools.VOXEL;
     this._ctrlShowWireframe.setVisibility(!isVoxelTool && !RenderData.ONLY_DRAW_ARRAYS);
 
-    var val = mesh.getShaderType();
+    var val = getOptionsURL().shader;
     this._ctrlMatcapTitle.setVisibility(val === Enums.Shader.MATCAP);
     this._ctrlMatcap.setVisibility(val === Enums.Shader.MATCAP);
     this._ctrlImportMatcap.setVisibility(val === Enums.Shader.MATCAP);

@@ -26,6 +26,8 @@ class GuiFiles {
     this._objColorZbrush = true;
     this._objColorAppended = false;
     this._browserSaves = []; // Cache for gallery
+    this._browserSavePage = 0;
+    this._browserThumbCache = new Map();
     this._texSize = 1024; // default 2^10
     this.init(guiParent);
     this.refreshBrowserSaves();
@@ -40,20 +42,45 @@ class GuiFiles {
         return tB - tA;
       });
       
-      // Pre-load images for thumbnails
-      this._browserSaves.forEach(save => {
-        if (save.value.thumb && !save.value.thumbImage) {
-          const img = new Image();
-          img.src = save.value.thumb;
-          save.value.thumbImage = img; // Cache the Image object
-          img.onload = () => {
-            if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
-          };
-        }
-      });
+      const pageCount = Math.max(1, Math.ceil(this._browserSaves.length / 12));
+      this._browserSavePage = Math.min(this._browserSavePage, pageCount - 1);
+      for (const save of this._browserSaves) {
+        const cached = this._browserThumbCache.get(save.key);
+        if (cached) save.value.galleryThumb = cached;
+      }
 
       if (this._main._guiXR) this._main._guiXR._needsRedraw = true;
     }).catch(err => console.error("Failed to load browser saves:", err));
+  }
+
+  // The HTML→VR texture path embeds image URLs into an SVG. Feeding it every 512px legacy
+  // thumbnail makes one panel paint surprisingly expensive, so only decode/downsample the
+  // twelve cards on the current page. Results remain in memory for the session.
+  prepareBrowserSavePage(page = this._browserSavePage, pageSize = 12) {
+    const visible = this._browserSaves.slice(page * pageSize, (page + 1) * pageSize);
+    return Promise.all(visible.map(save => {
+      const value = save.value || {};
+      if (!value.thumb || value.galleryThumb) return null;
+      return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            if (img.naturalWidth <= 128 && img.naturalHeight <= 128) {
+              value.galleryThumb = value.thumb;
+            } else {
+              const canvas = document.createElement('canvas');
+              canvas.width = 128; canvas.height = 128;
+              canvas.getContext('2d').drawImage(img, 0, 0, 128, 128);
+              value.galleryThumb = canvas.toDataURL('image/jpeg', 0.45);
+            }
+            this._browserThumbCache.set(save.key, value.galleryThumb);
+          } catch (_) { value.galleryThumb = value.thumb; }
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = value.thumb;
+      });
+    }));
   }
 
   init(guiParent) {
@@ -241,7 +268,9 @@ class GuiFiles {
 
     if (renderer) {
       try {
-        const THUMB = 512;
+        // Gallery cards are roughly 128 CSS pixels wide. A 512px capture quadrupled each
+        // dimension only to be shrunk again by the VR HTML rasteriser.
+        const THUMB = 128;
 
         // 1. Pick camera position and auto-frame toward the sculpt bounding box
         const snapCam = new THREE.PerspectiveCamera(45, 1.0, 0.01, 1000);

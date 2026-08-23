@@ -5,12 +5,12 @@ import Shader from '../../render/ShaderLib.js';
 
 export default function getRenderingWidgets(main) {
   const widgets = [];
-  let mesh = main.getMesh();
+  let mesh = main.getMesh() || main.getMeshes?.().find(m => !m._isBone && !m._isNull && !m._isReference);
   if (!mesh) return widgets;
 
   const meshes = main.getSelectedMeshes().length > 0 ? main.getSelectedMeshes() : [mesh];
 
-  const shaderType = mesh.getShaderType();
+  const shaderType = getOptionsURL().shader;
   const ShaderMERGE = Shader[Enums.Shader.MERGE];
   const ShaderPBR = Shader[Enums.Shader.PBR];
   const ShaderMATCAP = Shader[Enums.Shader.MATCAP];
@@ -44,18 +44,7 @@ export default function getRenderingWidgets(main) {
     options: shaderOptions,
     onSelect: (id) => {
       // console.log(`[GuiVR] onSelect shader id: ${id} (type: ${typeof id})`);
-      if (id === Enums.Shader.UV && !mesh.hasUV()) {
-        console.warn("[GuiVR] Cannot switch to UV Shader: Mesh has no UVs.");
-        return;
-      }
-      meshes.forEach(m => m.setShaderType(id));
-      
-      let shaderName = 'pbr';
-      if (id === Enums.Shader.MATCAP) shaderName = 'matcap';
-      else if (id === Enums.Shader.UV) shaderName = 'uv';
-      getOptionsURL.saveOption('shader', shaderName);
-
-      main.render();
+      getOptionsURL.setGlobalShader(main, id);
       if (main.guiXR) main.guiXR._needsUpdate = true;
     }
   });
@@ -213,11 +202,10 @@ export default function getRenderingWidgets(main) {
     id: 'flat',
     label: TR('renderingFlat'),
     x: col1X, y: y, w: 360, h: btnH,
-    value: mesh.getFlatShading(),
+    value: getOptionsURL().flatshading,
     onInteract: () => { 
-      const target = !mesh.getFlatShading();
-      meshes.forEach(m => m.setFlatShading(target)); 
-      main.render(); 
+      const target = !getOptionsURL().flatshading;
+      getOptionsURL.setGlobalFlatShading(main, target);
       if (main.guiXR) main.guiXR._needsUpdate = true; 
     }
   });
@@ -228,19 +216,10 @@ export default function getRenderingWidgets(main) {
     id: 'wireframe',
     label: TR('renderingWireframe'),
     x: col1X, y: y, w: 360, h: btnH,
-    value: mesh.getShowWireframe(),
+    value: getOptionsURL().wireframe,
     onInteract: () => { 
-      console.log("[GuiVR] Wireframe toggle clicked! Current internal state:", mesh.getShowWireframe());
-      const target = !mesh.getShowWireframe();
-      
-      // Guarantee we target all scene meshes if local selection is stale
-      const targetMeshes = main.getMeshes ? main.getMeshes() : meshes;
-      targetMeshes.forEach(m => {
-          console.log("[GuiVR] Setting wireframe state on mesh:", target, "Type:", m.constructor.name);
-          m.setShowWireframe(target);
-      }); 
-      
-      main.render(); 
+      const target = !getOptionsURL().wireframe;
+      getOptionsURL.setGlobalWireframe(main, target);
       if (main.guiXR) main.guiXR._needsUpdate = true; 
     }
   });
