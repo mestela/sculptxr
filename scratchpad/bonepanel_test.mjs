@@ -138,8 +138,16 @@ const renderEnd = MAIN_SRC.indexOf('\nexport function ', renderStart + 1);
 const RENDER_SRC = MAIN_SRC.slice(renderStart, renderEnd);
 check('Rendering does not disappear when no mesh is selected',
   !/if \(!mesh\) return/.test(RENDER_SRC));
-check('mesh-only Rendering controls use a disabled fieldset',
-  /fieldset class="mm-disabled-group"/.test(MAIN_SRC) && /const meshDisabled = mesh \? '' : ' disabled'/.test(MAIN_SRC));
+// Assert the PROPERTY, not the expression: the fieldset must take its disabled state from a
+// variable that can evaluate to ' disabled'. Pinning the exact source line failed once the
+// condition was widened from "a mesh is selected" to "a mesh exists at all", which is correct
+// behaviour the old check called a regression.
+check('mesh-only Rendering controls use a disabled fieldset', (() => {
+  const tag = MAIN_SRC.match(/<fieldset class="mm-disabled-group"\$\{(\w+)\}/);
+  if (!tag) return 'no fieldset interpolating a disable flag';
+  const decl = new RegExp('(?:const|let|var)\\s+' + tag[1] + "\\s*=[^;]*' disabled'");
+  return decl.test(MAIN_SRC) || `${tag[1]} is never assigned ' disabled'`;
+})() === true);
 check('Ground Plane sits outside the mesh-disabled fieldset', (() => {
   const start = MAIN_SRC.indexOf('<fieldset class="mm-disabled-group"');
   const end = MAIN_SRC.indexOf('</fieldset>', start);

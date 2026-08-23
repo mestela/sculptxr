@@ -1,3 +1,138 @@
+# v3.20.6
+**The Pins toggle survives a reload.** `pins` was a full member of the bone display registry
+with a button of its own, but its saved key `boneShowPins` was never declared in
+`getOptionsURL`, so the toggle read back as the default on every load — the one flag in the set
+that did not persist. Plus the `bonepanel` harness stops asserting the exact source line behind
+the Rendering panel's disabled fieldset: the condition was correctly widened from "a mesh is
+selected" to "a mesh exists at all", and a check pinned to the old spelling called that a
+regression. It now asserts the property — the fieldset takes its disabled state from a variable
+that can evaluate to disabled — which is the same standing lesson that killed "exactly 8
+callers".
+
+# v3.20.5
+**Shading is a viewport preference, not a property of each mesh.** Shader and matcap were
+per-object, so a scene could carry a different look on every mesh and a newly made object
+arrived on whatever its constructor chose. They are now one global setting applied to all
+ordinary meshes, with bones, pins and reference images left on their own shaders. Imported
+files carry per-object shader choices from the old model; those are overwritten with the global
+mode once hierarchy flags are restored.
+
+- **The save gallery opens quickly in VR.** The HTML-to-VR texture path embeds image URLs into
+  an SVG, so feeding it every 512px legacy thumbnail made one panel paint surprisingly
+  expensive. Only the twelve cards on the current page are decoded and downsampled, and new
+  captures are taken at the size a card actually is rather than at four times each dimension.
+- **A wireframe overlay no longer waits for a subdivision change to appear.** It was built
+  before its Three.js mesh entered the scene graph, so the flag read true while the orphaned
+  line object stayed invisible; it now attaches after, and reattaches on any later refresh.
+- **All resolutions of a Multimesh share one render object.** Loading kept each parsed level's
+  private RenderData, which attached higher-level wireframes to objects that never enter the
+  scene — level 0 appeared only because its render object is the one the Multimesh owns.
+
+# v3.20.4
+**Bind takes the control cage, whatever level you are looking at.** Skinning belongs to level 0;
+binding from a subdivided view analysed the visible sculpt instead. Each step downward is now
+analysed first, directly on the resolution objects, so the cage and every stored detail layer
+reflect what you can see without Bind dropping your viewport to the lowest level behind your
+back.
+
+- **A pole vector steers its own limb.** The swivel axis was found by searching upward for a
+  hard target, so an elbow with pinned hips swivelled about the hip-to-wrist axis and dragged
+  the shoulder and torso with it. The limb root immediately above the steered joint is already
+  solved by the time the pole adjustment runs, so it can be treated as fixed without a pin of
+  its own: the axis is always shoulder-to-wrist, or hip-to-ankle for a knee.
+- **The solver stops at ten sweeps, not forty.** A full-body pin arrangement often cannot meet
+  every target exactly, and letting those cases run to forty merely repeated a stalled solve
+  and made immersive playback several times slower. Activation is also fixed for the duration
+  of a solve, so the traversal order and each node's filtered child list are built once instead
+  of being reallocated every sweep.
+- **A blurred immersive session recovers.** System overlays — headset screen recording, most
+  visibly — can drop poses and input for a few frames without ending the session, and the old
+  stroke, menu and hand latches survived it, leaving hover and the brush cursor suppressed
+  until a whole new XR session was made. Resume is treated as a clean input boundary.
+- **Grab's origin is the visible stylus tip**, not the controller pivot, so a proximity tool
+  reaches what it looks like it is reaching when stylus offset and tilt are configured.
+- **Rig export to GLB**, plus tracks and playback range with separate lifecycles: loading or
+  clearing animation no longer puts a hand-authored range back to the legacy 48-frame default.
+
+# v3.20.1 - v3.20.2
+**Recording a performance, with both hands.** Rig animation can now be captured live rather
+than keyed pose by pose.
+
+- **Two hands, two pins, one take.** Each VR controller acquires and moves a pin control
+  independently, sharing one capture clock and one undo step. Scene dispatches tools through a
+  single dominant hand, so Grab reads the complete controller snapshot rather than filtering by
+  handedness, which silently discarded the non-dominant trigger.
+- **The transport clock drives capture**, not wall time, so keys stay in sync at every playback
+  speed and every control in a multi-target take spans the same loop boundary.
+- **A tap is not a take.** The old early return cleared the timer while leaving recording
+  active, leaving a red Record button that could neither capture nor reliably re-arm.
+- **Start-on-grab is an armed session** — one released gesture returns to waiting for the next
+  one — while countdown and immediate recording are one-shots that disarm on completion.
+- **Reset returns the rig and its pins to the solver rest pose**, pins moved onto their joints
+  after the local rest matrices are restored, so a hip pin, the feet and the pole goals come
+  back to one coherent frame instead of immediately pulling the reset rig apart.
+- **Two-controller timeline zoom.** Both triggers held over empty timeline space: horizontal
+  separation zooms time in either mode, vertical separation zooms value in the graph.
+- **Timeline focus and scene selection are one thing.** The last row, key or scene object
+  clicked is the selected object everywhere, and Delete targets that row's channels rather than
+  stale key selections left over from another. Deleting a track removes the whole channel and
+  restores it as the same object on undo, so tangents, layers and rest transforms survive.
+- **A pinned joint is addressed through its pin** at selection and keying boundaries, so an
+  overlapping joint marker cannot leave focus, or a key, on the driven bone instead.
+- **VR Grab stops rebuilding the rig visuals twice per frame**, and joint spheres and pins are
+  independent display layers — pins stay available with the spheres hidden, which is a lighter
+  view to puppeteer through.
+
+# v3.19.96 - v3.20.0
+**The pole vector, as a steering goal.** A pinned ankle one bone below the knee confines the
+knee to a sphere about the pin; fix the hip as well and it is the intersection of two spheres,
+which is a circle about the hip-to-ankle axis. Nothing used to steer where on that circle the
+knee sat. A **soft pin** does, and it costs the hard pins nothing, because the rotation that
+steers is about the axis through both of them and every point of that axis is fixed. A knee
+cannot reach a goal off its circle and must not stretch anything trying — it goes to the
+closest point the circle allows. The pin cycle gained a fourth stop rather than a new button: a
+soft pin is a pin in every structural sense and differs only in what the solver does with it.
+
+- **Mirror Pose and Copy Side, through the pins.** Mirroring is sparse: only authored controls
+  are reflected, so an unkeyed knee or elbow is rebuilt by IK rather than baked just because it
+  happened to be in the evaluated pose when the button was pressed. A joint without a twin
+  mirrors *in place* — hips travel metres to one side and a spine carries a real twist — while
+  an unpaired tip below a paired hand rides the mirrored hand frame instead.
+- **A full pin on the root holds translation as well as rotation.** `holdPins` anchors the root
+  while limbs settle, which is exactly wrong when the pin is *on* the root: its translation was
+  discarded immediately after its target was assigned while its orientation still applied,
+  which is the rotate-but-do-not-move behaviour. Two planted ankles and a 6DOF hip control now
+  work.
+- **Motion trails**, drawn as a thin line. `THREE.Points` uses camera-facing square sprites,
+  which at scene scale became a wall of red squares over the model; key timing belongs to the
+  dopesheet, so the viewport layer stays line-only.
+- **The rig controls split into four composable blocks** — authoring, pose, display, animation
+  — so pose controls are live wherever a rig node can be held (Bone Draw, Grab and TransformVR
+  all bind the same A-button pin cycle) rather than only under Bone Draw. Rendering is a
+  spatial menu: inapplicable groups go inert and muted rather than being removed, so controls
+  never jump under your hand.
+
+# v3.19.90 - v3.19.94
+**Make Skin makes a mesh you can sculpt on.** A box per joint, every box axis-aligned to the
+world, four cells a side. Every bone claims a rectangle of the side it points at — the whole
+face if it is alone there, equal strips if it shares — both ends settle on the smaller loop,
+the claimed faces are deleted and bridged, and the cage is relaxed onto the capsules.
+
+Orienting each box to its own bone is the obvious thing and it is wrong: two boxes can disagree
+about roll, the bridge between them shears, and the amount depends on the angle the bone was
+drawn at — the "it only works if I draw at 90 degrees" symptom. Boxes sharing one orientation
+have parallel faces everywhere, so a bridge cannot corkscrew at any angle. Two consequences
+come free: world X is the symmetry normal and a claim boundary sits on the box centre, so the
+seam between two legs lands exactly on the symmetry plane; and a lone bone claiming the whole
+face removes a tie that made a symmetric skeleton come back visibly asymmetric.
+
+- **An evaluated frame no longer depends on the route you took to it.** FABRIK seeds from the
+  current pose, so the same controls reached by scrub, by playback and by a jump put the knee
+  up to 0.487 apart. A scrub and a playback now agree, which is what makes keyed controls
+  reproduce at all.
+- **Delta mush over the rigid capsule bind**, and a VR flight recorder plus pick diagnostics
+  for the half-broken-session bug.
+
 # v3.19.84
 **Three key colours, not five.** Dopesheet keys were coloured by KIND — orange transform, blue
 shape, teal blendshape, another blue for layer keys — each with its own selected and hovered
