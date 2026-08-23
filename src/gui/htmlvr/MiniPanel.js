@@ -1,3 +1,4 @@
+import MotionPathEdit from '../../editing/MotionPathEdit.js';
 /**
  * MiniPanel — compact wrist HUD for SculptXR.
  *
@@ -695,6 +696,21 @@ export class MiniPanel extends HTMLVRPanel {
       });
     }
 
+    // ── Move extras: how a path edit measures "near" ───────────────────────
+    if (idx === Enums.Tools.MOVE) {
+      const btn = extras.querySelector('#mp-connected');
+      if (btn) {
+        btn.addEventListener('click', () => {
+          // Live value first so it takes effect on the current stroke, saved second so it
+          // sticks — the order every other persisted setting in here is read and written in.
+          const next = !MotionPathEdit.connected();
+          window._pathConnected = next;
+          getOptionsURL.saveOption('pathConnected', next, 0);
+          this.syncFromState();
+        });
+      }
+    }
+
     // ── Smooth / Relax extras ──────────────────────────────────────────────
     if (idx === Enums.Tools.SMOOTH || idx === Enums.Tools.RELAX) {
       const tangentBtn = extras.querySelector('#mp-tangent');
@@ -976,6 +992,20 @@ export class MiniPanel extends HTMLVRPanel {
     if (idx === Enums.Tools.TRANSFORM_VR || idx === Enums.Tools.TRANSFORM) {
       return buildTransformSectionHTML(this._main, 'mp')
         + (idx === Enums.Tools.TRANSFORM_VR ? buildBonePoseHTML(this._main, 'mp') : '');
+    }
+
+    // ── Move ───────────────────────────────────────────────────────────────
+    // How the brush measures "near" when Move is on a MOTION PATH. Always shown rather than
+    // appearing with the path: a wrist control that comes and goes moves the buttons beside it
+    // under your hand. Named "Path Falloff" so it is plainly about paths and not the mesh.
+    if (idx === Enums.Tools.MOVE) {
+      const on = MotionPathEdit.connected();
+      return `
+        <hr class="mp-divider">
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${on ? ' active' : ''}" id="mp-connected">Connectivity</button>
+        </div>
+      `;
     }
 
     // ── Smooth / Relax ─────────────────────────────────────────────────────

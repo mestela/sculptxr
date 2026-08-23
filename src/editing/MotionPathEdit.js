@@ -1,3 +1,4 @@
+import getOptionsURL from '../misc/getOptionsURL.js';
 import Enums from '../misc/Enums.js';
 import IKSolver from './IKSolver.js';
 // EDITING A MOTION PATH DIRECTLY, and pushing the result back onto the keys.
@@ -69,11 +70,37 @@ function falloff(d, radius) {
   return f;
 }
 
-// The weight each sample takes from a drag centred on `index`.
-MotionPathEdit.weights = function (points, index, radius) {
+// CONNECTIVITY, which is the only axis that matters here.
+//
+//   on  — distance measured ALONG the strand (arc length). Because a motion path is monotonic
+//         in time, travelling along it IS travelling through time: near on the strand and near
+//         in the animation are the same thing. So this is implicitly a time-ordered falloff,
+//         and a path that passes near itself is not edited in two places at once.
+//   off — plain Euclidean distance, ignoring the strand. This reaches EVERY pass through a
+//         region, which is right when a hand keeps clipping the same table at four different
+//         times, and wrong on a walk cycle, where it wrecks frame 90 while you fix frame 12.
+//
+// The same distinction the sculpt brushes draw between a connected falloff and a plain radius,
+// which is why it is named the same thing.
+MotionPathEdit.weights = function (points, index, radius, opts) {
+  if (opts && opts.connected === false) {
+    const c = points[index];
+    return points.map((p) => {
+      const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+      return falloff(Math.sqrt(dx * dx + dy * dy + dz * dz), radius);
+    });
+  }
   const s = arcLengths(points);
   const c = s[index];
   return s.map((si) => falloff(si - c, radius));
+};
+
+// Live value first, then the saved one — the same order every other persisted setting is read
+// in, so a toggle takes effect on the current stroke.
+MotionPathEdit.connected = function () {
+  if (window._pathConnected != null) return !!window._pathConnected;
+  const v = getOptionsURL().pathConnected;
+  return v == null ? true : !!v;
 };
 
 // The sample a click landed on: nearest in SCREEN space, since that is what "I clicked the
@@ -121,8 +148,8 @@ function rotateAbout(p, q, c, out) {
 
 const _rot = { x: 0, y: 0, z: 0 };
 
-MotionPathEdit.displace = function (points, index, delta, radius, rotQuat, rotCenter) {
-  const w = MotionPathEdit.weights(points, index, radius);
+MotionPathEdit.displace = function (points, index, delta, radius, rotQuat, rotCenter, opts) {
+  const w = MotionPathEdit.weights(points, index, radius, opts);
   const c = rotCenter || points[index];
   return points.map((p, i) => {
     let rx = 0, ry = 0, rz = 0;
@@ -175,8 +202,8 @@ function twistSince(startInv, nowQ, intensity) {
 // The ENDS ARE PINNED. A Laplacian shortens a curve, so an unpinned end creeps inward every
 // pass and the animation quietly loses its first and last poses — which look like keys drifting
 // for no reason. Endpoints keep their positions and only the interior relaxes.
-MotionPathEdit.smoothed = function (points, index, radius, strength) {
-  const w = MotionPathEdit.weights(points, index, radius);
+MotionPathEdit.smoothed = function (points, index, radius, strength, opts) {
+  const w = MotionPathEdit.weights(points, index, radius, opts);
   const k = Math.max(0, Math.min(1, strength == null ? 0.5 : strength));
   return points.map((p, i) => {
     if (i === 0 || i === points.length - 1) return { x: p.x, y: p.y, z: p.z };
@@ -197,7 +224,7 @@ MotionPathEdit.smoothed = function (points, index, radius, strength) {
 MotionPathEdit.smoothStep = function (main, strength) {
   const e = main._pathEdit;
   if (!e) return false;
-  e.after = MotionPathEdit.smoothed(e.after || e.before, e.index, e.radius, strength);
+  e.after = MotionPathEdit.smoothed(e.after || e.before, e.index, e.radius, strength, e.falloff);
   return true;
 };
 
@@ -322,6 +349,9 @@ MotionPathEdit.begin = function (main, x, y, radiusPx) {
     before: strand.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
     startWorld: worldAt(camera, z, x, y),
     after: null,
+    // Captured at the press: flipping the mode mid-drag would change what the displacement
+    // already applied meant, and the curve would jump.
+    falloff: { connected: MotionPathEdit.connected() },
   };
   return true;
 };
@@ -333,7 +363,7 @@ MotionPathEdit.drag = function (main, x, y) {
   if (!camera) return false;
   const now = worldAt(camera, e.screenZ, x, y);
   const delta = { x: now.x - e.startWorld.x, y: now.y - e.startWorld.y, z: now.z - e.startWorld.z };
-  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius);
+  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius, null, null, e.falloff);
   return true;
 };
 
@@ -444,6 +474,7 @@ MotionPathEdit.beginXR = function (main, tip, radiusWorld) {
     // Inverted at the grab, so every frame's twist is measured against that ONE pose. A delta
     // taken frame to frame would compose into a ratchet that never comes back to zero.
     startQuatInv: invert(main._vrControllerQuat),
+    falloff: { connected: MotionPathEdit.connected() },
   };
   return true;
 };
@@ -460,7 +491,7 @@ MotionPathEdit.dragXR = function (main, tip, intensity) {
   // controller's rotation is simply discarded, which is surprising in a way a missing feature
   // usually is not: you are already turning your wrist and nothing happens.
   const twist = twistSince(e.startQuatInv, main._vrControllerQuat, intensity);
-  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius, twist, e.startWorld);
+  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius, twist, e.startWorld, e.falloff);
   return true;
 };
 

@@ -17,7 +17,11 @@ const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_pathed
 // its calls counted rather than being left undefined.
 const prelude = 'globalThis.window = globalThis.window || {};\n' +
   'globalThis.__holds = 0;\n' +
-  'const IKSolver = { holdPins: () => { globalThis.__holds++; } };\n';
+  'const IKSolver = { holdPins: () => { globalThis.__holds++; } };\n' +
+  'const Enums = { Tools: { MOVE: 10, SMOOTH: 1, TRANSFORM: 13, GRAB: 15, TRANSFORM_VR: 16, BONE_DRAW: 34 } };\n' +
+  // The falloff mode is a persisted option; the harness drives it through the live override so
+  // each case says which mode it is testing rather than depending on a saved default.
+  'const getOptionsURL = () => (globalThis.__opts || {});\n';
 fs.writeFileSync(outPath, prelude +
   body.split('\n').filter((l) => !/^import\s/.test(l)).join('\n') +
   '\nexport default MotionPathEdit;\n');
@@ -82,6 +86,50 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   const after = MPE.displace(pts, 3, { x: 0, y: 5, z: 0 }, 0);
   check('...which displace honours', near(after[3].y, 5)
     && after.every((p, i) => i === 3 || near(p.y, 0)));
+}
+
+// --- 1d. connectivity: along the strand, or straight through space ------------------------
+//
+// A motion path is monotonic in time, so travelling ALONG it is travelling through time — near
+// on the strand and near in the animation are the same thing. That is what makes connectivity
+// implicitly a time-ordered falloff, and it is why it is the default.
+{
+  // Out along X and back, so index 2 and index 14 are almost the same POINT in space and about
+  // as far apart in time as the curve allows.
+  const pts = [];
+  for (let i = 0; i <= 8; i++) pts.push({ x: i, y: 0, z: 0 });
+  for (let i = 7; i >= 0; i--) pts.push({ x: i, y: 0.001, z: 0 });
+  const other = pts.length - 3;
+
+  const on = MPE.weights(pts, 2, 3, { connected: true });
+  const off = MPE.weights(pts, 2, 3, { connected: false });
+
+  check('connected on: the other pass is untouched', near(on[other], 0),
+    'this is the walk-cycle case — fixing frame 12 must not wreck frame 90');
+  check('connected OFF: the other pass comes with it', off[other] > 0.5,
+    'reaching every pass through a region is the whole point of turning it off');
+  check('either way the grabbed sample takes the full drag',
+    near(on[2], 1) && near(off[2], 1));
+  check('and neither reaches past the radius along its own measure',
+    near(on[8], 0) && near(off[8], 0), on[8] + ' / ' + off[8]);
+
+  // Default matters: the mode that can silently edit a second pass must be the one you ASK for.
+  check('connectivity defaults to ON when nothing is said',
+    near(MPE.weights(pts, 2, 3)[other], 0),
+    'the default must be the mode that cannot silently edit a second pass');
+
+  // ...and that has to hold for the SAVED setting too, not just the weights call. A fresh
+  // profile has never written this option, so it reads back undefined.
+  globalThis.__opts = {};
+  delete globalThis.window._pathConnected;
+  check('...including when the option has never been saved', MPE.connected() === true,
+    'undefined must mean connected, or a new user gets the destructive mode by default');
+  globalThis.__opts = { pathConnected: false };
+  check('...but an explicit false is honoured', MPE.connected() === false);
+  globalThis.window._pathConnected = true;
+  check('...and the live override wins over the saved value', MPE.connected() === true);
+  delete globalThis.window._pathConnected;
+  globalThis.__opts = {};
 }
 
 // --- 2. A SELF-CROSSING PATH IS THE POINT --------------------------------------------------

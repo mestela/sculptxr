@@ -210,6 +210,10 @@ var getOptionsURL = function () {
   // Which side the on-screen secondary-action modifier sits on. Off = right, matching the
   // right-click shorthand; a left-hander swaps it so it is not under the drawing hand.
   options.modifierLeft = queryBool(getVal('modifierLeft'), false);
+  // Motion path editing: does the brush travel ALONG the strand (default) or straight through
+  // space? A path is monotonic in time, so along-the-strand is implicitly a time-ordered
+  // falloff; off reaches every pass through a region, which is occasionally what you want.
+  options.pathConnected = queryBool(getVal('pathConnected'), true);
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
