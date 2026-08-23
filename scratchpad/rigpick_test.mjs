@@ -140,8 +140,10 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   // VR rig selection is CONTROLLER-TIP PROXIMITY, not a ray cone. Reaching for a joint is more
   // predictable than aiming at one, and it is the only thing that works during two-hand posing
   // where neither controller is pointing at anything in particular.
+  // No word boundary on the negative: `_rigPickConeVR\b` does not match `_rigPickConeVRPin`,
+  // so a reintroduced PIN cone would have slipped through while the bone cone was condemned.
   check('VR: rig nodes are picked by proximity, not geometry and not a ray cone',
-    /_rigPickProximityVR \|\| 0\.11/.test(vr) && !/_rigPickConeVR\b/.test(vr));
+    /_rigPickProximityVR \|\| 0\.11/.test(vr) && !/_rigPickConeVR/.test(vr));
   // The reach is a distance you can feel with your arm, so it has to be in PHYSICAL metres.
   // Model-space distance would make the reach grow and shrink with the world scale.
   check('VR: the reach is in physical metres, not model space',

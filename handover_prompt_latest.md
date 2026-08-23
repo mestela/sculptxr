@@ -206,10 +206,11 @@ decisions, so nobody unpicks one by accident:
     `keepTool` flag so the tool-context switch in `setOrUnsetMesh` is skipped.
   - `undef_test` was missing `queueMicrotask` from a hand-maintained globals list.
 
-- **Picking rules are asserted in TWO harnesses.** `recording_test` carries its own copy of the
-  VR proximity-pick assertions that `rigpick_test` also makes, by source spelling. That is this
-  project's signature bug in the tests themselves: the next person to touch `Picking.js` will
-  fix one and be failed by the other. Worth collapsing to one.
+- Nothing else known. **Picking rules now live in `rigpick_test.mjs` and only there** (v3.20.8);
+  `recording_test` used to carry a second copy by source spelling, which was this project's
+  signature bug living in the tests themselves. Before removing it, each of the five defects the
+  duplicate caught was injected and confirmed still caught by `rigpick_test` — moving a check is
+  only safe if you prove the coverage moved with it.
 
 ---
 

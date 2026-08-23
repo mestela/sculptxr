@@ -1,3 +1,20 @@
+# v3.20.8
+**One harness owns the picking rules.** `recording_test` carried its own copy of the VR
+proximity-pick assertions that `rigpick_test` also makes — the same rule in two places, this
+project's signature bug living in the tests themselves, where the next person to touch
+`Picking.js` fixes one harness and is failed by the other. The duplicate is gone and
+`rigpick_test` owns them outright; it asserts the same properties and asserts them better, by
+lifting the score expression and evaluating it rather than matching constants as spellings.
+
+Before the removal, each of the five defects the duplicate caught was injected in turn and
+confirmed still caught by `rigpick_test`: an unscaled reach, proximity replaced by a bone ray
+cone, an `rScore` that is no longer a proximity score, a removed pin tie-break, and a
+reintroduced pin ray cone. Moving a check is only safe if you prove the coverage moved with it.
+
+That last one closed a real gap. `rigpick_test`'s negative check was written `_rigPickConeVR\b`,
+and a word boundary does not match `_rigPickConeVRPin` — so a reintroduced PIN cone would have
+slipped through while the bone cone was condemned. The boundary is gone.
+
 # v3.20.7
 **The test suite stops condemning its own improvements.** Three harnesses had been failing, and
 triage found that two of the three were asserting a superseded design rather than catching a

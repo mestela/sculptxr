@@ -22,7 +22,6 @@ const oldVrPanel = read('src/gui/vr/GuiVRAnimation.js');
 const scene = read('src/Scene.js');
 const skel = read('src/editing/Skeleton.js');
 const bonePanel = read('src/gui/bonePanel.js');
-const picking = read('src/math3d/Picking.js');
 const timelineHelper = read('src/gui/TimelineHelper.js');
 const exportSgl = read('src/files/ExportSGL.js');
 const importSgl = read('src/files/ImportSGL.js');
@@ -92,12 +91,11 @@ check('selected objects delete whole animation tracks',
 check('timeline row and key focus update real scene selection',
   /this\._main\.setMesh\?\.\(mesh\b/.test(tl)
     && /Last-click wins/.test(tl));
-check('VR rig picking is proximity-first with only a coincident-pin tie break',
-  /physicalDistance = vec3\.len\(_TMP_RIG_W\) \* vrScale/.test(picking)
-    && /_rigPickProximityVR \|\| 0\.11/.test(picking)
-    && /var rScore = physicalDistance/.test(picking)
-    && /isPin \? 0\.002 : 0/.test(picking)
-    && !/_rigPickConeVRPin/.test(picking));
+// PICKING RULES LIVE IN rigpick_test.mjs, and only there. This file used to carry its own copy
+// of the VR proximity assertions, which is the same-rule-in-N-places bug in the tests
+// themselves: the next person to touch Picking.js fixes one harness and is failed by the other.
+// rigpick_test asserts the same properties and asserts them better — it LIFTS the score
+// expression and evaluates it, rather than matching the constants as spellings.
 check('VR pin hover and grab colors identify each controller',
   /RIGHT_HAND_COLOR = 0xf38ba8/.test(skel)
     && /LEFT_HAND_COLOR = 0xa6e3a1/.test(skel)
