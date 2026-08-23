@@ -214,6 +214,9 @@ function samplePaths(main, targets) {
   window._animPlaying = false;
 
   const times = sampleTimes(reg, targets, r, n);
+  // Kept for the editor: a sample is only meaningful with the time it was taken at, and
+  // push-back has to ask "how far did the curve move at this key's time".
+  main._trailTimes = times;
 
   try {
     for (const t of times) {
@@ -263,10 +266,23 @@ function makeLine(main) {
 MotionTrail.clear = function (main) {
   disposeTrail(main);
   main._trailSig = null;
+  main._trailStrand = null;
+};
+
+// Redraw one curve from points the editor is holding, without re-sampling. The drag is a pure
+// geometry change until it is pushed back, so a solve per frame would be wasted work.
+MotionTrail.redraw = function (main, lineIndex, points) {
+  const v = main._trailVis;
+  const line = v && v.lines && v.lines[lineIndex];
+  if (!line) return;
+  line.geometry.setFromPoints(points);
 };
 
 // Per-frame. Cheap when nothing changed: one fingerprint, one string compare.
 MotionTrail.update = function (main) {
+  // A live path edit owns the drawn curve: the editor writes the geometry directly as the drag
+  // moves, and re-sampling underneath it would fight the drag and cost a solve per frame.
+  if (main._pathEdit) return false;
   if (!Skeleton.displayFlag('trails')) { MotionTrail.clear(main); return false; }
   const targets = trailed(main);
   const r = range();
@@ -285,6 +301,13 @@ MotionTrail.update = function (main) {
     disposeTrail(main);
     main._trailVis = { lines: paths.map(() => makeLine(main)) };
   }
+
+  // The strand the editor may take hold of: the AUTHORED curve only. Solver output is not
+  // editable, so it is never offered — see MotionPathEdit for why.
+  const ci = targets.findIndex((t) => t.control);
+  main._trailStrand = ci >= 0
+    ? { points: paths[ci], times: main._trailTimes, pin: targets[ci].obj, line: ci }
+    : null;
 
   const v = main._trailVis;
   paths.forEach((pts, i) => {

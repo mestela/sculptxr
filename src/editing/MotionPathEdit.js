@@ -158,4 +158,95 @@ MotionPathEdit.editable = function (pin) {
   return !parent;
 };
 
+// ── THE STROKE ────────────────────────────────────────────────────────────────────────────
+//
+// A session lives on `main._pathEdit` for the length of one drag. It holds the BASELINE curve —
+// the points as they were when the drag started — because every frame's displacement is measured
+// against that one baseline. Re-reading the curve that is already being dragged would compound
+// the delta and the edit would run away under the cursor.
+
+// The drag moves in the camera plane through the grabbed sample, which is what dragging a point
+// on screen means. Depth is taken from the sample, so the point tracks the cursor rather than
+// sliding toward or away from the eye.
+function worldAt(camera, sampleScreenZ, x, y) {
+  const w = camera.unproject(x, y, sampleScreenZ);
+  return { x: w[0], y: w[1], z: w[2] };
+}
+
+// Try to take hold of the authored curve. Returns false when the pointer is not on it, so the
+// stroke falls through to whatever it would have done — sculpting the mesh, usually.
+MotionPathEdit.begin = function (main, x, y, radius, radiusPx) {
+  const strand = main._trailStrand;
+  if (!strand || !strand.points || strand.points.length < 2) return false;
+  if (!MotionPathEdit.editable(strand.pin)) {
+    console.log('[path] this pin is parented, so its motion path is not editable here');
+    return false;
+  }
+  const camera = main.getCamera && main.getCamera();
+  if (!camera) return false;
+
+  const project = (p) => { const s = camera.project([p.x, p.y, p.z]); return { x: s[0], y: s[1] }; };
+  const index = MotionPathEdit.hit(strand.points, project, x, y, radiusPx);
+  if (index < 0) return false;
+
+  const anchor = strand.points[index];
+  const z = camera.project([anchor.x, anchor.y, anchor.z])[2];
+  main._pathEdit = {
+    strand: strand,
+    index: index,
+    radius: radius,
+    screenZ: z,
+    // Deep copy: the baseline must not be a view of the array the drag writes to.
+    before: strand.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
+    startWorld: worldAt(camera, z, x, y),
+    after: null,
+  };
+  return true;
+};
+
+MotionPathEdit.drag = function (main, x, y) {
+  const e = main._pathEdit;
+  if (!e) return false;
+  const camera = main.getCamera && main.getCamera();
+  if (!camera) return false;
+  const now = worldAt(camera, e.screenZ, x, y);
+  const delta = { x: now.x - e.startWorld.x, y: now.y - e.startWorld.y, z: now.z - e.startWorld.z };
+  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius);
+  return true;
+};
+
+// Push back, as ONE undo step covering the keys the whole gesture moved. The strand itself is
+// not undone: it is transient, and the next rebuild re-derives it from the keys — which is the
+// real check that push-back did what the curve said.
+MotionPathEdit.finish = function (main) {
+  const e = main._pathEdit;
+  main._pathEdit = null;
+  if (!e || !e.after) return 0;
+
+  const reg = window._animationRegistry;
+  const track = reg && reg.tracks && reg.tracks.get(e.strand.pin.getID());
+  if (!track) return 0;
+
+  const beforePos = track.positions.slice();
+  const moved = MotionPathEdit.pushBack(track, e.strand.times, e.before, e.after);
+  if (!moved) return 0;
+
+  const afterPos = track.positions.slice();
+  const sm = main.getStateManager && main.getStateManager();
+  const put = (arr) => {
+    const t = reg.tracks.get(e.strand.pin.getID());
+    if (!t) return;
+    t.positions = arr.slice();
+    t.eulers = null;
+    reg.update(e.strand.pin, true);
+  };
+  if (sm && sm.pushStateCustom) {
+    sm.pushStateCustom(() => put(beforePos), () => put(afterPos), false, 'Edit Motion Path');
+  }
+  reg.update(e.strand.pin, true);
+  return moved;
+};
+
+MotionPathEdit.active = function (main) { return !!(main && main._pathEdit); };
+
 export default MotionPathEdit;

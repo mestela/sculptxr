@@ -167,5 +167,51 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('and so is nothing at all', MPE.editable(null) === false);
 }
 
+// --- 7. the wiring in Move ---------------------------------------------------------------
+{
+  const MOVE = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+  const TRAIL = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
+
+  // SculptBase.start ABORTS when the click misses all geometry. A motion path arcs through
+  // empty space, so hooking startSculpt would make the curve reachable only where it happens
+  // to cross the model - which is the least interesting part of any path.
+  check('the hook is start(), not startSculpt()',
+    /start\(ctrl\) \{[\s\S]{0,400}?MotionPathEdit\.begin\(/.test(MOVE),
+    'hooked after the pick, so a curve off the model would be unreachable');
+  check('...and a stroke that is NOT on the curve falls through unchanged',
+    /return super\.start\(ctrl\);/.test(MOVE));
+
+  check('the drag runs before the mesh guard in sculptStroke',
+    /sculptStroke\(\) \{\s*\n\s*if \(MotionPathEdit\.active/.test(MOVE),
+    'the mesh guard would return first in a rig-only scene');
+  check('push-back happens on stroke end', /MotionPathEdit\.finish\(main\)/.test(MOVE));
+  check('...and the trail is forced to rebuild from the written keys',
+    /main\._trailSig = null;/.test(MOVE),
+    'redrawing the dragged points instead would hide a push-back that disagreed with them');
+
+  // Re-sampling under a live drag fights the drag AND costs a full solve per frame.
+  check('MotionTrail yields while an edit is live', /if \(main\._pathEdit\) return false;/.test(TRAIL));
+  check('only the AUTHORED curve is offered to the editor',
+    /targets\.findIndex\(\(t\) => t\.control\)/.test(TRAIL),
+    'solver output is not editable');
+  check('the editor gets the times, not just the points',
+    /times: main\._trailTimes/.test(TRAIL));
+}
+
+// --- 8. the baseline survives the drag ----------------------------------------------------
+//
+// Every frame measures against the curve as it was when the drag STARTED. Measuring against the
+// curve that is already being dragged compounds the delta and the edit runs away under the
+// cursor - which looks like a sensitivity bug, not a baseline bug.
+{
+  const PE = SRC.slice(SRC.indexOf('MotionPathEdit.begin'), SRC.indexOf('MotionPathEdit.drag'));
+  check('begin deep-copies the baseline',
+    /before: strand\.points\.map\(\(p\) => \(\{ x: p\.x, y: p\.y, z: p\.z \}\)\)/.test(PE),
+    'a reference would be a view of the array the drag writes to');
+  const DR = SRC.slice(SRC.indexOf('MotionPathEdit.drag'), SRC.indexOf('MotionPathEdit.finish'));
+  check('and drag displaces from that baseline, not from the live curve',
+    /displace\(e\.before,/.test(DR) && !/displace\(e\.after/.test(DR));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

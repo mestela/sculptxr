@@ -1,4 +1,6 @@
 import { vec3, mat4, quat } from 'gl-matrix';
+import MotionPathEdit from '../MotionPathEdit.js';
+import MotionTrail from '../MotionTrail.js';
 import Geometry from '../../math3d/Geometry.js';
 import SculptBase from './SculptBase.js';
 import MeshSymmetry from '../../mesh/MeshSymmetry.js';
@@ -28,9 +30,26 @@ class Move extends SculptBase {
     this._lastVRQuat = quat.create(); // [VR] 6DOF
   }
 
+  // A MOTION PATH IS A THING YOU CAN MOVE. Move already means "displace with falloff"; this
+  // points the same verb at a strand instead of a mesh.
+  //
+  // Hooked at start() rather than startSculpt(), and that is load-bearing: SculptBase.start
+  // ABORTS when the click misses all geometry, so a curve arcing through empty space — which is
+  // most of any interesting motion path — would never have been reachable. Taken only when the
+  // pointer is genuinely on the authored curve, so every other stroke falls through unchanged.
+  start(ctrl) {
+    const main = this._main;
+    if (MotionPathEdit.begin(main, main._mouseX, main._mouseY,
+                             this._pathRadius(), this.getScreenRadius())) {
+      return true;
+    }
+    return super.start(ctrl);
+  }
+
   startSculpt() {
     var main = this._main;
     var picking = main.getPicking();
+
     
     // VR Safety: If the current frame did not hit a mesh, do NOT fall back to a previous stroke's mesh!
     if (main._xrSession && !picking.getMesh()) {
@@ -203,8 +222,19 @@ class Move extends SculptBase {
 
   end() {
     super.end();
-    
+
     var main = this._main;
+    if (MotionPathEdit.active(main)) {
+      const moved = MotionPathEdit.finish(main);
+      console.log('[path] motion path edit pushed back onto ' + moved + ' key(s)');
+      // The strand is transient. Dropping the fingerprint forces a REBUILD from the keys that
+      // were just written, which is the real check that push-back did what the curve said: if
+      // the redrawn curve jumps, the keys and the drawing disagree.
+      main._trailSig = null;
+      main.render();
+      return;
+    }
+
     var mesh = this.getMesh();
     if (!mesh) return;
 
@@ -243,6 +273,22 @@ class Move extends SculptBase {
       
       voxelTool._worker.postMessage({ type: 'GET_MESH' });
     }
+  }
+
+  // The brush radius as a WORLD length, which is what an arc-length falloff needs. Taken from
+  // the same screen radius the cursor ring draws, unprojected at the curve's own depth, so the
+  // ring you see is the reach you get.
+  _pathRadius() {
+    const main = this._main;
+    const camera = main.getCamera && main.getCamera();
+    const strand = main._trailStrand;
+    if (!camera || !strand || !strand.points.length) return 0;
+    const p = strand.points[0];
+    const s = camera.project([p.x, p.y, p.z]);
+    const a = camera.unproject(s[0], s[1], s[2]);
+    const b = camera.unproject(s[0] + this.getScreenRadius(), s[1], s[2]);
+    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
   initMoveData(picking, moveData) {
@@ -289,6 +335,14 @@ class Move extends SculptBase {
   }
 
   sculptStroke() {
+    if (MotionPathEdit.active(this._main)) {
+      const e = this._main._pathEdit;
+      if (MotionPathEdit.drag(this._main, this._main._mouseX, this._main._mouseY)) {
+        MotionTrail.redraw(this._main, e.strand.line, e.after);
+        this._main.render();
+      }
+      return;
+    }
     if (!this.getMesh()) return;
     var main = this._main;
     var picking = main.getPicking();
