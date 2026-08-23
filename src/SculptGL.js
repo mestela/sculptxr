@@ -8,7 +8,10 @@ import Skeleton from './editing/Skeleton.js';
 import Utils from './misc/Utils.js';
 import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
+import SecondaryAction from './editing/SecondaryAction.js';
 
+// Pixels a right press may travel and still count as a click rather than an orbit.
+const RIGHT_CLICK_SLOP = 4;
 var MOUSE_LEFT = 1;
 var MOUSE_MIDDLE = 2;
 var MOUSE_RIGHT = 3;
@@ -1228,6 +1231,16 @@ class SculptGL extends Scene {
     // chain, where Escape/Enter ends the chain and then leaves drawing — needs the key, and
     // routing that through the GUI would split the tool's state across two files. Returning
     // false (or having no handler at all) leaves every shortcut below untouched.
+    // Escape disarms the secondary-action modifier, BEFORE the tool gets the key. An armed
+    // modifier is a loaded state the user can see but not otherwise cancel without firing it,
+    // and Escape is what everyone already reaches for. Only consumes the key if it was armed,
+    // so the Bones chain still gets its own Escape.
+    if (e.key === 'Escape' && SecondaryAction.disarm(this)) {
+      this._modifierButton?.refresh?.();
+      e.preventDefault();
+      return;
+    }
+
     const _tool = this._sculptManager?.getCurrentTool?.();
     if (_tool?.onKeyDown?.(e)) { e.preventDefault(); return; }
 
@@ -1496,6 +1509,19 @@ class SculptGL extends Scene {
     // Prevent mouse-up from killing an active VR stroke
     if (this._vrSculpting) {
       return;
+    }
+
+    // A right press that never travelled is a right CLICK: the desktop shorthand for the
+    // secondary action. Read from stored state rather than the event, because onDeviceUp is
+    // called from a dozen places and most of them pass no event at all.
+    if (this._rightClickX != null) {
+      const wasClick = !this._rightMoved;
+      this._rightClickX = this._rightClickY = null;
+      this._rightMoved = false;
+      if (wasClick) {
+        SecondaryAction.fire(this);
+        if (this._modifierButton) this._modifierButton.refresh();
+      }
     }
 
     window._lastMouseTime = performance.now();
@@ -1787,6 +1813,28 @@ class SculptGL extends Scene {
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
 
+    // ARMED SECONDARY ACTION. Consumes the click entirely — no sculpt, no camera, no selection
+    // change — so the modifier cannot also grab the thing it just pinned.
+    if (button === MOUSE_LEFT && SecondaryAction.armed(this)) {
+      SecondaryAction.fire(this);
+      this._action = Enums.Action.NOTHING;
+      if (this._modifierButton) this._modifierButton.refresh();
+      return;
+    }
+    // A right CLICK is the desktop shorthand for the same thing, but a right DRAG already
+    // orbits the camera — so this only becomes an action if the pointer never moved. Decided
+    // on release, the same way Bone Draw's tap distinguishes itself from a drag.
+    //
+    // MOUSE ONLY. On iPad a second finger is dispatched as MOUSE_RIGHT to mean PAN (see the
+    // gesture table above), so a pan that happened to start and end on the same spot would
+    // fire this. Pen and touch reach the secondary action through the on-screen modifier,
+    // which is the whole reason that button exists.
+    if (button === MOUSE_RIGHT && event.pointerType !== 'pen' && event.pointerType !== 'touch') {
+      this._rightClickX = mouseX;
+      this._rightClickY = mouseY;
+      this._rightMoved = false;
+    }
+
     var canEdit = false;
     if (button === MOUSE_LEFT && this._sculptManager) {
       canEdit = this._sculptManager.start(event.shiftKey || this._shiftKey); // Support both event and global shift
@@ -1842,6 +1890,14 @@ class SculptGL extends Scene {
     window._lastMouseTime = performance.now();
     window.isUIHiddenForVR = false;
     this.setCanvasCursor('default');
+
+    // Once a right press has travelled, it is an orbit and not a click. A few pixels, because a
+    // mouse never releases on exactly the pixel it pressed — a threshold, not an epsilon.
+    if (this._rightClickX != null && !this._rightMoved
+        && (Math.abs(this._mouseX - this._rightClickX) > RIGHT_CLICK_SLOP
+          || Math.abs(this._mouseY - this._rightClickY) > RIGHT_CLICK_SLOP)) {
+      this._rightMoved = true;
+    }
 
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;

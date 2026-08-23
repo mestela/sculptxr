@@ -76,6 +76,12 @@ class SculptManager {
 
     this._toolIndex = id;
 
+    // The on-screen modifier labels itself from the ACTIVE tool's secondary action, and hides
+    // when there is none — so it has to hear about a tool change. Disarms as a side effect of
+    // refresh, which is deliberate: a modifier armed under Grab must not survive into a tool
+    // where it would mean something else, or nothing.
+    this._main?._modifierButton?.refresh?.();
+
     // Tool switch: hide BOTH transform gizmos so a deselected one can't linger (the
     // gizmos only ever turn themselves on). The active transform tool re-shows its
     // own each frame (desktop: postRender; VR: TransformVR.updateXR). Runs in both

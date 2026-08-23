@@ -10,6 +10,7 @@ import { SCULPT_TOOLS } from './gui/htmlvr/toolLists.js';
 import Subdivision from './editing/Subdivision.js';
 import Import from './files/Import.js';
 import Gui from './gui/Gui.js';
+import ModifierButton from './gui/ModifierButton.js';
 import Camera from './math3d/Camera.js';
 import Picking from './math3d/Picking.js';
 import Background from './drawables/Background.js';
@@ -182,6 +183,9 @@ class Scene {
     // ui stuffs
     this._focusGui = false; // if the gui is being focused
     this._gui = new Gui(this);
+    // The flat-screen secondary-action modifier. Built after the Gui so #viewport exists, and
+    // it hides itself whenever the active tool has no secondary action.
+    this._modifierButton = new ModifierButton(this);
 
     this._preventRender = false; // prevent multiple render per frame
     this._drawFullScene = false; // render everything on the rtt
