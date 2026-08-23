@@ -66,6 +66,14 @@ fs.writeFileSync(outPath, prelude + '\n' + body +
 const mod = await import(outPath + '?v=' + Date.now());
 const { samplePaths, signature, range } = mod;
 const THREE = await import(THREE_PATH);
+// The REAL fat-line geometry, not a fake of it: the gnomons rely on setPositions storing the
+// array it is handed and on instanceCount limiting what is drawn, and a stub of that API would
+// pass whatever it was written to pass.
+const { LineSegmentsGeometry } =
+  await import(path.join(REPO, 'node_modules/three/examples/jsm/lines/LineSegmentsGeometry.js'));
+// Enough of LineMaterial to be written to. The shader is not under test here.
+const fatMat = () => ({ resolution: { x: 0, y: 0, set(a, b) { this.x = a; this.y = b; } } });
+const fatSeg = () => ({ geometry: new LineSegmentsGeometry(), material: fatMat(), visible: false });
 
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
@@ -566,7 +574,7 @@ function setup(times) {
 // A quaternion is not a place, so rotation has no path to draw — the only way to see it is to
 // plant an axis triad where a key is and let its orientation show.
 {
-  const seg = { geometry: new THREE.BufferGeometry(), visible: false };
+  const seg = fatSeg();
   const strand = {
     points: [ {x:0,y:0,z:0}, {x:1,y:0,z:0}, {x:2,y:0,z:0} ],
     // A quarter turn about Z on the middle key, identity either side.
@@ -576,7 +584,8 @@ function setup(times) {
     times: [0, 1, 2],
     pin: { getID: () => 1, _pinnedJoint: {} },
   };
-  const m = { _trailStrand: strand, _trailVis: { gnomons: seg, keyIndices: [0, 1] } };
+  const m = { _trailStrand: strand, _trailVis: { gnomons: seg, keyIndices: [0, 1] },
+    getCamera: () => ({ _width: 1600, _height: 900 }) };
 
   window._flag_gnomons = false;
   mod.default.drawGnomons(m);
@@ -598,15 +607,21 @@ function setup(times) {
 
   window._flag_gnomons = true;
   mod.default.drawGnomons(m);
-  const pos = seg.geometry.getAttribute('position');
-  const col = seg.geometry.getAttribute('color');
+  const pos = seg.geometry.attributes.instanceStart.data;      // interleaved: start xyz, end xyz
+  const col = seg.geometry.attributes.instanceColorStart.data;
   check('one triad per KEY, three segments each',
-    seg.visible && pos.count === 2 * 6, pos && pos.count);
+    seg.visible && seg.geometry.instanceCount === 2 * 3, seg.geometry.instanceCount);
   check('...and only at the keys, not at every sample',
-    pos.count / 6 === 2 && strand.points.length === 3);
+    seg.geometry.instanceCount / 3 === 2 && strand.points.length === 3);
 
   // Segment 0 of key 0 is the X axis, unrotated: it must run along +X from the key.
   const at = (i) => [pos.array[i * 3], pos.array[i * 3 + 1], pos.array[i * 3 + 2]];
+  check('the gnomons are drawn with FAT lines, not 1px hardware lines',
+    !!seg.geometry.attributes.instanceStart,
+    'a hardware line cannot be antialiased and steps between whole pixels');
+  check('...whose screen-space width is told the viewport size',
+    seg.material.resolution.x === 1600 && seg.material.resolution.y === 900,
+    'a fat line with a stale resolution renders at the wrong thickness');
   check('each axis starts AT the key', near(at(0)[0], 0) && near(at(0)[1], 0));
   check('an unrotated key points its X axis along +X',
     at(1)[0] > 0 && near(at(1)[1], 0, 1e-6), at(1).join(','));
@@ -627,24 +642,25 @@ function setup(times) {
       times.push(i);
       keys.push(i);                       // every sample is a key, so key index == time
     }
-    const s2 = { geometry: new THREE.BufferGeometry(), visible: false };
+    const s2 = fatSeg();
     const m2 = { _trailStrand: { points: pts, quats: qs, times: times,
                                  pin: { getID: () => 1, _pinnedJoint: {} } },
-                 _trailVis: { gnomons: s2, keyIndices: keys } };
+                 _trailVis: { gnomons: s2, keyIndices: keys },
+                 getCamera: () => ({ _width: 1600, _height: 900 }) };
     window._flag_gnomons = true;
     window._animationRegistry = { globalPlaybackTime: 15 };
     mod.default.drawGnomons(m2);
 
-    const P = s2.geometry.getAttribute('position').array;
+    const P = s2.geometry.attributes.instanceStart.data.array;
     const axisLen = (k) => {              // length of the X axis of the k'th DRAWN triad
       const o = k * 18;
       return Math.abs(P[o + 3] - P[o]);
     };
-    const drawn = s2.geometry.drawRange.count / 6;
+    const drawn = s2.geometry.instanceCount / 3;
     check('only keys within reach are drawn at all',
       drawn === 19, drawn);               // 15 +/- 10 exclusive of the zero-scale ends
     check('...and the rest are not drawn faintly, they are not drawn',
-      s2.geometry.drawRange.count < 30 * 6);
+      s2.geometry.instanceCount < 30 * 3);
 
     check('the triad at the playhead is the largest', axisLen(9) > axisLen(0));
     check('...and it shrinks linearly with distance in KEYS',
@@ -664,12 +680,12 @@ function setup(times) {
     // this spacing, the draw is abandoned early, and the STALE draw range from the previous
     // call still reads as correct.
     check('the reach does not change when the keys are spread out in time',
-      s2.visible === true && s2.geometry.drawRange.count / 6 === drawn,
-      s2.visible + ' / ' + s2.geometry.drawRange.count / 6);
+      s2.visible === true && s2.geometry.instanceCount / 3 === drawn,
+      s2.visible + ' / ' + s2.geometry.instanceCount / 3);
     m2._trailStrand.times = times;
 
     // The colours stay at full strength - the one thing about a gnomon you must not squint at.
-    const C = s2.geometry.getAttribute('color').array;
+    const C = s2.geometry.attributes.instanceColorStart.data.array;
     check('axis colours do not fade with distance', near(C[0], C[18 * 9]),
       'scale carries the distance, colour carries which axis');
 
@@ -678,11 +694,21 @@ function setup(times) {
   }
 
   // It runs every frame now, so it must not allocate a fresh pair of buffers each time.
-  const firstPos = seg.geometry.getAttribute('position');
+  //
+  // The flag has to be ON here. The scale block above leaves it off, and with it off
+  // drawGnomons returns before touching the geometry at all - so this check passed on state
+  // nothing had written, whatever the code did.
+  window._flag_gnomons = true;
+  mod.default.drawGnomons(m);
+  // The ATTRIBUTE, not the array behind it: setPositions called with the same Float32Array
+  // still wraps it in a fresh InstancedInterleavedBuffer and fresh attributes every time, so
+  // comparing the array passes whether or not the rebuild was skipped.
+  const firstAttr = seg.geometry.attributes.instanceStart;
   mod.default.drawGnomons(m);
   check('repeat draws reuse the buffers rather than reallocating',
-    seg.geometry.getAttribute('position') === firstPos,
-    'two fresh Float32Arrays per frame is waste for geometry that rarely changes size');
+    seg.geometry.attributes.instanceStart === firstAttr,
+    'rebuilding the instanced attributes every frame is waste for geometry that rarely changes');
+  window._flag_gnomons = false;
 
   check('the axes are RGB, in that order',
     col.array[0] > col.array[1] && col.array[7] > col.array[6]

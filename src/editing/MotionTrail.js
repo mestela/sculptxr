@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+// Fat lines, for the gnomons only. THREE.Line draws hardware 1px lines, which cannot be
+// antialiased and step between whole pixels as the camera moves; LineSegments2 triangulates a
+// screen-space width instead. Used here and not (yet) for the trail itself, so the approach can
+// be judged on the small thing before the curve is committed to it.
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import Skeleton from './Skeleton.js';
 import IKSolver from './IKSolver.js';
 import MotionPathEdit from './MotionPathEdit.js';
@@ -432,12 +439,21 @@ const GNOMON_ORDER = 9997;
 const AXIS_COL = [[1, 0.25, 0.25], [0.25, 1, 0.3], [0.35, 0.5, 1]];
 const _axV = new THREE.Vector3();
 
+const GNOMON_PX = 2;
+
 function makeGnomons(main) {
   const g = Skeleton.overlayGroup(main);
-  const seg = new THREE.LineSegments(new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({
-      transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, vertexColors: true,
-    }));
+  const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
+    linewidth: GNOMON_PX,        // SCREEN pixels, because worldUnits is off
+    worldUnits: false,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    depthTest: false,
+    alphaToCoverage: false,      // the shader antialiases its own edges; coverage on top of
+                                 // that thins a 2px line to almost nothing
+  }));
   seg.frustumCulled = false;
   seg.isPickable = false;
   seg.renderOrder = GNOMON_ORDER;
@@ -445,10 +461,20 @@ function makeGnomons(main) {
   return seg;
 }
 
+// A screen-space width needs to know what the screen is. Read every draw rather than pushed
+// from a resize hook: a hook has to be added to every path that can change the viewport, and
+// the one that gets forgotten leaves the lines the wrong thickness with nothing to point at.
+function syncResolution(main, mat) {
+  const cam = main.getCamera && main.getCamera();
+  const w = (cam && cam._width) || 1;
+  const h = (cam && cam._height) || 1;
+  if (mat.resolution.x !== w || mat.resolution.y !== h) mat.resolution.set(w, h);
+}
+
 // Sized off the scene, not a constant: the same triad has to be legible on a head and on a
 // whole figure, and Skeleton.sceneUnit is what every other rig marker is scaled by.
 function gnomonLength(main) {
-  return (Skeleton.sceneUnit(main) || 1) * 0.03;
+  return (Skeleton.sceneUnit(main) || 1) * 0.0375;
 }
 
 // DISTANCE IS SHOWN BY SCALE, NOT BY FADING. A faded triad still occupies its space and still
@@ -526,17 +552,24 @@ MotionTrail.drawGnomons = function (main) {
   }
   if (!verts) { v.gnomons.visible = false; return; }
   const g = v.gnomons.geometry;
-  const pa = g.getAttribute('position');
-  if (v.gnomonFresh || !pa || pa.count !== n * 6) {
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  // setPositions rebuilds the instanced attributes, so it is called only when the buffer itself
+  // was replaced; otherwise the existing attributes are written in place and flagged.
+  if (v.gnomonFresh) {
+    g.setPositions(pos);
+    g.setColors(col);
     v.gnomonFresh = false;
   } else {
-    pa.needsUpdate = true;
-    const ca = g.getAttribute('color');
-    if (ca) ca.needsUpdate = true;
+    g.attributes.instanceStart.needsUpdate = true;
+    g.attributes.instanceEnd.needsUpdate = true;
+    if (g.attributes.instanceColorStart) {
+      g.attributes.instanceColorStart.needsUpdate = true;
+      g.attributes.instanceColorEnd.needsUpdate = true;
+    }
   }
-  g.setDrawRange(0, verts);
+  // The instanced equivalent of a draw range: one instance per SEGMENT, so the keys out of
+  // reach are simply not issued.
+  g.instanceCount = verts / 2;
+  syncResolution(main, v.gnomons.material);
   v.gnomons.visible = true;
 };
 
