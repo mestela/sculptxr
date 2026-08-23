@@ -464,8 +464,14 @@ MotionTrail.drawGnomons = function (main) {
   if (!n) { v.gnomons.visible = false; return; }
 
   const L = gnomonLength(main);
-  const pos = new Float32Array(n * 6 * 3);
-  const col = new Float32Array(n * 6 * 3);
+  const need = n * 6 * 3;
+  if (!v.gnomonPos || v.gnomonPos.length !== need) {
+    v.gnomonPos = new Float32Array(need);
+    v.gnomonCol = new Float32Array(need);
+    v.gnomonFresh = true;
+  }
+  const pos = v.gnomonPos;
+  const col = v.gnomonCol;
   let o = 0;
   for (const i of idx) {
     const p = strand.points[i];
@@ -482,8 +488,16 @@ MotionTrail.drawGnomons = function (main) {
     }
   }
   const g = v.gnomons.geometry;
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const pa = g.getAttribute('position');
+  if (v.gnomonFresh || !pa || pa.count !== n * 6) {
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    v.gnomonFresh = false;
+  } else {
+    pa.needsUpdate = true;
+    const ca = g.getAttribute('color');
+    if (ca) ca.needsUpdate = true;
+  }
   v.gnomons.visible = true;
 };
 
@@ -621,10 +635,23 @@ MotionTrail.recolor = function (main) {
   }
 };
 
+// EVERYTHING THAT CHANGES WITHOUT THE GEOMETRY CHANGING. The playhead moves, a display flag is
+// toggled, the pointer hovers a different sample — none of those alter the fingerprint, so none
+// of them cause a rebuild, and anything that depends on them has to run here instead.
+//
+// The gnomons were on the rebuild path and looked simply broken: pressing Key Axes set the flag
+// and nothing appeared, because the curve had not changed and so was never redrawn. That is the
+// second thing to land on this path for exactly the same reason, which is why there is now one
+// entry point rather than a call bolted onto each early return.
+MotionTrail.perFrame = function (main) {
+  MotionTrail.recolor(main);
+  MotionTrail.drawGnomons(main);
+};
+
 MotionTrail.update = function (main) {
   // A live path edit owns the drawn curve: the editor writes the geometry directly as the drag
   // moves, and re-sampling underneath it would fight the drag and cost a solve per frame.
-  if (main._pathEdit) { MotionTrail.recolor(main); return false; }
+  if (main._pathEdit) { MotionTrail.perFrame(main); return false; }
   if (!Skeleton.displayFlag('trails')) { MotionTrail.clear(main); return false; }
   const targets = trailed(main);
   const r = range();
@@ -638,7 +665,7 @@ MotionTrail.update = function (main) {
       ' tracks=' + (reg && reg.tracks ? reg.tracks.size : 'none'));
   }
   const sig = signature(main, targets, r);
-  if (sig === main._trailSig && main._trailVis) { MotionTrail.recolor(main); return false; }
+  if (sig === main._trailSig && main._trailVis) { MotionTrail.perFrame(main); return false; }
   main._trailSig = sig;
 
   const paths = samplePaths(main, targets);
@@ -678,8 +705,7 @@ MotionTrail.update = function (main) {
   });
 
   MotionTrail.drawDots(main);
-  MotionTrail.drawGnomons(main);
-  MotionTrail.recolor(main);
+  MotionTrail.perFrame(main);
   return true;
 };
 

@@ -583,6 +583,19 @@ function setup(times) {
   check('no triads unless Key Axes is on', seg.visible === false,
     'a triad per key is a lot of ink to carry while you are just watching an arc');
 
+  // TOGGLING THE FLAG HAS TO SHOW SOMETHING. It does not change the fingerprint, so it causes
+  // no rebuild — anything that only ran on the rebuild path looked simply broken: the button
+  // set the flag and nothing appeared.
+  window._flag_gnomons = true;
+  globalThis.__solves = [];
+  mod.default.perFrame(m);
+  check('turning Key Axes on draws them without a rebuild',
+    seg.visible === true && globalThis.__solves.length === 0,
+    'the flag is not in the fingerprint, so nothing would ever redraw them');
+  window._flag_gnomons = false;
+  mod.default.perFrame(m);
+  check('...and turning it off takes them away again', seg.visible === false);
+
   window._flag_gnomons = true;
   mod.default.drawGnomons(m);
   const pos = seg.geometry.getAttribute('position');
@@ -603,6 +616,13 @@ function setup(times) {
   check('a rotated key turns its triad with it',
     near(at(7)[0] - at(6)[0], 0, 1e-6) && at(7)[1] - at(6)[1] > 0,
     'a triad that ignores the quaternion is just three lines at a point');
+
+  // It runs every frame now, so it must not allocate a fresh pair of buffers each time.
+  const firstPos = seg.geometry.getAttribute('position');
+  mod.default.drawGnomons(m);
+  check('repeat draws reuse the buffers rather than reallocating',
+    seg.geometry.getAttribute('position') === firstPos,
+    'two fresh Float32Arrays per frame is waste for geometry that rarely changes size');
 
   check('the axes are RGB, in that order',
     col.array[0] > col.array[1] && col.array[7] > col.array[6]
