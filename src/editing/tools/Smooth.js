@@ -1,3 +1,5 @@
+import MotionPathEdit from '../MotionPathEdit.js';
+import MotionTrail from '../MotionTrail.js';
 import Utils from '../../misc/Utils.js';
 import Tablet from '../../misc/Tablet.js';
 import SculptBase from './SculptBase.js';
@@ -14,6 +16,38 @@ class Smooth extends SculptBase {
     this._idAlpha = 0;
     this._lockPosition = false;
     this._negative = false; // Support Sharpen
+  }
+
+  // SMOOTHING A MOTION PATH. On a mesh "smooth" needs a whole tool to disambiguate; on a strand
+  // it has exactly one meaning — a 1D Laplacian along the curve — and that IS noise removal, so
+  // this is the tool for taking the jitter out of a hand-recorded take.
+  //
+  // Hooked at start() for the same reason Move is: SculptBase.start aborts when the click
+  // misses geometry, and a motion path arcs through empty space.
+  start(ctrl) {
+    const main = this._main;
+    if (MotionPathEdit.begin(main, main._mouseX, main._mouseY, this.getScreenRadius())) return true;
+    return super.start(ctrl);
+  }
+
+  sculptStroke() {
+    const main = this._main;
+    if (MotionPathEdit.active(main)) {
+      // Iterative, unlike a Move: holding the brush still should keep relaxing, so each frame
+      // reads the current curve rather than the baseline. The baseline stays untouched, because
+      // push-back has to measure the whole gesture, not the last frame of it.
+      if (MotionPathEdit.smoothStep(main, this._intensity)) {
+        MotionTrail.redraw(main, main._pathEdit.strand.line, main._pathEdit.after);
+        main.render();
+      }
+      return;
+    }
+    super.sculptStroke();
+  }
+
+  end() {
+    super.end();
+    if (MotionPathEdit.active(this._main)) MotionPathEdit.endStroke(this._main);
   }
 
   stroke(picking) {

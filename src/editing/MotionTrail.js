@@ -237,7 +237,7 @@ function samplePaths(main, targets) {
 function disposeTrail(main) {
   const v = main._trailVis;
   if (!v) return;
-  for (const o of v.lines || []) {
+  for (const o of [...(v.lines || []), v.dots, v.keyDots]) {
     if (!o) continue;
     if (o.parent) o.parent.remove(o);
     if (o.geometry) o.geometry.dispose();
@@ -251,6 +251,53 @@ function disposeTrail(main) {
 // whenever the limb is reaching — a second curve at full strength would just thicken the first.
 const CONTROL_OPACITY = 0.95;
 const OUTPUT_OPACITY = 0.35;
+
+// DOTS ON THE AUTHORED CURVE, because you cannot grab what you cannot see. A drag takes hold of
+// the nearest SAMPLE, and with the samples invisible the curve appeared to move from a point
+// other than the one under the cursor — which reads as the tool being misaligned rather than as
+// the samples being sparse.
+//
+// This uses THREE.Points, which an earlier iteration was right to remove: at scene scale the
+// DEFAULT PointsMaterial draws world-sized camera-facing squares, and they became a wall of red
+// that hid both the curve and the model. The fix for that was sizeAttenuation, not banning the
+// primitive — a point pinned to a few SCREEN pixels is a dot, and cannot swamp anything.
+const DOT_PX = 7;          // a sample: grabbable, small
+const KEY_DOT_PX = 11;     // a sample that is also a KEY: where an edit can actually land
+const DOT_ORDER = 9999;
+
+// A sample sitting on a key time is worth showing differently: push-back moves KEYS, so those
+// are the instants an edit can be recorded at. A wiggle sculpted between two of them has
+// nothing to carry it.
+function keyMask(main, pin, times) {
+  const reg = window._animationRegistry;
+  const track = reg && reg.tracks && reg.tracks.get(pin.getID());
+  const out = new Array(times.length).fill(false);
+  if (!track || !track.times) return out;
+  const span = (times[times.length - 1] - times[0]) || 1;
+  const eps = span * 1e-6;
+  for (const kt of track.times) {
+    for (let i = 0; i < times.length; i++) {
+      if (Math.abs(times[i] - kt) <= eps) { out[i] = true; break; }
+    }
+  }
+  return out;
+}
+
+function makeDots(main, sizePx) {
+  const g = Skeleton.overlayGroup(main);
+  const pts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+    size: sizePx,
+    sizeAttenuation: false,   // SCREEN pixels — this is the whole difference from the old wall
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+  }));
+  pts.frustumCulled = false;
+  pts.isPickable = false;
+  pts.renderOrder = DOT_ORDER;
+  g.add(pts);
+  return pts;
+}
 
 function makeLine(main) {
   const g = Skeleton.overlayGroup(main);
@@ -276,6 +323,15 @@ MotionTrail.redraw = function (main, lineIndex, points) {
   const line = v && v.lines && v.lines[lineIndex];
   if (!line) return;
   line.geometry.setFromPoints(points);
+  // The dots ride with the drag. Leaving them on the old samples is worse than not drawing them
+  // at all: they would read as the curve's real positions while the line says otherwise.
+  const strand = main._trailStrand;
+  if (strand) {
+    const was = strand.points;
+    strand.points = points;
+    MotionTrail.drawDots(main);
+    strand.points = was;
+  }
 };
 
 // Per-frame. Cheap when nothing changed: one fingerprint, one string compare.
@@ -299,7 +355,11 @@ MotionTrail.update = function (main) {
   // rather than trying to reconcile: two lines is not a pool worth managing.
   if (!main._trailVis || main._trailVis.lines.length !== paths.length) {
     disposeTrail(main);
-    main._trailVis = { lines: paths.map(() => makeLine(main)) };
+    main._trailVis = {
+      lines: paths.map(() => makeLine(main)),
+      dots: makeDots(main, DOT_PX),
+      keyDots: makeDots(main, KEY_DOT_PX),
+    };
   }
 
   // The strand the editor may take hold of: the AUTHORED curve only. Solver output is not
@@ -322,7 +382,37 @@ MotionTrail.update = function (main) {
     line.visible = pts.length > 1;
   });
 
+  MotionTrail.drawDots(main);
   return true;
+};
+
+// The samples of the AUTHORED curve, drawn as dots so they can be aimed at. Split into two
+// clouds rather than one with per-point sizes: PointsMaterial carries a single size, and two
+// draw calls is cheaper than the custom shader the alternative needs.
+MotionTrail.drawDots = function (main, weights) {
+  const v = main._trailVis;
+  const strand = main._trailStrand;
+  if (!v || !v.dots) return;
+  if (!strand) { v.dots.visible = v.keyDots.visible = false; return; }
+
+  const pts = strand.points;
+  const isKey = keyMask(main, strand.pin, strand.times);
+  const plain = [], keys = [];
+  for (let i = 0; i < pts.length; i++) (isKey[i] ? keys : plain).push(pts[i]);
+
+  v.dots.geometry.setFromPoints(plain);
+  v.keyDots.geometry.setFromPoints(keys);
+  v.dots.visible = plain.length > 0;
+  v.keyDots.visible = keys.length > 0;
+
+  const col = Skeleton.boneColor(main, strand.pin._pinnedJoint);
+  v.dots.material.color.setRGB(col.r, col.g, col.b);
+  v.dots.material.opacity = 0.55;
+  // A key is where an edit can actually be recorded, so it reads brighter than a sample that
+  // is only there to draw the curve smoothly.
+  v.keyDots.material.color.setRGB(1, 1, 1);
+  v.keyDots.material.opacity = 0.95;
+  void weights;
 };
 
 export default MotionTrail;

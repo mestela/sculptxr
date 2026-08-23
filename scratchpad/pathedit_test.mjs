@@ -184,10 +184,15 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('the drag runs before the mesh guard in sculptStroke',
     /sculptStroke\(\) \{\s*\n\s*if \(MotionPathEdit\.active/.test(MOVE),
     'the mesh guard would return first in a rig-only scene');
-  check('push-back happens on stroke end', /MotionPathEdit\.finish\(main\)/.test(MOVE));
+  // Both of these moved into MotionPathEdit.endStroke when Smooth arrived and needed the same
+  // two steps. Assert them where they now live — checking Move's file would report the
+  // de-duplication as a regression.
+  const END = SRC.slice(SRC.indexOf('MotionPathEdit.endStroke'));
+  check('push-back happens on stroke end', /MotionPathEdit\.finish\(main\)/.test(END));
   check('...and the trail is forced to rebuild from the written keys',
-    /main\._trailSig = null;/.test(MOVE),
+    /main\._trailSig = null;/.test(END),
     'redrawing the dragged points instead would hide a push-back that disagreed with them');
+  check('...and every tool goes through it', /MotionPathEdit\.endStroke\(main\)/.test(MOVE));
 
   // Re-sampling under a live drag fights the drag AND costs a full solve per frame.
   check('MotionTrail yields while an edit is live', /if \(main\._pathEdit\) return false;/.test(TRAIL));
@@ -211,6 +216,51 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   const DR = SRC.slice(SRC.indexOf('MotionPathEdit.drag'), SRC.indexOf('MotionPathEdit.finish'));
   check('and drag displaces from that baseline, not from the live curve',
     /displace\(e\.before,/.test(DR) && !/displace\(e\.after/.test(DR));
+}
+
+// --- 9. smoothing a strand ----------------------------------------------------------------
+{
+  // A spike on an otherwise straight run: exactly the hand-recorded jitter this is for.
+  const pts = line(9).map((p, i) => ({ ...p, y: i === 4 ? 4 : 0 }));
+  const out = MPE.smoothed(pts, 4, 4, 1);
+  check('the spike comes down', Math.abs(out[4].y) < Math.abs(pts[4].y), out[4].y);
+  check('...toward the average of its neighbours', near(out[4].y, 0), out[4].y);
+
+  // A Laplacian SHORTENS a curve, so an unpinned end creeps inward every pass and the take
+  // quietly loses its first and last poses - which reads as keys drifting for no reason.
+  const ends = MPE.smoothed(line(9), 4, 99, 1);
+  check('the endpoints are pinned',
+    near(ends[0].x, 0) && near(ends[8].x, 8), ends[0].x + '..' + ends[8].x);
+
+  check('outside the radius nothing relaxes',
+    near(MPE.smoothed(pts, 8, 1, 1)[4].y, 4),
+    'the falloff must gate smoothing the same way it gates a move');
+  check('strength 0 is a no-op',
+    MPE.smoothed(pts, 4, 4, 0).every((p, i) => near(p.y, pts[i].y)));
+
+  // Iterative by nature: holding the brush still keeps relaxing, so each step reads the CURRENT
+  // curve. The baseline must survive it, or push-back measures the last frame instead of the
+  // whole gesture.
+  const main = { _pathEdit: { before: pts.map((p) => ({ ...p })), after: null, index: 4, radius: 4 } };
+  MPE.smoothStep(main, 1);
+  const firstY = main._pathEdit.after[4].y;
+  MPE.smoothStep(main, 1);
+  check('smoothing accumulates across frames',
+    Math.abs(main._pathEdit.after[4].y) <= Math.abs(firstY));
+  check('...and the baseline is never overwritten',
+    near(main._pathEdit.before[4].y, 4), main._pathEdit.before[4].y);
+}
+
+// --- 10. the stroke end is shared, not repeated per tool -----------------------------------
+{
+  const MOVE = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+  const SMOOTH = fs.readFileSync(path.join(REPO, 'src/editing/tools/Smooth.js'), 'utf8');
+  check('Smooth hooks start() too', /start\(ctrl\) \{[\s\S]{0,300}?MotionPathEdit\.begin\(/.test(SMOOTH));
+  check('both tools end through ONE shared path',
+    /MotionPathEdit\.endStroke\(/.test(MOVE) && /MotionPathEdit\.endStroke\(/.test(SMOOTH),
+    'push-back plus the forced rebuild is exactly the two-step that gets half-copied');
+  check('...and neither reimplements it',
+    !/_trailSig = null/.test(SMOOTH) && !/_trailSig = null/.test(MOVE));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

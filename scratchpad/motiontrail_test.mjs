@@ -355,8 +355,27 @@ function setup(times) {
 {
   const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
   check('the viewport trail is a line', /new THREE\.Line\(/.test(code));
-  check('the viewport trail has no camera-facing point sprites',
-    !/new THREE\.Points\(|new THREE\.PointsMaterial\(/.test(code));
+
+  // THIS CHECK USED TO BAN THREE.Points OUTRIGHT, and it was right to at the time: the default
+  // PointsMaterial draws WORLD-SIZED camera-facing squares, and at scene scale those became a
+  // wall of red that hid the curve and the model under it.
+  //
+  // But the defect was the SIZING, not the primitive. Dots are now needed — a drag takes hold
+  // of the nearest sample, and with the samples invisible the curve appears to move from
+  // somewhere other than the cursor, which reads as the tool being misaligned. A point pinned
+  // to a few SCREEN pixels cannot swamp anything.
+  //
+  // So the rule is stated as what actually went wrong: any Points material must switch
+  // sizeAttenuation OFF and ask for a small pixel size.
+  const materials = [...code.matchAll(/new THREE\.PointsMaterial\(\{([\s\S]*?)\}\)/g)];
+  check('every point cloud is sized in SCREEN pixels, not world units',
+    materials.length > 0 && materials.every((m) => /sizeAttenuation:\s*false/.test(m[1])),
+    'world-sized sprites are the wall of squares this check was written for');
+  // The size is passed in, so check the values the callers actually ask for. A screen-sized
+  // point still hides the curve if it is 40px across.
+  const sizes = [...code.matchAll(/^const (?:KEY_)?DOT_PX = (\d+);/gm)].map((m) => Number(m[1]));
+  check('...and asks for a dot, not a slab',
+    sizes.length > 0 && sizes.every((n) => n > 0 && n <= 16), sizes.join(','));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

@@ -102,6 +102,41 @@ MotionPathEdit.displace = function (points, index, delta, radius) {
   }));
 };
 
+// SMOOTH, which on a strand is a 1D Laplacian along it — each sample toward the average of its
+// two neighbours, scaled by the same falloff. On a mesh "smooth" is ambiguous enough to need a
+// whole tool; on a curve it has exactly one meaning, and it is precisely noise removal: the
+// jitter of a hand-recorded take is high-frequency deviation from the curve its neighbours
+// describe.
+//
+// The ENDS ARE PINNED. A Laplacian shortens a curve, so an unpinned end creeps inward every
+// pass and the animation quietly loses its first and last poses — which look like keys drifting
+// for no reason. Endpoints keep their positions and only the interior relaxes.
+MotionPathEdit.smoothed = function (points, index, radius, strength) {
+  const w = MotionPathEdit.weights(points, index, radius);
+  const k = Math.max(0, Math.min(1, strength == null ? 0.5 : strength));
+  return points.map((p, i) => {
+    if (i === 0 || i === points.length - 1) return { x: p.x, y: p.y, z: p.z };
+    const a = points[i - 1], b = points[i + 1];
+    const t = k * w[i];
+    return {
+      x: p.x + ((a.x + b.x) * 0.5 - p.x) * t,
+      y: p.y + ((a.y + b.y) * 0.5 - p.y) * t,
+      z: p.z + ((a.z + b.z) * 0.5 - p.z) * t,
+    };
+  });
+};
+
+// One pass of smoothing per stroke frame, accumulating. Unlike a Move — which measures every
+// frame against the baseline — smoothing is iterative by nature: holding the brush still should
+// keep relaxing. So it reads the CURRENT curve and writes back, while `before` stays the
+// baseline push-back measures against.
+MotionPathEdit.smoothStep = function (main, strength) {
+  const e = main._pathEdit;
+  if (!e) return false;
+  e.after = MotionPathEdit.smoothed(e.after || e.before, e.index, e.radius, strength);
+  return true;
+};
+
 // The residual at an arbitrary time, from the sampled before/after curves. Samples land on key
 // times (MotionTrail.sampleTimes), so a key is normally an exact hit; the interpolation is the
 // honest fallback for a key that is not, rather than a silent snap to the nearest sample.
@@ -175,7 +210,7 @@ function worldAt(camera, sampleScreenZ, x, y) {
 
 // Try to take hold of the authored curve. Returns false when the pointer is not on it, so the
 // stroke falls through to whatever it would have done — sculpting the mesh, usually.
-MotionPathEdit.begin = function (main, x, y, radius, radiusPx) {
+MotionPathEdit.begin = function (main, x, y, radiusPx) {
   const strand = main._trailStrand;
   if (!strand || !strand.points || strand.points.length < 2) return false;
   if (!MotionPathEdit.editable(strand.pin)) {
@@ -190,11 +225,20 @@ MotionPathEdit.begin = function (main, x, y, radius, radiusPx) {
   if (index < 0) return false;
 
   const anchor = strand.points[index];
-  const z = camera.project([anchor.x, anchor.y, anchor.z])[2];
+  const s = camera.project([anchor.x, anchor.y, anchor.z]);
+  const z = s[2];
+  // The brush radius as a WORLD length, measured at the depth of the sample actually grabbed.
+  // Measuring it anywhere else on the curve is wrong the moment the path recedes from the
+  // camera: the same ring of pixels covers a different world distance at every depth, so the
+  // reach stopped matching the cursor ring and the edit felt loose or dead by turns.
+  const a = camera.unproject(s[0], s[1], z);
+  const b = camera.unproject(s[0] + radiusPx, s[1], z);
+  const rx = b[0] - a[0], ry = b[1] - a[1], rz = b[2] - a[2];
+  const world = Math.sqrt(rx * rx + ry * ry + rz * rz);
   main._pathEdit = {
     strand: strand,
     index: index,
-    radius: radius,
+    radius: world,
     screenZ: z,
     // Deep copy: the baseline must not be a view of the array the drag writes to.
     before: strand.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
@@ -248,5 +292,20 @@ MotionPathEdit.finish = function (main) {
 };
 
 MotionPathEdit.active = function (main) { return !!(main && main._pathEdit); };
+
+// What every tool does at the end of a path stroke. Shared rather than repeated per tool: the
+// same rule implemented in N places is this project's signature bug, and "push back, then force
+// the curve to rebuild from what was written" is exactly the kind of two-step that gets half
+// copied into the second tool.
+MotionPathEdit.endStroke = function (main) {
+  const moved = MotionPathEdit.finish(main);
+  console.log('[path] motion path edit pushed back onto ' + moved + ' key(s)');
+  // The strand is transient. Dropping the fingerprint forces a REBUILD from the keys just
+  // written, which is the only honest check that push-back did what the curve said: if the
+  // redrawn curve jumps, the keys and the drawing disagree.
+  main._trailSig = null;
+  main.render();
+  return moved;
+};
 
 export default MotionPathEdit;

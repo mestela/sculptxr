@@ -39,8 +39,7 @@ class Move extends SculptBase {
   // pointer is genuinely on the authored curve, so every other stroke falls through unchanged.
   start(ctrl) {
     const main = this._main;
-    if (MotionPathEdit.begin(main, main._mouseX, main._mouseY,
-                             this._pathRadius(), this.getScreenRadius())) {
+    if (MotionPathEdit.begin(main, main._mouseX, main._mouseY, this.getScreenRadius())) {
       return true;
     }
     return super.start(ctrl);
@@ -224,16 +223,7 @@ class Move extends SculptBase {
     super.end();
 
     var main = this._main;
-    if (MotionPathEdit.active(main)) {
-      const moved = MotionPathEdit.finish(main);
-      console.log('[path] motion path edit pushed back onto ' + moved + ' key(s)');
-      // The strand is transient. Dropping the fingerprint forces a REBUILD from the keys that
-      // were just written, which is the real check that push-back did what the curve said: if
-      // the redrawn curve jumps, the keys and the drawing disagree.
-      main._trailSig = null;
-      main.render();
-      return;
-    }
+    if (MotionPathEdit.active(main)) { MotionPathEdit.endStroke(main); return; }
 
     var mesh = this.getMesh();
     if (!mesh) return;
@@ -273,22 +263,6 @@ class Move extends SculptBase {
       
       voxelTool._worker.postMessage({ type: 'GET_MESH' });
     }
-  }
-
-  // The brush radius as a WORLD length, which is what an arc-length falloff needs. Taken from
-  // the same screen radius the cursor ring draws, unprojected at the curve's own depth, so the
-  // ring you see is the reach you get.
-  _pathRadius() {
-    const main = this._main;
-    const camera = main.getCamera && main.getCamera();
-    const strand = main._trailStrand;
-    if (!camera || !strand || !strand.points.length) return 0;
-    const p = strand.points[0];
-    const s = camera.project([p.x, p.y, p.z]);
-    const a = camera.unproject(s[0], s[1], s[2]);
-    const b = camera.unproject(s[0] + this.getScreenRadius(), s[1], s[2]);
-    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
   initMoveData(picking, moveData) {
