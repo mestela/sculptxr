@@ -2026,6 +2026,10 @@ const DISPLAY_FLAGS = {
   // evaluation per sample, and it is an animation aid rather than something you want while
   // sculpting.
   trails: ['_boneShowTrails', 'boneShowTrails', false],
+  // Axis triads at a motion path's keys. Separate from trails rather than folded into them: a
+  // trail is often on for minutes at a time while you watch an arc, and a triad per key is a
+  // lot of ink to carry through that when you are not editing rotation.
+  gnomons: ['_boneShowGnomons', 'boneShowGnomons', false],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
 

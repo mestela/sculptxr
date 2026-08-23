@@ -215,6 +215,7 @@ var getOptionsURL = function () {
   // falloff; off reaches every pass through a region, which is occasionally what you want.
   options.pathConnected = queryBool(getVal('pathConnected'), true);
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
+  options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
 
   options.shortcuts = readShortcuts(params.shortcuts); // URL only for now
 

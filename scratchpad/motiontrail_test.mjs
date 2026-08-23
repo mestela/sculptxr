@@ -77,7 +77,13 @@ const near = (a, b, e) => Math.abs(a - b) < (e || 1e-6);
 let nextId = 1;
 function joint(track) {
   const j = { _isBone: true, _id: nextId++, _p: [0, 0, 0], _track: track || null,
-    getID() { return this._id; } };
+    getID() { return this._id; },
+    // A real mesh has this, and the sampler now reads ORIENTATION out of it for the gnomons.
+    // Stubbed as a genuine model matrix rather than omitted: a stub that is missing what the
+    // shipped object has is a harness that cannot see a whole class of bug.
+    getModelSpaceMatrix() {
+      return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1];
+    } };
   return j;
 }
 
@@ -225,7 +231,8 @@ function setup(times) {
 {
   const { j, main, reg } = setup();
   const pin = { _isPinTarget: true, _id: 900, _p: [0, 0, 0],
-    _track: { times: [0, 1, 2] }, getID() { return this._id; } };
+    _track: { times: [0, 1, 2] }, getID() { return this._id; },
+    getModelSpaceMatrix() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1]; } };
   j._pin = pin;
   main.getMeshes = () => [j, pin];
   reg.tracks.set(pin.getID(), pin._track);
@@ -268,7 +275,8 @@ function setup(times) {
 {
   const { j, main, reg } = setup();
   const pin = { _isPinTarget: true, _id: 902, _p: [0, 0, 0], _pinnedJoint: j,
-    getID() { return this._id; } };
+    getID() { return this._id; },
+    getModelSpaceMatrix() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1]; } };
   j._pin = pin;
   main.getMeshes = () => [j, pin];
 
@@ -362,7 +370,8 @@ function setup(times) {
 {
   const { j, main, reg } = setup();
   const pin = { _isPinTarget: true, _id: 903, _p: [0, 0, 0], _pinnedJoint: j,
-    getID() { return this._id; } };
+    getID() { return this._id; },
+    getModelSpaceMatrix() { return [1,0,0,0, 0,1,0,0, 0,0,1,0, this._p[0], this._p[1], this._p[2], 1]; } };
   const mesh = { _id: 904, getID() { return this._id; } };
   j._pin = pin;
   main.getMeshes = () => [j, pin, mesh];
@@ -550,6 +559,61 @@ function setup(times) {
   check('the far end of the ramp is a midtone GREY, not black',
     /const FAR_GREY\s*=\s*\[0\.48/.test(SRC),
     'fading to black desaturates, so a dim red reads as orange and a dim green as lime');
+}
+
+// --- 5f. RGB gnomons at the keys ----------------------------------------------------------
+//
+// A quaternion is not a place, so rotation has no path to draw — the only way to see it is to
+// plant an axis triad where a key is and let its orientation show.
+{
+  const seg = { geometry: new THREE.BufferGeometry(), visible: false };
+  const strand = {
+    points: [ {x:0,y:0,z:0}, {x:1,y:0,z:0}, {x:2,y:0,z:0} ],
+    // A quarter turn about Z on the middle key, identity either side.
+    quats: [ new THREE.Quaternion(),
+             new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), Math.PI / 2),
+             new THREE.Quaternion() ],
+    times: [0, 1, 2],
+    pin: { getID: () => 1, _pinnedJoint: {} },
+  };
+  const m = { _trailStrand: strand, _trailVis: { gnomons: seg, keyIndices: [0, 1] } };
+
+  window._flag_gnomons = false;
+  mod.default.drawGnomons(m);
+  check('no triads unless Key Axes is on', seg.visible === false,
+    'a triad per key is a lot of ink to carry while you are just watching an arc');
+
+  window._flag_gnomons = true;
+  mod.default.drawGnomons(m);
+  const pos = seg.geometry.getAttribute('position');
+  const col = seg.geometry.getAttribute('color');
+  check('one triad per KEY, three segments each',
+    seg.visible && pos.count === 2 * 6, pos && pos.count);
+  check('...and only at the keys, not at every sample',
+    pos.count / 6 === 2 && strand.points.length === 3);
+
+  // Segment 0 of key 0 is the X axis, unrotated: it must run along +X from the key.
+  const at = (i) => [pos.array[i * 3], pos.array[i * 3 + 1], pos.array[i * 3 + 2]];
+  check('each axis starts AT the key', near(at(0)[0], 0) && near(at(0)[1], 0));
+  check('an unrotated key points its X axis along +X',
+    at(1)[0] > 0 && near(at(1)[1], 0, 1e-6), at(1).join(','));
+
+  // Key 1 is turned a quarter turn about Z, so ITS x axis points along +Y. This is the whole
+  // point: the triad has to show the ORIENTATION, not just mark the spot.
+  check('a rotated key turns its triad with it',
+    near(at(7)[0] - at(6)[0], 0, 1e-6) && at(7)[1] - at(6)[1] > 0,
+    'a triad that ignores the quaternion is just three lines at a point');
+
+  check('the axes are RGB, in that order',
+    col.array[0] > col.array[1] && col.array[7] > col.array[6]
+      && col.array[14] > col.array[12],
+    'x red, y green, z blue — the convention every 3D app shares');
+
+  // Nothing to read the orientation from is not a crash and not a triad.
+  mod.default.drawGnomons({ _trailStrand: { points: strand.points, times: strand.times,
+    pin: strand.pin }, _trailVis: { gnomons: seg, keyIndices: [0] } });
+  check('a curve with no sampled orientations draws none', seg.visible === false);
+  window._flag_gnomons = false;
 }
 
 // --- 6. viewport representation ----------------------------------------------------------

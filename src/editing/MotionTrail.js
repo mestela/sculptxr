@@ -242,6 +242,9 @@ function samplePaths(main, targets) {
 
   const n = Math.max(2, Math.round(tune('_trailSamples', SAMPLES)));
   const paths = targets.map(() => []);
+  // Orientation is only collected for the AUTHORED curve: it is the only one that can be
+  // edited, and a triad on every sample of a read-only curve is noise.
+  const quats = targets.map((tg) => (tg.control ? [] : null));
   const wasT = reg.globalPlaybackTime || 0;
   const wasPlaying = window._animPlaying;
   // Suppress playback for the duration: update() advances globalPlaybackTime by wall-clock dt
@@ -259,7 +262,14 @@ function samplePaths(main, targets) {
       evaluateAt(main, reg, joints, t);
       // A pin reads the same way a joint does — both are meshes, and the path is the
       // translation of the model-space matrix either way.
-      targets.forEach((tg, k) => paths[k].push(Skeleton.jointPos(tg.obj || tg)));
+      targets.forEach((tg, k) => {
+        const o = tg.obj || tg;
+        paths[k].push(Skeleton.jointPos(o));
+        // The ORIENTATION at the same instant, for the gnomons. Free here: the rig is already
+        // posed at this time, and reading the rotation out of a track afterwards would be a
+        // second evaluator to keep in step with this one.
+        if (quats[k]) quats[k].push(sampleQuat(o));
+      });
     }
   } finally {
     // Put the rig back on the frame the user is actually on, through the same path, so the
@@ -267,13 +277,25 @@ function samplePaths(main, targets) {
     evaluateAt(main, reg, joints, wasT);
     window._animPlaying = wasPlaying;
   }
+  paths.quats = quats;
   return paths;
+}
+
+const _mQ = new THREE.Matrix4();
+const _vQ = new THREE.Vector3();
+const _sQ = new THREE.Vector3();
+
+function sampleQuat(obj) {
+  const q = new THREE.Quaternion();
+  _mQ.fromArray(obj.getModelSpaceMatrix());
+  _mQ.decompose(_vQ, q, _sQ);
+  return q;
 }
 
 function disposeTrail(main) {
   const v = main._trailVis;
   if (!v) return;
-  for (const o of [...(v.lines || []), v.dots, v.keyDots]) {
+  for (const o of [...(v.lines || []), v.dots, v.keyDots, v.gnomons]) {
     if (!o) continue;
     if (o.parent) o.parent.remove(o);
     if (o.geometry) o.geometry.dispose();
@@ -396,6 +418,74 @@ function dotTexture() {
   _dotTex.magFilter = THREE.LinearFilter;
   return _dotTex;
 }
+
+// RGB GNOMONS AT THE KEYS. Rotation has no path to draw — a quaternion is not a place — so the
+// only way to see it is to plant an axis triad where a key is and let its orientation show.
+//
+// AT THE KEYS ONLY, not every sample. There are dozens of samples and a handful of keys, and a
+// triad on each sample would be a thicket you cannot read; the keys are also the only instants a
+// rotation edit could be recorded at, so they are the honest place to show it.
+//
+// One LineSegments for the lot: three segments per key, coloured per vertex, so the whole set
+// is a single draw call however many keys there are.
+const GNOMON_ORDER = 9997;
+const AXIS_COL = [[1, 0.25, 0.25], [0.25, 1, 0.3], [0.35, 0.5, 1]];
+const _axV = new THREE.Vector3();
+
+function makeGnomons(main) {
+  const g = Skeleton.overlayGroup(main);
+  const seg = new THREE.LineSegments(new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      transparent: true, opacity: 0.95, depthWrite: false, depthTest: false, vertexColors: true,
+    }));
+  seg.frustumCulled = false;
+  seg.isPickable = false;
+  seg.renderOrder = GNOMON_ORDER;
+  g.add(seg);
+  return seg;
+}
+
+// Sized off the scene, not a constant: the same triad has to be legible on a head and on a
+// whole figure, and Skeleton.sceneUnit is what every other rig marker is scaled by.
+function gnomonLength(main) {
+  return (Skeleton.sceneUnit(main) || 1) * 0.06;
+}
+
+MotionTrail.drawGnomons = function (main) {
+  const v = main._trailVis;
+  const strand = main._trailStrand;
+  if (!v || !v.gnomons) return;
+  if (!strand || !strand.quats || !Skeleton.displayFlag('gnomons')) {
+    v.gnomons.visible = false;
+    return;
+  }
+  const idx = v.keyIndices || [];
+  const n = idx.length;
+  if (!n) { v.gnomons.visible = false; return; }
+
+  const L = gnomonLength(main);
+  const pos = new Float32Array(n * 6 * 3);
+  const col = new Float32Array(n * 6 * 3);
+  let o = 0;
+  for (const i of idx) {
+    const p = strand.points[i];
+    const q = strand.quats[i];
+    for (let a = 0; a < 3; a++) {
+      _axV.set(a === 0 ? L : 0, a === 1 ? L : 0, a === 2 ? L : 0);
+      if (q) _axV.applyQuaternion(q);
+      pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
+      pos[o + 3] = p.x + _axV.x; pos[o + 4] = p.y + _axV.y; pos[o + 5] = p.z + _axV.z;
+      const c = AXIS_COL[a];
+      col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2];
+      col[o + 3] = c[0]; col[o + 4] = c[1]; col[o + 5] = c[2];
+      o += 6;
+    }
+  }
+  const g = v.gnomons.geometry;
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  v.gnomons.visible = true;
+};
 
 function makeDots(main, sizePx) {
   const g = Skeleton.overlayGroup(main);
@@ -562,6 +652,7 @@ MotionTrail.update = function (main) {
       lines: paths.map(() => makeLine(main)),
       dots: makeDots(main, DOT_PX),
       keyDots: makeDots(main, KEY_DOT_PX),
+      gnomons: makeGnomons(main),
     };
   }
 
@@ -569,7 +660,8 @@ MotionTrail.update = function (main) {
   // editable, so it is never offered — see MotionPathEdit for why.
   const ci = targets.findIndex((t) => t.control);
   main._trailStrand = ci >= 0
-    ? { points: paths[ci], times: main._trailTimes, pin: targets[ci].obj, line: ci }
+    ? { points: paths[ci], quats: paths.quats && paths.quats[ci],
+        times: main._trailTimes, pin: targets[ci].obj, line: ci }
     : null;
 
   const v = main._trailVis;
@@ -586,6 +678,7 @@ MotionTrail.update = function (main) {
   });
 
   MotionTrail.drawDots(main);
+  MotionTrail.drawGnomons(main);
   MotionTrail.recolor(main);
   return true;
 };
@@ -601,9 +694,9 @@ MotionTrail.drawDots = function (main, weights) {
 
   const pts = strand.points;
   const isKey = keyMask(main, strand.pin, strand.times);
-  const plain = [], keys = [], keyTimes = [], slots = [];
+  const plain = [], keys = [], keyTimes = [], slots = [], keyIndices = [];
   for (let i = 0; i < pts.length; i++) {
-    if (isKey[i]) { slots.push({ key: true, i: keys.length }); keys.push(pts[i]); keyTimes.push(strand.times[i]); }
+    if (isKey[i]) { slots.push({ key: true, i: keys.length }); keys.push(pts[i]); keyTimes.push(strand.times[i]); keyIndices.push(i); }
     else { slots.push({ key: false, i: plain.length }); plain.push(pts[i]); }
   }
 
@@ -623,6 +716,7 @@ MotionTrail.drawDots = function (main, weights) {
   v.identity = [col.r, col.g, col.b];
   v.keyTimes = keyTimes;
   v.slots = slots;
+  v.keyIndices = keyIndices;
   v.plainCol = new Float32Array(plain.length * 3);
   v.keyCol = new Float32Array(keyTimes.length * 3);
   // Half a sample spacing counts as "on the playhead": the key and the playhead rarely land on
