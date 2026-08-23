@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import Skeleton from './Skeleton.js';
 import IKSolver from './IKSolver.js';
+import MotionPathEdit from './MotionPathEdit.js';
 
 // Motion trails: the world-space path a joint takes over the timeline, drawn in the viewport.
 //
@@ -413,6 +414,13 @@ MotionTrail.drawDots = function (main, weights) {
   v.keyDots.material.color.setRGB(1, 1, 1);
   v.keyDots.material.opacity = 0.95;
   void weights;
+};
+
+// The editor redraws through this rather than importing MotionTrail, which would close an
+// import cycle between the two.
+MotionPathEdit.redrawHook = function (main) {
+  const e = main._pathEdit;
+  if (e && e.after) MotionTrail.redraw(main, e.strand.line, e.after);
 };
 
 export default MotionTrail;

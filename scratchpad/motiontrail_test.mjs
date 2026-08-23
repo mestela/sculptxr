@@ -52,6 +52,9 @@ const IKSolver = {
 };
 globalThis.window = globalThis.window || {};
 globalThis.__solves = [];
+// MotionTrail publishes the editor's redraw hook, so the editor need not import the drawing
+// back and close a cycle. Stubbed here because the drawing is not what this harness tests.
+const MotionPathEdit = {};
 `;
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');

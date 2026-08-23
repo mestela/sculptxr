@@ -305,6 +305,89 @@ MotionPathEdit.finish = function (main) {
   return moved;
 };
 
+// ── THE HEADSET ───────────────────────────────────────────────────────────────────────────
+//
+// The VR path is not a port of the desktop one — it is the honest version of it, and it is
+// SHORTER. A controller tip is already a point in the world, so acquiring the curve is a plain
+// distance and the drag is a real 3D delta. There is no projection, no depth plane, and none of
+// the "which point's depth do I measure the radius at" question that caused two bugs on the
+// mouse side. The desktop path is the awkward 2D shadow of this one, not the other way round.
+
+// The brush radius as a world length, through the SAME fallback chain SculptBase uses for
+// stroke spacing — the picking radius when a mesh was hit, the last known one otherwise. A
+// motion path usually hangs in empty space, so the fallback is the normal case here, not the
+// exception.
+function vrRadius(main, picking) {
+  let r = picking && picking._rWorld2 > 0 ? Math.sqrt(picking._rWorld2) : 0;
+  if (r < 1e-5) r = main._vrLastPickingRadius || 0.05;
+  return r;
+}
+
+function dist2(a, b) {
+  const dx = a.x - b[0], dy = a.y - b[1], dz = a.z - b[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
+MotionPathEdit.beginXR = function (main, tip, radiusWorld) {
+  const strand = main._trailStrand;
+  if (!tip || !strand || !strand.points || strand.points.length < 2) return false;
+  if (!MotionPathEdit.editable(strand.pin)) return false;
+
+  let best = -1;
+  let bestD = radiusWorld * radiusWorld;
+  for (let i = 0; i < strand.points.length; i++) {
+    const d = dist2(strand.points[i], tip);
+    if (d <= bestD) { bestD = d; best = i; }
+  }
+  if (best < 0) return false;
+
+  main._pathEdit = {
+    strand: strand,
+    index: best,
+    radius: radiusWorld,
+    before: strand.points.map((p) => ({ x: p.x, y: p.y, z: p.z })),
+    startWorld: { x: tip[0], y: tip[1], z: tip[2] },
+    after: null,
+    xr: true,
+  };
+  return true;
+};
+
+MotionPathEdit.dragXR = function (main, tip) {
+  const e = main._pathEdit;
+  if (!e || !tip) return false;
+  const delta = { x: tip[0] - e.startWorld.x, y: tip[1] - e.startWorld.y, z: tip[2] - e.startWorld.z };
+  e.after = MotionPathEdit.displace(e.before, e.index, delta, e.radius);
+  return true;
+};
+
+// One frame of a VR stroke, for every tool. Returns true when the path edit consumed the frame,
+// so the tool falls through to its ordinary sculpt otherwise.
+//
+// Shared rather than written twice: Move and Smooth differ by ONE line here (what a held
+// trigger does to the curve), and the press-edge bookkeeping around it is exactly the part that
+// gets subtly different second implementations.
+MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, strength) {
+  if (MotionPathEdit.active(main)) {
+    if (!isPressed) { MotionPathEdit.endStroke(main); tool._pathXRHeld = false; return true; }
+    const ok = mode === 'smooth'
+      ? MotionPathEdit.smoothStep(main, strength)
+      : MotionPathEdit.dragXR(main, main._vrControllerPos);
+    if (ok) { MotionPathEdit.redrawHook(main); main.render(); }
+    return true;
+  }
+  // Only on the PRESS EDGE. Retrying every held frame would let the curve be snatched
+  // mid-stroke the moment a sculpt happened to pass near it.
+  const edge = isPressed && !tool._pathXRHeld;
+  tool._pathXRHeld = isPressed;
+  if (!edge) return false;
+  return MotionPathEdit.beginXR(main, main._vrControllerPos, vrRadius(main, picking));
+};
+
+// Set by MotionTrail at import time, so this module does not import the drawing back and close
+// a cycle (module_load_test reports those as "Class extends value undefined").
+MotionPathEdit.redrawHook = function () {};
+
 MotionPathEdit.active = function (main) { return !!(main && main._pathEdit); };
 
 // What every tool does at the end of a path stroke. Shared rather than repeated per tool: the

@@ -271,5 +271,70 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
     !/_trailSig = null/.test(SMOOTH) && !/_trailSig = null/.test(MOVE));
 }
 
+// --- 11. the headset path -----------------------------------------------------------------
+//
+// The version without projection: a controller tip is already a point in the world, so
+// acquiring the curve is a distance and the drag is a real 3D delta. Both bugs on the mouse
+// side came from choosing a depth, and there is no depth to choose here.
+{
+  const strand = {
+    points: line(9),
+    times: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    pin: { getID: () => 1, getParent: () => null, _pinnedJoint: {} },
+    line: 0,
+  };
+  const main = { _trailStrand: strand, _vrControllerPos: [4, 0.02, 0], render() {} };
+
+  check('a tip near the curve takes hold of the nearest sample',
+    MPE.beginXR(main, [4, 0.02, 0], 0.5) === true && main._pathEdit.index === 4,
+    main._pathEdit && main._pathEdit.index);
+  check('...and the reach is a plain 3D distance',
+    MPE.beginXR({ ...main, _pathEdit: null }, [4, 9, 0], 0.5) === false,
+    'a tip far off the curve must not acquire it');
+
+  main._pathEdit.after = null;
+  MPE.dragXR(main, [4, 1.02, 0]);
+  check('the drag is the tip delta, with no unprojection',
+    near(main._pathEdit.after[4].y, 1), main._pathEdit.after[4].y);
+  // The property is that the baseline is a COPY, not a view of the live strand — assert it by
+  // moving the strand underneath and checking the baseline did not follow. Reading it back
+  // after a pure displace passes either way and proves nothing.
+  strand.points[4] = { x: 4, y: 77, z: 0 };
+  check('...and the baseline is a copy, not a view of the live strand',
+    near(main._pathEdit.before[4].y, 0), main._pathEdit.before[4].y);
+  strand.points[4] = { x: 4, y: 0, z: 0 };
+
+  // Retrying begin on every held frame would snatch the curve mid-sculpt the moment a stroke
+  // passed near it.
+  //
+  // The defect is SNATCHING MID-STROKE: press away from the curve, sculpt, and the moment the
+  // controller happens to pass near the path it would be grabbed. So the press must miss and
+  // the tip must then arrive ON the curve while still held.
+  const tool = {};
+  main._pathEdit = null;
+  const held = { _trailStrand: strand, _vrControllerPos: [4, 9, 0], render() {} };
+  check('the press edge away from the curve does not acquire',
+    MPE.strokeXR(held, null, true, tool, 'move') === false && tool._pathXRHeld === true);
+  held._vrControllerPos = [4, 0.02, 0];   // now right on it, trigger still down
+  check('...and arriving on the curve mid-stroke does NOT snatch it',
+    MPE.strokeXR(held, null, true, tool, 'move') === false && !held._pathEdit,
+    'the curve would be grabbed out from under an ordinary sculpt');
+  // Releasing and pressing again on the curve is a new edge, and must work.
+  MPE.strokeXR(held, null, false, tool, 'move');
+  check('...but a fresh press on it does acquire',
+    MPE.strokeXR(held, null, true, tool, 'move') === true);
+  held._pathEdit = null;
+
+  const SM = fs.readFileSync(path.join(REPO, 'src/editing/tools/Smooth.js'), 'utf8');
+  const MV = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
+  check('both tools take the VR frame through ONE shared helper',
+    /MotionPathEdit\.strokeXR\(this\._main, picking, isPressed, this, 'move'\)/.test(MV)
+      && /MotionPathEdit\.strokeXR\(this\._main, picking, isPressed, this, 'smooth'/.test(SM),
+    'the press-edge bookkeeping is what gets a subtly different second implementation');
+  check('...and a frame it does not consume falls through to the tool',
+    /if \(MotionPathEdit\.strokeXR\([^)]*\)\) return;/.test(MV)
+      && /return super\.updateXR\(/.test(SM));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

@@ -50,6 +50,11 @@ class Smooth extends SculptBase {
     if (MotionPathEdit.active(this._main)) MotionPathEdit.endStroke(this._main);
   }
 
+  updateXR(picking, isPressed, origin, dir, options) {
+    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'smooth', this._intensity)) return;
+    return super.updateXR(picking, isPressed, origin, dir, options);
+  }
+
   stroke(picking) {
     var iVertsInRadius = picking.getPickedVertices();
     // Smooth moves a fixed fraction toward the neighbour average — no radius term — so it feels
