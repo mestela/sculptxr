@@ -292,6 +292,21 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
     MPE.beginXR({ ...main, _pathEdit: null }, [4, 9, 0], 0.5) === false,
     'a tip far off the curve must not acquire it');
 
+  // THE TIP, NOT THE PIVOT. The pivot sits inside your hand, a spike-length short of where you
+  // are aiming, so a proximity grab from it reads as taking the curve from behind the cursor.
+  {
+    const tipOpts = { handedness: 'right',
+      controllers: [{ handedness: 'left', rayOrigin: [99, 99, 99] },
+                    { handedness: 'right', rayOrigin: [4, 0.02, 0] }] };
+    const m2 = { _trailStrand: strand, _vrControllerPos: [4, 9, 9], render() {} };
+    const t2 = {};
+    check('the VR reach uses the stylus tip from the controller snapshot',
+      MPE.strokeXR(m2, null, true, t2, 'move', 0, tipOpts) === true,
+      'the pivot is metres away here, so this can only pass by reading rayOrigin');
+    check('...and picks the snapshot for the hand driving the stroke',
+      m2._pathEdit && m2._pathEdit.index === 4, m2._pathEdit && m2._pathEdit.index);
+  }
+
   main._pathEdit.after = null;
   MPE.dragXR(main, [4, 1.02, 0]);
   check('the drag is the tip delta, with no unprojection',
@@ -328,9 +343,16 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   const SM = fs.readFileSync(path.join(REPO, 'src/editing/tools/Smooth.js'), 'utf8');
   const MV = fs.readFileSync(path.join(REPO, 'src/editing/tools/Move.js'), 'utf8');
   check('both tools take the VR frame through ONE shared helper',
-    /MotionPathEdit\.strokeXR\(this\._main, picking, isPressed, this, 'move'\)/.test(MV)
+    /MotionPathEdit\.strokeXR\(this\._main, picking, isPressed, this, 'move'/.test(MV)
       && /MotionPathEdit\.strokeXR\(this\._main, picking, isPressed, this, 'smooth'/.test(SM),
     'the press-edge bookkeeping is what gets a subtly different second implementation');
+  // The tip lives on the per-controller snapshot, so both tools have to forward `options` or
+  // they silently fall back to the pivot - which is the bug this pair of checks now guards.
+  check('...and both forward the controller snapshot the TIP is read from',
+    /'move', 0, options\)/.test(MV) && /'smooth', this\._intensity, options\)/.test(SM),
+    'without options the tip falls back to the controller pivot');
+  check('...which Move can only do by accepting it',
+    /updateXR\(picking, isPressed, origin, dir, options\)/.test(MV));
   check('...and a frame it does not consume falls through to the tool',
     /if \(MotionPathEdit\.strokeXR\([^)]*\)\) return;/.test(MV)
       && /return super\.updateXR\(/.test(SM));

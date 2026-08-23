@@ -51,7 +51,7 @@ class Smooth extends SculptBase {
   }
 
   updateXR(picking, isPressed, origin, dir, options) {
-    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'smooth', this._intensity)) return;
+    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'smooth', this._intensity, options)) return;
     return super.updateXR(picking, isPressed, origin, dir, options);
   }
 

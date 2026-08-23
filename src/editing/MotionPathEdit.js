@@ -323,6 +323,26 @@ function vrRadius(main, picking) {
   return r;
 }
 
+// THE STYLUS TIP, not the controller pivot. This is a proximity gesture — you reach out and
+// take hold of the curve — so its origin has to be the point you can SEE at the end of the
+// spike. The pivot sits inside your hand, roughly a spike-length short, which reads as the
+// curve being grabbed from behind where you are aiming.
+//
+// `origin` as handed to updateXR is enginePos, which comes from the controller POSE and is the
+// pivot. The tip is already computed per controller in Scene.js as `rayOrigin` — the same value
+// Grab's rig proximity uses, and in the same model space as the sampled curve. Read it rather
+// than recomputing the offset/tilt/length maths here: that sum living in two places is exactly
+// how the two would drift.
+function xrTip(main, options) {
+  const list = options && options.controllers;
+  if (list && list.length) {
+    const hand = options.handedness;
+    const c = (hand && list.find((e) => e.handedness === hand)) || list[0];
+    if (c && c.rayOrigin) return c.rayOrigin;
+  }
+  return main._vrControllerPos;
+}
+
 function dist2(a, b) {
   const dx = a.x - b[0], dy = a.y - b[1], dz = a.z - b[2];
   return dx * dx + dy * dy + dz * dz;
@@ -367,12 +387,13 @@ MotionPathEdit.dragXR = function (main, tip) {
 // Shared rather than written twice: Move and Smooth differ by ONE line here (what a held
 // trigger does to the curve), and the press-edge bookkeeping around it is exactly the part that
 // gets subtly different second implementations.
-MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, strength) {
+MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, strength, options) {
+  const tip = xrTip(main, options);
   if (MotionPathEdit.active(main)) {
     if (!isPressed) { MotionPathEdit.endStroke(main); tool._pathXRHeld = false; return true; }
     const ok = mode === 'smooth'
       ? MotionPathEdit.smoothStep(main, strength)
-      : MotionPathEdit.dragXR(main, main._vrControllerPos);
+      : MotionPathEdit.dragXR(main, tip);
     if (ok) { MotionPathEdit.redrawHook(main); main.render(); }
     return true;
   }
@@ -381,7 +402,7 @@ MotionPathEdit.strokeXR = function (main, picking, isPressed, tool, mode, streng
   const edge = isPressed && !tool._pathXRHeld;
   tool._pathXRHeld = isPressed;
   if (!edge) return false;
-  return MotionPathEdit.beginXR(main, main._vrControllerPos, vrRadius(main, picking));
+  return MotionPathEdit.beginXR(main, tip, vrRadius(main, picking));
 };
 
 // Set by MotionTrail at import time, so this module does not import the drawing back and close

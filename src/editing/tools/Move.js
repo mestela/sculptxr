@@ -478,10 +478,11 @@ class Move extends SculptBase {
   }
 
   // WebXR Support
-  updateXR(picking, isPressed) {
+  updateXR(picking, isPressed, origin, dir, options) {
     // A motion path is grabbable in VR too, and this is the honest version of the gesture:
     // the controller tip is already a point in the world, so there is no projection anywhere.
-    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'move')) return;
+    // `options` carries the per-controller snapshot the tip is read from.
+    if (MotionPathEdit.strokeXR(this._main, picking, isPressed, this, 'move', 0, options)) return;
 
     // Custom Move Logic:
     // Hover: Update Anchor (_lastVRPos) continuously so we are ready to drag from current pos.
