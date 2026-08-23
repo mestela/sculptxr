@@ -288,6 +288,32 @@ function disposeTrail(main) {
 const CONTROL_OPACITY = 0.95;
 const OUTPUT_OPACITY = 0.35;
 
+// TIME, READ AS COLOUR. Red behind the playhead, green ahead of it, each fading with distance.
+// The point is loops: whether the end of a cycle comes back to where the start left is a
+// question about two ENDS of the curve, and with one colour along the whole thing you have to
+// hold both in your head. In red and green the answer is where the two shades meet.
+//
+// This takes the line's colour, so IDENTITY moves to the dots — which is the right way round,
+// since the dots are what you aim at, and with several paths on screen the thing you need from
+// a line at a glance is when, not which.
+const PAST_NEAR   = [1.00, 0.42, 0.38];
+const PAST_FAR    = [0.32, 0.02, 0.06];
+const FUTURE_NEAR = [0.55, 1.00, 0.48];
+const FUTURE_FAR  = [0.02, 0.30, 0.10];
+
+function mix(a, b, k, out, i) {
+  out[i]     = b[0] + (a[0] - b[0]) * k;
+  out[i + 1] = b[1] + (a[1] - b[1]) * k;
+  out[i + 2] = b[2] + (a[2] - b[2]) * k;
+}
+
+// Where the playhead is, in the same clock the samples were taken on.
+function now(main) {
+  const reg = window._animationRegistry;
+  const t = reg && reg.globalPlaybackTime;
+  return Number.isFinite(t) ? t : (window._animCurrentTime || 0);
+}
+
 // DOTS ON THE AUTHORED CURVE, because you cannot grab what you cannot see. A drag takes hold of
 // the nearest SAMPLE, and with the samples invisible the curve appeared to move from a point
 // other than the one under the cursor — which reads as the tool being misaligned rather than as
@@ -338,7 +364,7 @@ function makeDots(main, sizePx) {
 function makeLine(main) {
   const g = Skeleton.overlayGroup(main);
   const line = new THREE.Line(new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({ transparent: true, depthWrite: false }));
+    new THREE.LineBasicMaterial({ transparent: true, depthWrite: false, vertexColors: true }));
   line.frustumCulled = false;
   line.isPickable = false;
   line.renderOrder = TRAIL_ORDER;
@@ -378,10 +404,48 @@ MotionTrail.redraw = function (main, lineIndex, points) {
 };
 
 // Per-frame. Cheap when nothing changed: one fingerprint, one string compare.
+// RECOLOUR PER FRAME, RESAMPLE ONLY ON CHANGE. The playhead moves every frame and the geometry
+// does not, so the gradient cannot ride on the fingerprint — putting the playhead in it would
+// mean a full evaluation per sample, every frame, to draw a curve that has not moved. Writing a
+// colour array is nothing by comparison.
+MotionTrail.recolor = function (main) {
+  const v = main._trailVis;
+  const times = main._trailTimes;
+  if (!v || !v.lines || !times || times.length < 2) return;
+
+  const t0 = times[0];
+  const t1 = times[times.length - 1];
+  const span = (t1 - t0) || 1;
+  const head = now(main);
+
+  const col = new Float32Array(times.length * 3);
+  for (let i = 0; i < times.length; i++) {
+    const d = (times[i] - head) / span;              // -1 .. 1 across the drawn range
+    const k = Math.max(0, 1 - Math.min(1, Math.abs(d)));   // 1 at the playhead, 0 at the ends
+    if (d < 0) mix(PAST_NEAR, PAST_FAR, k, col, i * 3);
+    else mix(FUTURE_NEAR, FUTURE_FAR, k, col, i * 3);
+  }
+
+  for (const line of v.lines) {
+    const g = line.geometry;
+    const pos = g.getAttribute('position');
+    // A drag rewrites positions before the colours catch up; sizes that disagree throw in the
+    // renderer rather than drawing something slightly wrong.
+    if (!pos || pos.count !== times.length) continue;
+    const existing = g.getAttribute('color');
+    if (existing && existing.count === times.length) {
+      existing.copyArray(col);
+      existing.needsUpdate = true;
+    } else {
+      g.setAttribute('color', new THREE.BufferAttribute(col.slice(), 3));
+    }
+  }
+};
+
 MotionTrail.update = function (main) {
   // A live path edit owns the drawn curve: the editor writes the geometry directly as the drag
   // moves, and re-sampling underneath it would fight the drag and cost a solve per frame.
-  if (main._pathEdit) return false;
+  if (main._pathEdit) { MotionTrail.recolor(main); return false; }
   if (!Skeleton.displayFlag('trails')) { MotionTrail.clear(main); return false; }
   const targets = trailed(main);
   const r = range();
@@ -395,7 +459,7 @@ MotionTrail.update = function (main) {
       ' tracks=' + (reg && reg.tracks ? reg.tracks.size : 'none'));
   }
   const sig = signature(main, targets, r);
-  if (sig === main._trailSig && main._trailVis) return false;
+  if (sig === main._trailSig && main._trailVis) { MotionTrail.recolor(main); return false; }
   main._trailSig = sig;
 
   const paths = samplePaths(main, targets);
@@ -433,6 +497,7 @@ MotionTrail.update = function (main) {
   });
 
   MotionTrail.drawDots(main);
+  MotionTrail.recolor(main);
   return true;
 };
 

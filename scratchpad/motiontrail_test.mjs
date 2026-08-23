@@ -393,6 +393,62 @@ function setup(times) {
   delete main._trailTarget;
 }
 
+// --- 5e. time as colour, recoloured per frame without resampling -------------------------
+//
+// Red behind the playhead, green ahead, each fading with distance — so whether a loop closes is
+// a question you answer by looking at where the two shades meet, rather than by holding both
+// ends of the curve in your head.
+{
+  const times = [0, 0.5, 1, 1.5, 2];
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(times.length * 3), 3));
+  const main = { _trailTimes: times, _trailVis: { lines: [{ geometry: geom }] } };
+  window._animationRegistry = { globalPlaybackTime: 1 };   // playhead in the middle
+
+  mod.default.recolor(main);
+  const c = geom.getAttribute('color');
+  check('a colour is written for every sample', !!c && c.count === times.length,
+    c && c.count);
+
+  const at = (i) => [c.array[i * 3], c.array[i * 3 + 1], c.array[i * 3 + 2]];
+  check('samples BEHIND the playhead are red-dominant',
+    at(0)[0] > at(0)[1] && at(1)[0] > at(1)[1], at(0).join(','));
+  check('samples AHEAD of it are green-dominant',
+    at(3)[1] > at(3)[0] && at(4)[1] > at(4)[0], at(4).join(','));
+  check('...and each fades with distance from the playhead',
+    at(1)[0] > at(0)[0] && at(3)[1] > at(4)[1],
+    'the near shade must be the brighter one, or "how far away" reads backwards');
+
+  // THE POINT OF SPLITTING RECOLOUR OUT. The playhead moves every frame and the geometry does
+  // not; putting the playhead in the fingerprint would mean a full evaluation per sample, every
+  // frame, to redraw a curve that has not moved.
+  const wasRed = at(1)[0] > at(1)[1];
+  globalThis.__solves = [];
+  window._animationRegistry.globalPlaybackTime = 0;   // playhead to the start: all future now
+  mod.default.recolor(main);
+  check('moving the playhead recolours without a single solve',
+    globalThis.__solves.length === 0, globalThis.__solves.length);
+  check('...and the colours actually follow it',
+    wasRed && at(1)[1] > at(1)[0],
+    'sample 1 was behind the playhead and is now ahead of it, so it must swap red for green');
+  check('...still fading away from the new playhead position',
+    at(1)[1] > at(4)[1], at(1)[1] + ' vs ' + at(4)[1]);
+
+  // A drag rewrites positions before the colours catch up; mismatched attribute sizes throw in
+  // the renderer rather than drawing something slightly wrong.
+  const short = new THREE.BufferGeometry();
+  short.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2 * 3), 3));
+  mod.default.recolor({ _trailTimes: times, _trailVis: { lines: [{ geometry: short }] } });
+  check('a geometry whose length disagrees is skipped, not half-written',
+    !short.getAttribute('color'));
+
+  // Identity moved to the dots when the line took the gradient.
+  check('the line is drawn with per-vertex colour', /vertexColors: true/.test(SRC));
+  check('...and the dots still carry the identity colour',
+    /v\.dots\.material\.color\.setRGB\(col\.r, col\.g, col\.b\)/.test(SRC),
+    'with several paths on screen, which one is the question the dots answer');
+}
+
 // --- 6. viewport representation ----------------------------------------------------------
 // A trail is the thin spatial curve. THREE.Points uses camera-facing square sprites; at scene
 // scale those became a wall of large red squares that hid the curve and the model underneath.

@@ -209,7 +209,19 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   check('...and every tool goes through it', /MotionPathEdit\.endStroke\(main\)/.test(MOVE));
 
   // Re-sampling under a live drag fights the drag AND costs a full solve per frame.
-  check('MotionTrail yields while an edit is live', /if \(main\._pathEdit\) return false;/.test(TRAIL));
+  // The property is that a live edit does not RESAMPLE — not the exact spelling of the guard,
+  // which grew a recolour call when the time gradient arrived. Assert that the _pathEdit branch
+  // returns before any sampling happens.
+  {
+    const up = TRAIL.slice(TRAIL.indexOf('MotionTrail.update = function'));
+    // Bound by the GUARD'S OWN BLOCK. Searching forward for any `return false` finds the
+    // trails-are-off branch further down and passes with the guard's return deleted, which is
+    // precisely the defect.
+    const g = up.match(/if \(main\._pathEdit\)\s*(\{[^}]*\}|[^\n]*)/);
+    check('MotionTrail yields while an edit is live',
+      !!g && /\breturn\b/.test(g[1]),
+      'a resample under a live drag fights it and costs a solve per frame');
+  }
   check('only the AUTHORED curve is offered to the editor',
     /targets\.findIndex\(\(t\) => t\.control\)/.test(TRAIL),
     'solver output is not editable');
