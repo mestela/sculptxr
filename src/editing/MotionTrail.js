@@ -129,6 +129,74 @@ function evaluateAt(main, reg, joints, t) {
 }
 
 // Sample the path of each trailed joint over the range.
+// WHEN TO SAMPLE. Uniform fill, plus a sample on every KEY TIME of the trailed tracks.
+//
+// A uniform grid lands on a key only by luck, so the drawn curve is a chord across the pose the
+// key actually holds: two close keys with a fast move between them read as a smooth arc rather
+// than the snap they are. Putting a sample exactly on each key makes the curve pass through the
+// poses that were authored — which is what the curve is a promise about.
+//
+// It also makes EDITING tractable later. Push-back has to answer "how far did the curve move at
+// this key's time"; with a sample on the key that is a read, and without it an interpolation.
+//
+// Capped, because a track keyed on every frame of a long range would otherwise be a full solve
+// per key. Keys win the cap: they are the times that carry the animation, and dropping uniform
+// fill only costs smoothness between them.
+const MAX_SAMPLES = 256;
+
+function sampleTimes(reg, targets, r, n) {
+  const times = [];
+  for (let i = 0; i < n; i++) times.push(r.start + (r.end - r.start) * (i / (n - 1)));
+
+  if (reg && reg.tracks) {
+    for (const tg of targets) {
+      const t = reg.tracks.get((tg.obj || tg).getID());
+      if (!t || !t.times) continue;
+      for (const kt of t.times) if (kt >= r.start && kt <= r.end) times.push(kt);
+    }
+  }
+
+  times.sort((a, b) => a - b);
+  // Dedupe against the frame grid rather than exactly: a key at 1/24 and a uniform sample a
+  // ten-thousandth away are the same sample, and solving both is pure cost.
+  const span = (r.end - r.start) || 1;
+  const eps = span * 1e-6;
+  const out = [];
+  for (const t of times) if (!out.length || t - out[out.length - 1] > eps) out.push(t);
+
+  if (out.length <= MAX_SAMPLES) return out;
+
+  // Over the cap. Drop the uniform fill first, since it only buys smoothness between keys.
+  const keys = new Set();
+  if (reg && reg.tracks) {
+    for (const tg of targets) {
+      const t = reg.tracks.get((tg.obj || tg).getID());
+      if (t && t.times) for (const kt of t.times) keys.add(kt);
+    }
+  }
+  let kept = out.filter((t) => keys.has(t));
+
+  // A track keyed on every frame blows the cap on keys ALONE, so key-exactness cannot be
+  // absolute — thin them too. Nothing is lost that matters: a per-frame track has no sparse
+  // structure to be exact about, and the curve is already dense wherever it is thinned.
+  if (kept.length > MAX_SAMPLES) {
+    const stride = Math.ceil(kept.length / MAX_SAMPLES);
+    kept = kept.filter((_, i) => i % stride === 0);
+  } else {
+    const fill = out.filter((t) => !keys.has(t));
+    const room = MAX_SAMPLES - kept.length;
+    const stride = Math.ceil(fill.length / Math.max(1, room));
+    for (let i = 0; i < fill.length; i += stride) kept.push(fill[i]);
+  }
+
+  // The curve must still SPAN the range whatever the thinning dropped, or it visibly stops
+  // short of the ends it claims to cover.
+  if (kept[0] !== out[0]) kept.push(out[0]);
+  if (kept[kept.length - 1] !== out[out.length - 1]) kept.push(out[out.length - 1]);
+  kept.sort((a, b) => a - b);
+  return kept;
+}
+
 function samplePaths(main, targets) {
   const reg = window._animationRegistry;
   const r = range();
@@ -145,9 +213,10 @@ function samplePaths(main, targets) {
   // the first would be taken at the wrong time.
   window._animPlaying = false;
 
+  const times = sampleTimes(reg, targets, r, n);
+
   try {
-    for (let i = 0; i < n; i++) {
-      const t = r.start + (r.end - r.start) * (i / (n - 1));
+    for (const t of times) {
       evaluateAt(main, reg, joints, t);
       // A pin reads the same way a joint does — both are meshes, and the path is the
       // translation of the model-space matrix either way.

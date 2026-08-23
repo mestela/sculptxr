@@ -56,7 +56,7 @@ globalThis.__solves = [];
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_motiontrail_gen.mjs');
 fs.writeFileSync(outPath, prelude + '\n' + body +
-  '\nexport { samplePaths, signature, range, trailed, animated };\nexport default MotionTrail;\n');
+  '\nexport { samplePaths, signature, range, trailed, animated, sampleTimes };\nexport default MotionTrail;\n');
 
 const mod = await import(outPath + '?v=' + Date.now());
 const { samplePaths, signature, range } = mod;
@@ -291,12 +291,61 @@ function setup(times) {
   window._trailSamples = 4;
   const paths = samplePaths(main, keyed);
   delete window._trailSamples;
-  check('...and both are sampled', !!paths && paths.length === 2
-    && paths[0].length === 4 && paths[1].length === 4,
+  // Both curves come from ONE pass over the times, so they are the same length by
+  // construction — assert that, not a count, which now depends on where the keys fall.
+  check('...and both are sampled, in step with each other',
+    !!paths && paths.length === 2 && paths[0].length === paths[1].length && paths[0].length >= 4,
     paths ? paths.map((p) => p.length).join(',') : 'null');
 
   reg.tracks.delete(pin.getID());
   delete j._pin;
+}
+
+// --- 5c. samples land ON the keys, not just on a uniform grid ----------------------------
+//
+// A uniform grid hits a key only by luck, so the drawn curve cuts a chord across the pose the
+// key actually holds: two close keys with a snap between them read as a smooth arc. It also
+// decides whether push-back can READ the displacement at a key or has to interpolate it.
+{
+  const { j, main, reg } = setup();
+  const r = range();                       // 0 .. 2
+  reg.tracks.set(j.getID(), { times: [0, 0.3, 1.7, 2] });
+  const tg = [{ obj: j, control: false }];
+
+  const times = mod.sampleTimes(reg, tg, r, 5);   // grid: 0, 0.5, 1, 1.5, 2
+  for (const kt of [0, 0.3, 1.7, 2]) {
+    check('a key at ' + kt + ' gets its own sample',
+      times.some((t) => Math.abs(t - kt) < 1e-9), times.join(','));
+  }
+  check('the uniform fill survives alongside them',
+    times.includes(0.5) && times.includes(1) && times.includes(1.5), times.join(','));
+  check('the times come out sorted', times.every((t, i) => i === 0 || t >= times[i - 1]));
+  check('and a key that coincides with the grid is not sampled twice',
+    times.filter((t) => Math.abs(t) < 1e-9).length === 1, times.join(','));
+
+  // Keys outside the drawn range are not part of this curve.
+  reg.tracks.set(j.getID(), { times: [-5, 1, 99] });
+  const clipped = mod.sampleTimes(reg, tg, r, 5);
+  check('keys outside the range are ignored',
+    clipped.every((t) => t >= r.start - 1e-9 && t <= r.end + 1e-9), clipped.join(','));
+
+  // A track keyed on every frame of a long range would otherwise be one full solve per key.
+  // 1999 intervals, deliberately: the thinning stride divides 2000 evenly, so a round count
+  // would keep the last index by luck and the range-spanning guard would never be exercised.
+  const dense = [];
+  for (let i = 0; i <= 1999; i++) dense.push(r.start + (r.end - r.start) * (i / 1999));
+  reg.tracks.set(j.getID(), { times: dense });
+  const capped = mod.sampleTimes(reg, tg, r, 5);
+  check('a densely keyed track is capped', capped.length <= 256, capped.length);
+  check('...and stays sorted through the thinning',
+    capped.every((t, i) => i === 0 || t >= capped[i - 1]));
+  // Thinning must not shorten the curve: it still has to reach both ends of the range it says
+  // it draws, or it visibly stops short.
+  check('...and still spans the whole range',
+    Math.abs(capped[0] - r.start) < 1e-9 && Math.abs(capped[capped.length - 1] - r.end) < 1e-9,
+    capped[0] + '..' + capped[capped.length - 1]);
+
+  reg.tracks.delete(j.getID());
 }
 
 // --- 6. viewport representation ----------------------------------------------------------
