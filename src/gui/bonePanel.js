@@ -42,6 +42,13 @@ const DIALECT = {
         toggle: 'mm-choice', row: 'mm-row', lbl: 'mm-lbl', val: 'mm-val',
         btnRow: 'mm-choice-grid cols-2', action: 'mm-choice', divider: '',
         title: 'mm-section-title' },
+  // The desktop sidebar's Animation tab. Its own vocabulary, and its buttons are bare <button>
+  // inside a grid rather than a classed element, so `toggle` is deliberately empty — the
+  // `active` state class flagButton adds is the same one ACP uses everywhere else.
+  acp: { grid: 'acp-btn-grid', gridBtn: '', toggles: 'acp-btn-grid',
+         toggle: '', row: 'acp-row', lbl: 'acp-lbl', val: 'acp-val',
+         btnRow: 'acp-btn-grid', action: '', divider: '',
+         title: 'acp-section-title', section: 'acp-section' },
 };
 
 function pinLabel(n) { return n ? `Clear Pins (${n})` : 'Clear Pins'; }
@@ -158,12 +165,15 @@ export function buildBoneDisplayHTML(main, style) {
 
 export function buildBoneAnimationHTML(main, style) {
   const c = DIALECT[style] || DIALECT.mm;
-  return `
+  const inner = `
     ${sectionTitle(c, 'Rig Animation')}
     <div class="${c.btnRow}">
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
     </div>
   `;
+  // Some hosts group their controls in a wrapper that carries the spacing. Opt-in per dialect
+  // rather than assumed, since the menu panels lay their sections out themselves.
+  return c.section ? `<div class="${c.section}">${inner}</div>` : inner;
 }
 
 // Compatibility composition for the places/tests that mean "everything relevant while the

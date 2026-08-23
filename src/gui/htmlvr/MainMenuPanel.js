@@ -1795,7 +1795,9 @@ export function buildSectionHTML_sculpting(main) {
 }
 
 export function buildSectionHTML_animation(main) {
-  return buildAnimationSectionHTML() + buildBoneAnimationHTML(main, 'mm');
+  // The rig-animation block comes with the section now; appending it here as well was what
+  // made the two Animation panels disagree about whether Trails exists.
+  return buildAnimationSectionHTML(main, 'mm');
 }
 
 // ── MainMenuPanel class ──────────────────────────────────────────────────────

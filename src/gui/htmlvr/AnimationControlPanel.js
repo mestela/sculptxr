@@ -16,6 +16,7 @@
 import { HTMLVRPanel, VR_PANEL_PX_PER_M } from './HTMLVRPanel.js';
 import TimelineHelper from '../TimelineHelper.js';
 import IKSolver from '../../editing/IKSolver.js';
+import { buildBoneAnimationHTML, wireBoneSection, syncBoneSection } from '../bonePanel.js';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 // Uses .acp-root class prefix so the rules apply both to:
@@ -193,6 +194,7 @@ const CSS = `
 }
 .acp-root .acp-btn-grid button:hover,
 .acp-root .acp-btn-grid button.hover { background: #24243e; color: #cdd6f4; }
+.acp-root .acp-btn-grid button.active { background: #313244; color: #cba6f7; border-color: #cba6f7; }
 .acp-root .acp-btn-grid button.danger { color: #f38ba8; border-color: #f38ba8; }
 .acp-root .acp-btn-grid button.danger:hover,
 .acp-root .acp-btn-grid button.danger.hover { background: #3d1e2e; }
@@ -395,7 +397,10 @@ export function injectAnimCSS() {
 // Returns the animation section wrapped in .acp-root so CSS scoping works
 // whether embedded inside MainMenuPanel's #mm-content or as a standalone panel.
 
-export function buildAnimationSectionHTML() {
+// The rig-animation block is composed HERE, not by each host. It was appended by MainMenuPanel
+// alone, so the Trails toggle existed in the main menu and was unreachable from the desktop
+// sidebar's Animation tab — the same control in one of the two places that show it.
+export function buildAnimationSectionHTML(main, style) {
   return `<div class="acp-root">
     <!-- 1. Animation -->
     <div class="acp-section">
@@ -535,6 +540,7 @@ export function buildAnimationSectionHTML() {
          keyframe mode in the Keyframes section above is unaffected. The shared
          refreshBlendshapesDOM / acp-bs-* wiring below now no-ops (it guards on the
          absent #acp-bs-list) and stays for its other importers. -->
+    ${main ? buildBoneAnimationHTML(main, style || 'acp') : ''}
   </div>`;
 }
 
@@ -1584,7 +1590,7 @@ export class AnimationControlPanel extends HTMLVRPanel {
     const root = document.createElement('div');
     root.id        = 'acp-root';
     root.className = 'acp-root';
-    root.innerHTML = buildAnimationSectionHTML();
+    root.innerHTML = buildAnimationSectionHTML(main, 'acp');
 
     super(root, 560 / VR_PANEL_PX_PER_M);
 
@@ -1613,6 +1619,11 @@ export class AnimationControlPanel extends HTMLVRPanel {
       refreshBs: (mesh) => this.refreshBlendshapes(mesh, main),
       vrPanel:   this,   // lets the numpad position itself next to this panel in VR
     });
+    // The rig-animation block ships with this section, so it has to be wired here too. One
+    // wire function services every bone block and bails when none is present, so this is safe
+    // even if the block is ever composed out.
+    wireBoneSection(this._element, main, { refresh: () => this._requestPaint() });
+    syncBoneSection(this._element, main);
   }
 
   refreshBlendshapes(mesh, main) {

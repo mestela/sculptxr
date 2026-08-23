@@ -127,8 +127,10 @@ check('MainMenu shows Pose for Grab and TransformVR',
   /cur === Enums\.Tools\.GRAB \|\| cur === Enums\.Tools\.TRANSFORM_VR[\s\S]{0,100}?buildBonePoseHTML/.test(MAIN_SRC));
 check('Rendering owns the rig display block',
   /function buildSectionHTML_rendering[\s\S]{0,250}?buildBoneDisplayHTML/.test(MAIN_SRC));
-check('Animation owns the rig animation block',
-  /function buildSectionHTML_animation[\s\S]{0,150}?buildBoneAnimationHTML/.test(MAIN_SRC));
+// (The rig-animation block used to be asserted here, as MainMenuPanel referencing
+// buildBoneAnimationHTML directly. That IS the divergence that hid Trails from the desktop
+// sidebar — only this host appended it. The block is now composed once by the shared animation
+// section, and that is asserted below under "reaches BOTH animation panels".)
 
 // Rendering is a spatial menu: sections stay put and become unavailable rather than being
 // removed. Ground Plane is scene state, so it remains usable even when the current selection
@@ -157,6 +159,34 @@ check('Ground Plane sits outside the mesh-disabled fieldset', (() => {
 check('shader-specific groups mute instead of hiding',
   !/\.mm-if-pbr[^\n]*display:\s*none/.test(MAIN_SRC)
     && /mm-if-pbr[^\n]*inert/.test(MAIN_SRC));
+
+// ── The rig-animation block reaches BOTH animation panels ──────────────────────
+//
+// Trails lived only in the main menu, because MainMenuPanel appended the block itself and the
+// desktop sidebar's Animation tab (AnimationControlPanel) did not. Same control, one of the two
+// places that show it — so on desktop the flag was simply unreachable.
+//
+// The fix is composition in ONE place: the shared animation section carries the block, and
+// neither host appends it. Assert that, not the presence of a string in each file.
+{
+  const ACP = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/AnimationControlPanel.js', 'utf8');
+  const MM  = fs.readFileSync('/Users/mattestela/sculptxr/src/gui/htmlvr/MainMenuPanel.js', 'utf8');
+
+  check('the shared animation section composes the rig-animation block',
+    /buildBoneAnimationHTML\(main, style \|\| 'acp'\)/.test(ACP));
+  check('...so no host appends it a second time',
+    !/buildAnimationSectionHTML\([^)]*\) \+ buildBoneAnimationHTML/.test(MM),
+    'appending it per host is what made the two panels disagree');
+  check('both hosts pass main through, or the block cannot be built',
+    /buildAnimationSectionHTML\(main, 'acp'\)/.test(ACP)
+      && /buildAnimationSectionHTML\(main, 'mm'\)/.test(MM));
+  // Markup without wiring is a button that lights up and does nothing.
+  check('the sidebar wires the bone block it now renders',
+    /wireBoneSection\(this\._element, main/.test(ACP) && /syncBoneSection\(this\._element, main\)/.test(ACP),
+    'the Trails button would render inert');
+  check('the acp dialect exists for it',
+    /acp: \{ grid: 'acp-btn-grid'/.test(SRC));
+}
 
 // ── Display flags: defaults, one registry, and persistence ──────────────────────
 {
