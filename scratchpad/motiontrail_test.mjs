@@ -419,18 +419,26 @@ function setup(times) {
 // a question you answer by looking at where the two shades meet, rather than by holding both
 // ends of the curve in your head.
 {
+  // The curve is a FAT line now, so its colour lives in the same pairs layout as its positions:
+  // six floats per segment, start colour then end colour.
   const times = [0, 0.5, 1, 1.5, 2];
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(times.length * 3), 3));
-  const main = { _trailTimes: times, _trailVis: { lines: [{ geometry: geom }] } };
+  const segs = times.length - 1;
+  const st = { fresh: false, pos: new Float32Array(segs * 6), col: new Float32Array(segs * 6) };
+  const lineObj = fatSeg();
+  lineObj.geometry.setPositions(st.pos);
+  lineObj.geometry.setColors(st.col);
+  const main = { _trailTimes: times, _trailVis: { lines: [lineObj], lineState: [st] } };
   window._animationRegistry = { globalPlaybackTime: 1 };   // playhead in the middle
 
   mod.default.recolor(main);
-  const c = geom.getAttribute('color');
-  check('a colour is written for every sample', !!c && c.count === times.length,
-    c && c.count);
+  check('a colour is written for every sample',
+    st.col.length === segs * 6 && st.col.some((x) => x !== 0), st.col.length);
 
-  const at = (i) => [c.array[i * 3], c.array[i * 3 + 1], c.array[i * 3 + 2]];
+  // Sample i is the START colour of segment i, so it lands at i*6 in the pairs buffer. The
+  // last sample only ever appears as the END of the final segment.
+  const at = (i) => (i < segs
+    ? [st.col[i * 6], st.col[i * 6 + 1], st.col[i * 6 + 2]]
+    : [st.col[(segs - 1) * 6 + 3], st.col[(segs - 1) * 6 + 4], st.col[(segs - 1) * 6 + 5]]);
   check('samples BEHIND the playhead are red-dominant',
     at(0)[0] > at(0)[1] && at(1)[0] > at(1)[1], at(0).join(','));
   check('samples AHEAD of it are green-dominant',
@@ -454,21 +462,39 @@ function setup(times) {
   check('...still fading away from the new playhead position',
     at(1)[1] > at(4)[1], at(1)[1] + ' vs ' + at(4)[1]);
 
-  // A drag rewrites positions before the colours catch up; mismatched attribute sizes throw in
-  // the renderer rather than drawing something slightly wrong.
-  const short = new THREE.BufferGeometry();
-  short.setAttribute('position', new THREE.BufferAttribute(new Float32Array(2 * 3), 3));
-  mod.default.recolor({ _trailTimes: times, _trailVis: { lines: [{ geometry: short }] } });
-  check('a geometry whose length disagrees is skipped, not half-written',
-    !short.getAttribute('color'));
+  // A drag rewrites positions before the colours catch up; a buffer sized for a different
+  // sample count would be written past its end.
+  const shortSt = { fresh: false, pos: new Float32Array(6), col: new Float32Array(6) };
+  mod.default.recolor({ _trailTimes: times,
+    _trailVis: { lines: [fatSeg()], lineState: [shortSt] } });
+  check('a buffer whose length disagrees is skipped, not half-written',
+    shortSt.col.every((x) => x === 0));
 
   // Identity moved to the dots when the line took the gradient.
   check('the line is drawn with per-vertex colour', /vertexColors: true/.test(SRC));
   // A path runs through the model it belongs to; with depth testing on it z-fights wherever it
   // grazes a surface, which looks like the curve itself is unstable.
   check('the line reads as an overlay throughout, like the dots',
-    /depthWrite: false, depthTest: false, vertexColors: true/.test(SRC),
+    /depthWrite: false,\n    depthTest: false,/.test(SRC),
     'depth testing makes the curve shimmer where it grazes the mesh');
+  // The curve is a fat line too now: hardware 1px lines cannot be antialiased.
+  check('the trail curve is a fat line, like the triads',
+    /const TRAIL_PX = 2;/.test(SRC) && !/new THREE\.Line\(/.test(SRC),
+    'THREE.Line steps between whole pixels as the camera moves');
+  check('...built by the SAME helper as the triads',
+    (SRC.match(/makeFat\(main,/g) || []).length >= 2,
+    'two fat-line constructions drift into two different materials');
+  // Widths are screen pixels and matt set both by eye, so they are worth pinning: a fat line
+  // whose width drifts is not something a structural check would otherwise notice.
+  {
+    const t = SRC.match(/const TRAIL_PX = (\d+);/);
+    const g = SRC.match(/const GNOMON_PX = (\d+);/);
+    check('the widths are the ones that were dialled in',
+      !!t && !!g && Number(t[1]) === 2 && Number(g[1]) === 3,
+      (t && t[1]) + ' / ' + (g && g[1]));
+    check('...and the triads read heavier than the curve they sit on',
+      !!t && !!g && Number(g[1]) > Number(t[1]));
+  }
   // SAMPLE dots keep identity — with several paths on screen, which one is the question they
   // answer. KEY dots moved onto the time ramp, because a key is where an edit can land, so
   // which side of the playhead it sits on is what you need from it.
@@ -728,7 +754,10 @@ function setup(times) {
 // Key timing already belongs to the dopesheet, so the viewport layer must stay line-only.
 {
   const code = SRC.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  check('the viewport trail is a line', /new THREE\.Line\(/.test(code));
+  // The trail is a LINE, not a cloud of sprites — the original rule, restated for the fat-line
+  // implementation that replaced THREE.Line. LineSegments2 is still a line; what the rule
+  // forbids is drawing the path as points.
+  check('the viewport trail is a line', /new LineSegments2\(/.test(code));
 
   // THIS CHECK USED TO BAN THREE.Points OUTRIGHT, and it was right to at the time: the default
   // PointsMaterial draws WORLD-SIZED camera-facing squares, and at scene scale those became a

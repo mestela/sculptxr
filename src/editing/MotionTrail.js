@@ -439,26 +439,65 @@ const GNOMON_ORDER = 9997;
 const AXIS_COL = [[1, 0.25, 0.25], [0.25, 1, 0.3], [0.35, 0.5, 1]];
 const _axV = new THREE.Vector3();
 
-const GNOMON_PX = 2;
+const GNOMON_PX = 3;
+const TRAIL_PX = 2;
 
-function makeGnomons(main) {
+// ONE fat-line object for everything here — the trail and the triads alike. LineSegments2
+// rather than Line2 even for the curve, because Line2's own setPositions ALLOCATES a fresh
+// array on every call to expand a polyline into pairs, and the curve is rewritten every frame
+// of a drag. Expanding it here into a buffer that gets reused costs nothing per frame, and it
+// leaves one geometry type and one update path instead of two of each.
+function makeFat(main, px, opacity, order) {
   const g = Skeleton.overlayGroup(main);
   const seg = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
-    linewidth: GNOMON_PX,        // SCREEN pixels, because worldUnits is off
+    linewidth: px,               // SCREEN pixels, because worldUnits is off
     worldUnits: false,
     vertexColors: true,
     transparent: true,
-    opacity: 0.95,
+    opacity: opacity,
     depthWrite: false,
     depthTest: false,
     alphaToCoverage: false,      // the shader antialiases its own edges; coverage on top of
-                                 // that thins a 2px line to almost nothing
+                                 // that thins a thin line to almost nothing
   }));
   seg.frustumCulled = false;
   seg.isPickable = false;
-  seg.renderOrder = GNOMON_ORDER;
+  seg.renderOrder = order;
   g.add(seg);
   return seg;
+}
+
+function makeGnomons(main) {
+  return makeFat(main, GNOMON_PX, 0.95, GNOMON_ORDER);
+}
+
+// A polyline written into the pairs layout LineSegmentsGeometry wants: segment i runs from
+// point i to point i+1, six floats a segment.
+function writePairs(src, out, n) {
+  for (let i = 0; i < n - 1; i++) {
+    const o = i * 6;
+    out[o] = src[i * 3]; out[o + 1] = src[i * 3 + 1]; out[o + 2] = src[i * 3 + 2];
+    out[o + 3] = src[(i + 1) * 3]; out[o + 4] = src[(i + 1) * 3 + 1]; out[o + 5] = src[(i + 1) * 3 + 2];
+  }
+}
+
+// Hand a fat line its geometry, rebuilding the instanced attributes only when the buffer was
+// actually replaced. setPositions/setColors rebuild them every time they run.
+function pushFat(obj, state, pos, col, segs) {
+  const g = obj.geometry;
+  if (state.fresh) {
+    g.setPositions(pos);
+    g.setColors(col);
+    state.fresh = false;
+  } else {
+    g.attributes.instanceStart.needsUpdate = true;
+    g.attributes.instanceEnd.needsUpdate = true;
+    if (g.attributes.instanceColorStart) {
+      g.attributes.instanceColorStart.needsUpdate = true;
+      g.attributes.instanceColorEnd.needsUpdate = true;
+    }
+  }
+  g.instanceCount = segs;
 }
 
 // A screen-space width needs to know what the screen is. Read every draw rather than pushed
@@ -593,25 +632,7 @@ function makeDots(main, sizePx) {
 }
 
 function makeLine(main) {
-  const g = Skeleton.overlayGroup(main);
-  // depthTest OFF, like the dots. A motion path runs through the model it belongs to, so with
-  // depth testing on it z-fights wherever it grazes a surface — which is a shimmer that looks
-  // like the curve itself is unstable. It is an overlay; it should read as one throughout
-  // rather than dipping in and out of the geometry.
-  //
-  // What this does NOT fix: THREE.Line draws hardware 1px lines, which are aliased by nature
-  // and step between whole pixels as the camera moves. The real fix is Line2/LineMaterial,
-  // which triangulates a screen-space width and antialiases properly — but it needs the
-  // viewport resolution kept in step on every resize, so it is its own change, not a flag.
-  const line = new THREE.Line(new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({
-      transparent: true, depthWrite: false, depthTest: false, vertexColors: true,
-    }));
-  line.frustumCulled = false;
-  line.isPickable = false;
-  line.renderOrder = TRAIL_ORDER;
-  g.add(line);
-  return line;
+  return makeFat(main, TRAIL_PX, 1.0, TRAIL_ORDER);
 }
 
 MotionTrail.clear = function (main) {
@@ -633,7 +654,7 @@ MotionTrail.redraw = function (main, lineIndex, points) {
   const v = main._trailVis;
   const line = v && v.lines && v.lines[lineIndex];
   if (!line) return;
-  line.geometry.setFromPoints(points);
+  MotionTrail.writeLine(main, lineIndex, points);
   // The dots ride with the drag. Leaving them on the old samples is worse than not drawing them
   // at all: they would read as the curve's real positions while the line says otherwise.
   const strand = main._trailStrand;
@@ -691,20 +712,21 @@ MotionTrail.recolor = function (main) {
     v.keyDots.material.size = KEY_DOT_PX * (slot && slot.key ? HOVER_GROW : 1);
   }
 
-  for (const line of v.lines) {
+  // Fat lines want the colour in the same PAIRS layout as the positions: segment i takes the
+  // colour of point i at its start and point i+1 at its end, so the gradient runs continuously
+  // along the curve rather than stepping at every segment boundary.
+  v.lines.forEach((line, i) => {
+    const st = v.lineState && v.lineState[i];
+    // A drag rewrites positions before the colours catch up; a buffer sized for a different
+    // sample count would be written past its end.
+    if (!st || !st.col || st.col.length !== (times.length - 1) * 6) return;
+    writePairs(col, st.col, times.length);
     const g = line.geometry;
-    const pos = g.getAttribute('position');
-    // A drag rewrites positions before the colours catch up; sizes that disagree throw in the
-    // renderer rather than drawing something slightly wrong.
-    if (!pos || pos.count !== times.length) continue;
-    const existing = g.getAttribute('color');
-    if (existing && existing.count === times.length) {
-      existing.copyArray(col);
-      existing.needsUpdate = true;
-    } else {
-      g.setAttribute('color', new THREE.BufferAttribute(col.slice(), 3));
+    if (g.attributes.instanceColorStart) {
+      g.attributes.instanceColorStart.needsUpdate = true;
+      g.attributes.instanceColorEnd.needsUpdate = true;
     }
-  }
+  });
 };
 
 // EVERYTHING THAT CHANGES WITHOUT THE GEOMETRY CHANGING. The playhead moves, a display flag is
@@ -764,16 +786,16 @@ MotionTrail.update = function (main) {
     : null;
 
   const v = main._trailVis;
+  v.lineState = v.lineState || paths.map(() => ({ fresh: true }));
   paths.forEach((pts, i) => {
     const line = v.lines[i];
     const tg = targets[i];
     // Both curves take the colour of the JOINT they describe, so a control and its output read
     // as one thing seen two ways rather than as two unrelated curves.
-    const col = Skeleton.boneColor(main, tg.control ? tg.obj._pinnedJoint : tg.obj);
-    line.geometry.setFromPoints(pts);
-    line.material.color.setRGB(col.r, col.g, col.b);
+    MotionTrail.writeLine(main, i, pts);
     line.material.opacity = tg.control ? CONTROL_OPACITY : OUTPUT_OPACITY;
     line.visible = pts.length > 1;
+    void tg;
   });
 
   MotionTrail.drawDots(main);
@@ -841,6 +863,31 @@ function setColors(obj, arr) {
 MotionPathEdit.redrawHook = function (main) {
   const e = main._pathEdit;
   if (e && e.after) MotionTrail.redraw(main, e.strand.line, e.after);
+};
+
+// Write one curve's points into its fat-line geometry. The colour buffer is left alone here:
+// recolor owns it and runs every frame, so writing a colour here as well would be one rule in
+// two places, disagreeing for a frame each time the playhead moved.
+MotionTrail.writeLine = function (main, i, pts) {
+  const v = main._trailVis;
+  const line = v && v.lines && v.lines[i];
+  if (!line || pts.length < 2) return;
+  const segs = pts.length - 1;
+  const need = segs * 6;
+  v.lineState = v.lineState || [];
+  const st = v.lineState[i] || (v.lineState[i] = { fresh: true });
+  if (!st.pos || st.pos.length !== need) {
+    st.pos = new Float32Array(need);
+    st.col = new Float32Array(need);
+    st.fresh = true;
+  }
+  const flat = st.flat && st.flat.length === pts.length * 3
+    ? st.flat : (st.flat = new Float32Array(pts.length * 3));
+  for (let k = 0; k < pts.length; k++) {
+    flat[k * 3] = pts[k].x; flat[k * 3 + 1] = pts[k].y; flat[k * 3 + 2] = pts[k].z;
+  }
+  writePairs(flat, st.pos, pts.length);
+  pushFat(line, st, st.pos, st.col, segs);
 };
 
 export default MotionTrail;
