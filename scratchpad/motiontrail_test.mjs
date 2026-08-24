@@ -713,6 +713,16 @@ function setup(times) {
   check('...whose screen-space width is told the viewport size',
     seg.material.resolution.x === 1600 && seg.material.resolution.y === 900,
     'a fat line with a stale resolution renders at the wrong thickness');
+  // EVERY fat line, not just the triads. LineMaterial clones its uniforms per material, so a
+  // resolution set on one does nothing for the others, and the default is 1x1 - which divides
+  // the screen-space width by 1 instead of by a thousand.
+  check('...and so is every OTHER fat line, through the same helper',
+    /function pushFat\(main, obj, state/.test(SRC)
+      && /syncResolution\(main, obj\.material\);/.test(SRC),
+    'the trail inherited this gap when it was converted to fat lines');
+  check('...with no second copy of the push left to drift',
+    (SRC.match(/setPositions\(/g) || []).length === 1,
+    'the gnomons had their own copy of the rebuild rule');
   check('each axis starts AT the key', near(at(0)[0], 0) && near(at(0)[1], 0));
   check('an unrotated key points its X axis along +X',
     at(1)[0] > 0 && near(at(1)[1], 0, 1e-6), at(1).join(','));

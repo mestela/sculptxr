@@ -536,7 +536,13 @@ function writePairsScaled(src, out, n, k) {
   }
 }
 
-function pushFat(obj, state, pos, col, segs) {
+function pushFat(main, obj, state, pos, col, segs) {
+  // EVERY fat line needs the viewport, not just the triads. LineMaterial clones its uniforms
+  // per material, so a resolution set on one does nothing for the others — and a line whose
+  // resolution is still the default 1x1 has its screen-space width divided by 1 instead of by
+  // a thousand, which is not a subtle error. This was set for the gnomons alone when they were
+  // the only fat line, and the trail inherited the gap when it was converted.
+  syncResolution(main, obj.material);
   const g = obj.geometry;
   if (state.fresh) {
     g.setPositions(pos);
@@ -643,26 +649,20 @@ MotionTrail.drawGnomons = function (main) {
     }
   }
   if (!verts) { v.gnomons.visible = false; return; }
-  const g = v.gnomons.geometry;
-  // setPositions rebuilds the instanced attributes, so it is called only when the buffer itself
-  // was replaced; otherwise the existing attributes are written in place and flagged.
-  if (v.gnomonFresh) {
-    g.setPositions(pos);
-    g.setColors(col);
-    v.gnomonFresh = false;
-  } else {
-    g.attributes.instanceStart.needsUpdate = true;
-    g.attributes.instanceEnd.needsUpdate = true;
-    if (g.attributes.instanceColorStart) {
-      g.attributes.instanceColorStart.needsUpdate = true;
-      g.attributes.instanceColorEnd.needsUpdate = true;
-    }
-  }
   // The instanced equivalent of a draw range: one instance per SEGMENT, so the keys out of
-  // reach are simply not issued.
-  g.instanceCount = verts / 2;
-  syncResolution(main, v.gnomons.material);
+  // reach are simply not issued. Through the same helper the curves use, so the resolution and
+  // the rebuild rule cannot differ between them again.
+  v.gnomonState = v.gnomonState || {};
+  v.gnomonState.fresh = v.gnomonFresh;
+  pushFat(main, v.gnomons, v.gnomonState, pos, col, verts / 2);
+  v.gnomonFresh = v.gnomonState.fresh;
   v.gnomons.visible = true;
+
+  if (window._trailTrace) {
+    const r = v.gnomons.material.resolution;
+    console.log('[trail] gnomons segs=' + (verts / 2) + ' len=' + L.toFixed(4) +
+      ' res=' + r.x + 'x' + r.y + ' vis=' + v.gnomons.visible);
+  }
 };
 
 function makeDots(main, sizePx) {
@@ -949,7 +949,7 @@ MotionTrail.writeLine = function (main, i, pts) {
     flat[k * 3] = pts[k].x; flat[k * 3 + 1] = pts[k].y; flat[k * 3 + 2] = pts[k].z;
   }
   writePairs(flat, st.pos, pts.length);
-  pushFat(line, st, st.pos, st.col, segs);
+  pushFat(main, line, st, st.pos, st.col, segs);
 };
 
 export default MotionTrail;
