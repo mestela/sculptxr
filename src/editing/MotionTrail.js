@@ -314,7 +314,10 @@ function disposeTrail(main) {
 // One line per path. The AUTHORED curve is drawn solid; the SOLVED one is drawn faint, because
 // it is a readout rather than something you can take hold of, and because the two coincide
 // whenever the limb is reaching — a second curve at full strength would just thicken the first.
-const CONTROL_OPACITY = 0.95;
+// Both curves are transparent now, not just the solved one: at 2px and near-opaque the
+// authored path competed with the triads sitting on it, and the triads are the thing you are
+// reading when they are switched on.
+const CONTROL_OPACITY = 0.65;
 const OUTPUT_OPACITY = 0.35;
 
 // TIME, READ AS COLOUR. Red behind the playhead, green ahead of it, each fading with distance.
@@ -329,8 +332,12 @@ const OUTPUT_OPACITY = 0.35;
 // black at both ends, which desaturates as it darkens: a dim red reads as orange and a dim green
 // as lime, so the two shades stopped being distinguishable exactly where you need to tell them
 // apart. Grey holds the value steady and lets only the SATURATION carry distance.
-const PAST_NEAR   = [1.00, 0.00, 0.00];
-const FUTURE_NEAR = [0.00, 1.00, 0.00];
+// HUE-SEPARATED FROM THE AXIS TRIADS. Red-and-green for time and red-and-green for X-and-Y
+// were two unrelated meanings in the same two colours, sitting on top of each other. The trail
+// is pushed one way round the wheel and the axes the other, so the pairs stop competing:
+// the trail's past goes toward PURPLE and its future toward CYAN.
+const PAST_NEAR   = [0.95, 0.00, 0.45];
+const FUTURE_NEAR = [0.00, 0.95, 0.55];
 const FAR_GREY    = [0.48, 0.48, 0.48];
 // A key sitting on the playhead is the one an edit lands on, so it is not on the scale at all.
 const NOW_WHITE   = [1.00, 1.00, 1.00];
@@ -436,11 +443,25 @@ function dotTexture() {
 // One LineSegments for the lot: three segments per key, coloured per vertex, so the whole set
 // is a single draw call however many keys there are.
 const GNOMON_ORDER = 9997;
-const AXIS_COL = [[1, 0.25, 0.25], [0.25, 1, 0.3], [0.35, 0.5, 1]];
+// ...and the axes go the other way: X toward PINK, Y toward YELLOW. Z is lifted rather than
+// hue-shifted, for a different reason.
+//
+// THE BLUE AXIS REALLY WAS THINNER, and it is not the geometry — all three are the same width.
+// An antialiased line's apparent weight is its LUMINANCE contrast against the background, and
+// under Rec.709 green carries 0.72 of the luma, red 0.21 and blue 0.07. The old triad measured
+// 0.79 / 0.41 / 0.50, which is very close to the order it was reported in. Blue also reads
+// thinner than its luma alone predicts, because the eye resolves blue detail poorly.
+//
+// So the three are balanced by luminance rather than by eye: roughly 0.63 / 0.70 / 0.68. Blue
+// gets most of the lift, which is why Z is a light blue rather than a pure one.
+const AXIS_COL = [[1.00, 0.52, 0.64], [0.62, 0.78, 0.15], [0.50, 0.70, 1.00]];
 const _axV = new THREE.Vector3();
 
 const GNOMON_PX = 3;
-const TRAIL_PX = 2;
+// Thinner than the triads on purpose. A fat line can be a fraction of a pixel wide and still be
+// antialiased, which a hardware line cannot — so the curve can go BELOW 1px rather than being
+// stuck at the width that caused the original aliasing.
+const TRAIL_PX = 1.5;
 
 // ONE fat-line object for everything here — the trail and the triads alike. LineSegments2
 // rather than Line2 even for the curve, because Line2's own setPositions ALLOCATES a fresh

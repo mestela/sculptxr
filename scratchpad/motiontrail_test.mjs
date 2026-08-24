@@ -479,7 +479,7 @@ function setup(times) {
     'depth testing makes the curve shimmer where it grazes the mesh');
   // The curve is a fat line too now: hardware 1px lines cannot be antialiased.
   check('the trail curve is a fat line, like the triads',
-    /const TRAIL_PX = 2;/.test(SRC) && !/new THREE\.Line\(/.test(SRC),
+    /const TRAIL_PX = /.test(SRC) && !/new THREE\.Line\(/.test(SRC),
     'THREE.Line steps between whole pixels as the camera moves');
   check('...built by the SAME helper as the triads',
     (SRC.match(/makeFat\(main,/g) || []).length >= 2,
@@ -487,13 +487,50 @@ function setup(times) {
   // Widths are screen pixels and matt set both by eye, so they are worth pinning: a fat line
   // whose width drifts is not something a structural check would otherwise notice.
   {
-    const t = SRC.match(/const TRAIL_PX = (\d+);/);
-    const g = SRC.match(/const GNOMON_PX = (\d+);/);
+    // Fractional, because a fat line can be thinner than a pixel and still be antialiased.
+    const t = SRC.match(/const TRAIL_PX = ([\d.]+);/);
+    const g = SRC.match(/const GNOMON_PX = ([\d.]+);/);
     check('the widths are the ones that were dialled in',
-      !!t && !!g && Number(t[1]) === 2 && Number(g[1]) === 3,
+      !!t && !!g && Number(t[1]) === 1.5 && Number(g[1]) === 3,
       (t && t[1]) + ' / ' + (g && g[1]));
     check('...and the triads read heavier than the curve they sit on',
       !!t && !!g && Number(g[1]) > Number(t[1]));
+  }
+
+  // THE AXES ARE BALANCED BY LUMINANCE, not by eye. An antialiased line's apparent weight is
+  // its luminance contrast, so under Rec.709 an equal-width green reads far heavier than an
+  // equal-width blue — which is exactly how the first triad was reported.
+  {
+    const m = SRC.match(/const AXIS_COL = \[\[([^\]]+)\], \[([^\]]+)\], \[([^\]]+)\]\]/);
+    check('the axis colours are readable from source', !!m);
+    if (m) {
+      const luma = (str) => {
+        const c = str.split(',').map(Number);
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+      };
+      const L = [luma(m[1]), luma(m[2]), luma(m[3])];
+      check('no axis is much heavier than another',
+        Math.max(...L) - Math.min(...L) < 0.12, L.map((x) => x.toFixed(2)).join(' / '));
+      check('...and blue is lifted, not left as a pure blue',
+        Number(m[3].split(',')[1]) > 0.4,
+        'the eye resolves blue detail poorly, so it reads thinner than its luma alone predicts');
+    }
+  }
+
+  // Red-and-green for TIME and red-and-green for X-and-Y were two unrelated meanings in the
+  // same two colours, sitting on top of each other.
+  {
+    const past = SRC.match(/const PAST_NEAR   = \[([^\]]+)\]/);
+    const fut = SRC.match(/const FUTURE_NEAR = \[([^\]]+)\]/);
+    check('the trail palette is hue-shifted away from pure red and green',
+      !!past && !!fut
+        && Number(past[1].split(',')[2]) > 0.2      // past has blue in it: toward purple
+        && Number(fut[1].split(',')[2]) > 0.2,      // future has blue in it: toward cyan
+      'two meanings in the same two colours, on top of each other');
+    const axisX = SRC.match(/const AXIS_COL = \[\[([^\]]+)\]/);
+    check('...and the axes are shifted the OTHER way',
+      !!axisX && Number(axisX[1].split(',')[1]) > 0.4,
+      'X toward pink while the trail goes toward purple, so the pairs stop competing');
   }
   // SAMPLE dots keep identity — with several paths on screen, which one is the question they
   // answer. KEY dots moved onto the time ramp, because a key is where an edit can land, so
