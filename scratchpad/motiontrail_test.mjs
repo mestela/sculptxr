@@ -472,6 +472,20 @@ function setup(times) {
 
   // Identity moved to the dots when the line took the gradient.
   check('the line is drawn with per-vertex colour', /vertexColors: true/.test(SRC));
+  // NO BLENDING ANYWHERE. It cost a blended pass per overlay every frame, and it was also why
+  // the colours went pastel in the headset: a part-alpha line IS mixed with what is behind it.
+  check('no overlay is drawn with alpha blending',
+    !/transparent: true/.test(SRC) && /transparent: false/.test(SRC),
+    'blending was the judder suspect and the pastel cause both');
+  check('...the dots keep their round shape by CUTOUT instead',
+    /alphaTest: 0\.5/.test(SRC) && /map: dotTexture\(\)/.test(SRC),
+    'alphaTest discards the rim outright, with no blended pass');
+  check('...and the overlays are out of the tone mapper',
+    (SRC.match(/toneMapped: false/g) || []).length >= 2,
+    'tone mapping rolls a saturated axis off toward pastel the moment it is not Linear');
+  check('the two curves are told apart by VALUE, not opacity',
+    /CONTROL_VALUE = 0\.70/.test(SRC) && /OUTPUT_VALUE = 0\.40/.test(SRC)
+      && !/material\.opacity =/.test(SRC));
   // A path runs through the model it belongs to; with depth testing on it z-fights wherever it
   // grazes a surface, which looks like the curve itself is unstable.
   check('the line reads as an overlay throughout, like the dots',
@@ -509,11 +523,18 @@ function setup(times) {
         return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
       };
       const L = [luma(m[1]), luma(m[2]), luma(m[3])];
-      check('no axis is much heavier than another',
-        Math.max(...L) - Math.min(...L) < 0.12, L.map((x) => x.toFixed(2)).join(' / '));
-      check('...and blue is lifted, not left as a pure blue',
-        Number(m[3].split(',')[1]) > 0.4,
+      // The spread is NOT pinned tight any more. Holding the axes at full value and cutting the
+      // hue shift to a fifth both widen it, and both were asked for with eyes on the result — a
+      // check demanding 0.12 here would be overruling the person looking at it.
+      //
+      // What survives is the part that was diagnosed rather than chosen: blue reads thinner
+      // than the others at equal width, so it must be LIFTED rather than left pure. A pure blue
+      // is luma 0.07; this asserts several times that.
+      check('blue is lifted, not left as a pure blue',
+        L[2] > 0.4 && Number(m[3].split(',')[0]) > 0.3,
         'the eye resolves blue detail poorly, so it reads thinner than its luma alone predicts');
+      check('...and no axis is left darker than a pure blue would be',
+        Math.min(...L) > 0.2, L.map((x) => x.toFixed(2)).join(' / '));
     }
   }
 
@@ -522,14 +543,17 @@ function setup(times) {
   {
     const past = SRC.match(/const PAST_NEAR   = \[([^\]]+)\]/);
     const fut = SRC.match(/const FUTURE_NEAR = \[([^\]]+)\]/);
+    // Present but SLIGHT, which is the whole requirement: enough that the two palettes stop
+    // reading as the same red and green, not so much that they stop reading as red and green.
+    const b1 = past && Number(past[1].split(',')[2]);
+    const b2 = fut && Number(fut[1].split(',')[2]);
     check('the trail palette is hue-shifted away from pure red and green',
-      !!past && !!fut
-        && Number(past[1].split(',')[2]) > 0.2      // past has blue in it: toward purple
-        && Number(fut[1].split(',')[2]) > 0.2,      // future has blue in it: toward cyan
-      'two meanings in the same two colours, on top of each other');
+      b1 > 0.02 && b2 > 0.02, b1 + ' / ' + b2);
+    check('...but only slightly', b1 < 0.25 && b2 < 0.25,
+      'a heavy shift stops them reading as red and green at all');
     const axisX = SRC.match(/const AXIS_COL = \[\[([^\]]+)\]/);
     check('...and the axes are shifted the OTHER way',
-      !!axisX && Number(axisX[1].split(',')[1]) > 0.4,
+      !!axisX && Number(axisX[1].split(',')[1]) > 0.27,
       'X toward pink while the trail goes toward purple, so the pairs stop competing');
   }
   // SAMPLE dots keep identity — with several paths on screen, which one is the question they
@@ -559,7 +583,7 @@ function setup(times) {
     const pc = v.dots.geometry.getAttribute('color').array;
     const kc = v.keyDots.geometry.getAttribute('color').array;
     check('...and the sample dots still carry the identity colour',
-      near(pc[0], 0.2) && near(pc[1], 0.4) && near(pc[2], 0.9),
+      near(pc[0], 0.2 * 0.4, 1e-6) && near(pc[2], 0.9 * 0.4, 1e-6),
       'with several paths on screen, which one is the question the dots answer');
     check('...while the KEY dots are on the time ramp',
       near(kc[0], 1) && near(kc[1], 1) && near(kc[2], 1)      // key 0 sits on the playhead
@@ -573,7 +597,9 @@ function setup(times) {
     const pc2 = v.dots.geometry.getAttribute('color').array;
     check('the preselected sample is highlighted', pc2[3] > 0.9 && pc2[5] < 0.4,
       Array.from(pc2).join(','));
-    check('...and its neighbours are not', near(pc2[0], 0.2) && near(pc2[2], 0.9));
+    check('...and its neighbours are not',
+      near(pc2[0], 0.2 * 0.4, 1e-6) && near(pc2[2], 0.9 * 0.4, 1e-6),
+      Array.from(pc2).join(','));
     check('...and it grows, since a colour shift alone is easy to miss at four pixels',
       v.dots.material.size > 4, v.dots.material.size);
     check('...while the other cloud stays its normal size',
@@ -627,9 +653,11 @@ function setup(times) {
     /timeColor\(v\.keyTimes\[i\], head, span, keyCol, i \* 3, v\.nowEps\)/.test(SRC)
       && /v\.nowEps = span \/ Math\.max\(1, strand\.times\.length - 1\) \* 0\.5/.test(SRC),
     'a key rarely lands on the same float as the playhead');
-  check('the far end of the ramp is a midtone GREY, not black',
-    /const FAR_GREY\s*=\s*\[0\.48/.test(SRC),
-    'fading to black desaturates, so a dim red reads as orange and a dim green as lime');
+  {
+    const g = SRC.match(/const FAR_GREY\s*=\s*\[([\d.]+)/);
+    check('the far end of the ramp is a midtone GREY, not black',
+      !!g && Number(g[1]) > 0.3 && Number(g[1]) < 0.7, g && g[1]);
+  }
 }
 
 // --- 5f. RGB gnomons at the keys ----------------------------------------------------------

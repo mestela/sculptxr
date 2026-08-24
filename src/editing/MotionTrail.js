@@ -314,11 +314,13 @@ function disposeTrail(main) {
 // One line per path. The AUTHORED curve is drawn solid; the SOLVED one is drawn faint, because
 // it is a readout rather than something you can take hold of, and because the two coincide
 // whenever the limb is reaching — a second curve at full strength would just thicken the first.
-// Both curves are transparent now, not just the solved one: at 2px and near-opaque the
-// authored path competed with the triads sitting on it, and the triads are the thing you are
-// reading when they are switched on.
-const CONTROL_OPACITY = 0.65;
-const OUTPUT_OPACITY = 0.35;
+// NO ALPHA ANYWHERE. The authored and solved curves are told apart by VALUE, not opacity.
+//
+// Blending was also why the colours went pastel in the headset, and it was not the tone mapper:
+// a 0.35-alpha red drawn over a light background IS a pale pink, because that is what blending
+// does. Removing it puts the hue back at full strength for free.
+const CONTROL_VALUE = 0.70;
+const OUTPUT_VALUE = 0.40;
 
 // TIME, READ AS COLOUR. Red behind the playhead, green ahead of it, each fading with distance.
 // The point is loops: whether the end of a cycle comes back to where the start left is a
@@ -336,9 +338,11 @@ const OUTPUT_OPACITY = 0.35;
 // were two unrelated meanings in the same two colours, sitting on top of each other. The trail
 // is pushed one way round the wheel and the axes the other, so the pairs stop competing:
 // the trail's past goes toward PURPLE and its future toward CYAN.
-const PAST_NEAR   = [0.95, 0.00, 0.45];
-const FUTURE_NEAR = [0.00, 0.95, 0.55];
-const FAR_GREY    = [0.48, 0.48, 0.48];
+// A FIFTH of the shift that was there: enough to stop the two palettes reading as the same
+// red and green, not enough to stop them reading as red and green at all.
+const PAST_NEAR   = [0.99, 0.00, 0.09];
+const FUTURE_NEAR = [0.00, 0.99, 0.11];
+const FAR_GREY    = [0.46, 0.46, 0.46];
 // A key sitting on the playhead is the one an edit lands on, so it is not on the scale at all.
 const NOW_WHITE   = [1.00, 1.00, 1.00];
 // The sample a click would take. Bright and distinctly warm, so it does not read as "this key
@@ -454,7 +458,14 @@ const GNOMON_ORDER = 9997;
 //
 // So the three are balanced by luminance rather than by eye: roughly 0.63 / 0.70 / 0.68. Blue
 // gets most of the lift, which is why Z is a light blue rather than a pure one.
-const AXIS_COL = [[1.00, 0.52, 0.64], [0.62, 0.78, 0.15], [0.50, 0.70, 1.00]];
+// X and Y carry a FIFTH of the hue shift they had. Z is not hue-shifted at all — its lift is a
+// SATURATION change, and that is the fix for the blue axis reading thinner than the other two,
+// which is a separate problem from the two palettes competing.
+//
+// The luminance spread is wider again as a result (Z is dark at full saturation and the eye
+// resolves blue detail poorly), and that is the cost of holding the axes at full value. If blue
+// still reads thin, the lever is its saturation, not its hue.
+const AXIS_COL = [[1.00, 0.30, 0.33], [0.32, 0.96, 0.27], [0.50, 0.70, 1.00]];
 const _axV = new THREE.Vector3();
 
 const GNOMON_PX = 3;
@@ -474,13 +485,22 @@ function makeFat(main, px, opacity, order) {
     linewidth: px,               // SCREEN pixels, because worldUnits is off
     worldUnits: false,
     vertexColors: true,
-    transparent: true,
-    opacity: opacity,
+    // OPAQUE. Transparency here meant a blended pass per overlay every frame, and in the
+    // headset that was showing as judder. It also cost the colours their saturation, since a
+    // part-alpha line is literally mixed with whatever is behind it.
+    //
+    // The trade, stated plainly: LineMaterial antialiases its edge THROUGH alpha, and this
+    // renderer runs with antialias:false (MSAA breaks WebXR session start here), so
+    // alphaToCoverage has no coverage to work with either. Opaque means hard edges. That is a
+    // real loss and the reason to keep the widths modest.
+    transparent: false,
     depthWrite: false,
     depthTest: false,
-    alphaToCoverage: false,      // the shader antialiases its own edges; coverage on top of
-                                 // that thins a thin line to almost nothing
+    // The overlay is a readout, not part of the scene's lighting. Tone mapping would roll a
+    // fully saturated axis off toward pastel the moment anyone switched away from Linear.
+    toneMapped: false,
   }));
+  void opacity;
   seg.frustumCulled = false;
   seg.isPickable = false;
   seg.renderOrder = order;
@@ -504,6 +524,18 @@ function writePairs(src, out, n) {
 
 // Hand a fat line its geometry, rebuilding the instanced attributes only when the buffer was
 // actually replaced. setPositions/setColors rebuild them every time they run.
+// The pairs write again, with every channel scaled — used for colour, where each curve carries
+// its own brightness, rather than duplicating the loop with a multiply bolted on.
+function writePairsScaled(src, out, n, k) {
+  for (let i = 0; i < n - 1; i++) {
+    const o = i * 6;
+    out[o] = src[i * 3] * k; out[o + 1] = src[i * 3 + 1] * k; out[o + 2] = src[i * 3 + 2] * k;
+    out[o + 3] = src[(i + 1) * 3] * k;
+    out[o + 4] = src[(i + 1) * 3 + 1] * k;
+    out[o + 5] = src[(i + 1) * 3 + 2] * k;
+  }
+}
+
 function pushFat(obj, state, pos, col, segs) {
   const g = obj.geometry;
   if (state.fresh) {
@@ -639,11 +671,15 @@ function makeDots(main, sizePx) {
     size: sizePx,
     sizeAttenuation: false,   // SCREEN pixels — this is the whole difference from the old wall
     map: dotTexture(),
-    alphaTest: 0.02,          // discard the fully transparent rim rather than blending it
+    // A CUTOUT, not a blend. alphaTest discards the rim outright, so the dot keeps its round
+    // shape without any blended pass — which is the whole point, since blending was what had
+    // to go. The edge is harder than it was; a few pixels across, that is a fair trade.
+    alphaTest: 0.5,
     vertexColors: true,       // key dots carry the time ramp; sample dots carry identity
-    transparent: true,
+    transparent: false,
     depthWrite: false,
     depthTest: false,
+    toneMapped: false,
   }));
   pts.frustumCulled = false;
   pts.isPickable = false;
@@ -710,7 +746,10 @@ MotionTrail.recolor = function (main) {
   const hover = MotionPathEdit.hoverIndex(main);
   if (v.slots) {
     const plainCol = v.plainCol, keyCol = v.keyCol;
-    if (plainCol) { for (let i = 0; i < plainCol.length; i++) plainCol[i] = v.identity[i % 3]; }
+    // Sample dots ride at the solved curve's brightness: they mark the path, they are not it.
+    if (plainCol) {
+      for (let i = 0; i < plainCol.length; i++) plainCol[i] = v.identity[i % 3] * OUTPUT_VALUE;
+    }
     if (keyCol) {
       for (let i = 0; i < v.keyTimes.length; i++) {
         timeColor(v.keyTimes[i], head, span, keyCol, i * 3, v.nowEps);
@@ -741,7 +780,9 @@ MotionTrail.recolor = function (main) {
     // A drag rewrites positions before the colours catch up; a buffer sized for a different
     // sample count would be written past its end.
     if (!st || !st.col || st.col.length !== (times.length - 1) * 6) return;
-    writePairs(col, st.col, times.length);
+    // Value, not alpha, is what separates the authored curve from the solved one now.
+    const k = (v.lineValue && v.lineValue[i] != null) ? v.lineValue[i] : CONTROL_VALUE;
+    writePairsScaled(col, st.col, times.length, k);
     const g = line.geometry;
     if (g.attributes.instanceColorStart) {
       g.attributes.instanceColorStart.needsUpdate = true;
@@ -814,9 +855,9 @@ MotionTrail.update = function (main) {
     // Both curves take the colour of the JOINT they describe, so a control and its output read
     // as one thing seen two ways rather than as two unrelated curves.
     MotionTrail.writeLine(main, i, pts);
-    line.material.opacity = tg.control ? CONTROL_OPACITY : OUTPUT_OPACITY;
+    v.lineValue = v.lineValue || [];
+    v.lineValue[i] = tg.control ? CONTROL_VALUE : OUTPUT_VALUE;
     line.visible = pts.length > 1;
-    void tg;
   });
 
   MotionTrail.drawDots(main);
@@ -863,8 +904,8 @@ MotionTrail.drawDots = function (main, weights) {
   // Half a sample spacing counts as "on the playhead": the key and the playhead rarely land on
   // the same float, and a white mark that only appears on exact equality never appears.
   v.nowEps = span / Math.max(1, strand.times.length - 1) * 0.5;
-  v.dots.material.opacity = 0.55;
-  v.keyDots.material.opacity = 0.95;
+
+
   void weights;
 };
 
