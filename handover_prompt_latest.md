@@ -246,6 +246,11 @@ lever is MSAA, not blending.
   with a guard, or a noisy edit bakes a key per frame.
 - **The orientation lock for Grab's desktop solve**, so Bone Draw's IK mode can be retired
   without desktop posing getting looser.
+- **Split bone / dissolve bone** (matt, 2026-08-24, for later). Backlog #46. Insert a joint
+  partway along a bone; remove a joint and rejoin its neighbours. Both are TOPOLOGY edits, and
+  that is where the work is rather than in the geometry: a bound skin's weights, animation
+  tracks keyed by object id, pins holding a joint by reference, and the SKEL block's parent
+  indices all have to be told what happened.
 - **`window._trailTrace`** was added for an unexplained report — a pin highlighted in the
   viewport would not trail, though selecting it in the outliner did. The sticky trail target
   probably masks it now; the cause is still unknown.
