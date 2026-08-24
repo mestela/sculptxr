@@ -195,22 +195,60 @@ decisions, so nobody unpicks one by accident:
 
 ## STILL OPEN
 
-- **Nothing is blocked.** The three failing harnesses were triaged and fixed in v3.20.7; all 24
-  pass. What they turned out to be is worth remembering, because two of the three were the
-  harness condemning a BETTER rule (see standing lesson 7):
-  - `rigpick_test` asserted the superseded picking design verbatim. Its checks now LIFT the
-    score expression out of `Picking.js` and evaluate it, so they test the property (a pin wins
-    a coincident tie with its own joint, but never beats a genuinely nearer bone; depth breaks
-    ties and never outranks off-axis) rather than a spelling.
-  - `graph_target_test` was the real one. It is now allowed to select, but `setMesh` takes a
-    `keepTool` flag so the tool-context switch in `setOrUnsetMesh` is skipped.
-  - `undef_test` was missing `queueMicrotask` from a hand-maintained globals list.
+### 1. A JUDDER REGRESSION IN THE HEADSET — open, and the cause is NOT known
 
-- Nothing else known. **Picking rules now live in `rigpick_test.mjs` and only there** (v3.20.8);
-  `recording_test` used to carry a second copy by source spelling, which was this project's
-  signature bug living in the tests themselves. Before removing it, each of the five defects the
-  duplicate caught was injected and confirmed still caught by `rigpick_test` — moving a check is
-  only safe if you prove the coverage moved with it.
+matt, 2026-08-24 on GalaxyXR: the app judders, **and it still judders with all bones and trails
+disabled**. That last part is the important one and it was measured, not guessed.
+
+**What it rules out.** Everything the motion-path work draws. The overlays were the first
+suspect and alpha blending was removed on that theory (v3.20.34) — the colours improved, which
+was worth having on its own, but the judder was never the blending. With trails off,
+`MotionTrail.update` returns on its second line and the whole feature costs nothing.
+
+**Do not repeat the mistake that got made here.** Three rounds went into the overlays on a
+theory that was never measured. The next step is a MEASUREMENT, and the cheapest one that
+actually discriminates is a bisect: matt calls it a regression, so it has a first bad version.
+The range to bisect is roughly v3.20.9 (where this session's work starts) to v3.20.35, and a
+build only has to be judged judder / no judder in the headset.
+
+**Suspects worth holding lightly until then**, all things that run per frame REGARDLESS of the
+trail flag, and all introduced in that range:
+- `MotionPathEdit.strokeXR` is called from `Move.updateXR` and `Smooth.updateXR` on every frame
+  in VR, whether or not a path exists.
+- `Scene._updateStylusXray` gained `this._trailStrand` in its cache key.
+- The per-frame allocations in `MotionTrail.recolor` and `drawGnomons` (a fresh `Float32Array`
+  and a `.map()` per frame) — real GC churn at 72-90Hz, but only while trails are ON, so they
+  cannot be this.
+
+The last point is the shape of the whole problem: the obvious costs are all gated behind the
+flag that was switched off. Whatever this is, it is somewhere else.
+
+### 2. The rotation axis triads went missing (v3.20.34), fix UNCONFIRMED
+
+Only the gnomons ever had their `resolution` set; `LineMaterial` clones its uniforms per
+material, so the trail — converted to fat lines in v3.20.32 — was left at the default 1x1, which
+divides a screen-space width by 1 instead of by a thousand. Fixed in v3.20.35 by routing both
+through `pushFat`, which owns the resolution and the rebuild rule. **Nobody has seen the triads
+come back.** `window._trailTrace` reports the gnomons' segment count, length and resolution.
+
+### 3. Hard edges are now a known trade
+Blending is off and this renderer runs `antialias: false` (MSAA breaks WebXR session start), so
+`alphaToCoverage` has no coverage either. Fat lines are hard-edged. If that reads badly the
+lever is MSAA, not blending.
+
+### 4. Still not started
+- **Editing rotation VALUES.** The triads exist so you can see what you would be twisting. The
+  gesture: grab a point on the position path, the controller's twist drives the ROTATION keys,
+  a Position/Rotation toggle on the Move MiniPanel choosing which. Smooth in rotation mode
+  slerps each key toward its neighbours.
+- **Key insertion on push-back.** A wiggle sculpted between two keys has nothing to carry it and
+  vanishes on release. Measure the residual after push-back, insert a key at the peak, repeat —
+  with a guard, or a noisy edit bakes a key per frame.
+- **The orientation lock for Grab's desktop solve**, so Bone Draw's IK mode can be retired
+  without desktop posing getting looser.
+- **`window._trailTrace`** was added for an unexplained report — a pin highlighted in the
+  viewport would not trail, though selecting it in the outliner did. The sticky trail target
+  probably masks it now; the cause is still unknown.
 
 ---
 
