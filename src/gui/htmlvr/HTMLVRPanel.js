@@ -309,6 +309,11 @@ export class HTMLVRPanel {
       // Clear dirty only if a paint was actually scheduled. If it was rate-limited away,
       // stay dirty and retry next frame — otherwise the change is lost until the next edit
       // (the bug behind "the menu freezes until you click the other one").
+      // COUNTED, because "each paint is slow" and "we paint far too often" are the same
+      // milliseconds and completely different fixes. The first needs the panels rewritten onto
+      // canvas; the second needs whatever is marking them dirty to stop. xrPerf reports both
+      // the count and the total, so one run tells you which.
+      if (window._xrPerf) window._panelPaints = (window._panelPaints | 0) + 1;
       if (requestPaintOnce(getHostCanvas())) this._dirty = false;
     }
   }
