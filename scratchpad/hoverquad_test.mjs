@@ -53,8 +53,11 @@ check('...and out of the tone mapper, like the other overlays',
 // the other hand — whose winner is some other panel, or none — calls onVRLeave on that same
 // panel, every frame. Set, cleared, set again: the highlight flickered across every panel on
 // screen and looked like a hit-test fault.
+// Not pinned to the argument list — it grew a diagnostic third parameter, and a check written
+// against the old spelling reported correct code as broken. That has happened three times this
+// session with exactly this shape of assertion.
 check('a hover records which hand owns it',
-  /onVRMove\(uv, hand\) \{[\s\S]{0,240}?this\._hoverHand = hand;/.test(SRC));
+  /onVRMove\(uv, hand[^)]*\) \{[\s\S]{0,320}?this\._hoverHand = hand;/.test(SRC));
 check('...and only that hand can end it',
   /if \(hand === undefined \|\| hand === this\._hoverHand\) this\.clearHover\(\);/.test(SRC),
   'the other hand pointing elsewhere must not clear this hand\'s highlight');
@@ -64,7 +67,7 @@ check('...while an unnamed leave still clears, for a real teardown',
 {
   const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
   check('Scene names the hand on both calls',
-    /onVRMove\(_winner\.hit\.uv, source\.handedness\)/.test(SCENE)
+    /onVRMove\(_winner\.hit\.uv, source\.handedness/.test(SCENE)
       && /onVRLeave\(source\.handedness\)/.test(SCENE),
     'without the name the panel cannot tell the two cases apart');
 }

@@ -7140,7 +7140,8 @@ class Scene {
               const justUp   = !_pressed && this[v.pressKey];
               if (justDown)    v.panel.onVRPress(_winner.hit.uv);
               else if (justUp) v.panel.onVRRelease(_winner.hit.uv);
-              else             v.panel.onVRMove(_winner.hit.uv, source.handedness);
+              else             v.panel.onVRMove(_winner.hit.uv, source.handedness,
+                                                  window._hoverTrace ? _rc.ray.origin : null);
               this[v.pressKey] = _pressed;
               this._isPointingAtMenu = true;
               if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = _winnerName; }

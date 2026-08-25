@@ -368,9 +368,9 @@ export class HTMLVRPanel {
   //
   // A DRAG still dispatches, because a slider genuinely needs the DOM to move. That path was
   // already suppressing rasterisation for the same reason, on the same argument.
-  onVRMove(uv, hand) {
+  onVRMove(uv, hand, rayOrigin) {
     if (!this.mesh) return;
-    if (window._hoverTrace) this._hoverStat(uv, hand);
+    if (window._hoverTrace) this._hoverStat(uv, hand, rayOrigin);
     if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
     this._hoverHand = hand;
     this._showHover(uv);
@@ -388,15 +388,37 @@ export class HTMLVRPanel {
   //
   // Both hands are counted separately, because "two sources disagreeing" and "one source that
   // is noisy" look identical in a merged number and have nothing else in common.
-  _hoverStat(uv, hand) {
+  _hoverStat(uv, hand, rayOrigin) {
     const st = this._hoverStats || (this._hoverStats = { at: 0 });
     const key = hand || 'none';
-    const h = st[key] || (st[key] = { n: 0, minX: 9, maxX: -9, minY: 9, maxY: -9, els: new Set(), last: null, jump: 0 });
+    const h = st[key] || (st[key] = { n: 0, minX: 9, maxX: -9, minY: 9, maxY: -9, els: new Set(),
+      last: null, jump: 0, lastO: null, oJump: 0, pJump: 0, lastP: null });
     h.n++;
     h.minX = Math.min(h.minX, uv.x); h.maxX = Math.max(h.maxX, uv.x);
     h.minY = Math.min(h.minY, uv.y); h.maxY = Math.max(h.maxY, uv.y);
     if (h.last) h.jump = Math.max(h.jump, Math.abs(uv.x - h.last.x) + Math.abs(uv.y - h.last.y));
     h.last = { x: uv.x, y: uv.y };
+
+    // THE TWO THINGS THAT COULD BE MOVING, measured separately. A uv jump can come from the RAY
+    // swinging or from the PANEL swinging, and the fixes have nothing in common — so record how
+    // far each moved between frames, in metres, alongside the uv jump they produced.
+    //
+    // Steady ray, steady panel, jumping uv means neither is moving and the intersection maths is
+    // reading something else. A jumping ray means the pose is noisy upstream. A jumping panel
+    // means the thing it is carried by is.
+    if (rayOrigin) {
+      if (h.lastO) {
+        h.oJump = Math.max(h.oJump, Math.abs(rayOrigin.x - h.lastO.x)
+          + Math.abs(rayOrigin.y - h.lastO.y) + Math.abs(rayOrigin.z - h.lastO.z));
+      }
+      h.lastO = { x: rayOrigin.x, y: rayOrigin.y, z: rayOrigin.z };
+    }
+    const mw = this.mesh.matrixWorld.elements;
+    if (h.lastP) {
+      h.pJump = Math.max(h.pJump, Math.abs(mw[12] - h.lastP.x)
+        + Math.abs(mw[13] - h.lastP.y) + Math.abs(mw[14] - h.lastP.z));
+    }
+    h.lastP = { x: mw[12], y: mw[13], z: mw[14] };
     const t = this._hoverable(this._uvToElement(uv).el);
     h.els.add(t ? (t.id || t.className || t.tagName) : '(none)');
 
@@ -427,7 +449,8 @@ export class HTMLVRPanel {
       const d = st[k];
       console.log('[hover] ' + who + ' ' + k + ': ' + d.n + ' events, uv x ' +
         d.minX.toFixed(3) + '-' + d.maxX.toFixed(3) + ' y ' + d.minY.toFixed(3) + '-' + d.maxY.toFixed(3) +
-        ' | biggest single jump ' + d.jump.toFixed(4) +
+        ' | uv jump ' + d.jump.toFixed(4) +
+        ' | ray moved ' + d.oJump.toFixed(4) + 'm, panel moved ' + d.pJump.toFixed(4) + 'm' +
         ' | ' + d.els.size + ' distinct: ' + [...d.els].slice(0, 6).join(' / '));
       delete st[k];
     }
