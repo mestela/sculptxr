@@ -1384,6 +1384,32 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
 // handful of pins, and this is the only way a pin dragged with the GIZMO re-solves the rig.
 // Watching the transforms rather than hooking the gizmo means undo, a keyed pin and a script
 // setting the matrix all count as a move, without any of them knowing about the solver.
+// SOLVE ACCOUNTING. `window._ikPerf = true` prints one line a second: how many solves ran, what
+// asked for them, and how long they took. Nothing else here tells you whether a solve happened
+// because something genuinely moved or because the last solve's own output looked like a move —
+// and those two have completely different fixes.
+//
+// Deliberately a COUNTER rather than a per-solve log: at 72Hz a line per solve is unreadable and
+// changes the timing it is trying to report.
+IKSolver.perf = { solves: 0, ms: 0, byRegistry: 0, byWatcher: 0, at: 0 };
+
+IKSolver.perfNote = function (why) {
+  if (window._ikPerf) IKSolver.perf[why] = (IKSolver.perf[why] || 0) + 1;
+};
+
+IKSolver.perfTick = function () {
+  if (!window._ikPerf) return;
+  const p = IKSolver.perf;
+  const now = performance.now();
+  if (!p.at) { p.at = now; return; }
+  if (now - p.at < 1000) return;
+  const reg = window._ikPerfRegistry | 0;
+  console.log('[ikPerf] ' + p.solves + ' solves/s, ' + p.ms.toFixed(1) + 'ms total (' +
+    (p.solves ? (p.ms / p.solves).toFixed(2) : '0') + 'ms each)' +
+    ' | asked by: registry ' + reg + ', pin-watcher ' + p.byWatcher);
+  p.solves = 0; p.ms = 0; p.byWatcher = 0; window._ikPerfRegistry = 0; p.at = now;
+};
+
 IKSolver.pinsMoved = function (main) {
   let moved = false;
   for (const j of IKSolver.pinnedJoints(main)) {
@@ -1469,6 +1495,8 @@ IKSolver.resolveToJoint = function (main, joint) {
 };
 
 IKSolver.holdPins = function (main) {
+  const _t0 = window._ikPerf ? performance.now() : 0;
+  try {
   // Consumed FIRST, before any early return: a set left behind would be read by a later solve
   // as that frame's controls, and the joints it names would then be held at values from a
   // frame nobody is on any more.
@@ -1540,6 +1568,12 @@ IKSolver.holdPins = function (main) {
     solved = true;
   }
   return solved;
+  } finally {
+    if (window._ikPerf) {
+      IKSolver.perf.solves++;
+      IKSolver.perf.ms += performance.now() - _t0;
+    }
+  }
 };
 
 // Every joint's local matrix, for undo. A solve can reach anywhere in the tree (that is the

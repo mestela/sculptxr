@@ -1376,7 +1376,14 @@ class Scene {
     // A pin dragged with the gizmo has to re-solve the rig, and nothing tells the solver that
     // happened — so the pins are watched rather than the gizmo hooked. Undo, a keyed pin and a
     // console poke all count as a move without any of them knowing the solver exists.
-    if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) window._ikPinsDirty = true;
+    if (window._ikHoldPins !== false && IKSolver.pinsMoved(this)) {
+      // Recorded separately from the registry's flag: "a pin genuinely moved" and "playback
+      // wrote a bone" are the two reasons a solve happens, and which one is firing decides
+      // what the fix is. With playback PAUSED only this one can fire, so if it is still
+      // counting every frame then a solve's own output is being read back as a move.
+      IKSolver.perfNote('byWatcher');
+      window._ikPinsDirty = true;
+    }
 
     // THE SAME TRICK FOR BONES, which is what makes the transform gizmo a posing tool. The
     // gizmo writes a joint's matrix directly; watching for that and re-solving to wherever it
@@ -1399,6 +1406,8 @@ class Scene {
         }
       }
     }
+
+    IKSolver.perfTick();
 
     if (window._ikPinsDirty) {
       window._ikPinsDirty = false;

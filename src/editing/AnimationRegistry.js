@@ -2797,6 +2797,10 @@ class AnimationRegistry {
       // against a half-updated skeleton. Set from playback and from scrubbing alike, which is
       // why it is a flag rather than a call at the playback site.
       if (mesh._isBone) {
+        // A bare counter, not a call into IKSolver: this file does not import the solver and
+        // adding that import to carry a diagnostic would risk the cycle module_load_test exists
+        // to catch.
+        if (window._ikPerf) window._ikPerfRegistry = (window._ikPerfRegistry | 0) + 1;
         window._ikPinsDirty = true;
         // NAME THE JOINT, not just the fact that one moved. The solver treats the joints it
         // was handed as this frame's CONTROLS and puts every other joint back to rest before
