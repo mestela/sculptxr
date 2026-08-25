@@ -1,3 +1,4 @@
+import { VERSION } from '../Version.js';
 import * as THREE from 'three';
 import { mat4 } from 'gl-matrix';
 import Skeleton from './Skeleton.js';
@@ -1395,6 +1396,19 @@ IKSolver.perf = { solves: 0, ms: 0, byRegistry: 0, byWatcher: 0, at: 0 };
 
 IKSolver.perfNote = function (why) {
   if (window._ikPerf) IKSolver.perf[why] = (IKSolver.perf[why] || 0) + 1;
+};
+
+// A SWITCH THAT ANSWERS BACK. `window._ikPerf = true` is silent if the page is running older
+// code — you cannot tell "no solves" from "the flag is not wired here", and those look identical
+// from the console. Call `ikPerf()` instead: if it is undefined the page is stale, and if it
+// replies you know the instrument is live before you go looking for its output.
+window.ikPerf = function (on) {
+  window._ikPerf = on !== false;
+  IKSolver.perf.at = 0;
+  window._ikPerfRegistry = 0;
+  console.log('[ikPerf] ' + (window._ikPerf ? 'ON' : 'off') + ' — ' + VERSION +
+    (window._ikPerf ? '. One line a second from here, even if it is all zeros.' : ''));
+  return window._ikPerf;
 };
 
 IKSolver.perfTick = function () {
