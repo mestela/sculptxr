@@ -669,9 +669,28 @@ export class HTMLVRPanel {
         depthTest: false, depthWrite: false, toneMapped: false,
       }));
     m.renderOrder = (this.mesh.renderOrder || 0) + 1;
-    m.isPickable = false;
     m.frustumCulled = false;
     m.visible = false;
+
+    // INVISIBLE TO RAYCASTS, and this is not belt-and-braces — it is the whole bug.
+    //
+    // three's Raycaster.intersectObject defaults to recursive = TRUE, so every hit test against
+    // a panel also tests this quad. It is a child of the panel and sits 1mm in FRONT of it, so
+    // it wins the hit outright, and the returned uv is the quad's own 0-1 across a button-sized
+    // rectangle rather than the panel's across the whole panel. That uv resolves to some
+    // unrelated element, which moves the quad, which changes the next hit — a feedback loop
+    // that walks the buttons in order, at frame rate, from a completely stationary hand.
+    //
+    // matt described it as "cycling through all the button elements in order", which is what a
+    // feedback loop looks like from the outside and is what named it. The trace confirmed it:
+    // ray moved 0.0002m, panel moved 0.0003m, uv jump 0.2537 — neither the ray nor the panel
+    // was moving, so the intersection had to be reading something that was.
+    //
+    // isPickable = false does NOT do this. That is a SculptXR convention its own picking code
+    // honours; three's raycaster has never heard of it. Overriding raycast is the three way,
+    // and it applies to anything ever parented to a panel mesh, not just this quad.
+    m.raycast = () => {};
+    m.isPickable = false;
     this.mesh.add(m);
     this._hoverQuad = m;
     return m;

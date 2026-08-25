@@ -27,6 +27,25 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 }
 
 // ── the highlight itself ─────────────────────────────────────────────────────
+// THE BUG THIS FILE EXISTS FOR NOW. three's intersectObject defaults to recursive = TRUE, so a
+// child of the panel mesh is hit-tested along with it — and this one sits 1mm in front, so it
+// wins. The uv returned is then the QUAD's, across a button-sized rectangle, not the panel's
+// across the whole panel: it resolves to an unrelated element, which moves the quad, which
+// changes the next hit. A feedback loop that walks the buttons in order at frame rate.
+check('the highlight is invisible to raycasts',
+  /m\.raycast = \(\) => \{\};/.test(SRC),
+  'recursive is the DEFAULT, so a child of the panel is hit-tested with it');
+check('...via raycast, not isPickable',
+  /m\.raycast = \(\) => \{\};/.test(SRC),
+  'isPickable is a SculptXR convention; three has never heard of it');
+{
+  // Anything else ever parented to a panel mesh has the same problem.
+  const adds = [...SRC.matchAll(/this\.mesh\.add\((\w+)\)/g)].map((m) => m[1]);
+  check('every child added to the panel mesh is raycast-proofed',
+    adds.every((v) => new RegExp(v + '\\.raycast = \\(\\) => \\{\\};').test(SRC)),
+    'added: ' + adds.join(', '));
+}
+
 check('the highlight is a mesh parented to the panel',
   /this\.mesh\.add\(m\);/.test(SRC),
   'parenting means a panel that is grabbed and moved takes its hover with it');
