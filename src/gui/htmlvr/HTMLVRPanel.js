@@ -318,7 +318,12 @@ export class HTMLVRPanel {
     }
   }
 
-  markDirty() { this._dirty = true; }
+  markDirty() {
+    this._dirty = true;
+    // A repaint usually means the markup was rebuilt, and the element the highlight is sized
+    // to may no longer exist. Drop it rather than leave a quad over a gap.
+    this._hoverEl = null;
+  }
 
   /**
    * Synchronously request a repaint and drain the polyfill's rAF queue.
@@ -336,7 +341,25 @@ export class HTMLVRPanel {
 
   // ── VR interaction (called by Scene.js) ───────────────────────────────────
 
-  onVRMove(uv)    { if (this.mesh) this._vrDispatch('pointermove', uv, 0, true); }
+  // HOVER IS DRAWN IN 3D, NOT RASTERISED.
+  //
+  // A pointermove into the offscreen DOM changes CSS :hover, the polyfill's observer sees the
+  // mutation, and the WHOLE PANEL re-rasterises — DOM to SVG to texture upload — for a
+  // highlight. Crossing a row of buttons is one full repaint per button, which is what made
+  // the controller feel like it was dragging through treacle: every one of those landed inside
+  // a committed frame.
+  //
+  // So a plain hover no longer touches the DOM at all. The hit test already knows which
+  // element the ray is on and where it is, so the highlight is a quad laid over that rect on
+  // the panel's own plane. One draw call, no rasterisation, and the controller stops stalling.
+  //
+  // A DRAG still dispatches, because a slider genuinely needs the DOM to move. That path was
+  // already suppressing rasterisation for the same reason, on the same argument.
+  onVRMove(uv) {
+    if (!this.mesh) return;
+    if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
+    this._showHover(uv);
+  }
   onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1, true); }
   onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0, true); }
 
@@ -402,6 +425,9 @@ export class HTMLVRPanel {
   }
 
   onVRLeave() {
+    // The ray left, so the highlight has to go with it — otherwise it stays lit on whatever
+    // button the ray last crossed and reads as a selection.
+    this.clearHover();
     if (this._hoveredBtn) {
       this._hoveredBtn.classList.remove('hover'); // never strip .active — it may be the selection state
       this._hoveredBtn = null;
@@ -528,6 +554,64 @@ export class HTMLVRPanel {
     const absX = panelRect.left + relX;
     const absY = panelRect.top  + relY;
     return { el, absX, absY };
+  }
+
+  // The highlight quad, made once per panel and parented to it so it inherits the panel's
+  // transform — a panel that is grabbed and moved takes its hover with it for free.
+  _hoverMesh() {
+    if (this._hoverQuad) return this._hoverQuad;
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.16,
+        depthTest: false, depthWrite: false, toneMapped: false,
+      }));
+    m.renderOrder = (this.mesh.renderOrder || 0) + 1;
+    m.isPickable = false;
+    m.frustumCulled = false;
+    m.visible = false;
+    this.mesh.add(m);
+    this._hoverQuad = m;
+    return m;
+  }
+
+  // Only things you can actually press get a highlight. Without this the quad lands on
+  // whatever container happened to be under the ray, which reads as a random rectangle
+  // appearing over the panel rather than as "this is the thing you would click".
+  _hoverable(el) {
+    const root = this._element;
+    for (let n = el; n && n !== root; n = n.parentElement) {
+      if (n.tagName === 'BUTTON' || n.tagName === 'INPUT' || n.tagName === 'SELECT'
+          || n.getAttribute?.('role') === 'button' || n.dataset?.hover === '1') return n;
+    }
+    return null;
+  }
+
+  _showHover(uv) {
+    const q = this._hoverMesh();
+    const { el } = this._uvToElement(uv);
+    const target = this._hoverable(el);
+    if (!target) { q.visible = false; this._hoverEl = null; return; }
+    if (target === this._hoverEl) { q.visible = true; return; }   // nothing moved, nothing to do
+    this._hoverEl = target;
+
+    const panelRect = this._element.getBoundingClientRect();
+    const r = target.getBoundingClientRect();
+    if (!panelRect.width || !panelRect.height) { q.visible = false; return; }
+
+    const meshH = this._meshWidth * (panelRect.height / panelRect.width);
+    // DOM space is y-down from the top left; the plane is y-up from its centre.
+    const cx = (r.left - panelRect.left + r.width / 2) / panelRect.width;
+    const cy = (r.top - panelRect.top + r.height / 2) / panelRect.height;
+    q.scale.set(this._meshWidth * (r.width / panelRect.width),
+                meshH * (r.height / panelRect.height), 1);
+    q.position.set((cx - 0.5) * this._meshWidth, (0.5 - cy) * meshH, 0.001);
+    q.visible = true;
+  }
+
+  clearHover() {
+    if (this._hoverQuad) this._hoverQuad.visible = false;
+    this._hoverEl = null;
   }
 
   _sliderValueFromAbsX(input, absX) {
