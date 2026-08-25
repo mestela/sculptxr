@@ -301,6 +301,35 @@ function batchFor(main, key, geoFn, ghost) {
   return b;
 }
 
+// LINES CANNOT BE INSTANCED the way meshes can — there is no InstancedLineSegments — so the
+// wireframes are MERGED instead: one LineSegments whose buffer holds every joint's edges,
+// transformed on the CPU each pass. That sounds expensive and is not: the edge geometry is a
+// single cached EdgesGeometry of the bone, so this is a few thousand floats a frame, against
+// the fifty draw calls it removes.
+//
+// Per-vertex colour, because the joints tint differently and a merged buffer has one material.
+function makeLineBatch(main, geo, ghost) {
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true, transparent: true, depthWrite: false,
+    opacity: ghost ? 0.35 : 0.9,
+    ...(ghost ? { depthTest: true, depthFunc: THREE.GreaterDepth } : {}),
+  });
+  const m = new THREE.LineSegments(new THREE.BufferGeometry(), mat);
+  m.renderOrder = 9999;
+  m.isPickable = false;
+  m.frustumCulled = false;
+  Skeleton.overlayGroup(main).add(m);
+  return { mesh: m, cap: 0, line: true, src: geo };
+}
+
+function lineBatchSlot(main, key, geoFn, ghost) {
+  const all = main._skelBatch || (main._skelBatch = new Map());
+  if (!all.has(key)) all.set(key, makeLineBatch(main, geoFn(), ghost));
+  const slot = makeSlot();
+  slot._key = key;
+  return slot;
+}
+
 function batchSlot(main, key, geoFn, ghost) {
   batchFor(main, key, geoFn, ghost);
   const slot = makeSlot();
@@ -325,6 +354,8 @@ function flushBatches(main) {
   for (const [key, b] of all) {
     const slots = bySlot.get(key) || [];
     const n = slots.length;
+
+    if (b.line) { flushLineBatch(b, slots, n); continue; }
     if (n > b.cap) {
       // Rebuild at the next power of two, carrying the material and geometry across.
       let cap = b.cap || 1;
@@ -355,6 +386,42 @@ function flushBatches(main) {
 
 // Dropped wholesale when the rig is rebuilt: the slots are indexed by creation order, so a
 // partially-cleared batch would put one joint's transform on another.
+const _vLine = new THREE.Vector3();
+
+function flushLineBatch(b, slots, n) {
+  const srcPos = b.src.getAttribute('position');
+  const verts = srcPos.count;
+  const need = n * verts * 3;
+  const g = b.mesh.geometry;
+  let pa = g.getAttribute('position');
+  if (!pa || pa.array.length !== need) {
+    // Rebuilt only when the joint count moves — the buffer is written in place otherwise.
+    pa = new THREE.BufferAttribute(new Float32Array(need), 3);
+    g.setAttribute('position', pa);
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(need), 3));
+  }
+  const P = pa.array;
+  const C = g.getAttribute('color').array;
+  let o = 0;
+  for (let i = 0; i < n; i++) {
+    const s = slots[i];
+    _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
+    const c = s.material.color;
+    for (let v = 0; v < verts; v++) {
+      _vLine.fromBufferAttribute(srcPos, v).applyMatrix4(_mSlot);
+      P[o] = _vLine.x; P[o + 1] = _vLine.y; P[o + 2] = _vLine.z;
+      C[o] = c.r; C[o + 1] = c.g; C[o + 2] = c.b;
+      o += 3;
+    }
+  }
+  pa.needsUpdate = true;
+  g.getAttribute('color').needsUpdate = true;
+  // A hidden joint collapses to a point rather than being removed, for the same reason an
+  // instanced one is scaled to zero: the buffer is positional.
+  g.setDrawRange(0, n * verts);
+  b.mesh.visible = n > 0;
+}
+
 function clearBatches(main) {
   const all = main._skelBatch;
   if (!all) return;
@@ -926,16 +993,11 @@ function ensureEntry(main, id) {
   if (!e) {
     // The wireframe gets the same solid/ghost treatment as everything else, so the bone's
     // edges stay readable when it is buried inside the mesh.
-    const wire = new THREE.LineSegments(boneEdgeGeometry(), new THREE.LineBasicMaterial({
-      color: BONE_EDGE, transparent: true, opacity: 0.9, depthWrite: false,
-    }));
-    const wireGhost = new THREE.LineSegments(boneEdgeGeometry(), new THREE.LineBasicMaterial({
-      color: BONE_EDGE, transparent: true, opacity: 0.35, depthWrite: false,
-      depthTest: true, depthFunc: THREE.GreaterDepth,
-    }));
-    wire.renderOrder = wireGhost.renderOrder = 9999;
-    wire.isPickable = wireGhost.isPickable = false;
-    wire.frustumCulled = wireGhost.frustumCulled = false;
+    // MERGED. One LineSegments for every joint's edges rather than two per joint — the same
+    // reason the bodies are instanced, and the wireframe is on by default so it was carrying
+    // fifty of the remaining draw calls.
+    const wire = lineBatchSlot(main, 'wire', boneEdgeGeometry, false);
+    const wireGhost = lineBatchSlot(main, 'wire-ghost', boneEdgeGeometry, true);
 
     // The dashed leader from a pinned joint to the anchor it is trying to reach. Two points,
     // rewritten each frame; the dash pattern needs computeLineDistances() after every move.
@@ -974,8 +1036,9 @@ function ensureEntry(main, id) {
       },
     };
     // The batched slots, listed so flushBatches can gather them without knowing this shape.
-    e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost];
-    g.add(e.wire.solid, e.wire.ghost, e.label.sprite, e.pinLink,
+    e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
+                e.wire.solid, e.wire.ghost];
+    g.add(e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
@@ -995,7 +1058,7 @@ function disposeEntry(main, id) {
   }
   // bone and joint are batch SLOTS, not scene objects — they own no geometry or material and
   // are released with the batch itself.
-  for (const p of [e.wire, e.pinT, e.pinG, e.pinS, ...caps]) {
+  for (const p of [e.pinT, e.pinG, e.pinS, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     p.solid.material.dispose(); p.ghost.material.dispose();

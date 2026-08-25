@@ -27,6 +27,25 @@ check('...and the xray ghost is its own batch, not a second pass over the first'
   /'bone-ghost', boneGeometry, true/.test(SRC) && /'joint-ghost', jointGeometry, true/.test(SRC),
   'the ghost needs GreaterDepth and its own opacity, so it cannot share a material');
 
+// ── the wireframe is MERGED, not instanced ───────────────────────────────────
+//
+// There is no InstancedLineSegments, so the edges go into one buffer that is transformed on the
+// CPU each pass. That is a few thousand floats a frame against the fifty draw calls it removes.
+check('the wireframe is a merged line batch',
+  /lineBatchSlot\(main, 'wire', boneEdgeGeometry, false\)/.test(SRC)
+    && /lineBatchSlot\(main, 'wire-ghost', boneEdgeGeometry, true\)/.test(SRC));
+check('...with per-vertex colour, since a merged buffer has one material',
+  /vertexColors: true, transparent: true, depthWrite: false/.test(SRC),
+  'the joints tint differently and they now share a material');
+check('...and the buffer is only rebuilt when the joint count moves',
+  /if \(!pa \|\| pa\.array\.length !== need\)/.test(SRC),
+  'reallocating every frame would cost more than the draw calls did');
+check('...a hidden joint collapses rather than being removed',
+  /_mSlot\.compose\(s\.position, s\.quaternion, s\.visible \? s\.scale : _sZero\)[\s\S]{0,400}?P\[o\] = _vLine\.x/.test(SRC),
+  'the merged buffer is positional too');
+check('the wireframe no longer joins the scene graph per joint',
+  !/g\.add\(e\.wire\.solid/.test(SRC));
+
 // ── the call sites did not have to change ─────────────────────────────────────
 //
 // The four hundred lines that place these things are delicate. A slot has to look enough like a
@@ -46,8 +65,9 @@ check('slots are gathered from the LIVE entries, not held by the batch',
   /for \(const e of main\._skelVis\.values\(\)\)/.test(SRC)
     && !/b\.slots\.push/.test(SRC),
   'a batch that keeps its own list renumbers every joint after a deleted one');
-check('an entry publishes its slots for gathering',
-  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost\]/.test(SRC));
+check('an entry publishes ALL its slots for gathering',
+  /e\._slots = \[e\.bone\.solid, e\.bone\.ghost, e\.joint\.solid, e\.joint\.ghost,\s*\n\s*e\.wire\.solid, e\.wire\.ghost\]/.test(SRC),
+  'a slot left off this list is simply never drawn');
 check('the flush runs AFTER the dead entries are disposed',
   SRC.indexOf('if (!live.has(id)) disposeEntry') < SRC.lastIndexOf('flushBatches(main)'),
   'flushing first publishes a joint that is about to be removed');
@@ -69,7 +89,7 @@ check('slots are not added to the overlay group',
   !/g\.add\(e\.bone\.solid/.test(SRC) && !/g\.add\([^)]*e\.joint\.solid/.test(SRC),
   'a slot has no geometry or material; adding one to the scene does nothing good');
 check('...and dispose does not try to free a slot',
-  /for \(const p of \[e\.wire, e\.pinT, e\.pinG, e\.pinS, \.\.\.caps\]\)/.test(SRC),
+  /for \(const p of \[e\.pinT, e\.pinG, e\.pinS, \.\.\.caps\]\)/.test(SRC),
   'a slot owns nothing to dispose, and calling dispose on one would throw');
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
