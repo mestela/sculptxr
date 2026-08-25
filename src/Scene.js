@@ -6941,6 +6941,28 @@ class Scene {
           const _rc = this._vrSharedRaycaster;
 
           this._mark('xr-panelhit');
+
+          // THE PANEL HAS TO BE WHERE THE RAY THINKS IT IS.
+          //
+          // Wrist panels are parented to the controller grip, so their world matrix comes from
+          // the controller. World matrices are recomputed inside renderer.render(), which runs
+          // at the END of the frame — so here, before the draw, every panel's matrixWorld is
+          // still from the PREVIOUS frame's render while the ray being cast is from this
+          // frame's fresh pose.
+          //
+          // The error is therefore exactly one frame of the carrying hand's motion, and
+          // because the panel sits ~30cm from that hand, a millimetre of drift swings the hit
+          // point a long way across it. Measured: a single-frame uv jump of 0.44 to 1.09 in a
+          // 0-1 space, from a hand that was as still as a hand gets. matt described it as
+          // micromotions being translated into large motions, which is precisely what a
+          // one-frame lag on a close, hand-carried target looks like.
+          //
+          // Updating the grips cascades to every panel hanging off them. Two matrix updates
+          // against a hit test that was already running.
+          for (const g of [this._vrControllerLeftGrip, this._vrControllerRightGrip]) {
+            if (g) g.updateMatrixWorld(true);
+          }
+
           // Phase 1: collect hits — { name, panel, hit, pressKey, isTimeline }
           const _panelHits = [];
           // When the VR numpad is open it is modal: skip all other panels in the
