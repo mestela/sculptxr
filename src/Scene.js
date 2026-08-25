@@ -949,7 +949,7 @@ class Scene {
         // 13.9ms with a 40ms every half second feels far worse than a steady 20ms.
         const _t0 = window._xrPerf ? performance.now() : 0;
         this.applyRender(null, frame);
-        if (window._xrPerf) this._xrPerfSample(time, performance.now() - _t0);
+        if (window._xrPerf) { this._mark(null); this._xrPerfSample(time, performance.now() - _t0); }
       });
     }
   }
@@ -1179,6 +1179,21 @@ class Scene {
   // gap between frames we are actually responsible for. If the interval is erratic while our
   // work is short and steady, the time is going somewhere we do not control — which is a very
   // different problem from being too slow.
+  // SECTION TIMING. The total said 11.5ms for a default sphere with 5 draw calls, which cannot
+  // be rendering — so the question stopped being "how much" and became "where". Only live while
+  // xrPerf is on, and one performance.now() per section is nothing next to what it is measuring.
+  _mark(label) {
+    if (!window._xrPerf) return;
+    const p = this._xrPerf || (this._xrPerf = {});
+    const now = performance.now();
+    if (p._markAt && p._markLabel) {
+      p.sec = p.sec || {};
+      p.sec[p._markLabel] = (p.sec[p._markLabel] || 0) + (now - p._markAt);
+    }
+    p._markAt = label ? now : 0;
+    p._markLabel = label;
+  }
+
   _xrPerfSample(time, workMs) {
     const p = this._xrPerf || (this._xrPerf = { n: 0, work: 0, worst: 0, late: 0, last: 0, at: 0, gaps: [] });
     if (p.last) {
@@ -1220,13 +1235,24 @@ class Scene {
       ', geom ' + geo + (geoGrew ? ' (' + (geoGrew > 0 ? '+' : '') + geoGrew + ')' : '') +
       ', tex ' + (info ? info.memory.textures : 0) +
       ', calls ' + (info ? info.render.calls : 0));
+    if (p.sec) {
+      const parts = Object.keys(p.sec)
+        .map((k) => [k, p.sec[k] / p.n])
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => k + ' ' + v.toFixed(2))
+        .join(', ');
+      console.log('[xrPerf]   where: ' + parts + ' (ms/frame)');
+      p.sec = null;
+    }
     p.n = 0; p.work = 0; p.worst = 0; p.late = 0; p.at = now; p.gaps.length = 0;
   }
 
   applyRender(arg, xrFrame = null) {
     var targetFBO = (arg && typeof arg === 'object') ? arg : null;
     this._preventRender = false;
+    this._mark('matrices');
     this.updateMatricesAndSort();
+    this._mark('xr-input');
 
     var gl = this._gl;
     if (!gl) return;
@@ -1331,6 +1357,7 @@ class Scene {
         }
         // Single drain: executes the one requestPaint callback queued above.
         drainRAF();
+        this._mark('rig');
       }
       // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
       if (this._vrBlendMesh?.visible && this._vrBlendTexture) {
@@ -1367,6 +1394,7 @@ class Scene {
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
           this.handleXRInput(frame, refSpace);
+          this._mark('panels');
         } catch (e) {
           console.error("XR Input Error:", e);
         }
@@ -1458,6 +1486,7 @@ class Scene {
         try {
           IKSolver.resolveToJoint(this, movedJoint);
           Skeleton.updateVisuals(this);
+          this._mark('trail');
         } catch (e) {
           console.error('IK gizmo pose failed:', e);
         }
@@ -1521,6 +1550,7 @@ class Scene {
       }
     }
 
+    this._mark('draw');
     if (this._drawFullScene || (this._renderer && this._renderer.xr && this._renderer.xr.isPresenting)) {
       this._drawScene();
     } else {
