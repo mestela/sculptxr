@@ -97,6 +97,18 @@ export function setMenuColorGrade(b01, s01, g01) {
  */
 export const VR_PANEL_PX_PER_M = 1800;
 
+// A switch that answers back, for the same reason ikPerf and xrPerf have one: silence from an
+// instrument and silence from the thing it measures are indistinguishable otherwise, and this
+// session has now lost two headset sessions to exactly that.
+if (typeof window !== 'undefined') {
+  window.hoverTrace = function (on) {
+    window._hoverTrace = on !== false;
+    console.log('[hover] ' + (window._hoverTrace ? 'ON' : 'off') +
+      (window._hoverTrace ? ' — one line a second per visible panel, even if it saw no events.' : ''));
+    return window._hoverTrace;
+  };
+}
+
 export class HTMLVRPanel {
   /**
    * @param {HTMLElement} element   Root DOM element to render.  Not yet in document —
@@ -294,6 +306,7 @@ export class HTMLVRPanel {
    */
   update(_xrIsPresenting) {
     if (!this.mesh) return;
+    if (window._hoverTrace && this.mesh.visible) this._hoverTick();
     // Keep our host-canvas membership in sync with visibility — hidden panels are
     // unmounted so they don't get re-rasterised on every paint.
     this._setHostMounted(!!this.mesh.visible);
@@ -387,19 +400,37 @@ export class HTMLVRPanel {
     const t = this._hoverable(this._uvToElement(uv).el);
     h.els.add(t ? (t.id || t.className || t.tagName) : '(none)');
 
+  }
+
+  // TICKED FROM update(), NOT FROM THE EVENT. Reporting from inside onVRMove means silence when
+  // onVRMove never fires — and then "the hover code is not running" is indistinguishable from
+  // "this build does not have the hover code". That exact mistake was made and fixed once
+  // already this session, on the solver counter, and then repeated here.
+  //
+  // Ticking from update() makes ZERO EVENTS a finding rather than an absence: if the panel is
+  // visible, the ray is on it, and this prints "0 events", then the dispatch is not arriving —
+  // which is worth more than any uv statistic.
+  _hoverTick() {
+    const st = this._hoverStats || (this._hoverStats = { at: 0 });
     const now = performance.now();
     if (!st.at) { st.at = now; return; }
     if (now - st.at < 1000) return;
-    for (const k of Object.keys(st)) {
-      if (k === 'at') continue;
+    st.at = now;
+
+    const hands = Object.keys(st).filter((k) => k !== 'at');
+    const who = (this.constructor && this.constructor.name) || 'panel';
+    if (!hands.length) {
+      console.log('[hover] ' + who + ': 0 events — nothing is calling onVRMove on this panel');
+      return;
+    }
+    for (const k of hands) {
       const d = st[k];
-      console.log('[hover] ' + (this.constructor.name || 'panel') + ' ' + k + ': ' + d.n + ' events, uv x ' +
+      console.log('[hover] ' + who + ' ' + k + ': ' + d.n + ' events, uv x ' +
         d.minX.toFixed(3) + '-' + d.maxX.toFixed(3) + ' y ' + d.minY.toFixed(3) + '-' + d.maxY.toFixed(3) +
         ' | biggest single jump ' + d.jump.toFixed(4) +
         ' | ' + d.els.size + ' distinct: ' + [...d.els].slice(0, 6).join(' / '));
       delete st[k];
     }
-    st.at = now;
   }
   onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1, true); }
   onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0, true); }
