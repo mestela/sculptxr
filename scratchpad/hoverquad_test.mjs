@@ -15,7 +15,7 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
 
 // ── the whole point: a plain hover must not reach the DOM ────────────────────
 {
-  const i = SRC.indexOf('  onVRMove(uv) {');
+  const i = SRC.indexOf('  onVRMove(uv');   // signature grew a hand; do not pin the arg list
   const fn = i === -1 ? '' : SRC.slice(i, SRC.indexOf('\n  }', i));
   check('onVRMove exists', i !== -1);
   check('a plain hover does NOT dispatch into the DOM',
@@ -47,9 +47,27 @@ check('...and out of the tone mapper, like the other overlays',
 }
 
 // ── the ways a stale highlight happens, which is the failure mode here ───────
-check('the highlight clears when the ray leaves',
-  /onVRLeave\(\) \{[\s\S]{0,200}?this\.clearHover\(\);/.test(SRC),
-  'otherwise it stays lit on the last button crossed and reads as a selection');
+// ── TWO HANDS, ONE PANEL ─────────────────────────────────────────────────────
+//
+// Scene runs its dispatch once per CONTROLLER. The hand pointing at a panel calls onVRMove and
+// the other hand — whose winner is some other panel, or none — calls onVRLeave on that same
+// panel, every frame. Set, cleared, set again: the highlight flickered across every panel on
+// screen and looked like a hit-test fault.
+check('a hover records which hand owns it',
+  /onVRMove\(uv, hand\) \{[\s\S]{0,240}?this\._hoverHand = hand;/.test(SRC));
+check('...and only that hand can end it',
+  /if \(hand === undefined \|\| hand === this\._hoverHand\) this\.clearHover\(\);/.test(SRC),
+  'the other hand pointing elsewhere must not clear this hand\'s highlight');
+check('...while an unnamed leave still clears, for a real teardown',
+  /hand === undefined \|\|/.test(SRC),
+  'a hidden panel or an ended session must not leave anything lit');
+{
+  const SCENE = fs.readFileSync(path.join(REPO, 'src/Scene.js'), 'utf8');
+  check('Scene names the hand on both calls',
+    /onVRMove\(_winner\.hit\.uv, source\.handedness\)/.test(SCENE)
+      && /onVRLeave\(source\.handedness\)/.test(SCENE),
+    'without the name the panel cannot tell the two cases apart');
+}
 check('...and is dropped when the panel is rebuilt',
   /markDirty\(\) \{[\s\S]{0,240}?this\._hoverEl = null;/.test(SRC),
   'a repaint usually means new markup, so the measured element may no longer exist');

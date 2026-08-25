@@ -7118,7 +7118,7 @@ class Scene {
               const justUp   = !_pressed && this[v.pressKey];
               if (justDown)    v.panel.onVRPress(_winner.hit.uv);
               else if (justUp) v.panel.onVRRelease(_winner.hit.uv);
-              else             v.panel.onVRMove(_winner.hit.uv);
+              else             v.panel.onVRMove(_winner.hit.uv, source.handedness);
               this[v.pressKey] = _pressed;
               this._isPointingAtMenu = true;
               if (source.handedness === 'left') { this._vrUIHitDistLeft  = _winner.hit.distance; this._vrUIHitSourceLeft  = _winnerName; }
@@ -7134,7 +7134,9 @@ class Scene {
                 if (!_numpadOpen) v.panel.onVRRelease({ x: 0.5, y: 0.5 });
                 this[v.pressKey] = false;
               }
-              v.panel.onVRLeave();
+              // Named, so a panel can tell "the hand that was hovering me left" from "the
+              // OTHER hand is pointing somewhere else", which happens every frame.
+              v.panel.onVRLeave(source.handedness);
             }
           }
 

@@ -355,9 +355,10 @@ export class HTMLVRPanel {
   //
   // A DRAG still dispatches, because a slider genuinely needs the DOM to move. That path was
   // already suppressing rasterisation for the same reason, on the same argument.
-  onVRMove(uv) {
+  onVRMove(uv, hand) {
     if (!this.mesh) return;
     if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
+    this._hoverHand = hand;
     this._showHover(uv);
   }
   onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1, true); }
@@ -424,10 +425,17 @@ export class HTMLVRPanel {
     return null;
   }
 
-  onVRLeave() {
-    // The ray left, so the highlight has to go with it — otherwise it stays lit on whatever
-    // button the ray last crossed and reads as a selection.
-    this.clearHover();
+  onVRLeave(hand) {
+    // ONLY THE HAND THAT WAS HOVERING MAY END THE HOVER.
+    //
+    // Scene runs its dispatch once per CONTROLLER. The hand pointing at this panel calls
+    // onVRMove, and the other hand — whose winner is some other panel, or none — calls
+    // onVRLeave on this one. Every frame. Set, then cleared, then set again: the highlight
+    // flickered across every panel on screen and looked like a hit-test fault.
+    //
+    // A leave with no hand named is a real teardown (panel hidden, session ended) and still
+    // clears, so nothing can be left lit by a panel that has gone away.
+    if (hand === undefined || hand === this._hoverHand) this.clearHover();
     if (this._hoveredBtn) {
       this._hoveredBtn.classList.remove('hover'); // never strip .active — it may be the selection state
       this._hoveredBtn = null;
@@ -655,6 +663,7 @@ export class HTMLVRPanel {
   clearHover() {
     if (this._hoverQuad) this._hoverQuad.visible = false;
     this._hoverEl = null;
+    this._hoverHand = undefined;
   }
 
   _sliderValueFromAbsX(input, absX) {
