@@ -6017,6 +6017,11 @@ class Scene {
   }
 
   handleXRInput(frame, refSpace) {
+    // SPLIT, because this one section is 3,000 lines and it swung from 0.84ms to 8.71ms with a
+    // menu open — which is a specific thing happening, not "input is slow". The labels here
+    // replace the outer xr-input bucket for the part they cover; whatever is left over still
+    // shows as xr-input, and that remainder is itself a useful number.
+    this._mark('xr-pose');
     try {
 
     const xrInputNow = performance.now();
@@ -6888,6 +6893,7 @@ class Scene {
           this._vrSharedRaycaster.set(this._vrSharedRayOrigin, this._vrSharedRayDir);
           const _rc = this._vrSharedRaycaster;
 
+          this._mark('xr-panelhit');
           // Phase 1: collect hits — { name, panel, hit, pressKey, isTimeline }
           const _panelHits = [];
           // When the VR numpad is open it is modal: skip all other panels in the
@@ -7032,6 +7038,9 @@ class Scene {
             }
           }
 
+          // Hand the clock back: without this the panel-hit label would swallow everything
+          // downstream of it and read as though hit-testing cost the whole frame.
+          this._mark('xr-pose');
           // Phase 3: build full visible-panel list so non-hit panels also get leave calls
           const _allVisible = [];
           if (this._brushPanel?.mesh?.visible && window._brushPanelEnabled !== false)
@@ -9362,6 +9371,7 @@ class Scene {
         // a list rebuilt from the session — the difference between the two is exactly the
         // menu-guard case it exists to catch.
         this._lastXRControllers = xrControllers;
+        this._mark('xr-tools');
         this._sculptManager.updateXR(this._picking, isTriggerPressed, enginePos, dir, {
           isNegative: isNegative,
           controllers: xrControllers,
