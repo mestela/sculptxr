@@ -357,9 +357,49 @@ export class HTMLVRPanel {
   // already suppressing rasterisation for the same reason, on the same argument.
   onVRMove(uv, hand) {
     if (!this.mesh) return;
+    if (window._hoverTrace) this._hoverStat(uv, hand);
     if (this._sliderDragTarget) { this._vrDispatch('pointermove', uv, 0, true); return; }
     this._hoverHand = hand;
     this._showHover(uv);
+  }
+
+  // WHAT THE UV IS ACTUALLY DOING, summarised once a second rather than logged per frame — at
+  // 70Hz a line per event is unreadable and changes the timing it is reporting.
+  //
+  // matt's description is that a fraction of a millimetre of hand movement produces a large
+  // jump, "as if micromotions are translated into large motions", and that holding perfectly
+  // still locks onto one element. That is a testable claim: if the uv is genuinely jumping
+  // then the SPREAD per second will be large while the hand is nearly still, and the count of
+  // distinct elements will be high. If instead the uv is steady and the ELEMENT still changes,
+  // the fault is in the walk that turns a uv into an element, not in the uv at all.
+  //
+  // Both hands are counted separately, because "two sources disagreeing" and "one source that
+  // is noisy" look identical in a merged number and have nothing else in common.
+  _hoverStat(uv, hand) {
+    const st = this._hoverStats || (this._hoverStats = { at: 0 });
+    const key = hand || 'none';
+    const h = st[key] || (st[key] = { n: 0, minX: 9, maxX: -9, minY: 9, maxY: -9, els: new Set(), last: null, jump: 0 });
+    h.n++;
+    h.minX = Math.min(h.minX, uv.x); h.maxX = Math.max(h.maxX, uv.x);
+    h.minY = Math.min(h.minY, uv.y); h.maxY = Math.max(h.maxY, uv.y);
+    if (h.last) h.jump = Math.max(h.jump, Math.abs(uv.x - h.last.x) + Math.abs(uv.y - h.last.y));
+    h.last = { x: uv.x, y: uv.y };
+    const t = this._hoverable(this._uvToElement(uv).el);
+    h.els.add(t ? (t.id || t.className || t.tagName) : '(none)');
+
+    const now = performance.now();
+    if (!st.at) { st.at = now; return; }
+    if (now - st.at < 1000) return;
+    for (const k of Object.keys(st)) {
+      if (k === 'at') continue;
+      const d = st[k];
+      console.log('[hover] ' + (this.constructor.name || 'panel') + ' ' + k + ': ' + d.n + ' events, uv x ' +
+        d.minX.toFixed(3) + '-' + d.maxX.toFixed(3) + ' y ' + d.minY.toFixed(3) + '-' + d.maxY.toFixed(3) +
+        ' | biggest single jump ' + d.jump.toFixed(4) +
+        ' | ' + d.els.size + ' distinct: ' + [...d.els].slice(0, 6).join(' / '));
+      delete st[k];
+    }
+    st.at = now;
   }
   onVRPress(uv)   { if (this.mesh) this._vrDispatch('pointerdown', uv, 1, true); }
   onVRRelease(uv) { if (this.mesh) this._vrDispatch('pointerup',   uv, 0, true); }
