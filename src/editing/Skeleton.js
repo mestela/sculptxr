@@ -239,6 +239,133 @@ function boneWidth(len, jr) { return Math.max(len * 0.12, jr * 0.6); }
 // everywhere. JOINT_R_FRAC is the single knob; bones stay proportional to their own length.
 const JOINT_R_FRAC = 0.03;
 
+// ── BATCHED RIG VISUALS ───────────────────────────────────────────────────────────────────
+//
+// Every bone body and joint dot used to be its own Mesh, drawn twice (solid + xray ghost). At
+// twenty-five joints that is a hundred draw calls before anything else, and matt's frame timing
+// put the cost exactly there: with a skeleton loaded, `draw` went 2.6ms to 11.3ms and the call
+// count 23 to 185, while every other section stayed flat. It was never the solver or the trail.
+//
+// So the geometry is instanced instead: one InstancedMesh per KIND per pass, however many
+// joints there are. Same look, same ghost, ~4 draw calls instead of ~100.
+//
+// THE CALL SITES DO NOT CHANGE, and that is the point. Each joint still gets an object with
+// `position`, `quaternion`, `scale`, `visible` and `material.color` on it — a SLOT that records
+// what was written and is flushed into the instanced buffers once, at the end of the pass. The
+// four hundred lines that place these things are delicate and well understood; rewriting them
+// to speak an instancing API would have been the risky half of this change.
+//
+// An invisible slot is scaled to zero rather than removed: instances are positional, so hiding
+// one by shortening the count would renumber every joint after it.
+const _mSlot = new THREE.Matrix4();
+const _sZero = new THREE.Vector3(0, 0, 0);
+
+function makeSlot() {
+  return {
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    scale: new THREE.Vector3(1, 1, 1),
+    material: { color: new THREE.Color() },
+    visible: false,
+    // The placement code calls these on a Mesh; here they are already-done and never-needed.
+    updateMatrix() {},
+    matrixWorldNeedsUpdate: false,
+  };
+}
+
+// GATHERED FROM THE LIVE ENTRIES EVERY PASS, not held by the batch. Instances are positional,
+// so a batch that kept its own slot list would renumber every joint after any joint that was
+// deleted — and would keep the deleted one's slot alive forever. Walking `_skelVis` makes
+// disposal automatic: an entry that is gone is simply not gathered.
+function makeBatch(main, geo, ghost) {
+  const mat = ghost
+    ? new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, transparent: true,
+        opacity: GHOST_OPACITY, depthTest: true, depthFunc: THREE.GreaterDepth, depthWrite: false })
+    : new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  const m = new THREE.InstancedMesh(geo, mat, 1);
+  m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  m.count = 0;
+  m.renderOrder = ghost ? 9998 : 0;
+  m.isPickable = false;
+  m.frustumCulled = false;
+  Skeleton.overlayGroup(main).add(m);
+  return { mesh: m, cap: 1 };
+}
+
+// Grown in powers of two: InstancedMesh cannot be resized, so a rig that gains a joint would
+// otherwise rebuild its buffers on every add.
+function batchFor(main, key, geoFn, ghost) {
+  const all = main._skelBatch || (main._skelBatch = new Map());
+  let b = all.get(key);
+  if (!b) { b = makeBatch(main, geoFn(), ghost); all.set(key, b); }
+  return b;
+}
+
+function batchSlot(main, key, geoFn, ghost) {
+  batchFor(main, key, geoFn, ghost);
+  const slot = makeSlot();
+  slot._key = key;
+  return slot;
+}
+
+// One pass over every slot, at the end of the frame's visual update.
+function flushBatches(main) {
+  const all = main._skelBatch;
+  if (!all || !main._skelVis) return;
+
+  const bySlot = new Map();
+  for (const e of main._skelVis.values()) {
+    for (const slot of e._slots || []) {
+      let list = bySlot.get(slot._key);
+      if (!list) bySlot.set(slot._key, (list = []));
+      list.push(slot);
+    }
+  }
+
+  for (const [key, b] of all) {
+    const slots = bySlot.get(key) || [];
+    const n = slots.length;
+    if (n > b.cap) {
+      // Rebuild at the next power of two, carrying the material and geometry across.
+      let cap = b.cap || 1;
+      while (cap < n) cap *= 2;
+      const old = b.mesh;
+      const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.renderOrder = old.renderOrder;
+      m.isPickable = false;
+      m.frustumCulled = false;
+      if (old.parent) { old.parent.add(m); old.parent.remove(old); }
+      old.dispose();
+      b.mesh = m;
+      b.cap = cap;
+    }
+    const m = b.mesh;
+    for (let i = 0; i < n; i++) {
+      const s = slots[i];
+      _mSlot.compose(s.position, s.quaternion, s.visible ? s.scale : _sZero);
+      m.setMatrixAt(i, _mSlot);
+      if (m.setColorAt) m.setColorAt(i, s.material.color);
+    }
+    m.count = n;
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  }
+}
+
+// Dropped wholesale when the rig is rebuilt: the slots are indexed by creation order, so a
+// partially-cleared batch would put one joint's transform on another.
+function clearBatches(main) {
+  const all = main._skelBatch;
+  if (!all) return;
+  for (const b of all.values()) {
+    if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+    b.mesh.dispose();
+    b.mesh.material.dispose();
+  }
+  main._skelBatch = null;
+}
+
 function makePair(geo, color) {
   const solid = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
     color: color, side: THREE.DoubleSide,
@@ -826,8 +953,18 @@ function ensureEntry(main, id) {
       pinT: makePinPart(triadGeometry()),
       pinG: makePinPart(gimbalGeometry()),
       pinS: makePinPart(tetraGeometry(), false),
-      bone: makePair(boneGeometry(), BONE_COLOR),
-      joint: makePair(jointGeometry(), JOINT_COLOR),
+      // BATCHED. These two are the volume: one per bone and one per joint, each drawn twice,
+      // which is where the ~185 draw calls came from. Everything else here is still a Mesh of
+      // its own — pins exist only on pinned joints, capsules and labels are off by default, so
+      // none of them carry the same weight.
+      bone: {
+        solid: batchSlot(main, 'bone', boneGeometry, false),
+        ghost: batchSlot(main, 'bone-ghost', boneGeometry, true),
+      },
+      joint: {
+        solid: batchSlot(main, 'joint', jointGeometry, false),
+        ghost: batchSlot(main, 'joint-ghost', jointGeometry, true),
+      },
       wire: { solid: wire, ghost: wireGhost },
       label: makeLabel(),
       cap: {
@@ -836,8 +973,9 @@ function ensureEntry(main, id) {
         b: makeCapsulePart(capsuleEndGeometry()),
       },
     };
-    g.add(e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost,
-          e.wire.solid, e.wire.ghost, e.label.sprite, e.pinLink,
+    // The batched slots, listed so flushBatches can gather them without knowing this shape.
+    e._slots = [e.bone.solid, e.bone.ghost, e.joint.solid, e.joint.ghost];
+    g.add(e.wire.solid, e.wire.ghost, e.label.sprite, e.pinLink,
           e.pinT.solid, e.pinT.ghost, e.pinG.solid, e.pinG.ghost,
           e.pinS.solid, e.pinS.ghost);
     for (const p of [e.cap.shaft, e.cap.a, e.cap.b]) g.add(p.solid, p.ghost);
@@ -855,7 +993,9 @@ function disposeEntry(main, id) {
     g.remove(e.pinLink);
     e.pinLink.geometry.dispose(); e.pinLink.material.dispose();
   }
-  for (const p of [e.bone, e.joint, e.wire, e.pinT, e.pinG, e.pinS, ...caps]) {
+  // bone and joint are batch SLOTS, not scene objects — they own no geometry or material and
+  // are released with the batch itself.
+  for (const p of [e.wire, e.pinT, e.pinG, e.pinS, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
     p.solid.material.dispose(); p.ghost.material.dispose();
@@ -1202,6 +1342,11 @@ Skeleton.updateVisuals = function (main) {
   }
 
   for (const id of Array.from(main._skelVis.keys())) if (!live.has(id)) disposeEntry(main, id);
+
+  // LAST, after every slot has been written and after the dead entries are gone: the instanced
+  // buffers are built from whatever is live at this moment, so flushing earlier would publish a
+  // joint that is about to be removed.
+  flushBatches(main);
 };
 
 // Preview bone: parent joint (or a free-floating marker) to the live controller tip, so
@@ -2032,6 +2177,8 @@ const DISPLAY_FLAGS = {
   gnomons: ['_boneShowGnomons', 'boneShowGnomons', false],
 };
 Skeleton.DISPLAY_FLAGS = DISPLAY_FLAGS;
+Skeleton.flushBatches = flushBatches;
+Skeleton.clearBatches = clearBatches;
 
 // Live value first, then the saved one, then the default — the same order every other
 // persisted VR setting is read in, so a toggle takes effect on the current frame.
