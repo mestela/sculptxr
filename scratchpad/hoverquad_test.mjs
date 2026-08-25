@@ -54,15 +54,39 @@ check('...and is dropped when the panel is rebuilt',
   /markDirty\(\) \{[\s\S]{0,240}?this\._hoverEl = null;/.test(SRC),
   'a repaint usually means new markup, so the measured element may no longer exist');
 check('...and the same element twice does no work',
-  /if \(target === this\._hoverEl\) \{ q\.visible = true; return; \}/.test(SRC),
+  /if \(target === this\._hoverEl && !scrolled\) \{ q\.visible = true; return; \}/.test(SRC),
   'this runs every frame the ray is on a panel');
+check('...unless the panel scrolled under it',
+  /const scrolled = this\._hoverScrollTop !== this\._scrollTopOf\(target\);/.test(SRC),
+  'the same row is now somewhere else, and the highlight would stay behind');
 
 // ── the mapping, which is easy to get subtly wrong ───────────────────────────
-check('DOM y-down is converted to plane y-up',
-  /\(0\.5 - cy\) \* meshH/.test(SRC),
-  'getting this backwards puts the highlight on the mirrored row, which looks plausible');
-check('the quad is sized from the element rect, not a constant',
-  /r\.width \/ panelRect\.width/.test(SRC) && /r\.height \/ panelRect\.height/.test(SRC));
+// THIS CHECK ASSERTED THE BUG. It demanded `(0.5 - cy)` on the reasoning that DOM y is down
+// and a plane's y is up — which is true in general and false here, because the panel's texture
+// is mapped without inversion. Every highlight landed on the mirrored row, and the check
+// confirmed it was correct. A test written from the same wrong assumption as the code does not
+// catch the mistake, it ratifies it.
+check('the panel maps DOM-down straight onto plane-down, without negating',
+  /q\.position\.set\(\(cx - 0\.5\) \* this\._meshWidth, \(cy - 0\.5\) \* meshH/.test(SRC),
+  'negating puts every highlight on the mirrored row');
+check('the quad is sized from the measured rect, not a constant',
+  /\(right - left\) \/ panelRect\.width/.test(SRC) && /\(bot - top\) \/ panelRect\.height/.test(SRC));
+
+// ── a tall panel scrolls, and rects do not stop at the container ─────────────
+check('the highlight is clipped to the scroll container',
+  /const clip = this\._scrollClipRect\(target\) \|\| panelRect;/.test(SRC),
+  'getBoundingClientRect happily reports an element scrolled out of view');
+check('...and to the panel itself',
+  /Math\.max\(r\.top, clip\.top, panelRect\.top\)/.test(SRC));
+check('...and vanishes when nothing of it is left visible',
+  /if \(bot - top <= 0\.5 \|\| right - left <= 0\.5\) \{ q\.visible = false; return; \}/.test(SRC),
+  'otherwise a scrolled-away button keeps a highlight floating past the panel edge');
+check('a half-scrolled button is cut off at the boundary, not hidden',
+  /q\.scale\.set\(this\._meshWidth \* \(\(right - left\)/.test(SRC),
+  'sizing from the clipped rect gives the partial case for free');
+check('only ONE definition of which ancestor scrolls',
+  (SRC.match(/scrollHeight > n\.clientHeight \+ 1/g) || []).length === 1,
+  'two copies of that rule is how the clip and the scroll check drift apart');
 check('a panel with no measurable size is skipped',
   /if \(!panelRect\.width \|\| !panelRect\.height\)/.test(SRC),
   'a hidden panel measures zero and would divide by it');

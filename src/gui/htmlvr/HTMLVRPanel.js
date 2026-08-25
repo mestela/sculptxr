@@ -592,21 +592,64 @@ export class HTMLVRPanel {
     const { el } = this._uvToElement(uv);
     const target = this._hoverable(el);
     if (!target) { q.visible = false; this._hoverEl = null; return; }
-    if (target === this._hoverEl) { q.visible = true; return; }   // nothing moved, nothing to do
+    // Re-measure when the panel has SCROLLED even though the element is the same: the row is
+    // under the ray at a different place than it was, and skipping the measure would leave the
+    // highlight behind at the old position.
+    const scrolled = this._hoverScrollTop !== this._scrollTopOf(target);
+    if (target === this._hoverEl && !scrolled) { q.visible = true; return; }
+    this._hoverScrollTop = this._scrollTopOf(target);
     this._hoverEl = target;
 
     const panelRect = this._element.getBoundingClientRect();
     const r = target.getBoundingClientRect();
     if (!panelRect.width || !panelRect.height) { q.visible = false; return; }
 
+    // CLIPPED TO WHAT IS ACTUALLY ON SCREEN. A tall panel scrolls, and getBoundingClientRect
+    // happily reports an element that has scrolled out of its container — so without this the
+    // highlight lands beyond the end of the panel, floating in the air next to it. Clipping to
+    // the scroll container also gives the half-scrolled case for free: a button crossing the
+    // boundary gets a highlight cut off at exactly the same line the button is.
+    const clip = this._scrollClipRect(target) || panelRect;
+    const top = Math.max(r.top, clip.top, panelRect.top);
+    const bot = Math.min(r.bottom, clip.bottom, panelRect.bottom);
+    const left = Math.max(r.left, clip.left, panelRect.left);
+    const right = Math.min(r.right, clip.right, panelRect.right);
+    if (bot - top <= 0.5 || right - left <= 0.5) { q.visible = false; return; }
+
     const meshH = this._meshWidth * (panelRect.height / panelRect.width);
-    // DOM space is y-down from the top left; the plane is y-up from its centre.
-    const cx = (r.left - panelRect.left + r.width / 2) / panelRect.width;
-    const cy = (r.top - panelRect.top + r.height / 2) / panelRect.height;
-    q.scale.set(this._meshWidth * (r.width / panelRect.width),
-                meshH * (r.height / panelRect.height), 1);
-    q.position.set((cx - 0.5) * this._meshWidth, (0.5 - cy) * meshH, 0.001);
+    // The panel's texture is mapped without inversion (see the UV note in the class header), so
+    // DOM-down and plane-up already agree here. Negating this is the obvious-looking thing and
+    // it is wrong: it puts every highlight on the mirrored row, which looks plausible enough
+    // that a check asserting it passed for a whole version.
+    const cx = (left - panelRect.left + (right - left) / 2) / panelRect.width;
+    const cy = (top - panelRect.top + (bot - top) / 2) / panelRect.height;
+    q.scale.set(this._meshWidth * ((right - left) / panelRect.width),
+                meshH * ((bot - top) / panelRect.height), 1);
+    q.position.set((cx - 0.5) * this._meshWidth, (cy - 0.5) * meshH, 0.001);
     q.visible = true;
+  }
+
+  // The nearest ancestor that actually scrolls, as a rect. Null when nothing does, in which
+  // case the panel's own bounds are the only clip needed.
+  _scrollClipRect(el) {
+    const c = this._scrollClipEl(el);
+    return c ? c.getBoundingClientRect() : null;
+  }
+
+  _scrollTopOf(el) {
+    const c = this._scrollClipEl(el);
+    return c ? c.scrollTop : 0;
+  }
+
+  _scrollClipEl(el) {
+    const root = this._element;
+    for (let n = el; n && n !== root.parentElement; n = n.parentElement) {
+      const st = n.ownerDocument?.defaultView?.getComputedStyle?.(n);
+      if (!st) continue;
+      const oy = st.overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+    }
+    return null;
   }
 
   clearHover() {
