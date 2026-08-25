@@ -35,15 +35,28 @@ const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
     /updateMeshBuffers/.test(up));
 }
 
-// The hover branch is the one that runs every frame with nothing pressed.
-{
-  const i = MOVE.indexOf('    if (!isPressed) {');
-  const hover = i === -1 ? '' : MOVE.slice(i, MOVE.indexOf('\n    }', i));
-  check('Move has an isPressed=false branch', i !== -1);
-  check('...and it uses cursorRender, not updateRender',
+// EVERY hover branch, not just one of them. Move has its own copy and SculptBase has the
+// generic one every other tool goes through. Fixing Move alone changed nothing measurable,
+// because the generic branch was the one running — so this checks both, by searching for the
+// pattern rather than by naming a file.
+for (const [name, src] of [['SculptBase', BASE], ['Move', MOVE]]) {
+  const i = src.indexOf('if (!isPressed) {');
+  check(name + ' has an isPressed=false branch', i !== -1);
+  if (i === -1) continue;
+  const hover = src.slice(i, src.indexOf('\n      return;', i));
+  check('...and ' + name + ' uses cursorRender, not updateRender',
     /this\.cursorRender\(\)/.test(hover) && !/this\.updateRender\(\)/.test(hover),
     'this branch runs every frame the controller is not pressed');
 }
+// No hover path anywhere may upload. Stated as a sweep so a THIRD copy cannot appear unnoticed.
+for (const [name, src] of [['SculptBase', BASE], ['Move', MOVE]]) {
+  const bad = [...src.matchAll(/if \(!isPressed\) \{[\s\S]{0,600}?updateRender\(\)/g)];
+  check('no hover branch in ' + name + ' re-uploads the mesh', bad.length === 0,
+    'the same rule in two places is how the first fix missed');
+}
+// A fresh array per frame at 72Hz is collected mid-stroke.
+check('the hover does not allocate a vector every frame',
+  /if \(this\._lastVRPos\) vec3\.copy\(this\._lastVRPos, worldPos\);/.test(BASE));
 
 // The stroke path must be untouched: buffers there HAVE changed.
 {

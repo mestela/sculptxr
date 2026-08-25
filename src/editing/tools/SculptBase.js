@@ -545,12 +545,22 @@ class SculptBase {
     }
 
     // HOVER STATE (Trigger Released)
+    //
+    // THE ONE THAT WAS ACTUALLY RUNNING. Move has its own copy of this branch and it was fixed
+    // first; this is the generic one every other tool goes through, so fixing Move alone
+    // changed nothing measurable — xr-tools stayed at 3.5-5.8ms. Two implementations of the
+    // same rule, and the fix landed in the copy that was not being used.
     if (!isPressed) {
       this._vrStrokeStarted = false; // Reset VR stroke flag
       // Just update picking/cursor, no sculpting
       this.makeStrokeXR(picking, pickingSym, false, origin, dir, options);
-      this._lastVRPos = vec3.clone(worldPos); // Keep sync
-      this.updateRender();
+      // In place: this runs every frame the trigger is up, and a fresh array per frame at 72Hz
+      // is garbage collected in the middle of somebody's stroke.
+      if (this._lastVRPos) vec3.copy(this._lastVRPos, worldPos);
+      else this._lastVRPos = vec3.clone(worldPos);
+      // A hover changed nothing — see cursorRender. Re-uploading the mesh here was the single
+      // largest CPU cost in the headset.
+      this.cursorRender();
       return;
     }
 
