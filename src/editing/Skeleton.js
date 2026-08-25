@@ -634,6 +634,17 @@ Skeleton.sceneUnit = function (main) {
   const now = performance.now();
   if (main._skelUnit && now - main._skelUnitAt < 500) return main._skelUnit;
 
+  // HELD WHILE THE RIG IS ANIMATING, and this is the fix for markers that pop mid-playback.
+  //
+  // The unit is the largest mesh's BOUNDING SPHERE. On a bound character that sphere grows and
+  // shrinks as the pose changes — an arm going up genuinely makes the mesh bigger — so every
+  // joint dot, pin and marker was being rescaled by the pose. Cached for 500ms, that arrived as
+  // a step rather than a drift: markers jumping a quarter larger for half a second at a time.
+  //
+  // A scene does not change SIZE because something in it moved. Playback changes poses, never
+  // structure, so the last value is the right one to keep until it stops.
+  if (main._skelUnit && window._animPlaying) return main._skelUnit;
+
   let best = 0;
   for (const m of main.getMeshes() || []) {
     if (Skeleton.isJoint(m) || m._isNull) continue;
@@ -1241,10 +1252,14 @@ Skeleton.updateVisuals = function (main) {
     // A steering goal is NOT a triad with a different colour — it is its own marker, and the
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
     // which quietly gave the steering goal a set of orientation rings it does not have.
+    // PRESELECTION IS COLOUR ONLY. It used to grow the marker as well — 2.2 to 3.0, half again
+    // as big — and a marker that changes SIZE competes with the thing size already means here:
+    // a pin's scale is how you read its kind and the joint radius it belongs to. The yellow
+    // says "this is what you would take" on its own, and it says it without moving anything.
     const pinParts = [
-      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * (pinHot ? 3.0 : 2.2)],
-      [e.pinG, showPins && pinMode === 2, jr * (pinHot ? 3.0 : 2.2)],
-      [e.pinS, showPins && pinMode === 3, jr * (pinHot ? 2.0 : 1.5)],
+      [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * 2.2],
+      [e.pinG, showPins && pinMode === 2, jr * 2.2],
+      [e.pinS, showPins && pinMode === 3, jr * 1.5],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always

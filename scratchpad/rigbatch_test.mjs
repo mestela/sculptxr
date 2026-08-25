@@ -92,5 +92,30 @@ check('...and dispose does not try to free a slot',
   /for \(const p of \[e\.pinT, e\.pinG, e\.pinS, \.\.\.caps\]\)/.test(SRC),
   'a slot owns nothing to dispose, and calling dispose on one would throw');
 
+// ── marker sizing is not driven by the POSE ──────────────────────────────────
+//
+// matt: pins popped a quarter larger for a few seconds during playback, then back. It was not
+// the preselection - it was the scene unit, which is the largest mesh's BOUNDING SPHERE, and on
+// a bound character that sphere grows and shrinks as the pose changes. Cached for 500ms, the
+// rescaling arrived as a step rather than a drift, which is what read as a pop.
+check('the scene unit is held while the rig is animating',
+  /if \(main\._skelUnit && window\._animPlaying\) return main\._skelUnit;/.test(SRC),
+  'a scene does not change size because something in it moved');
+check('...but is still recomputed when nothing is playing',
+  /now - main\._skelUnitAt < 500\) return main\._skelUnit;/.test(SRC),
+  'freezing it outright would stop it tracking a sculpt that actually grew');
+
+// ── preselection says "this one" without moving it ───────────────────────────
+{
+  const i = SRC.indexOf('const pinParts = [');
+  const block = SRC.slice(i, SRC.indexOf('];', i));
+  check('a preselected pin does not change size',
+    !/pinHot \?/.test(block), block.replace(/\s+/g, ' ').slice(0, 90));
+  check('...and preselection is still carried by colour',
+    /o\.material\.color\.setHex\(pinHandColor \|\| \(pinHot \? HILITE_COLOR/.test(SRC),
+    'dropping the scale must not drop the signal with it');
+  check('...in the same yellow the joints use', /const HILITE_COLOR = 0xffe066;/.test(SRC));
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
