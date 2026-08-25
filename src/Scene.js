@@ -1200,6 +1200,11 @@ class Scene {
     if (p._markAt && p._markLabel) {
       p.sec = p.sec || {};
       p.sec[p._markLabel] = (p.sec[p._markLabel] || 0) + (now - p._markAt);
+      // ALSO PER FRAME, because the average is not what anyone feels. A 129ms frame is nine
+      // frames in which the controller does not move, and an average of 6ms says nothing about
+      // it — the median frame can be perfect while the tail is what makes the thing unusable.
+      p.frame = p.frame || {};
+      p.frame[p._markLabel] = (p.frame[p._markLabel] || 0) + (now - p._markAt);
     }
     p._markAt = label ? now : 0;
     p._markLabel = label;
@@ -1217,7 +1222,13 @@ class Scene {
     p.last = time;
     p.n++;
     p.work += workMs;
-    if (workMs > p.worst) p.worst = workMs;
+    // Keep the BREAKDOWN of the worst frame, not just its duration: "the worst frame was 129ms"
+    // and "the worst frame was 129ms and 118 of it was one section" are different findings.
+    if (workMs > p.worst) {
+      p.worst = workMs;
+      p.worstSec = p.frame;
+    }
+    p.frame = null;
 
     const now = performance.now();
     if (!p.at) { p.at = now; return; }
@@ -1256,6 +1267,16 @@ class Scene {
         .join(', ');
       console.log('[xrPerf]   where: ' + parts + ' (ms/frame)');
       p.sec = null;
+    }
+    if (p.worstSec) {
+      const w = Object.keys(p.worstSec)
+        .map((k) => [k, p.worstSec[k]])
+        .sort((a, b) => b[1] - a[1])
+        .filter(([, v]) => v > 0.5)
+        .map(([k, v]) => k + ' ' + v.toFixed(1))
+        .join(', ');
+      console.log('[xrPerf]   worst frame: ' + (w || '(nothing over 0.5ms — the stall was outside our work)'));
+      p.worstSec = null;
     }
     p.n = 0; p.work = 0; p.worst = 0; p.late = 0; p.at = now; p.gaps.length = 0;
   }
