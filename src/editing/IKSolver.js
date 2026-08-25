@@ -1402,6 +1402,16 @@ IKSolver.perfNote = function (why) {
 // code — you cannot tell "no solves" from "the flag is not wired here", and those look identical
 // from the console. Call `ikPerf()` instead: if it is undefined the page is stale, and if it
 // replies you know the instrument is live before you go looking for its output.
+// The frame-pacing twin of ikPerf. Lives here so the two switches are found together; the
+// sampling itself is in Scene, which is the only place that knows when a frame began.
+window.xrPerf = function (on) {
+  window._xrPerf = on !== false;
+  if (window.app) window.app._xrPerf = null;
+  console.log('[xrPerf] ' + (window._xrPerf ? 'ON' : 'off') + ' — ' + VERSION +
+    (window._xrPerf ? '. One line a second: frames, our work, and the gap between frames.' : ''));
+  return window._xrPerf;
+};
+
 window.ikPerf = function (on) {
   window._ikPerf = on !== false;
   IKSolver.perf.at = 0;

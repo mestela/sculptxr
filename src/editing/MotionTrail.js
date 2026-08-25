@@ -129,9 +129,22 @@ function signature(main, joints, r) {
   for (const j of IKSolver.pinnedJoints(main)) {
     const p = IKSolver.pinObject(j);
     if (!p) continue;
-    const m = p.getMatrix();
-    sig += 'p' + j.getID() + ':' + m[12].toFixed(4) + ',' + m[13].toFixed(4) + ',' + m[14].toFixed(4) + ';';
-    sig += trackSig(reg, p, 'pk');
+    // A KEYED pin's live matrix is DERIVED from its track, so during playback it changes every
+    // frame while the curve it describes does not change at all. Hashing it made the
+    // fingerprint differ on every frame of playback, which forced a full resample — and a
+    // resample is a solve per sample, which is where ~1000 solves/s and half a second of every
+    // second went. The track is the honest fingerprint for a keyed pin.
+    //
+    // An UNKEYED pin has no track, and its transform is the only thing that says where it is —
+    // dragged with the gizmo, moved by undo, poked from the console. That one still gets
+    // hashed, which is what the matrix was here for in the first place.
+    const pk = trackSig(reg, p, 'pk');
+    if (pk) {
+      sig += pk;
+    } else {
+      const m = p.getMatrix();
+      sig += 'p' + j.getID() + ':' + m[12].toFixed(4) + ',' + m[13].toFixed(4) + ',' + m[14].toFixed(4) + ';';
+    }
   }
   return sig;
 }

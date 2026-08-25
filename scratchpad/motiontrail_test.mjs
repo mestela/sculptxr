@@ -220,6 +220,36 @@ function setup(times) {
   window._animationRegistry.tracks.delete(901);
   delete j._pin;
 
+  // THE PLAYBACK CASE, which cost half of every second. A keyed pin's live matrix is DERIVED
+  // from its track: during playback it is rewritten every frame while the curve it describes
+  // does not change at all. Hashing it made the fingerprint differ every frame, which forced a
+  // full resample — and a resample is one solve per sample.
+  {
+    let mx = 0.5;
+    const keyedPin = { _isPinTarget: true, getID: () => 902,
+      getMatrix: () => [1,0,0,0, 0,1,0,0, 0,0,1,0, mx, 0, 0, 1] };
+    j._pin = keyedPin;
+    window._animationRegistry.tracks.set(902, { times: [0, 1, 2] });
+    const before = signature(main, [j], r);
+    mx = 0.9;                                    // playback writes the pin from its track
+    check('a KEYED pin moving does not force a resample',
+      signature(main, [j], r) === before,
+      'this is where ~1000 solves/s came from during playback');
+
+    // ...but the track itself changing still must, or an edit would leave a stale curve.
+    window._animationRegistry.tracks.set(902, { times: [0, 1.5, 2] });
+    check('...while retiming its keys still does', signature(main, [j], r) !== before);
+
+    // An UNKEYED pin has no track, so its transform is the only thing that says where it is.
+    window._animationRegistry.tracks.delete(902);
+    const dragBase = signature(main, [j], r);
+    mx = 1.4;
+    check('an UNKEYED pin still registers when it is dragged',
+      signature(main, [j], r) !== dragBase,
+      'that is what hashing the matrix was for in the first place');
+    delete j._pin;
+  }
+
   const r2 = { start: 0, end: 1 };
   check('changing the range changes it', signature(main, [j], r2) !== base);
 }

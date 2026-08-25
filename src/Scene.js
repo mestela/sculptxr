@@ -940,7 +940,16 @@ class Scene {
     // This replaces manual window.requestAnimationFrame and session.requestAnimationFrame calls
     if (this._renderer) {
       this._renderer.setAnimationLoop((time, frame) => {
+        // FRAME PACING, measured at the only place that knows what a frame is. `xrPerf()` is
+        // for the symptom matt actually described — head movement arriving a frame late, with
+        // no rig in the scene — which a solve counter cannot see at all.
+        //
+        // What it reports is deliberately about CONSISTENCY, not averages: dropped frames and
+        // a long tail are what read as judder, and a mean frame time hides both. A steady
+        // 13.9ms with a 40ms every half second feels far worse than a steady 20ms.
+        const _t0 = window._xrPerf ? performance.now() : 0;
         this.applyRender(null, frame);
+        if (window._xrPerf) this._xrPerfSample(time, performance.now() - _t0);
       });
     }
   }
@@ -1164,6 +1173,36 @@ class Scene {
 
   render() {
     this._drawFullScene = true;
+  }
+
+  // One line a second: how many frames arrived, how long our own work took, and how much of the
+  // gap between frames we are actually responsible for. If the interval is erratic while our
+  // work is short and steady, the time is going somewhere we do not control — which is a very
+  // different problem from being too slow.
+  _xrPerfSample(time, workMs) {
+    const p = this._xrPerf || (this._xrPerf = { n: 0, work: 0, worst: 0, late: 0, last: 0, at: 0, gaps: [] });
+    if (p.last) {
+      const gap = time - p.last;
+      p.gaps.push(gap);
+      // A frame that took more than 1.5 intervals to arrive is one the headset had to reproject
+      // or repeat — that is the thing being felt.
+      if (gap > 20) p.late++;
+    }
+    p.last = time;
+    p.n++;
+    p.work += workMs;
+    if (workMs > p.worst) p.worst = workMs;
+
+    const now = performance.now();
+    if (!p.at) { p.at = now; return; }
+    if (now - p.at < 1000) return;
+    p.gaps.sort((a, b) => a - b);
+    const med = p.gaps[p.gaps.length >> 1] || 0;
+    const p95 = p.gaps[Math.floor(p.gaps.length * 0.95)] || 0;
+    console.log('[xrPerf] ' + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
+      'ms avg, ' + p.worst.toFixed(1) + 'ms worst | frame gap ' + med.toFixed(1) +
+      'ms median, ' + p95.toFixed(1) + 'ms p95 | ' + p.late + ' late');
+    p.n = 0; p.work = 0; p.worst = 0; p.late = 0; p.at = now; p.gaps.length = 0;
   }
 
   applyRender(arg, xrFrame = null) {
