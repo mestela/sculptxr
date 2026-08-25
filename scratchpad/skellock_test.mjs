@@ -14,7 +14,19 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const REPO = '/Users/mattestela/sculptxr';
-const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+
+// Defect injection (standing lesson 1):
+//   SKEL_INJECT=pinbits  the pin mode is written with its old two bits only, so the fourth
+//                        mode saves as unpinned while everything about the live session still
+//                        looks right — the classic bitfield bug that only shows up on reload.
+{
+  if (process.env.SKEL_INJECT === 'pinbits') {
+    const a = "\n        | (((m._boneIKPin | 0) & 4) << 2),";
+    if (!SRC.includes(a)) throw new Error('inject pinbits: anchor moved');
+    SRC = SRC.replace(a, ',');
+  }
+}
 
 // Same trick the other rig harnesses use: strip the imports, prepend just enough stubs, keep
 // the code under test byte-identical to what ships.
@@ -118,6 +130,23 @@ const roundTrip = (meshes) => {
     check('the joint is still a joint', out[1]._isBone === true,
       'the lock bit must not disturb the flags it shares a word with');
   }
+}
+
+// EVERY PIN MODE SURVIVES THE ROUND TRIP, including the one that does not fit the two bits the
+// field started with. PIN_ROT is 4 and bit 3 belongs to the selection lock, so its high bit had
+// to go above the lock rather than beside its own low bits — an arrangement that works in every
+// live session and fails only on reload, which is the kind of bug worth a check of its own. The
+// lock is set on the same meshes on purpose: the two share a word and the whole risk is that
+// one of them eats the other's bit.
+{
+  const modes = [1, 2, 3, 4];
+  const bones = modes.map((m) => mk({ _isBone: true, _boneIKPin: m, _selectLocked: true }));
+  const out = roundTrip(bones);
+  check('every pin mode round-trips', !!out && modes.every((m, i) => out[i]._boneIKPin === m),
+    out ? 'got ' + modes.map((m, i) => out[i]._boneIKPin).join(',') : 'no file');
+  check('and the selection lock they share a word with survives too',
+    !!out && modes.every((m, i) => out[i]._selectLocked === true));
+  check('and they are all still joints', !!out && modes.every((m, i) => out[i]._isBone === true));
 }
 
 // A LOCKED MESH THAT IS NEITHER A BONE NOR PARENTED must still earn a row — that is exactly

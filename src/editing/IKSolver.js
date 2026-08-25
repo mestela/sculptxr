@@ -89,9 +89,16 @@ IKSolver.PIN_FULL = 2;  // 6DOF: position and orientation both held
 // the hard pins nothing. Value 3 is the last free pattern in the two-bit field the pin already
 // rides in, so it saves and loads with no file format change at all.
 IKSolver.PIN_SOFT = 3;
+// ORIENTATION ONLY: the joint's rotation is held, its position is free. The other half of
+// PIN_FULL, and useful wherever a limb should keep pointing the same way while the body it
+// hangs off moves — a head that keeps facing forward, a foot that stays flat while the hips
+// travel. APPENDED rather than inserted on purpose: every value below it keeps the meaning it
+// already has, so no SKEL file written by an older build changes behaviour when read by this
+// one. It costs a third bit in the field, which is why it could not simply take a low slot.
+IKSolver.PIN_ROT = 4;
 
 // Older builds stored a boolean here; `true | 0` is 1, which is exactly the 3DOF pin.
-IKSolver.pinMode = function (joint) { return joint ? ((joint._boneIKPin | 0) & 3) : 0; };
+IKSolver.pinMode = function (joint) { return joint ? ((joint._boneIKPin | 0) & 7) : 0; };
 IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 
 // A pin is a WORLD-SPACE anchor, captured once when the pin goes on and held there until it
@@ -135,7 +142,7 @@ IKSolver.controlFor = function (mesh, main) {
 
 IKSolver.setPin = function (joint, mode, main) {
   if (!joint) return null;
-  const now = (mode | 0) & 3;
+  const now = (mode | 0) & 7;
   let pin = IKSolver.pinObject(joint);
 
   if (!now) {
@@ -170,7 +177,7 @@ IKSolver.makePinObject = function (main, joint) {
 
 IKSolver.pinMode = function (joint) {
   const p = IKSolver.pinObject(joint);
-  return p ? ((p._pinMode | 0) & 3) : 0;
+  return p ? ((p._pinMode | 0) & 7) : 0;
 };
 IKSolver.isPinned = function (joint) { return IKSolver.pinMode(joint) > 0; };
 
@@ -195,8 +202,20 @@ IKSolver.pinAnchorQuat = function (joint, out) {
 // none -> position -> position+rotation -> none. A cycle rather than two buttons: pinning is
 // done by pointing at a joint and pressing one thing, and the marker says which state it is in.
 // Returns { mode, pin, removed } so the caller can put the object in or out of the scene.
+// The order the A button walks, written out rather than computed: PIN_ROT is 4 for file
+// compatibility, so the cycle is no longer the mode numbers in sequence and a modulo cannot
+// express it. Position and 6DOF lead because they are the common two; rotation-only sits next
+// to 6DOF because it is the same idea minus a half; steer is last because it is a hint rather
+// than a constraint and reads as the odd one out.
+IKSolver.PIN_CYCLE = [IKSolver.PIN_POS, IKSolver.PIN_FULL, IKSolver.PIN_ROT,
+                      IKSolver.PIN_SOFT, IKSolver.PIN_NONE];
+
 IKSolver.cyclePin = function (joint, main) {
-  const next = (IKSolver.pinMode(joint) + 1) % 4;   // none -> position -> 6DOF -> steer -> none
+  const ring = IKSolver.PIN_CYCLE;
+  const at = ring.indexOf(IKSolver.pinMode(joint));
+  // An unrecognised mode (a file from a newer build, say) lands at -1 and so steps to the
+  // front of the ring rather than off the end of it.
+  const next = ring[(at + 1) % ring.length];
   const before = IKSolver.pinObject(joint);
   const pin = IKSolver.setPin(joint, next, main);
   return { mode: next, pin: next ? pin : null, removed: next ? null : before };
@@ -419,6 +438,12 @@ function rootOf(node) {
 // root. A joint off those paths is not solved at all — it simply rides its parent through
 // the scene graph, which is both cheaper and more predictable than letting the solver nudge
 // parts of the rig nobody asked it to move.
+// MARKING A NODE ACTIVE BEFORE markActive RUNS WOULD SEVER THE CHAIN ABOVE IT: the walk stops
+// at the first node it finds already lit, on the assumption that everything above it was lit by
+// the same walk. So rotation-only pins are collected and switched on AFTER the anchors have
+// been walked, never during. Found by injecting the defect this mode is meant not to have and
+// watching the injected build solve nothing at all — the target was there, the chain leading
+// up to it was not.
 function markActive(anchors) {
   for (const a of anchors) {
     for (let n = a; n; n = n.parent) {
@@ -1300,6 +1325,7 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   targets.set(eff, target.clone());
 
   const pinTargets = [];
+  const rotHeld = [];
   const pinList = pinListEarly;
   for (const j of pinList) {
     const n = nodes.get(j.getID());
@@ -1307,6 +1333,15 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
     if (rootOf(n) !== root) continue; // a pin on a different skeleton is not our business
     // The anchor, not the joint's current position — see setPin. This is the whole
     // difference between a pin that holds the ground and one that rides the character up.
+    // Rotation-only pins hold no ground, so they are not something to hold the drag against:
+    // no target, no entry in pinTargets, and no say in clampToPins — just the orientation and
+    // a live node for applyRotations to reach. Same reasoning as in holdPins below.
+    if (IKSolver.pinMode(j) === IKSolver.PIN_ROT) {
+      n.orient = IKSolver.pinAnchorQuat(j, new THREE.Quaternion());
+      n.rot = n.orient.clone().multiply(modelQuat(j, _qNow).invert());
+      rotHeld.push(n);   // woken after markActive, not here — see the note by markActive
+      continue;
+    }
     const anchor = IKSolver.pinAnchor(j, new THREE.Vector3());
     targets.set(n, anchor);
     pinTargets.push({ node: n, anchor: anchor });
@@ -1344,6 +1379,7 @@ IKSolver.solve = function (main, effector, target, pins, orientation) {
   }
 
   markActive(targets.keys());
+  for (const n of rotHeld) n.active = true;
   // With nothing else pinned the root is the anchor, or the whole character would follow
   // your hand on the very first drag.
   //
@@ -1442,7 +1478,16 @@ IKSolver.pinsMoved = function (main) {
     const m = p.getMatrix();
     const last = p._pinLastM;
     if (!last) { p._pinLastM = mat4.clone(m); moved = true; continue; }
+    // A ROTATION-ONLY PIN IS WATCHED FOR ROTATION ONLY. Its translation is not an input to the
+    // solve — solve() never puts it in `targets` — so treating a moved one as a change would
+    // schedule a full solve that could not possibly produce a different pose. That matters
+    // rather than being merely tidy: this marker sits on a joint that the animation moves, so
+    // watching all sixteen elements would report a change on every frame of playback and put
+    // the whole rig through an IK solve per frame. The basis is elements 0-2, 4-6 and 8-10;
+    // 12-14 are the translation and 3, 7, 11, 15 are the constant bottom row.
+    const rotOnly = IKSolver.pinMode(j) === IKSolver.PIN_ROT;
     for (let i = 0; i < 16; i++) {
+      if (rotOnly && (i > 10 || (i & 3) === 3)) continue;
       if (Math.abs(last[i] - m[i]) > MOVE_EPS) { moved = true; break; }
     }
     if (moved) mat4.copy(p._pinLastM, m);
@@ -1561,16 +1606,31 @@ IKSolver.holdPins = function (main) {
     // A steering goal is NOT a target: handing it to FABRIK as one would make it compete with
     // the hard pins on equal terms, which is precisely the arrangement it exists to replace.
     const soft = new Map();
+    const rotHeld = [];
     for (const { node, joint } of group) {
-      if (IKSolver.pinMode(joint) === IKSolver.PIN_SOFT) {
+      const pm = IKSolver.pinMode(joint);
+      if (pm === IKSolver.PIN_SOFT) {
         soft.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
+        continue;
+      }
+      // ROTATION ONLY: the orientation half of a 6DOF pin without the position half. It sets
+      // `orient` exactly as PIN_FULL does, but it must NOT enter `targets` — a target is a
+      // position goal, and handing FABRIK one is precisely the thing this mode exists not to
+      // do. It still has to be marked active, or applyRotations never visits it and the held
+      // orientation is silently dropped. Only the node itself, not its ancestors: nothing
+      // above it is being asked to move, so waking the chain would put joints through a
+      // rotation fit for a solve that never touched their positions.
+      if (pm === IKSolver.PIN_ROT) {
+        node.orient = IKSolver.pinAnchorQuat(joint, new THREE.Quaternion());
+        node.rot = node.orient.clone().multiply(modelQuat(joint, _qNow).invert());
+        rotHeld.push(node);   // woken after markActive, not here — see the markActive note
         continue;
       }
       targets.set(node, IKSolver.pinAnchor(joint, new THREE.Vector3()));
       // A 6DOF pin holds its orientation as well, through the same machinery the interactive
       // solve uses: the target is the orientation it already has, so the joint is its own fixed
       // point and its children stay rigid with it while the chain above swings.
-      if (IKSolver.pinMode(joint) === IKSolver.PIN_FULL) {
+      if (pm === IKSolver.PIN_FULL) {
         node.orient = IKSolver.pinAnchorQuat(joint, new THREE.Quaternion());
         node.rot = node.orient.clone().multiply(modelQuat(joint, _qNow).invert());
       }
@@ -1579,6 +1639,9 @@ IKSolver.holdPins = function (main) {
     // marked active and the swivel has nothing it is allowed to move.
     markActive(targets.keys());
     markActive(soft.keys());
+    // Last, and only the nodes themselves: nothing above a rotation-only pin is being asked to
+    // move, and lighting one before the walks above would have stopped them dead.
+    for (const n of rotHeld) n.active = true;
     // Ordinarily holdPins anchors the root while limbs settle onto their goals. A hard pin ON
     // the root is the exception: fixing the root to its pre-solve position immediately after
     // assigning its target discarded the pin's translation, while its orientation still ran
@@ -1662,7 +1725,8 @@ IKSolver.togglePin = function (main, joint) {
   const now = r.mode;
   if (r.removed) main.removeMeshSilent(r.removed);
   const nowPin = r.pin;
-  const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)'];
+  const names = ['unpinned', 'pinned (position)', 'pinned (position + rotation)',
+                 'pinned (steer)', 'pinned (rotation)'];
   const sm = main.getStateManager && main.getStateManager();
   if (sm && sm.pushStateCustom) {
     const apply = (mode, pin, m) => {

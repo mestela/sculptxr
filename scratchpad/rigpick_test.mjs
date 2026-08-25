@@ -5,9 +5,51 @@
 // behind it — nearMesh was never assigned on the rig path. Both were only findable by clicking.
 // The cone test is pure geometry, so it can be checked directly.
 import fs from 'fs';
-import { vec3 } from '/Users/mattestela/sculptxr/node_modules/gl-matrix/esm/index.js';
+import { vec3, mat4 } from '/Users/mattestela/sculptxr/node_modules/gl-matrix/esm/index.js';
 
-const SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Picking.js', 'utf8');
+let SRC = fs.readFileSync('/Users/mattestela/sculptxr/src/math3d/Picking.js', 'utf8');
+let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+
+// Defect injections (standing lesson 1):
+//   PICK_INJECT=alwaystip     a bone hit always reports its TIP joint, so the root — which is
+//                             nobody's tip — becomes unreachable once the dots are hidden
+//   PICK_INJECT=noclamp       raySegDist clamps the segment parameter without re-solving the
+//                             ray for it, the classic way this returns a point that is not
+//                             the closest one
+//   PICK_INJECT=tiponly       a capsule lights only from its TIP, leaving the root with no
+//                             feedback at all
+//   PICK_INJECT=pinovershot   the pin tint goes back above preselection, so hovering a pinned
+//                             bone shows nothing
+//   PICK_INJECT=spherealways  the joint dot goes back to being drawn unconditionally
+{
+  const inj = process.env.PICK_INJECT || '';
+  if (inj === 'alwaystip') {
+    const a = 'rigHit = _segS >= 0.5 ? mesh : segHead;';
+    if (!SRC.includes(a)) throw new Error('inject alwaystip: anchor moved');
+    SRC = SRC.replace(a, 'rigHit = mesh;');
+  } else if (inj === 'noclamp') {
+    const a = `    if (_segS < 0.0) { _segS = 0.0; _segT = -c / dd; }
+    else if (_segS > 1.0) { _segS = 1.0; _segT = (b - c) / dd; }`;
+    if (!SRC.includes(a)) throw new Error('inject noclamp: anchor moved');
+    SRC = SRC.replace(a, `    if (_segS < 0.0) _segS = 0.0;
+    else if (_segS > 1.0) _segS = 1.0;`);
+  } else if (inj === 'tiponly') {
+    const a = 'const boneHot = isHi || hiAll.has(pid);';
+    if (!SKEL.includes(a)) throw new Error('inject tiponly: anchor moved');
+    SKEL = SKEL.replace(a, 'const boneHot = isHi;');
+  } else if (inj === 'pinovershot') {
+    // The pin tint goes back on top of preselection, so hovering a pinned bone shows nothing.
+    const a = 'const boneTint = boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR';
+    if (!SKEL.includes(a)) throw new Error('inject pinovershot: anchor moved');
+    SKEL = SKEL.replace(a, 'const boneTint = ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR');
+    const b2 = ': (tintMode === 1 ? PIN_POS_COLOR : restTint))));';
+    SKEL = SKEL.replace(b2, ': restTint)))));');
+  } else if (inj === 'spherealways') {
+    const a = 'o.visible = noBoneBody || isolated;';
+    if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
+    SKEL = SKEL.replace(a, 'o.visible = true;');
+  }
+}
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
@@ -147,8 +189,15 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   // The reach is a distance you can feel with your arm, so it has to be in PHYSICAL metres.
   // Model-space distance would make the reach grow and shrink with the world scale.
   check('VR: the reach is in physical metres, not model space',
-    /_vrScale/.test(vr) && /physicalDistance = vec3\.len\([^)]*\) \* vrScale/.test(vr),
+    /_vrScale/.test(vr) && /physicalDistance = rigDist \* vrScale/.test(vr),
     'an unscaled distance changes how far you can reach when the world is scaled');
+  // A spelling check, unusually, because the mistake it guards has no local behaviour to run:
+  // the bone distance must reach the reach test through the SAME scaling the joint distance
+  // does. Measure the bone in model space and the metres conversion is skipped for exactly the
+  // targets that were just added.
+  check('VR: a bone distance goes through that same conversion',
+    /if \(segD < rigDist\) \{ rigDist = segD/.test(vr),
+    'the segment result must land in the variable that gets scaled, not beside it');
   {
     const m = vr.match(/var rScore = ([^;]+);/);
     check('the VR rig score is liftable', !!m, 'no `var rScore = ...;` in intersectionRayMeshes');
@@ -211,6 +260,183 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     /!this\._isGizmoHovered && !this\._pickConsumed/.test(VR));
   check('rig preselection yields to the gizmo handle',
     /!this\._isGizmoHovered && !isPressed/.test(VR));
+}
+
+
+// ── THE BONE AS A PICK TARGET ────────────────────────────────────────────────
+//
+// This rig is joint-centric: the capsule between two joints is drawn into an overlay batch, is
+// not in the mesh list, and owns no state. It is now pick SURFACE donated to the joints either
+// side of it, reporting whichever end is nearer — which is what lets the joint dots come off
+// the screen entirely. The geometry is lifted and RUN here rather than matched as a spelling,
+// because "closest point between a ray and a segment" is exactly the kind of thing that looks
+// right and is quietly wrong at the ends.
+{
+  const i = SRC.indexOf('var _TMP_SEG_A');
+  const j = SRC.indexOf('\n}', SRC.indexOf('function segmentHead'));
+  const lifted = SRC.slice(i, j + 2);
+  const api = new Function('vec3', 'mat4',
+    lifted + '\nreturn { raySegDist, pointSegDist, segmentHead, S: () => _segS, T: () => _segT };')(vec3, mat4);
+
+  // A ray up +Z from the origin. D is vFar - vNear and is NOT normalised, exactly as the pick
+  // builds it, so dd is passed alongside.
+  const vNear = [0, 0, 0], D = [0, 0, 10], dd = 100;
+
+  // Crossing the ray dead on: distance zero, and the crossing is at the middle of the bone.
+  let d = api.raySegDist(vNear, D, dd, [-1, 0, 5], [2, 0, 0]);
+  check('ray/segment: a bone crossing the ray reads as a hit on the bone', d < 1e-9,
+    'got ' + d);
+  check('...at the point where it crosses', Math.abs(api.S() - 0.5) < 1e-9);
+  check('...and at the right depth along the ray', Math.abs(api.T() - 0.5) < 1e-9);
+
+  // THE CLAMPED CASE, which is the one that goes wrong. The whole bone lies off to one side of
+  // the ray, so the closest point is its END, not an interior point — and the ray parameter has
+  // to be re-solved for that end rather than left where the unclamped solve put it.
+  // A bone raked away from the ray, so the closest point on its INFINITE line lies a full bone
+  // length off the near end. Clamping the segment parameter to that end without re-solving the
+  // ray for it leaves the ray sitting where the unclamped answer put it, and the distance comes
+  // back 4.12 instead of 1 — a bone you are pointing straight at reads as far away.
+  d = api.raySegDist(vNear, D, dd, [1, 0, 5], [1, 0, 4]);
+  check('ray/segment: a bone raked off the ray reports the distance to its nearest END',
+    Math.abs(d - 1) < 1e-9, 'got ' + d + ' (should be 1: the ray passes 1 unit beside the head)');
+  check('...which is the head', Math.abs(api.S()) < 1e-9, 's=' + api.S());
+  check('...measured at that end’s depth, not where the unclamped solve left it',
+    Math.abs(api.T() - 0.5) < 1e-9, 't=' + api.T());
+
+  // The same bone the other way round, so the clamp lands on the TIP. Both branches re-solve.
+  d = api.raySegDist(vNear, D, dd, [2, 0, 9], [-1, 0, -4]);
+  check('ray/segment: and the same when the nearest end is the tip',
+    Math.abs(d - 1) < 1e-9 && Math.abs(api.S() - 1) < 1e-9 && Math.abs(api.T() - 0.5) < 1e-9,
+    'got ' + d + ' s=' + api.S() + ' t=' + api.T());
+
+  // A zero-length bone is just its own joint, and must not divide by its own length.
+  d = api.raySegDist(vNear, D, dd, [0, 2, 5], [0, 0, 0]);
+  check('ray/segment: a zero-length bone degrades to its joint', Math.abs(d - 2) < 1e-9,
+    'got ' + d);
+  check('...with finite parameters', Number.isFinite(api.S()) && Number.isFinite(api.T()));
+
+  // Behind the eye: measured from the near plane rather than reported as a negative depth,
+  // since the cone radius is scaled by that depth and a negative one inverts the test.
+  api.raySegDist(vNear, D, dd, [0, 1, -5], [0, 0, -1]);
+  check('ray/segment: a bone behind the eye never yields a negative depth', api.T() >= 0);
+
+  // The VR pick is controller-tip proximity, not a ray.
+  d = api.pointSegDist([0, 0, 0], [1, 0, 0], [0, 0, 4]);
+  check('point/segment: reaching past the end of a bone measures to that end',
+    Math.abs(d - 1) < 1e-9 && Math.abs(api.S()) < 1e-9, 'got ' + d + ' s=' + api.S());
+  d = api.pointSegDist([1, 0, 2], [1, 0, 0], [0, 0, 4]);
+  check('point/segment: reaching for the middle of one lands on it',
+    d < 1e-9 && Math.abs(api.S() - 0.5) < 1e-9, 'got ' + d + ' s=' + api.S());
+
+  // WHICH JOINT A BONE HAS. Not every rig node has one, and the ones that do not are exactly
+  // the cases that used to be handled by the dot being always visible.
+  const vis = (extra = {}) => ({ _isBone: true, isVisible: () => true, ...extra });
+  check('a pin is a point, never a segment', api.segmentHead({ _isPinTarget: true }) === null);
+  check('the root has no bone above it', api.segmentHead(vis({ _parentMesh: null })) === null);
+  check('nor does a joint parented to something that is not a joint',
+    api.segmentHead(vis({ _parentMesh: { _isBone: false, isVisible: () => true } })) === null);
+  check('a hidden parent means no segment, not a way round the hiding',
+    api.segmentHead(vis({ _parentMesh: vis({ isVisible: () => false }) })) === null);
+  check('a locked parent likewise',
+    api.segmentHead(vis({ _parentMesh: vis({ _selectLocked: true }) })) === null);
+  const good = vis();
+  check('an ordinary joint reports its parent', api.segmentHead(vis({ _parentMesh: good })) === good);
+
+  // NEAREST END, evaluated. Always reporting the tip is the plausible-looking version — it is
+  // 1:1 with the capsules — and it silently makes the root unselectable, because the root is
+  // nobody's tip and no longer has a dot of its own to click.
+  const m = /rigHit = (.+?);\n/.exec(SRC.slice(SRC.indexOf('var segHead = segmentHead(mesh);')));
+  check('the nearest-end rule is liftable', !!m, 'the pick loop moved');
+  if (m) {
+    const endOf = new Function('_segS', 'mesh', 'segHead', 'return (' + m[1] + ');');
+    check('a hit near the tip takes the tip joint', endOf(0.9, 'tip', 'head') === 'tip');
+    check('a hit near the head takes the head joint', endOf(0.1, 'tip', 'head') === 'head',
+      'the root is only ever a head, so this is what makes it reachable at all');
+    check('the boundary is the midpoint', endOf(0.5, 'tip', 'head') === 'tip'
+      && endOf(0.49, 'tip', 'head') === 'head');
+    check('and at the very tip it agrees with the old point test', endOf(1, 'tip', 'head') === 'tip',
+      'the two must be continuous, or the answer jumps as you approach a joint');
+  }
+}
+
+// ── THERE ARE NO JOINT DOTS ──────────────────────────────────────────────────
+//
+// Not "off by default" — gone. The bone is the pick target, so the dot marks nothing, and
+// preselection moved onto the capsule where it can be shown without a second kind of marker.
+// The only survivor is the case with no capsule at either end.
+{
+  const m = /o\.visible = (.+?);\n/.exec(SKEL.slice(SKEL.indexOf('const isolated = !hasChildBone')));
+  check('the joint dot visibility is liftable', !!m, 'the placement code moved');
+  if (m) {
+    const show = (o = {}) => new Function('noBoneBody', 'isolated',
+      'return (' + m[1] + ');')(!!o.noBoneBody, !!o.isolated);
+
+    check('an ordinary joint draws no dot', show() === false);
+    check('nor does the one under the cursor', show({ isHi: true }) === false,
+      'preselection is the capsule now; a dot that appears only sometimes is still a dot');
+    check('nor a selected one', show({ isSel: true }) === false);
+    check('nor a grabbed one', show({ jointHandColor: 0xff0000 }) === false);
+    check('an ISOLATED joint does, because it has no capsule at either end',
+      show({ isolated: true }) === true,
+      'without it the first joint you place is invisible AND unpickable');
+    check('so does every joint when the bone body is switched off',
+      show({ noBoneBody: true }) === true, 'the same case by a different route');
+  }
+  // NO FLAG AT ALL, deliberately. Defaulting one to off left it persisted, so anyone who had
+  // seen the old default kept the dots for good.
+  check('there is no joint-dot display flag to turn them back on',
+    !/boneShowJoints/.test(SKEL) && !/showJoints/.test(SKEL),
+    'a saved value would resurrect exactly what was asked to be removed');
+}
+
+// ── THE CAPSULE CARRIES PRESELECTION ─────────────────────────────────────────
+//
+// With the dot gone this is the only feedback left, so it has to be right: a capsule lights
+// when EITHER of its ends is the joint in question, which is what makes hovering a mid-chain
+// joint read as one joint rather than one arbitrary bone. And it has to sit ABOVE the pin
+// tint — a preselection something else can cover is worth nothing.
+{
+  const m = /const boneTint = (.+?);\n/s.exec(SKEL);
+  check('the bone tint is liftable', !!m, 'the tint code moved');
+  if (m) {
+    const C = (n) => {
+      const r = new RegExp('^const ' + n + ' = (0x[0-9a-fA-F]+);', 'm').exec(SKEL);
+      if (!r) throw new Error('constant moved: ' + n);
+      return parseInt(r[1], 16);
+    };
+    const HILITE = C('HILITE_COLOR'), SELECT = C('SELECT_COLOR');
+    const POS = C('PIN_POS_COLOR'), FULL = C('PIN_FULL_COLOR');
+    const tint = (o = {}) => new Function('boneHand', 'boneHot', 'boneSel', 'tintMode',
+      'HILITE_COLOR', 'SELECT_COLOR', 'PIN_POS_COLOR', 'PIN_FULL_COLOR', 'restTint',
+      'return (' + m[1] + ');')(o.boneHand || null, !!o.boneHot, !!o.boneSel, o.tintMode || 0,
+      HILITE, SELECT, POS, FULL, 0x111111);
+
+    check('an idle unpinned bone wears the rest colour', tint() === 0x111111);
+    check('a hovered bone wears the preselect colour', tint({ boneHot: true }) === HILITE);
+    check('a selected one wears the selection colour', tint({ boneSel: true }) === SELECT);
+    check('a grabbed one wears its hand colour', tint({ boneHand: 0x00ff00 }) === 0x00ff00);
+    check('a pinned bone still reports its pin', tint({ tintMode: 1 }) === POS
+      && tint({ tintMode: 2 }) === FULL && tint({ tintMode: 4 }) === FULL);
+    check('but hovering a PINNED bone still shows the preselect',
+      tint({ boneHot: true, tintMode: 2 }) === HILITE,
+      'a preselection the pin state can cover is a preselection you cannot trust');
+    check('and the hand beats everything', tint({ boneHand: 0xff00ff, boneHot: true,
+      tintMode: 2 }) === 0xff00ff);
+  }
+  // EITHER END, not just the tip. Only the tip would mean hovering the ROOT lights nothing at
+  // all, since the root is nobody's tip — the same trap the pick itself had, and the reason a
+  // hit maps to the nearest end rather than always the child.
+  for (const [what, expr] of [['preselect', 'boneHot'], ['selection', 'boneSel']]) {
+    const hm = new RegExp('const ' + expr + ' = (.+?);\n').exec(SKEL);
+    check(`the ${what} rule is liftable`, !!hm);
+    if (!hm) continue;
+    const lit = (tip, head) => new Function('isHi', 'isSel', 'hiAll', 'sel', 'pid',
+      'return (' + hm[1] + ');')(tip, tip, new Set(head ? [7] : []), new Set(head ? [7] : []), 7);
+    check(`${what}: the joint at the TIP lights this capsule`, lit(true, false) === true);
+    check(`${what}: so does the joint at the HEAD`, lit(false, true) === true,
+      'the root is only ever a head — light only tips and it has no feedback at all');
+    check(`${what}: and an unrelated joint lights nothing`, !lit(false, false));
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

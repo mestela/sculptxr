@@ -90,17 +90,20 @@ check('every wired id exists in the markup', missing.length === 0, missing.join(
 // exactly the failure the id sweep above cannot see on its own.
 // Wired through the flag() helper rather than a literal q('id'), so the id sweep above cannot
 // see them — the wiring call is what has to be looked for.
-for (const id of ['solid', 'wire', 'joints']) {
+for (const id of ['solid', 'wire']) {
   const drawn = display.includes('id="bone-' + id + '"');
   const hooked = SRC.includes("flag('" + id + "'");
   check('display toggle "' + id + '" is drawn and wired', drawn && hooked,
     (drawn ? '' : 'not in markup ') + (hooked ? '' : 'not wired'));
 }
 
-// Default ON: a rig you have just drawn has to be visible without hunting for a switch.
-check('the joint markers default to shown', /id="bone-joints"[^>]*class=|class="[^"]*active[^"]*"[^>]*id="bone-joints"/.test(display)
-  || /<button class="[^"]*active[^"]*" id="bone-joints"/.test(display),
-  'Joints button did not render active by default');
+// THE JOINTS TOGGLE IS GONE, not merely defaulted off. The bone is the pick target now, so the
+// dots mark nothing — and the flag was PERSISTED, which meant anyone who had ever seen the old
+// default carried it forward and got the dots back on every launch. Defaulting it off fixed
+// nothing for the only person who had reported the problem. A display toggle whose one honest
+// setting is off should not be on the panel at all.
+check('the Joints toggle is gone from the panel', !/bone-joints/.test(SRC),
+  'a persisted flag that resurrects the dots is the bug, not the default it starts at');
 
 // The split itself: each concern appears in exactly its intended block. This is the property
 // the reorganisation is for; checking only that every id exists would pass with the old
@@ -207,7 +210,10 @@ check('shader-specific groups mute instead of hiding',
   check('weight colours are off by default', FLAG_DEFAULTS.weights === false, FLAG_DEFAULTS.weights);
   // The rest keep the defaults they had; a registry that quietly flipped them would be worse
   // than the sentinel it replaced.
-  for (const k of ['snapPlane', 'snapAxis', 'solid', 'wire', 'joints']) {
+  // The joint dots have no flag at all any more — see the note by the panel toggle above.
+  check('there is no joint-dot flag left to persist', FLAG_DEFAULTS.joints === undefined,
+    'a removed toggle must take its saved option with it, or old saves keep setting it');
+  for (const k of ['snapPlane', 'snapAxis', 'solid', 'wire']) {
     check(`${k} is still on by default`, FLAG_DEFAULTS[k] === true, FLAG_DEFAULTS[k]);
   }
   check('lengths are still off by default', FLAG_DEFAULTS.lengths === false, FLAG_DEFAULTS.lengths);

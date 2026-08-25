@@ -205,7 +205,6 @@ var getOptionsURL = function () {
   options.boneShowWeights = queryBool(getVal('boneShowWeights'), false);
   options.boneShowSolid = queryBool(getVal('boneShowSolid'), true);
   options.boneShowWire = queryBool(getVal('boneShowWire'), true);
-  options.boneShowJoints = queryBool(getVal('boneShowJoints'), true);
   options.boneShowPins = queryBool(getVal('boneShowPins'), true);
   // Which side the on-screen secondary-action modifier sits on. Off = right, matching the
   // right-click shorthand; a left-hander swaps it so it is not under the drawing hand.

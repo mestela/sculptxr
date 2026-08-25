@@ -13,7 +13,31 @@ import fs from 'fs';
 import path from 'path';
 
 const REPO = '/Users/mattestela/sculptxr';
-const SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
+
+// Defect injections (standing lesson 1):
+//   RIG_INJECT=nullscount   nulls count towards the scene unit, so adding a PIN resizes the
+//                           whole rig — the reported bug, exactly
+//   RIG_INJECT=widthfloor   the scene-unit floor goes back under bone width, so a short bone
+//                           on a large rig comes out many times too fat
+//   RIG_INJECT=unitreadspos the unit signature folds in an object's POSITION, so posing the
+//                           scene re-measures it and the markers change size as things move
+{
+  const inj = process.env.RIG_INJECT || '';
+  if (inj === 'nullscount') {
+    const a = '    if (Skeleton.isJoint(m) || m._isNull) continue;';
+    if (SRC.split(a).length - 1 !== 2) throw new Error('inject nullscount: anchor moved');
+    SRC = SRC.replace(a, '    if (false) continue;');   // the signature loop is the first one
+  } else if (inj === 'widthfloor') {
+    const a = 'function boneWidth(len) { return len * 0.12; }';
+    if (!SRC.includes(a)) throw new Error('inject widthfloor: anchor moved');
+    SRC = SRC.replace(a, 'function boneWidth(len, jr) { return Math.max(len * 0.12, jr * 0.6); }');
+  } else if (inj === 'unitreadspos') {
+    const a = '    sig = (Math.imul(sig, 16777619) ^ (Math.round(ss * 4096) | 0)) | 0;';
+    if (!SRC.includes(a)) throw new Error('inject unitreadspos: anchor moved');
+    SRC = SRC.replace(a, a + '\n    sig = (Math.imul(sig, 16777619) ^ (Math.round(sm[12] * 4096) | 0)) | 0;');
+  }
+}
 let failures = 0;
 const check = (n, ok, d) => { if (ok) return console.log('  ok   ' + n);
   failures++; console.log('  FAIL ' + n + (d ? '  ' + d : '')); };
@@ -98,11 +122,17 @@ check('...and dispose does not try to free a slot',
 // the preselection - it was the scene unit, which is the largest mesh's BOUNDING SPHERE, and on
 // a bound character that sphere grows and shrinks as the pose changes. Cached for 500ms, the
 // rescaling arrived as a step rather than a drift, which is what read as a pop.
+//
+// Holding it during playback only covered playback; a pose changed by hand did it too, and so
+// did anything else that touched the scene between ticks. The timer is gone now and the value
+// is latched against a signature — see the section at the bottom, which runs it. This check
+// stays because the playback hold is still the cheapest short-circuit and losing it would put
+// a signature walk on every frame of every playing rig.
 check('the scene unit is held while the rig is animating',
   /if \(main\._skelUnit && window\._animPlaying\) return main\._skelUnit;/.test(SRC),
   'a scene does not change size because something in it moved');
-check('...but is still recomputed when nothing is playing',
-  /now - main\._skelUnitAt < 500\) return main\._skelUnit;/.test(SRC),
+check('...and it can still be re-measured when the scene really does change',
+  /main\._skelUnitSig = sig;/.test(SRC) && /let best = 0;/.test(SRC),
   'freezing it outright would stop it tracking a sculpt that actually grew');
 
 // ── preselection says "this one" without moving it ───────────────────────────
@@ -114,7 +144,141 @@ check('...but is still recomputed when nothing is playing',
   check('...and preselection is still carried by colour',
     /o\.material\.color\.setHex\(pinHandColor \|\| \(pinHot \? HILITE_COLOR/.test(SRC),
     'dropping the scale must not drop the signal with it');
-  check('...in the same yellow the joints use', /const HILITE_COLOR = 0xffe066;/.test(SRC));
+  // The same CONSTANT, not the same hex: a highlight is one colour across the rig, and the
+  // check that pinned it to a literal reported a deliberate repaint as a regression.
+  check('...in the same colour the joints use',
+    /setHex\(jointHandColor \|\| \(isHi \? HILITE_COLOR/.test(SRC)
+      && /setHex\(pinHandColor \|\| \(pinHot \? HILITE_COLOR/.test(SRC),
+    'the two must read one constant, or they drift apart');
+}
+
+
+// ── THE SCENE UNIT IS LATCHED ────────────────────────────────────────────────
+//
+// Every marker in the rig is sized from Skeleton.sceneUnit, so anything that moves it resizes
+// the whole skeleton at once — which is how a user ends up reporting that "adding a few
+// constraints made the bones 10x bigger". It used to be re-measured on a 500ms timer from the
+// largest mesh's bounding sphere, and a bounding sphere is not a fixed property of an object:
+// it grows as the pose opens out. Now the value is latched and only a SIGNATURE over what is
+// in the scene releases it.
+//
+// The signature is lifted and RUN, because the whole property is about what it does and does
+// not read, and no amount of matching its spelling says that.
+{
+  const i = SRC.indexOf('  let sig = 2166136261 | 0;');
+  const j = SRC.indexOf('if (main._skelUnit && main._skelUnitSig === sig)', i);
+  check('the unit signature is liftable', i > 0 && j > i, 'sceneUnit moved');
+  if (i > 0 && j > i) {
+    const lifted = SRC.slice(i, j);
+    const Skeleton = { isJoint: (m) => !!m._isBone, joints: (mn) => mn.getMeshes().filter((m) => m._isBone) };
+    const sigOf = new Function('main', 'Skeleton', 'Math',
+      lifted + '\nreturn sig;').bind(null);
+
+    let nextId = 1;
+    const mesh = (o = {}) => {
+      const m = new Float64Array(16);
+      m[0] = m[5] = m[10] = m[15] = 1;
+      return { _id: nextId++, getID() { return this._id; },
+        getModelSpaceMatrix() { return this.m; }, m, ...o };
+    };
+    const scene = (list) => ({ getMeshes: () => list });
+    const sig = (list) => sigOf(scene(list), Skeleton, Math);
+
+    const sculpt = mesh();
+    const base = sig([sculpt]);
+
+    // THE REPORTED BUG. A pin is a null; a null is not the size of the scene.
+    const pin = mesh({ _isNull: true, _isPinTarget: true });
+    check('adding a pin does not move the scene unit', sig([sculpt, pin]) === base,
+      'this is the one that made the rig jump when constraints were added');
+    check('nor do several', sig([sculpt, pin, mesh({ _isNull: true }), mesh({ _isNull: true })]) === base);
+    const joint = mesh({ _isNull: true, _isBone: true });
+    check('nor does adding a joint, while there is a mesh to measure',
+      sig([sculpt, joint]) === base);
+
+    // POSING. The signature must not read a position — not the object's, not a joint's.
+    const posed = mesh();
+    posed.m[12] = 12.5; posed.m[13] = -3; posed.m[14] = 7;
+    posed._id = sculpt.getID();
+    check('moving something does not move the scene unit', sig([posed]) === base,
+      'a scene does not change SIZE because something in it moved');
+
+    // SCALING, which is deliberate and SHOULD carry the markers with it.
+    const scaled = mesh();
+    scaled._id = sculpt.getID();
+    scaled.m[0] = scaled.m[5] = scaled.m[10] = 2;
+    check('scaling an object DOES move it', sig([scaled]) !== base,
+      'that one is a deliberate act, and the markers belong at the new size');
+
+    // Structure.
+    check('adding a real mesh moves it', sig([sculpt, mesh()]) !== base);
+    check('removing one moves it', sig([]) !== base);
+
+    // With nothing to measure, the fallback is the rig's own extent — which legitimately grows
+    // as a rig is drawn, so the joint COUNT is in the signature. Its positions still are not.
+    const j1 = mesh({ _isNull: true, _isBone: true });
+    const j2 = mesh({ _isNull: true, _isBone: true });
+    const rigOnly = sig([j1]);
+    check('with no mesh, drawing another joint re-measures', sig([j1, j2]) !== rigOnly,
+      'the rig is its own ruler then, and it is still being drawn');
+    const j1moved = mesh({ _isNull: true, _isBone: true });
+    j1moved._id = j1.getID(); j1moved.m[13] = 40;
+    check('...but posing that rig still does not', sig([j1moved]) === rigOnly);
+    check('and a pin on a mesh-less rig is still not the ruler',
+      sig([j1, mesh({ _isNull: true, _isPinTarget: true })]) === rigOnly);
+  }
+  // The latch itself: measuring and then ignoring the result would pass every check above.
+  check('the measurement is skipped entirely when the signature is unchanged',
+    /if \(main\._skelUnit && main\._skelUnitSig === sig\) return main\._skelUnit;/.test(SRC));
+  check('and there is no timer left to release it',
+    !/_skelUnitAt/.test(SRC),
+    'a 500ms re-measure is what made the old jump arrive as a step');
+}
+
+
+// ── A BONE'S WIDTH IS ITS OWN BUSINESS ───────────────────────────────────────
+//
+// matt: "one hand bone has gone huge again", with rigUnit() reporting the scene unit had been
+// measured exactly once and never moved — so the unit was not what changed, something
+// downstream was multiplying it. It was the floor under boneWidth: no thinner than the joint
+// dot, which is jr = unit * JOINT_R_FRAC, ONE number for the whole rig. On a rig with no sculpt
+// the unit is the rig's own half-extent; matt's was 57.9, so the floor sat at 1.04 and every
+// bone shorter than 8.7 units was pinned to the same width. A spine looks fine at that. A hand
+// bone is thirty times too fat.
+{
+  const m = /function boneWidth\(([^)]*)\) \{ return ([^;]+); \}/.exec(SRC);
+  check('boneWidth is liftable', !!m, 'the helper moved');
+  if (m) {
+    const args = m[1].split(',').map((a) => a.trim()).filter(Boolean);
+    check('bone width takes ONLY the length', args.length === 1 && args[0] === 'len',
+      'got (' + m[1] + '): anything else is the whole rig reaching into one bone');
+    // The extra argument is supplied when the signature still has one, so an injected floor
+    // fails as a WRONG WIDTH rather than as a NaN — a check that only catches the missing
+    // argument would pass against a floor fed from somewhere else.
+    const JR = 57.8582 * 0.03;   // matt's rig: unit 57.9, no sculpt to measure
+    const raw = new Function(m[1] || 'len', 'return (' + m[2] + ');');
+    const w = (len) => (args.length > 1 ? raw(len, JR) : raw(len));
+
+    // Proportional, so a bone reports its own length and two bones of different lengths look
+    // different. That is the only thing the width is for.
+    check('width is proportional to length', Math.abs(w(10) / w(1) - 10) < 1e-9,
+      'w(1)=' + w(1) + ' w(10)=' + w(10));
+    check('...at every scale', Math.abs(w(0.1) / w(0.01) - 10) < 1e-9);
+
+    // THE REPORTED BUG, as a ratio. A hand bone next to a spine bone on the same rig must stay
+    // in proportion to it however big the rig is; a floor makes them converge on one width.
+    const spine = 8, hand = 0.3;
+    check('a short bone stays in proportion to a long one on the same rig',
+      Math.abs((w(spine) / w(hand)) - (spine / hand)) < 1e-9,
+      'ratio ' + (w(spine) / w(hand)).toFixed(2) + ' vs the lengths’ ' + (spine / hand).toFixed(2));
+    check('...and a very short one does not blow up',
+      w(0.05) < w(0.06) && w(0.05) > 0, 'w(0.05)=' + w(0.05));
+  }
+  // The scene unit must not reach the bone at all now. `jr` still sizes the pin markers and the
+  // isolated-joint dot; a bone body is not one of its customers.
+  check('no drawn bone is sized by the scene unit',
+    !/boneWidth\([^)]*jr/.test(SRC),
+    'that is how one number for the whole rig ended up setting one bone’s width');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

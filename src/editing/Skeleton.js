@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { VERSION } from '../Version.js';
 import { mat4 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
@@ -28,8 +29,8 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 const JOINT_COLOR = 0x33e0ff;
 const BONE_COLOR = 0xf0c674;
 const BONE_EDGE = 0x1e1e2e;
-const HILITE_COLOR = 0xffe066;
-const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the amber preselect
+const HILITE_COLOR = 0x00ffff;  // preselection: pure cyan, the brightest thing on the rig
+const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the cyan preselect
 const RIGHT_HAND_COLOR = 0xf38ba8;
 const LEFT_HAND_COLOR = 0xa6e3a1;
 // A pinned bone is tinted, which is the one display channel still free: the JOINT marker's
@@ -189,11 +190,33 @@ function gimbalGeometry() {
 // under vertexColors reads every vertex as black and multiplies the material colour away, so
 // the tetrahedron has to opt out — the symptom is a marker that is present, correctly placed,
 // and invisibly dark.
+// THE HIGHLIGHT NEEDS A MATERIAL OF ITS OWN, and the reason is the axis colouring.
+//
+// A triad and a gimbal carry their red/green/blue in VERTEX colours, and `material.color` then
+// multiplies into them — which is exactly how the mode tint and its hue shift work. But a
+// multiply cannot lift red, green and blue at the same time: cyan leaves the green and blue
+// axes exactly as they were and kills the red one. The preselection colour was
+// being written all along and had no way to show, which is why a pin under the cursor looked
+// identical to one that was not. The same applies to the per-hand grab colour.
+//
+// So the highlight swaps to a copy of the same material with vertex colours OFF, where the
+// colour is the whole colour. Built up front rather than toggling `vertexColors` on the live
+// material: that flag forces a shader recompile, and recompiling on hover ENTER is a hitch in
+// a headset — the one place where preselection matters most.
 function makePinPart(geo, vertexColored = true) {
   const p = makePair(geo, 0xffffff);
   for (const o of [p.solid, p.ghost]) {
     o.material.vertexColors = vertexColored;
     o.material.needsUpdate = true;
+    o.userData.vcMat = o.material;
+    if (vertexColored) {
+      const plain = o.material.clone();
+      plain.vertexColors = false;
+      plain.needsUpdate = true;
+      o.userData.plainMat = plain;
+    } else {
+      o.userData.plainMat = o.material;   // nothing to lift: it is a flat marker already
+    }
   }
   p.solid.renderOrder = p.ghost.renderOrder = 9998;
   return p;
@@ -230,7 +253,21 @@ function radiusFrac() {
 // always-on-top overlay (which reads as a stereo headache and loses all depth cue).
 // A bone's body width, from its own length. Proportional to the bone so a long limb reads as
 // a limb — this is the size it has always been, and thinning it turns the rig into needles.
-function boneWidth(len, jr) { return Math.max(len * 0.12, jr * 0.6); }
+// A BONE'S WIDTH COMES FROM ITS OWN LENGTH AND NOTHING ELSE.
+//
+// There used to be a floor of `jr * 0.6` under this — no thinner than the joint dot — so that a
+// short bone did not vanish inside the two markers at its ends. The dots are gone, so the floor
+// has nothing left to clear, and what it had become was a bug: `jr` is the SCENE unit, one
+// number for the whole rig, and on a rig with no sculpt to measure that unit is the rig's own
+// half-extent. matt's was 57.9, which put the floor at 1.04 — so every bone shorter than 8.7
+// units was forced to the same width regardless of its length, and a hand bone came out about
+// thirty times too fat while the spine beside it looked fine. One bone gone huge, nothing else
+// changed, and `rigUnit()` correctly reporting that the unit had not moved.
+//
+// So: no floor, and with it the last thing about a drawn bone that depends on the scene unit.
+// A thin bone is not a hard target either — the pick is a screen-space test against the joint
+// positions and never touches this geometry.
+function boneWidth(len) { return len * 0.12; }
 
 // Joint markers are ONE size across the whole rig. Sizing each one off the bone below it did
 // keep every joint clear of its own bone, but it made a rig of mixed bone lengths a string of
@@ -628,24 +665,50 @@ Skeleton.jointVisible = function (joint) {
 // A scene-scale unit so joint markers and preview bones are sized relative to the model
 // rather than to absolute engine units (a 0.02 marker is invisible on a big sculpt and
 // swallows a small one). Model-space bounding radius of the largest sculptable mesh.
-Skeleton.sceneUnit = function (main) {
-  // Called every frame by the visual pass, so cache it briefly — it walks every mesh, and
-  // it only feeds marker sizing, where a fraction of a second of staleness is invisible.
-  const now = performance.now();
-  if (main._skelUnit && now - main._skelUnitAt < 500) return main._skelUnit;
+// Last measurement, kept out here so `window.rigUnit()` can report it without needing a handle
+// on the scene.
+let _lastUnit = 1, _lastUnitFrom = 'never', _lastUnitMeshes = 0, _unitRemeasures = 0;
 
-  // HELD WHILE THE RIG IS ANIMATING, and this is the fix for markers that pop mid-playback.
+Skeleton.sceneUnit = function (main) {
+  // RE-MEASURED ONLY WHEN THE SCENE CHANGES STRUCTURALLY, never on a timer.
   //
-  // The unit is the largest mesh's BOUNDING SPHERE. On a bound character that sphere grows and
-  // shrinks as the pose changes — an arm going up genuinely makes the mesh bigger — so every
-  // joint dot, pin and marker was being rescaled by the pose. Cached for 500ms, that arrived as
-  // a step rather than a drift: markers jumping a quarter larger for half a second at a time.
+  // Every marker in the rig is sized from this, so anything that moves it resizes the whole
+  // skeleton at once. It used to be re-taken every 500ms from the largest mesh's BOUNDING
+  // SPHERE — and a bounding sphere is not a fixed property of an object, it grows and shrinks
+  // as the pose changes, because an arm going up genuinely makes the mesh bigger. On a timer
+  // that arrived as a step rather than a drift: the rig jumping a size for half a second at a
+  // time, with nothing the user did to explain it. Holding it during playback fixed the worst
+  // of it and left the rest, since a pose can be changed by hand just as easily.
   //
-  // A scene does not change SIZE because something in it moved. Playback changes poses, never
-  // structure, so the last value is the right one to keep until it stops.
+  // A scene does not change SIZE because something in it moved. So the value is latched, and
+  // the only thing that releases it is a change to WHAT is in the scene or how it is scaled:
+  // the ids of the real meshes, their transform scales, and — when there is no sculpt to
+  // measure at all — how many joints the fallback has to work with. A pose is none of those,
+  // and neither is adding a pin: pins are nulls, and nulls are not the scene's size. That is
+  // the whole of it. `window.rigUnit()` prints what it settled on and why.
   if (main._skelUnit && window._animPlaying) return main._skelUnit;
 
+  let sig = 2166136261 | 0;
+  let real = 0;
+  for (const m of main.getMeshes() || []) {
+    if (Skeleton.isJoint(m) || m._isNull) continue;
+    real++;
+    sig = (Math.imul(sig, 16777619) ^ m.getID()) | 0;
+    // The TRANSFORM scale, not the bounding sphere: scaling an object is a deliberate act and
+    // should carry the markers with it, while posing it is not and must not.
+    const sm = m.getModelSpaceMatrix ? m.getModelSpaceMatrix() : null;
+    const ss = sm ? Math.hypot(sm[0], sm[1], sm[2]) : 1;
+    sig = (Math.imul(sig, 16777619) ^ (Math.round(ss * 4096) | 0)) | 0;
+  }
+  sig = (Math.imul(sig, 16777619) ^ real) | 0;
+  // With no sculpt in the scene the unit comes from the rig's own extent, which legitimately
+  // grows as a rig is drawn — so the joint COUNT is part of the signature. Their POSITIONS are
+  // not, or posing a rig with no mesh bound to it would resize its own markers.
+  if (!real) sig = (Math.imul(sig, 16777619) ^ Skeleton.joints(main).length) | 0;
+  if (main._skelUnit && main._skelUnitSig === sig) return main._skelUnit;
+
   let best = 0;
+  let from = 'mesh';
   for (const m of main.getMeshes() || []) {
     if (Skeleton.isJoint(m) || m._isNull) continue;
     const tm = m.getThreeMesh && m.getThreeMesh();
@@ -665,6 +728,7 @@ Skeleton.sceneUnit = function (main) {
   // radius is scaled by this, so a rig drawn at scene scale suddenly measured against 1
   // makes its own joints too small to see and its snaps too tight to hit.
   if (best <= 1e-6) {
+    from = 'rig';
     const js = Skeleton.joints(main);
     if (js.length) {
       _pA.set(0, 0, 0);
@@ -677,13 +741,42 @@ Skeleton.sceneUnit = function (main) {
   // Use how far the camera is pulled back — that is the size of what the user is looking at,
   // and it is the difference between a usable snap plane and a postage stamp at the origin.
   if (best <= 1e-6) {
+    from = 'camera';
     const cam = main.getCamera && main.getCamera();
     const d = cam && cam._trans ? Math.abs(cam._trans[2]) : 0;
     if (d > 1e-6) best = d * 0.3;
   }
+  if (best <= 1e-6) from = 'default';
   main._skelUnit = best > 1e-6 ? best : 1;
-  main._skelUnitAt = now;
+  main._skelUnitSig = sig;
+  main._skelUnitFrom = from;
+  main._skelUnitMeshes = real;
+  _lastUnit = main._skelUnit; _lastUnitFrom = from; _lastUnitMeshes = real;
+  _unitRemeasures++;
+  if (window._rigUnitTrace) {
+    console.log('[rigUnit] remeasured ' + main._skelUnit.toFixed(4) + ' from ' + from
+      + ' (' + real + ' real meshes) — #' + _unitRemeasures);
+  }
   return main._skelUnit;
+};
+
+// What the rig is sized by, and where that number came from.
+//
+// Read off a module-level copy rather than reaching for the scene: a diagnostic that needs a
+// global nobody sets is a diagnostic that prints nothing, and this file has burnt that hour
+// already. It answers immediately AND turns tracing on — and after that, SILENCE IS THE
+// ANSWER. If the markers change size while nothing prints, the unit is not what moved and the
+// cause is downstream of it.
+window.rigUnit = function () {
+  console.log('[rigUnit] ' + VERSION + ' — currently ' + _lastUnit.toFixed(4)
+    + ', measured from ' + _lastUnitFrom + ' (' + _lastUnitMeshes + ' real meshes)'
+    + ' | joint dot ' + (_lastUnit * JOINT_R_FRAC).toFixed(4)
+    + ' | ' + _unitRemeasures + ' remeasures so far');
+  window._rigUnitTrace = true;
+  console.log('[rigUnit] tracing ON. It only prints when the unit is RE-MEASURED, which is a '
+    + 'structural change to the scene. Nothing printed while the rig resizes means the rig '
+    + 'is not being resized by this.');
+  return _lastUnit;
 };
 
 // Push a joint's engine matrix into its Three mesh and refresh its world matrix. Needed
@@ -1072,7 +1165,12 @@ function disposeEntry(main, id) {
   for (const p of [e.pinT, e.pinG, e.pinS, ...caps]) {
     if (!p) continue;
     g.remove(p.solid, p.ghost);
-    p.solid.material.dispose(); p.ghost.material.dispose();
+    // Both materials, not `o.material`: a pin disposed while it was highlighted would leak the
+    // axis-coloured one, and one disposed while idle would leak the highlight copy.
+    for (const o of [p.solid, p.ghost]) {
+      const mats = new Set([o.material, o.userData.vcMat, o.userData.plainMat].filter(Boolean));
+      for (const m of mats) m.dispose();
+    }
   }
   if (e.label) {
     g.remove(e.label.sprite);
@@ -1148,14 +1246,12 @@ Skeleton.updateVisuals = function (main) {
   // outside every capsule gets no weight from any of them — so seeing them is the difference
   // between tuning weights by argument and tuning them by eye.
   const showCaps = Skeleton.displayFlag('capsules');
-  // The bone body and its edge overlay, each switchable. Turn both off and only the joint
-  // markers remain — which is the pose-mode display: the spheres are what you aim at, and the
-  // bones between them are just something to see the sculpt through.
+  // The bone body and its edge overlay, each switchable. Turning both off brings the joint
+  // dots back on their own, because otherwise there would be nothing on screen marking a
+  // target that is still perfectly pickable — the bone IS the target now.
   const showSolid = Skeleton.displayFlag('solid');
   const showWire = Skeleton.displayFlag('wire');
-  // Joint spheres and pin controls are independent display layers. Pins remain available
-  // while joint spheres are hidden, which is useful for a lighter puppeteering view.
-  const showJoints = Skeleton.displayFlag('joints');
+  // Pins are their own display layer, independent of the bone body.
   const showPins = Skeleton.displayFlag('pins');
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
@@ -1194,17 +1290,40 @@ Skeleton.updateVisuals = function (main) {
 
     Skeleton.jointPos(j, _pB);
 
-    // Preselection: the joint the next trigger will act on. Colour AND size both change —
-    // colour alone is easy to lose against a warm-coloured sculpt, and in a headset the
-    // size change is what reads at a glance.
+    // Preselection: the joint the next trigger will act on. COLOUR ONLY. It used to grow the
+    // sphere as well, on the argument that size is what reads at a glance in a headset — but a
+    // marker that changes size competes with what size already means here, which is the joint
+    // radius, and the whole rig appeared to breathe as the cursor swept across it. The same
+    // call the pin markers made, for the same reason. Outliner SELECTION still scales: that is
+    // a state you set and leave, not something that flickers under a moving hand.
     const isHi = hiAll.has(id);
     const isSel = sel.has(id);
     const jointHandColor = handColor(grabHands[id] || hoverHands[id]);
+    // THERE ARE NO JOINT SPHERES ANY MORE.
+    //
+    // The bone between two joints donates its surface to the joints at its ends (see the note
+    // in Picking), so the whole rig is one continuous target and the dot that used to mark
+    // where the invisible pick point sat has nothing left to say. Preselection and selection
+    // moved onto the CAPSULE, below: every capsule touching the joint lights up, which says
+    // "this joint" without adding a second kind of marker to say it with. Two markers for one
+    // thing is what the dual representation was, and a dot that appears only sometimes is
+    // still a dot.
+    //
+    // What is left is the one case with no capsule to light: an ISOLATED joint, which has no
+    // bone at either end. Without this the first joint you place in Bone Draw would be
+    // invisible and unpickable. The bone body being switched off is the same case by a
+    // different route.
+    //
+    // There is no flag for any of it. Defaulting one to off is not the same as removing the
+    // dots: the flag was persisted, so anyone who had ever seen the old default carried it
+    // forward and got them back on every launch.
+    const isolated = !hasChildBone.has(id) && !Skeleton.isJoint(j._parentMesh);
+    const noBoneBody = !showSolid && !showWire;   // nothing else would mark the joint
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
-      o.scale.setScalar(isHi || isSel ? jr * 1.7 : jr);
+      o.scale.setScalar(isSel ? jr * 1.7 : jr);
       o.material.color.setHex(jointHandColor || (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
-      o.visible = showJoints;
+      o.visible = noBoneBody || isolated;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -1214,7 +1333,7 @@ Skeleton.updateVisuals = function (main) {
     // Declared out here, not inside the `if (pinMode)` below: the preselection highlight
     // further down needs it whether or not this joint is pinned.
     const pinObj = j._boneIKPinObj;
-    const pinMode = (pinObj && pinObj._isPinTarget) ? ((pinObj._pinMode | 0) & 3) : 0;
+    const pinMode = (pinObj && pinObj._isPinTarget) ? ((pinObj._pinMode | 0) & 7) : 0;
     if (pinMode) {
       // THE MARKER BELONGS AT THE ANCHOR, NOT AT THE JOINT.
       //
@@ -1228,7 +1347,28 @@ Skeleton.updateVisuals = function (main) {
       // independent of the solver and there is no import cycle. A rig loaded from a save file
       // has no anchor yet — the saved pose IS the pinned pose, so the joint is the right
       // reading until the solver takes its own.
+      //
+      // ROTATION-ONLY (mode 4) IS THE EXCEPTION, and for the reason above rather than against
+      // it: that pin states nothing about position, so there is no shortfall to show and the
+      // marker at the joint is the honest picture. Its handle is moved to match rather than
+      // merely drawn there — the null is the thing you grab, and one left behind while the
+      // animation carries the joint away would be unreachable. Only the translation is
+      // touched; the orientation is the half it holds and is never written here. The guard
+      // matters: this runs every frame, and an unconditional write would report a moved pin
+      // to the solve watcher forever. (Literal 4 rather than IKSolver.PIN_ROT on purpose —
+      // the visuals do not import the solver. See the note on reading the joint's own fields.)
       if (pinObj && pinObj.getModelSpaceMatrix) {
+        if (pinMode === 4 && pinObj.setModelSpaceMatrix) {
+          const pm = pinObj.getModelSpaceMatrix();
+          if (Math.abs(pm[12] - _pB.x) > 1e-9 || Math.abs(pm[13] - _pB.y) > 1e-9 ||
+              Math.abs(pm[14] - _pB.z) > 1e-9) {
+            _mTmp.fromArray(pm);
+            _mTmp.elements[12] = _pB.x;
+            _mTmp.elements[13] = _pB.y;
+            _mTmp.elements[14] = _pB.z;
+            pinObj.setModelSpaceMatrix(_mTmp.elements);
+          }
+        }
         const pm = pinObj.getModelSpaceMatrix();
         _vPin.set(pm[12], pm[13], pm[14]);
       } else {
@@ -1254,17 +1394,24 @@ Skeleton.updateVisuals = function (main) {
     // which quietly gave the steering goal a set of orientation rings it does not have.
     // PRESELECTION IS COLOUR ONLY. It used to grow the marker as well — 2.2 to 3.0, half again
     // as big — and a marker that changes SIZE competes with the thing size already means here:
-    // a pin's scale is how you read its kind and the joint radius it belongs to. The yellow
+    // a pin's scale is how you read its kind and the joint radius it belongs to. The colour
     // says "this is what you would take" on its own, and it says it without moving anything.
+    //
+    // The marker is the mode, read off directly: the triad is the position half and the rings
+    // are the rotation half. So a 3DOF pin is lines, a 6DOF pin is lines AND rings, and the
+    // rotation-only pin is rings alone. Nothing had to be invented for the fourth mode — it
+    // is the half of the 6DOF marker that says what it still does.
     const pinParts = [
       [e.pinT, showPins && (pinMode === 1 || pinMode === 2), jr * 2.2],
-      [e.pinG, showPins && pinMode === 2, jr * 2.2],
+      [e.pinG, showPins && (pinMode === 2 || pinMode === 4), jr * 2.2],
       [e.pinS, showPins && pinMode === 3, jr * 1.5],
     ];
     // The gap between where the joint is and where it is pinned. Shown only when there IS a
     // gap worth showing: a pin that is being met draws no leader, so a visible dash always
     // means the solve is falling short.
-    const gap = showPins && pinMode ? _vPin.distanceTo(_pB) : 0;
+    // Mode 4 excluded: a dash means the solve is falling short of a position goal, and a
+    // rotation-only pin has none to fall short of. (It sits on the joint anyway.)
+    const gap = showPins && pinMode && pinMode !== 4 ? _vPin.distanceTo(_pB) : 0;
     if (gap > jr * 0.35) {
       const pa = e.pinLink.geometry.getAttribute('position');
       pa.setXYZ(0, _pB.x, _pB.y, _pB.z);
@@ -1283,10 +1430,14 @@ Skeleton.updateVisuals = function (main) {
       for (const o of [part.solid, part.ghost]) {
         o.visible = on;
         if (!on) continue;
+        // Flat while it is the thing you would take, axis-coloured the rest of the time —
+        // see the note on makePinPart for why the highlight cannot be a tint.
+        const wantMat = (pinHandColor || pinHot) ? o.userData.plainMat : o.userData.vcMat;
+        if (wantMat && o.material !== wantMat) o.material = wantMat;
         if (o.material && o.material.color) {
           o.material.color.setHex(pinHandColor || (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
-              : (pinMode === 2 ? PIN_FULL_COLOR : PIN_POS_COLOR))));
+              : ((pinMode === 2 || pinMode === 4) ? PIN_FULL_COLOR : PIN_POS_COLOR))));
         }
         o.position.copy(_vPin);
         o.quaternion.copy(_qPin);
@@ -1344,7 +1495,7 @@ Skeleton.updateVisuals = function (main) {
     _dirLocal.copy(_dir).applyQuaternion(_qInv.copy(_qOwner).invert()).normalize();
     _qAlign.setFromUnitVectors(_up, _dirLocal);
     _q.copy(_qOwner).multiply(_qAlign);
-    const w = boneWidth(len, jr);
+    const w = boneWidth(len);
     // TINTED BY THE PIN AT THE BONE'S ROOT, not at its tip. Pinning the ankle colours the FOOT
     // — the bone that grows out of the pinned joint — because "the pin is at the root of the
     // foot" is how a rig is read and talked about, and tinting the shin instead invites you to
@@ -1354,7 +1505,7 @@ Skeleton.updateVisuals = function (main) {
     // back to the bone that ENDS there. That is the one case where the two readings cannot
     // agree, and showing the pin somewhere beats showing it nowhere.
     const rootPin = (parent._boneIKPinObj && parent._boneIKPinObj._isPinTarget)
-      ? ((parent._boneIKPinObj._pinMode | 0) & 3) : 0;
+      ? ((parent._boneIKPinObj._pinMode | 0) & 7) : 0;
     const leafPin = hasChildBone.has(id) ? 0 : pinMode;
     const tintMode = rootPin || leafPin;
     // IDENTITY COLOUR WHILE RIGGING, plain yellow otherwise. The capsule below already wears
@@ -1368,7 +1519,25 @@ Skeleton.updateVisuals = function (main) {
     const restTint = ident ? ident.getHex() : BONE_COLOR;
     // A steering goal does not tint the bone: the bone below a HARD pin is being held, which is
     // worth colouring, and the bone below a steering goal is not held at all.
-    const boneTint = tintMode === 2 ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : restTint);
+    // Rotation-only (4) tints as 6DOF does: the bone below it IS held, just in rotation
+    // rather than in place, and the thing the colour reports is that it is held at all.
+    // PRESELECTION AND SELECTION LIVE HERE NOW, since there is no joint dot to carry them.
+    //
+    // A capsule lights when EITHER of its ends is the joint in question, so hovering a mid-chain
+    // joint lights the bones above and below it and the pair of them reads as "this joint" —
+    // which is what a single capsule could never say, and the reason the dot survived as long
+    // as it did. At the end of a chain only one lights, and that is still unambiguous.
+    //
+    // Above the pin tint, unlike the identity colour: a pin is a standing state you can go and
+    // look at, while preselection is the answer to "what does this press do" and is worth
+    // nothing at all if something else can cover it.
+    const pid = parent.getID();
+    const boneHand = jointHandColor || handColor(grabHands[pid] || hoverHands[pid]);
+    const boneHot = isHi || hiAll.has(pid);
+    const boneSel = isSel || sel.has(pid);
+    const boneTint = boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR
+      : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR
+        : (tintMode === 1 ? PIN_POS_COLOR : restTint))));
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
     // Its whole job is to make the bone's roll and taper legible, and it can only do that by
     // contrasting with the body it sits on — matched exactly, the ridge lines disappear into
@@ -1462,7 +1631,7 @@ Skeleton.showPreview = function (main, fromPos, toPos) {
   const len = _dir.length();
   if (len < 1e-6) { pv.bone.solid.visible = pv.bone.ghost.visible = false; return; }
   _q.setFromUnitVectors(_up, _dir.divideScalar(len));
-  const w = boneWidth(len, jr);
+  const w = boneWidth(len);
   for (const o of [pv.bone.solid, pv.bone.ghost]) {
     o.position.copy(fromPos); o.quaternion.copy(_q); o.scale.set(w, len, w); o.visible = true;
     o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
@@ -1819,7 +1988,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
   for (const j of pinSrcOf.values()) {
     const pin = j._boneIKPinObj;
     pinWas.set(j, pin ? {
-      mode: (j._boneIKPin | 0) & 3,
+      mode: (j._boneIKPin | 0) & 7,
       m: new THREE.Matrix4().fromArray(pin.getModelSpaceMatrix()),
     } : null);
   }
@@ -1909,6 +2078,11 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
 const SKEL_VERSION = 5;  // v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose
+// The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
+// third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
+// so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
+function pinModeOf(bone) { return ((bone >> 1) & 3) | ((bone >> 2) & 4); }
+
 const NONE = 0xffffffff;
 const INFLUENCES = 4;
 
@@ -1935,7 +2109,14 @@ Skeleton.serialize = function (meshes) {
       // boolean, so pins persist with NO version bump: an older build reads the whole word as
       // truthy and still sees a bone, and a v1/v2 file read here simply has the pin bits clear.
       // Bit 3 (v4) = selection lock. Same field, next spare bit — see the note above.
-      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0),
+      // Bit 4 (v5) = the pin mode's THIRD bit. PIN_ROT is 4, which no longer fits the two bits
+      // the mode started in, and bit 3 was already spoken for — so the high bit sits above the
+      // lock rather than beside its own low bits. An older build reads the low two bits alone
+      // and sees a rotation-only pin as unpinned, which is the right way for it to fail: it
+      // cannot honour the mode, and a pin it cannot honour is better absent than mistaken for
+      // a position pin that would drag the joint somewhere.
+      bone: (m._isBone ? 1 : 0) | (((m._boneIKPin | 0) & 3) << 1) | (m._selectLocked ? 8 : 0)
+        | (((m._boneIKPin | 0) & 4) << 2),
       r: m._boneRadius || 0,
       mir: (m._isBone && m._boneMirror && idxOf(m._boneMirror) >= 0) ? idxOf(m._boneMirror) : NONE,
       // v3: which object this joint is pinned TO. The pin null itself is saved by the ordinary
@@ -2075,7 +2256,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       if (!(row.bone & 1)) continue;
       const m = row.mesh;
       m._isBone = true;
-      m._boneIKPin = (row.bone >> 1) & 3;
+      m._boneIKPin = pinModeOf(row.bone);
       m._isNull = true;
       m.isPickable = false;
       m._boneRadius = row.r;
@@ -2101,7 +2282,7 @@ Skeleton.deserialize = function (buffer, meshes, main) {
     pendingPins.length = 0;
     for (const row of rows) {
       if (!(row.bone & 1)) continue;
-      const mode = (row.bone >> 1) & 3;
+      const mode = pinModeOf(row.bone);
       if (!mode) continue;
       const pinMesh = row.pin !== NONE ? meshes[row.pin] : null;
       pendingPins.push({ joint: row.mesh, mode: mode, pin: pinMesh || null });
@@ -2243,7 +2424,6 @@ const DISPLAY_FLAGS = {
   weights: ['_boneShowWeights', 'boneShowWeights', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
-  joints: ['_boneShowJoints', 'boneShowJoints', true],
   pins: ['_boneShowPins', 'boneShowPins', true],
   // The path the selected joint takes over the timeline. Off by default: it costs a full
   // evaluation per sample, and it is an animation aid rather than something you want while

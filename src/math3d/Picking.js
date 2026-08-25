@@ -15,6 +15,76 @@ var _TMP_INTER_1 = [0.0, 0.0, 0.0];
 var _TMP_INTER_RIG = [0.0, 0.0, 0.0];
 var _TMP_RIG_P = [0.0, 0.0, 0.0], _TMP_RIG_D = [0.0, 0.0, 0.0];
 var _TMP_RIG_W = [0.0, 0.0, 0.0], _TMP_RIG_C = [0.0, 0.0, 0.0];
+var _TMP_SEG_A = [0.0, 0.0, 0.0], _TMP_SEG_E = [0.0, 0.0, 0.0];
+var _TMP_SEG_R = [0.0, 0.0, 0.0], _TMP_SEG_Q = [0.0, 0.0, 0.0];
+var _TMP_SEG_P = [0.0, 0.0, 0.0];
+var _TMP_SEG_MS = mat4.create();
+// Filled by the two segment helpers below, read immediately after. Two numbers rather than an
+// allocated result object: these run once per joint per pick, and a pick runs on every hover.
+var _segT = 0.0;   // parameter ALONG THE RAY at closest approach (the desktop helper only)
+var _segS = 0.0;   // parameter along the segment, 0 at the head and 1 at the tip
+
+// THE BONE IS A PICK TARGET FOR THE JOINTS EITHER SIDE OF IT.
+//
+// This rig is joint-centric: a joint is a real object with a transform and a parent, and the
+// capsule drawn between two of them has no identity at all — it is not in the mesh list, owns
+// no state, and cannot be selected. Drawing something that substantial and refusing to let it
+// be clicked is what made the rig read as two kinds of thing when it only has one. So the
+// segment donates its surface to the joints at its ends, and a hit reports whichever end is
+// nearer. Near a joint that is the same answer the old point test gave, so the two are
+// continuous; between them it fills the gap that used to be dead.
+//
+// The alternative mappings both lose a joint you need. Always reporting the TIP leaves the
+// root unreachable; always the HEAD leaves every leaf unreachable, and leaves are the hands
+// and feet you reach for most.
+
+// Closest approach between the ray vNear + t*D (t >= 0) and the segment A -> A+E.
+// Returns the distance; leaves the parameters in _segT and _segS.
+function raySegDist(vNear, D, dd, A, E) {
+  var ee = vec3.dot(E, E);
+  vec3.sub(_TMP_SEG_R, vNear, A);
+  var c = vec3.dot(D, _TMP_SEG_R);
+  if (ee < 1e-20) {                     // a zero-length bone is just its own joint
+    _segS = 0.0;
+    _segT = -c / dd;
+  } else {
+    var f = vec3.dot(E, _TMP_SEG_R);
+    var b = vec3.dot(D, E);
+    var denom = dd * ee - b * b;
+    _segT = denom > 1e-20 ? (b * f - c * ee) / denom : 0.0;
+    _segS = (b * _segT + f) / ee;
+    // Clamp to the segment, then re-solve the ray for that end — clamping one parameter
+    // without re-solving the other is the classic way this returns a point that is not the
+    // closest one.
+    if (_segS < 0.0) { _segS = 0.0; _segT = -c / dd; }
+    else if (_segS > 1.0) { _segS = 1.0; _segT = (b - c) / dd; }
+  }
+  if (_segT < 0.0) _segT = 0.0;         // behind the eye: measure from the near plane
+  vec3.scaleAndAdd(_TMP_SEG_Q, vNear, D, _segT);
+  vec3.scaleAndAdd(_TMP_SEG_P, A, E, _segS);
+  return vec3.dist(_TMP_SEG_Q, _TMP_SEG_P);
+}
+
+// Closest approach between a POINT and the segment A -> A+E. The VR rig pick is controller-tip
+// proximity rather than a ray, so it wants this one.
+function pointSegDist(P, A, E) {
+  var ee = vec3.dot(E, E);
+  vec3.sub(_TMP_SEG_R, P, A);
+  _segS = ee < 1e-20 ? 0.0 : vec3.dot(_TMP_SEG_R, E) / ee;
+  if (_segS < 0.0) _segS = 0.0; else if (_segS > 1.0) _segS = 1.0;
+  vec3.scaleAndAdd(_TMP_SEG_Q, A, E, _segS);
+  return vec3.dist(P, _TMP_SEG_Q);
+}
+
+// The joint at the other end of this joint's bone, when there is one and it can be selected.
+// A hidden or locked parent means no segment: the capsule is not a way round either state.
+function segmentHead(mesh) {
+  if (!mesh._isBone) return null;      // pins are points, and always have been
+  var p = mesh._parentMesh;
+  if (!p || !p._isBone) return null;   // the root, or a joint parented to something else
+  if (!p.isVisible || !p.isVisible() || p._selectLocked) return null;
+  return p;
+}
 var _TMP_DIR_PICK = [0.0, 0.0, 0.0];
 var _TMP_V1 = [0.0, 0.0, 0.0];
 var _TMP_V2 = [0.0, 0.0, 0.0];
@@ -214,6 +284,29 @@ class Picking {
         if (tAlong < 0) continue;                       // behind the eye
         vec3.scaleAndAdd(_TMP_RIG_C, vNear, _TMP_RIG_D, tAlong);
         var offAxis = vec3.dist(_TMP_RIG_C, _TMP_RIG_P);
+        // The bone this joint hangs off is part of its target — see the note by raySegDist.
+        // Kept as an IMPROVEMENT on the point test rather than a replacement for it, so a
+        // joint with no bone (the first one you place, before it has been extended) is picked
+        // exactly as it always was.
+        var rigHit = mesh;
+        var segHead = segmentHead(mesh);
+        if (segHead) {
+          var shm = segHead.getThreeMesh();
+          if (shm) {
+            shm.updateMatrixWorld(true);
+            var shw = shm.matrixWorld.elements;
+            _TMP_SEG_A[0] = shw[12]; _TMP_SEG_A[1] = shw[13]; _TMP_SEG_A[2] = shw[14];
+            vec3.sub(_TMP_SEG_E, _TMP_RIG_P, _TMP_SEG_A);
+            var segOff = raySegDist(vNear, _TMP_RIG_D, rl2, _TMP_SEG_A, _TMP_SEG_E);
+            if (segOff < offAxis) {
+              offAxis = segOff;
+              tAlong = _segT;
+              // NEAREST END. At s = 1 this is the joint itself and the answer matches the
+              // point test exactly, which is what makes the two continuous.
+              rigHit = _segS >= 0.5 ? mesh : segHead;
+            }
+          }
+        }
         // ORTHO RAYS ARE PARALLEL, so the hit zone is a cylinder, not a cone: scaling the
         // radius with depth there makes it vanish near the camera and balloon far away, which
         // is why nothing could be picked in orthographic at all. In both cases the radius is
@@ -232,6 +325,7 @@ class Picking {
         if (window._pickTrace) {
           console.log('[pick]', mesh._permanentStaticLabel || mesh.getID(),
             mesh._isPinTarget ? 'PIN' : 'BONE',
+            'hit=', rigHit === mesh ? 'self' : (rigHit._permanentStaticLabel || rigHit.getID()),
             'p=', _TMP_RIG_P.map((v) => v.toFixed(2)).join(','),
             't=', tAlong.toFixed(3), 'off=', offAxis.toFixed(3), 'cone=', cone.toFixed(3),
             offAxis <= cone ? 'HIT' : '');
@@ -242,7 +336,7 @@ class Picking {
         var score = offAxis + tAlong * 1e-6 - (mesh._isPinTarget ? 1e-7 : 0);
         if (score < nearRigDistance) {
           nearRigDistance = score;
-          nearRig = mesh;
+          nearRig = rigHit;
           // The intersection is reported in MESH-LOCAL coords — callers transform it by the
           // mesh matrix — and a locator's origin is its centre. Handing back the model-space
           // position instead would be transformed a second time and put the grab depth in the
@@ -334,13 +428,28 @@ class Picking {
         // Coordinates are in model space; convert to physical metres so world scale does not
         // change the reach distance.
         const vrScale = this._main?._vrScale || 1.0;
-        const physicalDistance = vec3.len(_TMP_RIG_W) * vrScale;
+        var rigDist = vec3.len(_TMP_RIG_W);
+        var vrHit = mesh;
+        // Reaching for the middle of a limb takes the joint at the nearer end of it. Same rule
+        // as the desktop pick, measured from the controller tip instead of along a ray, since
+        // that is what the VR rig pick has always been.
+        var vrHead = segmentHead(mesh);
+        if (vrHead) {
+          vrHead.getModelSpaceMatrix(_TMP_SEG_MS);
+          _TMP_SEG_A[0] = _TMP_SEG_MS[12];
+          _TMP_SEG_A[1] = _TMP_SEG_MS[13];
+          _TMP_SEG_A[2] = _TMP_SEG_MS[14];
+          vec3.sub(_TMP_SEG_E, _TMP_RIG_P, _TMP_SEG_A);
+          var segD = pointSegDist(origin, _TMP_SEG_A, _TMP_SEG_E);
+          if (segD < rigDist) { rigDist = segD; vrHit = _segS >= 0.5 ? mesh : vrHead; }
+        }
+        const physicalDistance = rigDist * vrScale;
         if (physicalDistance > (window._rigPickProximityVR || 0.11)) continue;
         var isPin = !!mesh._isPinTarget;
         // Pure controller-tip proximity. The 2 mm pin bias resolves the common exact overlap
         // with its own joint but cannot steal focus from a genuinely nearer setup bone.
         var rScore = physicalDistance - (isPin ? 0.002 : 0);
-        if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = mesh; }
+        if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = vrHit; }
         continue;
       }
       if (mesh.isPickable === false) continue;

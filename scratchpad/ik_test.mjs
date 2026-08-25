@@ -24,6 +24,31 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
     const a = '  if (!soft || !soft.size) return 0;';
     if (!SRC.includes(a)) throw new Error('inject noswivel: anchor moved');
     SRC = SRC.replace(a, '  return 0;');
+  } else if (inj === 'rotastarget') {
+    // The rotation-only pin falls through into `targets`, which is the plausible-looking
+    // version: it still holds the orientation, so it looks like it works, and quietly nails
+    // the joint to the handle's position as well.
+    const a = `        rotHeld.push(node);   // woken after markActive, not here — see the markActive note
+        continue;
+      }`;
+    if (!SRC.includes(a)) throw new Error('inject rotastarget: anchor moved');
+    SRC = SRC.replace(a, `        rotHeld.push(node);
+      }`);
+  } else if (inj === 'rotwakeearly') {
+    // The rotation-only pin lights its own node DURING the pin loop instead of after the
+    // anchor walks. markActive stops at the first already-lit node, so a hard pin whose chain
+    // runs through this joint silently loses everything above it and solves nothing.
+    const a = '    for (const n of rotHeld) n.active = true;';
+    if (!SRC.includes(a)) throw new Error('inject rotwakeearly: anchor moved');
+    SRC = SRC.replace(a, '')
+      .replace(`        rotHeld.push(node);   // woken after markActive, not here — see the markActive note`,
+        '        node.active = true;');
+  } else if (inj === 'rotwatchall') {
+    // pinsMoved goes back to comparing all sixteen matrix elements for a rotation-only pin,
+    // so its handle riding along with its joint reports a change on every frame of playback.
+    const a = '      if (rotOnly && (i > 10 || (i & 3) === 3)) continue;';
+    if (!SRC.includes(a)) throw new Error('inject rotwatchall: anchor moved');
+    SRC = SRC.replace(a, '');
   } else if (inj === 'axial') {
     const a = `  _vPu.addScaledVector(_vAx, -_vPu.dot(_vAx));`;
     const b = `  _vPv.addScaledVector(_vAx, -_vPv.dot(_vAx));`;
@@ -447,12 +472,31 @@ function lengthsPreserved(name, joints, before) {
 
   // The cycle gained a fourth stop when steering goals arrived: a soft pin is a pin in every
   // structural sense (same object, same anchor, same undo) and differs only in what the solver
-  // does with it, so it belongs on the same button rather than on a new one.
+  // does with it, so it belongs on the same button rather than on a new one. Rotation-only
+  // then took a fifth, sitting NEXT TO 6DOF rather than at the end of the numbers, because it
+  // is the same hold minus a half and reads as the neighbour of the thing it halves. That is
+  // why the order is a written-out ring: PIN_ROT is 4 for file compatibility, so the sequence
+  // the button walks is no longer the mode numbers in order.
   const c3 = IKSolver.cyclePin(j, m9);
-  check('cycle: full -> steer', c3.mode === IKSolver.PIN_SOFT);
+  check('cycle: full -> rotation only', c3.mode === IKSolver.PIN_ROT);
+  check('cycle: a rotation-only pin still reads as pinned', IKSolver.isPinned(j));
+  check('cycle: rotation only reuses the same object', IKSolver.pinObject(j) === pinObj);
+
+  const c35 = IKSolver.cyclePin(j, m9);
+  check('cycle: rotation only -> steer', c35.mode === IKSolver.PIN_SOFT);
   check('cycle: a steering goal still reads as pinned', IKSolver.isPinned(j));
   check('cycle: and still reuses the same object', IKSolver.pinObject(j) === pinObj);
   check('cycle: and does not add a null of its own', m9.getMeshes().length === before + 1);
+
+  // Every mode is reachable from the button and none of them twice, which is the whole
+  // contract of a cycle and the thing a hand-written ring can get wrong.
+  const ring = IKSolver.PIN_CYCLE;
+  const modes = [IKSolver.PIN_NONE, IKSolver.PIN_POS, IKSolver.PIN_FULL,
+                 IKSolver.PIN_SOFT, IKSolver.PIN_ROT];
+  check('cycle: the ring visits every mode exactly once',
+    ring.length === modes.length && modes.every((m) => ring.filter((r) => r === m).length === 1),
+    JSON.stringify(ring));
+  check('cycle: the modes are all distinct values', new Set(modes).size === modes.length);
 
   const c4 = IKSolver.cyclePin(j, m9);
   check('cycle: steer -> none', c4.mode === IKSolver.PIN_NONE);
@@ -1666,6 +1710,127 @@ function poleLeg() {
   rig.joints.forEach((j, i) => { worst = Math.max(worst, pos(j).distanceTo(was[i])); });
   check('a steering goal with nothing to swivel about does nothing', worst < 1e-9,
     'moved ' + worst.toExponential(2));
+}
+
+
+// ROTATION-ONLY PINS. The other half of a 6DOF pin: the orientation is held, the position is
+// not. The half that is easy to get wrong is the half that must NOT happen — a mode that holds
+// orientation by quietly also holding position is indistinguishable from 6DOF in every pose
+// where the joint happens to be reachable, and only shows itself as a limb that will not
+// travel. So the check is on the freedom, not only on the hold.
+{
+  window._ikWritten = null;
+  const mq = (j) => {
+    const q = new THREE.Quaternion();
+    new THREE.Matrix4().fromArray(j.getModelSpaceMatrix()).decompose(
+      new THREE.Vector3(), q, new THREE.Vector3());
+    return q;
+  };
+
+  // ON THE LEAF, which is where an orientation hold is a statement rather than a trap: hold a
+  // MID-chain joint's orientation and it also decides where its child ends up, because the
+  // child hangs off it rigidly. That is true of 6DOF pins too and is not this mode's problem,
+  // but it means the ankle is the honest place to measure "position is free".
+  const rig = poleLeg();
+  IKSolver.setPin(rig.ankle, IKSolver.PIN_ROT, rig.main);   // replaces poleLeg's PIN_POS
+  const pin = IKSolver.pinObject(rig.ankle);
+  // A distinctive held orientation, so the check cannot pass just because nothing rotated —
+  // and the handle deliberately parked well AWAY from the joint, somewhere the ankle could
+  // comfortably reach. In the app the handle rides on its joint, so a handle position that is
+  // quietly being used as a goal would look harmless there; put it a metre off and a goal
+  // becomes something the pose cannot hide.
+  const held = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.7);
+  const handle = new THREE.Vector3(0, 0.5, 1.2);
+  pin._m.compose(handle, held, new THREE.Vector3(1, 1, 1));
+
+  const ankleWas = pos(rig.ankle);
+  Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(0.2, 1.9, 0));
+  IKSolver.holdPins(rig.main);
+
+  check('rotation-only pin: the orientation IS held',
+    mq(rig.ankle).angleTo(held) < 1e-6,
+    'off by ' + mq(rig.ankle).angleTo(held).toFixed(4) + ' rad');
+  check('rotation-only pin: the position is NOT held',
+    pos(rig.ankle).distanceTo(ankleWas) > 1e-3,
+    'ankle moved ' + pos(rig.ankle).distanceTo(ankleWas).toExponential(2));
+  check('rotation-only pin: the handle position is not a goal',
+    pos(rig.ankle).distanceTo(handle) > 1.0,
+    'ankle ended ' + pos(rig.ankle).distanceTo(handle).toFixed(3) + ' from the handle');
+
+  // The contrast that makes the second check mean something: the SAME rig with a 6DOF pin on
+  // the ankle DOES hold the position, so "not held" is a property of the mode rather than of a
+  // pose where nothing was going to move anyway.
+  const rig6 = poleLeg();
+  IKSolver.setPin(rig6.ankle, IKSolver.PIN_FULL, rig6.main);
+  const anchor6 = IKSolver.pinAnchor(rig6.ankle, new THREE.Vector3());
+  Skeleton.moveJoint(rig6.main, rig6.hips, new THREE.Vector3(0.2, 1.9, 0));
+  IKSolver.holdPins(rig6.main);
+  check('contrast: a 6DOF pin on the same joint DOES hold the position',
+    pos(rig6.ankle).distanceTo(anchor6) < 1e-3,
+    'ankle off by ' + pos(rig6.ankle).distanceTo(anchor6).toExponential(2));
+
+  // And it costs the hard pins nothing. Measured as a DIFFERENCE against the same solve with
+  // the rotation-only pin absent, rather than against the anchor: a hard pin does not always
+  // reach its anchor — this pose is slightly out of reach, which is ordinary — and a check
+  // written against the anchor would be measuring the reach rather than the interference.
+  const kneeOnly = (rot) => {
+    const r = poleLeg();
+    IKSolver.setPin(r.ankle, rot ? IKSolver.PIN_ROT : IKSolver.PIN_NONE, r.main);
+    IKSolver.setPin(r.knee, IKSolver.PIN_POS, r.main);
+    Skeleton.moveJoint(r.main, r.hips, new THREE.Vector3(0.2, 1.9, 0));
+    IKSolver.holdPins(r.main);
+    return pos(r.knee);
+  };
+  const kneeAlone = kneeOnly(false);
+  const kneeWithRot = kneeOnly(true);
+  check('rotation-only pin: a hard pin on the same chain solves identically without it',
+    kneeAlone.distanceTo(kneeWithRot) < 1e-9,
+    'knee shifted ' + kneeAlone.distanceTo(kneeWithRot).toExponential(2));
+}
+
+// A rotation-only pin MID-CHAIN must not sever the chain above it. It lights its own node so
+// that applyRotations reaches it, and markActive's walk stops at the first node already lit —
+// so lighting it at the wrong moment leaves a hard pin further down with no chain to move and
+// the whole rig standing still. Measured on the joint ABOVE the rot pin, because that is the
+// part that disappears: whether the ankle then reaches its own anchor is a separate question
+// (a held mid-chain orientation does place its child, which is what holding one means).
+{
+  window._ikWritten = null;
+  const rig = poleLeg();                                   // ankle already PIN_POS
+  IKSolver.setPin(rig.knee, IKSolver.PIN_ROT, rig.main);
+  const rigid = pos(rig.knee).add(new THREE.Vector3(0.2, -0.1, 0));  // where a dead solve leaves it
+  Skeleton.moveJoint(rig.main, rig.hips, new THREE.Vector3(0.2, 1.9, 0));
+  IKSolver.holdPins(rig.main);
+  check('rotation-only pin: a hard pin below it still moves the chain ABOVE it',
+    pos(rig.knee).distanceTo(rigid) > 1e-3,
+    'knee sat exactly where the hips carried it, ' +
+    pos(rig.knee).distanceTo(rigid).toExponential(2) + ' from rigid');
+}
+
+// The pin watcher must ignore a rotation-only pin's TRANSLATION. Its handle rides on the joint
+// it holds, so a moved-pin report would fire on every frame of playback and put the whole rig
+// through a solve per frame — which is the judder this mode would otherwise reintroduce.
+{
+  const rig = poleLeg();
+  IKSolver.setPin(rig.knee, IKSolver.PIN_ROT, rig.main);
+  const pin = IKSolver.pinObject(rig.knee);
+  IKSolver.pinsMoved(rig.main);                       // seed the caches
+  check('watcher: a settled rig reports nothing moved', !IKSolver.pinsMoved(rig.main));
+
+  const e = pin._m.elements;
+  e[12] += 0.5; e[13] -= 0.25;                        // translate the handle only
+  check('watcher: translating a rotation-only pin is not a change',
+    !IKSolver.pinsMoved(rig.main));
+
+  pin._m.multiply(new THREE.Matrix4().makeRotationZ(0.3)); // now rotate it
+  check('watcher: rotating one IS a change', IKSolver.pinsMoved(rig.main));
+
+  // A position pin is watched whole, as it always was.
+  const rigP = poleLeg();
+  const pinP = IKSolver.pinObject(rigP.ankle);
+  IKSolver.pinsMoved(rigP.main);
+  pinP._m.elements[12] += 0.5;
+  check('watcher: translating a POSITION pin is still a change', IKSolver.pinsMoved(rigP.main));
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
