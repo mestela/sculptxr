@@ -605,6 +605,18 @@ class SculptBase {
   }
 
   makeStrokeXR(picking, pickingSym, isSculpting, origin, dir, options) {
+    // Split out of xr-tools: this is the shared hover/stroke path every tool runs per frame,
+    // so it separates "what all tools do" from "what THIS tool does" — and xr-tools at 3.3 to
+    // 4.8ms with the trigger not pressed is mostly hover work by definition.
+    this._main._mark?.('tool-hover');
+    try {
+      return this._makeStrokeXRInner(picking, pickingSym, isSculpting, origin, dir, options);
+    } finally {
+      this._main._mark?.('xr-tools');
+    }
+  }
+
+  _makeStrokeXRInner(picking, pickingSym, isSculpting, origin, dir, options) {
     var pick1 = null;
     var pick2 = null;
 

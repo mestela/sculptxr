@@ -8674,6 +8674,11 @@ class Scene {
     }
 
 
+    // THE PER-FRAME MESH PICK, split out because xr-pose was seen spiking to 5ms and this is
+    // the only thing in that stretch that scales with the sculpt. It runs whether or not the
+    // trigger is down — the brush cursor needs a surface point to sit on — so on a dense mesh
+    // it is paid every frame for a cursor.
+    this._mark('xr-pick');
     let picked = false;
     
     const activeSceneMesh = this.getMesh();
@@ -8755,6 +8760,7 @@ class Scene {
       }
     }
 
+    this._mark('xr-pose');
     // Capture Mesh Intersection Distance for Laser Visuals
     if (picked) {
       const hitPoint = this._picking.getIntersectionPoint(); // engine space
