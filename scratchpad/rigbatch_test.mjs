@@ -18,6 +18,7 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 // Defect injections (standing lesson 1):
 //   RIG_INJECT=nullscount   nulls count towards the scene unit, so adding a PIN resizes the
 //                           whole rig — the reported bug, exactly
+//   RIG_INJECT=nosync       a matrix write is left unsynced to the three-side matrix
 //   RIG_INJECT=widthfloor   the scene-unit floor goes back under bone width, so a short bone
 //                           on a large rig comes out many times too fat
 //   RIG_INJECT=unitreadspos the unit signature folds in an object's POSITION, so posing the
@@ -28,6 +29,12 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
     const a = '    if (Skeleton.isJoint(m) || m._isNull) continue;';
     if (SRC.split(a).length - 1 !== 2) throw new Error('inject nullscount: anchor moved');
     SRC = SRC.replace(a, '    if (false) continue;');   // the signature loop is the first one
+  } else if (inj === 'nosync') {
+    // A matrix write that leaves the three-side matrix behind. The two then disagree until
+    // something refreshes them, and the next world-preserving read measures the stale one.
+    const a = '            Skeleton.syncThree(pinObj);';
+    if (!SRC.includes(a)) throw new Error('inject nosync: anchor moved');
+    SRC = SRC.replace(a, '');
   } else if (inj === 'widthfloor') {
     const a = 'function boneWidth(len) { return len * 0.12; }';
     if (!SRC.includes(a)) throw new Error('inject widthfloor: anchor moved');
@@ -279,6 +286,44 @@ check('...and it can still be re-measured when the scene really does change',
   check('no drawn bone is sized by the scene unit',
     !/boneWidth\([^)]*jr/.test(SRC),
     'that is how one number for the whole rig ended up setting one bone’s width');
+}
+
+
+// ── EVERY MATRIX WRITE IS SYNCED ─────────────────────────────────────────────
+//
+// There are TWO matrices for every mesh: the SculptGL `_matrix` and the three-side
+// `tm.matrix`. A write to the first that does not push through to the second leaves them
+// disagreeing, and the damage lands later and somewhere else — `setMeshParent`, `attach()`
+// and `getModelSpaceMatrix` on a parented mesh all read the THREE side, so the next
+// world-preserving operation preserves a world transform that was never true. FrameGroup
+// carries a note about this exact mistake SHRINKING a duplicated mesh, which is why a
+// gradual collapse sends you here.
+//
+// So: a structural rule rather than a behavioural one, because the failure is not local to
+// the write and no unit of behaviour contains it. Every setModelSpaceMatrix / getMatrix()
+// write in the rig files must be followed by syncThree within a few lines.
+{
+  const files = [['Skeleton.js', SRC],
+    ['IKSolver.js', fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8')]];
+  for (const [name, src] of files) {
+    const lines = src.split('\n');
+    const unsynced = [];
+    lines.forEach((l, i) => {
+      const writes = /\.setModelSpaceMatrix\(/.test(l)
+        || /mat4\.copy\(\s*\w+\.getMatrix\(\)/.test(l)
+        || /\.setMatrix\(/.test(l);
+      if (!writes) return;
+      // syncThree is what pushes it across. Allow it on the same line or just after, and
+      // allow the definition of syncThree itself, which IS the push.
+      if (/syncThree|Skeleton\.syncThree = /.test(l)) return;
+      const after = lines.slice(i, i + 4).join('\n');
+      if (/syncThree|matrixAutoUpdate|tm\.matrix\.fromArray/.test(after)) return;
+      unsynced.push((i + 1) + ': ' + l.trim());
+    });
+    check(name + ': every matrix write is pushed through to the three-side matrix',
+      unsynced.length === 0,
+      unsynced.join('  |  '));
+  }
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

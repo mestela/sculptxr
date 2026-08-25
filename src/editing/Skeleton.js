@@ -860,8 +860,16 @@ Skeleton.makePin = function (main, joint) {
     _mTmp.fromArray(joint.getModelSpaceMatrix());
     _mTmp.decompose(_vTmp, _qPin, _sTmp);
     _mTmp.compose(_vTmp, _qPin, _sOnePin);
+    // Seat it at the joint AND push that through to the three-side matrix. Unsynced, the
+    // pin's two matrices disagree from the moment it is created: the SculptGL one stands at
+    // the joint, the three one is still the locator buildNull left at the origin. Everything
+    // that reads a pin through `getModelSpaceMatrix` on a parented mesh — the anchor the
+    // solve chases included — then reads the wrong one, and every world-preserving operation
+    // preserves a transform that was never true. Same mistake FrameGroup records shrinking a
+    // duplicated mesh.
     if (pin.setModelSpaceMatrix) pin.setModelSpaceMatrix(_mTmp.elements);
     else mat4.copy(pin.getMatrix(), _mTmp.elements);
+    Skeleton.syncThree(pin);
   }
   return pin;
 };
@@ -1222,9 +1230,81 @@ Skeleton.healGraph = function (main) {
 // Rebuild every joint marker + bone from the live model-space matrices. Called once per
 // frame from the render loop, so posing, undo, gizmo drags and animation playback all
 // keep the skeleton correct without any of them having to know it exists.
+// ── DRIFT TRIPWIRE ────────────────────────────────────────────────────────────────────────
+//
+// matt: "a pinned bone gradually scaled away to nothing... the elbow, and the hand child both
+// collapse." GRADUAL means compounding, so something writes a joint every frame and does not
+// give back exactly what it took. Reading has not found it and the solver measures clean over
+// closed loops in every pin mode, so this asks the running app instead.
+//
+// Only two numbers can shrink a drawn bone, and they are both LOCAL to the joint:
+//   - the local TRANSLATION, whose length is the bone in the parent's frame
+//   - the local SCALE, which shrinks everything below it, which is why a hand collapses with
+//     the elbow that carries it
+// Sampling both each frame says WHICH, and that halves the search on the first report. Local
+// rather than model-space on purpose: a model-space length changes when an ancestor legitimately
+// moves, and would cry wolf on every pose.
+let _driftPrev = null, _driftAt = 0, _driftWorst = new Map();
+
+function driftCheck(joints) {
+  const now = performance.now();
+  const cur = new Map();
+  for (const j of joints) {
+    const m = j.getMatrix();
+    cur.set(j.getID(), {
+      name: j._permanentStaticLabel || ('joint ' + j.getID()),
+      t: Math.hypot(m[12], m[13], m[14]),
+      s: Math.hypot(m[0], m[1], m[2]),
+    });
+  }
+  if (_driftPrev) {
+    for (const [id, c] of cur) {
+      const p = _driftPrev.get(id);
+      if (!p) continue;
+      // A real edit moves a joint by a lot in one frame; a ratchet moves it by a sliver every
+      // frame forever. The band catches the second and ignores the first, which is the whole
+      // point — otherwise posing the rig buries the signal.
+      const dt = p.t > 1e-12 ? (c.t - p.t) / p.t : 0;
+      const ds = p.s > 1e-12 ? (c.s - p.s) / p.s : 0;
+      for (const [kind, d] of [['translation', dt], ['scale', ds]]) {
+        if (Math.abs(d) < 1e-7 || Math.abs(d) > 0.25) continue;
+        const key = c.name + ' ' + kind;
+        const w = _driftWorst.get(key) || { n: 0, sum: 0, first: d };
+        w.n++; w.sum += d;
+        _driftWorst.set(key, w);
+      }
+    }
+  }
+  _driftPrev = cur;
+  if (now - _driftAt < 1000) return;
+  _driftAt = now;
+  if (!_driftWorst.size) { console.log('[rigDrift] nothing moved this second'); return; }
+  const rows = Array.from(_driftWorst.entries())
+    .sort((a, b) => Math.abs(b[1].sum) - Math.abs(a[1].sum)).slice(0, 6);
+  for (const [key, w] of rows) {
+    console.log('[rigDrift] ' + key + ': ' + w.n + ' frames, net '
+      + (w.sum * 100).toFixed(4) + '% (' + (w.sum > 0 ? 'growing' : 'SHRINKING') + ')');
+  }
+  _driftWorst = new Map();
+}
+
+// Watch every joint's LOCAL translation and scale and report anything that creeps. Run it,
+// then pose the rig with a pin on and leave it alone for a few seconds. A line naming
+// "translation" means the bone's own offset is being eaten; "scale" means the joint is
+// shrinking and taking its children with it. Silence means neither, and the collapse is in
+// what draws the bone rather than in the rig.
+window.rigDrift = function (on) {
+  window._rigDrift = on !== false;
+  _driftPrev = null; _driftWorst = new Map(); _driftAt = 0;
+  console.log('[rigDrift] ' + VERSION + ' — ' + (window._rigDrift ? 'ON' : 'off')
+    + (window._rigDrift ? '. One line a second per drifting joint, even if nothing drifts.' : ''));
+  return window._rigDrift;
+};
+
 Skeleton.updateVisuals = function (main) {
   Skeleton.healGraph(main);
   const joints = Skeleton.joints(main);
+  if (window._rigDrift) driftCheck(joints);
   main._skelVis = main._skelVis || new Map();
   if (!joints.length) {
     if (main._skelVis.size) for (const id of Array.from(main._skelVis.keys())) disposeEntry(main, id);
@@ -1366,7 +1446,18 @@ Skeleton.updateVisuals = function (main) {
             _mTmp.elements[12] = _pB.x;
             _mTmp.elements[13] = _pB.y;
             _mTmp.elements[14] = _pB.z;
+            // WRITE AND SYNC, together, or the write is only half done and it RATCHETS.
+            //
+            // setModelSpaceMatrix stores a LOCAL matrix; getModelSpaceMatrix on a parented
+            // mesh reads back through `tm.matrixWorld`, which only the three-side sync
+            // refreshes. Unsynced, the read below — and the read on the NEXT frame — sees the
+            // world matrix from before the write, so each frame takes a stale world
+            // transform, keeps its rotation and scale, patches the translation and re-seats
+            // it: local becomes inv(parent_now) * parent_then * local, which is identity only
+            // while the parent is still. On a moving joint it compounds, every frame, for as
+            // long as the pin exists.
             pinObj.setModelSpaceMatrix(_mTmp.elements);
+            Skeleton.syncThree(pinObj);
           }
         }
         const pm = pinObj.getModelSpaceMatrix();

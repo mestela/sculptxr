@@ -253,7 +253,13 @@ IKSolver.attachPin = function (joint, pin, mode, m) {
   pin._isPinTarget = true;
   pin._pinMode = mode;
   pin._pinnedJoint = joint;
-  if (m) mat4.copy(pin.getMatrix(), m);
+  // Restoring a pin's matrix on undo has to SYNC it, like every other matrix write in this
+  // file. Writing the SculptGL local and leaving the three-side matrix behind leaves the two
+  // disagreeing until something happens to refresh them, and the next world-preserving read
+  // then measures the stale one. FrameGroup carries a note about the same mistake shrinking a
+  // duplicated mesh; a pin read through a stale world matrix reports the wrong anchor, and
+  // the solve chases it.
+  if (m) { mat4.copy(pin.getMatrix(), m); Skeleton.syncThree(pin); }
 };
 
 // Forget every remembered bend, so the next solve re-reads it from the rest pose. Called
