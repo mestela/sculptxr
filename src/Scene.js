@@ -1199,9 +1199,27 @@ class Scene {
     p.gaps.sort((a, b) => a - b);
     const med = p.gaps[p.gaps.length >> 1] || 0;
     const p95 = p.gaps[Math.floor(p.gaps.length * 0.95)] || 0;
+
+    // WHAT THE SCENE IS CARRYING, because the frame time was seen to CLIMB - 6.5ms to 16ms
+    // over a few minutes with no rig in the scene. A cost that grows is not a slow function,
+    // it is something accumulating, and these four numbers say what: objects drive the
+    // matrix-update traversal, geometries and textures are what leaks when something is
+    // rebuilt without being disposed, and draw calls say whether it reached the GPU.
+    let objs = 0;
+    if (this._scene) this._scene.traverse(() => { objs++; });
+    const info = this._renderer ? this._renderer.info : null;
+    const grew = p.objs ? (objs - p.objs) : 0;
+    const geo = info ? info.memory.geometries : 0;
+    const geoGrew = p.geo ? (geo - p.geo) : 0;
+    p.objs = objs; p.geo = geo;
+
     console.log('[xrPerf] ' + p.n + ' frames/s | our work ' + (p.work / p.n).toFixed(2) +
       'ms avg, ' + p.worst.toFixed(1) + 'ms worst | frame gap ' + med.toFixed(1) +
-      'ms median, ' + p95.toFixed(1) + 'ms p95 | ' + p.late + ' late');
+      'ms median, ' + p95.toFixed(1) + 'ms p95 | ' + p.late + ' late' +
+      ' | scene ' + objs + (grew ? ' (' + (grew > 0 ? '+' : '') + grew + ')' : '') +
+      ', geom ' + geo + (geoGrew ? ' (' + (geoGrew > 0 ? '+' : '') + geoGrew + ')' : '') +
+      ', tex ' + (info ? info.memory.textures : 0) +
+      ', calls ' + (info ? info.render.calls : 0));
     p.n = 0; p.work = 0; p.worst = 0; p.late = 0; p.at = now; p.gaps.length = 0;
   }
 

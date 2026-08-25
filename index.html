@@ -5,11 +5,11 @@
     <meta charset='utf-8' />
     <meta name='viewport'
         content='width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0'>
-    <title>SculptXR v3.20.39</title>
+    <title>SculptXR v3.20.40</title>
     <meta name="description" content="SculptXR - WebXR sculpting application">
     <!--
                                                               SculptXR - WebXR sculpting application
-                                                              VERSION: v3.20.39
+                                                              VERSION: v3.20.40
                                                               Target: WebXR (Quest 2/3/Pro)
                                                             -->
     <meta property="og:site_name" content="SculptXR.com" />
@@ -179,7 +179,7 @@
 
             // Expose screenLog globally
             window.screenLog = (msg, color) => {
-                if (window._fullLogBuffer) window._fullLogBuffer.push(msg);
+                if (window._pushFullLog) window._pushFullLog(msg);
                 console.log(msg); // Route through intercepted console.log
                 if (window.app) {
                     const scene = window.app;
@@ -253,7 +253,7 @@
                     }
                 }
 
-                if (window._fullLogBuffer) window._fullLogBuffer.push(msg);
+                if (window._pushFullLog) window._pushFullLog(msg);
                 if (!window._showDebugLog) {
                     cls.call(console, `[+${delta.toFixed(1)}ms]`, ...args);
                     return;
@@ -326,8 +326,20 @@
                 }
             });
 
-            // Full log buffer — unbounded, copied on demand
+            // Full log buffer, copied on demand. CAPPED — it was unbounded, and its own comment
+            // said so. Anything that logs per frame (a trace flag, a perf counter, a chatty
+            // tool) grew it without limit for the life of the session, which is memory and GC
+            // pressure bought for scrollback nobody reads past a few thousand lines.
             window._fullLogBuffer = [];
+            window._fullLogCap = 4000;
+            window._pushFullLog = (msg) => {
+                const b = window._fullLogBuffer;
+                if (!b) return;
+                b.push(msg);
+                // Trimmed in one block rather than shifting per push: shift() on a long array
+                // is O(n), so trimming on every line would cost more than the leak did.
+                if (b.length > window._fullLogCap * 1.25) b.splice(0, b.length - window._fullLogCap);
+            };
 
             // Add Copy Button (Ensured logic)
             const logContainer = document.getElementById('log');
