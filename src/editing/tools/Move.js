@@ -515,7 +515,8 @@ class Move extends SculptBase {
       const pickingSym = main.getSculptManager().getSymmetry() ? main.getPickingSymmetry() : null;
       // Re-use SculptBase logic for cursor update
       super.makeStrokeXR(picking, pickingSym, false);
-      this.updateRender();
+      // HOVER, not a stroke: the mesh is untouched, so its buffers do not need re-uploading.
+      this.cursorRender();
 
       return;
     }

@@ -333,6 +333,20 @@ class SculptBase {
     this._main.render();
   }
 
+  // A HOVER CHANGED NOTHING, so it must not pay what a stroke pays.
+  //
+  // updateRender re-uploads the mesh's vertex buffers to the GPU. That is exactly right after a
+  // stroke has moved vertices, and pure waste when the controller has merely moved: not one
+  // value in those buffers is different. Called every frame from a tool's hover path it was the
+  // single largest CPU cost in the headset - xr-tools sat at 3.3-4.8ms with the trigger not
+  // pressed, while the shared hover path it wraps measured 0.04ms.
+  //
+  // The redraw flag still goes up, because the brush CURSOR did move and that has to reach the
+  // screen. The cursor is its own object; it was never in the mesh's buffers.
+  cursorRender() {
+    this._main.render();
+  }
+
   makeStroke(mouseX, mouseY, picking, pickingSym) {
     var mesh = this.getMesh();
     picking.intersectionMouseMesh(mesh, mouseX, mouseY);
