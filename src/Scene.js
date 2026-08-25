@@ -1263,7 +1263,8 @@ class Scene {
     this._preventRender = false;
     this._mark('matrices');
     this.updateMatricesAndSort();
-    this._mark('xr-input');
+    // XR frame setup only — getFrame, getReferenceSpace, a couple of counters.
+    this._mark('xr-setup');
 
     var gl = this._gl;
     if (!gl) return;
@@ -1376,9 +1377,19 @@ class Scene {
           }
         }
         // Single drain: executes the one requestPaint callback queued above.
-        this._mark('xr-input');
+        // THE PANEL RASTERISATION, and it took three attempts to label it honestly.
+        //
+        // drainRAF executes the paint callbacks the panels queued above — DOM to SVG to
+        // texture upload, 20-80ms for a complex panel. This was inside a bucket called
+        // `xr-input`, which is how "the menus are not the cost" got concluded twice from
+        // measurements that had the paint filed under input, while a bucket that WAS called
+        // `panels` measured a region after handleXRInput containing no panel work at all.
+        //
+        // A label that names the wrong thing is worse than no label: it does not merely fail
+        // to inform, it argues confidently for the wrong conclusion.
+        this._mark('panel-paint');
         drainRAF();
-        this._mark('rig');
+        this._mark('post-paint');
       }
       // Keep the VR timeline texture fresh — GuiTimeline.draw() runs in its own rAF loop.
       if (this._vrBlendMesh?.visible && this._vrBlendTexture) {
@@ -1415,7 +1426,10 @@ class Scene {
       if (frame && refSpace && typeof this.handleXRInput === 'function') {
         try {
           this.handleXRInput(frame, refSpace);
-          this._mark('panels');
+          // NOT panels — this is whatever runs between input and the rig visuals. It was
+          // called `panels` and measured 0.03ms, which is a large part of why the real panel
+          // cost went unfound for so long.
+          this._mark('post-input');
         } catch (e) {
           console.error("XR Input Error:", e);
         }
@@ -6029,8 +6043,8 @@ class Scene {
   handleXRInput(frame, refSpace) {
     // SPLIT, because this one section is 3,000 lines and it swung from 0.84ms to 8.71ms with a
     // menu open — which is a specific thing happening, not "input is slow". The labels here
-    // replace the outer xr-input bucket for the part they cover; whatever is left over still
-    // shows as xr-input, and that remainder is itself a useful number.
+    // replace the outer bucket for the part they cover; whatever is left over shows as
+    // xr-pose, and that remainder is itself a useful number.
     this._mark('xr-pose');
     try {
 
