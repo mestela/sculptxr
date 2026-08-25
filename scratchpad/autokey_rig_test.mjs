@@ -124,8 +124,20 @@ check('the registry keys any mesh generically', /_writeTransformKey\(mesh, time\
 // Bound to the PROPERTY rather than to one spelling of it: the branch used to be a single
 // line and is now a block, and a guard pinned to the line reported the addition as the bug.
 {
+  // BOUNDED BY THE BLOCK, NOT BY A CHARACTER COUNT. This was a fixed 700-char window, and it
+  // truncated the moment a diagnostic was added inside the block — reporting correct code as
+  // broken, which is the standing lesson this repo already carries about slicing by length.
+  // Walk the braces from the `if (mesh._isBone) {` instead.
   const i = REG.indexOf('mesh._isBone');
-  const near = i === -1 ? '' : REG.slice(i, i + 700);
+  let near = '';
+  if (i !== -1) {
+    const open = REG.indexOf('{', i);
+    let depth = 0;
+    for (let k = open; k < REG.length; k++) {
+      if (REG[k] === '{') depth++;
+      else if (REG[k] === '}') { depth--; if (!depth) { near = REG.slice(i, k + 1); break; } }
+    }
+  }
   check('playback re-solves pins after a keyed bone is written',
     /_ikPinsDirty = true/.test(near),
     'without this a keyed pose interpolates off its pins');
