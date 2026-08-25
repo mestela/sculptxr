@@ -1295,11 +1295,20 @@ class Scene {
       this._logThrottle = (this._logThrottle || 0) + 1;
 
       // VR Menu Update (Sync with Frame and Upload to WebGL if dirty)
+      // THE PANELS' PER-FRAME UPDATE, labelled at last. This ran inside the stretch the timer
+      // was calling `xr-input`, which is how "the menus are not the cost" was concluded from a
+      // measurement that had them filed under input. They are the cost; the RASTERISATION is
+      // not, and those are different things.
+      // Split two ways, because they are two different technologies with two different costs
+      // and lumping them would repeat the mistake that produced `xr-input`: gui-canvas is the
+      // canvas-drawn GUI, panel-html is the DOM-backed one.
+      this._mark('gui-canvas');
       if (!this._htmlPanelsHidden) {
         if (this._guiXR) this._guiXR.update();
         if (this._guiMini) this._guiMini.update();
         if (this._guiPopup) this._guiPopup.update();
       }
+      this._mark('panel-html');
 
       // [HTMLVRPanel] Mark dirty panels, then drain once for all of them.
       // Skipped entirely when Y-button hide is active so the polyfill does
@@ -1367,6 +1376,7 @@ class Scene {
           }
         }
         // Single drain: executes the one requestPaint callback queued above.
+        this._mark('xr-input');
         drainRAF();
         this._mark('rig');
       }
