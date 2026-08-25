@@ -193,6 +193,63 @@ decisions, so nobody unpicks one by accident:
 
 ---
 
+## VR PERFORMANCE — the instruments, and what they found (2026-08-25)
+
+**Three switches, all self-announcing.** Each replies when turned on, because a silent
+instrument and a silent problem are indistinguishable from a console — a mistake made three
+times in the session that built them.
+
+```js
+xrPerf()                  // frames/s, OUR work, frame gap median+p95, late count,
+                          // scene/geom/tex/calls, a per-section breakdown, and the
+                          // section breakdown of the WORST frame in each second
+ikPerf()                  // solves/s, ms each, and WHICH of the two dirty flags asked
+window._hoverTrace = true // per panel per second: uv range, biggest single-frame uv jump,
+                          // how far the ray and the panel each moved, distinct elements hit
+```
+
+**Read the worst frame, not the average.** A lagging controller is not a throughput problem:
+matt's runs showed a 13.9ms median against an 83ms p95. The median frame can be perfect while
+the tail is what makes it unusable, and a mean hides every one.
+
+### What was actually wrong, in order of size
+
+1. **A hover re-uploaded the whole mesh, every frame.** `updateRender()` calls
+   `updateMeshBuffers()`, which pushes the entire vertex buffer to the GPU — right after a
+   stroke, pure waste on a hover. 4.5ms/frame with the trigger UP. `cursorRender()` now raises
+   the redraw flag and stops. NOTE: the fix landed in Move's copy of that branch first and
+   changed nothing, because the generic one in `SculptBase.sculptStrokeXR` is what runs.
+2. **Rig visuals were a Mesh per bone per joint, drawn twice.** 185 draw calls, `draw` 11.3ms.
+   Bone bodies and joint dots are instanced and the wireframes merged into one buffer: ~20
+   calls. The placement code was left untouched — each joint writes to a SLOT that looks like
+   a Mesh and is flushed into the instanced buffers once per pass.
+3. **The motion trail resampled every frame of playback.** Its fingerprint hashed each pin's
+   LIVE MATRIX, and a keyed pin's matrix is derived from its track — so it differed every frame
+   while the curve did not change at all. ~1000 solves/s.
+4. **Marker sizes followed the POSE.** `Skeleton.sceneUnit` is the largest mesh's bounding
+   sphere, which grows and shrinks as a bound character moves. Held while animating.
+
+### What was NOT wrong, after three rounds of believing it was
+The HTML menus. `xr-panelhit` 0.03-0.12ms, `panels`/rasterisation 0.02-0.04ms amortised,
+`panel-html` 0.5-0.7ms, `gui-canvas` 0.01ms. A panel paint IS 20-80ms but only happens when a
+panel goes DIRTY. What made the menus feel gluggy was hover: crossing a button dispatched a
+pointermove into the offscreen DOM, CSS `:hover` changed, and the whole panel re-rasterised —
+once per button crossed. Hover is drawn as a 3D quad now and touches no DOM.
+
+**Before proposing a canvas rewrite of the panels, re-read that paragraph.** The paint is not
+the cost; `gui-canvas` being 0.01ms is the only number that argues for it, and the fill cost of
+a big transparent quad is identical either way.
+
+### THE GOTCHA THAT COST FOUR HEADSET SESSIONS
+`three`'s `Raycaster.intersectObject(object, recursive = true)` — **the default is TRUE**. A
+child of a panel mesh is hit-tested along with it. The hover quad sat 1mm in front of its panel,
+won every hit on distance, and returned ITS OWN uv — which resolved to an unrelated element,
+which moved the quad, which changed the next hit. A feedback loop enumerating the buttons at
+frame rate from a stationary hand. `isPickable = false` does NOT prevent this: it is a SculptXR
+convention that three has never heard of. Override `raycast` instead.
+
+---
+
 ## STILL OPEN
 
 ### 1. A JUDDER REGRESSION IN THE HEADSET — open, and the cause is NOT known
@@ -309,6 +366,21 @@ which it reports as *Class extends value undefined*.
 5. **Strip comments before a source guard.** Guards have matched the prose explaining why the
    code does NOT do the thing they forbade.
 6. **Never bound a source slice by a character count.** Bound by braces.
+0. **AN INSTRUMENT MUST ANSWER BACK.** A switch that prints nothing when turned on cannot be
+   told from a problem that is not happening — and those are opposite findings. Every diagnostic
+   here replies with ON and its version, and ticks even when it counted zero, so "0 events" is
+   a finding rather than an absence. This was learned, written down, and then repeated twice in
+   the same session; it costs a headset session every time.
+0b. **A LABEL THAT NAMES THE WRONG THING IS WORSE THAN NO LABEL.** A frame-section timer had
+   the panel rasterisation filed under `xr-input` and a bucket called `panels` pointing at a
+   region with no panel work in it. Twice, that produced a confident "the menus are not the
+   cost" — to the person who already knew they were. A mislabelled measurement does not merely
+   fail to inform, it argues for the wrong conclusion.
+0c. **BELIEVE THE USER'S DESCRIPTION OVER YOUR OWN THEORY.** Two of matt's phrasings solved
+   problems that four measurements had not: "micromotions translated into large motions" ruled
+   out jitter, and "cycling through all the button elements in order" is what a FEEDBACK LOOP
+   looks like from outside — random noise does not enumerate. He also killed a theory outright
+   by pointing out that a controller cannot aim at a panel it is carrying.
 7. **Assert the property, not a tally, and not a source SPELLING.** "Exactly 8 callers" breaks
    when a ninth legitimate caller appears — same reason the raw-cage overlap exemption is a flag,
    not a number. Fresh instance in v3.20.6: `bonepanel_test` pinned the exact line
