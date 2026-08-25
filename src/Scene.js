@@ -1182,9 +1182,20 @@ class Scene {
   // SECTION TIMING. The total said 11.5ms for a default sphere with 5 draw calls, which cannot
   // be rendering — so the question stopped being "how much" and became "where". Only live while
   // xrPerf is on, and one performance.now() per section is nothing next to what it is measuring.
+  // ONE initialiser for both, because there are two entry points into this state and they
+  // disagreed: _mark runs first, at the top of the frame, and was creating a bare {} that
+  // _xrPerfSample then tried to push a frame gap into. Whichever runs first has to produce the
+  // whole shape.
+  _xrPerfState() {
+    return this._xrPerf || (this._xrPerf = {
+      n: 0, work: 0, worst: 0, late: 0, last: 0, at: 0, gaps: [],
+      objs: 0, geo: 0, sec: null, _markAt: 0, _markLabel: null,
+    });
+  }
+
   _mark(label) {
     if (!window._xrPerf) return;
-    const p = this._xrPerf || (this._xrPerf = {});
+    const p = this._xrPerfState();
     const now = performance.now();
     if (p._markAt && p._markLabel) {
       p.sec = p.sec || {};
@@ -1195,7 +1206,7 @@ class Scene {
   }
 
   _xrPerfSample(time, workMs) {
-    const p = this._xrPerf || (this._xrPerf = { n: 0, work: 0, worst: 0, late: 0, last: 0, at: 0, gaps: [] });
+    const p = this._xrPerfState();
     if (p.last) {
       const gap = time - p.last;
       p.gaps.push(gap);
