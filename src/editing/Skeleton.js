@@ -1422,7 +1422,8 @@ Skeleton.updateVisuals = function (main) {
   // target that is still perfectly pickable — the bone IS the target now.
   const showSolid = Skeleton.displayFlag('solid');
   const showWire = Skeleton.displayFlag('wire');
-  // Pins are their own display layer, independent of the bone body.
+  // Pins and joint dots are their own display layers, independent of the bone body.
+  const showJoints = Skeleton.displayFlag('joints');
   const showPins = Skeleton.displayFlag('pins');
   // Which joints have a bone hanging off them. Built once per draw rather than asked per joint,
   // and used by the pin tint below to spot a pinned LEAF, which no bone grows out of.
@@ -1494,11 +1495,10 @@ Skeleton.updateVisuals = function (main) {
       o.position.copy(_pB);
       o.scale.setScalar(isSel ? jr * 1.7 : jr);
       o.material.color.setHex(jointHandColor || (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
-      // AND WHENEVER THE BONE IS NOT THE PICK TARGET. The dots came off on the grounds that
-      // the capsule had replaced them; bone selection is off by default now (see Picking), so
-      // by default they are back. Removing the marker AND the target it stood for is what
-      // leaves nothing to aim at.
-      o.visible = noBoneBody || isolated || window._rigBoneSelect !== true;
+      // The flag, plus the two cases that ignore it: an ISOLATED joint has no capsule at
+      // either end to be picked by, and a hidden bone body leaves nothing else on screen —
+      // switching a marker off must not also switch off the only way to find the thing.
+      o.visible = showJoints || noBoneBody || isolated;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -2626,6 +2626,12 @@ const DISPLAY_FLAGS = {
   weights: ['_boneShowWeights', 'boneShowWeights', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
   wire: ['_boneShowWire', 'boneShowWire', true],
+  // BACK AS A TOGGLE. The dots were removed when the bone became the pick target, and came
+  // back when that was switched off — but they came back with no way to turn them off again,
+  // which is worse than either state. Default TRUE because that is what ships: bone selection
+  // is off, so the dot is the marker for the target. Turn bone selection on and this is the
+  // switch that gets the screen quiet again.
+  joints: ['_boneShowJoints', 'boneShowJoints', true],
   pins: ['_boneShowPins', 'boneShowPins', true],
   // The path the selected joint takes over the timeline. Off by default: it costs a full
   // evaluation per sample, and it is an animation aid rather than something you want while

@@ -90,20 +90,26 @@ check('every wired id exists in the markup', missing.length === 0, missing.join(
 // exactly the failure the id sweep above cannot see on its own.
 // Wired through the flag() helper rather than a literal q('id'), so the id sweep above cannot
 // see them — the wiring call is what has to be looked for.
-for (const id of ['solid', 'wire']) {
+for (const id of ['solid', 'wire', 'joints']) {
   const drawn = display.includes('id="bone-' + id + '"');
   const hooked = SRC.includes("flag('" + id + "'");
   check('display toggle "' + id + '" is drawn and wired', drawn && hooked,
     (drawn ? '' : 'not in markup ') + (hooked ? '' : 'not wired'));
 }
 
-// THE JOINTS TOGGLE IS GONE, not merely defaulted off. The bone is the pick target now, so the
+// THE JOINTS TOGGLE IS BACK. It went when the bone became the pick target; bone selection is
+// off again, so the dots are the marker and they need a switch of their own. The bone is the pick target now, so the
 // dots mark nothing — and the flag was PERSISTED, which meant anyone who had ever seen the old
 // default carried it forward and got the dots back on every launch. Defaulting it off fixed
 // nothing for the only person who had reported the problem. A display toggle whose one honest
 // setting is off should not be on the panel at all.
-check('the Joints toggle is gone from the panel', !/bone-joints/.test(SRC),
-  'a persisted flag that resurrects the dots is the bug, not the default it starts at');
+// The id is built as `bone-${id}` at runtime, so the literal never appears in source — assert
+// on the call that makes it, and on the two wirings without which the button is decorative.
+check('the Joints toggle is on the panel',
+  /flagButton\(c, 'joints', 'Joints'/.test(SRC)
+    && /flag\('joints', 'joints'\);/.test(SRC)
+    && /setFlag\('joints', Skeleton\.displayFlag\('joints'\)\);/.test(SRC),
+  'the dots came back without a way to turn them off, which is worse than either state');
 
 // The split itself: each concern appears in exactly its intended block. This is the property
 // the reorganisation is for; checking only that every id exists would pass with the old
@@ -210,9 +216,11 @@ check('shader-specific groups mute instead of hiding',
   check('weight colours are off by default', FLAG_DEFAULTS.weights === false, FLAG_DEFAULTS.weights);
   // The rest keep the defaults they had; a registry that quietly flipped them would be worse
   // than the sentinel it replaced.
-  // The joint dots have no flag at all any more — see the note by the panel toggle above.
-  check('there is no joint-dot flag left to persist', FLAG_DEFAULTS.joints === undefined,
-    'a removed toggle must take its saved option with it, or old saves keep setting it');
+  // The joint dots are a toggle again. They were removed when the bone became the pick target
+  // and came back when that was switched off — but with no way to turn them off, which is
+  // worse than either state. Default TRUE because bone selection ships OFF, so the dot is the
+  // marker for the thing you are aiming at.
+  check('joint dots are a flag again', FLAG_DEFAULTS.joints === true, FLAG_DEFAULTS.joints);
   for (const k of ['snapPlane', 'snapAxis', 'solid', 'wire']) {
     check(`${k} is still on by default`, FLAG_DEFAULTS[k] === true, FLAG_DEFAULTS[k]);
   }

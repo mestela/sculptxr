@@ -10,6 +10,8 @@
 // Run: node scratchpad/motiontrail_test.mjs
 //   TRAIL_INJECT=noplayguard  sample without suppressing playback
 //   TRAIL_INJECT=nopins       leave pins out of the fingerprint
+//   TRAIL_INJECT=jointignorespin  a selected JOINT ignores the pin on it, so the trail depends
+//                             on which of the two the pick happened to return
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -19,6 +21,11 @@ const THREE_PATH = path.join(REPO, 'node_modules/three/build/three.module.js');
 let SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
 
 const inject = process.env.TRAIL_INJECT || '';
+if (inject === 'jointignorespin') {
+  const a = "    if (pin && pin._isPinTarget && keyed(pin)) out.unshift({ obj: pin, control: true });";
+  if (!SRC.includes(a)) throw new Error('inject jointignorespin: anchor moved');
+  SRC = SRC.replace(a, '');
+}
 if (inject === 'noplayguard') {
   const a = '  window._animPlaying = false;';
   if (!SRC.includes(a)) throw new Error('inject noplayguard: anchor moved');
@@ -338,6 +345,39 @@ function setup(times) {
     keyed[0] && keyed[0].obj === pin && keyed[0].control === true);
   check('...and the solved curve is the JOINT, not flagged',
     keyed[1] && keyed[1].obj === j && keyed[1].control === false);
+
+  // A JOINT AND THE PIN ON IT ARE ONE CONTROL POINT, so selecting either shows the same pair.
+  //
+  // matt: grabbing a pinned wrist in the viewport trailed nothing, while the same wrist picked
+  // from the dopesheet gutter trailed fine. The trace said why — the viewport pick returns the
+  // JOINT, the gutter row IS the pin, and the keys are on the pin because the joint is driven
+  // by the solver and has no track of its own. So reading only what was selected found nothing
+  // to draw. Whether a trail appears must not depend on which half of one control the pick
+  // happened to land on.
+  j._boneIKPinObj = pin;
+  main.getMesh = () => j;
+  const forJoint = mod.trailed(main);
+  check('a selected JOINT trails the curve of the pin on it',
+    forJoint.length === 2, JSON.stringify(forJoint.map((t) => [t.obj.getID(), t.control])));
+  check('...same pair, same order as selecting the pin itself',
+    forJoint[0] && forJoint[0].obj === pin && forJoint[0].control === true
+      && forJoint[1] && forJoint[1].obj === j && forJoint[1].control === false,
+    'one control point, one answer, whichever half was picked');
+
+  // The pin has to be KEYED to contribute a curve — an unkeyed one is a stationary point and
+  // drawing a degenerate curve for it would be noise.
+  reg.tracks.delete(pin.getID());
+  const jointUnkeyed = mod.trailed(main);
+  check('a joint whose pin has no keys trails only itself',
+    jointUnkeyed.length === 1 && jointUnkeyed[0].obj === j);
+  reg.tracks.set(pin.getID(), { times: [0, 1, 2] });
+
+  // And a joint with no pin at all is unchanged.
+  j._boneIKPinObj = null;
+  const bare = mod.trailed(main);
+  check('a joint with no pin still trails itself, once',
+    bare.length === 1 && bare[0].obj === j && bare[0].control === false);
+  j._boneIKPinObj = pin;
 
   // Two curves means two sampled paths, or the drawing has nothing to draw the second from.
   window._trailSamples = 4;
@@ -884,6 +924,31 @@ function setup(times) {
   const sizes = [...code.matchAll(/^const (?:KEY_)?DOT_PX = (\d+);/gm)].map((m) => Number(m[1]));
   check('...and asks for a dot, not a slab',
     sizes.length > 0 && sizes.every((n) => n > 0 && n <= 16), sizes.join(','));
+}
+
+
+// ── THE PIN GRAB SELECTS THE PIN ─────────────────────────────────────────────
+//
+// The actual cause of "trails only work from the dopesheet". Grab has a dedicated VR pin-grab
+// gesture, separate from its ordinary rig grab, and it was the one path that never selected
+// what it took — it recorded the pin for AutoKey and left the app's selection on whatever was
+// there before, usually the joint underneath. So the pin was being dragged while everything
+// downstream that reads the selection was answering about a different object.
+//
+// matt saw straight through the symptom: "if i grab, its clearly grabbing and manipulating the
+// pin." It was. The selection just did not say so.
+{
+  const G = fs.readFileSync(path.join(REPO, 'src/editing/tools/Grab.js'), 'utf8');
+  const i = G.indexOf('this._vrPinGrabs.set(hand, { pin,');
+  const block = G.slice(i, i + 1400);
+  check('the pin-grab gesture selects the pin it takes',
+    /this\._main\.setMesh\?\.\(pin, true\)/.test(block),
+    'without this the trail, the outliner and anything else reading the selection see the joint');
+  check('...and honours the selection lock, like every other grab path',
+    /if \(!this\._main\._lockSelection\) this\._main\.setMesh/.test(block));
+  check('...with keepTool, so taking hold of a pin does not swap the active tool',
+    /setMesh\?\.\(pin, true\)/.test(block),
+    'the second argument IS keepTool — see Scene.setMesh');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

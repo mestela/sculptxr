@@ -153,6 +153,19 @@ class Grab extends SculptBase {
           this._vrPinGrabs.set(hand, { pin, last: mat4.clone(controller.matrix) });
           this._syncXRPinHandColors();
           this._main._lastRigEdit = pin;
+          // AND SELECT IT. This is the one rig grab that never did: the ordinary path calls
+          // setMesh on whatever it took, but pins have their own gesture here and it only
+          // recorded the pin for AutoKey. So the pin was being dragged while the app's
+          // selection sat on whatever was there before — usually the joint underneath — and
+          // everything downstream that reads the selection was answering about the wrong
+          // object. matt: "if i grab, its clearly grabbing and manipulating the pin."
+          //
+          // That is what made the motion trail depend on the route: the dopesheet row selects
+          // the pin, this did not, and the trail reads the selection.
+          //
+          // keepTool, like the timeline's row click: taking hold of a pin must not switch the
+          // active tool out from under the hand that is holding it.
+          if (!this._main._lockSelection) this._main.setMesh?.(pin, true);
         }
       }
       this._vrPinTriggerWas[hand] = pressed;

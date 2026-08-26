@@ -69,9 +69,9 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
     const b2 = ': (tintMode === 1 ? PIN_POS_COLOR : restTint))));';
     SKEL = SKEL.replace(b2, ': restTint)))));');
   } else if (inj === 'spherealways') {
-    const a = 'o.visible = noBoneBody || isolated || window._rigBoneSelect !== true;';
+    const a = 'o.visible = showJoints || noBoneBody || isolated;';
     if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
-    SKEL = SKEL.replace(a, 'o.visible = true;');
+    SKEL = SKEL.replace(a, 'o.visible = true;');   // always drawn, flag ignored
   }
 }
 let failures = 0;
@@ -394,35 +394,34 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   }
 }
 
-// ── THERE ARE NO JOINT DOTS ──────────────────────────────────────────────────
+// ── WHEN THE JOINT DOTS DRAW ─────────────────────────────────────────────────
 //
-// Not "off by default" — gone. The bone is the pick target, so the dot marks nothing, and
-// preselection moved onto the capsule where it can be shown without a second kind of marker.
-// The only survivor is the case with no capsule at either end.
+// They went when the bone became the pick target and came back when that was switched off —
+// but with no way to turn them off, which is worse than either state. So: a flag, plus the two
+// cases that ignore it, because switching a marker off must not also switch off the only way
+// to find the thing it marks.
 {
   const m = /o\.visible = (.+?);\n/.exec(SKEL.slice(SKEL.indexOf('const isolated = !hasChildBone')));
   check('the joint dot visibility is liftable', !!m, 'the placement code moved');
   if (m) {
-    const show = (o = {}) => new Function('noBoneBody', 'isolated', 'window',
-      'return (' + m[1] + ');')(!!o.noBoneBody, !!o.isolated,
-      { _rigBoneSelect: o.boneSelect !== false });
+    const show = (o = {}) => new Function('showJoints', 'noBoneBody', 'isolated',
+      'return (' + m[1] + ');')(!!o.showJoints, !!o.noBoneBody, !!o.isolated);
 
-    check('an ordinary joint draws no dot', show() === false);
-    check('nor does the one under the cursor', show({ isHi: true }) === false,
-      'preselection is the capsule now; a dot that appears only sometimes is still a dot');
-    check('nor a selected one', show({ isSel: true }) === false);
-    check('nor a grabbed one', show({ jointHandColor: 0xff0000 }) === false);
-    check('an ISOLATED joint does, because it has no capsule at either end',
-      show({ isolated: true }) === true,
-      'without it the first joint you place is invisible AND unpickable');
+    check('the flag on draws them', show({ showJoints: true }) === true);
+    check('the flag off hides them', show({ showJoints: false }) === false,
+      'the dots came back with no way to turn them off, which is what this restores');
+    check('an ISOLATED joint draws anyway', show({ isolated: true }) === true,
+      'it has no capsule at either end: without the dot it is invisible AND unpickable');
     check('so does every joint when the bone body is switched off',
       show({ noBoneBody: true }) === true, 'the same case by a different route');
+    check('...and those two ignore the flag on purpose',
+      show({ showJoints: false, isolated: true }) === true
+        && show({ showJoints: false, noBoneBody: true }) === true,
+      'switching a marker off must not switch off the only way to find the thing');
   }
-  // NO FLAG AT ALL, deliberately. Defaulting one to off left it persisted, so anyone who had
-  // seen the old default kept the dots for good.
-  check('there is no joint-dot display flag to turn them back on',
-    !/boneShowJoints/.test(SKEL) && !/showJoints/.test(SKEL),
-    'a saved value would resurrect exactly what was asked to be removed');
+  check('the flag exists and defaults to ON',
+    /joints: \['_boneShowJoints', 'boneShowJoints', true\]/.test(SKEL),
+    'bone selection ships off, so the dot is the marker for the target');
 }
 
 // ── THE CAPSULE CARRIES PRESELECTION ─────────────────────────────────────────
@@ -575,8 +574,11 @@ check('...and the zone widening is the only thing left gated',
   'the blended scores are gone entirely now, so there is nothing left to gate there');
 {
   const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
-  check('and the joint dots come back when it is off',
-    /window\._rigBoneSelect !== true/.test(SK),
+  // The dots are a flag again rather than a consequence of this switch — see the section
+  // above. What still must hold is that they DEFAULT to drawn, because bone selection ships
+  // off and the dot is then the only marker for the thing being aimed at.
+  check('and the joint dots default to drawn, since the bone is not the target',
+    /joints: \['_boneShowJoints', 'boneShowJoints', true\]/.test(SK),
     'removing the marker AND the target it stood for leaves nothing to aim at');
 }
 

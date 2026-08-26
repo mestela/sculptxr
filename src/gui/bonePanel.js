@@ -157,6 +157,7 @@ export function buildBoneDisplayHTML(main, style) {
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
+      ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
       ${flagButton(c, 'pins', 'Pins', Skeleton.displayFlag('pins'))}
       ${flagButton(c, 'trails', 'Trails', Skeleton.displayFlag('trails'))}
       ${flagButton(c, 'gnomons', 'Key Axes', Skeleton.displayFlag('gnomons'))}
@@ -228,6 +229,7 @@ export function wireBoneSection(root, main, opts) {
   flag('caps', 'capsules');
   flag('solid', 'solid');
   flag('wire', 'wire');
+  flag('joints', 'joints');
   flag('pins', 'pins');
   flag('trails', 'trails');
   flag('gnomons', 'gnomons');
@@ -490,6 +492,7 @@ export function syncBoneSection(root, main) {
   setFlag('weights', Skeleton.displayFlag('weights'));
   setFlag('solid', Skeleton.displayFlag('solid'));
   setFlag('wire', Skeleton.displayFlag('wire'));
+  setFlag('joints', Skeleton.displayFlag('joints'));
   setFlag('pins', Skeleton.displayFlag('pins'));
   setFlag('trails', Skeleton.displayFlag('trails'));
   setFlag('gnomons', Skeleton.displayFlag('gnomons'));

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { VERSION } from '../Version.js';
 // Fat lines, for the gnomons only. THREE.Line draws hardware 1px lines, which cannot be
 // antialiased and step between whole pixels as the camera moves; LineSegments2 triangulates a
 // screen-space width instead. Used here and not (yet) for the trail itself, so the approach can
@@ -85,14 +86,28 @@ function trailed(main) {
     console.log('[trail] target=' + (sel && sel._permanentStaticLabel) +
       ' isBone=' + !!(sel && sel._isBone) + ' isPin=' + !!(sel && sel._isPinTarget) +
       ' pinnedJoint=' + !!(sel && sel._pinnedJoint) +
+      ' pinOnJoint=' + !!(sel && sel._boneIKPinObj) +
       ' selection=' + (main.getMesh && main.getMesh() && main.getMesh()._permanentStaticLabel));
   }
-  if (sel && Skeleton.isJoint(sel)) return [{ obj: sel, control: false }];
+  const reg = window._animationRegistry;
+  const keyed = (m) => !!(m && reg && reg.tracks && reg.tracks.get(m.getID()));
+  // A JOINT AND THE PIN ON IT ARE ONE CONTROL POINT, so either one selected shows the same
+  // pair of curves. The pin case was handled and the joint case was not, which made the trail
+  // depend on WHICH of the two the pick happened to return — and the pick returns the joint
+  // when you grab a pinned wrist in the viewport, while the dopesheet row is the pin. Same
+  // wrist, same keys, and a trail from one route only. matt's report, exactly.
+  //
+  // The keys are on the PIN: the joint is driven by the solver and usually has no track of its
+  // own, so reading only what was selected finds nothing to draw and draws nothing.
+  if (sel && Skeleton.isJoint(sel)) {
+    const pin = sel._boneIKPinObj;
+    const out = [{ obj: sel, control: false }];
+    if (pin && pin._isPinTarget && keyed(pin)) out.unshift({ obj: pin, control: true });
+    return out;
+  }
   if (sel && sel._isPinTarget && sel._pinnedJoint) {
-    const reg = window._animationRegistry;
-    const keyed = !!(reg && reg.tracks && reg.tracks.get(sel.getID()));
     const out = [{ obj: sel._pinnedJoint, control: false }];
-    if (keyed) out.unshift({ obj: sel, control: true });
+    if (keyed(sel)) out.unshift({ obj: sel, control: true });
     return out;
   }
   return [];
@@ -812,12 +827,55 @@ MotionTrail.recolor = function (main) {
 // and nothing appeared, because the curve had not changed and so was never redrawn. That is the
 // second thing to land on this path for exactly the same reason, which is why there is now one
 // entry point rather than a call bolted onto each early return.
+// Why is there no trail? Answers on the spot rather than only arming a flag: the last three
+// diagnostics in this project printed nothing when first run, because the thing they watched
+// only speaks when it changes. This says what it can see RIGHT NOW — the display flag, the
+// scene selection, the sticky target and whether anything is actually keyed — and then traces.
+//
+// Written for matt's report that a pin selected in the DOPESHEET trails and the same pin
+// selected in the VIEWPORT does not. Both routes end at the same place, so the answer is in
+// one of these four lines and not in a theory of mine.
+window.trailTrace = function (on) {
+  window._trailTrace = on !== false;
+  const main = _lastMain;
+  if (!main) {
+    console.log('[trail] ' + VERSION + ' — trace '
+      + (window._trailTrace ? 'ON' : 'off') + '. No frame has drawn yet, so nothing to report.');
+    return window._trailTrace;
+  }
+  const reg = window._animationRegistry;
+  const sel = main.getMesh && main.getMesh();
+  const held = main._trailTarget;
+  const kind = (m) => !m ? 'none'
+    : ((m._permanentStaticLabel || ('#' + m.getID())) + (m._isPinTarget ? ' [pin]'
+      : (m._isBone ? ' [joint]' : ' [mesh]')));
+  const keyed = (m) => !!(m && reg && reg.tracks && reg.tracks.get(m.getID()));
+  console.log('[trail] ' + VERSION
+    + '\n  trails display flag : ' + (Skeleton.displayFlag('trails') ? 'ON' : 'OFF  <-- nothing will draw')
+    + '\n  scene selection     : ' + kind(sel) + (keyed(sel) ? ' (keyed)' : ' (no track)')
+    + '\n  sticky trail target : ' + kind(held) + (keyed(held) ? ' (keyed)' : ' (no track)')
+    + '\n  pin <-> joint link  : ' + (sel && sel._isPinTarget
+      ? (sel._pinnedJoint ? 'pin -> ' + kind(sel._pinnedJoint) : 'MISSING  <-- a pin with no _pinnedJoint is skipped')
+      : (sel && sel._isBone
+        ? (sel._boneIKPinObj ? 'joint -> ' + kind(sel._boneIKPinObj)
+          + (keyed(sel._boneIKPinObj) ? ' (keyed - this is where the curve comes from)' : ' (no track either)')
+          : 'this joint carries no pin')
+        : 'n/a'))
+    + '\n  tracks in the scene : ' + (reg && reg.tracks ? reg.tracks.size : 'no registry'));
+  console.log('[trail] trace ' + (window._trailTrace ? 'ON' : 'off')
+    + ' — per-frame lines follow while the target or the keys change.');
+  return window._trailTrace;
+};
+
 MotionTrail.perFrame = function (main) {
   MotionTrail.recolor(main);
   MotionTrail.drawGnomons(main);
 };
 
+let _lastMain = null;
+
 MotionTrail.update = function (main) {
+  _lastMain = main;   // so trailTrace() can answer without being handed the scene
   // A live path edit owns the drawn curve: the editor writes the geometry directly as the drag
   // moves, and re-sampling underneath it would fight the drag and cost a solve per frame.
   if (main._pathEdit) { MotionTrail.perFrame(main); return false; }
