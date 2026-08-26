@@ -195,6 +195,10 @@ const CSS = `
 .acp-root .acp-btn-grid button:hover,
 .acp-root .acp-btn-grid button.hover { background: #24243e; color: #cdd6f4; }
 .acp-root .acp-btn-grid button.active { background: #313244; color: #cba6f7; border-color: #cba6f7; }
+/* Nothing selected to act on. Dimmed rather than hidden: the button moving or vanishing would
+   reflow the grid, and a control that comes and goes is harder to aim at than one that greys. */
+.acp-root .acp-btn-grid button.acp-dim { opacity: 0.35; cursor: default; }
+.acp-root .acp-btn-grid button.acp-dim:hover { background: #181825; color: inherit; }
 .acp-root .acp-btn-grid button.danger { color: #f38ba8; border-color: #f38ba8; }
 .acp-root .acp-btn-grid button.danger:hover,
 .acp-root .acp-btn-grid button.danger.hover { background: #3d1e2e; }
@@ -1299,9 +1303,35 @@ export function wireAnimationSection(el, main, { repaint = () => {}, sync, refre
     repaint();
   });
 
+  // DELETE MEANS THE MOST SPECIFIC THING THAT IS SELECTED.
+  //
+  //   keys selected              -> delete those keys
+  //   a track row selected       -> delete that object's animation
+  //   neither                    -> the button is disabled (see syncDeleteButton)
+  //
+  // The track case is matt's: selecting a gutter row already selects its object in the 3D
+  // view, so the row IS a selection and Delete should be able to act on it. The registry's
+  // deleteAnimationForIds already pushes its own undo entry, so redo comes free — there is no
+  // second undo path here to keep in step with it.
+  //
+  // The old behaviour — delete whatever key sits at the current time — is kept as the last
+  // resort so a bare Delete on a track still does what it always did.
   el.querySelector('#acp-del-key')?.addEventListener('click', () => {
     const r = reg(); const target = _getTargetMesh();
-    if (!r || !target) return;
+    if (!r) return;
+    const timeline = main.getGui?.()?._ctrlTimeline;
+    if (window._animSelectedKeys?.length) {
+      window._animPanel?.deleteKey?.();
+      repaint();
+      return;
+    }
+    const hasTrack = timeline?.selectedAnimationIds?.().some((id) => r.tracks?.has(id));
+    if (hasTrack && timeline?.deleteAnimationFromSelectedObjects) {
+      timeline.deleteAnimationFromSelectedObjects();
+      repaint();
+      return;
+    }
+    if (!target) return;
     const t = window._animCurrentTime || 0;
     if (window._animKeyMode === 'shape') r.deleteShapeKey?.(target, t);
     else r.deleteTransformKey?.(target, t);
@@ -1630,8 +1660,35 @@ export class AnimationControlPanel extends HTMLVRPanel {
     refreshBlendshapesDOM(this._element, mesh, main, () => this._requestPaint());
   }
 
+  // WHETHER DELETE HAS ANYTHING TO DELETE, and it says so by going dim when it does not.
+  // A destructive button that is always lit is a button you cannot read: it gives no answer to
+  // "is this row actually selected", which is the question being asked of it here.
+  syncDeleteButton() {
+    const el = this._element;
+    const btn = el && el.querySelector('#acp-del-key');
+    if (!btn) return;
+    const reg = window._animationRegistry;
+    const timeline = this._main?.getGui?.()?._ctrlTimeline;
+    const hasKeys = !!(window._animSelectedKeys && window._animSelectedKeys.length);
+    const hasTrack = !!(reg && timeline?.selectedAnimationIds?.()
+      .some((id) => reg.tracks?.has(id)));
+    const on = hasKeys || hasTrack;
+    // Guarded so this can be called from the timeline's draw without writing to the DOM every
+    // frame: the state only changes when the selection does, and a per-frame class toggle on a
+    // panel that rasterises to a texture in VR is not free.
+    const sig = (on ? 1 : 0) | (hasKeys ? 2 : 0);
+    if (sig === this._lastDelSig) return;
+    this._lastDelSig = sig;
+    btn.disabled = !on;
+    btn.classList.toggle('acp-dim', !on);
+    // What it would do if pressed, so the two meanings are not a guess.
+    btn.title = hasKeys ? 'Delete the selected keys'
+      : (hasTrack ? 'Delete this object\u2019s animation' : 'Nothing selected to delete');
+  }
+
   syncFromState() {
     syncAnimationSection(this._element, this._main);
+    this.syncDeleteButton();
 
     // Blendshape list: rebuild only when mesh or count changes.
     // getMesh() returns the UI-selected mesh, which may be null in VR (no

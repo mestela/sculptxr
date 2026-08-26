@@ -441,6 +441,13 @@ export default class GuiTimeline {
     ctx.restore();
   }
 
+  // Selection changed — let the panel re-read whether Delete has anything to act on. Called
+  // rather than polled: syncFromState is not on a frame timer, so a button left to notice on
+  // its own would stay wrong until something else happened to repaint it.
+  _notifySelectionChanged() {
+    try { window._animPanel?.syncDeleteButton?.(); } catch (_) {}
+  }
+
   selectedAnimationIds() {
     const active = this._main.getMesh?.();
     const activeId = active?.getID?.();
@@ -2826,6 +2833,9 @@ export default class GuiTimeline {
     // Unify timeline focus with the scene selection, but pass keepTool: setOrUnsetMesh runs
     // tool-context switching, and looking at a curve must not change your active tool.
     if (mesh && this._main.getMesh?.() !== mesh) this._main.setMesh?.(mesh, true);
+    // This IS the selection changing — the row, the scene object and Delete's target are all
+    // one thing (see the note above), so the button has to be re-read here.
+    this._notifySelectionChanged();
   }
 
   _graphMesh() {
@@ -3214,6 +3224,14 @@ export default class GuiTimeline {
   _gutterBtnDefs() {
     const mode   = window._animKeyMode || 'transform';
     const hasSel = !!(window._animSelectedKeys?.length);
+    // A SELECTED TRACK COUNTS TOO. Clicking a row name already selects that object — in the
+    // dopesheet, in the graph and in the 3D view, which are deliberately one selection — so the
+    // row is a thing Delete can act on and the button has no business being dead over it.
+    // matt: "i select a track name in the dopesheet, the name goes yellow, the delete icon
+    // doesn't get activated."
+    const _delReg = window._animationRegistry;
+    const hasTrackSel = !hasSel && !!_delReg
+      && this.selectedAnimationIds().some((id) => _delReg.tracks?.has(id));
     const btns   = [];
     const GUTTER_W = 196;
     const by = 27, bh = 20;
@@ -3234,7 +3252,11 @@ export default class GuiTimeline {
       btns.push({ id: 'sr_del', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Delete frame' }); x += bw + gap;
     } else {
       btns.push({ id: 'addkey', icon: '', x, y: by, w: bw, h: bh, tooltip: 'Add key at playhead' }); x += bw + gap;
-      btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh, disabled: !hasSel, tooltip: 'Delete selected key(s)' }); x += bw + gap;
+      btns.push({ id: 'delkey', icon: '', x, y: by, w: bw, h: bh,
+        disabled: !hasSel && !hasTrackSel,
+        // Says WHICH of the two it would do, so a destructive button is never a guess.
+        tooltip: hasTrackSel ? 'Delete this object\u2019s animation'
+          : 'Delete selected key(s)' }); x += bw + gap;
       // Shape mode: New shape layer (#34). Recording arms the new layer; click a layer's
       // name in a lane to (re)arm it, click the active one again → back to the base track.
       if (mode === 'shape') {
@@ -3396,7 +3418,12 @@ export default class GuiTimeline {
               }
               break;
             case 'delkey':
-              this.deleteSelectedKeys();
+              // Keys first: a key selection is the narrower statement, and the other way round
+              // wipes a whole object's animation while keys are selected. The track case only
+              // runs when there are no keys — deleteAnimationFromSelectedObjects pushes its own
+              // undo entry, so redo comes with it.
+              if (window._animSelectedKeys?.length) this.deleteSelectedKeys();
+              else this.deleteAnimationFromSelectedObjects();
               break;
             default:
               if (gbHit.id.startsWith('keymode_')) {
@@ -5517,6 +5544,9 @@ export default class GuiTimeline {
   }
 
   draw() {
+    // Re-read whether Delete has anything to act on. Cheap: syncDeleteButton compares a
+    // signature and returns before touching the DOM unless the answer changed.
+    this._notifySelectionChanged();
     const ctx = this._ctx;
     const w = {
       x: 0,
