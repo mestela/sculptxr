@@ -31,6 +31,7 @@ import getOptionsURL from '../../misc/getOptionsURL.js';
 import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
+import RigPending   from '../../editing/RigPending.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import {
@@ -1238,10 +1239,14 @@ export function buildSectionHTML_scene(main) {
 
       <div class="mm-rig-btn-row">
         <button class="mm-toggle${pendingMode === 'parent' ? ' active' : ''}" data-rig="set-parent">
-          ${pendingMode === 'parent' ? 'Select parent…' : 'Set parent…'}
+          ${pendingMode === 'parent'
+            ? (main._rigPendingSubject == null ? 'Click CHILD (list or 3D)…' : 'Click PARENT (list or 3D)…')
+            : 'Set parent…'}
         </button>
         <button class="mm-toggle${pendingMode === 'lookat' ? ' active' : ''}" data-rig="set-aim">
-          ${pendingMode === 'lookat' ? 'Select aim…' : 'Aim at…'}
+          ${pendingMode === 'lookat'
+            ? (main._rigPendingSubject == null ? 'Click EYE (list or 3D)…' : 'Click TARGET (list or 3D)…')
+            : 'Aim at…'}
         </button>
         <button class="mm-toggle${mirrored ? ' active' : ''}" data-rig="mirror" title="Mirror across X (eye rig)">Mirror X</button>
       </div>
@@ -2546,16 +2551,11 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
 
 
   // Complete a pending two-step rig assignment (parent / aim) against `target`.
+  // The transitions live in RigPending now, because the VIEWPORT can finish one of these too
+  // and two copies of the rule is how the outliner and the 3D pick would drift apart.
   const completeRigPending = (target) => {
-    const mode   = main._rigPendingMode;
-    const subjId = main._rigPendingSubject;
-    main._rigPendingMode = null;
-    main._rigPendingSubject = null;
-    if (target && target.getID() !== subjId) {
-      if (mode === 'parent')      main.setMeshParent?.(subjId, target.getID());
-      else if (mode === 'lookat') main.setLookAt?.(subjId, target.getID());
-    }
-    main.render?.(); repaintFn();
+    RigPending.take(main, target);
+    repaintFn();
   };
 
   // Inline rename editor. Replaces the row's label with a text input; commits on
@@ -2637,7 +2637,7 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   });
 
   // Any scene-add action cancels an in-progress pick to avoid a stale subject.
-  const cancelPending = () => { main._rigPendingMode = null; main._rigPendingSubject = null; };
+  const cancelPending = () => RigPending.cancel(main);
 
   // When an SR frame group is the active context, a newly-added primitive is adopted
   // as the frame at the playhead (fills a blank "New" slot) instead of a stray object.
@@ -2682,16 +2682,16 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
 
   // Two-step assignment: arm a pending mode, then the next outliner click is the target.
   // Pressing the same button again cancels.
+  // ALWAYS THREE STEPS: press, click the child, click the parent. The selection is not read at
+  // all — on a flat screen it cannot be set reliably for a pin in the first place (only the
+  // Transform tool selects rig nodes), so seeding the child from it started the gesture on
+  // whatever was left over from something else.
   el.querySelector('[data-rig="set-parent"]')?.addEventListener('click', () => {
-    const sel = selOne(); if (!sel) return;
-    if (main._rigPendingMode === 'parent') cancelPending();
-    else { main._rigPendingMode = 'parent'; main._rigPendingSubject = sel.getID(); }
+    RigPending.toggle(main, 'parent');
     repaintFn();
   });
   el.querySelector('[data-rig="set-aim"]')?.addEventListener('click', () => {
-    const sel = selOne(); if (!sel) return;
-    if (main._rigPendingMode === 'lookat') cancelPending();
-    else { main._rigPendingMode = 'lookat'; main._rigPendingSubject = sel.getID(); }
+    RigPending.toggle(main, 'lookat');
     repaintFn();
   });
   el.querySelector('[data-rig="clear-parent"]')?.addEventListener('click', () => {

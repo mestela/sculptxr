@@ -8,6 +8,8 @@ import Remesh from './Remesh.js';
 import Mesh from '../mesh/Mesh.js';
 import MeshStatic from '../mesh/meshStatic/MeshStatic.js';
 import Skinning from './Skinning.js';
+import RigPending from './RigPending.js';
+import Skeleton from './Skeleton.js';
 
 // Tools that change the vertex count (or the mesh object), which a per-vertex skin weight
 // map cannot survive. Voxel is included because it replaces the surface wholesale.
@@ -232,6 +234,18 @@ class SculptManager {
     // so EVERY input route is covered: nothing has begun yet, so nothing to undo.
     if (window._sculptLocked) return false;
 
+    // A RIG ASSIGNMENT IS ALSO A "DO NOTHING" MODE while it is armed. matt: "grab should be
+    // disabled during this process, i shouldn't be able to move or tweak anything." He is
+    // right, and not only for tidiness: the gesture names two objects by clicking them, and a
+    // tool that also acts on those clicks moves the very thing being named — which is what
+    // made the selection appear to come and go halfway through.
+    //
+    // Gated HERE, beside the sculpt lock, for the reason written above it: start() is the one
+    // place every input route passes through, and nothing has begun yet so there is nothing to
+    // undo. The click itself is consumed earlier, in onDeviceDown; this is the backstop for
+    // every route that does not come through there.
+    if (RigPending.armed(this._main)) return false;
+
     // Blendshape layer gate (desktop + VR both route through here): when a layer is
     // active for editing, all mesh deformation is captured into that layer's delta
     // — which is only correct while the layer is visible and held at weight 1. If
@@ -385,6 +399,48 @@ class SculptManager {
   updateXR(picking, isPressed, origin, dir, options) {
     var tool = this.getCurrentTool();
     // if (window.screenLog && Math.random() < 0.01) window.screenLog(`ManagerXR: ToolIdx=${this._toolIndex} Tool=${!!tool}`, "orange");
+
+    // THE ARMED ASSIGNMENT OWNS THE TRIGGER, in every tool rather than in one.
+    //
+    // Handled at the manager rather than inside a tool because it has to be true of ALL of
+    // them: an assignment armed while Grab is active must not grab, and a version wired into
+    // TransformVR alone would work in the one tool nobody is holding at the time. The tool
+    // never runs while this is armed, which is the same "do nothing" the sculpt lock gives.
+    //
+    // On the press EDGE: one press is one step of the gesture, and a held trigger at 90Hz
+    // would otherwise name the child and the parent in consecutive frames.
+    if (RigPending.armed(this._main)) {
+      // AND KEEP THE PRESELECTION ALIVE, because switching the tool off switched off the thing
+      // that was driving it. Grab and the transforms are what maintain the rig highlight in
+      // VR, and the branch above skips them — so without this the controller points at a pin
+      // and nothing lights up, which is the whole of the feedback for the question being
+      // asked. Self-throttling and pick-preserving, the same helper the tools call.
+      // FROM THE TIP OF THE SPIKE, not the controller's pivot. `origin` is the pivot; the tip
+      // is a stylus-length in front of it and is what you are actually aiming with, which is
+      // why reaching for a pin felt offset by the length of the controller. Scene already
+      // computes it exactly and passes it as `tipOrigin`.
+      const tip = (options && options.tipOrigin) || origin;
+      if (picking && tip && dir) {
+        Skeleton.hoverRigFromRay(this._main, picking, tip, dir,
+          RigPending.targets(this._main));
+      }
+      if (isPressed && !this._rigPendPressed) {
+        this._rigPendPressed = true;
+        const main = this._main;
+        let picked = null;
+        if (picking && tip && dir) {
+          const targets = RigPending.targets(main).filter((m) => m.isVisible() && !m._isVoxelChunk);
+          picked = picking.intersectionRayMeshes(targets, tip, dir, true)
+            ? picking.getMesh() : null;
+        }
+        RigPending.fireFromRay(main, picked);
+        main.render?.();
+      } else if (!isPressed) {
+        this._rigPendPressed = false;
+      }
+      return;
+    }
+    this._rigPendPressed = false;
 
     if (tool && tool.updateXR) {
       tool.updateXR(picking, isPressed, origin, dir, options);

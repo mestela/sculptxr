@@ -24,6 +24,46 @@ var _TMP_SEG_MS = mat4.create();
 var _segT = 0.0;   // parameter ALONG THE RAY at closest approach (the desktop helper only)
 var _segS = 0.0;   // parameter along the segment, 0 at the head and 1 at the tip
 
+// BONE SELECTION IS OPT-IN, AND OFF.
+//
+// Making the capsule pick surface was a good idea that I could not test. It went in over five
+// versions, and every one of them had to re-balance it against the pins that sit on the joints
+// at its ends — because a bone segment and the pin on its end occupy the SAME PLACE, so every
+// rule that separated them was a tuning constant rather than a fact. matt, on v3.20.77: "still
+// fucked. getting annoyed now." Four rounds of my adjusting margins is four rounds too many to
+// spend on a tool someone is trying to work with.
+//
+// So the whole of it — the segments, the zone-relative scores, the marker-sized zones, the
+// control-beats-joint rule — is behind one switch, and the switch is OFF. What runs by default
+// is exactly what ran in v3.20.65: rig nodes picked as POINTS in a cone, compared in raw
+// units. Known to work, because it did.
+//
+//   window._rigBoneSelect = true    turn it back on, no rebuild
+//
+// Skeleton reads the same flag and brings the joint dots back when it is off, because the dots
+// were only removed on the grounds that the bone had replaced them as the target.
+const BONE_SELECT = () => window._rigBoneSelect === true;
+
+// WHICH ONE YOU MEANT, in two lines and one number.
+//
+// Everything within reach is a candidate. Keep the nearest PIN and the nearest BONE separately,
+// and at the end: if a pin is anywhere near as close as the bone, the pin wins. A pin is a
+// control someone deliberately placed on that joint; reaching into a rig full of them and
+// getting the bone underneath is never what was wanted. A bone only wins by being CLEARLY
+// nearer — more than `_rigPinPriority` times closer.
+//
+// This replaces four versions of arithmetic that mixed the two into one number with tie-break
+// epsilons and zone normalisations. Every one of those was a tuning constant pretending to be a
+// rule, and each round moved the margin somewhere else. Two distances and one comparison cannot
+// drift: for any pair of candidates the answer is the same every time, and it is one number to
+// argue about rather than four interacting ones.
+function rigWinner(pin, pinD, bone, boneD) {
+  if (!pin) return bone;
+  if (!bone) return pin;
+  const k = window._rigPinPriority || 2.0;
+  return pinD <= boneD * k ? pin : bone;
+}
+
 // THE BONE IS A PICK TARGET FOR THE JOINTS EITHER SIDE OF IT.
 //
 // This rig is joint-centric: a joint is a real object with a transform and a parent, and the
@@ -78,6 +118,29 @@ function pointSegDist(P, A, E) {
 
 // The joint at the other end of this joint's bone, when there is one and it can be selected.
 // A hidden or locked parent means no segment: the capsule is not a way round either state.
+// THE PIN ON THAT END, when the point you are aiming at is inside the pin's own marker.
+//
+// This is the defect three rounds of score tuning could not reach. A bone hit resolves to the
+// joint at its nearer END — and a control pin sits exactly ON that joint. So the segment and
+// the pin occupy the SAME PLACE, and which of them won was decided by whichever tuning constant
+// happened to be larger that week. Scoring cannot separate two things that are not apart.
+//
+// So it is not scored at all. If the nearer end carries a pin and you are within the marker
+// that pin is drawing, the pin IS the answer: it is the control, the joint is the thing the
+// control drives, and nobody reaching for a visible handle means the bone underneath it. The
+// marker bound keeps it honest — aim at the middle of the bone, well away from any handle, and
+// you still get the bone.
+function pinAtEnd(joint, px, py, pz) {
+  const pin = joint && joint._boneIKPinObj;
+  if (!pin || !pin._isPinTarget || !pin.getModelSpaceMatrix) return null;
+  if (!pin.isVisible || !pin.isVisible() || pin._selectLocked) return null;
+  const r = pin._pickRadius || 0;
+  if (r <= 0) return null;                       // no marker drawn: nothing to be aiming at
+  const m = pin.getModelSpaceMatrix(_TMP_SEG_MS);
+  const dx = m[12] - px, dy = m[13] - py, dz = m[14] - pz;
+  return (dx * dx + dy * dy + dz * dz) <= r * r ? pin : null;
+}
+
 function segmentHead(mesh) {
   if (!mesh._isBone) return null;      // pins are points, and always have been
   var p = mesh._parentMesh;
@@ -248,8 +311,8 @@ class Picking {
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
-    var nearRigDistance = Infinity;
-    var nearRig = null;
+    var nearPinD = Infinity, nearPin = null;
+    var nearBoneD = Infinity, nearBone = null;
     var nearRigFace = -1;
 
     for (var i = 0, nbMeshes = meshes.length; i < nbMeshes; ++i) {
@@ -289,7 +352,8 @@ class Picking {
         // joint with no bone (the first one you place, before it has been extended) is picked
         // exactly as it always was.
         var rigHit = mesh;
-        var segHead = segmentHead(mesh);
+        // BONE SELECTION IS OFF BY DEFAULT — see the note by BONE_SELECT.
+        var segHead = BONE_SELECT() ? segmentHead(mesh) : null;
         if (segHead) {
           var shm = segHead.getThreeMesh();
           if (shm) {
@@ -304,6 +368,8 @@ class Picking {
               // NEAREST END. At s = 1 this is the joint itself and the answer matches the
               // point test exactly, which is what makes the two continuous.
               rigHit = _segS >= 0.5 ? mesh : segHead;
+              // ...and the CONTROL on that end wins over the joint it drives — see pinAtEnd.
+              rigHit = pinAtEnd(rigHit, _TMP_SEG_P[0], _TMP_SEG_P[1], _TMP_SEG_P[2]) || rigHit;
             }
           }
         }
@@ -311,17 +377,49 @@ class Picking {
         // radius with depth there makes it vanish near the camera and balloon far away, which
         // is why nothing could be picked in orthographic at all. In both cases the radius is
         // chosen to be the same fraction of the SCREEN.
-        var _pk = mesh._isPinTarget
-          ? (window._rigPickConePin || 0.028)
-          : (window._rigPickCone || 0.018);
+        // THE RADIUS IS THE TOOL'S OWN RADIUS — the sphere you can see and set.
+        //
+        // matt: "use [the grab sphere radius] as the preselect radius". It is the right answer
+        // and it settles an argument the previous rules could not: a hidden constant that had
+        // to be guessed at, tuned blind and re-tuned every time something else moved is
+        // replaced by a number that is drawn on screen and adjustable while you work. "Within
+        // x radius" stops being a figure of speech.
+        //
+        // Converted at the NODE's depth rather than the brush's: project the node, step the
+        // tool's screen radius sideways, unproject, and measure. Same conversion the brush uses
+        // for its own world radius, anchored on the thing being picked.
+        //
+        // ONE radius for pins and bones alike. Which of them you meant is decided by rigWinner
+        // afterwards, and mixing that decision into the radius is what produced four versions
+        // of interacting constants.
         var _cam = this._main && this._main.getCamera && this._main.getCamera();
-        var cone;
-        if (_cam && _cam.isOrthographic && _cam.isOrthographic()) {
-          var halfH = (_cam._height || 1) * _cam.getOrthoZoom(); // matches updateOrtho's half-extent
-          cone = _pk * halfH / Math.tan((_cam.getFov ? _cam.getFov() : 45) * 0.5 * Math.PI / 180);
-        } else {
-          cone = _pk * tAlong * Math.sqrt(rl2);
+        var cone = 0;
+        var _tool = this._main.getSculptManager && this._main.getSculptManager()
+          && this._main.getSculptManager().getCurrentTool();
+        var _scr = _tool && _tool.getScreenRadius ? _tool.getScreenRadius() : 0;
+        if (_scr > 0) {
+          var _pp = this.project(_TMP_RIG_P);
+          cone = Math.sqrt(vec3.sqrDist(_TMP_RIG_P, this.unproject(_pp[0] + _scr, _pp[1], _pp[2])));
         }
+        if (!(cone > 0)) {
+          // No tool radius to read (a tool without one, or before one is set). Fall back to the
+          // screen-fraction cone this used before, so the pick never silently has no zone.
+          var _pk = mesh._isPinTarget
+            ? (window._rigPickConePin || 0.028)
+            : (window._rigPickCone || 0.018);
+          if (_cam && _cam.isOrthographic && _cam.isOrthographic()) {
+            var halfH = (_cam._height || 1) * _cam.getOrthoZoom(); // matches updateOrtho's half-extent
+            cone = _pk * halfH / Math.tan((_cam.getFov ? _cam.getFov() : 45) * 0.5 * Math.PI / 180);
+          } else {
+            cone = _pk * tAlong * Math.sqrt(rl2);
+          }
+        }
+        // NEVER SMALLER THAN THE MARKER ITSELF. The cone above is a fraction of the screen; a
+        // pin's gnomon is sized in WORLD units from the scene unit, and on a large rig it is
+        // much the bigger of the two. Pointing at an arm of the triad then landed outside the
+        // pin's own zone and the bone beneath it won every time. `_pickRadius` is published by
+        // the code that draws the marker, so the zone is whatever is actually on screen.
+        if (BONE_SELECT() && mesh._pickRadius > cone) cone = mesh._pickRadius;
         if (window._pickTrace) {
           console.log('[pick]', mesh._permanentStaticLabel || mesh.getID(),
             mesh._isPinTarget ? 'PIN' : 'BONE',
@@ -333,17 +431,25 @@ class Picking {
         if (offAxis > cone) continue;
         // Selection is spatial, not categorical. A pin wins only an effectively coincident
         // tie with its own joint; it must never hide a different bone elsewhere in the cone.
-        var score = offAxis + tAlong * 1e-6 - (mesh._isPinTarget ? 1e-7 : 0);
-        if (score < nearRigDistance) {
-          nearRigDistance = score;
-          nearRig = rigHit;
-          // The intersection is reported in MESH-LOCAL coords — callers transform it by the
-          // mesh matrix — and a locator's origin is its centre. Handing back the model-space
-          // position instead would be transformed a second time and put the grab depth in the
-          // wrong place entirely.
-          _TMP_INTER_RIG[0] = _TMP_INTER_RIG[1] = _TMP_INTER_RIG[2] = 0;
-          nearRigFace = -1;
-        }
+        //
+        // MEASURED AGAINST ITS OWN ZONE, not in raw units. A pin's cone is wider than a bone's
+        // (0.028 vs 0.018) because a pin is the smaller thing to aim at and needs the help —
+        // but the score compared raw distances, so the wider zone bought a pin nothing at all
+        // and the comparison silently favoured whichever target simply had more surface near
+        // the ray. That was harmless while bones were picked as POINTS at their joints. It
+        // stopped being harmless the moment a bone became a whole SEGMENT of pick surface:
+        // a bone then beat the pin sitting on its own end from almost anywhere, and pins
+        // became effectively unselectable. Dividing by the cone asks the question that was
+        // always meant: how far INTO its own target zone is each one.
+        // Off-axis distance alone, kept per KIND. Depth is not mixed in: two candidates the
+        // pointer is equally close to are equally good, and the rule below decides which kind
+        // you meant. The intersection is reported in MESH-LOCAL coords — callers transform it
+        // by the mesh matrix — and a locator's origin is its centre.
+        _TMP_INTER_RIG[0] = _TMP_INTER_RIG[1] = _TMP_INTER_RIG[2] = 0;
+        nearRigFace = -1;
+        if (rigHit._isPinTarget) {
+          if (offAxis < nearPinD) { nearPinD = offAxis; nearPin = rigHit; }
+        } else if (offAxis < nearBoneD) { nearBoneD = offAxis; nearBone = rigHit; }
         continue;
       }
 
@@ -373,6 +479,7 @@ class Picking {
     // Note the missing `&& nearMesh`: rig nodes are tested on their own path and never touch
     // nearMesh, so requiring one meant a hit on a bone with no mesh behind it reported NOTHING
     // — which read as the rig having become unselectable altogether.
+    var nearRig = rigWinner(nearPin, nearPinD, nearBone, nearBoneD);
     if (nearRig) {
       nearMesh = nearRig;
       nearFace = nearRigFace;
@@ -406,8 +513,8 @@ class Picking {
     var nearDistance = Infinity;
     var nearMesh = null;
     var nearFace = -1;
-    var nearRigScore = Infinity;
-    var nearRig = null;
+    var nearPinD = Infinity, nearPin = null;
+    var nearBoneD = Infinity, nearBone = null;
 
     // vNear = origin
     // vFar = origin + direction * length
@@ -433,7 +540,7 @@ class Picking {
         // Reaching for the middle of a limb takes the joint at the nearer end of it. Same rule
         // as the desktop pick, measured from the controller tip instead of along a ray, since
         // that is what the VR rig pick has always been.
-        var vrHead = segmentHead(mesh);
+        var vrHead = BONE_SELECT() ? segmentHead(mesh) : null;
         if (vrHead) {
           vrHead.getModelSpaceMatrix(_TMP_SEG_MS);
           _TMP_SEG_A[0] = _TMP_SEG_MS[12];
@@ -441,15 +548,42 @@ class Picking {
           _TMP_SEG_A[2] = _TMP_SEG_MS[14];
           vec3.sub(_TMP_SEG_E, _TMP_RIG_P, _TMP_SEG_A);
           var segD = pointSegDist(origin, _TMP_SEG_A, _TMP_SEG_E);
-          if (segD < rigDist) { rigDist = segD; vrHit = _segS >= 0.5 ? mesh : vrHead; }
+          if (segD < rigDist) {
+            rigDist = segD;
+            vrHit = _segS >= 0.5 ? mesh : vrHead;
+            vrHit = pinAtEnd(vrHit, _TMP_SEG_Q[0], _TMP_SEG_Q[1], _TMP_SEG_Q[2]) || vrHit;
+          }
         }
         const physicalDistance = rigDist * vrScale;
-        if (physicalDistance > (window._rigPickProximityVR || 0.11)) continue;
         var isPin = !!mesh._isPinTarget;
-        // Pure controller-tip proximity. The 2 mm pin bias resolves the common exact overlap
-        // with its own joint but cannot steal focus from a genuinely nearer setup bone.
-        var rScore = physicalDistance - (isPin ? 0.002 : 0);
-        if (rScore < nearRigScore) { nearRigScore = rScore; nearRig = vrHit; }
+        // A PIN REACHES FURTHER THAN A BONE, in the same proportion the desktop cone gives it
+        // (0.028 against 0.018), and never less far than the marker you are reaching FOR — a
+        // gnomon drawn 30cm across has arms further out than an 11cm reach, so touching one
+        // would miss the pin and take the bone behind it.
+        // THE REACH IS THE CURSOR SPHERE. Same number the sphere is drawn at, published by
+        // Scene each frame — "use its radius as the proximity max dist". A radius you can see
+        // and set beats a constant nobody can, which is the whole lesson of the last few
+        // rounds. Falls back to the fixed reach when there is no sphere to read.
+        const base = this._main?._vrBrushPhysicalRadius || (window._rigPickProximityVR || 0.11);
+        const reach = BONE_SELECT()
+          ? Math.max(base, (mesh._pickRadius || 0) * vrScale) : base;
+        if (physicalDistance > reach) continue;
+        // MEASURED AGAINST ITS OWN REACH, exactly as the desktop score is measured against its
+        // own cone — and for a reason that only appeared when bones became pick surface.
+        //
+        // A pin is a POINT. A bone is now a whole SEGMENT. Compared in raw metres the segment
+        // wins from almost anywhere near the limb, and the 2 mm pin bias below is far too small
+        // to matter: the pin only won in a sliver where it was genuinely nearer than the entire
+        // bone. matt, on the primary controller: "I have to be apparently 1mm to the right of a
+        // pin to select it." The secondary hand looked fine because it was not driving this
+        // pick at all.
+        // Same rule as the desktop pick, measured from the controller tip: nearest of each
+        // kind, and rigWinner decides between them.
+        if (vrHit._isPinTarget) {
+          if (physicalDistance < nearPinD) { nearPinD = physicalDistance; nearPin = vrHit; }
+        } else if (physicalDistance < nearBoneD) {
+          nearBoneD = physicalDistance; nearBone = vrHit;
+        }
         continue;
       }
       if (mesh.isPickable === false) continue;
@@ -480,6 +614,7 @@ class Picking {
     // nearest-hit leaves the mesh permanently in the way of its own rig. Note it does not
     // require nearMesh: rig nodes are tested on their own path and never set it, and requiring
     // one is what made a lone bone report nothing on the desktop side.
+    var nearRig = rigWinner(nearPin, nearPinD, nearBone, nearBoneD);
     if (nearRig) {
       nearMesh = nearRig;
       nearFace = -1;

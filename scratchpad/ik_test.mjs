@@ -43,6 +43,12 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/IKSolver.js'), 'utf8');
     SRC = SRC.replace(a, '')
       .replace(`        rotHeld.push(node);   // woken after markActive, not here — see the markActive note`,
         '        node.active = true;');
+  } else if (inj === 'watchlocal') {
+    // The pin watcher goes back to reading the pin's own LOCAL matrix. Identical for a
+    // top-level pin, which is why it was invisible — and blind the moment a pin has a parent.
+    const a = 'const m = p.getModelSpaceMatrix ? p.getModelSpaceMatrix(_mWatch) : p.getMatrix();';
+    if (!SRC.includes(a)) throw new Error('inject watchlocal: anchor moved');
+    SRC = SRC.replace(a, 'const m = p.getMatrix();');
   } else if (inj === 'rotwatchall') {
     // pinsMoved goes back to comparing all sixteen matrix elements for a rotation-only pin,
     // so its handle riding along with its joint reports a change on every frame of playback.
@@ -69,6 +75,7 @@ import * as THREE from '${THREE_PATH}';
 globalThis.window = globalThis.window || {};
 
 const mat4 = {
+  create: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
   clone: (m) => Float32Array.from(m),
   copy: (out, m) => { for (let i = 0; i < 16; i++) out[i] = m[i]; return out; },
 };
@@ -108,6 +115,11 @@ export function makeMain(joints) {
   return {
     getMeshes: () => list,
     buildNull() {
+      // A null composes through its parent exactly as a joint does, and honours the "out"
+      // argument the real Mesh takes. Both matter now that a pin can be PARENTED to another
+      // pin: the solve reads a pin in model space, so a stub that ignored its parent would
+      // make the watcher look correct while the app it models was blind.
+      // (No backticks in here: the whole prelude is a template literal.)
       const n = {
         _isNull: true,
         _permanentStaticLabel: null,
@@ -116,8 +128,17 @@ export function makeMain(joints) {
         _parentMesh: null,
         getID() { return this._id; },
         getMatrix() { return this._m.elements; },
-        getModelSpaceMatrix() { return this._m.elements; },
-        setModelSpaceMatrix(e) { this._m.fromArray(e); },
+        getModelSpaceMatrix(out) {
+          const e = modelMat(this).elements;
+          if (!out) return e;
+          for (let i = 0; i < 16; i++) out[i] = e[i];
+          return out;
+        },
+        setModelSpaceMatrix(e) {
+          const m = new THREE.Matrix4().fromArray(e);
+          if (this._parentMesh) m.premultiply(modelMat(this._parentMesh).clone().invert());
+          this._m.copy(m);
+        },
       };
       return n;
     },
@@ -1831,6 +1852,60 @@ function poleLeg() {
   IKSolver.pinsMoved(rigP.main);
   pinP._m.elements[12] += 0.5;
   check('watcher: translating a POSITION pin is still a change', IKSolver.pinsMoved(rigP.main));
+}
+
+
+// A PIN PARENTED TO ANOTHER PIN — the control-rig case: one handle that carries several pins,
+// so moving it poses a whole limb. The structure is free (setMeshParent already does the
+// scene-graph half); what is NOT free is that the watcher which decides whether to solve has
+// to be asking about the same number the solve consumes.
+//
+// pinAnchor is MODEL space. The watcher used to read the pin's own LOCAL matrix, which is the
+// same thing for a top-level pin and a completely different thing once it has a parent: drag
+// the parent and the child's local matrix does not move at all. No change reported, no solve
+// scheduled, and a control handle built out of pins looks dead while every value in it is
+// correct.
+{
+  window._ikWritten = null;
+  const rig = poleLeg();                       // ankle PIN_POS
+  const pin = IKSolver.pinObject(rig.ankle);
+  // The handle: a null the pin hangs off, standing where the pin stands.
+  const handle = rig.main.buildNull();
+  handle._m.fromArray(pin._m.elements);
+  rig.main.addMeshSilent(handle);
+  const world = new THREE.Matrix4().fromArray(pin.getModelSpaceMatrix());
+  pin._parentMesh = handle;
+  pin.setModelSpaceMatrix(world.elements);     // reparent, world-preserving, as the app does
+
+  check('parenting a pin leaves it exactly where it was',
+    new THREE.Vector3().setFromMatrixPosition(
+      new THREE.Matrix4().fromArray(pin.getModelSpaceMatrix()))
+      .distanceTo(new THREE.Vector3().setFromMatrixPosition(world)) < 1e-9);
+
+  IKSolver.pinsMoved(rig.main);                                   // seed
+  check('a settled parented pin reports nothing moved', !IKSolver.pinsMoved(rig.main));
+
+  // THE CLAIM. Move the HANDLE; the pin's own local matrix never changes.
+  const before = Float64Array.from(pin.getMatrix());
+  handle._m.elements[12] += 0.5;
+  check('...and the pin\'s own local matrix genuinely did not change',
+    Array.from(pin.getMatrix()).every((v, i) => Math.abs(v - before[i]) < 1e-12),
+    'if this fails the check below proves nothing');
+  check('moving the PARENT of a pin schedules a solve', IKSolver.pinsMoved(rig.main),
+    'the watcher has to ask about the anchor the solve reads, not about the pin object');
+
+  // And the anchor really did follow, or there would be nothing worth solving for.
+  const anchor = IKSolver.pinAnchor(rig.ankle, new THREE.Vector3());
+  check('...because the anchor moved with it',
+    Math.abs(anchor.x - (world.elements[12] + 0.5)) < 1e-9,
+    'anchor x ' + anchor.x.toFixed(4));
+
+  // The cache the watcher compares against must store the SAME reading, or every frame looks
+  // like a change and the whole rig solves at frame rate.
+  IKSolver.syncPinCache(rig.main);
+  check('syncPinCache stores the same reading the watcher takes',
+    !IKSolver.pinsMoved(rig.main),
+    'the two halves disagreeing means a full IK solve every frame, forever');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

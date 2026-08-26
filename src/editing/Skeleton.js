@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { VERSION } from '../Version.js';
+import RigPending from './RigPending.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { mat4 } from 'gl-matrix';
 import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Primitives from '../drawables/Primitives.js';
@@ -952,24 +956,26 @@ function pickPreserving(picking, fn) {
 }
 
 // Desktop / iPad: pick from the cursor.
-Skeleton.hoverRigFromMouse = function (main, picking) {
+// `meshes` narrows what may be hovered — the rig assignment passes pins only, so the
+// preselection cannot offer a bone the pick would refuse.
+Skeleton.hoverRigFromMouse = function (main, picking, meshes) {
   if (window._grabTrace && (!main || !picking)) {
     console.log('[rigHover] mouse: main=' + !!main + ' picking=' + !!picking);
   }
   if (!main || !picking || !hoverDue(main, 'mouse')) return;
   const hit = pickPreserving(picking, () =>
-    picking.intersectionMouseMeshes(main.getMeshes(), main._mouseX, main._mouseY, false, true)
+    picking.intersectionMouseMeshes(meshes || main.getMeshes(), main._mouseX, main._mouseY, false, true)
       ? picking.getMesh() : null);
   applyRigHover(main, isRigNode(hit) ? hit : null);
 };
 
 // VR: pick from the controller ray Scene supplies. NOT derived from the controller matrix —
 // that is the raw WebXR frame, and picking against it misses every mesh in the scene.
-Skeleton.hoverRigFromRay = function (main, picking, origin, dir) {
+Skeleton.hoverRigFromRay = function (main, picking, origin, dir, meshes) {
   if (!main || !picking || !origin || !dir || !hoverDue(main, 'vr')) return;
   // Rig hover is an x-ray operation: skin geometry must not occlude the bone/pin that the
   // controller is visibly aiming at. Use the same target class as rig acquisition.
-  const vis = main.getMeshes().filter((m) => m.isVisible() && isRigNode(m));
+  const vis = (meshes || main.getMeshes()).filter((m) => m.isVisible() && isRigNode(m));
   const hit = pickPreserving(picking, () =>
     picking.intersectionRayMeshes(vis, origin, dir, true) ? picking.getMesh() : null);
   applyRigHover(main, isRigNode(hit) ? hit : null);
@@ -1301,8 +1307,93 @@ window.rigDrift = function (on) {
   return window._rigDrift;
 };
 
+// ── THE PENDING-ASSIGNMENT LINK ───────────────────────────────────────────────────────────
+//
+// A yellow dashed line from the CHILD to the parent it is about to get. It exists because the
+// gesture is otherwise invisible: the button says a click is expected, but nothing in the 3D
+// view says which object is the child, which one the click would take, or that anything is
+// armed at all. matt asked for it by name, and it doubles as proof the target is pickable —
+// no line means the thing under the pointer is not something this can parent to.
+//
+// Drawn between MODEL-space origins, which is where a pin and a joint both live.
+const PENDING_COLOR = 0xffe066;
+let _pendLine = null;
+let _pendHovering = false;
+
+function pendingLink(main) {
+  const step = RigPending.step(main);
+  // KEEP THE PRESELECTION ALIVE FOR BOTH STEPS. The tools that normally drive it are Grab and
+  // the transforms, and while an assignment is armed those tools are switched off — so without
+  // this there is no highlight at all, and the one question the user is being asked, "which
+  // one?", has no answer on screen. It was gated on the PARENT step alone, which left the
+  // child step with nothing to look at: matt, "it's not preselect highlighting either".
+  //
+  // hoverRigFromMouse throttles itself and restores the picking state it borrowed, which is
+  // what makes this safe to ask for every frame — see the note on it.
+  // Guarded against RE-ENTRY: applyRigHover repaints the visuals when the highlight changes,
+  // and the visuals are what called this. The throttle alone would bound the recursion at two
+  // levels, which is not a depth problem but is a whole extra rig rebuild on every hover
+  // change. The flag makes the inner pass draw the line and ask nothing.
+  if (step && !_pendHovering && !main._xrSession && main.getPicking) {
+    _pendHovering = true;
+    try {
+      Skeleton.hoverRigFromMouse(main, main.getPicking(), RigPending.targets(main));
+    } finally { _pendHovering = false; }
+  }
+
+  const subject = RigPending.subject(main);
+  const target = RigPending.candidate(main);
+  if (!_pendLine) {
+    // A FAT line, not a native one: THREE's `Line` is a 1px hardware line that steps between
+    // whole pixels and all but disappears against a busy sculpt. This is the only thing on
+    // screen saying the gesture is live, so it gets a width you cannot miss. Same
+    // LineSegments2 machinery the motion trails use.
+    _pendLine = new LineSegments2(new LineSegmentsGeometry(), new LineMaterial({
+      color: PENDING_COLOR,
+      linewidth: 5,          // SCREEN pixels, since worldUnits is off
+      worldUnits: false,
+      dashed: true,
+      transparent: false,
+      depthWrite: false,
+      depthTest: false,      // it is a readout, and being hidden inside the mesh is useless
+      toneMapped: false,     // or a saturated yellow rolls off to pastel under any tone map
+    }));
+    _pendLine.renderOrder = 10001;   // over the pin leaders, which is the one thing it can hide
+    _pendLine.isPickable = false;
+    _pendLine.raycast = () => {};
+    _pendLine.frustumCulled = false;
+  }
+  const g = skelGroup(main);
+  if (_pendLine.parent !== g) g.add(_pendLine);
+
+  if (!subject || !target) { _pendLine.visible = false; return; }
+  const a = subject.getModelSpaceMatrix && subject.getModelSpaceMatrix();
+  const b = target.getModelSpaceMatrix && target.getModelSpaceMatrix();
+  if (!a || !b) { _pendLine.visible = false; return; }
+  // A screen-space width has to know what the screen is, and LineMaterial clones its uniforms
+  // per material — a resolution left at the default 1x1 divides the width by one instead of by
+  // a thousand, which is not a subtle error.
+  const cam = main.getCamera && main.getCamera();
+  const rw = (cam && cam._width) || 1, rh = (cam && cam._height) || 1;
+  if (_pendLine.material.resolution.x !== rw || _pendLine.material.resolution.y !== rh) {
+    _pendLine.material.resolution.set(rw, rh);
+  }
+  _pendLine.geometry.setPositions([a[12], a[13], a[14], b[12], b[13], b[14]]);
+  // Dash size from the span, so the line reads as dashed whether it crosses a finger or a
+  // whole character — a fixed dash is solid at one scale and a row of dots at the other.
+  const span = Math.hypot(b[12] - a[12], b[13] - a[13], b[14] - a[14]);
+  _pendLine.material.dashSize = span * 0.06;
+  _pendLine.material.gapSize = span * 0.04;
+  _pendLine.material.needsUpdate = true;
+  _pendLine.computeLineDistances();
+  _pendLine.visible = true;
+}
+
 Skeleton.updateVisuals = function (main) {
   Skeleton.healGraph(main);
+  // Ahead of the no-joints early return below: an assignment can be under way in a scene with
+  // no rig in it at all, and the line is the only thing on screen saying so.
+  pendingLink(main);
   const joints = Skeleton.joints(main);
   if (window._rigDrift) driftCheck(joints);
   main._skelVis = main._skelVis || new Map();
@@ -1403,7 +1494,11 @@ Skeleton.updateVisuals = function (main) {
       o.position.copy(_pB);
       o.scale.setScalar(isSel ? jr * 1.7 : jr);
       o.material.color.setHex(jointHandColor || (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
-      o.visible = noBoneBody || isolated;
+      // AND WHENEVER THE BONE IS NOT THE PICK TARGET. The dots came off on the grounds that
+      // the capsule had replaced them; bone selection is off by default now (see Picking), so
+      // by default they are back. Removing the marker AND the target it stood for is what
+      // leaves nothing to aim at.
+      o.visible = noBoneBody || isolated || window._rigBoneSelect !== true;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -1517,6 +1612,22 @@ Skeleton.updateVisuals = function (main) {
       e.pinLink.visible = false;
     }
 
+    // THE THING YOU CAN SEE IS THE THING YOU CAN CLICK.
+    //
+    // A pin's pick zone is a fixed fraction of the SCREEN (see Picking), while its marker is
+    // sized from the scene unit in WORLD units — so on a large rig the drawn gnomon is far
+    // bigger than the zone that answers for it. You aim at an arm of the triad, land outside
+    // the pin's zone entirely, and the bone underneath wins: matt, "the wrist never preselect
+    // highlighted". Publishing the drawn radius lets the pick take the larger of the two, so
+    // pointing at the marker means what it looks like it means.
+    //
+    // Recorded on the PIN OBJECT rather than reached for from Picking, which would have to
+    // import Skeleton for the scene unit and does not import it for anything else.
+    if (pinObj) {
+      let r = 0;
+      for (const [, on, size] of pinParts) if (on) r = Math.max(r, size);
+      pinObj._pickRadius = r;
+    }
     for (const [part, on, size] of pinParts) {
       for (const o of [part.solid, part.ghost]) {
         o.visible = on;

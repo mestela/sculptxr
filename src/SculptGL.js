@@ -9,6 +9,7 @@ import Utils from './misc/Utils.js';
 import Scene from './Scene.js';
 import Multimesh from './mesh/multiresolution/Multimesh.js';
 import SecondaryAction from './editing/SecondaryAction.js';
+import RigPending from './editing/RigPending.js';
 
 // Pixels a right press may travel and still count as a click rather than an orbit.
 const RIGHT_CLICK_SLOP = 4;
@@ -1813,6 +1814,22 @@ class SculptGL extends Scene {
     var mouseX = this._mouseX;
     var mouseY = this._mouseY;
 
+    // AN ARMED RIG ASSIGNMENT takes the click first, and takes it whole. "Set parent" and
+    // "Aim at" are armed from the outliner and used to be finishable only from an outliner
+    // ROW; this is the other half, so the target can be the thing you are looking at. Pointing
+    // is the better answer for pins in particular — they are named after the joints they hold,
+    // a rig has a great many, and finding "pin_hand_L" in a list is a worse way to say "that
+    // one" than pointing at it.
+    //
+    // Ahead of the secondary action rather than behind it: both consume a click, and a rig
+    // assignment is a deliberate two-step the user is halfway through, while the modifier is a
+    // single shot they can simply press again.
+    if (button === MOUSE_LEFT && RigPending.fireFromPointer(this)) {
+      this._action = Enums.Action.NOTHING;
+      this.getGui?.()?.updateMesh?.();
+      this.render();
+      return;
+    }
     // ARMED SECONDARY ACTION. Consumes the click entirely — no sculpt, no camera, no selection
     // change — so the modifier cannot also grab the thing it just pinned.
     if (button === MOUSE_LEFT && SecondaryAction.armed(this)) {

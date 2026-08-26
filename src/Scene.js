@@ -9577,6 +9577,10 @@ class Scene {
           sliderVal = tool._radius / 100.0;
         }
         const physicalRadius = sliderVal * 0.1; // 0-10cm range
+        // THE SPHERE IS THE PICK RADIUS. Published so the rig pick uses the same number the
+        // cursor is drawing, rather than a constant of its own that nobody can see or adjust:
+        // "use its radius as the proximity max dist".
+        this._vrBrushPhysicalRadius = physicalRadius;
 
         const invScale = 1.0 / (this._vrScale || 1.0);
 
@@ -9782,8 +9786,14 @@ class Scene {
                 // Transform uses the gizmo and Grab uses direct rig targets; neither has a
                 // brush radius, so the surface ring/volume indicator is misleading.
                 const isTransformTool = tool && tool.constructor
-                  && (tool.constructor.name === 'TransformVR' || tool.constructor.name === 'Transform'
-                    || tool.constructor.name === 'Grab');
+                  && (tool.constructor.name === 'TransformVR' || tool.constructor.name === 'Transform');
+                // GRAB GETS ITS SPHERE BACK. It lost it when the rig pick was a RAY, where a
+                // radius genuinely meant nothing. The pick is proximity again — everything
+                // within the radius is a candidate — so the sphere is the literal shape of the
+                // question being asked, and it is the radius the pick uses. What Grab still has
+                // no use for is the surface RING: it is not a brush and does not act on a
+                // surface.
+                const isGrabTool = tool && tool.constructor && tool.constructor.name === 'Grab';
 
                 if (volumeSphere) volumeSphere.visible = !isCubeShape && !isPicking;
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
@@ -9800,7 +9810,7 @@ class Scene {
 
                 // 1. Position Surface Ring (if hitting mesh) — not useful for voxels (and mis-sized),
                 // so hide it entirely in voxel mode; the volume sphere/cube is the brush indicator there.
-                if (!isVoxelTool && hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
+                if (!isVoxelTool && !isGrabTool && hitDist !== 5.0 && wInter && pickedMesh && (uiHitDist === undefined || uiHitDist === Infinity)) {
                     // // if (doLog) console.log(`  Mode: SURF, pos: ${wInter[0].toFixed(2)},${wInter[1].toFixed(2)},${wInter[2].toFixed(2)}`);
                     
                     if (ringLine) {

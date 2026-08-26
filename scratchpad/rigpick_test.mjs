@@ -16,6 +16,12 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
 //   PICK_INJECT=noclamp       raySegDist clamps the segment parameter without re-solving the
 //                             ray for it, the classic way this returns a point that is not
 //                             the closest one
+//   PICK_INJECT=nopinatend    a bone hit resolves to the JOINT even when a pin sits on that
+//                             end, so aiming at a visible handle takes the bone under it
+//   PICK_INJECT=vrrawmetres   the VR score compares raw metres again, so a bone SEGMENT beats
+//                             the pin sitting on its own end from almost anywhere
+//   PICK_INJECT=markerzone    the pick zone ignores the drawn marker size, so a gnomon larger
+//                             than its own zone cannot be hit
 //   PICK_INJECT=tiponly       a capsule lights only from its TIP, leaving the root with no
 //                             feedback at all
 //   PICK_INJECT=pinovershot   the pin tint goes back above preselection, so hovering a pinned
@@ -33,6 +39,24 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
     if (!SRC.includes(a)) throw new Error('inject noclamp: anchor moved');
     SRC = SRC.replace(a, `    if (_segS < 0.0) _segS = 0.0;
     else if (_segS > 1.0) _segS = 1.0;`);
+  } else if (inj === 'nopinatend') {
+    // The bone hit keeps resolving to the JOINT even when a pin is sitting on that end, so
+    // aiming at a visible handle selects the bone underneath it.
+    const a = '  return (dx * dx + dy * dy + dz * dz) <= r * r ? pin : null;';
+    if (!SRC.includes(a)) throw new Error('inject nopinatend: anchor moved');
+    SRC = SRC.replace(a, '  return null;');
+  } else if (inj === 'vrrawmetres') {
+    // The VR score goes back to raw metres. A pin is a point and a bone is a segment, so the
+    // segment wins along the whole limb and pins become all but unreachable.
+    const a = 'var rScore = (BONE_SELECT() ? physicalDistance / reach : physicalDistance)';
+    if (!SRC.includes(a)) throw new Error('inject vrrawmetres: anchor moved');
+    SRC = SRC.replace(a, 'var rScore = (BONE_SELECT() ? physicalDistance : physicalDistance)');
+  } else if (inj === 'markerzone') {
+    // The pick zone goes back to being a fixed fraction of the screen, ignoring how big the
+    // marker actually is — so on a large rig you aim at the gnomon and hit the bone behind it.
+    const a = '        if (BONE_SELECT() && mesh._pickRadius > cone) cone = mesh._pickRadius;';
+    if (!SRC.includes(a)) throw new Error('inject markerzone: anchor moved');
+    SRC = SRC.replace(a, '');
   } else if (inj === 'tiponly') {
     const a = 'const boneHot = isHi || hiAll.has(pid);';
     if (!SKEL.includes(a)) throw new Error('inject tiponly: anchor moved');
@@ -45,7 +69,7 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
     const b2 = ': (tintMode === 1 ? PIN_POS_COLOR : restTint))));';
     SKEL = SKEL.replace(b2, ': restTint)))));');
   } else if (inj === 'spherealways') {
-    const a = 'o.visible = noBoneBody || isolated;';
+    const a = 'o.visible = noBoneBody || isolated || window._rigBoneSelect !== true;';
     if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
     SKEL = SKEL.replace(a, 'o.visible = true;');
   }
@@ -64,39 +88,62 @@ check('a rig hit is adopted without requiring a mesh hit',
 // dominated distance absolutely. Selection is spatial: a pin should win only when it is
 // effectively coincident with its own joint, which is the case the priority exists for.
 //
-// Lifted from the source and evaluated, rather than matched as a spelling — the previous
-// version of these two checks asserted the old formula verbatim and reported the better rule
-// as a regression.
+// WHICH ONE YOU MEANT, in two distances and one comparison.
+//
+// matt, after four versions of me tuning a single blended score: "this feels like its spiralling
+// out of control... to me its simple: get list of bones/pins within (x) radius; if there are
+// pins and bones within similar radius, pins get priority." He is right, and the rule below is
+// that sentence. Keep the nearest of each KIND, then choose. Two distances and one comparison
+// cannot drift the way four interacting constants did — and there is exactly one number to
+// argue about, `_rigPinPriority`, rather than four that move each other.
 {
-  const m = SRC.match(/var score = ([^;]+);/);
-  check('the desktop rig score is liftable', !!m,
-    'no `var score = ...;` in intersectionMouseMeshes — the checks below cannot run');
-  if (m) {
-    // A lifted expression that no longer evaluates in these terms is a FAILURE, not a crash.
-    // The old rule read a `rank` variable hoisted above it; lifting that threw a ReferenceError
-    // and took the whole harness down, which reports nothing rather than reporting the defect.
-    let scoreOf = null, liftErr = '';
-    try {
-      const f = new Function('offAxis', 'tAlong', 'isPin',
-        'const mesh = { _isPinTarget: isPin }; return ' + m[1] + ';');
-      f(0.02, 3, true);                       // prove it evaluates before trusting it
-      scoreOf = f;
-    } catch (e) { liftErr = String(e.message || e); }
-    check('the desktop rig score evaluates in (offAxis, tAlong, isPin) alone', !!scoreOf,
-      liftErr + ' — a score depending on anything else is not a spatial score');
-    const wins = (a, b) => scoreOf && a < b;   // lower score wins
+  const i = SRC.indexOf('function rigWinner(');
+  const lifted = SRC.slice(i, SRC.indexOf('\n}', i) + 2);
+  check('the winner rule is liftable', i > 0, 'rigWinner moved');
+  const win = new Function('window', lifted + '\nreturn rigWinner;')({});
+  const PIN = { pin: true }, BONE = { bone: true };
+  const K = parseFloat(/_rigPinPriority \|\| ([\d.]+)/.exec(SRC)?.[1] ?? '2.0');
 
-    check('a pin beats its own joint when they coincide',
-      scoreOf && wins(scoreOf(0.02, 3, true), scoreOf(0.02, 3, false)),
-      'a pin sitting exactly on its joint must not lose to it by float noise');
-    check('...but a nearer bone beats a pin',
-      scoreOf && wins(scoreOf(0.005, 3, false), scoreOf(0.02, 3, true)),
-      'the old rank*1e6 bug: a pin anywhere in the cone hid the bone under the cursor');
-    check('depth breaks ties only',
-      scoreOf && wins(scoreOf(0.02, 1, false), scoreOf(0.02, 9, false))
-        && wins(scoreOf(0.005, 99, false), scoreOf(0.02, 0.1, false)),
-      'nearest-to-eye must decide equal off-axis hits, and never outrank off-axis itself');
-  }
+  check('a pin alone wins', win(PIN, 5, null, Infinity) === PIN);
+  check('a bone alone wins', win(null, Infinity, BONE, 5) === BONE);
+  check('nothing in range, nothing picked', win(null, Infinity, null, Infinity) === null);
+
+  // THE RULE ITSELF. A pin at the same distance as a bone wins; a pin somewhat further still
+  // wins; a bone wins only by being CLEARLY nearer.
+  check('a pin at the same distance beats the bone', win(PIN, 5, BONE, 5) === PIN);
+  check('a pin further away still wins, up to the priority factor',
+    win(PIN, 5 * K * 0.99, BONE, 5) === PIN,
+    'reaching into a rig full of pins and getting the bone under one is never what was meant');
+  check('...and exactly at the factor', win(PIN, 5 * K, BONE, 5) === PIN);
+  check('a clearly nearer bone wins', win(PIN, 5 * K * 1.01, BONE, 5) === BONE,
+    'a pin must not shadow a bone the pointer is plainly on');
+  check('the priority factor is greater than 1', K > 1,
+    'at 1 this is nearest-wins and the pin priority does nothing');
+
+  // DETERMINISM, which is the property being bought here. The same pair gives the same answer
+  // every time, and no third candidate elsewhere in the scene can change it.
+  const once = win(PIN, 4, BONE, 3);
+  check('the same pair always gives the same answer',
+    [...Array(50)].every(() => win(PIN, 4, BONE, 3) === once));
+  check('and it reads no depth, no zone size, no epsilon',
+    !/tAlong|cone|reach|1e-/.test(lifted),
+    'every one of those was a tuning constant pretending to be a rule');
+}
+
+// THE RADIUS IS THE TOOL'S OWN RADIUS, so "within x radius" means the sphere on screen.
+{
+  check('the pick radius comes from the tool',
+    /_tool\.getScreenRadius \? _tool\.getScreenRadius\(\) : 0/.test(SRC),
+    'a hidden constant cannot be adjusted while you work; the drawn sphere can');
+  check('...converted at the NODE depth, not the brush depth',
+    /this\.unproject\(_pp\[0\] \+ _scr, _pp\[1\], _pp\[2\]\)/.test(SRC),
+    'the same conversion the brush uses, anchored on the thing being picked');
+  check('...with the old screen-fraction cone as a fallback',
+    /if \(!\(cone > 0\)\) \{/.test(SRC),
+    'a tool with no radius must not leave the pick with no zone at all');
+  check('...and ONE radius for pins and bones alike',
+    !/_isPinTarget[\s\S]{0,80}getScreenRadius/.test(SRC),
+    'which kind you meant is rigWinner\'s job; folding it into the radius is what spiralled');
 }
 
 // The intersection must be reported in mesh-LOCAL coords (callers transform it by the matrix).
@@ -196,26 +243,14 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   // does. Measure the bone in model space and the metres conversion is skipped for exactly the
   // targets that were just added.
   check('VR: a bone distance goes through that same conversion',
-    /if \(segD < rigDist\) \{ rigDist = segD/.test(vr),
+    /if \(segD < rigDist\) \{\s*\n\s*rigDist = segD;/.test(vr),
     'the segment result must land in the variable that gets scaled, not beside it');
-  {
-    const m = vr.match(/var rScore = ([^;]+);/);
-    check('the VR rig score is liftable', !!m, 'no `var rScore = ...;` in intersectionRayMeshes');
-    if (m) {
-      let scoreOf = null, liftErr = '';
-      try {
-        const f = new Function('physicalDistance', 'isPin', 'return ' + m[1] + ';');
-        f(0.05, true);
-        scoreOf = f;
-      } catch (e) { liftErr = String(e.message || e); }
-      check('the VR rig score evaluates in (physicalDistance, isPin) alone', !!scoreOf, liftErr);
-      check('VR: a pin beats its own joint when they coincide',
-        scoreOf && scoreOf(0.05, true) < scoreOf(0.05, false));
-      check('VR: ...but a genuinely nearer bone beats a pin',
-        scoreOf && scoreOf(0.01, false) < scoreOf(0.05, true),
-        'the pin bias must resolve an overlap, not steal focus across the reach');
-    }
-  }
+  check('VR: the same two-distance rule decides it',
+    /nearPinD/.test(vr) && /nearBoneD/.test(vr) && /rigWinner\(nearPin, nearPinD, nearBone, nearBoneD\)/.test(vr),
+    'one rule for both platforms, or they drift apart again');
+  check('VR: with no blended score left to tune',
+    !/rScore/.test(vr), 'the thing that took four rounds to not get right');
+
   check('VR: a lone rig hit is adopted without a mesh hit',
     /if \(nearRig\) \{[\s\S]{0,400}?nearMesh = nearRig;/.test(vr),
     'the same guard that broke the desktop path');
@@ -345,7 +380,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   // NEAREST END, evaluated. Always reporting the tip is the plausible-looking version — it is
   // 1:1 with the capsules — and it silently makes the root unselectable, because the root is
   // nobody's tip and no longer has a dot of its own to click.
-  const m = /rigHit = (.+?);\n/.exec(SRC.slice(SRC.indexOf('var segHead = segmentHead(mesh);')));
+  const m = /rigHit = (_segS.+?);\n/.exec(SRC.slice(SRC.indexOf('var rigHit = mesh;')));
   check('the nearest-end rule is liftable', !!m, 'the pick loop moved');
   if (m) {
     const endOf = new Function('_segS', 'mesh', 'segHead', 'return (' + m[1] + ');');
@@ -368,8 +403,9 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   const m = /o\.visible = (.+?);\n/.exec(SKEL.slice(SKEL.indexOf('const isolated = !hasChildBone')));
   check('the joint dot visibility is liftable', !!m, 'the placement code moved');
   if (m) {
-    const show = (o = {}) => new Function('noBoneBody', 'isolated',
-      'return (' + m[1] + ');')(!!o.noBoneBody, !!o.isolated);
+    const show = (o = {}) => new Function('noBoneBody', 'isolated', 'window',
+      'return (' + m[1] + ');')(!!o.noBoneBody, !!o.isolated,
+      { _rigBoneSelect: o.boneSelect !== false });
 
     check('an ordinary joint draws no dot', show() === false);
     check('nor does the one under the cursor', show({ isHi: true }) === false,
@@ -437,6 +473,159 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
       'the root is only ever a head — light only tips and it has no feedback at all');
     check(`${what}: and an unrelated joint lights nothing`, !lit(false, false));
   }
+}
+
+
+// ── THE ZONE IS AT LEAST THE MARKER ──────────────────────────────────────────
+//
+// A pin's pick zone is a fraction of the SCREEN; its gnomon is sized in WORLD units from the
+// scene unit. On matt's rig — unit 57.9, so a marker ~3.8 units across — the drawn thing is far
+// bigger than the zone that answers for it, and aiming at an arm of the triad landed outside
+// the pin entirely: "the wrist never preselect highlighted", with the bone underneath winning.
+// So the zone takes whichever is larger. The thing you can see is the thing you can click.
+{
+  const m = /if \(BONE_SELECT\(\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/.test(SRC);
+  check('the desktop cone is widened to the drawn marker', m,
+    'a marker bigger than its own pick zone is a target you cannot hit');
+  check('...and the VR reach likewise',
+    /Math\.max\(base, \(mesh\._pickRadius \|\| 0\) \* vrScale\)/.test(SRC),
+    'a gnomon 30cm across has arms further out than an 11cm reach');
+
+  // Evaluated: the widening has to be a MAXIMUM, never a replacement, or a pin viewed from far
+  // away would lose the screen-space zone that makes it hittable at a distance.
+  const widen = new Function('cone', 'r',
+    'const BONE_SELECT = () => true; const mesh = { _pickRadius: r }; '
+    + (SRC.match(/if \(BONE_SELECT\(\) && mesh\._pickRadius > cone\) cone = mesh\._pickRadius;/) || [''])[0]
+    + ' return cone;');
+  check('a marker larger than the cone widens it', widen(0.2, 3.8) === 3.8);
+  check('a marker smaller than the cone leaves it alone', widen(2.0, 0.5) === 2.0,
+    'a distant pin still needs its screen-space zone, which is the larger one there');
+  check('no marker recorded changes nothing', widen(0.2, undefined) === 0.2,
+    'anything that is not a pin has no _pickRadius, and must keep the plain cone');
+}
+
+// And the radius has to actually be PUBLISHED, or the widening above reads undefined forever
+// and the whole thing is a no-op that looks implemented.
+{
+  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  check('the drawing code publishes the marker radius',
+    /pinObj\._pickRadius = r;/.test(SK));
+  check('...taking the LARGEST visible part',
+    /for \(const \[, on, size\] of pinParts\) if \(on\) r = Math\.max\(r, size\);/.test(SK),
+    'a mode showing the rings and the triad is as big as the bigger of them');
+}
+
+
+// ── THE CONTROL ON AN END BEATS THE JOINT IT DRIVES ──────────────────────────
+//
+// The defect three rounds of score tuning could not reach. A bone hit resolves to the joint at
+// its nearer END, and a control pin sits exactly ON that joint — so the segment and the pin
+// occupy the SAME PLACE, and which won was decided by whichever tuning constant happened to be
+// larger. Scoring cannot separate two things that are not apart. So this one is not scored:
+// inside the marker the pin is drawing, the pin IS the answer.
+{
+  const i = SRC.indexOf('function pinAtEnd(');
+  const lifted = SRC.slice(i, SRC.indexOf('\nfunction segmentHead'));
+  const api = new Function('_TMP_SEG_MS', lifted + '\nreturn pinAtEnd;')(new Array(16).fill(0));
+
+  const at = (x, r, extra = {}) => {
+    const m = new Array(16).fill(0);
+    m[12] = x; m[13] = 0; m[14] = 0;
+    return { _isPinTarget: true, _pickRadius: r, isVisible: () => true,
+      getModelSpaceMatrix(out) { for (let k = 0; k < 16; k++) out[k] = m[k]; return out; },
+      ...extra };
+  };
+  const joint = (pin) => ({ _isBone: true, _boneIKPinObj: pin });
+
+  const pin = at(0, 2.0);
+  check('aiming inside the pin marker takes the PIN', api(joint(pin), 1.5, 0, 0) === pin,
+    'this is the whole report: the wrist pin never highlighted');
+  check('...right up to its edge', api(joint(pin), 1.99, 0, 0) === pin);
+  check('aiming outside it leaves the bone alone', api(joint(pin), 2.5, 0, 0) === null,
+    'the middle of a bone, well away from any handle, must still be the bone');
+  check('a joint with no pin is untouched', api(joint(null), 0, 0, 0) === null);
+  check('a pin with no marker drawn claims nothing',
+    api(joint(at(0, 0)), 0, 0, 0) === null,
+    'nothing is on screen there, so nobody can be aiming at it');
+  check('a hidden pin claims nothing',
+    api(joint(at(0, 2, { isVisible: () => false })), 0, 0, 0) === null);
+  check('a locked pin claims nothing',
+    api(joint(at(0, 2, { _selectLocked: true })), 0, 0, 0) === null);
+  check('and it is measured in 3D, not along one axis',
+    api(joint(pin), 0, 1.5, 0) === pin && api(joint(pin), 1.5, 1.5, 0) === null);
+}
+
+// The escape hatch. Four rounds went into the interaction between bone segments and pins; if
+// the balance is still wrong in the headset, this puts the pick back to joints-as-points
+// without a rebuild, which is what it was before any of it.
+// THE WHOLE OF BONE SELECTION IS OPT-IN, AND OFF. Five versions of it shipped without ever
+// being run against the real app, each one re-balancing the previous against the pins that sit
+// on the joints at a bone's ends. What runs by default is the rule from v3.20.65, which is
+// known to work because it did.
+check('bone selection is one switch, and it defaults to OFF',
+  /const BONE_SELECT = \(\) => window\._rigBoneSelect === true;/.test(SRC),
+  'a default of true is not an escape hatch, it is the same gamble with a flag on it');
+check('...gating the segments on both paths',
+  (SRC.match(/BONE_SELECT\(\) \? segmentHead\(mesh\) : null/g) || []).length === 2,
+  'desktop and VR, or the switch only half works');
+check('...the zone widening', /BONE_SELECT\(\) && mesh\._pickRadius > cone/.test(SRC));
+check('...and the zone widening is the only thing left gated',
+  /BONE_SELECT\(\) && mesh\._pickRadius > cone/.test(SRC)
+    && !/BONE_SELECT\(\) \? offAxis/.test(SRC),
+  'the blended scores are gone entirely now, so there is nothing left to gate there');
+{
+  const SK = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8');
+  check('and the joint dots come back when it is off',
+    /window\._rigBoneSelect !== true/.test(SK),
+    'removing the marker AND the target it stood for leaves nothing to aim at');
+}
+
+
+// ── THE RADIUS IS THE ONE ON SCREEN, ON BOTH PLATFORMS ───────────────────────
+//
+// matt: "turn [the grab radius sphere] back on, and use its radius as the proximity max dist."
+// The sphere lost its job when the rig pick was a RAY, where a radius meant nothing; the pick
+// is proximity again, so the sphere is the literal shape of the question and must be the number
+// the pick uses. A radius you can see and set beats a constant nobody can — which is the whole
+// lesson of the rounds before this one.
+{
+  check('VR: the reach is the published cursor radius',
+    /this\._main\?\._vrBrushPhysicalRadius \|\| \(window\._rigPickProximityVR \|\| 0\.11\)/.test(SRC),
+    'a constant of its own is a number nobody can adjust while working');
+
+  const SC = fs.readFileSync('/Users/mattestela/sculptxr/src/Scene.js', 'utf8');
+  check('...and Scene publishes exactly what it draws the sphere at',
+    /this\._vrBrushPhysicalRadius = physicalRadius;/.test(SC),
+    'two numbers for one radius is how the sphere ends up lying about the pick');
+  check('Grab shows its cursor again', !/tool\.constructor\.name === 'Grab'\);\n\n?\s*if \(volumeSphere\)/.test(SC)
+    && /const isGrabTool = tool && tool\.constructor && tool\.constructor\.name === 'Grab';/.test(SC),
+    'it was grouped with the transform tools when the pick was a ray');
+  check('...but not the surface ring', /!isVoxelTool && !isGrabTool && hitDist/.test(SC),
+    'Grab is not a brush and does not act on a surface');
+  check('the transform tools still have no cursor',
+    /isTransformTool = tool && tool\.constructor\s*\n?\s*&& \(tool\.constructor\.name === 'TransformVR' \|\| tool\.constructor\.name === 'Transform'\);/.test(SC),
+    'those are gizmo-driven and genuinely have no radius');
+}
+
+// ── AND IT IS MEASURED FROM THE SPIKE TIP ────────────────────────────────────
+//
+// matt: "it seems to again be measuring from the controller pivot rather than from the end of
+// the controllers spike." `origin` IS the pivot; the tip is a stylus-length in front of it and
+// is what you aim with, so reaching for a pin was off by the length of the controller. Scene
+// computes the tip exactly and passes it as `tipOrigin`.
+{
+  const SM = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/SculptManager.js', 'utf8');
+  const armed = SM.slice(SM.indexOf('if (RigPending.armed(this._main)) {'));
+  const branch = armed.slice(0, armed.indexOf('\n      return;'));
+  check('the armed branch takes the tip, not the pivot',
+    /const tip = \(options && options\.tipOrigin\) \|\| origin;/.test(branch));
+  check('...for the hover', /hoverRigFromRay\(this\._main, picking, tip, dir,/.test(branch));
+  check('...and for the press pick', /intersectionRayMeshes\(targets, tip, dir, true\)/.test(branch));
+  check('...with the pivot only as a fallback', /\|\| origin;/.test(branch),
+    'a frame with no tip supplied must still pick something');
+  check('no raw origin left in the branch', !/picking, origin, dir/.test(branch)
+    && !/targets, origin, dir/.test(branch),
+    'one of the two using the pivot is the same bug half the time');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

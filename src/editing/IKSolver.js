@@ -1476,12 +1476,28 @@ IKSolver.perfTick = function () {
   p.solves = 0; p.ms = 0; p.byWatcher = 0; window._ikPerfRegistry = 0; p.at = now;
 };
 
+// Scratch for the watcher below. It runs once per pin per frame, and getModelSpaceMatrix
+// allocates a fresh matrix when it is not handed one.
+const _mWatch = mat4.create();
+
 IKSolver.pinsMoved = function (main) {
   let moved = false;
   for (const j of IKSolver.pinnedJoints(main)) {
     const p = IKSolver.pinObject(j);
     if (!p) continue;
-    const m = p.getMatrix();
+    // MODEL SPACE, BECAUSE THAT IS WHAT THE SOLVE READS.
+    //
+    // The anchor a pin contributes is `pinAnchor`, which is its MODEL-space transform — so the
+    // question this watcher asks has to be "has the thing the solver consumes changed", not
+    // "has this object's own local matrix changed". They are the same number for an unparented
+    // pin, which is why reading the local one was invisible: every pin was top-level.
+    //
+    // Parent a pin to another pin and they come apart. Drag the parent and the child's LOCAL
+    // matrix does not move at all, so the watcher reports nothing, no solve is scheduled, and
+    // a control handle built out of pins looks simply dead. `syncPinCache` was already writing
+    // the model-space matrix into the same cache this compared against, so the two halves
+    // disagreed about what they were storing the moment anything had a parent.
+    const m = p.getModelSpaceMatrix ? p.getModelSpaceMatrix(_mWatch) : p.getMatrix();
     const last = p._pinLastM;
     if (!last) { p._pinLastM = mat4.clone(m); moved = true; continue; }
     // A ROTATION-ONLY PIN IS WATCHED FOR ROTATION ONLY. Its translation is not an input to the
@@ -1508,7 +1524,8 @@ IKSolver.syncPinCache = function (main) {
   for (const joint of IKSolver.pinnedJoints(main)) {
     const pin = IKSolver.pinObject(joint);
     if (!pin) continue;
-    const m = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix() : pin.getMatrix();
+    // The same reading pinsMoved takes, which is the whole contract of this cache.
+    const m = pin.getModelSpaceMatrix ? pin.getModelSpaceMatrix(_mWatch) : pin.getMatrix();
     if (pin._pinLastM) mat4.copy(pin._pinLastM, m);
     else pin._pinLastM = mat4.clone(m);
   }
