@@ -25,7 +25,7 @@ let SRC = fs.readFileSync(path.join(REPO, 'src/editing/Skeleton.js'), 'utf8');
 {
   const inj = process.env.PIN_INJECT || '';
   if (inj === 'tintonly') {
-    const a = '        const wantMat = (pinHandColor || pinHot) ? o.userData.plainMat : o.userData.vcMat;';
+    const a = '        const wantMat = (pinHeld || pinHot) ? o.userData.plainMat : o.userData.vcMat;';
     if (!SRC.includes(a)) throw new Error('inject tintonly: anchor moved');
     SRC = SRC.replace(a, '        const wantMat = o.userData.vcMat;');
   } else if (inj === 'jointgrow') {
@@ -62,6 +62,7 @@ function lift(head) {
     return parseInt(m[1], 16);
   };
   const HILITE_COLOR = constOf('HILITE_COLOR');
+  const SELECT_COLOR = constOf('SELECT_COLOR');
   const PIN_POS_COLOR = constOf('PIN_POS_COLOR');
   const PIN_FULL_COLOR = constOf('PIN_FULL_COLOR');
   const PIN_SOFT_COLOR = constOf('PIN_SOFT_COLOR');
@@ -80,15 +81,16 @@ function lift(head) {
     };
   };
 
-  const draw = ({ pinHot = false, pinHandColor = null, pinMode = 1, vertexColored = true }) => {
+  const draw = ({ pinHot = false, pinHeld = false, pinMode = 1, vertexColored = true }) => {
     const part = { solid: mkMesh(vertexColored), ghost: mkMesh(vertexColored) };
     const on = true, size = 1;
     const _vPin = {}, _qPin = {};
     // eslint-disable-next-line no-new-func
-    const run = new Function('part', 'on', 'size', '_vPin', '_qPin', 'pinHot', 'pinHandColor',
-      'pinMode', 'HILITE_COLOR', 'PIN_POS_COLOR', 'PIN_FULL_COLOR', 'PIN_SOFT_COLOR', block);
-    run(part, on, size, _vPin, _qPin, pinHot, pinHandColor, pinMode,
-      HILITE_COLOR, PIN_POS_COLOR, PIN_FULL_COLOR, PIN_SOFT_COLOR);
+    const run = new Function('part', 'on', 'size', '_vPin', '_qPin', 'pinHot', 'pinHeld',
+      'pinMode', 'HILITE_COLOR', 'SELECT_COLOR', 'PIN_POS_COLOR', 'PIN_FULL_COLOR',
+      'PIN_SOFT_COLOR', block);
+    run(part, on, size, _vPin, _qPin, pinHot, pinHeld, pinMode,
+      HILITE_COLOR, SELECT_COLOR, PIN_POS_COLOR, PIN_FULL_COLOR, PIN_SOFT_COLOR);
     return part.solid;
   };
 
@@ -113,10 +115,17 @@ function lift(head) {
     draw({ pinMode: 4 }).material.color.hex === PIN_FULL_COLOR,
     'it is the same hold minus a half, and the colour says held');
 
-  // A grabbed pin wears its hand colour, and that is a flat colour for exactly the same reason.
-  const grabbed = draw({ pinHandColor: 0x00ff00 });
-  check('a grabbed pin also drops the axis colours for its hand colour',
-    grabbed.material.vertexColors === false && grabbed.material.color.hex === 0x00ff00);
+  // A HELD pin reads as SELECTED — cyan, not a per-hand red or green. It drops the axis
+  // colours for the same reason the highlight does: a tint cannot lift red, green and blue at
+  // once, so a flat material is the only way the state can be seen at all.
+  const grabbed = draw({ pinHeld: true });
+  check('a held pin reads as selected', grabbed.material.color.hex === SELECT_COLOR,
+    'got 0x' + grabbed.material.color.hex.toString(16));
+  check('...on the flat material, so it can be seen',
+    grabbed.material.vertexColors === false);
+  check('...and holding outranks merely aiming at it',
+    draw({ pinHeld: true, pinHot: true }).material.color.hex === SELECT_COLOR,
+    'a hand on the thing is a stronger statement than a ray near it');
 
   // The steering marker is flat already, so there is nothing to swap and nothing to break.
   const soft = draw({ pinHot: true, pinMode: 3, vertexColored: false });

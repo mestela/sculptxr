@@ -87,7 +87,7 @@ check('the wireframe no longer joins the scene graph per joint',
   for (const field of ['position', 'quaternion', 'scale', 'material', 'visible', 'updateMatrix'])
     check('a slot still answers to .' + field, slot.includes(field + ':') || slot.includes(field + '('));
   check('...and the placement code was left alone',
-    /for \(const o of \[e\.joint\.solid, e\.joint\.ghost\]\) \{[\s\S]{0,200}?o\.material\.color\.setHex/.test(SRC),
+    /for \(const o of \[e\.joint\.solid, e\.joint\.ghost\]\) \{[\s\S]{0,500}?o\.material\.color\.setHex/.test(SRC),
     'if these had to be rewritten, the risky half of the change was not avoided');
 }
 
@@ -149,13 +149,13 @@ check('...and it can still be re-measured when the scene really does change',
   check('a preselected pin does not change size',
     !/pinHot \?/.test(block), block.replace(/\s+/g, ' ').slice(0, 90));
   check('...and preselection is still carried by colour',
-    /o\.material\.color\.setHex\(pinHandColor \|\| \(pinHot \? HILITE_COLOR/.test(SRC),
+    /o\.material\.color\.setHex\(pinHeld \? SELECT_COLOR : \(pinHot \? HILITE_COLOR/.test(SRC),
     'dropping the scale must not drop the signal with it');
   // The same CONSTANT, not the same hex: a highlight is one colour across the rig, and the
   // check that pinned it to a literal reported a deliberate repaint as a regression.
   check('...in the same colour the joints use',
-    /setHex\(jointHandColor \|\| \(isHi \? HILITE_COLOR/.test(SRC)
-      && /setHex\(pinHandColor \|\| \(pinHot \? HILITE_COLOR/.test(SRC),
+    /setHex\(jointHeld \? SELECT_COLOR\s*\n?\s*: \(isHi \? HILITE_COLOR/.test(SRC)
+      && /setHex\(pinHeld \? SELECT_COLOR : \(pinHot \? HILITE_COLOR/.test(SRC),
     'the two must read one constant, or they drift apart');
 }
 

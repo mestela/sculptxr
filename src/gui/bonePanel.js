@@ -155,6 +155,7 @@ export function buildBoneDisplayHTML(main, style) {
     ${sectionTitle(c, 'Rig Display')}
     <div class="${c.toggles}">
       ${flagButton(c, 'len', 'Lengths', Skeleton.displayFlag('lengths'))}
+      ${flagButton(c, 'names', 'Names', Skeleton.displayFlag('names'))}
       ${flagButton(c, 'solid', 'Solid', Skeleton.displayFlag('solid'))}
       ${flagButton(c, 'wire', 'Wire', Skeleton.displayFlag('wire'))}
       ${flagButton(c, 'joints', 'Joints', Skeleton.displayFlag('joints'))}
@@ -226,6 +227,7 @@ export function wireBoneSection(root, main, opts) {
   flag('snap', 'snapPlane');
   flag('axis', 'snapAxis');
   flag('len', 'lengths');
+  flag('names', 'names');
   flag('caps', 'capsules');
   flag('solid', 'solid');
   flag('wire', 'wire');
@@ -488,6 +490,7 @@ export function syncBoneSection(root, main) {
   setFlag('snap', Skeleton.displayFlag('snapPlane'));
   setFlag('axis', Skeleton.displayFlag('snapAxis'));
   setFlag('len', Skeleton.displayFlag('lengths'));
+  setFlag('names', Skeleton.displayFlag('names'));
   setFlag('caps', Skeleton.displayFlag('capsules'));
   setFlag('weights', Skeleton.displayFlag('weights'));
   setFlag('solid', Skeleton.displayFlag('solid'));

@@ -7005,7 +7005,31 @@ class Scene {
         const _bBtn = activeGamepad?.buttons?.[5];
         const _bDown = !_modalUp && !!(_bBtn && (_bBtn.pressed || _bBtn.value > 0.5));
         const _pp = worldPose.transform.position;
-        this._vrRadial.handleInput(_bDown, [_pp.x, _pp.y, _pp.z], () => this._resolveRadialCommands());
+        this._vrRadial.handleInput(_bDown, [_pp.x, _pp.y, _pp.z], () => {
+          // LATCH WHAT THE MENU IS ACTING ON, for as long as it is acting on it.
+          //
+          // The hand has to move to pick a sector, and the rig preselection follows the hand —
+          // so the highlight crawled to whatever bone happened to be nearest while the menu was
+          // open, behind the wheel, on an object the menu was not going to touch. matt: "i can
+          // see behind the menu its changing the preselect highlight to whatever is the next
+          // closest bone, which is confusing."
+          //
+          // So the subject is frozen at open and drawn as SELECTED — cyan, the colour for "this
+          // is the one" — which is what he meant by "B should select". The freeze holds through
+          // a pending submenu and lifts when the whole operation is done, not when the first
+          // wheel closes: naming is two wheels, and going yellow between them would say the
+          // subject had been let go.
+          const cmds = this._resolveRadialCommands();
+          const subj = Skeleton.hoveredJoint(this) || this.getMesh?.();
+          this._rigMenuLatch = (subj && (subj._isBone || subj._isPinTarget))
+            ? subj.getID() : null;
+          return cmds;
+        });
+        // Lifted only once nothing is open AND nothing is waiting for the next press.
+        if (!this._vrRadial.isOpen && !this._vrRadial.hasPending && this._rigMenuLatch != null) {
+          this._rigMenuLatch = null;
+          Skeleton.updateVisuals(this);
+        }
       }
 
       // Keep Legacy _vrRightRayMatrix for now (for old Menu Logic, until Step 4)
@@ -8325,8 +8349,75 @@ class Scene {
     const layerCmds = (tl()?._shapeLayerMenuCommands?.() || []).map(c => ({
       label: c.label, icon: 'fa-object-group', enabled: true, run: c.run,
     }));
+    // NAME CHAIN — a submenu, because the presets are short but not one wedge. `run()` returns
+    // a command list, which reopens the wheel on it (see VrRadialMenu._commit): two flicks of
+    // one gesture rather than a trip to a panel, which is the whole point of doing this here
+    // and not in the main menu. The flat-screen "…" menu gets it from the same array.
+    //
+    // Offered only on a JOINT, since that is what a chain starts from. A pin resolves to the
+    // joint it holds — reaching for a control and being told "not that" is a worse answer than
+    // just doing the obvious thing.
+    // WHAT THE MENU ACTS ON: the preselected node first, then the selection.
+    //
+    // A bone lit yellow under the ray is the thing you are pointing at, and pressing B while
+    // pointing at it means that one — matt: "if a bone is in a yellow preselect state and B is
+    // pressed, treat it as a selection." Requiring a prior click made the command dead in the
+    // one situation it is most obviously wanted.
+    //
+    // Preselect WINS over the selection when both exist, because it is the more recent and more
+    // specific statement: the selection may be left over from something you did minutes ago,
+    // the highlight is where your hand is now. `hoveredJoint` resolves a hovered pin to the
+    // joint it holds, which is the chain root either way.
+    //
+    // It does not COMMIT the selection. Opening a menu is not a pick, and `getMesh()` is also
+    // the animation target — reselecting as a side effect of pressing B would retarget the
+    // timeline without anyone asking.
+    const hoveredRoot = Skeleton.hoveredJoint(this);
+    const nameRoot = hoveredRoot
+      || (selMesh && selMesh._isPinTarget && selMesh._pinnedJoint)
+      || (selMesh && selMesh._isBone ? selMesh : null);
+    const nameCmds = (which) => {
+      const chain = Skeleton.chainFrom(this, nameRoot);
+      const n = chain.length;
+      // BOTH SETS ARE ALWAYS REACHABLE. Picking one by context keeps each wheel short, but a
+      // rig drawn entirely with symmetry on has a mirror twin on every joint, so the centreline
+      // names were never offered at all — matt: "its never showing me options for the central
+      // axis types." Context now chooses which set you see FIRST; a wedge swaps to the other.
+      const limb = which ? which === 'limb' : !!(nameRoot && nameRoot._boneMirror);
+      const list = limb ? Skeleton.LIMB_NAMES : Skeleton.AXIS_NAMES;
+      const cmds = list.map((nm) => ({
+        label: nm, icon: 'fa-tag', enabled: true,
+        run: () => { Skeleton.nameChain(this, nameRoot, nm); },
+      }));
+      cmds.push({
+        label: limb ? 'spine\u2026' : 'limbs\u2026', icon: 'fa-rotate', enabled: true,
+        sub: () => nameCmds(limb ? 'axis' : 'limb'),
+        run: () => {},
+      });
+      // The long tail. One wedge rather than a panel, and the keyboard already exists.
+      cmds.push({
+        label: 'Type\u2026', icon: 'fa-keyboard', enabled: true,
+        run: () => {
+          const kb = window._vrKeyboard;
+          const cur = (nameRoot._permanentStaticLabel || '').replace(/_\d+(_[LR])?$/, '');
+          if (kb && kb.shouldUse && kb.shouldUse()) {
+            kb.open(cur, { label: 'Name chain (' + n + ' joints)', maxLength: 24 },
+              (text) => { Skeleton.nameChain(this, nameRoot, text); });
+          } else {
+            const t = window.prompt('Name this chain of ' + n + ' joints', cur);
+            if (t) Skeleton.nameChain(this, nameRoot, t);
+          }
+        },
+      });
+      return cmds;
+    };
+
     return [
       ...layerCmds,
+      // `sub` rather than `run`: the wheel needs to know a sector HAS children before running
+      // anything, so it can open them when you push out past the rim.
+      { label: 'Name chain\u2026', icon: 'fa-tag', enabled: !!nameRoot,
+        sub: () => nameCmds(), run: () => {} },
       { label: 'Copy',       icon: 'fa-copy',        enabled: hasKeySel, run: () => tl()?.copySelectedKeys?.() },  // selected key(s)/frame(s)
       { label: 'Paste',      icon: 'fa-paste',       enabled: canPaste,  run: () => tl()?.pasteKeys?.(false) },    // at the playhead
       { label: 'Paste Link', icon: 'fa-link',        enabled: canPaste,  run: () => tl()?.pasteKeys?.(true) },     // linked instance

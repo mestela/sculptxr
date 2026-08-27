@@ -96,10 +96,17 @@ check('timeline row and key focus update real scene selection',
 // themselves: the next person to touch Picking.js fixes one harness and is failed by the other.
 // rigpick_test asserts the same properties and asserts them better — it LIFTS the score
 // expression and evaluates it, rather than matching the constants as spellings.
-check('VR pin hover and grab colors identify each controller',
-  /RIGHT_HAND_COLOR = 0xf38ba8/.test(skel)
-    && /LEFT_HAND_COLOR = 0xa6e3a1/.test(skel)
-    && /_rigGrabHands/.test(grab));
+// PER-HAND COLOURS ARE GONE, deliberately. Tinting whatever each controller touched by
+// handedness put a third and fourth colour on a surface that already has to say "aimed at" and
+// "selected", and the hand doing it is the one thing you can already see. matt: "the red/green
+// highlighting with the grab tool for the left/right controller is confusing." What survives is
+// the map itself — the visuals still need to know a pin is IN A HAND rather than aimed at, and
+// that now reads as selected.
+check('a held pin is still published to the visuals',
+  /_rigGrabHands/.test(grab) && /_syncXRPinGrabs/.test(grab));
+check('...but not as a per-hand colour',
+  !/RIGHT_HAND_COLOR|LEFT_HAND_COLOR/.test(skel),
+  'held reads as selected now; two more colours on the rig is what was confusing');
 check('bones remain directly selectable beside pins and retain their own animation focus',
   !/setOrUnsetMesh\(mesh, multiSelect\) \{\s*mesh = IKSolver\.controlFor/.test(scene)
     && /var mesh = picking\.getMesh\(\)/.test(grab)

@@ -100,12 +100,15 @@ class Grab extends SculptBase {
     queueMicrotask(() => this._flushXRPinSolve());
   }
 
-  _syncXRPinHandColors() {
+  // Publish which pins each controller is HOLDING. It used to drive a per-hand tint; the tint
+  // is gone (held reads as selected now, see Skeleton), but the map is still what tells the
+  // visuals a pin is in a hand rather than merely aimed at.
+  _syncXRPinGrabs() {
     const handMap = {};
     for (const [hand, held] of this._vrPinGrabs) handMap[held.pin.getID()] = hand;
     const signature = JSON.stringify(handMap);
-    if (signature === this._vrPinHandColorSignature) return;
-    this._vrPinHandColorSignature = signature;
+    if (signature === this._vrPinGrabSignature) return;
+    this._vrPinGrabSignature = signature;
     this._main._rigGrabHands = handMap;
     Skeleton.updateVisuals(this._main);
     this._main.render?.();
@@ -151,7 +154,7 @@ class Grab extends SculptBase {
             window._animationRegistry?.addInteractionTarget?.(pin);
           }
           this._vrPinGrabs.set(hand, { pin, last: mat4.clone(controller.matrix) });
-          this._syncXRPinHandColors();
+          this._syncXRPinGrabs();
           this._main._lastRigEdit = pin;
           // AND SELECT IT. This is the one rig grab that never did: the ordinary path calls
           // setMesh on whatever it took, but pins have their own gesture here and it only
@@ -177,7 +180,7 @@ class Grab extends SculptBase {
     for (const controller of activeControllers) {
       if (!controller.buttons?.[0]?.pressed) this._vrPinGrabs.delete(controller.handedness);
     }
-    this._syncXRPinHandColors();
+    this._syncXRPinGrabs();
 
     // A held pin must not suppress aim feedback for the free hand. The free controller can
     // continue preselecting its next target while the other controller moves its pin.

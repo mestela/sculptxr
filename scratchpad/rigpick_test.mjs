@@ -63,13 +63,14 @@ let SKEL = fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js',
     SKEL = SKEL.replace(a, 'const boneHot = isHi;');
   } else if (inj === 'pinovershot') {
     // The pin tint goes back on top of preselection, so hovering a pinned bone shows nothing.
-    const a = 'const boneTint = boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR';
+    const a = 'const boneTint = boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR';
     if (!SKEL.includes(a)) throw new Error('inject pinovershot: anchor moved');
-    SKEL = SKEL.replace(a, 'const boneTint = ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR : (tintMode === 1 ? PIN_POS_COLOR : boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR');
-    const b2 = ': (tintMode === 1 ? PIN_POS_COLOR : restTint))));';
-    SKEL = SKEL.replace(b2, ': restTint)))));');
+    SKEL = SKEL.replace(a, 'const boneTint = tintMode ? ((tintMode === 2 || tintMode === 4)'
+      + ' ? PIN_FULL_COLOR : PIN_POS_COLOR) : (boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR');
+    SKEL = SKEL.replace(': (tintMode === 1 ? PIN_POS_COLOR : restTint))));',
+      ': (tintMode === 1 ? PIN_POS_COLOR : restTint)))));');
   } else if (inj === 'spherealways') {
-    const a = 'o.visible = showJoints || noBoneBody || isolated;';
+    const a = 'o.visible = showJoints || noBoneBody || isolated || isHi || isSel || jointHeld;';
     if (!SKEL.includes(a)) throw new Error('inject spherealways: anchor moved');
     SKEL = SKEL.replace(a, 'o.visible = true;');   // always drawn, flag ignored
   }
@@ -405,11 +406,18 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
   check('the joint dot visibility is liftable', !!m, 'the placement code moved');
   if (m) {
     const show = (o = {}) => new Function('showJoints', 'noBoneBody', 'isolated',
-      'return (' + m[1] + ');')(!!o.showJoints, !!o.noBoneBody, !!o.isolated);
+      'isHi', 'isSel', 'jointHeld', 'return (' + m[1] + ');')(
+      !!o.showJoints, !!o.noBoneBody, !!o.isolated, !!o.isHi, !!o.isSel, !!o.jointHeld);
 
     check('the flag on draws them', show({ showJoints: true }) === true);
     check('the flag off hides them', show({ showJoints: false }) === false,
       'the dots came back with no way to turn them off, which is what this restores');
+    // The dot is where preselect and selection are SHOWN on a joint, so those states have to
+    // bring it back even with the layer off — otherwise turning the dots off silently turns
+    // off the answer to "which one would I get".
+    check('...except the one under the cursor', show({ isHi: true }) === true);
+    check('...a selected one', show({ isSel: true }) === true);
+    check('...and one in a hand', show({ jointHeld: true }) === true);
     check('an ISOLATED joint draws anyway', show({ isolated: true }) === true,
       'it has no capsule at either end: without the dot it is invisible AND unpickable');
     check('so does every joint when the bone body is switched off',
@@ -420,7 +428,7 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
       'switching a marker off must not switch off the only way to find the thing');
   }
   check('the flag exists and defaults to ON',
-    /joints: \['_boneShowJoints', 'boneShowJoints', true\]/.test(SKEL),
+    /joints: \['_boneShowJoints', 'boneShowJointDots', true\]/.test(SKEL),
     'bone selection ships off, so the dot is the marker for the target');
 }
 
@@ -441,22 +449,32 @@ check('perspective still scales with depth', /cone = _pk \* tAlong \* Math\.sqrt
     };
     const HILITE = C('HILITE_COLOR'), SELECT = C('SELECT_COLOR');
     const POS = C('PIN_POS_COLOR'), FULL = C('PIN_FULL_COLOR');
-    const tint = (o = {}) => new Function('boneHand', 'boneHot', 'boneSel', 'tintMode',
+    const tint = (o = {}) => new Function('boneHeld', 'boneHot', 'boneSel', 'tintMode',
       'HILITE_COLOR', 'SELECT_COLOR', 'PIN_POS_COLOR', 'PIN_FULL_COLOR', 'restTint',
-      'return (' + m[1] + ');')(o.boneHand || null, !!o.boneHot, !!o.boneSel, o.tintMode || 0,
+      'return (' + m[1] + ');')(!!o.boneHeld, !!o.boneHot, !!o.boneSel, o.tintMode || 0,
       HILITE, SELECT, POS, FULL, 0x111111);
 
     check('an idle unpinned bone wears the rest colour', tint() === 0x111111);
     check('a hovered bone wears the preselect colour', tint({ boneHot: true }) === HILITE);
     check('a selected one wears the selection colour', tint({ boneSel: true }) === SELECT);
-    check('a grabbed one wears its hand colour', tint({ boneHand: 0x00ff00 }) === 0x00ff00);
+    // HELD READS AS SELECTED — one cyan, not a red hand and a green hand. The per-hand tints
+    // put two more colours on a surface that already has to say "aimed at" and "selected", and
+    // which hand it is is the thing you can already see.
+    check('a held bone reads as selected', tint({ boneHeld: true }) === SELECT);
+    check('...and holding outranks aiming at it',
+      tint({ boneHeld: true, boneHot: true }) === SELECT,
+      'a hand on the thing is a stronger statement than a ray near it');
     check('a pinned bone still reports its pin', tint({ tintMode: 1 }) === POS
       && tint({ tintMode: 2 }) === FULL && tint({ tintMode: 4 }) === FULL);
     check('but hovering a PINNED bone still shows the preselect',
       tint({ boneHot: true, tintMode: 2 }) === HILITE,
       'a preselection the pin state can cover is a preselection you cannot trust');
-    check('and the hand beats everything', tint({ boneHand: 0xff00ff, boneHot: true,
-      tintMode: 2 }) === 0xff00ff);
+    check('and holding beats the pin tint too',
+      tint({ boneHeld: true, tintMode: 2 }) === SELECT);
+    check('no per-hand colours survive anywhere',
+      !/HAND_COLOR/.test(SRC) && !/HAND_COLOR/.test(
+        fs.readFileSync('/Users/mattestela/sculptxr/src/editing/Skeleton.js', 'utf8')),
+      'red and green by handedness is what was confusing');
   }
   // EITHER END, not just the tip. Only the tip would mean hovering the ROOT lights nothing at
   // all, since the root is nobody's tip — the same trap the pick itself had, and the reason a
@@ -578,7 +596,7 @@ check('...and the zone widening is the only thing left gated',
   // above. What still must hold is that they DEFAULT to drawn, because bone selection ships
   // off and the dot is then the only marker for the thing being aimed at.
   check('and the joint dots default to drawn, since the bone is not the target',
-    /joints: \['_boneShowJoints', 'boneShowJoints', true\]/.test(SK),
+    /joints: \['_boneShowJoints', 'boneShowJointDots', true\]/.test(SK),
     'removing the marker AND the target it stood for leaves nothing to aim at');
 }
 

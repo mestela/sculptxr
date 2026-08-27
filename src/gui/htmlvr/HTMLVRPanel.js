@@ -708,16 +708,39 @@ export class HTMLVRPanel {
     return null;
   }
 
+  // THE HOVER QUAD KNOWS WHAT IS UNDER THE RAY; THE DOM DOES NOT.
+  //
+  // Hover stopped being a DOM event on purpose — dispatching pointermove into the offscreen DOM
+  // changes CSS :hover, which repaints the whole panel, which is what made the menus lag. The
+  // quad replaced all of that. But it also means anything that wants to know what is hovered
+  // can no longer listen for a pointer event, because there is not one: matt's outliner-row
+  // highlight never fired, and could not have.
+  //
+  // So the quad announces it instead. A CustomEvent does not touch :hover and does not repaint
+  // anything, so the reason the quad exists survives — this just stops the knowledge being
+  // trapped inside it.
+  _announceHover(next, prev) {
+    if (next === prev) return;
+    try {
+      if (prev) prev.dispatchEvent(new CustomEvent('vrhoverout', { bubbles: true }));
+      if (next) next.dispatchEvent(new CustomEvent('vrhover', { bubbles: true }));
+    } catch (_) { /* an overlay mid-teardown is not worth taking the frame down for */ }
+  }
+
   _showHover(uv) {
     const q = this._hoverMesh();
     const { el } = this._uvToElement(uv);
     const target = this._hoverable(el);
-    if (!target) { q.visible = false; this._hoverEl = null; return; }
+    if (!target) {
+      this._announceHover(null, this._hoverEl);
+      q.visible = false; this._hoverEl = null; return;
+    }
     // Re-measure when the panel has SCROLLED even though the element is the same: the row is
     // under the ray at a different place than it was, and skipping the measure would leave the
     // highlight behind at the old position.
     const scrolled = this._hoverScrollTop !== this._scrollTopOf(target);
     if (target === this._hoverEl && !scrolled) { q.visible = true; return; }
+    this._announceHover(target, this._hoverEl);
     this._hoverScrollTop = this._scrollTopOf(target);
     this._hoverEl = target;
 
@@ -775,6 +798,9 @@ export class HTMLVRPanel {
 
   clearHover() {
     if (this._hoverQuad) this._hoverQuad.visible = false;
+    // Tell whoever was listening: the ray has left, and a highlight that outlives the thing
+    // pointing at it is worse than no highlight.
+    this._announceHover(null, this._hoverEl);
     this._hoverEl = null;
     this._hoverHand = undefined;
   }

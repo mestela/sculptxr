@@ -30,13 +30,21 @@ import getOptionsURL from '../misc/getOptionsURL.js';
 // lives inside a solid arm, so without the ghost you are placing it blind (stereo gives
 // you depth perception of surfaces, not of things buried in them).
 
-const JOINT_COLOR = 0x33e0ff;
-const BONE_COLOR = 0xf0c674;
+// GRAY AT REST, so the two states that mean something can own a colour each. A rig that is
+// already amber and cyan everywhere has nowhere left to say "this is what you would take" —
+// matt: "make the default bone colour be a gray, so then we can use yellow for the preselect
+// highlight, and cyan for a confirm selection". The dots are a shade LIGHTER than the bones so
+// the two still read apart at rest.
+const JOINT_COLOR = 0x9aa0ac;
+const BONE_COLOR = 0x6c7280;
 const BONE_EDGE = 0x1e1e2e;
-const HILITE_COLOR = 0x00ffff;  // preselection: pure cyan, the brightest thing on the rig
-const SELECT_COLOR = 0xa6e3a1; // outliner selection, distinct from the cyan preselect
-const RIGHT_HAND_COLOR = 0xf38ba8;
-const LEFT_HAND_COLOR = 0xa6e3a1;
+const HILITE_COLOR = 0xffd733;  // preselection: yellow — "this is what the next press takes"
+const SELECT_COLOR = 0x00e5ff; // confirmed selection: cyan, and only ever this
+// NO PER-HAND COLOURS. The rig used to tint whatever each controller was touching red or
+// green by handedness, which put a third and fourth colour on a surface that already has to say
+// "aimed at" and "selected" — and the hand doing it is the one thing you can already see,
+// because it is attached to you. matt: "the red/green highlighting with the grab tool for the
+// left/right controller is confusing." Held now reads as SELECTED, which is what it is.
 // A pinned bone is tinted, which is the one display channel still free: the JOINT marker's
 // colour is already spoken for by preselect and selection, so pin state goes on the bone. It
 // also reads from across the scene, where a small triad does not.
@@ -508,9 +516,13 @@ function makeCapsulePart(geo) {
 // segment usually want to be about equal, and reading two numbers is far quicker than
 // eyeballing two bones from a single viewpoint in a headset. Sprites, so they always face
 // the viewer, and depthTest off so a label inside the mesh is still readable.
+const LABEL_FONT = 'bold 34px sans-serif';
+const LABEL_H = 64;      // canvas height; the width is sized to the text, see setLabelText
+const LABEL_PAD = 18;    // room for the stroke outline at both ends
+
 function makeLabel() {
   const canvas = document.createElement('canvas');
-  canvas.width = 128; canvas.height = 64;
+  canvas.width = 128; canvas.height = LABEL_H;
   const tex = new THREE.CanvasTexture(canvas);
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: tex, transparent: true, depthTest: false, depthWrite: false,
@@ -518,15 +530,34 @@ function makeLabel() {
   sprite.renderOrder = 10001;
   sprite.isPickable = false;
   sprite.frustumCulled = false;
-  return { sprite: sprite, canvas: canvas, tex: tex, text: '' };
+  // The sprite is scaled from THIS, so a long word is never squeezed into a short plate.
+  return { sprite: sprite, canvas: canvas, tex: tex, text: '', aspect: canvas.width / LABEL_H };
 }
 
+// THE PLATE IS SIZED TO THE TEXT, not the other way round.
+//
+// The canvas was a fixed 128x64 and the text drawn centred, which is fine for "1.24" and
+// clips a NAME at both ends — you see the middle of the word and nothing else. Stretching the
+// sprite to compensate only stretches the same clipped pixels. matt: "the names are stretched
+// horizontally, and are clipped to the center of their names."
+//
+// So: measure, widen the canvas to fit, and let the sprite take its aspect from the canvas.
+// The text then has one size in pixels and one shape in the world, whatever it says.
 function setLabelText(lab, text) {
   if (lab.text === text) return; // repainting a canvas + reuploading a texture is not free
   lab.text = text;
   const c = lab.canvas, ctx = c.getContext('2d');
+  ctx.font = LABEL_FONT;
+  const want = Math.max(64, Math.ceil(ctx.measureText(text).width) + LABEL_PAD * 2);
+  if (c.width !== want) {
+    c.width = want;          // resizing CLEARS the canvas and resets every ctx property
+    // Three will not reallocate the GPU texture for a resized canvas without this — the same
+    // gotcha the VR timeline hit when its canvas changed size.
+    lab.tex.dispose();
+    lab.aspect = c.width / LABEL_H;
+  }
   ctx.clearRect(0, 0, c.width, c.height);
-  ctx.font = 'bold 34px sans-serif';
+  ctx.font = LABEL_FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = 6;
@@ -806,6 +837,109 @@ Skeleton.childJoints = function (main, joint) {
 // derived from joint positions, so they follow for free) while the foot and toes stay
 // exactly where they were. Only direct children need pinning; their own descendants ride
 // along with them and stay put automatically.
+// ── NAMING A CHAIN ────────────────────────────────────────────────────────────────────────
+//
+// Bone Draw already names as it goes — `${chainName}_${NN}${side}` — but `chainName` is always
+// "bone", so a finished rig is `bone_01_L … bone_17`. matt: naming AFTER the fact is the useful
+// half, because it keeps you in the flow while building and lets you tidy up at the end.
+//
+// WHAT A CHAIN IS HERE: from the joint you picked, walk DOWN through children for as long as
+// there is exactly one, and stop at a fork or a leaf. Click the shoulder and you get the arm;
+// a wrist that forks into fingers stops at the wrist and each finger is named separately.
+// Deliberately not clever — no guessing that something "looks like a leg" from its geometry,
+// because a guess that is wrong one time in five is worse than a rule you can predict.
+Skeleton.chainFrom = function (main, joint) {
+  const out = [];
+  let j = joint;
+  while (j && Skeleton.isJoint(j)) {
+    out.push(j);
+    const kids = Skeleton.childJoints(main, j).filter((k) => Skeleton.isJoint(k));
+    if (kids.length !== 1) break;   // a fork ends the chain, and so does a leaf
+    j = kids[0];
+  }
+  return out;
+};
+
+// The `_L` / `_R` a joint already carries. Preserved rather than re-derived: it was set at draw
+// time from the mirror plane, and re-deriving it from position risks disagreeing with
+// `_boneMirror`, which is the link that actually drives mirroring.
+const SIDE_RE = /(_[LR])$/;
+function sideOf(j) {
+  const m = SIDE_RE.exec(j && j._permanentStaticLabel || '');
+  return m ? m[1] : '';
+}
+
+// Rename a chain to `name`, renumbering from 01, in ONE undo step.
+//
+// Also renames, because leaving either behind is a name that lies:
+//   - the MIRROR TWIN, with the opposite suffix. `_boneMirror` gives it for nothing, and doing
+//     one side only means doing everything twice.
+//   - each joint's PIN. makePin labels them `pin_<jointName>` at creation, so a renamed joint
+//     otherwise leaves `pin_bone_03_L` in the outliner pointing at `arm_02_L`.
+//
+// No uniquing. Labels are not keys — ids are — so a duplicate is cosmetic rather than
+// corrupting, and dedup logic here would buy little and surprise more.
+Skeleton.nameChain = function (main, joint, name) {
+  const clean = String(name || '').trim().replace(/[^\w-]+/g, '_');
+  if (!main || !joint || !clean) return false;
+  const chain = Skeleton.chainFrom(main, joint);
+  if (!chain.length) return false;
+
+  const before = new Map();
+  const after = new Map();
+  const record = (m, label) => {
+    if (!m) return;
+    if (!before.has(m)) before.set(m, m._permanentStaticLabel);
+    after.set(m, label);
+  };
+
+  chain.forEach((j, i) => {
+    const idx = String(i + 1).padStart(2, '0');
+    const side = sideOf(j);
+    const label = clean + '_' + idx + side;
+    record(j, label);
+    const twin = j._boneMirror;
+    if (twin && Skeleton.isJoint(twin)) {
+      const flip = side === '_L' ? '_R' : (side === '_R' ? '_L' : '');
+      record(twin, clean + '_' + idx + flip);
+    }
+    for (const m of [j, twin]) {
+      const pin = m && m._boneIKPinObj;
+      if (pin && pin._isPinTarget) record(pin, 'pin_' + after.get(m));
+    }
+  });
+
+  const apply = (map) => {
+    for (const [m, label] of map) {
+      m._permanentStaticLabel = label;
+      m.uiName = label;
+    }
+    main.render?.();
+    Skeleton.refreshOutliner(main);
+  };
+  apply(after);
+  main.getStateManager?.()?.pushStateCustom?.(
+    () => apply(before), () => apply(after), false, 'Name chain');
+  if (window.screenLog) {
+    window.screenLog('Named ' + chain.length + ' joint' + (chain.length === 1 ? '' : 's')
+      + ' -> ' + clean + '_01', 'cyan');
+  }
+  return true;
+};
+
+// THE PRESETS, chosen by where the chain SITS rather than shown as one long list.
+//
+// A radial stops being flick-able past about eight wedges — it becomes a menu you read, which
+// is the thing this exists to avoid. The rig already knows which half applies: `_boneMirror` is
+// set at draw time for anything off the mirror plane, so a limb and a centreline chain can be
+// offered different lists and each stays short.
+Skeleton.LIMB_NAMES = ['arm', 'forearm', 'hand', 'finger', 'thumb', 'leg', 'foot'];
+Skeleton.AXIS_NAMES = ['spine', 'neck', 'head', 'hips', 'tail'];
+
+Skeleton.nameSuggestions = function (joint) {
+  return (joint && joint._boneMirror) ? Skeleton.LIMB_NAMES : Skeleton.AXIS_NAMES;
+};
+
 Skeleton.moveJoint = function (main, joint, pos, compensate) {
   const kids = compensate ? Skeleton.childJoints(main, joint) : [];
   const saved = kids.map((k) => k.getModelSpaceMatrix());
@@ -888,7 +1022,16 @@ Skeleton.makePin = function (main, joint) {
 // Throttled: a full pick plus a visual rebuild at 90Hz costs more frame than preselection is
 // worth, and the cost showed up not as slowness but as VR grab failing outright. A hand does
 // not move fast enough to need more, and the highlight is sticky between checks.
+// WHILE A CONTEXT MENU IS ACTING ON A NODE, THE PRESELECTION STOPS MOVING.
+//
+// Picking a sector means moving the hand, and the hover follows the hand — so without this the
+// highlight walks to whatever is nearest while the wheel is up, drawing attention to an object
+// the menu will not touch. The latch is the subject; nothing else may claim the preselection
+// until the operation is finished.
+function hoverFrozen(main) { return main && main._rigMenuLatch != null; }
+
 function applyRigHover(main, node) {
+  if (hoverFrozen(main)) return;
   if (window._grabTrace) {
     console.log('[rigHover] node=' + (node ? (node._permanentStaticLabel || node.getID()) : 'none')
       + ' kind=' + (node ? (node._isPinTarget ? 'pin' : 'bone') : '-'));
@@ -903,6 +1046,7 @@ function applyRigHover(main, node) {
 }
 
 function applyRigHovers(main, nodes, primaryNode, hands = []) {
+  if (hoverFrozen(main)) return;
   const jointIds = nodes.filter((n) => n && !n._isPinTarget).map((n) => n.getID());
   const pinIds = nodes.filter((n) => n?._isPinTarget).map((n) => n.getID());
   const handMap = {};
@@ -1389,6 +1533,38 @@ function pendingLink(main) {
   _pendLine.visible = true;
 }
 
+// Does hovering an outliner row light the thing in 3D? Two attempts have failed and reading has
+// not found it, so this reports the whole chain: how many rows got wired, what a row resolves
+// to, what id reaches the draw, and whether that id is a joint the draw can see.
+//
+// Prints on every move over a row, so turn it off after. Silence when you hover a row means the
+// listener never fired — which is a different bug from the id not reaching the draw.
+window.outlinerHover = function (on) {
+  window._outlinerHoverTrace = on !== false;
+  console.log('[outlinerHover] ' + VERSION + ' — trace ' + (window._outlinerHoverTrace ? 'ON' : 'off')
+    + '. Open the outliner, move over a bone row. Nothing printing at all means the row '
+    + 'listener never fired; a "row -> ..." with no "draw:" means the id is not reaching the '
+    + 'visuals; a "draw: ... is NOT one of the N joints" means the id is the wrong kind.');
+  console.log('[outlinerHover] wiring is re-attached on the next panel repaint — '
+    + 'open or switch a tab if the row lines do not appear.');
+  return window._outlinerHoverTrace;
+};
+
+// REBUILD THE OUTLINER, both of them, and make the panel actually believe it.
+//
+// The VR panel skips a rebuild when its content key is unchanged, and that key is built from
+// the section, the shader, the mesh COUNT and the active tool — none of which a rename touches.
+// So renaming left the old names in the DOM until something else forced a rebuild, which is why
+// closing and reopening the outliner "fixed" it. The revision counter goes into that key, so
+// anything that changes what the outliner SAYS can say so.
+Skeleton.refreshOutliner = function (main) {
+  if (!main) return;
+  main._outlinerRev = (main._outlinerRev | 0) + 1;
+  const gui = main.getGui && main.getGui();
+  if (gui && gui._desktopSceneEl && gui._buildDesktopScene) gui._buildDesktopScene(gui._desktopSceneEl);
+  main._mainMenuPanel?.markDirty?.();
+};
+
 Skeleton.updateVisuals = function (main) {
   Skeleton.healGraph(main);
   // Ahead of the no-joints early return below: an assignment can be under way in a scene with
@@ -1408,11 +1584,33 @@ Skeleton.updateVisuals = function (main) {
   const hi = main._skelHighlightId ?? -1;
   const hiAll = new Set(main._skelHighlightIds || [hi]);
   const pinHiAll = new Set(main._pinHighlightIds || [main._pinHighlightId ?? -1]);
-  const hoverHands = main._rigHoverHands || {};
+  // A SECOND SOURCE FOR THE SAME STATE: hovering a row in the outliner.
+  //
+  // It cannot go through setRigHighlight, because the ray hover is recomputed from scratch
+  // every frame and would overwrite it before it was ever drawn — which is exactly what
+  // happened. Its own channel, OR-ed in here, so the two sources cannot stomp each other and
+  // the highlight still means one thing wherever it came from. Added to both sets: an id
+  // matches a joint or a pin, never both.
+  const panelHi = main._rigPanelHoverId;
+  if (panelHi != null && panelHi >= 0) { hiAll.add(panelHi); pinHiAll.add(panelHi); }
+  if (window._outlinerHoverTrace && panelHi != null && panelHi >= 0) {
+    const hit = joints.some((j) => j.getID() === panelHi);
+    console.log('[outlinerHover] draw: id ' + panelHi + (hit ? ' IS' : ' is NOT')
+      + ' one of the ' + joints.length + ' joints'
+      + ' | dots ' + (Skeleton.displayFlag('joints') ? 'on' : 'off')
+      + ' | bones ' + (Skeleton.displayFlag('solid') ? 'on' : 'off'));
+  }
+
+  // THE NODE A CONTEXT MENU IS ACTING ON reads as SELECTED for the duration — see the latch in
+  // Scene. Added to `sel`, not to the highlight: while the menu is up this is not "what you
+  // would take", it is "what this is about to happen to", and those are different claims.
+  const menuLatch = main._rigMenuLatch;
   const grabHands = main._rigGrabHands || {};
-  const handColor = (hand) => hand === 'right' ? RIGHT_HAND_COLOR
-    : (hand === 'left' ? LEFT_HAND_COLOR : null);
+  // Which nodes a controller is HOLDING. Read for truth, not for colour: holding a thing is a
+  // stronger statement than aiming at it, so it outranks the preselect and shows as selected.
+  const held = (id) => !!grabHands[id];
   const showLen = Skeleton.displayFlag('lengths');
+  const showNames = Skeleton.displayFlag('names');
   // The bind capsules, drawn. They are the actual support of the capsule bind — a vertex
   // outside every capsule gets no weight from any of them — so seeing them is the difference
   // between tuning weights by argument and tuning them by eye.
@@ -1439,6 +1637,7 @@ Skeleton.updateVisuals = function (main) {
   // rather than hooking setMesh means it works from every selection route — outliner,
   // gizmo, undo — without any of them knowing joints exist.
   const sel = new Set((main.getSelectedMeshes?.() || []).map((m) => m.getID()));
+  if (menuLatch != null && menuLatch >= 0) sel.add(menuLatch);
 
   for (const j of joints) {
     const id = j.getID();
@@ -1470,7 +1669,7 @@ Skeleton.updateVisuals = function (main) {
     // a state you set and leave, not something that flickers under a moving hand.
     const isHi = hiAll.has(id);
     const isSel = sel.has(id);
-    const jointHandColor = handColor(grabHands[id] || hoverHands[id]);
+    const jointHeld = held(id);
     // THERE ARE NO JOINT SPHERES ANY MORE.
     //
     // The bone between two joints donates its surface to the joints at its ends (see the note
@@ -1494,11 +1693,14 @@ Skeleton.updateVisuals = function (main) {
     for (const o of [e.joint.solid, e.joint.ghost]) {
       o.position.copy(_pB);
       o.scale.setScalar(isSel ? jr * 1.7 : jr);
-      o.material.color.setHex(jointHandColor || (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
+      // Held and selected are the same statement, so the same colour: cyan. Preselect is
+      // yellow, and it loses to a hand actually on the thing.
+      o.material.color.setHex(jointHeld ? SELECT_COLOR
+        : (isHi ? HILITE_COLOR : (isSel ? SELECT_COLOR : JOINT_COLOR)));
       // The flag, plus the two cases that ignore it: an ISOLATED joint has no capsule at
       // either end to be picked by, and a hidden bone body leaves nothing else on screen —
       // switching a marker off must not also switch off the only way to find the thing.
-      o.visible = showJoints || noBoneBody || isolated;
+      o.visible = showJoints || noBoneBody || isolated || isHi || isSel || jointHeld;
       o.updateMatrix(); o.matrixWorldNeedsUpdate = true;
     }
 
@@ -1574,7 +1776,7 @@ Skeleton.updateVisuals = function (main) {
     // The pin marker grows and warms the same way a joint does under the cursor: same signal,
     // same meaning, so the two read as one preselection rather than two conventions.
     const pinHot = pinObj && pinHiAll.has(pinObj.getID());
-    const pinHandColor = pinObj ? handColor(grabHands[pinObj.getID()] || hoverHands[pinObj.getID()]) : null;
+    const pinHeld = pinObj ? held(pinObj.getID()) : false;
     // A steering goal is NOT a triad with a different colour — it is its own marker, and the
     // triad and the rings are both switched off for it. `pinMode > 1` used to light the gimbal,
     // which quietly gave the steering goal a set of orientation rings it does not have.
@@ -1634,10 +1836,10 @@ Skeleton.updateVisuals = function (main) {
         if (!on) continue;
         // Flat while it is the thing you would take, axis-coloured the rest of the time —
         // see the note on makePinPart for why the highlight cannot be a tint.
-        const wantMat = (pinHandColor || pinHot) ? o.userData.plainMat : o.userData.vcMat;
+        const wantMat = (pinHeld || pinHot) ? o.userData.plainMat : o.userData.vcMat;
         if (wantMat && o.material !== wantMat) o.material = wantMat;
         if (o.material && o.material.color) {
-          o.material.color.setHex(pinHandColor || (pinHot ? HILITE_COLOR
+          o.material.color.setHex(pinHeld ? SELECT_COLOR : (pinHot ? HILITE_COLOR
             : (pinMode === 3 ? PIN_SOFT_COLOR
               : ((pinMode === 2 || pinMode === 4) ? PIN_FULL_COLOR : PIN_POS_COLOR))));
         }
@@ -1669,12 +1871,25 @@ Skeleton.updateVisuals = function (main) {
       continue;
     }
 
-    if (showLen) {
+    if (showLen || showNames) {
+      // ONE SPRITE, BOTH FACTS. A second label per joint would double the sprite count for
+      // something you read rather than aim at, and the two belong together anyway: "forearm_02
+      // 1.24" is one statement about one bone. Name first, because it is what you are looking
+      // for; the number is the detail.
+      //
+      // The label rides the bone ENDING at this joint, so a chain's ROOT — which no bone ends
+      // at — carries no name. That is the same limitation the length labels have always had,
+      // and the joint dot is still there to aim at.
+      const _nm = showNames ? (j._permanentStaticLabel || ('#' + id)) : '';
+      const _ln = showLen ? (len < 10 ? len.toFixed(2) : len.toFixed(1)) : '';
       // Sit the label at the bone's midpoint, nudged off the shaft so it does not sit
       // inside the geometry it is describing.
-      setLabelText(e.label, len < 10 ? len.toFixed(2) : len.toFixed(1));
+      setLabelText(e.label, _nm && _ln ? (_nm + '  ' + _ln) : (_nm || _ln));
       e.label.sprite.position.copy(_pA).addScaledVector(_dir, 0.5).addScaledVector(_up, jr * 1.6);
-      e.label.sprite.scale.set(unit * 0.16, unit * 0.08, 1);
+      // Height sets the type size; width follows the canvas aspect, so nothing is stretched.
+      // 0.06 is 0.75 of the 0.08 these used to be — matt's call, they were too big.
+      const _h = unit * 0.06;
+      e.label.sprite.scale.set(_h * (e.label.aspect || 2), _h, 1);
       e.label.sprite.visible = true;
     } else {
       e.label.sprite.visible = false;
@@ -1734,10 +1949,10 @@ Skeleton.updateVisuals = function (main) {
     // look at, while preselection is the answer to "what does this press do" and is worth
     // nothing at all if something else can cover it.
     const pid = parent.getID();
-    const boneHand = jointHandColor || handColor(grabHands[pid] || hoverHands[pid]);
+    const boneHeld = jointHeld || held(pid);
     const boneHot = isHi || hiAll.has(pid);
     const boneSel = isSel || sel.has(pid);
-    const boneTint = boneHand || (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR
+    const boneTint = boneHeld ? SELECT_COLOR : (boneHot ? HILITE_COLOR : (boneSel ? SELECT_COLOR
       : ((tintMode === 2 || tintMode === 4) ? PIN_FULL_COLOR
         : (tintMode === 1 ? PIN_POS_COLOR : restTint))));
     // The edge overlay takes the same identity colour DARKENED rather than the colour itself.
@@ -2622,6 +2837,9 @@ const DISPLAY_FLAGS = {
   snapPlane: ['_boneSnapPlane', 'boneSnapPlane', true],
   snapAxis: ['_boneSnapAxis', 'boneSnapAxis', true],
   lengths: ['_boneShowLengths', 'boneShowLengths', false],
+  // The joint's NAME, drawn where the length is drawn — off by default for the same reason:
+  // it is a label per bone, and a rig full of them is unreadable while you are working.
+  names: ['_boneShowNames', 'boneShowNames', false],
   capsules: ['_boneShowCapsules', 'boneShowCapsules', false],
   weights: ['_boneShowWeights', 'boneShowWeights', false],
   solid: ['_boneShowSolid', 'boneShowSolid', true],
@@ -2631,7 +2849,12 @@ const DISPLAY_FLAGS = {
   // which is worse than either state. Default TRUE because that is what ships: bone selection
   // is off, so the dot is the marker for the target. Turn bone selection on and this is the
   // switch that gets the screen quiet again.
-  joints: ['_boneShowJoints', 'boneShowJoints', true],
+  // A NEW KEY ON PURPOSE. `boneShowJoints` shipped defaulting FALSE for v3.20.66-.83 and then
+  // had its toggle removed entirely, so anyone who ran those builds has a persisted `false`
+  // they never chose and cannot reason about — matt: "the joint spheres disappeared, i couldn't
+  // make them reappear." Renaming the key orphans that value, so the new default applies and
+  // the toggle persists under a name whose history is clean.
+  joints: ['_boneShowJoints', 'boneShowJointDots', true],
   pins: ['_boneShowPins', 'boneShowPins', true],
   // The path the selected joint takes over the timeline. Off by default: it costs a full
   // evaluation per sample, and it is an animation aid rather than something you want while
