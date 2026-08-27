@@ -228,7 +228,11 @@ class Scene {
       offset: vec3.create()
     };
 
-    this._activeHandedness = 'right';
+    // NULL, not 'right' — "no hand has been latched yet", which is the truth at construction
+    // and lets the cursor fall back to `_dominantHand` (set below, and by the leftHandMode
+    // option). Hard-coding it here gave a left-handed user no brush cursor from startup until
+    // they happened to squeeze a trigger.
+    this._activeHandedness = null;
     this._vrScale = 0.008; // Scale 100-unit world to 0.8 meters (User Req: "25% too big")
     this._exposure = 1.0; // Reset to 1.0 after fixing ShaderMerge 5x boost
 
@@ -948,6 +952,7 @@ class Scene {
         // a long tail are what read as judder, and a mean frame time hides both. A steady
         // 13.9ms with a 40ms every half second feels far worse than a steady 20ms.
         const _t0 = window._xrPerf ? performance.now() : 0;
+        if (window._cursorDiag) this._cursorDiagTick(frame);
         this.applyRender(null, frame);
         if (window._xrPerf) { this._mark(null); this._xrPerfSample(time, performance.now() - _t0); }
       });
@@ -3784,7 +3789,17 @@ class Scene {
     if (this._vrSculpting) this._sculptManager?.end?.();
     this._vrSculpting = false;
     this._vrLockedHand = null;
-    this._activeHandedness = null;
+    // NOT `_activeHandedness`. It sat in this list with the genuinely transient things — the
+    // stroke, the menu latch, the pointing flags — but it is a PREFERENCE, not input state: it
+    // records which hand you sculpt with, and a system overlay stealing focus for a moment is
+    // no reason to forget that. Clearing it dropped the brush cursor back to the fallback
+    // above, and the cursor is the ONLY thing in the app gated on this latch — which is why
+    // starting the GalaxyXR recorder made the radius sphere vanish while everything else
+    // carried on. matt: "it hides some of the UI, but not all of it... strange that the rest of
+    // the app is unaffected."
+    //
+    // The next trigger squeeze re-latches it either way, so keeping it costs nothing and the
+    // stale value is the correct one.
     this._vrMenuTriggerLatch = false;
     this._isPointingAtMenu = false;
     this._wasPointingAtMenu = false;
@@ -3886,6 +3901,86 @@ class Scene {
     });
     this._vrIsNegative = false;
     this._headHeightCalibrated = false;
+  }
+
+  // ── CURSOR DIAGNOSTIC ────────────────────────────────────────────────────────
+  //
+  // Three theories about why the brush cursor vanishes when the GalaxyXR screen recorder is
+  // started MID-SESSION, and three of them wrong. The fact that broke the last one: start the
+  // recorder BEFORE entering immersive mode and everything works. That rules out anything about
+  // the steady state — the extra observer view, the projection, the culling — because all of
+  // those are the same either way. It is about something changing UNDER a running session.
+  //
+  // So this does not test a theory. It watches every value that could plausibly differ and
+  // reports the ones that CHANGE, with the frame they changed on. Start it, start the recorder,
+  // and whatever prints is the answer.
+  _cursorDiagSnap(frame) {
+    const xr = this._renderer && this._renderer.xr;
+    const cam = xr && xr.getCamera && xr.getCamera(this._camera?.getThreeCamera?.());
+    const session = (frame && frame.session) || this._xrSession;
+    const layer = session && session.renderState && session.renderState.baseLayer;
+    const tool = this.getSculptManager?.()?.getCurrentTool?.();
+    const cur = this._vrCursorRight || this._vrCursorLeft;
+    const sph = cur && cur.getObjectByName && cur.getObjectByName('volume_sphere');
+    return {
+      views: cam && cam.cameras ? cam.cameras.length : -1,
+      fbW: layer ? layer.framebufferWidth : -1,
+      fbH: layer ? layer.framebufferHeight : -1,
+      vis: session ? session.visibilityState : 'none',
+      sources: session && session.inputSources ? session.inputSources.length : -1,
+      hand: this._activeHandedness || 'null',
+      dom: this._dominantHand || 'null',
+      playing: !!window._animPlaying,
+      panels: !!this._htmlPanelsHidden,
+      tool: tool && tool.constructor ? tool.constructor.name : 'none',
+      curVis: cur ? !!cur.visible : null,
+      sphVis: sph ? !!sph.visible : null,
+      sphScale: sph ? +sph.scale.x.toFixed(4) : -1,
+      sphPos: sph ? [sph.position.x, sph.position.y, sph.position.z]
+        .map((v) => +v.toFixed(3)).join(',') : 'none',
+      curParent: cur && cur.parent ? (cur.parent.name || cur.parent.type) : 'none',
+      scale: +(this._vrScale || 0).toFixed(4),
+      uiL: this._vrUIHitDistLeft === Infinity ? 'inf' : +(this._vrUIHitDistLeft || 0).toFixed(2),
+      uiR: this._vrUIHitDistRight === Infinity ? 'inf' : +(this._vrUIHitDistRight || 0).toFixed(2),
+    };
+  }
+
+  _cursorDiagTick(frame) {
+    this._cursorDiagN = (this._cursorDiagN || 0) + 1;
+    const now = this._cursorDiagSnap(frame);
+    const was = this._cursorDiagPrev;
+    this._cursorDiagPrev = now;
+    if (!was) { console.log('[cursorDiag] frame 1 baseline', JSON.stringify(now)); return; }
+    const moved = {};
+    let any = false;
+    for (const k of Object.keys(now)) {
+      if (now[k] !== was[k]) { moved[k] = was[k] + ' -> ' + now[k]; any = true; }
+    }
+    // The sphere's POSITION changes every frame by design, so it is only interesting alongside
+    // something else. Reporting it alone would bury the signal in a per-frame stream.
+    if (any && Object.keys(moved).length === 1 && moved.sphPos) return;
+    if (any) {
+      delete moved.sphPos;
+      console.log('[cursorDiag] frame ' + this._cursorDiagN + ' CHANGED', JSON.stringify(moved));
+    }
+  }
+
+  // The switch. Prints a full baseline immediately — so a run that shows nothing afterwards is
+  // still an answer, not a diagnostic that failed to arm — then one line per CHANGE.
+  //
+  // How to use it: enter immersive, run it, THEN start the recorder. Whatever prints between
+  // those two moments is what the recorder did. Running it in the working order (recorder
+  // first, then immersive) gives the control.
+  cursorDiag(on) {
+    window._cursorDiag = on !== false;
+    this._cursorDiagPrev = null;
+    this._cursorDiagN = 0;
+    if (!window._cursorDiag) { console.log('[cursorDiag] off'); return false; }
+    console.log('[cursorDiag] ' + VERSION + ' ON. Baseline next frame, then one line per change.');
+    console.log('[cursorDiag] now: ' + JSON.stringify(this._cursorDiagSnap(null)));
+    console.log('[cursorDiag] enter immersive, run this, THEN start the recorder. '
+      + 'Nothing printing is itself an answer: it would mean none of these values moved.');
+    return true;
   }
 
   computeEngineToPhysicalMatrix(out) {
@@ -5148,6 +5243,32 @@ class Scene {
 
           this._vrCursorLeft = createVRCursor();
           this._vrCursorRight = createVRCursor();
+          // NEVER FRUSTUM-CULLED — the one overlay in this app that was.
+          //
+          // Screen recording on the GalaxyXR adds a SECONDARY (first-person observer) view to
+          // the frame, so three sees three views rather than two. Its WebXRManager then takes
+          // this branch:
+          //
+          //     if ( cameras.length === 2 ) setProjectionFromUnion( cameraXR, cameraL, cameraR );
+          //     else cameraXR.projectionMatrix.copy( cameraL.projectionMatrix );  // "AR"
+          //
+          // and `cameraXR.projectionMatrix` is what the CULLING frustum is built from. With a
+          // recorder attached it silently becomes the LEFT EYE's projection instead of the
+          // union of both, so culling runs against a narrower, off-centre frustum and starts
+          // discarding things that are plainly on screen.
+          //
+          // Every other overlay here already opts out — the rig batches, the pin leader, the
+          // motion trails, the pending link, the null cruciform. The cursor never did, which is
+          // precisely why it was the ONE thing that vanished while the rest of the app carried
+          // on. matt: "it does something to the state of the immersive mode that breaks only a
+          // small section of the app, not all of it."
+          //
+          // Per CHILD, not just the group: three tests each drawable object, and a Group has no
+          // geometry to test.
+          for (const _c of [this._vrCursorLeft, this._vrCursorRight]) {
+            _c.frustumCulled = false;
+            _c.traverse((o) => { o.frustumCulled = false; });
+          }
           // Start hidden — otherwise they sit (full size) at the world origin during
           // startup until the per-frame VR loop positions them. The loop re-enables
           // them once tracking a controller.
@@ -6198,11 +6319,39 @@ class Scene {
             if (this._vrPopup && this._vrPopup.mesh.parent) this._vrPopup.mesh.removeFromParent();
         }
     } else {
-        // Fallback or wiped state
-        this._vrControllerLeft = null;
-        this._vrControllerLeftGrip = null;
-        this._vrControllerRight = null;
-        this._vrControllerRightGrip = null;
+        // A FRAME WITH NO INPUT SOURCES IS NOT A DISCONNECTION, and this used to treat it as
+        // one — wiping the handedness mapping that ONLY the 'connected' listener can rebuild.
+        //
+        // Starting the GalaxyXR screen recorder blurs the session: `sources` goes 2 -> 0 for
+        // about a second, then back to 2. The controllers were never really disconnected, so no
+        // 'connected' event fires on the way back, so nothing re-assigns the mapping — and
+        // `_vrControllerRight` stays null for the rest of the session. The cursor block's first
+        // gate is `if (!controllerGroup) { cursorGroup.visible = false; continue; }`, which is
+        // why the radius sphere vanished and stayed vanished while everything else carried on:
+        // it is the only thing that asks. matt's diagnostic caught it exactly — `curVis` went
+        // true -> false on the frame after "Input state recovered", with nothing else moving.
+        //
+        // The 'disconnected' listener is the real signal for this, and it already does the job
+        // properly (it checks identity before clearing). Nothing to do here.
+    }
+
+    // AND REBUILD THE MAPPING IF IT IS MISSING. Belt and braces for the case above however it
+    // arises — a runtime that really does drop sources without a 'disconnected', or a session
+    // that has already been wiped by an older build. Only fills gaps, so it never fights the
+    // 'connected' listener that normally owns this.
+    if (sources && sources.length && this._renderer && this._renderer.xr) {
+      for (let i = 0; i < sources.length; i++) {
+        const h = sources[i] && sources[i].handedness;
+        if (h !== 'left' && h !== 'right') continue;
+        const known = h === 'left' ? this._vrControllerLeft : this._vrControllerRight;
+        if (known) continue;
+        const c = this._renderer.xr.getController(i);
+        const g = this._renderer.xr.getControllerGrip(i);
+        if (!c) continue;
+        if (h === 'left') { this._vrControllerLeft = c; this._vrControllerLeftGrip = g; }
+        else { this._vrControllerRight = c; this._vrControllerRightGrip = g; }
+        console.info('[XR] re-mapped ' + h + ' controller (source ' + i + ')');
+      }
     }
 
     let leftGrip = false, rightGrip = false;
@@ -9767,8 +9916,12 @@ class Scene {
                 if (this._activeHandedness) {
                     isActiveHand = (source.handedness === this._activeHandedness);
                 } else {
-                    // Fallback to right hand if user hasn't squeezed trigger yet
-                    isActiveHand = (source.handedness === 'right');
+                    // Before the first trigger squeeze there is no latch, so fall back to the
+                    // DOMINANT hand — not to a hard-coded 'right'. The app has known which hand
+                    // that is all along (`_dominantHand`, settable and driven by the
+                    // leftHandMode option); this line ignored it, so a left-handed user had no
+                    // brush cursor at all until they happened to squeeze a trigger.
+                    isActiveHand = (source.handedness === (this._dominantHand || 'right'));
                 }
 
                 if (!isActiveHand && !this._vrAmbidextrousCursors) {
@@ -9799,11 +9952,29 @@ class Scene {
                 if (volumeCube) volumeCube.visible = isCubeShape && !isPicking;
                 const activeVol = isCubeShape ? volumeCube : volumeSphere;
 
-                // Hidden during playback — EXCEPT a shape (vertex) take, where the loop
-                // keeps playing but you're actively sculpting, so the draw cursor must stay.
-                // Always hidden for the transform tool (gizmo-driven, no brush cursor).
-                cursorGroup.visible = !isTransformTool && (!window._animPlaying
-                  || (window._animationRegistry?.isRecording && window._animKeyMode === 'shape'));
+                // HIDDEN DURING PLAYBACK, NEVER DURING A RECORDING.
+                //
+                // `_animPlaying` means two different things: watching the animation back, and
+                // performing one. The cursor should go away for the first — nobody wants a
+                // brush ring over a playback — and must not for the second, because a
+                // recording is when you are aiming.
+                //
+                // The exception used to be carved for SHAPE takes alone, on the reasoning that
+                // those are the ones where you are sculpting while the loop runs. But a
+                // TRANSFORM take is a performance too, and it is the ordinary one for posing —
+                // so hitting record made the radius sphere vanish, which is exactly the point
+                // at which you are demonstrating what the brush is about to do. matt, trying to
+                // record tutorials on the GalaxyXR: "it hides some of the UI, but not all of
+                // it; the sphere radius indicator disappears."
+                //
+                // Nothing to do with the headset or its screen recorder — the app's own record
+                // button sets `_animPlaying` (see AnimationRegistry._executePunchIn), and this
+                // is the only thing in the app that reads it for visibility. Which is also why
+                // the rest of the UI was unaffected.
+                //
+                // Still always hidden for the transform TOOL (gizmo-driven, no brush cursor).
+                const _rec = !!window._animationRegistry?.isRecording;
+                cursorGroup.visible = !isTransformTool && (!window._animPlaying || _rec);
                 cursorGroup.position.set(0, 0, 0);
                 cursorGroup.quaternion.identity();
                 cursorGroup.scale.set(1, 1, 1);
