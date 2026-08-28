@@ -26,7 +26,15 @@ import MotionPathEdit from './MotionPathEdit.js';
 // in step with the first, and the two disagreeing is exactly the bug this feature exists to
 // visualise.
 
-const SAMPLES = 48;      // along the whole range; the curve is smooth, not the motion
+// ALONG THE WHOLE RANGE. 48 was chosen to draw a smooth curve, and for drawing it is plenty —
+// the curve is smooth even when the motion is not. But the EDITOR snaps a grab to the nearest
+// sample, so the spacing is also the worst-case distance between where you click and where the
+// edit takes hold. At 48 across a long path that is around half an inch on a 15" monitor, which
+// is what matt reported as the selection feeling "heavily misaligned": it was not misaligned,
+// it was quantised. Each sample costs one full rig evaluation on rebuild (not per frame — the
+// trail rebuilds on its fingerprint), so this is a real cost, and `window._trailSamples`
+// overrides it either way.
+const SAMPLES = 128;
 const TRAIL_ORDER = 9998;
 
 function tune(key, dflt) {
@@ -330,7 +338,7 @@ function sampleQuat(obj) {
 function disposeTrail(main) {
   const v = main._trailVis;
   if (!v) return;
-  for (const o of [...(v.lines || []), v.dots, v.keyDots, v.gnomons]) {
+  for (const o of [...(v.lines || []), v.dots, v.keyDots, v.hoverDot, v.gnomons]) {
     if (!o) continue;
     if (o.parent) o.parent.remove(o);
     if (o.geometry) o.geometry.dispose();
@@ -599,8 +607,13 @@ function syncResolution(main, mat) {
 
 // Sized off the scene, not a constant: the same triad has to be legible on a head and on a
 // whole figure, and Skeleton.sceneUnit is what every other rig marker is scaled by.
+// A FRACTION OF THE SCENE UNIT. 0.0375 was tuned on the day the gnomons were built and read as
+// too small in use — matt, with the diagnostic in front of him: "still smaller than i'd expect".
+// Tunable live, because this is taste and taste is faster to settle by turning a knob than by
+// asking.
+const GNOMON_LEN = 0.06;
 function gnomonLength(main) {
-  return (Skeleton.sceneUnit(main) || 1) * 0.0375;
+  return (Skeleton.sceneUnit(main) || 1) * tune('_gnomonSize', GNOMON_LEN);
 }
 
 // DISTANCE IS SHOWN BY SCALE, NOT BY FADING. A faded triad still occupies its space and still
@@ -613,6 +626,11 @@ function gnomonLength(main) {
 // are a second apart or a minute. Frames would mean a densely keyed passage shows three triads
 // and a sparse one shows none.
 const GNOMON_KEY_REACH = 10;
+// ...BUT NOT TO NOTHING. The falloff exists so a long take does not become a wall of triads,
+// and it works — but at ten keys out it reached 0.125, and a triad an eighth of full size does
+// not read as "far away", it reads as broken. matt measured exactly that: "scale=0.125..0.975".
+// A floor keeps the distant ones legible while still ranking them behind the playhead.
+const GNOMON_MIN_SCALE = 0.45;
 
 // Where the playhead sits in the key ordering, as a FRACTIONAL index — it rarely lands on a
 // key, and an integer answer would make the whole set jump a step as it crossed each one.
@@ -635,6 +653,14 @@ MotionTrail.drawGnomons = function (main) {
     v.gnomons.visible = false;
     return;
   }
+  // A LIVE EDIT OWNS THE ORIENTATIONS, exactly as it owns the curve. perFrame runs every frame
+  // of a drag and calls this, so reading the baseline here would repaint the old rotation one
+  // frame after the twist drew the new one — the gnomons would sit inert while the path moved,
+  // which is indistinguishable from the rotation not being editable at all.
+  const edit = main._pathEdit;
+  const points = (edit && edit.after) || strand.points;
+  const quats = (edit && edit.afterQ) || strand.quats;
+
   const idx = v.keyIndices || [];
   const n = idx.length;
   if (!n) { v.gnomons.visible = false; return; }
@@ -657,13 +683,20 @@ MotionTrail.drawGnomons = function (main) {
 
   let o = 0;
   let verts = 0;
+  let smallest = 1, biggest = 0;
   for (let k = 0; k < idx.length; k++) {
-    const scale = 1 - Math.abs(k - centre) / GNOMON_KEY_REACH;
-    if (scale <= 0) continue;          // past the reach: not drawn at all, not drawn faintly
+    const raw = 1 - Math.abs(k - centre) / GNOMON_KEY_REACH;
+    if (raw <= 0) continue;            // past the reach: not drawn at all, not drawn faintly
+    // Remapped onto [floor, 1] rather than clamped, so the ranking survives the floor: a clamp
+    // would flatten everything past the halfway point into one size.
+    const floor = Math.min(0.95, tune('_gnomonMinScale', GNOMON_MIN_SCALE));
+    const scale = floor + raw * (1 - floor);
+    if (scale < smallest) smallest = scale;
+    if (scale > biggest) biggest = scale;
     const len = L * scale;
     const i = idx[k];
-    const p = strand.points[i];
-    const q = strand.quats[i];
+    const p = points[i];
+    const q = quats[i];
     for (let a = 0; a < 3; a++) {
       _axV.set(a === 0 ? len : 0, a === 1 ? len : 0, a === 2 ? len : 0);
       if (q) _axV.applyQuaternion(q);
@@ -686,11 +719,46 @@ MotionTrail.drawGnomons = function (main) {
   v.gnomonFresh = v.gnomonState.fresh;
   v.gnomons.visible = true;
 
+  // A TRIAD'S DRAWN LENGTH IS `unit * 0.0375 * scale`, AND NOTHING ELSE. Two inputs, so when
+  // the answer is wrong it is one of exactly two numbers — the scene unit, or the distance in
+  // KEYS from the playhead. Kept every draw because it is five numbers, and because "the
+  // gnomons are the wrong size" is otherwise a report that can only be answered by guessing.
+  // Read it with window.gnomonDiag().
+  v.gnomonDbg = { L: L, unit: Skeleton.sceneUnit(main) || 0, centre: centre,
+    keys: idx.length, drawn: verts / 2 / 3, minScale: smallest, maxScale: biggest };
+
   if (window._trailTrace) {
     const r = v.gnomons.material.resolution;
     console.log('[trail] gnomons segs=' + (verts / 2) + ' len=' + L.toFixed(4) +
       ' res=' + r.x + 'x' + r.y + ' vis=' + v.gnomons.visible);
   }
+};
+
+// WHY ARE THE AXIS TRIADS THAT SIZE. One command, one answer, because the length has exactly
+// two inputs and they are told apart by one number each:
+//
+//   unit    — Skeleton.sceneUnit, latched off the meshes in the scene. If THIS is 10x small,
+//             the whole rig is undersized too and the gnomons are a symptom, not the bug.
+//   scale   — 1 - (keys from the playhead) / 10. A triad nine keys from the playhead is drawn
+//             at a TENTH of full size, on purpose. If minScale is small and unit is right, the
+//             triads are not the wrong size; the playhead is somewhere else.
+window.gnomonDiag = function () {
+  const main = _lastMain;
+  const d = main && main._trailVis && main._trailVis.gnomonDbg;
+  if (!d) {
+    console.log('[gnomon] nothing drawn yet — turn Trails and Key Axes on, with a keyed pin '
+      + 'selected, then run this again');
+    return null;
+  }
+  console.log('[gnomon] unit=' + d.unit.toFixed(4) + ' fullLength=' + d.L.toFixed(4)
+    + '  keys=' + d.keys + ' drawn=' + d.drawn + ' playheadAtKey=' + d.centre.toFixed(2)
+    + '  scale=' + d.minScale.toFixed(3) + '..' + d.maxScale.toFixed(3)
+    + '  -> drawn length ' + (d.L * d.minScale).toFixed(4) + '..'
+    + (d.L * d.maxScale).toFixed(4));
+  console.log('[gnomon] maxScale well under 1 means the PLAYHEAD is far from the keys, not that '
+    + 'the triads are small. unit far from the size of your sculpt means the scene unit is the '
+    + 'problem — check window.rigUnit().');
+  return d;
 };
 
 function makeDots(main, sizePx) {
@@ -796,8 +864,29 @@ MotionTrail.recolor = function (main) {
     if (keyCol) setColors(v.keyDots, keyCol);
     // The hovered mark grows as well as changes colour: at four pixels a colour shift alone is
     // easy to miss against a busy scene.
-    v.dots.material.size = DOT_PX * (slot && !slot.key ? HOVER_GROW : 1);
-    v.keyDots.material.size = KEY_DOT_PX * (slot && slot.key ? HOVER_GROW : 1);
+    // THE HOVER MARK IS ITS OWN ONE-POINT CLOUD, and this is the bug that read as a misaligned
+    // preselection for four rounds of diagnosis.
+    //
+    // It used to grow the hovered dot by writing `material.size` — but a PointsMaterial carries
+    // ONE size for the whole cloud, which the note on makeDots says in as many words. So
+    // hovering a single sample grew every one of the hundred-odd sample dots at once: the entire
+    // curve visibly changed, and the one genuinely tinted dot was lost inside it. matt saw
+    // exactly that and described it precisely — "i can see all the plotted points of the curve
+    // get preselection highlighting" — and I read it as a remark about which points COULD be
+    // highlighted rather than as the report it was.
+    //
+    // Every measurement of the tint was correct the whole time, because the tint was correct.
+    // A separate one-vertex cloud is the cheapest true per-point mark: one draw call, no custom
+    // shader, and the size is per-cloud precisely because the cloud is one point.
+    const hp = hover >= 0 && v.slots[hover] ? pointOf(main, hover) : null;
+    if (v.hoverDot) {
+      if (hp) {
+        v.hoverDot.geometry.setFromPoints([hp]);
+        setColors(v.hoverDot, new Float32Array(HOVER_COL));
+        v.hoverDot.material.size = (v.slots[hover].key ? KEY_DOT_PX : DOT_PX) * HOVER_GROW;
+      }
+      v.hoverDot.visible = !!hp;
+    }
   }
 
   // Fat lines want the colour in the same PAIRS layout as the positions: segment i takes the
@@ -906,6 +995,8 @@ MotionTrail.update = function (main) {
       lines: paths.map(() => makeLine(main)),
       dots: makeDots(main, DOT_PX),
       keyDots: makeDots(main, KEY_DOT_PX),
+      // Drawn after the two clouds so it sits on top of the dot it marks.
+      hoverDot: makeDots(main, DOT_PX * HOVER_GROW),
       gnomons: makeGnomons(main),
     };
   }
@@ -980,6 +1071,15 @@ MotionTrail.drawDots = function (main, weights) {
   void weights;
 };
 
+// The drawn position of a sample: the edit's curve while a drag is live, the strand otherwise.
+// Same rule the gnomons follow, so the mark cannot sit on the old curve mid-drag.
+function pointOf(main, i) {
+  const e = main._pathEdit;
+  const pts = (e && e.after) || (main._trailStrand && main._trailStrand.points);
+  const p = pts && pts[i];
+  return p ? new THREE.Vector3(p.x, p.y, p.z) : null;
+}
+
 function setColors(obj, arr) {
   const g = obj.geometry;
   const existing = g.getAttribute('color');
@@ -993,6 +1093,89 @@ function setColors(obj, arr) {
 
 // The editor redraws through this rather than importing MotionTrail, which would close an
 // import cycle between the two.
+// WHICH DOT IS ACTUALLY LIT, read out of the colour buffer that was last uploaded rather than
+// recomputed. This is the measurement that separates "the highlight is on the wrong dot" from
+// "the highlight is on the right dot and something else is what looks wrong" — and it is the
+// one I kept not taking, computing the answer three times instead and getting the same correct
+// number while the screen said otherwise.
+MotionPathEdit.drawnHoverHook = function (main) {
+  const v = main && main._trailVis;
+  if (!v || !v.slots) return null;
+  const hit = (cloud, isKey) => {
+    const g = cloud && cloud.geometry;
+    const c = g && g.getAttribute('color');
+    const pos = g && g.getAttribute('position');
+    if (!c || !pos) return null;
+    for (let i = 0; i < c.count; i++) {
+      if (Math.abs(c.getX(i) - HOVER_COL[0]) < 0.01 && Math.abs(c.getY(i) - HOVER_COL[1]) < 0.01
+        && Math.abs(c.getZ(i) - HOVER_COL[2]) < 0.01) {
+        // Back to a SAMPLE index, so it can be compared with what the hit test decided.
+        const sample = v.slots.findIndex((sl) => sl && sl.key === isKey && sl.i === i);
+        // WHERE THREE ACTUALLY DRAWS IT. Every probe so far projected with SculptGL's camera —
+        // the same projection the hit test uses — so of course the two agreed. The dot is
+        // rendered by three, through the three camera, under _worldGroup and whatever transform
+        // that carries. If those two projections disagree, the hit test is self-consistent and
+        // the screen is somewhere else, which is exactly the symptom.
+        const out = { cloud: isKey ? 'key' : 'plain', within: i, sample: sample,
+          x: pos.getX(i), y: pos.getY(i), z: pos.getZ(i) };
+        const tc = main._camera && main._camera.getThreeCamera && main._camera.getThreeCamera();
+        const cv = main._canvas;
+        if (tc && cv) {
+          cloud.updateMatrixWorld(true);
+          const w = new THREE.Vector3(out.x, out.y, out.z).applyMatrix4(cloud.matrixWorld);
+          out.world = [w.x, w.y, w.z];
+          const ndc = w.clone().project(tc);
+          out.threeX = (ndc.x * 0.5 + 0.5) * cv.width;
+          out.threeY = (-ndc.y * 0.5 + 0.5) * cv.height;
+        }
+        return out;
+      }
+    }
+    return null;
+  };
+  return hit(v.dots, false) || hit(v.keyDots, true);
+};
+
+// THE PROJECTION THE RENDERER USES, handed to the editor so its hit test and your eyes agree.
+//
+// The trail is drawn under the skeleton overlay group, which lives under `_worldGroup` and its
+// 0.701 scale. SculptGL's own camera.project takes the raw sample and knows nothing about that
+// group, so the editor was measuring in a space the screen does not use: self-consistent, and
+// about seventy pixels from the dot you were pointing at. matt measured it — the two
+// projections of ONE dot came out at 798,355 and 728,370, a ratio of exactly 0.701 about the
+// canvas centre.
+//
+// Lives here rather than in MotionPathEdit for the same reason redrawHook does: that module
+// cannot import three or the drawing without closing an import cycle.
+const _pv = new THREE.Vector3();
+MotionPathEdit.projectHook = function (main, p) {
+  const g = main && main._skelGroup;
+  const cam = main && main._camera && main._camera.getThreeCamera && main._camera.getThreeCamera();
+  const cv = main && main._canvas;
+  if (!g || !cam || !cv) return null;
+  g.updateMatrixWorld(true);
+  _pv.set(p.x, p.y, p.z).applyMatrix4(g.matrixWorld).project(cam);
+  return { x: (_pv.x * 0.5 + 0.5) * cv.width, y: (-_pv.y * 0.5 + 0.5) * cv.height };
+};
+
+// The inverse, for the drag: a screen point at the depth of the sample being held, brought back
+// into the space the curve's samples live in.
+MotionPathEdit.unprojectHook = function (main, x, y, depthOf) {
+  const g = main && main._skelGroup;
+  const cam = main && main._camera && main._camera.getThreeCamera && main._camera.getThreeCamera();
+  const cv = main && main._canvas;
+  if (!g || !cam || !cv || !depthOf) return null;
+  g.updateMatrixWorld(true);
+  // The held sample's NDC depth, so the drag stays on its plane rather than sliding toward or
+  // away from the eye — the same rule the old camera-space version followed.
+  _pv.set(depthOf.x, depthOf.y, depthOf.z).applyMatrix4(g.matrixWorld).project(cam);
+  const z = _pv.z;
+  _pv.set((x / cv.width) * 2 - 1, -((y / cv.height) * 2 - 1), z).unproject(cam)
+    .applyMatrix4(_invG.copy(g.matrixWorld).invert());
+  return { x: _pv.x, y: _pv.y, z: _pv.z };
+};
+const _invG = new THREE.Matrix4();
+
 MotionPathEdit.redrawHook = function (main) {
   const e = main._pathEdit;
   if (e && e.after) MotionTrail.redraw(main, e.strand.line, e.after);

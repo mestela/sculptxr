@@ -4,17 +4,39 @@ import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(REPO, p), 'utf8');
+
 let failures = 0;
 const check = (name, ok, got = '') => {
   console.log((ok ? '  ok   ' : '  FAIL ') + name + (ok ? '' : '  ' + got));
   if (!ok) failures++;
 };
 
-const reg = read('src/editing/AnimationRegistry.js');
+let reg = read('src/editing/AnimationRegistry.js');
 const grab = read('src/editing/tools/Grab.js');
 const xf = read('src/editing/tools/Transform.js');
 const vr = read('src/editing/tools/TransformVR.js');
-const tl = read('src/gui/GuiTimeline.js');
+let tl = read('src/gui/GuiTimeline.js');
+
+// Defect injections (standing lesson 1) — source-level, since these checks read the source:
+//   REC_INJECT=noparkstart  a finished non-looping take is left on its last frame again
+//   REC_INJECT=livechannel  an unrecorded channel takes the LIVE value, baking in the hand you
+//                           switched off
+//   REC_INJECT=onepath      only one of the two capture paths goes through the gate
+//   REC_INJECT=menucloses   the channel menu closes on every toggle, like a command menu
+{
+  const i = process.env.REC_INJECT || '';
+  const cut = (src, a, b, what) => {
+    if (!src.includes(a)) throw new Error('inject ' + what + ': the anchor moved');
+    return src.replace(a, b);
+  };
+  if (i === 'noparkstart') reg = cut(reg, 'const t0 = window._animLoopStart ?? 0;', 'const t0 = -1;', i);
+  else if (i === 'livechannel') reg = cut(reg, 'P: ch.translate ? P : was.p,', 'P: P,', i);
+  else if (i === 'onepath') reg = cut(reg,
+    'const g = this._gateChannels(this.activeMesh.getID(), elapsed,', 'const g = ({ P: (', i);
+  else if (i === 'menucloses') tl = cut(tl,
+    "const cmd = this._recOptCommands()[Math.floor((ry - rr.y) / rr.cellH)];",
+    "const cmd = this._recOptCommands()[0]; this._recOptMenuOpen = false;", i);
+}
 const acp = read('src/gui/htmlvr/AnimationControlPanel.js');
 const mainMenu = read('src/gui/htmlvr/MainMenuPanel.js');
 const desktopPanel = read('src/gui/GuiAnimation.js');
@@ -223,6 +245,98 @@ check('graph redraws publish their VR texture revision',
 check('VR clear-scene confirmation rebuilds the Files menu',
   /const rebuildFiles = \(\) => \{[\s\S]{0,120}?_lastContentKey = ''[\s\S]{0,80}?_refreshContent\(\)/.test(mainMenu)
     && /main\._clearSceneConfirm = false;[\s\S]{0,60}?rebuildFn\(\);/.test(mainMenu));
+
+
+// ── A FINISHED TAKE PARKS AT THE START WHEN LOOP IS OFF ──────────────────────
+//
+// The looping case rewinds and plays, so you see the take. The non-looping case did neither: it
+// stopped the clock and left the playhead on the LAST frame, which is the one place from which
+// nothing you do next makes sense — play replays nothing, and recording again starts from the
+// end. matt: "when the recording is finished it should get out of record mode, and jump back to
+// the first frame."
+check('a non-looping take parks the playhead at the range start',
+  /const t0 = window\._animLoopStart \?\? 0;\s*\n\s*this\.globalPlaybackTime = t0;\s*\n\s*window\._animCurrentTime = t0;/.test(reg),
+  'left on the last frame, the transport has nowhere sensible to go next');
+check('...the range START, not zero, so a range beginning partway in still works',
+  /window\._animLoopStart \?\? 0/.test(reg));
+check('...and it evaluates once, so the viewport is not left on the last pose',
+  /if \(m\) this\.update\(m, true\);/.test(reg),
+  'the clock would say frame one while the model still showed the end of the take');
+check('...but a MANUAL abort is left where it was',
+  /window\._animPlaying = false;[\s\S]{0,1800}?if \(!isManualAbort\) \{/.test(reg),
+  'stopping a take by hand is not the take finishing; yanking the playhead would be rude');
+check('...and a finished take asks for a frame',
+  /window\.app\?\.render\?\.\(\);/.test(reg),
+  'the take changes the keys, the trail rebuilds inside render(), and desktop renders on '
+    + 'demand — so without this nothing on screen says the take finished');
+check('...and record mode comes off either way',
+  /this\.isRecording = false;[\s\S]{0,200}?this\.isCountingIn = false;/.test(reg));
+
+// ── WHICH CHANNELS A TAKE WRITES ─────────────────────────────────────────────
+//
+// A key is one TRS sample in three parallel arrays indexed in lockstep, so "rotation only"
+// cannot mean writing fewer numbers — every key still needs a position and a scale. It means
+// the other channels come out UNCHANGED, and the only honest source for "unchanged" is the
+// animation as it stood before the take. Taking the live value would bake your hand into a
+// channel you switched off; freezing one value would flatten animation that channel already had.
+check('the channel set is read live-then-saved-then-on, like every other setting',
+  /translate: read\('_recTranslate', 'recTranslate'\)/.test(reg)
+    && /rotate: read\('_recRotate', 'recRotate'\)/.test(reg)
+    && /scale: read\('_recScale', 'recScale'\)/.test(reg));
+check('...defaulting to ALL THREE ON',
+  /return v == null \? true : !!v;/.test(reg),
+  'a recorder that quietly drops a channel is worse than one that records too much');
+check('an unrecorded channel is filled from the PRE-TAKE animation',
+  /_preTakeTRS\(id, time\)/.test(reg)
+    && /this\._trackStatesBeforeRecording &&\s*\n?\s*this\._trackStatesBeforeRecording\.get\(id\)/.test(reg),
+  'the live value bakes in the hand you switched off; a frozen value flattens what was there');
+// The substitution ITSELF, per channel. The check above proves the pre-take value is fetched;
+// this proves it is USED. REC_INJECT=livechannel removes the ternary and left the first version
+// of this section passing, because "the snapshot is read" and "the snapshot is written" are two
+// different claims.
+check('...and each channel actually takes it when switched off',
+  /P: ch\.translate \? P : was\.p,/.test(reg)
+    && /Q: ch\.rotate \? Q : was\.q,/.test(reg)
+    && /S: ch\.scale \? S : was\.s,/.test(reg));
+check('...and when there was no prior animation the live value stands',
+  /if \(!was\) return \{ P, Q, S \};/.test(reg),
+  'a key has to hold something, and there is nothing to preserve');
+check('...with the quaternion taking the SHORT arc between pre-take keys',
+  /const sgn = d < 0 \? -1 : 1;/.test(reg),
+  'the long way round reads as the object spinning between two keys it should pass straight through');
+check('the gate is applied at ONE point, and both capture paths go through it',
+  (reg.match(/_gateChannels\(/g) || []).length === 3,
+  'the same rule written into each capture path is how the two come to disagree');
+check('...and the all-on case returns untouched, so the default costs nothing',
+  /if \(ch\.translate && ch\.rotate && ch\.scale\) return \{ P, Q, S \};/.test(reg));
+
+// The dropdown itself.
+check('the record button has a channel dropdown beside it',
+  /id: 'recopts'/.test(tl) && /case 'recopts':/.test(tl));
+check('...offering all three channels',
+  /row\('Translate', ch\.translate/.test(tl) && /row\('Rotate', ch\.rotate/.test(tl)
+    && /row\('Scale', ch\.scale/.test(tl));
+// Sliced to the hit-test block rather than searched whole-file: the "..." handler legitimately
+// closes this menu on its way past, and a negative regex over the whole file caught that
+// instead of the thing being asserted.
+{
+  const a = tl.indexOf('if (this._recOptMenuOpen) {');
+  const blk = tl.slice(a, tl.indexOf('if (this._contextMenuOpen) {', a));
+  const hit = blk.slice(0, blk.indexOf('this._recOptMenuOpen = false;'));
+  check('...and it STAYS OPEN when one is clicked',
+    /this\.draw\(\);\s*\n\s*return;/.test(hit) && !/= false/.test(hit),
+    'these are switches, not commands: flipping two must not cost two trips to the menu');
+}
+check('...closing only on a click elsewhere, which still does its own job',
+  /this\._recOptMenuOpen = false;[\s\S]{0,320}?this\.draw\(\);\s*\n\s*\}/.test(tl),
+  'no early return on dismissal, so the closing click is not wasted');
+check('...drawn canvas-native like the other menus, so VR gets it too',
+  (tl.match(/_drawRecOptMenu\(ctx\)/g) || []).length === 3);
+check('...and the arrow lights only when a channel is OFF',
+  /active: !!_ch && !\(_ch\.translate && _ch\.rotate && _ch\.scale\)/.test(tl),
+  'a quiet affordance normally, a warning when a take is about to ignore something');
+check('the two menus are mutually exclusive',
+  /case 'recopts':[\s\S]{0,180}?this\._contextMenuOpen = false;/.test(tl));
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

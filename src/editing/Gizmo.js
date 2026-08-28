@@ -1060,14 +1060,21 @@ class Gizmo {
     return (dx * dx + dy * dy) <= s.r * s.r;
   }
 
-  // Trackball annulus: inside the rotation sphere but outside a center exclusion radius,
-  // so the trackball never steals the crowded center (center sphere + plane handles).
+  // THE TRACKBALL IS THE WHOLE INTERIOR, and the centre exclusion that used to be here is gone.
+  //
+  // It was an annulus — inside the ring but outside 0.5r — on the reasoning that the trackball
+  // must not steal the crowded centre where the centre sphere and the plane handles live. But
+  // this is only ever consulted AFTER `_pickGizmoTiered` has returned nothing, and that pick
+  // gives the centre sphere and the planes their own priority tiers ahead of everything else.
+  // If the tiered pick missed them, there is nothing left in the middle to protect: the
+  // exclusion was belt-and-braces over a rule that had already run.
+  //
+  // What it cost was the gesture every other app has — press inside the gizmo on empty space
+  // and swing. matt: "usually click and drag within the transform gizmo in empty space is
+  // treated as a trackball rotation", reporting that a click in there orbits the CAMERA
+  // instead, which is what a click the gizmo declines falls through to.
   _inTrackballZone(mx, my) {
-    var s = this._gizmoScreenRadius();
-    var dx = mx - s.cx, dy = my - s.cy;
-    var d2 = dx * dx + dy * dy;
-    var inner = s.r * 0.5; // exclusion radius (tune: larger = bigger dead zone at center)
-    return d2 <= s.r * s.r && d2 >= inner * inner;
+    return this._isInsideRotSphere(mx, my);
   }
 
   // Camera right / up / toward-viewer axes in world space, via unproject (no Camera
@@ -1388,6 +1395,46 @@ class Gizmo {
   onMouseUp() {
     this._isEditing = false;
   }
+
+  // WHY DID THAT CLICK ORBIT THE CAMERA INSTEAD OF THE GIZMO. A press inside the gizmo reaches
+  // the camera only when Transform.start() returns false, and that has exactly three causes:
+  // no selected mesh, no armed handle, or the cursor genuinely outside the ring. Reading the
+  // code cannot tell them apart, because the answer depends on where the pointer was.
+  //
+  // Move the mouse to the spot that misbehaves, then run this WITHOUT clicking.
+  diag() {
+    const s = this._gizmoScreenRadius();
+    const mx = this._main._mouseX, my = this._main._mouseY;
+    const d = Math.hypot(mx - s.cx, my - s.cy);
+    const sel = this._pickGizmoTiered(mx, my);
+    console.log('[gizmo] cursor ' + mx.toFixed(0) + ',' + my.toFixed(0)
+      + '  centre ' + s.cx.toFixed(0) + ',' + s.cy.toFixed(0)
+      + '  ringRadius ' + s.r.toFixed(1) + '  distance ' + d.toFixed(1)
+      + ' (' + (d / s.r).toFixed(2) + ' of the ring)');
+    console.log('[gizmo] tieredPick=' + (sel ? '#' + sel._type : 'nothing')
+      + '  insideRing=' + this._isInsideRotSphere(mx, my)
+      + '  trackballWouldArm=' + (!sel && !!(this._activatedType & ROT_W)
+        && this._inTrackballZone(mx, my))
+      + '  ROT_W enabled=' + !!(this._activatedType & ROT_W)
+      + '  selectedMesh=' + !!this._main.getMesh());
+    console.log('[gizmo] a press orbits the camera when trackballWouldArm is false AND '
+      + 'tieredPick is nothing — or when selectedMesh is false, because Transform.start() '
+      + 'requires one before it consults the gizmo at all.');
+    return { r: s.r, d: d, sel: sel && sel._type };
+  }
 }
+
+// Reachable without holding the instance: the Transform tool owns it.
+window.gizmoDiag = function () {
+  const app = window.app || window.sculptgl;
+  const sm = app && app.getSculptManager && app.getSculptManager();
+  const t = sm && sm.getCurrentTool && sm.getCurrentTool();
+  const g = t && t._gizmo;
+  if (!g || !g.diag) {
+    console.log('[gizmo] switch to the Transform tool first — the gizmo lives on it');
+    return null;
+  }
+  return g.diag();
+};
 
 export default Gizmo;

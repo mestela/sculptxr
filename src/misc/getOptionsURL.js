@@ -215,6 +215,16 @@ var getOptionsURL = function () {
   // space? A path is monotonic in time, so along-the-strand is implicitly a time-ordered
   // falloff; off reaches every pass through a region, which is occasionally what you want.
   options.pathConnected = queryBool(getVal('pathConnected'), true);
+  // Which channel of the keys a motion-path edit writes. Both by default: the twist reaching
+  // the orientations is the point of the feature, and a default of off would read as it not
+  // working. See MotionPathEdit.channels.
+  options.pathTranslate = queryBool(getVal('pathTranslate'), true);
+  options.pathRotate = queryBool(getVal('pathRotate'), true);
+  // Which channels a transform TAKE records. All three by default — a recorder that quietly
+  // drops a channel is worse than one that records too much.
+  options.recTranslate = queryBool(getVal('recTranslate'), true);
+  options.recRotate = queryBool(getVal('recRotate'), true);
+  options.recScale = queryBool(getVal('recScale'), true);
   options.boneShowTrails = queryBool(getVal('boneShowTrails'), false);
   options.boneShowGnomons = queryBool(getVal('boneShowGnomons'), false);
 

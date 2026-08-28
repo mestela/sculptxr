@@ -407,6 +407,55 @@ export default class GuiTimeline {
     ctx.restore();
   }
 
+  // THE RECORD CHANNEL MENU. Same canvas-native construction as the "..." menu — one draw, one
+  // hit test — and it reaches the synthetic VR timeline events as well as desktop pointers,
+  // which a DOM popup would not.
+  //
+  // It STAYS OPEN as you click, unlike "...": those are commands and these are switches, and
+  // flipping two of them should not cost two trips to the menu. matt: "the menu should stay
+  // active, and only clear if the user clicks elsewhere."
+  _recOptCommands() {
+    const reg = window._animationRegistry;
+    const ch = reg ? reg.recordChannels() : { translate: true, rotate: true, scale: true };
+    const row = (label, on, liveKey, savedKey) => ({
+      label: (on ? '\u2713  ' : '\u2003  ') + label, on: on,
+      run: () => { window[liveKey] = !on; window.saveOption?.(savedKey, !on); },
+    });
+    return [
+      row('Translate', ch.translate, '_recTranslate', 'recTranslate'),
+      row('Rotate', ch.rotate, '_recRotate', 'recRotate'),
+      row('Scale', ch.scale, '_recScale', 'recScale'),
+    ];
+  }
+
+  _recOptRect() {
+    const btn = this._toolbarBtnDefs().find(b => b.id === 'recopts');
+    // Right-aligned under the arrow, so a 140px menu hanging off a 16px button cannot run past
+    // the edge of a narrow timeline.
+    return btn ? { x: Math.max(2, btn.x + btn.w - 140), y: btn.y + btn.h,
+      w: 140, h: 3 * 24, cellH: 24 } : null;
+  }
+
+  _drawRecOptMenu(ctx) {
+    if (!this._recOptMenuOpen) return;
+    const r = this._recOptRect();
+    if (!r) return;
+    ctx.save();
+    ctx.fillStyle = Theme.crust; ctx.strokeStyle = Theme.surface1; ctx.lineWidth = 1;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+    this._recOptCommands().forEach((cmd, i) => {
+      const y = r.y + i * r.cellH;
+      const hov = this._lastMouseX >= r.x && this._lastMouseX <= r.x + r.w
+        && this._lastMouseY >= y && this._lastMouseY < y + r.cellH;
+      if (hov) { ctx.fillStyle = Theme.surface1; ctx.fillRect(r.x + 1, y + 1, r.w - 2, r.cellH - 2); }
+      ctx.fillStyle = cmd.on ? Theme.text : Theme.overlay0;
+      ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(cmd.label, r.x + 10, y + r.cellH / 2);
+    });
+    ctx.restore();
+  }
+
   _contextMenuCommands() {
     const main = this._main;
     return [...this._shapeLayerMenuCommands(), ...(main?._resolveRadialCommands?.() || [])];
@@ -3146,11 +3195,25 @@ export default class GuiTimeline {
       { id: 'record',    icon: '',    active: armed,                           tooltip: armed ? 'Disarm recording' : 'Arm recording' },
     ];
     const _tbBtnW = 38, _tbBtnGap = 6;
-    const _tbTotal = _tbDefs.length * _tbBtnW + (_tbDefs.length - 1) * _tbBtnGap;
+    // The channel dropdown rides directly on Record, narrow and with no gap before it, so it
+    // reads as part of that button rather than as a seventh transport control.
+    const _recOptW = 16;
+    const _tbTotal = _tbDefs.length * _tbBtnW + (_tbDefs.length - 1) * _tbBtnGap + _recOptW;
     let _tbX = Math.max(_leftSafeEnd, Math.round((this._cssWidth - _tbTotal) / 2));
     _tbDefs.forEach(def => {
       btns.push({ ...def, x: _tbX, y: 5, w: _tbBtnW, h: 20 });
       _tbX += _tbBtnW + _tbBtnGap;
+      if (def.id === 'record') {
+        _tbX -= _tbBtnGap;
+        const _reg = window._animationRegistry;
+        const _ch = _reg ? _reg.recordChannels() : null;
+        btns.push({ id: 'recopts', x: _tbX, y: 5, w: _recOptW, h: 20, label: '\u25be',
+          // Lit only when a channel is OFF, so the arrow is a quiet affordance normally and a
+          // warning when a take is about to ignore something.
+          active: !!_ch && !(_ch.translate && _ch.rotate && _ch.scale),
+          tooltip: 'Which channels a take records: translate / rotate / scale' });
+        _tbX += _recOptW + _tbBtnGap;
+      }
     });
 
     // Recording row. Kept in the timeline itself because this is the surface visible while
@@ -3298,6 +3361,21 @@ export default class GuiTimeline {
 
     // Shared canvas-native "…" menu. This path receives both desktop pointer events and the
     // synthetic VR timeline events, unlike the old DOM popup.
+    // The channel menu first, and a hit does NOT close it: these are switches, not commands.
+    if (this._recOptMenuOpen) {
+      const rr = this._recOptRect();
+      if (rr && rx >= rr.x && rx <= rr.x + rr.w && ry >= rr.y && ry < rr.y + rr.h) {
+        const cmd = this._recOptCommands()[Math.floor((ry - rr.y) / rr.cellH)];
+        try { cmd?.run?.(); } catch (err) { console.error('[TL recopts] toggle failed', err); }
+        this.draw();
+        return;
+      }
+      this._recOptMenuOpen = false;
+      // Deliberately no `return`: the click that dismisses the menu still lands on whatever it
+      // was over, which is what makes closing it feel free rather than like a wasted click.
+      this.draw();
+    }
+
     if (this._contextMenuOpen) {
       const mr = this._contextMenuRect();
       if (mr && rx >= mr.x && rx <= mr.x + mr.w && ry >= mr.y && ry < mr.y + mr.h) {
@@ -3587,6 +3665,13 @@ export default class GuiTimeline {
             break;
           case 'ctxmenu':
             this._contextMenuOpen = !this._contextMenuOpen;
+            this._speedMenuOpen = false;
+            this._recOptMenuOpen = false;
+            this.draw();
+            return;
+          case 'recopts':
+            this._recOptMenuOpen = !this._recOptMenuOpen;
+            this._contextMenuOpen = false;
             this._speedMenuOpen = false;
             this.draw();
             return;
@@ -5912,6 +5997,7 @@ export default class GuiTimeline {
       this.drawGraph(ctx);
       this._drawSpeedMenu(ctx);
       this._drawContextMenu(ctx);
+      this._drawRecOptMenu(ctx);
       // Graph mode returns before the dopesheet tail below. Still publish the completed
       // draw so Scene uploads its changed canvas texture in VR (transport state included).
       this._drawRevision = (this._drawRevision || 0) + 1;
@@ -5980,6 +6066,7 @@ export default class GuiTimeline {
     }
     this._drawSpeedMenu(ctx);
     this._drawContextMenu(ctx);
+    this._drawRecOptMenu(ctx);
     this._drawRevision = (this._drawRevision || 0) + 1;
   }
 }

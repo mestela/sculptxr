@@ -33,6 +33,23 @@ import {
 } from '../bonePanel.js';
 import { buildTransformSectionHTML, wireTransformSection, syncTransformSection } from '../transformPanel.js';
 
+// THE TWO CHANNELS A MOTION-PATH EDIT CAN WRITE, as one markup helper so Move and Smooth cannot
+// drift apart. A 6DOF grab always produces both a translation and a rotation — your hand cannot
+// move without turning a little — so without these a nudge sideways also nods every gnomon it
+// passes. matt: "i can see cases where i'll want to affect just positions, or just rotations, or
+// both."
+//
+// Labelled "Path" because these are about the motion path and NOT about the mesh brush, which
+// shares the tool and the panel above it.
+function pathChannelHTML() {
+  const ch = MotionPathEdit.channels();
+  return `
+        <div class="mp-toggles">
+          <button class="mp-toggle-btn${ch.translate ? ' active' : ''}" id="mp-path-translate">Path Move</button>
+          <button class="mp-toggle-btn${ch.rotate ? ' active' : ''}" id="mp-path-rotate">Path Rotate</button>
+        </div>`;
+}
+
 
 // ── Tool name lookup ─────────────────────────────────────────────────────────
 const TOOL_NAMES = {
@@ -696,6 +713,24 @@ export class MiniPanel extends HTMLVRPanel {
       });
     }
 
+    // ── The motion-path channel buttons, on both tools that edit a path ────
+    // Shared wiring rather than two copies: Move and Smooth show the same pair and write the
+    // same global setting, so a second copy is a second place for the order of "live value
+    // first, saved second" to be got wrong.
+    if (idx === Enums.Tools.MOVE || idx === Enums.Tools.SMOOTH) {
+      const channelBtn = (id, liveKey, savedKey) => {
+        extras.querySelector(id)?.addEventListener('click', () => {
+          const ch = MotionPathEdit.channels();
+          const next = !(liveKey === '_pathTranslate' ? ch.translate : ch.rotate);
+          window[liveKey] = next;
+          getOptionsURL.saveOption(savedKey, next, 0);
+          this.syncFromState();
+        });
+      };
+      channelBtn('#mp-path-translate', '_pathTranslate', 'pathTranslate');
+      channelBtn('#mp-path-rotate', '_pathRotate', 'pathRotate');
+    }
+
     // ── Move extras: how a path edit measures "near" ───────────────────────
     if (idx === Enums.Tools.MOVE) {
       const btn = extras.querySelector('#mp-connected');
@@ -954,6 +989,12 @@ export class MiniPanel extends HTMLVRPanel {
         btn.classList.toggle('active', !!(vm?.getShowWireframe?.()));
       });
 
+    } else if (idx === Enums.Tools.MOVE || idx === Enums.Tools.SMOOTH) {
+      const ch = MotionPathEdit.channels();
+      extrasEl.querySelector('#mp-path-translate')?.classList.toggle('active', ch.translate);
+      extrasEl.querySelector('#mp-path-rotate')?.classList.toggle('active', ch.rotate);
+      extrasEl.querySelector('#mp-connected')
+        ?.classList.toggle('active', MotionPathEdit.connected());
     } else if (idx === Enums.Tools.EXTRUDE || idx === Enums.Tools.INSET) {
       extrasEl.querySelector('#mp-keep-together')
         ?.classList.toggle('active', !!(window.keepExtrudeFacesTogether ?? true));
@@ -1002,6 +1043,7 @@ export class MiniPanel extends HTMLVRPanel {
       const on = MotionPathEdit.connected();
       return `
         <hr class="mp-divider">
+        ${pathChannelHTML()}
         <div class="mp-toggles">
           <button class="mp-toggle-btn${on ? ' active' : ''}" id="mp-connected">Connectivity</button>
         </div>
@@ -1015,6 +1057,7 @@ export class MiniPanel extends HTMLVRPanel {
       const sharpen = idx === Enums.Tools.SMOOTH && !!(t?._negative);
       return `
         <hr class="mp-divider">
+        ${idx === Enums.Tools.SMOOTH ? pathChannelHTML() : ''}
         <div class="mp-toggles">
           <button class="mp-toggle-btn${tangent ? ' active' : ''}" id="mp-tangent">Tangent</button>
           ${idx === Enums.Tools.SMOOTH

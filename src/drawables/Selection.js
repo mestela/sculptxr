@@ -3,6 +3,8 @@ import Buffer from '../render/Buffer.js';
 import ShaderLib from '../render/ShaderLib.js';
 import Enums from '../misc/Enums.js';
 import * as THREE from 'three';
+import MotionPathEdit from '../editing/MotionPathEdit.js';
+import Skeleton from '../editing/Skeleton.js';
 
 var _TMP_MATPV = mat4.create();
 var _TMP_MAT = mat4.create();
@@ -369,11 +371,81 @@ class Selection {
       this._threeCircle.visible = true;
       this._threeDot.visible = false;
 
+    } else if (this._showPathCircle(main, sm)) {
+      // handled there
+
     } else {
       if (this._threeCircle) this._threeCircle.visible = false;
       if (this._threeDot)   this._threeDot.visible    = false;
     }
     // _isEditMode is managed by GuiSculpting — do NOT reset it here
+  }
+
+  // THE BRUSH RING OVER A MOTION PATH, WHICH HANGS IN EMPTY SPACE.
+  //
+  // The ring is normally placed at the picked SURFACE POINT and parented to the mesh that was
+  // hit — so with nothing under the cursor there is nothing to place it on, and it simply does
+  // not draw. That is right for a sculpt brush and wrong for a path edit: a motion path is in
+  // mid-air by nature, and the radius is the whole of what the edit does — it decides how much
+  // of the curve comes with you. matt, on desktop: "the move tool doesn't show the radius
+  // sphere". You were aiming a brush whose size you could not see.
+  //
+  // Placed on the sample the edit WOULD take, not at the cursor, for the same reason the
+  // preselection dot is: the samples are discrete, and drawing the ring anywhere else would
+  // promise a centre the edit is not going to use.
+  _showPathCircle(main, sm) {
+    if (!this._threeCircle) return false;
+    // DESKTOP ONLY. The headset draws its own cursor and has its own reach; this ring is placed
+    // from a SCREEN radius through the flat-screen projection, which in a session would put it
+    // somewhere arbitrary — the base camera is not the one you are looking through.
+    if (main._xrSession || main._vrSculpting) return false;
+    const i = MotionPathEdit.hoverIndex(main);
+    const strand = main._trailStrand;
+    if (i < 0 || !strand || !strand.points || !strand.points[i]) return false;
+    const tool = sm && sm.getCurrentTool && sm.getCurrentTool();
+    const camera = main.getCamera && main.getCamera();
+    if (!tool || !tool.getScreenRadius || !camera) return false;
+
+    const group = Skeleton.overlayGroup && Skeleton.overlayGroup(main);
+    if (!group) return false;
+    if (this._threeCircle.parent !== group) {
+      group.add(this._threeCircle);
+      group.add(this._threeDot);
+    }
+
+    // The radius as a WORLD length measured at the depth of THIS sample — the same conversion
+    // MotionPathEdit.begin does, and for the same reason: the same ring of pixels covers a
+    // different world distance at every depth, so measuring it anywhere else makes the drawn
+    // ring disagree with the reach the edit actually uses.
+    // Through the renderer's projection, not SculptGL's: the ring is drawn in the overlay
+    // group and the group carries a scale the SculptGL camera knows nothing about, so measuring
+    // there gave a ring that disagreed with both the reach and the curve. Same hook the hit
+    // test uses, so the drawn ring and the samples it will take are one number.
+    const p = strand.points[i];
+    const sc = MotionPathEdit.projectHook && MotionPathEdit.projectHook(main, p);
+    const un = MotionPathEdit.unprojectHook;
+    let r;
+    if (sc && un) {
+      const a = un(main, sc.x, sc.y, p);
+      const b = un(main, sc.x + tool.getScreenRadius(), sc.y, p);
+      r = a && b ? Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) : 0;
+    } else {
+      const ss = camera.project([p.x, p.y, p.z]);
+      const a = camera.unproject(ss[0], ss[1], ss[2]);
+      const b = camera.unproject(ss[0] + tool.getScreenRadius(), ss[1], ss[2]);
+      r = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    }
+    if (!(r > 0)) return false;
+
+    this._threeCircle.position.set(p.x, p.y, p.z);
+    this._threeCircle.scale.set(r, r, r);
+    // Facing the camera, because there is no surface to lie on. A ring left on the last
+    // surface normal would read as a disc stuck at some angle to the curve.
+    this._threeCircle.quaternion.copy(camera.getThreeCamera
+      ? camera.getThreeCamera().quaternion : this._threeCircle.quaternion);
+    this._threeCircle.visible = true;
+    this._threeDot.visible = false;
+    return true;
   }
 
   // Faint grid showing the voxel draw plane (1b). Parented to the voxel mesh and placed

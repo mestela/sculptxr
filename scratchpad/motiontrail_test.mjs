@@ -634,18 +634,23 @@ function setup(times) {
     const mk = (n) => {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-      return { geometry: g, material: { size: 0, opacity: 1 } };
+      return { geometry: g, material: { size: 0, opacity: 1 }, visible: false };
     };
     // Four samples: 0 and 2 are keys, 1 and 3 are plain fill.
     const v = {
       lines: [], dots: mk(2), keyDots: mk(2),
+      // The one-point hover mark. Sized 1 because that is the whole point of it.
+      hoverDot: mk(1),
       identity: [0.2, 0.4, 0.9],
       keyTimes: [0, 1],
       nowEps: 0.25,
       slots: [{ key: true, i: 0 }, { key: false, i: 0 }, { key: true, i: 1 }, { key: false, i: 1 }],
       plainCol: new Float32Array(6), keyCol: new Float32Array(6),
     };
-    const m = { _trailTimes: [0, 0.5, 1, 1.5], _trailVis: v };
+    // recolor reads the sample positions through pointOf(), so the strand has to exist.
+    const m = { _trailTimes: [0, 0.5, 1, 1.5], _trailVis: v,
+      _trailStrand: { points: [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 },
+        { x: 2, y: 0, z: 0 }, { x: 3, y: 0, z: 0 }] } };
     window._animationRegistry = { globalPlaybackTime: 0 };
 
     globalThis.__hover = -1;
@@ -663,6 +668,10 @@ function setup(times) {
     // PRESELECTION: which sample a click would take. Samples are discrete, so without this the
     // curve appears to move from somewhere other than the cursor.
     globalThis.__hover = 3;            // a PLAIN sample, slot 1 of the plain cloud
+    // Stamped with the real defaults first, so "the cloud is not resized" is a claim about
+    // recolor leaving them ALONE rather than about it writing these numbers back.
+    v.dots.material.size = 4;
+    v.keyDots.material.size = 6;
     mod.default.recolor(m);
     const pc2 = v.dots.geometry.getAttribute('color').array;
     check('the preselected sample is highlighted', pc2[3] > 0.9 && pc2[5] < 0.4,
@@ -670,10 +679,22 @@ function setup(times) {
     check('...and its neighbours are not',
       near(pc2[0], 0.2 * 0.4, 1e-6) && near(pc2[2], 0.9 * 0.4, 1e-6),
       Array.from(pc2).join(','));
+    // THE MARK GROWS, BUT ONLY THE MARK. This used to assert `v.dots.material.size > 4`, which
+    // is the bug it was meant to guard: a PointsMaterial has ONE size for the whole cloud, so
+    // growing the hovered dot grew all hundred-odd of them and the curve visibly changed as a
+    // body. That is what matt was reporting for four rounds — "i can see all the plotted points
+    // of the curve get preselection highlighting" — while every measurement of the tint came
+    // back correct, because the tint always was.
     check('...and it grows, since a colour shift alone is easy to miss at four pixels',
-      v.dots.material.size > 4, v.dots.material.size);
-    check('...while the other cloud stays its normal size',
-      v.keyDots.material.size === 6, v.keyDots.material.size);
+      v.hoverDot.visible === true && v.hoverDot.material.size > 4,
+      v.hoverDot && v.hoverDot.material.size);
+    check('...WITHOUT resizing the cloud it came from',
+      v.dots.material.size === 4 && v.keyDots.material.size === 6,
+      v.dots.material.size + ',' + v.keyDots.material.size);
+    void 0;
+    check('...and the mark is one point, sitting on the sample it marks',
+      v.hoverDot.geometry.getAttribute('position').count === 1,
+      'a per-point highlight is the whole requirement; a cloud-wide one is the bug');
 
     globalThis.__hover = 0;            // now a KEY sample
     mod.default.recolor(m);
@@ -684,7 +705,7 @@ function setup(times) {
       globalThis.__hover = -1;
       mod.default.recolor(m);
       const k = v.keyDots.geometry.getAttribute('color').array;
-      return near(k[0], 1) && near(k[2], 1) && v.dots.material.size === 4;
+      return near(k[0], 1) && near(k[2], 1) && v.hoverDot.visible === false;
     })(), 'a stuck highlight promises a click that would land somewhere else');
 
     globalThis.__hover = -1;
@@ -837,7 +858,12 @@ function setup(times) {
     check('...and it shrinks linearly with distance in KEYS',
       near(axisLen(9) - axisLen(8), axisLen(8) - axisLen(7), 1e-6),
       [axisLen(7), axisLen(8), axisLen(9)].join(','));
-    check('...reaching zero at the edge of the reach', axisLen(0) < axisLen(9) * 0.15,
+    // NOT TO ZERO. This used to assert the edge triad was under 15% of the largest, which is
+    // the behaviour matt then measured and objected to: a triad an eighth of full size does not
+    // read as "far away", it reads as broken. The falloff is remapped onto [floor, 1], so the
+    // ranking survives while the distant ones stay legible.
+    check('...but not to nothing: the far triads keep the floor',
+      axisLen(0) > axisLen(9) * 0.4 && axisLen(0) < axisLen(9) * 0.7,
       axisLen(0) + ' vs ' + axisLen(9));
 
     // Counted in KEYS, not seconds: ten keys either side is ten poses either side, whether

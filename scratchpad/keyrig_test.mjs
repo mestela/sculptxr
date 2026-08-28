@@ -44,6 +44,9 @@ const mat4 = {};
 const arkitEntry = () => null, arkitSplitTargets = () => [], arkitUnifiedFor = () => null;
 const Enums = { Action: {} };
 const Skinning = { captureSource() {} };
+// The recorder reads its channel switches through this. Stubbed empty so every channel takes
+// its default of ON, which is the behaviour the rest of this harness is written against.
+const getOptionsURL = () => ({});
 `;
 
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_key_gen.mjs');

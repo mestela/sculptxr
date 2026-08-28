@@ -12,6 +12,31 @@ const REPO = '/Users/mattestela/sculptxr';
 const SRC = fs.readFileSync(path.join(REPO, 'src/editing/MotionPathEdit.js'), 'utf8');
 const body = SRC.split('\n').filter((l) => !/^import\s/.test(l))
   .filter((l) => !/^export default/.test(l)).join('\n');
+// Defect injections (standing lesson 1) — see the ROTATION section at the bottom.
+//   PE_INJECT=postmul       the twist is applied in each sample's OWN frame (q * delta), so a
+//                           held section stops being rigid and every gnomon spins in place
+//   PE_INJECT=lerpweight    the falloff scales the quaternion's components instead of slerping
+//                           from identity, which is not a rotation and gives the wrong angle
+//   PE_INJECT=diffresidual  the rotation residual is a subtraction, not after * inv(before)
+//   PE_INJECT=nopushquat    finish() stops writing the rotation channel
+let INJ_BODY = null;
+{
+  const i = process.env.PE_INJECT || '';
+  if (i === 'postmul') INJ_BODY = ['const r = normQ(mulQ(scaleQuat(delta, w[i]), b));',
+    'const r = normQ(mulQ(b, scaleQuat(delta, w[i])));'];
+  else if (i === 'lerpweight') INJ_BODY = ['const r = normQ(mulQ(scaleQuat(delta, w[i]), b));',
+    'const r = normQ(mulQ([delta[0] * w[i], delta[1] * w[i], delta[2] * w[i], delta[3] * w[i]], b));'];
+  else if (i === 'diffresidual') INJ_BODY = ['return mulQ(a, invQ(b));',
+    'return [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];'];
+  else if (i === 'nogate') INJ_BODY = ['const delta = ch.translate ? reach : ZERO;',
+    'const delta = reach;'];
+  else if (i === 'swinggate') INJ_BODY = ['ch.translate ? twist : null, e.startWorld, e.falloff);',
+    'ch.rotate ? twist : null, e.startWorld, e.falloff);'];
+  else if (i === 'nopushquat') INJ_BODY = [
+    'const turned = MotionPathEdit.pushBackQuats(track, e.strand.times, e.beforeQ, e.afterQ);',
+    'const turned = 0;'];
+}
+
 const outPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '_pathedit_gen.mjs');
 // Undo has to re-solve the rig, not just rewrite the pin's track, so the solver is stubbed and
 // its calls counted rather than being left undefined.
@@ -22,9 +47,16 @@ const prelude = 'globalThis.window = globalThis.window || {};\n' +
   // The falloff mode is a persisted option; the harness drives it through the live override so
   // each case says which mode it is testing rather than depending on a saved default.
   'const getOptionsURL = () => (globalThis.__opts || {});\n';
-fs.writeFileSync(outPath, prelude +
-  body.split('\n').filter((l) => !/^import\s/.test(l)).join('\n') +
-  '\nexport default MotionPathEdit;\n');
+// THE SOURCE THE HARNESS ACTUALLY RUNS. Every structural check below reads THIS, not the file
+// on disk: the injections rewrite it on its way to the module, so a check that re-reads SRC is
+// looking at source that is not being run and passes cheerfully with the defect in place. That
+// mistake has been made three times in this project; PE_INJECT=nopushquat caught the fourth.
+let MPS = body.split('\n').filter((l) => !/^import\s/.test(l)).join('\n');
+if (INJ_BODY) {
+  if (!MPS.includes(INJ_BODY[0])) throw new Error('inject: the anchor moved — ' + INJ_BODY[0]);
+  MPS = MPS.replace(INJ_BODY[0], INJ_BODY[1]);
+}
+fs.writeFileSync(outPath, prelude + MPS + '\nexport default MotionPathEdit;\n');
 const MPE = (await import(outPath + '?v=' + Date.now())).default;
 
 let failures = 0;
@@ -599,6 +631,404 @@ const line = (n) => Array.from({ length: n }, (_, i) => ({ x: i, y: 0, z: 0 }));
   MPE.dragXR(main, [4, 0, 0], 0);
   check('...and zero intensity leaves only the translation',
     near(main._pathEdit.after[8].y, 0, 1e-9), main._pathEdit.after[8].y);
+}
+
+// --- ROTATION: the twist reaches the KEYED ORIENTATIONS -----------------------------------
+//
+// The gnomons drew a rotation nobody could edit. Positions had swung around the hand since
+// v3.20.26 while the orientations sat still, so a twist moved the path and left every triad on
+// its old heading. matt: they "are not hooked into the grab tool to allow the user to twist and
+// sculpt those keys".
+//
+// The arithmetic is where this goes wrong quietly, so it is RUN rather than read. Two mistakes
+// both look like a working twist: applying the delta in each sample's own frame (the held
+// section stops being rigid), and scaling a quaternion by the falloff instead of slerping (a
+// rotation by the wrong angle, which just reads as a weak brush).
+const QI = { x: 0, y: 0, z: 0, w: 1 };
+const axisQ = (ax, ay, az, deg) => {
+  const h = (deg * Math.PI / 180) / 2, sn = Math.sin(h);
+  return [ax * sn, ay * sn, az * sn, Math.cos(h)];
+};
+const qArr = (q) => (Array.isArray(q) ? q : [q.x, q.y, q.z, q.w]);
+const qMul = (a, b) => [
+  a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+  a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+  a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+  a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+];
+const qInv = (q) => [-q[0], -q[1], -q[2], q[3]];
+// Sign-independent: q and -q are the same rotation.
+const qAngle = (q) => 2 * Math.acos(Math.min(1, Math.abs(q[3])));
+
+{
+  const pts = line(11);
+  const rest = pts.map(() => ({ ...QI }));
+  const out = MPE.twisted(pts, rest, 5, axisQ(0, 0, 1, 90), 3);
+
+  check('the grabbed key takes the full twist',
+    near(qAngle(qArr(out[5])), Math.PI / 2, 1e-6), qAngle(qArr(out[5])));
+  check('...and a key at the radius is not turned at all',
+    near(qAngle(qArr(out[2])), 0, 1e-9), qAngle(qArr(out[2])));
+  check('...with the ones between turned partway, monotonically',
+    qAngle(qArr(out[4])) > qAngle(qArr(out[3]))
+      && qAngle(qArr(out[3])) > qAngle(qArr(out[2])));
+  check('the falloff is symmetric about the grab, as it is for position',
+    near(qAngle(qArr(out[4])), qAngle(qArr(out[6])), 1e-9));
+
+  // THE WEIGHT IS A SLERP, NOT A SCALE. At w = 0.5 the result must be HALF THE ANGLE. Scaling
+  // the components gives something that is not a rotation, and normalising it afterwards lands
+  // on a different angle entirely — which reads as the brush merely being weak.
+  const w = MPE.weights(pts, 5, 3);
+  const i = w.findIndex((v) => Math.abs(v - 0.5) < 0.2);
+  check('...and a half-weight key turns by half the ANGLE',
+    near(qAngle(qArr(out[i])), (Math.PI / 2) * w[i], 1e-6),
+    qAngle(qArr(out[i])) + ' vs ' + (Math.PI / 2) * w[i]);
+  check('the baseline orientations are not mutated',
+    rest[5].w === 1 && rest[5].z === 0,
+    'a mutated baseline compounds the twist frame over frame');
+}
+
+// PREMULTIPLIED — the twist is about the axis the WRIST turned about, in the world the curve is
+// drawn in, so a held section swings together as one rigid thing. Applied in each sample's own
+// frame instead, the relative rotation between two samples changes, and what you see is every
+// gnomon spinning in place rather than a section turning. Two samples at EQUAL weight either
+// side of the grab, so the only difference between the candidates is the composition order.
+{
+  const pts = line(11);
+  const rest = pts.map((_, i) => {
+    const q = axisQ(1, 0, 0, i * 17);          // each sample on a different heading
+    return { x: q[0], y: q[1], z: q[2], w: q[3] };
+  });
+  const was = qMul(qInv(qArr(rest[4])), qArr(rest[6]));
+  const out = MPE.twisted(pts, rest, 5, axisQ(0, 0, 1, 80), 3);
+  const now = qMul(qInv(qArr(out[4])), qArr(out[6]));
+  check('a held section stays rigid — the angle between two equal-weight keys is preserved',
+    near(qAngle(was), qAngle(now), 1e-9),
+    qAngle(was) + ' -> ' + qAngle(now)
+      + ' — turning each key in its own frame is not a grab, it is a spin');
+}
+
+// THE RESIDUAL IS A RATIO: after * inv(before), not after - before. The difference of two
+// quaternions is not a rotation, and pushing it onto a key is meaningless.
+{
+  const pts = line(5);
+  const times = [0, 1, 2, 3, 4];
+  const rest = pts.map((_, i) => {
+    const q = axisQ(0, 1, 0, i * 11);
+    return { x: q[0], y: q[1], z: q[2], w: q[3] };
+  });
+  const out = MPE.twisted(pts, rest, 2, axisQ(0, 0, 1, 60), 99);  // radius past the ends
+  const r = MPE.residualQuatAt(times, rest, out, 2);
+  check('on a sample the residual is exactly the rotation that was applied',
+    near(qAngle(qArr(r)), Math.PI / 3, 1e-6), qAngle(qArr(r)));
+  check('...whatever the key was already holding',
+    near(qAngle(qMul(qArr(r), qArr(rest[2]))), qAngle(qArr(out[2])), 1e-6),
+    'a residual that depends on the baseline is not a residual');
+  check('between samples it interpolates as a rotation',
+    near(qAngle(qArr(MPE.residualQuatAt(times, rest, out, 1.5))), Math.PI / 3, 1e-6));
+  check('outside the span it holds at the end sample',
+    near(qAngle(qArr(MPE.residualQuatAt(times, rest, out, 99))), Math.PI / 3, 1e-6));
+}
+
+// PUSH-BACK onto the track's quaternion channel: same span rule as positions, composed on top
+// of whatever the key already held, left normalised.
+{
+  const pts = line(5);
+  const times = [0, 1, 2, 3, 4];
+  const rest = pts.map(() => ({ ...QI }));
+  const out = MPE.twisted(pts, rest, 2, axisQ(0, 0, 1, 90), 1.5);
+  const start = axisQ(1, 0, 0, 30);
+  const track = { times: [2, 9], quaternions: [...start, 0, 0, 0, 1], eulers: [1, 2, 3] };
+  const turned = MPE.pushBackQuats(track, times, rest, out);
+
+  check('a key inside the span is turned', turned === 1, turned);
+  check('...composed ON TOP of the rotation it already held',
+    near(qAngle(track.quaternions.slice(0, 4)), qAngle(qMul(axisQ(0, 0, 1, 90), start)), 1e-6),
+    'overwriting instead of composing throws away the pose that was already keyed');
+  check('...and written normalised',
+    near(Math.hypot(...track.quaternions.slice(0, 4)), 1, 1e-9),
+    'a key can be twisted many times; unnormalised the error compounds into a scale');
+  check('a key outside the sampled span is left exactly alone',
+    track.quaternions.slice(4).join() === '0,0,0,1',
+    'the curve makes no claim about time the user could not see');
+  check('cached eulers are dropped so the registry rebuilds them', track.eulers === null);
+
+  // A drag with no twist in it must write nothing, or every Move costs a rotation key and an
+  // undo entry for a rotation that did not change.
+  const flat = { times: [2], quaternions: [0, 0, 0, 1], eulers: null };
+  check('an untwisted gesture turns no key',
+    MPE.pushBackQuats(flat, times, rest, rest.map((q) => ({ ...q }))) === 0);
+  check('...and a curve carrying no orientations is simply not a rotation edit',
+    MPE.pushBackQuats(flat, times, null, null) === 0,
+    'a read-only curve has no quats; asking must be free, not a throw');
+}
+
+// THE WIRING: captured at the grab, twisted by the SAME delta as the positions, pushed back and
+// undone as one gesture, and drawn live while the hand is still moving.
+{
+  check('the grab copies the baseline orientations',
+    /beforeQ: strand\.quats \? strand\.quats\.map\(\(q\) => readQ\(q\)\) : null/.test(MPS),
+    'sharing the array with the drag compounds the twist every frame');
+  // Three separate greps rather than one spanning regex: the first version measured the gap
+  // between them in characters, so a comment added between the two halves broke a check about
+  // arithmetic. What matters is that ONE `twist` binding feeds both, not how far apart they sit.
+  check('one delta drives both halves of the gesture',
+    /const twist = twistSince\(e\.startQuatInv, main\._vrControllerQuat, intensity\);/.test(MPS)
+      && /ch\.translate \? twist : null, e\.startWorld, e\.falloff\)/.test(MPS)
+      && /MotionPathEdit\.twisted\(e\.before, e\.beforeQ, e\.index, twist, e\.radius, e\.falloff\)/.test(MPS),
+    'two twists computed separately is two chances for the path and the triads to disagree');
+  check('finish pushes the rotation channel back',
+    /pushBackQuats\(track, e\.strand\.times, e\.beforeQ, e\.afterQ\)/.test(MPS));
+  check('...and a pure twist still counts as an edit',
+    /if \(!moved && !turned\) return 0;/.test(MPS),
+    'gating rotation behind a positional move loses every twist-only gesture');
+  check('...and undo restores the quaternions with the positions, in ONE entry',
+    /const put = \(arr, quat\) =>[\s\S]{0,300}?t\.quaternions = quat\.slice\(\)/.test(MPS)
+      && /pushStateCustom\(\(\) => put\(beforePos, beforeQuat\), \(\) => put\(afterPos, afterQuat\)/.test(MPS),
+    'two entries for one gesture, and the second undoes a state the first already changed');
+
+  const TRAIL_R = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
+  check('the gnomons are drawn from the live edit while it is running',
+    /const edit = main\._pathEdit;\s*\n\s*const points = \(edit && edit\.after\) \|\| strand\.points;\s*\n\s*const quats = \(edit && edit\.afterQ\) \|\| strand\.quats;/.test(TRAIL_R),
+    'perFrame calls drawGnomons every frame, so the baseline would repaint over the twist');
+  check('...and drawGnomons reads those rather than the strand directly',
+    /const p = points\[i\];\s*\n\s*const q = quats\[i\];/.test(TRAIL_R));
+}
+
+// --- CHANNELS: which half of the keys an edit is allowed to write ------------------------
+//
+// A 6DOF grab always produces both a translation and a rotation, because a hand cannot move
+// without turning a little. Once the twist reached the orientations that stopped being free.
+// matt: "i can see cases where i'll want to affect just positions, or just rotations, or both."
+//
+// The subtle mistake here is not forgetting a gate — it is putting the TWIST'S POSITIONAL SWING
+// on the wrong one. Turning your wrist swings the curve around your hand as well as turning the
+// triads; that swing moves POSITIONS, so it belongs to Translate. Filed under Rotate it would
+// make "just rotations" move the path, which is the one thing the button promises it will not.
+{
+  const drag = (ch, ang) => {
+    const pts = line(5);
+    const rest = pts.map(() => ({ ...QI }));
+    const main = {
+      _vrControllerQuat: axisQ(0, 0, 1, ang),
+      _pathEdit: {
+        before: pts, beforeQ: rest.map((q) => [q.x, q.y, q.z, q.w]),
+        index: 2, radius: 99, startWorld: { x: 0, y: 0, z: 0 },
+        startQuatInv: [0, 0, 0, 1], falloff: { connected: false },
+        channels: ch, after: null, afterQ: null,
+      },
+    };
+    MPE.dragXR(main, [0, 3, 0], 1);
+    return main._pathEdit;
+  };
+
+  // Not asserted against a hand-computed position: the twist swings the curve about the GRAB
+  // ORIGIN as well as translating it, so the moved point is not simply start + delta. The first
+  // version of this check assumed it was and failed on correct code. What matters is that both
+  // channels changed, and — below — that turning one off leaves the other one identical.
+  const both = drag({ translate: true, rotate: true }, 90);
+  const moved = (e) => e.after.some((p, i) => Math.abs(p.x - i) > 1e-6 || Math.abs(p.y) > 1e-6);
+  check('both channels on: the path moves and the keys turn',
+    moved(both) && !!both.afterQ && near(qAngle(qArr(both.afterQ[2])), Math.PI / 2, 1e-6));
+
+  const rotOnly = drag({ translate: false, rotate: true }, 90);
+  check('Translate off: the path does not move at all',
+    rotOnly.after.every((p, i) => near(p.x, i) && near(p.y, 0) && near(p.z, 0)),
+    JSON.stringify(rotOnly.after[2]));
+  check('...not even by the twist’s swing around the hand',
+    near(rotOnly.after[0].x, 0) && near(rotOnly.after[0].y, 0),
+    JSON.stringify(rotOnly.after[0])
+      + ' — the swing is a POSITION edit driven by a rotation, so Translate owns it');
+  check('...while the keys still turn',
+    !!rotOnly.afterQ && near(qAngle(qArr(rotOnly.afterQ[2])), Math.PI / 2, 1e-6));
+
+  const movOnly = drag({ translate: true, rotate: false }, 90);
+  check('Rotate off: the path moves EXACTLY as it did with both on',
+    JSON.stringify(movOnly.after) === JSON.stringify(both.after),
+    'switching a channel off must not change what the other one does');
+  check('...and no orientation is written', movOnly.afterQ === null,
+    'a null afterQ is what makes pushBackQuats a no-op, so this IS the gate');
+  check('...including the twist’s swing, because that is a position',
+    !near(movOnly.after[0].y, 0),
+    'gating the swing on Rotate would make Move stop behaving like a 6DOF grab');
+}
+
+// SMOOTH takes the same two gates, on the same setting.
+{
+  const pts = line(7);
+  pts[3].y = 5;                                     // a spike to relax
+  const rest = pts.map((_, i) => {
+    const q = axisQ(0, 1, 0, i === 3 ? 80 : 0);      // and a matching spike in rotation
+    return { x: q[0], y: q[1], z: q[2], w: q[3] };
+  });
+  const run = (ch) => {
+    const main = { _pathEdit: { before: pts, beforeQ: rest, index: 3, radius: 99,
+      falloff: { connected: false }, channels: ch, after: null, afterQ: null } };
+    MPE.smoothStep(main, 1);
+    return main._pathEdit;
+  };
+  const both = run({ translate: true, rotate: true });
+  check('smooth, both on: the positional spike comes down',
+    Math.abs(both.after[3].y) < 5, both.after[3].y);
+  check('...and so does the rotational one',
+    !!both.afterQ && qAngle(qArr(both.afterQ[3])) < (80 * Math.PI / 180) - 1e-6,
+    'a Rotate button on Smooth that does not smooth rotation is a lie');
+  const rotOnly = run({ translate: false, rotate: true });
+  // `after` IS THE CURRENT CURVE, ALWAYS. The first version of this asserted `after === null`
+  // when positions were not being smoothed, which is what the code did and what crashed the
+  // stroke: the redraw hands `after` straight to writeLine. "Untouched" has to mean equal to the
+  // baseline, not absent.
+  check('smooth, Translate off: positions come out unchanged',
+    JSON.stringify(rotOnly.after) === JSON.stringify(pts),
+    'a null `after` reaches writeLine and throws on .length');
+  check('...and rotations still relax',
+    !!rotOnly.afterQ && qAngle(qArr(rotOnly.afterQ[3])) < (80 * Math.PI / 180) - 1e-6);
+  const movOnly = run({ translate: true, rotate: false });
+  check('smooth, Rotate off: orientations are untouched', movOnly.afterQ === null);
+}
+
+// The rotational smooth is a slerp toward the neighbours' MIDPOINT, and the ends are pinned for
+// the same reason the positional one pins them: a Laplacian pulls toward the middle, so an
+// unpinned end creeps off its authored pose a little more every pass.
+{
+  const pts = line(5);
+  const rest = pts.map((_, i) => {
+    const q = axisQ(0, 1, 0, i === 2 ? 90 : 0);
+    return { x: q[0], y: q[1], z: q[2], w: q[3] };
+  });
+  const out = MPE.smoothedQuats(pts, rest, 2, 99, 1);
+  check('the rotational spike relaxes to the midpoint of its neighbours',
+    near(qAngle(qArr(out[2])), 0, 1e-6), qAngle(qArr(out[2])));
+  const ends = MPE.smoothedQuats(pts, pts.map(() => {
+    const q = axisQ(0, 1, 0, 40); return { x: q[0], y: q[1], z: q[2], w: q[3] };
+  }), 2, 99, 1);
+  check('...and the endpoints keep their authored orientation',
+    near(qAngle(qArr(ends[0])), 40 * Math.PI / 180, 1e-6),
+    'an unpinned end quietly loses the first and last poses of the animation');
+}
+
+// The setting itself: live first, saved second, both by default.
+{
+  delete globalThis.window._pathTranslate;
+  delete globalThis.window._pathRotate;
+  globalThis.__opts = {};
+  const d = MPE.channels();
+  check('both channels are on when nothing has been said', d.translate && d.rotate,
+    'a default of off would read as the twist simply not working');
+  globalThis.__opts = { pathTranslate: false, pathRotate: false };
+  check('a saved false is honoured', MPE.channels().translate === false);
+  globalThis.window._pathTranslate = true;
+  check('...and the live override wins, so a toggle takes the CURRENT stroke',
+    MPE.channels().translate === true);
+  delete globalThis.window._pathTranslate;
+  delete globalThis.window._pathRotate;
+  globalThis.__opts = {};
+}
+
+// BOTH PANELS. matt asked for these on the wrist panel and the main menu, and a control that
+// exists in one place only is the reason Connectivity is still invisible from the main menu.
+{
+  const MINI = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MiniPanel.js'), 'utf8');
+  const MAIN = fs.readFileSync(path.join(REPO, 'src/gui/htmlvr/MainMenuPanel.js'), 'utf8');
+  check('the wrist panel offers both channels',
+    /id="mp-path-translate"/.test(MINI) && /id="mp-path-rotate"/.test(MINI));
+  check('...on Move AND on Smooth',
+    /idx === Enums\.Tools\.MOVE \|\| idx === Enums\.Tools\.SMOOTH/.test(MINI)
+      && /idx === Enums\.Tools\.SMOOTH \? pathChannelHTML\(\) : ''/.test(MINI),
+    'Smooth edits the same curve, so it needs the same say over which channel it writes');
+  check('...from ONE markup helper, so the two tools cannot drift apart',
+    (MINI.match(/pathChannelHTML\(\)/g) || []).length >= 3);
+  check('the main menu offers them too',
+    /id="mm-path-translate"/.test(MAIN) && /id="mm-path-rotate"/.test(MAIN)
+      && /if \(isMove \|\| isSmooth\)/.test(MAIN));
+  for (const [name, src] of [['wrist', MINI], ['main menu', MAIN]]) {
+    check(`the ${name} writes the live value AND saves it`,
+      /window\[liveKey\] = next;/.test(src)
+        && /saveOption\(savedKey, next, 0\)/.test(src),
+      'live only forgets on exit; saved only ignores the stroke in progress');
+  }
+  // THE DESKTOP TRACKBALL. A mouse has no roll, so with Rotate on there was no gesture to read
+  // and the drag did nothing at all — matt: "move tool in rotation mode does nothing".
+  check('the drag becomes a rotation when Rotate is the only channel on',
+    /e\.afterQ = \(ch\.rotate && !ch\.translate && e\.beforeQ\)/.test(MPS),
+    'with both on, one drag would have to be a move and a turn at once');
+  check('...about an axis perpendicular to the drag, in the plane of the screen',
+    /const ax = \[-D\[0\] \* dx \+ R\[0\] \* dy/.test(MPS));
+  check('...with both axes read from the RENDERER’s projection, not the picker’s',
+    /const rx = worldAt\(main, camera, e\.screenZ, e\.startX \+ 10/.test(MPS),
+    'the same space mismatch that made the preselection miss by seventy pixels');
+  check('...and no rotation at all before the mouse has moved',
+    /if \(!dx && !dy\) return null;/.test(MPS),
+    'a zero-length drag has no axis; normalising one gives a random turn on mouse-down');
+
+  // THE SPACE. Five rounds of diagnosis went past this because every probe projected with the
+  // SAME camera the hit test used, so the two could only ever confirm each other. The curve is
+  // drawn under the skeleton overlay group, which carries _worldGroup's 0.701 scale; SculptGL's
+  // camera does not know about it. matt's measurement of one dot: 798,355 by the picker's
+  // projection, 728,370 where three actually drew it — a ratio of 0.701 about the canvas centre.
+  check('the hit test projects the way the RENDERER does',
+    /function screenOf\(main, camera, p\)[\s\S]{0,300}?MotionPathEdit\.projectHook\(main, p\)/.test(MPS));
+  check('...and every desktop screen-space read goes through that one function',
+    (MPS.match(/screenOf\(main, camera/g) || []).length >= 3,
+    'one path left on the old projection is the bug still there, just harder to find');
+  check('...including the drag, or the curve moves at the wrong RATE as well as from the wrong place',
+    /MotionPathEdit\.unprojectHook\(main, x, y, anchor\)/.test(MPS));
+  check('...and the reach, so the drawn ring and the samples it takes are one number',
+    /function reachAt\(main, camera, x, y, z, anchor, radiusPx\)/.test(MPS));
+  {
+    const TR2 = fs.readFileSync(path.join(REPO, 'src/editing/MotionTrail.js'), 'utf8');
+    check('the hook walks the overlay group before projecting with the THREE camera',
+      /applyMatrix4\(g\.matrixWorld\)\.project\(cam\)/.test(TR2),
+      'the group transform is exactly what the two projections disagreed about');
+    check('...and the inverse brings a screen point back into the curve’s own space',
+      /\.unproject\(cam\)\s*\n?\s*\.applyMatrix4\(_invG\.copy\(g\.matrixWorld\)\.invert\(\)\)/.test(TR2));
+    const SEL = fs.readFileSync(path.join(REPO, 'src/drawables/Selection.js'), 'utf8');
+    check('...and the brush ring is measured in that space too',
+      /MotionPathEdit\.projectHook && MotionPathEdit\.projectHook\(main, p\)/.test(SEL));
+  }
+
+  // THE REDRAW REQUEST. This is the one that cost three wrong diagnoses: every measurement of
+  // the hit test came back correct while the screen stayed wrong, because a diagnostic computes
+  // fresh and desktop only renders on demand. A motion path is not a mesh, so the shared
+  // preUpdate — which asks for a frame when the thing under the cursor changes — asked for
+  // nothing, and the lit dot sat wherever the cursor was when the last frame went out.
+  check('a changed path hover asks for a frame',
+    /MotionPathEdit\.hoverTick = function \(main\)[\s\S]{0,900}?main\.render\?\.\(\);/.test(MPS));
+  check('...and never in a session, where the loop already draws every frame',
+    /if \(main\._xrSession \|\| main\._vrSculpting\) return false;/.test(MPS),
+    'a redundant draw per hover change, on the surface that can least afford one');
+  check('...only on CHANGE, so a mouse move is not one frame per pixel',
+    /if \(i === main\._pathHoverLast\) return false;/.test(MPS),
+    'rendering every move turns a hover into a per-pixel redraw of the whole scene');
+  check('...and never while a drag is live, which renders itself',
+    /if \(!main \|\| !main\._trailStrand \|\| main\._pathEdit\) return false;/.test(MPS));
+  for (const f of ['src/editing/tools/Move.js', 'src/editing/tools/Smooth.js']) {
+    const T = fs.readFileSync(path.join(REPO, f), 'utf8');
+    check(f.split('/').pop() + ' calls it from preUpdate, after the base pick',
+      /preUpdate\(canBeContinuous\) \{\s*\n\s*super\.preUpdate\(canBeContinuous\);\s*\n\s*MotionPathEdit\.hoverTick\(this\._main\);/.test(T));
+  }
+  check('...and NOT from SculptBase, which cannot import it',
+    !/MotionPathEdit/.test(fs.readFileSync(path.join(REPO, 'src/editing/tools/SculptBase.js'), 'utf8')),
+    'the import cycle leaves MotionPathEdit undefined at load — module_load_test catches it');
+
+  // AND THE DESKTOP SIDEBAR. The VR panels are not reachable with a mouse, so without this the
+  // feature runs on desktop with whatever the wrist panel was last set to and no way to see it.
+  const DESK = fs.readFileSync(path.join(REPO, 'src/gui/GuiSculptingTools.js'), 'utf8');
+  check('the desktop sidebar offers the channels too',
+    /flag\('Move', ch\.translate, '_pathTranslate', 'pathTranslate'\)/.test(DESK)
+      && /flag\('Rotate', ch\.rotate, '_pathRotate', 'pathRotate'\)/.test(DESK));
+  check('...and Connectivity, which had never reached a mouse at all',
+    /flag\('Connectivity', MotionPathEdit\.connected\(\)/.test(DESK));
+  check('...on both tools that can sculpt a path',
+    (DESK.match(/addPathOptions\(this\._ctrls, fold\);/g) || []).length === 2,
+    'Move and Smooth both edit the curve; one of them silently lacking the options is the bug '
+      + 'this check exists to stop coming back');
+  check('...writing live first and saved second, like every other panel',
+    /window\[liveKey\] = !!v;[\s\S]{0,120}?saveOption\(savedKey, !!v, 0\)/.test(DESK));
+
+  check('and both read the state back through channels(), not a local copy',
+    /MotionPathEdit\.channels\(\)/.test(MINI) && /MotionPathEdit\.channels\(\)/.test(MAIN),
+    'a panel holding its own copy is a panel that can disagree with the edit');
 }
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall checks passed');

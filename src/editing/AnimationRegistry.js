@@ -4,9 +4,37 @@ import { rotSync, xfWrite } from './xfChannel.js';
 import { arkitEntry, arkitSplitTargets, arkitUnifiedFor } from './ArkitBlendshapes.js';
 import Enums from '../misc/Enums.js';
 import Skinning from './Skinning.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
 
 const _regQuat = new THREE.Quaternion();
 const _regEuler = new THREE.Euler();
+
+// One TRS sample out of a track snapshot's parallel arrays.
+function trsAt(snap, i) {
+  return {
+    p: [snap.positions[i * 3], snap.positions[i * 3 + 1], snap.positions[i * 3 + 2]],
+    q: [snap.quaternions[i * 4], snap.quaternions[i * 4 + 1],
+      snap.quaternions[i * 4 + 2], snap.quaternions[i * 4 + 3]],
+    s: [snap.scales[i * 3], snap.scales[i * 3 + 1], snap.scales[i * 3 + 2]],
+  };
+}
+
+function trsLerp(a, b, u) {
+  const l = (x, y) => x + (y - x) * u;
+  // Short-arc nlerp on the quaternion: without the sign flip a pair either side of a half turn
+  // interpolates the long way round, which reads as the object spinning between two keys.
+  let d = a.q[0] * b.q[0] + a.q[1] * b.q[1] + a.q[2] * b.q[2] + a.q[3] * b.q[3];
+  const sgn = d < 0 ? -1 : 1;
+  const q = [0, 1, 2, 3].map((k) => l(a.q[k], b.q[k] * sgn));
+  const ql = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return {
+    p: [0, 1, 2].map((k) => l(a.p[k], b.p[k])),
+    q: q.map((v) => v / ql),
+    s: [0, 1, 2].map((k) => l(a.s[k], b.s[k])),
+  };
+}
+
+const getOpt = () => getOptionsURL();
 
 class AnimationRegistry {
   constructor() {
@@ -526,9 +554,12 @@ class AnimationRegistry {
         track.quaternions.push(0, 0, 0, 1);
         track.eulers = null; // rebuilt on next read
       } else {
-        track.positions.push(m[12], m[13], m[14]);
-        track.scales.push(sx, sy, sz);
-        track.quaternions.push(qx, qy, qz, qw);
+        // Through the SAME gate the other write path uses — see _gateChannels.
+        const g = this._gateChannels(this.activeMesh.getID(), elapsed,
+          [m[12], m[13], m[14]], [qx, qy, qz, qw], [sx, sy, sz]);
+        track.positions.push(g.P[0], g.P[1], g.P[2]);
+        track.scales.push(g.S[0], g.S[1], g.S[2]);
+        track.quaternions.push(g.Q[0], g.Q[1], g.Q[2], g.Q[3]);
         track.eulers = null; // rebuilt on next read
       }
     }
@@ -1072,6 +1103,34 @@ class AnimationRegistry {
       window._animPlaying = true;
     } else {
       window._animPlaying = false;
+      // WITH LOOP OFF, A FINISHED TAKE PARKS AT THE START RATHER THAN WHEREVER IT ENDED.
+      //
+      // The looping case rewinds and plays, so you see the take immediately. The non-looping
+      // case did neither: it stopped the clock and left the playhead sitting on the last frame,
+      // which is the one place from which nothing you do next makes sense — pressing play
+      // replays nothing, and recording again starts from the end. Parking at the range start is
+      // what every transport does when a take finishes, and it is the frame you want to be on
+      // to watch it or to go again. matt: "when the recording is finished it should get out of
+      // record mode, and jump back to the first frame."
+      //
+      // The range START, not zero: a loop range that begins partway in has its own first frame.
+      // Same three lines the timeline's Rewind button uses, so the two cannot disagree.
+      if (!isManualAbort) {
+        const t0 = window._animLoopStart ?? 0;
+        this.globalPlaybackTime = t0;
+        window._animCurrentTime = t0;
+        // Evaluate once at the new time, or the clock says frame one while the viewport still
+        // shows the last pose of the take.
+        const m = takeTargets[0] || this.activeMesh || window.app?.getMesh?.();
+        if (m) this.update(m, true);
+      }
+      // AND ASK FOR A FRAME, whether or not the playhead moved. A take changes the keys, which
+      // changes the motion trail's fingerprint — but the trail is rebuilt inside render(), and
+      // desktop renders on demand. Without this the take is finished and nothing on screen says
+      // so until something else happens to draw: matt, "once i finish recording i see the trail,
+      // but i don't see any keys or inbetweens. i have to deselect and reselect the pin".
+      // The looping branch above gets its frames free from playback; this one gets none.
+      window.app?.render?.();
     }
   }
 
@@ -1948,6 +2007,69 @@ class AnimationRegistry {
 
   // Insert (or overwrite) one mesh's transform key. Split out of addTransformKey so a
   // rig-wide key can reuse it: keying thirty joints must be ONE undo step, not thirty.
+  // WHICH CHANNELS A TAKE IS ALLOWED TO WRITE. All three by default.
+  //
+  // A key is one TRS sample in three parallel arrays indexed in lockstep, so "record rotation
+  // only" cannot mean "write fewer numbers" — every key still needs a position and a scale. It
+  // means the OTHER channels must come out unchanged.
+  //
+  // Unchanged from WHAT is the whole question, and the answer is the animation as it stood
+  // before this take. The punch-in overwrite deletes the keys in the window it re-passes, so
+  // taking the live value would bake your hand's movement into a channel you switched off, and
+  // taking a single frozen value would flatten any animation that channel already had. Reading
+  // it back out of the pre-take snapshot is the only one of the three that leaves the channel
+  // genuinely as it was.
+  //
+  // Sampled LINEARLY, while playback interpolates with tangents. For recorded takes the keys
+  // are dense enough that the difference is invisible; on a sparsely hand-keyed channel a
+  // re-recorded span can differ slightly from the curve it replaced. Worth knowing before
+  // chasing it as a bug.
+  recordChannels() {
+    const o = getOpt();
+    const read = (liveKey, savedKey) => {
+      const live = window[liveKey];
+      if (live != null) return !!live;
+      const v = o[savedKey];
+      return v == null ? true : !!v;
+    };
+    return {
+      translate: read('_recTranslate', 'recTranslate'),
+      rotate: read('_recRotate', 'recRotate'),
+      scale: read('_recScale', 'recScale'),
+    };
+  }
+
+  // The pre-take value of every channel at `time`, or null when this object had no animation
+  // before the take — in which case the caller keeps the live value, since there is nothing to
+  // preserve and a key has to hold something.
+  // Substitute the pre-take value for every channel this take is not recording. Live values
+  // pass straight through when all three are on, which is the default and the hot path.
+  _gateChannels(id, time, P, Q, S) {
+    const ch = this.recordChannels();
+    if (ch.translate && ch.rotate && ch.scale) return { P, Q, S };
+    const was = this._preTakeTRS(id, time);
+    if (!was) return { P, Q, S };   // nothing to preserve; a key must hold something
+    return {
+      P: ch.translate ? P : was.p,
+      Q: ch.rotate ? Q : was.q,
+      S: ch.scale ? S : was.s,
+    };
+  }
+
+  _preTakeTRS(id, time) {
+    const snap = this._trackStatesBeforeRecording &&
+      this._trackStatesBeforeRecording.get(id);
+    const t = snap && snap.times;
+    if (!t || !t.length) return null;
+    let i = 0;
+    while (i < t.length && t[i] < time) i++;
+    if (i === 0) return trsAt(snap, 0);
+    if (i >= t.length) return trsAt(snap, t.length - 1);
+    const t0 = t[i - 1], t1 = t[i];
+    const u = t1 > t0 ? (time - t0) / (t1 - t0) : 0;
+    return trsLerp(trsAt(snap, i - 1), trsAt(snap, i), u);
+  }
+
   _writeTransformKey(mesh, time) {
     if (!mesh) return;
     const id = mesh.getID();
@@ -1983,20 +2105,28 @@ class AnimationRegistry {
       qx /= ql; qy /= ql; qz /= ql; qw /= ql;
     }
 
+    // The channel gate, applied at the ONE point every take writes through. Both capture paths
+    // funnel into a key write; putting the rule in each of them separately is how the two would
+    // come to disagree about what "rotation only" means.
+    const g = this._gateChannels(id, time, [px, py, pz], [qx, qy, qz, qw], [sx, sy, sz]);
+    const gpx = g.P[0], gpy = g.P[1], gpz = g.P[2];
+    const gqx = g.Q[0], gqy = g.Q[1], gqz = g.Q[2], gqw = g.Q[3];
+    const gsx = g.S[0], gsy = g.S[1], gsz = g.S[2];
+
     let idx = 0;
     while (idx < track.times.length && track.times[idx] < time) idx++;
 
     if (idx < track.times.length && Math.abs(track.times[idx] - time) < 0.005) {
-      track.positions.splice(idx*3, 3, px, py, pz);
-      track.quaternions.splice(idx*4, 4, qx, qy, qz, qw);
+      track.positions.splice(idx*3, 3, gpx, gpy, gpz);
+      track.quaternions.splice(idx*4, 4, gqx, gqy, gqz, gqw);
       track.eulers = null;
-      track.scales.splice(idx*3, 3, sx, sy, sz);
+      track.scales.splice(idx*3, 3, gsx, gsy, gsz);
     } else {
       track.times.splice(idx, 0, time);
-      track.positions.splice(idx*3, 0, px, py, pz);
-      track.quaternions.splice(idx*4, 0, qx, qy, qz, qw);
+      track.positions.splice(idx*3, 0, gpx, gpy, gpz);
+      track.quaternions.splice(idx*4, 0, gqx, gqy, gqz, gqw);
       track.eulers = null;
-      track.scales.splice(idx*3, 0, sx, sy, sz);
+      track.scales.splice(idx*3, 0, gsx, gsy, gsz);
 
       // Shift tangent offsets up for keys after idx
       if (track.tangentOffsets) {

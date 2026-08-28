@@ -32,6 +32,7 @@ import Shader       from '../../render/ShaderLib.js';
 import Remesh       from '../../editing/Remesh.js';
 import Picking      from '../../math3d/Picking.js';
 import RigPending   from '../../editing/RigPending.js';
+import MotionPathEdit from '../../editing/MotionPathEdit.js';
 import { toolTextTint } from './toolTints.js';
 import { SCULPT_TOOLS, MESH_TOOLS } from './toolLists.js';
 import {
@@ -1630,6 +1631,27 @@ export function buildSectionHTML_sculpting(main) {
       brushHTML += `<div class="mm-choice-grid ${cols}" style="margin-top:4px">${toggles.join('')}</div>`;
     }
 
+    // ── Motion path: which channel of the keys an edit writes ────────
+    //
+    // Move and Smooth are the two tools that can sculpt a motion path, so they are the two that
+    // get the choice. A 6DOF grab always produces both a translation and a rotation — your hand
+    // cannot move without turning a little — so without these a nudge sideways also nods every
+    // gnomon it passes. matt: "i can see cases where i'll want to affect just positions, or just
+    // rotations, or both."
+    //
+    // The same global setting the wrist panel writes, deliberately: "which channel am I
+    // editing" is a fact about the edit and not about the brush, and two panels disagreeing
+    // about it would be worse than either answer.
+    if (isMove || isSmooth) {
+      const ch = MotionPathEdit.channels();
+      brushHTML += `
+        <div class="mm-lbl" style="margin-top:6px">Motion Path</div>
+        <div class="mm-choice-grid cols-2">
+          <button class="mm-choice${ch.translate ? ' active' : ''}" id="mm-path-translate">Move</button>
+          <button class="mm-choice${ch.rotate ? ' active' : ''}" id="mm-path-rotate">Rotate</button>
+        </div>`;
+    }
+
     // ── Face-group paint controls ────────────────────────────────────
     if (isPaintGroup) {
       const grp = tool._group ?? 1;
@@ -3158,6 +3180,20 @@ export function wireSectionSculpting(el, main, repaintFn, lightRepaintFn = repai
       e.currentTarget.classList.toggle('active', on);
       main.render?.();
     });
+    // The path channels. Live value first so it takes effect on the current stroke, saved
+    // second so it sticks — the order every persisted setting in here is read and written in.
+    const pathChannel = (id, liveKey, savedKey, pick) => {
+      el.querySelector(id)?.addEventListener('click', (e) => {
+        const next = !pick(MotionPathEdit.channels());
+        window[liveKey] = next;
+        getOptionsURL.saveOption(savedKey, next, 0);
+        e.currentTarget.classList.toggle('active', next);
+        lightRepaintFn();
+      });
+    };
+    pathChannel('#mm-path-translate', '_pathTranslate', 'pathTranslate', (c) => c.translate);
+    pathChannel('#mm-path-rotate', '_pathRotate', 'pathRotate', (c) => c.rotate);
+
     el.querySelector('#mm-brush-clay')?.addEventListener('click', (e) => {
       tool._clay = !tool._clay;
       e.currentTarget.classList.toggle('active', tool._clay);

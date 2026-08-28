@@ -36,6 +36,20 @@ class Move extends SculptBase {
   // ABORTS when the click misses all geometry, so a curve arcing through empty space — which is
   // most of any interesting motion path — would never have been reachable. Taken only when the
   // pointer is genuinely on the authored curve, so every other stroke falls through unchanged.
+  // A MOTION PATH IS NOT A MESH, so the shared preUpdate — which requests a frame when the
+  // thing under the cursor changes — never asks for one while you are over a curve. Desktop
+  // renders on demand, and MotionTrail.update runs inside render(), so the preselect highlight
+  // was only recoloured on frames drawn for some other reason: the lit dot sat wherever the
+  // cursor had been when the last frame went out.
+  //
+  // Hooked here rather than in SculptBase because SculptBase cannot import MotionPathEdit
+  // without closing an import cycle (MotionTrail already reaches back through redrawHook for
+  // the same reason). These two tools are the only ones that can edit a path anyway.
+  preUpdate(canBeContinuous) {
+    super.preUpdate(canBeContinuous);
+    MotionPathEdit.hoverTick(this._main);
+  }
+
   start(ctrl) {
     const main = this._main;
     if (MotionPathEdit.begin(main, main._mouseX, main._mouseY, this.getScreenRadius())) {

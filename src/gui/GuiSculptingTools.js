@@ -5,6 +5,32 @@ import Picking from '../math3d/Picking.js';
 import Enums from '../misc/Enums.js';
 import Utils from '../misc/Utils.js';
 import VoxelDensityOverlay from '../render/VoxelDensityOverlay.js';
+import MotionPathEdit from '../editing/MotionPathEdit.js';
+import getOptionsURL from '../misc/getOptionsURL.js';
+
+// THE MOTION-PATH OPTIONS, ON THE DESKTOP SIDEBAR.
+//
+// Move and Smooth can sculpt a motion path on a flat screen exactly as they can in the headset,
+// but every option governing that lived in the VR panels — so on desktop the feature ran with
+// whatever the wrist panel was last set to and no way to see it, let alone change it. That is
+// also why Connectivity is here: it has been MiniPanel-only since it shipped.
+//
+// Global settings rather than tool properties, so these take the value/callback form of
+// addCheckbox rather than the object/key form the tool options use. Live value written first so
+// it applies to the stroke in progress, saved second so it sticks — the order everywhere else
+// reads them in.
+function addPathOptions(ctrls, fold) {
+  const ch = MotionPathEdit.channels();
+  const flag = (label, value, liveKey, savedKey) => ctrls.push(
+    fold.addCheckbox(label, value, (v) => {
+      window[liveKey] = !!v;
+      getOptionsURL.saveOption(savedKey, !!v, 0);
+    }));
+  fold.addTitle('Motion path');
+  flag('Move', ch.translate, '_pathTranslate', 'pathTranslate');
+  flag('Rotate', ch.rotate, '_pathRotate', 'pathRotate');
+  flag('Connectivity', MotionPathEdit.connected(), '_pathConnected', 'pathConnected');
+}
 
 
 var GuiSculptingTools = {};
@@ -294,6 +320,7 @@ GuiTools[Enums.Tools.MOVE] = {
     this._ctrls.push(fold.addCheckbox(TR('sculptTopologicalCheck'), tool, '_topoCheck'));
     this._ctrls.push(addCtrlNegative(tool, fold, this, TR('sculptMoveAlongNormal')));
     addCtrlAlpha(this._ctrls, fold, tool, this);
+    addPathOptions(this._ctrls, fold);
   }
 };
 
@@ -305,6 +332,7 @@ GuiTools[Enums.Tools.SMOOTH] = {
     this._ctrls.push(fold.addCheckbox(TR('sculptTangentialSmoothing'), tool, '_tangent'));
     this._ctrls.push(addCtrlCulling(tool, fold));
     addCtrlAlpha(this._ctrls, fold, tool, this);
+    addPathOptions(this._ctrls, fold);
   }
 };
 
